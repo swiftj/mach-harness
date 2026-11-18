@@ -32,8 +32,8 @@ func ledgerAt(seq int, at, typ, ticket string, data map[string]any) []byte {
 	if ticket != "" {
 		tk = ticket
 	}
-	line, _ := json.Marshal(map[string]any{"schema_version": 2, "seq": seq, "at": at, "type": typ, "project_id": "P-1", "source_commit": nil,
-		"wave_id": "WAVE-001", "slice_id": "SLICE-002", "revision": 1, "ticket_id": tk, "runner_id": nil, "execution_id": nil,
+	line, _ := json.Marshal(map[string]any{"schema_version": 3, "seq": seq, "at": at, "type": typ, "source_commit": nil,
+		"epic_id": "EPIC-001", "issue": nil, "slice_id": "SLICE-002", "revision": 1, "ticket_id": tk, "runner_id": nil, "execution_id": nil,
 		"source": "supervisor", "cause": nil, "refs": nil, "data": data})
 	return append(line, '\n')
 }

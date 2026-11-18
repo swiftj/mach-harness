@@ -161,7 +161,7 @@ func checkCSP(t *testing.T, resp *http.Response) {
 // Every route, with a valid example, for the checks that apply to all of them.
 func routes() []string {
 	return []string{"/api/v1/session", "/api/v1/health", "/api/v1/factory/status", "/api/v1/events", "/api/v1/snapshot", "/api/v1/project",
-		"/api/v1/waves", "/api/v1/waves/WAVE-001", "/api/v1/slices", "/api/v1/slices/SLICE-001", "/api/v1/cells", "/api/v1/cells/T-1",
+		"/api/v1/slices", "/api/v1/slices/SLICE-001", "/api/v1/cells", "/api/v1/cells/T-1",
 		"/api/v1/cells/T-1/visits/build%231", "/api/v1/cells/T-1/evidence", "/api/v1/runs", "/api/v1/runs/x0123456789ab",
 		"/api/v1/runs/x0123456789ab/agents", "/api/v1/runs/x0123456789ab/tools", "/api/v1/spans", "/api/v1/artifacts",
 		"/api/v1/analytics/metrics", "/api/v1/analytics/runs", "/api/v1/history", "/api/v1/series", "/api/v1/concurrency", "/api/v1/marks"}
@@ -272,10 +272,8 @@ func TestEveryEndpointShape(t *testing.T) {
 		"/api/v1/history":                    {"events", "next_from_order", "more", "complete", "capped", "head", "watermark_ms", "limits"},
 		"/api/v1/snapshot":                   {"cursor", "generation", "reconstructed", "state"},
 		"/api/v1/project":                    {"counts_by_state", "factory", "active_cells", "human_gates_open", "cursor"},
-		"/api/v1/waves":                      {"items", "cursor"},
-		"/api/v1/waves/WAVE-001":             {"wave_id", "slices", "state_counts"},
 		"/api/v1/slices":                     {"items", "total", "more"},
-		"/api/v1/slices/SLICE-002":           {"state", "waiting", "history", "dependencies"},
+		"/api/v1/slices/SLICE-002":           {"state", "waiting", "history", "dependencies", "epic_id", "epic_title", "issue"},
 		"/api/v1/cells":                      {"items", "total"},
 		"/api/v1/cells/T-1":                  {"visits", "gates", "tasks", "checks", "reviews", "approvals", "merge", "cleanup", "rounds"},
 		"/api/v1/cells/T-1/visits/build%231": {"visit", "events"},
@@ -300,7 +298,7 @@ func TestEveryEndpointShape(t *testing.T) {
 			}
 		}
 	}
-	for _, path := range []string{"/api/v1/waves/WAVE-404", "/api/v1/slices/S-404", "/api/v1/cells/T-404", "/api/v1/cells/T-1/visits/build%239",
+	for _, path := range []string{"/api/v1/waves", "/api/v1/slices/S-404", "/api/v1/cells/T-404", "/api/v1/cells/T-1/visits/build%239",
 		"/api/v1/runs/x404", "/api/v1/runs/x404/agents"} {
 		if resp, env, _ := h.do(t, "GET", path, nil); resp.StatusCode != 404 || env.Error.Kind != KindNotFound {
 			t.Fatalf("%s: %d", path, resp.StatusCode)
@@ -330,7 +328,7 @@ func TestEveryEndpointShape(t *testing.T) {
 	}
 	sess := h.get(t, "/api/v1/session")
 	if sess["capabilities"].(map[string]any)["stream_observations"].(map[string]any)["ok"] != true ||
-		len(sess["versions"].(map[string]any)["event"].(map[string]any)["kinds"].([]any)) != 54 {
+		len(sess["versions"].(map[string]any)["event"].(map[string]any)["kinds"].([]any)) != 53 {
 		t.Fatalf("session %v", sess)
 	}
 	m := h.get(t, "/api/v1/analytics/metrics?ids=Q2,K5&group_by=risk")["metrics"].([]any)

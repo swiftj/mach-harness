@@ -5,11 +5,10 @@ import { feature as roadmap } from "./roadmap";
 import { feature as spec } from "./spec";
 import { feature as interview } from "./interview";
 import { feature as inbox } from "./inbox";
-import { feature as waves } from "./waves";
 import { feature as activity } from "./activity";
 
 /** Every feature of the app. Add a folder under features/ and list it here; nothing else needs to change. */
-export const features: Feature[] = [home, vision, roadmap, spec, interview, inbox, waves, activity];
+export const features: Feature[] = [home, vision, roadmap, spec, interview, inbox, activity];
 
 export const routes = features.flatMap((feature) => feature.routes);
 

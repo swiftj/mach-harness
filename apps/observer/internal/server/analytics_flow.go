@@ -13,7 +13,7 @@ var flowRules = []string{
 	"a visit, wait or transition belongs to the UTC day it began; a gate evaluation to the day it was recorded",
 	"a transition counts recorded consecutive visits of one cell; it is not a ticket's trajectory",
 	"a wait is placed before the station the ticket entered next; waits with no later visit are counted as next_station_unknown",
-	"risk, app type and wave are the cell's recorded values at the cursor; unknown means none was recorded",
+	"risk, app type and epic are the cell's recorded values at the cursor; unknown means none was recorded",
 	"bottlenecks rank by total measured time, so volume counts; what was not measured is counted beside it",
 	"as_of_ms: a record later than it does not exist yet (compared by order time); what was open then is open; a cell's risk is its latest review's by then, unknown when it was reviewed only later",
 }
@@ -54,7 +54,7 @@ func (s *Server) analyticsFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.Exact = true // as_of_ms cuts records, spans and executions exactly
-	if e := unsupported(p, "risk", "app_type", "wave", "station"); e != nil {
+	if e := unsupported(p, "risk", "app_type", "epic", "station"); e != nil {
 		writeJSON(w, http.StatusBadRequest, *e)
 		return
 	}
@@ -63,7 +63,7 @@ func (s *Server) analyticsFlow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, *bad)
 		return
 	}
-	q := project.FlowQuery{Risk: p.Risk, AppType: p.AppType, Wave: p.Wave, Station: p.Station}
+	q := project.FlowQuery{Risk: p.Risk, AppType: p.AppType, Epic: p.Epic, Station: p.Station}
 	q.From, q.To, q.Window = p.EffectiveWindow()
 	rep := ix.Flow(q)
 	env := analyticsEnvelopeAt(s, ix.Epoch, ix.Pos, ix.State(), p)

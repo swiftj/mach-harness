@@ -14,6 +14,7 @@ import { duration, timecode } from "../shell/time";
 import { LINE_STATIONS, sentBackWords, type LineRow, type StationStat, type StationTime } from "./model";
 import { StatePill } from "./Marks";
 import { costWords, modelWords } from "./words";
+import { EpicName, issueWords } from "./Epic";
 
 function Back({ onBack }: { onBack: () => void }) {
   return (
@@ -111,6 +112,13 @@ export function TicketPanel({ row, now, onBack, onRecord, onFloor }: { row: Line
       <Part title="Facts">
         <Facts
           rows={[
+            ["Issue", issueWords(row.issue) ?? "not recorded"],
+            ["Epic", row.epicTitle || row.epicId ? (
+              <span key="e">
+                <EpicName row={row} />
+                {row.epicTitle && row.epicId ? <span className="ml-1 font-mono text-caption text-ink-muted">{row.epicId}</span> : null}
+              </span>
+            ) : "not recorded"],
             ["Risk", row.risk ?? "not recorded"],
             ["Rounds used", `${row.roundsUsed} of ${MAX_ROUNDS}`],
             ["Cost", costWords(row.cost)],

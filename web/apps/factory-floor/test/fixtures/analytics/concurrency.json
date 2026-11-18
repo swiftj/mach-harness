@@ -70,11 +70,6 @@
        "max": 5,
        "mean": 3.596
       },
-      "wave": {
-       "inferred_max": 0,
-       "max": 1,
-       "mean": 0.932
-      },
       "workflow": {
        "inferred_max": 0,
        "max": 4,
@@ -149,11 +144,6 @@
        "inferred_max": 0,
        "max": 10,
        "mean": 3.345
-      },
-      "wave": {
-       "inferred_max": 0,
-       "max": 2,
-       "mean": 1.265
       },
       "workflow": {
        "inferred_max": 0,
@@ -230,11 +220,6 @@
        "max": 7,
        "mean": 3.806
       },
-      "wave": {
-       "inferred_max": 0,
-       "max": 2,
-       "mean": 2
-      },
       "workflow": {
        "inferred_max": 1,
        "max": 4,
@@ -310,11 +295,6 @@
        "max": 10,
        "mean": 3.991
       },
-      "wave": {
-       "inferred_max": 0,
-       "max": 3,
-       "mean": 2.599
-      },
       "workflow": {
        "inferred_max": 1,
        "max": 4,
@@ -389,11 +369,6 @@
        "inferred_max": 0,
        "max": 5,
        "mean": 3.769
-      },
-      "wave": {
-       "inferred_max": 0,
-       "max": 3,
-       "mean": 2.783
       },
       "workflow": {
        "inferred_max": 0,
@@ -480,11 +455,6 @@
        "max": 11,
        "mean": 3.75
       },
-      "wave": {
-       "inferred_max": 0,
-       "max": 3,
-       "mean": 2.933
-      },
       "workflow": {
        "inferred_max": 1,
        "max": 4,
@@ -570,11 +540,6 @@
        "max": 10,
        "mean": 3.828
       },
-      "wave": {
-       "inferred_max": 0,
-       "max": 3,
-       "mean": 2.269
-      },
       "workflow": {
        "inferred_max": 0,
        "max": 4,
@@ -649,11 +614,6 @@
        "inferred_max": 0,
        "max": 5,
        "mean": 3.727
-      },
-      "wave": {
-       "inferred_max": 0,
-       "max": 3,
-       "mean": 3
       },
       "workflow": {
        "inferred_max": 0,
@@ -735,11 +695,6 @@
        "max": 9,
        "mean": 3.57
       },
-      "wave": {
-       "inferred_max": 0,
-       "max": 3,
-       "mean": 2.796
-      },
       "workflow": {
        "inferred_max": 0,
        "max": 4,
@@ -819,11 +774,6 @@
        "inferred_max": 0,
        "max": 5,
        "mean": 3.105
-      },
-      "wave": {
-       "inferred_max": 0,
-       "max": 3,
-       "mean": 3
       },
       "workflow": {
        "inferred_max": 0,
@@ -910,11 +860,6 @@
        "max": 12,
        "mean": 3.874
       },
-      "wave": {
-       "inferred_max": 0,
-       "max": 4,
-       "mean": 3.769
-      },
       "workflow": {
        "inferred_max": 0,
        "max": 4,
@@ -995,11 +940,6 @@
        "max": 11,
        "mean": 3.799
       },
-      "wave": {
-       "inferred_max": 0,
-       "max": 4,
-       "mean": 3.267
-      },
       "workflow": {
        "inferred_max": 0,
        "max": 4,
@@ -1074,11 +1014,6 @@
        "inferred_max": 0,
        "max": 5,
        "mean": 3.766
-      },
-      "wave": {
-       "inferred_max": 0,
-       "max": 4,
-       "mean": 4
       },
       "workflow": {
        "inferred_max": 0,
@@ -1155,11 +1090,6 @@
        "max": 5,
        "mean": 3.766
       },
-      "wave": {
-       "inferred_max": 0,
-       "max": 4,
-       "mean": 4
-      },
       "workflow": {
        "inferred_max": 0,
        "max": 4,
@@ -1235,11 +1165,6 @@
        "max": 5,
        "mean": 3.799
       },
-      "wave": {
-       "inferred_max": 0,
-       "max": 4,
-       "mean": 4
-      },
       "workflow": {
        "inferred_max": 0,
        "max": 4,
@@ -1314,11 +1239,6 @@
        "inferred_max": 0,
        "max": 5,
        "mean": 3.784
-      },
-      "wave": {
-       "inferred_max": 0,
-       "max": 4,
-       "mean": 4
       },
       "workflow": {
        "inferred_max": 0,
@@ -1400,11 +1320,6 @@
        "max": 5,
        "mean": 3.804
       },
-      "wave": {
-       "inferred_max": 0,
-       "max": 4,
-       "mean": 4
-      },
       "workflow": {
        "inferred_max": 0,
        "max": 4,
@@ -1484,11 +1399,6 @@
        "inferred_max": 0,
        "max": 5,
        "mean": 3.791
-      },
-      "wave": {
-       "inferred_max": 0,
-       "max": 4,
-       "mean": 4
       },
       "workflow": {
        "inferred_max": 0,
@@ -1570,11 +1480,6 @@
        "max": 5,
        "mean": 3.308
       },
-      "wave": {
-       "inferred_max": 0,
-       "max": 4,
-       "mean": 4
-      },
       "workflow": {
        "inferred_max": 0,
        "max": 4,
@@ -1635,11 +1540,6 @@
        "max": 2,
        "mean": 1.002
       },
-      "wave": {
-       "inferred_max": 0,
-       "max": 4,
-       "mean": 4
-      },
       "workflow": {
        "inferred_max": 0,
        "max": 1,
@@ -1690,11 +1590,6 @@
        "max": 1,
        "mean": 0.866
       },
-      "wave": {
-       "inferred_max": 0,
-       "max": 4,
-       "mean": 3.463
-      },
       "workflow": {
        "inferred_max": 0,
        "max": 1,
@@ -1744,6 +1639,6 @@
   "ok": true
  },
  "path": "/concurrency?from_ms=1792648800000&to_ms=1794463200000&bucket_ms=86400000",
- "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --waves 8 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
+ "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --epics 8; its wave fields renamed by hand for M11 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
  "status": 200
 }

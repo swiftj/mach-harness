@@ -95,7 +95,10 @@ func TestM7OnlyListedOperationsExist(t *testing.T) {
 	}
 	h := start(t)
 	h.login()
-	for _, op := range []string{"fac" + "tory.enable", "dis" + "patch", "merge", "run", "approve-human", "exec", "SEND", "send ", "status;id", "..", "status%00"} {
+	// Commands the app never offers (removed ones, and the terminal-only acceptance record) are not routes either.
+	neverOffered := []string{"slice.approve", "wave.new", "wave.add", "wave.remove", "wave.approve", "wave.renumber", "send", "send.preview",
+		"feedback", "acceptance.record", "acceptance.show"}
+	for _, op := range append([]string{"fac" + "tory.enable", "dis" + "patch", "merge", "run", "approve-human", "exec", "SEND", "send ", "status;id", "..", "status%00"}, neverOffered...) {
 		status, env := h.call("POST", "/api/ops/"+op, `{}`, nil)
 		if env.OK || (status != 404 && status != 400) {
 			t.Errorf("op %q: %d %+v", op, status, env.Error)

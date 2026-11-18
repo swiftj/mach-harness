@@ -34,7 +34,7 @@ REFUSAL_MAX_AGE = timedelta(hours=1)  # a not-accepted decision is kept this lon
 WAIT_SECONDS = 5.0  # how long a second command waits for the cache before it is told to try again
 MAX_ATTEMPTS = 20  # a status write GitHub could not be reached for is tried this many times, then given up
 GIVE_UP_KINDS = ("auth", "sso", "rule", "not_found", "moved")  # failures a retry cannot fix
-WRITE_KINDS = ("label", "comment", "close")
+WRITE_KINDS = ("comment", "close")
 DAMAGED = "the local request cache was damaged and was partly reset"
 BUSY = "Another Product Studio command is running; try again."
 TEXT_IS_DATA = ("Text written on GitHub by someone outside this workspace. Common credential formats are masked, but do not "
@@ -71,10 +71,6 @@ def settings(config: Dict[str, Any], rules: Any) -> Dict[str, Any]:
             accounts.append({"login": entry["login"], "id": entry["id"]})
     return {"label": label if isinstance(label, str) and label.strip() else rules.DEFAULT_REQUEST_LABEL,
             "comments": github.get("status_comments") is not False, "monitor_accounts": accounts}
-
-
-def logins(people: Any) -> List[str]:
-    return [p["login"] for p in people or [] if isinstance(p, dict) and isinstance(p.get("login"), str)]
 
 
 def label_names(item: Dict[str, Any]) -> List[str]:
@@ -216,7 +212,8 @@ class Requests:
         raw, events_failure = collab.issue_label_events(self.project, repository, number)
         events = rules.label_events(raw or [])
         event = rules.deciding_event(events, self.settings["label"]) if raw is not None else None
-        record["picked_up_by"] = rules.labellers(events, rules.GROOMING)
+        comments, _ = collab.issue_comments(self.project, repository, number)
+        record["picked_up_by"] = rules.pickers(comments or [])
         record["routing"] = self.routing(item, event)
         failure = failure or events_failure
         if failure is not None:
@@ -400,7 +397,7 @@ class Requests:
         decision = record.get("decision") or {}
         if decision.get("state") != "accepted":
             raise RequestError(f"Request #{number} cannot be picked up. {decision.get('reason') or 'Not accepted.'}")
-        if self.rules.GROOMING in (record.get("labels") or []) and not also:
+        if record.get("picked_up_by") and not also:
             who = ", ".join(f"@{login}" for login in record.get("picked_up_by") or []) or "another product manager"
             raise RequestError(f"Already picked up by {who}. To define another slice for it too, pick it up with --also.",
                                f"Already picked up by {who}. To define another slice for it too, pick it up as well.")
@@ -422,7 +419,6 @@ class Requests:
         if not text.is_file():  # what an interview was seeded with is never rewritten
             self._write(text, json.dumps({"number": number, "title": title, "body": body, "truncated": bool(record.get("truncated"))}, ensure_ascii=False) + "\n")
         picked["slices"][slice_id] = {"text": name, "sha256": digest}
-        self.queue(data, number, "label", self.rules.GROOMING)
         self.queue_comment(data, number, "picked", [slice_id])
         self.save(data)
         return self.flush(data, only=number)
@@ -507,25 +503,16 @@ class Requests:
             if entry["key"] == made["key"]:
                 entry["refs"] = sorted(refs)
 
-    def queue_sent(self, wave_slices: Dict[str, Dict[str, Any]], pull_request: Any) -> Dict[str, Any]:
-        """After send knows its pull request: one `sent` comment per request the wave's slices came from."""
+    def queue_ready(self, origin: Dict[str, Any], slice_id: str, issue: int) -> Dict[str, Any]:
+        """After a slice made from a request is marked ready: one comment on the request linking the slice's issue."""
         with self.exclusive():
-            return self._queue_sent(wave_slices, pull_request)
-
-    def _queue_sent(self, wave_slices: Dict[str, Dict[str, Any]], pull_request: Any) -> Dict[str, Any]:
-        data = self.load()
-        repository = data.get("repository")
-        if not isinstance(pull_request, int) or not repository:
-            return {"queued": 0}
-        by_number: Dict[int, List[str]] = {}
-        for slice_id, work in wave_slices.items():
-            number = origin_number(work, repository)
-            if number:
-                by_number.setdefault(number, []).append(slice_id)
-        for number, slice_ids in sorted(by_number.items()):
-            self.queue_comment(data, number, "sent", [*sorted(slice_ids), f"#{pull_request}"])
-        self.save(data)
-        return self.flush(data) if by_number else {"queued": 0}
+            data = self.load()
+            number = origin_number({"origin": origin}, data.get("repository"))
+            if not number or not data.get("repository"):
+                return {"queued": 0}
+            self.queue_comment(data, number, "ready", [slice_id, f"#{int(issue)}"])
+            self.save(data)
+            return self.flush(data, only=number)
 
     def queue_close(self, number: int) -> Dict[str, Any]:
         with self.exclusive():
@@ -575,9 +562,7 @@ class Requests:
                     continue
             entry.update(state="unknown", attempts=int(entry.get("attempts") or 0) + 1)
             self.save(data)
-            if entry["kind"] == "label":
-                failure = collab.add_status_label(self.project, repository, number, entry["value"], self.rules.STATUS_LABELS)
-            elif entry["kind"] == "comment":
+            if entry["kind"] == "comment":
                 body = self.rules.comment(entry["moment"], entry.get("refs") or [], data["nonce"])["body"]
                 failure = collab.comment_on_issue(self.project, repository, number, body)
             else:

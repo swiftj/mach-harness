@@ -5,7 +5,7 @@
 import type { AnySimEvent } from "./events";
 
 export function describe(event: AnySimEvent): string {
-  const who = event.ticket_id ?? event.slice_id ?? event.wave_id ?? "the Factory";
+  const who = event.ticket_id ?? event.slice_id ?? "the Factory";
   switch (event.type) {
     case "factory.activated":
       return `${event.data.by} enabled the Factory (${event.data.autonomy}, up to ${event.data.limits.max_parallel} cells at once).`;
@@ -15,12 +15,10 @@ export function describe(event: AnySimEvent): string {
       return `${event.data.by} paused the Factory.`;
     case "factory.resumed":
       return `${event.data.by} resumed the Factory.`;
-    case "wave.discovered":
-      return `Approved wave ${event.wave_id} arrived with ${event.data.slices.length} slices (approved by ${event.data.approval.actor}).`;
     case "intake.validated":
-      return `Intake verified ${event.wave_id} against its source commit.`;
+      return `Intake verified ${event.slice_id}` + (event.issue ? ` (issue #${event.issue})` : "") + " as it was marked ready.";
     case "intake.refused":
-      return `Intake refused ${event.wave_id}: ${event.data.problems.join(" ")}`;
+      return `Intake refused ${event.slice_id ?? "a slice"}: ${event.data.problems.join(" ")}`;
     case "slice.materialized":
       return `${event.slice_id} became ticket ${event.ticket_id}` + (event.data.dependencies.length ? `, waiting for ${event.data.dependencies.join(" and ")}.` : ".");
     case "slice.integrated":

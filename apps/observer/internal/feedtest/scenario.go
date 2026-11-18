@@ -1,7 +1,7 @@
 package feedtest
 
 // Scenario is one product ticket's whole life in version 3 events, as the contract's sources
-// would yield it: a wave with two slices (one blocked on the other), a supervised execution of
+// would yield it: an epic with two slices (one blocked on the other), a supervised execution of
 // T-1 running a Dynamic Workflow whose agents build, verify (round 1 fails), revise, verify again
 // and review (awaiting a person), a human approval, the merge, cleanup and the run record; and a
 // second execution that is interrupted with its outcome unknown. Times are milliseconds after Base.
@@ -9,13 +9,13 @@ func Scenario() []map[string]any {
 	const x1, x2 = "x0123456789ab", "x0fedcba98765"
 	wf := "workflow:" + x1 + "/task0001"
 	i := func(typ string, ms int64) *Ev {
-		return New("intake-log", typ, ms).ID("project_id", "P-1").ID("wave_id", "WAVE-001")
+		return New("intake-log", typ, ms).ID("project_id", "P-1").ID("epic_id", "EPIC-001")
 	}
 	sl := func(e *Ev, slice string, rev int) *Ev {
-		return e.ID("slice_id", slice).ID("revision", rev).Entity("slice:" + slice).Entity("wave:WAVE-001")
+		return e.ID("slice_id", slice).ID("revision", rev).Entity("slice:" + slice)
 	}
 	c := func(typ string, ms int64, visit string, round int) *Ev {
-		return New("cell-lifecycle", typ, ms).Ticket("T-1").ID("slice_id", "SLICE-001").ID("wave_id", "WAVE-001").Visit("T-1", visit, round).Exec(x1)
+		return New("cell-lifecycle", typ, ms).Ticket("T-1").ID("slice_id", "SLICE-001").ID("epic_id", "EPIC-001").Visit("T-1", visit, round).Exec(x1)
 	}
 	s := func(typ string, ms int64) *Ev { return New("execution-stream", typ, ms).Exec(x1).Ticket("T-1") }
 	agent := func(typ string, ms int64, id, label, station string) *Ev {
@@ -30,8 +30,6 @@ func Scenario() []map[string]any {
 
 	add(i("factory.activated", 0).Data(map[string]any{"autonomy": "supervised", "by_role": "engineer", "limits": map[string]any{"max_parallel": 2},
 		"allow_merge": true, "persistent": false, "backlog": nil, "excluded_slices": []string{}}))
-	add(i("wave.discovered", 1000).Entity("wave:WAVE-001").Data(map[string]any{"slices": []string{"SLICE-001", "SLICE-002"},
-		"approval": map[string]any{"approved_at": "2026-11-11T09:00:00Z", "by_role": "person"}}))
 	add(sl(i("slice.materialized", 2000), "SLICE-001", 1).Ticket("T-1").Data(map[string]any{"digest": "abc", "adopted": false, "dependencies": []string{}, "reissued": nil}))
 	add(sl(i("slice.materialized", 2000), "SLICE-002", 1).Ticket("T-2").Data(map[string]any{"digest": "def", "adopted": false, "dependencies": []string{"SLICE-001"}, "reissued": nil}))
 	add(sl(i("dependency.blocked", 3000), "SLICE-002", 1).Data(map[string]any{"reasons": []string{"SLICE-001 is not integrated yet"}}))

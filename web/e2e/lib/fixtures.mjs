@@ -46,8 +46,12 @@ export async function serveFixtures({ csp = true } = {}) {
   const origin = `http://127.0.0.1:${server.address().port}`;
   return {
     origin,
-    /** The Inbox under a request scenario: url("all"), url("hostile", "refuse=1"). */
-    url: (scenario, extra = "") => `${origin}/?requests=${scenario}${extra ? `&${extra}` : ""}#/inbox`,
+    /**
+     * The Inbox under a request scenario: url("all"), url("hostile", "refuse=1"). The workspace is
+     * one slice marked ready, saved on GitHub, or to the folder for a project with no GitHub remote.
+     */
+    url: (scenario, extra = "") =>
+      `${origin}/?requests=${scenario}&fixture=${scenario === "none" ? "status.folder" : "status.on-github"}${extra ? `&${extra}` : ""}#/inbox`,
     /** Any screen, with the fixture transport's query parameters: at("/", "fixture=status.conflicts"). */
     at: (route, query = "") => `${origin}/${query ? `?${query}` : ""}#${route}`,
     stop: () => new Promise((resolve) => server.close(resolve)),

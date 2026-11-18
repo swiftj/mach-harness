@@ -133,7 +133,7 @@ var apiVocabulary = func() map[string]bool {
 	for _, w := range strings.Fields(`ok data error kind message reason reasons items events event cursor next head floor more
 		generation schema schema_version schema_revision id ids type types label labels title titles key keys value values
 		count counts total totals state status stage stages station stations visit visits round rounds seat seats
-		verdict vote votes outcome outcomes gate gates risk model models phase phases cell cells slice slices wave waves
+		verdict vote votes outcome outcomes gate gates risk model models phase phases cell cells slice slices epic epics issue issues
 		ticket tickets run runs execution executions agent agents tool tools span spans marks series window limits
 		limit offset note notes rule rules basis authority origin time times order order_ms occurred_at observed_at
 		precision entity entities parent cause artifacts artifact unknown inferred provenance late withheld groups group

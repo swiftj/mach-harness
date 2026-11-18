@@ -4,16 +4,14 @@
  * alone, in the contract's words. People are "a person" (contract D15). An unknown kind says so.
  */
 import type { Significance } from "./catalog";
-import type { AnySimEvent } from "./events";
 import { describe } from "./describe";
 import type { LogEntry } from "./log";
 import type { AnyV3Event, UnknownV3Event } from "./v3";
-import { isKnownV3Kind, isSentBack } from "./v3";
+import { isKnownV3Kind, isSentBack, isV3 } from "./v3";
 import { gapClassWord } from "./provenance";
 import { gapClassOf } from "./reduce-v3";
 
 const SIGNIFICANCE: Readonly<Record<string, Significance>> = {
-  "wave.discovered": "chapter",
   "factory.activated": "chapter",
   "slice.integrated": "major",
   "work.scheduled": "major",
@@ -55,7 +53,7 @@ export function significanceOf(type: string): Significance {
 
 export function describeEntry(entry: LogEntry): string {
   const event = entry.event;
-  if (event.schema_version !== 3) return describe(event as AnySimEvent);
+  if (!isV3(event)) return describe(event);
   return describeV3(event);
 }
 
@@ -67,11 +65,9 @@ function roleWords(role: string | null | undefined): string {
 export function describeV3(event: AnyV3Event | UnknownV3Event): string {
   if (!isKnownV3Kind(event.type)) return `An event this version does not understand (${event.type}).`;
   const e = event as AnyV3Event;
-  const who = e.ids.ticket_id ?? e.ids.slice_id ?? e.ids.wave_id ?? "the Factory";
+  const who = e.ids.ticket_id ?? e.ids.slice_id ?? "the Factory";
   const station = e.ids.station ?? "a station";
   switch (e.type) {
-    case "wave.discovered":
-      return `Approved wave ${e.ids.wave_id} arrived with ${e.data.slices.length} slices.`;
     case "slice.materialized":
       return `${e.ids.slice_id} became ticket ${e.ids.ticket_id}.`;
     case "slice.integrated":

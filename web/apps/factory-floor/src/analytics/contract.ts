@@ -19,8 +19,8 @@ import type { EntityRef } from "../sim/model";
 
 /** The catalog, in its order. */
 export const METRIC_IDS = [
-  "T1", "T2", "T3",
-  "C1", "C2", "C3", "C4", "C5",
+  "T1", "T2",
+  "C1", "C2", "C3", "C4",
   "W1", "W2", "W2b", "W3", "W4", "W5",
   "Q1", "Q2", "Q3", "Q4",
   "R1", "R2", "R3", "R4", "R5", "R6",
@@ -44,7 +44,7 @@ export type MetricStatus = "available" | "partial" | "deferred" | "not-recorded"
 
 /** Dimensions the observer accepts in `group_by` (routes.go `groupDims`), plus the M6.5 periods. */
 export type Dimension =
-  | "day" | "week" | "risk" | "app_type" | "station" | "round" | "seat" | "model" | "phase" | "wave" | "stage" | "gate"
+  | "day" | "week" | "risk" | "app_type" | "station" | "round" | "seat" | "model" | "phase" | "epic" | "stage" | "gate"
   | "reason_code" | "kind" | "tool" | "rule" | "target_kind" | "stop_reason" | "writer" | "ticket" | "token_kind" | "outcome";
 
 /** query.go `Excluded`: members of the population left out of the value, and why. */

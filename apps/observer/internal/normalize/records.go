@@ -78,7 +78,7 @@ func execRecord(typ, execution string, seq int64, identity *Identity, r Read) *e
 		if t := identity.TicketOf(execution); t != "" {
 			ev.IDs.TicketID = t
 			p := identity.ProductOf(t)
-			ev.IDs.SliceID, ev.IDs.WaveID, ev.IDs.Revision = p.SliceID, p.WaveID, p.Revision
+			ev.IDs.SliceID, ev.IDs.EpicID, ev.IDs.Issue, ev.IDs.Revision = p.SliceID, p.EpicID, p.Issue, p.Revision
 			cell := event.CellRef(t, identity.Current(t))
 			ev.Ref(cell)
 			ev.Parent = cell
@@ -139,7 +139,8 @@ func (n *Runs) Line(line []byte, r Read) []*event.Event {
 	if ev.IDs.SliceID == "" {
 		ev.IDs.SliceID, _ = redact.ID(raw["slice_id"])
 	}
-	ev.IDs.WaveID, _ = redact.ID(product["wave_id"])
+	ev.IDs.EpicID, _ = redact.ID(product["epic_id"]) // M11: the run record names its epic and issue
+	ev.IDs.Issue = issueNumber(product["issue"])
 	if rev, ok := redact.Int(product["revision"]); ok {
 		ev.IDs.Revision = &rev
 	}

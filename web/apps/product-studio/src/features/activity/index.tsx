@@ -1,8 +1,8 @@
 import type { Feature } from "../types";
-import { SharedScreen } from "./SharedScreen";
+import { GithubScreen } from "./GithubScreen";
 
-/** Collaboration and refresh: bring in what other product managers shared, and where everything stands. */
+/** Where the project, its epics and its slices stand on GitHub, read when the PM refreshes. */
 export const feature: Feature = {
-  routes: [{ path: "shared", element: <SharedScreen /> }],
-  destination: { to: "/shared", label: "Shared project", description: "What others have shared, and where everything stands", order: 60 },
+  routes: [{ path: "github", element: <GithubScreen /> }],
+  destination: { to: "/github", label: "On GitHub", description: "Your project, epics and slices as saved for the builders", order: 60 },
 };

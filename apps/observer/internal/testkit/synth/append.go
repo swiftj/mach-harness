@@ -24,7 +24,7 @@ type State struct {
 	IntakeSeq int         `json:"intake_seq"`
 	Ticket    string      `json:"ticket"`
 	Slice     string      `json:"slice"`
-	Wave      string      `json:"wave"`
+	Epic      string      `json:"epic"`
 	Revision  int         `json:"revision"`
 	Execution string      `json:"execution"`
 	TaskID    string      `json:"task_id"`
@@ -59,7 +59,7 @@ type OpenAgent struct {
 func (g *gen) recordOpen(s *streamGen) {
 	x := s.x
 	st := g.state
-	st.Ticket, st.Slice, st.Wave, st.Revision = x.cell.ticket, x.cell.slice.id, x.cell.slice.wave.id, x.cell.slice.rev
+	st.Ticket, st.Slice, st.Epic, st.Revision = x.cell.ticket, x.cell.slice.id, x.cell.slice.epic.id, x.cell.slice.rev
 	st.Execution, st.TaskID, st.ToolUse, st.Session = x.id, x.taskID, x.toolUse, x.session
 	st.NextIndex = x.nextIndex + 1
 	st.WFStartMS = g.w.ms(x.wfStart)
@@ -284,8 +284,8 @@ func (a *appender) tick(now time.Time, budget, ticks int) error {
 	// Every five seconds, the supervisor's pass.
 	if ticks%50 == 3 {
 		st.IntakeSeq++
-		line, _ := json.Marshal(map[string]any{"schema_version": 2, "seq": st.IntakeSeq, "at": isoS(ms), "type": "scheduling.decided", "project_id": "P-SYNTH",
-			"source_commit": nil, "wave_id": nil, "slice_id": nil, "revision": nil, "ticket_id": nil, "runner_id": "runner-synth", "execution_id": nil,
+		line, _ := json.Marshal(map[string]any{"schema_version": 3, "seq": st.IntakeSeq, "at": isoS(ms), "type": "scheduling.decided", "project_id": "P-SYNTH",
+			"source_commit": nil, "epic_id": nil, "issue": nil, "slice_id": nil, "revision": nil, "ticket_id": nil, "runner_id": "runner-synth", "execution_id": nil,
 			"source": "supervisor", "cause": nil, "refs": nil, "data": map[string]any{"state": "supervised", "dispatched": []any{}, "started": []any{}, "held": []any{}}})
 		if err := a.put(".factory/intake/events.jsonl", line); err != nil {
 			return err

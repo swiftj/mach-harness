@@ -122,12 +122,7 @@ class Base(unittest.TestCase):
     def approved_slice(self, project=None):
         self.ready_slice(project)
         self.ok("epic", "approve", "EPIC-001", project=project)
-        return self.ok("slice", "approve", "SLICE-001", project=project)
-
-    def approved_wave(self, project=None):
-        self.approved_slice(project)
-        self.ok("wave", "new", "--slice", "SLICE-001", project=project)
-        return self.ok("wave", "approve", "WAVE-001", "--actor", "Pat PM", "--at", AT, project=project)
+        return self.ok("slice", "ready", "SLICE-001", project=project)
 
     def artifact(self, relative, project=None):
         return json.loads(((project or self.project) / ".factory/studio/draft" / relative).read_text())
@@ -138,10 +133,9 @@ class Base(unittest.TestCase):
 
 
 class FullSessionTest(Base):
-    def test_project_to_approved_wave(self):
-        result = self.approved_wave()
-        self.assertEqual(result["wave"]["status"], "approved_for_engineering")
-        self.assertEqual(result["wave"]["approval"], {"actor": "Pat PM", "approved_at": AT})
+    def test_project_to_a_ready_slice(self):
+        result = self.approved_slice()
+        self.assertEqual((result["ready"], result["saved_to"]), (True, "folder"))  # no GitHub repository here
         self.assertIs(result["factory_authorized"], False)
         work = self.artifact("product/slices/SLICE-001.json")
         self.assertEqual((work["status"], work["open_questions"], work["spec_path"]), ("approved_for_engineering", [], "specs/slices/" + SPEC))
@@ -156,19 +150,6 @@ class FullSessionTest(Base):
         self.assertTrue(status["structurally_valid"])
         self.assertIs(status["factory_authorized"], False)
 
-    def test_approval_uses_the_git_identity(self):
-        self.approved_slice()
-        self.ok("wave", "new", "--slice", "SLICE-001")
-        wave = self.ok("wave", "approve", "WAVE-001")["wave"]
-        self.assertEqual(wave["approval"]["actor"], "Pat PM")  # the name, never the address
-        self.ok("slice", "reopen", "SLICE-001")
-        self.ok("slice", "approve", "SLICE-001")
-        self.assertEqual(self.ok("wave", "approve", "WAVE-001", "--actor", "Pat PM <pat@example.com>")["wave"]["approval"]["actor"], "Pat PM")
-        self.ok("slice", "reopen", "SLICE-001")
-        self.ok("slice", "approve", "SLICE-001")
-        self.assertIn("a name, not an address", self.refused("wave", "approve", "WAVE-001", "--actor", "pat@example.com"))
-        self.assertTrue(product._is_timestamp(wave["approval"]["approved_at"]))
-
     def test_status_suggests_the_next_step(self):
         self.assertIn("Define the project", self.ok("status")["suggested_next"][0])
         self.start()
@@ -179,7 +160,7 @@ class FullSessionTest(Base):
         self.write_intent()
         self.ok("slice", "check", "SLICE-001")
         suggestions = " ".join(self.ok("status")["suggested_next"])
-        self.assertIn("slice approve SLICE-001", suggestions)
+        self.assertIn("slice ready SLICE-001", suggestions)
         self.assertIn("epic approve EPIC-001", suggestions)
 
     def test_where_points_at_the_shared_interview_files(self):
@@ -191,8 +172,8 @@ class FullSessionTest(Base):
 
     def test_same_operations_give_identical_bytes(self):
         other = self.make_project("other")
-        self.approved_wave()
-        self.approved_wave(other)
+        self.approved_slice()
+        self.approved_slice(other)
         self.assertEqual(self.tree(self.project), self.tree(other))
         for name, data in self.tree(self.project).items():
             if name.endswith(".json"):
@@ -214,7 +195,7 @@ class ApprovalGateTest(Base):
     def test_no_spec(self):
         self.start()
         self.ok("slice", "new", "--epic", "EPIC-001", "--title", "Invite a teammate")
-        self.assertIn("No spec yet", self.refused("slice", "approve", "SLICE-001"))
+        self.assertIn("No spec yet", self.refused("slice", "ready", "SLICE-001"))
 
     def test_open_question_blocks(self):
         self.ready_slice()
@@ -226,7 +207,7 @@ class ApprovalGateTest(Base):
         self.assertEqual((check["status"], len(check["open_questions"])), ("interviewing", 1))
         self.assertEqual(self.artifact("product/slices/SLICE-001.json")["open_questions"], ["Do invitations expire?"])
         self.assertEqual(self.run_studio("slice", "check", "SLICE-001", "--ready")[0], 1)
-        self.assertIn("open question: Do invitations expire?", self.refused("slice", "approve", "SLICE-001"))
+        self.assertIn("open question: Do invitations expire?", self.refused("slice", "ready", "SLICE-001"))
         self.assertEqual(self.artifact("product/slices/SLICE-001.json")["status"], "interviewing")
 
     def test_spec_the_validator_rejects_blocks(self):
@@ -238,27 +219,27 @@ class ApprovalGateTest(Base):
         code, out, _ = self.run_studio("slice", "check", "SLICE-001")
         self.assertEqual(code, 1)
         self.assertTrue(json.loads(out)["errors"])
-        self.refused("slice", "approve", "SLICE-001")
+        self.refused("slice", "ready", "SLICE-001")
 
     def test_spec_for_another_slice_blocks(self):
         self.ready_slice()
         self.ok("epic", "approve", "EPIC-001")
         self.write_spec(text=FIXTURE.read_text().replace("# SLICE-001:", "# SLICE-009:", 1))
-        self.refused("slice", "approve", "SLICE-001")
+        self.refused("slice", "ready", "SLICE-001")
 
     def test_missing_or_unfinished_intent_blocks(self):
         self.ready_slice()
         self.ok("epic", "approve", "EPIC-001")
         (self.draft / "product/intents/SLICE-001.md").unlink()
-        self.assertIn("is missing", self.refused("slice", "approve", "SLICE-001"))
+        self.assertIn("is missing", self.refused("slice", "ready", "SLICE-001"))
         self.write_intent(text=(ROOT / "skills/product-studio/assets/intent-template.md").read_text())
-        self.assertIn("placeholder", self.refused("slice", "approve", "SLICE-001"))
+        self.assertIn("placeholder", self.refused("slice", "ready", "SLICE-001"))
         self.write_intent(text=INTENT_TEXT.replace("- **Tier:** High", "- **Tier:** Severe"))
-        self.assertIn("Tier", self.refused("slice", "approve", "SLICE-001"))
+        self.assertIn("Tier", self.refused("slice", "ready", "SLICE-001"))
 
     def test_unapproved_epic_blocks(self):
         self.ready_slice()
-        self.assertIn("epic EPIC-001 is proposed", self.refused("slice", "approve", "SLICE-001"))
+        self.assertIn("epic EPIC-001 is proposed", self.refused("slice", "ready", "SLICE-001"))
 
     def test_epic_needs_criteria_to_be_approved(self):
         self.start()
@@ -267,43 +248,23 @@ class ApprovalGateTest(Base):
 
     def test_approved_slice_cannot_be_edited_in_place(self):
         self.approved_slice()
-        for argv in (("slice", "set", "SLICE-001", "--title", "Other"), ("slice", "check", "SLICE-001"), ("slice", "approve", "SLICE-001")):
+        for argv in (("slice", "set", "SLICE-001", "--title", "Other"), ("slice", "check", "SLICE-001")):
             self.assertIn("reopen", self.refused(*argv))
 
     def test_editing_an_approved_spec_is_caught_and_reopen_recovers(self):
-        self.approved_wave()
+        self.approved_slice()
         spec = self.draft / "specs/slices" / SPEC
         spec.write_text(spec.read_text() + "\nA late change.\n")
         code, out, _ = self.run_studio("validate")
         self.assertEqual(code, 1)
         self.assertIn("spec_sha256 does not match", out)
+        self.assertIn("changed after you approved it", self.refused("slice", "ready", "SLICE-001"))
         reopened = self.ok("slice", "reopen", "SLICE-001")
-        self.assertEqual(reopened["waves_returned_to_draft"], ["WAVE-001"])
-        work, wave = self.artifact("product/slices/SLICE-001.json"), self.artifact("product/delivery-waves/WAVE-001.json")
+        self.assertEqual(reopened["github"], {"where": "folder"})
+        self.assertFalse((self.draft / "product/ready/SLICE-001").exists())
+        work = self.artifact("product/slices/SLICE-001.json")
         self.assertEqual((work["status"], work["spec_sha256"], work["revision"]), ("interviewing", None, 3))
-        self.assertEqual((wave["status"], wave["approval"], wave["revision"]), ("draft", None, 3))
         self.assertEqual(self.run_studio("validate")[0], 0)
-
-    def test_wave_approval_rechecks_the_spec(self):
-        self.approved_slice()
-        self.ok("wave", "new", "--slice", "SLICE-001")
-        spec = self.draft / "specs/slices" / SPEC
-        spec.write_text(spec.read_text() + "\nA late change.\n")
-        self.assertIn("changed after it was approved", self.refused("wave", "approve", "WAVE-001"))
-        self.assertEqual(self.artifact("product/delivery-waves/WAVE-001.json")["status"], "draft")
-
-    def test_wave_rules(self):
-        self.ready_slice()
-        self.assertIn("at least one slice", self.refused("wave", "new"))
-        self.assertIn("No such slice", self.refused("wave", "new", "--slice", "SLICE-404"))
-        self.ok("wave", "new", "--slice", "SLICE-001")
-        self.assertIn("not approved", self.refused("wave", "approve", "WAVE-001"))
-        self.assertIn("empty", self.refused("wave", "remove", "WAVE-001", "SLICE-001"))
-        self.ok("epic", "approve", "EPIC-001")
-        self.ok("slice", "approve", "SLICE-001")
-        self.assertIn("date-time", self.refused("wave", "approve", "WAVE-001", "--at", "yesterday"))
-        self.ok("wave", "approve", "WAVE-001", "--at", AT)
-        self.assertIn("Only a draft wave", self.refused("wave", "add", "WAVE-001", "SLICE-001"))
 
     def test_a_failed_change_leaves_every_file_as_it_was(self):
         self.ready_slice()
@@ -312,12 +273,11 @@ class ApprovalGateTest(Base):
         self.assertIn("inconsistent", self.refused("slice", "set", "SLICE-001", "--depends-on", "SLICE-001"))
         self.assertEqual(self.tree(self.project), before)
 
-    def test_nothing_can_be_sent_without_a_shared_repository(self):
-        self.approved_wave()
-        self.assertIn("not connected to a shared repository", self.refused("send", "WAVE-001"))
-        self.assertIn("not connected to a shared repository", self.refused("send", "WAVE-001", "--dry-run"))
-        self.assertEqual(self.ok("feedback")["waves"][0]["status"], "Approved, not sent")
-        self.assertIs(self.ok("refresh")["refreshed"], False)
+    def test_without_a_shared_repository_refresh_reads_nothing(self):
+        self.approved_slice()
+        refreshed = self.ok("refresh")
+        self.assertIs(refreshed["refreshed"], False)
+        self.assertEqual((refreshed["github"]["repository"], refreshed["github"]["refreshed"]), (None, False))
 
 
 class SliceIdTest(Base):
@@ -382,7 +342,7 @@ class WorkspaceTest(Base):
 
     def test_the_main_checkout_is_untouched_by_a_whole_session(self):
         before = self.snapshot()
-        self.approved_wave()
+        self.approved_slice()
         self.ok("slice", "reopen", "SLICE-001")
         self.ok("status")
         after = self.snapshot()
@@ -405,45 +365,6 @@ class WorkspaceTest(Base):
         self.start()
         self.assertIn("Say which slice", self.refused("slice", "resume"))
 
-    def publish(self, relative, data):
-        path = self.project / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(studio.canonical(data))
-        return path
-
-    def test_published_work_arrives_and_unedited_copies_follow_it(self):
-        project = {"schema_version": 1, "project_id": "team-space", "name": "Team Space", "revision": 4, "status": "active",
-                   "vision": "Teams work together.", "outcomes": ["Teams can work together"]}
-        path = self.publish("product/project.json", project)
-        status = self.ok("status")
-        self.assertEqual(status["project"]["revision"], 4)
-        self.assertIn("already defined", self.refused("project", "init", "--id", "x-y", "--name", "n", "--vision", "v", "--outcome", "o"))
-        self.publish("product/project.json", {**project, "revision": 5, "name": "Team Rooms"})
-        self.assertEqual(self.ok("status")["project"]["name"], "Team Rooms")
-        self.assertEqual(path.read_text(), studio.canonical({**project, "revision": 5, "name": "Team Rooms"}))  # never written back
-
-    def test_an_edited_copy_is_kept_and_the_conflict_reported(self):
-        project = {"schema_version": 1, "project_id": "team-space", "name": "Team Space", "revision": 4, "status": "active",
-                   "vision": "Teams work together.", "outcomes": ["Teams can work together"]}
-        self.publish("product/project.json", project)
-        self.ok("project", "set", "--vision", "My draft vision.")
-        self.publish("product/project.json", {**project, "revision": 5, "vision": "Their vision."})
-        status = self.ok("status")
-        self.assertEqual(status["project"]["vision"], "My draft vision.")
-        self.assertEqual(status["needs_reconciling"]["conflicts"], ["product/project.json"])
-
-    def test_a_number_taken_upstream_blocks_approval_of_the_draft(self):
-        self.ready_slice()
-        self.ok("epic", "approve", "EPIC-001")
-        self.publish("product/slices/SLICE-001.json", {"schema_version": 1, "slice_id": "SLICE-001", "project_id": "team-space",
-                                                       "epic_id": "EPIC-001", "revision": 1, "title": "Someone else's slice", "status": "draft",
-                                                       "dependencies": [], "open_questions": [], "spec_path": None, "spec_sha256": None})
-        self.assertIn("renumbered", self.refused("slice", "approve", "SLICE-001"))
-        status = self.ok("status")
-        self.assertEqual(status["needs_reconciling"]["collisions"], ["product/slices/SLICE-001.json"])
-        self.assertEqual(status["slices"][0]["source"], "collision")
-        self.assertEqual(self.artifact("product/slices/SLICE-001.json")["title"], "Invite a teammate")
-
     def test_symlinked_workspace_is_refused(self):
         elsewhere = Path(self.tmp.name) / "elsewhere"
         elsewhere.mkdir()
@@ -463,10 +384,7 @@ class WithoutGitTest(Base):
     use_git = False
 
     def test_works_in_a_folder_that_is_not_a_repository(self):
-        self.approved_slice()
-        self.ok("wave", "new", "--slice", "SLICE-001")
-        wave = self.ok("wave", "approve", "WAVE-001", "--actor", "Pat PM")["wave"]
-        self.assertEqual(wave["approval"]["actor"], "Pat PM")
+        self.assertEqual(self.approved_slice()["saved_to"], "folder")
         self.assertIs(self.ok("where")["is_git_repository"], False)
 
 
@@ -569,26 +487,23 @@ class NextActionsTest(Base):
         self.write_spec()
         self.write_intent()
         self.ok("slice", "check", "SLICE-001")
-        self.assertEqual(self.actions()[1], [("approve_slice", "SLICE-001"), ("approve_epic", "EPIC-001")])  # a ready slice is still open
+        self.assertEqual(self.actions()[1], [("mark_ready", "SLICE-001"), ("approve_epic", "EPIC-001")])  # a ready slice is still open
         self.ok("epic", "approve", "EPIC-001")
-        self.ok("slice", "approve", "SLICE-001")
-        status, kinds = self.actions()
-        self.assertEqual(kinds, [("create_wave", None), ("start_slice", None)])
-        self.assertEqual(status["next_actions"][0]["related"], ["SLICE-001"])
-        self.ok("wave", "new", "--slice", "SLICE-001")
-        self.assertEqual(self.actions()[1], [("approve_wave", "WAVE-001"), ("start_slice", None)])
-        self.ok("wave", "approve", "WAVE-001", "--actor", "Pat PM", "--at", AT)
-        self.assertEqual(self.actions()[1], [("send_wave", "WAVE-001"), ("start_slice", None)])
+        self.ok("slice", "ready", "SLICE-001")
+        self.assertEqual(self.actions()[1], [("start_slice", None)])
+        # Approved but not handed over (an interrupted run): finish it.
+        (self.project / ".factory/studio/issues.json").unlink()
+        self.assertEqual(self.actions()[1], [("finish_ready", "SLICE-001"), ("start_slice", None)])
 
     def test_status_carries_what_the_screens_need(self):
         self.approved_slice()
         self.ok("slice", "new", "--epic", "EPIC-001", "--title", "Remove a teammate", "--depends-on", "SLICE-001")
-        self.ok("wave", "new", "--slice", "SLICE-001")
         status = self.ok("status")
+        self.assertNotIn("waves", status)
         rows = {row["slice_id"]: row for row in status["slices"]}
         second = next(sid for sid in rows if sid != "SLICE-001")
-        self.assertEqual((rows["SLICE-001"]["editable"], rows["SLICE-001"]["in_waves"], rows["SLICE-001"]["dependencies"]), (False, ["WAVE-001"], []))
-        self.assertEqual((rows[second]["editable"], rows[second]["in_waves"], rows[second]["dependencies"]), (True, [], ["SLICE-001"]))
+        self.assertEqual((rows["SLICE-001"]["editable"], rows["SLICE-001"]["github"]["saved"], rows["SLICE-001"]["dependencies"]), (False, "folder", []))
+        self.assertEqual((rows[second]["editable"], rows[second]["github"]["saved"], rows[second]["dependencies"]), (True, None, ["SLICE-001"]))
         self.assertEqual(status["epics"][0]["acceptance_criteria"], ["Only invited people can join"])
 
 
@@ -616,26 +531,22 @@ class AppWordingTest(Base):
         self.ok("slice", "new", "--epic", "EPIC-001", "--title", "Invite a teammate")
         self.write_spec()
         self.write_intent()
-        message, hint = self.app_refusal("slice", "approve", "SLICE-001")
-        self.assertEqual(message, "SLICE-001 cannot be approved yet:\n  epic EPIC-001 is proposed, not approved")
+        message, hint = self.app_refusal("slice", "ready", "SLICE-001")
+        self.assertEqual(message, "SLICE-001 cannot be marked ready yet:\n  epic EPIC-001 is proposed, not approved")
         self.assertEqual(hint, {"kind": "approve_epic", "target": "EPIC-001"})
-        self.assertIn("(studio.py epic approve EPIC-001)", self.refused("slice", "approve", "SLICE-001"))  # the terminal keeps its hint
+        self.assertIn("(studio.py epic approve EPIC-001)", self.refused("slice", "ready", "SLICE-001"))  # the terminal keeps its hint
         self.ok("epic", "approve", "EPIC-001")
-        self.ok("slice", "approve", "SLICE-001")
+        self.ok("slice", "ready", "SLICE-001")
         self.assertEqual(self.app_refusal("slice", "check", "SLICE-001"),
                          ("SLICE-001 is approved. To change an approved slice, reopen it first.", {"kind": "reopen_slice", "target": "SLICE-001"}))
-        self.assertEqual(self.app_refusal("wave", "new")[0], "A delivery wave needs at least one slice.")
-        self.ok("wave", "new", "--slice", "SLICE-001")
-        self.ok("wave", "approve", "WAVE-001", "--actor", "Pat PM", "--at", AT)
-        self.assertEqual(self.app_refusal("wave", "add", "WAVE-001", "SLICE-001")[0],
-                         "WAVE-001 is approved. Only a draft wave can be changed; start a new wave instead.")
+        spec = self.draft / "specs/slices" / SPEC
+        spec.write_text(spec.read_text() + "\nA late change.\n")
+        self.assertEqual(self.app_refusal("slice", "ready", "SLICE-001"),
+                         ("SLICE-001's spec changed after you approved it. Reopen it to change it.", {"kind": "reopen_slice", "target": "SLICE-001"}))
         self.assertIn("approved_for_engineering", self.refused("slice", "check", "SLICE-001"))  # the terminal keeps the identifier
-        self.assertIn("--slice SLICE-NNN", self.refused("wave", "new"))
         shown = json.loads(self.run_studio("--app", "slice", "show", "SLICE-001")[1])
         self.assertIsNone(self.BANNED.search(shown["edit_refusal"]))
         self.assertEqual(self.run_studio("--app", "status")[0], 0)
-        self.assertEqual(self.ok("status")["shared_project"], "this folder (no shared repository)")
-        self.assertEqual(json.loads(self.run_studio("--app", "status")[1])["shared_project"], "this folder only (no shared project)")
 
     def test_every_refusal_with_a_command_has_app_wording(self):
         """Every refusal or problem whose text names a command, an option or a branch says it twice, through say()."""
@@ -675,21 +586,19 @@ class HintKindsTest(unittest.TestCase):
 
 class StatusFactsTest(Base):
     def test_withdrawn_approvals_are_explained_until_given_again(self):
-        self.approved_wave()
+        self.approved_slice()
         self.assertEqual(self.ok("status")["approvals_withdrawn"], [])
         self.ok("slice", "reopen", "SLICE-001")
         withdrawn = {(w["artifact"], w["kind"]): w for w in self.ok("status")["approvals_withdrawn"]}
+        self.assertEqual(list(withdrawn), [("SLICE-001", "slice")])
         self.assertEqual(withdrawn[("SLICE-001", "slice")]["reason"], "You reopened it to change it.")
-        self.assertEqual(withdrawn[("WAVE-001", "wave")]["reason"], "SLICE-001 was reopened, so this wave went back to draft.")
         self.assertTrue(product._is_timestamp(withdrawn[("SLICE-001", "slice")]["at"]))
-        self.ok("slice", "approve", "SLICE-001")
-        self.assertEqual([w["artifact"] for w in self.ok("status")["approvals_withdrawn"]], ["WAVE-001"])
-        self.ok("wave", "approve", "WAVE-001", "--actor", "Pat PM", "--at", AT)
+        self.ok("slice", "ready", "SLICE-001")
         self.assertEqual(self.ok("status")["approvals_withdrawn"], [])
 
-    def test_the_project_says_where_it_came_from(self):
+    def test_the_project_has_no_issue_until_a_slice_is_marked_ready(self):
         self.start()
-        self.assertEqual(self.ok("status")["project"]["source"], "draft")
+        self.assertEqual((self.ok("status")["project"]["issue"], self.ok("status")["project"]["url"]), (None, None))
 
     def test_each_diagnostic_names_its_section(self):
         self.ready_slice()
@@ -709,26 +618,6 @@ class StatusFactsTest(Base):
         self.assertTrue(any(item["section"] for item in check["diagnostics"]))
         shown = self.ok("slice", "show", "SLICE-001")
         self.assertTrue(all("section" in f for f in shown["spec"]["findings"]))
-
-
-class OfflineMessageTest(Base):
-    """A shared repository that cannot be reached is reported in a plain sentence, not Git's last line."""
-
-    def setUp(self):
-        super().setUp()
-        git(self.project, "remote", "add", "origin", str(Path(self.tmp.name) / "no-such-repository"))
-
-    def test_refresh_says_so_plainly(self):
-        refreshed = self.ok("refresh")
-        self.assertIs(refreshed["refreshed"], False)
-        self.assertEqual(refreshed["problem"], "The shared repository could not be reached.")
-        self.assertTrue(refreshed["problem_detail"])  # Git's own words, kept apart for an engineer
-
-    def test_send_says_so_plainly(self):
-        self.approved_wave()
-        message = self.refused("send", "WAVE-001")
-        self.assertIn("Could not reach the shared repository, so nothing was sent. Try again when you are connected.", message)
-        self.assertNotIn("repository exists", message)
 
 
 def cell_validator():

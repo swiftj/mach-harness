@@ -49,11 +49,11 @@ const unpos = (e) => {
 
 test("1. a revise visit belongs to the round it starts, in the simulation and in the lifecycle log alike", () => {
   // Live: the lifecycle log records the revise visit under the round it starts.
-  const cell = logOf(EVENTS).head().cells["LOCAL-031"];
+  const cell = logOf(EVENTS).head().cells["131"];
   const revises = cell.visits.filter((v) => v.action === "revise");
   assert.deepEqual(revises.map((v) => v.round), [2, 3]);
-  // The simulation, converted where it enters the scene: LOCAL-031 revises after verification round 1.
-  const simCell = finalScene(SCENARIO).cells["LOCAL-031"];
+  // The simulation, converted where it enters the scene: 131 revises after verification round 1.
+  const simCell = finalScene(SCENARIO).cells["131"];
   const simRevise = simCell.visits.filter((v) => v.action === "revise");
   assert.ok(simRevise.length >= 1);
   for (const v of simRevise) {
@@ -66,46 +66,38 @@ test("1. a revise visit belongs to the round it starts, in the simulation and in
   assert.ok(simCell.visits.slice(0, first).every((v) => v.round === 1));
 });
 
-// ---------------------------------------------------------------- 2. waves merge; bays never move
+// ---------------------------------------------------------------- 2. bays never move
 
-const waveEvent = (wave, slices, t, seq) => ev("wave.discovered", { stream: "intake-log", key: "i:0badc0de", seq, t, precision: "s", ids: { wave_id: wave }, entities: [`wave:${wave}`], data: { slices, approval: { approved_at: null, by_role: "person" } } });
-const sliceEvent = (wave, slice, ticket, t, seq) => ev("slice.materialized", { stream: "intake-log", key: "i:0badc0de", seq, t, precision: "s", ids: { wave_id: wave, slice_id: slice, ticket_id: ticket }, entities: [`wave:${wave}`, `slice:${slice}`, `cell:${ticket}`], data: { digest: "d", adopted: false, dependencies: [], reissued: null } });
+// A slice taken in with its ticket filed (slice.materialized); `takenIn` names the slice itself as its ticket.
+const sliceEvent = (slice, ticket, t, seq) => ev("slice.materialized", { stream: "intake-log", key: "i:0badc0de", seq, t, precision: "s", ids: { epic_id: "EPIC-1", slice_id: slice, ticket_id: ticket }, entities: [`slice:${slice}`, `cell:${ticket}`], data: { digest: "d", adopted: false, dependencies: [], reissued: null } });
+const takenIn = (slice, t, seq) => sliceEvent(slice, slice, t, seq);
 
-test("2. a repeated wave.discovered merges into the wave's slices (union, order of first sight)", () => {
-  const log = logOf(finalize([waveEvent("WAVE-1", ["S1", "S2"], T0, 1), waveEvent("WAVE-1", ["S3", "S1"], T0 + 5000, 2)]));
-  const wave = log.head().waves["WAVE-1"];
-  assert.deepEqual(wave.sliceIds, ["S1", "S2", "S3"]);
-  assert.equal(wave.discoveredAt, T0, "it keeps the moment it was first seen");
-});
-
-test("2. bays are ordered by their first event and never move, even when an older wave arrives late", () => {
-  const a = waveEvent("WAVE-A", ["S1"], T0, 1);
-  const b = waveEvent("WAVE-B", ["S2", "S3"], T0 + 10_000, 2);
+test("2. bays are ordered by their first event and never move, even when an older slice arrives late", () => {
+  const a = takenIn("S1", T0, 1);
+  const b = [takenIn("S2", T0 + 10_000, 2), takenIn("S3", T0 + 10_000, 3)];
   // Delivered together: by the order of their first event.
-  const together = logOf(finalize([b, a]));
+  const together = logOf(finalize([...b, a]));
   assert.deepEqual(bayOrder(together).slots.map((s) => s.sliceId), ["S1", "S2", "S3"]);
-  assert.deepEqual(bayOrder(together).waveIds, ["WAVE-A", "WAVE-B"]);
-  // WAVE-B first, WAVE-A late: B's bays keep their indices, A's slice comes after.
+  // S2 and S3 first, S1 late: their bays keep their indices, S1 comes after.
   const log = createSceneLog({ definitions: DEFS, provenance: provenance("live") });
-  log.ingest(finalize([b]));
+  log.ingest(finalize(b));
   const before = bayOrder(log);
   assert.deepEqual(before.slots.map((s) => s.sliceId), ["S2", "S3"]);
   log.ingest(finalize([a], 10));
   const after = bayOrder(log);
   assert.deepEqual(after.slots.map((s) => s.sliceId), ["S2", "S3", "S1"], "an assigned bay index never changes");
-  assert.deepEqual(after.waveIds, ["WAVE-B", "WAVE-A"]);
   assert.equal(bayOrder(log), after, "the same object while nothing changes");
   // A slice's cell opens: the bay learns its ticket and keeps its index.
-  log.ingest(finalize([sliceEvent("WAVE-B", "S3", "LOCAL-9", T0 + 20_000, 3)], 20));
+  log.ingest(finalize([sliceEvent("S3", "LOCAL-9", T0 + 20_000, 4)], 20));
   assert.deepEqual(bayOrder(log).slots[1], { sliceId: "S3", ticketId: "LOCAL-9" });
 });
 
 test("2. a cell seen before its slice keeps its bay when the slice becomes known", () => {
   const stray = ev("station.entered", { stream: "cell-lifecycle", key: "c:LOCAL-7:aa", seq: 1, t: T0, ids: { ticket_id: "LOCAL-7", cell_instance: "aa", visit_id: "LOCAL-7/build#1", station: "build", round: 1 }, entities: ["cell:LOCAL-7"], data: { station: "build", stage: "building", action: "build", resumed: false, unclosed_visit: null, head: null, counts: {} } });
   const log = createSceneLog({ definitions: DEFS, provenance: provenance("live") });
-  log.ingest(finalize([waveEvent("WAVE-A", ["S1"], T0 - 5000, 1), stray]));
+  log.ingest(finalize([takenIn("S1", T0 - 5000, 1), stray]));
   assert.deepEqual(bayOrder(log).slots.map((s) => s.sliceId), ["S1", "cell:LOCAL-7"]);
-  log.ingest(finalize([sliceEvent("WAVE-A", "S9", "LOCAL-7", T0 + 1000, 2)], 10));
+  log.ingest(finalize([sliceEvent("S9", "LOCAL-7", T0 + 1000, 2)], 10));
   assert.deepEqual(bayOrder(log).slots, [{ sliceId: "S1", ticketId: "S1" }, { sliceId: "S9", ticketId: "LOCAL-7" }]);
 });
 
@@ -113,19 +105,19 @@ test("2. a cell seen before its slice keeps its bay when the slice becomes known
 
 test("3. an approved cell not merged yet is known: review completed, merge next, who merges not recorded", () => {
   const scene = logOf(EVENTS).head();
-  const a = activityOf(scene, "cell:LOCAL-031");
-  assert.equal(scene.cells["LOCAL-031"].stage, "approved");
+  const a = activityOf(scene, "cell:131");
+  assert.equal(scene.cells["131"].stage, "approved");
   assert.equal(a.state, "completed");
   assert.deepEqual(a.awaiting, { step: "merge", label: "Approved, not merged yet", by: null, basis: null });
   // pr-open: the same care.
-  const pr = ev("station.exited", { stream: "cell-lifecycle", key: "c:LOCAL-031:3f2a9c1e", seq: 999, t: RUN.end + 10_000, ids: { ticket_id: "LOCAL-031", cell_instance: "3f2a9c1e", visit_id: "LOCAL-031/merge#1", station: "merge" }, entities: ["cell:LOCAL-031"], data: { station: "merge", outcome: "pr-open", stage: "pr-open", duration_ms: 10, closed_by: null, head: null, counts: {} } });
+  const pr = ev("station.exited", { stream: "cell-lifecycle", key: "c:131:3f2a9c1e", seq: 999, t: RUN.end + 10_000, ids: { ticket_id: "131", cell_instance: "3f2a9c1e", visit_id: "131/merge#1", station: "merge" }, entities: ["cell:131"], data: { station: "merge", outcome: "pr-open", stage: "pr-open", duration_ms: 10, closed_by: null, head: null, counts: {} } });
   const withPr = logOf(finalize([...RUN.events, pr])).head();
-  const p = activityOf(withPr, "cell:LOCAL-031");
+  const p = activityOf(withPr, "cell:131");
   assert.equal(p.state, "completed");
   assert.equal(p.awaiting.label, "Pull request open, not merged yet");
   // Where an event says a person must merge (the execution stopped at this stage waiting for one), say so.
   const stoppedHere = RUN.events.map((e) => (e.type === "execution.completed" ? { ...e, data: { ...e.data, stage: "approved" } } : e));
-  const waiting = activityOf(logOf(finalize(stoppedHere)).head(), "cell:LOCAL-031");
+  const waiting = activityOf(logOf(finalize(stoppedHere)).head(), "cell:131");
   assert.equal(waiting.state, "waiting-person");
   assert.equal(waiting.awaiting.by, "person");
 });
@@ -136,15 +128,15 @@ test("4. the verification round carries the received list of targets, with its a
   const log = logOf(EVENTS);
   const entered = log.entries().find((e) => e.event.type === "station.entered" && e.event.data.station === "verify");
   const listed = log.entries().find((e) => e.event.type === "verify.targets_listed");
-  const before = log.sceneAtCursor(log.entries().indexOf(listed)).cells["LOCAL-031"].verifications[0];
+  const before = log.sceneAtCursor(log.entries().indexOf(listed)).cells["131"].verifications[0];
   assert.ok(log.entries().indexOf(entered) < log.entries().indexOf(listed));
   assert.equal(before.listed, null, "nothing is expected before a list is received");
   assert.equal(before.checks.length, 0);
-  const after = log.sceneAt(listed.t).cells["LOCAL-031"].verifications[0];
+  const after = log.sceneAt(listed.t).cells["131"].verifications[0];
   assert.deepEqual(after.listed, { eventId: listed.id, authority: "reconstructed", count: 2, late: false });
   assert.equal(after.checks.filter((c) => c.result === "pending").length, 2);
   // The simulation's verification.started lists them too, as simulated.
-  const v = finalScene(SCENARIO).cells["LOCAL-031"].verifications[0];
+  const v = finalScene(SCENARIO).cells["131"].verifications[0];
   assert.equal(v.listed.authority, "simulated");
   assert.equal(v.listed.count, v.checks.length);
 });
@@ -153,7 +145,7 @@ test("4. the verification round carries the received list of targets, with its a
 
 test("5. review rounds, seats' verdicts, decisions, gates and human approvals name the event that made them", () => {
   const log = logOf(EVENTS);
-  const cell = log.head().cells["LOCAL-031"];
+  const cell = log.head().cells["131"];
   const round = cell.reviews.find((r) => r.round === 3);
   const byId = (id) => log.entry(id).event;
   assert.equal(byId(round.eventId).type, "review.round_started");
@@ -164,13 +156,13 @@ test("5. review rounds, seats' verdicts, decisions, gates and human approvals na
     assert.equal(byId(seat.votedEventId).data.seat, seat.seat);
   }
   assert.equal(byId(round.humanApproval.eventId).type, "human.approval_recorded");
-  const gate = log.head().gates["LOCAL-031/review#3"];
+  const gate = log.head().gates["131/review#3"];
   assert.equal(byId(gate.meta.eventId).type, "review.decided");
   assert.equal(gate.meta.late, false);
   // The observer's own `late` flag reaches the scene; lateness to this browser stays on the entry.
   const decided = EVENTS.find((e) => e.type === "review.decided");
   const flagged = logOf(EVENTS.map((e) => (e.id === decided.id ? { ...e, late: true } : e)));
-  const r = flagged.head().cells["LOCAL-031"].reviews.find((x) => x.decidedEventId === decided.id);
+  const r = flagged.head().cells["131"].reviews.find((x) => x.decidedEventId === decided.id);
   assert.equal(r.decidedLate, true);
   assert.equal(isLateEntry(flagged, decided.id), true);
   // Delivered after everything else (to this browser): the entry says late, the scene is the same.
@@ -190,15 +182,15 @@ test("6. a slice's risk follows the cell's recorded risk; the human-approval vis
   assert.ok(!slice.meta.unknown.includes("risk"), "work.scheduled recorded the risk; the slice knows it");
   const high = RUN.events.map((e) => (e.type === "review.round_started" ? { ...e, data: { ...e.data, risk: "High" } } : e));
   assert.equal(logOf(finalize(high)).head().slices["SLICE-021"].risk, "High", "the review's recorded risk reaches the slice");
-  const human = scene.cells["LOCAL-031"].visits.find((v) => v.station === "human-approval");
+  const human = scene.cells["131"].visits.find((v) => v.station === "human-approval");
   assert.equal(human.action, "stop");
   assert.notEqual(human.action, "build");
   assert.equal(human.meta.inferred.action, "awaiting-human");
-  // A cell with no slice: its ticket is the lane title, its wave not recorded.
+  // A cell with no slice: its ticket is the lane title, its epic not recorded.
   const stray = ev("station.entered", { stream: "cell-lifecycle", key: "c:AUTO-1:aa", seq: 1, t: T0, ids: { ticket_id: "AUTO-1", cell_instance: "aa", visit_id: "AUTO-1/build#1", station: "build", round: 1 }, entities: ["cell:AUTO-1"], data: { station: "build", stage: "building", action: "build", resumed: false, unclosed_visit: null, head: null, counts: {} } });
   const home = cellHome(logOf(finalize([stray])).head(), "AUTO-1");
-  assert.deepEqual(home, { ticketId: "AUTO-1", sliceId: null, waveId: null, laneTitle: "AUTO-1", sliceKnown: false, waveKnown: false });
-  assert.deepEqual(cellHome(scene, "LOCAL-031"), { ticketId: "LOCAL-031", sliceId: "SLICE-021", waveId: "WAVE-007", laneTitle: "LOCAL-031", sliceKnown: true, waveKnown: true });
+  assert.deepEqual(home, { ticketId: "AUTO-1", sliceId: null, epicId: null, laneTitle: "AUTO-1", sliceKnown: false });
+  assert.deepEqual(cellHome(scene, "131"), { ticketId: "131", sliceId: "SLICE-021", epicId: "EPIC-004", laneTitle: "131", sliceKnown: true });
 });
 
 // ---------------------------------------------------------------- 7. capacity waits and gate refusals with no gate state
@@ -212,17 +204,17 @@ test("7. a capacity wait with no cell yet, and a refused gate no gate state stan
   const released = ev("capacity.wait_changed", { stream: "observer", key: "i:0badc0de", seq: 8, t: T0 + 60_000, ids: { ticket_id: "LOCAL-77" }, entities: [], data: { state: "released", scope: "execution", limit: 2 } });
   assert.equal(capacityWaits(logOf(finalize([wait, released])).head()).length, 0);
 
-  const refused = ev("gate.evaluated", { stream: "cell-lifecycle", key: "c:LOCAL-031:3f2a9c1e", seq: 500, t: RUN.end + 1000, ids: { ticket_id: "LOCAL-031", cell_instance: "3f2a9c1e", visit_id: null, station: "build" }, entities: ["cell:LOCAL-031"], data: { gate: "build.start", verdict: "refused", reason_code: "audit-stale", subject: null, status: null, audit_tier: null, counts: {} } });
+  const refused = ev("gate.evaluated", { stream: "cell-lifecycle", key: "c:131:3f2a9c1e", seq: 500, t: RUN.end + 1000, ids: { ticket_id: "131", cell_instance: "3f2a9c1e", visit_id: null, station: "build" }, entities: ["cell:131"], data: { gate: "build.start", verdict: "refused", reason_code: "audit-stale", subject: null, status: null, audit_tier: null, counts: {} } });
   const s2 = logOf(finalize([...RUN.events, refused])).head();
-  const found = gateRefusals(s2, "LOCAL-031");
+  const found = gateRefusals(s2, "131");
   assert.equal(found.length, 1);
   assert.equal(found[0].gate, "build.start");
   assert.equal(found[0].gateId, null);
   assert.equal(found[0].eventId, refused.id);
   assert.equal(gateRefusals(s2).length, 1);
   // A refusal a gate state does stand for is not listed here (it is the gate's state).
-  const verdict = s2.cells["LOCAL-031"].gateLog.find((g) => g.gate === "verify.verdict" && g.verdict === "refused");
-  assert.equal(verdict.gateId, "LOCAL-031/verification#1");
+  const verdict = s2.cells["131"].gateLog.find((g) => g.gate === "verify.verdict" && g.verdict === "refused");
+  assert.equal(verdict.gateId, "131/verification#1");
 });
 
 // ---------------------------------------------------------------- 8. entity kinds
@@ -231,8 +223,8 @@ test("8. visit, seat, workflow, execution and project are entity kinds, found by
   for (const kind of ["visit", "seat", "workflow", "execution", "project"]) assert.ok(ENTITY_KINDS.includes(kind), kind);
   const withProject = RUN.events.map((e) => ({ ...e, ids: { ...e.ids, project_id: "team-space" } }));
   const scene = logOf(finalize(withProject)).head();
-  assert.equal(entityAt(scene, "visit:LOCAL-031/verify#1").value.outcomeWord, "FAIL_WITH_EVIDENCE");
-  const seat = entityAt(scene, "seat:LOCAL-031/review#2/security").value;
+  assert.equal(entityAt(scene, "visit:131/verify#1").value.outcomeWord, "FAIL_WITH_EVIDENCE");
+  const seat = entityAt(scene, "seat:131/review#2/security").value;
   assert.equal(seat.vote, "REJECT");
   assert.equal(seat.findings, 1);
   const wf = entityAt(scene, "workflow:x1a2b3c4d5e6f/task0001").value;
@@ -244,10 +236,10 @@ test("8. visit, seat, workflow, execution and project are entity kinds, found by
   assert.equal(project.name, null, "not recorded in events");
   assert.equal(project.cells, 1);
   // For a React selector: the same object while nothing in it changed.
-  assert.equal(stableEntityAt(scene, "seat:LOCAL-031/review#2/security"), stableEntityAt(scene, "seat:LOCAL-031/review#2/security"));
+  assert.equal(stableEntityAt(scene, "seat:131/review#2/security"), stableEntityAt(scene, "seat:131/review#2/security"));
   const log = logOf(finalize(withProject));
   const lateScene = log.sceneAt(log.headTime() - 1);
-  assert.equal(stableEntityAt(lateScene, "seat:LOCAL-031/review#2/security").value, stableEntityAt(scene, "seat:LOCAL-031/review#2/security").value, "unchanged between scenes: same object");
+  assert.equal(stableEntityAt(lateScene, "seat:131/review#2/security").value, stableEntityAt(scene, "seat:131/review#2/security").value, "unchanged between scenes: same object");
 });
 
 // ---------------------------------------------------------------- 9. one time scale
@@ -372,7 +364,7 @@ test("13. after a gap, history continues from the observer's floor; the summarie
   stream.closed = false;
   server.expire(later.at(-1).pos - 20);
   // The run's own cell is in the window (left to its events); another cell and its ended execution are not.
-  server.summaries.cells = [{ ticket_id: "LOCAL-031", slice_id: "SLICE-021", stage: "verified", round: 2 }, { ticket_id: "LOCAL-040", slice_id: "SLICE-040", stage: "building", round: 1 }];
+  server.summaries.cells = [{ ticket_id: "131", slice_id: "SLICE-021", stage: "verified", round: 2 }, { ticket_id: "LOCAL-040", slice_id: "SLICE-040", stage: "building", round: 1 }];
   server.summaries.runs = [{ execution_id: "x0000000000aa", ticket_id: "LOCAL-040", state: "ended", attempt: 1 }];
   server.sendGap();
   await settle();
@@ -385,7 +377,7 @@ test("13. after a gap, history continues from the observer's floor; the summarie
   assert.equal(head.executions.x0000000000aa.meta.authority, "reconstructed");
   assert.equal(head.executions.x0000000000aa.ended, "exited", "an execution whose process ended is never seeded as running");
   assert.notEqual(sim.activityOf(head, "execution:x0000000000aa").state, "executing");
-  assert.ok(!head.cells["LOCAL-031"].meta.eventId.startsWith("k:"), "a summary never stands in for a cell the window's events describe");
+  assert.ok(!head.cells["131"].meta.eventId.startsWith("k:"), "a summary never stands in for a cell the window's events describe");
   assert.equal(store.getState().connection.state, "live");
   source.stop();
 });

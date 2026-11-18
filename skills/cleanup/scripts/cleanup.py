@@ -290,14 +290,12 @@ def integration_record(cell: Cell, plan: Dict[str, Any], approved: Optional[str]
 
 
 def product_record(product: Dict[str, Any]) -> Dict[str, Any]:
-    """The product block of a run record. `origin` (M8: the GitHub issue a slice came from, as
-    identifiers only) is carried only when the cell has one, so a record without it is unchanged
-    and record_version stays 2."""
-    block = {key: product.get(key) for key in ("slice_id", "revision", "wave_id", "digest", "source_commit")}
-    origin = product.get("origin")
-    if isinstance(origin, dict) and origin.get("kind") == "github_issue" and isinstance(origin.get("repository"), str) \
-            and type(origin.get("number")) is int:
-        block["origin"] = {"kind": "github_issue", "repository": origin["repository"], "number": origin["number"]}
+    """The product block of a run record (M11): the slice, its revision, its epic, where it came from, and its
+    issue (identifiers only) when it came as a GitHub issue."""
+    block = {key: product.get(key) for key in ("slice_id", "revision", "epic_id", "digest", "source", "source_commit")}
+    issue = product.get("issue")
+    if isinstance(issue, dict) and isinstance(issue.get("repository"), str) and type(issue.get("number")) is int:
+        block["issue"] = {"repository": issue["repository"], "number": issue["number"]}
     return block
 
 

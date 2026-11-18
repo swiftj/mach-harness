@@ -9,7 +9,6 @@ import { gateId, ref } from "./model";
 export function simRefsOf(event: AnySimEvent, sliceDeps: Map<string, readonly string[]>): EntityRef[] {
   const out = new Set<EntityRef>();
   const ticket = event.ticket_id;
-  if (event.wave_id) out.add(ref.wave(event.wave_id));
   if (event.slice_id) out.add(ref.slice(event.slice_id));
   if (ticket) out.add(ref.cell(ticket));
   if (event.execution_id) out.add(ref.execution(event.execution_id));

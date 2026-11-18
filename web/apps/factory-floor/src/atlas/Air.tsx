@@ -101,7 +101,7 @@ export function Transit() {
       ))}
       {legs.map(({ leg, p }) => {
         const pos = pointAlong(leg.route, p);
-        const dim = isDimmed(highlight, ref.cell(leg.ticketId), ref.wave(leg.ticketId));
+        const dim = isDimmed(highlight, ref.cell(leg.ticketId));
         const name = `${leg.label}`;
         if (leg.card) {
           return (

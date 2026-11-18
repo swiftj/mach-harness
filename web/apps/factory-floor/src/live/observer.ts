@@ -347,8 +347,8 @@ export function readContentLabels(headers: { get(name: string): string | null } 
 }
 
 /**
- * The observer's current summaries (`/waves`, `/slices`, `/cells`, `/runs`), bounded by how many
- * waves, slices, cells and executions there are, never by how many events: the state a long history
+ * The observer's current summaries (`/slices`, `/cells`, `/runs`), bounded by how many
+ * slices, cells and executions there are, never by how many events: the state a long history
  * starts from (D17) without the whole snapshot. `cursor` is the projection position they describe
  * (the highest of the replies).
  */
@@ -369,7 +369,7 @@ export interface ObserverClient {
   artifacts(query?: { readonly ticket?: string; readonly limit?: number; readonly offset?: number }): Promise<{ readonly items: readonly ArtifactEntry[]; readonly more: boolean }>;
   /** One served text (`/artifacts/{id}/content`) with what its headers say (free text, redactions). */
   artifactContent(id: string): Promise<{ readonly text: string; readonly labels: ContentLabels }>;
-  /** The current waves, slices, cells and executions, paged through (see ObserverSummaries). */
+  /** The current slices, cells and executions, paged through (see ObserverSummaries). */
   summaries(): Promise<ObserverSummaries>;
   // ---- M6.4 (evidence player). Optional like the M6.3 methods; createObserverClient has them all.
   /** `/cells/{ticket}/evidence`: the cell's checks, each with its files linked to the catalog. */
@@ -401,7 +401,7 @@ export interface ObserverClient {
 }
 
 /** The filters every analytics route reads (M6_5_DESIGN.md 3); a route that cannot honour one answers 400. Values are identifiers or codes, never prose. */
-export const ANALYTICS_FILTERS = ["risk", "app_type", "model", "station", "wave", "outcome", "provenance"] as const;
+export const ANALYTICS_FILTERS = ["risk", "app_type", "model", "station", "epic", "outcome", "provenance"] as const;
 export type ObserverAnalyticsFilter = (typeof ANALYTICS_FILTERS)[number];
 
 /** The common analytics parameters: one cursor (`at`) for every query of a view, a window or the last N runs, filters. */
@@ -591,12 +591,11 @@ export function readArtifactEntry(value: unknown): ArtifactEntry {
 const humanGateState = (g: Record<string, unknown>): string => (g.closed ? (g.closed_by === "rejected" || g.closed_by === "sent-back" ? "failed" : "passed") : "waiting");
 
 /**
- * `/api/v1/snapshot`'s `state` (the observer's projection: `waves`, `slices`, `cells`, `executions`
+ * `/api/v1/snapshot`'s `state` (the observer's projection: `slices`, `cells`, `executions`
  * as maps by id, `gates` as the human gates) in the shape the reducer reads. Arrays are taken too.
  */
 export function readSnapshotState(data: unknown): ObserverSnapshotState {
   const d = obj(data);
-  const waves = list(d.waves).map((x) => obj(x)).filter((w) => typeof w.wave_id === "string");
   const slices = list(d.slices).map((x) => obj(x)).filter((x) => typeof x.slice_id === "string");
   const cells = list(d.cells).map((x) => obj(x)).filter((c) => typeof c.ticket_id === "string");
   const executions = list(d.executions)
@@ -607,8 +606,8 @@ export function readSnapshotState(data: unknown): ObserverSnapshotState {
     .filter((x) => typeof x.execution_id === "string");
   const gates = list(d.gates).map((x) => obj(x));
   return {
-    waves: waves.map((w) => ({ wave_id: w.wave_id as string, slices: strings(w.slices), revision: num(w.revision) })),
-    slices: slices.map((x) => ({ slice_id: x.slice_id as string, ticket_id: str(x.ticket_id), state: str(x.state), dependencies: strings(x.dependencies ?? x.depends_on), revision: num(x.revision) })),
+    slices: slices.map((x) => ({ slice_id: x.slice_id as string, ticket_id: str(x.ticket_id), state: str(x.state), dependencies: strings(x.dependencies ?? x.depends_on), revision: num(x.revision),
+      title: str(x.title) || null, epic_id: str(x.epic_id) || null, epic_title: str(x.epic_title) || null, issue: num(x.issue) })),
     cells: cells.map((c) => {
       const plan = planOf(c.plan);
       return {
@@ -874,8 +873,6 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
         }
         return out;
       };
-      const waves = await get("/waves");
-      seeCursor(waves.cursor);
       const [slices, cells, runs] = [await all("/slices"), await all("/cells"), await all("/runs")];
       // How complete the observer's history is (`/project` `history`, observer M6.2); optional.
       let history: unknown = null;
@@ -886,7 +883,7 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
       } catch (error) {
         if (!(error instanceof ObserverError)) throw error;
       }
-      const state = readSnapshotState({ waves: waves.items, slices, cells, executions: runs, history });
+      const state = readSnapshotState({ slices, cells, executions: runs, history });
       return { cursor, state };
     },
     async concurrency(query) {

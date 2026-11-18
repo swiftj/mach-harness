@@ -14,8 +14,8 @@ import (
 
 // Release readiness snapshots (M7 D11): .factory/release/<id>/readiness.json, written by release
 // qualification, read here as plain files, read-only, on request. Only codes and commits are
-// served: the release id, the commit it is for, the outcome, product acceptance's decision overall
-// and per wave, and run.json's evaluated_at, which orders them (the newest is the last
+// served: the release id, the commit it is for, the outcome, product acceptance's decision, the
+// epic the release was qualified for (M11: a release covers an epic or named slices), and run.json's evaluated_at, which orders them (the newest is the last
 // evaluated). Acceptance is never inferred: a snapshot that records none says not_recorded, and no
 // snapshot means none is served.
 
@@ -32,18 +32,12 @@ const (
 
 // ReleaseSnapshot is one readiness snapshot as served.
 type ReleaseSnapshot struct {
-	ReleaseID         string        `json:"release_id"`
-	Commit            *string       `json:"commit"`
-	Outcome           *string       `json:"outcome"`
-	ProductAcceptance *string       `json:"product_acceptance"`
-	Waves             []WaveAccepts `json:"waves"`
-	EvaluatedAt       *string       `json:"evaluated_at"`
-}
-
-// WaveAccepts is one wave's recorded acceptance decision in a snapshot.
-type WaveAccepts struct {
-	WaveID   string  `json:"wave_id"`
-	Decision *string `json:"decision"`
+	ReleaseID         string  `json:"release_id"`
+	Commit            *string `json:"commit"`
+	Outcome           *string `json:"outcome"`
+	ProductAcceptance *string `json:"product_acceptance"`
+	EpicID            *string `json:"epic_id"`
+	EvaluatedAt       *string `json:"evaluated_at"`
 }
 
 func code(v any) *string {
@@ -98,23 +92,22 @@ func ReadReleases(root string) []ReleaseSnapshot {
 			} `json:"release"`
 			ProductAcceptance struct {
 				Decision any `json:"decision"`
-				Waves    []struct {
-					WaveID   any `json:"wave_id"`
-					Decision any `json:"decision"`
-				} `json:"waves"`
 			} `json:"product_acceptance"`
+			Scope struct {
+				Epic struct {
+					EpicID any `json:"epic_id"`
+				} `json:"epic"`
+			} `json:"scope"`
 		}
 		if json.Unmarshal(b, &r) != nil {
 			continue
 		}
-		snap := ReleaseSnapshot{ReleaseID: id, Outcome: code(r.Outcome), ProductAcceptance: code(r.ProductAcceptance.Decision), Waves: []WaveAccepts{}}
+		snap := ReleaseSnapshot{ReleaseID: id, Outcome: code(r.Outcome), ProductAcceptance: code(r.ProductAcceptance.Decision)}
 		if c, ok := r.Release.Commit.(string); ok && releaseCommitRe.MatchString(c) {
 			snap.Commit = &c
 		}
-		for _, w := range r.ProductAcceptance.Waves {
-			if wid, ok := redact.ID(w.WaveID); ok && len(snap.Waves) < 64 {
-				snap.Waves = append(snap.Waves, WaveAccepts{WaveID: wid, Decision: code(w.Decision)})
-			}
+		if eid, ok := redact.ID(r.Scope.Epic.EpicID); ok {
+			snap.EpicID = &eid
 		}
 		if rb, ok := plainFile(filepath.Join(dir, e.Name(), "run.json")); ok {
 			var run struct {

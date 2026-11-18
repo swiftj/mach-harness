@@ -54,7 +54,7 @@ func ScrubEvent(ev *event.Event, projectRoot string, c *Counters) {
 		}
 	}
 	ids := &ev.IDs
-	for _, p := range []*string{&ids.ProjectID, &ids.WaveID, &ids.SliceID, &ids.TicketID, &ids.CellInstance, &ids.ExecutionID,
+	for _, p := range []*string{&ids.ProjectID, &ids.EpicID, &ids.SliceID, &ids.TicketID, &ids.CellInstance, &ids.ExecutionID,
 		&ids.RunnerID, &ids.VisitID, &ids.Station, &ids.Seat, &ids.AgentID, &ids.ParentAgentID, &ids.ToolCallID,
 		&ev.Parent, &ev.Origin.Script, &ev.Origin.SourceVersion} {
 		drop(p)

@@ -35,14 +35,14 @@ export function RequestsGroup({ list, status }: { list: RequestList; status: Sta
           title="Not checked with GitHub yet"
           actions={
             <Button asChild size="sm">
-              <Link to="/shared">
+              <Link to="/github">
                 <RefreshCw aria-hidden="true" />
                 Check for changes
               </Link>
             </Button>
           }
         >
-          Requests appear after the shared project is checked for changes.
+          Requests appear after GitHub is checked for changes.
         </Banner>
       ) : (
         <Text size="caption" tone="subtle">

@@ -70,7 +70,7 @@ test("reconnects from the durable cursor after a drop, without re-applying anyth
 
 test("gap: history missing is marked partial, the bounded start runs again (summaries, never a snapshot); selection and camera survive", async () => {
   const { server, clock, store, source, log } = await setup({ snapshot: true });
-  store.select("cell:LOCAL-031");
+  store.select("cell:131");
   store.setFollow(false);
   const beforeGap = RUN[100].time.order_ms;
   const focus = store.getState().focus;
@@ -82,13 +82,13 @@ test("gap: history missing is marked partial, the bounded start runs again (summ
   server.expire(later.at(-1).pos - 10);
   // The observer's summaries: the run's own cell (its events are in the window: left to them) and one
   // no event of the window touches (seeded, reconstructed).
-  server.summaries.cells = [{ ticket_id: "LOCAL-031", stage: "verified", round: 2 }, { ticket_id: "LOCAL-099", slice_id: "SLICE-099", stage: "merged", round: 1, risk: "Low", app_type: "cli", plan: { app_type: "cli", risk: "Low", contracts: 1, tasks: 4, recorded_by: "c:LOCAL-099:aa:6" } }];
+  server.summaries.cells = [{ ticket_id: "131", stage: "verified", round: 2 }, { ticket_id: "LOCAL-099", slice_id: "SLICE-099", stage: "merged", round: 1, risk: "Low", app_type: "cli", plan: { app_type: "cli", risk: "Low", contracts: 1, tasks: 4, recorded_by: "c:LOCAL-099:aa:6" } }];
   const requested = server.requests.length;
   server.sendGap();
   await settle();
   clock.frames(1, 16);
   const s = store.getState();
-  assert.equal(s.selection, "cell:LOCAL-031");
+  assert.equal(s.selection, "cell:131");
   assert.equal(s.follow, false);
   assert.equal(s.focus, focus);
   const head = log.head();
@@ -98,7 +98,7 @@ test("gap: history missing is marked partial, the bounded start runs again (summ
   assert.equal(head.cells["LOCAL-099"].stage, "merged", "a cell no event of the window touches is seeded");
   assert.equal(head.cells["LOCAL-099"].meta.authority, "reconstructed");
   assert.deepEqual({ ...head.cells["LOCAL-099"].plan }, { appType: "cli", risk: "Low", contracts: 1, tasks: 4, eventId: "c:LOCAL-099:aa:6", authority: "reconstructed" });
-  assert.ok(!head.cells["LOCAL-031"].meta.eventId.startsWith("k:"), "a summary never stands in for a cell the window's events describe");
+  assert.ok(!head.cells["131"].meta.eventId.startsWith("k:"), "a summary never stands in for a cell the window's events describe");
   assert.equal(s.connection.gaps, 1);
   assert.equal(s.connection.state, "live");
   assert.equal(log.sceneAt(beforeGap).completeness.state, "complete", "before the gap, history was complete");
@@ -147,12 +147,12 @@ test("stale: silence beyond the bound is shown, with the last confirmed moment; 
 
 test("selection survives ordinary updates; the supervisor's heartbeat freshness is read", async () => {
   const { server, clock, store, source, timers } = await setup();
-  store.select("cell:LOCAL-031");
+  store.select("cell:131");
   store.hover("slice:SLICE-021");
   push(server, RUN.slice(SPLIT));
   clock.frames(2, 16);
-  assert.equal(store.getState().selection, "cell:LOCAL-031");
-  assert.ok(store.getState().highlighted.includes("cell:LOCAL-031"));
+  assert.equal(store.getState().selection, "cell:131");
+  assert.ok(store.getState().highlighted.includes("cell:131"));
   server.status = { ...server.status, supervisor: { lease_present: true, heartbeat_fresh: false, heartbeat_age_seconds: 95, lease_expired: false } };
   timers.tick();
   await settle();

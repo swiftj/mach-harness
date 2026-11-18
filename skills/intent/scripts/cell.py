@@ -503,6 +503,8 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
         print("SAVED: the spec is valid but open questions remain, so it is not ready for contracts or building.")
         return 0 if args.allow_open else 1
 
+    if spec_before and spec_before != cell["spec_sha256"]:
+        cell.pop("spec_question", None)  # a changed spec is the product manager's answer to the builders' question
     export = {"ticket_id": cell["ticket_id"], "risk": cell["risk"], "spec_path": cell["spec_path"], **model}
     spec_json.write_text(json.dumps(export, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     replanned = set_aside_plan(root, cell, SPEC_CHANGED) if stage_before == "planned" and spec_before and spec_before != cell["spec_sha256"] else None
@@ -995,6 +997,28 @@ def cmd_adr_conflict(project: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_spec_question(project: Path, args: argparse.Namespace) -> int:
+    """The contract engineer's way to say a product-sourced spec has a defect only the product manager can settle. The
+    ticket stops; the Factory puts the question on the slice's issue (redacted and bounded), and the product manager's
+    answer arrives as a new revision of the slice, which finalize takes in and plans again. The spec is never patched here."""
+    cell = read_cell(project, args.ticket_id)
+    root = cell_dir(project, args.ticket_id)
+    if cell.get("stage") != "spec-ready":
+        raise CellError(f"A question about the spec is asked while the plan is written, when the cell is spec-ready; {args.ticket_id} is '{cell.get('stage')}'.")
+    if not isinstance(cell.get("product"), dict):
+        raise CellError(f"{args.ticket_id} was not handed over by Product Studio. Put the question to the product manager in the grooming interview instead.")
+    question = (args.question or "").strip()
+    if len(question) < 20:
+        raise CellError("--question must say what in the spec contradicts itself or cannot be built, and what the product manager needs to decide.")
+    cell["spec_question"] = {"text": question[:4000], "at": now(), "revision": cell["product"].get("revision")}
+    write_cell(project, cell)
+    telemetry(root, "gate.evaluated", "plan", lambda: {"gate": "plan.spec", "outcome": "refuse", "reason_code": "spec-question", "overridden_by_reason": False})
+    print(json.dumps({"status": "STOPPED", "ticket_id": args.ticket_id,
+                      "next": "Stop: do not patch the spec or plan around it. The question goes to the product manager on the slice's issue; "
+                              "their answer comes back as a new revision of the slice, and the plan is written again then."}, indent=2))
+    return 0
+
+
 def cmd_adr_exception(project: Path, args: argparse.Namespace) -> int:
     """A person's exception to one accepted ADR for this ticket, with their reason in their words. Only on their
     explicit word; refused inside a supervised execution. Shown to the contract engineer, the builder and the reviewers."""
@@ -1265,6 +1289,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--adr", required=True, help="the ADR's ID, such as ADR-0007")
     p.add_argument("--reason", required=True, help="which part of it the slice cannot follow, and why")
     p.set_defaults(func=cmd_adr_conflict)
+
+    p = sub.add_parser("spec-question", help="record that a product-sourced spec has a defect only the product manager can settle; the ticket stops for their answer")
+    p.add_argument("ticket_id")
+    p.add_argument("--question", required=True, help="what in the spec contradicts itself or cannot be built, and what needs deciding")
+    p.set_defaults(func=cmd_spec_question)
 
     p = sub.add_parser("adr-exception", help="a person's exception to one accepted ADR for this ticket; only on their explicit word")
     p.add_argument("ticket_id")

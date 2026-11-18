@@ -13,10 +13,10 @@ import (
 func sentBackRun(decision any, withDecision bool) []map[string]any {
 	const x1 = "xeb8b948e8cf9"
 	i := func(typ string, ms int64) *feedtest.Ev {
-		return feedtest.New("intake-log", typ, ms).ID("project_id", "textkit").ID("wave_id", "WAVE-001")
+		return feedtest.New("intake-log", typ, ms).ID("project_id", "textkit").ID("epic_id", "EPIC-001")
 	}
 	c := func(typ string, ms int64, visit string, round int) *feedtest.Ev {
-		return feedtest.New("cell-lifecycle", typ, ms).Ticket("LOCAL-001").ID("slice_id", "SLICE-001").ID("wave_id", "WAVE-001").Visit("LOCAL-001", visit, round)
+		return feedtest.New("cell-lifecycle", typ, ms).Ticket("LOCAL-001").ID("slice_id", "SLICE-001").ID("epic_id", "EPIC-001").Visit("LOCAL-001", visit, round)
 	}
 	var out []map[string]any
 	add := func(e *feedtest.Ev) { out = append(out, e.Build()) }

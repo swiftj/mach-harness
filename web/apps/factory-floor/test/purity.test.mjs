@@ -46,9 +46,10 @@ test("src/sim and src/scene use only erasable TypeScript (node strips the types)
 
 test("the real kinds are exactly intake.py EVENT_TYPES", () => {
   const intake = readFileSync(join(repo, "skills", "run", "scripts", "intake.py"), "utf8");
-  const block = intake.slice(intake.indexOf("EVENT_TYPES = ("), intake.indexOf(")\nAPPROVED"));
+  const start = intake.indexOf("EVENT_TYPES = (");
+  const block = intake.slice(start, intake.indexOf("\n)\n", start));
   const kinds = [...block.matchAll(/"([a-z]+\.[a-z_]+)"/g)].map((m) => m[1]);
-  assert.equal(kinds.length, 22);
+  assert.equal(kinds.length, 21);
   assert.deepEqual([...sim.REAL_KINDS].sort(), kinds.sort());
 });
 

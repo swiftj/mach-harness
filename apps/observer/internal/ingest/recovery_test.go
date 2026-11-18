@@ -133,7 +133,7 @@ func TestCrashBetweenLogAndCheckpointsRepeatsNothing(t *testing.T) {
 	h := newHarness(t, root, dir, false)
 	h.drain()
 	old, _ := os.ReadFile(filepath.Join(dir, "checkpoints.json"))
-	for _, line := range [][]byte{v2(24, "human.required", "intake", "", "", map[string]any{"reason": "more"})} {
+	for _, line := range [][]byte{v3(24, "human.required", "intake", "", "", map[string]any{"reason": "more"})} {
 		testkit.Append(t, testkit.LedgerPath(root), line)
 	}
 	full, _ := os.ReadFile(testkit.StreamFixture("belt-build-verify-review.jsonl"))
@@ -237,7 +237,7 @@ func TestSettleWindowOrdersAcrossSourcesAndMarksLate(t *testing.T) {
 	root := testkit.Project(t)
 	h := newHarness(t, root, "", true)
 	h.tick()                                                                                                                                     // the (empty) history on disk is read: catching up is over
-	testkit.Append(t, testkit.LedgerPath(root), v2(1, "intake.validated", "intake", "", "", map[string]any{"digest": strings.Repeat("ab", 32)})) // 10:00:00.999
+	testkit.Append(t, testkit.LedgerPath(root), v3(1, "intake.validated", "intake", "", "", map[string]any{"digest": strings.Repeat("ab", 32)})) // 10:00:00.999
 	h.tick()
 	if h.st.Head() != 0 {
 		t.Fatal("an event stamped after the sources' read-through was committed")
@@ -352,7 +352,7 @@ func TestRewrittenAndTruncatedLedger(t *testing.T) {
 		t.Fatalf("%d events, had %d", len(evs), n)
 	}
 	// Rewritten with other contents: a new generation, new ids.
-	os.WriteFile(testkit.LedgerPath(root), v2(1, "human.required", "intake", "", "", map[string]any{"reason": "a new ledger"}), 0o644)
+	os.WriteFile(testkit.LedgerPath(root), v3(1, "human.required", "intake", "", "", map[string]any{"reason": "a new ledger"}), 0o644)
 	h.drain()
 	h.validate()
 	reasons := map[string]int{}

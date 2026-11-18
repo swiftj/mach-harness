@@ -43,7 +43,7 @@ cannot be honest:
 not in the follow-up pass, section 8 item 16, which lists what blocks it). It enters the same engine through the same log, with ids `sim:<seq>`, an order key of the same
 shape (`<t>~0~sim~<seq>~0000`), authority `simulated` on every entity and provenance `simulation` on
 every scene, so it can never be mistaken for real execution. Re-expressing it as v3 would change what
-it shows: 1,380 of its 2,126 events are per-call `tool.*` for workflow agents, which v3 makes a count,
+it shows: 1,380 of its 2,129 events are per-call `tool.*` for workflow agents, which v3 makes a count,
 and the M6.0 views still draw those ticks. What remains, for the wave that moves the views onto counts:
 
 1. Rewrite `sim/scenario` (`belt.ts`, `story.ts`, `recorder.ts`) to emit v3 envelopes: `agent.queued`
@@ -85,7 +85,7 @@ Measured (Node 25, Apple silicon, `test/live-scale.test.mjs`, run on this branch
 | One late event 300 behind the head | 320 reductions, 30 to 60 ms |
 | Random `sceneAt` over the whole 200,000 | 0.5 to 2.3 ms per call (varies run to run) |
 | Twelve concurrent cells (3,792 events) | 19 to 53 ms to reduce |
-| Simulation fixture (2,126 events) | indexed in 8 to 13 ms; `sceneAt` 0.4 to 0.6 µs per call once cached |
+| Simulation fixture (2,129 events) | indexed in 8 to 13 ms; `sceneAt` 0.4 to 0.6 µs per call once cached |
 
 ## 3. The two sources, in the store
 
@@ -198,11 +198,11 @@ list is not kept here; it is in Git history.
 | # | What | Where |
 |---|---|---|
 | 1 | A visit belongs to the judging round it starts (the lifecycle log's meaning). The simulation's revise visit is converted where it enters the scene (`reducer.ts`, `station.entered`). (The Blueprint, which drew it, is gone.) | `sim/reducer.ts` |
-| 2 | A repeated `wave.discovered` merges into the wave's slices (union, order of first sight) and keeps its first moment. `bayOrder(log)` is an assignment table per log: new bays ordered by the `order` of their first event, then appended; an index never changes (an older wave arriving late goes last). The Atlas lays out from it. | `sim/reduce-v3.ts`, `sim/selectors.ts`, `atlas/layout.ts`, `atlas/index.tsx` |
+| 2 | `bayOrder(log)` is an assignment table per log: new bays ordered by the `order` of their first event, then appended; an index never changes (an older slice arriving late goes last). (M11 removed waves, and with them the rule that merged a repeated `wave.discovered`.) The Atlas lays out from it. | `sim/reduce-v3.ts`, `sim/selectors.ts`, `atlas/layout.ts`, `atlas/index.tsx` |
 | 3 | An approved (or `pr-open`) cell not merged yet: `activityOf` says `completed` with `awaiting {step: "merge", label, by, basis}`; `by` is `person` only where an event says so (the execution stopped at that stage waiting for one; a refused merge), else null (not recorded). | `sim/selectors.ts` |
 | 4 | `VerificationState.listed {eventId, authority, count, late}` when `verify.targets_listed` (or the simulation's `verification.started`) was received; "expected" = pending checks of a listed round only. | `sim/model.ts` |
 | 5 | Review rounds (`eventId`, `late`, `decidedEventId`, `decidedLate`), seats (`votedEventId`, `votedLate`), human approvals (`eventId`, `late`), gate evaluations (`eventId`, `late`) and every `EntityMeta` (`late`). Scene `late` is the observer's own flag (part of the record); lateness to this browser stays on the log entry (`isLateEntry`), so delivery order never changes a scene. | `sim/*` |
-| 6 | A slice's risk follows the cell's recorded risk (`work.scheduled`, `review.round_started`). The human-approval visit's action is `stop` (run.py's answer at awaiting-human; `meta.inferred.action`). `cellHome(scene, ticket)`: a cell with no slice stands under its ticket, wave not recorded. | `sim/reduce-v3.ts`, `sim/selectors.ts` |
+| 6 | A slice's risk follows the cell's recorded risk (`work.scheduled`, `review.round_started`). The human-approval visit's action is `stop` (run.py's answer at awaiting-human; `meta.inferred.action`). `cellHome(scene, ticket)`: a cell with no slice stands under its ticket, with no epic. | `sim/reduce-v3.ts`, `sim/selectors.ts` |
 | 7 | `scene.capacityWaits` holds recorded waits whether or not the cell exists (`capacityWaits`, `capacityWaitOf`); gate evaluations name the gate state they set (`gateId`, null when none), `gateRefusals(scene, ticket?)` lists refusals no gate state stands for. | `sim/*` |
 | 8 | `project`, `workflow`, `visit`, `seat` are `EntityKind`s; `entityAt` resolves them by identity; `stableEntityAt` keeps the object while it does not change (for React selectors). Inspector sections for the four. | `sim/model.ts`, `sim/selectors.ts`, `shell/inspector/*`, `shell/vocab.ts`, `atlas/locate.ts` |
 | 9 | `timeScaleOf(state)`: one time scale for motion. Since the redesign: 1 live, `PLAYBACK_BASE_RATE` for the simulation. The Atlas (`setMotionSource`) reads it. | `scene/store.ts`, `atlas/derive.ts`, `atlas/index.tsx` |
@@ -304,7 +304,7 @@ What changed:
   execution's agents and tools; about 35 MB of JSON at 230,853 events), each history window read
   `/snapshot?at=` again, and a gap read `/snapshot` at the floor or the head. After: no `/snapshot`
   anywhere in the live source. A long history starts from the observer's summaries
-  (`/waves`, `/slices`, `/cells`, `/runs` paged by 1,000, `/project`: bounded by how many there are,
+  (`/slices`, `/cells`, `/runs` paged by 1,000, `/project`: bounded by how many there are,
   never by events) and its newest `liveWindow` events (`/events?after=`), then the stream. Only what no
   event of the window touches is seeded from the summaries (its state at the summaries' cursor holds
   through the window, so it may stand at the window's start), as a reconstructed
@@ -327,7 +327,7 @@ What changed:
 - **Atlas element budget (task 5)**, in `atlas/Bay.tsx` (`SummaryBay`), `Plant.tsx` (`Ruler`),
   `Stations.tsx`: the dense plant's mid-zoom peak on the `twelve` fixture from about 2,600 to 2,401
   (budget 2,500): summary bays lose their attribute-less wrapper groups, the main-line ruler's ticks
-  are one path, a wave's stack draws at most five sheets (the count is lettered), the merge berths and
+  are one path, the dock's stack of slices draws at most five sheets (the count is lettered), the merge berths and
   run-record shelf slots of a dense plant are one dashed path each, and a departed slice's holding pad
   in a dense plant at mid zoom is its outline. The simulation's Atlas markup at five moments and two
   zooms is the same but for the ruler's ticks folded into one path.

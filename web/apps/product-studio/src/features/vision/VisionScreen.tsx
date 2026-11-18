@@ -1,10 +1,10 @@
 import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
-import { Link, useLocation } from "react-router";
+import { useLocation } from "react-router";
 import { CircleAlert, Plus, X } from "lucide-react";
-import { ArtifactId, Banner, Button, EpicStatusPill, ErrorState, Field, Heading, Input, Page, Skeleton, SkeletonText, SourceBadge, Text, Textarea, cn, describeError, toast, type Status, type StatusEpicRow, HintAction } from "@mach/ui";
+import { ArtifactId, Banner, Button, EpicStatusPill, ErrorState, Field, Heading, Input, Page, Skeleton, SkeletonText, Text, Textarea, cn, describeError, toast, type Status, type StatusEpicRow, HintAction } from "@mach/ui";
 import { useEngineAct } from "../../api/act";
-import { useRefresh, useStatus } from "../../api/store";
-import { fieldWords } from "../../api/describe";
+import { useStatus } from "../../api/store";
+import { IssueNumber } from "../../shared/IssueLink";
 import { ApproveEpicDialog } from "./ApproveEpicDialog";
 import { EpicSheet, knownCriteria } from "./EpicSheet";
 import { NewSliceDialog } from "../roadmap/NewSliceDialog";
@@ -207,7 +207,6 @@ function ProjectCreator() {
 function ProjectEditor({ status }: { status: Status }) {
   const project = status.project!;
   const act = useEngineAct();
-  const refresh = useRefresh();
   const [name, setName] = useState(project.name);
   const [vision, setVision] = useState(project.vision);
   const [outcomes, setOutcomes] = useState<string[]>(project.outcomes.length ? project.outcomes : [""]);
@@ -220,9 +219,6 @@ function ProjectEditor({ status }: { status: Status }) {
     outcomes: JSON.stringify(clean(outcomes)) !== JSON.stringify(project.outcomes),
   };
   const dirty = changed.name || changed.vision || changed.outcomes;
-  const source = project.source ?? (status.needs_reconciling.conflicts.includes("product/project.json") ? "conflict" : undefined);
-  const conflict = source === "conflict" || source === "collision";
-  const sharedUpdate = refresh.data?.updated.find((u) => u.path === "product/project.json");
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
@@ -237,7 +233,7 @@ function ProjectEditor({ status }: { status: Status }) {
       ...(changed.vision ? { vision: vision.trim() } : {}),
       ...(changed.outcomes ? { outcome: clean(outcomes) } : {}),
     });
-    if (result) toast({ tone: "success", title: "Saved the project", description: "Your draft is updated. Others see it once a wave that includes it is accepted." });
+    if (result) toast({ tone: "success", title: "Saved the project", description: "Your draft is updated. The project's issue on GitHub follows the next time you mark a slice ready." });
   };
 
   const discard = () => {
@@ -257,30 +253,13 @@ function ProjectEditor({ status }: { status: Status }) {
               Vision
             </Heading>
             <ArtifactId>{project.project_id}</ArtifactId>
-            {source ? <SourceBadge source={source} showDraft /> : null}
+            {project.issue ? <IssueNumber number={project.issue} url={project.url} /> : null}
           </div>
           <Text editorial size="body-lg" tone="muted">
-            What the product is for and what people will get from it. Changes are saved to your draft; others see them once they are accepted.
+            What the product is for and what people will get from it. Changes are saved to your draft; the project&apos;s issue on GitHub follows
+            the next time you mark a slice ready.
           </Text>
-          {source === "published" ? (
-            <Text size="body-sm" tone="muted">
-              This is the version in the shared project. Saving a change makes it your draft until it is sent and accepted.
-            </Text>
-          ) : source === "draft" ? (
-            <Text size="body-sm" tone="muted">
-              Only in your workspace: not yet in the shared project.
-            </Text>
-          ) : null}
         </div>
-        {conflict ? (
-          <Banner tone="warning" title="The project changed here and in the shared project" actions={<Button size="sm" asChild><Link to="/inbox">Settle it</Link></Button>}>
-            Choose which version stands on the Decisions screen. Saving here changes only your draft.
-          </Banner>
-        ) : sharedUpdate ? (
-          <Banner tone="info" title="Updated from the shared project">
-            Another product manager’s accepted change arrived: {(sharedUpdate.fields ?? sharedUpdate.changed ?? []).map(fieldWords).join(", ") || "the project"}.
-          </Banner>
-        ) : null}
         <Field label="Name" error={errors.name}>
           <Input value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
@@ -335,7 +314,7 @@ function Epics({ status }: { status: Status }) {
           <Heading level={2} id="epics-title">
             Epics
           </Heading>
-          <Text tone="muted">The larger capabilities that make up the product. Approving an epic lets its slices be approved.</Text>
+          <Text tone="muted">The larger capabilities that make up the product. Approving an epic lets its slices be marked ready to build.</Text>
         </div>
         <Button variant="primary" onClick={() => setSheet({ mode: "add" })}>
           <Plus aria-hidden="true" />
@@ -361,7 +340,7 @@ function Epics({ status }: { status: Status }) {
                       {epic.title}
                     </Heading>
                     <EpicStatusPill status={epic.status} size="sm" />
-                    <SourceBadge source={epic.source} showDraft />
+                    {epic.issue ? <IssueNumber number={epic.issue} url={epic.url} /> : null}
                   </div>
                   {criteria ? (
                     <ul className="flex flex-col gap-0.5 pl-0.5">

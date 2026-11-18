@@ -286,7 +286,7 @@ func Began(ticket, reason string, info CellInfo, identity *Identity, r Read, fil
 	ev.IDs.TicketID, ev.IDs.CellInstance = ticket, instance
 	if identity != nil {
 		p := identity.ProductOf(ticket)
-		ev.IDs.SliceID, ev.IDs.WaveID, ev.IDs.Revision, ev.IDs.ProjectID = p.SliceID, p.WaveID, p.Revision, identity.ProjectID
+		ev.IDs.SliceID, ev.IDs.EpicID, ev.IDs.Issue, ev.IDs.Revision, ev.IDs.ProjectID = p.SliceID, p.EpicID, p.Issue, p.Revision, identity.ProjectID
 	}
 	var st, round any
 	if info.Stage != "" {

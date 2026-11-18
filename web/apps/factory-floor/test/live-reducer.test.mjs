@@ -32,7 +32,7 @@ test("v3 fixture: every event has the envelope's required fields and a kind the 
 
 test("a belt run (build, verify fails, revise, verify, review rejects, revise, verify, review approves, human gate) gives the expected scene", () => {
   const scene = logOf(EVENTS).head();
-  const cell = scene.cells["LOCAL-031"];
+  const cell = scene.cells["131"];
   assert.equal(scene.provenance.source, "live");
   assert.equal(cell.stage, "approved");
   assert.equal(cell.round, 3);
@@ -50,16 +50,16 @@ test("a belt run (build, verify fails, revise, verify, review rejects, revise, v
   assert.deepEqual(cell.visits.map((v) => v.outcome), ["done", "failed", "done", "passed", "rejected", "done", "passed", "awaiting-human", "approved"]);
   assert.deepEqual(cell.visits[2].action, "revise");
   assert.ok(cell.visits.every((v) => v.durationMs !== null && v.durationMs >= 0 && v.meta.end === "measured"), "visit durations are measured");
-  assert.equal(scene.gates["LOCAL-031/verification#1"].state, "failed");
-  assert.equal(scene.gates["LOCAL-031/verification#2"].state, "passed");
-  assert.equal(scene.gates["LOCAL-031/review#2"].state, "failed");
-  assert.equal(scene.gates["LOCAL-031/review#3"].state, "passed");
-  assert.equal(scene.gates["LOCAL-031/human-approval"].state, "passed");
-  assert.equal(scene.gates["LOCAL-031/human-approval"].detail, "Approved by a person.");
+  assert.equal(scene.gates["131/verification#1"].state, "failed");
+  assert.equal(scene.gates["131/verification#2"].state, "passed");
+  assert.equal(scene.gates["131/review#2"].state, "failed");
+  assert.equal(scene.gates["131/review#3"].state, "passed");
+  assert.equal(scene.gates["131/human-approval"].state, "passed");
+  assert.equal(scene.gates["131/human-approval"].detail, "Approved by a person.");
   assert.equal(scene.counters.verificationFailures, 1);
   assert.equal(cell.reviews.length, 2);
   assert.equal(cell.reviews[0].outcome, "REJECTED");
-  assert.equal(cell.reviews[0].findings[0].id, "LOCAL-031/r2/security/1");
+  assert.equal(cell.reviews[0].findings[0].id, "131/r2/security/1");
   assert.equal(cell.reviews[1].outcome, "APPROVED");
   assert.equal(cell.reviews[1].humanApproval.by, "a person", "people's names never appear (D15)");
   assert.deepEqual(cell.verifications.map((v) => v.status), ["FAIL_WITH_EVIDENCE", "PASS", "PASS"]);
@@ -75,7 +75,7 @@ test("a belt run (build, verify fails, revise, verify, review rejects, revise, v
 
 test("workflow agents are counted, not ticked: count known, calls unknown (contract 8.1)", () => {
   const scene = logOf(EVENTS).head();
-  const cell = scene.cells["LOCAL-031"];
+  const cell = scene.cells["131"];
   const workers = Object.values(cell.agents).filter((a) => a.observation === "count-only");
   assert.equal(workers.length, RUN.agents.length);
   for (const a of workers) {
@@ -120,10 +120,10 @@ test("degraded states: executing, waiting for a person, completed, failed, inter
   const entries = log.entries();
   const at = (pred) => entries.find(pred).t;
   const building = log.sceneAt(at((e) => e.event.type === "station.entered" && e.event.data.station === "build") + 1);
-  assert.equal(activityOf(building, "cell:LOCAL-031").state, "executing");
-  assert.equal(activityOf(building, "cell:LOCAL-031", { stale: true }).state, "stale", "a lost connection makes executing stale");
+  assert.equal(activityOf(building, "cell:131").state, "executing");
+  assert.equal(activityOf(building, "cell:131", { stale: true }).state, "stale", "a lost connection makes executing stale");
   const gate = log.sceneAt(at((e) => e.event.type === "human.required"));
-  assert.equal(activityOf(gate, "cell:LOCAL-031").state, "waiting-person");
+  assert.equal(activityOf(gate, "cell:131").state, "waiting-person");
   const end = log.head();
   assert.equal(activityOf(end, "execution:x1a2b3c4d5e6f").state, "completed");
   // Approved and not merged: its state is known (review done, merge next); who merges is not recorded.
@@ -131,7 +131,7 @@ test("degraded states: executing, waiting for a person, completed, failed, inter
   assert.equal(approved.state, "completed");
   assert.deepEqual(approved.awaiting, { step: "merge", label: "Approved, not merged yet", by: null, basis: null });
   assert.match(approved.reason, /Who merges is not recorded/);
-  const agent = Object.values(end.cells["LOCAL-031"].agents).find((a) => a.observation === "count-only");
+  const agent = Object.values(end.cells["131"].agents).find((a) => a.observation === "count-only");
   assert.equal(activityOf(end, `agent:${agent.id}`).state, "completed");
   assert.equal(activityOf(end, "cell:NOPE").state, "unknown");
 
@@ -162,7 +162,7 @@ test("waiting for resources only where a wait is recorded (capacity.wait_changed
 
 test("every value a view may draw carries its authority, what is unknown, and how its times are known", () => {
   const scene = logOf(EVENTS).head();
-  const cell = scene.cells["LOCAL-031"];
+  const cell = scene.cells["131"];
   assert.equal(authorityOf(cell.meta, "stage"), "authoritative");
   assert.equal(isKnown(cell.meta, "title"), false, "no product definitions in a live scene: the title is a placeholder");
   assert.equal(isKnown(cell.meta, "risk"), true, "work.scheduled recorded the risk");
@@ -177,23 +177,23 @@ test("every value a view may draw carries its authority, what is unknown, and ho
   const s = finalScene(SCENARIO);
   assert.equal(s.provenance.source, "simulation");
   assert.equal(s.provenance.label, "Simulation");
-  assert.equal(s.cells["LOCAL-031"].meta.authority, "simulated");
+  assert.equal(s.cells["131"].meta.authority, "simulated");
   assert.ok(allAgents(s).every((a) => a.meta.authority === "simulated" && a.observation === "per-call"));
   assert.equal(sceneAt(SCENARIO, 0).provenance.source, "simulation");
 });
 
 test("event-to-entity links in both directions (for Evidence Theater and Analytics)", () => {
   const log = logOf(EVENTS);
-  const ids = eventIdsFor(log, "gate:LOCAL-031/review#2");
+  const ids = eventIdsFor(log, "gate:131/review#2");
   assert.ok(ids.length >= 4);
-  for (const id of ids) assert.ok(refsOfEntry(log, id).includes("gate:LOCAL-031/review#2"));
-  const finding = eventsFor(log, "finding:LOCAL-031/r2/security/1");
+  for (const id of ids) assert.ok(refsOfEntry(log, id).includes("gate:131/review#2"));
+  const finding = eventsFor(log, "finding:131/r2/security/1");
   assert.equal(finding.length, 1);
   assert.equal(finding[0].authority, "reconstructed");
-  assert.ok(eventsFor(log, "visit:LOCAL-031/verify#1").length >= 4, "visit refs index their events");
-  const visit = liveEntityAt(log.head(), "visit:LOCAL-031/verify#1");
+  assert.ok(eventsFor(log, "visit:131/verify#1").length >= 4, "visit refs index their events");
+  const visit = liveEntityAt(log.head(), "visit:131/verify#1");
   assert.equal(visit.value.outcomeWord, "FAIL_WITH_EVIDENCE");
-  assert.equal(liveEntityAt(log.head(), "seat:LOCAL-031/review#2/security").value.vote, "REJECT");
+  assert.equal(liveEntityAt(log.head(), "seat:131/review#2/security").value.vote, "REJECT");
   assert.equal(liveEntityAt(log.head(), "workflow:x1a2b3c4d5e6f/task0001").value.executionId, "x1a2b3c4d5e6f");
   assert.ok(describeEntry(log.entries().at(-1)).length > 5);
 });
@@ -214,8 +214,8 @@ test("determinism: the same events give the same scene object graph", () => {
   const b = logOf(structuredClone(EVENTS)).head();
   assert.deepStrictEqual(a, b);
   assert.equal(JSON.stringify(a), JSON.stringify(b));
-  assert.ok(relatedRefs(a, "cell:LOCAL-031").includes("slice:SLICE-021"));
-  assert.equal(entityAt(a, "cell:LOCAL-031").value.ticketId, "LOCAL-031");
+  assert.ok(relatedRefs(a, "cell:131").includes("slice:SLICE-021"));
+  assert.equal(entityAt(a, "cell:131").value.ticketId, "131");
 });
 
 test("an unknown kind from a later revision is kept and not reduced", () => {

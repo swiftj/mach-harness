@@ -12,12 +12,12 @@ const { createSceneLog, provenance, activityOf, sliceHoldOf, holdOf, isKnown } =
 const t0 = Date.UTC(2026, 10, 14, 15, 10, 37, 999);
 const WHY = "Dispatch by 'supervisor' was not authorized: the readiness audit is stale. Nothing was dispatched.";
 let seq = 0;
-const intake = (type, t, ids, data) => ev(type, { stream: "intake-log", key: "i:cb515669", seq: ++seq, t, precision: "s", ids: { project_id: "textkit", wave_id: "WAVE-001", ...ids }, entities: ids.slice_id ? [`slice:${ids.slice_id}`] : [], data });
+const intake = (type, t, ids, data) => ev(type, { stream: "intake-log", key: "i:cb515669", seq: ++seq, t, precision: "s", ids: { project_id: "textkit", epic_id: "EPIC-001", ...ids }, entities: ids.slice_id ? [`slice:${ids.slice_id}`] : [], data });
 
 function run({ releaseHold = false, title = "Unique link name" } = {}) {
   seq = 0;
   const events = [
-    intake("wave.discovered", t0, {}, { slices: ["SLICE-003"], approval: { approved_at: "2026-11-13T09:00:00Z", by_role: "person" } }),
+    intake("intake.validated", t0, { slice_id: "SLICE-003", revision: 2 }, { digest: "c".repeat(64) }),
     intake("slice.materialized", t0, { slice_id: "SLICE-003", ticket_id: "LOCAL-003", revision: 2 }, { digest: "c".repeat(64), adopted: false, dependencies: [], reissued: null, title }),
     intake("dependency.resolved", t0, { slice_id: "SLICE-003", ticket_id: "LOCAL-003", revision: 2 }, { depends_on: [] }),
     intake("scheduling.decided", t0 + 494_000, {}, { state: "supervised", dispatched: [], started: [], held: [{ slice_id: "SLICE-003", why: WHY }] }),

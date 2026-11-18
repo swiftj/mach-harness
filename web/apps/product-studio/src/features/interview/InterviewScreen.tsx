@@ -1,5 +1,5 @@
-import { useEffect, type ReactNode } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { useEffect, useRef, type ReactNode } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { ArrowLeft, CircleAlert, MessagesSquare, Pause, SearchX, Square, Users, WifiOff } from "lucide-react";
 import {
   Badge,
@@ -28,7 +28,8 @@ import { Transcript } from "./Transcript";
 import { useInterview, type InterviewController } from "./useInterview";
 import { useSliceShow } from "../../api/useSliceShow";
 import { useStatus } from "../../api/store";
-import { ApproveDialog } from "../spec/SliceActs";
+import { MarkReadyDialog } from "../spec/SliceActs";
+import { BuildersQuestion } from "../../shared/BuildersQuestion";
 
 const PAUSE_REQUEST = "I need to stop here. Please save where we are so I can continue later.";
 
@@ -55,6 +56,15 @@ function InterviewWorkspace({ sliceId }: { sliceId: string }) {
   const status = useStatus();
   const iv = useInterview(sliceId);
   const { model } = iv;
+  // Reached from "Answer it": start (or join) the interview at once; the host opens a turn on the builders' question.
+  const answering = Boolean((useLocation().state as { answer?: boolean } | null)?.answer);
+  const started = useRef(false);
+  useEffect(() => {
+    if (answering && (iv.phase === "idle" || iv.phase === "live") && !started.current) {
+      started.current = true;
+      iv.start();
+    }
+  }, [answering, iv]);
 
   // Reload the validated draft when the host reports a write. Several arrive close together.
   const reload = show.reload;
@@ -87,6 +97,7 @@ function InterviewWorkspace({ sliceId }: { sliceId: string }) {
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.15fr)_minmax(22rem,1fr)]">
         <section aria-label="Interview" className="min-h-0 overflow-y-auto px-10 py-10">
           <div className="mx-auto flex max-w-[44rem] flex-col gap-10">
+            {show.data ? <BuildersQuestion github={show.data.github} /> : null}
             <Current iv={iv} busy={busy} sliceId={sliceId} show={show.data} onApproved={show.reload} />
             <Settled decisions={model.decisions} />
             {iv.phase === "live" && model.timeline.length ? (
@@ -325,25 +336,25 @@ function Current({ iv, busy, sliceId, show, onApproved }: { iv: InterviewControl
 }
 
 /**
- * The engine reports the slice ready (its check passes, nothing open): the approval act, with what
- * approving does today. The dialog says it again and the engine checks once more.
+ * The engine reports the slice ready (its check passes, nothing open): marking it ready to build,
+ * with what that does. The dialog says it again and the engine checks once more.
  */
 function ApprovalOffer({ show, onApproved }: { show: SliceShow; onApproved: () => void }) {
   const navigate = useNavigate();
   return (
     <section aria-labelledby="approval-title" className="flex flex-col gap-5">
       <Heading level={2} size="title-1" id="approval-title">
-        Nothing is left open. Read it through, then approve it.
+        Nothing is left open. Read it through, then mark it ready to build.
       </Heading>
       <div className="flex flex-col gap-1 rounded-sm border-l-2 border-accent bg-accent-soft px-4 py-3">
-        <p className="text-label text-accent-ink">What approving means</p>
+        <p className="text-label text-accent-ink">What marking it ready does</p>
         <p className="text-body-lg text-ink">
-          You record that this specification is what you want built, and it is frozen until you reopen it. Nothing goes to engineering until you
-          send it in a delivery wave.
+          It saves the slice to the project on GitHub, under its epic, and tells the builders it is ready. It records that you approved exactly
+          this text, which stays frozen until you reopen it.
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-3">
-        <ApproveDialog
+        <MarkReadyDialog
           show={show}
           primary
           onDone={() => {

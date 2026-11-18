@@ -23,10 +23,10 @@ const withHook = () => {
 
 test("hook: the capture script can select, focus, switch workspace, mode and theater", () => {
   const { hook } = withHook();
-  hook.select("cell:LOCAL-031");
-  assert.equal(hook.state().selection, "cell:LOCAL-031");
-  hook.focus("gate:LOCAL-032/human-approval");
-  assert.equal(hook.state().focus, "gate:LOCAL-032/human-approval");
+  hook.select("cell:131");
+  assert.equal(hook.state().selection, "cell:131");
+  hook.focus("gate:132/human-approval");
+  assert.equal(hook.state().focus, "gate:132/human-approval");
   hook.focus("overview");
   assert.equal(hook.state().focus, "overview");
   hook.setWorkspace("floor");
@@ -107,12 +107,12 @@ test("follow: on by default, off when the person pans or zooms, back on with set
 
 test("follow: a camera request the person made releases it; the follow camera's own requests do not", () => {
   const { store } = withHook();
-  store.focusOn("cell:LOCAL-031", "follow");
+  store.focusOn("cell:131", "follow");
   assert.equal(store.getState().follow, true);
-  store.select("cell:LOCAL-033");
+  store.select("cell:133");
   assert.equal(store.getState().follow, false);
   store.setFollow(true);
-  store.select("cell:LOCAL-031", { focus: false });
+  store.select("cell:131", { focus: false });
   assert.equal(store.getState().follow, true, "selecting without framing leaves follow alone");
   store.focusOn("overview", "api");
   assert.equal(store.getState().follow, false);
@@ -159,7 +159,7 @@ test("actors: attribution is truthful to the fixture", () => {
     assert.ok(ACTOR_KINDS[actor].includes(event.type) || event.type === "human.required");
   }
   // Intake's own kinds, the engineer's commands and the stations' facts belong to no actor.
-  for (const kind of ["wave.discovered", "slice.materialized", "factory.activated", "human.approval_recorded", "agent.started", "review.decided"]) {
+  for (const kind of ["intake.validated", "slice.materialized", "factory.activated", "human.approval_recorded", "agent.started", "review.decided"]) {
     assert.equal(actorOf(SCENARIO.events.find((e) => e.type === kind)), null, kind);
   }
 });
@@ -193,7 +193,7 @@ test("timing: tool calls and station visits the same way", () => {
   const known = toolCallTimingAt(call, t);
   assert.equal(known.finished, true);
   assert.equal(known.elapsed, call.finishedAt - call.startedAt);
-  const visit = scene.cells["LOCAL-031"].visits.find((v) => v.leftAt === null);
-  assert.ok(visit, "LOCAL-031 is at a station");
+  const visit = scene.cells["131"].visits.find((v) => v.leftAt === null);
+  assert.ok(visit, "131 is at a station");
   assert.deepEqual(visitTimingAt(visit, t), { started: true, startedAt: visit.enteredAt, elapsed: t - visit.enteredAt, finishedAt: null, finished: false });
 });

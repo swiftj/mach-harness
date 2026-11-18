@@ -55,9 +55,9 @@ const (
 )
 
 // Dimensions every cell-attached metric carries where the cell is known: its risk and app type at
-// the time of the event (empty is reported as the group "unknown"). Wave is kept only where the
-// catalog lists it (T1, T2, C3, C4, W1, W2): on every metric it multiplied the cells by the number
-// of waves.
+// the time of the event (empty is reported as the group "unknown"). Epic is kept only where the
+// catalog lists it (T1, T2, C3, C4, W1, W2): on every metric it would multiply the cells by the
+// number of epics.
 var cellDims = []string{"risk", "app_type"}
 
 func with(dims ...string) []string { return append(dims, cellDims...) }
@@ -67,24 +67,22 @@ var runDims = []string{"risk", "app_type", "outcome"}
 // Catalog is the metric catalog, in the shared contract's order.
 var Catalog = []Def{
 	{ID: "T1", Name: "Tickets merged", Kind: "count", Unit: "tickets", Numerator: "merge.completed", Denominator: "per period",
-		Dimensions: []string{"risk", "app_type", "wave", "writer"}, Source: "cell lifecycle", Authority: "authoritative", Limitations: "merged is not accepted (T2)", Avail: "lifecycle", Stream: "lifecycle"},
+		Dimensions: []string{"risk", "app_type", "epic", "writer"}, Source: "cell lifecycle", Authority: "authoritative", Limitations: "merged is not accepted (T2)", Avail: "lifecycle", Stream: "lifecycle"},
 	{ID: "T2", Name: "Accepted delivery", Kind: "count", Unit: "slices", Numerator: "slice.integrated", Denominator: "per period",
-		Dimensions: []string{"wave", "risk", "app_type"}, Source: "intake log", Authority: "authoritative", Limitations: "stamped when the plan noticed; non-product tickets have no slice; risk and app type are the ticket's when the slice was integrated", Avail: "yes", Stream: "intake"},
-	{ID: "T3", Name: "Waves delivered", Kind: "count", Numerator: "waves whose every current slice is integrated", Denominator: "per period", Source: "intake log", Authority: "authoritative", Avail: "yes", Unavailable: deferred, Deferred: true},
+		Dimensions: []string{"epic", "risk", "app_type"}, Source: "intake log", Authority: "authoritative", Limitations: "stamped when the plan noticed; non-product tickets have no slice; risk and app type are the ticket's when the slice was integrated", Avail: "yes", Stream: "intake"},
 	{ID: "C1", Name: "Station cycle time", Kind: "duration", Unit: "ms", Numerator: "sum of measured visit durations", Denominator: "visits with a measured duration",
 		Dimensions: with("station", "round"), Source: "cell lifecycle (station.entered to station.exited)", Authority: "authoritative", Limitations: "cells without a lifecycle log are excluded; bounded, unknown and open visits are counted apart, not averaged", Avail: "lifecycle", Stream: "lifecycle", Open: true},
 	{ID: "C2", Name: "Station visits per ticket", Kind: "mean", Unit: "visits", Numerator: "visits", Denominator: "tickets with a lifecycle log",
 		Dimensions: with("station", "ticket"), Source: "cell lifecycle", Authority: "authoritative", Limitations: "a ticket counts in the denominator when it recorded a visit in the window; by station, the denominator is the tickets that visited that station", Avail: "lifecycle", Stream: "lifecycle", Distinct: "ticket"},
 	{ID: "C3", Name: "End-to-end cycle time, dispatch to merge", Kind: "duration", Unit: "ms", Numerator: "work.scheduled to merge.completed", Denominator: "merged product tickets",
-		Dimensions: []string{"risk", "app_type", "wave"}, Source: "intake log and cell lifecycle", Authority: "authoritative", Limitations: "product tickets only; whole-second start", Avail: "lifecycle", Stream: "lifecycle"},
+		Dimensions: []string{"risk", "app_type", "epic"}, Source: "intake log and cell lifecycle", Authority: "authoritative", Limitations: "product tickets only; whole-second start", Avail: "lifecycle", Stream: "lifecycle"},
 	{ID: "C4", Name: "End-to-end, eligible to integrated", Kind: "duration", Unit: "ms", Numerator: "dependency.resolved (or slice.materialized) to slice.integrated", Denominator: "integrated slices",
-		Dimensions: []string{"wave", "risk", "app_type"}, Source: "intake log", Authority: "authoritative", Limitations: "includes queue wait", Avail: "yes", Stream: "intake"},
-	{ID: "C5", Name: "Wave lead time", Kind: "duration", Numerator: "wave.discovered to last slice.integrated", Denominator: "delivered waves", Source: "intake log", Authority: "authoritative", Avail: "yes", Unavailable: deferred, Deferred: true},
+		Dimensions: []string{"epic", "risk", "app_type"}, Source: "intake log", Authority: "authoritative", Limitations: "includes queue wait", Avail: "yes", Stream: "intake"},
 	{ID: "W1", Name: "Dependency wait", Kind: "duration", Unit: "ms", Numerator: "dependency.blocked to dependency.resolved", Denominator: "slices ever blocked",
-		Dimensions: []string{"wave", "risk", "app_type"}, Source: "intake log", Authority: "authoritative", Avail: "yes", Stream: "intake", Open: true,
+		Dimensions: []string{"epic", "risk", "app_type"}, Source: "intake log", Authority: "authoritative", Avail: "yes", Stream: "intake", Open: true,
 		Partial: "the denominator is closed waits, not slices: a slice blocked twice counts twice"},
 	{ID: "W2", Name: "Queue wait (eligible, not dispatched)", Kind: "duration", Unit: "ms", Numerator: "slice eligible to work.scheduled", Denominator: "dispatched slices",
-		Dimensions: []string{"wave", "risk", "app_type"}, Source: "intake log", Authority: "authoritative", Limitations: "cell-capacity and engineer waits are not separable (a slice waiting for a free cell is not recorded); writer is not known when a slice is dispatched", Avail: "yes", Stream: "intake"},
+		Dimensions: []string{"epic", "risk", "app_type"}, Source: "intake log", Authority: "authoritative", Limitations: "cell-capacity and engineer waits are not separable (a slice waiting for a free cell is not recorded); writer is not known when a slice is dispatched", Avail: "yes", Stream: "intake"},
 	{ID: "W2b", Name: "Execution-capacity wait", Kind: "duration", Unit: "ms", Numerator: "capacity.wait_changed waiting to released", Denominator: "tickets ever held for capacity",
 		Dimensions: cellDims, Source: "reconstructed from scheduling.decided.held[] (rule held-sentence)", Authority: "reconstructed", Limitations: "supervised mode only; never inferred from silence; slice-level capacity waits are not counted", Avail: "yes", Stream: "observer", Open: true,
 		Partial: "the denominator is closed waits, not tickets: a ticket held twice counts twice"},

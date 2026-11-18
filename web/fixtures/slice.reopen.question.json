@@ -1,0 +1,30 @@
+{
+  "exit_code": 0,
+  "data": {
+    "reopened": true,
+    "slice": {
+      "dependencies": [],
+      "epic_id": "EPIC-001",
+      "open_questions": [],
+      "project_id": "team-space",
+      "revision": 3,
+      "schema_version": 1,
+      "slice_id": "SLICE-001",
+      "spec_path": "specs/slices/SLICE-001-invite-teammate.md",
+      "spec_sha256": null,
+      "status": "interviewing",
+      "title": "Invite a teammate"
+    },
+    "github": {
+      "where": "github",
+      "issue": 3,
+      "building": false,
+      "question": true,
+      "shipped": false
+    },
+    "note": "It is no longer marked ready on GitHub (#3). You can change it now. Mark it ready again when it is done. Answer the builders' question in the interview; when you mark it ready again, the builders take the new version and plan again.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

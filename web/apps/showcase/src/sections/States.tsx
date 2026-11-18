@@ -1,4 +1,4 @@
-import { FileQuestion, Layers, RefreshCw, Send, WifiOff } from "lucide-react";
+import { CircleCheck, FileQuestion, Layers, RefreshCw, ShieldAlert } from "lucide-react";
 import {
   ArtifactId,
   Badge,
@@ -17,8 +17,8 @@ import { Section, Specimen } from "../layout";
 import { fx, runs } from "../fixtures";
 
 export function States() {
-  const refresh = fx.refreshConflicts;
   const offline = fx.refreshOffline;
+  const changed = fx.statusStates.slices.find((s) => s.github.changed_on_github);
   const check = fx.sliceCheckErrors;
   return (
     <Section
@@ -32,9 +32,9 @@ export function States() {
             <Badge>3 slices</Badge>
             <Badge tone="warning">Risk High</Badge>
             <Badge tone="info" outline>
-              Shared
+              #{fx.sliceReady.issue}
             </Badge>
-            <Badge tone="warning">Conflict</Badge>
+            <Badge tone="warning">Number taken</Badge>
             <Badge tone="danger">2 errors</Badge>
             <Badge tone="success">Ready</Badge>
           </div>
@@ -43,33 +43,23 @@ export function States() {
             <StatusPill tone="info" icon={<StateGlyph shape="half" />}>Interviewing</StatusPill>
             <StatusPill tone="accent" icon={<StateGlyph shape="ready" />}>Ready for approval</StatusPill>
             <StatusPill tone="success" icon={<StateGlyph shape="approved" />}>Approved</StatusPill>
-            <StatusPill tone="info" icon={<StateGlyph shape="submitted" />}>Waiting for review</StatusPill>
-            <StatusPill tone="success" icon={<StateGlyph shape="accepted" />}>Accepted</StatusPill>
-            <StatusPill tone="danger" icon={<StateGlyph shape="blocked" />}>Blocked by a check</StatusPill>
+            <StatusPill tone="info" icon={<StateGlyph shape="submitted" />}>Ready to build</StatusPill>
+            <StatusPill tone="info" icon={<StateGlyph shape="building" />}>Being built</StatusPill>
+            <StatusPill tone="warning" icon={<StateGlyph shape="question" />}>Question from the builders</StatusPill>
+            <StatusPill tone="success" icon={<StateGlyph shape="accepted" />}>Shipped</StatusPill>
+            <StatusPill tone="danger" icon={<StateGlyph shape="blocked" />}>Changed on GitHub after you approved it</StatusPill>
             <StatusPill tone="neutral" icon={<StateGlyph shape="superseded" />}>Superseded</StatusPill>
           </div>
         </div>
       </Specimen>
 
-      <Specimen title="Banners" source="refresh.conflicts.json, refresh.offline.json, validate.json" note="A banner stays while the situation lasts. It is not dismissed by a timer.">
+      <Specimen title="Banners" source="status.states.json, refresh.offline.json, validate.json, slice.ready.json" note="A banner stays while the situation lasts. It is not dismissed by a timer.">
         <div className="flex flex-col gap-3">
-          <Banner
-            tone="warning"
-            title={`${refresh.needs_reconciling.conflicts.length} items changed both in your drafts and in the shared project`}
-            actions={<Button size="sm">Settle them</Button>}
-          >
-            {refresh.needs_reconciling.conflicts.map((path, i) => (
-              <span key={path}>
-                {i > 0 ? ", " : null}
-                <span className="font-mono text-caption">{path}</span>
-              </span>
-            ))}
-            . Choose which version stands before approving anything that depends on them.
-          </Banner>
-          <Banner tone="info" title={`${refresh.arrived.length} item arrived from the shared project`}>
-            <span className="font-mono text-caption">{refresh.arrived.join(", ")}</span>. Updated: the project's{" "}
-            {refresh.updated.flatMap((u) => u.fields ?? []).join(", ")}.
-          </Banner>
+          {changed ? (
+            <Banner tone="warning" title={`${changed.title} was changed on GitHub after you approved it`} actions={<Button size="sm">Mark it ready again</Button>}>
+              The builders will not take it until you put your approved version back.
+            </Banner>
+          ) : null}
           <Banner
             tone="warning"
             title="Could not reach the shared project"
@@ -86,8 +76,8 @@ export function States() {
           <Banner tone="danger" title="The workspace has a structural problem">
             {fx.validate.errors[0]}
           </Banner>
-          <Banner tone="success" title={`${fx.waveApprove.wave.wave_id} approved`}>
-            {fx.waveApprove.note}
+          <Banner tone="success" title={`${fx.sliceReady.slice.slice_id} is ready to build`}>
+            {fx.sliceReady.note}
           </Banner>
         </div>
       </Specimen>
@@ -101,15 +91,15 @@ export function States() {
             action={<Button variant="primary">Define the project</Button>}
           />
         </Specimen>
-        <Specimen title="Error: the engine refused" source="send.refused-offline.json" note="A refusal is the engine saying no. Its message is written for a person, so it is shown as is.">
+        <Specimen title="Error: the engine refused" source="slice.ready.refused-newer-elsewhere.json" note="A refusal is the engine saying no. Its message is written for a person, so it is shown as is.">
           <ErrorState
-            icon={<WifiOff />}
-            title="WAVE-001 was not sent"
-            message={runs.sendRefusedOffline.refused}
+            icon={<ShieldAlert />}
+            title="SLICE-004 was not marked ready"
+            message={runs.sliceReadyRefusedNewer.refused}
             action={
               <Button size="sm">
-                <Send aria-hidden="true" />
-                Send again
+                <CircleCheck aria-hidden="true" />
+                Choose a version
               </Button>
             }
           />
@@ -134,11 +124,11 @@ export function States() {
             </Text>
           </div>
         </Specimen>
-        <Specimen title="Refusal with steps" source="slice.approve.refused-no-spec.json">
+        <Specimen title="Refusal with steps" source="slice.ready.refused-no-spec.json">
           <ErrorState
             icon={<FileQuestion />}
-            title="SLICE-001 cannot be approved yet"
-            message={(runs.sliceApproveRefusedNoSpec.refused ?? "").split("\n").slice(1).map((line) => `• ${line.trim()}`).join("\n")}
+            title="SLICE-001 cannot be marked ready yet"
+            message={(runs.sliceReadyRefusedNoSpec.refused ?? "").split("\n").slice(1).map((line) => `• ${line.trim()}`).join("\n")}
           />
         </Specimen>
         <Specimen title="Loading" note="Say what is loading. Use a skeleton when the shape of the result is known.">

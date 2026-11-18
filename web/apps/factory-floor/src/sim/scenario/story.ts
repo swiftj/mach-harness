@@ -1,20 +1,21 @@
 /**
- * The storyboard, as a script. One approved delivery wave (WAVE-007, five invoicing slices) arrives
- * at a Factory a person has just enabled. The supervisor takes it in, dispatches the three slices
+ * The storyboard, as a script. Five invoicing slices of one epic (EPIC-004, issue #130), each a
+ * GitHub issue marked ready to build, reach a Factory a person has just enabled. Each issue is its
+ * own ticket (#131 to #135). The supervisor takes them in, dispatches the three slices
  * that depend on nothing, and runs one execution of the mach:belt workflow per ticket, in parallel:
  *
- *   LOCAL-033 (SLICE-023, Medium)  plan, build, verify PASS, review APPROVED 2 of 3 with one outvoted
+ *   133 (SLICE-023, Medium)  plan, build, verify PASS, review APPROVED 2 of 3 with one outvoted
  *                                  product blocker, merge (no revalidation: first to land), cleanup.
- *   LOCAL-031 (SLICE-021, Medium)  plan, build, verify FAILS on matrix rule R4, revise (round 2),
+ *   131 (SLICE-021, Medium)  plan, build, verify FAILS on matrix rule R4, revise (round 2),
  *                                  verify PASS, review round 2 APPROVED 3 of 3, merge with
  *                                  revalidation, cleanup. Its merge frees SLICE-024.
- *   LOCAL-032 (SLICE-022, High)    changes an existing contract; review round 1 REJECTED by a security
+ *   132 (SLICE-022, High)    changes an existing contract; review round 1 REJECTED by a security
  *                                  blocker, revise, verify, delta review round 2 AWAITING_HUMAN; the
  *                                  execution stops at the human gate; Daniel Okafor approves; a new
  *                                  execution merges it with revalidation and cleans up.
- *   LOCAL-034 (SLICE-024, Medium)  waits for SLICE-021; eligible and dispatched when it is integrated;
+ *   134 (SLICE-024, Medium)  waits for SLICE-021; eligible and dispatched when it is integrated;
  *                                  still building when the scenario ends.
- *   LOCAL-035 (SLICE-025, High)    waits for SLICE-022 and SLICE-024 throughout.
+ *   135 (SLICE-025, High)    waits for SLICE-022 and SLICE-024 throughout.
  *
  * The supervisor ticks every 60 s (poll_seconds 60): it observes stage changes, records the plan,
  * notices finished executions and starts new ones only on ticks, as supervisor.py does.
@@ -22,7 +23,7 @@
 import type { AnySimEvent, EventDataMap } from "../events";
 import type { Chapter, Fixture } from "../model";
 import type { CellStage, Risk } from "../vocabulary";
-import { CONTENT, DEFINITIONS, PEOPLE, PROJECT, SLICE_IDS, TICKETS, WAVE } from "./content";
+import { CONTENT, DEFINITIONS, EPIC, ISSUES, PEOPLE, PROJECT, REVISION, SLICE_IDS, TICKETS } from "./content";
 import { approveByPerson, build, cleanup, endWorkflow, leave, merge, next, plan, review, revise, startWorkflow, verify, type MainLine, type Suite } from "./belt";
 import { Lane, Recorder, SCENARIO_START, hex, sha40, uuidFrom, type Envelope, type Handle } from "./recorder";
 
@@ -38,8 +39,8 @@ export function tickAfter(t: number): number {
 }
 
 const RUNNER = uuidFrom("runner:priya-macbook");
-const PRODUCT_COMMIT = sha40("product:WAVE-007:r1");
-const MAIN_AT_DISPATCH = sha40("main:before-wave-007");
+const PRODUCT_COMMIT = sha40("product:EPIC-004:r1");
+const MAIN_AT_DISPATCH = sha40("main:before-epic-004");
 const LIMITS: EventDataMap["factory.activated"]["limits"] = {
   max_parallel: 3,
   max_execution_minutes: 120,
@@ -54,19 +55,20 @@ const risk = (slice: string): Risk => DEFINITIONS.slices[slice]?.risk ?? "Medium
 const title = (slice: string): string => DEFINITIONS.slices[slice]?.title ?? slice;
 
 export function buildScenario(): Fixture {
-  const rec = new Recorder(PROJECT.id, RUNNER, PRODUCT_COMMIT);
+  const rec = new Recorder(RUNNER, PRODUCT_COMMIT);
   const sliceEnv = (slice: string, extra: Partial<Envelope> = {}): Envelope => ({
     source: "supervisor",
-    wave_id: WAVE.id,
+    epic_id: EPIC.id,
+    issue: ISSUES[slice] ?? null,
     slice_id: slice,
-    revision: WAVE.revision,
+    revision: REVISION,
     ticket_id: TICKETS[slice] ?? null,
     ...extra,
   });
   const lanes: Record<string, Lane> = {};
   const laneOf = (slice: string): Lane => {
     const ticket = TICKETS[slice] ?? slice;
-    lanes[ticket] ??= new Lane(rec, ticket, slice, WAVE.id, WAVE.revision);
+    lanes[ticket] ??= new Lane(rec, ticket, slice, EPIC.id, ISSUES[slice] ?? null, REVISION);
     return lanes[ticket];
   };
   const archivedAt: Record<string, number> = {};
@@ -84,13 +86,13 @@ export function buildScenario(): Fixture {
     excluded_slices: [],
   }, { source: "engineer", source_commit: null });
 
-  // ------------------------------------------------------------ 00:30 first tick: intake takes the wave in
+  // ------------------------------------------------------------ 00:30 first tick: intake takes the ready issues in
+  // Each slice revision is verified (intake.validated), then filed as its ticket: its own issue (slice.materialized).
   const t1 = TICK0;
-  rec.emit(t1 + 100, "wave.discovered", { slices: [...SLICE_IDS], approval: { actor: PEOPLE.productManager, approved_at: WAVE.approvedAt } },
-    { source: "supervisor", wave_id: WAVE.id, revision: WAVE.revision });
-  rec.emit(t1 + 200, "intake.validated", { digest: `sha256:${hex("wave-007-digest", 64)}` }, { source: "supervisor", wave_id: WAVE.id, revision: WAVE.revision });
   SLICE_IDS.forEach((slice, i) => {
-    rec.emit(t1 + 320 + i * 70, "slice.materialized", { digest: `sha256:${hex(`${slice}-digest`, 64)}`, adopted: false, dependencies: [...(DEFINITIONS.slices[slice]?.dependencies ?? [])] }, sliceEnv(slice));
+    const digest = `sha256:${hex(`${slice}-digest`, 64)}`;
+    rec.emit(t1 + 300 + i * 70, "intake.validated", { digest }, sliceEnv(slice, { ticket_id: null }));
+    rec.emit(t1 + 320 + i * 70, "slice.materialized", { digest, adopted: false, dependencies: [...(DEFINITIONS.slices[slice]?.dependencies ?? [])] }, sliceEnv(slice));
   });
   for (const slice of ["SLICE-021", "SLICE-022", "SLICE-023"]) rec.emit(t1 + 720, "dependency.resolved", { depends_on: [] }, sliceEnv(slice));
   rec.emit(t1 + 740, "dependency.blocked", { reasons: ["It waits for SLICE-021 to be integrated (now queued)."] }, sliceEnv("SLICE-024"));
@@ -136,7 +138,7 @@ export function buildScenario(): Fixture {
     runs[lane.ticket] = launch(lane, at, "spec-ready", "plan");
     at += 1100;
   }
-  decisions.push({ t: at + 400, data: { state: "supervised", dispatched: ["SLICE-021", "SLICE-022", "SLICE-023"], started: ["LOCAL-031", "LOCAL-032", "LOCAL-033"], held: [] } });
+  decisions.push({ t: at + 400, data: { state: "supervised", dispatched: ["SLICE-021", "SLICE-022", "SLICE-023"], started: ["131", "132", "133"], held: [] } });
 
   const suites: Record<string, Suite> = {};
   const main: MainLine = { head: MAIN_AT_DISPATCH, tests: BASELINE_TESTS, merges: [] };
@@ -189,7 +191,7 @@ export function buildScenario(): Fixture {
   };
 
   // ------------------------------------------------------------ the three executions, side by side
-  const ticketsInOrder = ["LOCAL-033", "LOCAL-031", "LOCAL-032"];
+  const ticketsInOrder = ["133", "131", "132"];
   const approvedAt: Record<string, number> = {};
   for (const ticket of ticketsInOrder) {
     const lane = lanes[ticket];
@@ -200,24 +202,24 @@ export function buildScenario(): Fixture {
     approvedAt[ticket] = result.end;
   }
 
-  // LOCAL-032 stops at the human gate: its first execution ends there.
-  const high = lanes["LOCAL-032"] as Lane;
-  const highRun = runs["LOCAL-032"] as ReturnType<typeof launch>;
-  let highAt = next(high, (approvedAt["LOCAL-032"] ?? 0) + 800, { action: "stop", stage: "awaiting-human", reason: "The review panel approved, and a person must approve before merge because the change is High risk.", needs: "human-approval" });
+  // 132 stops at the human gate: its first execution ends there.
+  const high = lanes["132"] as Lane;
+  const highRun = runs["132"] as ReturnType<typeof launch>;
+  let highAt = next(high, (approvedAt["132"] ?? 0) + 800, { action: "stop", stage: "awaiting-human", reason: "The review panel approved, and a person must approve before merge because the change is High risk.", needs: "human-approval" });
   const firstWorkflowEnd = endWorkflow(high, highAt, { stage: "awaiting-human", waiting_for: "human-approval" });
   executionEnds.push({ lane: high, execution: highRun.execution, session: highRun.session, workflowEnd: firstWorkflowEnd, stage: "awaiting-human", waitingFor: "human-approval", cost: 14.62 });
   const gateTick = tickAfter(firstWorkflowEnd + 4 * S);
   rec.emit(gateTick + 600, "human.required", { reason: "waiting for human-approval" }, sliceEnv("SLICE-022"));
 
-  // The two Medium tickets merge as they are approved: LOCAL-033 first, then LOCAL-031.
-  const order = ["LOCAL-033", "LOCAL-031"].sort((a, b) => (approvedAt[a] ?? 0) - (approvedAt[b] ?? 0));
-  if (order[0] !== "LOCAL-033") throw new Error("The story expects LOCAL-033 to be approved before LOCAL-031");
+  // The two Medium tickets merge as they are approved: 133 first, then 131.
+  const order = ["133", "131"].sort((a, b) => (approvedAt[a] ?? 0) - (approvedAt[b] ?? 0));
+  if (order[0] !== "133") throw new Error("The story expects 133 to be approved before 131");
   const finishedAt: Record<string, number> = {};
   for (const ticket of order) {
     const lane = lanes[ticket] as Lane;
     finishedAt[ticket] = toFinish(lane, (approvedAt[ticket] ?? 0) + 800);
     const run = runs[ticket] as ReturnType<typeof launch>;
-    executionEnds.push({ lane, execution: run.execution, session: run.session, workflowEnd: finishedAt[ticket] ?? 0, stage: null, waitingFor: "nothing", cost: ticket === "LOCAL-033" ? 7.18 : 10.94 });
+    executionEnds.push({ lane, execution: run.execution, session: run.session, workflowEnd: finishedAt[ticket] ?? 0, stage: null, waitingFor: "nothing", cost: ticket === "133" ? 7.18 : 10.94 });
   }
 
   // Integration: the tick after each merge, the plan sees the merge commit on main.
@@ -241,11 +243,11 @@ export function buildScenario(): Fixture {
   rec.emit(unblockTick + 1900, "dependency.blocked", { reasons: ["It waits for SLICE-022 to be integrated (now active).", "It waits for SLICE-024 to be integrated (now active)."] }, sliceEnv("SLICE-025"));
   const reminders = laneOf("SLICE-024");
   const remindersRun = launch(reminders, unblockTick + 2200, "spec-ready", "plan");
-  decisions.push({ t: unblockTick + 3400, data: { state: "supervised", dispatched: ["SLICE-024"], started: ["LOCAL-034"], held: [] } });
+  decisions.push({ t: unblockTick + 3400, data: { state: "supervised", dispatched: ["SLICE-024"], started: ["134"], held: [] } });
   {
     let t = startWorkflow(reminders, remindersRun.workflowAt, remindersRun.session, remindersRun.started);
-    const c = CONTENT["LOCAL-034"];
-    if (!c) throw new Error("No content for LOCAL-034");
+    const c = CONTENT["134"];
+    if (!c) throw new Error("No content for 134");
     const suite: Suite = { passing: BASELINE_TESTS + main.merges.reduce((sum, m) => sum + m.tests, 0), pending: 0 };
     t = next(reminders, t, { action: "plan", stage: "spec-ready", reason: "The spec is ready; contracts and the plan are not written yet.", model: "opus" });
     t = leave(reminders, plan(reminders, t, c), "plan", "done", "Contracts committed; plan checked.");
@@ -258,7 +260,7 @@ export function buildScenario(): Fixture {
   approveByPerson(high, approvalAt, "Checked the idempotency key handling against the processor's retry rules. OK to ship.");
   const mergeTick = tickAfter(approvalAt + 600);
   const second = launch(high, mergeTick + 1800, "approved", "merge");
-  decisions.push({ t: mergeTick + 3000, data: { state: "supervised", dispatched: [], started: ["LOCAL-032"], held: [] } });
+  decisions.push({ t: mergeTick + 3000, data: { state: "supervised", dispatched: [], started: ["132"], held: [] } });
   highAt = startWorkflow(high, second.workflowAt, second.session, second.started);
   const highEnd = toFinish(high, highAt);
   executionEnds.push({ lane: high, execution: second.execution, session: second.session, workflowEnd: highEnd, stage: null, waitingFor: "nothing", cost: 1.37 });
@@ -295,8 +297,8 @@ export function buildScenario(): Fixture {
   const events = rec.build();
   const end = events[events.length - 1]?.t ?? 0;
   return {
-    id: "m6-living-factory-wave-007",
-    title: "WAVE-007 through the Factory (simulation)",
+    id: "m6-living-factory-epic-004",
+    title: "EPIC-004 through the Factory (simulation)",
     startAt: SCENARIO_START,
     duration: end + TAIL,
     events,
@@ -318,9 +320,10 @@ function observeStages(rec: Recorder, archivedAt: Record<string, number>, until:
       if (seen[ticket] === change.to) continue;
       rec.emit(at, "station.observed", { from_stage: seen[ticket] ?? null, stage: change.to }, {
         source: "supervisor",
-        wave_id: change.wave,
+        epic_id: change.epic,
+        issue: change.issue,
         slice_id: change.slice,
-        revision: WAVE.revision,
+        revision: REVISION,
         ticket_id: ticket,
         refs: { cell: `.factory/worktrees/${ticket}/cell.json` },
       });
@@ -333,19 +336,19 @@ function chaptersOf(events: readonly AnySimEvent[]): Chapter[] {
   const find = (pred: (e: AnySimEvent) => boolean): AnySimEvent | undefined => events.find(pred);
   const specs: Array<{ id: string; title: string; summary: string; pred: (e: AnySimEvent) => boolean; focus: (e: AnySimEvent) => Chapter["focus"] }> = [
     { id: "enabled", title: "The Factory is enabled", summary: `${PEOPLE.engineer} enables supervised autonomy: three cells at once, merging allowed.`, pred: (e) => e.type === "factory.activated", focus: () => null },
-    { id: "wave", title: "An approved wave arrives", summary: `${WAVE.id}, five invoicing slices approved by ${PEOPLE.productManager}, becomes five tickets.`, pred: (e) => e.type === "wave.discovered", focus: () => `wave:${WAVE.id}` },
-    { id: "dispatch", title: "Three cells start", summary: "The scheduler dispatches the three slices that depend on nothing; SLICE-024 and SLICE-025 wait.", pred: (e) => e.type === "work.scheduled", focus: () => `wave:${WAVE.id}` },
+    { id: "ready", title: "Ready slices arrive", summary: `Five invoicing slices of ${EPIC.id}, marked ready by ${PEOPLE.productManager}, are taken in, each as its own issue.`, pred: (e) => e.type === "slice.materialized", focus: (e) => (e.slice_id ? `slice:${e.slice_id}` : null) },
+    { id: "dispatch", title: "Three cells start", summary: "The scheduler dispatches the three slices that depend on nothing; SLICE-024 and SLICE-025 wait.", pred: (e) => e.type === "work.scheduled", focus: (e) => (e.ticket_id ? `cell:${e.ticket_id}` : null) },
     { id: "plan", title: "Contracts and plans", summary: "A contract engineer in each cell writes the boundary contracts and a test-first plan.", pred: (e) => e.type === "agent.started" && e.data.role === "contract-engineer", focus: (e) => (e.ticket_id ? `cell:${e.ticket_id}` : null) },
     { id: "build", title: "Test-first construction", summary: "Builders work task by task: a failing test committed, then the code that makes the suite pass.", pred: (e) => e.type === "task.red", focus: (e) => (e.ticket_id ? `cell:${e.ticket_id}` : null) },
     { id: "verify", title: "Verification", summary: "Fresh verifiers prove every scenario and matrix rule with their own data and capture evidence.", pred: (e) => e.type === "verification.started", focus: (e) => (e.ticket_id ? `cell:${e.ticket_id}` : null) },
-    { id: "verify-fail", title: "R4 fails: back to build", summary: "LOCAL-031 lists an invoice due today as overdue. The verdict sends it back for round 2.", pred: (e) => e.type === "verification.verdict" && e.data.status === "FAIL_WITH_EVIDENCE", focus: (e) => (e.ticket_id ? `gate:${e.ticket_id}/verification#${e.type === "verification.verdict" ? e.data.round : 1}` : null) },
+    { id: "verify-fail", title: "R4 fails: back to build", summary: "131 lists an invoice due today as overdue. The verdict sends it back for round 2.", pred: (e) => e.type === "verification.verdict" && e.data.status === "FAIL_WITH_EVIDENCE", focus: (e) => (e.ticket_id ? `gate:${e.ticket_id}/verification#${e.type === "verification.verdict" ? e.data.round : 1}` : null) },
     { id: "review", title: "Review panels", summary: "Three fresh reviewers per cell, one per seat, vote through their findings.", pred: (e) => e.type === "review.started", focus: (e) => (e.ticket_id ? `cell:${e.ticket_id}` : null) },
-    { id: "blocker", title: "A security blocker", summary: "The security seat rejects LOCAL-032: a timed-out charge could charge a card twice.", pred: (e) => e.type === "review.decided" && e.data.outcome === "REJECTED", focus: (e) => (e.ticket_id ? `gate:${e.ticket_id}/review#1` : null) },
-    { id: "integrate", title: "First work lands", summary: "LOCAL-033 merges into main; nothing to revalidate.", pred: (e) => e.type === "merge.completed", focus: (e) => (e.ticket_id ? `cell:${e.ticket_id}` : null) },
-    { id: "human-gate", title: "A person must approve", summary: "LOCAL-032 passes its delta review; as High risk it stops for a person.", pred: (e) => e.type === "review.decided" && e.data.outcome === "AWAITING_HUMAN", focus: (e) => (e.ticket_id ? `gate:${e.ticket_id}/human-approval` : null) },
+    { id: "blocker", title: "A security blocker", summary: "The security seat rejects 132: a timed-out charge could charge a card twice.", pred: (e) => e.type === "review.decided" && e.data.outcome === "REJECTED", focus: (e) => (e.ticket_id ? `gate:${e.ticket_id}/review#1` : null) },
+    { id: "integrate", title: "First work lands", summary: "133 merges into main; nothing to revalidate.", pred: (e) => e.type === "merge.completed", focus: (e) => (e.ticket_id ? `cell:${e.ticket_id}` : null) },
+    { id: "human-gate", title: "A person must approve", summary: "132 passes its delta review; as High risk it stops for a person.", pred: (e) => e.type === "review.decided" && e.data.outcome === "AWAITING_HUMAN", focus: (e) => (e.ticket_id ? `gate:${e.ticket_id}/human-approval` : null) },
     { id: "unblocked", title: "SLICE-024 is free to start", summary: "SLICE-021 is integrated, so SLICE-024 becomes eligible and is dispatched.", pred: (e) => e.type === "dependency.resolved" && e.slice_id === "SLICE-024", focus: () => "dependency:SLICE-024->SLICE-021" },
     { id: "approved", title: `${PEOPLE.approver} approves`, summary: "The person signs off; the supervisor starts a new execution to merge.", pred: (e) => e.type === "human.approval_recorded", focus: (e) => (e.ticket_id ? `gate:${e.ticket_id}/human-approval` : null) },
-    { id: "last-merge", title: "Revalidated and merged", summary: "Main moved twice since approval: LOCAL-032 is revalidated on top of it and lands.", pred: (e) => e.type === "merge.completed" && e.ticket_id === "LOCAL-032", focus: () => "cell:LOCAL-032" },
+    { id: "last-merge", title: "Revalidated and merged", summary: "Main moved twice since approval: 132 is revalidated on top of it and lands.", pred: (e) => e.type === "merge.completed" && e.ticket_id === "132", focus: () => "cell:132" },
   ];
   const chapters: Chapter[] = [];
   for (const spec of specs) {

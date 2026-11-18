@@ -34,7 +34,8 @@ type FreeTextField struct {
 // holds each path to the allowlist (Allow); a kind or field that keeps prose must be added here.
 var FreeTextFields = []FreeTextField{
 	{"review.finding", "data.title", 200},
-	{"slice.materialized", "data.title", 200}, // M6.6: the slice's title, from the intake ledger
+	{"slice.materialized", "data.title", 200},      // M6.6: the slice's title, from the intake ledger
+	{"slice.materialized", "data.epic_title", 200}, // M11: the name of the slice's epic, from the intake ledger
 	{"agent.queued", "data.label", 120},
 	{"agent.started", "data.label", 120},
 	{"agent.queued", "data.phase", 60},
@@ -154,14 +155,14 @@ var ProjectionFields = []ProjectionField{
 	{Route: "/api/v1/cells/{ticket}", Path: "waiting.reasons[]", From: []string{"human.required data.reason", "scheduling.decided data.held[].why", "dependency.blocked data.reasons[]", "execution.completed data.waiting_for"}},
 	{Route: "/api/v1/slices", Path: "items[].title", From: []string{"slice.materialized data.title"}},
 	{Route: "/api/v1/slices/{slice}", Path: "title", From: []string{"slice.materialized data.title"}},
-	{Route: "/api/v1/waves/{wave}", Path: "slices[].title", From: []string{"slice.materialized data.title"}},
+	{Route: "/api/v1/slices", Path: "items[].epic_title", From: []string{"slice.materialized data.epic_title"}},
+	{Route: "/api/v1/slices/{slice}", Path: "epic_title", From: []string{"slice.materialized data.epic_title"}},
 	{Route: "/api/v1/snapshot", Path: "state.slices.*.title", From: []string{"slice.materialized data.title"}},
+	{Route: "/api/v1/snapshot", Path: "state.slices.*.epic_title", From: []string{"slice.materialized data.epic_title"}},
 	{Route: "/api/v1/slices", Path: "items[].last_reasons[]", From: []string{"dependency.blocked data.reasons[]"}},
 	{Route: "/api/v1/slices", Path: "items[].waiting.reasons[]", From: []string{"human.required data.reason", "scheduling.decided data.held[].why", "dependency.blocked data.reasons[]", "execution.completed data.waiting_for"}},
 	{Route: "/api/v1/slices/{slice}", Path: "last_reasons[]", From: []string{"dependency.blocked data.reasons[]"}},
 	{Route: "/api/v1/slices/{slice}", Path: "waiting.reasons[]", From: []string{"human.required data.reason", "scheduling.decided data.held[].why", "dependency.blocked data.reasons[]", "execution.completed data.waiting_for"}},
-	{Route: "/api/v1/waves/{wave}", Path: "slices[].last_reasons[]", From: []string{"dependency.blocked data.reasons[]"}},
-	{Route: "/api/v1/waves/{wave}", Path: "slices[].waiting.reasons[]", From: []string{"human.required data.reason", "scheduling.decided data.held[].why", "dependency.blocked data.reasons[]", "execution.completed data.waiting_for"}},
 	{Route: "/api/v1/project", Path: "human_gates_open[].reason", From: []string{"human.required data.reason"}},
 	{Route: "/api/v1/project", Path: "factory.held[].why", From: []string{"scheduling.decided data.held[].why"}},
 	{Route: "/api/v1/project", Path: "factory.paused_reason", From: []string{"factory.paused data.reason"}},

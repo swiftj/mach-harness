@@ -1,7 +1,7 @@
 /**
  * Which part of MACH wrote an event, where it is one of the two non-agent actors. Attribution is
  * by kind, from the real emitters (intake.py, supervisor.py); see ACTOR_KINDS. Intake's own kinds
- * (wave.discovered, intake.validated, slice.materialized, ...) belong to intake, and the engineer's
+ * (intake.validated, slice.materialized, ...) belong to intake, and the engineer's
  * commands to the engineer: neither is attributed here.
  */
 import type { AnySimEvent, EventKind } from "./events";

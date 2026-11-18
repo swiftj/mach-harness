@@ -3,7 +3,6 @@ package engine
 import (
 	"sort"
 	"strconv"
-	"strings"
 )
 
 // Args is one operation's typed arguments. Argv validates them and returns the fixed argument
@@ -20,7 +19,7 @@ type Operation struct {
 	// JSONOnFailure: the engine exits 1 with a JSON report on stdout when the thing it judged has
 	// problems (slice check, validate). The call still succeeded; its result says what is wrong.
 	JSONOnFailure bool
-	// Network: the engine may fetch from the shared repository, so it gets a longer time limit.
+	// Network: the engine may reach the shared repository or GitHub, so it gets a longer time limit.
 	Network bool
 	// ReadOnly: the engine changes nothing on disk. Every call is still serialised (see Engine).
 	ReadOnly bool
@@ -153,7 +152,7 @@ func (a *EpicIDArgs) Argv() ([]string, error) {
 	return []string{"epic", a.verb, a.EpicID}, nil
 }
 
-// RenumberArgs serves epic, slice and wave renumber; `identifier` is the engine's own name.
+// RenumberArgs serves epic and slice renumber; `identifier` is the engine's own name.
 type RenumberArgs struct {
 	Identifier string `json:"identifier"`
 	kind       string
@@ -161,11 +160,8 @@ type RenumberArgs struct {
 
 func (a *RenumberArgs) Argv() ([]string, error) {
 	pattern, example := EpicIDPattern, "EPIC-001"
-	switch a.kind {
-	case "slice":
+	if a.kind == "slice" {
 		pattern, example = SliceIDPattern, "SLICE-001"
-	case "wave":
-		pattern, example = WaveIDPattern, "WAVE-001"
 	}
 	if err := checkID("identifier", a.Identifier, pattern, example); err != nil {
 		return nil, err
@@ -278,7 +274,7 @@ func (a *SliceCheckArgs) Argv() ([]string, error) {
 	return argv, nil
 }
 
-// SliceIDArgs serves slice show, approve and reopen.
+// SliceIDArgs serves slice show, ready and reopen.
 type SliceIDArgs struct {
 	SliceID string `json:"slice_id"`
 	verb    string
@@ -291,105 +287,81 @@ func (a *SliceIDArgs) Argv() ([]string, error) {
 	return []string{"slice", a.verb, a.SliceID}, nil
 }
 
-type WaveNewArgs struct {
-	Slice []string `json:"slice"`
+// ReconcileArgs serves reconcile for a slice someone else saved a newer version of on GitHub:
+// the product manager keeps theirs or takes the other version, whole.
+// SliceMoveArgs serves slice.move: exactly one of before, after, first or last.
+type SliceMoveArgs struct {
+	SliceID string  `json:"slice_id"`
+	Before  *string `json:"before"`
+	After   *string `json:"after"`
+	First   bool    `json:"first"`
+	Last    bool    `json:"last"`
 }
 
-func (a *WaveNewArgs) Argv() ([]string, error) {
-	if err := checkIDList("slice", a.Slice, SliceIDPattern, "SLICE-001", 0); err != nil {
+func (a *SliceMoveArgs) Argv() ([]string, error) {
+	if err := checkID("slice_id", a.SliceID, SliceIDPattern, "SLICE-001"); err != nil {
 		return nil, err
 	}
-	return append([]string{"wave", "new"}, repeated("slice", a.Slice)...), nil
+	if err := checkOptionalID("before", a.Before, SliceIDPattern, "SLICE-002"); err != nil {
+		return nil, err
+	}
+	if err := checkOptionalID("after", a.After, SliceIDPattern, "SLICE-002"); err != nil {
+		return nil, err
+	}
+	var where []string
+	if a.Before != nil {
+		where = append(where, flag("before", *a.Before))
+	}
+	if a.After != nil {
+		where = append(where, flag("after", *a.After))
+	}
+	if a.First {
+		where = append(where, "--first")
+	}
+	if a.Last {
+		where = append(where, "--last")
+	}
+	if len(where) != 1 {
+		return nil, invalid("Give exactly one of before, after, first or last.")
+	}
+	return append([]string{"slice", "move", a.SliceID}, where...), nil
 }
 
-// WaveSlicesArgs serves wave add and wave remove.
-type WaveSlicesArgs struct {
-	WaveID   string   `json:"wave_id"`
-	SliceIDs []string `json:"slice_ids"`
-	verb     string
+// SliceTakeArgs serves slice.take: the slice's issue number or its slice ID, exactly one.
+type SliceTakeArgs struct {
+	Issue   *int    `json:"issue"`
+	SliceID *string `json:"slice_id"`
 }
 
-func (a *WaveSlicesArgs) Argv() ([]string, error) {
-	if err := checkID("wave_id", a.WaveID, WaveIDPattern, "WAVE-001"); err != nil {
-		return nil, err
+func (a *SliceTakeArgs) Argv() ([]string, error) {
+	switch {
+	case a.Issue != nil && a.SliceID == nil:
+		if err := checkRequestNumber(*a.Issue); err != nil {
+			return nil, invalid("issue must be an issue number such as 41.")
+		}
+		return []string{"slice", "take", strconv.Itoa(*a.Issue)}, nil
+	case a.SliceID != nil && a.Issue == nil:
+		if err := checkID("slice_id", *a.SliceID, SliceIDPattern, "SLICE-001"); err != nil {
+			return nil, err
+		}
+		return []string{"slice", "take", *a.SliceID}, nil
 	}
-	if err := checkIDList("slice_ids", a.SliceIDs, SliceIDPattern, "SLICE-001", 1); err != nil {
-		return nil, err
-	}
-	return append([]string{"wave", a.verb, a.WaveID}, a.SliceIDs...), nil
-}
-
-type WaveApproveArgs struct {
-	WaveID string  `json:"wave_id"`
-	Actor  *string `json:"actor"`
-}
-
-func (a *WaveApproveArgs) Argv() ([]string, error) {
-	if err := checkID("wave_id", a.WaveID, WaveIDPattern, "WAVE-001"); err != nil {
-		return nil, err
-	}
-	if err := checkOptionalText("actor", a.Actor, maxShortText); err != nil {
-		return nil, err
-	}
-	return append([]string{"wave", "approve", a.WaveID}, optional("actor", a.Actor)...), nil
+	return nil, invalid("Give exactly one of issue or slice_id.")
 }
 
 type ReconcileArgs struct {
-	Artifact string  `json:"artifact"`
-	Take     string  `json:"take"`
-	Field    *string `json:"field"`
+	SliceID string `json:"slice_id"`
+	Take    string `json:"take"`
 }
 
 func (a *ReconcileArgs) Argv() ([]string, error) {
-	if a.Artifact == "" {
-		return nil, invalid("artifact is required.")
-	}
-	if len(a.Artifact) > maxArtifactLen || !artifactPattern.MatchString(a.Artifact) || strings.Contains(a.Artifact, "..") {
-		return nil, invalid("artifact must be a path or ID listed under needs_reconciling.")
+	if err := checkID("slice_id", a.SliceID, SliceIDPattern, "SLICE-001"); err != nil {
+		return nil, err
 	}
 	if a.Take != "mine" && a.Take != "theirs" {
 		return nil, invalid("take must be \"mine\" or \"theirs\".")
 	}
-	argv := []string{"reconcile", a.Artifact, flag("take", a.Take)}
-	if a.Field != nil {
-		if len(*a.Field) > 64 || !fieldPattern.MatchString(*a.Field) {
-			return nil, invalid("field must be a field name such as acceptance_criteria.")
-		}
-		argv = append(argv, flag("field", *a.Field))
-	}
-	return argv, nil
-}
-
-// SendArgs serves send and send.preview (`send <wave> --dry-run`).
-type SendArgs struct {
-	WaveID string `json:"wave_id"`
-	dryRun bool
-}
-
-func (a *SendArgs) Argv() ([]string, error) {
-	if err := checkID("wave_id", a.WaveID, WaveIDPattern, "WAVE-001"); err != nil {
-		return nil, err
-	}
-	argv := []string{"send", a.WaveID}
-	if a.dryRun {
-		argv = append(argv, "--dry-run")
-	}
-	return argv, nil
-}
-
-type FeedbackArgs struct {
-	WaveID *string `json:"wave_id"`
-}
-
-func (a *FeedbackArgs) Argv() ([]string, error) {
-	if err := checkOptionalID("wave_id", a.WaveID, WaveIDPattern, "WAVE-001"); err != nil {
-		return nil, err
-	}
-	argv := []string{"feedback"}
-	if a.WaveID != nil {
-		argv = append(argv, *a.WaveID)
-	}
-	return argv, nil
+	return []string{"reconcile", a.SliceID, flag("take", a.Take)}, nil
 }
 
 // ---- requests: GitHub issues labelled as requests (M8) ----
@@ -486,18 +458,12 @@ func init() {
 	register(Operation{Name: "slice.pause", New: func() Args { return &SlicePauseArgs{} }})
 	register(Operation{Name: "slice.check", New: func() Args { return &SliceCheckArgs{} }, JSONOnFailure: true})
 	register(Operation{Name: "slice.show", New: func() Args { return &SliceIDArgs{verb: "show"} }, ReadOnly: true})
-	register(Operation{Name: "slice.approve", New: func() Args { return &SliceIDArgs{verb: "approve"} }})
-	register(Operation{Name: "slice.reopen", New: func() Args { return &SliceIDArgs{verb: "reopen"} }})
+	register(Operation{Name: "slice.ready", New: func() Args { return &SliceIDArgs{verb: "ready"} }, Network: true})
+	register(Operation{Name: "slice.reopen", New: func() Args { return &SliceIDArgs{verb: "reopen"} }, Network: true})
+	register(Operation{Name: "slice.move", New: func() Args { return &SliceMoveArgs{} }, Network: true})
+	register(Operation{Name: "slice.take", New: func() Args { return &SliceTakeArgs{} }, Network: true})
 	register(Operation{Name: "slice.renumber", New: func() Args { return &RenumberArgs{kind: "slice"} }})
-	register(Operation{Name: "wave.new", New: func() Args { return &WaveNewArgs{} }})
-	register(Operation{Name: "wave.add", New: func() Args { return &WaveSlicesArgs{verb: "add"} }})
-	register(Operation{Name: "wave.remove", New: func() Args { return &WaveSlicesArgs{verb: "remove"} }})
-	register(Operation{Name: "wave.approve", New: func() Args { return &WaveApproveArgs{} }})
-	register(Operation{Name: "wave.renumber", New: func() Args { return &RenumberArgs{kind: "wave"} }})
-	register(Operation{Name: "reconcile", New: func() Args { return &ReconcileArgs{} }})
-	register(Operation{Name: "send.preview", New: func() Args { return &SendArgs{dryRun: true} }, Network: true})
-	register(Operation{Name: "send", New: func() Args { return &SendArgs{} }, Network: true})
-	register(Operation{Name: "feedback", New: func() Args { return &FeedbackArgs{} }, Network: true})
+	register(Operation{Name: "reconcile", New: func() Args { return &ReconcileArgs{} }, Network: true})
 	register(Operation{Name: "request.list", New: func() Args { return &requestListArgs{} }, ReadOnly: true})
 	register(Operation{Name: "request.show", New: func() Args { return &RequestNumberArgs{verb: "show"} }, ReadOnly: true})
 	register(Operation{Name: "request.pick", New: func() Args { return &RequestPickArgs{} }, Network: true})

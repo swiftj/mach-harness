@@ -23,8 +23,8 @@ func intakeLine(seq int, at, typ, slice, ticket string, data map[string]any) []b
 	if ticket != "" {
 		tk = ticket
 	}
-	line, _ := json.Marshal(map[string]any{"schema_version": 2, "seq": seq, "at": at, "type": typ, "project_id": "P-1", "source_commit": nil,
-		"wave_id": "WAVE-001", "slice_id": sl, "revision": 2, "ticket_id": tk, "runner_id": nil, "execution_id": nil,
+	line, _ := json.Marshal(map[string]any{"schema_version": 3, "seq": seq, "at": at, "type": typ, "source_commit": nil,
+		"epic_id": "EPIC-001", "issue": nil, "slice_id": sl, "revision": 2, "ticket_id": tk, "runner_id": nil, "execution_id": nil,
 		"source": "supervisor", "cause": nil, "refs": nil, "data": data})
 	return append(line, '\n')
 }
@@ -114,7 +114,7 @@ func TestASliceHeldForAFreePlaceIsACapacityWait(t *testing.T) {
 		t.Fatalf("want one wait for SLICE-002, one for SLICE-004 and LOCAL-004's own: %+v", items)
 	}
 	sp := byEntity["slice:SLICE-002"][0]
-	if sp.IDs["slice_id"] != "SLICE-002" || sp.IDs["wave_id"] != "WAVE-001" || sp.IDs["ticket_id"] != "" || sp.Authority != "reconstructed" || sp.Parent == nil || *sp.Parent != "slice:SLICE-002" {
+	if sp.IDs["slice_id"] != "SLICE-002" || sp.IDs["epic_id"] != "EPIC-001" || sp.IDs["ticket_id"] != "" || sp.Authority != "reconstructed" || sp.Parent == nil || *sp.Parent != "slice:SLICE-002" {
 		t.Fatalf("ids, authority, parent: %+v", sp)
 	}
 	if sp.Attrs.Limit == nil || *sp.Attrs.Limit != 1 || len(sp.Attrs.Reasons) != 1 || sp.Attrs.Reasons[0] != "it is ready and waits for a free place: 1 of 1 in use" {

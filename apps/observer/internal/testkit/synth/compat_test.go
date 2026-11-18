@@ -29,7 +29,9 @@ func treeDigest(t *testing.T, root string) string {
 
 // The outputs of the Timeline-era options, recorded before the analytics mode was added. Without
 // --analytics the generator must keep producing exactly these bytes, so histories already used by
-// the M6.3 performance work and the browser suite stay reproducible.
+// the M6.3 performance work and the browser suite stay reproducible. Every digest was re-recorded
+// for M11's epics: intake lines of version 3 with epic_id and issue, no wave.discovered, ledger
+// slices that name their epic, and cell.json product blocks with epic_id (run records unchanged).
 var compatGolden = []struct {
 	name   string
 	opts   synth.Options
@@ -37,20 +39,21 @@ var compatGolden = []struct {
 	sum    string
 }{
 	{"twelve cells, seed 7", synth.Options{Cells: 12, Events: 5000, Seed: 7, Hours: 30, AgentsPerExecution: 24},
-		"2b64711568a06fe1914c5cfdcc3179d789b4e4c39bdb40c3967ae3ba9b9ff176", "9b13e5a68f9cdafa70f899918d88ae47e4554151b0763ec070fa1bdb3be98d42"},
+		"4b291b580f45ff36e6d38f246edf583aa2ea6201c21742769c4bbdb9d4390858", "682e04a90a4a15878ccdaed94b008b6cbf2d81064f85b6cdb90f4e08c5d0e1d0"},
 	{"twenty cells, seed 3", synth.Options{Cells: 20, Events: 9000, Seed: 3, Hours: 12, AgentsPerExecution: 12},
-		"ffc1805d4126ae1973d40d12d4c3d27b6d11148ae09e4b431e7e63ba280b9878", "2a505d1f5397a1696cc9818283167714f84353048bc12011806e78c73513e58d"},
+		"4e990060cd76b2731b6a44931971964dc7cc7d39c2f0ab50235e878602dd45d5", "2258cc9f36e799c7755415f5c5e7f208c5f7d38d4b84c774e0ec3303f20e536c"},
 	// The default history (mach-synth with no options but --out): the Timeline's 220,000 events.
 	{"the default history", synth.Options{Seed: 1},
-		"00dad56cc13f1f9151bbecfb97fada8f0a4c1b5a291ab17b2d49e60afeb16f4f", "2349d091028f841be7987582e8d09832c3480f0e9404003bcfc62e7d14603ac7"},
+		"c618fe0e3512a587468d4f8fe8703135c521c47fd1f9c45b545136a4955ff879", "ed8f864ad8fbdc1899303e05dc6677f11381b8da6ce7cdbc80d99894c6516f27"},
 	// The analytics mode's default profile, recorded before --profile realistic was added: tiny,
-	// medium and a third shape, as mach-synth --analytics writes them.
-	{"analytics tiny", synth.Options{Analytics: true, Cells: 2, Waves: 1, Seed: 1},
-		"57b76cd821bc7b9d8c1f85d8e0c0ea3cb5fce5b737d22d5b2fc060be8f972ab3", "513ebb67c32f672ef740ccfef01c3ba99a47a5d66a2b106f84ffa1a0fcd09e54"},
-	{"analytics medium", synth.Options{Analytics: true, Cells: 60, Waves: 8, Seed: 1},
-		"7b4a6abaf394933d259f456201c7414cfa6beee839388c2621b7ded02bec46a3", "5532c2c7c76792ce50b60e13b74b4c7af986209b0f1e8d4bebe7f566b9ff803a"},
-	{"analytics thirty cells, seed 5", synth.Options{Analytics: true, Cells: 30, Waves: 4, Seed: 5},
-		"6399f5ea21bc02a4e663c27d3ff7b1b656d1e83e7c03fcb210f3fcd129c36d35", "994b0e1b4a47b86e9c16607b70875a2099b15084df464b28c3e29e6d120ab8ad"},
+	// medium and a third shape, as mach-synth --analytics writes them. Re-recorded for M11: a run
+	// record's product block names its epic and source and no epic, as cleanup.py writes it.
+	{"analytics tiny", synth.Options{Analytics: true, Cells: 2, Epics: 1, Seed: 1},
+		"7404eac6eb8ea15c1e046c43dc391551db2562cbb8af3f8b401a510192af725b", "ff98a6691438da7bcad451cea0e4f74a19d3e755ebf4141da2e6cbbf23d6e392"},
+	{"analytics medium", synth.Options{Analytics: true, Cells: 60, Epics: 8, Seed: 1},
+		"5da9d41341fd434bbffff89f58ad07b34b0d381d5144971e20e0e5dec9845e70", "d89cf320a05ed028d172e162fb5f94146da354adf6ae3cc93e5235cfe8332c1e"},
+	{"analytics thirty cells, seed 5", synth.Options{Analytics: true, Cells: 30, Epics: 4, Seed: 5},
+		"ad64d49269c1c7710cfdda74d955e6dcb82bd4c17f358109d3274a88708fc819", "fa5eb29d9d7380617260406a855bcb154b508ebc6464edb490d4edb53f2522ab"},
 }
 
 // TestCompatibleWithoutAnalytics: the same options and seed give byte-identical files and the same

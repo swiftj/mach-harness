@@ -26,7 +26,7 @@ export function Opportunities(props: OpportunitiesProps) {
 /** The area a rule's first measurement belongs to, by catalog family. */
 export function areaOf(i: Insight): AreaId {
   const m = i.measurements[0]?.metric ?? "";
-  if (/^[CW]/.test(m) || /^T3/.test(m)) return "flow";
+  if (/^[CW]/.test(m)) return "flow";
   if (/^[QRG]/.test(m)) return "quality";
   if (/^K/.test(m)) return "economics";
   if (/^[XS]/.test(m)) return "reliability";

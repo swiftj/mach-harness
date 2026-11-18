@@ -59,7 +59,7 @@ export const NO_FIXTURE: Fixture = Object.freeze({
   startAt: "1970-01-01T00:00:00Z",
   duration: 0,
   events: [],
-  definitions: { project: { id: "", name: "", integrationBranch: "" }, waves: {}, slices: {} },
+  definitions: { project: { id: "", name: "", integrationBranch: "" }, epics: {}, slices: {} },
   chapters: [],
 });
 

@@ -126,7 +126,7 @@ func Sensitive(s string) bool {
 	return opaque(s) || emailRe.MatchString(s) || absPathRe.MatchString(s) || homeRe.MatchString(s)
 }
 
-// ID accepts a MACH identifier (ticket, slice, wave, execution, runner, visit) or returns "".
+// ID accepts a MACH identifier (ticket, slice, epic, execution, runner, visit) or returns "".
 func ID(v any) (string, bool) {
 	s, ok := v.(string)
 	if !ok || !idRe.MatchString(s) || strings.Contains(s, "..") || Sensitive(s) {

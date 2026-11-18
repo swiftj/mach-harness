@@ -91,12 +91,12 @@ var rules = map[RecordKind]recordRules{
 		"exit_code", "passed", "seconds", "tests_seen_failing_first", "ticket_id", "overrides", "gate", "reason", "deviations", "ui_findings")},
 	KindCell: {known: keys("app_type", "branch", "created_at", "human_review_required", "isolation", "merged", "at", "commit", "landed_commit",
 		"method", "mode", "review", "risk", "slice_id", "spec_path", "spec_sha256", "stage", "ticket_id", "title", "updated_at",
-		"verification", "contracts", "product", "wave_id", "revision", "source_commit", "digest")},
+		"verification", "contracts", "product", "epic_id", "epic_issue", "issue", "number", "revision", "source_commit", "digest")},
 	KindRunRecord: {known: keys("abandon_reason", "app_type", "archive", "blockers", "closed_at", "created_at", "deviations", "escalated",
 		"first_pass", "human_approval", "integration", "branch", "into", "method", "approved_commit", "landed_commit", "merge_commit",
 		"pull_request", "merged_at", "mode", "notes", "outcome", "product", "record_version", "review_rejections", "risk", "rounds",
 		"slice_id", "tests_passing_on_first_run", "tests_seen_failing_first", "ticket_id", "title", "verify_failures", "verify_findings",
-		"rule", "count", "seat", "type", "kind", "wave_id", "revision")},
+		"rule", "count", "seat", "type", "kind", "epic_id", "issue", "number", "revision")},
 }
 
 // seatNames are what a vote's "reviewer" holds when a model, not a person, reviewed.

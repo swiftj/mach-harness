@@ -84,7 +84,7 @@ func TestSummaryCoversTheShapes(t *testing.T) {
 	if d := sum.Events - sum.Target; d < -sum.Target/100 || d > sum.Target/100 {
 		t.Fatalf("%d events for a target of %d", sum.Events, sum.Target)
 	}
-	for _, typ := range []string{"factory.activated", "wave.discovered", "dependency.blocked", "dependency.resolved", "revision.superseded", "scheduling.decided",
+	for _, typ := range []string{"factory.activated", "intake.validated", "dependency.blocked", "dependency.resolved", "revision.superseded", "scheduling.decided",
 		"work.claimed", "execution.started", "execution.completed", "execution.failed", "recovery.started", "human.required", "slice.integrated",
 		"station.entered", "station.exited", "gate.evaluated", "build.task_completed", "verify.check_recorded", "review.round_started",
 		"review.verdict_submitted", "review.decided", "human.approval_recorded", "merge.completed", "cleanup.completed", "run.recorded",
@@ -100,8 +100,8 @@ func TestSummaryCoversTheShapes(t *testing.T) {
 			t.Errorf("feature %s missing", f)
 		}
 	}
-	if sum.Waves != 3 || sum.Slices != 13 || sum.Spans["capacity-wait"] == 0 {
-		t.Errorf("waves %d, slices %d, capacity waits %d", sum.Waves, sum.Slices, sum.Spans["capacity-wait"])
+	if sum.Epics != 3 || sum.Slices != 13 || sum.Spans["capacity-wait"] == 0 {
+		t.Errorf("epics %d, slices %d, capacity waits %d", sum.Epics, sum.Slices, sum.Spans["capacity-wait"])
 	}
 	// Rounds 1 to 3 occur, and executions do not line up with rounds: some execution writes records of two rounds.
 	data, _ := os.ReadFile(testkit.CellLog(dir, sum.Features["escalated_ticket"].(string)))

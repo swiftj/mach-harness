@@ -1,10 +1,10 @@
 # MACH Factory Floor (`@mach/factory-floor`)
 
-The Factory Floor is MACH's read-only view of the Factory in the browser. `mach-observer` embeds it (`apps/observer/build.sh`). When an observer answers, it shows the **Live Factory**. With no observer, or with `?simulation`, it shows one recorded run (one delivery wave of five slices, 2,126 events over 55:50 of factory time) from a fixture compiled into the bundle, labelled **Simulation** on every screen. The Simulation runs forward on its own and stops at its last moment. The Factory Floor shows only the present: there is no playback, no replay and no playhead. It starts nothing and has no control that changes the Factory. Where a person must act, it shows the `/mach` command to run in Claude Code.
+The Factory Floor is MACH's read-only view of the Factory in the browser. `mach-observer` embeds it (`apps/observer/build.sh`). When an observer answers, it shows the **Live Factory**. With no observer, or with `?simulation`, it shows one recorded run (five slices of one epic, each its own GitHub issue and ticket, 2,129 events over 55:50 of factory time) from a fixture compiled into the bundle, labelled **Simulation** on every screen. The Simulation runs forward on its own and stops at its last moment. The Factory Floor shows only the present: there is no playback, no replay and no playhead. It starts nothing and has no control that changes the Factory. Where a person must act, it shows the `/mach` command to run in Claude Code.
 
 Three workspaces:
 
-- **Line** (the default, `src/line/`): the stations left to right as columns, and a row for each ticket at the station it stands at. A "Needs you" strip on top, a side panel for a ticket or a station, a ticket's full record, and "What just happened" when nothing is selected.
+- **Line** (the default, `src/line/`): the stations left to right as columns, and a row for each ticket at the station it stands at. A row shows the slice's title, its issue number (as text) and its epic's name where recorded; epic names, like titles, are free text under the session's display policy. A "Needs you" strip on top, a side panel for a ticket or a station, a ticket's full record, and "What just happened" when nothing is selected.
 - **Floor** (`src/atlas/`): the Factory Atlas, the plant drawn in axonometric, with the inspector, camera follow and Theater Mode.
 - **Analytics** (`src/analytics/`): Factory Analytics, with the inspector on request.
 
@@ -58,7 +58,7 @@ Main app (`/`):
 | `?simulation` | Show the Simulation, even when an observer answers |
 | `?theme=light` or `?theme=dark` | Pin the theme (default: follow the system) |
 | `#line`, `#floor`, `#analytics` | The workspace. Kept in step with the app; a workspace change is a new history entry |
-| `?sel=<ref>` after any route, e.g. `#line?sel=cell:LOCAL-031` | Select an entity (any `EntityRef`). The Floor also frames it |
+| `?sel=<ref>` after any route, e.g. `#line?sel=cell:131` | Select an entity (any `EntityRef`). The Floor also frames it |
 | `#floor?theater=1` | Open the Floor in Theater Mode |
 | `#analytics?area=&win=&risk=&app=&model=&station=&cmp=&focus=&pick=` | Analytics' area, period, filters, comparison, open rows and cross-filter (grammar in `src/shell/source/hash.ts`) |
 | `evidence=<ticket>&check=<id>` after any route | Open the evidence player for one ticket at one check |
@@ -75,7 +75,7 @@ In development and capture builds only (never in a production build), `window.__
 const sim = window.__machSim;            // version 2
 sim.duration; sim.eventCount; sim.fixtureId;
 sim.seek(t);                             // move the Simulation to scenario time t, either way; it runs on from there
-sim.select("cell:LOCAL-031"); sim.focus("overview");
+sim.select("cell:131"); sim.focus("overview");
 sim.setWorkspace("floor"); sim.setTheater(true); sim.setFollow(true);
 sim.state();                             // now, cursor, workspace, theater, selection, follow, focus, reducedMotion, clock
 sim.useManualClock(); sim.advance(1000 / 30); sim.useLiveClock();

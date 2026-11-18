@@ -25,7 +25,7 @@ const dayMS = int64(24 * time.Hour / time.Millisecond)
 
 // analyticsCommon are the parameters every analytics route reads itself.
 var analyticsCommon = map[string]bool{"at": true, "as_of_ms": true, "from_ms": true, "to_ms": true, "last_runs": true, "risk": true, "app_type": true, "model": true,
-	"station": true, "wave": true, "outcome": true, "provenance": true, "schema": true}
+	"station": true, "epic": true, "outcome": true, "provenance": true, "schema": true}
 
 // Fixed value sets; a value outside them is a 400. "unknown" selects what recorded no value.
 var (
@@ -49,7 +49,7 @@ type analyticsParams struct {
 	ToMS     *int64 // as asked (exclusive)
 	LastRuns int    // 0: not asked; exclusive with a window
 	// Filters ("" when not asked).
-	Risk, AppType, Model, Station, Wave, Outcome, Provenance string
+	Risk, AppType, Model, Station, Epic, Outcome, Provenance string
 }
 
 // EffectiveWindow is the asked window widened to whole UTC days; ok is false when no window was
@@ -105,7 +105,7 @@ func (p analyticsParams) InWindow(ms int64) bool {
 // Filters is the filters asked, by name (only those asked).
 func (p analyticsParams) Filters() map[string]string {
 	out := map[string]string{}
-	for k, v := range map[string]string{"risk": p.Risk, "app_type": p.AppType, "model": p.Model, "station": p.Station, "wave": p.Wave,
+	for k, v := range map[string]string{"risk": p.Risk, "app_type": p.AppType, "model": p.Model, "station": p.Station, "epic": p.Epic,
 		"outcome": p.Outcome, "provenance": p.Provenance} {
 		if v != "" {
 			out[k] = v
@@ -208,7 +208,7 @@ func (s *Server) parseAnalytics(r *http.Request, route map[string]bool) (analyti
 		vals map[string]bool
 		dst  *string
 	}{{"risk", analyticsRisks, &p.Risk}, {"app_type", analyticsAppTypes, &p.AppType}, {"outcome", analyticsOutcomes, &p.Outcome},
-		{"model", nil, &p.Model}, {"station", nil, &p.Station}, {"wave", nil, &p.Wave}, {"provenance", nil, &p.Provenance}} {
+		{"model", nil, &p.Model}, {"station", nil, &p.Station}, {"epic", nil, &p.Epic}, {"provenance", nil, &p.Provenance}} {
 		if !set(f.name, f.vals, f.dst) {
 			if f.vals != nil {
 				return bad(f.name + " must be one of " + strings.Join(sortedKeys(f.vals), ", ") + ".")

@@ -138,7 +138,7 @@ func TestSyntheticHistoryEndToEnd(t *testing.T) {
 // spanKindServed: the generator's model names a few kinds the observer does not serve as spans.
 func spanKindServed(kind string) bool {
 	switch kind {
-	case "wave", "slice-wait", "slice-eligible", "capacity-wait", "cell", "round", "visit", "gate-wait", "person-wait", "seat", "claim", "execution",
+	case "slice-wait", "slice-eligible", "capacity-wait", "cell", "round", "visit", "gate-wait", "person-wait", "seat", "claim", "execution",
 		"workflow", "agent-queue", "agent", "tool", "task":
 		return true
 	}

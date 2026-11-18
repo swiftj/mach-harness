@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowUpRight, Check, Plus, RefreshCw, Send } from "lucide-react";
+import { ArrowUpRight, CircleCheck, Plus, RefreshCw } from "lucide-react";
 import {
   ArtifactId,
   Button,
@@ -22,24 +22,24 @@ import { fx } from "../fixtures";
 
 const project = fx.projectInit.project;
 const epic = fx.epicAdd.epic;
-const renumbered = fx.statusAfterRenumber;
+const rich = fx.statusRich;
 
 export function Controls() {
-  const [chosen, setChosen] = useState<string[]>(["SLICE-002"]);
-  const [epicId, setEpicId] = useState(renumbered.epics[0]?.epic_id ?? "");
-  const approved = renumbered.slices.filter((s) => s.status === "approved_for_engineering");
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [epicId, setEpicId] = useState(rich.epics[0]?.epic_id ?? "");
+  const candidates = rich.slices;
   return (
     <Section
       id="controls"
       title="Controls"
       intro="Buttons say exactly what happens. Every control has a visible label, a 2px focus ring and a 36px height, or 44px where it is the main act on a page."
     >
-      <Specimen title="Buttons" note="One primary button per region. Approving and sending are a person's acts: primary, and always confirmed in a dialog.">
+      <Specimen title="Buttons" note="One primary button per region. Marking a slice ready to build is a person's act: primary, and always confirmed in a dialog.">
         <div className="flex flex-col gap-6">
           <div className="flex flex-wrap items-center gap-3">
             <Button variant="primary">
-              <Check aria-hidden="true" />
-              Approve SLICE-001
+              <CircleCheck aria-hidden="true" />
+              Mark SLICE-001 ready to build
             </Button>
             <Button>
               <RefreshCw aria-hidden="true" />
@@ -51,19 +51,19 @@ export function Controls() {
             </Button>
             <Button variant="danger">Reopen SLICE-001</Button>
             <Button variant="link" asChild>
-              <a href={fx.send.pull_request ?? "#"}>
-                Open the review request
+              <a href={fx.sliceReady.url}>
+                Open #{fx.sliceReady.issue} on GitHub
                 <ArrowUpRight aria-hidden="true" />
               </a>
             </Button>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <Button variant="primary" size="lg">
-              <Send aria-hidden="true" />
-              Send WAVE-001 to engineering
+              <CircleCheck aria-hidden="true" />
+              Mark SLICE-004 ready to build
             </Button>
             <Button variant="primary" loading>
-              Sending
+              Saving to GitHub
             </Button>
             <Button size="sm">Small</Button>
             <Button disabled>Disabled</Button>
@@ -93,20 +93,20 @@ export function Controls() {
         </Specimen>
 
         <div className="flex flex-col gap-6">
-          <Specimen title="Select" source="status.after-renumber.json">
+          <Specimen title="Select" source="status.rich.json">
             <Field label="Epic" hint="The slice belongs to one epic.">
               <Select
                 value={epicId}
                 onValueChange={setEpicId}
-                options={renumbered.epics.map((e) => ({ value: e.epic_id, label: `${e.epic_id} ${e.title}`, description: e.status }))}
+                options={rich.epics.map((e) => ({ value: e.epic_id, label: `${e.epic_id} ${e.title}`, description: e.status }))}
               />
             </Field>
           </Specimen>
 
-          <Specimen title="Checkbox" source="status.after-renumber.json" note="Choosing approved slices for a new wave.">
+          <Specimen title="Checkbox" source="status.rich.json" note="Choosing the slices a new slice needs first.">
             <fieldset className="flex flex-col gap-3">
-              <legend className="mb-2 text-label text-ink">Slices in this wave</legend>
-              {approved.map((slice) => (
+              <legend className="mb-2 text-label text-ink">Needs these slices first</legend>
+              {candidates.map((slice) => (
                 <Checkbox
                   key={slice.slice_id}
                   checked={chosen.includes(slice.slice_id)}
@@ -116,38 +116,22 @@ export function Controls() {
                       <ArtifactId>{slice.slice_id}</ArtifactId> {slice.title}
                     </span>
                   }
-                  description="Approved"
                 />
               ))}
-              {renumbered.slices
-                .filter((s) => s.status !== "approved_for_engineering")
-                .map((slice) => (
-                  <Checkbox
-                    key={slice.slice_id}
-                    disabled
-                    label={
-                      <span className="inline-flex items-center gap-2">
-                        <ArtifactId>{slice.slice_id}</ArtifactId> {slice.title}
-                      </span>
-                    }
-                    description="Only approved slices can go in a wave."
-                  />
-                ))}
             </fieldset>
           </Specimen>
         </div>
       </div>
 
-      <Specimen title="Tabs" source="status.conflicts.json" note="Arrow keys move between tabs; Tab moves into the panel.">
+      <Specimen title="Tabs" source="status.rich.json" note="Arrow keys move between tabs; Tab moves into the panel.">
         <Tabs defaultValue="slices">
           <TabsList aria-label="Workspace">
             <TabsTrigger value="slices">Slices</TabsTrigger>
             <TabsTrigger value="epics">Epics</TabsTrigger>
-            <TabsTrigger value="waves">Waves</TabsTrigger>
           </TabsList>
           <TabsContent value="slices">
             <ul className="flex flex-col divide-y divide-line">
-              {fx.statusConflicts.slices.map((s) => (
+              {rich.slices.map((s) => (
                 <li key={s.slice_id} className="flex items-center gap-3 py-2">
                   <ArtifactId>{s.slice_id}</ArtifactId>
                   <span className="flex-1 text-body text-ink">{s.title}</span>
@@ -158,7 +142,7 @@ export function Controls() {
           </TabsContent>
           <TabsContent value="epics">
             <ul className="flex flex-col divide-y divide-line">
-              {fx.statusConflicts.epics.map((e) => (
+              {rich.epics.map((e) => (
                 <li key={e.epic_id} className="flex items-center gap-3 py-2">
                   <ArtifactId>{e.epic_id}</ArtifactId>
                   <span className="flex-1 text-body text-ink">{e.title}</span>
@@ -167,11 +151,6 @@ export function Controls() {
               ))}
             </ul>
           </TabsContent>
-          <TabsContent value="waves">
-            <Text tone="muted">
-              {fx.statusConflicts.waves.length} waves: {fx.statusConflicts.waves.map((w) => w.wave_id).join(", ")}.
-            </Text>
-          </TabsContent>
         </Tabs>
       </Specimen>
 
@@ -179,7 +158,6 @@ export function Controls() {
         <div className="flex flex-wrap items-center gap-3">
           <ArtifactId>{epic.epic_id}</ArtifactId>
           <ArtifactId>SLICE-001</ArtifactId>
-          <ArtifactId>WAVE-002</ArtifactId>
           <ArtifactId>FR-01</ArtifactId>
           <Text as="span" size="body-sm" tone="muted" className="ml-4">
             Open the command menu with <Kbd>⌘</Kbd> <Kbd>K</Kbd>, close anything with <Kbd>Esc</Kbd>.

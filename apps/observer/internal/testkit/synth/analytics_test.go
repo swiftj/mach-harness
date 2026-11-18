@@ -16,9 +16,9 @@ import (
 	"mach/observer/internal/testkit/synth"
 )
 
-func analytics(t *testing.T, dir string, cells, waves int, seed uint64) *synth.Summary {
+func analytics(t *testing.T, dir string, cells, epics int, seed uint64) *synth.Summary {
 	t.Helper()
-	sum, err := synth.Generate(synth.Options{Out: dir, Analytics: true, Cells: cells, Waves: waves, Seed: seed})
+	sum, err := synth.Generate(synth.Options{Out: dir, Analytics: true, Cells: cells, Epics: epics, Seed: seed})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,8 +136,8 @@ func TestAnalyticsShapes(t *testing.T) {
 	if len(e["cost"].(map[string]any)["by_model"].(map[string]any)) < 4 {
 		t.Error("fewer than four models with recorded cost")
 	}
-	if num(e, "waves", "total") != 10 || num(e, "tickets", "total") != 80 {
-		t.Errorf("waves %v, tickets %v", e["waves"], e["tickets"])
+	if num(e, "epics", "total") != 10 || num(e, "tickets", "total") != 80 {
+		t.Errorf("epics %v, tickets %v", e["epics"], e["tickets"])
 	}
 	for _, f := range []string{"partial_lifecycle_tickets", "no_lifecycle_tickets"} {
 		if len(e["history_quirks"].(map[string]any)[f].([]any)) == 0 {
@@ -241,9 +241,9 @@ func TestAnalyticsObserverIndexesIt(t *testing.T) {
 	}
 }
 
-func realistic(t *testing.T, dir string, cells, waves int, seed uint64) map[string]any {
+func realistic(t *testing.T, dir string, cells, epics int, seed uint64) map[string]any {
 	t.Helper()
-	if _, err := synth.Generate(synth.Options{Out: dir, Analytics: true, Profile: synth.ProfileRealistic, Cells: cells, Waves: waves, Seed: seed}); err != nil {
+	if _, err := synth.Generate(synth.Options{Out: dir, Analytics: true, Profile: synth.ProfileRealistic, Cells: cells, Epics: epics, Seed: seed}); err != nil {
 		t.Fatal(err)
 	}
 	return readExpected(t, dir)

@@ -181,7 +181,7 @@ Shadows are tinted charcoal, never grey-blue. In dark, elevation shows mainly as
 │          │                                              │
 │ ▌Home    │  <Page width="reading|wide|full">            │  main: the only scroller
 │  Slices  │                                              │
-│  Waves   │                                              │
+│ Decisions│                                              │
 │          │                                              │
 │ ☀ ☾ ▣   │                                              │  rail footer: ThemeSwitch
 └──────────┴──────────────────────────────────────────────┘
@@ -196,12 +196,12 @@ Shadows are tinted charcoal, never grey-blue. In dark, elevation shows mainly as
 
 ## 7. Controls, dialogs, sheets, popovers
 
-- **Button** variants: `primary` (one per region; approve, send, save), `secondary` (default), `ghost` (toolbars), `danger` (reopen, withdraw; always confirmed), `link`. `loading` keeps the width, shows a spinner and sets `aria-busy`. Labels say what happens: "Approve SLICE-001", "Send WAVE-001 to engineering", not "Submit". The toast that follows uses the same verb: "Approved SLICE-001".
+- **Button** variants: `primary` (one per region; approve, mark ready, save), `secondary` (default), `ghost` (toolbars), `danger` (reopen, withdraw; always confirmed), `link`. `loading` keeps the width, shows a spinner and sets `aria-busy`. Labels say what happens: "Approve EPIC-001", "Mark ready to build", not "Submit". The toast or result that follows uses the same words: "SLICE-001 is ready to build".
 - **Field** wraps label, hint, control and error and wires `id`, `aria-describedby` and `aria-invalid` into `Input`, `Textarea` and `Select`. Errors say what to do ("Use lowercase words joined by hyphens, such as team-space."). `Textarea editorial` sets product writing at the larger reading size.
 - **Select** for short lists (Radix). **Checkbox** with label and description; disabled options say why they are disabled.
 - **Dialog**: a decision. Title is a question, description says what the act means (both required), the confirming button is last. Focus is trapped, Escape closes, focus returns to the trigger.
-- **ConfirmDialog**: the one way a personal act (`personalActs`: approve, send, reconcile) is confirmed. `onConfirm` performs the act and resolves `false` to stay open; a refusal is shown inside the dialog in the engine's own words (`error`). The confirming button shows progress and blocks a second click.
-- **Sheet**: detail beside the page, from the right (400, 480 or 640px). Used for a reconcile comparison (your draft | shared project, side by side, each with its own button), a slice's check, reviewer remarks.
+- **ConfirmDialog**: the one way a personal act (`personalActs`: approve an epic, mark a slice ready, reopen, choose a version, renumber) is confirmed. `onConfirm` performs the act and resolves `false` to stay open; a refusal is shown inside the dialog in the engine's own words (`error`). The confirming button shows progress and blocks a second click.
+- **Sheet**: detail beside the page, from the right (400, 480 or 640px). Used for a roadmap item's detail and a slice's check.
 - **Popover**: non-modal explanation anchored to a control. **Tooltip**: names an icon-only control; never holds essential information.
 - **Tabs**: underline in `accent`; arrow keys move between tabs.
 - **Reading and detail** (promoted from the screens in wave 3): `RichText` renders light Markdown (paragraphs, lists, bold, code) as text, never HTML; `plain()` lowers requirement keywords (MUST, SHALL) for reading; `IdText` sets engine IDs inside a sentence as identifiers; `Disclosure` hides engineering detail (paths, Git's own words) behind a closed summary; `FactList`, `Panel`, `Stepper`. Formatting: `plural()`, `formatWhen()`.
@@ -213,74 +213,28 @@ Every state has a word, a glyph and a tone. The glyph vocabulary (`StateGlyph`):
 
 | Glyph | Shape | Means |
 |-------|-------|-------|
-| `open` | dashed ring | nothing settled yet (draft slice, proposed epic, draft wave) |
-| `half` | half-filled ring | being worked out (interviewing; changes requested; needs updating) |
+| `open` | dashed ring | nothing settled yet (draft slice, proposed epic) |
+| `half` | half-filled ring | being worked out (interviewing) |
 | `ready` | ring with dot | settled, waiting for a person (ready for approval) |
 | `approved` | solid disc with tick | a person approved it |
-| `submitted` | solid disc with arrow | sent, under review |
-| `accepted` | double ring | accepted into the shared project; epic completed |
-| `blocked` | octagon with bar | cannot move until fixed |
-| `superseded` | ring with slash | replaced or deferred; kept for history |
+| `submitted` | solid disc with arrow | handed to the builders: ready to build; saved to a folder |
+| `building` | three-quarter-filled ring | being built |
+| `question` | solid disc with a question mark | the builders asked the product manager a question |
+| `accepted` | double ring | shipped; epic completed |
+| `blocked` | octagon with bar | cannot move until the PM acts (changed on GitHub after approval, number taken, saving did not finish) |
+| `superseded` | ring with slash | replaced or deferred, kept for history; a newer version saved by someone else |
 
 **Slice** (`SliceStatusPill`, `SliceLifecycle`): Draft (neutral) → Interviewing (info; shows open questions) → Ready for approval (accent) → Approved (success). Superseded (neutral, off the path). `SliceLifecycle` is an ordered list: past steps ticked, the current step marked with `aria-current="step"`, later steps quiet.
 
-**Epic** (`EpicStatusPill`): Proposed, Approved, Deferred (warning), Completed, Superseded. **Wave** (`WaveStatusPill`): Draft, Approved, Superseded.
+**Epic** (`EpicStatusPill`): Proposed, Approved, Deferred (warning), Completed, Superseded.
 
-**Wave review** (`ReviewStatusPill`, `WaveJourney`): four stages, Approved → Sent → In review → Accepted. The engine's review word sits on its stage:
-
-| Engine status | Stage | Tone | Glyph | Needs the PM |
-|---------------|-------|------|-------|--------------|
-| Not approved yet | Approved | neutral | open | |
-| Approved, not sent | Approved | neutral | approved | |
-| Sent, pull request not opened (shown "Sent, request not opened") | Sent | warning | blocked | yes |
-| Waiting for review | In review | info | submitted | |
-| Changes requested | In review | warning | half | yes |
-| Blocked by a check | In review | danger | blocked | yes |
-| Needs updating | In review | warning | half | yes |
-| Accepted, waiting to merge | Accepted | success | approved | |
-| Accepted | Accepted (final) | success | accepted | |
-| Declined | In review (final) | neutral | superseded | |
-
-The engine's `meaning` sentence is shown beside the pill when present. Reviewer remarks follow as `<Quote from kind>`.
-
-**Where an artifact stands** (`SourceBadge`): Your draft (outline, hidden by default), Shared (outline info), Conflict (warning), Needs a new number (warning, for a collision).
-
-## 9. Feedback states
-
-| State | Component | When | Rules |
-|-------|-----------|------|-------|
-| Success | `toast({tone:"success"})` | An act completed | Past tense of the act's own name; the engine's `note` as the description. Disappears after 5s |
-| Information | `Banner tone="info"`, `toast({tone:"info"})` | Refresh brought things in | A banner when it stays relevant |
-| Warning | `Banner tone="warning"` | Something to settle: conflicts, collisions, approvals withdrawn, shared project unreachable | Stays until resolved; carries the action ("Settle them", "Try again") |
-| Error: refused | `ErrorState` or inline | The engine said no | The engine's message shown as is; the title names what did not happen ("WAVE-001 was not sent") |
-| Error: check findings | List with `blocked` glyphs | `slice check` found problems | Not an app error: the check ran. Count badge, then findings |
-| Error: host | `ErrorState` + `describeError` | Network, session, protocol | Says what to do (start Product Studio again, reload) |
-| Loading | `LoadingState`, `Skeleton`, `SkeletonText` | Waiting | Words say what is loading; skeletons when the shape is known; the region has `aria-busy` |
-| Empty | `EmptyState` | Nothing yet | Says what belongs here, offers the one action. `headingLevel={1}` when it is the whole page |
-
-Danger toasts never auto-dismiss. Toasts are never the only record of something the person must act on.
-
-## 10. Motion
-
-| Token | Duration | Easing | For |
-|-------|----------|--------|-----|
-| `instant` | 0 | | Checkbox ticks, selection |
-| `fast` | 120ms | standard | Hover, press, focus feedback |
-| `base` | 180ms | enter | Popovers, tooltips, tab changes |
-| `slow` | 260ms | enter | Dialogs, sheets and toasts entering |
-| `layout` | 400ms | standard | Graph re-layout, list reordering |
-
-Easings: standard `cubic-bezier(0.2,0,0,1)`, enter `(0,0,0,1)`, exit `(0.4,0,1,1)`. Exits are faster than entrances. Only opacity and transform animate. `motion/react` users take presets from `useMachTransition(name)`.
-
-**Reduced motion** (`prefers-reduced-motion: reduce`): every `--mach-duration-*` becomes 0; a base rule caps any remaining CSS animation or transition at 0.01ms; `useMachTransition` returns `{duration: 0}`; the graph fits without animating; skeleton shimmer and spinner rotation stop (the spinner stays visible, still). The capture script verifies that no element is still animating under reduced motion.
-
-## 11. Graph
+**With the builders** (`SliceGithubPills`, from a slice's `github` in `status` and `slice show`): the state the engine read from the slice's GitHub issue (`builderStates`: Ready to build, Being built, Question from the builders, Shipped), then each mark the engine reports (`githubMarks`, in this order: Changed on GitHub after you approved it, Newer version saved by someone else, Number already taken, Saving did not finish, Saved to a folder). Nothing is shown when the engine reported nothing. Shown beside the slice's own pill, never instead of it.
 
 `@mach/ui/graph`: React Flow 12 with ELK's layered layout (loaded on first use, about 1.4MB, so screens without a graph do not pay for it).
 
-- `productGraphFromStatus({status, reviews?, dependencies?})` builds nodes and edges from the engine's `status` (and optionally `feedback` and work-order dependencies). `layoutGraph(nodes, edges, {direction})` positions them. `<ProductGraph nodes edges onSelect selectedId ariaLabel>` renders, read-only. `<GraphOutline>` renders the same graph as a nested list; every graph view offers it.
-- **Node kinds** share one component (`MachNodeView`): the kind is named in words ("Project", "Epic", "Slice") and shown by the left bar's weight (6px project, 4px epic, 2px slice); the project node is raised. Each node shows the engine ID, the title, the state (glyph and word) and either a short fact (open questions, the wave) or, in warning ink, what must be settled ("Conflict", "Needs a new number").
-- **Node states** add a border style so state reads without colour: proposed (dashed), interviewing / ready / approved / submitted (solid), accepted (double), blocked (heavy, danger), superseded (dashed, faded). Mapping from the engine is presentation only (`sliceGraphState`): a slice's status, raised to submitted when its wave was sent, accepted or blocked when review said so.
+- `productGraphFromStatus({status, dependencies?})` builds nodes and edges from the engine's `status` (and optionally work-order dependencies). `layoutGraph(nodes, edges, {direction})` positions them. `<ProductGraph nodes edges onSelect selectedId ariaLabel>` renders, read-only. `<GraphOutline>` renders the same graph as a nested list; every graph view offers it.
+- **Node kinds** share one component (`MachNodeView`): the kind is named in words ("Project", "Epic", "Slice") and shown by the left bar's weight (6px project, 4px epic, 2px slice); the project node is raised. Each node shows the engine ID, the title, the state (glyph and word) and either a short fact (open questions, the issue number) or, in warning ink, what must be settled ("Changed on GitHub", "Number taken").
+- **Node states** add a border style so state reads without colour: proposed (dashed), interviewing / ready / approved / ready to build / being built (solid), question from the builders (heavy, warning), shipped (double), superseded (dashed, faded). Mapping from the engine is presentation only (`sliceGraphState`): an approved slice shows the state the engine read from its issue, when it read one.
 - **Edges**: *contains* (project → epic → slice) thin solid `graph-edge`, recedes; *depends* dashed `graph-edge-dependency` with an arrowhead, drawn from the prerequisite to the slice that needs it, so the left-to-right order is delivery order.
 - **Interaction**: no dragging or connecting (structure changes go through the engine). Tab moves between nodes, Enter or Space selects, the focus ring sits 3px outside the node. Zoom controls bottom right.
 - **Factory Floor** adds kinds (station, cell, agent) and states with the same vocabulary; it keeps the glyphs and border semantics.

@@ -27,7 +27,6 @@ import type {
 // ---------------------------------------------------------------- references
 
 export const ENTITY_KINDS = [
-  "wave",
   "slice",
   "cell",
   "station",
@@ -61,14 +60,14 @@ export type AnyEntityRef = EntityRef;
 
 /**
  * One string names any selectable thing: `<kind>:<id>`.
- * - `wave:WAVE-007`, `slice:SLICE-021`, `cell:LOCAL-031`, `execution:x1a2b3c4d5e6f`
- * - `station:LOCAL-031/build` (a station as one cell visits it) or `station:build` (the station itself)
- * - `agent:ag-031-07`, `tool:tc-031-0042`, `artifact:LOCAL-031:plan.md`
- * - `gate:LOCAL-031/review#2` (round-numbered gates: verification, review), `gate:LOCAL-031/audit`
+ * - `slice:SLICE-021`, `cell:131`, `execution:x1a2b3c4d5e6f`
+ * - `station:131/build` (a station as one cell visits it) or `station:build` (the station itself)
+ * - `agent:ag-131-07`, `tool:tc-131-0042`, `artifact:131:plan.md`
+ * - `gate:131/review#2` (round-numbered gates: verification, review), `gate:131/audit`
  * - `dependency:SLICE-024->SLICE-021` (the first waits for the second)
- * - `finding:LOCAL-032/r1/security/1`
+ * - `finding:132/r1/security/1`
  * - `actor:supervisor`, `actor:scheduler`
- * - live only: `visit:LOCAL-031/build#2`, `seat:LOCAL-031/review#2/security`,
+ * - live only: `visit:131/build#2`, `seat:131/review#2/security`,
  *   `workflow:<execution>/<task>`, `project:<id>`
  *
  * Agent and tool ids are opaque (contract 5.2): `agent:<execution>/<agentId>` in production. Nothing
@@ -94,7 +93,6 @@ export function refId(ref: AnyRef): string {
   return ref.slice(ref.indexOf(":") + 1);
 }
 export const ref = {
-  wave: (id: string): EntityRef => `wave:${id}`,
   slice: (id: string): EntityRef => `slice:${id}`,
   cell: (ticketId: string): EntityRef => `cell:${ticketId}`,
   station: (station: StationId, ticketId?: string): EntityRef => (ticketId ? `station:${ticketId}/${station}` : `station:${station}`),
@@ -132,21 +130,23 @@ export function gateId(ticketId: string, gate: GateKind, round?: number): string
 /** What the events' refs point at: the approved product definitions, as intake reads them from the integration branch. */
 export interface ProductDefinitions {
   readonly project: { readonly id: string; readonly name: string; readonly integrationBranch: string };
-  readonly waves: Readonly<Record<string, WaveDefinition>>;
+  /** The epics the slices belong to (M11: an epic groups slices; each is a GitHub issue). */
+  readonly epics: Readonly<Record<string, EpicDefinition>>;
   readonly slices: Readonly<Record<string, SliceDefinition>>;
 }
-export interface WaveDefinition {
+export interface EpicDefinition {
   readonly id: string;
   readonly title: string;
-  readonly epicId: string;
-  readonly epicTitle: string;
+  /** The epic's GitHub issue number. */
+  readonly issue: number | null;
 }
 export interface SliceDefinition {
   readonly id: string;
   readonly title: string;
   readonly summary: string;
-  readonly waveId: string;
   readonly epicId: string;
+  /** The slice's GitHub issue number (it is also its ticket); null for a slice from a ready folder. */
+  readonly issue: number | null;
   readonly risk: Risk;
   readonly appType: AppType;
   readonly dependencies: readonly string[];
@@ -194,7 +194,6 @@ export interface Scene {
   readonly project: ProductDefinitions["project"];
   readonly factory: FactoryState;
   readonly supervisor: SupervisorState;
-  readonly waves: Readonly<Record<string, WaveState>>;
   readonly slices: Readonly<Record<string, SliceState>>;
   readonly dependencies: Readonly<Record<string, DependencyState>>;
   readonly cells: Readonly<Record<string, CellState>>;
@@ -265,25 +264,19 @@ export interface SupervisorState {
   readonly attention: Readonly<Record<string, { readonly reason: string; readonly at: number; readonly seq: number; readonly code?: NotProgressing | null }>>;
 }
 
-export interface WaveState {
-  readonly id: string;
-  readonly title: string;
-  readonly epicTitle: string;
-  readonly revision: number | null;
-  readonly sliceIds: readonly string[];
-  readonly approvedBy: string;
-  readonly approvedAt: string;
-  readonly state: "discovered" | "validated";
-  readonly discoveredAt: number;
-  readonly seq: number;
-  readonly meta: EntityMeta;
-}
-
 export interface SliceState {
   readonly id: string;
   readonly title: string;
   readonly summary: string;
-  readonly waveId: string;
+  /** The epic it belongs to, when recorded (M11); null otherwise, never guessed. */
+  readonly epicId: string | null;
+  /**
+   * The epic's name as recorded (live: slice.materialized `data.epic_title`, free text under the
+   * display policy; the simulation: its definitions). Null when not recorded.
+   */
+  readonly epicTitle: string | null;
+  /** Its GitHub issue number, when recorded; null for a slice from a ready folder or when not recorded. */
+  readonly issue: number | null;
   readonly revision: number | null;
   readonly risk: Risk;
   readonly ticketId: string;

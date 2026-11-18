@@ -19,10 +19,12 @@ import (
 // SchemaVersion is the event schema the serving side reads and serves.
 const SchemaVersion = 3
 
-// SchemaRevision is the additive revision within version 3 that this observer serves (1:
+// SchemaRevision is the revision within version 3 that this observer serves (1:
 // execution.usage.cost_complete and cost_incomplete_reasons; 2: history.gap class and history_lost,
-// origin.runtime_state; 3: execution.started source_commit, provenance and provenance_reason).
-const SchemaRevision = 3
+// origin.runtime_state; 3: execution.started source_commit, provenance and provenance_reason; 4,
+// not additive (M11): ids.epic_id and ids.issue for ids.wave_id, no wave.discovered,
+// slice.materialized epic_title).
+const SchemaRevision = 4
 
 // Errors a Log read returns.
 var (
@@ -189,7 +191,8 @@ type Time struct {
 // IDs are every identity key, all nullable (contract section 4).
 type IDs struct {
 	ProjectID     *string `json:"project_id"`
-	WaveID        *string `json:"wave_id"`
+	EpicID        *string `json:"epic_id"`
+	Issue         *int64  `json:"issue"`
 	SliceID       *string `json:"slice_id"`
 	Revision      *int64  `json:"revision"`
 	TicketID      *string `json:"ticket_id"`

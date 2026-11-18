@@ -4,12 +4,12 @@
     "agents_per_execution": 12,
     "cells": 60,
     "end": "2026-11-12T06:00:00.000Z",
+    "epics": 8,
     "events_target": 0,
     "hours": 504,
     "max_parallel": 4,
     "seed": 1,
-    "start": "2026-10-22T06:00:00.000Z",
-    "waves": 8
+    "start": "2026-10-22T06:00:00.000Z"
   },
   "tickets": {
     "abandoned": 4,
@@ -90,8 +90,7 @@
     "revisions_superseded": 0,
     "total": 61
   },
-  "waves": {
-    "delivered": 4,
+  "epics": {
     "total": 8
   },
   "visits": {

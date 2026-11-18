@@ -165,8 +165,8 @@ func FuzzLifecycleLine(f *testing.F) {
 
 func FuzzIntakeLine(f *testing.F) {
 	seed(f, intakeSample()...)
-	before := v2(1, "intake.validated", "intake", "", "", map[string]any{"digest": "ab"})
-	after := v2(999999999, "human.required", "intake", "T-1", "", map[string]any{"reason": "a person decides"})
+	before := v3(1, "intake.validated", "intake", "", "", map[string]any{"digest": "ab"})
+	after := v3(999999999, "human.required", "intake", "T-1", "", map[string]any{"reason": "a person decides"})
 	fuzzParser(f, func() lineParser {
 		return normalize.NewLedger("0badc0de", "/work/project", normalize.NewIdentity())
 	}, before, after, "human.required")

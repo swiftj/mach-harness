@@ -1,14 +1,14 @@
-import { CircleAlert, CircleCheck, RefreshCw, X } from "lucide-react";
+import { CircleAlert, CircleCheck, RefreshCw } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { ArtifactId, Banner, Button, EmptyState, ErrorState, Heading, Page, Skeleton, Text, describeError, reviewDescriptor, type FeedbackWave, type Renumber, type Status, Panel, formatWhen, plural } from "@mach/ui";
-import { ReviewProgress } from "../waves/delivery/ReviewProgress";
-import { forget, useDeliveryMemory, type Withdrawal } from "../waves/delivery/memory";
-import { useDeliveryRead } from "../waves/delivery/ops";
-import { CollisionCard } from "./CollisionCard";
-import { ConflictCard } from "./ConflictCard";
+import { ArtifactId, Button, EmptyState, ErrorState, Heading, Page, Skeleton, SliceGithubPills, Text, describeError, formatWhen, type ApprovalWithdrawn, type Status, type StatusSliceRow } from "@mach/ui";
+import { useStatus } from "../../api/store";
+import { titleFor } from "../../api/describe";
+import { IssueLink } from "../../shared/IssueLink";
+import { RenumberDialog } from "../../shared/RenumberDialog";
+import { AnswerQuestionButton, BuildersQuestion } from "../../shared/BuildersQuestion";
+import { NewerVersionCard } from "./NewerVersionCard";
 import { OpenQuestionsCard } from "./OpenQuestionsCard";
-import { artifactFromPath, titleFor } from "../../api/describe";
 import { useRequestList } from "./requests/api";
 import { RequestsGroup } from "./requests/RequestsGroup";
 
@@ -28,114 +28,96 @@ function Group({ id, title, hint, count, children }: { id: string; title: string
   );
 }
 
-function WithdrawnCard({ item, status, again, dismissable = true }: { item: Withdrawal; status: Status; again: boolean; dismissable?: boolean }) {
-  const title = titleFor(status, item.id);
-  const to = item.id.startsWith("WAVE-") ? "/waves" : item.id.startsWith("SLICE-") ? `/slices/${item.id}` : "/roadmap";
+/** One slice the engine reports something about, with the one way to settle it. */
+function SliceCard({ slice, label, children, action }: { slice: StatusSliceRow; label: string; children: ReactNode; action: ReactNode }) {
+  const headingId = `${label}-${slice.slice_id}`;
   return (
-    <article aria-label={`${item.id} ${again ? "needs approval again" : "approval withdrawn"}`} className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-line bg-surface px-5 py-4">
-      <div className="flex min-w-0 flex-col gap-1">
-        <p className="flex flex-wrap items-center gap-2 text-body font-semibold text-ink">
-          <ArtifactId>{item.id}</ArtifactId>
-          {title ? <span>{title}</span> : null}
-        </p>
-        <Text size="body-sm">{item.why}</Text>
-        <Text size="caption" tone="subtle">
-          {again ? "Needs your approval again" : "Approval withdrawn"}{item.at ? ` · ${formatWhen(item.at)}` : ""}
-        </Text>
-      </div>
-      <div className="flex items-center gap-2">
-        <Button asChild size="sm">
-          <Link to={to}>Review and approve again</Link>
-        </Button>
-        {dismissable ? (
-          <Button size="sm" variant="ghost" onClick={() => forget(item.id)}>
-            <X aria-hidden="true" />
-            Dismiss<span className="sr-only"> {item.id}</span>
-          </Button>
-        ) : null}
-      </div>
+    <article aria-labelledby={headingId} className="flex flex-col gap-3 rounded-md border border-line bg-surface px-5 py-4">
+      <header className="flex flex-wrap items-center gap-2">
+        <Heading level={3} id={headingId} size="title-3">
+          <span className="inline-flex flex-wrap items-center gap-2">
+            <ArtifactId className="text-body text-ink">{slice.slice_id}</ArtifactId>
+            <span>{slice.title}</span>
+          </span>
+        </Heading>
+        <SliceGithubPills github={slice.github} size="sm" />
+        {slice.github.issue ? <IssueLink number={slice.github.issue} url={slice.github.url} /> : null}
+      </header>
+      <div className="text-body text-ink">{children}</div>
+      <div className="flex flex-wrap gap-2">{action}</div>
     </article>
   );
 }
 
-function RenumberResult({ result, onClose }: { result: Renumber; onClose: () => void }) {
+function WithdrawnCard({ item, status }: { item: ApprovalWithdrawn; status: Status }) {
+  const title = titleFor(status, item.artifact);
   return (
-    <Banner
-      tone="success"
-      live="polite"
-      title={`${result.renumbered.from} is now ${result.renumbered.to}`}
-      actions={
-        <Button size="sm" variant="ghost" onClick={onClose}>
-          Done
-        </Button>
-      }
-    >
-      <p>Every reference moved with it ({plural(result.changed.length, "item")} updated in your draft).</p>
-      {result.needs_approval_again.length ? (
-        <p className="mt-1 font-semibold">
-          Needs your approval again: {result.needs_approval_again.join(", ")}. It is listed below under approvals.
+    <article aria-label={`${item.artifact} approval withdrawn`} className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-line bg-surface px-5 py-4">
+      <div className="flex min-w-0 flex-col gap-1">
+        <p className="flex flex-wrap items-center gap-2 text-body font-semibold text-ink">
+          <ArtifactId>{item.artifact}</ArtifactId>
+          {title ? <span>{title}</span> : null}
         </p>
-      ) : (
-        <p className="mt-1">Nothing needs approving again.</p>
-      )}
-    </Banner>
+        {item.reason ? <Text size="body-sm">{item.reason}</Text> : null}
+        <Text size="caption" tone="subtle">
+          Approval withdrawn{item.at ? ` · ${formatWhen(item.at)}` : ""}
+        </Text>
+      </div>
+      <Button asChild size="sm">
+        <Link to={`/slices/${item.artifact}`}>Read it and mark it ready again</Link>
+      </Button>
+    </article>
   );
 }
 
 /**
- * The Decision Inbox: everything only the PM can decide, most urgent first. Items that block sharing
- * (conflicts, collisions) come first, then engineering waiting on the PM, withdrawn approvals, and open
- * interview questions. The engine reports every item; this screen only orders and explains them.
+ * The Decision Inbox: everything only the PM can decide, most urgent first. Every item is something
+ * the engine reports (`status`, and the requests found at the last refresh); this screen only orders
+ * and explains them, and each act is confirmed in a dialog or made on the slice's own screen.
  */
 export function InboxScreen() {
-  const status = useDeliveryRead("status", {});
-  const feedback = useDeliveryRead("feedback", status.data?.waves.some((w) => w.sent) ? {} : null);
-  const memory = useDeliveryMemory();
-  const [renumbered, setRenumbered] = useState<Renumber | null>(null);
+  const status = useStatus();
   const requests = useRequestList();
+  const [renumber, setRenumber] = useState<string | null>(null);
 
-  if (status.loading && !status.data) {
+  if (!status.data && !status.error) {
     return (
       <Page width="reading">
         <div role="status" aria-busy="true" aria-label="Reading what needs your decision" className="flex flex-col gap-4">
           <Skeleton className="h-9 w-48" />
           <Skeleton className="h-5 w-full" />
           <Skeleton className="mt-4 h-40 w-full" />
-          <Skeleton className="h-40 w-full" />
         </div>
       </Page>
     );
   }
   if (!status.data) {
-    const { title, message } = status.error ? describeError(status.error) : { title: "Nothing to show", message: "" };
+    const { title, message } = describeError(status.error!);
     return (
       <Page width="reading">
-        <ErrorState icon={<CircleAlert />} title={title} message={message} action={<Button onClick={status.reload}>Try again</Button>} />
+        <ErrorState icon={<CircleAlert />} title={title} message={message} action={<Button onClick={() => void status.reload()}>Try again</Button>} />
       </Page>
     );
   }
 
   const data = status.data;
-  const reconciling = data.needs_reconciling;
-  const collisionIds = [...new Set(reconciling.collisions.map((p) => artifactFromPath(p).owner ?? p))];
-  const engineering: FeedbackWave[] = (feedback.data?.waves ?? []).filter((w) => reviewDescriptor(w.status).attention);
-  const present = (id: string) => [...data.slices.map((s) => s.slice_id), ...data.waves.map((w) => w.wave_id), ...data.epics.map((e) => e.epic_id)].includes(id);
-  // The engine reports withdrawn approvals and their reason (status.approvals_withdrawn); older
-  // engines did not, so this browser's own record is the fallback.
-  const fromEngine = data.approvals_withdrawn !== undefined;
-  const withdrawn: Withdrawal[] = fromEngine
-    ? (data.approvals_withdrawn ?? []).map((w) => ({ id: w.artifact, why: w.reason ?? "Something changed what you had approved.", at: w.at ?? "" }))
-    : memory.withdrawn.filter((w) => present(w.id));
-  const again = memory.needsApprovalAgain.filter((w) => present(w.id) && !withdrawn.some((x) => x.id === w.id));
+  const changed = data.slices.filter((s) => s.github.changed_on_github);
+  const newer = data.slices.filter((s) => s.github.newer_elsewhere);
+  const taken = data.slices.filter((s) => s.github.number_taken);
+  const unfinished = data.slices.filter((s) => s.github.unfinished);
+  const builders = data.slices.filter((s) => s.github.state_label === "mach:question");
+  const withdrawn = data.approvals_withdrawn;
   const questions = data.slices.filter((s) => s.open_questions > 0);
-  // Requests from GitHub issues: no section at all when the shared repository is not on GitHub.
+  // Requests from GitHub issues: no section at all when the project is not on GitHub.
   const requestsShown = Boolean(requests.data?.repository) || (requests.error !== null && !requests.data);
 
   const groups = [
-    { id: "conflicts", label: "Versions to choose", count: reconciling.conflicts.length },
-    { id: "collisions", label: "New numbers needed", count: collisionIds.length },
-    { id: "engineering", label: "Engineering is waiting on you", count: engineering.length },
-    { id: "approvals", label: "Approvals to give again", count: withdrawn.length + again.length },
+    { id: "changed", label: "Changed on GitHub", count: changed.length },
+    { id: "newer", label: "Versions to choose", count: newer.length },
+    { id: "numbers", label: "New numbers needed", count: taken.length },
+    { id: "unfinished", label: "Saving to finish", count: unfinished.length },
+    { id: "builders", label: "Questions from the builders", count: builders.length },
+    { id: "approvals", label: "Approvals to give again", count: withdrawn.length },
     { id: "questions", label: "Open questions", count: questions.length },
     { id: "requests", label: "Requests", count: requests.data?.items.length ?? 0 },
   ].filter((g) => g.count > 0);
@@ -146,9 +128,7 @@ export function InboxScreen() {
       <div className="flex max-w-[64rem] flex-col gap-8">
         <header className="flex max-w-reading flex-col gap-3">
           <Heading level={1}>Decisions</Heading>
-          <Text tone="muted">
-            Things only you can decide, most urgent first. Nothing here is decided for you, and every choice asks you to confirm it.
-          </Text>
+          <Text tone="muted">Things only you can decide, most urgent first. Nothing here is decided for you, and every choice asks you to confirm it.</Text>
           {total > 0 ? (
             <nav aria-label="Decisions by kind">
               <ul className="flex flex-wrap gap-2">
@@ -172,86 +152,109 @@ export function InboxScreen() {
           ) : null}
         </header>
 
-        {renumbered ? <RenumberResult result={renumbered} onClose={() => setRenumbered(null)} /> : null}
-
-        {feedback.error ? (
-          <Banner tone="info" title="Review progress could not be checked just now" actions={<Button size="sm" onClick={feedback.reload}>Check again</Button>}>
-            Anything engineering is waiting on will appear here once it can be read.
-          </Banner>
-        ) : null}
-
         {total === 0 ? (
           <EmptyState
             layout="page"
             icon={<CircleCheck />}
             title="Nothing to decide"
-            description={
-              feedback.loading && !feedback.data
-                ? "Your drafts agree with the shared project and no interview has an open question. Still checking engineering's review…"
-                : "Your drafts agree with the shared project, no interview has an open question, and engineering isn't waiting on you."
-            }
+            description="Nothing is waiting for your decision, and no interview has an open question."
             action={
-              <Button asChild>
-                <Link to="/shared">
-                  <RefreshCw aria-hidden="true" />
-                  Check the shared project for changes
-                </Link>
-              </Button>
+              data.github.repository ? (
+                <Button asChild>
+                  <Link to="/github">
+                    <RefreshCw aria-hidden="true" />
+                    Check GitHub for changes
+                  </Link>
+                </Button>
+              ) : undefined
             }
           />
         ) : null}
 
-        {reconciling.conflicts.length ? (
-          <Group
-            id="conflicts"
-            title="Versions to choose"
-            hint="These changed both in your draft and in the shared project. Nothing that contains them can be approved or sent until you choose."
-            count={reconciling.conflicts.length}
-          >
-            {reconciling.conflicts.map((path) => (
-              <ConflictCard key={path} path={path} detail={reconciling.details[path]} status={data} onSettled={status.reload} />
+        {changed.length ? (
+          <Group id="changed" title="Changed on GitHub after you approved it" hint="The builders will not take these until you put your approved version back." count={changed.length}>
+            {changed.map((slice) => (
+              <SliceCard
+                key={slice.slice_id}
+                slice={slice}
+                label="changed"
+                action={
+                  <Button asChild variant="primary">
+                    <Link to={`/slices/${slice.slice_id}`}>Read it and mark it ready again</Link>
+                  </Button>
+                }
+              >
+                Someone edited this slice&apos;s issue on GitHub after you approved it. Marking it ready again puts your approved version back.
+              </SliceCard>
             ))}
           </Group>
         ) : null}
 
-        {collisionIds.length ? (
-          <Group id="collisions" title="New numbers needed" hint="Someone else's work took these numbers first. Your work is fine; it needs a new number before it can be shared." count={collisionIds.length}>
-            {collisionIds.map((id) => (
-              <CollisionCard
-                key={id}
-                id={id}
-                status={data}
-                onRenumbered={(result) => {
-                  setRenumbered(result);
-                  status.reload();
-                }}
-              />
+        {newer.length ? (
+          <Group id="newer" title="Versions to choose" hint="Someone else saved a newer version of these on GitHub. Choose before you mark them ready." count={newer.length}>
+            {newer.map((slice) => (
+              <NewerVersionCard key={slice.slice_id} slice={slice} />
             ))}
           </Group>
         ) : null}
 
-        {engineering.length ? (
-          <Group id="engineering" title="Engineering is waiting on you" hint="Review of a wave you sent needs your response." count={engineering.length}>
-            {engineering.map((wave) => (
-              <Panel key={wave.wave_id} aria-labelledby={`eng-${wave.wave_id}`} className="flex flex-col gap-4 px-5 py-4">
-                <Heading level={3} id={`eng-${wave.wave_id}`} size="title-3">
-                  <span className="inline-flex flex-wrap items-center gap-2">
-                    Delivery wave <ArtifactId className="text-body text-ink">{wave.wave_id}</ArtifactId>
-                  </span>
-                </Heading>
-                <ReviewProgress wave={wave} headingLevel={4} />
-              </Panel>
+        {taken.length ? (
+          <Group id="numbers" title="New numbers needed" hint="Another slice on GitHub already uses these numbers. Your work is fine; it needs a new number." count={taken.length}>
+            {taken.map((slice) => (
+              <SliceCard
+                key={slice.slice_id}
+                slice={slice}
+                label="numbers"
+                action={
+                  <Button variant="primary" onClick={() => setRenumber(slice.slice_id)}>
+                    Give {slice.slice_id} a new number
+                  </Button>
+                }
+              >
+                Another slice saved on GitHub uses the number {slice.slice_id}. Your draft keeps everything it says and gets the next free number.
+              </SliceCard>
             ))}
           </Group>
         ) : null}
 
-        {withdrawn.length || again.length ? (
-          <Group id="approvals" title="Approvals to give again" hint="Something changed what you had approved. Look again before you rely on it." count={withdrawn.length + again.length}>
+        {unfinished.length ? (
+          <Group id="unfinished" title="Saving to finish" hint="You approved these, but saving them to GitHub stopped part way." count={unfinished.length}>
+            {unfinished.map((slice) => (
+              <SliceCard
+                key={slice.slice_id}
+                slice={slice}
+                label="unfinished"
+                action={
+                  <Button asChild variant="primary">
+                    <Link to={`/slices/${slice.slice_id}`}>Finish marking it ready</Link>
+                  </Button>
+                }
+              >
+                Marking it ready again finishes the job; nothing is made twice.
+              </SliceCard>
+            ))}
+          </Group>
+        ) : null}
+
+        {builders.length ? (
+          <Group id="builders" title="Questions from the builders" hint="The builders need your answer before they go on. Answering reopens the slice and starts its interview from their question." count={builders.length}>
+            {builders.map((slice) => (
+              <SliceCard
+                key={slice.slice_id}
+                slice={slice}
+                label="builders"
+                action={<AnswerQuestionButton sliceId={slice.slice_id} approved={!slice.editable} />}
+              >
+                <BuildersQuestion github={slice.github} headingLevel={3} />
+              </SliceCard>
+            ))}
+          </Group>
+        ) : null}
+
+        {withdrawn.length ? (
+          <Group id="approvals" title="Approvals to give again" hint="Something changed what you had approved. Look again before you rely on it." count={withdrawn.length}>
             {withdrawn.map((item) => (
-              <WithdrawnCard key={`w-${item.id}`} item={item} status={data} again={false} dismissable={!fromEngine} />
-            ))}
-            {again.map((item) => (
-              <WithdrawnCard key={`a-${item.id}`} item={item} status={data} again />
+              <WithdrawnCard key={item.artifact} item={item} status={data} />
             ))}
           </Group>
         ) : null}
@@ -259,17 +262,18 @@ export function InboxScreen() {
         {questions.length ? (
           <Group id="questions" title="Open questions" hint="Interviews waiting for your answers." count={questions.length}>
             {questions.map((slice) => (
-              <OpenQuestionsCard key={slice.slice_id} slice={slice} status={data} />
+              <OpenQuestionsCard key={slice.slice_id} slice={slice} />
             ))}
           </Group>
         ) : null}
 
         {requestsShown ? (
-          <Group id="requests" title="Requests" hint="GitHub issues labelled as requests. Picking one up starts a draft slice; the interview still asks you every question." count={requests.data?.items.length ?? 0}>
+          <Group id="requests" title="Requests" hint="Requests other people filed as GitHub issues. Picking one up starts a draft slice; the interview still asks you every question." count={requests.data?.items.length ?? 0}>
             <RequestsGroup list={requests} status={data} />
           </Group>
         ) : null}
       </div>
+      <RenumberDialog id={renumber} onOpenChange={(open) => !open && setRenumber(null)} />
     </Page>
   );
 }

@@ -215,7 +215,7 @@ func TestCompareIncompleteUsageAccounting(t *testing.T) {
 func TestCompareUnavailable(t *testing.T) {
 	_, o := twoWeeks(t)
 	d := o.metrics(allIDs(), "")
-	for id, status := range map[string]string{"K5": "not-recorded", "K6": "not-recorded", "G4": "not-recorded", "T3": "deferred", "C5": "deferred", "R4": "deferred"} {
+	for id, status := range map[string]string{"K5": "not-recorded", "K6": "not-recorded", "G4": "not-recorded", "R4": "deferred"} {
 		r := metric(t, d, id)
 		if r["status"] != status || r["value"] != nil || r["numerator_value"] != nil || r["denominator_value"] != nil {
 			t.Errorf("%s: status %v value %v", id, r["status"], r["value"])

@@ -33,11 +33,11 @@ func NewLedger(gen, root string, identity *Identity) *Ledger {
 // Key is the partition key.
 func (l *Ledger) Key() string { return l.key }
 
-// The kinds of the intake log (contract 11.1), all 22.
+// The kinds of the intake log (contract 11.1), all 21 (M11 removed wave.discovered).
 var intakeKinds = map[string]bool{}
 
 func init() {
-	for _, k := range event.Kinds[:22] {
+	for _, k := range event.Kinds[:21] {
 		intakeKinds[k] = true
 	}
 }
@@ -48,7 +48,8 @@ type ledgerLine struct {
 	At            any            `json:"at"`
 	Type          any            `json:"type"`
 	ProjectID     any            `json:"project_id"`
-	WaveID        any            `json:"wave_id"`
+	EpicID        any            `json:"epic_id"` // version 3 (M11); a version 2 line's wave_id is not read
+	Issue         any            `json:"issue"`   // version 3 (M11): the slice's issue number
 	SliceID       any            `json:"slice_id"`
 	Revision      any            `json:"revision"`
 	TicketID      any            `json:"ticket_id"`
@@ -71,7 +72,7 @@ func (l *Ledger) Line(line []byte, r Read) []*event.Event {
 		redact.PeopleFor(l.Root).LearnJSON(line)
 	}
 	var in ledgerLine
-	if err := json.Unmarshal(line, &in); err != nil || in.SchemaVersion == nil || *in.SchemaVersion != 2 || in.Seq == nil || *in.Seq < 1 {
+	if err := json.Unmarshal(line, &in); err != nil || in.SchemaVersion == nil || intakeVersions[*in.SchemaVersion] == "" || in.Seq == nil || *in.Seq < 1 {
 		ev := gapEvent(event.ObserverID("gap", l.key, int(r.Line)), l.key, "unparsable-line", nil, nil, 1, nil, r)
 		ev.AnchorKey, ev.AnchorSeq = l.key, l.lastSeq
 		return []*event.Event{ev}
@@ -89,6 +90,11 @@ func (l *Ledger) Line(line []byte, r Read) []*event.Event {
 	}
 	l.lastSeq = seq
 	typ, _ := in.Type.(string)
+	// A version 2 history announced each delivery wave; M11 removed waves, so the line is read and
+	// dropped (no gap: nothing is missing) and its slices are shown without a group.
+	if typ == "wave.discovered" && *in.SchemaVersion == 2 {
+		return out
+	}
 	if !intakeKinds[typ] {
 		g := gapEvent(event.ObserverID("gap", l.key+":"+itoa(seq)+":type"), l.key, "unknown-type", seq, seq, 1, nil, r)
 		g.AnchorKey, g.AnchorSeq = l.key, seq
@@ -96,7 +102,7 @@ func (l *Ledger) Line(line []byte, r Read) []*event.Event {
 	}
 	ev := newEvent(typ, event.StreamIntake, l.key, seq, "intake", event.Authoritative)
 	ev.ID = event.At(l.key, seq)
-	ev.Origin.SourceVersion = IntakeVersion
+	ev.Origin.SourceVersion = intakeVersions[*in.SchemaVersion]
 	if w := enum(in.Source, "intake", "engineer", "supervisor"); w != nil {
 		ev.Origin.Writer = w.(string)
 	}
@@ -106,7 +112,10 @@ func (l *Ledger) Line(line []byte, r Read) []*event.Event {
 	secondTime(ev, in.At, r)
 	ids := &ev.IDs
 	ids.ProjectID, _ = redact.ID(in.ProjectID)
-	ids.WaveID, _ = redact.ID(in.WaveID)
+	ids.EpicID, _ = redact.ID(in.EpicID)
+	if n, ok := redact.Int(in.Issue); ok && n > 0 {
+		ids.Issue = n
+	}
 	ids.SliceID, _ = redact.ID(in.SliceID)
 	ids.TicketID, _ = Ticket(in.TicketID)
 	ids.RunnerID, _ = redact.ID(in.RunnerID)
@@ -134,10 +143,12 @@ func (l *Ledger) Line(line []byte, r Read) []*event.Event {
 	if typ == "slice.materialized" {
 		// The intake log records no title; the intake ledger does, for the slice's current revision
 		// (M6.6 D6). Product prose: scrubbed like every free-text field (redact.FreeTextFields).
-		d["title"] = nil
+		// The epic's name likewise (M11): the ledger records it with the slice.
+		d["title"], d["epic_title"] = nil, nil
 		if l.Identity != nil && ids.Revision != nil {
 			if t, rev, ok := l.Identity.SliceTitle(ids.SliceID); ok && rev == *ids.Revision {
-				d["title"] = textOrNil(t, l.Root, SliceTitleMax)
+				d["title"] = textOrNil(t.Title, l.Root, SliceTitleMax)
+				d["epic_title"] = textOrNil(t.Epic, l.Root, SliceTitleMax)
 			}
 		}
 	}
@@ -159,9 +170,6 @@ func (l *Ledger) refs(ev *event.Event) {
 	ids := ev.IDs
 	if ids.ProjectID != "" {
 		ev.Ref(event.RefProject(ids.ProjectID))
-	}
-	if ids.WaveID != "" {
-		ev.Ref(event.RefWave(ids.WaveID))
 	}
 	if ids.SliceID != "" {
 		ev.Ref(event.RefSlice(ids.SliceID))
@@ -214,14 +222,6 @@ func (l *Ledger) data(ev *event.Event, typ string, in map[string]any) (map[strin
 	get := func(k string) any { used[k] = true; return in[k] }
 	root := l.Root
 	switch typ {
-	case "wave.discovered":
-		d["slices"] = idList(get("slices"), 200)
-		ap := obj(get("approval"))
-		var at any
-		if ms, _, ok := parseTime(ap["approved_at"]); ok {
-			at = stampMS(ms)
-		}
-		d["approval"] = map[string]any{"approved_at": at, "by_role": "person"}
 	case "intake.validated":
 		require(ev, d, "digest", nullStr(redact.Digest(get("digest"))), "")
 	case "intake.refused":

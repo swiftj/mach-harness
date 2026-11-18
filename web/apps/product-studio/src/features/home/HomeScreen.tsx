@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
-import { ArrowRight, CircleAlert, Plus } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, CircleAlert, Plus } from "lucide-react";
 import {
   ArtifactId,
   Banner,
@@ -12,25 +12,37 @@ import {
   Page,
   Skeleton,
   SkeletonText,
+  SliceGithubPills,
   SliceStatusPill,
-  SourceBadge,
   Text,
   cn,
   describeError,
   formatWhen,
   plural,
+  toast,
+  builderStates,
   type NextAction,
+  type OrderRow,
+  type StatusSliceRow,
   type Refresh,
   type Status,
   type StatusEpicRow,
 } from "@mach/ui";
+import { failureText, type OperationArgs } from "@mach/ui/api";
+import { client } from "../../api/client";
+import { toApiError } from "../../api/session";
 import { useRefresh, useStatus } from "../../api/store";
-import { describePath } from "../../api/describe";
+import { describePath, titleFor } from "../../api/describe";
 import { nextActions, routeFor } from "../../api/nextActions";
 import { destinations } from "../registry";
 import { useRequestList } from "../inbox/requests/api";
 import { ApproveEpicDialog } from "../vision/ApproveEpicDialog";
 import { NewSliceDialog } from "../roadmap/NewSliceDialog";
+import { IssueLink, IssueNumber } from "../../shared/IssueLink";
+import { RenumberDialog } from "../../shared/RenumberDialog";
+import { AnswerQuestionDialog } from "../../shared/BuildersQuestion";
+import { SliceTimes } from "../../shared/SliceTimes";
+import { EpicSheet } from "../vision/EpicSheet";
 import { FirstRun } from "./FirstRun";
 
 /** Refresh once per visit, when the project home first opens. */
@@ -58,7 +70,7 @@ export function HomeScreen() {
     );
   }
   const data = status.data as Status;
-  if (!data.project) return <FirstRun status={data} refreshing={refresh.loading} />;
+  if (!data.project) return <FirstRun refreshing={refresh.loading} />;
   return <ProjectHome status={data} />;
 }
 
@@ -73,6 +85,10 @@ function ProjectHome({ status }: { status: Status }) {
   const navigate = useNavigate();
   const [approveEpic, setApproveEpic] = useState<string | null>(null);
   const [newSlice, setNewSlice] = useState<{ epicId: string | null } | null>(null);
+  const [renumber, setRenumber] = useState<string | null>(null);
+  const [addEpic, setAddEpic] = useState(false);
+  const [answer, setAnswer] = useState<string | null>(null);
+  const [answerError, setAnswerError] = useState<ReturnType<typeof failureText> | null>(null);
   const [next] = nextActions(status);
 
   const runRoute = (action: NextAction) => {
@@ -80,7 +96,12 @@ function ProjectHome({ status }: { status: Status }) {
     if (route.type === "navigate") void navigate(route.to, route.state === undefined ? undefined : { state: route.state });
     else if (route.type === "approve-epic") setApproveEpic(route.epicId);
     else if (route.type === "new-slice") setNewSlice({ epicId: route.epicId });
-    else void refresh.run();
+    else if (route.type === "add-epic") setAddEpic(true);
+    else if (route.type === "answer-question") {
+      const row = status.slices.find((s) => s.slice_id === route.sliceId);
+      if (row && !row.editable) setAnswer(route.sliceId);
+      else void navigate(`/slices/${route.sliceId}/interview`, { state: { answer: true } });
+    } else setRenumber(route.id);
   };
 
   // Requests from GitHub issues: only for a project whose shared repository is on GitHub (the engine
@@ -95,18 +116,23 @@ function ProjectHome({ status }: { status: Status }) {
       <div className="flex flex-col gap-10">
         <header className="flex flex-col gap-4">
           <div className="flex flex-col gap-3">
-            <Heading level={1} size="display">
-              {project.name}
-            </Heading>
+            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+              <Heading level={1} size="display">
+                {project.name}
+              </Heading>
+              {project.issue ? <IssueNumber number={project.issue} url={project.url} /> : null}
+            </div>
             <Text size="body-lg" className="max-w-reading text-ink-muted">
               {project.vision}
             </Text>
           </div>
           <nav aria-label="Project">
             <ul className="flex flex-wrap items-center gap-x-5 gap-y-2 text-body-sm">
-              <RowLink to="/vision" state={{ focus: "epics" }}>
-                Add an epic
-              </RowLink>
+              <li>
+                <button type="button" onClick={() => setAddEpic(true)} className="rounded-xs font-semibold text-accent-ink underline-offset-2 hover:underline">
+                  Add an epic
+                </button>
+              </li>
               <RowLink to="/vision">Edit the vision and outcomes</RowLink>
               {requestCount > 0 ? <RowLink to="/inbox">{plural(requestCount, "request")} from other people</RowLink> : null}
               {destinations
@@ -122,7 +148,7 @@ function ProjectHome({ status }: { status: Status }) {
 
         <Notices status={status} refresh={refresh.data} refreshError={refresh.error ? describeError(refresh.error).message : null} onRetry={() => void refresh.run()} />
 
-        {next ? <CarryOn action={next} onGo={() => runRoute(next)} busy={routeFor(next).type === "refresh" && refresh.loading} /> : null}
+        {next ? <CarryOn action={next} onGo={() => runRoute(next)} /> : null}
 
         <section aria-labelledby="epics-title" className="flex flex-col gap-8">
           <Heading level={2} size="title-3" id="epics-title" className="sr-only">
@@ -141,10 +167,8 @@ function ProjectHome({ status }: { status: Status }) {
           ) : (
             <div className="flex flex-col items-start gap-3 rounded-md border border-dashed border-line-strong px-5 py-5">
               <Text>No epics yet. An epic is a larger capability, such as “Team membership”, that several slices deliver.</Text>
-              <Button asChild variant="primary" size="sm">
-                <Link to="/vision" state={{ focus: "epics" }}>
-                  Add the first epic
-                </Link>
+              <Button variant="primary" size="sm" onClick={() => setAddEpic(true)}>
+                Add the first epic
               </Button>
             </div>
           )}
@@ -165,6 +189,16 @@ function ProjectHome({ status }: { status: Status }) {
         onOpenChange={(open) => !open && setApproveEpic(null)}
       />
       <NewSliceDialog open={newSlice !== null} onOpenChange={(open) => !open && setNewSlice(null)} epics={status.epics} epicId={newSlice?.epicId} />
+      <RenumberDialog id={renumber} onOpenChange={(open) => !open && setRenumber(null)} />
+      <EpicSheet state={addEpic ? { mode: "add" } : null} onClose={() => setAddEpic(false)} />
+      <AnswerQuestionDialog
+        sliceId={answer}
+        open={answer !== null}
+        onOpenChange={(open) => !open && setAnswer(null)}
+        error={answerError}
+        setError={setAnswerError}
+        onReopened={() => answer && void navigate(`/slices/${answer}/interview`, { state: { answer: true } })}
+      />
     </Page>
   );
 }
@@ -180,7 +214,7 @@ function RowLink({ to, state, children }: { to: string; state?: unknown; childre
 }
 
 /** The engine's first recommended step, in its own words, with the one button that does it. */
-function CarryOn({ action, onGo, busy }: { action: NextAction; onGo: () => void; busy: boolean }) {
+function CarryOn({ action, onGo }: { action: NextAction; onGo: () => void }) {
   const route = routeFor(action);
   return (
     <section aria-labelledby="carry-on-title" className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4 rounded-md border border-line bg-surface px-6 py-5">
@@ -193,7 +227,7 @@ function CarryOn({ action, onGo, busy }: { action: NextAction; onGo: () => void;
         </Heading>
         {action.reason ? <Text tone="muted">{action.reason}</Text> : null}
       </div>
-      <Button variant="primary" size="lg" loading={busy} onClick={onGo}>
+      <Button variant="primary" size="lg" onClick={onGo}>
         {route.label}
         {route.type === "navigate" ? <ArrowRight aria-hidden="true" /> : null}
       </Button>
@@ -201,35 +235,33 @@ function CarryOn({ action, onGo, busy }: { action: NextAction; onGo: () => void;
   );
 }
 
-/** Everything the engine reports as waiting for the PM, in one notice, plus problems reaching the shared project. */
+/** Everything the engine reports as waiting for the PM, in one notice, plus problems reaching GitHub. */
 function Notices({ status, refresh, refreshError, onRetry }: { status: Status; refresh: Refresh | null; refreshError: string | null; onRetry: () => void }) {
   const notices: ReactNode[] = [];
   if (refreshError) {
     notices.push(
-      <Banner key="host" tone="danger" live="assertive" title="Could not check the shared project" actions={<Button size="sm" onClick={onRetry}>Try again</Button>}>
+      <Banner key="host" tone="danger" live="assertive" title="Could not check GitHub" actions={<Button size="sm" onClick={onRetry}>Try again</Button>}>
         {refreshError}
       </Banner>,
     );
-  } else if (refresh && !refresh.refreshed) {
+  } else if (refresh?.github.problem) {
     notices.push(
-      <Banner key="offline" tone="warning" live="polite" title={refresh.problem ?? "The shared project could not be reached"} actions={<Button size="sm" onClick={onRetry}>Try again</Button>}>
-        Your drafts are safe and you can keep working. What others have approved will appear when you are connected.
-        {refresh.problem_detail ? (
-          <Disclosure summary="Details for an engineer" className="mt-1.5 bg-transparent">
-            <span className="font-mono text-caption text-ink-muted">{refresh.problem_detail}</span>
-          </Disclosure>
-        ) : null}
+      <Banner key="offline" tone="warning" live="polite" title="GitHub could not be read" actions={<Button size="sm" onClick={onRetry}>Try again</Button>}>
+        {refresh.github.problem} Your drafts are safe and you can keep working; what is shown is from the last time GitHub was read.
       </Banner>,
     );
   }
 
   const waiting: ReactNode[] = [];
-  const conflicts = status.needs_reconciling.conflicts.length;
-  const collisions = status.needs_reconciling.collisions.length;
-  if (conflicts) waiting.push(<li key="conflicts">{conflicts === 1 ? "One item was changed" : `${conflicts} items were changed`} both in your draft and in the shared project: choose which version to keep.</li>);
-  if (collisions) waiting.push(<li key="collisions">{collisions === 1 ? "One item needs" : `${collisions} items need`} a new number, because someone else's work took it first.</li>);
-  const withdrawn = status.approvals_withdrawn ?? refresh?.approvals_withdrawn.map((artifact) => ({ artifact, reason: null, at: null })) ?? [];
-  for (const w of withdrawn) {
+  const named = (slice: Status["slices"][number]) => <span className="font-semibold">{slice.title}</span>;
+  for (const slice of status.slices) {
+    if (slice.github.changed_on_github) waiting.push(<li key={`c-${slice.slice_id}`}>{named(slice)} was changed on GitHub after you approved it: the builders will not take it until you mark it ready again.</li>);
+    if (slice.github.newer_elsewhere) waiting.push(<li key={`n-${slice.slice_id}`}>Someone else saved a newer version of {named(slice)}: choose theirs or keep yours.</li>);
+    if (slice.github.number_taken) waiting.push(<li key={`t-${slice.slice_id}`}>{named(slice)} needs a new number, because another slice on GitHub uses it.</li>);
+    if (slice.github.unfinished) waiting.push(<li key={`u-${slice.slice_id}`}>Saving {named(slice)} to GitHub stopped part way: mark it ready again to finish.</li>);
+    if (slice.github.state_label === "mach:question") waiting.push(<li key={`b-${slice.slice_id}`}>The builders have a question about {named(slice)}.</li>);
+  }
+  for (const w of status.approvals_withdrawn) {
     waiting.push(
       <li key={`w-${w.artifact}`}>
         Your approval of <span className="font-semibold">{titled(w.artifact, status)}</span> no longer holds{w.reason ? `: ${w.reason}` : "."}
@@ -240,7 +272,7 @@ function Notices({ status, refresh, refreshError, onRetry }: { status: Status; r
   for (const slice of status.slices.filter((s) => s.open_questions > 0)) {
     waiting.push(
       <li key={`q-${slice.slice_id}`}>
-        <span className="font-semibold">{slice.title}</span> has {plural(slice.open_questions, "open question")}.
+        {named(slice)} has {plural(slice.open_questions, "open question")}.
       </li>,
     );
   }
@@ -260,6 +292,13 @@ function Notices({ status, refresh, refreshError, onRetry }: { status: Status; r
       </Banner>,
     );
   }
+  if (status.github_updates_note || status.github_updates_not_made_note) {
+    notices.push(
+      <Banner key="updates" tone="info" title="Updates to GitHub">
+        {[status.github_updates_note, status.github_updates_not_made_note].filter(Boolean).join(" ")}
+      </Banner>,
+    );
+  }
 
   if (status.structural_errors.length) {
     // The engine's message names files; the PM sees the items they belong to, the exact words behind a disclosure.
@@ -268,7 +307,7 @@ function Notices({ status, refresh, refreshError, onRetry }: { status: Status; r
       <Banner key="structure" tone="danger" title="Some of your drafts no longer fit together">
         <p>
           {affected.length === 1 ? "Look at " : "Look at these: "}
-          {affected.join("; ")}. Anything that disagrees with the shared project is on the Decisions screen.
+          {affected.join("; ")}.
         </p>
         <Disclosure summary="What the check reported" className="mt-2 bg-transparent">
           <ul className="flex flex-col gap-1">
@@ -285,20 +324,17 @@ function Notices({ status, refresh, refreshError, onRetry }: { status: Status; r
   return notices.length ? <div className="flex flex-col gap-3">{notices}</div> : null;
 }
 
-/** "Slice SLICE-001, Invite a teammate" for an engine ID; workspace paths through describePath. */
+/** "Invite a teammate (SLICE-001)" for an engine ID. */
 function titled(id: string, status: Status): string {
-  if (id.includes("/")) return describePath(id, status).label;
-  const slice = status.slices.find((s) => s.slice_id === id);
-  if (slice) return `${slice.title} (${id})`;
-  const epic = status.epics.find((e) => e.epic_id === id);
-  if (epic) return `${epic.title} (${id})`;
-  if (id.startsWith("WAVE-")) return `delivery wave ${id}`;
-  return id;
+  const title = titleFor(status, id);
+  return title ? `${title} (${id})` : id;
 }
 
 function EpicBlock({ epic, status, onApprove, onAddSlice }: { epic: StatusEpicRow; status: Status; onApprove: () => void; onAddSlice: () => void }) {
   const slices = status.slices.filter((s) => s.epic_id === epic.epic_id);
   const headingId = `epic-${epic.epic_id}-title`;
+  const counts = epic.counts;
+  const order = status.order.find((o) => o.epic_id === epic.epic_id);
   // The same epics the start-a-slice dialog offers.
   const open = epic.status !== "superseded" && epic.status !== "completed";
   return (
@@ -309,7 +345,13 @@ function EpicBlock({ epic, status, onApprove, onAddSlice }: { epic: StatusEpicRo
         </Heading>
         <ArtifactId>{epic.epic_id}</ArtifactId>
         <EpicStatusPill status={epic.status} size="sm" />
-        <SourceBadge source={epic.source} />
+        {epic.issue ? <IssueNumber number={epic.issue} url={epic.url} /> : null}
+        {counts.total ? (
+          <Text as="span" size="body-sm" tone="muted">
+            {counts.ready_or_further} of {plural(counts.total, "slice")} ready or further
+            <span className="sr-only"> ({counts.ready_or_further_means})</span>
+          </Text>
+        ) : null}
         {epic.status === "proposed" ? (
           <Button size="sm" className="ml-auto" onClick={onApprove}>
             Approve {epic.epic_id}
@@ -328,7 +370,14 @@ function EpicBlock({ epic, status, onApprove, onAddSlice }: { epic: StatusEpicRo
           </ul>
         </div>
       ) : null}
-      {slices.length ? (
+      {counts.total ? (
+        <Text size="caption" tone="subtle">
+          Ready or further means {counts.ready_or_further_means}.
+        </Text>
+      ) : null}
+      {order?.slices.length ? (
+        <OrderedSlices order={order} status={status} />
+      ) : slices.length ? (
         <SliceList slices={slices} status={status} />
       ) : (
         <Text size="body-sm" tone="muted">
@@ -345,44 +394,150 @@ function EpicBlock({ epic, status, onApprove, onAddSlice }: { epic: StatusEpicRo
   );
 }
 
-/** Each slice with the engine's state for it, and the way into its interview or its specification. */
+/** Each slice with the engine's state for it, when it got there, and the way into its interview or its specification. */
 function SliceList({ slices, status }: { slices: Status["slices"]; status: Status }) {
   return (
     <ul className="flex flex-col divide-y divide-line rounded-md border border-line bg-surface">
-      {slices.map((slice) => {
-        const current = slice.slice_id === status.current_slice;
-        const interview =
-          slice.editable === false ? null : slice.status === "draft" ? "Start the interview" : slice.status === "interviewing" ? "Continue the interview" : null;
-        return (
-          <li key={slice.slice_id} className={cn("flex flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-3", current && "bg-accent-soft")}>
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1">
-                <Link to={`/slices/${slice.slice_id}`} className="rounded-xs text-body font-semibold text-ink underline-offset-2 hover:underline">
-                  {slice.title}
-                </Link>
-                <ArtifactId>{slice.slice_id}</ArtifactId>
-              </span>
-              {slice.open_questions > 0 || current ? (
-                <span className="text-caption text-ink-muted">
-                  {[current ? "You were last working on this slice" : null, slice.open_questions > 0 ? `${plural(slice.open_questions, "open question")}` : null]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </span>
-              ) : null}
-            </div>
-            <SourceBadge source={slice.source} />
-            <SliceStatusPill status={slice.status} size="sm" />
-            {interview ? (
-              <Button size="sm" variant={current ? "secondary" : "ghost"} asChild>
-                <Link to={`/slices/${slice.slice_id}/interview`} aria-label={`${interview}: ${slice.title}`}>
-                  {interview}
-                </Link>
-              </Button>
-            ) : null}
-          </li>
-        );
-      })}
+      {slices.map((slice) => (
+        <SliceRow key={slice.slice_id} slice={slice} status={status} />
+      ))}
     </ul>
+  );
+}
+
+function SliceRow({ slice, status, children }: { slice: StatusSliceRow; status: Status; children?: ReactNode }) {
+  const current = slice.slice_id === status.current_slice;
+  const interview = slice.editable === false ? null : slice.status === "draft" ? "Start the interview" : slice.status === "interviewing" ? "Continue the interview" : null;
+  return (
+    <li className={cn("flex flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-3", current && "bg-accent-soft")}>
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1">
+          <Link to={`/slices/${slice.slice_id}`} className="rounded-xs text-body font-semibold text-ink underline-offset-2 hover:underline">
+            {slice.title}
+          </Link>
+          <ArtifactId>{slice.slice_id}</ArtifactId>
+        </span>
+        {slice.open_questions > 0 || current ? (
+          <span className="text-caption text-ink-muted">
+            {[current ? "You were last working on this slice" : null, slice.open_questions > 0 ? `${plural(slice.open_questions, "open question")}` : null]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
+        ) : null}
+        <SliceTimes github={slice.github} mode="latest" />
+      </div>
+      <SliceStatusPill status={slice.status} size="sm" />
+      <SliceGithubPills github={slice.github} size="sm" />
+      {slice.github.issue ? <IssueLink number={slice.github.issue} url={slice.github.url} /> : null}
+      {interview ? (
+        <Button size="sm" variant={current ? "secondary" : "ghost"} asChild>
+          <Link to={`/slices/${slice.slice_id}/interview`} aria-label={`${interview}: ${slice.title}`}>
+            {interview}
+          </Link>
+        </Button>
+      ) : null}
+      {children}
+    </li>
+  );
+}
+
+/**
+ * An epic's slices in the engine's order (`status.order`), each with Move up and Move down. Moving
+ * is reversible, so it is not confirmed; the engine's note is announced politely. A slice GitHub
+ * lists under the epic that is not in this workspace keeps its place and leads to "On GitHub".
+ */
+function OrderedSlices({ order, status }: { order: OrderRow; status: Status }) {
+  const [moving, setMoving] = useState<string | null>(null);
+  const [said, setSaid] = useState("");
+  const move = async (key: string, args: OperationArgs<"slice.move">) => {
+    setMoving(key);
+    try {
+      const result = await client.op("slice.move", args);
+      setSaid(result.note);
+    } catch (cause) {
+      const { title, message } = failureText(toApiError(cause, "slice.move"), `${args.slice_id} was not moved`);
+      setSaid(`${title}. ${message}`);
+      toast({ tone: "danger", title, description: message });
+    } finally {
+      setMoving(null);
+    }
+  };
+  const items = order.slices;
+  const first = items[0];
+  return (
+    <div className="flex flex-col gap-2">
+      <ul className="flex flex-col divide-y divide-line rounded-md border border-line bg-surface">
+        {items.map((item, index) => {
+          const row = item.in_workspace ? status.slices.find((s) => s.slice_id === item.slice_id) : undefined;
+          const title = row?.title ?? item.title ?? item.slice_id;
+          const buttons = (
+            <span className="flex items-center gap-1">
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={`Move ${title} up`}
+                disabled={index === 0 || moving !== null}
+                loading={moving === `${item.slice_id}-up`}
+                onClick={() => void move(`${item.slice_id}-up`, { slice_id: item.slice_id, before: items[index - 1]!.slice_id })}
+              >
+                <ArrowUp aria-hidden="true" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-label={`Move ${title} down`}
+                disabled={index === items.length - 1 || moving !== null}
+                loading={moving === `${item.slice_id}-down`}
+                onClick={() => void move(`${item.slice_id}-down`, { slice_id: item.slice_id, after: items[index + 1]!.slice_id })}
+              >
+                <ArrowDown aria-hidden="true" />
+              </Button>
+            </span>
+          );
+          if (row) {
+            return (
+              <SliceRow key={item.slice_id} slice={row} status={status}>
+                {buttons}
+              </SliceRow>
+            );
+          }
+          return (
+            <li key={item.slice_id} className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-3">
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1">
+                  <span className="min-w-0 break-words text-body text-ink">{title}</span>
+                  <ArtifactId>{item.slice_id}</ArtifactId>
+                </span>
+                <span className="text-caption text-ink-muted">
+                  Saved on GitHub by someone else; not in your workspace. Its title is as written on GitHub.{" "}
+                  <Link to="/github" className="font-semibold text-accent-ink underline-offset-2 hover:underline">
+                    See it on GitHub's list<span className="sr-only">: {item.slice_id}</span>
+                  </Link>
+                </span>
+              </div>
+              {item.state_label ? <Text as="span" size="body-sm" tone="muted">{builderStates[item.state_label].label}</Text> : null}
+              {item.issue ? <IssueNumber number={item.issue} url={null} /> : null}
+              {buttons}
+            </li>
+          );
+        })}
+      </ul>
+      {order.note ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <Text size="body-sm" tone={order.unfinished ? "warning" : "muted"}>
+            {order.note}
+          </Text>
+          {order.unfinished && first ? (
+            <Button size="sm" loading={moving === "finish"} disabled={moving !== null} onClick={() => void move("finish", { slice_id: first.slice_id, first: true })}>
+              Finish the move
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      <p role="status" aria-live="polite" className="sr-only">
+        {said}
+      </p>
+    </div>
   );
 }
 

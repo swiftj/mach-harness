@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:mach:schema:factory-event:v2",
-  "title": "MACH Factory Event v2",
-  "description": "One transition of the intake ledger, as a line of .factory/intake/events.jsonl. Events are written only when the ledger changes, in sequence order, so the log can be replayed but is never a second source of truth.",
+  "$id": "urn:mach:schema:factory-event:v3",
+  "title": "MACH Factory Event v3",
+  "description": "One transition of the intake ledger, as a line of .factory/intake/events.jsonl. Events are written only when the ledger changes, in sequence order, so the log can be replayed but is never a second source of truth. Version 3 (M11): no wave_id or project_id; epic_id and issue say where a slice belongs (null when not known).",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -10,9 +10,9 @@
     "seq",
     "at",
     "type",
-    "project_id",
     "source_commit",
-    "wave_id",
+    "epic_id",
+    "issue",
     "slice_id",
     "revision",
     "ticket_id",
@@ -25,7 +25,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": 2
+      "const": 3
     },
     "seq": {
       "type": "integer",
@@ -38,7 +38,6 @@
     },
     "type": {
       "enum": [
-        "wave.discovered",
         "intake.validated",
         "intake.refused",
         "slice.materialized",
@@ -62,24 +61,27 @@
         "execution.failed"
       ]
     },
-    "project_id": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
     "source_commit": {
       "type": [
         "string",
         "null"
       ],
-      "description": "The integration-branch commit the product definitions were read from."
+      "description": "The integration-branch commit ready folders were last read from."
     },
-    "wave_id": {
+    "epic_id": {
       "type": [
         "string",
         "null"
-      ]
+      ],
+      "description": "The slice's epic (EPIC-NNN), when the event is about a slice."
+    },
+    "issue": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1,
+      "description": "The slice's own GitHub issue number, when it came as an issue; it is also its ticket."
     },
     "slice_id": {
       "type": [

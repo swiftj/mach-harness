@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { CircleCheck, Pause, RotateCcw } from "lucide-react";
 import { Banner, Button, Dialog, DialogClose, DialogContent, DialogTrigger, ErrorState, Field, Text, Textarea, describeError, toast, CheckCounts, CheckPill, DiagnosticList, diagnostics, plural as count } from "@mach/ui";
-import type { MachApiError, SliceShow } from "@mach/ui/api";
+import type { MachApiError, SliceReady, SliceShow } from "@mach/ui/api";
+import { IssueLink } from "../../shared/IssueLink";
 import { client as studioClient } from "../../api/client";
 import { toApiError } from "../../api/session";
+import { useStatus } from "../../api/store";
 
 function Failure({ error, what }: { error: MachApiError; what: string }) {
   // A refusal is the engine's own words, shown as written; the title names what did not happen.
@@ -12,94 +14,156 @@ function Failure({ error, what }: { error: MachApiError; what: string }) {
 }
 
 /**
- * Approve: a personal act. The dialog says what approval means and shows the engine's readiness;
- * the engine still decides, and its refusal is shown exactly.
+ * Mark ready to build: the PM's approval of exactly this text. The dialog says what the engine does
+ * and shows its check; the engine still decides, and its refusal is shown exactly. Once it is done,
+ * the dialog says where the slice was saved, in the engine's words.
  */
-export function ApproveDialog({ show, onDone, primary }: { show: SliceShow; onDone: () => void; primary: boolean }) {
+export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; onDone: () => void; primary: boolean }) {
   const id = show.slice.slice_id;
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<MachApiError | null>(null);
+  const [saved, setSaved] = useState<SliceReady | null>(null);
   const check = show.check;
   const problems = diagnostics(check);
+  const again = show.slice.status === "approved_for_engineering";
+  const epicId = show.slice.epic_id;
+  const epicTitle = useStatus().data?.epics.find((e) => e.epic_id === epicId)?.title;
+  const epicName = epicTitle ? `the epic “${epicTitle}” (${epicId})` : `its epic, ${epicId}`;
 
-  const approve = () => {
+  const markReady = () => {
     setBusy(true);
     setError(null);
-    studioClient.op("slice.approve", { slice_id: id }).then(
+    studioClient.op("slice.ready", { slice_id: id }).then(
       (result) => {
         setBusy(false);
-        setOpen(false);
-        toast({ tone: "success", title: `Approved ${id}`, description: result.note });
-        onDone();
+        setSaved(result);
       },
       (cause: unknown) => {
         setBusy(false);
-        setError(toApiError(cause, "slice.approve"));
+        setError(toApiError(cause, "slice.ready"));
       },
     );
   };
 
+  const close = (next: boolean) => {
+    setOpen(next);
+    if (next) return;
+    setError(null);
+    if (saved) {
+      setSaved(null);
+      onDone();
+    }
+  };
+
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) setError(null);
-      }}
-    >
+    <Dialog open={open} onOpenChange={(next) => (busy ? undefined : close(next))}>
       <DialogTrigger asChild>
         <Button variant={primary ? "primary" : "secondary"}>
           <CircleCheck aria-hidden="true" />
-          Approve {id}
+          {again ? `Mark ${id} ready again` : "Mark ready to build"}
         </Button>
       </DialogTrigger>
-      <DialogContent
-        width="lg"
-        title={`Approve ${id}?`}
-        description="Approving records your decision that this specification is what you want built. It freezes the slice until you reopen it. Nothing goes to engineering until you send a delivery wave that contains it."
-        footer={
-          <>
+      {saved ? (
+        <DialogContent
+          width="lg"
+          title={`${id} is ready to build`}
+          description={saved.note}
+          footer={
             <DialogClose asChild>
-              <Button variant="secondary">Cancel</Button>
+              {/* The confirming button is gone; focus moves to the one way out. */}
+              {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
+              <Button variant="primary" autoFocus>
+                Done
+              </Button>
             </DialogClose>
-            <Button variant="primary" loading={busy} onClick={approve}>
-              Approve {id}
-            </Button>
-          </>
-        }
-      >
-        <div className="flex flex-col gap-4 pb-1">
-          <div className="flex flex-col gap-2 rounded-md border border-line bg-surface px-4 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-label text-ink">What the engine's check says</p>
-              <CheckPill check={check} size="sm" />
-            </div>
-            <CheckCounts check={check} />
-            {check.risk ? (
-              <Text size="body-sm" tone="muted">
-                Risk the interviewer assigned: <span className="font-semibold text-ink">{check.risk}</span>
-              </Text>
-            ) : null}
-            {problems.length ? <DiagnosticList items={problems} compact /> : null}
-            {check.open_questions.length ? (
-              <Text size="body-sm" tone="warning">
-                {count(check.open_questions.length, "question is", "questions are")} still open.
-              </Text>
-            ) : null}
+          }
+        >
+          <div className="pb-1">
+            <SavedPlace result={saved} />
           </div>
-          <Text size="body-sm" tone="muted">
-            The engine checks again when you approve, including whether the slice's epic is approved. If something is missing it says what, and
-            nothing changes.
-          </Text>
-          {error ? <Failure error={error} what={`${id} was not approved`} /> : null}
-        </div>
-      </DialogContent>
+        </DialogContent>
+      ) : (
+        <DialogContent
+          width="lg"
+          title={again ? `Mark ${id} ready again?` : `Mark ${id} ready to build?`}
+          description={`This saves the slice to the project on GitHub, under ${epicName}, and tells the builders it is ready. It records that you approved exactly this text. The slice cannot change until you reopen it.`}
+          footer={
+            <>
+              <DialogClose asChild>
+                <Button variant="secondary" disabled={busy}>
+                  Cancel
+                </Button>
+              </DialogClose>
+              <Button variant="primary" loading={busy} onClick={markReady}>
+                Mark ready to build
+              </Button>
+            </>
+          }
+        >
+          <div className="flex flex-col gap-4 pb-1">
+            <div className="flex flex-col gap-2 rounded-md border border-line bg-surface px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-label text-ink">What the engine's check says</p>
+                <CheckPill check={check} size="sm" />
+              </div>
+              <CheckCounts check={check} />
+              {check.risk ? (
+                <Text size="body-sm" tone="muted">
+                  Risk the interviewer assigned: <span className="font-semibold text-ink">{check.risk}</span>
+                </Text>
+              ) : null}
+              {problems.length ? <DiagnosticList items={problems} compact /> : null}
+              {check.open_questions.length ? (
+                <Text size="body-sm" tone="warning">
+                  {count(check.open_questions.length, "question is", "questions are")} still open.
+                </Text>
+              ) : null}
+            </div>
+            <Text size="body-sm" tone="muted">
+              The engine checks again first, including whether the slice's epic is approved. If something is missing it says what, and nothing
+              is saved. Where GitHub cannot be used from this computer, the slice is written to a folder instead, and you are told how it
+              reaches the builders.
+            </Text>
+            {error ? <Failure error={error} what={`${id} was not marked ready`} /> : null}
+          </div>
+        </DialogContent>
+      )}
     </Dialog>
   );
 }
 
-/** Reopen: withdraws an approval so the slice can change. Approved waves containing it return to draft. */
+/** Where a slice marked ready was saved: its issue, as the engine linked it, or the folder and the engine's two ways on. */
+export function SavedPlace({ result }: { result: SliceReady }) {
+  if (result.saved_to === "github") {
+    return (
+      <div className="flex flex-col gap-1 rounded-md border border-line bg-surface px-4 py-3">
+        <p className="text-label text-ink">Saved on GitHub</p>
+        <p className="text-body">
+          Issue <IssueLink number={result.issue} url={result.url} />, under the epic&apos;s issue #{result.epic_issue}. Approved as{" "}
+          <span className="font-mono text-body-sm">{result.approved_by}</span>
+          {result.follows ? `; it changes #${result.follows}, which has shipped` : ""}.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-line bg-surface px-4 py-3">
+      <p className="text-label text-ink">Saved to a folder</p>
+      <Text size="body-sm" tone="muted">
+        {result.why_folder}
+      </Text>
+      <p className="break-all font-mono text-body-sm text-ink">{result.folder}</p>
+      <ul className="flex list-disc flex-col gap-1 pl-5 text-body">
+        {result.ways_on.map((way) => (
+          <li key={way}>{way}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Reopen: takes the slice back from the builders so it can change. Shows the engine's note on what that did. */
 export function ReopenDialog({ show, onDone }: { show: SliceShow; onDone: () => void }) {
   const id = show.slice.slice_id;
   const [open, setOpen] = useState(false);
@@ -113,12 +177,7 @@ export function ReopenDialog({ show, onDone }: { show: SliceShow; onDone: () => 
       (result) => {
         setBusy(false);
         setOpen(false);
-        const waves = result.waves_returned_to_draft;
-        toast({
-          tone: "info",
-          title: `Reopened ${id}`,
-          description: waves.length ? `${waves.join(", ")} returned to draft and need your approval again.` : "No approved wave contained it.",
-        });
+        toast({ tone: "info", title: `Reopened ${id}`, description: result.note });
         onDone();
       },
       (cause: unknown) => {
@@ -132,6 +191,7 @@ export function ReopenDialog({ show, onDone }: { show: SliceShow; onDone: () => 
     <Dialog
       open={open}
       onOpenChange={(next) => {
+        if (busy) return;
         setOpen(next);
         if (!next) setError(null);
       }}
@@ -144,11 +204,13 @@ export function ReopenDialog({ show, onDone }: { show: SliceShow; onDone: () => 
       </DialogTrigger>
       <DialogContent
         title={`Reopen ${id}?`}
-        description="Reopening withdraws your approval so the specification can change. Any approved delivery wave that contains this slice returns to draft and needs your approval again."
+        description="Reopening withdraws your approval so the specification can change. It first takes the slice off the builders' list of ready work; if the builders have already started, they are told it changed when you mark it ready again."
         footer={
           <>
             <DialogClose asChild>
-              <Button variant="secondary">Keep it approved</Button>
+              <Button variant="secondary" disabled={busy}>
+                Keep it ready
+              </Button>
             </DialogClose>
             <Button variant="danger" loading={busy} onClick={reopen}>
               Reopen {id}

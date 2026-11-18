@@ -34,7 +34,7 @@ export const PHASES = ["Preflight", "Groom", "Build", "Verify", "Review", "Wrap 
 const RANK = { "intake-log": 1, "cell-lifecycle": 2, "execution-record": 3, "run-record": 4, "execution-stream": 5, observer: 6 };
 const pad = (n, w) => String(Math.max(0, Math.floor(n))).padStart(w, "0");
 const iso = (ms) => new Date(ms).toISOString();
-const NULL_IDS = { project_id: null, wave_id: null, slice_id: null, revision: null, ticket_id: null, cell_instance: null, execution_id: null, runner_id: null, visit_id: null, station: null, round: null, attempt: null, seat: null, agent_id: null, parent_agent_id: null, tool_call_id: null };
+const NULL_IDS = { project_id: null, epic_id: null, issue: null, slice_id: null, revision: null, ticket_id: null, cell_instance: null, execution_id: null, runner_id: null, visit_id: null, station: null, round: null, attempt: null, seat: null, agent_id: null, parent_agent_id: null, tool_call_id: null };
 
 /** One schema-shaped v3 event. `pos` is assigned by finalize(). */
 export function ev(type, { stream, key, seq, part = 0, t, occurred = t, precision = "ms", authority, ids = {}, entities = [], data = {}, writer, script = null, unknown = [], inferred = {}, parent = null, cause = null, provenance = null, lag = 0 }) {
@@ -91,7 +91,7 @@ const defaultIds = { agent: () => `a${pad(++counter, 16)}`, gen: () => "3f2a9c1e
  * review (rejected), revise, verify, review (approved, awaiting a person), and, with `approve`, the
  * person's approval. Returns events without positions.
  */
-export function beltRun({ ticket = "LOCAL-031", slice = "SLICE-021", wave = "WAVE-007", execution = "x1a2b3c4d5e6f", t0 = Date.UTC(2026, 10, 12, 9, 0, 0), intakeGen = "0badc0de", cellGen = "3f2a9c1e", approve = true, decision = undefined, ids = defaultIds, dependencies = [], intakeSeq = 1, progressEvery = 1 } = {}) {
+export function beltRun({ ticket = "131", slice = "SLICE-021", epic = "EPIC-004", execution = "x1a2b3c4d5e6f", t0 = Date.UTC(2026, 10, 12, 9, 0, 0), intakeGen = "0badc0de", cellGen = "3f2a9c1e", approve = true, decision = undefined, ids = defaultIds, dependencies = [], intakeSeq = 1, progressEvery = 1 } = {}) {
   const out = [];
   const intakeKey = `i:${intakeGen}`;
   const cellKey = `c:${ticket}:${cellGen}`;
@@ -102,12 +102,12 @@ export function beltRun({ ticket = "LOCAL-031", slice = "SLICE-021", wave = "WAV
   let sseq = 0;
   let oseq = 0;
   let t = t0;
-  const intake = (type, data, extra = {}) => out.push(ev(type, { stream: "intake-log", key: intakeKey, seq: iseq++, t, precision: "s", ids: { wave_id: wave, slice_id: slice, ticket_id: ticket, ...extra.ids }, entities: [`wave:${wave}`, `slice:${slice}`, `cell:${ticket}`, ...(extra.entities ?? [])], data, writer: extra.writer }));
+  const intake = (type, data, extra = {}) => out.push(ev(type, { stream: "intake-log", key: intakeKey, seq: iseq++, t, precision: "s", ids: { epic_id: epic, issue: /^[0-9]+$/.test(ticket) ? Number(ticket) : null, slice_id: slice, ticket_id: ticket, ...extra.ids }, entities: [`slice:${slice}`, `cell:${ticket}`, ...(extra.entities ?? [])], data, writer: extra.writer }));
   const visits = {};
   let round = 1;
   let currentVisit = null;
   const life = (type, data, extra = {}) =>
-    out.push(ev(type, { stream: "cell-lifecycle", key: cellKey, seq: ++cseq, t, ids: { ticket_id: ticket, slice_id: slice, wave_id: wave, cell_instance: cellGen, execution_id: execution, visit_id: currentVisit?.id ?? null, station: currentVisit?.station ?? null, round: ["build", "verify", "review", "human-approval"].includes(currentVisit?.station) ? round : null, ...extra.ids }, entities: [`cell:${ticket}`, ...(currentVisit ? [`station:${ticket}/${currentVisit.station}`, `visit:${currentVisit.id}`] : []), ...(extra.entities ?? [])], data, script: extra.script ?? null }));
+    out.push(ev(type, { stream: "cell-lifecycle", key: cellKey, seq: ++cseq, t, ids: { ticket_id: ticket, slice_id: slice, epic_id: epic, cell_instance: cellGen, execution_id: execution, visit_id: currentVisit?.id ?? null, station: currentVisit?.station ?? null, round: ["build", "verify", "review", "human-approval"].includes(currentVisit?.station) ? round : null, ...extra.ids }, entities: [`cell:${ticket}`, ...(currentVisit ? [`station:${ticket}/${currentVisit.station}`, `visit:${currentVisit.id}`] : []), ...(extra.entities ?? [])], data, script: extra.script ?? null }));
   const enter = (station, action, data = {}) => {
     visits[station] = (visits[station] ?? 0) + 1;
     currentVisit = { station, id: `${ticket}/${station}#${visits[station]}`, at: t };
@@ -144,7 +144,7 @@ export function beltRun({ ticket = "LOCAL-031", slice = "SLICE-021", wave = "WAV
   };
 
   // ---- intake and dispatch
-  intake("wave.discovered", { slices: [slice], approval: { approved_at: iso(t0 - 3600_000), by_role: "person" } }, { ids: { slice_id: null, ticket_id: null }, entities: [] });
+  intake("intake.validated", { digest: "ab12" }, { ids: { ticket_id: null } });
   t += 1000;
   intake("slice.materialized", { digest: "ab12", adopted: false, dependencies, reissued: null }, { entities: dependencies.map((d) => `dependency:${slice}->${d}`) });
   t += 1000;

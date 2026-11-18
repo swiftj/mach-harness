@@ -1,8 +1,8 @@
 """Release qualification (run.py release ...) and product acceptance (Product Studio's acceptance record).
 
-Each test publishes a real delivery wave with Product Studio into a local bare repository, has an
-"engineer" take it in, dispatch it and merge the ticket's branch, and leaves the archive the cleanup
-station would leave. Verdicts are written as the verification and review stations record them:
+Each test hands a slice over as Product Studio does (a ready folder on the shared branch, or a slice
+issue), has an "engineer" take it in, dispatch it and merge the ticket's branch, and leaves the
+archive the cleanup station would leave. Verdicts are written as the verification and review stations record them:
 simulated station records, real Git, a real rerun of the project's suite.
 """
 
@@ -22,7 +22,6 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT / "skills" / "run" / "scripts"))
 import run  # noqa: E402
-from test_mach_product_collab import Base as CollabBase  # noqa: E402
 from test_mach_product_intake import Base as IntakeBase, git  # noqa: E402
 
 QUALIFY = ROOT / "skills" / "run" / "scripts" / "qualify.py"
@@ -114,17 +113,12 @@ class Base(IntakeBase):
         shutil.rmtree(cell_dir)
         return merge_commit
 
-    def ready(self, **finish):
-        """WAVE-001 (SLICE-001) taken in, built, verified, reviewed and merged."""
+    def built(self, **finish):
+        """SLICE-001 taken in from its ready folder, built, verified, reviewed and merged."""
         self.first()
         self.product("intake")
         self.product("dispatch", "SLICE-001")
         return self.finish(**finish)
-
-    def share(self):
-        """Engineering's integration branch, with the release commit, reaches the product managers."""
-        git(self.eng, "push", "-q", "origin", "main")
-        self.ok(self.a, "refresh")
 
     def studio_refused(self, project, *argv):
         code, out, err = self.run_studio(project, *argv)
@@ -137,20 +131,20 @@ class Base(IntakeBase):
 
 class OutcomeTest(Base):
     def test_qualified_and_byte_identical(self):
-        commit = self.ready()
+        commit = self.built()
         self.configure(integration_command=f"{sys.executable} check.py")
         self.scan(commit)
-        first = self.release("qualify", "WAVE-001", "--release", "r1")
+        first = self.release("qualify", "SLICE-001", "--release", "r1")
         self.assertEqual((first["outcome"], first["commit"], first["released"]), ("qualified", commit, False))
         path = self.eng / ".factory/release/r1/readiness.json"
         before = path.read_bytes()
         run_before = json.loads((path.parent / "run.json").read_text())
-        self.release("qualify", "WAVE-001", "--release", "r1")
+        self.release("qualify", "SLICE-001", "--release", "r1")
         self.assertEqual(path.read_bytes(), before)
         self.assertIn("evaluated_at", run_before)
         data = self.readiness("r1")
         self.assertNotIn("evaluated_at", json.dumps(data))
-        self.assertEqual(data["schema_version"], 1)
+        self.assertEqual((data["schema_version"], data["scope"]), (2, {"epic": None, "slices": ["SLICE-001"], "issues_not_taken_in": []}))
         row = data["slices"][0]
         self.assertEqual((row["slice_id"], row["ticket_id"], row["integration"]["status"], row["verification"]["verdict"], row["review"]["decision"]),
                          ("SLICE-001", "LOCAL-001", "integrated", "PASS", "APPROVED"))
@@ -164,8 +158,8 @@ class OutcomeTest(Base):
         self.assertEqual(data["product_acceptance"]["decision"], "not_recorded")
 
     def test_a_missing_check_is_incomplete_never_a_pass(self):
-        self.ready()
-        result = self.release("qualify", "WAVE-001")
+        self.built()
+        result = self.release("qualify", "SLICE-001")
         self.assertEqual(result["outcome"], "incomplete")
         data = self.readiness(result["release_id"])
         checks = self.checks(data)
@@ -174,60 +168,60 @@ class OutcomeTest(Base):
         self.assertEqual(set(data["incomplete"]), {"integration_tests", "security.scan"})
 
     def test_a_scanner_that_failed_or_scanned_nothing_is_not_run(self):
-        commit = self.ready()
+        commit = self.built()
         self.configure(integration_command=f"{sys.executable} check.py")
         for extra, reason in (({"exit_code": 128}, "exited with code 128"), ({"scanned": 0}, "scanned no sources"),
                               ({"error": "no package sources found"}, "reported an error")):
             self.scan(commit, **extra)
-            result = self.release("qualify", "WAVE-001", "--release", "r1")
+            result = self.release("qualify", "SLICE-001", "--release", "r1")
             check = self.checks(self.readiness("r1"))["security.scan.scanner"]
             self.assertEqual((result["outcome"], check["status"]), ("incomplete", "not_run"), extra)
             self.assertIn(reason, check["detail"])
             self.assertIn("security.scan.scanner", result["incomplete"])
         self.scan(commit, exit_code=1, scanned=12)  # findings-found exit code, sources scanned: a real result
-        self.assertEqual(self.release("qualify", "WAVE-001", "--release", "r1")["outcome"], "qualified")
+        self.assertEqual(self.release("qualify", "SLICE-001", "--release", "r1")["outcome"], "qualified")
 
     def test_a_report_without_the_facts_is_not_evidence(self):
-        commit = self.ready()
+        commit = self.built()
         self.configure(integration_command=f"{sys.executable} check.py")
         for field in ("version", "exit_code", "scanned", "scanned_at"):
             self.scan(commit, drop=(field,))
-            result = self.release("qualify", "WAVE-001", "--release", "r1")
+            result = self.release("qualify", "SLICE-001", "--release", "r1")
             check = self.checks(self.readiness("r1"))["security.scan.scanner"]
             self.assertEqual((result["outcome"], check["status"]), ("incomplete", "not_run"), field)
             self.assertIn(f"report lacks {field}", check["detail"])
             self.assertIn(f"security.scan.scanner (not run: report lacks {field})", result["outcome_summary"])
 
     def test_the_outcome_line_names_every_check_not_shown(self):
-        self.ready()
-        result = self.release("qualify", "WAVE-001")
+        self.built()
+        result = self.release("qualify", "SLICE-001")
         self.assertEqual(result["outcome_summary"], "incomplete; not assessed: integration_tests (not configured), performance (not configured), "
                                                     "security.scan (not run: no scanner report for this commit)")
 
     def test_a_failing_suite_blocks(self):
-        self.ready()
+        self.built()
         (self.eng / "ok.txt").unlink()
         git(self.eng, "commit", "-q", "-am", "break the suite")
         self.configure(integration_command=f"{sys.executable} check.py")
         self.scan(self.head())
-        result = self.release("qualify", "WAVE-001")
+        result = self.release("qualify", "SLICE-001")
         self.assertEqual(result["outcome"], "blocked")
         self.assertIn("suite", result["unresolved_blockers"])
         self.assertTrue((self.eng / ".factory/release" / result["release_id"] / "logs/test-suite.log").is_file())
 
     def test_a_suite_that_cannot_run_is_not_run(self):
-        self.ready()
+        self.built()
         (self.eng / ".factory/config.json").write_text(json.dumps({"audit": {"commands": {"test": "no-such-runner-xyz"}}}))
-        result = self.release("qualify", "WAVE-001")
+        result = self.release("qualify", "SLICE-001")
         self.assertEqual(self.checks(self.readiness(result["release_id"]))["suite"]["status"], "not_run")
         self.assertEqual(result["outcome"], "incomplete")
 
     def test_failed_verification_and_open_blockers_block(self):
-        commit = self.ready(verdict="FAIL_WITH_EVIDENCE",
+        commit = self.built(verdict="FAIL_WITH_EVIDENCE",
                             blockers=[{"reviewer": "security", "rule": "INV-01", "title": "token logged", "file": "a.py"}])
         self.configure(integration_command=f"{sys.executable} check.py")
         self.scan(commit, [{"id": "X-1", "severity": "high", "title": "bad"}])
-        data = self.readiness(self.release("qualify", "WAVE-001", "--release", "r2")["release_id"])
+        data = self.readiness(self.release("qualify", "SLICE-001", "--release", "r2")["release_id"])
         self.assertEqual(data["outcome"], "blocked")
         self.assertIn("slice.SLICE-001.verification", data["unresolved_blockers"])
         self.assertIn("blocker.SLICE-001.r1.1", data["unresolved_blockers"])
@@ -238,7 +232,7 @@ class OutcomeTest(Base):
         self.first()
         self.product("intake")
         self.product("dispatch", "SLICE-001")
-        data = self.readiness(self.release("qualify", "WAVE-001", "--release", "r3")["release_id"])
+        data = self.readiness(self.release("qualify", "SLICE-001", "--release", "r3")["release_id"])
         self.assertEqual(self.checks(data)["slice.SLICE-001.integrated"]["status"], "fail")
         self.assertEqual(self.checks(data)["slice.SLICE-001.verification"]["status"], "missing")
         self.assertEqual(data["outcome"], "blocked")
@@ -246,11 +240,11 @@ class OutcomeTest(Base):
 
 class ExceptionTest(Base):
     def test_exceptions_apply_only_at_their_commit(self):
-        commit = self.ready()
-        self.assertEqual(self.release("qualify", "WAVE-001", "--release", "r1")["outcome"], "incomplete")
+        commit = self.built()
+        self.assertEqual(self.release("qualify", "SLICE-001", "--release", "r1")["outcome"], "incomplete")
         for check in ("integration_tests", "security.scan"):
             self.release("except", "--release", "r1", "--check", check, "--by", "release-manager", "--reason", "Accepted for this internal release only.")
-        again = self.release("qualify", "WAVE-001", "--release", "r1")
+        again = self.release("qualify", "SLICE-001", "--release", "r1")
         self.assertEqual(again["outcome"], "qualified_with_exceptions")
         data = self.readiness("r1")
         self.assertEqual(self.checks(data)["security.scan"]["exception"]["by"], "release-manager")
@@ -258,124 +252,114 @@ class ExceptionTest(Base):
         path = self.eng / ".factory/release/r1/exceptions.jsonl"
         forged = [json.loads(line) for line in path.read_text().splitlines()]
         path.write_text("".join(json.dumps({**item, "commit": "f" * 40}) + "\n" for item in forged))
-        self.assertEqual(self.release("qualify", "WAVE-001", "--release", "r1")["outcome"], "incomplete")
+        self.assertEqual(self.release("qualify", "SLICE-001", "--release", "r1")["outcome"], "incomplete")
         self.assertEqual({i["not_applied_because"] for i in self.readiness("r1")["exceptions_not_applied"]}, {"recorded for another commit"})
         self.assertEqual(commit, self.readiness("r1")["release"]["commit"])
 
     def test_refusals(self):
-        self.ready()
-        self.assertIn("Not an approved delivery wave", self.refused_release("qualify", "WAVE-009"))
-        self.release("qualify", "WAVE-001", "--release", "r1")
+        self.built()
+        self.assertIn("is not known here", self.refused_release("qualify", "--epic", "EPIC-009"))
+        self.assertIn("Name an epic", self.refused_release("qualify"))
+        self.release("qualify", "SLICE-001", "--release", "r1")
         self.assertIn("names a role", self.refused_release("except", "--release", "r1", "--check", "security.scan", "--by", "Ada Lovelace", "--reason", "because it is fine"))
         self.assertIn("passes", self.refused_release("except", "--release", "r1", "--check", "suite", "--by", "release-manager", "--reason", "because it is fine"))
         self.assertIn("no check", self.refused_release("except", "--release", "r1", "--check", "nope", "--by", "release-manager", "--reason", "because it is fine"))
         self.assertIn("No readiness snapshot", self.refused_release("show", "r9"))
         (self.eng / "ok.txt").write_text("changed\n")
         git(self.eng, "commit", "-q", "-am", "move on")
-        self.assertIn("names one commit", self.refused_release("qualify", "WAVE-001", "--release", "r1"))
+        self.assertIn("names one commit", self.refused_release("qualify", "SLICE-001", "--release", "r1"))
 
 
 class AcceptanceTest(Base):
-    def test_acceptance_is_recorded_published_and_read_never_inferred(self):
-        commit = self.ready()
+    """Product's decision, per epic: a comment from a fixed template on the epic's issue, written by Product Studio."""
+
+    def through_issues(self):
+        """Product Studio marks SLICE-001 ready as a GitHub issue; the Factory builds it; the release is qualified."""
+        self.set_gh(me="ada-pm")
+        self.project_and_epic()
+        self.drafted()
+        number = self.ok(self.a, "slice", "ready", "SLICE-001")["issue"]
+        self.set_gh(me="erin-eng")
+        self.product("intake")
+        self.product("dispatch", "SLICE-001")
+        commit = self.finish(str(number))
         self.configure(integration_command=f"{sys.executable} check.py")
         self.scan(commit)
-        self.assertEqual(self.release("qualify", "WAVE-001", "--release", "r1")["outcome"], "qualified")
-        readiness = str(self.eng / ".factory/release/r1/readiness.json")
-        self.share()
-        base = ("acceptance", "record", "WAVE-001", "--release", "r1", "--commit", commit, "--by", "product-owner")
+        first = self.release("qualify", "--epic", "EPIC-001", "--release", "r1")
+        self.assertEqual((first["outcome"], first["product_acceptance"]), ("qualified", "not_recorded"))
+        self.set_gh(me="ada-pm")
+        return commit, str(self.eng / ".factory/release/r1/readiness.json")
+
+    def test_acceptance_is_recorded_on_the_epic_and_read_never_inferred(self):
+        commit, readiness = self.through_issues()
+        base = ("acceptance", "record", "EPIC-001", "--release", "r1", "--commit", commit)
         self.assertIn("readiness snapshot", self.studio_refused(self.a, *base, "--decision", "accepted"))
-        self.assertIn("names a role", self.studio_refused(self.a, "acceptance", "record", "WAVE-001", "--release", "r1", "--commit", commit,
-                                                    "--by", "Ada", "--decision", "rejected"))
-        self.assertIn("not for release", self.studio_refused(self.a, "acceptance", "record", "WAVE-001", "--release", "r2", "--commit", commit,
-                                                       "--by", "product-owner", "--decision", "accepted", "--readiness", readiness))
-        recorded = self.ok(self.a, *base, "--decision", "accepted", "--readiness", readiness)["acceptance"]
-        self.assertEqual((recorded["decision"], recorded["readiness_outcome"], recorded["release_commit"]), ("accepted", "qualified", commit))
-        self.assertTrue(self.ok(self.a, "validate")["valid"])
-        # Published like any product file, on its own request, and merged by engineering.
-        sent = self.ok(self.a, "send", "WAVE-001")
-        self.assertEqual(sent["branch"], "product/WAVE-001-acceptance")
-        self.land("product/WAVE-001-acceptance")
-        again = self.release("qualify", "WAVE-001", "--release", "r1", "--commit", commit)
+        self.assertIn("not for release", self.studio_refused(self.a, "acceptance", "record", "EPIC-001", "--release", "r2", "--commit", commit,
+                                                       "--decision", "accepted", "--readiness", readiness))
+        recorded = self.ok(self.a, *base, "--decision", "accepted", "--readiness", readiness)
+        self.assertEqual((recorded["decision"], recorded["factory_authorized"]), ("accepted", False))
+        epic = next(i for i in self.gh()["issues"].values() if "mach:epic" in [l["name"] for l in i["labels"]])
+        self.assertTrue(epic["comments"][-1]["body"].startswith(f"Product decision recorded in MACH Product Studio by ada-pm: release r1 at commit {commit[:12]} is accepted for EPIC-001."))
+        self.assertEqual(self.ok(self.a, *base, "--decision", "accepted", "--readiness", readiness)["already_recorded"], True)  # never twice
+        self.set_gh(me="erin-eng")
+        again = self.release("qualify", "--epic", "EPIC-001", "--release", "r1", "--commit", commit)
         self.assertEqual((again["outcome"], again["product_acceptance"]), ("qualified", "accepted"))
+        data = self.readiness("r1")
+        self.assertEqual((data["product_acceptance"]["by"], data["scope"]["epic"]["epic_id"]), ("ada-pm", "EPIC-001"))
+
+    def test_an_edited_or_forged_decision_does_not_count(self):
+        commit, readiness = self.through_issues()
+        self.ok(self.a, "acceptance", "record", "EPIC-001", "--release", "r1", "--commit", commit, "--decision", "accepted", "--readiness", readiness)
+        state = self.gh()
+        epic = next(i for i in state["issues"].values() if "mach:epic" in [l["name"] for l in i["labels"]])
+        epic["comments"][-1]["updated_at"] = "2026-11-19T00:00:00Z"
+        epic["comments"].append({**epic["comments"][-1], "login": "mallory", "id": 6666, "updated_at": epic["comments"][-1]["created_at"]})
+        self.gh_state.write_text(json.dumps(state))
+        self.set_gh(me="erin-eng")
+        again = self.release("qualify", "--epic", "EPIC-001", "--release", "r1", "--commit", commit)
+        self.assertEqual(again["product_acceptance"], "not_recorded")
+        ignored = {item["why"] for item in self.readiness("r1")["product_acceptance"]["ignored"]}
+        self.assertEqual(ignored, {"it was edited after it was written", "it was not written by the account it names"})
 
     def test_an_unqualified_release_can_only_be_rejected(self):
-        commit = self.ready()
-        self.assertEqual(self.release("qualify", "WAVE-001", "--release", "r1")["outcome"], "incomplete")
-        readiness = str(self.eng / ".factory/release/r1/readiness.json")
-        self.share()
-        base = ("acceptance", "record", "WAVE-001", "--release", "r1", "--commit", commit, "--by", "product-owner", "--readiness", readiness)
+        self.set_gh(me="ada-pm")
+        self.project_and_epic()
+        self.drafted()
+        number = self.ok(self.a, "slice", "ready", "SLICE-001")["issue"]
+        self.set_gh(me="erin-eng")
+        self.product("intake")
+        self.product("dispatch", "SLICE-001")
+        commit = self.finish(str(number))
+        self.assertEqual(self.release("qualify", "--epic", "EPIC-001", "--release", "r1")["outcome"], "incomplete")
+        self.set_gh(me="ada-pm")
+        base = ("acceptance", "record", "EPIC-001", "--release", "r1", "--commit", commit, "--readiness", str(self.eng / ".factory/release/r1/readiness.json"))
         self.assertIn("incomplete", self.studio_refused(self.a, *base, "--decision", "accepted"))
-        self.assertEqual(self.ok(self.a, *base, "--decision", "rejected")["acceptance"]["decision"], "rejected")
+        self.assertEqual(self.ok(self.a, *base, "--decision", "rejected")["decision"], "rejected")
 
-
-    def test_a_merged_wave_is_accepted_even_when_its_draft_moved_on(self):
-        """D4: the decision binds to the wave as merged at the release commit, not to the workspace's draft."""
-        commit = self.ready()
-        self.configure(integration_command=f"{sys.executable} check.py")
-        self.scan(commit)
-        self.assertEqual(self.release("qualify", "WAVE-001", "--release", "r1")["outcome"], "qualified")
-        self.share()
-        draft = self.draft(self.a, "product/delivery-waves/WAVE-001.json")
-        data = json.loads(draft.read_text())
-        draft.write_text(json.dumps({**data, "status": "draft", "approval": None, "revision": data["revision"] + 1}, indent=2, sort_keys=True) + "\n")
-        readiness = str(self.eng / ".factory/release/r1/readiness.json")
-        recorded = self.ok(self.a, "acceptance", "record", "WAVE-001", "--release", "r1", "--commit", commit, "--by", "product-owner",
-                           "--decision", "accepted", "--readiness", readiness)["acceptance"]
-        self.assertEqual((recorded["wave_revision"], recorded["decision"]), (data["revision"], "accepted"))
-        self.assertEqual(self.ok(self.a, "send", "WAVE-001")["branch"], "product/WAVE-001-acceptance")
-        self.land("product/WAVE-001-acceptance")
-        self.assertEqual(self.release("qualify", "WAVE-001", "--release", "r1", "--commit", commit)["product_acceptance"], "accepted")
-        # Refused only when the wave at that commit is not an approved wave.
-        self.assertIn("not in the shared project", self.studio_refused(self.a, "acceptance", "record", "WAVE-007", "--release", "r1", "--commit", commit,
-                                                                          "--by", "product-owner", "--decision", "rejected"))
-
-
-    def test_an_acceptance_publication_holds_only_the_decision(self):
-        """N4: with a later draft of the wave's slice pending, the acceptance is sent alone, on its own branch."""
-        commit = self.ready()
-        self.configure(integration_command=f"{sys.executable} check.py")
-        self.scan(commit)
-        self.release("qualify", "WAVE-001", "--release", "r1")
-        self.share()
-        self.ok(self.a, "acceptance", "record", "WAVE-001", "--release", "r1", "--commit", commit, "--by", "product-owner",
-                "--decision", "accepted", "--readiness", str(self.eng / ".factory/release/r1/readiness.json"))
-        self.ok(self.a, "slice", "reopen", "SLICE-001")
-        self.write_slice(self.a, "SLICE-001", extra="\nRevised by product.\n")
-        self.ok(self.a, "slice", "approve", "SLICE-001")
-        self.ok(self.a, "wave", "approve", "WAVE-001", "--at", "2026-11-11T10:00:00Z")
-        sent = self.ok(self.a, "send", "WAVE-001", "--acceptance")
-        self.assertEqual((sent["published"], sent["branch"], sent["still_unsent"]), ("acceptance", "product/WAVE-001-acceptance", ["the wave's definition"]))
-        git(self.eng, "fetch", "-q", "origin")
-        changed = git(self.eng, "diff", "--name-only", "origin/main...origin/product/WAVE-001-acceptance").split()
-        self.assertEqual(changed, ["product/acceptance/WAVE-001.json"])
-        request = [pr for pr in self.gh()["prs"] if pr["head"] == "product/WAVE-001-acceptance"][0]
-        self.assertEqual(request["title"], f"Product acceptance for WAVE-001 at {commit[:12]}")
-        # The definition is its own publication, without the decision.
-        definition = self.ok(self.a, "send", "WAVE-001")
-        self.assertEqual((definition["published"], definition["branch"]), ("definition", "product/WAVE-001"))
-        git(self.eng, "fetch", "-q", "origin")
-        self.assertNotIn("product/acceptance/WAVE-001.json", git(self.eng, "diff", "--name-only", "origin/main...origin/product/WAVE-001").split())
+    def test_a_list_of_slices_has_no_product_acceptance(self):
+        self.built()
+        data = self.readiness(self.release("qualify", "SLICE-001", "--release", "r1")["release_id"])
+        self.assertEqual(data["product_acceptance"]["reason"], "Product acceptance is recorded per epic; this release names slices.")
 
 
 class ContractTest(Base):
     """D2: a contract shared by slices is judged against the latest reviewed change to it."""
 
     def two_slices(self):
-        self.ready(contract=("proto/api.yaml", "version: 1\n"))
+        self.built(contract=("proto/api.yaml", "version: 1\n"))
         second = self.slice(self.a, "Second")
         self.publish(self.a, second)
         self.product("intake")
         self.product("dispatch", second)
         self.finish("LOCAL-002", contract=("proto/api.yaml", "version: 2\n"))
 
-    def contract_checks(self, *waves):
-        data = self.readiness(self.release("qualify", *waves)["release_id"])
+    def contract_checks(self, *slices):
+        data = self.readiness(self.release("qualify", *slices)["release_id"])
         return data, {c["id"]: c for c in data["checks"] if c["id"].startswith("contract.")}
 
     def test_a_later_reviewed_change_supersedes_an_earlier_one(self):
         self.two_slices()
-        data, checks = self.contract_checks("WAVE-001", "WAVE-002")
+        data, checks = self.contract_checks("SLICE-001", "SLICE-002")
         first, second = checks["contract.SLICE-001.proto/api.yaml"], checks["contract.SLICE-002.proto/api.yaml"]
         self.assertEqual((first["status"], second["status"]), ("pass", "pass"))
         self.assertIn("Superseded by SLICE-002", first["detail"])
@@ -386,14 +370,14 @@ class ContractTest(Base):
         self.two_slices()
         (self.eng / "proto/api.yaml").write_text("version: 3\n")
         git(self.eng, "commit", "-q", "-am", "edit the contract by hand")
-        data, checks = self.contract_checks("WAVE-001", "WAVE-002")
+        data, checks = self.contract_checks("SLICE-001", "SLICE-002")
         self.assertEqual({c["status"] for c in checks.values()}, {"fail"})
         self.assertIn("changed outside review", checks["contract.SLICE-002.proto/api.yaml"]["detail"])
         self.assertEqual(data["outcome"], "blocked")
 
     def test_a_change_from_outside_the_release_is_incomplete(self):
         self.two_slices()
-        data, checks = self.contract_checks("WAVE-001")
+        data, checks = self.contract_checks("SLICE-001")
         check = checks["contract.SLICE-001.proto/api.yaml"]
         self.assertEqual(check["status"], "missing")
         self.assertIn("SLICE-002 (LOCAL-002) outside this release", check["detail"])
@@ -405,7 +389,7 @@ class ContractTest(Base):
         lines = [json.loads(line) for line in runs.read_text().splitlines()]
         lines[0]["integration"]["approved_commit"] = "0" * 40
         runs.write_text("".join(json.dumps(line) + "\n" for line in lines))
-        _, checks = self.contract_checks("WAVE-001", "WAVE-002")
+        _, checks = self.contract_checks("SLICE-001", "SLICE-002")
         self.assertEqual(checks["contract.SLICE-001.proto/api.yaml"]["status"], "missing")
 
 
@@ -413,9 +397,9 @@ class GuardTest(unittest.TestCase):
     def test_it_lands_publishes_and_starts_nothing(self):
         source = QUALIFY.read_text()
         used = set(re.findall(r"_git(?:_bytes)?\(\"([a-z-]+)\"", source))
-        self.assertEqual(used, {"merge-base", "show", "rev-parse", "archive"})
+        self.assertEqual(used, {"merge-base", "show", "rev-parse", "archive", "ls-tree"})
         self.assertEqual(len(re.findall(r"subprocess\.run\(", source)), 2)  # only the two read-only Git helpers
-        for word in ('"push"', '"tag"', '"merge"', '"checkout"', '"fetch"', '"worktree"', "deploy", "Popen", "os.system",
+        for word in ('"push"', '"tag"', '"merge"', '"checkout"', '"fetch"', '"worktree"', "deploy", "Popen", "os.system", "slice-status", '"comment"',
                      "claude", "Workflow", "runner.json", "read_local_policy", "factory_started\": True"):
             self.assertNotIn(word, source, word)
 

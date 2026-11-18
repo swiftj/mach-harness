@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { FactoryScene, StateMark, factoryTokens, lodForZoom, screenBounds, type Lod, type RegionKind } from "@mach/ui";
 import { isStale, timeScaleOf, useScene, useSceneActions, useSceneStore, useStore } from "../scene";
-import { bayOrder, distinctSliceCount, refKind, type EntityRef, type Scene } from "../sim";
+import { bayOrder, epicsInArrivalOrder, refKind, type EntityRef, type Scene } from "../sim";
 import { AtlasContext, useHighlight, type AtlasContextValue } from "./context";
 import { createCamera, frame, visibleRect, zoomAt, type Camera, type ScreenRect } from "./camera";
 import { PLATE_Z, plantLayout, type PlantLayout } from "./layout";
@@ -44,9 +44,8 @@ function captionsOf(scene: Scene, stale: boolean): { captions: Partial<Record<Re
   // On a stale connection nothing is said to be working: the floor is "as last seen".
   const working = stale ? [] : cells.filter((c) => c.station && ["plan", "groom", "build", "verify", "audit"].includes(c.station) && c.activeAgentIds.length > 0);
   const waiting = Object.values(scene.slices).filter((s) => s.scheduler === "waiting-on-dependency").length;
-  const waves = Object.values(scene.waves).sort((a, b) => a.discoveredAt - b.discoveredAt);
-  const wave = waves[waves.length - 1];
-  const sliceCount = distinctSliceCount(scene);
+  const epics = epicsInArrivalOrder(scene);
+  const sliceCount = Object.keys(scene.slices).length;
   const merged = cells.filter((c) => c.merged).length;
   const archived = cells.filter((c) => c.archived).length;
   const reviewing = cells.find((c) => c.station === "review");
@@ -56,7 +55,7 @@ function captionsOf(scene: Scene, stale: boolean): { captions: Partial<Record<Re
   const human = cells.find((c) => c.stage === "awaiting-human");
   return {
     captions: {
-      intake: wave ? `${waves.length > 1 ? `${waves.length} waves, latest ${wave.id}` : wave.id} · ${sliceCount} slices · ${waiting} waiting` : "Waiting for an approved wave",
+      intake: sliceCount ? `${epics.length > 1 ? `${epics.length} epics, latest ${epics.at(-1)}` : (epics[0] ?? "no epic recorded")} · ${sliceCount} slice${sliceCount === 1 ? "" : "s"} · ${waiting} waiting` : "Waiting for a slice marked ready",
       floor: `${cells.length} cell${cells.length === 1 ? "" : "s"} · ${stale ? "as last seen" : `${working.length} working`}`,
       review: reviewing ? `${reviewing.ticketId} under review` : lastDecided ? `Last: ${lastDecided.c.ticketId} ${lastDecided.r.outcome?.toLowerCase().replace("_", " ")}` : "No panel sitting yet",
       human: human ? `${human.ticketId} held` : "Clear",
@@ -109,11 +108,11 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
   const staleSince = useSceneStore((s) => (isStale(s.connection) ? `${s.connection!.state}|${s.connection!.staleSince ?? s.now}` : null));
   const provenanceLabel = log.provenance.label;
   // The plant from what is known so far, never from the end of a run: the bays from the log's
-  // assignment table (bayOrder), in which a bay index never changes once given, late waves included.
+  // assignment table (bayOrder), in which a bay index never changes once given, late slices included.
   // plantLayout returns the same object while the bays known are the same.
   const layout = useMemo(() => {
     const order = bayOrder(log);
-    return plantLayout(order.slots, order.waveIds);
+    return plantLayout(order.slots);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- logVersion is the log's change signal
   }, [log, logVersion]);
   const mode = useMemo<ViewMode>(() => ({ live: source !== "simulation", stale }), [source, stale]);
@@ -228,7 +227,7 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
     [camera, layout],
   );
 
-  // The plant grew (a wave arrived, a cell opened): if the camera was at fit, frame the new plant.
+  // The plant grew (a slice arrived, a cell opened): if the camera was at fit, frame the new plant.
   const lastLayout = useRef(layout);
   useEffect(() => {
     if (lastLayout.current === layout) return;
@@ -308,7 +307,7 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
           const pad = kind === "cell" || kind === "slice" ? 40 * 0.9 : 8;
           const r = locateScreen(layout, scene, s.now, s.focus.target, pad, mode);
           if (r) {
-            const minZoom = kind === "cell" || kind === "slice" || kind === "wave" || kind === "dependency" ? Z.far + 0.06 : kind === "gate" ? Z.far + 0.06 : Z.near + 0.06;
+            const minZoom = kind === "cell" || kind === "slice" || kind === "dependency" ? Z.far + 0.06 : kind === "gate" ? Z.far + 0.06 : Z.near + 0.06;
             camera.animateTo(frame(r, camera.viewport, 2.2, Math.min(minZoom, camera.get().zoom > minZoom ? camera.get().zoom : minZoom)), ms);
           }
         }

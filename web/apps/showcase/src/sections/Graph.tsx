@@ -8,8 +8,9 @@ import { fx } from "../fixtures";
 export function GraphSection() {
   const [selected, setSelected] = useState<MachNode | null>(null);
   const [view, setView] = useState<"graph" | "list">("graph");
-  const conflicts = useMemo(() => productGraphFromStatus({ status: fx.statusAfterRenumber }), []);
-  const published = useMemo(() => productGraphFromStatus({ status: fx.statusPublished, reviews: fx.feedbackAccepted.waves }), []);
+  const rich = useMemo(() => productGraphFromStatus({ status: fx.statusRich }), []);
+  const states = useMemo(() => productGraphFromStatus({ status: fx.statusStates }), []);
+  const dependency = useMemo(() => productGraphFromStatus({ status: fx.statusWithDependency }), []);
 
   return (
     <Section
@@ -19,7 +20,7 @@ export function GraphSection() {
     >
       <Specimen
         title="Product graph"
-        source="status.after-renumber.json"
+        source="status.rich.json"
         note="Tab moves between nodes; Enter selects. A warning line on a node names what must be settled."
       >
         <div className="flex flex-col gap-4">
@@ -47,22 +48,26 @@ export function GraphSection() {
           {view === "graph" ? (
             <div className="h-[420px]">
               <ProductGraph
-                nodes={conflicts.nodes}
-                edges={conflicts.edges}
+                nodes={rich.nodes}
+                edges={rich.edges}
                 onSelect={setSelected}
                 selectedId={selected?.id}
                 ariaLabel="Team Space: project, epics and slices"
               />
             </div>
           ) : (
-            <GraphOutline nodes={conflicts.nodes} edges={conflicts.edges} onSelect={setSelected} selectedId={selected?.id} />
+            <GraphOutline nodes={rich.nodes} edges={rich.edges} onSelect={setSelected} selectedId={selected?.id} />
           )}
         </div>
       </Specimen>
 
-      <Specimen title="After review accepted the wave" source="status.published.json + feedback.accepted.json" note="The same slice, now accepted: a double border and a ringed glyph.">
-        <div className="h-[260px]">
-          <ProductGraph nodes={published.nodes} edges={published.edges} ariaLabel="Team Space after acceptance" />
+      <Specimen
+        title="With the builders"
+        source="status.states.json"
+        note="Slices being built, with a question from the builders, shipped (a double border and a ringed glyph), and one changed on GitHub after approval."
+      >
+        <div className="h-[320px]">
+          <ProductGraph nodes={states.nodes} edges={states.edges} ariaLabel="Team Space with the builders" />
         </div>
       </Specimen>
 
@@ -96,7 +101,10 @@ export function GraphSection() {
             })}
           </ul>
         </Specimen>
-        <Specimen title="Edges" note="No fixture has a dependency yet, so the graph above shows none; this is how one is drawn.">
+        <Specimen title="Edges" source="status.with-dependency.json" note="A slice that needs another first is drawn with a dashed arrow.">
+          <div className="mb-4 h-[200px]">
+            <ProductGraph nodes={dependency.nodes} edges={dependency.edges} ariaLabel="Team Space: a slice that needs another first" />
+          </div>
           <ul className="flex flex-col gap-4">
             <li className="flex items-center gap-3">
               <svg width="72" height="12" aria-hidden="true">

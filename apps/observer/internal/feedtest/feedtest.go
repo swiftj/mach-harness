@@ -242,7 +242,7 @@ var seqs sync.Map // partition key -> *int64, for deterministic per-partition se
 // precision for the lifecycle, execution-stream and observer streams and whole seconds otherwise.
 func New(stream, typ string, ms int64) *Ev {
 	ids := map[string]any{}
-	for _, k := range []string{"project_id", "wave_id", "slice_id", "revision", "ticket_id", "cell_instance", "execution_id", "runner_id",
+	for _, k := range []string{"project_id", "epic_id", "issue", "slice_id", "revision", "ticket_id", "cell_instance", "execution_id", "runner_id",
 		"visit_id", "station", "round", "attempt", "seat", "agent_id", "parent_agent_id", "tool_call_id"} {
 		ids[k] = nil
 	}

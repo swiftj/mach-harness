@@ -17,7 +17,7 @@ import (
 // Kinds are the version 3 event kinds (schemas/factory-event.v3.schema.json). Revision 1 added
 // no kind.
 var Kinds = []string{
-	"wave.discovered", "intake.validated", "intake.refused", "slice.materialized", "slice.integrated", "dependency.resolved", "dependency.blocked",
+	"intake.validated", "intake.refused", "slice.materialized", "slice.integrated", "dependency.resolved", "dependency.blocked",
 	"work.scheduled", "revision.superseded", "human.required", "factory.activated", "factory.disabled", "factory.paused", "factory.resumed",
 	"revision.discovered", "scheduling.decided", "work.claimed", "execution.started", "station.observed", "recovery.started", "execution.completed",
 	"execution.failed", "station.entered", "station.exited", "gate.evaluated", "build.task_completed", "verify.check_recorded", "review.round_started",
@@ -301,7 +301,7 @@ func (s *Server) snapshotHead(w http.ResponseWriter) {
 	w.Write(data)
 }
 
-// ---- project, waves, slices, cells ----
+// ---- project, slices, cells ----
 
 func (s *Server) project(w http.ResponseWriter, r *http.Request) {
 	s.view(w, func(st *project.State) (int, Envelope) {
@@ -311,33 +311,10 @@ func (s *Server) project(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) waves(w http.ResponseWriter, r *http.Request) {
-	s.view(w, func(st *project.State) (int, Envelope) {
-		return http.StatusOK, ok(map[string]any{"items": project.Waves(st), "cursor": s.cursor(st.Pos)})
-	})
-}
-
-func (s *Server) wave(w http.ResponseWriter, r *http.Request) {
-	id, good := ident(r.PathValue("wave"))
-	if !good {
-		writeJSON(w, http.StatusBadRequest, fail(KindInvalid, "That is not a wave identifier."))
-		return
-	}
-	s.view(w, func(st *project.State) (int, Envelope) {
-		wv := st.Waves[id]
-		if wv == nil {
-			return http.StatusNotFound, fail(KindNotFound, "No such wave has been seen.")
-		}
-		v := project.WaveDetail(st, wv)
-		v["cursor"] = s.cursor(st.Pos)
-		return http.StatusOK, ok(v)
-	})
-}
-
 var sliceStates = map[string]bool{"completed": true, "active": true, "ready": true, "blocked": true, "superseded": true, "unknown": true}
 
 func (s *Server) slices(w http.ResponseWriter, r *http.Request) {
-	wave, bad := optIdent(r.URL.Query(), "wave")
+	epic, bad := optIdent(r.URL.Query(), "epic")
 	if bad != nil {
 		writeJSON(w, http.StatusBadRequest, *bad)
 		return
@@ -358,7 +335,7 @@ func (s *Server) slices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.view(w, func(st *project.State) (int, Envelope) {
-		return http.StatusOK, ok(pageOf(project.Slices(st, wave, state), off, limit, s.cursor(st.Pos)))
+		return http.StatusOK, ok(pageOf(project.Slices(st, epic, state), off, limit, s.cursor(st.Pos)))
 	})
 }
 

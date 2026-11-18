@@ -74,12 +74,12 @@ def backlog(ctx: Context) -> List[Dict[str, Any]]:
     if ctx.line is None:
         return []
     found = ctx.line.discover()
-    found.pop("_snapshot", None)
+    found.pop("_rows", None)
     plan = ctx.line.plan()
     rows: Dict[str, Dict[str, Any]] = {}
     for item in found.get("slices") or []:
         if item["status"] in ("new", "modified"):
-            rows[item["slice_id"]] = {"slice_id": item["slice_id"], "title": item.get("title"), "why": "approved and merged, not yet taken in" if item["status"] == "new" else "changed since it was taken in"}
+            rows[item["slice_id"]] = {"slice_id": item["slice_id"], "title": item.get("title"), "why": "marked ready, not yet taken in" if item["status"] == "new" else "changed since it was taken in"}
     for row in plan["slices"]:
         if row["state"] in ("ready", "blocked", "active"):
             rows.setdefault(row["slice_id"], {"slice_id": row["slice_id"], "title": row.get("title"),
@@ -105,15 +105,15 @@ def status(ctx: Context) -> Dict[str, Any]:
     limit = ctx.sup.cap(pol) if ctx.line is not None else None  # the plan below shows the limit in force here, not only the project's
     plan = ctx.line.plan() if ctx.line is not None else None
     mode = "disabled" if not in_force else "paused" if pol.get("paused") else pol.get("autonomy")
-    # A parked ticket that was since abandoned and closed is waiting for nobody (recorded facts: the
-    # run record and the tracker), so it is listed apart, with the ticket that replaced it if any.
+    # A parked ticket whose work has since left the line (abandoned or merged, with no cell open) is
+    # waiting for nobody (recorded facts: the run record), so it is listed apart.
     settled = ctx.line.settled(ledger, sorted(state["parked"])) if ctx.line is not None else {}
     return {
         "factory": mode,
         "enabled_here": in_force,
         "in_words": {"disabled": "The Factory is disabled on this machine. Nothing runs unless an engineer runs it.",
                      "paused": "The Factory is enabled but paused: nothing new is dispatched or started.",
-                     "observe": "Observe: approved work is discovered, taken in and planned. No agent is started.",
+                     "observe": "Observe: slices marked ready are discovered, taken in and planned. No agent is started.",
                      "supervised": "Supervised autopilot: eligible approved work is run, and stops at every human gate."}[str(mode)],
         "policy": describe(pol) if raw.get("source") == "local-file" else None,
         "problems": raw.get("problems") or [],
@@ -124,7 +124,7 @@ def status(ctx: Context) -> Dict[str, Any]:
                        for _, record in sorted(state["executions"].items()) if record["state"] in LIVE],
         "waiting_for_a_person": {ticket: record for ticket, record in state["parked"].items() if ticket not in settled},
         "no_longer_waiting": [{**settled[ticket], "parked_reason": state["parked"][ticket].get("reason"),
-                               "in_words": f"{ticket} was abandoned and closed" + (f"; reissued as {settled[ticket]['reissued_as']}" if settled[ticket].get("reissued_as") else "") + "."}
+                               "in_words": f"{ticket}'s work left the line: it was {settled[ticket]['outcome']}."}
                               for ticket in sorted(settled)],
         "plan": {**{key: plan[key] for key in ("counts", "dispatchable", "waiting_for_a_place", "runnable", "needs_person", "intake_is_current", "limits")},
                  "max_parallel_from": limit} if plan else None,

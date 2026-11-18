@@ -1,0 +1,44 @@
+{
+  "exit_code": 0,
+  "data": {
+    "ready": true,
+    "saved_to": "folder",
+    "slice": {
+      "dependencies": [],
+      "epic_id": "EPIC-001",
+      "open_questions": [],
+      "project_id": "team-space",
+      "revision": 2,
+      "schema_version": 1,
+      "slice_id": "SLICE-001",
+      "spec_path": "specs/slices/SLICE-001-invite-teammate.md",
+      "spec_sha256": "b0097bdf9d525aac493e1f8038476fc27984db47a22b6f3d229d6fd3ca4c15aa",
+      "status": "approved_for_engineering",
+      "title": "Invite a teammate"
+    },
+    "folder": "/project/.factory/studio/draft/product/ready/SLICE-001",
+    "files": [
+      "/project/.factory/studio/draft/product/ready/SLICE-001/spec.md",
+      "/project/.factory/studio/draft/product/ready/SLICE-001/why.md",
+      "/project/.factory/studio/draft/product/ready/SLICE-001/slice.json"
+    ],
+    "revision": 1,
+    "why_folder": "You are not signed in to GitHub on this computer.",
+    "risk": "High",
+    "counts": {
+      "invariants": 4,
+      "functional_requirements": 9,
+      "matrix_rules": 5,
+      "scenarios": 3
+    },
+    "warnings": [],
+    "ways_on": [
+      "Add this folder to the project's repository; the builders take it from there.",
+      "Or hand the folder to the engineer, who brings it in with MACH."
+    ],
+    "factory_authorized": false,
+    "note": "Approved and written to the folder. Nothing was sent to GitHub and no work has started."
+  },
+  "refused": null,
+  "hint": null
+}

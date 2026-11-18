@@ -24,8 +24,8 @@ Settings, in .factory/config.json under "merge":
             with the pull request method, post the approving round's findings on the pull request
             once, as one review of type comment (default true; only an explicit false turns it off)
 
-A pull request for work that came from a GitHub issue says "Refs #<n>" (never a closing keyword:
-the issue closes on the product manager's word). Posting findings never blocks or delays the merge.
+A pull request for a slice that came as a GitHub issue says "Refs #<n>" (never a closing keyword:
+the Factory closes the slice's issue once it sees the merge on the integration branch). Posting findings never blocks or delays the merge.
 
 Standard library only. It never force-pushes, never rewrites history, and never deletes a branch.
 """
@@ -349,14 +349,15 @@ def origin_repository(project: Path) -> Optional[str]:
 
 
 def refs_line(cell: Cell) -> Optional[str]:
-    """'Refs #<n>' for work from an issue in this repository, 'Refs owner/name#<n>' otherwise; None if the cell
-    names no request or what it names is not a valid repository and issue number. Never a closing keyword."""
+    """'Refs #<n>' for a slice whose issue is in this repository, 'Refs owner/name#<n>' otherwise; None if the cell
+    names no slice issue or what it names is not a valid repository and issue number. Never a closing keyword: the
+    Factory closes a slice's issue itself once the merge is seen on the integration branch."""
     rules = issue_rules()
     product = cell.info.get("product")
-    origin = product.get("origin") if isinstance(product, dict) else None
-    if rules is None or not isinstance(origin, dict) or origin.get("kind") != "github_issue":
+    issue = product.get("issue") if isinstance(product, dict) else None
+    if rules is None or not isinstance(issue, dict):
         return None
-    repository, number = origin.get("repository"), origin.get("number")
+    repository, number = issue.get("repository"), issue.get("number")
     if not rules.is_repository(repository) or not rules.is_issue_number(number):
         return None
     here = origin_repository(cell.project)

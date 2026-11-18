@@ -55,7 +55,7 @@ function randomView(r) {
     pick: r() < 0.3 ? { dim: pick(r, ["outcome", "rule", "target_kind"]), value: pick(r, VALUES) } : null,
   };
 }
-const SELS = [null, "cell:LOCAL-031", "station:LOCAL-031/build", "gate:LOCAL-031/review#2", "execution:x/1 2"];
+const SELS = [null, "cell:131", "station:131/build", "gate:131/review#2", "execution:x/1 2"];
 
 // ---------------------------------------------------------------- the store's slice
 
@@ -97,7 +97,7 @@ test("setAnalyticsView: merges filters key by key, ignores invalid members one b
 test("switching workspaces never changes selection, hover or the moment shown", () => {
   const r = rng(11);
   const store = make();
-  store.select("cell:LOCAL-031");
+  store.select("cell:131");
   for (let i = 0; i < 60; i++) {
     const before = store.getState();
     const w = pick(r, ["line", "floor", "analytics"]);
@@ -132,13 +132,13 @@ test("the floor is held (inert to changes) while Analytics is up, and catches up
   assert.equal(frozen.workspace, "floor", "the hidden floor never saw the switch");
   // The target is set while the floor is still up (one notification, interface state only); nothing after.
   told = 0;
-  store.select("cell:LOCAL-032");
+  store.select("cell:132");
   store.setAnalyticsView({ area: "quality" });
   assert.equal(told, 0, "nothing reached the hidden floor");
   assert.equal(held.getState(), frozen);
   showOnFloor(store);
   assert.equal(held.held(), false);
-  assert.equal(held.getState().selection, "cell:LOCAL-032");
+  assert.equal(held.getState().selection, "cell:132");
   assert.equal(told, 2, "caught up with one notification, then the framing request showOnFloor makes");
 });
 
@@ -146,12 +146,12 @@ test("the floor is held (inert to changes) while Analytics is up, and catches up
 
 test("showInAnalytics: sets the target (filters replaced, focus and pick reset) and switches; selection stays", () => {
   const store = make();
-  store.select("station:LOCAL-031/build");
+  store.select("station:131/build");
   store.setAnalyticsView({ filters: { risk: "high" }, focus: { metric: "K1", group: null }, compare: { a: { risk: "high" }, b: {} } });
   showInAnalytics(store, { area: "flow", filters: { station: "build" } });
   const s = store.getState();
   assert.equal(s.workspace, "analytics");
-  assert.equal(s.selection, "station:LOCAL-031/build");
+  assert.equal(s.selection, "station:131/build");
   assert.deepEqual(s.analytics.filters, { risk: null, appType: null, model: null, station: "build" }, "the link shows exactly what it says");
   assert.equal(s.analytics.focus, null);
   assert.ok(s.analytics.compare, "a comparison is kept");
@@ -165,16 +165,16 @@ test("showInAnalytics: sets the target (filters replaced, focus and pick reset) 
 test("from Analytics: showOnLine and showOnFloor with a ref select it", () => {
   const store = make();
   showInAnalytics(store, { area: "flow" });
-  showOnLine(store, "cell:LOCAL-033");
+  showOnLine(store, "cell:133");
   let s = store.getState();
   assert.equal(s.workspace, "line");
-  assert.equal(s.selection, "cell:LOCAL-033");
+  assert.equal(s.selection, "cell:133");
   showInAnalytics(store);
-  showOnFloor(store, { ref: "cell:LOCAL-031" });
+  showOnFloor(store, { ref: "cell:131" });
   s = store.getState();
   assert.equal(s.workspace, "floor");
-  assert.equal(s.selection, "cell:LOCAL-031");
-  assert.equal(s.focus.target, "cell:LOCAL-031");
+  assert.equal(s.selection, "cell:131");
+  assert.equal(s.focus.target, "cell:131");
 });
 
 test("analyticsStationOf: the floor's station kinds map to Analytics' stations; intake and observe have none", () => {
@@ -213,7 +213,7 @@ test("hash: #line and #floor round-trip exactly, with no Analytics parameter (pr
     assert.equal(h.analytics, null);
     assert.equal(formatHash({ route, sel: h.sel }), hash);
   }
-  for (const old of ["#line", "#floor", "#floor?sel=cell%3ALOCAL-031"]) {
+  for (const old of ["#line", "#floor", "#floor?sel=cell%3A131"]) {
     const h = parseHash(old);
     assert.equal(formatHash({ route: h.route, sel: h.sel }), old);
   }
@@ -249,19 +249,19 @@ test("hashSync: an Analytics view is written as #analytics (never as #floor), an
   const store = make({ workspace: "floor" });
   const host = { hash: "#floor", getHash: () => host.hash, replaceHash: (h) => (host.hash = h), onHashChange: (l) => ((host.change = l), () => {}), onInteraction: () => () => {}, setTimeout: () => 0, clearTimeout: () => {} };
   const sync = createHashSync(store, host);
-  store.select("cell:LOCAL-031");
+  store.select("cell:131");
   showInAnalytics(store, { area: "flow", filters: { station: "build" } });
-  assert.equal(host.hash, "#analytics?area=flow&station=build&sel=cell%3ALOCAL-031");
+  assert.equal(host.hash, "#analytics?area=flow&station=build&sel=cell%3A131");
   store.setAnalyticsView({ focus: { metric: "C1", group: { dim: "station", value: "build" } } });
-  assert.equal(host.hash, "#analytics?area=flow&station=build&sel=cell%3ALOCAL-031&focus=C1,station:build");
+  assert.equal(host.hash, "#analytics?area=flow&station=build&sel=cell%3A131&focus=C1,station:build");
   showOnFloor(store);
-  assert.equal(host.hash, "#floor?sel=cell%3ALOCAL-031");
+  assert.equal(host.hash, "#floor?sel=cell%3A131");
   // Back to an Analytics address (the browser's Back): the whole view as written.
   host.hash = "#analytics?area=quality&win=7d&risk=high&cmp=risk:high~risk:low";
   host.change();
   const s = store.getState();
   assert.equal(s.workspace, "analytics");
-  assert.equal(s.selection, "cell:LOCAL-031", "an address without sel keeps the selection");
+  assert.equal(s.selection, "cell:131", "an address without sel keeps the selection");
   assert.equal(s.analytics.area, "quality");
   assert.equal(s.analytics.window, "7d");
   assert.deepEqual(s.analytics.filters, { risk: "high", appType: null, model: null, station: null }, "station from before is not kept: the address is the whole view");
@@ -299,20 +299,20 @@ function press(store, key, extra = {}) {
 
 test("keys: 1 2 3 switch from every workspace keeping the selection", () => {
   const store = make();
-  store.select("cell:LOCAL-031");
+  store.select("cell:131");
   const route = [["3", "analytics"], ["1", "line"], ["3", "analytics"], ["2", "floor"], ["3", "analytics"], ["1", "line"], ["2", "floor"]];
   for (const [key, w] of route) {
     const { e } = press(store, key);
     const s = store.getState();
     assert.equal(s.workspace, w, key);
     assert.ok(e.prevented);
-    assert.equal(s.selection, "cell:LOCAL-031");
+    assert.equal(s.selection, "cell:131");
   }
 });
 
 test("keys in Analytics: F and T do nothing (they are the floor's); I, ?, S and Escape still work", () => {
   const store = make();
-  store.select("cell:LOCAL-031");
+  store.select("cell:131");
   showInAnalytics(store);
   const before = store.getState();
   for (const key of [" ", ",", ".", "[", "]", "Home", "End", "l", "L", "f", "F", "t", "T"]) {

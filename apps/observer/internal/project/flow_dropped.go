@@ -8,7 +8,7 @@ import (
 // Waits the projection no longer keeps one by one (the oldest beyond maxCapacityWaits and
 // maxWaitsPerSlice) are folded into per-day flow cells as they are dropped (CAPACITY_SPEC.md), so
 // the flow totals count every wait and only the contributor list is bounded. The cell's dims (risk,
-// app type, wave) and the station entered next are fixed when the wait is dropped.
+// app type, epic) and the station entered next are fixed when the wait is dropped.
 
 // WaitCell is a mergeable, encodable aggregate of dropped waits of one kind, day, dims and next station.
 type WaitCell struct {
@@ -16,7 +16,7 @@ type WaitCell struct {
 	Day             int64    `json:"day"`
 	Risk            string   `json:"risk,omitempty"`
 	AppType         string   `json:"app_type,omitempty"`
-	Wave            string   `json:"wave,omitempty"`
+	Epic            string   `json:"epic,omitempty"`
 	Next            string   `json:"next,omitempty"`
 	Basis           [5]int64 `json:"basis"`
 	Measured        []int64  `json:"measured"`
@@ -42,7 +42,7 @@ func addSorted(list []string, v string) []string {
 }
 
 // foldDroppedWait adds one dropped wait (from start to end, end nil while open) to its cell.
-func (s *State) foldDroppedWait(kind, ticket, wave string, start, end *Stamp) {
+func (s *State) foldDroppedWait(kind, ticket, epic string, start, end *Stamp) {
 	if start == nil && end == nil {
 		return
 	}
@@ -57,8 +57,8 @@ func (s *State) foldDroppedWait(kind, ticket, wave string, start, end *Stamp) {
 	risk, app := "", ""
 	if td := TicketDims(s, ticket); td != nil {
 		risk, app = td["risk"], td["app_type"]
-		if td["wave"] != "" {
-			wave = td["wave"]
+		if td["epic"] != "" {
+			epic = td["epic"]
 		}
 	}
 	next := ""
@@ -78,13 +78,13 @@ func (s *State) foldDroppedWait(kind, ticket, wave string, start, end *Stamp) {
 		}
 	}
 	day := flowDay(from)
-	key := kind + "|" + strconv.FormatInt(day, 10) + "|" + risk + "|" + app + "|" + wave + "|" + next
+	key := kind + "|" + strconv.FormatInt(day, 10) + "|" + risk + "|" + app + "|" + epic + "|" + next
 	if s.DroppedWaits == nil {
 		s.DroppedWaits = map[string]*WaitCell{}
 	}
 	c := s.DroppedWaits[key]
 	if c == nil {
-		c = &WaitCell{Kind: kind, Day: day, Risk: risk, AppType: app, Wave: wave, Next: next, Measured: []int64{}, Tickets: []string{}, MeasuredTickets: []string{}}
+		c = &WaitCell{Kind: kind, Day: day, Risk: risk, AppType: app, Epic: epic, Next: next, Measured: []int64{}, Tickets: []string{}, MeasuredTickets: []string{}}
 		s.DroppedWaits[key] = c
 	}
 	d := between(start, end, false)
@@ -134,7 +134,7 @@ func (s *State) dropSliceCapacity(ws []*SliceCapacityWait) {
 		if sl := s.Slices[w.SliceID]; sl != nil {
 			ticket = sl.TicketID
 		}
-		s.foldDroppedWait(WaitCapacitySlice, ticket, w.WaveID, w.Opened, w.Released)
+		s.foldDroppedWait(WaitCapacitySlice, ticket, w.EpicID, w.Opened, w.Released)
 	}
 }
 
@@ -145,7 +145,7 @@ func (s *State) dropDependency(sl *Slice, ws []*DependencyWait) {
 		if end == nil {
 			end = w.Superseded
 		}
-		s.foldDroppedWait(WaitDependency, sl.TicketID, sl.WaveID, w.Blocked, end)
+		s.foldDroppedWait(WaitDependency, sl.TicketID, sl.EpicID, w.Blocked, end)
 	}
 }
 

@@ -109,40 +109,43 @@ func TestEveryOperationAgainstTheRealEngine(t *testing.T) {
 	if shown := mustOK(t, e, "slice.show", `{"slice_id":"SLICE-001"}`); shown["editable"] != true {
 		t.Fatalf("slice.show: %v", shown)
 	}
-	mustFail(t, e, "slice.approve", `{"slice_id":"SLICE-001"}`, engine.KindRefused, "epic EPIC-001 is proposed")
-	if env := do(t, e, "slice.approve", `{"slice_id":"SLICE-001"}`); strings.Contains(env.Error.Message, "studio.py") ||
+	mustFail(t, e, "slice.ready", `{"slice_id":"SLICE-001"}`, engine.KindRefused, "epic EPIC-001 is proposed")
+	if env := do(t, e, "slice.ready", `{"slice_id":"SLICE-001"}`); strings.Contains(env.Error.Message, "studio.py") ||
 		string(env.Error.Hint) != `{"kind": "approve_epic", "target": "EPIC-001"}` {
 		t.Fatalf("the app's refusal: %q hint %s", env.Error.Message, env.Error.Hint)
 	}
 	mustOK(t, e, "epic.approve", `{"epic_id":"EPIC-001"}`)
-	mustOK(t, e, "slice.approve", `{"slice_id":"SLICE-001"}`)
+	// No GitHub repository: the slice is approved and written to the ready folder, with the two ways on.
+	ready := mustOK(t, e, "slice.ready", `{"slice_id":"SLICE-001"}`)
+	if ready["saved_to"] != "folder" || len(ready["ways_on"].([]any)) != 2 || strings.Contains(fmt.Sprint(ready["ways_on"]), "/mach") {
+		t.Fatalf("slice.ready without GitHub: %v", ready)
+	}
+	if _, err := os.Stat(testkit.Draft(project, "product", "ready", "SLICE-001", "slice.json")); err != nil {
+		t.Fatalf("the ready folder: %v", err)
+	}
 	if shown := mustOK(t, e, "slice.show", `{"slice_id":"SLICE-001"}`); shown["editable"] != false {
-		t.Fatalf("an approved slice is not editable: %v", shown["editable"])
+		t.Fatalf("a slice marked ready is not editable: %v", shown["editable"])
 	}
 	mustFail(t, e, "slice.check", `{"slice_id":"SLICE-001"}`, engine.KindRefused, "reopen it first")
 
 	// The fixture spec reserves SLICE-002 to SLICE-004 for deferred features, so the engine picks the next.
 	second := mustOK(t, e, "slice.new", `{"epic":"EPIC-001","title":"Remove a teammate"}`)["slice"].(map[string]any)["slice_id"].(string)
-	mustOK(t, e, "wave.new", `{"slice":["SLICE-001"]}`)
-	mustOK(t, e, "wave.add", `{"wave_id":"WAVE-001","slice_ids":["`+second+`"]}`)
-	mustOK(t, e, "wave.remove", `{"wave_id":"WAVE-001","slice_ids":["`+second+`"]}`)
-	if wave := mustOK(t, e, "wave.approve", `{"wave_id":"WAVE-001","actor":"Pat PM"}`)["wave"].(map[string]any); wave["status"] != "approved_for_engineering" {
-		t.Fatalf("wave.approve: %v", wave)
-	}
-	mustFail(t, e, "send.preview", `{"wave_id":"WAVE-001"}`, engine.KindRefused, "not connected to a shared repository")
-	mustFail(t, e, "send", `{"wave_id":"WAVE-001"}`, engine.KindRefused, "not connected to a shared repository")
-	mustOK(t, e, "feedback", `{}`)
-	mustOK(t, e, "feedback", `{"wave_id":"WAVE-001"}`)
-	mustFail(t, e, "reconcile", `{"artifact":"SLICE-001","take":"mine"}`, engine.KindRefused, "needs reconciling")
-	if reopened := mustOK(t, e, "slice.reopen", `{"slice_id":"SLICE-001"}`); fmt.Sprint(reopened["waves_returned_to_draft"]) != "[WAVE-001]" {
+	mustFail(t, e, "reconcile", `{"slice_id":"SLICE-001","take":"mine"}`, engine.KindRefused, "")
+	if reopened := mustOK(t, e, "slice.reopen", `{"slice_id":"SLICE-001"}`); reopened["github"].(map[string]any)["where"] != "folder" {
 		t.Fatalf("slice.reopen: %v", reopened)
+	}
+	if _, err := os.Stat(testkit.Draft(project, "product", "ready", "SLICE-001")); !os.IsNotExist(err) {
+		t.Fatalf("reopening removes the ready folder: %v", err)
 	}
 	if renumbered := mustOK(t, e, "slice.renumber", `{"identifier":"`+second+`"}`)["renumbered"].(map[string]any); renumbered["from"] != second {
 		t.Fatalf("slice.renumber: %v", renumbered)
 	}
+	if moved := mustOK(t, e, "slice.move", `{"slice_id":"SLICE-001","last":true}`); moved["position"] != float64(2) {
+		t.Fatalf("slice.move: %v", moved)
+	}
+	mustFail(t, e, "slice.take", `{"issue":41}`, engine.KindRefused, "")
 	mustOK(t, e, "epic.add", `{"title":"Billing","criterion":["Invoices are correct"]}`)
 	mustOK(t, e, "epic.renumber", `{"identifier":"EPIC-002"}`)
-	mustOK(t, e, "wave.renumber", `{"identifier":"WAVE-001"}`)
 	mustFail(t, e, "project.set", `{"status":"bogus"}`, engine.KindInvalid, "invalid choice")
 	mustFail(t, e, "slice.show", `{"slice_id":"SLICE-099"}`, engine.KindRefused, "No slice SLICE-099")
 	mustFail(t, e, "no.such.op", `{}`, engine.KindInvalid, "no operation")
@@ -175,10 +178,10 @@ func TestEnvelopeMapping(t *testing.T) {
 	}{
 		{"exit 0 with JSON", `print('{"a": 1}')`, "status", true, "", ""},
 		{"exit 0 without JSON", `print('hello')`, "status", false, engine.KindInternal, "not JSON"},
-		{"refusal", `sys.stderr.write("refused: SLICE-001 cannot be approved yet:\n  epic EPIC-001 is proposed\n"); sys.exit(1)`,
-			"slice.approve", false, engine.KindRefused, "SLICE-001 cannot be approved yet:\n  epic EPIC-001 is proposed"},
-		{"refusal with a hint", `sys.stderr.write('refused-hint: {"kind": "approve_epic", "target": "EPIC-001"}\nrefused: SLICE-001 cannot be approved yet\n'); sys.exit(1)`,
-			"slice.approve", false, engine.KindRefused, "SLICE-001 cannot be approved yet"},
+		{"refusal", `sys.stderr.write("refused: SLICE-001 cannot be marked ready yet:\n  epic EPIC-001 is proposed\n"); sys.exit(1)`,
+			"slice.ready", false, engine.KindRefused, "SLICE-001 cannot be marked ready yet:\n  epic EPIC-001 is proposed"},
+		{"refusal with a hint", `sys.stderr.write('refused-hint: {"kind": "approve_epic", "target": "EPIC-001"}\nrefused: SLICE-001 cannot be marked ready yet\n'); sys.exit(1)`,
+			"slice.ready", false, engine.KindRefused, "SLICE-001 cannot be marked ready yet"},
 		{"check with problems", `print('{"ready": false, "errors": ["x"]}'); sys.exit(1)`, "slice.check", true, "", ""},
 		{"validate with problems", `print('{"valid": false}'); sys.exit(1)`, "validate", true, "", ""},
 		{"JSON with exit 1 elsewhere", `print('{"a": 1}'); sys.exit(1)`, "epic.approve", false, engine.KindInternal, "exit code 1"},
@@ -205,7 +208,7 @@ func TestEnvelopeMapping(t *testing.T) {
 
 func bodyFor(op string) string {
 	switch op {
-	case "slice.approve", "slice.check":
+	case "slice.ready", "slice.check":
 		return `{"slice_id":"SLICE-001"}`
 	case "epic.approve":
 		return `{"epic_id":"EPIC-001"}`

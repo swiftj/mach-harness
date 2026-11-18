@@ -9,14 +9,14 @@ import (
 )
 
 // Marks are the instants (and intervals) of a history worth jumping to: failures, retries, gate
-// decisions, review verdicts, waits for a person, recoveries, interruptions, history gaps, waves
+// decisions, review verdicts, waits for a person, recoveries, interruptions, history gaps
 // and merges. Like spans they are derived from the projection, never stored, and built once per
 // projection position. Labels are plain sentences that name roles only, never a person.
 
 // MarkKinds are the kinds of mark, in the order a menu lists them.
 // retry is a revise visit (a judging round sent the work back); attempt is an execution of a cell
 // after its first, by start order (the supervisor's recorded attempt number can repeat).
-var MarkKinds = []string{"failure", "retry", "attempt", "gate", "review", "human", "recovery", "interruption", "gap", "wave", "merge"}
+var MarkKinds = []string{"failure", "retry", "attempt", "gate", "review", "human", "recovery", "interruption", "gap", "merge"}
 
 // Mark is one mark.
 type Mark struct {
@@ -136,11 +136,6 @@ func allMarks(s *State) []*Mark {
 			label = "History arrived out of order or was repaired here (" + orDefault(g.Reason, "no reason recorded") + ")."
 		}
 		b.add("gap", g.At, nil, "", label, g.Class)
-	}
-	for _, id := range sortedKeys(s.Waves) {
-		w := s.Waves[id]
-		b.add("wave", w.FirstSeen, nil, "wave:"+id, "Delivery wave "+id+" was taken in.", "discovered")
-		b.add("wave", waveDone(s, w), nil, "wave:"+id, "Every slice of delivery wave "+id+" was integrated or superseded.", "completed")
 	}
 	sort.Slice(b.out, func(i, j int) bool {
 		if b.out[i].AtMS != b.out[j].AtMS {

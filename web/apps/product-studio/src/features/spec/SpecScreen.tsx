@@ -1,15 +1,18 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { CircleAlert, MessagesSquare, SearchX } from "lucide-react";
-import { ArtifactId, Banner, Button, EmptyState, ErrorState, Heading, Page, Skeleton, SkeletonText, SliceLifecycle, SliceStatusPill, Tabs, TabsContent, TabsList, TabsTrigger, Text, describeError, CheckCounts, CheckPill, checkVerdict, DiagnosticList, diagnostics as listDiagnostics, specModel, whyDocument, type Diagnostic, type SpecSectionId as SectionId, plural as count } from "@mach/ui";
+import { ArtifactId, Banner, Button, EmptyState, ErrorState, Heading, Page, Skeleton, SkeletonText, SliceGithubPills, SliceLifecycle, SliceStatusPill, Tabs, TabsContent, TabsList, TabsTrigger, Text, describeError, CheckCounts, CheckPill, checkVerdict, DiagnosticList, diagnostics as listDiagnostics, specModel, whyDocument, type Diagnostic, type SpecSectionId as SectionId, plural as count } from "@mach/ui";
 import { type SliceShow, ENGINE_ID as SLICE_ID } from "@mach/ui/api";
-import { ApproveDialog, PauseDialog, ReopenDialog } from "./SliceActs";
+import { MarkReadyDialog, PauseDialog, ReopenDialog } from "./SliceActs";
 import { SourceEditor } from "./SourceEditor";
 import { AssumptionsSection, DecisionTableSection, DependenciesSection, OpenQuestionsSection, RequirementsSection, RulesSection, ScenariosSection, SummarySection, WhySection } from "./SpecSections";
 import { sectionTitles } from "./specModel";
 import { useSliceShow } from "../../api/useSliceShow";
 import { useStatus } from "../../api/store";
 import { WithdrawnNote } from "../../shared/WithdrawnNote";
+import { IssueLink } from "../../shared/IssueLink";
+import { AnswerQuestionButton, BuildersQuestion } from "../../shared/BuildersQuestion";
+import { SliceTimes } from "../../shared/SliceTimes";
 
 type View = "spec" | "why" | "source";
 
@@ -100,7 +103,10 @@ function SpecHeader({ show, onChanged, refreshing, refreshError }: { show: Slice
   const approved = slice.status === "approved_for_engineering";
   const ready = show.check.ready;
   const openCount = show.check.open_questions.length;
-  const withdrawn = useStatus().data?.approvals_withdrawn?.find((w) => w.artifact === slice.slice_id);
+  const status = useStatus().data;
+  const withdrawn = status?.approvals_withdrawn.find((w) => w.artifact === slice.slice_id);
+  // An approved slice is offered "mark ready again" only when the engine says so (a changed issue, an unfinished save).
+  const again = status?.next_actions.some((a) => a.target === slice.slice_id && (a.kind === "mark_ready" || a.kind === "finish_ready")) ?? false;
   return (
     <header className="flex flex-col gap-5">
       <WithdrawnNote item={withdrawn} />
@@ -111,6 +117,12 @@ function SpecHeader({ show, onChanged, refreshing, refreshError }: { show: Slice
             in <ArtifactId plain>{slice.epic_id}</ArtifactId>
           </span>
           <SliceStatusPill status={slice.status} size="sm" />
+          <SliceGithubPills github={show.github} size="sm" />
+          {show.github.issue ? (
+            <span>
+              Issue <IssueLink number={show.github.issue} url={show.github.url} />
+            </span>
+          ) : null}
           {refreshing ? <span className="text-caption text-ink-subtle">Updating…</span> : null}
         </div>
         <Heading level={1} size="display">
@@ -123,25 +135,31 @@ function SpecHeader({ show, onChanged, refreshing, refreshError }: { show: Slice
         ) : null}
       </div>
       <SliceLifecycle status={slice.status} openQuestions={openCount} />
+      <SliceTimes github={show.github} mode="all" />
+      <BuildersQuestion github={show.github} />
       <div className="flex flex-wrap items-center gap-2">
+        {show.github.question ? <AnswerQuestionButton sliceId={slice.slice_id} approved={approved} /> : null}
         {approved ? (
-          <ReopenDialog show={show} onDone={onChanged} />
+          <>
+            {again ? <MarkReadyDialog show={show} onDone={onChanged} primary /> : null}
+            <ReopenDialog show={show} onDone={onChanged} />
+          </>
         ) : (
           <>
-            {ready ? <ApproveDialog show={show} onDone={onChanged} primary /> : null}
+            {ready ? <MarkReadyDialog show={show} onDone={onChanged} primary /> : null}
             <Button variant={ready ? "secondary" : "primary"} asChild>
               <Link to={`/slices/${slice.slice_id}/interview`}>
                 <MessagesSquare aria-hidden="true" />
                 {slice.status === "draft" ? "Start the interview" : "Continue the interview"}
               </Link>
             </Button>
-            {!ready ? <ApproveDialog show={show} onDone={onChanged} primary={false} /> : null}
+            {!ready ? <MarkReadyDialog show={show} onDone={onChanged} primary={false} /> : null}
             <PauseDialog show={show} onDone={onChanged} />
           </>
         )}
       </div>
       {approved ? (
-        <Banner tone="success" title="Approved by you. This slice is read-only.">
+        <Banner tone="success" title="Approved by you and marked ready. This slice is read-only.">
           {show.edit_refusal ?? "To change it, reopen it first."}
         </Banner>
       ) : show.resume_note ? (

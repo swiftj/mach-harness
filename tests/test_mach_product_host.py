@@ -6,6 +6,7 @@ Skipped cleanly when Go is not installed.
 
 import http.client
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -34,10 +35,14 @@ def make_project(parent: Path, name: str) -> Path:
     return project
 
 
+TIME_RE = re.compile(rb"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
+
+
 def workspace(project: Path):
-    """Every file Product Studio keeps, by path, with its bytes."""
+    """Every file Product Studio keeps, by path, with its bytes; the moments it records (when a
+    slice was marked ready) are the only bytes that may differ between two runs."""
     home = project / ".factory" / "studio"
-    return {p.relative_to(home).as_posix(): p.read_bytes() for p in sorted(home.rglob("*")) if p.is_file()}
+    return {p.relative_to(home).as_posix(): TIME_RE.sub(b"<TIME>", p.read_bytes()) for p in sorted(home.rglob("*")) if p.is_file()}
 
 
 @unittest.skipIf(GO is None, "go is not installed")
@@ -158,8 +163,8 @@ class HostConformanceTest(unittest.TestCase):
         self.assertIs(shown["editable"], True)
         self.assertEqual(shown["spec"]["markdown"], FIXTURE.read_text())
         self.op("epic.approve", epic_id="EPIC-001")
-        approved = self.op("slice.approve", slice_id="SLICE-001")
-        self.assertEqual(approved["slice"]["status"], "approved_for_engineering")
+        approved = self.op("slice.ready", slice_id="SLICE-001")
+        self.assertEqual((approved["slice"]["status"], approved["saved_to"]), ("approved_for_engineering", "folder"))
         self.assertIs(approved["factory_authorized"], False)
 
         # Directly, as the terminal skill does.
@@ -174,7 +179,7 @@ class HostConformanceTest(unittest.TestCase):
         self.studio("slice", "check", "SLICE-001")
         self.studio("slice", "show", "SLICE-001")
         self.studio("epic", "approve", "EPIC-001")
-        self.studio("slice", "approve", "SLICE-001")
+        self.studio("slice", "ready", "SLICE-001")
 
         host_files, direct_files = workspace(self.via_host), workspace(self.direct)
         self.assertEqual(sorted(host_files), sorted(direct_files))

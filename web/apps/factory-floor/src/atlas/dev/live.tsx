@@ -31,7 +31,7 @@ const timeOf = (e: EngineEvent) => (e as unknown as { time: { order_ms: number }
 const t0 = Math.min(...all.map(timeOf));
 const t1 = Math.max(...all.map(timeOf));
 
-const log = createSceneLog({ definitions: { project: { id: "dev", name: "Atlas live dev", integrationBranch: "main" }, waves: {}, slices: {} }, provenance: provenance("live", "test fixture") });
+const log = createSceneLog({ definitions: { project: { id: "dev", name: "Atlas live dev", integrationBranch: "main" }, epics: {}, slices: {} }, provenance: provenance("live", "test fixture") });
 const store = createSceneStore({ source: "live", log, clock: browserClock() });
 let fed = 0;
 let edge = t0;

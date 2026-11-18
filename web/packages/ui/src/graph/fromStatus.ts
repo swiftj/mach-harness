@@ -1,14 +1,9 @@
-import type { EpicStatus, FeedbackWave, ProjectStatus, SliceStatus, Status, StatusSliceRow } from "../api/types";
-import { epicStates, sliceStates, sourceStates } from "../lifecycle/states";
-import type { ArtifactSource } from "../api/types";
+import type { EpicStatus, ProjectStatus, SliceStateLabel, SliceStatus, Status, StatusSliceRow } from "../api/types";
+import { builderStates, epicStates, githubMarks, githubMarksOf, sliceStates } from "../lifecycle/states";
+import type { GraphState, MachEdge, MachNode } from "./types";
 
 /** Short words for a node's footer; the full wording is in the node's accessible name and sheet. */
-function attentionLabel(source: ArtifactSource): string | undefined {
-  if (source === "conflict") return "Conflict";
-  if (source === "collision") return "Number taken";
-  return undefined;
-}
-import type { GraphState, MachEdge, MachNode } from "./types";
+const attentionWords = { changed_on_github: "Changed on GitHub", newer_elsewhere: "Newer version elsewhere", number_taken: "Number taken", unfinished: "Saving did not finish" };
 
 const fromSlice: Record<SliceStatus, GraphState> = {
   draft: "proposed",
@@ -18,11 +13,18 @@ const fromSlice: Record<SliceStatus, GraphState> = {
   superseded: "superseded",
 };
 
+const fromBuilders: Record<SliceStateLabel, GraphState> = {
+  "mach:ready": "ready_to_build",
+  "mach:building": "building",
+  "mach:question": "question",
+  "mach:shipped": "shipped",
+};
+
 const fromEpic: Record<EpicStatus, GraphState> = {
   proposed: "proposed",
   approved: "approved",
   deferred: "superseded",
-  completed: "accepted",
+  completed: "shipped",
   superseded: "superseded",
 };
 
@@ -30,31 +32,29 @@ const fromProject: Record<ProjectStatus, GraphState> = { draft: "proposed", acti
 
 export interface ProductGraphInput {
   status: Status;
-  /** `feedback.waves`, when known: lets sent slices show as submitted, accepted or blocked. */
-  reviews?: FeedbackWave[];
   /** Work-order dependencies by slice ID. Defaults to the status rows' own `dependencies`. */
   dependencies?: Record<string, string[]>;
 }
 
 /**
  * The visual state of a slice on the graph. Presentation only: it reads what the engine reported
- * (the slice's status, whether its wave was sent, what review said) and never decides anything.
+ * (the slice's status, and the state it read from the slice's issue) and never decides anything.
  */
-export function sliceGraphState(row: StatusSliceRow, status: Status, reviews: FeedbackWave[] = []): GraphState {
+export function sliceGraphState(row: StatusSliceRow): GraphState {
   const base = fromSlice[row.status];
-  if (base !== "approved") return base;
-  const waves = status.waves.filter((wave) => wave.slices.includes(row.slice_id) && wave.status !== "superseded");
-  const review = reviews.find((r) => r.slices.includes(row.slice_id));
-  if (review?.status === "Accepted") return "accepted";
-  if (review?.status === "Blocked by a check") return "blocked";
-  if (waves.some((wave) => wave.sent)) return "submitted";
-  return base;
+  if (base !== "approved" || !row.github.state_label) return base;
+  return fromBuilders[row.github.state_label];
 }
 
-/** Builds graph nodes and edges from the engine's `status` (and optionally `feedback`). No positions: run layoutGraph. */
-export function productGraphFromStatus({ status, reviews = [], dependencies }: ProductGraphInput): { nodes: MachNode[]; edges: MachEdge[] } {
-  // Status rows carry each slice's dependencies (engines from M5 wave 3); an explicit map wins.
-  const needs = dependencies ?? Object.fromEntries(status.slices.filter((s) => s.dependencies?.length).map((s) => [s.slice_id, s.dependencies ?? []]));
+/** The first thing the engine reports as needing the PM on this slice's issue, in a footer's words. */
+function attentionOf(row: StatusSliceRow): string | undefined {
+  const mark = githubMarksOf(row.github).find((m) => m !== "folder");
+  return mark ? attentionWords[mark] : undefined;
+}
+
+/** Builds graph nodes and edges from the engine's `status`. No positions: run layoutGraph. */
+export function productGraphFromStatus({ status, dependencies }: ProductGraphInput): { nodes: MachNode[]; edges: MachEdge[] } {
+  const needs = dependencies ?? Object.fromEntries(status.slices.filter((s) => s.dependencies.length).map((s) => [s.slice_id, s.dependencies]));
   const nodes: MachNode[] = [];
   const edges: MachEdge[] = [];
   const project = status.project;
@@ -80,12 +80,11 @@ export function productGraphFromStatus({ status, reviews = [], dependencies }: P
   for (const epic of status.epics) {
     const id = `epic:${epic.epic_id}`;
     const slices = status.slices.filter((s) => s.epic_id === epic.epic_id).length;
-    const attention = attentionLabel(epic.source);
     nodes.push({
       id,
       type: "mach",
       position: { x: 0, y: 0 },
-      ariaLabel: `Epic ${epic.epic_id}, ${epic.title}, ${epicStates[epic.status].label}${attention ? `, ${sourceStates[epic.source].label}` : ""}`,
+      ariaLabel: `Epic ${epic.epic_id}, ${epic.title}, ${epicStates[epic.status].label}${epic.issue ? `, issue #${epic.issue}` : ""}`,
       data: {
         kind: "epic",
         artifactId: epic.epic_id,
@@ -93,7 +92,6 @@ export function productGraphFromStatus({ status, reviews = [], dependencies }: P
         state: fromEpic[epic.status],
         stateLabel: epicStates[epic.status].label,
         meta: `${slices} ${slices === 1 ? "slice" : "slices"}`,
-        attention,
       },
     });
     if (rootId) edges.push({ id: `${rootId}->${id}`, source: rootId, target: id, type: "contains", data: { kind: "contains" } });
@@ -101,18 +99,20 @@ export function productGraphFromStatus({ status, reviews = [], dependencies }: P
 
   for (const row of status.slices) {
     const id = `slice:${row.slice_id}`;
-    const state = sliceGraphState(row, status, reviews);
-    const attention = attentionLabel(row.source);
-    const meta =
-      row.open_questions > 0
-        ? `${row.open_questions} open ${row.open_questions === 1 ? "question" : "questions"}`
-        : status.waves.find((w) => w.slices.includes(row.slice_id) && w.status !== "superseded")?.wave_id;
+    const attention = attentionOf(row);
+    const meta = row.open_questions > 0 ? `${row.open_questions} open ${row.open_questions === 1 ? "question" : "questions"}` : row.github.issue ? `#${row.github.issue}` : undefined;
+    const words = [
+      sliceStates[row.status].label,
+      row.github.state_label ? builderStates[row.github.state_label].label : null,
+      ...githubMarksOf(row.github).map((mark) => githubMarks[mark].label),
+      row.github.issue ? `issue #${row.github.issue}` : null,
+    ].filter(Boolean);
     nodes.push({
       id,
       type: "mach",
       position: { x: 0, y: 0 },
-      ariaLabel: `Slice ${row.slice_id}, ${row.title}, ${sliceStates[row.status].label}${attention ? `, ${sourceStates[row.source].label}` : ""}`,
-      data: { kind: "slice", artifactId: row.slice_id, title: row.title, state, meta, attention },
+      ariaLabel: `Slice ${row.slice_id}, ${row.title}, ${words.join(", ")}`,
+      data: { kind: "slice", artifactId: row.slice_id, title: row.title, state: sliceGraphState(row), meta, attention },
     });
     edges.push({ id: `epic:${row.epic_id}->${id}`, source: `epic:${row.epic_id}`, target: id, type: "contains", data: { kind: "contains" } });
   }

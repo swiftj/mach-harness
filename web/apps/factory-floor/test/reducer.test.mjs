@@ -62,22 +62,22 @@ test("the scene at t has exactly the events up to t applied", () => {
 
 test("the end state is the story's end", () => {
   const end = finalScene(SCENARIO);
-  for (const ticket of ["LOCAL-031", "LOCAL-032", "LOCAL-033"]) {
+  for (const ticket of ["131", "132", "133"]) {
     assert.equal(end.cells[ticket].stage, "merged");
     assert.ok(end.cells[ticket].archived);
   }
-  assert.equal(end.cells["LOCAL-034"].stage, "building");
+  assert.equal(end.cells["134"].stage, "building");
   assert.equal(end.slices["SLICE-024"].scheduler, "dispatched");
   assert.equal(end.slices["SLICE-025"].scheduler, "waiting-on-dependency");
   assert.equal(end.dependencies["SLICE-024->SLICE-021"].state, "satisfied");
   assert.equal(end.dependencies["SLICE-025->SLICE-022"].state, "satisfied");
   assert.equal(end.dependencies["SLICE-025->SLICE-024"].state, "blocking");
-  assert.equal(end.gates["LOCAL-032/human-approval"].state, "passed");
-  assert.equal(end.gates["LOCAL-031/verification#1"].state, "failed");
-  assert.equal(end.gates["LOCAL-031/verification#2"].state, "passed");
-  assert.equal(end.gates["LOCAL-032/review#1"].state, "failed");
-  assert.equal(end.cells["LOCAL-031"].round, 2);
-  assert.equal(end.cells["LOCAL-033"].reviews[0].findings.filter((f) => f.outvoted).length, 1);
+  assert.equal(end.gates["132/human-approval"].state, "passed");
+  assert.equal(end.gates["131/verification#1"].state, "failed");
+  assert.equal(end.gates["131/verification#2"].state, "passed");
+  assert.equal(end.gates["132/review#1"].state, "failed");
+  assert.equal(end.cells["131"].round, 2);
+  assert.equal(end.cells["133"].reviews[0].findings.filter((f) => f.outvoted).length, 1);
   assert.equal(end.counters.merged, 3);
   assert.equal(end.counters.agentsActive, activeAgents(end).length);
   assert.equal(end.counters.toolCallsActive, 0);
@@ -93,8 +93,8 @@ test("the middle of the run: three cells at work, the human gate waiting", () =>
   assert.ok(working / sampled > 0.6, `tools in flight in ${working} of ${sampled} samples`);
   const gate = SCENARIO.events.find((e) => e.type === "human.required");
   const waiting = sceneAt(SCENARIO, gate.t);
-  assert.equal(waiting.gates["LOCAL-032/human-approval"].state, "waiting");
-  assert.equal(waiting.cells["LOCAL-032"].stage, "awaiting-human");
+  assert.equal(waiting.gates["132/human-approval"].state, "waiting");
+  assert.equal(waiting.cells["132"].stage, "awaiting-human");
 });
 
 test("selectors: windows, changes, the events behind an entity, stepping", () => {
@@ -108,10 +108,10 @@ test("selectors: windows, changes, the events behind an entity, stepping", () =>
   assert.equal(fwd.direction, "forward");
   assert.equal(back.direction, "backward");
   assert.deepEqual(fwd.events, back.events);
-  assert.ok(fwd.refs.includes("cell:LOCAL-031"));
-  const behind = eventsFor(SCENARIO, "gate:LOCAL-032/human-approval");
+  assert.ok(fwd.refs.includes("cell:131"));
+  const behind = eventsFor(SCENARIO, "gate:132/human-approval");
   assert.deepEqual(behind.map((e) => e.type), ["review.decided", "station.entered", "human.required", "human.approval_recorded", "station.left"]);
-  assert.equal(latestEventFor(SCENARIO, "gate:LOCAL-032/human-approval", behind[1].t).seq, behind[1].seq);
+  assert.equal(latestEventFor(SCENARIO, "gate:132/human-approval", behind[1].t).seq, behind[1].seq);
   const n = nextEventTime(SCENARIO, t);
   assert.ok(n > t && SCENARIO.events.some((e) => e.t === n));
   const p = previousEventTime(SCENARIO, t);
@@ -126,11 +126,11 @@ test("selectors: any entity resolves, and hover sets cover the dependency graph"
   assert.equal(entityAt(end, `agent:${agent.id}`).value.id, agent.id);
   const call = agent.toolCalls[0];
   assert.equal(entityAt(end, `tool:${call.id}`).value.id, call.id);
-  const artifact = end.cells["LOCAL-031"].artifacts.find((a) => a.kind === "plan");
+  const artifact = end.cells["131"].artifacts.find((a) => a.kind === "plan");
   assert.equal(entityAt(end, `artifact:${artifact.id}`).value.path, "plan.md");
-  assert.equal(entityAt(end, "station:LOCAL-031/verify").value.visits.length, 2);
-  assert.equal(entityAt(end, "finding:LOCAL-032/r1/security/1").value.severity, "blocker");
-  assert.equal(entityAt(sceneAt(SCENARIO, 0), "cell:LOCAL-031"), null);
+  assert.equal(entityAt(end, "station:131/verify").value.visits.length, 2);
+  assert.equal(entityAt(end, "finding:132/r1/security/1").value.severity, "blocker");
+  assert.equal(entityAt(sceneAt(SCENARIO, 0), "cell:131"), null);
   const related = relatedRefs(end, "slice:SLICE-025");
   for (const r of ["slice:SLICE-022", "slice:SLICE-024", "slice:SLICE-021", "dependency:SLICE-025->SLICE-024", "dependency:SLICE-024->SLICE-021"]) assert.ok(related.includes(r), r);
   assert.ok(relatedRefs(end, `artifact:${artifact.id}`).includes(`agent:${artifact.writer.agentId}`));
@@ -142,7 +142,7 @@ test("selectors: a dependency link highlights its chain, its downstream dependen
   assert.ok(scene.dependencies["SLICE-025->SLICE-024"], "the scenario still has SLICE-025 waiting on SLICE-024");
   const related = relatedRefs(scene, "dependency:SLICE-024->SLICE-021");
   // Both ends, with their cells.
-  for (const r of ["dependency:SLICE-024->SLICE-021", "slice:SLICE-024", "slice:SLICE-021", "cell:LOCAL-034", "cell:LOCAL-031"]) assert.ok(related.includes(r), r);
+  for (const r of ["dependency:SLICE-024->SLICE-021", "slice:SLICE-024", "slice:SLICE-021", "cell:134", "cell:131"]) assert.ok(related.includes(r), r);
   // The dependent's own dependents, and the link that makes them so: not dimmed.
   for (const r of ["slice:SLICE-025", "dependency:SLICE-025->SLICE-024"]) assert.ok(related.includes(r), r);
   // A sibling prerequisite of a downstream dependent is not part of this link's chain.
@@ -151,7 +151,7 @@ test("selectors: a dependency link highlights its chain, its downstream dependen
 
 test("selectors: timelines and moments", () => {
   const lanes = cellTimelines(SCENARIO, SCENARIO.duration);
-  assert.deepEqual(lanes.map((l) => l.ticketId), ["LOCAL-031", "LOCAL-032", "LOCAL-033", "LOCAL-034"]);
+  assert.deepEqual(lanes.map((l) => l.ticketId), ["131", "132", "133", "134"]);
   const a = lanes[0];
   assert.deepEqual(a.stations.map((s) => s.station), ["plan", "build", "verify", "build", "verify", "review", "merge", "cleanup"]);
   for (const span of a.agents) {

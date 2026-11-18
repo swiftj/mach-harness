@@ -16,10 +16,9 @@ import type { CellStage, ReviewSeat, Risk, StationId, StepAction } from "./vocab
 
 export const V3_SCHEMA_VERSION = 3;
 
-/** The 54 kinds of contract section 11, in its order. */
+/** The 53 kinds of contract section 11, in its order (revision 4, M11: wave.discovered removed). */
 export const V3_KINDS = [
-  // 11.1 intake log (22)
-  "wave.discovered",
+  // 11.1 intake log (21)
   "intake.validated",
   "intake.refused",
   "slice.materialized",
@@ -115,7 +114,10 @@ export interface V3Time {
 
 export interface V3Ids {
   readonly project_id: string | null;
-  readonly wave_id: string | null;
+  /** Revision 4 (M11): the epic the slice belongs to. */
+  readonly epic_id: string | null;
+  /** Revision 4 (M11): the slice's GitHub issue number; null for a slice from a ready folder. */
+  readonly issue: number | null;
   readonly slice_id: string | null;
   readonly revision: number | null;
   readonly ticket_id: string | null;
@@ -138,10 +140,9 @@ type Stage = CellStage | "spec-open";
 
 /** `data` by kind, for the fields the client reads. The schema's `$defs` is exact. */
 export interface V3DataMap {
-  "wave.discovered": { slices: string[]; approval: { approved_at: string | null; by_role: ByRole } };
   "intake.validated": { digest: string };
   "intake.refused": { problems: string[] };
-  "slice.materialized": { digest: string; adopted: boolean; dependencies: string[]; reissued?: boolean | null; /** M6.6: the intake ledger's title for this revision (free text), null when not recorded. */ title?: string | null };
+  "slice.materialized": { digest: string; adopted: boolean; dependencies: string[]; reissued?: boolean | null; /** M6.6: the intake ledger's title for this revision (free text), null when not recorded. */ title?: string | null; /** M11: its epic's name, likewise. */ epic_title?: string | null };
   "slice.integrated": { commit: string };
   "dependency.resolved": { depends_on: string[] };
   "dependency.blocked": { reasons: string[] };
@@ -250,8 +251,7 @@ export interface V3DataMap {
  */
 export interface ObserverSnapshotState {
   readonly factory?: { readonly enabled?: boolean; readonly paused?: boolean; readonly autonomy?: "observe" | "supervised" | null } | null;
-  readonly waves?: ReadonlyArray<{ readonly wave_id: string; readonly slices?: readonly string[]; readonly revision?: number | null }>;
-  readonly slices?: ReadonlyArray<{ readonly slice_id: string; readonly ticket_id?: string | null; readonly state?: string | null; readonly dependencies?: readonly string[]; readonly revision?: number | null; readonly title?: string | null }>;
+  readonly slices?: ReadonlyArray<{ readonly slice_id: string; readonly ticket_id?: string | null; readonly state?: string | null; readonly dependencies?: readonly string[]; readonly revision?: number | null; readonly title?: string | null; readonly epic_id?: string | null; readonly epic_title?: string | null; readonly issue?: number | null }>;
   readonly cells?: ReadonlyArray<{
     readonly ticket_id: string;
     readonly slice_id?: string | null;
@@ -311,7 +311,7 @@ export function isKnownV3Kind(type: string): type is V3Kind | ClientKind {
 }
 
 const ORDER_RE = /^[0-9]{15}~[0-9]~[^~]+~[0-9]{12}~[0-9]{4}$/;
-const REF_RE = /^(project|workflow|wave|slice|cell|station|visit|execution|agent|tool|artifact|gate|dependency|finding|seat|actor):.+$/;
+const REF_RE = /^(project|workflow|slice|cell|station|visit|execution|agent|tool|artifact|gate|dependency|finding|seat|actor):.+$/;
 
 /**
  * Check the envelope of one received event, tolerantly: the fields the engine relies on must be
@@ -348,11 +348,15 @@ export function timeQualityOf(precision: Precision): "measured" | "inferred" {
 
 // ---------------------------------------------------------------- what the engine takes
 
-/** Anything the engine can apply: a simulation event (v2 + `t`) or a version 3 event (known or not). */
+/**
+ * Anything the engine can apply: a simulation event (the intake envelope, version 3 since M11, plus
+ * `t`) or an observer event of version 3 (known or not). Both say schema_version 3; only an observer
+ * event carries its history `order` (checked when it is received, `checkV3`).
+ */
 export type EngineEvent = AnySimEvent | AnyV3Event | UnknownV3Event;
 
 export function isV3(event: EngineEvent): event is AnyV3Event | UnknownV3Event {
-  return event.schema_version === 3;
+  return "order" in event;
 }
 
 /** The event's id: its own for v3, `sim:<seq>` for the simulation. */

@@ -3,7 +3,7 @@
  * choice of timestamp and the reading of a count are tested (test/inspector-wording.test.mjs)
  * rather than left inside JSX. No React, no design system: node's test runner imports this file.
  */
-import type { CellState, ReviewRoundState, StationVisit, WaveState } from "../../sim";
+import type { CellState, ReviewRoundState, StationVisit } from "../../sim";
 
 /** Where an entity stands now, and the moment that standing began. */
 export interface Timing {
@@ -23,11 +23,6 @@ export function cellTiming(cell: Pick<CellState, "merged" | "openedAt">): Timing
 export function stationTiming(last: Pick<StationVisit, "enteredAt" | "leftAt"> | undefined): Timing {
   if (!last) return { phase: "finished", since: null };
   return last.leftAt === null ? { phase: "running", since: last.enteredAt } : { phase: "finished", since: last.leftAt };
-}
-
-/** A wave arrives and is checked; it never "finishes". The only time it carries is its arrival. */
-export function waveTiming(wave: Pick<WaveState, "discoveredAt">): Timing {
-  return { phase: "finished", since: wave.discoveredAt, sinceWord: "Arrived at" };
 }
 
 /** The words before the time in "Finished at 42:42." */

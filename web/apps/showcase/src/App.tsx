@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Activity, Boxes, Factory, Layers, MousePointerClick, Network, Palette, PanelsTopLeft, SquareStack } from "lucide-react";
-import { AppShell, Brand, ConnectionIndicator, Heading, NavItem, NavRail, NavSection, Page, Text, ThemeSwitch, TopBar, type ProductName } from "@mach/ui";
+import { AppShell, Brand, ConnectionIndicator, Heading, savedState, NavItem, NavRail, NavSection, Page, Text, ThemeSwitch, TopBar, type ProductName } from "@mach/ui";
 import { Foundations } from "./sections/Foundations";
 import { Controls } from "./sections/Controls";
 import { Overlays } from "./sections/Overlays";
@@ -34,7 +34,7 @@ function useHash(): string {
 export function App({ product }: { product: ProductName }) {
   const hash = useHash() || "foundations";
   const other: ProductName = product === "factory-floor" ? "product-studio" : "factory-floor";
-  const status = fx.statusPublished;
+  const status = fx.statusRich;
   // The factory grammar (M6) is its own page, so the design-system page above stays exactly as it was.
   const factory = hash === "factory" || hash.startsWith("factory-");
   return (
@@ -63,7 +63,7 @@ export function App({ product }: { product: ProductName }) {
           status={
             <ConnectionIndicator
               host="online"
-              shared={{ reachable: true, lastRefreshed: status.last_refreshed, description: status.shared_project }}
+              saved={savedState(status.saved)}
             />
           }
           actions={

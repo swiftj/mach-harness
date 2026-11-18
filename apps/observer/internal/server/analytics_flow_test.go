@@ -109,7 +109,7 @@ func TestAnalyticsFlowRoutes(t *testing.T) {
 		}
 	}
 	run := runs["items"].([]any)[0].(map[string]any)
-	if run["ticket_id"] != "T-1" || run["outcome"] != "merged" || run["rounds"].(float64) != 2 || run["wave"] != "WAVE-001" {
+	if run["ticket_id"] != "T-1" || run["outcome"] != "merged" || run["rounds"].(float64) != 2 || run["epic"] != "EPIC-001" {
 		t.Fatalf("run %v", run)
 	}
 	execs := run["executions"].([]any)

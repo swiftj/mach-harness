@@ -28,14 +28,13 @@ import {
   type SliceState,
   type ToolCallState,
   type VisitEntity,
-  type WaveState,
   type WorkflowEntity,
   executionEndedAt,
   holdOf,
   type SupervisorState,
 } from "../../sim";
 import { historyEndedAt, useScene, useSceneStore, useStore } from "../../scene";
-import { ActorGlyph, AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateWord, StationGlyph, ToolGlyph, WaveGlyph } from "../glyphs";
+import { ActorGlyph, AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateWord, StationGlyph, ToolGlyph, ProjectGlyph } from "../glyphs";
 import { IconButton } from "../IconButton";
 import { artifactOf, selectable, gateOf, kindOf, gateState, outcomeState, roleOf, runState, schedulerLook, stageLook, tierOf, timecode, toolFamily } from "../vocab";
 import {
@@ -53,7 +52,6 @@ import {
   StationAnatomy,
   ToolAnatomy,
   VisitAnatomy,
-  WaveAnatomy,
   WorkflowAnatomy,
 } from "./anatomies";
 import { identityOf, parseStation, pickedVisitOf, selectEntity } from "./entity";
@@ -64,7 +62,7 @@ import { stationAcrossWords } from "./words";
 import { RunNow } from "./RunNow";
 import { EventWords, FreeText, FreeTextLabel } from "./FreeText";
 import { gatePositionWords, visitStateWords } from "./outcomes";
-import { cellTiming, stationAcrossTiming, stationTiming, timingWords, waveTiming, type Timing } from "./timing";
+import { cellTiming, stationAcrossTiming, stationTiming, timingWords, type Timing } from "./timing";
 
 interface Look extends Timing {
   glyph: ReactNode;
@@ -85,10 +83,6 @@ function lookOf(entity: AnyRef, value: unknown, historyEnd: number | null = null
     case "actor": {
       const a = value as ActorState;
       return { glyph: <ActorGlyph actor={a.id} size={28} />, state: "idle", word: a.acts ? `${a.acts} acts so far` : "Not acted yet", phase: "running", since: a.lastActedAt };
-    }
-    case "wave": {
-      const w = value as WaveState;
-      return { glyph: <WaveGlyph size={28} />, state: w.state === "validated" ? "succeeded" : "active", word: w.state === "validated" ? "Verified" : "Arrived", ...waveTiming(w) };
     }
     case "slice": {
       const s = value as SliceState;
@@ -171,7 +165,7 @@ function lookOf(entity: AnyRef, value: unknown, historyEnd: number | null = null
       return { glyph: <ExecutionGlyph size={28} state={state} />, state, word: v.status === "running" ? "Running" : v.status === "completed" ? "Completed" : v.status === "killed" ? "Killed" : "Not recorded", phase: v.status === "running" ? "running" : "finished", since: v.finishedAt };
     }
     case "project":
-      return { glyph: <WaveGlyph size={28} />, state: "idle", word: "Project", phase: "running", since: null };
+      return { glyph: <ProjectGlyph size={28} />, state: "idle", word: "Project", phase: "running", since: null };
   }
 }
 
@@ -179,8 +173,6 @@ function Anatomy({ entity, value }: { entity: AnyRef; value: unknown }) {
   switch (kindOf(entity)) {
     case "actor":
       return <ActorAnatomy actor={value as ActorState} />;
-    case "wave":
-      return <WaveAnatomy wave={value as WaveState} />;
     case "slice":
       return <SliceAnatomy slice={value as SliceState} />;
     case "cell":

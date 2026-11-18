@@ -1,6 +1,6 @@
 // Conformance: the terminal engine (studio.py run directly, as /mach:product-studio does) and the
-// host API must leave equivalent workspaces for the same operations, and the host must expose
-// exactly its allowlist.
+// host API must leave equivalent workspaces, reports and GitHub issues for the same operations,
+// and the host must expose exactly its allowlist: none of the engine's leftover commands.
 //
 //   node --test web/e2e/suites/conformance.test.mjs
 import { after, before, test } from "node:test";
@@ -15,9 +15,13 @@ import { specFor, whyFor } from "../lib/content.mjs";
 // The host's allowlist as documented (contract sections 3, 8.1 and 8.4, apps/studio/README.md).
 const ALLOWLIST = [
   "where", "status", "validate", "refresh", "project.init", "project.set", "epic.add", "epic.set", "epic.approve", "epic.renumber",
-  "slice.new", "slice.set", "slice.resume", "slice.pause", "slice.check", "slice.show", "slice.approve", "slice.reopen", "slice.renumber",
-  "wave.new", "wave.add", "wave.remove", "wave.approve", "wave.renumber", "reconcile", "send.preview", "send", "feedback",
-  "request.list", "request.show", "request.pick", "request.link", "request.met",
+  "slice.new", "slice.set", "slice.resume", "slice.pause", "slice.check", "slice.show", "slice.ready", "slice.reopen", "slice.renumber", "slice.move", "slice.take",
+  "reconcile", "request.list", "request.show", "request.pick", "request.link", "request.met",
+];
+// Commands the engine keeps only for another team's tests (docs/mach-next/M11_STUDIO_ISSUES.md). The host never reaches them.
+const LEFTOVERS = [
+  "slice.approve", "wave.new", "wave.add", "wave.remove", "wave.approve", "wave.renumber", "send", "send.preview", "feedback",
+  "acceptance.record", "acceptance.show",
 ];
 
 let binary, terminal, terminalApp, web, host, api;
@@ -74,16 +78,18 @@ const STEPS = [
   { name: "slice check ready", argv: ["slice", "check", "SLICE-001", "--ready"], op: ["slice.check", { slice_id: "SLICE-001", ready: true }] },
   { name: "slice pause", argv: ["slice", "pause", "SLICE-001", "--note", "Settled the seat rules."], op: ["slice.pause", { slice_id: "SLICE-001", note: "Settled the seat rules." }] },
   { name: "slice show", argv: ["slice", "show", "SLICE-001"], op: ["slice.show", { slice_id: "SLICE-001" }] },
-  { name: "slice approve", argv: ["slice", "approve", "SLICE-001"], op: ["slice.approve", { slice_id: "SLICE-001" }] },
+  { name: "slice ready", argv: ["slice", "ready", "SLICE-001"], op: ["slice.ready", { slice_id: "SLICE-001" }] },
   { name: "second slice", argv: ["slice", "new", "--epic", "EPIC-002", "--title", "See the seat count"], op: ["slice.new", { epic: "EPIC-002", title: "See the seat count", depends_on: [] }] },
   { name: "slice set", argv: ["slice", "set", "SLICE-002", "--title", "See how many seats are used"], op: ["slice.set", { slice_id: "SLICE-002", title: "See how many seats are used" }] },
-  { name: "wave new", argv: ["wave", "new", "--slice", "SLICE-001"], op: ["wave.new", { slice: ["SLICE-001"] }] },
-  { name: "wave approve", argv: ["wave", "approve", "WAVE-001"], op: ["wave.approve", { wave_id: "WAVE-001" }] },
+  { name: "slice renumber", argv: ["slice", "renumber", "SLICE-002"], op: ["slice.renumber", { identifier: "SLICE-002" }] },
+  { name: "a third slice", argv: ["slice", "new", "--epic", "EPIC-001", "--title", "Remove a teammate"], op: ["slice.new", { epic: "EPIC-001", title: "Remove a teammate", depends_on: [] }] },
+  { name: "slice move", argv: ["slice", "move", "SLICE-004", "--before", "SLICE-001"], op: ["slice.move", { slice_id: "SLICE-004", before: "SLICE-001" }] },
+  { name: "the builders take it, then refresh", github: (w) => w.setStateLabel(w.issues("mach:slice")[0].number, "mach:building"), argv: ["refresh"], op: ["refresh", {}] },
+  { name: "slice reopen", argv: ["slice", "reopen", "SLICE-001"], op: ["slice.reopen", { slice_id: "SLICE-001" }] },
+  { name: "someone saves a newer version, then refresh", github: (w) => w.newerVersion(w.issues("mach:slice")[0].number, "\nChanged by Ben.\n"), argv: ["refresh"], op: ["refresh", {}] },
+  { name: "reconcile theirs", argv: ["reconcile", "SLICE-001", "--take", "theirs"], op: ["reconcile", { slice_id: "SLICE-001", take: "theirs" }] },
+  { name: "slice ready again", argv: ["slice", "ready", "SLICE-001"], op: ["slice.ready", { slice_id: "SLICE-001" }] },
   { name: "validate", argv: ["validate"], op: ["validate", {}] },
-  { name: "send preview", argv: ["send", "WAVE-001", "--dry-run"], op: ["send.preview", { wave_id: "WAVE-001" }] },
-  { name: "send", argv: ["send", "WAVE-001"], op: ["send", { wave_id: "WAVE-001" }] },
-  { name: "feedback", argv: ["feedback", "WAVE-001"], op: ["feedback", { wave_id: "WAVE-001" }] },
-  { name: "land, then refresh", land: true, argv: ["refresh"], op: ["refresh", {}] },
   { name: "status", argv: ["status"], op: ["status", {}] },
 ];
 
@@ -91,11 +97,7 @@ test("conformance: terminal and host leave equivalent workspaces", async (t) => 
   const wordingOnly = [];
   for (const s of STEPS) {
     await t.test(s.name, async () => {
-      if (s.land) {
-        terminal.land("product/WAVE-001");
-        terminalApp.land("product/WAVE-001");
-        web.land("product/WAVE-001");
-      }
+      if (s.github) for (const w of [terminal, terminalApp, web]) s.github(w);
       let viaTerminal, viaApp, viaHost;
       if (s.draft) {
         const [kind, id] = s.draft;
@@ -136,12 +138,12 @@ test("conformance: terminal and host leave equivalent workspaces", async (t) => 
     st.diagnostic(wordingOnly.join(", ") || "none");
   });
 
-  await t.test("the pull request each client opened is the same", () => {
-    const pr = (w) => normalise(w.gh().prs.map(({ head, base, title, body, isDraft }) => ({ head, base, title, body, isDraft })));
-    assert.equal(terminal.gh().prs.length, 1);
-    assert.deepEqual(pr(web), pr(terminalApp));
-    assert.deepEqual(pr(terminalApp), pr(terminal), "the pull request body depends on --app");
-    assert.deepEqual(web.branchFiles("product/WAVE-001"), terminal.branchFiles("product/WAVE-001"));
+  await t.test("the issues each client saved on GitHub are the same", () => {
+    const issues = (w) => normalise(w.issues().map(({ number, title, body, state, labels, comments, sub_issues, pinned }) => ({ number, title, body, state, labels, comments, sub_issues, pinned })));
+    assert.equal(terminal.issues("mach:slice").length, 1);
+    assert.deepEqual(issues(web), issues(terminalApp));
+    assert.deepEqual(issues(terminalApp), issues(terminal), "an issue depends on --app");
+    assert.deepEqual(normalise(web.gh().labels), normalise(terminal.gh().labels));
   });
 });
 
@@ -163,6 +165,7 @@ test("allowlist: every listed operation is reachable and answers with the envelo
 
 test("allowlist: nothing outside it is reachable", async (t) => {
   const outside = [
+    ...LEFTOVERS,
     "run", "factory", "factory.enable", "factory.serve", "factory.tick", "product.dispatch", "dispatch", "intake", "belt", "build", "merge",
     "slice.delete", "project.delete", "wave.send", "send.now", "STATUS", "status ", "status;rm", "status/../where", "..%2Fstatus", "%2e%2e",
     "slice", "slice.", ".status", "slice.check.ready", "__proto__", "constructor", "toString", "where\u0000", "x".repeat(300),

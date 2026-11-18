@@ -1,5 +1,5 @@
 // Opt-in, and it spends money (up to the $6 guard): a real AI-assisted interview carried all the
-// way to an approved, sent wave, through the browser only.
+// way to a slice marked ready to build and saved as an issue (the stand-in gh), through the browser only.
 //
 //   E2E_REAL_CLAUDE_FULL=1 node --test --test-reporter=spec web/e2e/suites/interview-real-full.test.mjs
 //
@@ -131,7 +131,7 @@ const decisionsCount = async () => {
   return Number((name.match(/\d+/) || ["0"])[0]);
 };
 
-test("real claude, full: an AI-assisted interview to an approved, sent wave", { skip: !enabled && "set E2E_REAL_CLAUDE_FULL=1 to run (spends up to $6)" }, async (t) => {
+test("real claude, full: an AI-assisted interview to a slice marked ready to build", { skip: !enabled && "set E2E_REAL_CLAUDE_FULL=1 to run (spends up to $6)" }, async (t) => {
   let broken = null;
   const step = (name, fn) =>
     t.test(name, async (st) => {
@@ -337,37 +337,19 @@ test("real claude, full: an AI-assisted interview to an approved, sent wave", { 
     }
   });
 
-  await step("approve the slice in the app", async () => {
+  await step("mark the slice ready to build in the app", async () => {
     assert.ok(done);
     await page.goto(`${host.origin}/#/slices/${SLICE}`);
     await main().getByRole("heading", { level: 1 }).waitFor();
     await settle(page);
     await page.getByRole("complementary", { name: "Engine check" }).getByText(/Ready for your approval/).waitFor({ timeout: 30000 });
-    await main().getByRole("button", { name: `Approve ${SLICE}` }).click();
-    await dialog().getByRole("button", { name: `Approve ${SLICE}` }).click();
+    await main().getByRole("button", { name: "Mark ready to build" }).click();
+    await dialog().getByRole("button", { name: "Mark ready to build" }).click();
+    await page.getByRole("dialog", { name: `${SLICE} is ready to build` }).waitFor({ timeout: 120000 });
+    await shot("08-slice-ready");
+    await dialog().getByRole("button", { name: "Done" }).click();
     await dialog().waitFor({ state: "detached" });
     assert.equal(world.status().slices[0].status, "approved_for_engineering");
-    await shot("08-slice-approved");
-  });
-
-  await step("create, approve and send a wave", async () => {
-    await page.goto(`${host.origin}/#/waves`);
-    await settle(page);
-    await main().getByRole("button", { name: "Start a wave", exact: true }).click();
-    await dialog().getByRole("checkbox", { name: new RegExp(SLICE) }).check();
-    await dialog().getByRole("button", { name: "Create a wave with 1 slice" }).click();
-    await dialog().waitFor({ state: "detached" });
-    const card = main().getByRole("article", { name: "Delivery wave WAVE-001" });
-    await card.getByRole("button", { name: "Approve WAVE-001" }).click();
-    await dialog().getByRole("button", { name: "Approve WAVE-001" }).click();
-    await dialog().waitFor({ state: "detached" });
-    await main().getByRole("link", { name: "Review and send WAVE-001" }).click();
-    await main().getByRole("heading", { level: 1, name: "Send WAVE-001 to engineering" }).waitFor();
-    await settle(page);
-    await main().getByRole("button", { name: "Send WAVE-001 to engineering…" }).click();
-    await dialog().getByRole("button", { name: "Send WAVE-001" }).click();
-    await main().getByText("WAVE-001 was sent to engineering").waitFor({ timeout: 120000 });
-    await shot("09-sent");
   });
 
   await t.test("reload and host restart restored the interview faithfully", () => {
@@ -376,22 +358,17 @@ test("real claude, full: an AI-assisted interview to an approved, sent wave", { 
 
   await step("the engine's state on disk", async () => {
     const status = world.status();
-    const files = world.branchFiles("product/WAVE-001");
-    const creates = world.gh().calls.filter((c) => c.argv[0] === "pr" && c.argv[1] === "create");
+    const issues = world.issues("mach:slice");
     result.final_state = {
       slice: status.slices[0],
-      wave: status.waves[0],
-      pull_requests: creates.length,
-      branch_files: files,
+      slice_issues: issues.map((i) => ({ number: i.number, labels: i.labels.map((l) => l.name) })),
       factory_authorized: status.factory_authorized,
     };
     save();
     assert.equal(status.slices[0].status, "approved_for_engineering");
     assert.equal(status.slices[0].open_questions, 0);
-    assert.equal(status.waves[0].status, "approved_for_engineering");
-    assert.equal(status.waves[0].sent, true);
-    assert.equal(creates.length, 1);
-    assert.deepEqual(files.filter((f) => !/^(product\/|specs\/slices\/)/.test(f)), []);
+    assert.equal(status.slices[0].github.saved, "github");
+    assert.equal(issues.length, 1);
     assert.equal(status.factory_authorized, false);
     const p = await session.problems();
     // The host's port changed at the restart; both origins are the host's own.

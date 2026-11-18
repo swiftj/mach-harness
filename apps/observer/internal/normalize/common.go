@@ -25,11 +25,15 @@ import (
 	"mach/observer/internal/redact"
 )
 
-// SourceVersions.
+// SourceVersions. The intake log is read at version 2 and 3 (M11: slices from issues and ready
+// folders, with epic_id and issue; no project_id, so a project is absent, never invented). A version 2
+// line's wave_id and its wave.discovered lines are dropped: waves are gone, and nothing replaces them.
 const (
-	IntakeVersion    = "2"
 	LifecycleVersion = "1"
 )
+
+// intakeVersions are the intake log versions the observer reads.
+var intakeVersions = map[int64]string{2: "2", 3: "3"}
 
 // Read is what a normaliser knows about a line besides its bytes.
 type Read struct {

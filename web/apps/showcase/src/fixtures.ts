@@ -5,59 +5,43 @@
  */
 import type {
   EngineRun,
-  Feedback,
+  Epic,
   LooseJson,
+  Project,
+  Reconcile,
   Refresh,
-  SendPreview,
-  Send,
-  SliceApprove,
+  Renumber,
   SliceCheck,
-  SliceResume,
+  SliceReady,
+  SliceReadyInFolder,
+  SliceReadyOnGithub,
+  SliceReopen,
   Status,
   Validate,
   Where,
-  Epic,
-  Project,
-  Reconcile,
-  Renumber,
-  WaveApprove,
 } from "@mach/ui/api";
 
 import statusEmptyJson from "../../../fixtures/status.empty.json";
-import statusProjectAndEpicJson from "../../../fixtures/status.project-and-epic.json";
 import statusSliceReadyJson from "../../../fixtures/status.slice-ready.json";
-import statusWaveApprovedJson from "../../../fixtures/status.wave-approved.json";
-import statusPublishedJson from "../../../fixtures/status.published.json";
-import statusConflictsJson from "../../../fixtures/status.conflicts.json";
-import statusAfterRenumberJson from "../../../fixtures/status.after-renumber.json";
-import statusSecondPmJson from "../../../fixtures/status.second-pm.json";
-import sliceCheckReadyJson from "../../../fixtures/slice.check.ready.json";
-import sliceCheckOpenJson from "../../../fixtures/slice.check.open-questions.json";
+import statusStatesJson from "../../../fixtures/status.states.json";
+import statusOfflineJson from "../../../fixtures/status.offline.json";
+import statusRichJson from "../../../fixtures/status.rich.json";
+import statusWithDependencyJson from "../../../fixtures/status.with-dependency.json";
 import sliceCheckErrorsJson from "../../../fixtures/slice.check.errors.json";
-import sliceResumeReadyJson from "../../../fixtures/slice.resume.ready.json";
-import sliceApproveJson from "../../../fixtures/slice.approve.json";
-import sliceApproveRefusedEpicJson from "../../../fixtures/slice.approve.refused-epic.json";
-import sliceApproveRefusedNoSpecJson from "../../../fixtures/slice.approve.refused-no-spec.json";
-import refreshConflictsJson from "../../../fixtures/refresh.conflicts.json";
+import sliceReadyJson from "../../../fixtures/slice.ready.json";
+import sliceReadyFolderJson from "../../../fixtures/slice.ready.folder.json";
+import sliceReadyRefusedEpicJson from "../../../fixtures/slice.ready.refused-epic.json";
+import sliceReadyRefusedNoSpecJson from "../../../fixtures/slice.ready.refused-no-spec.json";
+import sliceReadyRefusedNewerJson from "../../../fixtures/slice.ready.refused-newer-elsewhere.json";
+import sliceReopenJson from "../../../fixtures/slice.reopen.json";
+import reconcileTheirsJson from "../../../fixtures/reconcile.theirs.json";
+import refreshOnGithubJson from "../../../fixtures/refresh.on-github.json";
 import refreshOfflineJson from "../../../fixtures/refresh.offline.json";
-import refreshCollisionJson from "../../../fixtures/refresh.collision.json";
-import refreshSecondPmJson from "../../../fixtures/refresh.second-pm-arrives.json";
-import feedbackWaitingJson from "../../../fixtures/feedback.waiting.json";
-import feedbackChangesJson from "../../../fixtures/feedback.changes-requested.json";
-import feedbackBlockedJson from "../../../fixtures/feedback.blocked-by-check.json";
-import feedbackAcceptedJson from "../../../fixtures/feedback.accepted.json";
-import feedbackNotSentJson from "../../../fixtures/feedback.not-sent.json";
-import sendDryRunJson from "../../../fixtures/send.dry-run.json";
-import sendJson from "../../../fixtures/send.json";
-import sendRefusedOfflineJson from "../../../fixtures/send.refused-offline.json";
 import validateJson from "../../../fixtures/validate.json";
 import whereJson from "../../../fixtures/where.json";
 import epicAddJson from "../../../fixtures/epic.add.json";
 import projectInitJson from "../../../fixtures/project.init.json";
-import reconcileFieldJson from "../../../fixtures/reconcile.field.json";
-import reconcileRefusedJson from "../../../fixtures/reconcile.refused-unknown.json";
 import sliceRenumberJson from "../../../fixtures/slice.renumber.json";
-import waveApproveJson from "../../../fixtures/wave.approve.json";
 
 /** Checks field names and nesting against the engine type, then narrows to it. */
 function fixture<T>(json: LooseJson<EngineRun<T>>): EngineRun<T> {
@@ -72,72 +56,45 @@ function data<T>(run: EngineRun<T>, name: string): T {
 
 export const runs = {
   statusEmpty: fixture<Status>(statusEmptyJson),
-  statusProjectAndEpic: fixture<Status>(statusProjectAndEpicJson),
   statusSliceReady: fixture<Status>(statusSliceReadyJson),
-  statusWaveApproved: fixture<Status>(statusWaveApprovedJson),
-  statusPublished: fixture<Status>(statusPublishedJson),
-  statusConflicts: fixture<Status>(statusConflictsJson),
-  statusAfterRenumber: fixture<Status>(statusAfterRenumberJson),
-  statusSecondPm: fixture<Status>(statusSecondPmJson),
-  sliceCheckReady: fixture<SliceCheck>(sliceCheckReadyJson),
-  sliceCheckOpen: fixture<SliceCheck>(sliceCheckOpenJson),
+  statusStates: fixture<Status>(statusStatesJson),
+  statusRich: fixture<Status>(statusRichJson),
+  statusOffline: fixture<Status>(statusOfflineJson),
+  statusWithDependency: fixture<Status>(statusWithDependencyJson),
   sliceCheckErrors: fixture<SliceCheck>(sliceCheckErrorsJson),
-  sliceResumeReady: fixture<SliceResume>(sliceResumeReadyJson),
-  sliceApprove: fixture<SliceApprove>(sliceApproveJson),
-  sliceApproveRefusedEpic: fixture<SliceApprove>(sliceApproveRefusedEpicJson),
-  sliceApproveRefusedNoSpec: fixture<SliceApprove>(sliceApproveRefusedNoSpecJson),
-  refreshConflicts: fixture<Refresh>(refreshConflictsJson),
+  sliceReady: fixture<SliceReadyOnGithub>(sliceReadyJson),
+  sliceReadyFolder: fixture<SliceReadyInFolder>(sliceReadyFolderJson),
+  sliceReadyRefusedEpic: fixture<SliceReady>(sliceReadyRefusedEpicJson),
+  sliceReadyRefusedNoSpec: fixture<SliceReady>(sliceReadyRefusedNoSpecJson),
+  sliceReadyRefusedNewer: fixture<SliceReady>(sliceReadyRefusedNewerJson),
+  sliceReopen: fixture<SliceReopen>(sliceReopenJson),
+  reconcileTheirs: fixture<Reconcile>(reconcileTheirsJson),
+  refreshOnGithub: fixture<Refresh>(refreshOnGithubJson),
   refreshOffline: fixture<Refresh>(refreshOfflineJson),
-  refreshCollision: fixture<Refresh>(refreshCollisionJson),
-  refreshSecondPm: fixture<Refresh>(refreshSecondPmJson),
-  feedbackWaiting: fixture<Feedback>(feedbackWaitingJson),
-  feedbackChanges: fixture<Feedback>(feedbackChangesJson),
-  feedbackBlocked: fixture<Feedback>(feedbackBlockedJson),
-  feedbackAccepted: fixture<Feedback>(feedbackAcceptedJson),
-  feedbackNotSent: fixture<Feedback>(feedbackNotSentJson),
-  sendDryRun: fixture<SendPreview>(sendDryRunJson),
-  send: fixture<Send>(sendJson),
-  sendRefusedOffline: fixture<Send>(sendRefusedOfflineJson),
   validate: fixture<Validate>(validateJson),
   where: fixture<Where>(whereJson),
   epicAdd: fixture<{ epic: Epic }>(epicAddJson),
   projectInit: fixture<{ project: Project; path: string }>(projectInitJson),
-  reconcileField: fixture<Reconcile>(reconcileFieldJson),
-  reconcileRefused: fixture<Reconcile>(reconcileRefusedJson),
   sliceRenumber: fixture<Renumber>(sliceRenumberJson),
-  waveApprove: fixture<WaveApprove>(waveApproveJson),
 };
 
 export const fx = {
   statusEmpty: data(runs.statusEmpty, "status.empty"),
-  statusProjectAndEpic: data(runs.statusProjectAndEpic, "status.project-and-epic"),
   statusSliceReady: data(runs.statusSliceReady, "status.slice-ready"),
-  statusWaveApproved: data(runs.statusWaveApproved, "status.wave-approved"),
-  statusPublished: data(runs.statusPublished, "status.published"),
-  statusConflicts: data(runs.statusConflicts, "status.conflicts"),
-  statusAfterRenumber: data(runs.statusAfterRenumber, "status.after-renumber"),
-  statusSecondPm: data(runs.statusSecondPm, "status.second-pm"),
-  sliceCheckReady: data(runs.sliceCheckReady, "slice.check.ready"),
-  sliceCheckOpen: data(runs.sliceCheckOpen, "slice.check.open-questions"),
+  statusStates: data(runs.statusStates, "status.states"),
+  statusRich: data(runs.statusRich, "status.rich"),
+  statusOffline: data(runs.statusOffline, "status.offline"),
+  statusWithDependency: data(runs.statusWithDependency, "status.with-dependency"),
   sliceCheckErrors: data(runs.sliceCheckErrors, "slice.check.errors"),
-  sliceResumeReady: data(runs.sliceResumeReady, "slice.resume.ready"),
-  sliceApprove: data(runs.sliceApprove, "slice.approve"),
-  refreshConflicts: data(runs.refreshConflicts, "refresh.conflicts"),
+  sliceReady: data(runs.sliceReady, "slice.ready"),
+  sliceReadyFolder: data(runs.sliceReadyFolder, "slice.ready.folder"),
+  sliceReopen: data(runs.sliceReopen, "slice.reopen"),
+  reconcileTheirs: data(runs.reconcileTheirs, "reconcile.theirs"),
+  refreshOnGithub: data(runs.refreshOnGithub, "refresh.on-github"),
   refreshOffline: data(runs.refreshOffline, "refresh.offline"),
-  refreshCollision: data(runs.refreshCollision, "refresh.collision"),
-  refreshSecondPm: data(runs.refreshSecondPm, "refresh.second-pm-arrives"),
-  feedbackWaiting: data(runs.feedbackWaiting, "feedback.waiting"),
-  feedbackChanges: data(runs.feedbackChanges, "feedback.changes-requested"),
-  feedbackBlocked: data(runs.feedbackBlocked, "feedback.blocked-by-check"),
-  feedbackAccepted: data(runs.feedbackAccepted, "feedback.accepted"),
-  feedbackNotSent: data(runs.feedbackNotSent, "feedback.not-sent"),
-  sendDryRun: data(runs.sendDryRun, "send.dry-run"),
-  send: data(runs.send, "send"),
   validate: data(runs.validate, "validate"),
   where: data(runs.where, "where"),
   epicAdd: data(runs.epicAdd, "epic.add"),
   projectInit: data(runs.projectInit, "project.init"),
-  reconcileField: data(runs.reconcileField, "reconcile.field"),
   sliceRenumber: data(runs.sliceRenumber, "slice.renumber"),
-  waveApprove: data(runs.waveApprove, "wave.approve"),
 };

@@ -1,15 +1,15 @@
 {
   "exit_code": 1,
   "data": {
-    "slice_id": "SLICE-002",
-    "spec": "/project/.factory/studio/draft/specs/slices/SLICE-002-invite-teammate.md",
+    "slice_id": "SLICE-007",
+    "spec": "/project/.factory/studio/draft/specs/slices/SLICE-007-invite-teammate.md",
     "errors": [
-      "SLICE-002-invite-teammate.md: Missing required section '## Invariants'. [missing-section]",
-      "SLICE-002-invite-teammate.md:45: INV-04 is referenced but not defined in Invariants or Functional requirements. [trace-undefined]",
-      "SLICE-002-invite-teammate.md:46: INV-02 is referenced but not defined in Invariants or Functional requirements. [trace-undefined]",
-      "SLICE-002-invite-teammate.md:47: INV-01 is referenced but not defined in Invariants or Functional requirements. [trace-undefined]",
-      "SLICE-002-invite-teammate.md:62: INV-03 is referenced but not defined in Invariants or Functional requirements. [trace-undefined]",
-      "SLICE-002-invite-teammate.md:87: INV-03 is not defined in Invariants or Functional requirements. [defaults-format]"
+      "SLICE-007-invite-teammate.md: Missing required section '## Invariants'. [missing-section]",
+      "SLICE-007-invite-teammate.md:45: INV-04 is referenced but not defined in Invariants or Functional requirements. [trace-undefined]",
+      "SLICE-007-invite-teammate.md:46: INV-02 is referenced but not defined in Invariants or Functional requirements. [trace-undefined]",
+      "SLICE-007-invite-teammate.md:47: INV-01 is referenced but not defined in Invariants or Functional requirements. [trace-undefined]",
+      "SLICE-007-invite-teammate.md:62: INV-03 is referenced but not defined in Invariants or Functional requirements. [trace-undefined]",
+      "SLICE-007-invite-teammate.md:87: INV-03 is not defined in Invariants or Functional requirements. [defaults-format]"
     ],
     "warnings": [],
     "diagnostics": [

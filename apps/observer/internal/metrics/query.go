@@ -27,7 +27,7 @@ type Query struct {
 	// Runs, when set, is the table of the last LastRuns run records (observe's population): the
 	// scorecard metrics are read from it and every other metric is unavailable.
 	Runs *Table
-	// Resolve gives a ticket's risk, app type and wave at the cursor read: ticket-keyed cells take
+	// Resolve gives a ticket's risk, app type and epic at the cursor read: ticket-keyed cells take
 	// those dimensions from it, never from when the event was applied.
 	Resolve func(ticket string) map[string]string
 	joined  map[string]map[string]string // Resolve's answers, shared by the rows of one query
@@ -218,7 +218,7 @@ type Row struct {
 }
 
 // joinable are the dimensions a read joins to a ticket-keyed cell (Query.Resolve).
-var joinable = map[string]bool{"risk": true, "app_type": true, "wave": true}
+var joinable = map[string]bool{"risk": true, "app_type": true, "epic": true}
 
 // Exclusion reasons for durations that are not measured.
 const (

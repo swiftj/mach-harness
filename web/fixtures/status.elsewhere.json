@@ -1,0 +1,50 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Teams work together.",
+      "outcomes": [
+        "Teams can work together"
+      ],
+      "issue": null,
+      "url": null
+    },
+    "approvals_withdrawn": [],
+    "epics": [],
+    "slices": [],
+    "saved": {
+      "everything_saved": true,
+      "note": "Everything is saved.",
+      "not_saved": []
+    },
+    "order": [],
+    "github": {
+      "repository": "acme/team-space",
+      "form": null,
+      "last_read": "2026-11-18T14:39:19Z"
+    },
+    "current_slice": null,
+    "last_refreshed": "2026-11-18T14:39:19Z",
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Add the first epic (epic add)."
+    ],
+    "next_actions": [
+      {
+        "kind": "add_epic",
+        "target": null,
+        "title": "Add the first epic",
+        "reason": "An epic is a larger capability that several slices deliver.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

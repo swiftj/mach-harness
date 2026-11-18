@@ -1,11 +1,11 @@
 import { Check } from "lucide-react";
 import { Fragment } from "react";
-import type { ArtifactSource, EpicStatus, SliceStatus, WaveReviewStatus, WaveStatus } from "../api/types";
-import { Badge, StatusPill } from "../components/badge";
+import type { EpicStatus, SliceGithub, SliceStatus } from "../api/types";
+import { StatusPill } from "../components/badge";
 import { toneClasses } from "../components/tone";
 import { cn } from "../lib/cn";
 import { StateGlyph } from "./glyph";
-import { epicStates, reviewDescriptor, sliceLifecycle, sliceStates, sourceStates, waveJourney, waveStates } from "./states";
+import { builderStates, epicStates, githubMarks, githubMarksOf, sliceLifecycle, sliceStates } from "./states";
 
 export function SliceStatusPill({ status, size }: { status: SliceStatus; size?: "sm" | "md" }) {
   const d = sliceStates[status];
@@ -25,32 +25,26 @@ export function EpicStatusPill({ status, size }: { status: EpicStatus; size?: "s
   );
 }
 
-export function WaveStatusPill({ status, size }: { status: WaveStatus; size?: "sm" | "md" }) {
-  const d = waveStates[status];
+/**
+ * Where a slice is with the builders, and anything about its GitHub issue the PM must know, each
+ * as a word and a shape. Shows only what the engine reported in `github`; nothing when it reported nothing.
+ */
+export function SliceGithubPills({ github, size }: { github: SliceGithub; size?: "sm" | "md" }) {
+  const builder = github.state_label ? builderStates[github.state_label] : undefined;
+  const marks = githubMarksOf(github).map((mark) => githubMarks[mark]);
   return (
-    <StatusPill tone={d.tone} size={size} icon={<StateGlyph shape={d.glyph} />} title={d.description}>
-      {d.label}
-    </StatusPill>
-  );
-}
-
-export function ReviewStatusPill({ status, size }: { status: WaveReviewStatus; size?: "sm" | "md" }) {
-  const d = reviewDescriptor(status);
-  return (
-    <StatusPill tone={d.tone} size={size} icon={<StateGlyph shape={d.glyph} />} title={d.description}>
-      {d.label}
-    </StatusPill>
-  );
-}
-
-/** Where an artifact stands against the shared project. Hidden for plain drafts unless `showDraft`. */
-export function SourceBadge({ source, showDraft = false }: { source: ArtifactSource; showDraft?: boolean }) {
-  if (source === "draft" && !showDraft) return null;
-  const d = sourceStates[source];
-  return (
-    <Badge tone={d.tone} outline={source === "draft" || source === "published"} title={d.description}>
-      {d.label}
-    </Badge>
+    <>
+      {builder ? (
+        <StatusPill tone={builder.tone} size={size} icon={<StateGlyph shape={builder.glyph} />} title={builder.description}>
+          {builder.label}
+        </StatusPill>
+      ) : null}
+      {marks.map((d) => (
+        <StatusPill key={d.label} tone={d.tone} size={size} icon={<StateGlyph shape={d.glyph} />} title={d.description}>
+          {d.label}
+        </StatusPill>
+      ))}
+    </>
   );
 }
 
@@ -112,51 +106,6 @@ export function SliceLifecycle({ status, openQuestions, className }: SliceLifecy
           <StateGlyph shape="superseded" /> {sliceStates.superseded.description}
         </p>
       ) : null}
-    </div>
-  );
-}
-
-export interface WaveJourneyProps {
-  status: WaveReviewStatus;
-  /** The engine's own explanation (`meaning` from feedback). Falls back to the descriptor's. */
-  meaning?: string;
-  className?: string;
-}
-
-/**
- * A sent wave's way through review: approved, sent, in review, accepted. The review state sits on
- * its stage with its own tone and glyph; states that need the PM are flagged in words.
- */
-export function WaveJourney({ status, meaning, className }: WaveJourneyProps) {
-  const d = reviewDescriptor(status);
-  const t = toneClasses[d.tone];
-  return (
-    <div className={cn("flex flex-col gap-3", className)}>
-      <ol className="grid grid-cols-4 gap-2" aria-label="Review progress">
-        {waveJourney.map((stage, index) => {
-          const done = index < d.stage || (index === d.stage && d.final && status === "Accepted");
-          const here = index === d.stage;
-          return (
-            <li key={stage} aria-current={here ? "step" : undefined} className="flex flex-col gap-1.5">
-              <span
-                aria-hidden="true"
-                className={cn("h-1 rounded-full", here ? t.fill : done ? "bg-ink-subtle" : "bg-line-strong")}
-              />
-              <span className={cn("text-caption", here ? cn("font-semibold", t.ink) : done ? "text-ink-muted" : "text-ink-subtle")}>
-                {stage}
-                <span className="sr-only">{done && !here ? ", done" : here ? `, now: ${d.label}` : ", not reached"}</span>
-              </span>
-            </li>
-          );
-        })}
-      </ol>
-      <div className="flex items-start gap-3">
-        <ReviewStatusPill status={status} />
-        <p className="pt-0.5 text-body-sm text-ink-muted">
-          {meaning ?? d.description}
-          {d.attention ? <span className="font-semibold text-ink"> Needs you.</span> : null}
-        </p>
-      </div>
     </div>
   );
 }

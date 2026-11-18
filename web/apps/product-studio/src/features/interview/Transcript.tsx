@@ -195,7 +195,7 @@ function ActivityGroup({ items, finished }: { items: Array<Extract<TimelineItem,
               {a.text}
             </Text>
             <Text size="caption" tone="muted">
-              Approving, sending and settling differences are yours to do, with the buttons in Product Studio. The interview carries on.
+              Marking a slice ready, approving and choosing between versions are yours to do, with the buttons in Product Studio. The interview carries on.
             </Text>
           </div>
         </div>

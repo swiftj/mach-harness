@@ -51,8 +51,8 @@ test("the live reducer: a released claim, a killed run and a parked ticket from 
 });
 
 test("the release readiness snapshot line, never inferred", () => {
-  const latest = { release_id: "WAVE-002-e325cb6f23ba", commit: "e325cb6f23babe1c9ef56c561d9063e83c4b216d", outcome: "qualified_with_exceptions", product_acceptance: "accepted", waves: [], evaluated_at: "2026-11-14T23:00:08Z" };
-  assert.equal(pulse.readinessLine({ ok: true, data: { items: [latest], latest } }), "Release WAVE-002-e325cb6f23ba at e325cb6f23ba: qualified with exceptions; product acceptance: accepted");
+  const latest = { release_id: "EPIC-002-e325cb6f23ba", commit: "e325cb6f23babe1c9ef56c561d9063e83c4b216d", outcome: "qualified_with_exceptions", product_acceptance: "accepted", waves: [], evaluated_at: "2026-11-14T23:00:08Z" };
+  assert.equal(pulse.readinessLine({ ok: true, data: { items: [latest], latest } }), "Release EPIC-002-e325cb6f23ba at e325cb6f23ba: qualified with exceptions; product acceptance: accepted");
   assert.equal(pulse.readinessLine({ ok: true, data: { items: [], latest: null } }), null);
   assert.equal(pulse.readinessLine(null), null);
   assert.match(pulse.readinessLine({ data: { latest: { ...latest, product_acceptance: "Ann accepted it" } } }), /product acceptance: not recorded$/);

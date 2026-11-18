@@ -22,14 +22,14 @@ MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A
 
 | | Does | Never has to |
 |---|---|---|
-| **Product manager** | Describes the product, answers the interview, approves slices, sends them to engineering | Use Git, read code, or answer a technical question |
+| **Product manager** | Describes the product, answers the interview, marks slices ready for the builders | Use Git, read code, or answer a technical question |
 | **Engineer** | Installs MACH, takes approved work in, runs the line, approves high-risk changes | Write the spec, the tests or the code by hand |
 | **The factory** | Grooms, plans, builds, verifies, reviews, merges, cleans up, and learns from finished tickets | Decide a high-risk change, or start on its own on a machine where nobody enabled it |
 
 Some words used below:
 
 - A **slice** is one thin, complete outcome for one kind of user, small enough to build and check in one go.
-- A **delivery wave** is a group of approved slices sent to engineering together.
+- A slice **marked ready** is saved as a GitHub issue under its epic's issue; that issue is how it reaches the builders.
 - A **ticket** is one piece of work in the factory. A **cell** is the ticket's private workspace: its own Git worktree and branch, so nothing touches your main checkout until it is merged.
 - A **station** is one step of the line (groom, build, verify, review, merge, clean up), run by its own agent with a fresh context.
 
@@ -70,7 +70,7 @@ Almost everything goes through two commands.
 
 | Command | For | What it is |
 |---|---|---|
-| `/mach-product-studio` | Product managers | The workspace for the project, its epics, slices and delivery waves |
+| `/mach-product-studio` | Product managers | The workspace for the project, its epics and slices, saved as GitHub issues |
 | `/mach` | Engineers | The line: move a ticket, see the status of every ticket, take in product work, check the setup |
 
 Both take plain words as well as the forms shown in this guide: "open the app", "what is LOCAL-004 waiting for?", "open the Factory Floor".
@@ -88,11 +88,9 @@ A request can start as a GitHub issue labelled `mach:request`; Product Studio sh
   describe the project
   interview, one question
   at a time, per slice
-  approve slices
-  group them into a wave
-  send the wave  ───────────────►  review and merge the
-  (one pull request)               product pull request
-                                   take the work in  ───────────►  one ticket per slice
+  mark a slice ready
+  (saved as a GitHub issue
+  under its epic)  ─────────────►  take the work in  ───────────►  the issue is the ticket
                                    dispatch what is ready           groom ► plan ► build ► verify
                                                                     ► review ► merge ► clean up
                                    approve high-risk changes  ◄──  stops wherever a person is needed
@@ -124,19 +122,18 @@ With nothing after it, it shows where things stand and suggests the next step. S
    | `I need to stop` | Your progress is saved. Say "continue SLICE-004" later. |
 
    You never argue scope or answer in technical terms: the interview cuts the idea down to the smallest complete outcome and reserves IDs for what it defers.
-4. **Approve the slice** once the spec passes its checks and no question is open.
-5. **Group approved slices into a delivery wave**, approve it, and say "send the wave". Engineering receives one pull request. Sending starts no engineering work.
-6. **Read the feedback.** Say "feedback" to see whether engineering accepted the wave or asked for changes.
+4. **Mark the slice ready** once the spec passes its checks and no question is open. It is saved as a GitHub issue under its epic's issue, with your approval recorded on it; the builders take it from there. Without GitHub on your computer it is written to a folder you can hand to an engineer. Marking a slice ready starts no engineering work by itself.
+5. **Change a ready slice** by saying so: it is taken back from the builders, you revise it, and you mark it ready again. "Refresh" shows each slice's issue, whether the builders have it, and anything changed on GitHub after you approved it.
 
-Everything you write is a private draft on your computer until you send a wave. Full guide: [Product Manager Guide](docs/guides/PRODUCT_MANAGER_GUIDE.md).
+Everything you write is a private draft on your computer until you mark a slice ready. Full guide: [Product Manager Guide](docs/guides/PRODUCT_MANAGER_GUIDE.md).
 
 ### Starting from a GitHub issue
 
 1. Someone files an issue in plain words. A person with write access to the repository labels it `mach:request`.
 2. After a refresh it appears under Requests (say "show requests"). A request labelled by anyone else is listed as "not accepted", with the reason.
 3. Say "pick up request 42". You choose the epic and a title, and are interviewed as usual. The issue's text is shown to you as what was asked for; it never answers a question for you.
-4. The issue gets a `mach:grooming` label and short comments with slice IDs and links as work moves: taken in, sent, merged.
-5. When a slice made from it is approved, say "request 42 is met" and the issue closes.
+4. The issue gets short comments with slice IDs and links as work moves: taken in, and a link to each slice's issue when it is marked ready.
+5. When a slice made from it is marked ready, say "request 42 is met" and the issue closes.
 
 ## For engineers
 
@@ -189,16 +186,17 @@ An interrupted run loses nothing. Run the same command again and it resumes at t
 
 ### Approved product work
 
-When a product manager's wave has been merged:
+When a product manager marks a slice ready, it arrives as a GitHub issue (or, without GitHub, as a `product/ready/SLICE-NNN/` folder):
 
 ```
-/mach product status      what is approved and merged; changes nothing
-/mach product intake      file one ticket per new slice
+/mach product status      what is marked ready, and what is not accepted and why; changes nothing
+/mach product intake      take each new slice revision in, once (the issue is its ticket)
 /mach product plan        what is ready, active, blocked, and why
-/mach product dispatch SLICE-001
+/mach product dispatch 41 the slice of issue #41, or its slice ID
+/mach product import <folder>   a ready folder handed to you outside Git
 ```
 
-Dispatch opens the cell and stops; `/mach <ticket>` then runs it. Nothing is dispatched without your command.
+Dispatch opens the cell and stops; `/mach <ticket>` then runs it. Nothing is dispatched without your command, except by the supervisor on a machine where you enabled it. The Factory tells the slice's issue as it goes: building, a question for the product manager, shipped (and closed once merged).
 
 ### Several tickets at once
 
@@ -239,10 +237,10 @@ Run `/mach floor`, or say "open the Factory Floor". It opens a read-only view in
 ### Releasing
 
 ```
-/mach release qualify WAVE-001
+/mach release qualify --epic EPIC-001
 ```
 
-It checks, at one exact commit, that every slice in the wave is merged, verified and reviewed, reruns the tests, and writes a readiness snapshot. It never tags or deploys.
+It checks, at one exact commit, that every slice of the epic (or of a list of slices you name) is merged, verified and reviewed, reruns the tests, and writes a readiness snapshot. The product manager records acceptance as a comment on the epic's issue. It never tags or deploys.
 
 Full guide: [Engineer Guide](docs/guides/ENGINEER_GUIDE.md).
 
@@ -319,7 +317,7 @@ A cost appears only where one was recorded, which today means work the superviso
 
 | Command | What it does |
 |---|---|
-| `/mach-product-studio` | Project, epics, slices, waves; requests from GitHub issues; `refresh`, `send`, `feedback`; "open the app" |
+| `/mach-product-studio` | Project, epics, slices; mark a slice ready (a GitHub issue); requests from GitHub issues; `refresh`; "open the app" |
 | `/mach <ticket>` | Move one ticket to the next point a person is needed |
 | `/mach <ticket> <ticket> ...` | Run several tickets, scheduled by script; `--dry-run`, `--limit <n>`, `--sequential` |
 | `/mach status` | Every open ticket and its next step |
@@ -340,9 +338,9 @@ A cost appears only where one was recorded, which today means work the superviso
 | `/mach adr except <ticket> <ADR-NNNN> "<why>"` | Let one ticket depart from an accepted ADR, with your reason |
 | `/mach adr accept <ticket> <ADR-NNNN>` | Accept the ADR a ticket proposes, on that ticket's branch |
 | `/mach audit` | The repository's readiness tier |
-| `/mach product status\|intake\|plan\|dispatch` | Take approved product work into the factory |
+| `/mach product status\|intake\|import\|plan\|dispatch` | Take slices marked ready into the factory |
 | `/mach factory status\|enable\|pause\|resume\|disable\|stop` | The unattended supervisor on this machine |
-| `/mach release status\|qualify\|show` | Is a wave ready to release, at one commit |
+| `/mach release status\|qualify\|show` | Is an epic, or a set of slices, ready to release, at one commit |
 | `/mach-intent <ticket or idea>` | The interview, spec, contracts and plan; `--headless` when no person can answer |
 | `/mach-build <ticket>` | Build test-first inside the cell |
 | `/mach-verify <ticket>` | Prove the built slice with captured evidence |

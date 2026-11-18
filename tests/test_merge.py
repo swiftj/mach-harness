@@ -267,7 +267,7 @@ TOKEN = "ghp_" + "A1b2" * 9
 
 
 class ReferenceTest(PullRequestBase):
-    """Design 2.1: the pull request refers to the request it came from, and never closes it."""
+    """M11: the pull request refers to the slice's own issue, and never closes it (the Factory closes it once the merge is seen)."""
 
     def body(self):
         return merge.pr_body(merge.Cell(self.project, "LOCAL-001"))
@@ -279,7 +279,7 @@ class ReferenceTest(PullRequestBase):
         git(self.project, "remote", "set-url", "origin", address)
 
     def request(self, repository="acme/app", number=42):
-        self.set_cell(product={"slice_id": "SLICE-001", "origin": {"kind": "github_issue", "repository": repository, "number": number}})
+        self.set_cell(product={"slice_id": "SLICE-001", "issue": {"repository": repository, "number": number}})
 
     def test_same_repository_refers_by_number(self):
         self.approved(mode="auto", method="pr")
@@ -306,9 +306,9 @@ class ReferenceTest(PullRequestBase):
                                    ("acme", 4), ("../x/y", 4), ("acme/app b", 4), ("acme/app/extra", 4), (None, 4), ("-acme/app", 4)):
             self.request(repository, number)
             self.assertNotIn("Refs", self.body(), (repository, number))
-        self.set_cell(product={"origin": {"kind": "gitlab_issue", "repository": "acme/app", "number": 4}})
+        self.set_cell(product={"origin": {"kind": "github_issue", "repository": "acme/app", "number": 4}})  # a request: no longer referred to
         self.assertNotIn("Refs", self.body())
-        self.set_cell(product={"origin": "acme/app#4"})
+        self.set_cell(product={"issue": "acme/app#4"})
         self.assertNotIn("Refs", self.body())
 
     def test_no_body_closes_an_issue_whatever_the_cell_says(self):

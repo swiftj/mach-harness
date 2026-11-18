@@ -71,7 +71,7 @@ The binary is checked before the project so the host and the engine come from th
 The interpreter is `--python`, else `python3` on `PATH`, made absolute (not resolved through
 symlinks, so a virtual environment keeps working). The engine runs as
 `<python> -I -B <studio.py> --project <root> <fixed arguments>`, in the project folder, with a time
-limit (60 s; 180 s for operations that may fetch), bounded output (8 MiB stdout, 64 KiB stderr),
+limit (60 s; 180 s for operations that may reach the shared repository or GitHub), bounded output (8 MiB stdout, 64 KiB stderr),
 and in its own process group so a time limit stops the Git processes it started too.
 
 ## The API
@@ -128,6 +128,21 @@ or a negative number is `invalid`), and no other field is accepted:
 
 `refresh` returns the `requests` block as well. The interviewer's allowed operations are unchanged.
 
+Slices are saved as GitHub issues (M11, `docs/mach-next/M11_STUDIO_ISSUES.md`); there are no
+delivery waves. These operations may reach GitHub:
+
+| Operation | Arguments | Engine command | Kind |
+|-----------|-----------|----------------|------|
+| `slice.ready` | `{slice_id}` | `slice ready <SLICE>` | the approval: saves the slice as an issue under its epic, or to the ready folder |
+| `slice.reopen` | `{slice_id}` | `slice reopen <SLICE>` | takes the slice back from GitHub first |
+| `reconcile` | `{slice_id, take}` | `reconcile <SLICE> --take=mine\|theirs` | for a slice someone else saved a newer version of |
+| `slice.move` | `{slice_id}` and exactly one of `before`, `after` (slice IDs), `first`, `last` (`true`) | `slice move <SLICE> --before=<SLICE>\|--after=<SLICE>\|--first\|--last` | the product manager's order within the epic; GitHub's order is put in place where the epic's slices are there |
+| `slice.take` | exactly one of `{issue}` (a whole number) or `{slice_id}` | `slice take <n\|SLICE>` | opens a slice another product manager saved on GitHub as a draft here |
+
+`acceptance record` stays a terminal command; it is not on the allowlist, and neither is any name of
+the removed `slice approve`, waves, `send` or `feedback`. No operation's argument vector can start
+with one (`internal/engine/ops_test.go`).
+
 ### Interview events
 
 Each event is `id: <seq>`, `event: <name>`, `data: <JSON>`. `seq` rises through an interview. On
@@ -175,8 +190,9 @@ claude -p --output-format stream-json --verbose --include-partial-messages
 - Allowed: `Read`, `Glob`, `Grep`; `where`, `status`, `validate`, `refresh`, and on the interview's
   own slice `slice resume|check|pause|set`, each spelled with `python3` and the absolute
   interpreter, and the script through the plugin link and its real path, quoted and unquoted;
-  `Edit(//…)` for that slice's spec and why only. Denied again: every approval, wave, send,
-  reconcile, renumber, reopen, project, feedback, slice new and epic add/set.
+  `Edit(//…)` for that slice's spec and why only. Denied again: `slice ready`, epic approval,
+  reconcile, renumber, reopen, `slice move`, `slice take`, project, slice new and epic add/set, and
+  names the app never offers (`slice approve`, `wave`, `send`, `feedback`, `acceptance`).
 - The environment is `HOME USER LOGNAME PATH LANG LC_ALL TMPDIR SHELL TERM` and
   `GIT_TERMINAL_PROMPT=0`; nothing else of the host's, so no API key or token passes.
 - The working folder is the project's real path. Stderr and the raw stream are never logged or sent.

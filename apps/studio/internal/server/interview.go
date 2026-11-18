@@ -106,7 +106,7 @@ func (s *Server) interviewStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The engine says whether the slice exists and may still be edited; an approved slice is refused.
-	var epicID string
+	var epicID, question string
 	check := s.opts.Engine.Transaction(r.Context(), func(tx *engine.Tx) engine.Envelope {
 		view, env := show(r.Context(), tx, body.SliceID)
 		if view == nil {
@@ -120,13 +120,17 @@ func (s *Server) interviewStart(w http.ResponseWriter, r *http.Request) {
 			return engine.Fail(engine.KindRefused, message)
 		}
 		epicID = view.Slice.EpicID
+		if view.Github.Question != nil {
+			question = *view.Github.Question
+		}
 		return engine.OKValue(nil)
 	})
 	if !check.OK {
 		writeEnvelope(w, statusFor(check), check)
 		return
 	}
-	started, err := s.opts.Bridge.Start(r.Context(), interview.StartRequest{SliceID: body.SliceID, EpicID: epicID, Idea: strings.TrimSpace(body.Idea)})
+	started, err := s.opts.Bridge.Start(r.Context(), interview.StartRequest{SliceID: body.SliceID, EpicID: epicID, Idea: strings.TrimSpace(body.Idea),
+		BuildersQuestion: question})
 	if err != nil {
 		s.interviewError(w, err)
 		return

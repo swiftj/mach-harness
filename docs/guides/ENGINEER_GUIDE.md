@@ -26,33 +26,26 @@ A build or test suite that fails, is missing or cannot be run is Bronze whatever
 
 ## 2. Product intake, plan and dispatch
 
-Approved waves that product managers published and engineering merged are taken in through `RUN product ...`. Nothing runs unless you say so.
+Slices product managers marked ready in Product Studio are taken in through `RUN product ...`. A slice arrives as a GitHub issue (`mach:slice` and `mach:ready`) in the repository the `origin` remote names, or, without GitHub, as a `product/ready/SLICE-NNN/` folder committed on the integration branch, or as a folder handed to you (`product import <folder>`). Nothing runs unless you say so, or a supervisor you enabled on this machine.
 
-- `product status` and `product plan` only read. Status shows waves (`new`, `known`, `modified`, `superseded`, `already_integrated`) and anything refused with reasons. Plan lists every slice as `completed`, `active`, `ready`, `blocked` or `superseded`, with reasons.
-- `product intake` files one ticket per new slice revision. `--dry-run` first. It reads Git objects at the merged integration commit only, re-checks each spec against its approved SHA-256, and files nothing twice. Repeating it creates nothing new (seen in a test).
-- A slice is `completed` only when its commit is on the integration branch. An approved cell is still `active`, and dependents stay blocked.
-- `product dispatch <SLICE-ID>...` or `--ready` opens the cells and stops at `spec-ready`. It starts no agent. Product-sourced work is never reviewed below Medium.
-- `product reconcile` is intake plus a recorded plan. It never dispatches.
+- `product status` and `product plan` only read. Status shows each slice marked ready (`new`, `known`, `modified`) and everything `not_accepted` with its reason in plain words. Plan lists every slice as `completed`, `active`, `ready` or `blocked`, with reasons, and the order they go in.
+- `product intake` takes each new slice revision in once. `--dry-run` first. A slice from GitHub is its own ticket: the issue number names the ticket, the cell, the branch and the pull request (`/mach 41`). A folder gets one local ticket. Repeating it takes nothing in twice.
+- An issue counts only when the last person who added `mach:ready` has the triage, write, maintain or admin role, wrote an unedited approval comment for that revision and those hashes, the body is intact, the epic's issue is Product Studio's, and the spec passes the intent gates. This guards against accidents and edits, not against someone with write access who sets out to forge an approval.
+- A slice waits until what it depends on is merged (its commit on the integration branch); then the product manager's order within the epic; then the oldest marked ready. An approved cell is still `active`, and dependents stay blocked.
+- `product dispatch <SLICE-ID or issue number>...` or `--ready` opens the cells, commits each spec on its ticket's branch with a header line naming its epic and issue, and stops at `spec-ready`. It starts no agent. Product-sourced work is never reviewed below Medium.
+- `product reconcile` is intake plus a recorded plan plus the status writes. It never dispatches.
 
-### Slices that came from a GitHub issue
+### What the slice's issue is told
 
-A slice made from a request carries the issue's repository and number in its work order (identifiers only, no issue text). Intake copies it into the ledger, the ticket text (`Request: OWNER/REPO#42`), the cell's `product` block and the run record. Because it is part of the approved definition, changing it needs `slice reopen`.
+Through `ticket.py slice-status`, from fixed templates with a hidden marker, recorded in the ledger before they are tried and retried on the next pass; they never block the line: `mach:building` when the cell opens; `mach:question` with the contract engineer's question (redacted, bounded, mentioning nobody) when the spec has a defect only the product manager can settle; `mach:shipped`, and the issue closed, once its merge is on the integration branch; a comment when the cell is blocked; and a comment when the slice changed while it was being built. `tickets.github.status_comments: false` stops the comments and keeps the labels. The Factory writes nothing to a request's issue.
 
-Intake writes to the request's issue at two moments, through `ticket.py request-status`, whatever `tickets.provider` is:
+### When a slice changes
 
-- **Merged.** When a slice's ticket is first filed, intake adds `mach:ready`, removes `mach:grooming` and comments once: "SLICE-012 revision 1 is approved and merged; the Factory may take it (ticket 104)."
-- **Blocked.** When the cell of such a slice is `blocked`, intake comments once: "Ticket 104 is blocked and waits for a person." It adds no label to a product request.
-
-These writes never block or fail intake. Each is recorded in the ledger (`request_status`) before it is tried. One that GitHub does not take stays pending and is tried again on the next `product intake` or `reconcile`; the report shows how many are pending, done or refused. A write for a repository other than the project's `origin` is refused and not retried. Each comment ends with a hidden marker, so a write whose outcome was lost is found on the issue and not repeated.
-
-Settings: `tickets.github.status_comments: false` stops the comments and keeps the labels. `tickets.github.request_label` names the request label.
-
-Labels: if `mach:ready` (or `mach:grooming`, `mach:blocked`) does not exist, MACH creates it, only for those three names and never over an existing label. `mach:request` is never created by MACH; a person with write access applies it. `/mach doctor` lists any of the four missing from the repository with the `gh label create` line to run yourself.
-
-A changed definition under work in progress, a withdrawn slice, an abandoned ticket that is still open or a ticket claiming a merge not on the branch is `needs_person`. MACH reports it and does not choose. Two cases it now settles with a recorded reason, shown on a real Factory run (a throwaway project):
-
-- **A revised slice whose earlier ticket was abandoned and closed.** The next `product intake` files the newer revision as a new ticket by itself, exactly once, and records that it follows the abandoned one. Close the abandoned ticket first; an abandoned ticket left open is reported for you to close.
-- **A revised slice whose earlier revision is still in the line** (waiting, building or in review). Intake flags it and changes nothing: the cell, ticket and branch stay untouched. When you decide the newer revision replaces the work in progress, run `RUN product resolve <SLICE-ID> --supersede-in-work "<why>"`, only on your own decision. It records the old revision as superseded (with who and why), takes the newer revision in as a new ticket, and never dispatches the superseded one. The earlier cell is still there: abandon it with the cleanup station when you want it gone.
+- Waiting work takes the new revision on the same ticket.
+- Work in the line is never changed: it is flagged for you. Let it finish (the new revision follows on the same ticket once it ships), or abandon it with the cleanup station and the next intake takes the new revision.
+- A cell stopped for the product manager's answer (`needs: product-answer`) takes the new revision and plans again.
+- Shipped work changed comes as a new issue that says `Changes #N, which has shipped.`
+- `product intake --reissue <SLICE-ID>` puts abandoned work back in the queue on the same ticket, only when you say so.
 
 **Re-planning a wrong plan.** `cell.py replan <ticket> --reason "<why>"` (the intent station's script), only when you say so, returns a `planned` or `building` cell to `spec-ready` so the line plans it again. Nothing is lost: the old `plan.md`, `build.json` and `build-report.json` go under `plan-history/<n>/`, and if the branch had moved its old tip is kept as `refs/mach/replan/<ticket>/<n>`. It refuses a cell that has been through a judging round, uncommitted changes, task work already on main, and an empty reason. It adds no judging round. `RUN next` then says `plan`.
 
@@ -157,7 +150,7 @@ The line itself is driven by what stations recorded, so running `RUN <ticket>` a
 
 ## 7. Release qualification
 
-`RUN release status` lists snapshots. `RUN release qualify <WAVE-ID>... [--release <id>] [--commit <sha>]` evaluates the integration branch at one commit and writes `.factory/release/<id>/readiness.json`. It reruns the project's test suite on a clean tree, which runs the repository's own code. `RUN release show <id>` prints the checks.
+`RUN release status` lists snapshots. `RUN release qualify --epic <EPIC-ID or issue number> | <SLICE-ID>... [--release <id>] [--commit <sha>]` evaluates an epic, or the slices you name, on the integration branch at one commit and writes `.factory/release/<id>/readiness.json`. It reruns the project's test suite on a clean tree, which runs the repository's own code. `RUN release show <id>` prints the checks.
 
 Four outcomes:
 
@@ -166,7 +159,7 @@ Four outcomes:
 3. **qualified_with_exceptions**: everything else passed, but a person recorded an exception.
 4. **qualified**: every check passed.
 
-A missing check is never a pass. No scanner report means `not_run`, which makes the result `incomplete`. An exception is recorded only on a person's explicit word, after they have seen that check: `RUN release except --release <id> --check <check-id> --by <role> --reason "<text>"`. Use a role, never a name. It counts only at the commit it was recorded for; qualify again afterwards. Qualification ships, merges, tags and deploys nothing. Product's acceptance is separate and is read from merged product files.
+A missing check is never a pass. No scanner report means `not_run`, which makes the result `incomplete`. An exception is recorded only on a person's explicit word, after they have seen that check: `RUN release except --release <id> --check <check-id> --by <role> --reason "<text>"`. Use a role, never a name. It counts only at the commit it was recorded for; qualify again afterwards. Qualification ships, merges, tags and deploys nothing. Product's acceptance is separate: the product manager records it as a comment on the epic's issue, and the snapshot reports it (`accepted`, `rejected` or `not_recorded`) only from a comment written by the account it names, unedited, with the triage role or above.
 
 Scanners are not run by MACH. Someone runs them and puts their reports under `.factory/release/scans/<name>.json` for the exact commit. A report counts as a scan only if it carries every fact MACH needs to judge it: `tool`, `version`, `commit` (the release commit), `exit_code`, `scanned` (a number greater than zero), `scanned_at` and `findings` (each with `id`, `severity`, `title`; `critical` or `high` fail). One example, a clean gitleaks run:
 
@@ -177,7 +170,7 @@ Scanners are not run by MACH. Someone runs them and puts their reports under `.f
 
 A report that lacks a field is `not_run` with "report lacks <field>"; so is one that records an `error`, an exit code other than 0 (clean) or 1 (findings found), or `scanned` of 0. A scanner that found nothing to read (osv-scanner on a project with no dependency manifest exits 128) must be written down as exactly that, not as an empty list of findings, or a false "clean" results. This is stricter than earlier versions: an older report without these fields is now `not_run`.
 
-**The outcome line.** `qualify` prints a one-line outcome that names every check that is missing, not run or not configured, required or optional, with its reason, whatever the outcome, for example `qualified; not assessed: performance (not configured)` or `incomplete; not assessed: security.scan.osv-scanner (not run: report lacks scanned)`. Read it before you read the word qualified. Optional checks (performance with no command) never change the outcome and are never hidden. The record is deterministic: the same inputs give the same bytes. Qualification across a whole five-slice wave, including slices that share one contract file, was run live and gave `qualified`; a sixth slice's scanner report with zero sources gave `incomplete`. The new report format and the outcome-line wording were checked by tests only.
+**The outcome line.** `qualify` prints a one-line outcome that names every check that is missing, not run or not configured, required or optional, with its reason, whatever the outcome, for example `qualified; not assessed: performance (not configured)` or `incomplete; not assessed: security.scan.osv-scanner (not run: report lacks scanned)`. Read it before you read the word qualified. Optional checks (performance with no command) never change the outcome and are never hidden. The record is deterministic: the same inputs give the same bytes. Qualification across five slices of one delivery, including slices that share one contract file, was run live (before M11, as a wave) and gave `qualified`; a sixth slice's scanner report with zero sources gave `incomplete`. The new report format and the outcome-line wording were checked by tests only.
 
 ## 8. Security boundaries in brief
 

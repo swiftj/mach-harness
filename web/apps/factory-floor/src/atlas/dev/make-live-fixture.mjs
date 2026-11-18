@@ -23,7 +23,7 @@ function lane(n, { t0, approve = false }) {
   return beltRun({
     ticket: `LOCAL-${hex(n, 4)}`,
     slice: `SLICE-${hex(n, 4)}`,
-    wave: "WAVE-001",
+    epic: "EPIC-001",
     execution: `x${hex(n, 12)}`,
     intakeGen: hex(n, 8),
     cellGen: hex(n * 7919, 8).slice(-8),
@@ -64,7 +64,7 @@ function three() {
   }
   // 3: taken in and scheduled, then held: every execution place is in use (recorded).
   const c = lane(3, { t0: T0 + 8_000 });
-  const scheduled = c.events.filter((e) => ["wave.discovered", "slice.materialized", "dependency.resolved", "work.scheduled"].includes(e.type));
+  const scheduled = c.events.filter((e) => ["intake.validated", "slice.materialized", "dependency.resolved", "work.scheduled"].includes(e.type));
   events.push(...scheduled);
   const at = scheduled.at(-1).time.order_ms + 1_500;
   events.push(ev("capacity.wait_changed", { stream: "intake-log", key: "i:capacity", seq: 1, t: at, precision: "s", writer: "supervisor", ids: { ticket_id: "LOCAL-0003", slice_id: "SLICE-0003" }, entities: ["cell:LOCAL-0003"], data: { state: "waiting", limit: 2, running: 2 } }));

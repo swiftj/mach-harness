@@ -236,7 +236,7 @@ func (s *Stream) setTicket(ev *event.Event, t string, fromLabel bool) {
 	k := 1
 	if s.Identity != nil {
 		p := s.Identity.ProductOf(t)
-		ev.IDs.SliceID, ev.IDs.WaveID, ev.IDs.Revision = p.SliceID, p.WaveID, p.Revision
+		ev.IDs.SliceID, ev.IDs.EpicID, ev.IDs.Issue, ev.IDs.Revision = p.SliceID, p.EpicID, p.Issue, p.Revision
 		k = s.Identity.Current(t)
 	}
 	ev.Ref(event.CellRef(t, k))

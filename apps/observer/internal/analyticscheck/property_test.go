@@ -36,7 +36,7 @@ func gen(seed uint64) []piece {
 	dur := func(lo, hi int) time.Duration { return time.Duration(lo+r.IntN(hi-lo+1)) * time.Second }
 	cost := func() float64 { return float64(1+r.IntN(12)) * 0.25 } // exact in binary
 	tickets := 2 + r.IntN(4)
-	waves := map[string]bool{}
+	epics := map[string]bool{}
 	for i := 0; i < tickets; i++ {
 		tk := fmt.Sprintf("T-%d", i+1)
 		x := fmt.Sprintf("x%012x", 0xa0+i)
@@ -44,22 +44,22 @@ func gen(seed uint64) []piece {
 		risk := []string{"Low", "Medium", "High"}[r.IntN(3)]
 		app := []string{"cli", "web", "api"}[r.IntN(3)]
 		product := r.IntN(2) == 0
-		slice, wave := fmt.Sprintf("SLICE-%03d", i+1), fmt.Sprintf("WAVE-%03d", i%2+1)
+		slice, epic := fmt.Sprintf("SLICE-%03d", i+1), fmt.Sprintf("EPIC-%03d", i%2+1)
 		if product {
-			if !waves[wave] {
-				waves[wave] = true
-				wv := wave
+			if !epics[epic] {
+				epics[epic] = true
+				wv := epic
 				add(piece{src: "intake", t: T0.Add(-time.Hour), write: func(f *fx) {
-					f.intake(L{At: T0.Add(-time.Hour), Type: "wave.discovered", Wave: wv, Source: "intake", Data: M{"slices": []string{}}})
+					f.intake(L{At: T0.Add(-time.Hour), Type: "intake.validated", Epic: wv, Source: "intake", Data: M{"digest": "ab"}})
 				}})
 			}
 			t0, t1 := s, s.Add(dur(10, 120))
 			add(piece{src: "intake", t: t0, write: func(f *fx) {
-				f.slice(slice, tk, wave, 1)
-				f.intake(L{At: t0, Type: "slice.materialized", Wave: wave, Slice: slice, Ticket: tk, Source: "intake", Data: M{"dependencies": []string{}}})
+				f.slice(slice, tk, epic, 1)
+				f.intake(L{At: t0, Type: "slice.materialized", Epic: epic, Slice: slice, Ticket: tk, Source: "intake", Data: M{"dependencies": []string{}}})
 			}})
 			add(piece{src: "intake", t: t1, write: func(f *fx) {
-				f.intake(L{At: t1, Type: "work.scheduled", Wave: wave, Slice: slice, Ticket: tk, Data: M{"stage": "spec-ready", "risk": risk}})
+				f.intake(L{At: t1, Type: "work.scheduled", Epic: epic, Slice: slice, Ticket: tk, Data: M{"stage": "spec-ready", "risk": risk}})
 			}})
 		}
 		life := "life:" + tk
@@ -164,7 +164,7 @@ func gen(seed uint64) []piece {
 		if product && merged {
 			ig := done.Add(dur(10, 300))
 			add(piece{src: "intake", t: ig, write: func(f *fx) {
-				f.intake(L{At: ig, Type: "slice.integrated", Wave: wave, Slice: slice, Ticket: tk, Source: "intake", Data: M{"commit": "fedcba987654"}})
+				f.intake(L{At: ig, Type: "slice.integrated", Epic: epic, Slice: slice, Ticket: tk, Source: "intake", Data: M{"commit": "fedcba987654"}})
 			}})
 		}
 		closed := done.Add(dur(60, 600))
