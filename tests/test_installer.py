@@ -304,6 +304,20 @@ class StudioTest(Base):
         self.assertEqual(manifest["files"][mach.STUDIO_DEST], mach.sha(data))
         self.assertIn(mach.STUDIO_DEST, (self.project / ".gitignore").read_text())
 
+    def test_an_update_replaces_the_program_with_a_new_file(self):
+        """macOS stops a program whose file was overwritten in place; an update must be a new file."""
+        self.publish(b"#!/bin/sh\necho one\n")
+        self.mach("install")
+        path = self.project / mach.STUDIO_DEST
+        before = path.stat().st_ino
+        data = self.publish(b"#!/bin/sh\necho two\n")
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(path.read_bytes(), data)
+        self.assertNotEqual(path.stat().st_ino, before)
+        self.assertTrue(os.access(path, os.X_OK))
+        self.assertEqual([item.name for item in path.parent.iterdir() if item.name.startswith(".")], [])
+
     def test_scaffold_downloads_it_too_for_plugin_users(self):
         self.publish()
         code, out = self.mach("scaffold")
