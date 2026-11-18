@@ -1,0 +1,177 @@
+{
+  "exit_code": 0,
+  "data": {
+    "refreshed": true,
+    "problem": null,
+    "problem_detail": null,
+    "shared_project": "the shared project",
+    "arrived": [],
+    "updated": [],
+    "merged": [],
+    "approvals_withdrawn": [],
+    "needs_reconciling": {
+      "conflicts": [],
+      "collisions": [],
+      "details": {}
+    },
+    "requests": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "refreshed_at": "2026-11-18T05:28:10Z",
+      "problem": null,
+      "truncated": false,
+      "truncated_note": null,
+      "items": [],
+      "updates_waiting": 0,
+      "updates_waiting_note": null,
+      "could_not_update": [],
+      "could_not_update_note": null
+    },
+    "github": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "problem": null,
+      "refreshed_at": "2026-11-18T05:28:10Z",
+      "form": "sub_issues",
+      "project_issue": 1,
+      "epics": {
+        "EPIC-001": 2
+      },
+      "slices": [
+        {
+          "slice_id": "SLICE-001",
+          "in_workspace": true,
+          "saved": "github",
+          "unfinished": false,
+          "issue": 3,
+          "url": "https://github.com/acme/team-space/issues/3",
+          "state_label": "mach:ready",
+          "revision": 2,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "shipped_issues": [],
+          "on_github": [
+            {
+              "issue": 3,
+              "state": "open",
+              "state_label": "mach:ready",
+              "revision": 2,
+              "title": "Invite a teammate",
+              "matches_approval": true,
+              "approved_by": "ada-pm"
+            }
+          ],
+          "title": "Invite a teammate"
+        },
+        {
+          "slice_id": "SLICE-002",
+          "in_workspace": true,
+          "saved": "github",
+          "unfinished": false,
+          "issue": 4,
+          "url": "https://github.com/acme/team-space/issues/4",
+          "state_label": "mach:question",
+          "revision": 1,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "shipped_issues": [],
+          "on_github": [
+            {
+              "issue": 4,
+              "state": "open",
+              "state_label": "mach:question",
+              "revision": 1,
+              "title": "Remove a teammate",
+              "matches_approval": true,
+              "approved_by": "ada-pm"
+            }
+          ],
+          "title": "Remove a teammate"
+        },
+        {
+          "slice_id": "SLICE-003",
+          "in_workspace": true,
+          "saved": "github",
+          "unfinished": false,
+          "issue": 5,
+          "url": "https://github.com/acme/team-space/issues/5",
+          "state_label": "mach:shipped",
+          "revision": 1,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "shipped_issues": [],
+          "on_github": [
+            {
+              "issue": 5,
+              "state": "closed",
+              "state_label": "mach:shipped",
+              "revision": 1,
+              "title": "Resend an invitation",
+              "matches_approval": true,
+              "approved_by": "ada-pm"
+            }
+          ],
+          "title": "Resend an invitation"
+        },
+        {
+          "slice_id": "SLICE-004",
+          "in_workspace": true,
+          "saved": null,
+          "unfinished": false,
+          "issue": 6,
+          "url": "https://github.com/acme/team-space/issues/6",
+          "state_label": null,
+          "revision": 2,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "shipped_issues": [],
+          "on_github": [
+            {
+              "issue": 6,
+              "state": "open",
+              "state_label": null,
+              "revision": 2,
+              "title": "Rename a teammate",
+              "matches_approval": true,
+              "approved_by": "ben-pm"
+            }
+          ],
+          "title": "Rename a teammate"
+        },
+        {
+          "slice_id": "SLICE-005",
+          "in_workspace": true,
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": null,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": true,
+          "shipped_issues": [],
+          "on_github": [
+            {
+              "issue": 77,
+              "state": "open",
+              "state_label": null,
+              "revision": 1,
+              "title": "Someone else's slice",
+              "matches_approval": false,
+              "approved_by": null
+            }
+          ],
+          "title": "Someone else's slice"
+        }
+      ]
+    },
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

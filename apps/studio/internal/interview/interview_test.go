@@ -334,7 +334,7 @@ func TestTheAllowListIsOnlyTheInterviewersOperationsOnItsOwnSlice(t *testing.T) 
 			t.Errorf("a Write or relative Edit rule: %s", rule)
 		}
 	}
-	for _, op := range []string{"slice approve", "epic approve", "wave", "send", "reconcile", "project", "slice new"} {
+	for _, op := range []string{"slice ready", "slice approve", "epic approve", "wave", "send", "feedback", "acceptance", "reconcile", "project", "slice new"} {
 		found := false
 		for _, rule := range deny {
 			if strings.HasSuffix(rule, " "+op+" *)") {
@@ -378,8 +378,8 @@ func TestATurnBecomesTheContractsEvents(t *testing.T) {
 			{ID: "toolu_5", Name: "Read", Input: map[string]any{"file_path": "/elsewhere/notes.md"},
 				Error: "/elsewhere/notes.md is outside /project; --restricted confines the file tools to the working directory."},
 		}},
-		testkit.Turn{Text: "I can't approve; use the Approve button.", Tools: []testkit.FakeTool{
-			{ID: "toolu_4", Name: "Bash", Input: map[string]any{"command": `python3 "` + script + `" slice approve SLICE-001`}, Denied: true},
+		testkit.Turn{Text: "I can't mark it ready; use the Mark ready to build button.", Tools: []testkit.FakeTool{
+			{ID: "toolu_4", Name: "Bash", Input: map[string]any{"command": `python3 "` + script + `" slice ready SLICE-001`}, Denied: true},
 		}},
 	)
 	started := r.start("SLICE-001")
@@ -424,7 +424,7 @@ func TestATurnBecomesTheContractsEvents(t *testing.T) {
 	}
 	evs = until(t, r.bridge, started.InterviewID, lastSeq(evs), "waiting_for_reply")
 	refused := find(evs, "activity")
-	if len(refused) != 1 || dataOf(refused[0])["kind"] != "refused" || dataOf(refused[0])["text"] != "tried to approve; only you can approve, with the Approve button" {
+	if len(refused) != 1 || dataOf(refused[0])["kind"] != "refused" || dataOf(refused[0])["text"] != "tried to mark the slice ready; only you can, with the Mark ready to build button" {
 		t.Fatalf("refused activity %v", names(evs))
 	}
 	if m := dataOf(find(evs, "message")[0]); m["kind"] != "other" || len(find(evs, "question")) != 0 {

@@ -15,9 +15,14 @@
       "status": "interviewing",
       "title": "Invite a teammate"
     },
-    "waves_returned_to_draft": [
-      "WAVE-001"
-    ]
+    "github": {
+      "where": "github",
+      "issue": 3,
+      "building": true,
+      "question": false,
+      "shipped": false
+    },
+    "note": "It is no longer marked ready on GitHub (#3). You can change it now. Mark it ready again when it is done. The builders have already started on it; when you mark it ready again they will be told it changed."
   },
   "refused": null,
   "hint": null

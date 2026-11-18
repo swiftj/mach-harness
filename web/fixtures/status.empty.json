@@ -5,7 +5,11 @@
     "approvals_withdrawn": [],
     "epics": [],
     "slices": [],
-    "waves": [],
+    "github": {
+      "repository": null,
+      "form": null,
+      "last_read": null
+    },
     "current_slice": null,
     "needs_reconciling": {
       "conflicts": [],

@@ -5,13 +5,14 @@
  * a refusal as { ok: false, error: { kind: "refused" } }. Query parameters before the hash choose
  * the scenario:
  *
- *   ?fixture=status.conflicts                             which status the app sees
- *   ?show=ready | open-questions | errors | approved      which slice.show the slice screens see
- *   ?approve=refused                                      slice.approve answers with the engine's refusal
+ *   ?fixture=status.states                                which status the app sees
+ *   ?show=ready | open-questions | errors | on-github     which slice.show the slice screens see
+ *   ?ready=refused | folder                               slice.ready answers with the engine's refusal, or saves to the folder
+ *   ?refresh=refresh.offline                              which refresh the app sees
  *   ?interview=unavailable                                the session reports interview: false
  *
- * Every answer is a real engine run from web/fixtures. The only adjustment: slice.reopen's fixture
- * is for SLICE-001, so its slice ID is set to the slice the screen asked about.
+ * Every answer is a real engine run from web/fixtures. The only adjustment: the slice.ready and
+ * slice.reopen fixtures are for SLICE-001, so their slice ID is set to the slice the screen asked about.
  */
 import type { EngineRun, SliceCheck, SliceShow, Transport, TransportResponse } from "@mach/ui/api";
 import { devParam, devState } from "./devState";
@@ -39,25 +40,23 @@ const fail = (kind: string, message: string, status = 200, hint: EngineRun<unkno
 /** Which fixture answers each operation by default. */
 const defaults: Record<string, string> = {
   where: "where",
-  status: "status.wave-approved",
+  status: "status.rich",
   validate: "validate",
-  refresh: "refresh.after-accept",
+  refresh: "refresh.rich",
   "slice.resume": "slice.resume.ready",
-  "wave.approve": "wave.approve",
-  "send.preview": "send.dry-run",
-  send: "send",
-  feedback: "feedback.waiting",
+  "slice.renumber": "slice.renumber",
+  reconcile: "reconcile.theirs",
 };
 
-/* ── Slices: slice.show, check, approve, reopen, pause, drafts ──────────── */
+/* ── Slices: slice.show, check, ready, reopen, pause, drafts ────────────── */
 
 async function sliceShow(sliceId: string): Promise<SliceShow | null> {
   const scenario =
     devParam("show") ??
     (sliceId === "SLICE-001"
-      ? devState.approved.has(sliceId)
-        ? "approved"
-        : "ready"
+      ? devState.reopened.has(sliceId)
+        ? "ready"
+        : "on-github"
       : sliceId === "SLICE-002"
         ? devState.writtenUp
           ? "open-questions"
@@ -66,8 +65,8 @@ async function sliceShow(sliceId: string): Promise<SliceShow | null> {
   switch (scenario) {
     case "ready":
       return data<SliceShow>("slice.show.ready");
-    case "approved":
-      return data<SliceShow>("slice.show.approved");
+    case "on-github":
+      return data<SliceShow>("slice.show.on-github");
     case "open-questions":
       return data<SliceShow>("slice.show.open-questions");
     case "errors":
@@ -77,10 +76,10 @@ async function sliceShow(sliceId: string): Promise<SliceShow | null> {
   }
 }
 
-async function reopened(sliceId: string): Promise<unknown> {
-  const reopen = await data<{ slice: { slice_id: string } }>("slice.reopen");
-  reopen.slice.slice_id = sliceId;
-  return reopen;
+async function forSlice(name: string, sliceId: string): Promise<unknown> {
+  const result = await data<{ slice: { slice_id: string } }>(name);
+  result.slice.slice_id = sliceId;
+  return result;
 }
 
 async function sliceRoute(path: string, method: string, args: Record<string, unknown>): Promise<TransportResponse | null> {
@@ -94,17 +93,17 @@ async function sliceRoute(path: string, method: string, args: Record<string, unk
       const show = await sliceShow(sliceId);
       return ok(show ? show.check : await data<SliceCheck>(sliceId === "SLICE-001" ? "slice.check.ready" : "slice.check.open-questions"));
     }
-    case "/api/ops/slice.approve": {
-      if (devParam("approve") === "refused") {
-        const refused = await load("slice.approve.refused-epic");
+    case "/api/ops/slice.ready": {
+      if (devParam("ready") === "refused") {
+        const refused = await load("slice.ready.refused-epic");
         return fail("refused", refused?.refused ?? "Refused.", 422, refused?.hint ?? null);
       }
-      devState.approved.add(sliceId);
-      return ok(await data("slice.approve"));
+      devState.reopened.delete(sliceId);
+      return ok(await forSlice(devParam("ready") === "folder" ? "slice.ready.folder" : "slice.ready", sliceId));
     }
     case "/api/ops/slice.reopen":
-      devState.approved.delete(sliceId);
-      return ok(await reopened(sliceId));
+      devState.reopened.add(sliceId);
+      return ok(await forSlice("slice.reopen", sliceId));
     case "/api/ops/slice.pause":
       return ok({ ...(await data<object>("slice.pause")), slice_id: sliceId });
   }
@@ -156,7 +155,7 @@ export const fixtureTransport: Transport = async ({ path, method, body }) => {
   if (slice) return slice;
 
   const op = path.startsWith("/api/ops/") ? path.slice("/api/ops/".length) : null;
-  const chosen = op === "status" ? devParam("fixture") : null;
+  const chosen = op === "status" ? devParam("fixture") : op === "refresh" ? devParam("refresh") : null;
   const name = chosen ?? (op ? defaults[op] : undefined);
   const run = name ? await load<unknown>(name) : null;
   if (!run) return fail("invalid", `No fixture answers ${path}.`, 400);

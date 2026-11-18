@@ -1,6 +1,7 @@
-// A throwaway world for one run: a local bare repository as the shared remote, an engineer's clone
-// with MACH scaffolded (bin/mach scaffold, committed and pushed), the product manager's clone, a
-// stand-in gh and (optionally) a scripted stand-in claude first on PATH, and Git configuration
+// A throwaway world for one run: a local bare repository as the shared remote, reached by the
+// product managers' clones through a github.com address (url.insteadOf), an engineer's clone with
+// MACH scaffolded (bin/mach scaffold, committed and pushed), the stand-in gh for GitHub issues the
+// Python suite uses, (optionally) a scripted stand-in claude first on PATH, and Git configuration
 // isolated from the person's own. Nothing reaches the network.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -9,6 +10,9 @@ import { join, relative } from "node:path";
 import { e2e, engine, keepScratch, machCli, repo, scratch } from "./env.mjs";
 
 const python = process.env.E2E_PYTHON || "python3";
+/** The GitHub repository the stand-in gh answers for, and the address the clones use for it. */
+export const REPO = "acme/team-space";
+const ADDRESS = `https://github.com/${REPO}.git`;
 
 function git(cwd, env, ...args) {
   return execFileSync("git", args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -28,6 +32,10 @@ export function createWorld({ claude = "fake", turns, clones = ["pm"] } = {}) {
     return target;
   };
   install(join(e2e, "fakes/gh.py"), "gh");
+  // The Python suite's own stand-in for GitHub issues, reused as it is (fakes/gh.py wraps it).
+  const issuesStandIn = execFileSync(python, ["-I", "-B", "-c", `import sys; sys.path[:0] = [${JSON.stringify(join(repo, "tests"))}, ${JSON.stringify(join(repo, "skills/ticket/scripts"))}]
+from test_mach_product_issues import FAKE_GH; sys.stdout.write(FAKE_GH)`], { encoding: "utf8" });
+  writeFileSync(join(bin, "gh-issues"), issuesStandIn.replace(/^#!.*\n/, pyShebang), { mode: 0o755 });
   let claudePath = null;
   if (claude === "fake") {
     // On PATH, as the host finds it by default. Its config and call log live beside it.
@@ -35,7 +43,7 @@ export function createWorld({ claude = "fake", turns, clones = ["pm"] } = {}) {
     writeFileSync(join(bin, "config.json"), JSON.stringify({ fixture: join(repo, "tests/fixtures/SLICE-001-invite-teammate.md"), engine, turns: turns ?? [] }));
   }
   const ghState = join(root, "gh.json");
-  writeFileSync(ghState, JSON.stringify({ prs: [], fail: [], log: [], calls: [] }));
+  writeFileSync(ghState, JSON.stringify({ repo: REPO, me: "ada-pm", issues: {}, labels: [], fail: {}, calls: [] }));
   // PATH: our bin first, so `gh` (and, with the stand-in, `claude`) resolve to the stand-ins before
   // any real one. With claude "none" a non-executable placeholder shadows the real one.
   if (claude === "none") writeFileSync(join(bin, "claude"), "not a program\n");
@@ -51,14 +59,18 @@ export function createWorld({ claude = "fake", turns, clones = ["pm"] } = {}) {
 
   const origin = join(root, "origin.git");
   git(root, env, "init", "-q", "--bare", "-b", "main", origin);
-  const clone = (name, person) => {
+  const clone = (name, person, onGithub = true) => {
     const folder = join(root, name);
     git(root, env, "clone", "-q", origin, folder);
     git(folder, env, "config", "user.name", person);
     git(folder, env, "config", "user.email", `${name}@example.test`);
+    if (onGithub) {
+      git(folder, env, "remote", "set-url", "origin", ADDRESS);
+      git(folder, env, "config", `url.${origin}.insteadOf`, ADDRESS);
+    }
     return folder;
   };
-  const eng = clone("eng", "Erin Engineer");
+  const eng = clone("eng", "Erin Engineer", false);
   writeFileSync(join(eng, "README.md"), "# Team Space\n");
   writeFileSync(join(eng, "app.py"), "print('hello')\n");
   git(eng, env, "add", "-A");
@@ -80,19 +92,47 @@ export function createWorld({ claude = "fake", turns, clones = ["pm"] } = {}) {
     projects,
     claudePath,
     app: false,
+    /** The stand-in gh's issues, labels and comments. */
     gh: () => JSON.parse(readFileSync(ghState, "utf8")),
-    /** Changes a pull request the way a reviewer would, under the stand-in gh's own lock (fakes/gh.py). */
-    setPr(number, changes) {
+    /** Every gh call: { argv, cwd }. */
+    ghCalls: () => (existsSync(`${ghState}.calls`) ? readFileSync(`${ghState}.calls`, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : []),
+    /** Issues carrying a label, by number. */
+    issues(label) {
+      return Object.values(world.gh().issues)
+        .filter((i) => !label || i.labels.some((l) => l.name === label))
+        .sort((a, b) => a.number - b.number);
+    },
+    /**
+     * Changes GitHub the way someone else would, under the stand-in's own lock (fakes/gh.py): a
+     * Python body that edits `state` (the stand-in's state) with issue_rules at hand.
+     */
+    onGithub(pythonBody, ...args) {
       const script = `import fcntl, json, os, sys
-path, number, changes = sys.argv[1], int(sys.argv[2]), json.loads(sys.argv[3])
+sys.path.insert(0, ${JSON.stringify(join(repo, "skills/ticket/scripts"))})
+import issue_rules
+path, args = sys.argv[1], json.loads(sys.argv[2])
 lock = open(path + ".lock", "a")
 fcntl.flock(lock, fcntl.LOCK_EX)
 state = json.load(open(path))
-state["prs"][number - 1].update(changes)
-tmp = path + ".setpr.tmp"
+${pythonBody}
+tmp = path + ".world.tmp"
 json.dump(state, open(tmp, "w"))
 os.replace(tmp, path)`;
-      execFileSync(python, ["-I", "-B", "-c", script, ghState, String(number), JSON.stringify(changes)], { env });
+      execFileSync(python, ["-I", "-B", "-c", script, ghState, JSON.stringify(args)], { env });
+    },
+    /** The builders' state label on a slice's issue, as the Factory would set it. */
+    setStateLabel(number, label) {
+      world.onGithub(`issue = state["issues"][str(args[0])]
+issue["labels"] = [l for l in issue["labels"] if l["name"] not in issue_rules.SLICE_STATE_LABELS] + [{"name": args[1]}]`, number, label);
+    },
+    /** Another product manager saves the next version of a slice, with their own approval. */
+    newerVersion(number, extra) {
+      world.onGithub(`issue = state["issues"][str(args[0])]
+marker = issue_rules.parse_slice_body(issue["body"])
+spec = marker["spec"] + args[1]
+revision = marker["revision"] + 1
+issue["body"] = issue_rules.slice_issue_body(marker["slice_id"], revision, marker["epic"], marker["depends"], marker["why"], spec)
+issue["comments"].append({"login": "ben-pm", "body": issue_rules.approval_comment(marker["slice_id"], revision, "ben-pm", issue_rules.text_sha256_of(spec), marker["why_sha256"])})`, number, extra);
     },
     claudeCalls() {
       const folder = join(bin, "calls");
@@ -115,44 +155,6 @@ os.replace(tmp, path)`;
       const r = world.studio(project, "status");
       if (r.code !== 0) throw new Error(`status failed: ${r.stderr}`);
       return r.json;
-    },
-    /** Engineering accepts a contribution: merge its branch into main and push; the PR shows merged. */
-    land(branch) {
-      git(eng, env, "fetch", "-q", "origin");
-      git(eng, env, "merge", "-q", "--ff-only", "origin/main");
-      git(eng, env, "merge", "-q", "--no-ff", "-m", `Merge ${branch}`, `origin/${branch}`);
-      git(eng, env, "push", "-q", "origin", "main");
-      world.gh().prs.forEach((pr, i) => {
-        if (pr.head === branch && pr.state === "OPEN") world.setPr(i + 1, { state: "MERGED" });
-      });
-    },
-    /** Someone else's accepted change on the shared main: edit a product file directly. */
-    upstream(rel, pythonEdit) {
-      git(eng, env, "fetch", "-q", "origin");
-      git(eng, env, "merge", "-q", "--ff-only", "origin/main");
-      const path = join(eng, rel);
-      if (rel.endsWith(".json")) {
-        const script = `import json,sys; sys.path.insert(0, ${JSON.stringify(join(repo, "skills/product-studio/scripts"))}); sys.path.insert(0, ${JSON.stringify(join(repo, "skills/intent/scripts"))})
-import studio
-p = ${JSON.stringify(path)}
-d = json.load(open(p))
-${pythonEdit}
-d["revision"] += 1
-open(p, "w").write(studio.canonical(d))`;
-        execFileSync(python, ["-I", "-B", "-c", script], { env });
-      } else {
-        writeFileSync(path, pythonEdit(readFileSync(path, "utf8")));
-      }
-      git(eng, env, "add", "-A");
-      git(eng, env, "commit", "-q", "-m", `change ${rel}`);
-      git(eng, env, "push", "-q", "origin", "main");
-    },
-    /** Files changed by a branch on the shared remote, relative to the remote's main. */
-    branchFiles(branch) {
-      return git(origin, env, "diff", "--name-only", `main...${branch}`).split("\n").filter(Boolean);
-    },
-    remoteBranches() {
-      return git(origin, env, "for-each-ref", "--format=%(refname:short)", "refs/heads").split("\n").filter(Boolean);
     },
     /**
      * The PM's checkout, byte for byte: HEAD, local branches, the raw index file, the stash, the

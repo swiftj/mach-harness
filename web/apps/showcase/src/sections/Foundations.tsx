@@ -17,7 +17,7 @@ const brand: Array<{ name: keyof typeof palette; role: string }> = [
   { name: "cream", role: "The Product Studio canvas" },
   { name: "terracotta", role: "Brand accent: the primary action and where you are" },
   { name: "blue", role: "Information, in-progress, focus" },
-  { name: "green", role: "Approved and accepted" },
+  { name: "green", role: "Approved and shipped" },
   { name: "ochre", role: "Warnings: something to settle" },
   { name: "brick", role: "Errors, blocked, destructive" },
 ];
@@ -134,7 +134,7 @@ export function Foundations() {
             const family = t.family === "mono" ? "var(--mach-font-mono)" : "var(--mach-font-sans)";
             const sample =
               step === "mono"
-                ? "SLICE-001  EPIC-001  WAVE-002  FR-01"
+                ? "SLICE-001  EPIC-001  #41  FR-01"
                 : step === "body-lg"
                   ? fx_vision
                   : step.startsWith("title") || step === "display"
@@ -226,4 +226,4 @@ export function Foundations() {
   );
 }
 
-const fx_vision = fx.statusConflicts.project?.vision ?? "";
+const fx_vision = fx.statusRich.project?.vision ?? "";

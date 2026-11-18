@@ -8,7 +8,7 @@
  * Every operation that may change the workspace reloads the status by itself (client.onChange).
  */
 import { useEffect, useSyncExternalStore } from "react";
-import { isMachApiError, MachApiError, type Feedback, type Refresh, type Session, type Status } from "@mach/ui/api";
+import { isMachApiError, MachApiError, type Refresh, type Session, type Status } from "@mach/ui/api";
 import { client } from "./client";
 
 export interface Loadable<T> {
@@ -72,12 +72,11 @@ const refreshStore = store<Refresh>(async () => {
   void statusStore.run();
   return result;
 });
-const feedbackStore = store<Feedback>(() => client.op("feedback", {}));
 
 // Every act that may change the workspace (anywhere in the app) reloads the shared status, so a
-// screen never shows what was true before it: a reconcile, an approval, a wave, a draft write.
+// screen never shows what was true before it: a version chosen, a slice marked ready, a draft write.
 client.onChange((operation) => {
-  if (operation === "feedback" || operation === "refresh") return; // refresh reloads status itself
+  if (operation === "refresh") return; // refresh reloads status itself
   void statusStore.run();
 });
 
@@ -109,14 +108,10 @@ export function useSession(): Loadable<Session> {
 }
 
 /**
- * The last `refresh` this visit (it fetches from the shared project). Not run automatically;
- * the workspace runs it once when opened. Status is reloaded after every refresh.
+ * The last `refresh` this visit (it reads the project, epics and slices on GitHub, and the
+ * requests). Not run automatically; the project home runs it once when opened. Status is reloaded
+ * after every refresh.
  */
 export function useRefresh(): Loadable<Refresh> & { run: () => Promise<void> } {
   return { ...useStore(refreshStore, false), run: refreshStore.run };
-}
-
-/** `feedback` for sent waves (fetches). Loaded on first use, shared. */
-export function useFeedback(enabled: boolean): Loadable<Feedback> & { reload: () => Promise<void> } {
-  return { ...useStore(feedbackStore, enabled), reload: feedbackStore.run };
 }

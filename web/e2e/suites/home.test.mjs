@@ -17,8 +17,7 @@ const SECONDARY = [
   { label: "Vision and outcomes", hash: "#/vision", heading: "Vision" },
   { label: "Roadmap", hash: "#/roadmap", heading: "Roadmap" },
   { label: "Decisions", hash: "#/inbox", heading: "Decisions" },
-  { label: "Send to engineering", hash: "#/waves", heading: "Delivery waves" },
-  { label: "Shared project", hash: "#/shared", heading: "Shared project" },
+  { label: "On GitHub", hash: "#/github", heading: "On GitHub" },
 ];
 let browser, server;
 
@@ -85,26 +84,29 @@ test("the project home: name, vision, the row of links first, carry on, epics wi
     });
     assert.ok(order.row >= 0 && order.row < order.carry && order.carry < order.epic, JSON.stringify(order));
 
-    // Carry on: the engine's first next step (status.wave-approved: send WAVE-001), one primary button.
-    const carry = main.getByRole("region", { name: "Send WAVE-001 to engineering" });
-    await carry.getByText("It is approved and has not been sent yet.").waitFor();
+    // Carry on: the engine's first next step (status.rich: mark SLICE-004 ready), one primary button.
+    const carry = main.getByRole("region", { name: "Mark SLICE-004 ready" });
+    await carry.getByText("Rename a teammate is ready for your approval.", { exact: false }).waitFor();
     assert.equal(await carry.getByRole("button").count(), 1);
 
-    // The epic and its slice, with the engine's state in words.
+    // The epic and its slices, with the engine's states in words: the draft's, and where it is with the builders.
     const epic = main.getByRole("region", { name: "Team membership" });
     await epic.getByText("EPIC-001").waitFor();
-    const slice = epic.getByRole("listitem").filter({ hasText: "Invite a teammate" });
-    await slice.getByRole("link", { name: "Invite a teammate" }).waitFor();
+    await epic.getByText("#2", { exact: true }).waitFor();
+    const slice = epic.getByRole("listitem").filter({ hasText: "Invite a teammate" }).first();
+    await slice.getByRole("link", { name: "Invite a teammate", exact: true }).waitFor();
     await slice.getByText("Approved", { exact: true }).waitFor();
-    assert.equal(await slice.getByRole("link", { name: "Invite a teammate" }).getAttribute("href"), "#/slices/SLICE-001");
+    await slice.getByText("Ready to build", { exact: true }).waitFor();
+    assert.equal(await slice.getByRole("link", { name: "Invite a teammate", exact: true }).getAttribute("href"), "#/slices/SLICE-001");
+    assert.equal(await slice.getByRole("link", { name: /^#3/ }).getAttribute("href"), "https://github.com/acme/team-space/issues/3");
+    await epic.getByRole("listitem").filter({ hasText: "Remove a teammate" }).getByText("Question from the builders", { exact: true }).waitFor();
+    await epic.getByRole("listitem").filter({ hasText: "Resend an invitation" }).getByText("Shipped", { exact: true }).waitFor();
     await epic.getByRole("button", { name: "Add a slice to Team membership" }).waitFor();
-
-    // Waves are not on the home page: only the one link leads to them.
-    assert.equal(await main.getByText("WAVE-001", { exact: true }).count(), 0, "no wave shown on the home page");
+    // The project's issue number, as the engine reports it.
+    await main.getByText("#1", { exact: true }).waitFor();
 
     await carry.getByRole("button").click();
-    await page.waitForURL(/#\/waves$/);
-    await page.getByRole("heading", { level: 1, name: "Delivery waves" }).waitFor();
+    await page.waitForURL(/#\/slices\/SLICE-004$/);
     await clean(watched);
   } finally {
     await watched.context.close();
@@ -112,7 +114,7 @@ test("the project home: name, vision, the row of links first, carry on, epics wi
 });
 
 test("the home page has no axe violation in light or dark", async () => {
-  const watched = await open("/", "fixture=status.conflicts");
+  const watched = await open("/", "fixture=status.states");
   try {
     await home(watched.page).waitFor();
     assert.deepEqual(await axe(watched.page), []);
@@ -123,26 +125,63 @@ test("the home page has no axe violation in light or dark", async () => {
 });
 
 test("what needs the PM's answer is one notice that leads to Decisions", async () => {
-  const watched = await open("/", "fixture=status.conflicts");
+  const watched = await open("/", "fixture=status.states");
   const { page } = watched;
   try {
     await home(page).waitFor();
     const main = page.getByRole("main");
-    const notice = main.getByText(/things? needs? your answer/);
-    await notice.waitFor();
-    await main.getByText("3 items were changed both in your draft and in the shared project", { exact: false }).waitFor();
-    await main.getByText("has 2 open questions", { exact: false }).waitFor();
-    // Two slices still in interview, in the engine's own state.
-    const epic = main.getByRole("region", { name: "People and access" });
-    assert.equal(await epic.getByText("Interviewing", { exact: true }).count(), 2);
-    await epic.getByRole("link", { name: /^Continue the interview: Invite a teammate$/ }).waitFor();
-    // Carry on is the engine's first step here too: settle what disagrees.
-    await main.getByRole("region", { name: "Settle what disagrees with the shared project" }).waitFor();
+    await main.getByText(/things? needs? your answer/).waitFor();
+    await main.getByText("the builders will not take it until you mark it ready again", { exact: false }).waitFor();
+    await main.getByText("The builders have a question about", { exact: false }).waitFor();
+    // The edited slice says so, in words and a shape.
+    const edited = main.getByRole("listitem").filter({ hasText: "Rename a teammate" });
+    await edited.getByText("Changed on GitHub after you approved it", { exact: true }).waitFor();
+    // Carry on is the engine's first step here too: put the approved version back.
+    await main.getByRole("region", { name: "Mark SLICE-004 ready again" }).waitFor();
     await main.getByRole("link", { name: "Answer them" }).click();
     await page.getByRole("heading", { level: 1, name: "Decisions" }).waitFor();
+    const decisions = page.getByRole("main");
+    await decisions.getByRole("heading", { level: 2, name: /Changed on GitHub after you approved it/ }).waitFor();
+    await decisions.getByRole("heading", { level: 2, name: /Questions from the builders/ }).waitFor();
+    assert.deepEqual(await axe(page), []);
     await clean(watched);
   } finally {
     await watched.context.close();
+  }
+});
+
+test("Decisions: a newer version to choose and a number already taken, each confirmed in a dialog", async () => {
+  const watched = await open("/inbox", "fixture=status.number-taken");
+  const { page } = watched;
+  try {
+    const main = page.getByRole("main");
+    await main.getByRole("heading", { level: 1, name: "Decisions" }).waitFor();
+    const taken = main.getByRole("article", { name: /SLICE-005/ });
+    await taken.getByText("Number already taken", { exact: true }).waitFor();
+    await taken.getByRole("button", { name: "Give SLICE-005 a new number" }).click();
+    const dialog = page.getByRole("dialog", { name: "Give SLICE-005 a new number?" });
+    await dialog.getByRole("button", { name: "Give it a new number" }).click();
+    await dialog.waitFor({ state: "detached" });
+    await page.getByText("SLICE-005 is now SLICE-006", { exact: true }).waitFor();
+    await clean(watched);
+  } finally {
+    await watched.context.close();
+  }
+  const newer = await open("/inbox", "fixture=status.newer-elsewhere");
+  try {
+    const main = newer.page.getByRole("main");
+    const card = main.getByRole("article", { name: /SLICE-004/ });
+    await card.getByText("Newer version saved by someone else", { exact: true }).waitFor();
+    await card.getByRole("button", { name: "Take their version" }).click();
+    const dialog = newer.page.getByRole("dialog", { name: "Take the newer version of SLICE-004?" });
+    await dialog.getByText("It does not become ready", { exact: false }).waitFor();
+    await dialog.getByRole("button", { name: "Take their version" }).click();
+    await dialog.waitFor({ state: "detached" });
+    await newer.page.getByText("Your draft now holds the version from GitHub.", { exact: false }).first().waitFor();
+    assert.deepEqual(await axe(newer.page), []);
+    await clean(newer);
+  } finally {
+    await newer.context.close();
   }
 });
 
@@ -249,24 +288,51 @@ test("the interview: the question takes the larger half, the slice builds up bes
   }
 });
 
-test("when nothing is open, the interview offers the approval, confirmed in a dialog that says what it means", async () => {
+test("when nothing is open, the interview offers to mark it ready, confirmed in a dialog that says what it does", async () => {
   const watched = await open("/slices/SLICE-001/interview", "show=ready");
   const { page } = watched;
   try {
     const ask = page.getByRole("region", { name: "Interview" });
-    await ask.getByRole("heading", { level: 2, name: "Nothing is left open. Read it through, then approve it." }).waitFor();
-    await ask.getByText("Nothing goes to engineering until you send it in a delivery wave.", { exact: false }).waitFor();
+    await ask.getByRole("heading", { level: 2, name: "Nothing is left open. Read it through, then mark it ready to build." }).waitFor();
+    await ask.getByText("tells the builders it is ready", { exact: false }).waitFor();
     await ask.getByRole("link", { name: "Keep it as a draft" }).waitFor();
-    const approve = ask.getByRole("button", { name: "Approve SLICE-001" });
-    assert.match(await approve.getAttribute("class"), /bg-accent-fill/, "approving is the primary button");
-    await approve.click();
-    const dialog = page.getByRole("dialog", { name: "Approve SLICE-001?" });
-    await dialog.getByText("It freezes the slice until you reopen it.", { exact: false }).waitFor();
+    const mark = ask.getByRole("button", { name: "Mark ready to build" });
+    assert.match(await mark.getAttribute("class"), /bg-accent-fill/, "marking it ready is the primary button");
+    await mark.click();
+    const dialog = page.getByRole("dialog", { name: "Mark SLICE-001 ready to build?" });
+    await dialog.getByText("saves the slice to the project on GitHub, under its epic", { exact: false }).waitFor();
+    await dialog.getByText("records that you approved exactly this text", { exact: false }).waitFor();
     await dialog.getByRole("button", { name: "Cancel" }).click();
     await dialog.waitFor({ state: "detached" });
-    await approve.click();
-    await page.getByRole("dialog").getByRole("button", { name: "Approve SLICE-001" }).click();
+    await mark.click();
+    await page.getByRole("dialog").getByRole("button", { name: "Mark ready to build" }).click();
+    // Where it was saved: the issue the engine returned, as a link.
+    const done = page.getByRole("dialog", { name: "SLICE-001 is ready to build" });
+    await done.getByText("Saved to GitHub as #3 and marked ready.", { exact: false }).waitFor();
+    assert.equal(await done.getByRole("link", { name: /^#3/ }).getAttribute("href"), "https://github.com/acme/team-space/issues/3");
+    assert.deepEqual(await axe(page), []);
+    await done.getByRole("button", { name: "Done" }).click();
     await home(page).waitFor();
+    await clean(watched);
+  } finally {
+    await watched.context.close();
+  }
+});
+
+test("without GitHub, the slice is saved to a folder and the engine's two ways on are shown as written", async () => {
+  const watched = await open("/slices/SLICE-001", "show=ready&ready=folder");
+  const { page } = watched;
+  try {
+    await page.getByRole("main").getByRole("button", { name: "Mark ready to build" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Mark ready to build" }).click();
+    const done = page.getByRole("dialog", { name: "SLICE-001 is ready to build" });
+    await done.getByText("Saved to a folder", { exact: true }).waitFor();
+    await done.getByText("You are not signed in to GitHub on this computer.", { exact: true }).waitFor();
+    await done.getByText("/project/.factory/studio/draft/product/ready/SLICE-001", { exact: true }).waitFor();
+    for (const way of ["Add this folder to the project's repository; the builders take it from there.", "Or hand the folder to the engineer, who brings it in with MACH."]) {
+      await done.getByRole("listitem").filter({ hasText: way }).waitFor();
+    }
+    assert.equal(await done.getByRole("link").count(), 0, "no issue link for a folder");
     await clean(watched);
   } finally {
     await watched.context.close();

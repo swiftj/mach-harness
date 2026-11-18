@@ -16,7 +16,7 @@ Requires Node 22.18 or later (the token script uses built-in TypeScript strippin
 | `pnpm install` | Installs exact, pinned versions |
 | `pnpm lint` / `pnpm typecheck` / `pnpm build` | Every package. `typecheck` also checks that `tokens.css` is current and that every contrast pair passes |
 | `pnpm dev:showcase` | The showcase |
-| `pnpm dev:studio:fixtures` | Product Studio answered from `fixtures/`; `?fixture=status.conflicts` picks the status it sees |
+| `pnpm dev:studio:fixtures` | Product Studio answered from `fixtures/`; `?fixture=status.states` picks the status it sees |
 | `MACH_STUDIO_HOST=http://127.0.0.1:<port> pnpm dev:studio` | Product Studio against a running Go host. Open the host's start-up URL once first so the session cookie is set |
 | `pnpm --filter @mach/ui tokens` | Regenerates `tokens.css` after editing `tokens.ts` |
 | `pnpm --filter @mach/showcase build && pnpm capture` | Screenshots in both themes at 1440 and 1100, plus axe, into `apps/showcase/screenshots/` |

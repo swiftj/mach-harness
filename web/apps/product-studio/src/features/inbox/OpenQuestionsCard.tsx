@@ -1,12 +1,11 @@
 import { MessageCircleQuestion } from "lucide-react";
 import { Link } from "react-router";
-import { ArtifactId, Button, Heading, SkeletonText, SliceStatusPill, Text, type Status, type StatusSliceRow, plural } from "@mach/ui";
-import { useDeliveryRead } from "../waves/delivery/ops";
-import { Affects } from "./Affects";
+import { ArtifactId, Button, Heading, SkeletonText, SliceStatusPill, Text, type StatusSliceRow, plural } from "@mach/ui";
+import { useOperation } from "../../api/useOperation";
 
 /** A slice whose interview has questions only the PM can answer. The text comes from `slice.show`. */
-export function OpenQuestionsCard({ slice, status }: { slice: StatusSliceRow; status: Status }) {
-  const show = useDeliveryRead("slice.show", { slice_id: slice.slice_id });
+export function OpenQuestionsCard({ slice }: { slice: StatusSliceRow }) {
+  const show = useOperation("slice.show", { slice_id: slice.slice_id });
   const questions = show.data?.slice.open_questions ?? show.data?.check.open_questions ?? [];
   const headingId = `questions-${slice.slice_id}`;
   return (
@@ -22,9 +21,8 @@ export function OpenQuestionsCard({ slice, status }: { slice: StatusSliceRow; st
           <SliceStatusPill status={slice.status} size="sm" />
         </div>
         <Text size="body-sm" tone="muted">
-          {plural(slice.open_questions, "open question")}. It can't be approved until each is answered.
+          {plural(slice.open_questions, "open question")}. It can't be marked ready until each is answered.
         </Text>
-        <Affects status={status} id={slice.slice_id} />
       </header>
       <div aria-busy={show.loading && !show.data} aria-live="polite">
         {show.loading && !show.data ? (

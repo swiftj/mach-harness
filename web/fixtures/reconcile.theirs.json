@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "data": {
+    "reconciled": "SLICE-004",
+    "took": "theirs",
+    "github_version": 2,
+    "approvals_withdrawn": [],
+    "note": "Your draft now holds the version from GitHub. Mark it ready to approve it yourself."
+  },
+  "refused": null,
+  "hint": null
+}

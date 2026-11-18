@@ -12,11 +12,10 @@ import (
 // The contract's section 3, plus slice.show. Nothing else may be reachable.
 func TestAllowlistIsExactlyTheContract(t *testing.T) {
 	want := []string{
-		"epic.add", "epic.approve", "epic.renumber", "epic.set", "feedback", "project.init", "project.set",
+		"epic.add", "epic.approve", "epic.renumber", "epic.set", "project.init", "project.set",
 		"reconcile", "refresh", "request.link", "request.list", "request.met", "request.pick", "request.show",
-		"send", "send.preview", "slice.approve", "slice.check", "slice.new", "slice.pause",
-		"slice.renumber", "slice.reopen", "slice.resume", "slice.set", "slice.show", "status", "validate",
-		"wave.add", "wave.approve", "wave.new", "wave.remove", "wave.renumber", "where",
+		"slice.check", "slice.new", "slice.pause", "slice.ready",
+		"slice.renumber", "slice.reopen", "slice.resume", "slice.set", "slice.show", "status", "validate", "where",
 	}
 	if got := engine.Names(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("allowlist\n got %v\nwant %v", got, want)
@@ -31,14 +30,54 @@ func TestAllowlistIsExactlyTheContract(t *testing.T) {
 			t.Errorf("%s reports problems as JSON with exit code 1", name)
 		}
 	}
-	// Reading GitHub: only picking up (a live re-read) and marking as met (closing the issue).
-	for _, name := range []string{"request.pick", "request.met"} {
+	// Reaching GitHub: marking ready, reopening, taking a version, picking up a request (a live
+	// re-read) and marking it as met (closing the issue).
+	for _, name := range []string{"slice.ready", "slice.reopen", "reconcile", "request.pick", "request.met"} {
 		if op, _ := engine.Lookup(name); !op.Network || op.ReadOnly {
 			t.Errorf("%s reaches GitHub and changes the workspace", name)
 		}
 	}
 	if op, _ := engine.Lookup("request.link"); op.Network || op.ReadOnly {
 		t.Errorf("request.link changes only the draft and never reaches GitHub")
+	}
+}
+
+// The engine still has commands kept only for another team's tests (docs/mach-next/M11_STUDIO_ISSUES.md,
+// "Leftovers"): slice approve, waves, send, feedback and acceptance. None is reachable by name,
+// and no operation's argument vector starts with one, whatever its arguments.
+func TestTheEnginesLeftoverCommandsAreUnreachable(t *testing.T) {
+	for _, name := range []string{"slice.approve", "wave.new", "wave.add", "wave.remove", "wave.approve", "wave.renumber",
+		"send", "send.preview", "feedback", "acceptance.record", "acceptance.show", "acceptance"} {
+		if _, ok := engine.Lookup(name); ok {
+			t.Errorf("%s is reachable", name)
+		}
+	}
+	leftover := func(argv []string) bool {
+		if len(argv) == 0 {
+			return false
+		}
+		switch argv[0] {
+		case "wave", "send", "feedback", "acceptance":
+			return true
+		}
+		return len(argv) > 1 && argv[0] == "slice" && argv[1] == "approve"
+	}
+	bodies := []string{`{}`, `{"slice_id":"SLICE-001"}`, `{"slice_id":"SLICE-001","take":"mine"}`, `{"identifier":"SLICE-001"}`,
+		`{"identifier":"EPIC-001"}`, `{"epic_id":"EPIC-001"}`, `{"number":42}`, `{"number":42,"slice_id":"SLICE-001"}`}
+	for _, name := range engine.Names() {
+		for _, body := range bodies {
+			got, err := argv(t, name, body)
+			if err == nil && leftover(got) {
+				t.Errorf("%s %s reaches a leftover command: %q", name, body, got)
+			}
+		}
+	}
+	// The slice form of reconcile: a slice ID, never a path, a wave or a field.
+	for _, body := range []string{`{"artifact":"product/project.json","take":"mine"}`, `{"slice_id":"WAVE-001","take":"mine"}`,
+		`{"slice_id":"SLICE-001","take":"mine","field":"title"}`} {
+		if _, err := argv(t, "reconcile", body); err == nil {
+			t.Errorf("reconcile %s was accepted", body)
+		}
 	}
 }
 
@@ -90,22 +129,11 @@ func TestEveryOperationsArgumentVector(t *testing.T) {
 		{"slice.check", `{"slice_id":"SLICE-001"}`, []string{"slice", "check", "SLICE-001"}},
 		{"slice.check", `{"slice_id":"SLICE-001","ready":true}`, []string{"slice", "check", "SLICE-001", "--ready"}},
 		{"slice.show", `{"slice_id":"SLICE-001"}`, []string{"slice", "show", "SLICE-001"}},
-		{"slice.approve", `{"slice_id":"SLICE-001"}`, []string{"slice", "approve", "SLICE-001"}},
+		{"slice.ready", `{"slice_id":"SLICE-001"}`, []string{"slice", "ready", "SLICE-001"}},
 		{"slice.reopen", `{"slice_id":"SLICE-001"}`, []string{"slice", "reopen", "SLICE-001"}},
 		{"slice.renumber", `{"identifier":"SLICE-002"}`, []string{"slice", "renumber", "SLICE-002"}},
-		{"wave.new", `{"slice":["SLICE-001","SLICE-002"]}`, []string{"wave", "new", "--slice=SLICE-001", "--slice=SLICE-002"}},
-		{"wave.add", `{"wave_id":"WAVE-001","slice_ids":["SLICE-002"]}`, []string{"wave", "add", "WAVE-001", "SLICE-002"}},
-		{"wave.remove", `{"wave_id":"WAVE-001","slice_ids":["SLICE-002","SLICE-003"]}`, []string{"wave", "remove", "WAVE-001", "SLICE-002", "SLICE-003"}},
-		{"wave.approve", `{"wave_id":"WAVE-001"}`, []string{"wave", "approve", "WAVE-001"}},
-		{"wave.approve", `{"wave_id":"WAVE-001","actor":"Pat PM"}`, []string{"wave", "approve", "WAVE-001", "--actor=Pat PM"}},
-		{"wave.renumber", `{"identifier":"WAVE-002"}`, []string{"wave", "renumber", "WAVE-002"}},
-		{"reconcile", `{"artifact":"product/epics/EPIC-001.json","take":"theirs","field":"acceptance_criteria"}`,
-			[]string{"reconcile", "product/epics/EPIC-001.json", "--take=theirs", "--field=acceptance_criteria"}},
-		{"reconcile", `{"artifact":"SLICE-001","take":"mine"}`, []string{"reconcile", "SLICE-001", "--take=mine"}},
-		{"send.preview", `{"wave_id":"WAVE-001"}`, []string{"send", "WAVE-001", "--dry-run"}},
-		{"send", `{"wave_id":"WAVE-001"}`, []string{"send", "WAVE-001"}},
-		{"feedback", `{}`, []string{"feedback"}},
-		{"feedback", `{"wave_id":"WAVE-001"}`, []string{"feedback", "WAVE-001"}},
+		{"reconcile", `{"slice_id":"SLICE-001","take":"mine"}`, []string{"reconcile", "SLICE-001", "--take=mine"}},
+		{"reconcile", `{"slice_id":"SLICE-002","take":"theirs"}`, []string{"reconcile", "SLICE-002", "--take=theirs"}},
 		{"request.list", `{}`, []string{"request", "list"}},
 		{"request.show", `{"number":42}`, []string{"request", "show", "42"}},
 		{"request.pick", `{"number":42,"epic":"EPIC-001","title":"Export a report"}`,
@@ -203,7 +231,7 @@ func TestRequestsTheHostRejects(t *testing.T) {
 		{"slice.show", `{"slice_id":"SLICE-001/../x"}`, "SLICE-001"},
 		{"slice.show", `{"slice_id":"slice-001"}`, "SLICE-001"},
 		{"slice.show", `{"slice_id":"SLICE-0000000000000000000000000001"}`, "SLICE-001"},
-		{"wave.approve", `{"wave_id":"WAVE-001; rm -rf /"}`, "WAVE-001"},
+		{"slice.ready", `{"slice_id":"SLICE-001; rm -rf /"}`, "SLICE-001"},
 		{"project.init", `{"id":"Team Space","name":"n","vision":"v"}`, "campaign-platform"},
 		{"project.init", `{"id":"team","name":"","vision":"v"}`, "name is required"},
 		{"project.init", `{"id":"team","name":"n","vision":"v","outcome":[""]}`, "required"},
@@ -211,11 +239,10 @@ func TestRequestsTheHostRejects(t *testing.T) {
 		{"epic.add", `{"title":"a\u0000b"}`, "control character"},
 		{"epic.add", `{"title":"bell\u0007"}`, "control character"},
 		{"slice.new", `{"epic":"EPIC-001","title":"t","depends_on":["SLICE-1"]}`, "SLICE-001"},
-		{"wave.add", `{"wave_id":"WAVE-001","slice_ids":[]}`, "at least 1"},
-		{"reconcile", `{"artifact":"../outside","take":"mine"}`, "needs_reconciling"},
-		{"reconcile", `{"artifact":"--take=theirs","take":"mine"}`, "needs_reconciling"},
-		{"reconcile", `{"artifact":"SLICE-001","take":"both"}`, "mine"},
-		{"reconcile", `{"artifact":"SLICE-001","take":"mine","field":"Bad Field"}`, "field"},
+		{"reconcile", `{"slice_id":"../outside","take":"mine"}`, "SLICE-001"},
+		{"reconcile", `{"slice_id":"--take=theirs","take":"mine"}`, "SLICE-001"},
+		{"reconcile", `{"slice_id":"SLICE-001","take":"both"}`, "mine"},
+		{"reconcile", `{"slice_id":"SLICE-001","take":"mine","field":"title"}`, "Unknown field"},
 		// shape errors from Decode
 		{"epic.approve", `{"epic_id":"EPIC-001","force":true}`, "Unknown field"},
 		{"epic.approve", `{"epic_id":1}`, "wrong type"},

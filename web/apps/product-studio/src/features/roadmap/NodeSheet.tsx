@@ -8,16 +8,18 @@ import {
   Sheet,
   SheetContent,
   SkeletonText,
+  SliceGithubPills,
   SliceStatusPill,
-  SourceBadge,
   StateGlyph,
   Text,
+  githubMarksOf,
   toneClasses,
   type SliceShow,
   type Status,
 } from "@mach/ui";
-import { graphStates, type MachNode } from "@mach/ui/graph";
+import { graphStates, type GraphState, type MachNode } from "@mach/ui/graph";
 import { client } from "../../api/client";
+import { IssueLink, IssueNumber } from "../../shared/IssueLink";
 import { ApproveEpicDialog } from "../vision/ApproveEpicDialog";
 
 export interface NodeSheetProps {
@@ -29,15 +31,16 @@ export interface NodeSheetProps {
   onNewSlice: (epicId: string) => void;
 }
 
-/** What it means for the PM, by graph state. Never presents approval or acceptance as built work. */
-const meaning: Record<string, string> = {
+/** What it means for the PM, by graph state. Never presents approval as built work. */
+const meaning: Record<GraphState, string> = {
   proposed: "Nothing is settled yet.",
   interviewing: "Being worked out in the interview.",
-  ready: "The specification is complete and passes every check. It is waiting for your approval.",
-  approved: "You approved this definition. It reaches engineering when a delivery wave containing it is sent.",
-  submitted: "Sent to engineering for review. Nobody has built anything yet.",
-  accepted: "Engineering accepted the definition into the shared project. It is not built yet.",
-  blocked: "An automatic check on its review request is failing.",
+  ready: "The specification is complete and passes every check. It is waiting for you to mark it ready to build.",
+  approved: "You approved this text and marked it ready.",
+  ready_to_build: "Saved for the builders, who have not taken it yet. Nothing is built yet.",
+  building: "The builders have taken it and are building it.",
+  question: "The builders asked a question about it on GitHub and are waiting for your answer.",
+  shipped: "Built and merged.",
   superseded: "Replaced by later work. Kept for history.",
 };
 
@@ -120,7 +123,6 @@ function Actions({ children }: { children: ReactNode }) {
 function SliceDetail({ id, status }: { id: string; status: Status }) {
   const row = status.slices.find((s) => s.slice_id === id);
   const epic = status.epics.find((e) => e.epic_id === row?.epic_id);
-  const wave = status.waves.find((w) => w.slices.includes(id) && w.status !== "superseded");
   const [show, setShow] = useState<SliceShow | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -146,12 +148,16 @@ function SliceDetail({ id, status }: { id: string; status: Status }) {
           <SliceStatusPill status={row.status} size="sm" />
         </Fact>
         <Fact term="Epic">{epic ? `${epic.epic_id} ${epic.title}` : row.epic_id}</Fact>
-        <Fact term="Where it is">
-          <SourceBadge source={row.source} showDraft />
-        </Fact>
-        {wave ? (
-          <Fact term="Delivery wave">
-            <ArtifactId>{wave.wave_id}</ArtifactId> {wave.sent ? "sent for review" : wave.status === "approved_for_engineering" ? "approved, not sent" : "draft"}
+        {row.github.state_label || githubMarksOf(row.github).length ? (
+          <Fact term="With the builders">
+            <span className="flex flex-wrap gap-1.5">
+              <SliceGithubPills github={row.github} size="sm" />
+            </span>
+          </Fact>
+        ) : null}
+        {row.github.issue ? (
+          <Fact term="Issue">
+            <IssueLink number={row.github.issue} url={row.github.url} />
           </Fact>
         ) : null}
         {show ? (
@@ -209,11 +215,7 @@ function SliceDetail({ id, status }: { id: string; status: Status }) {
           <Button variant="primary" asChild>
             <Link to={`/slices/${id}/interview`}>{row.status === "draft" ? "Start the interview" : "Continue the interview"}</Link>
           </Button>
-        ) : (
-          <Button asChild>
-            <Link to="/waves">Delivery waves</Link>
-          </Button>
-        )}
+        ) : null}
       </Actions>
     </>
   );
@@ -243,9 +245,11 @@ function EpicDetail({
         <Fact term="Status">
           <EpicStatusPill status={epic.status} size="sm" />
         </Fact>
-        <Fact term="Where it is">
-          <SourceBadge source={epic.source} showDraft />
-        </Fact>
+        {epic.issue ? (
+          <Fact term="Issue">
+            <IssueNumber number={epic.issue} />
+          </Fact>
+        ) : null}
       </Facts>
       <div className="flex flex-col gap-2">
         <Text size="body-sm" weight="semibold">
@@ -278,7 +282,7 @@ function EpicDetail({
       </div>
       {epic.status === "proposed" ? (
         <Text size="body-sm" tone="muted">
-          Its slices can be worked on now, but none can be approved until you approve the epic.
+          Its slices can be worked on now, but none can be marked ready until you approve the epic.
         </Text>
       ) : null}
       <Actions>

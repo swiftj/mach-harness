@@ -685,6 +685,18 @@
       "ready": true
     },
     "resume_note": "Settled who may invite and the seat limit. Next: do invitations expire?",
+    "github": {
+      "saved": null,
+      "unfinished": false,
+      "issue": null,
+      "url": null,
+      "state_label": null,
+      "revision": null,
+      "changed_on_github": false,
+      "newer_elsewhere": false,
+      "number_taken": false,
+      "shipped_issues": []
+    },
     "factory_authorized": false
   },
   "refused": null,

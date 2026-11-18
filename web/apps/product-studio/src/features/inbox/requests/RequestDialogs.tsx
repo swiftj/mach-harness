@@ -71,7 +71,7 @@ function PickUpBody({ onOpenChange, item, onDone, also, epics }: DialogProps & {
       onEscapeKeyDown={(e) => act.pending && e.preventDefault()}
       onPointerDownOutside={(e) => act.pending && e.preventDefault()}
       title={also ? `Pick up request #${item.number} as well?` : `Pick up request #${item.number}?`}
-      description="This starts a draft slice from the request. The interview still asks you every question; nothing is approved or sent."
+      description="This starts a draft slice from the request. The interview still asks you every question; nothing is marked ready."
       footer={
         <>
           <DialogClose asChild>
@@ -174,7 +174,7 @@ export function MarkMetDialog({ open, onOpenChange, item, onDone }: DialogProps)
         onOpenChange(next);
       }}
       title={`Mark request #${item.number} as met?`}
-      description="This closes the issue on GitHub as completed. Do it once the slices that meet it are approved."
+      description="This closes the issue on GitHub as completed. Do it once the slices that meet it are marked ready."
       confirmLabel="Mark as met"
       error={act.shown}
       onConfirm={async () => {
