@@ -21,7 +21,7 @@ const sizes = [
 ];
 const themes = ["light", "dark"];
 const screens = [
-  { name: "workspace", hash: "#/" },
+  { name: "home", hash: "#/" },
   { name: "vision", hash: "#/vision" },
   { name: "roadmap", hash: "#/roadmap" },
 ];
@@ -94,20 +94,21 @@ for (const scenario of ["empty", "established"]) {
       }
     }
     if (scenario === "established") {
-      // At 1100 wide the rail is icons only; each names itself in a tooltip on hover and focus.
+      // The secondary screens, behind the top bar's "More" menu.
       await page.setViewportSize({ width: 1100, height: 800 });
       await page.emulateMedia({ colorScheme: "light" });
       await page.goto(`${host.origin}/#/`);
       await settle(page);
-      await page.locator('nav[aria-label="Main"] a').nth(2).hover();
-      await page.getByRole("tooltip").waitFor();
-      await page.screenshot({ path: join(out, "established-rail-tooltip-light-1100.png"), clip: { x: 0, y: 0, width: 420, height: 360 } });
+      await page.getByRole("button", { name: "More" }).click();
+      await page.getByRole("navigation", { name: "More" }).waitFor();
+      await page.screenshot({ path: join(out, "established-more-menu-light-1100.png"), clip: { x: 600, y: 0, width: 500, height: 520 } });
+      await page.keyboard.press("Escape");
       // The structural problem, opened.
       const details = page.locator("details", { hasText: "What the check reported" });
       if (await details.count()) {
         await details.first().locator("summary").click();
         await page.waitForTimeout(200);
-        await page.screenshot({ path: join(out, "established-workspace-structure-light-1100.png") });
+        await page.screenshot({ path: join(out, "established-home-structure-light-1100.png") });
       }
       // The roadmap's detail sheet for a slice, and Vision's epic editor, in both themes.
       await page.setViewportSize({ width: 1440, height: 900 });

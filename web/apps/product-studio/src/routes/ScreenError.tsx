@@ -20,7 +20,7 @@ export function ScreenError() {
             <div className="flex flex-wrap gap-2">
               <Button onClick={() => window.location.reload()}>Try again</Button>
               <Button variant="ghost" asChild>
-                <Link to="/">Go to the workspace</Link>
+                <Link to="/">Go to the project home</Link>
               </Button>
             </div>
           }

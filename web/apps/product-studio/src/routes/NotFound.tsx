@@ -13,7 +13,7 @@ export function NotFound() {
         description="This address does not match a page in Product Studio."
         action={
           <Button asChild>
-            <Link to="/">Go to Home</Link>
+            <Link to="/">Go to the project home</Link>
           </Button>
         }
       />

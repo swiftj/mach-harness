@@ -188,6 +188,7 @@ Shadows are tinted charcoal, never grey-blue. In dark, elevation shows mainly as
 ```
 
 - **Rail** (`NavRail`, `NavSection`, `NavItem`): the current page has `aria-current="page"`, an accent bar, `accent-soft` fill and `accent-ink` label. Below 1180px the rail collapses to icons by itself; the person can toggle it. Collapsed items keep their name (tooltip and `aria-label`), and a badge becomes a dot.
+- **No rail** (`<AppShell topBar>` without `nav`): for a product whose home screen leads everywhere. Product Studio has no rail: the top bar carries the MACH mark, a breadcrumb whose first step (the project's name) goes back to the project home, and a `NavMenu` ("More") with the secondary screens and the theme switch. `NavMenu` is a navigation landmark in a popover: Tab moves through its `NavMenuItem` links, Escape closes it and focus returns to the button, following a link closes it; the current page is marked as in the rail.
 - **Top bar** (`TopBar`): where you are on the left; status (connection) then at most one primary action on the right.
 - **Connection** (`ConnectionIndicator`): two separate links, each with icon and words. *Host*: Connecting, Connected, Host not responding, Session ended. *Shared project*: Refreshed 14:32, Not refreshed yet, Shared project unreachable (with the engine's `problem` in the popover). Changes are announced through a polite live region. Factory Floor uses the host half only.
 - **Skip link**: "Skip to content" is the first tab stop.

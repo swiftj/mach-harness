@@ -18,7 +18,7 @@ export function SpecScreen() {
   if (!SLICE_ID.test(sliceId)) {
     return (
       <Page width="reading">
-        <EmptyState layout="page" headingLevel={1} icon={<SearchX />} title="That is not a slice" description={`"${sliceId}" is not a slice ID such as SLICE-001.`} action={<Button asChild><Link to="/">Go to the workspace</Link></Button>} />
+        <EmptyState layout="page" headingLevel={1} icon={<SearchX />} title="That is not a slice" description={`"${sliceId}" is not a slice ID such as SLICE-001.`} action={<Button asChild><Link to="/">Go to the project home</Link></Button>} />
       </Page>
     );
   }

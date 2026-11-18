@@ -148,6 +148,12 @@ export function RequirementsSection({ model, diagnostics }: { model: SpecModel; 
   );
 }
 
+/** A decision-table cell in words: every value of the condition reads "Any". */
+export function matrixCell(values: string[], all: string[]): { any: boolean; text: string } {
+  const any = values.length > 1 && values.length >= all.length;
+  return { any, text: any ? "Any" : values.join(" or ") };
+}
+
 export function DecisionTableSection({ model, diagnostics }: { model: SpecModel; diagnostics: Diagnostic[] }) {
   const matrix = model.decision_matrix;
   return (
@@ -182,11 +188,10 @@ export function DecisionTableSection({ model, diagnostics }: { model: SpecModel;
                     <ArtifactId>{rule.id}</ArtifactId>
                   </th>
                   {matrix.conditions.map((c) => {
-                    const values = rule.conditions[c.name] ?? [];
-                    const any = values.length > 1 && values.length >= c.values.length;
+                    const cell = matrixCell(rule.conditions[c.name] ?? [], c.values);
                     return (
-                      <td key={c.name} className={cn("px-3 py-2.5", any ? "text-ink-subtle" : "text-ink")}>
-                        {any ? "Any" : values.join(" or ")}
+                      <td key={c.name} className={cn("px-3 py-2.5", cell.any ? "text-ink-subtle" : "text-ink")}>
+                        {cell.text}
                       </td>
                     );
                   })}

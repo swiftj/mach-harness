@@ -1,16 +1,34 @@
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
-import { Link, useParams } from "react-router";
+import { useEffect, type ReactNode } from "react";
+import { Link, useNavigate, useParams } from "react-router";
 import { ArrowLeft, CircleAlert, MessagesSquare, Pause, SearchX, Square, Users, WifiOff } from "lucide-react";
-import { ArtifactId, Banner, Button, EmptyState, ErrorState, Heading, LoadingState, Page, SliceStatusPill, Spinner, Text, Tooltip, describeError, HintAction } from "@mach/ui";
+import {
+  Badge,
+  Banner,
+  Button,
+  Disclosure,
+  EmptyState,
+  ErrorState,
+  Heading,
+  HintAction,
+  LoadingState,
+  Page,
+  RichText,
+  Spinner,
+  Text,
+  Tooltip,
+  describeError,
+} from "@mach/ui";
+import { ENGINE_ID as SLICE_ID, type SliceShow } from "@mach/ui/api";
 import { Composer } from "./Composer";
 import { ContinueInClaudeCode } from "./ContinueInClaudeCode";
-import { isBusy } from "./model";
+import { isBusy, type Decision } from "./model";
 import { QuestionCard } from "./QuestionCard";
-import { SpecPreview } from "./SpecPreview";
+import { SliceDocument } from "./SliceDocument";
 import { Transcript } from "./Transcript";
 import { useInterview, type InterviewController } from "./useInterview";
-import { ENGINE_ID as SLICE_ID } from "@mach/ui/api";
 import { useSliceShow } from "../../api/useSliceShow";
+import { useStatus } from "../../api/store";
+import { ApproveDialog } from "../spec/SliceActs";
 
 const PAUSE_REQUEST = "I need to stop here. Please save where we are so I can continue later.";
 
@@ -26,8 +44,15 @@ export function InterviewScreen() {
   return <InterviewWorkspace key={sliceId} sliceId={sliceId} />;
 }
 
+/**
+ * The interview, with room to breathe: the question takes the larger half (where it stands, the
+ * question in large type, the recommendation, the ways to answer, what is settled so far); the
+ * slice builds up beside it as a document. When the engine's check says the slice is ready, the
+ * approval act takes the question's place.
+ */
 function InterviewWorkspace({ sliceId }: { sliceId: string }) {
   const show = useSliceShow(sliceId);
+  const status = useStatus();
   const iv = useInterview(sliceId);
   const { model } = iv;
 
@@ -40,32 +65,39 @@ function InterviewWorkspace({ sliceId }: { sliceId: string }) {
   }, [model.draftChanges, reload]);
 
   const title = show.data?.slice.title ?? sliceId;
+  const epicId = show.data?.slice.epic_id;
+  const epicTitle = status.data?.epics.find((e) => e.epic_id === epicId)?.title ?? null;
   const busy = iv.phase === "live" && !model.ended && (model.turnRunning || isBusy(model.hostState));
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-3 border-b border-line px-8 py-4">
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <div className="flex flex-wrap items-center gap-2 text-body-sm text-ink-muted">
-            <Link to={`/slices/${sliceId}`} className="inline-flex items-center gap-1 rounded-xs text-accent-ink hover:underline">
-              <ArrowLeft aria-hidden="true" className="size-4" />
-              Specification
-            </Link>
-            <span aria-hidden="true">/</span>
-            <ArtifactId>{sliceId}</ArtifactId>
-            {show.data ? <SliceStatusPill status={show.data.slice.status} size="sm" /> : null}
-          </div>
-          <Heading level={1} size="title-1" className="truncate">
+      <header className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-2 border-b border-line px-10 py-3">
+        <div className="flex min-w-0 flex-1 items-center gap-4">
+          <Link to={`/slices/${sliceId}`} className="inline-flex shrink-0 items-center gap-1 rounded-xs text-body-sm text-accent-ink hover:underline">
+            <ArrowLeft aria-hidden="true" className="size-4" />
+            Specification
+          </Link>
+          <Heading level={1} size="title-3" className="truncate">
             Interview: {title}
           </Heading>
         </div>
         <InterviewActions iv={iv} busy={busy} />
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(19rem,25rem)]">
-        <Conversation iv={iv} busy={busy} sliceId={sliceId} editable={show.data?.editable ?? true} editRefusal={show.data?.edit_refusal ?? null} resumeNote={show.data?.resume_note ?? null} interviewedBefore={Boolean(show.data && show.data.slice.status !== "draft")} />
-        <aside aria-label="Draft specification and decisions" className="min-h-0 overflow-y-auto border-l border-line bg-surface px-6 py-4">
-          <SpecPreview sliceId={sliceId} show={show} decisions={model.decisions} />
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.15fr)_minmax(22rem,1fr)]">
+        <section aria-label="Interview" className="min-h-0 overflow-y-auto px-10 py-10">
+          <div className="mx-auto flex max-w-[44rem] flex-col gap-10">
+            <Current iv={iv} busy={busy} sliceId={sliceId} show={show.data} onApproved={show.reload} />
+            <Settled decisions={model.decisions} />
+            {iv.phase === "live" && model.timeline.length ? (
+              <Disclosure summary="The whole conversation" className="bg-transparent">
+                <Transcript model={model} onRetry={model.lastReply && !busy ? () => iv.reply(model.lastReply ?? "", "reply") : null} />
+              </Disclosure>
+            ) : null}
+          </div>
+        </section>
+        <aside aria-label="The slice so far" className="min-h-0 overflow-y-auto border-l border-line bg-surface px-10 py-10">
+          <SliceDocument sliceId={sliceId} show={show} epicTitle={epicTitle} />
         </aside>
       </div>
     </div>
@@ -78,20 +110,20 @@ function InterviewActions({ iv, busy }: { iv: InterviewController; busy: boolean
     <div className="flex shrink-0 items-center gap-2">
       <StatusLine iv={iv} busy={busy} />
       {busy ? (
-        <Button variant="secondary" loading={iv.sending === "interrupt"} onClick={iv.interrupt}>
+        <Button variant="secondary" size="sm" loading={iv.sending === "interrupt"} onClick={iv.interrupt}>
           <Square aria-hidden="true" />
           Interrupt
         </Button>
       ) : (
         <Tooltip content="Asks the interviewer to save what is settled and the next question, then wait.">
-          <Button variant="secondary" disabled={iv.sending !== null} onClick={() => iv.reply(PAUSE_REQUEST, "reply")}>
+          <Button variant="secondary" size="sm" disabled={iv.sending !== null} onClick={() => iv.reply(PAUSE_REQUEST, "reply")}>
             <Pause aria-hidden="true" />
             Save and pause
           </Button>
         </Tooltip>
       )}
       <Tooltip content="Ends the interview now. Your draft and the saved note stay; you can continue later.">
-        <Button variant="ghost" loading={iv.sending === "stop"} onClick={iv.stop}>
+        <Button variant="ghost" size="sm" loading={iv.sending === "stop"} onClick={iv.stop}>
           Stop
         </Button>
       </Tooltip>
@@ -127,181 +159,243 @@ function StatusLine({ iv, busy }: { iv: InterviewController; busy: boolean }) {
   );
 }
 
-function Conversation({
-  iv,
-  busy,
-  sliceId,
-  editable,
-  editRefusal,
-  resumeNote,
-  interviewedBefore,
-}: {
-  iv: InterviewController;
-  busy: boolean;
-  interviewedBefore: boolean;
-  sliceId: string;
-  editable: boolean;
-  editRefusal: string | null;
-  resumeNote: string | null;
-}) {
-  const scroller = useRef<HTMLDivElement>(null);
-  const pinned = useRef(true);
+/** What the PM answers now: the question, the interviewer's latest reply, or the approval when nothing is open. */
+function Current({ iv, busy, sliceId, show, onApproved }: { iv: InterviewController; busy: boolean; sliceId: string; show: SliceShow | null; onApproved: () => void }) {
   const { model } = iv;
-  const streamed = Object.values(model.messages).reduce((n, m) => n + m.text.length, 0);
-
-  // A new entry or a new question always brings the end of the conversation into view; streamed
-  // text follows only while the person has not scrolled up to read something earlier.
-  useLayoutEffect(() => {
-    const node = scroller.current;
-    if (node) node.scrollTop = node.scrollHeight;
-    pinned.current = true;
-  }, [model.timeline.length, model.awaiting, busy]);
-  useLayoutEffect(() => {
-    const node = scroller.current;
-    if (node && pinned.current) node.scrollTop = node.scrollHeight;
-  }, [streamed]);
-
-  const center = (children: ReactNode) => (
-    <section aria-label="Conversation" className="min-h-0 overflow-y-auto px-8 py-8">
-      <div className="mx-auto max-w-[46rem]">{children}</div>
-    </section>
-  );
+  const ready = Boolean(show && show.check.ready && show.slice.status !== "approved_for_engineering" && show.slice.status !== "superseded");
+  const approval = ready && show ? <ApprovalOffer show={show} onApproved={onApproved} /> : null;
 
   switch (iv.phase) {
     case "loading":
-      return center(<LoadingState label="Connecting to the interviewer" />);
+      return <LoadingState label="Connecting to the interviewer" />;
     case "starting":
-      return center(<LoadingState label="Starting the interviewer. The first reply takes about 20 seconds while it reads your project." />);
+      return <LoadingState label="Starting the interviewer. The first reply takes about 20 seconds while it reads your project." />;
     case "unavailable":
-      return center(iv.capability ? <ContinueInClaudeCode sliceId={sliceId} capability={iv.capability} /> : null);
+      return (
+        <>
+          {approval}
+          {iv.capability ? <ContinueInClaudeCode sliceId={sliceId} capability={iv.capability} /> : null}
+        </>
+      );
     case "conflict":
-      return center(
+      return (
         <Banner tone="warning" title="The interview cannot be opened here" actions={<Button onClick={iv.retryLoad}>Check again</Button>}>
           {/* The host's own words when it gave them; otherwise the fact the lookup reported. */}
           {iv.problem?.kind === "conflict" ? iv.problem.message : "Another process holds this slice's interview."}
-        </Banner>,
+        </Banner>
       );
     case "refused":
     case "error": {
       const error = iv.problem;
       const described = error ? describeError(error) : { title: "The interview could not start", message: "" };
-      return center(
+      return (
         <ErrorState
           icon={<CircleAlert />}
           title={error?.kind === "refused" ? "The interview did not start" : described.title}
           message={error?.kind === "refused" ? error.message : described.message}
           hint={error?.hint}
           action={<Button onClick={iv.retryLoad}>Try again</Button>}
-        />,
+        />
       );
     }
     case "idle":
-      return center(<StartPanel iv={iv} editable={editable} editRefusal={editRefusal} resumeNote={resumeNote} sliceId={sliceId} interviewedBefore={interviewedBefore} />);
+      return (
+        <>
+          {approval}
+          <StartPanel
+            iv={iv}
+            editable={show?.editable ?? true}
+            editRefusal={show?.edit_refusal ?? null}
+            resumeNote={show?.resume_note ?? null}
+            sliceId={sliceId}
+            interviewedBefore={Boolean(show && show.slice.status !== "draft")}
+            quiet={Boolean(approval)}
+          />
+        </>
+      );
     case "live":
       break;
   }
 
   const awaiting = model.awaiting ? model.messages[model.awaiting] : null;
-  const lastFinal = awaiting ?? null;
-  const announce = lastFinal?.question
-    ? `Question ${lastFinal.question.number}: ${lastFinal.question.title}. Recommended: ${lastFinal.question.recommendation}`
-    : lastFinal
+  const announce = awaiting?.question
+    ? `Question ${awaiting.question.number}: ${awaiting.question.title}. Recommended: ${awaiting.question.recommendation}`
+    : awaiting
       ? "The interviewer replied."
       : "";
+  const last = model.timeline.at(-1);
+  const streaming = Object.values(model.messages).find((m) => !m.final && m.text);
+
+  let body: ReactNode;
+  if (model.ended) {
+    const reason = model.ended.reason;
+    body = (
+      <>
+        {approval}
+        <Banner
+          tone={reason === "failed" ? "danger" : reason === "host_shutdown" ? "warning" : "info"}
+          title={reason === "failed" ? "The interview stopped because of a problem" : reason === "host_shutdown" ? "Product Studio's host was stopped" : "Interview stopped"}
+          actions={
+            <Button variant={approval ? "secondary" : "primary"} onClick={iv.start}>
+              Continue the interview
+            </Button>
+          }
+        >
+          Your draft and the saved note remain. Continuing picks up from them.
+        </Banner>
+      </>
+    );
+  } else if (awaiting?.question) {
+    body = <QuestionCard key={awaiting.question.message_id} question={awaiting.question} busy={iv.sending === "reply"} onAnswer={iv.reply} />;
+  } else if (busy) {
+    body = (
+      <div className="flex flex-col gap-4">
+        <p className="flex items-center gap-2 text-body text-ink-muted">
+          <Spinner size="sm" />
+          {model.lastActivity ?? "The interviewer is working on a reply"}
+        </p>
+        {streaming ? <RichText text={streaming.text} editorial className="text-ink-muted" /> : null}
+        <Text size="body-sm" tone="subtle">
+          You can reply when the interviewer has finished. Interrupt it if it is going the wrong way.
+        </Text>
+      </div>
+    );
+  } else {
+    body = (
+      <div className="flex flex-col gap-6">
+        {approval}
+        {awaiting ? (
+          <div className="flex flex-col gap-2">
+            <span className="flex items-center gap-2 text-body-sm text-ink-muted">
+              The interviewer
+              {awaiting.kind === "confirmation" ? <Badge tone="info">Summary to confirm</Badge> : null}
+            </span>
+            <RichText text={awaiting.text} editorial className="text-ink" />
+          </div>
+        ) : null}
+        <Composer
+          key={model.awaiting ?? "free"}
+          focusOnMount={Boolean(awaiting) && !approval}
+          busy={iv.sending === "reply"}
+          label={approval ? "Or tell the interviewer what is missing" : awaiting?.kind === "confirmation" ? "Does this capture the intent?" : "Your reply"}
+          hint={awaiting?.kind === "confirmation" && !approval ? "Say yes to have the specification written up, or say what is missing." : undefined}
+          onSend={(text) => iv.reply(text, "reply")}
+        />
+      </div>
+    );
+  }
 
   return (
-    <section aria-label="Conversation" className="flex min-h-0 flex-col">
-      {/* The history scrolls on its own, so it must be reachable by keyboard (axe scrollable-region-focusable). */}
-      <div
-        ref={scroller}
-        role="region"
-        aria-label="Conversation history"
-        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-        tabIndex={0}
-        className="min-h-0 flex-1 overflow-y-auto px-8 py-6 focus-visible:outline-offset-[-2px]"
-        onScroll={(event) => {
-          const node = event.currentTarget;
-          pinned.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
-        }}
-      >
-        <div className="mx-auto flex max-w-[46rem] flex-col gap-5">
-          <Text size="caption" tone="subtle" className="border-b border-line pb-3">
-            The interviewer asks one question at a time and proposes an answer. Nothing it says is approved: the specification beside this
-            conversation is what the engine checked, and only you approve it.
-          </Text>
-          {model.connection === "reconnecting" ? (
-            <Banner tone="warning" title="Connection to Product Studio lost. Reconnecting." live="polite">
-              Nothing you said is lost. The conversation catches up when the connection returns.
-            </Banner>
-          ) : null}
-          <Transcript model={model} onRetry={model.lastReply && !busy ? () => iv.reply(model.lastReply ?? "", "reply") : null} />
-          {busy && !model.lastActivity && !Object.values(model.messages).some((m) => !m.final) ? (
-            <p className="flex items-center gap-2 text-body-sm text-ink-muted">
-              <Spinner size="sm" />
-              The interviewer is working on a reply
-            </p>
-          ) : null}
-        </div>
-      </div>
+    <div className="flex flex-col gap-6">
+      {model.connection === "reconnecting" ? (
+        <Banner tone="warning" title="Connection to Product Studio lost. Reconnecting." live="polite">
+          Nothing you said is lost. The conversation catches up when the connection returns.
+        </Banner>
+      ) : null}
+      {last?.type === "notice" ? (
+        <Banner
+          tone={last.tone}
+          title={last.title}
+          actions={
+            last.retry && model.lastReply && !busy ? (
+              <Button size="sm" onClick={() => iv.reply(model.lastReply ?? "", "reply")}>
+                Send again
+              </Button>
+            ) : undefined
+          }
+        >
+          {last.text}
+        </Banner>
+      ) : null}
+      {iv.problem ? (
+        <Banner
+          tone="danger"
+          title={iv.problem.kind === "conflict" ? "The interviewer is still working on a reply" : describeError(iv.problem).title}
+          actions={iv.problem.hint ? <HintAction hint={iv.problem.hint} /> : undefined}
+        >
+          {iv.problem.kind === "conflict" ? "Wait for it to finish, or interrupt it." : iv.problem.message}
+        </Banner>
+      ) : null}
+      {body}
       <div className="sr-only" aria-live="polite">
         {announce}
       </div>
-      <div className="shrink-0 border-t border-line bg-canvas px-8 py-4">
-        <div className="mx-auto flex max-w-[46rem] flex-col gap-3">
-          {iv.problem ? (
-            <Banner
-              tone="danger"
-              title={iv.problem.kind === "conflict" ? "The interviewer is still working on a reply" : describeError(iv.problem).title}
-              actions={iv.problem.hint ? <HintAction hint={iv.problem.hint} /> : undefined}
-            >
-              {iv.problem.kind === "conflict" ? "Wait for it to finish, or interrupt it." : iv.problem.message}
-            </Banner>
-          ) : null}
-          <Dock iv={iv} busy={busy} />
-        </div>
+    </div>
+  );
+}
+
+/**
+ * The engine reports the slice ready (its check passes, nothing open): the approval act, with what
+ * approving does today. The dialog says it again and the engine checks once more.
+ */
+function ApprovalOffer({ show, onApproved }: { show: SliceShow; onApproved: () => void }) {
+  const navigate = useNavigate();
+  return (
+    <section aria-labelledby="approval-title" className="flex flex-col gap-5">
+      <Heading level={2} size="title-1" id="approval-title">
+        Nothing is left open. Read it through, then approve it.
+      </Heading>
+      <div className="flex flex-col gap-1 rounded-sm border-l-2 border-accent bg-accent-soft px-4 py-3">
+        <p className="text-label text-accent-ink">What approving means</p>
+        <p className="text-body-lg text-ink">
+          You record that this specification is what you want built, and it is frozen until you reopen it. Nothing goes to engineering until you
+          send it in a delivery wave.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <ApproveDialog
+          show={show}
+          primary
+          onDone={() => {
+            onApproved();
+            void navigate("/");
+          }}
+        />
+        <Button variant="secondary" asChild>
+          <Link to="/">Keep it as a draft</Link>
+        </Button>
       </div>
     </section>
   );
 }
 
-function Dock({ iv, busy }: { iv: InterviewController; busy: boolean }) {
-  const { model } = iv;
-  if (model.ended) {
-    const reason = model.ended.reason;
-    return (
-      <Banner
-        tone={reason === "failed" ? "danger" : reason === "host_shutdown" ? "warning" : "info"}
-        title={reason === "failed" ? "The interview stopped because of a problem" : reason === "host_shutdown" ? "Product Studio's host was stopped" : "Interview stopped"}
-        actions={
-          <Button variant="primary" onClick={iv.start}>
-            Continue the interview
-          </Button>
-        }
-      >
-        Your draft and the saved note remain. Continuing picks up from them.
-      </Banner>
-    );
-  }
-  const awaiting = model.awaiting ? model.messages[model.awaiting] : null;
-  if (awaiting?.question) {
-    return <QuestionCard key={awaiting.question.message_id} question={awaiting.question} busy={iv.sending === "reply"} onAnswer={iv.reply} />;
-  }
-  if (busy) {
-    return (
-      <Text size="body-sm" tone="muted" className="py-2">
-        You can reply when the interviewer has finished. Interrupt it if it is going the wrong way.
-      </Text>
-    );
-  }
+const decisionWords: Record<Decision["answer"], string> = {
+  accepted: "Accepted",
+  revised: "Your answer",
+  deferred: "Left open",
+  delegated: "Interviewer decides",
+  explain: "Asked why",
+  reply: "Replied",
+};
+
+/** The answers given so far in this conversation, latest last; all of them behind a disclosure. */
+function Settled({ decisions }: { decisions: Decision[] }) {
+  if (!decisions.length) return null;
+  const recent = decisions.slice(-3);
+  const row = (d: Decision) => (
+    <li key={d.messageId} className="grid grid-cols-[minmax(0,1fr)_minmax(0,14rem)] gap-4 border-t border-line py-2.5 first:border-t-0">
+      <span className="text-body-sm text-ink">{d.title}</span>
+      <span className="flex flex-col items-end gap-0.5 text-right">
+        <Badge tone={d.answer === "deferred" ? "warning" : d.answer === "revised" ? "info" : "neutral"}>{decisionWords[d.answer]}</Badge>
+        <span className="line-clamp-2 text-caption text-ink-muted">{d.answer === "accepted" || d.answer === "delegated" ? (d.recommendation.split(/(?<=\.)\s+/)[0] ?? d.recommendation) : d.text}</span>
+      </span>
+    </li>
+  );
   return (
-    <Composer
-      key={model.awaiting ?? "free"}
-      focusOnMount={Boolean(awaiting)}
-      busy={iv.sending === "reply"}
-      label={awaiting?.kind === "confirmation" ? "Does this capture the intent?" : "Your reply"}
-      hint={awaiting?.kind === "confirmation" ? "Say yes to have the specification written up, or say what is missing." : undefined}
-      onSend={(text) => iv.reply(text, "reply")}
-    />
+    <section aria-labelledby="settled-title" className="flex flex-col gap-2 border-t border-line pt-6">
+      <Heading level={2} size="title-3" id="settled-title">
+        Settled so far
+      </Heading>
+      <ol>{recent.map(row)}</ol>
+      {decisions.length > recent.length ? (
+        <Disclosure summary={`Show all ${decisions.length}`} className="bg-transparent">
+          <ol>{decisions.map(row)}</ol>
+        </Disclosure>
+      ) : null}
+      <Text size="caption" tone="subtle">
+        Kept in this browser; question numbers restart each session. The slice beside this is the record.
+      </Text>
+    </section>
   );
 }
 
@@ -312,6 +406,7 @@ function StartPanel({
   resumeNote,
   sliceId,
   interviewedBefore,
+  quiet,
 }: {
   iv: InterviewController;
   editable: boolean;
@@ -319,6 +414,8 @@ function StartPanel({
   resumeNote: string | null;
   sliceId: string;
   interviewedBefore: boolean;
+  /** The approval is offered above: starting the interview again is the lesser choice. */
+  quiet: boolean;
 }) {
   const saved = Boolean(iv.summary) || Boolean(resumeNote) || interviewedBefore;
   if (!editable) {
@@ -339,7 +436,7 @@ function StartPanel({
             : "The interviewer asks one yes-or-no question at a time, each with a recommended answer. It reads your project first, so the first question takes about 20 seconds."
         }
         action={
-          <Button variant="primary" size="lg" onClick={iv.start}>
+          <Button variant={quiet ? "secondary" : "primary"} size="lg" onClick={iv.start}>
             {saved ? "Continue the interview" : "Start the interview"}
           </Button>
         }
@@ -357,3 +454,4 @@ function StartPanel({
     </div>
   );
 }
+

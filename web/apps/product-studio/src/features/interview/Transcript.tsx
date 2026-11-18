@@ -108,12 +108,14 @@ export function Transcript({
 
 function InterviewerEntry({ message, awaiting }: { message: InterviewerMessage; awaiting: boolean }) {
   const q = message.question;
-  // The question being asked lives in the question card below; here only its preface stays in the flow.
+  // The reply being answered is shown in full above the conversation; here it is not repeated.
+  if (awaiting && !q) return <p className="text-body-sm text-ink-muted">The interviewer's latest reply is shown above.</p>;
+  // The question being asked lives in the question card above; here only its preface stays in the flow.
   if (q && awaiting) {
     return q.preface ? (
       <Speaker>
         <RichText text={q.preface} />
-        <p className="mt-2 text-body-sm text-ink-muted">Question {q.number} is below.</p>
+        <p className="mt-2 text-body-sm text-ink-muted">Question {q.number} is asked above.</p>
       </Speaker>
     ) : null;
   }
