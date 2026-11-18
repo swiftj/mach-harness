@@ -5,7 +5,6 @@ import { ArtifactId, Banner, Button, EpicStatusPill, ErrorState, Field, Heading,
 import { useEngineAct } from "../../api/act";
 import { useStatus } from "../../api/store";
 import { IssueNumber } from "../../shared/IssueLink";
-import { ApproveEpicDialog } from "./ApproveEpicDialog";
 import { EpicSheet, knownCriteria } from "./EpicSheet";
 import { NewSliceDialog } from "../roadmap/NewSliceDialog";
 
@@ -293,7 +292,6 @@ function ProjectEditor({ status }: { status: Status }) {
 
 function Epics({ status }: { status: Status }) {
   const [sheet, setSheet] = useState<{ mode: "add" } | { mode: "edit"; epic: StatusEpicRow } | null>(null);
-  const [approve, setApprove] = useState<StatusEpicRow | null>(null);
   const [newSlice, setNewSlice] = useState<string | null>(null);
   const act = useEngineAct();
   const slicesOf = useMemo(() => {
@@ -302,7 +300,7 @@ function Epics({ status }: { status: Status }) {
     return map;
   }, [status.slices]);
 
-  const setEpicStatus = async (epic: StatusEpicRow, next: "deferred" | "proposed") => {
+  const setEpicStatus = async (epic: StatusEpicRow, next: StatusEpicRow["status"]) => {
     const result = await act.run("epic.set", { epic_id: epic.epic_id, status: next });
     if (result) toast({ tone: "success", title: next === "deferred" ? `Set ${epic.epic_id} aside` : `Brought back ${epic.epic_id}`, description: epic.title });
   };
@@ -314,7 +312,7 @@ function Epics({ status }: { status: Status }) {
           <Heading level={2} id="epics-title">
             Epics
           </Heading>
-          <Text tone="muted">The larger capabilities that make up the product. Approving an epic lets its slices be marked ready to build.</Text>
+          <Text tone="muted">The larger capabilities that make up the product. Each holds the slices of intent that deliver it; you mark each slice ready to build on its own.</Text>
         </div>
         <Button size="sm" variant="ghost" className="self-start" onClick={() => setSheet({ mode: "add" })}>
           <Plus aria-hidden="true" />
@@ -332,7 +330,7 @@ function Epics({ status }: { status: Status }) {
             const slices = slicesOf.get(epic.epic_id) ?? [];
             const criteria = epic.acceptance_criteria ?? knownCriteria(epic.epic_id);
             return (
-              <li key={epic.epic_id} className={cn("grid grid-cols-[minmax(0,1fr)_auto] gap-x-6 gap-y-2 py-5", epic.status === "superseded" && "opacity-70")}>
+              <li key={epic.epic_id} className={cn("grid grid-cols-[minmax(0,1fr)_auto] gap-x-6 gap-y-2 py-5", epic.status === "deferred" && "opacity-70")}>
                 <div className="flex min-w-0 flex-col gap-2">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                     <ArtifactId>{epic.epic_id}</ArtifactId>
@@ -356,26 +354,21 @@ function Epics({ status }: { status: Status }) {
                   </Text>
                 </div>
                 <div className="flex flex-wrap items-start justify-end gap-2">
-                  {epic.status === "proposed" ? (
-                    <Button size="sm" variant="primary" aria-label={`Approve this epic’s scope: ${epic.epic_id}`} onClick={() => setApprove(epic)}>
-                      Approve this epic’s scope
-                    </Button>
-                  ) : null}
-                  <Button size="sm" onClick={() => setNewSlice(epic.epic_id)} disabled={epic.status === "superseded" || epic.status === "completed"}>
+                  <Button size="sm" onClick={() => setNewSlice(epic.epic_id)}>
                     Start a slice
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setSheet({ mode: "edit", epic })}>
                     Edit
                   </Button>
-                  {epic.status === "proposed" ? (
+                  {epic.status === "deferred" ? (
+                    <Button size="sm" variant="ghost" onClick={() => void setEpicStatus(epic, "open")} disabled={act.pending}>
+                      Bring back
+                    </Button>
+                  ) : (
                     <Button size="sm" variant="ghost" onClick={() => void setEpicStatus(epic, "deferred")} disabled={act.pending}>
                       Set aside
                     </Button>
-                  ) : epic.status === "deferred" ? (
-                    <Button size="sm" variant="ghost" onClick={() => void setEpicStatus(epic, "proposed")} disabled={act.pending}>
-                      Bring back
-                    </Button>
-                  ) : null}
+                  )}
                 </div>
               </li>
             );
@@ -394,11 +387,6 @@ function Epics({ status }: { status: Status }) {
       )}
 
       <EpicSheet state={sheet} onClose={() => setSheet(null)} />
-      <ApproveEpicDialog
-        epic={approve}
-        sliceTitles={approve ? (slicesOf.get(approve.epic_id) ?? []).map((s) => `${s.slice_id} ${s.title}`) : []}
-        onOpenChange={(open) => !open && setApprove(null)}
-      />
       <NewSliceDialog open={newSlice !== null} onOpenChange={(open) => !open && setNewSlice(null)} epics={status.epics} epicId={newSlice} />
     </section>
   );

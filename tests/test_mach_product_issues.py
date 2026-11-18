@@ -403,7 +403,6 @@ class IssuesBase(Base):
         project = project or self.a
         self.ok(project, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
         self.ok(project, "epic", "add", "--title", "Team membership", "--criterion", "Only invited people can join")
-        self.ok(project, "epic", "approve", "EPIC-001")
 
     def drafted(self, project=None, title="Invite a teammate", depends=()):
         project = project or self.a
@@ -488,8 +487,6 @@ class ReadyTest(IssuesBase):
         self.ok(self.a, "epic", "add", "--title", "Billing", "--criterion", "Invoices are sent")
         slice_id = self.ok(self.a, "slice", "new", "--epic", "EPIC-002", "--title", "Send an invoice")["slice"]["slice_id"]
         self.write_slice(self.a, slice_id)
-        self.assertIn("epic EPIC-002 is proposed, not approved", self.refused(self.a, "slice", "ready", slice_id))
-        self.ok(self.a, "epic", "approve", "EPIC-002")
         self.draft(self.a, f"product/intents/{slice_id}.md").unlink()
         self.assertIn("cannot be marked ready yet", self.refused(self.a, "slice", "ready", slice_id))
         self.assertEqual(self.gh()["calls"], [])  # the gates are judged before GitHub is asked anything

@@ -1,5 +1,5 @@
 // A project with something on every screen, built through the real engine (the terminal path) and
-// the stand-in gh: an approved and a proposed epic, a slice marked ready that the builders took,
+// the stand-in gh: two epics, a slice marked ready that the builders took,
 // one edited on GitHub after it was approved, one someone else saved a newer version of, a paused
 // slice with open questions, and a fresh draft.
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -28,7 +28,6 @@ export function seedRich(world) {
   };
   ok("project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together without friction.", "--outcome", "Teams can work together", "--outcome", "Admins stay in control of who has access");
   ok("epic", "add", "--title", "Team membership", "--criterion", "Only invited people can join", "--criterion", "Admins can see who is invited");
-  ok("epic", "approve", "EPIC-001");
   // Marked ready, and taken by the builders.
   drafted("SLICE-001", "Invite a teammate");
   const building = ok("slice", "ready", "SLICE-001").issue;
@@ -47,7 +46,7 @@ issue["body"] = issue["body"].replace("An admin", "Anyone")`, edited);
   drafted("SLICE-004", "Remove a teammate", specFor("SLICE-004").replace("## Open questions\n\n- None.", OPEN_QUESTIONS));
   ok("slice", "check", "SLICE-004");
   ok("slice", "pause", "SLICE-004", "--note", "Settled who may remove a teammate. Next: does access end at once or at the end of the billing period?");
-  // A second epic, not yet approved, with a fresh draft.
+  // A second epic, with a fresh draft.
   ok("epic", "add", "--title", "Workspace settings", "--criterion", "Admins can rename the workspace");
   ok("slice", "new", "--epic", "EPIC-002", "--title", "Rename the workspace");
   ok("refresh");

@@ -109,12 +109,20 @@ func TestEveryOperationAgainstTheRealEngine(t *testing.T) {
 	if shown := mustOK(t, e, "slice.show", `{"slice_id":"SLICE-001"}`); shown["editable"] != true {
 		t.Fatalf("slice.show: %v", shown)
 	}
-	mustFail(t, e, "slice.ready", `{"slice_id":"SLICE-001"}`, engine.KindRefused, "epic EPIC-001 is proposed")
-	if env := do(t, e, "slice.ready", `{"slice_id":"SLICE-001"}`); strings.Contains(env.Error.Message, "studio.py") ||
-		string(env.Error.Hint) != `{"kind": "approve_epic", "target": "EPIC-001"}` {
-		t.Fatalf("the app's refusal: %q hint %s", env.Error.Message, env.Error.Hint)
+	// A slice under a new epic needs no step for the epic. A refusal that remains: an open question,
+	// worded as the reasons alone, because the app titles the refusal itself.
+	spec := testkit.Draft(project, "specs", "slices", testkit.SpecName)
+	asked := strings.Replace(string(testkit.Fixture(t)), "## Open questions\n\n- None.", "## Open questions\n\n- Do invitations expire? Follow up: ask Legal.", 1)
+	if err := os.WriteFile(spec, []byte(asked), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	mustOK(t, e, "epic.approve", `{"epic_id":"EPIC-001"}`)
+	if env := do(t, e, "slice.ready", `{"slice_id":"SLICE-001"}`); env.OK || env.Error.Kind != engine.KindRefused ||
+		env.Error.Message != "open question: Do invitations expire?" || len(env.Error.Hint) != 0 {
+		t.Fatalf("the app's refusal is the reasons alone, with no heading: %+v", env.Error)
+	}
+	if err := os.WriteFile(spec, testkit.Fixture(t), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	// No GitHub repository: the slice is approved and written to the ready folder, with the two ways on.
 	ready := mustOK(t, e, "slice.ready", `{"slice_id":"SLICE-001"}`)
 	if ready["saved_to"] != "folder" || len(ready["ways_on"].([]any)) != 2 || strings.Contains(fmt.Sprint(ready["ways_on"]), "/mach") {
@@ -178,13 +186,13 @@ func TestEnvelopeMapping(t *testing.T) {
 	}{
 		{"exit 0 with JSON", `print('{"a": 1}')`, "status", true, "", ""},
 		{"exit 0 without JSON", `print('hello')`, "status", false, engine.KindInternal, "not JSON"},
-		{"refusal", `sys.stderr.write("refused: SLICE-001 cannot be marked ready yet:\n  epic EPIC-001 is proposed\n"); sys.exit(1)`,
-			"slice.ready", false, engine.KindRefused, "SLICE-001 cannot be marked ready yet:\n  epic EPIC-001 is proposed"},
-		{"refusal with a hint", `sys.stderr.write('refused-hint: {"kind": "approve_epic", "target": "EPIC-001"}\nrefused: SLICE-001 cannot be marked ready yet\n'); sys.exit(1)`,
-			"slice.ready", false, engine.KindRefused, "SLICE-001 cannot be marked ready yet"},
+		{"refusal", `sys.stderr.write("refused: open question: Do invitations expire?\ndependency SLICE-009 does not exist\n"); sys.exit(1)`,
+			"slice.ready", false, engine.KindRefused, "open question: Do invitations expire?\ndependency SLICE-009 does not exist"},
+		{"refusal with a hint", `sys.stderr.write('refused-hint: {"kind": "mark_ready", "target": "SLICE-002"}\nrefused: SLICE-001 depends on SLICE-002, which is not ready yet. Mark SLICE-002 ready first.\n'); sys.exit(1)`,
+			"slice.ready", false, engine.KindRefused, "SLICE-001 depends on SLICE-002, which is not ready yet. Mark SLICE-002 ready first."},
 		{"check with problems", `print('{"ready": false, "errors": ["x"]}'); sys.exit(1)`, "slice.check", true, "", ""},
 		{"validate with problems", `print('{"valid": false}'); sys.exit(1)`, "validate", true, "", ""},
-		{"JSON with exit 1 elsewhere", `print('{"a": 1}'); sys.exit(1)`, "epic.approve", false, engine.KindInternal, "exit code 1"},
+		{"JSON with exit 1 elsewhere", `print('{"a": 1}'); sys.exit(1)`, "slice.reopen", false, engine.KindInternal, "exit code 1"},
 		{"usage error", `sys.stderr.write("usage: studio.py\nstudio.py: error: argument --status: invalid choice\n"); sys.exit(2)`,
 			"project.set", false, engine.KindInvalid, "argument --status: invalid choice"},
 		{"crash", `raise RuntimeError("SECRET-CONTENT from a file")`, "status", false, engine.KindInternal, "failed unexpectedly"},
@@ -208,10 +216,8 @@ func TestEnvelopeMapping(t *testing.T) {
 
 func bodyFor(op string) string {
 	switch op {
-	case "slice.ready", "slice.check":
+	case "slice.ready", "slice.check", "slice.reopen":
 		return `{"slice_id":"SLICE-001"}`
-	case "epic.approve":
-		return `{"epic_id":"EPIC-001"}`
 	}
 	return `{}`
 }

@@ -323,7 +323,8 @@ func TestOperationsReturnTheEnginesWords(t *testing.T) {
 	h.startSlice()
 	status, env := h.call("POST", "/api/ops/slice.ready", `{"slice_id":"SLICE-001"}`, nil)
 	expect(t, status, env, 422, engine.KindRefused)
-	if !strings.Contains(env.Error.Message, "SLICE-001 cannot be marked ready yet") {
+	// The app titles a refusal itself, so the engine's message is the reasons alone, with no heading.
+	if !strings.Contains(env.Error.Message, "No spec yet") || strings.Contains(env.Error.Message, "cannot be marked ready yet") {
 		t.Fatalf("the refusal is the engine's: %q", env.Error.Message)
 	}
 	status, env = h.call("POST", "/api/ops/slice.check", `{"slice_id":"SLICE-001"}`, nil)
@@ -399,7 +400,6 @@ func TestDraftWritesAreCheckedAndConfined(t *testing.T) {
 		t.Fatalf("read the why: %v", got)
 	}
 
-	h.mustOp("epic.approve", `{"epic_id":"EPIC-001"}`)
 	h.mustOp("slice.ready", `{"slice_id":"SLICE-001"}`)
 	status, env = h.call("PUT", "/api/drafts/spec/SLICE-001", specBody(t, ""), nil)
 	expect(t, status, env, 422, engine.KindRefused)

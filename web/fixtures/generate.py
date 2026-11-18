@@ -96,8 +96,6 @@ def on_github():
         s.capture("slice.resume.ready", "slice", "resume", "SLICE-001")
         s.capture("slice.show.ready", "slice", "show", "SLICE-001")
         s.capture("status.slice-ready", "status")
-        s.capture("slice.ready.refused-epic", "slice", "ready", "SLICE-001")
-        s.capture("epic.approve", "epic", "approve", "EPIC-001")
         first = s.capture("slice.ready", "slice", "ready", "SLICE-001")["issue"]
         s.capture("slice.show.on-github", "slice", "show", "SLICE-001")
         s.capture("status.on-github", "status")
@@ -155,13 +153,14 @@ def on_github():
         s.capture("slice.ready.refused-number-taken", "slice", "ready", taken)
         s.capture("slice.renumber", "slice", "renumber", taken)
 
-        # A draft with open questions, then with validator errors; a second epic not yet approved.
+        # A draft with open questions, then with validator errors; a second epic.
         open_slice = s.ok(s.a, "slice", "new", "--epic", "EPIC-001", "--title", "Invite a teammate by email")["slice"]["slice_id"]
         s.write_slice(s.a, open_slice)
         spec_file = s.draft(s.a, f"specs/slices/{open_slice}-invite-teammate.md")
         spec_file.write_text(spec_file.read_text().replace("## Open questions\n\n- None.", OPEN_QUESTIONS))
         s.capture("slice.check.open-questions", "slice", "check", open_slice)
         s.capture("slice.show.open-questions", "slice", "show", open_slice)
+        s.capture("slice.ready.refused-open-questions", "slice", "ready", open_slice)
         text = spec_file.read_text()
         spec_file.write_text(text[:text.index("## Invariants")] + text[text.index("## Functional requirements"):])
         s.capture("slice.check.errors", "slice", "check", open_slice)

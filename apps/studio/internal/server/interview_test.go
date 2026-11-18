@@ -227,7 +227,6 @@ func TestASliceMarkedReadyIsNotInterviewed(t *testing.T) {
 	h.startSlice()
 	h.call("PUT", "/api/drafts/spec/SLICE-001", specBody(t, "invite-teammate"), nil)
 	h.call("PUT", "/api/drafts/intent/SLICE-001", `{"markdown":`+strconv.Quote(testkit.IntentText)+`}`, nil)
-	h.mustOp("epic.approve", `{"epic_id":"EPIC-001"}`)
 	h.mustOp("slice.ready", `{"slice_id":"SLICE-001"}`)
 	status, env := h.call("POST", "/api/interview", `{"slice_id":"SLICE-001"}`, nil)
 	expect(t, status, env, 422, engine.KindRefused)

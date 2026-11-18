@@ -163,10 +163,7 @@ test("real claude, full: an AI-assisted interview to a slice marked ready to bui
     await dialog().getByRole("textbox", { name: "Criterion 1" }).fill("Only invited people can join a workspace");
     await dialog().getByRole("button", { name: "Add epic" }).click();
     await dialog().waitFor({ state: "detached" });
-    await main().getByRole("button", { name: "Approve this epic’s scope: EPIC-001" }).click();
-    await dialog().getByRole("button", { name: "Approve this epic’s scope" }).click();
-    await dialog().waitFor({ state: "detached" });
-    assert.equal(world.status().epics[0].status, "approved");
+    assert.equal(world.status().epics[0].status, "open");
   });
 
   await step("start the slice with an idea and open the interview", async () => {

@@ -52,11 +52,8 @@ export const sliceStates: Record<SliceStatus, StateDescriptor> = {
 export const sliceLifecycle: readonly SliceStatus[] = ["draft", "interviewing", "ready_for_approval", "approved_for_engineering"];
 
 export const epicStates: Record<EpicStatus, StateDescriptor> = {
-  proposed: { label: "Proposed", description: "Not yet approved. Its slices cannot be marked ready until it is.", tone: "neutral", glyph: "open" },
-  approved: { label: "Approved", description: "Approved. Its slices can be marked ready.", tone: "success", glyph: "approved" },
-  deferred: { label: "Deferred", description: "Set aside for now.", tone: "warning", glyph: "superseded" },
-  completed: { label: "Completed", description: "Every slice it needed has been delivered.", tone: "success", glyph: "accepted" },
-  superseded: { label: "Superseded", description: "Replaced by another epic. Kept for history.", tone: "neutral", glyph: "superseded" },
+  open: { label: "Open", description: "In the project. Its slices are defined and marked ready one at a time.", tone: "neutral", glyph: "open" },
+  deferred: { label: "Set aside", description: "Set aside for now. Bring it back when its slices are wanted again.", tone: "warning", glyph: "superseded" },
 };
 
 /**

@@ -51,7 +51,7 @@ function EpicSheetBody({ state, onClose }: { state: NonNullable<EpicSheetState>;
       const result = await act.run("epic.add", { title: title.trim(), criterion: list });
       if (!result) return;
       remember(result.epic);
-      toast({ tone: "success", title: `Added ${result.epic.epic_id}`, description: `${result.epic.title}. It is proposed until you approve it.` });
+      toast({ tone: "success", title: `Added ${result.epic.epic_id}`, description: result.epic.title });
     } else {
       const result = await act.run("epic.set", {
         epic_id: editing.epic_id,
@@ -72,11 +72,7 @@ function EpicSheetBody({ state, onClose }: { state: NonNullable<EpicSheetState>;
         width={480}
         title={editing ? `Edit ${editing.epic_id}` : "Add an epic"}
         description={
-          editing
-            ? editing.status === "approved"
-              ? "This epic is approved. Changing it keeps the approval; check that its slices still fit."
-              : "Changes are saved to your draft."
-            : "A capability that several slices of intent will deliver. It starts as proposed; you approve it when its scope is right."
+          editing ? "Changes are saved to your draft." : "A capability that several slices of intent will deliver."
         }
         footer={
           <>

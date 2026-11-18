@@ -47,8 +47,7 @@ export function PickUpDialog(props: DialogProps & { also: boolean; epics: Status
 
 function PickUpBody({ onOpenChange, item, onDone, also, epics }: DialogProps & { also: boolean; epics: StatusEpicRow[] }) {
   const act = useRequestAct();
-  const usable = epics.filter((e) => e.status !== "superseded" && e.status !== "completed");
-  const [epic, setEpic] = useState(usable[0]?.epic_id ?? "");
+  const [epic, setEpic] = useState(epics[0]?.epic_id ?? "");
   const [title, setTitle] = useState("");
   const [titleError, setTitleError] = useState<string | null>(null);
   const formId = `pick-request-${item.number}`;
@@ -77,16 +76,16 @@ function PickUpBody({ onOpenChange, item, onDone, also, epics }: DialogProps & {
           <DialogClose asChild>
             <Button disabled={act.pending}>Cancel</Button>
           </DialogClose>
-          <Button variant="primary" type="submit" form={formId} loading={act.pending} disabled={!usable.length}>
+          <Button variant="primary" type="submit" form={formId} loading={act.pending} disabled={!epics.length}>
             {also ? "Pick up as well" : "Pick up"}
           </Button>
         </>
       }
     >
       <form id={formId} onSubmit={submit} className="flex flex-col gap-4" noValidate>
-        {usable.length ? (
+        {epics.length ? (
           <Field label="Epic" hint="The larger capability the new slice delivers part of.">
-            <Select value={epic} onValueChange={setEpic} options={usable.map((e) => ({ value: e.epic_id, label: `${e.epic_id} ${e.title}` }))} />
+            <Select value={epic} onValueChange={setEpic} options={epics.map((e) => ({ value: e.epic_id, label: `${e.epic_id} ${e.title}` }))} />
           </Field>
         ) : (
           <p className="text-body-sm text-ink">Add an epic on the roadmap first: a slice always belongs to one.</p>

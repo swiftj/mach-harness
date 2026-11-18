@@ -19,8 +19,8 @@
       {
         "epic_id": "EPIC-001",
         "title": "Team membership",
-        "status": "approved",
-        "revision": 2,
+        "status": "open",
+        "revision": 1,
         "acceptance_criteria": [
           "Only invited people can join",
           "Admins can see who is invited"
@@ -64,7 +64,7 @@
           "question_note": null,
           "shipped_issues": [],
           "times": {
-            "marked_ready": "2026-11-18T14:39:09Z",
+            "marked_ready": "2026-11-18T16:56:01Z",
             "building": null,
             "question": null,
             "shipped": null

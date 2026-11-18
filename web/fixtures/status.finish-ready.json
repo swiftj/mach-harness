@@ -19,15 +19,15 @@
         "artifact": "SLICE-004",
         "kind": "slice",
         "reason": "You reopened it to change it.",
-        "at": "2026-11-18T14:39:12Z"
+        "at": "2026-11-18T16:56:06Z"
       }
     ],
     "epics": [
       {
         "epic_id": "EPIC-001",
         "title": "Team membership",
-        "status": "approved",
-        "revision": 2,
+        "status": "open",
+        "revision": 1,
         "acceptance_criteria": [
           "Only invited people can join",
           "Admins can see who is invited"
@@ -52,7 +52,7 @@
       {
         "epic_id": "EPIC-002",
         "title": "Workspace settings",
-        "status": "proposed",
+        "status": "open",
         "revision": 1,
         "acceptance_criteria": [
           "Admins can rename the workspace"
@@ -418,7 +418,7 @@
           "SLICE-002",
           "SLICE-004"
         ],
-        "github_read_at": "2026-11-18T14:39:16Z",
+        "github_read_at": "2026-11-18T16:56:12Z",
         "matches_github": true,
         "unfinished": false,
         "taken_from_github": false,
@@ -450,10 +450,10 @@
     "github": {
       "repository": "acme/team-space",
       "form": "sub_issues",
-      "last_read": "2026-11-18T14:39:15Z"
+      "last_read": "2026-11-18T16:56:11Z"
     },
     "current_slice": "SLICE-009",
-    "last_refreshed": "2026-11-18T14:39:15Z",
+    "last_refreshed": "2026-11-18T16:56:11Z",
     "structurally_valid": true,
     "structural_errors": [],
     "factory_authorized": false,
@@ -463,8 +463,7 @@
       "Continue the interview for SLICE-006: Invite by link (slice resume SLICE-006).",
       "Continue the interview for SLICE-007: Invite a teammate by email (slice resume SLICE-007).",
       "Continue the interview for SLICE-008: Rename the workspace (slice resume SLICE-008).",
-      "SLICE-009 is approved, but saving it did not finish: mark it ready again to finish (slice ready SLICE-009).",
-      "Approve epic EPIC-002: Workspace settings (epic approve EPIC-002), so its slices can be marked ready."
+      "SLICE-009 is approved, but saving it did not finish: mark it ready again to finish (slice ready SLICE-009)."
     ],
     "next_actions": [
       {
@@ -507,13 +506,6 @@
         "target": "SLICE-009",
         "title": "Finish marking SLICE-009 ready",
         "reason": "Invite with a message is approved, but saving it did not finish.",
-        "related": []
-      },
-      {
-        "kind": "approve_epic",
-        "target": "EPIC-002",
-        "title": "Approve epic EPIC-002",
-        "reason": "Workspace settings: its slices can be marked ready only once it is.",
         "related": []
       }
     ]

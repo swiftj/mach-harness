@@ -241,7 +241,7 @@ class TakeTest(TakeBase):
         self.assertEqual(self.draft(self.b, taken["spec"]).read_bytes(), self.draft(self.a, f"specs/slices/{slice_id}-invite-teammate.md").read_bytes())
         self.assertEqual(self.draft(self.b, taken["why"]).read_bytes(), self.draft(self.a, f"product/intents/{slice_id}.md").read_bytes())
         epic = self.artifact(self.b, "product/epics/EPIC-001.json")
-        self.assertEqual((epic["title"], epic["status"], epic["acceptance_criteria"]), ("Team membership", "approved", ["Only invited people can join"]))
+        self.assertEqual((epic["title"], epic["status"], epic["acceptance_criteria"]), ("Team membership", "open", ["Only invited people can join"]))
         work = self.artifact(self.b, f"product/slices/{slice_id}.json")
         self.assertEqual((work["status"], work["title"], work["epic_id"]), ("approved_for_engineering", "Invite a teammate", "EPIC-001"))
         self.assertTrue(self.ok(self.b, "validate")["valid"])

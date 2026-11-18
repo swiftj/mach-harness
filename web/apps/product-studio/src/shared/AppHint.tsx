@@ -5,7 +5,6 @@ import { Button } from "@mach/ui";
 import type { ApiErrorHint, failureText } from "@mach/ui/api";
 import { routeForHint } from "../api/nextActions";
 import { useStatus } from "../api/store";
-import { ApproveEpicDialog } from "../features/vision/ApproveEpicDialog";
 import { NewSliceDialog } from "../features/roadmap/NewSliceDialog";
 import { RenumberDialog } from "./RenumberDialog";
 import { AnswerQuestionDialog } from "./BuildersQuestion";
@@ -27,7 +26,7 @@ export function AppHint({ hint }: { hint: ApiErrorHint }) {
   if (route.type === "navigate") {
     return (
       <Button size="sm" asChild>
-        <Link to={route.to} state={route.state}>
+        <Link to={route.to}>
           {route.label}
           <ArrowRight aria-hidden="true" />
         </Link>
@@ -40,13 +39,7 @@ export function AppHint({ hint }: { hint: ApiErrorHint }) {
       <Button size="sm" onClick={() => setOpen(true)}>
         {route.label}
       </Button>
-      {route.type === "approve-epic" ? (
-        <ApproveEpicDialog
-          epic={open ? { epic_id: route.epicId, title: epics.find((e) => e.epic_id === route.epicId)?.title ?? "" } : null}
-          sliceTitles={(status.data?.slices ?? []).filter((s) => s.epic_id === route.epicId).map((s) => `${s.slice_id} ${s.title}`)}
-          onOpenChange={setOpen}
-        />
-      ) : route.type === "renumber" ? (
+      {route.type === "renumber" ? (
         <RenumberDialog id={open ? route.id : null} onOpenChange={setOpen} />
       ) : route.type === "add-epic" ? (
         <EpicSheet state={open ? { mode: "add" } : null} onClose={() => setOpen(false)} />

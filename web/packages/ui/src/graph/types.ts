@@ -8,15 +8,15 @@ export type GraphNodeKind = "product" | "epic" | "slice";
 /**
  * Visual states on the graph. One vocabulary for both products:
  *
- *   proposed        nothing settled yet (draft slice, proposed epic, draft project)
+ *   proposed        nothing settled yet (draft slice, draft project); an open epic, which is a container and is never approved
  *   interviewing    being worked out
  *   ready           settled, waiting for a person's approval
  *   approved        a person approved it
  *   ready_to_build  saved for the builders, waiting for them
  *   building        the builders are building it
  *   question        the builders asked the product manager a question
- *   shipped         built and merged (an epic: completed)
- *   superseded      replaced; kept for history
+ *   shipped         built and merged
+ *   superseded      replaced; kept for history (an epic: set aside)
  */
 export type GraphState = "proposed" | "interviewing" | "ready" | "approved" | "ready_to_build" | "building" | "question" | "shipped" | "superseded";
 

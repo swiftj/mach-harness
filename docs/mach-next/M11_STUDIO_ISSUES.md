@@ -146,7 +146,7 @@ Both run only on the product manager's word. `status` gains an `order` list (one
 - **The epic** is the issue the marker names, which must be an epic Product Studio wrote. An epic
   here under the same ID is used when it is linked to that issue, or not linked and has the same
   title; otherwise it is refused, pointing to `epic renumber`. With no epic here, one is created
-  `approved`, with the title and the "Done when" criteria from its issue (`issue_rules.epic_criteria`).
+  (`open`), with the title and the "Done when" criteria from its issue (`issue_rules.epic_criteria`).
 - **Dependencies** must already be drafts here; the refusal names the slice to open first.
 - **State.** A slice marked ready, being built, or with a question from the builders opens
   `approved_for_engineering` (reopen to change it); one not marked ready opens editable. The record

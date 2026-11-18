@@ -161,7 +161,6 @@ test("draft routes stay inside the draft workspace", async (t) => {
   for (const [op, args] of [
     ["project.init", { id: "team-space", name: "Team Space", vision: "Teams work together.", outcome: ["Teams can work together"] }],
     ["epic.add", { title: "Team membership", criterion: ["Only invited people can join"] }],
-    ["epic.approve", { epic_id: "EPIC-001" }],
     ["slice.new", { epic: "EPIC-001", title: "Invite a teammate", depends_on: [] }],
     ["slice.new", { epic: "EPIC-001", title: "Remove a teammate", depends_on: [] }],
   ]) {
@@ -359,7 +358,7 @@ test("nothing can reach the Factory", async (t) => {
     assert.equal(edits.length, 2, edits.join("\n"));
     for (const e of edits) assert.match(e, /SLICE-002(-\*)?\.md\)$/);
     assert.deepEqual(allowed.filter((r) => !/^(Read|Glob|Grep|Bash\(|Edit\()/.test(r)), []);
-    for (const word of ["slice ready", "slice approve", "epic approve", "wave", "send", "feedback", "reconcile"]) assert.ok(denied.some((r) => r.includes(` ${word}`)), `denied rules do not name ${word}`);
+    for (const word of ["slice ready", "slice approve", "wave", "send", "feedback", "reconcile"]) assert.ok(denied.some((r) => r.includes(` ${word}`)), `denied rules do not name ${word}`);
     assert.ok(!call.argv.some((x) => /dangerously|bypassPermissions|acceptEdits/.test(x)));
     const stop = record(await a.send("POST", `/api/interview/${started.json.data.interview_id}/stop`, {}));
     assert.equal(stop.json?.ok, true, stop.text);

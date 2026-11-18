@@ -3,7 +3,7 @@
 
     python3 scenario.py empty        a Git project with one commit and a shared remote on GitHub; no product yet
     python3 scenario.py established  Ada's project: a slice marked ready that the builders took, one edited
-                                     on GitHub after approval, a proposed epic, a slice in interview with
+                                     on GitHub after approval, a second epic, a slice in interview with
                                      open questions, a draft
 
 Prints JSON: {"project": <folder for --project>, "env": {"PATH": ..., "FAKE_GH_STATE": ...}}. Start the
@@ -46,14 +46,13 @@ def main(kind):
         s.ok(a, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together without friction.",
              "--outcome", "Teams can work together", "--outcome", "Admins stay in control of who has access")
         s.ok(a, "epic", "add", "--title", "Team membership", "--criterion", "Only invited people can join", "--criterion", "Admins can see who is invited")
-        s.ok(a, "epic", "approve", "EPIC-001")
         # Marked ready; the builders took it.
         first = s.ready(s.drafted(title="Invite a teammate"))["issue"]
         s.change_issue(first, labels=[{"name": "mach:slice"}, {"name": "mach:building"}])
         # Marked ready, then edited on GitHub by someone else.
         second = s.ready(s.drafted(title="Resend an invitation"))["issue"]
         s.change_issue(second, body=s.issue(second)["body"].replace("An admin", "Anyone"))
-        # More work: a proposed epic, a slice in interview with open questions, a draft.
+        # More work: a second epic, a slice in interview with open questions, a draft.
         s.ok(a, "epic", "add", "--title", "Workspace settings", "--criterion", "Admins can rename the workspace", "--criterion", "Admins can see the seat count")
         removal = s.ok(a, "slice", "new", "--epic", "EPIC-001", "--title", "Remove a teammate")["slice"]["slice_id"]
         s.write_slice(a, removal)

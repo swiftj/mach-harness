@@ -78,7 +78,7 @@ and in its own process group so a time limit stops the Git processes it started 
 
 Every response is `{ok: true, data}` or `{ok: false, error: {kind, message, hint?}}`. `hint` comes
 only with some `refused` errors: the engine's structured suggestion `{kind, target}` for the app
-action that would resolve it (`approve_epic`, `reopen_slice`, `renumber_slice`, `edit_epic`, …;
+action that would resolve it (`reopen_slice`, `renumber_slice`, `mark_ready`, …;
 `studio.NEXT_ACTION_KINDS` and `HINT_KINDS`). The host runs the engine with `--app`, so refusals
 and reports carry no terminal commands or Git words; decisions and artifacts are the terminal's. Clients read the
 envelope; the HTTP status only follows it (refused 422, invalid 400 or 404/413/415, unauthorized
@@ -190,7 +190,7 @@ claude -p --output-format stream-json --verbose --include-partial-messages
 - Allowed: `Read`, `Glob`, `Grep`; `where`, `status`, `validate`, `refresh`, and on the interview's
   own slice `slice resume|check|pause|set`, each spelled with `python3` and the absolute
   interpreter, and the script through the plugin link and its real path, quoted and unquoted;
-  `Edit(//…)` for that slice's spec and why only. Denied again: `slice ready`, epic approval,
+  `Edit(//…)` for that slice's spec and why only. Denied again: `slice ready`,
   reconcile, renumber, reopen, `slice move`, `slice take`, project, slice new and epic add/set, and
   names the app never offers (`slice approve`, `wave`, `send`, `feedback`, `acceptance`).
 - The environment is `HOME USER LOGNAME PATH LANG LC_ALL TMPDIR SHELL TERM` and

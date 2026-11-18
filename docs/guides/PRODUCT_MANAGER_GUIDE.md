@@ -117,7 +117,7 @@ After the write-up, Claude checks the spec with the same checker engineering use
 
 Read the assumptions. They are the places where the recommendation stood in for your decision.
 
-Marking a slice ready is your act: it approves the slice and hands it to the builders in one step. It is refused unless the spec has no open questions, the "why" is complete, the epic is approved and every slice it depends on is itself marked ready. A marked-ready slice is frozen. To change it, ask to reopen it: it is taken back from the builders until you mark it ready again.
+Marking a slice ready is your act: it approves the slice and hands it to the builders in one step. It is refused unless the spec has no open questions, the "why" is complete and every slice it depends on is itself marked ready. A marked-ready slice is frozen. To change it, ask to reopen it: it is taken back from the builders until you mark it ready again.
 
 **Where it goes.** With GitHub, the slice becomes an issue under its epic's issue, with your approval recorded as a comment, and the label `mach:ready`; the project and epic get issues too. Without GitHub (no `gh`, not signed in, or the project is not on GitHub), it is written to a folder, `product/ready/SLICE-NNN/`: commit it to the project, or hand it to an engineer, who brings it in. Either way nothing is built until an engineer's Factory takes it in.
 

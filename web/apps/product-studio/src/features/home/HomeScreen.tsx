@@ -36,7 +36,6 @@ import { describePath, titleFor } from "../../api/describe";
 import { nextActions, routeFor } from "../../api/nextActions";
 import { destinations } from "../registry";
 import { useRequestList } from "../inbox/requests/api";
-import { ApproveEpicDialog } from "../vision/ApproveEpicDialog";
 import { NewSliceDialog } from "../roadmap/NewSliceDialog";
 import { IssueLink, IssueNumber } from "../../shared/IssueLink";
 import { RenumberDialog } from "../../shared/RenumberDialog";
@@ -83,7 +82,6 @@ function ProjectHome({ status }: { status: Status }) {
   const refresh = useRefresh();
   const requests = useRequestList();
   const navigate = useNavigate();
-  const [approveEpic, setApproveEpic] = useState<string | null>(null);
   const [newSlice, setNewSlice] = useState<{ epicId: string | null } | null>(null);
   const [renumber, setRenumber] = useState<string | null>(null);
   const [addEpic, setAddEpic] = useState(false);
@@ -93,8 +91,7 @@ function ProjectHome({ status }: { status: Status }) {
 
   const runRoute = (action: NextAction) => {
     const route = routeFor(action);
-    if (route.type === "navigate") void navigate(route.to, route.state === undefined ? undefined : { state: route.state });
-    else if (route.type === "approve-epic") setApproveEpic(route.epicId);
+    if (route.type === "navigate") void navigate(route.to);
     else if (route.type === "new-slice") setNewSlice({ epicId: route.epicId });
     else if (route.type === "add-epic") setAddEpic(true);
     else if (route.type === "answer-question") {
@@ -107,7 +104,6 @@ function ProjectHome({ status }: { status: Status }) {
   // Requests from GitHub issues: only for a project whose shared repository is on GitHub (the engine
   // reports no repository otherwise), counted as the Decisions screen counts them.
   const requestCount = requests.data?.repository ? requests.data.items.length : 0;
-  const epicToApprove = status.epics.find((e) => e.epic_id === approveEpic) ?? null;
   const known = new Set(status.epics.map((e) => e.epic_id));
   const orphans = status.slices.filter((s) => !known.has(s.epic_id));
 
@@ -160,7 +156,6 @@ function ProjectHome({ status }: { status: Status }) {
                 key={epic.epic_id}
                 epic={epic}
                 status={status}
-                onApprove={() => setApproveEpic(epic.epic_id)}
                 onAddSlice={() => setNewSlice({ epicId: epic.epic_id })}
               />
             ))
@@ -183,11 +178,6 @@ function ProjectHome({ status }: { status: Status }) {
         </section>
       </div>
 
-      <ApproveEpicDialog
-        epic={epicToApprove}
-        sliceTitles={status.slices.filter((s) => s.epic_id === approveEpic).map((s) => `${s.slice_id} ${s.title}`)}
-        onOpenChange={(open) => !open && setApproveEpic(null)}
-      />
       <NewSliceDialog open={newSlice !== null} onOpenChange={(open) => !open && setNewSlice(null)} epics={status.epics} epicId={newSlice?.epicId} />
       <RenumberDialog id={renumber} onOpenChange={(open) => !open && setRenumber(null)} />
       <EpicSheet state={addEpic ? { mode: "add" } : null} onClose={() => setAddEpic(false)} />
@@ -330,13 +320,11 @@ function titled(id: string, status: Status): string {
   return title ? `${title} (${id})` : id;
 }
 
-function EpicBlock({ epic, status, onApprove, onAddSlice }: { epic: StatusEpicRow; status: Status; onApprove: () => void; onAddSlice: () => void }) {
+function EpicBlock({ epic, status, onAddSlice }: { epic: StatusEpicRow; status: Status; onAddSlice: () => void }) {
   const slices = status.slices.filter((s) => s.epic_id === epic.epic_id);
   const headingId = `epic-${epic.epic_id}-title`;
   const counts = epic.counts;
   const order = status.order.find((o) => o.epic_id === epic.epic_id);
-  // The same epics the start-a-slice dialog offers.
-  const open = epic.status !== "superseded" && epic.status !== "completed";
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3 border-t border-line pt-6">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -351,11 +339,6 @@ function EpicBlock({ epic, status, onApprove, onAddSlice }: { epic: StatusEpicRo
             {counts.ready_or_further} of {plural(counts.total, "slice")} ready or further
             <span className="sr-only"> ({counts.ready_or_further_means})</span>
           </Text>
-        ) : null}
-        {epic.status === "proposed" ? (
-          <Button size="sm" className="ml-auto" aria-label={`Approve this epic’s scope: ${epic.epic_id}`} onClick={onApprove}>
-            Approve this epic’s scope
-          </Button>
         ) : null}
       </div>
       {epic.acceptance_criteria?.length ? (
@@ -384,12 +367,10 @@ function EpicBlock({ epic, status, onApprove, onAddSlice }: { epic: StatusEpicRo
           No slices yet.
         </Text>
       )}
-      {open ? (
-        <Button variant="ghost" size="sm" className="self-start" onClick={onAddSlice}>
-          <Plus aria-hidden="true" />
-          Add a slice to {epic.title}
-        </Button>
-      ) : null}
+      <Button variant="ghost" size="sm" className="self-start" onClick={onAddSlice}>
+        <Plus aria-hidden="true" />
+        Add a slice to {epic.title}
+      </Button>
     </section>
   );
 }

@@ -4,7 +4,7 @@
 //
 // Asserts: zero console errors, zero CSP violations, zero requests leaving 127.0.0.1, the session
 // established (no "signed in" error), real engine data on screen, a state-changing operation
-// accepted (CSRF and Content-Type), and a personal act confirmed in a dialog under the CSP.
+// accepted (CSRF and Content-Type), and a dialog opened and closed under the CSP.
 import { chromium } from "playwright";
 import { rmSync } from "node:fs";
 import { buildHost, scratchProject, startHost, studio, watch } from "./host.mjs";
@@ -43,16 +43,21 @@ try {
   const signedOut = await page.getByText("no longer signed in").count();
   check("no signed-out error", signedOut === 0);
 
-  // A personal act, confirmed in a dialog (exercises Radix under the CSP), then cancelled.
+  // The epic editor, a dialog (exercises Radix under the CSP), opened and cancelled.
   await page.goto(`${host.origin}/#/vision`, { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: /^Approve this epic’s scope: EPIC-001/ }).first().click();
+  const epicRow = page.getByRole("listitem").filter({ hasText: "EPIC-001" });
+  await epicRow.getByRole("button", { name: "Edit", exact: true }).click();
   await page.getByRole("dialog").waitFor();
-  check("approval dialog opens", true);
-  await page.getByRole("dialog").getByRole("button", { name: "Approve this epic’s scope" }).click();
-  await page.getByText("Approved EPIC-001").first().waitFor({ timeout: 20000 });
+  check("epic editor dialog opens", true);
+  await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
   await page.getByRole("dialog").waitFor({ state: "detached" });
-  const approvedNow = studio(project, "status").epics[0]?.status;
-  check("epic approved through the app's own client (POST with CSRF)", approvedNow === "approved", `engine says ${approvedNow}`);
+  // A state-changing operation through the app's own client (POST with CSRF): set the epic aside.
+  await epicRow.getByRole("button", { name: "Set aside" }).click();
+  await page.getByText("Set EPIC-001 aside").first().waitFor({ timeout: 20000 });
+  const asideNow = studio(project, "status").epics[0]?.status;
+  check("epic set aside through the app's own client (POST with CSRF)", asideNow === "deferred", `engine says ${asideNow}`);
+  await epicRow.getByRole("button", { name: "Bring back" }).click();
+  await page.getByText("Brought back EPIC-001").first().waitFor({ timeout: 20000 });
 
   // The lazily loaded map (React Flow, then ELK on first layout) under the CSP.
   await page.goto(`${host.origin}/#/roadmap`, { waitUntil: "networkidle" });

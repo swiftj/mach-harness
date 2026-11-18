@@ -98,10 +98,15 @@ async function sliceRoute(path: string, method: string, args: Record<string, unk
       return ok(show ? show.check : await data<SliceCheck>(sliceId === "SLICE-001" ? "slice.check.ready" : "slice.check.open-questions"));
     }
     case "/api/ops/slice.ready": {
-      if (devParam("ready") === "refused") {
-        const refused = await load("slice.ready.refused-epic");
+      // ?ready=refused: open questions (no hint). ?ready=refused-once: refused with a hint the first
+      // time, then, slowly enough to see the button working, marked ready.
+      const mode = devParam("ready");
+      const first = devState.readyAsked++ === 0;
+      if (mode === "refused" || (mode === "refused-once" && first)) {
+        const refused = await load(mode === "refused" ? "slice.ready.refused-open-questions" : "slice.ready.refused-number-taken");
         return fail("refused", refused?.refused ?? "Refused.", 422, refused?.hint ?? null);
       }
+      if (mode === "refused-once") await new Promise((resolve) => setTimeout(resolve, 1500));
       devState.reopened.delete(sliceId);
       return ok(await forSlice(devParam("ready") === "folder" ? "slice.ready.folder" : "slice.ready", sliceId));
     }

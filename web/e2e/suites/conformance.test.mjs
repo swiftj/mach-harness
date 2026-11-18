@@ -14,7 +14,7 @@ import { specFor, whyFor } from "../lib/content.mjs";
 
 // The host's allowlist as documented (contract sections 3, 8.1 and 8.4, apps/studio/README.md).
 const ALLOWLIST = [
-  "where", "status", "validate", "refresh", "project.init", "project.set", "epic.add", "epic.set", "epic.approve", "epic.renumber",
+  "where", "status", "validate", "refresh", "project.init", "project.set", "epic.add", "epic.set", "epic.renumber",
   "slice.new", "slice.set", "slice.resume", "slice.pause", "slice.check", "slice.show", "slice.ready", "slice.reopen", "slice.renumber", "slice.move", "slice.take",
   "reconcile", "request.list", "request.show", "request.pick", "request.link", "request.met",
 ];
@@ -70,7 +70,7 @@ const STEPS = [
   { name: "epic add", argv: ["epic", "add", "--title", "Team membership", "--criterion", "Only invited people can join"], op: ["epic.add", { title: "Team membership", criterion: ["Only invited people can join"] }] },
   { name: "second epic", argv: ["epic", "add", "--title", "Billing", "--criterion", "Admins see the seat count"], op: ["epic.add", { title: "Billing", criterion: ["Admins see the seat count"] }] },
   { name: "epic set", argv: ["epic", "set", "EPIC-002", "--title", "Workspace billing"], op: ["epic.set", { epic_id: "EPIC-002", title: "Workspace billing" }] },
-  { name: "epic approve", argv: ["epic", "approve", "EPIC-001"], op: ["epic.approve", { epic_id: "EPIC-001" }] },
+  { name: "epic set aside", argv: ["epic", "set", "EPIC-002", "--status", "deferred"], op: ["epic.set", { epic_id: "EPIC-002", status: "deferred" }] },
   { name: "slice new", argv: ["slice", "new", "--epic", "EPIC-001", "--title", "Invite a teammate"], op: ["slice.new", { epic: "EPIC-001", title: "Invite a teammate", depends_on: [] }] },
   { name: "slice resume", argv: ["slice", "resume", "SLICE-001"], op: ["slice.resume", { slice_id: "SLICE-001" }] },
   { name: "write spec", draft: ["spec", "SLICE-001"] },

@@ -4,6 +4,6 @@
   "project_id": "campaign-platform",
   "revision": 1,
   "title": "Identity and Access",
-  "status": "approved",
+  "status": "open",
   "acceptance_criteria": ["Only authorized people can access a private campaign"]
 }

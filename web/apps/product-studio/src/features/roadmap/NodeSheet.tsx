@@ -12,6 +12,7 @@ import {
   SliceStatusPill,
   StateGlyph,
   Text,
+  epicStates,
   githubMarksOf,
   toneClasses,
   type SliceShow,
@@ -20,7 +21,6 @@ import {
 import { graphStates, type GraphState, type MachNode } from "@mach/ui/graph";
 import { client } from "../../api/client";
 import { IssueLink, IssueNumber } from "../../shared/IssueLink";
-import { ApproveEpicDialog } from "../vision/ApproveEpicDialog";
 
 export interface NodeSheetProps {
   node: MachNode | null;
@@ -31,7 +31,7 @@ export interface NodeSheetProps {
   onNewSlice: (epicId: string) => void;
 }
 
-/** What it means for the PM, by graph state. Never presents approval as built work. */
+/** What it means for the PM, by graph state (an epic says its own). Never presents approval as built work. */
 const meaning: Record<GraphState, string> = {
   proposed: "Nothing is settled yet.",
   interviewing: "Being worked out in the interview.",
@@ -45,14 +45,14 @@ const meaning: Record<GraphState, string> = {
 };
 
 export function NodeSheet({ node, status, nodes, onClose, onSelect, onNewSlice }: NodeSheetProps) {
-  const [approve, setApprove] = useState(false);
   const kind = node?.data.kind;
   const title = node ? (kind === "product" ? node.data.title : `${node.data.artifactId}: ${node.data.title}`) : "";
   const d = node ? graphStates[node.data.state] : null;
+  const epic = kind === "epic" ? status.epics.find((e) => e.epic_id === node?.data.artifactId) : undefined;
 
   return (
     <>
-      <Sheet open={node !== null && !approve} onOpenChange={(open) => !open && onClose()}>
+      <Sheet open={node !== null} onOpenChange={(open) => !open && onClose()}>
         <SheetContent
           width={480}
           title={title}
@@ -66,7 +66,7 @@ export function NodeSheet({ node, status, nodes, onClose, onSelect, onNewSlice }
                   {node.data.stateLabel ?? d.label}
                 </span>
                 <Text size="body-sm" tone="muted">
-                  {meaning[node.data.state]}
+                  {epic ? epicStates[epic.status].description : meaning[node.data.state]}
                 </Text>
                 {node.data.attention ? (
                   <Text size="body-sm" tone="warning" weight="semibold">
@@ -80,25 +80,13 @@ export function NodeSheet({ node, status, nodes, onClose, onSelect, onNewSlice }
               </div>
               {kind === "slice" ? <SliceDetail id={node.data.artifactId} status={status} /> : null}
               {kind === "epic" ? (
-                <EpicDetail
-                  id={node.data.artifactId}
-                  status={status}
-                  nodes={nodes}
-                  onSelect={onSelect}
-                  onNewSlice={onNewSlice}
-                  onApprove={() => setApprove(true)}
-                />
+                <EpicDetail id={node.data.artifactId} status={status} nodes={nodes} onSelect={onSelect} onNewSlice={onNewSlice} />
               ) : null}
               {kind === "product" ? <ProjectDetail status={status} /> : null}
             </div>
           ) : null}
         </SheetContent>
       </Sheet>
-      <ApproveEpicDialog
-        epic={approve && node?.data.kind === "epic" ? { epic_id: node.data.artifactId, title: node.data.title } : null}
-        sliceTitles={node ? status.slices.filter((s) => s.epic_id === node.data.artifactId).map((s) => `${s.slice_id} ${s.title}`) : []}
-        onOpenChange={(open) => !open && setApprove(false)}
-      />
     </>
   );
 }
@@ -227,14 +215,12 @@ function EpicDetail({
   nodes,
   onSelect,
   onNewSlice,
-  onApprove,
 }: {
   id: string;
   status: Status;
   nodes: MachNode[];
   onSelect: (node: MachNode) => void;
   onNewSlice: (epicId: string) => void;
-  onApprove: () => void;
 }) {
   const epic = status.epics.find((e) => e.epic_id === id);
   if (!epic) return null;
@@ -280,16 +266,10 @@ function EpicDetail({
           </Text>
         )}
       </div>
-      {epic.status === "proposed" ? (
-        <Text size="body-sm" tone="muted">
-          Its slices can be worked on now, but none can be marked ready until you approve the epic.
-        </Text>
-      ) : null}
       <Actions>
-        <Button variant="primary" onClick={() => onNewSlice(id)} disabled={epic.status === "superseded" || epic.status === "completed"}>
+        <Button variant="primary" onClick={() => onNewSlice(id)}>
           Start a slice in this epic
         </Button>
-        {epic.status === "proposed" ? <Button onClick={onApprove}>Approve {id}</Button> : null}
         <Button variant="ghost" asChild>
           <Link to="/vision" state={{ focus: "epics" }}>
             Edit in Vision

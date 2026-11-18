@@ -160,7 +160,6 @@ class RequestBase(Base):
     def ready(self, project):
         self.ok(project, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
         self.ok(project, "epic", "add", "--title", "Team membership", "--criterion", "Only invited people can join")
-        self.ok(project, "epic", "approve", "EPIC-001")
 
     def request(self, project, number=42):
         found = [item for item in self.ok(project, "refresh")["requests"]["items"] if item["number"] == number]

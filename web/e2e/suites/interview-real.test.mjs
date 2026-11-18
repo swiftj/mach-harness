@@ -28,7 +28,6 @@ before(async () => {
   for (const argv of [
     ["project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together without friction.", "--outcome", "Teams can work together"],
     ["epic", "add", "--title", "Team membership", "--criterion", "Only invited people can join"],
-    ["epic", "approve", "EPIC-001"],
   ]) {
     const r = world.studio(world.pm, ...argv);
     if (r.code !== 0) throw new Error(r.stderr);
