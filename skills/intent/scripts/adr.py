@@ -83,6 +83,26 @@ def digest(text: str) -> str:
 
 # ---------------------------------------------------------------- the folder
 
+LANDINGS = {
+    "pull-request": "This project is set up for a team: accepted decisions go on a branch and through a pull request, so someone else can read them.",
+    "main": "This project is set up for one engineer: accepted decisions are committed straight to the main branch, on the engineer's word.",
+}
+
+
+def landing(config: Any) -> Dict[str, Any]:
+    """How a person's accepted ADRs reach the main branch here: `adr.landing`, `pull-request` (a team, the default) or
+    `main` (one engineer). MACH itself needs no review: a decision binds once it is committed on the main branch."""
+    section = config.get("adr") if isinstance(config, dict) else None
+    value = section.get("landing") if isinstance(section, dict) else None
+    problem = None
+    if value is not None and value not in LANDINGS:
+        problem = (f"adr.landing in .factory/config.json ({str(value)[:40]!r}) is neither 'pull-request' nor 'main', "
+                   "so 'pull-request' is used")
+    how = value if value in LANDINGS else "pull-request"
+    return {"how": how, "setting": "adr.landing", "in_words": LANDINGS[how], "problem": problem,
+            "needed_by_mach": "Only the commit on the main branch. MACH asks for no review of its own."}
+
+
 def folder_of(config: Any) -> Tuple[str, Optional[str]]:
     """The ADR folder relative to the repository root, and a problem when the setting cannot be used."""
     section = config.get("adr") if isinstance(config, dict) else None

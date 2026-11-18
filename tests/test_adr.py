@@ -583,7 +583,7 @@ class InstructionsTest(unittest.TestCase):
 
     def test_the_config_template_lists_the_adr_folder(self):
         self.assertEqual(json.loads((ROOT / "templates/config.json").read_text())["adr"],
-                         {"dir": "docs/adr", "required_topics": ["language", "framework", "storage", "testing", "deployment", "coding-standards"]})
+                         {"dir": "docs/adr", "landing": "pull-request", "required_topics": ["language", "framework", "storage", "testing", "deployment", "coding-standards"]})
         self.assertEqual(list(adr.REQUIRED_TOPICS), json.loads((ROOT / "templates/config.json").read_text())["adr"]["required_topics"])
 
 
