@@ -104,6 +104,7 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
 └── .factory/
     ├── config.json             # Factory configuration (ticket provider, model tiers, thresholds)
     ├── audit-report.json       # Latest readiness scorecard; the gate other stations read
+    ├── adr-baseline.json       # What /mach adr baseline found per required topic, and the ADR drafted from it; git-ignored
     ├── .mach-manifest.json     # What the installer wrote, with hashes, so uninstall is exact
     ├── bin/mach                # Copy of the installer, for status and uninstall
     ├── bin/mach-studio         # The visual Product Studio's host, downloaded for this machine; git-ignored
@@ -164,7 +165,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
   * **Silver (70–89%)**: Autonomous build permitted with mandatory human review before PR merge.
   * **Bronze/Fail (<70%)**: Autonomous execution blocked; hardening work is filed as a `repo-hardening` ticket.
 * **Blockers**: A build or test suite that fails, is missing, or could not be run makes the tier Bronze whatever the score. Checks that cannot be verified locally are reported as unverified, never assumed to pass.
-* **Notes**: a project with no accepted ADR, or with ADR files that cannot be read, gets a note in the report. A note changes neither the score nor the tier.
+* **Notes**: a project whose required ADR topics (`adr.required_topics`) are not all covered gets a note naming them, and ADR files that cannot be read get one too. The hold is at planning, not here. A note changes neither the score nor the tier.
 * **Gate**: `audit.py gate` is what other stations call. It refuses when the report is missing, older than `audit.max_age_days`, for a different commit than the main checkout, or Bronze.
 * **Output**: `.factory/audit-report.json`. Options: `--strict` (Gold or fail), `--fix` (create a missing `.gitignore`), `--json`.
 
@@ -297,7 +298,7 @@ The order of the belt is decided by a script, not by whoever is driving. `skills
 | Cell stage | Next step |
 |------------|-----------|
 | no cell, `interview`, `spec-open` | groom (intent); in headless mode a spec with open questions stops for a person; a slice taken in from Product Studio but not dispatched stops (`dispatch`) and is never groomed |
-| `spec-ready` | plan (intent stage 2); stop if the contract engineer asked the product manager a question (`product-answer`), the plan cannot follow an accepted ADR (`adr-decision`) or an ADR on main cannot be read (`adr-fix`) |
+| `spec-ready` | plan (intent stage 2); stop if the contract engineer asked the product manager a question (`product-answer`), the plan cannot follow an accepted ADR (`adr-decision`), an ADR on main cannot be read (`adr-fix`), or a required topic has no accepted ADR on main (`adr-baseline`) |
 | `planned` | stop if High risk and its own proposed ADR is not accepted (`adr-acceptance`); audit if the report is missing or stale; stop if Bronze and not a hardening ticket; otherwise build |
 | `building` | build (resume) |
 | `built` | revise if verification failed or review rejected this build; otherwise verify |
@@ -414,9 +415,10 @@ Engineers record technology decisions (stack, libraries, languages, component st
 
 * **Plan**: the contract engineer reads them with `cell.py adrs`. `check-plan` refuses a plan that names an ADR that does not exist or is not accepted, or whose file touch map falls under an accepted ADR's `path:` globs without naming it or a person's recorded exception, and any plan task that changes an ADR file. It records in `cell.json` the ADRs (ID and digest) the plan was made under and keeps a copy of each text in the cell.
 * **Cannot comply**: `cell.py adr-conflict` records which ADR and why; the routing sheet stops (`adr-decision`) and the walkthrough offers what the scripts accept: a person's exception (`cell.py adr-exception --by --reason`, their words, shown to the builder and reviewers) or, once an engineer has superseded or changed the ADR, `replan`. Neither is recommended by rule.
-* **No ADR covers a needed choice**: the contract engineer drafts a `proposed` ADR on the ticket's branch (`cell.py adr-draft`) and the plan lists it. Low and Medium risk go on and the proposal is reviewed with the change; High risk stops (`adr-acceptance`) until a person accepts it (`cell.py adr-accept --by`, which sets the status on the branch copy and commits it there).
+* **The required baseline (decided 2026-11-18)**: no ticket is planned or built until every topic in `adr.required_topics` (default `language`, `framework`, `storage`, `testing`, `deployment`, `coding-standards`, each with one fixed line in `adr.py`) has an ADR that is accepted, committed on the main branch and names `topic:<name>`; an ADR that decides a topic does not apply covers it, a malformed one never does, and an empty list is the project's only "off". `run.py next` stops at `spec-ready` (`adr-baseline`, with `missing_topics`); `cell.py claim <ticket> plan` and `check-plan` refuse for the same reason. Grooming, cells already planned and `factory-tuning` tickets are not held; `repo-hardening` tickets are, since hardening chooses the test runner and linter. `/mach adr baseline` (`run.py adr baseline`, `baseline.py`) gathers evidence read-only from the main checkout's committed files, redacted and bounded, records it once per topic in the git-ignored `.factory/adr-baseline.json`, and the skill writes one `proposed` ADR per missing topic with `run.py adr new --baseline <topic>` (evidence listed, open points marked; no evidence means asking the engineer). It never redrafts a topic that has an ADR. `/mach adr accept <ADR-NNNN>... --by` sets proposed files in the working tree to accepted, on an engineer's word, and commits nothing.
+* **No ADR covers a needed choice** (outside the required topics): the contract engineer drafts a `proposed` ADR on the ticket's branch (`cell.py adr-draft`) and the plan lists it. Low and Medium risk go on and the proposal is reviewed with the change; High risk stops (`adr-acceptance`) until a person accepts it (`cell.py adr-accept --by`, which sets the status on the branch copy and commits it there).
 * **Timing**: an ADR accepted or changed later binds tickets planned afterwards; work already planned is flagged in `next`, `status` and `explain`, never restarted or blocked, and a reviewer may not cite it as a blocker.
-* **Commands**: `/mach adr list` (reads only) and `/mach adr new "<decision>"` (a short interview, then `run.py adr new` writes the file as `proposed` in the main checkout's working tree; the engineer commits it by pull request).
+* **Commands**: `/mach adr list` (reads only; also each required topic, what covers it and what is missing), `/mach adr baseline`, `/mach adr accept <ADR-NNNN>...` and `/mach adr new "<decision>"` (a short interview, then `run.py adr new` writes the file as `proposed` in the main checkout's working tree; the engineer commits it by pull request).
 * **Never**: the Factory, the observe station and `factory-tuning` tickets do not accept, change or supersede an ADR. The exception and accept acts are refused inside a supervised execution.
 
 ### Review rounds after the first

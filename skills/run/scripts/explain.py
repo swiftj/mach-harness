@@ -370,6 +370,8 @@ def explain(root: Path, ticket_id: str, next_info: Dict[str, Any], config: Optio
     base["overrides"] = [{"task": clean(item.get("task"), 20), "type": clean(item.get("type"), 60), "detail": clean(item.get("detail")),
                           "source_file": "build-report.json"} for item in (report.get("deviations") or [])[:20] if isinstance(item, dict)]
     facts = adr_facts(root, cellroot, cell, config)
+    if nxt.get("needs") == "adr-baseline":  # no ticket is planned until the required topics have accepted ADRs
+        facts = dict(facts or {}, baseline_missing=[clean(topic, 40) for topic in next_info.get("missing_topics") or []][:20])
     if facts:
         base["adrs"] = facts
     return base, 0
@@ -416,6 +418,8 @@ def human(report: Dict[str, Any]) -> str:
         lines.append(f"- [adr] proposed and waiting for an engineer to accept: {', '.join(facts['waiting_for_acceptance'])}")
     for item in facts.get("changed_since_plan") or []:
         lines.append(f"- [adr] {item['adr']} {item['change']}: it applies to tickets planned from now on; this one goes on as planned")
+    if facts.get("baseline_missing"):
+        lines.append(f"- [adr] required topics with no accepted ADR on the main branch: {', '.join(facts['baseline_missing'])}; no ticket is planned until each has one")
     if facts.get("not_checked"):
         lines.append(f"- [adr] {facts['not_checked']}")
     if report.get("headline_code") not in ("unknown_ticket", "archived", "finished"):

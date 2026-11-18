@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT / "skills" / "run" / "scripts"))
 import intake  # noqa: E402
 import run  # noqa: E402
 from test_mach_product_issues import REPO, IssuesBase, git, intent_for, spec_for  # noqa: E402
+import adr_baseline_fixture  # noqa: E402
 import issue_rules  # noqa: E402
 
 TICKET = ROOT / "skills" / "ticket" / "scripts" / "ticket.py"
@@ -37,7 +38,8 @@ class Base(IssuesBase):
         (self.eng / ".gitignore").write_text(".factory/\n__pycache__/\n")
         (self.eng / ".factory").mkdir()
         (self.eng / ".factory/config.json").write_text(json.dumps({"tickets": {"provider": "local"}, "factory": {"max_parallel": 3}}))
-        git(self.eng, "add", ".gitignore")
+        adr_baseline_fixture.write(self.eng)
+        git(self.eng, "add", ".gitignore", adr_baseline_fixture.FILE)
         git(self.eng, "commit", "-q", "-m", "ignore execution state")
         git(self.eng, "push", "-q", "origin", "main")
         git(self.a, "pull", "-q", "--ff-only")

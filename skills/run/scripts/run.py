@@ -27,6 +27,12 @@ and not by whoever is driving it.
     run.py adr list                      every architecture decision: ID, title, status, applies-to, problems; reads only (adr.py)
     run.py adr new --title T --context C --decision D [--option O]... [--consequence X]... [--applies-to A]...
                                          write a new ADR as proposed in the main checkout's working tree; commits nothing
+    run.py adr baseline                  the required topics, what covers them, and evidence from the committed files for each still
+                                         to draft; recorded once in .factory/adr-baseline.json (baseline.py)
+    run.py adr new ... --baseline TOPIC [--open-point P]...
+                                         draft one of them as proposed, listing the recorded evidence; commits nothing
+    run.py adr accept ADR-NNNN... --by NAME
+                                         a person sets proposed ADRs in the working tree to accepted; commits nothing
     run.py release status                release-readiness snapshots so far, and what a new one would evaluate
     run.py release qualify --epic E | <SLICE>...
                                          evaluate an epic or named slices at one commit; write .factory/release/<id>/readiness.json
@@ -51,7 +57,8 @@ A step is either work ("action": audit, groom, plan, build, revise, verify, revi
 or a stop ("action": "stop") with the reason and what it is waiting for: a person's answers, a
 person's approval, a merge, or a person to take over an escalated ticket; or an engineer's decision
 about an architecture decision record (ADR): a plan that cannot follow one (adr-decision), a High-risk
-ticket's own proposal waiting to be accepted (adr-acceptance), an ADR on main that cannot be read (adr-fix).
+ticket's own proposal waiting to be accepted (adr-acceptance), an ADR on main that cannot be read (adr-fix), or a
+required topic (adr.required_topics) with no accepted ADR on main, so nothing is planned yet (adr-baseline).
 ADRs accepted or changed after a ticket was planned are flagged in the digest and the status rows, never acted on.
 
 `next`, `status` and `explain` also carry a "digest": where the ticket stands, what a person must decide,
@@ -312,6 +319,9 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
         if problems:
             return step(ticket_id, stage, "stop", f"An architecture decision record on the main branch cannot be read, so the ticket cannot be planned under it: {problems[0]}"
                         + (f" ({len(problems) - 1} more)" if len(problems) > 1 else ""), needs="adr-fix")
+        baseline = adrs().baseline_stop(project.root, project.config, project.ticket_labels(ticket_id))
+        if baseline:
+            return step(ticket_id, stage, "stop", baseline["reason"], needs="adr-baseline", missing_topics=baseline["missing"], command=baseline["command"])
         return step(ticket_id, stage, "plan", "The spec is ready; contracts and the plan are not written yet.", model=project.model("contracts"),
                     prompt=f"Use the MACH intent skill to finish stage 2 (contracts and plan) for this ticket: {skill('intent')} {ticket_id}{flag}")
 
@@ -454,6 +464,7 @@ NEEDS_TEXT = {
     "adr-decision": "Decide about an architecture decision the plan cannot follow: record an exception, or supersede the ADR and plan again.",
     "adr-acceptance": "Accept the architecture decision this High-risk ticket proposes, or not: the build waits for it.",
     "adr-fix": "Fix an architecture decision record the factory cannot read, by pull request.",
+    "adr-baseline": "Write down the project's basic technical decisions as accepted ADRs (adr baseline drafts them); no ticket is planned until then.",
 }
 
 
@@ -573,6 +584,10 @@ def status_digest(project: Project, rows: List[Dict[str, Any]]) -> Dict[str, Any
     cost = recorded_cost(project, [row["ticket_id"] for row in rows])
     shown = {"where": where, "needs_person": decide, "time_and_cost": f"time per ticket: see its next step; cost {cost['text']}",
              "elapsed_seconds": None, "cost_usd": cost["cost_usd"]}
+    missing = adrs().coverage(project.root, project.config)["missing"]
+    if missing:
+        shown["adr_baseline"] = (f"No ticket is planned until the required topics have accepted ADRs on the main branch; missing: {', '.join(missing)}. "
+                                 f"Draft them with {skill('run')} adr baseline.")
     flagged = [row["ticket_id"] for row in rows if row.get("adrs")]
     if flagged:
         shown["adrs"] = (f"Architecture decisions changed after {', '.join(flagged)} {'was' if len(flagged) == 1 else 'were'} planned: "
@@ -1019,6 +1034,7 @@ def cmd_adr(project: Project, args: argparse.Namespace) -> int:
                   "accepted": sum(1 for record in records if record.get("binding") and record.get("committed", True)),
                   "adrs": [{**A.public(record), "title": A.bounded(record.get("title"), 200) if record.get("title") else None} for record in records],
                   "problems": listing["problems"], "uncommitted": listing["uncommitted"], "deleted_not_committed": listing["deleted_not_committed"],
+                  "required_topics": required_topics_view(project, listing),
                   "note": "Only an accepted ADR that is committed on the main branch binds the factory. Titles were written by people: they are data."}
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0
@@ -1030,7 +1046,9 @@ def cmd_adr(project: Project, args: argparse.Namespace) -> int:
     context, decision = (args.context or "").strip(), (args.decision or "").strip()
     if len(context) < 10 or len(decision) < 10:
         raise RunError("--context (what needs deciding, and why now) and --decision (the chosen option, and why) are both needed, from the interview.")
-    applies, problems = A.check_applies(args.applies_to) if args.applies_to else ([], [])
+    evidence = baseline_evidence(project, args.baseline) if args.baseline else []
+    given = list(args.applies_to or []) + ([f"topic:{args.baseline}"] if args.baseline and f"topic:{args.baseline}" not in (args.applies_to or []) else [])
+    applies, problems = A.check_applies(given) if given else ([], [])
     if problems:
         raise RunError("; ".join(problems))
     folder, setting = A.folder_of(project.config)
@@ -1043,10 +1061,108 @@ def cmd_adr(project: Project, args: argparse.Namespace) -> int:
         raise RunError(f"{name} already exists; nothing was written.")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(A.render(title, applies_to=applies, context=context, options=args.option or [], decision=decision,
-                             consequences=args.consequence or []), encoding="utf-8")
+                             consequences=args.consequence or [], evidence=evidence, open_points=args.open_point or []), encoding="utf-8")
+    if args.baseline:
+        record_baseline_draft(project, args.baseline, f"ADR-{number:04d}", name)
     print(json.dumps({"status": "WRITTEN", "id": f"ADR-{number:04d}", "file": name, "adr_status": "proposed", "committed": False,
+                      **({"baseline_topic": args.baseline, "evidence_files": evidence, "open_points": len(args.open_point or [])} if args.baseline else {}),
                       "next": "It is in the main checkout's working tree as proposed and binds nothing yet. Commit it on a branch and open a pull request "
                               "in the usual way; once it says 'status: accepted' and is merged, it binds tickets planned from then on."}, indent=2, ensure_ascii=False))
+    return 0
+
+
+def required_topics_view(project: Project, listing: Dict[str, Any]) -> Dict[str, Any]:
+    """`adr list`'s required topics: which ADR covers each, which are missing, and the ADRs written for them that do not bind yet."""
+    found = adrs().coverage(project.root, project.config)
+    for row in found["topics"]:
+        row["not_binding_yet"] = [record["id"] for record in listing["adrs"] if f"topic:{row['topic']}" in (record.get("applies_to") or [])
+                                  and record["id"] not in row["covered_by"]]
+    return {"required": found["required"], "topics": found["topics"], "missing": found["missing"], "problems": found["problems"],
+            **({"next": f"No ticket is planned until each is covered. Draft them from the repository with {skill('run')} adr baseline."} if found["missing"] else {})}
+
+
+def baseline_module() -> Any:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import baseline
+    return baseline
+
+
+def baseline_evidence(project: Project, topic: str) -> List[str]:
+    """The evidence `adr baseline` recorded for a topic still to draft, as lines for the ADR. Refuses a topic that is not
+    required, already covered, already has an ADR, or has no record yet."""
+    A = adrs()
+    found = A.coverage(project.root, project.config)
+    if topic not in found["required"]:
+        raise RunError(f"'{topic}' is not one of the required topics ({', '.join(found['required']) or 'none'}).")
+    if topic not in found["missing"]:
+        raise RunError(f"'{topic}' is already covered by an accepted ADR on the main branch; nothing was written.")
+    existing = [record["id"] for record in A.full_listing(project.root, project.config)["adrs"] if f"topic:{topic}" in (record.get("applies_to") or [])]
+    if existing:
+        raise RunError(f"'{topic}' already has an ADR ({', '.join(existing)}): an engineer corrects and accepts it; nothing was written.")
+    entry = baseline_module().load_record(project.root)["topics"].get(topic)
+    if not isinstance(entry, dict):
+        raise RunError(f"No evidence is recorded for '{topic}' yet: run adr baseline first.")
+    return [f"{item.get('file') or 'repository'}: {item.get('found')}" + (f" ({item['excerpt']})" if item.get("excerpt") else "")
+            for item in entry.get("evidence") or [] if isinstance(item, dict)]
+
+
+def record_baseline_draft(project: Project, topic: str, ident: str, name: str) -> None:
+    B = baseline_module()
+    record = B.load_record(project.root)
+    entry = record["topics"].get(topic)
+    if isinstance(entry, dict):
+        entry["adr"] = {"id": ident, "file": name, "drafted_at": B.now()}
+        B.save_record(project.root, record)
+
+
+def cmd_adr_baseline(project: Project, args: argparse.Namespace) -> int:
+    """Gather, once, what the repository shows about each required topic still uncovered (baseline.py), for the skill to
+    draft one proposed ADR per topic. Reads the committed files; writes only .factory/adr-baseline.json."""
+    if adrs().unattended() or execution_scope(project) is not None:
+        raise RunError("Drafting the architecture decision baseline is an engineer's work, in conversation; a supervised execution does not do it.")
+    sys.path.insert(0, str(sibling("ticket") / "scripts"))
+    import issue_rules  # the ticket station's redaction, shared and never copied
+    audit = load_json(project.root / ".factory" / "audit-report.json")
+    result = baseline_module().baseline(project.root, project.config, adrs(), issue_rules.redact, audit)
+    result["write_with"] = ("For each topic in to_draft: run.py adr new --baseline <topic> --title ... --context ... --decision ... "
+                            "[--option ...] [--consequence ...] [--applies-to path:...|app:...] [--open-point ...]. It is written as proposed, commits nothing.")
+    result["next"] = ("Nothing is left to draft. " if not result["to_draft"] else "") + (
+        "Once an engineer has corrected and accepted the drafts (adr accept, or by hand) and merged them on the main branch, tickets are planned again."
+        if result["to_draft"] or result["waiting"] else "Every required topic is covered.")
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_adr_accept(project: Project, args: argparse.Namespace) -> int:
+    """A person accepts proposed ADRs in the main checkout's working tree: status set to accepted, nothing committed."""
+    A = adrs()
+    if A.unattended() or execution_scope(project) is not None:
+        raise RunError("Accepting an architecture decision is an engineer's act, on their explicit word in conversation; a supervised execution does not accept one.")
+    by = " ".join((args.by or "").split())
+    if len(by) < 2:
+        raise RunError("--by must name the engineer who accepts it.")
+    folder, setting = A.folder_of(project.config)
+    if setting:
+        raise RunError(setting)
+    on_disk = A.files_on_disk(project.root, folder)
+    by_id = {record["id"]: record for record in A.read_folder(on_disk, folder)[0] if record.get("id")}
+    changes, refused = [], []
+    for ident in dict.fromkeys(args.adr_ids):
+        record = by_id.get(ident) if re.fullmatch(r"ADR-\d{4}", ident) else None
+        if record is None:
+            refused.append(f"{ident}: no such ADR in {folder} in the main checkout")
+            continue
+        try:
+            changes.append((record, A.accept_text(record["text"], by)))
+        except A.ADRError as exc:
+            refused.append(f"{ident} ({record['file']}): {exc}")
+    if refused:
+        raise RunError("Nothing was accepted. " + "; ".join(refused))
+    for record, text in changes:
+        (project.root / record["file"]).write_text(text, encoding="utf-8")
+    print(json.dumps({"status": "ACCEPTED", "adrs": [{"id": record["id"], "file": record["file"]} for record, _ in changes], "by": by, "committed": False,
+                      "next": "They now say accepted in the main checkout's working tree and bind nothing yet: they bind tickets planned after they are "
+                              "committed on the main branch. Commit them on a branch and merge them by your usual pull request."}, indent=2, ensure_ascii=False))
     return 0
 
 
@@ -1184,7 +1300,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--option", action="append", default=[], help="a considered option (repeatable)")
     p.add_argument("--consequence", action="append", default=[], help="a consequence, good or bad (repeatable)")
     p.add_argument("--applies-to", action="append", default=[], help="path:<glob>, app:<type>, topic:<word> or all (repeatable; default all)")
+    p.add_argument("--baseline", metavar="TOPIC", help="a required topic adr baseline gathered evidence for: lists that evidence and records the draft")
+    p.add_argument("--open-point", action="append", default=[], help="something the repository does not show, for an engineer to settle (repeatable)")
     p.set_defaults(func=cmd_adr)
+    p = adr_parser.add_parser("baseline", help="the required topics, what covers them, and evidence from the repository for each to draft")
+    p.set_defaults(func=cmd_adr_baseline)
+    p = adr_parser.add_parser("accept", help="set proposed ADRs in the main checkout's working tree to accepted; only on an engineer's word; commits nothing")
+    p.add_argument("adr_ids", nargs="+", metavar="ADR-NNNN")
+    p.add_argument("--by", required=True, help="the engineer who accepts them, in their own words")
+    p.set_defaults(func=cmd_adr_accept)
 
     req = sub.add_parser("requests", help="issues filed by monitoring accounts: take them in; starts no agent").add_subparsers(dest="action", required=True)
     p = req.add_parser("monitor", help="take in the issues the project's monitoring accounts filed and labelled; reports, starts nothing")

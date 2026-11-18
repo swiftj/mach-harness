@@ -612,7 +612,7 @@ def slug(title: str) -> str:
 
 
 def render(title: str, *, applies_to: Sequence[str] = (), context: str = "", options: Sequence[str] = (), decision: str = "",
-           consequences: Sequence[str] = (), date: Optional[str] = None) -> str:
+           consequences: Sequence[str] = (), date: Optional[str] = None, evidence: Sequence[str] = (), open_points: Sequence[str] = ()) -> str:
     """A MADR file with status `proposed`. Empty sections carry a template comment, which check-plan refuses."""
     title = " ".join(title.split())
     header = ["---", "status: proposed", f"date: {date or datetime.now(timezone.utc).date().isoformat()}"]
@@ -636,6 +636,12 @@ def render(title: str, *, applies_to: Sequence[str] = (), context: str = "", opt
         "## Decision Outcome", "", block(decision, "Chosen option, and why it was chosen over the others."), "",
         "### Consequences", "", items(consequences, "Good, because ... / Bad, because ..."), "",
     ]
+    if evidence or open_points:  # an ADR drafted from the repository (run.py adr new --baseline) says what it was read from
+        body += ["## More Information", ""]
+        if evidence:
+            body += ["Evidence in the repository, read when this was drafted:", "", items(evidence, ""), ""]
+        if open_points:
+            body += [OPEN_POINTS_MARK + "; an engineer settles each before accepting):", "", items(open_points, ""), ""]
     return "\n".join(header) + "\n\n" + "\n".join(body)
 
 
@@ -656,3 +662,118 @@ def set_status(text: str, status: str) -> str:
 def ids_in(text: Any) -> List[str]:
     """ADR IDs named in a text, such as a plan's header or a reviewer's rule."""
     return sorted({f"ADR-{number}" for number in ID_RE.findall(str(text or ""))})
+
+
+# ---------------------------------------------------------------- the required baseline
+#
+# No ticket is planned or built until the project's basic technical decisions are written down: for every topic in
+# `adr.required_topics` (the six below unless a project says otherwise), an ADR that is accepted, committed on the main
+# branch and names `topic:<name>` in applies-to. An ADR may decide that a topic does not apply ("this library stores
+# no data"); that covers it too. An empty list is a project's explicit choice to require nothing, and the only "off".
+# `factory-tuning` tickets change only rule files and are never held by it.
+
+REQUIRED_TOPICS = {  # the default topics, each with the one line every script and the skill show for it
+    "language": "Language and runtime: the programming languages the code is written in, and the runtime versions it runs on.",
+    "framework": "Framework and application type: the frameworks the code is built on, and what kind of application it is.",
+    "storage": "Data storage: where and how the application keeps its data, or that it keeps none.",
+    "testing": "Testing approach: the test runner, the kinds of tests, and where they live.",
+    "deployment": "Deployment environment: where the application runs, and how a change gets there.",
+    "coding-standards": "Coding standards: the linter, formatter, type checking and conventions the code follows.",
+}
+ADDED_TOPIC = "A topic this project added to adr.required_topics in .factory/config.json."
+BASELINE_EXEMPT_LABEL = "factory-tuning"
+
+
+def baseline_command() -> str:
+    """The run skill's command that drafts the baseline, as MACH is installed (a project's /mach, or the plugin's /mach:run)."""
+    return "/mach adr baseline" if Path(__file__).resolve().parent.parent.name.startswith("mach-") else "/mach:run adr baseline"
+
+
+def describe_topic(topic: str) -> str:
+    return REQUIRED_TOPICS.get(topic, ADDED_TOPIC)
+
+
+def topic_label(topic: str) -> str:
+    """A few words for a topic: the start of its description, or 'added by this project'."""
+    return REQUIRED_TOPICS[topic].split(":")[0].lower() if topic in REQUIRED_TOPICS else "added by this project"
+
+
+def required_topics(config: Any) -> Tuple[List[str], List[str]]:
+    """The topics a project requires, and the problems with its setting. A setting that is not a list requires the
+    defaults; an entry that is not a topic word stays required (no ADR can cover it) until it is fixed."""
+    section = config.get("adr") if isinstance(config, dict) else None
+    if not isinstance(section, dict) or "required_topics" not in section:
+        return list(REQUIRED_TOPICS), []
+    value = section["required_topics"]
+    if not isinstance(value, list):
+        return list(REQUIRED_TOPICS), ["adr.required_topics in .factory/config.json is not a list of topic words, so the default topics are required until it is fixed."]
+    topics: List[str] = []
+    problems: List[str] = []
+    for item in value:
+        name = str(item)[:40]
+        if not isinstance(item, str) or not TOPIC_RE.match(item):
+            problems.append(f"adr.required_topics names {name!r}, which is not a topic (one lowercase word, or words joined by '-'); "
+                            "no ADR can cover it until the setting is fixed.")
+        if name not in topics:
+            topics.append(name)
+    return topics, problems
+
+
+def coverage(project: Path, config: Any, commit: Optional[str] = None) -> Dict[str, Any]:
+    """Which required topics an accepted ADR committed on the main branch covers, and which are missing. Reads only.
+    A malformed ADR covers nothing; neither does a file that is only in the working tree, except in a project with no
+    commit yet, where the working tree stands in for the main branch as it does for every ADR rule (main_listing)."""
+    topics, problems = required_topics(config)
+    listing = main_listing(project, config, commit)
+    rows = []
+    for topic in topics:
+        covering = [record for record in listing["adrs"] if record["binding"] and f"topic:{topic}" in record["applies_to"]]
+        rows.append({"topic": topic, "description": describe_topic(topic), "covered_by": [record["id"] for record in covering],
+                     "files": [record["file"] for record in covering]})
+    missing = [row["topic"] for row in rows if not row["covered_by"]]
+    return {"required": topics, "topics": rows, "missing": missing, "covered": not missing, "commit": listing["commit"],
+            "dir": listing["dir"], "problems": problems, "adr_problems": listing["problems"]}
+
+
+def baseline_stop(project: Path, config: Any, labels: Iterable[str] = ()) -> Optional[Dict[str, Any]]:
+    """Why no ticket may be planned yet, or None when the baseline is covered (or the ticket is a factory-tuning one)."""
+    if BASELINE_EXEMPT_LABEL in set(labels):
+        return None
+    found = coverage(project, config)
+    if found["covered"]:
+        return None
+    named = "; ".join(f"{topic} ({topic_label(topic)})" for topic in found["missing"])
+    command = baseline_command()
+    reason = (f"The project's basic technical decisions are not all written down as accepted ADRs on the main branch. Missing: {named}. "
+              "No ticket is planned or built until they are, so the factory never guesses the stack. "
+              f"Draft them from the repository with {command}, then an engineer corrects, accepts and commits them by pull request.")
+    return {"missing": found["missing"], "reason": reason, "command": command, "problems": found["problems"]}
+
+
+OPEN_POINTS_MARK = "Open points (not evidenced in the repository"
+
+
+def accept_text(text: str, by: str) -> str:
+    """An ADR's text accepted by a person (run.py adr accept): its status set to accepted and, when the header names no
+    decision-makers, the person added as one. Raises ADRError for a file that is not ready to accept."""
+    record = parse(text, "docs/adr/0000-x.md")
+    problems = [problem for problem in record["problems"] if not problem.startswith("the file name")]
+    if problems:
+        raise ADRError("it cannot be read: " + "; ".join(problems[:3]))
+    if record["status"] != "proposed":
+        raise ADRError(f"it is {record['status']}, not proposed; only a proposed ADR is accepted here")
+    if "<!--" in text:
+        raise ADRError("it still holds a template comment: fill in that section, or remove it, first")
+    if OPEN_POINTS_MARK in text:
+        raise ADRError("it still lists open points: an engineer settles each one in the text, removes the list, and then accepts it")
+    accepted = set_status(text, "accepted")
+    fields, _, _ = front_matter(accepted)
+    if "decision-makers" not in fields:
+        name = " ".join("".join(ch for ch in by if ch.isprintable()).split())[:80].lstrip("[-'\"# ")
+        if not name:
+            raise ADRError("--by must name the person who accepts it")
+        lines = accepted.split("\n")
+        index = next(index for index in range(1, len(lines)) if re.match(r"^status:", lines[index]))
+        lines.insert(index + 1, f"decision-makers: {name}")
+        accepted = "\n".join(lines)
+    return accepted

@@ -25,6 +25,7 @@ sys.path.insert(0, str(ROOT / "skills" / "run" / "scripts"))
 sys.path.insert(0, str(ROOT / "skills" / "intent" / "scripts"))
 import cell as cell_script  # noqa: E402
 import run  # noqa: E402
+import adr_baseline_fixture  # noqa: E402
 from test_build import Base as BuildBase, INTENT, PLAN, SPEC, SPEC_NAME  # noqa: E402
 
 C = run.claims()  # the helper exactly as run.py loads it
@@ -43,6 +44,7 @@ class Base(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name).resolve() / "project"
         (self.root / ".factory").mkdir(parents=True)
+        adr_baseline_fixture.write(self.root)
         self.env = mock.patch.dict(os.environ, {}, clear=False)
         self.env.start()
         self.addCleanup(self.env.stop)

@@ -560,8 +560,16 @@ def unreachable_green(task_lines: Sequence[str]) -> List[str]:
     return problems
 
 
+def refuse_without_baseline(project: Path, ticket_id: str) -> None:
+    """No plan is started or accepted while a required topic has no accepted ADR on the main branch (adr.baseline_stop)."""
+    stop = adr.baseline_stop(project, load_config(project), ticket_labels(project, ticket_id))
+    if stop:
+        raise CellError(stop["reason"] + " Do not start the contract engineer, and do not plan it yourself.")
+
+
 def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
     cell = read_cell(project, args.ticket_id)
+    refuse_without_baseline(project, args.ticket_id)
     root = cell_dir(project, args.ticket_id)
     if cell.get("stage") in ("spec-ready", "planned"):  # the plan station's first check opens its visit; later checks belong to it
         telemetry(root, "station.entered", "plan", lambda: {"stage": cell.get("stage")}, once=True)
@@ -935,7 +943,10 @@ def cmd_adrs(project: Path, args: argparse.Namespace) -> int:
         "exceptions": adr.exceptions(cell), "conflict": cell.get("adr_conflict"), "problems": view["problems"],
         "rules": ["Follow every accepted ADR in 'apply'; name each ADR the plan relies on under 'ADRs' in plan.md.",
                   "An accepted ADR in 'index' whose path globs match a file the plan touches must be named too: check-plan refuses a plan that leaves it out.",
-                  "A needed choice no ADR covers (a new library, language, framework or similar): propose an ADR with cell.py adr-draft and list it under 'ADRs'.",
+                  "A needed choice no ADR covers (a new library, protocol or similar): propose an ADR with cell.py adr-draft and list it under 'ADRs'.",
+                  "The required topics (adr.required_topics: language, framework, storage, testing, deployment, coding standards unless the project "
+                  "says otherwise) already have accepted ADRs, or planning would not have started. Follow them; a slice that needs something else "
+                  "for one of them is a conflict (cell.py adr-conflict), never a proposal.",
                   "A plan that cannot follow an accepted ADR: stop and record it with cell.py adr-conflict; never plan around it."],
     }, indent=2, ensure_ascii=False))
     return 0
@@ -1213,6 +1224,8 @@ def cmd_claim(project: Path, args: argparse.Namespace) -> int:
     root = cell_dir(project, args.ticket_id)
     if not (root / "cell.json").is_file():
         raise CellError(f"No cell for {args.ticket_id}. Run: cell.py open {args.ticket_id}")
+    if args.step == "plan":
+        refuse_without_baseline(project, args.ticket_id)
     holder = args.holder or claims.new_holder()
     limit = claims.minutes(load_config(project))
     try:

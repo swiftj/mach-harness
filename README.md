@@ -163,9 +163,13 @@ applies-to:
 
 The contract engineer plans under the accepted ones and names each it relied on; a plan that touches files an ADR covers must name it. The builder follows them with no override, and the architecture reviewer checks the change against them. A plan that cannot follow one stops for you: record an exception for that ticket, or supersede the ADR and plan again. A choice no ADR covers arrives as a proposed ADR in the ticket's own change; for a high-risk ticket the build waits until you accept it. A decision accepted later binds tickets planned afterwards; work already planned is flagged, never restarted. The factory never accepts, changes or supersedes an ADR.
 
+**Nothing is planned until the basics are decided.** The factory does not guess your stack. Until each required topic has an accepted ADR on the main branch that names it (`topic:language`, `topic:framework`, `topic:storage`, `topic:testing`, `topic:deployment`, `topic:coding-standards` by default), tickets are groomed but not planned or built. An ADR may decide a topic does not apply ("This library stores no data"). Add your own topics to `adr.required_topics`; an empty list requires nothing. For an existing repository, `/mach adr baseline` reads the committed files (manifests, lockfiles, test and lint settings, CI, container and deployment files, migrations) and drafts one proposed ADR per missing topic, stating what the repository already does and listing what it could not tell as open points; for a new project it asks you instead. You correct them, accept them and commit them by pull request.
+
 ```
-/mach adr list                 every decision, its status and what it applies to
+/mach adr list                 every decision, its status and what it applies to, and which required topics are missing
 /mach adr new "<decision>"     a short interview, then the file is written as proposed for you to commit
+/mach adr baseline             draft the missing required decisions from the repository, as proposed files
+/mach adr accept <ADR-NNNN>... mark proposed files you have read as accepted; you commit them
 ```
 
 ### One idea, start to finish
@@ -266,6 +270,7 @@ These are the cases, and what each choice runs if you would rather type it yours
 | The plan cannot follow an architecture decision | Record an exception for this ticket: `/mach adr except <ticket> <ADR-NNNN> "<why>"`. Or supersede the ADR by pull request, then `/mach replan <ticket> "<why>"` |
 | A high-risk ticket proposes a new architecture decision | Read the proposal, then `/mach adr accept <ticket> <ADR-NNNN>`; it is accepted on the ticket's branch and lands with the change |
 | An ADR file cannot be read | Fix it by pull request; `/mach adr list` names the problem, and `/mach <ticket>` plans the ticket once it is fixed |
+| The project's basic technical decisions are not written down | `/mach adr baseline`, then correct, accept and commit the drafts; `/mach <ticket>` plans the ticket once they are merged |
 | The audit is missing or out of date | `/mach audit` |
 
 A ticket gets three judging rounds in all, counting failed verifications and rejected reviews. On the third failure it is handed to a person; the factory does not keep trying.
@@ -337,6 +342,8 @@ A cost appears only where one was recorded, which today means work the superviso
 | `/mach adr new "<decision>"` | A short interview, then a new ADR written as proposed for you to commit by pull request |
 | `/mach adr except <ticket> <ADR-NNNN> "<why>"` | Let one ticket depart from an accepted ADR, with your reason |
 | `/mach adr accept <ticket> <ADR-NNNN>` | Accept the ADR a ticket proposes, on that ticket's branch |
+| `/mach adr baseline` | Draft the required basic decisions (language, framework, storage, testing, deployment, coding standards) from the repository |
+| `/mach adr accept <ADR-NNNN>...` | Mark proposed ADRs in your working tree accepted; you commit them |
 | `/mach audit` | The repository's readiness tier |
 | `/mach product status\|intake\|import\|plan\|dispatch` | Take slices marked ready into the factory |
 | `/mach factory status\|enable\|pause\|resume\|disable\|stop` | The unattended supervisor on this machine |
@@ -377,6 +384,7 @@ Settings are in `.factory/config.json`. The ones people change most:
 | `tickets.github.request_label` | `mach:request` | The label a person with write access applies to turn an issue into a request |
 | `tickets.github.status_comments` | `true` | `false` stops MACH's comments on request issues; its labels are still set |
 | `adr.dir` | `docs/adr` | The folder of the project's architecture decision records |
+| `adr.required_topics` | the six basics | Topics that need an accepted ADR before any ticket is planned. Add names to extend it; `[]` requires nothing |
 | `floor.evidence_media` | off | Let the Factory Floor's evidence player show screenshots and recordings; transcripts and other text are shown either way |
 
 A high-risk change always needs a person's approval in review unless you change that setting yourself. `REVIEW.md` and `AGENTS.md` are yours to edit once created.
