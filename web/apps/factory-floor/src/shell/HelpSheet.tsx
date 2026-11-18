@@ -1,6 +1,6 @@
 /**
  * The keyboard help (`?`): every shortcut, rendered from the same table the handler uses, plus the
- * legend of the timeline's marks.
+ * legend of the Line's ticket states and the inspector's badges.
  */
 import { type RefObject } from "react";
 import { Dialog, DialogContent, Kbd } from "@mach/ui";
@@ -8,14 +8,13 @@ import { activeCanvas, KEYMAP, type KeyBinding } from "./keyboard";
 import { StateGlyph } from "./glyphs";
 import { AuthorityBadge, TelemetryBadge } from "./inspector/parts";
 import { SourceGlyph } from "./SourceBadge";
+import { StatePill } from "../line/Marks";
 
-const GROUPS: KeyBinding["group"][] = ["Playback", "Views", "Panels", "In a view", "Atlas", "Blueprint", "Timeline", "Timeline workspace", "Analytics"];
+const GROUPS: KeyBinding["group"][] = ["Workspaces", "Panels", "Line", "Floor"];
 /** What each group is, where it is not obvious. */
 const GROUP_NOTES: Partial<Record<KeyBinding["group"], string>> = {
-  Playback: "In the Atlas and in the Timeline. Analytics (4) shows no transport, so these keys, and F, do nothing there, except L and End to go back to live (below).",
-  Timeline: "The timeline docked under the Atlas.",
-  "Timeline workspace": "While the Timeline (3) is up. Space, the arrows and the playback keys work there as everywhere; T does nothing.",
-  Analytics: "While Analytics (4) is up and its figures are counted to an earlier moment (the playhead held behind the live edge).",
+  Line: "With a ticket's row focused.",
+  Floor: "While the Floor (2) is up; T, F and Shift+F do nothing elsewhere. The arrows, zoom and pan keys work while the Atlas has focus.",
 };
 
 function Keys({ keys }: { keys: string[] }) {
@@ -38,10 +37,8 @@ function Keys({ keys }: { keys: string[] }) {
 
 export function HelpSheet({ open, onOpenChange, opener }: { open: boolean; onOpenChange: (open: boolean) => void; opener?: RefObject<Element | null> }) {
   // DialogContent returns focus to whatever had it when the sheet opened, by key or by button, but only
-  // to an HTML element (@mach/ui focus-return.ts checks `instanceof HTMLElement`). The views' entities
-  // and the Blueprint's tree items are SVG elements, so the shell's record of the opener is used for
-  // those: without it, `?` pressed on a Blueprint tree item sent focus to the whole stage on close
-  // (checked with Playwright on a capture build). An opener a view re-rendered away goes back to that
+  // to an HTML element (@mach/ui focus-return.ts checks `instanceof HTMLElement`). The Atlas's entities
+  // are SVG elements, so the shell's record of the opener is used for those. An opener a view re-rendered away goes back to that
   // view's canvas rather than to the design system's fallback (<main>, here the whole stage).
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -60,7 +57,7 @@ export function HelpSheet({ open, onOpenChange, opener }: { open: boolean; onOpe
             canvas.focus();
           }
         }}
-        title="Keyboard, legend and display" description="Every shortcut in the Factory Floor. The keys under In a view, Atlas, Blueprint and Timeline work while that part has focus; those under Timeline workspace while the Timeline is up.">
+        title="Keyboard, legend and display" description="Every shortcut in the Factory Floor. The view keys under Line and Floor work while that part has focus.">
         {/* Scrolls on short windows, so it takes focus for keyboard scrolling. */}
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
         <div tabIndex={0} role="region" aria-label="Shortcuts and legend" className="grid min-h-0 gap-x-8 gap-y-5 overflow-y-auto px-6 pb-6 pt-4 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus md:grid-cols-2">
@@ -96,49 +93,40 @@ export function HelpSheet({ open, onOpenChange, opener }: { open: boolean; onOpe
                 </span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="mt-1 text-info-ink">
-                  <SourceGlyph source="replay" />
-                </span>
-                <span>
-                  <strong className="text-ink">Historical replay</strong>: the same real history, loaded once and played back. Nothing new arrives.
-                </span>
-              </li>
-              <li className="flex items-start gap-2">
                 <span className="mt-1 text-warning-ink">
                   <SourceGlyph source="simulation" />
                 </span>
                 <span>
-                  <strong className="text-ink">Simulation</strong>: a recorded scenario of invented work, for demonstration. Never real execution. Shown when no observer answers, and said so.
+                  <strong className="text-ink">Simulation</strong>: a recorded scenario of invented work, running on its own, for demonstration. Never real execution. Shown when no observer answers, and said so.
                 </span>
               </li>
-              <li>
-                Live: dragging the playhead back reviews what was received while events keep arriving; the transport counts the new events, and <strong className="text-ink">Return to live</strong> (L or End) goes back to the edge. Nothing can be shown past the live edge, and the Factory Floor has no control that starts, pauses, schedules or approves anything.
-              </li>
+              <li>The Factory Floor shows the present only. It has no control that starts, pauses, schedules or approves anything: where a person must act, it shows the /mach command to run in Claude Code.</li>
               <li>Times of real history are UTC wall-clock. A history that is partial (some of it could not be received) or reconstructed (seeded from a snapshot) says so beside the source badge.</li>
             </ul>
           </section>
           <section aria-labelledby="legend" className="md:col-span-2">
             <h3 id="legend" className="mb-2 text-label text-ink">
-              Reading the timeline and the inspector
+              Reading the Line and the inspector
             </h3>
             <ul className="grid gap-x-6 gap-y-1.5 text-body-sm text-ink-muted sm:grid-cols-2">
               <li className="flex items-center gap-2">
-                <StateGlyph state="active" size={12} /> Working: a station visit or agent in progress
+                <StatePill state="working" /> a worker is at it now
               </li>
               <li className="flex items-center gap-2">
-                <StateGlyph state="succeeded" size={12} /> Passed or finished
+                <StatePill state="held" /> not at work, nothing needed from you (dashed)
               </li>
               <li className="flex items-center gap-2">
-                <StateGlyph state="failed" size={12} /> Failed: a red line runs through the track
+                <StatePill state="person" /> a person must decide (a diamond)
               </li>
               <li className="flex items-center gap-2">
-                <StateGlyph state="waiting" size={12} /> Waiting on a dependency (dashed)
+                <StatePill state="stopped" /> the line stopped work on it (square)
               </li>
               <li className="flex items-center gap-2">
-                <StateGlyph state="human" size={12} /> Held for a person; a filled triangle is a person's act
+                <StatePill state="landed" /> merged (a tick)
               </li>
+              <li>A dashed arc on a row: work sent back to an earlier station, with how many times.</li>
               <li className="flex items-center gap-2">
-                <span className="inline-block h-3 w-6 border-l border-dashed border-line-strong bg-surface-sunken" aria-hidden="true" /> Simulation only: beyond the live edge, has not happened yet
+                <StateGlyph state="active" size={12} /> In the inspector: working; <StateGlyph state="succeeded" size={12} /> passed; <StateGlyph state="failed" size={12} /> failed
               </li>
               <li className="flex items-center gap-2">
                 <AuthorityBadge authority="authoritative" /> A MACH script recorded it as it decided it

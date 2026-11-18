@@ -1,8 +1,8 @@
 /**
  * Where one station visit sits among the measured visits of its station (I-12, journey 3): how many
  * were shorter and how many longer, read from the observer's log buckets. The bucket the visit falls in
- * is said as a range, never as an exact rank, because a bucket only bounds its visits (the Timeline's
- * bounded grammar: "between A and B").
+ * is said as a range, never as an exact rank, because a bucket only bounds its visits (the bounded
+ * grammar: "between A and B").
  */
 import type { HistBin } from "./charts";
 

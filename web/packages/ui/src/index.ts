@@ -35,6 +35,7 @@ export * from "./components/banner";
 export * from "./components/toast";
 export * from "./components/rich-text";
 export * from "./components/detail";
+export * from "./components/command-line";
 
 export * from "./shell";
 export * from "./lifecycle";

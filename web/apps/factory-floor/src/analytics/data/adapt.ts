@@ -100,7 +100,6 @@ export function toContractRow(r: MetricRow): ContractRow | null {
     ...(dropped ? { groups_reason: `${dropped} group${dropped === 1 ? "" : "s"} named in free text not checked for names are listed apart` } : r.groups_reason ? { groups_reason: r.groups_reason } : {}),
     ...(r.buckets ? { buckets: r.buckets.map((b) => ({ ...figure(b), period: b.period, from_ms: b.from_ms, to_ms: b.to_ms, suspect: b.suspect })) } : {}),
     suspect: r.suspect,
-    as_of: r.as_of ? { effective_to_ms: r.as_of.effective_to_ms, exact: r.as_of.exact } : null,
   };
 }
 
@@ -238,7 +237,7 @@ const HISTORY_REASON: Readonly<Record<string, string>> = {
 
 /**
  * The contract's freshness for one view: `/factory/status` (when read) for files and read times,
- * and the envelope's `history.sources` (at the view's cursor, or as of the playhead) for each
+ * and the envelope's `history.sources` (at the view's cursor) for each
  * source's last event and count. Without the status reply, the four history classes alone; a value
  * neither gives stays null and the note says why. `history.sources` empty and no status: [].
  */
@@ -248,7 +247,7 @@ export function freshnessFor(status: FreshnessReply | null, history: AnalyticsHi
     const source = HISTORY_SOURCE[h.source] as SourceFreshness["source"] | undefined;
     if (!source) return [];
     const lifecycle = source === "cell lifecycle" && flow && flow.tickets !== null && flow.tickets_with_lifecycle !== null;
-    const notes = [h.precision === "hour" ? "counted to whole hours before the playhead" : null, h.source === "stream" ? "execution streams and execution records are one source here" : null, ...h.reason.map((r) => HISTORY_REASON[r] ?? r)].filter(
+    const notes = [h.source === "stream" ? "execution streams and execution records are one source here" : null, ...h.reason.map((r) => HISTORY_REASON[r] ?? r)].filter(
       (n): n is string => n !== null,
     );
     return [

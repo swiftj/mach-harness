@@ -2,9 +2,8 @@
  * Where what is shown comes from, said so it cannot be mistaken (spec: a simulation must never be
  * indistinguishable from real execution):
  *
- * - the **source badge**: Live Factory, Historical replay or Simulation, each with its own word,
- *   glyph and tone (never colour alone). It opens the source menu (switch to replay or to the
- *   simulation, and back);
+ * - the **source badge**: Live Factory or Simulation, each with its own word, glyph and tone (never
+ *   colour alone). It opens the source menu (switch to the simulation, and back);
  * - the **connection badge** (live only): connecting, live, reconnecting, stale since hh:mm:ss,
  *   disconnected; its popover gives the observer's lag, the Factory Supervisor's heartbeat age and
  *   what has been received;
@@ -13,7 +12,7 @@
  *   observer gone quiet), over the stage only while it is empty or its contents may be out of date;
  * - the **Factory state chip**: the steady states that leave the stage full and correct (the Factory
  *   not enabled on this machine, or paused), as a compact chip in the top bar whose popover holds the
- *   whole notice, so it never covers the Atlas or the Blueprint.
+ *   whole notice, so it never covers the Line or the Floor.
  *
  * Nothing here starts, pauses, schedules or approves anything; the menu only chooses what to read.
  */
@@ -30,15 +29,14 @@ export { connectionLook, noticesFor, type ConnectionLook, type Notice } from "./
 import type { SourceChoice } from "./source/boot";
 import { duration as durationWords, isMoment, timecode, utcClock } from "./vocab";
 
-// ---------------------------------------------------------------- the three sources
+// ---------------------------------------------------------------- the two sources
 
 export const SOURCE_WORDS: Record<SceneSource, { label: string; short: string; description: string }> = {
   live: { label: "Live Factory", short: "Live", description: "Real execution, as the observer reads it from this project's Factory files, arriving as it happens." },
-  replay: { label: "Historical replay", short: "Replay", description: "Real execution recorded earlier, loaded once from the observer and played back. Nothing new arrives." },
-  simulation: { label: "Simulation", short: "Simulation", description: "A recorded scenario that plays back invented work. It reads no Factory state and is never real execution." },
+  simulation: { label: "Simulation", short: "Simulation", description: "A recorded scenario of invented work, running on its own. It reads no Factory state and is never real execution." },
 };
 
-/** The source's own glyph: a broadcast dot (live), a turning-back arrow (replay), a dashed ring (simulation). */
+/** The source's own glyph: a broadcast dot (live), a dashed ring (simulation). */
 export function SourceGlyph({ source, size = 10 }: { source: SceneSource; size?: number }) {
   return (
     <svg aria-hidden="true" width={size} height={size} viewBox="0 0 10 10" className="shrink-0">
@@ -46,12 +44,6 @@ export function SourceGlyph({ source, size = 10 }: { source: SceneSource; size?:
         <>
           <circle cx="5" cy="5" r="2.4" style={{ fill: "currentColor" }} />
           <circle cx="5" cy="5" r="4.3" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.1 }} />
-        </>
-      ) : source === "replay" ? (
-        <>
-          <path d="M2.2 3.2A3.6 3.6 0 1 1 1.4 5.6" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.4, strokeLinecap: "round" }} />
-          <path d="M0.8 1.4L2.4 3.6L4.6 2.4" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.2, strokeLinejoin: "round", strokeLinecap: "round" }} />
-          <path d="M5 3.2V5.2L6.4 6" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.1, strokeLinecap: "round" }} />
         </>
       ) : (
         <circle cx="5" cy="5" r="4" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.4, strokeDasharray: "2 1.6" }} />
@@ -63,8 +55,6 @@ export function SourceGlyph({ source, size = 10 }: { source: SceneSource; size?:
 const TONE: Record<SceneSource, string> = {
   // Live: the factory's live ink on its soft ground, solid line.
   live: "border-factory-live bg-factory-live-soft text-factory-live",
-  // Replay: the information tone, solid line; its word is set in capitals so it differs in shape too.
-  replay: "border-info-line bg-info-soft text-info-ink",
   // Simulation: the warning tone, dashed: the M6.0 stamp.
   simulation: "border-dashed border-warning-line bg-warning-soft text-warning-ink",
 };
@@ -86,7 +76,7 @@ export function SourceStamp({ source, size = "md", className }: { source: SceneS
       )}
     >
       <SourceGlyph source={source} size={size === "md" ? 10 : 12} />
-      {source === "replay" ? <span className="uppercase tracking-[0.04em]">{words.label}</span> : words.label}
+      {words.label}
     </span>
   );
 }
@@ -133,7 +123,7 @@ export function SourceBadge({ open: openProp, onOpenChange }: { open?: boolean; 
           className={cn("inline-flex h-6 shrink-0 items-center gap-1.5 rounded-xs border px-2 font-sans text-caption font-bold outline-offset-2", TONE[source])}
         >
           <SourceGlyph source={source} />
-          {source === "replay" ? <span className="uppercase tracking-[0.04em]">{words.label}</span> : words.label}
+          {words.label}
           <ChevronDown aria-hidden="true" className="size-3.5 opacity-80" />
         </button>
       </PopoverTrigger>
@@ -145,12 +135,6 @@ export function SourceBadge({ open: openProp, onOpenChange }: { open?: boolean; 
               <SourceGlyph source="live" /> Live Factory
             </span>
             <span className="block text-caption text-ink-muted">{real ? "Real execution as it happens." : "Needs the observer: open the link the skill printed."}</span>
-          </MenuItem>
-          <MenuItem choice="replay" current={source} available={real} onPick={pick}>
-            <span className="flex items-center gap-1.5 text-body-sm font-semibold text-ink">
-              <SourceGlyph source="replay" /> Historical replay
-            </span>
-            <span className="block text-caption text-ink-muted">{real ? "The same real history, played back from its start." : "Needs the observer."}</span>
           </MenuItem>
           <MenuItem choice="simulation" current={source} available onPick={pick}>
             <span className="flex items-center gap-1.5 text-body-sm font-semibold text-ink">
@@ -278,13 +262,12 @@ export function ConnectionBadge() {
 // ---------------------------------------------------------------- completeness
 
 /**
- * The completeness of the scene at the playhead in words, as one string so the badge re-renders only
- * when it changes. M6.6 (I-38): at the playhead, as the Atlas's title reads it, so a replay held before
- * a later gap does not already say "Partial since …" (following live, the playhead is the head).
+ * The completeness of the scene now in words, as one string so the badge re-renders only when it
+ * changes.
  */
-export function completenessKey(s: { log: { sceneAt(t: number): { completeness: Completeness } }; source: SceneSource; playhead: number }): string {
+export function completenessKey(s: { log: { sceneAt(t: number): { completeness: Completeness } }; source: SceneSource; now: number }): string {
   if (s.source === "simulation") return "";
-  const c = s.log.sceneAt(s.playhead).completeness;
+  const c = s.log.sceneAt(s.now).completeness;
   const words = completenessWords(c);
   return words ? `${words.state}|${c.since ?? ""}|${words.why}` : "";
 }

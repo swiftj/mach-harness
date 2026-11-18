@@ -1,6 +1,6 @@
 /**
  * Development entry for the Factory Atlas alone, before the shell exists: /dev/atlas.html.
- * ?theme=light|dark pins the theme; ?meter shows the frame meter; ?t=<factory ms> seeks; ?play=16 plays.
+ * ?theme=light|dark pins the theme; ?meter shows the frame meter; ?t=<factory ms> starts the simulation there.
  * The capture script drives it through window.__machSim. Not part of the build.
  */
 import { StrictMode } from "react";
@@ -8,16 +8,13 @@ import { createRoot } from "react-dom/client";
 import { ThemeProvider, TooltipProvider, type ThemePreference } from "@mach/ui";
 import "../src/index.css";
 import { AtlasView } from "../src/atlas";
-import { getSceneStore } from "../src/scene";
+import { getSceneStore, type MachSimHook } from "../src/scene";
 
 const params = new URLSearchParams(window.location.search);
 const theme = params.get("theme");
-const store = getSceneStore();
-if (params.has("t")) store.seek(Number(params.get("t")));
-if (params.has("play")) {
-  store.setSpeed(Number(params.get("play")) as 16);
-  store.play();
-}
+getSceneStore();
+// The simulation runs on its own; ?t starts it at that moment, through the development hook.
+if (params.has("t")) (window as unknown as { __machSim?: MachSimHook }).__machSim?.seek(Number(params.get("t")));
 
 function Stamp() {
   return (

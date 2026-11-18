@@ -1,6 +1,6 @@
 /**
  * One anatomy per entity type (spec f.9, item 3 and 5): the facts that matter for that kind of
- * thing at the playhead, and links to what it relates to. Each reads its entity's own object from
+ * thing now, and links to what it relates to. Each reads its entity's own object from
  * the scene, so it re-renders when that entity changes, not on every tick.
  */
 import { useMemo, type ReactNode } from "react";
@@ -59,13 +59,13 @@ import {
   timecode,
   toolFamily,
 } from "../vocab";
-import { Elapsed, Facts, JumpButton, Mono, NotRecorded, RecurrenceLink, RefLink, RefList, Section, StationHistoryLink, useEntityEvents, VisitHistoryLink } from "./parts";
+import { Elapsed, Facts, Mono, NotRecorded, RecurrenceLink, RefLink, RefList, Section, StationHistoryLink, useEntityEvents, VisitHistoryLink } from "./parts";
 import { parseStation } from "./entity";
 import { reviewTally } from "./timing";
 import { activityNote, agentsWords, interruptionWords, modelCostsOf, planWords, reviewerWords, runtimeWords, seatModelName, visitLeftWords } from "./words";
 import { useFreeTextLabel } from "./catalog";
 import { EventWords, FreeText, FreeTextLabel } from "./FreeText";
-import { gatePositionWords, outcomeStateWords, outcomeWordsOf, visitStateWords } from "../../timeline/inspector";
+import { gatePositionWords, outcomeStateWords, outcomeWordsOf, visitStateWords } from "./outcomes";
 import { OpenEvidence } from "../../evidence/OpenEvidence";
 import { checkCitingPath } from "../../evidence/model";
 import { historyEndedAt, useSceneStore } from "../../scene";
@@ -482,7 +482,6 @@ export function StationAnatomy({ id, cell }: { id: string; cell: CellState }) {
                   </p>
                   {v.interrupted ? <p className="text-[11px] text-ink-subtle">Not continuous: {interruptionWords(v, (t) => timecode(t, false))}.</p> : null}
                 </div>
-                <JumpButton t={v.enteredAt} label="Go" />
               </li>
             );
           })}
@@ -1000,11 +999,6 @@ export function DependencyAnatomy({ dependency }: { dependency: DependencyState 
             ]}
           />
         </div>
-        {dependency.satisfiedAt !== null ? (
-          <div className="mt-2">
-            <JumpButton t={dependency.satisfiedAt} label="Go to when it cleared" />
-          </div>
-        ) : null}
       </Section>
       <Section title="Related">
         <RefList>
@@ -1024,7 +1018,7 @@ export function DependencyAnatomy({ dependency }: { dependency: DependencyState 
 // ---------------------------------------------------------------- execution
 
 /** Recorded spend per model, from the execution's own usage record (never per agent). */
-/** Cost by model as of the playhead: the last usage record received by then (never one recorded later). */
+/** Cost by model: the last usage record received so far. */
 function useModelCosts(executionId: string): Array<[string, number | null]> {
   const { all, happened } = useEntityEvents(ref.execution(executionId));
   return useMemo(() => modelCostsOf(all.slice(0, happened)), [all, happened]);
@@ -1206,12 +1200,9 @@ export function ActorAnatomy({ actor }: { actor: ActorState }) {
                 <FreeTextLabel what="Why each is held" />
               </>
             ) : null}
-            <div className="mt-1">
-              <JumpButton eventId={decision.id} />
-            </div>
           </div>
         ) : (
-          <Empty>No decision yet at the playhead.</Empty>
+          <Empty>No decision yet.</Empty>
         )}
       </Section>
       <Section title="What it writes">
@@ -1324,7 +1315,6 @@ export function SeatAnatomy({ seat }: { seat: SeatEntity }) {
             ["Reviewer", seat.agentId ? <ReviewerWords key="r" seat={seat} /> : "not seen"],
           ]}
         />
-        {seat.votedEventId ? <JumpButton eventId={seat.votedEventId} label="Go to the vote" /> : null}
       </Section>
       <Section title="Related">
         <RefList>

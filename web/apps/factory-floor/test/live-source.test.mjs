@@ -1,7 +1,6 @@
 // M6.2: the live source against an in-memory observer: history pages, the stream, reconnection from
 // the durable cursor, gap (history missing: partial, snapshot reload) and reset (index rebuilt), stale
-// detection, no seek past the live edge, replay while ingest continues, and the person's selection,
-// mode, camera intent and playhead surviving all of it.
+// detection, and the person's selection, mode and camera intent surviving all of it.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { live } from "./_load.mjs";
@@ -48,8 +47,7 @@ test("connects: history in pages, then the stream from the cursor; events apply 
   clock.frames(1, 16);
   assert.equal(log.size(), SPLIT + 20, "one batch on the next frame");
   assert.equal(source.status().cursor, `${server.generation}.${SPLIT + 20}`);
-  assert.equal(store.getState().following, true);
-  assert.ok(store.getState().liveAt >= RUN[SPLIT + 19].time.order_ms);
+  assert.ok(store.getState().now >= RUN[SPLIT + 19].time.order_ms);
   assert.equal(store.getState().extent.kind, "so-far");
   source.stop();
 });
@@ -70,13 +68,11 @@ test("reconnects from the durable cursor after a drop, without re-applying anyth
   source.stop();
 });
 
-test("gap: history missing is marked partial, the bounded start runs again (summaries, never a snapshot); selection, mode, camera and replay playhead survive", async () => {
+test("gap: history missing is marked partial, the bounded start runs again (summaries, never a snapshot); selection and camera survive", async () => {
   const { server, clock, store, source, log } = await setup({ snapshot: true });
   store.select("cell:LOCAL-031");
-  store.setView("blueprint");
   store.setFollow(false);
-  const replayAt = RUN[100].time.order_ms;
-  store.seek(replayAt);
+  const beforeGap = RUN[100].time.order_ms;
   const focus = store.getState().focus;
   // The browser falls behind (its stream delivers nothing for a while): the observer moves on and forgets.
   const stream = server.live()[0];
@@ -93,11 +89,8 @@ test("gap: history missing is marked partial, the bounded start runs again (summ
   clock.frames(1, 16);
   const s = store.getState();
   assert.equal(s.selection, "cell:LOCAL-031");
-  assert.equal(s.view, "blueprint");
   assert.equal(s.follow, false);
   assert.equal(s.focus, focus);
-  assert.equal(s.playhead, replayAt, "the replay's playhead is kept");
-  assert.equal(s.following, false);
   const head = log.head();
   assert.equal(head.completeness.state, "reconstructed", "seeded from the observer's summaries after missing history");
   assert.ok(head.completeness.gaps.some((g) => g.reason === "cursor-expired"));
@@ -108,7 +101,7 @@ test("gap: history missing is marked partial, the bounded start runs again (summ
   assert.ok(!head.cells["LOCAL-031"].meta.eventId.startsWith("k:"), "a summary never stands in for a cell the window's events describe");
   assert.equal(s.connection.gaps, 1);
   assert.equal(s.connection.state, "live");
-  assert.equal(log.sceneAt(replayAt).completeness.state, "complete", "before the gap, history was complete");
+  assert.equal(log.sceneAt(beforeGap).completeness.state, "complete", "before the gap, history was complete");
   source.stop();
 });
 
@@ -142,47 +135,14 @@ test("stale: silence beyond the bound is shown, with the last confirmed moment; 
   const s = store.getState();
   assert.equal(s.connection.state, "stale");
   assert.equal(s.connection.staleSince, confirmed);
-  const edge = s.liveAt;
+  const edge = s.now;
   clock.frames(30, 1000);
-  assert.equal(store.getState().liveAt, edge, "a stale connection does not carry the edge forward");
+  assert.equal(store.getState().now, edge, "a stale connection does not carry the edge forward");
   server.heartbeat(RUN[SPLIT].time.order_ms + 60_000);
   assert.equal(store.getState().connection.state, "live");
   assert.equal(store.getState().connection.sourceLagMs, 1500, "lag: heartbeat time minus the observer's settled watermark");
   source.stop();
   assert.equal(store.getState().connection.state, "disconnected");
-});
-
-test("no seek past the live edge; stepping forward stops at it", async () => {
-  const { store, source } = await setup();
-  const edge = store.getState().liveAt;
-  store.seek(edge + 3_600_000);
-  assert.equal(store.getState().playhead, edge);
-  store.stepNext();
-  assert.ok(store.getState().playhead <= store.getState().liveAt);
-  store.seek(0);
-  assert.equal(store.getState().playhead, RUN[0].time.order_ms, "and not below the first event received");
-  source.stop();
-});
-
-test("replay while ingest continues: the playhead stays, the edge moves, return to live re-attaches", async () => {
-  const { server, clock, store, source, log } = await setup();
-  const at = RUN[120].time.order_ms;
-  store.seek(at);
-  const scene = log.sceneAt(at);
-  push(server, RUN.slice(SPLIT, SPLIT + 50));
-  clock.frames(1, 16);
-  const s = store.getState();
-  assert.equal(s.following, false);
-  assert.equal(s.playhead, at);
-  assert.ok(s.liveAt >= RUN[SPLIT + 49].time.order_ms, "ingest went on");
-  assert.equal(log.sceneAt(at), scene, "the replayed moment is the same object");
-  store.play();
-  clock.frames(5, 100);
-  assert.ok(store.getState().playhead > at, "replay plays");
-  store.followLive();
-  assert.equal(store.getState().following, true);
-  assert.equal(store.getState().playhead, store.getState().liveAt);
-  source.stop();
 });
 
 test("selection survives ordinary updates; the supervisor's heartbeat freshness is read", async () => {
@@ -211,17 +171,4 @@ test("an observer that answers 401 puts the connection in the no-session state, 
   assert.equal(store.getState().connection.state, "no-session");
   assert.equal(timers.pendingTimeouts, 0, "a session cannot come back by retrying");
   source.stop();
-});
-
-test("Historical Replay: a loaded history is labelled replay, its edge is its last event", async () => {
-  const server = fakeObserver();
-  server.commit(RUN.map(unpos));
-  const log = await live.loadHistory(createObserverClient({ fetch: server.fetch }), { pageLimit: 100 });
-  const { createSceneStore } = await import("../src/scene/store.ts");
-  const store = createSceneStore({ source: "replay", log, clock: manualClock(0) });
-  assert.equal(log.head().provenance.source, "replay");
-  assert.equal(store.getState().connection, null);
-  assert.equal(store.getState().liveAt, RUN.at(-1).time.order_ms);
-  store.seek(RUN.at(-1).time.order_ms + 10_000);
-  assert.equal(store.getState().playhead, RUN.at(-1).time.order_ms);
 });

@@ -1,11 +1,11 @@
 // Defects found while capturing real execution (docs/mach-next/M6_2_COMPLETION.md, section 7):
 // a visit that stopped and was taken up again never "took" its whole span; the Factory's own
-// lifecycle events read as sentences; and real history's playback speeds are named against real time.
+// lifecycle events read as sentences. (The third, real history's playback speeds, went with playback.)
 // (The fourth, a viewport that scrolled when focus landed outside it, is CSS: `overflow: clip`.)
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { sim, scene, live } from "./_load.mjs";
+import { sim, live } from "./_load.mjs";
 import { ev, finalize } from "./fixtures/v3.mjs";
 
 const words = await import("../src/shell/inspector/words.ts");
@@ -56,18 +56,8 @@ test("the Factory's lifecycle events are sentences, by role only", () => {
   assert.equal(say("factory.resumed", { by_role: "person", retrying: [] }), "A person resumed the Factory.");
 });
 
-test("real history's speeds are named against real time; the simulation's stay relative", () => {
-  const { playbackFactorOf, playbackFactorLabel, playbackFactorWords, PLAYBACK_BASE_RATE, SPEEDS } = scene;
-  assert.deepEqual(SPEEDS.map((s) => playbackFactorLabel("replay", s)), ["5×", "10×", "20×", "40×", "80×", "160×"]);
-  assert.deepEqual(SPEEDS.map((s) => playbackFactorLabel("live", s)), ["5×", "10×", "20×", "40×", "80×", "160×"]);
-  assert.deepEqual(SPEEDS.map((s) => playbackFactorLabel("simulation", s)), ["½×", "1×", "2×", "4×", "8×", "16×"]);
-  assert.equal(playbackFactorOf("replay", 2), 2 * PLAYBACK_BASE_RATE, "the label is the rate the store plays real history at");
-  assert.equal(playbackFactorWords("replay", 2), "20 times real time");
-  assert.equal(playbackFactorWords("simulation", 2), "2 times");
-});
-
 test("the viewports clip: focus landing outside them cannot scroll the drawing away", () => {
-  for (const file of ["../src/atlas/atlas.css", "../src/blueprint/blueprint.css"]) {
+  for (const file of ["../src/atlas/atlas.css"]) {
     const css = readFileSync(new URL(file, import.meta.url), "utf8");
     assert.match(css, /overflow: hidden;[\s\S]{0,400}?overflow: clip;/, file);
   }

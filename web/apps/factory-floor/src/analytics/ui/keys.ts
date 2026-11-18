@@ -1,7 +1,6 @@
 /**
  * What a key pressed on a chart's mark does. A chart owns the keys it moves or acts with: they never
- * reach the Factory Floor's own shortcuts (Space plays and pauses, the arrows step the playhead), even
- * on a mark that has no action. Pure, so the test runner checks it (test/analytics-ui-keys.test.mjs).
+ * reach the Factory Floor's own shortcuts, even on a mark that has no action. Pure, so the test runner checks it (test/analytics-ui-keys.test.mjs).
  */
 
 /** The keys a chart keeps for itself. */

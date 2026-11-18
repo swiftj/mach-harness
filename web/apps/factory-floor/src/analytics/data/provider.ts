@@ -1,6 +1,6 @@
 /**
- * `AnalyticsData`: the one interface the Analytics workspace reads, with two implementations, as the
- * Timeline has: `observerAnalytics(client)` (live and replay) and `simulatedAnalytics(seed)` (the
+ * `AnalyticsData`: the one interface the Analytics workspace reads, with two implementations:
+ * `observerAnalytics(client)` (the live Factory) and `simulatedAnalytics(seed)` (the
  * prototype's seeded fixture, always `source: "simulation"`, which the UI labels Simulated).
  *
  * Every method takes the view's cursor (`at`, null for the first query of a view) and answers an
@@ -47,8 +47,6 @@ export interface RunsQuery extends AnalyticsQuery {
 export interface CallOptions {
   /** The view's cursor; null or absent for the first query of a view (the head). */
   readonly at?: string | null;
-  /** A playhead (`as_of_ms`): nothing recorded later is counted (exactly, or by whole UTC days: the reply's `as_of` says). Combinable with `at`. */
-  readonly asOfMs?: number | null;
   readonly signal?: AbortSignal;
 }
 

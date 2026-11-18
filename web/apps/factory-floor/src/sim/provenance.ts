@@ -9,13 +9,12 @@
  */
 
 /**
- * The three sources of a scene, persistent in the store and stamped on every scene:
+ * The two sources of a scene, persistent in the store and stamped on every scene:
  * - `live`: the Live Factory, events received from the observer's stream as they happen;
- * - `replay`: Historical Replay of real events, loaded from the observer's history (no stream);
  * - `simulation`: the deterministic M6.0 scenario, a development, demonstration and regression
  *   fixture. Never real execution.
  */
-export const SCENE_SOURCES = ["live", "replay", "simulation"] as const;
+export const SCENE_SOURCES = ["live", "simulation"] as const;
 export type SceneSource = (typeof SCENE_SOURCES)[number];
 
 /**
@@ -71,15 +70,14 @@ export const SIM_META: EntityMeta = Object.freeze({
 
 export interface SceneProvenance {
   readonly source: SceneSource;
-  /** What a view prints next to the scene: "Live Factory", "Historical replay", "Simulation". */
+  /** What a view prints next to the scene: "Live Factory" or "Simulation". */
   readonly label: string;
-  /** Simulation only: the fixture's id. Live and replay: the observer's project folder name, if known. */
+  /** Simulation only: the fixture's id. Live: the observer's project folder name, if known. */
   readonly origin: string | null;
 }
 
 export const PROVENANCE: Readonly<Record<SceneSource, SceneProvenance>> = {
   live: { source: "live", label: "Live Factory", origin: null },
-  replay: { source: "replay", label: "Historical replay", origin: null },
   simulation: { source: "simulation", label: "Simulation", origin: null },
 };
 

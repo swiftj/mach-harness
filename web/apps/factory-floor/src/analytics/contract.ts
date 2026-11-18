@@ -191,8 +191,6 @@ export interface MetricRow {
   readonly p50_bounds_ms?: readonly [number, number];
   readonly p90_bounds_ms?: readonly [number, number];
   readonly suspect?: boolean;
-  /** Under a playhead: the figure counts whole UTC days, up to `effective_to_ms` (exact false). */
-  readonly as_of?: { readonly exact: boolean; readonly effective_to_ms: number | null } | null;
 }
 
 /** `GET /api/v1/metrics` data. */
@@ -316,7 +314,7 @@ export interface SourceFreshness {
 }
 
 export interface AnalyticsSnapshot {
-  readonly source: "simulated" | "live" | "replay";
+  readonly source: "simulated" | "live";
   readonly generated_at_ms: number;
   readonly window: { readonly from_ms: number; readonly to_ms: number };
   readonly filters: AnalyticsFilters;
@@ -335,8 +333,6 @@ export interface AnalyticsSnapshot {
   readonly freshness: readonly SourceFreshness[];
   /** M6.6 (I-03): how complete the counted history is (the reply's `history.partial`, `history.gaps`, `suspect_days`); absent from the fixture. */
   readonly history?: SnapshotHistory;
-  /** Real-run D4: held on the history's first UTC day, no whole day precedes the playhead: day-counted figures have nothing to count (not "nothing recorded"). */
-  readonly no_whole_day?: true;
 }
 
 export const groupedKey = (id: MetricId, dim: Dimension): string => `${id}|${dim}`;

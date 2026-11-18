@@ -1,5 +1,5 @@
-// M6.6 I-05: prose the observer has not checked for names (R1) is contained in the floor and Timeline
-// inspectors exactly as in Analytics: one shared UncheckedText (src/text/), the session's display
+// M6.6 I-05: prose the observer has not checked for names (R1) is contained in the floor's inspectors
+// and the Line exactly as in Analytics: one shared UncheckedText (src/text/), the session's display
 // policy available outside analytics/, and a source guard that fails if an inspector prints a policy
 // field any other way.
 import { test } from "node:test";
@@ -79,8 +79,8 @@ test("containField: an opaque value at the field's limit, a placeholder wherever
 
 // ---------------------------------------------------------------- the source guard
 
-// The inspector files (floor and Timeline): every anatomy, the header, the evidence list, the run at the playhead, "In time".
-const INSPECTOR_FILES = ["shell/inspector/anatomies.tsx", "shell/inspector/Inspector.tsx", "shell/inspector/parts.tsx", "shell/inspector/RunNow.tsx", "shell/inspector/Provenance.tsx", "timeline/inspector/InTimeSection.tsx", "evidence/EvidencePlayer.tsx", "evidence/OpenEvidence.tsx"];
+// The inspector files: every anatomy, the header, the evidence list, the run now; and the Line's board, panels and record, which show the same fields.
+const INSPECTOR_FILES = ["shell/inspector/anatomies.tsx", "shell/inspector/Inspector.tsx", "shell/inspector/parts.tsx", "shell/inspector/RunNow.tsx", "shell/inspector/Provenance.tsx", "evidence/EvidencePlayer.tsx", "evidence/OpenEvidence.tsx", "line/Board.tsx", "line/Panels.tsx", "line/Record.tsx", "line/Workspace.tsx"];
 
 // How the scene names each policy field (text/fields.ts KNOWN_FREE_TEXT_FIELDS, through the reducers).
 const POLICY_READS = [
@@ -180,12 +180,12 @@ test("the session's policy is read outside analytics/: one shared hook over the 
   assert.match(hook, /UNDECLARED_POLICY/);
 });
 
-// ---------------------------------------------------------------- the whole floor, the Timeline and the shell
+// ---------------------------------------------------------------- the whole floor, the Line and the shell
 
 import { readdirSync, statSync } from "node:fs";
 
 // M6.4: the evidence player's folder is scanned like the inspectors it opens from.
-const ROOTS = ["blueprint", "atlas", "shell", "timeline", "evidence"];
+const ROOTS = ["atlas", "shell", "line", "evidence"];
 const walk = (dir) =>
   readdirSync(new URL(`../src/${dir}`, import.meta.url)).flatMap((name) => {
     const rel = `${dir}/${name}`;
@@ -220,12 +220,12 @@ const NAMING = /aria-label=|\btitle=|\btitle:\s*`?[^,]*$|\blabel=\{|\bname:\s*`|
 
 // Reviewed exceptions: a read that is a copy into data, not a print or a name.
 const CONTAINMENT_ALLOWED = [
-  // A stand-in slice record for a cell with no slice: a data field, printed later through containedWords.
-  ["blueprint/tree.ts", /s = \{ id: cell\.sliceId \|\| cell\.ticketId, title: cell\.title,/],
   // A selector's value, printed by the row through FreeText.
   ["shell/inspector/RunNow.tsx", /return isKnown\(cell\.meta, "title"\) \? cell\.title : \(s\.slices\[cell\.sliceId\]\?\.title \?\? ""\);/],
   // The identity's name: shown only in the inspector's heading, through FreeText (Inspector.tsx).
   ["shell/inspector/entity.ts", /name: (?:sl && sl\.title && isKnown\(sl\.meta, "title"\) \? sl\.title|c && isKnown\(c\.meta, "title"\) \? c\.title)/],
+  // The Line's held reason: the supervisor's words copied into the row's data, printed by the panel through FreeText (line/Panels.tsx).
+  ["line/model.ts", /\{ kind: "supervisor", words: "The supervisor holds it\. Its recorded words:", freeText: hold\.why \}/],
 ];
 
 /** [file:line, field, kind, line]: a policy field printed outside the contained path, or in a name. */
@@ -261,13 +261,13 @@ export function containmentOffenders(file, text) {
   return out;
 }
 
-test("guard: blueprint, atlas, shell, timeline and evidence print the policy's free text only through the shared containment, and never name with it", () => {
-  assert.ok(ALL_FILES.length > 60, `scanned ${ALL_FILES.length} files`);
+test("guard: atlas, shell, line and evidence print the policy's free text only through the shared containment, and never name with it", () => {
+  assert.ok(ALL_FILES.length > 40, `scanned ${ALL_FILES.length} files`);
   const found = ALL_FILES.flatMap((f) => containmentOffenders(f, src(f)));
   assert.deepEqual(found, [], `\n${found.map((x) => x.join("  ")).join("\n")}`);
 });
 
-test("guard: the containment guard bites (the M6.5 Blueprint, Atlas and Timeline lines are caught)", () => {
+test("guard: the containment guard bites (lines of the kind M6.5 found are caught)", () => {
   const before = [
     '    <g style={{ opacity: p }} role="note" aria-label={`Outvoted ${seat} blocker ${rule ?? ""}: ${f.title}`}>',
     '  const waiting = x.outcome?.waitingFor && x.outcome.waitingFor !== "nothing" ? `, waiting for ${x.outcome.waitingFor}` : "";',

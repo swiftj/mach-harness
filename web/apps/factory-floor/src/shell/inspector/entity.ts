@@ -1,5 +1,5 @@
 /**
- * Reading the selected entity from the scene at the playhead, with selectors that return the
+ * Reading the selected entity from the scene now, with selectors that return the
  * scene's own (stable) objects, so the inspector re-renders only when that entity changes.
  */
 import type { StationKind } from "@mach/ui";
@@ -39,33 +39,27 @@ export function parseStation(id: string): { ticketId: string | null; station: St
 const pickedCache = new WeakMap<object, VisitEntity>();
 
 /**
- * The visit the Timeline picked through a station (X3): the selection is `station:T/s` and the detail
- * `visit:T/s#n` (the n-th visit to that station in the cell, as the Timeline numbers them) or the
- * visit's recorded id. Null when the detail names no visit of that station, or it has not begun.
+ * A visit selected as `visit:T/s#n` (the n-th visit to station s in cell T) that the scene does not
+ * hold under that id. Null for any other selection, or when that visit has not begun.
  */
-export function pickedVisitOf(scene: Scene, entity: AnyRef, detail: string | null): VisitEntity | null {
+export function pickedVisitOf(scene: Scene, entity: AnyRef): VisitEntity | null {
   // A visit selected by its own ref that the scene cannot resolve (the simulation's visits carry no
-  // recorded id): read it through its station, by the Timeline's numbering.
-  if (!detail && kindOf(entity) === "visit") {
-    const m = /^visit:([^/]+)\/([^#/]+)#\d+$/.exec(entity);
-    if (!m || stableEntityAt(scene, entity)) return null;
-    return pickedVisitOf(scene, `station:${m[1]}/${m[2]}` as AnyRef, entity);
-  }
-  if (!detail || !detail.startsWith("visit:") || kindOf(entity) !== "station") return null;
-  const { ticketId, station } = parseStation(refId(entity));
-  const cell = ticketId ? scene.cells[ticketId] : undefined;
+  // recorded id): read it through its station, numbered in order of entry.
+  if (kindOf(entity) !== "visit") return null;
+  const m = /^visit:([^/]+)\/([^#/]+)#(\d+)$/.exec(entity);
+  if (!m || stableEntityAt(scene, entity)) return null;
+  const ticketId = m[1] as string;
+  const cell = scene.cells[ticketId];
   if (!cell) return null;
-  const vid = detail.slice("visit:".length);
-  const mine = cell.visits.filter((v) => v.station === station);
-  const m = /^([^/]+)\/([^#/]+)#(\d+)$/.exec(vid);
-  const v = mine.find((x) => x.visitId === vid) ?? (m && m[1] === ticketId && m[2] === station ? mine[Number(m[3]) - 1] : undefined);
+  const vid = entity.slice("visit:".length);
+  const v = cell.visits.filter((x) => x.station === m[2])[Number(m[3]) - 1];
   if (!v) return null;
   let out = pickedCache.get(v);
   if (!out) pickedCache.set(v, (out = { ...v, ticketId: cell.ticketId, visitId: vid }));
   return out;
 }
 
-/** The entity's own object at the playhead (stable while it does not change), or null if it does not exist yet. */
+/** The entity's own object now (stable while it does not change), or null if it does not exist yet. */
 export function selectEntity(scene: Scene, entity: AnyRef): unknown {
   const id = refId(entity);
   switch (kindOf(entity)) {

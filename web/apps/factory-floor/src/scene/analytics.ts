@@ -2,7 +2,7 @@
  * The Factory Analytics workspace's interface state (M6.5 design section 4), kept in the scene store
  * (`state.analytics`) so it survives a workspace switch and is written to the address. Interface state
  * only: the area on screen, the period, the shared filters, a comparison and the metric whose rows are
- * open. Selection, hover, the camera's focus and the playhead stay the store's own; nothing here is a
+ * open. Selection, hover and the camera's focus stay the store's own; nothing here is a
  * second selection, and nothing here changes what another workspace shows.
  *
  * Every value is checked here (`applyAnalyticsPatch`): an unknown area, filter value or malformed
@@ -24,7 +24,7 @@ export const ANALYTICS_AREA_WORDS: Readonly<Record<AnalyticsArea, string>> = {
   opportunities: "Improvement opportunities",
 };
 
-/** A period ending at the newest record the source holds (or at the playhead: see the shell's `analyticsAsOf`). `all`: the whole recorded history. */
+/** A period ending at the newest record the source holds. `all`: the whole recorded history. */
 export const ANALYTICS_WINDOW_PRESETS = ["7d", "14d", "28d", "all"] as const;
 export type AnalyticsWindowPreset = (typeof ANALYTICS_WINDOW_PRESETS)[number];
 /** A chosen interval, in the source's own time (the simulation's scenario ms; Unix ms for real history), `from < to`. */

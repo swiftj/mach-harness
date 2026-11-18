@@ -1,7 +1,7 @@
 /**
  * Contributing entities. Each row carries its entity reference in the Factory Floor's grammar and
- * opens it only through the caller's `onOpen(ref, where, interval?)`: the Timeline, framed on the
- * entity's own interval where one was recorded, or the floor. The link's address is the deep link
+ * opens it only through the caller's `onOpen(ref, where)`: on the Line (its ticket's row), or on the
+ * Floor. The link's address is the deep link
  * for opening in a new tab; a plain click never navigates by itself. A value that was not recorded
  * says so; it is never shown as zero.
  *
@@ -16,7 +16,7 @@ import { pageOf, sortRows, type SortDir } from "../../model/series";
 import { trapTab } from "../kit";
 import type { AreaData, OnOpen, RowsRequest } from "../types";
 
-export const refHref = (ref: string): string => `#timeline?sel=${encodeURIComponent(ref)}`;
+export const refHref = (ref: string): string => `#line?sel=${encodeURIComponent(ref)}`;
 
 /**
  * Whether a row's entity can be opened where the workspace is mounted (the Shell provides it). Under
@@ -41,8 +41,6 @@ export function contributedText(c: Contributor, unit: RowsRequest["unit"]): stri
   }
 }
 
-const intervalOf = (c: Contributor) => (c.from_ms !== null && c.to_ms !== null && c.to_ms > c.from_ms ? { from: c.from_ms, to: c.to_ms } : undefined);
-
 export function RefList({ items, unit, showWhen = false, onOpen }: { items: readonly Contributor[]; unit: RowsRequest["unit"]; showWhen?: boolean; onOpen: OnOpen }) {
   const canOpen = useContext(CanOpenRef);
   if (items.length === 0) return <p className="text-body-sm text-ink-muted">None recorded.</p>;
@@ -50,7 +48,6 @@ export function RefList({ items, unit, showWhen = false, onOpen }: { items: read
     <ul className="divide-y divide-line border-y border-line">
       {items.map((c, i) => {
         const l = refLabel(c);
-        const iv = intervalOf(c);
         const openable = !canOpen || canOpen(c.ref);
         return (
           <li key={`${c.ref}-${i}`} className="flex items-center gap-3 py-1.5 text-body-sm" data-openable={openable ? undefined : "no"}>
@@ -64,9 +61,9 @@ export function RefList({ items, unit, showWhen = false, onOpen }: { items: read
               onClick={(e) => {
                 if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
                 e.preventDefault();
-                onOpen(c.ref, "timeline", iv);
+                onOpen(c.ref, "line");
               }}
-              aria-label={`${l.primary}${l.secondary ? `, ${l.secondary}` : ""}: open in the Timeline`}
+              aria-label={`${l.primary}${l.secondary ? `, ${l.secondary}` : ""}: show on the Line`}
             >
               {l.primary}
             </a>
@@ -153,7 +150,7 @@ export function Rows({ req, data, onClose, onOpen }: { req: RowsRequest; data: A
         <RefList items={pg.items} unit={req.unit} showWhen onOpen={onOpen} />
       </div>
       <div className="flex items-center gap-2 border-t border-line px-4 py-2 text-caption text-ink-muted">
-        <span className="flex-1">A row opens its entity in the Timeline, framed on its own interval; the pin shows it in the Atlas.</span>
+        <span className="flex-1">A row shows its ticket on the Line; the pin shows it on the Floor.</span>
         {pg.pages > 1 ? (
           <>
             <span className="an-num shrink-0">

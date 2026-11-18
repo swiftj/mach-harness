@@ -38,7 +38,7 @@ import {
   stopOwn,
   waitCaughtUp,
 } from "../e2e/analytics-lib.mjs";
-import { distribution, heapAfterGc, machineFacts } from "./timeline-lib.mjs";
+import { distribution, heapAfterGc, machineFacts } from "./measure-lib.mjs";
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback) => {

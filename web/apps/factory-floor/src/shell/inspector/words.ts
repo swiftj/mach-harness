@@ -171,7 +171,7 @@ export function visitLeftWords(visit: Pick<StationVisit, "leftAt">, status: Pick
   return clock(visit.leftAt);
 }
 
-/** Cost by model from the last `execution.usage` among `entries` (the caller passes only what happened by the playhead). */
+/** Cost by model from the last `execution.usage` among `entries` (the caller passes only what has happened). */
 export function modelCostsOf(entries: readonly { readonly event: { readonly type: string } }[]): Array<[string, number | null]> {
   const usage = [...entries].reverse().find((e) => e.event.type === "execution.usage");
   if (!usage) return [];
@@ -183,28 +183,6 @@ export function modelCostsOf(entries: readonly { readonly event: { readonly type
 export function sliceTitle(s: { readonly id: string; readonly title: string }): string | null {
   const t = s.title.trim();
   return t && t !== s.id ? t : null;
-}
-
-/** What a Timeline span picked through an ancestor is called, by its ref's grammar. */
-export function pickedWords(detail: string): string {
-  if (/^visit:.*\/task:/.test(detail)) return "a build task";
-  if (detail.startsWith("visit:")) return "a station visit";
-  if (/^gate:.*\/round#/.test(detail)) return "a review round";
-  if (/^gate:.*\/required:/.test(detail)) return "a wait on a person";
-  if (detail.startsWith("workflow:")) return "a workflow";
-  if (detail.startsWith("seat:")) return "a review seat";
-  if (detail.startsWith("gate:")) return "a wait at a gate";
-  return "a span";
-}
-
-/**
- * The note above an entity selected through a span the store cannot select itself (a wait on a
- * person, a round, a seat). It never says nothing more is known: what the Timeline holds for the span
- * (its record's reasons, since when, until when or still open, how it is known) is the In time
- * section, shown first; the selected ancestor's own record follows.
- */
-export function pickedThroughWords(detail: string, kindWord: string): string {
-  return `You picked ${pickedWords(detail)} on the Timeline. It is not selectable on its own: what its span records is under In time, first; its ${kindWord.toLowerCase()}'s own record follows.`;
 }
 
 /** A seat's model by its name ("Claude Opus 5.5"); a model the vocabulary does not know, as recorded; null when none is. */
@@ -220,7 +198,7 @@ export function reviewerWords(seat: string, model: string | null): string {
 
 /**
  * A station on its own (`station:verify`, the Factory-level station, I-22): its visits across every
- * cell, never "Not visited" when a cell has been there. `cells` is the scene's cells at the playhead.
+ * cell, never "Not visited" when a cell has been there. `cells` is the scene's cells now.
  */
 export function stationAcrossWords(
   cells: Readonly<Record<string, { readonly station: string | null; readonly visits: readonly Pick<StationVisit, "station" | "enteredAt" | "leftAt">[] }>>,

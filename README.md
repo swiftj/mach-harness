@@ -212,7 +212,7 @@ Issues that a production monitoring account files and labels itself can also be 
 
 ### Watching it
 
-Run `/mach floor`, or say "open the Factory Floor". It opens a read-only view in your browser: the Atlas (what is where), the Timeline (what happened, when) and Analytics (how well the factory runs). It cannot start, approve or merge anything.
+Run `/mach floor`, or say "open the Factory Floor". It opens a read-only view in your browser: the Line (every ticket, station by station, and what needs you), the Floor (the factory as an isometric drawing) and Analytics (how well the factory runs). It cannot start, approve or merge anything.
 
 ### Releasing
 

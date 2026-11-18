@@ -1,6 +1,6 @@
 /**
  * Where an entity is on the plant, as plan boxes: for selection brackets, the focus ring and camera
- * framing. Pure, from the layout and the scene at the playhead.
+ * framing. Pure, from the layout and the scene at the moment shown.
  */
 import { factoryTokens, screenBounds, type PlanBox } from "@mach/ui";
 import { entityAt, findAgent, findArtifact, findToolCall, ref, refId, refKind, type EntityRef, type Scene } from "../sim";

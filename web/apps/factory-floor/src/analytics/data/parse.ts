@@ -371,7 +371,6 @@ export function readContributors(data: unknown, source: AnalyticsSource): Contri
     by_basis: counts(d.by_basis),
     order: oneOf(d.order, ["impact", "recent"] as const),
     limit: num(d.limit),
-    after_as_of: 0,
   };
 }
 
@@ -456,7 +455,7 @@ export function readRun(v: unknown): RunItem | null {
 export function readRuns(data: unknown, source: AnalyticsSource): RunsReply | ExecutionsReply {
   const d = obj(data);
   if (!Array.isArray(d.items)) throw new AnalyticsProtocolError("The runs reply carries no items.");
-  const common = { ...readEnvelope(d, source), total: num(d.total), offset: num(d.offset), more: d.more === true, excluded: readExcluded(d.excluded), after_as_of: 0 };
+  const common = { ...readEnvelope(d, source), total: num(d.total), offset: num(d.offset), more: d.more === true, excluded: readExcluded(d.excluded) };
   if (d.of === "executions") return { ...common, of: "executions", items: d.items.map(readExecution).filter((x): x is ExecutionItem => x !== null) };
   return { ...common, of: "runs", items: d.items.map(readRun).filter((x): x is RunItem => x !== null) };
 }

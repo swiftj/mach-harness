@@ -4,13 +4,11 @@
  * events behind an entity). The simulation's events carry their M6.0 telemetry class; real events
  * carry their authority and time precision.
  */
-import { CornerDownRight } from "lucide-react";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@mach/ui";
 import { entriesBehind, EVENT_CATALOG, eventsFor, isSceneLog, timingAt, type AnyRef, type AnySimEvent, type Authority, type LogEntry, type Telemetry } from "../../sim";
-import { analyticsStationOf, showInAnalytics, useSceneStore, useStore, type AnalyticsTarget } from "../../scene";
+import { analyticsStationOf, showInAnalytics, useNowEffect, useSceneStore, useStore, type AnalyticsTarget } from "../../scene";
 import { visitAnalyticsWindow } from "../../scene/analytics";
-import { usePlayheadEffect } from "../timeline/playhead";
 import { duration as durationWords, selectable, TELEMETRY_WORDS, timecode } from "../vocab";
 import { elapsedWords } from "./words";
 import { EventWords } from "./FreeText";
@@ -94,21 +92,6 @@ export function RefLink({ to, glyph, children, detail }: { to: AnyRef; glyph?: R
 
 export function RefList({ children }: { children: ReactNode }) {
   return <div className="-mx-1.5 flex flex-col">{children}</div>;
-}
-
-/** A playhead jump, worded for its purpose: to an event by its id (any source), a simulation seq, or a time. */
-export function JumpButton({ eventId, seq, t, label = "Go to this moment" }: { eventId?: string | null; seq?: number; t?: number; label?: string }) {
-  const store = useStore();
-  return (
-    <button
-      type="button"
-      onClick={() => (eventId ? store.seekToEvent(eventId) : seq !== undefined ? store.seekToSeq(seq) : t !== undefined ? store.seek(t) : undefined)}
-      className="inline-flex items-center gap-1 rounded-xs text-caption font-semibold text-accent-ink underline decoration-1 underline-offset-[3px] hover:decoration-2"
-    >
-      <CornerDownRight aria-hidden="true" className="size-3" />
-      {label}
-    </button>
-  );
 }
 
 export function TelemetryBadge({ telemetry }: { telemetry: Telemetry }) {
@@ -253,10 +236,7 @@ export function EventRow({ entry, current }: { entry: LogEntry; current?: boolea
           ))}
         </p>
       ) : null}
-      <div className="mt-1.5 flex items-center gap-3">
-        <JumpButton eventId={entry.id} label={sim ? "Go to this moment" : "Go to event"} />
-        {current ? <span className="text-caption text-ink-subtle">Latest event behind what you see</span> : null}
-      </div>
+      {current ? <p className="mt-1.5 text-caption text-ink-subtle">Latest event behind what you see</p> : null}
     </li>
   );
 }
@@ -273,8 +253,8 @@ function upperBoundByT(entries: readonly LogEntry[], t: number): number {
 }
 
 /**
- * The events behind an entity (as log entries, any source), and how many of them have happened at
- * the playhead. Re-read when the log changes (live ingest); the count is what is subscribed to, so
+ * The events behind an entity (as log entries, any source), and how many of them have happened by
+ * now. Re-read when the log changes (live ingest); the count is what is subscribed to, so
  * this changes when the entity's own next event happens, not on every tick.
  */
 export function useEntityEvents(entity: AnyRef): { all: readonly LogEntry[]; happened: number } {
@@ -282,11 +262,11 @@ export function useEntityEvents(entity: AnyRef): { all: readonly LogEntry[]; hap
   const version = useSceneStore((s) => s.logVersion);
   // With the event the entity's own record names, so the evidence never reads "0 events" beside a record that names one (D14).
   const all = useMemo(() => (isSceneLog(log) && log.provenance.source !== "simulation" ? entriesBehind(log, entity) : eventsFor(log, entity)), [log, entity, version]); // eslint-disable-line react-hooks/exhaustive-deps
-  const happened = useSceneStore((s) => upperBoundByT(all, s.playhead));
+  const happened = useSceneStore((s) => upperBoundByT(all, s.now));
   return { all, happened };
 }
 
-/** "Why it looks like this" and the evidence: every event behind the entity up to the playhead. */
+/** "Why it looks like this" and the evidence: every event behind the entity so far. */
 export function Evidence({ entity }: { entity: AnyRef }) {
   const { all, happened } = useEntityEvents(entity);
   const [showAll, setShowAll] = useState(false);
@@ -317,7 +297,7 @@ export function Evidence({ entity }: { entity: AnyRef }) {
       }
     >
       {past.length === 0 ? (
-        <p className="text-body-sm text-ink-muted">No event received touches this at the playhead.</p>
+        <p className="text-body-sm text-ink-muted">No event received touches this yet.</p>
       ) : (
         <>
           {sim ? (
@@ -362,15 +342,15 @@ export function Evidence({ entity }: { entity: AnyRef }) {
 }
 
 /**
- * Elapsed time of work, as known at the playhead: "for 2 min 10 s" while it runs, the whole span once
+ * Elapsed time of work, as known now: "for 2 min 10 s" while it runs, the whole span once
  * it has finished. Never a fraction or a time left (nobody knows how long work in flight will take).
- * Written straight to the DOM on each frame, so it never re-renders the inspector.
+ * Written straight to the DOM as time moves, so it never re-renders the inspector.
  */
 export function Elapsed({ startedAt, finishedAt, mode = "work" }: { startedAt: number; finishedAt: number | null; mode?: "work" | "wait" | "ended-unrecorded" | "interrupted" | "open" }) {
   const ref = useRef<HTMLSpanElement>(null);
-  usePlayheadEffect(
+  useNowEffect(
     (s) => {
-      const timing = timingAt(startedAt, finishedAt, s.playhead);
+      const timing = timingAt(startedAt, finishedAt, s.now);
       // A wait on a person is never "at work" (D14); a visit that never exited is bounded, not "took" (D4).
       const text = elapsedWords(mode === "ended-unrecorded" && timing.finished ? "ended-unrecorded" : mode, timing.started, timing.finished, durationWords(timing.elapsed));
       if (ref.current && ref.current.textContent !== text) ref.current.textContent = text;
@@ -381,8 +361,8 @@ export function Elapsed({ startedAt, finishedAt, mode = "work" }: { startedAt: n
 }
 
 /**
- * A link from the inspector into Factory Analytics (M6.5 design section 4), in the style of "Show in
- * Timeline": the selection and the playhead stay; Analytics opens on `target`.
+ * A link from the inspector into Factory Analytics (M6.5 design section 4): the selection stays;
+ * Analytics opens on `target`.
  */
 export function AnalyticsLink({ target, children }: { target: AnalyticsTarget; children: ReactNode }) {
   const store = useStore();
@@ -405,7 +385,7 @@ export function StationHistoryLink({ kind }: { kind: string }) {
 }
 
 /**
- * "Open its measured history" for one station visit picked in the Timeline (I-12, journey 3): Flow for
+ * "Open its measured history" for one station visit (I-12, journey 3): Flow for
  * its station over the week the visit ended in, with the visit still selected, so Flow can say where it
  * sits among that week's measured visits. The simulation's Analytics reads its own fixture, not the
  * simulated run, so there the period is left as it is.

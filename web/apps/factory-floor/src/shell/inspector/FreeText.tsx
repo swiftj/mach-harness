@@ -1,5 +1,5 @@
 /**
- * Prose the observer has not checked for names, in the floor and Timeline inspectors (M6.6, I-05;
+ * Prose the observer has not checked for names, in the inspector and the Line (M6.6, I-05;
  * M6_5_SECURITY.md 6 B, rules C1 to C3). Every field the session's `display_policy.free_text` names
  * (`text/fields.ts`) is printed only through these components, which hand it to the one shared
  * `UncheckedText`: plain text, cut to the field's limit, labelled "free text, not checked for names".

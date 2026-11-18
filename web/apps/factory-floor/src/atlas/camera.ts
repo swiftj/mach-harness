@@ -2,7 +2,7 @@
  * The Atlas camera: one `{ x, y, zoom }` applied as a CSS transform on the scene wrapper (spec f.1).
  * This is interface state, the only state the Atlas keeps besides hover; it never touches factory
  * progress. Easing here is interface motion (camera focus 650 ms, follow 900 ms, standard curve),
- * driven by requestAnimationFrame and performance.now, never by the playhead.
+ * driven by requestAnimationFrame and performance.now, never by the moment shown.
  */
 import { easings, factoryTokens } from "@mach/ui";
 

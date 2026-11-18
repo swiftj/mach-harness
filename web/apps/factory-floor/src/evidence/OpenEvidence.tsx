@@ -1,7 +1,7 @@
 /**
  * The ways into the evidence player (M6.4, design 4.1): from a cell's inspector, from a check in a
  * verification gate's "What it checked", from an artifact cited by a check, and from an evidence
- * reference in the Timeline's inspector. Each only asks the store to open the player; the address then
+ * reference in the inspector. Each only asks the store to open the player; the address then
  * carries the ticket and the check, never a path. Button names are IDs and words, never file names.
  */
 import { useCallback } from "react";

@@ -1,14 +1,13 @@
 // M6.2 acceptance: the scene-model, live-client and shell defects the real end-to-end run found
-// (docs/mach-next/M6_2_ACCEPTANCE.md, D4 to D24). Each test reproduces its defect with a small v3
-// fixture written for it (shaped like the run's records, with none of its data), then holds the fix.
+// (docs/mach-next/M6_2_ACCEPTANCE.md, D4 to D24; D19 and D20 went with the Timeline and playback).
+// Each test reproduces its defect with a small v3 fixture written for it (shaped like the run's
+// records, with none of its data), then holds the fix.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { sim, live } from "./_load.mjs";
 import { ev, finalize } from "./fixtures/v3.mjs";
 import { fakeObserver, fakeTimers, seeded, settle } from "./fixtures/observer.mjs";
 
-const { createSceneStore } = await import("../src/scene/store.ts");
 const { manualClock } = await import("../src/scene/clock.ts");
 const words = await import("../src/shell/inspector/words.ts");
 const { gateStateWords } = await import("../src/shell/vocab.ts").catch(() => ({ gateStateWords: null }));
@@ -336,35 +335,6 @@ test("D23: a workflow's record is its own observed record, not its execution's",
   assert.equal(workflow.meta.authority, "observed");
   assert.ok(workflow.meta.eventId.startsWith(`s:${x}:`), workflow.meta.eventId);
   assert.notEqual(workflow.meta.eventId, head.executions[x].meta.eventId);
-});
-
-// ---------------------------------------------------------------- D20: new events are arrivals, not events after the playhead
-
-test("D20: 'N new events' counts events that arrived since the person left the live edge", () => {
-  const f = factory();
-  for (let i = 0; i < 40; i++) f.life("build.task_completed", T0 + i * 1000, { task_id: `T${i}`, kind: "impl", step: "green", first_run: "pass", suite: "green", commit: null });
-  const events = finalize(f.out);
-  const log = logOf(events);
-  const store = createSceneStore({ source: "live", log, clock: manualClock() });
-  store.seek(T0 + 5000); // back 34 events with an idle Factory: the run said "31 new events" here
-  let s = store.getState();
-  assert.equal(s.following, false);
-  assert.equal(s.arrived - s.arrivedAtLeave, 0, "nothing arrived");
-  log.ingest(finalize([ev("build.task_completed", { stream: "cell-lifecycle", key: CELL_KEY, seq: 900, t: T0 + 90_000, ids: { ticket_id: TICKET }, entities: [`cell:${TICKET}`], data: { task_id: "N", kind: "impl", step: "green", first_run: "pass", suite: "green", commit: null } })], 41));
-  store.logChanged();
-  s = store.getState();
-  assert.equal(s.arrived - s.arrivedAtLeave, 1);
-  store.followLive();
-  assert.equal(store.getState().arrivedAtLeave, null);
-});
-
-// ---------------------------------------------------------------- D19: the timeline's chapter flags are at least 24 px
-
-test("D19: the simulation timeline's chapter flags are targets of at least 24 x 24 px", () => {
-  const ruler = readFileSync(new URL("../src/shell/timeline/Ruler.tsx", import.meta.url), "utf8");
-  const flag = ruler.match(/"absolute top-[^"]*rounded-xs pl-\[3px\][^"]*"/)?.[0] ?? "";
-  assert.match(flag, /h-\[24px\]/, flag);
-  assert.match(flag, /min-w-\[24px\]/, flag);
 });
 
 // ---------------------------------------------------------------- D17 (counts) and the connection popover

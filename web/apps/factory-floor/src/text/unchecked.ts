@@ -6,7 +6,7 @@
  * object, not a string. It cannot be passed where a string is expected (a query parameter, a hash, a
  * `title`), it prints as a placeholder if interpolated or serialised by mistake, and its words are
  * read only through `uncheckedView`, which truncates and labels them. The one component that renders
- * it is `UncheckedText.tsx` in this folder, shared by Analytics and the floor and Timeline inspectors
+ * it is `UncheckedText.tsx` in this folder, shared by Analytics, the Line and the inspector
  * (M6.6): every field the session's `display_policy.free_text` names goes through it.
  *
  * Analytics replies hold such prose in one place today: group keys of `group_by=phase`

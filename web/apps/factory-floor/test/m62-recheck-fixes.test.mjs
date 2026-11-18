@@ -1,7 +1,7 @@
 // M6.2 acceptance re-check after the fix rounds (docs/mach-next/M6_2_ACCEPTANCE.md, "Re-check after the
 // fix rounds"): D6, D10, R4, R5, R6 and R7, each reproduced with a small v3 fixture written for it
-// (shaped like the run's records, with none of its data), then held. D17's memory is measured in
-// test/live-windows-scale.test.mjs and in the browser (README section 11).
+// (shaped like the run's records, with none of its data), then held. Live memory is bounded by
+// `retain` (test/live-scale.test.mjs).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sim, live } from "./_load.mjs";
@@ -177,7 +177,7 @@ test("R6: after its process ended and before the supervisor records it, an execu
   assert.deepEqual(sim.executionStatusOf(execution), { word: "Ended, outcome not recorded yet", running: false }, "the inspector's state");
   const xa = activityOf(head, `execution:${x}`);
   assert.equal(xa.state, "unknown");
-  assert.equal(xa.label, "Ended, outcome not recorded yet", "the Blueprint's execution row");
+  assert.equal(xa.label, "Ended, outcome not recorded yet", "the execution's row");
   const ca = activityOf(head, `cell:${TICKET}`);
   assert.equal(ca.label, "Idle, outcome not recorded yet", "the Atlas's mast and cell label, not 'not known'");
   assert.equal(sim.activityLabel(ca, () => "Not known"), "Idle, outcome not recorded yet");
@@ -249,34 +249,35 @@ test("R7: the live edge is the wall clock from the first frame, not the last eve
   const last = events.at(-1).time.order_ms;
   const wall = last + 4 * 3_600_000; // the page opens four hours after the last event
   const { store, clock } = liveStore(events, wall);
-  assert.equal(store.getState().liveAt, wall, "at once, before any frame or heartbeat");
-  assert.equal(store.getState().playhead, wall);
+  assert.equal(store.getState().now, wall, "at once, before any frame or heartbeat");
   const off = store.subscribe(() => undefined);
   store.setConnection({ ...store.getState().connection, state: "live" });
   clock.frames(1, 16);
-  assert.ok(Math.abs(store.getState().liveAt - (wall + 16)) <= 1, `${store.getState().liveAt - wall}`);
+  assert.ok(Math.abs(store.getState().now - (wall + 16)) <= 1, `${store.getState().now - wall}`);
   // The observer's clock says 3 s later than the browser's: the edge follows the observer's.
   store.observeClock(wall + clock.now() + 3_000);
   clock.frames(70, 16);
-  assert.ok(Math.abs(store.getState().liveAt - (wall + clock.now() + 3_000)) < 1_100, `${store.getState().liveAt - (wall + clock.now())}`);
+  assert.ok(Math.abs(store.getState().now - (wall + clock.now() + 3_000)) < 1_100, `${store.getState().now - (wall + clock.now())}`);
   // Stale: frozen, as before.
   store.setConnection({ ...store.getState().connection, state: "stale", staleSince: last });
-  const frozen = store.getState().liveAt;
+  const frozen = store.getState().now;
   clock.frames(120, 16);
-  assert.equal(store.getState().liveAt, frozen);
+  assert.equal(store.getState().now, frozen);
   off();
   store.dispose();
 });
 
 test("R7: an empty project shows an empty state, never 1 January 1970; with a wall clock its edge is now", () => {
-  assert.deepEqual(time.timeCodeText({ playhead: 0, liveAt: 0, source: "live" }), { code: "--:--:--", clock: "No events yet" });
-  assert.deepEqual(time.timeCodeText({ playhead: 5_800, liveAt: 5_800, source: "live" }), { code: "--:--:--", clock: "No events yet" });
-  assert.doesNotMatch(JSON.stringify(time.timeCodeText({ playhead: 5_800, liveAt: 5_800, source: "replay" })), /1970/);
+  // Below a day of Unix ms is no moment at all: the shell prints "nothing yet", never 1970.
+  assert.equal(time.isMoment(0), false);
+  assert.equal(time.isMoment(5_800), false);
+  assert.equal(time.isMoment(null), false);
   const t = Date.UTC(2026, 10, 13, 3, 0, 0, 500);
-  assert.deepEqual(time.timeCodeText({ playhead: t, liveAt: t, source: "live" }), { code: "03:00:00.5", clock: "UTC, 13 Nov 2026" });
+  assert.equal(time.isMoment(t), true);
+  assert.equal(time.utcClock(t, true), "03:00:00.5");
   const { store } = liveStore([], t);
-  assert.equal(store.getState().liveAt, t);
-  assert.doesNotMatch(time.timeCodeText(store.getState()).clock, /1970/);
+  assert.equal(store.getState().now, t);
+  assert.equal(time.isMoment(store.getState().now), true);
 });
 
 test("R7: following the live edge with nothing moving asks for no frames: it wakes once a second, and runs frames only while a motion is in progress", () => {
@@ -292,7 +293,7 @@ test("R7: following the live edge with nothing moving asks for no frames: it wak
   const idleFrames = clock.framesRun - before;
   assert.ok(idleFrames <= 2, `idle: ${idleFrames} frames in 10 s (was 600)`);
   assert.ok(notified >= 9 && notified <= 12, `the clock label moves once a second: ${notified} changes`);
-  const edge = store.getState().liveAt;
+  const edge = store.getState().now;
   assert.ok(Math.abs(edge - (wall + clock.now())) < 1_100, "and the edge keeps up with the wall clock");
   // An event arrives: frames for its motion, then waits again.
   const t = wall + clock.now() - 200;
@@ -306,12 +307,6 @@ test("R7: following the live edge with nothing moving asks for no frames: it wak
   const settled = clock.framesRun;
   clock.frames(600, 1000 / 60);
   assert.ok(clock.framesRun - settled <= 2, `idle again: ${clock.framesRun - settled} frames in 10 s`);
-  // Playback still runs every frame.
-  store.seek(events[3].time.order_ms);
-  store.play();
-  const playing = clock.framesRun;
-  clock.frames(30, 1000 / 60);
-  assert.ok(clock.framesRun - playing >= 29);
   off();
   store.dispose();
   assert.equal(clock.pending, 0, "nothing left asked for");

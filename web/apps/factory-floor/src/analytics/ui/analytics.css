@@ -1,6 +1,6 @@
 /*
  * Factory Analytics: chart roles and the workspace's layout. Colours are the design system's tokens
- * and the factory grammar's (one family with the Atlas and the Timeline); the only new values are a
+ * and the factory grammar's (one family with the Atlas); the only new values are a
  * single-hue blue ramp for token kinds, stepped per theme and kept monotonic in lightness.
  */
 .an-root {

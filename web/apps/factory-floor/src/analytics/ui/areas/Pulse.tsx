@@ -24,10 +24,11 @@ import { runRecordFoot } from "../../model/capped";
 const D = 86_400_000;
 
 /** M7 D11: product acceptance is recorded in the product files and the release readiness snapshot, which the observer does not follow. */
-/** M7 D11: the newest release readiness snapshot, read once from the observer (GET only); null when there is none or no observer. */
-function useReadiness(): string | null {
+/** M7 D11: the newest release readiness snapshot, read once from the observer (GET only); null when there is none or no observer (the Simulation asks nothing). */
+function useReadiness(enabled: boolean): string | null {
   const [line, setLine] = useState<string | null>(null);
   useEffect(() => {
+    if (!enabled) return;
     let live = true;
     fetch("/api/v1/release/readiness", { credentials: "same-origin", headers: { Accept: "application/json" } })
       .then((r) => (r.ok ? r.json() : null))
@@ -38,8 +39,8 @@ function useReadiness(): string | null {
     return () => {
       live = false;
     };
-  }, []);
-  return line;
+  }, [enabled]);
+  return enabled ? line : null;
 }
 
 const PRODUCT_ACCEPTANCE_NOTE = "MACH's intake records do not carry product acceptance; see the release readiness snapshot.";
@@ -54,7 +55,7 @@ export function Pulse(props: PulseProps) {
 
 function PulseBody({ insights }: { insights: AreaData<InsightsReply> | undefined }) {
   const { snapshot: s, density } = useAnalytics();
-  if (density === "empty" && !s.no_whole_day)
+  if (density === "empty")
     return <NothingYet about={`The ${windowWords(s)} holds no finished ticket, no execution, no merge and no station visit. Factory Pulse reads what MACH writes as the line runs:`} />;
   const fs = insights?.state === "ready" ? insights.value.insights.slice(0, 4) : [];
   return (
@@ -256,8 +257,8 @@ function DeliveryTrend() {
  * is not a merged ticket, a merge is not an integrated slice, and integration is not acceptance.
  */
 function Ladder() {
-  const { snapshot: s } = useAnalytics();
-  const readiness = useReadiness();
+  const { snapshot: s, source } = useAnalytics();
+  const readiness = useReadiness(source !== "simulation");
   const t = s.totals;
   const steps: { label: string; row: MetricRow | undefined; value: number | null; unit: [string, string] }[] = [
     { label: "Executions completed", row: t.S3, value: t.S3?.numerator_value ?? null, unit: ["execution", "executions"] },

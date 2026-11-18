@@ -1,10 +1,10 @@
 /**
- * MACH Factory Floor (M6.2): the Living Factory over real execution, with the M6.0 simulation kept as
- * an explicit, always-labelled source.
+ * MACH Factory Floor: the Line, the Floor and Analytics over real execution, with the M6.0
+ * simulation kept as an explicit, always-labelled source.
  *
  * At start-up the app asks one question of the page: does an observer answer here
  * (`GET /api/v1/session`, same origin, the session cookie the observer's one-time link set)?
- * - It does: the Live Factory (or, with `?replay`, Historical replay of the same real history).
+ * - It does: the Live Factory. The Floor shows only the present: there is no replay.
  * - An observer answers but does not know this browser: say so, and how to get a session.
  * - Nothing answers (a static build, the dev server with no observer): the simulation, with
  *   "No observer: showing the simulation" on screen.
@@ -18,13 +18,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSceneStore, SceneStoreProvider, type SceneStore } from "./scene";
 import { Shell } from "./shell";
-import { createBrowserLive, createBrowserReplay, observerClient, probeObserver, requestedSource, urlFor, type Probe, type SourceChoice } from "./shell/source/boot";
+import { createBrowserLive, observerClient, probeObserver, requestedSource, urlFor, type Probe, type SourceChoice } from "./shell/source/boot";
 import { SourceContext, useSourceInfo, type ObserverPresence } from "./shell/source/context";
-import { LoadFailed, NoSession, Probing } from "./shell/source/Gate";
+import { NoSession, Probing } from "./shell/source/Gate";
 import { setTimeBase } from "./shell/vocab";
-
-/** How often the Factory's state on this machine is read again (the observer reads its files at most once a second). */
-const FACTORY_STATUS_MS = 10_000;
 
 type Target = "pending" | "no-session" | SourceChoice;
 
@@ -45,7 +42,6 @@ export function App() {
   const [probe, setProbe] = useState<{ attempt: number; probe: Probe } | null>(null);
   // Bumped by "Try again" and by every switch: a new store (and a fresh load) each time.
   const [generation, setGeneration] = useState(0);
-  const [replay, setReplay] = useState<{ generation: number; store: SceneStore | null; error: string | null } | null>(null);
 
   // Does an observer answer here? Asked again on "Try again".
   useEffect(() => {
@@ -78,31 +74,12 @@ export function App() {
     };
   }, [live]);
 
-  // Historical replay: the observer's retained history, loaded once per switch.
-  useEffect(() => {
-    if (target !== "replay") return;
-    let cancelled = false;
-    createBrowserReplay(client, reducedMotionNow()).then(
-      (store) => {
-        if (cancelled) store.dispose();
-        else setReplay({ generation, store, error: null });
-      },
-      (error: unknown) => {
-        if (!cancelled) setReplay({ generation, store: null, error: error instanceof Error ? error.message : "The observer did not answer." });
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [target, client, generation]);
-
-  const replayNow = replay && replay.generation === generation ? replay : null;
-  const store: SceneStore | null = target === "simulation" ? getSceneStore() : target === "live" ? (live?.store ?? null) : target === "replay" ? (replayNow?.store ?? null) : null;
+  const store: SceneStore | null = target === "simulation" ? getSceneStore() : target === "live" ? (live?.store ?? null) : null;
   useEffect(() => {
     shown.current = store;
   }, [store]);
 
-  // Reduced motion follows the system for the live and replay stores too (the simulation's store listens itself).
+  // Reduced motion follows the system for the live store too (the simulation's store listens itself).
   useEffect(() => {
     if (!store || typeof matchMedia !== "function") return;
     const media = matchMedia("(prefers-reduced-motion: reduce)");
@@ -110,26 +87,6 @@ export function App() {
     media.addEventListener("change", on);
     return () => media.removeEventListener("change", on);
   }, [store]);
-
-  // The Factory's state on this machine, into the store (state.factoryStatus). The live source reads it
-  // itself; a historical replay has no source, so it is read here while the observer answers.
-  useEffect(() => {
-    if (!store || target !== "replay") return;
-    let cancelled = false;
-    const read = () =>
-      void client.factoryStatus().then(
-        (status) => {
-          if (!cancelled) store.setFactoryStatus(status);
-        },
-        () => undefined,
-      );
-    read();
-    const timer = window.setInterval(read, FACTORY_STATUS_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [store, target, client]);
 
   const switchTo = useCallback((choice: SourceChoice) => {
     window.history.replaceState(null, "", urlFor(choice, window.location));
@@ -147,13 +104,12 @@ export function App() {
     project: answer?.kind === "observer" ? answer.session.project : null,
     switchTo,
     // The evidence catalog is read for real history only (free-text labels, R1).
-    client: target === "live" || target === "replay" ? client : null,
+    client: target === "live" ? client : null,
   });
 
   if (target === "pending") return <Probing label="Looking for the observer" />;
   if (target === "no-session") return <NoSession message={answer?.kind === "no-session" ? answer.message : ""} onRetry={retry} onSimulation={() => switchTo("simulation")} />;
-  if (target === "replay" && replayNow?.error) return <LoadFailed title="The history could not be loaded" message={replayNow.error} onRetry={retry} onSimulation={() => switchTo("simulation")} />;
-  if (!store) return <Probing label="Loading the history held by the observer" />;
+  if (!store) return <Probing label="Connecting to the observer" />;
   return (
     <SourceContext.Provider value={info}>
       <SceneStoreProvider store={store} key={target === "simulation" ? "simulation" : `${target}-${generation}`}>

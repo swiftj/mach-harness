@@ -10,8 +10,8 @@ import type { InsightsReply } from "../data/types";
 import type { AreaId } from "../model/findings";
 import type { CohortBy, RunConfigs } from "../model/cohorts";
 
-/** simulation: the seeded fixture, always labelled Simulated. live: the observer's head. replay: the observer at a point in time. */
-export type AreaSource = "simulation" | "live" | "replay";
+/** simulation: the seeded fixture, always labelled Simulated. live: the observer's head. */
+export type AreaSource = "simulation" | "live";
 
 /**
  * The data's load state. `error` carries the observer's answer ("the observer answered 400: <reason>"
@@ -24,13 +24,13 @@ export type AreaData<T> =
   | { readonly state: "unavailable"; readonly reason: string }
   | { readonly state: "ready"; readonly value: T; readonly stale?: { readonly reason: string } | null };
 
-export type OpenWhere = "timeline" | "floor";
+export type OpenWhere = "line" | "floor";
 export interface Interval {
   readonly from: number;
   readonly to: number;
 }
-/** Open an entity in another workspace. The Shell wires it to the scene store (showInTimeline, showOnFloor). */
-export type OnOpen = (ref: EntityRef, where: OpenWhere, interval?: Interval) => void;
+/** Open an entity in another workspace. The Shell wires it to the scene store (showOnLine, showOnFloor). */
+export type OnOpen = (ref: EntityRef, where: OpenWhere) => void;
 
 /** Which figure's contributors the Rows drawer lists. */
 export interface RowsRequest {
@@ -66,7 +66,7 @@ export interface CompareChoice {
 export interface AreaProps {
   readonly data: AreaData<AnalyticsSnapshot>;
   readonly source: AreaSource;
-  /** "As of 13 Nov, 18:00 UTC", "As of the playhead, 12 Nov 09:14": what moment the figures describe. */
+  /** "The complete recorded history", "As of 13 Nov, 18:00 UTC": what history the figures describe. */
   readonly asOf: string;
   readonly onOpen: OnOpen;
   /** Opens the Rows drawer; without it the areas offer no "Rows" buttons. */

@@ -1,12 +1,15 @@
 // M6.1/M6.2 follow-ups after the observer's M6.2 update (commit 0cf50ec): a cell idle between two
-// executions, bays kept across history windows, the observer's new fields (history completeness,
-// runtime states, plan facts, evidence visit links) and a bounded start on a long history.
+// executions, the observer's new fields (history completeness, runtime states, plan facts, evidence
+// visit links) and a bounded start on a long history.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sim, live } from "./_load.mjs";
 import { ev, finalize } from "./fixtures/v3.mjs";
+import { fakeObserver, settle } from "./fixtures/observer.mjs";
 
-const { createSceneLog, provenance, activityOf, bayOrder } = sim;
+const { manualClock } = await import("../src/scene/clock.ts");
+
+const { createSceneLog, provenance, activityOf } = sim;
 const DEFS = live.LIVE_DEFINITIONS;
 const logOf = (events) => {
   const log = createSceneLog({ definitions: DEFS, provenance: provenance("live") });
@@ -122,63 +125,6 @@ test("activityOf: the simulation's reading is unchanged (a cell at a station is 
   }
 });
 
-// ---------------------------------------------------------------- task 4: bays kept across history windows
-
-import { beltRun } from "./fixtures/v3.mjs";
-import { fakeObserver, settle } from "./fixtures/observer.mjs";
-const { manualClock } = await import("../src/scene/clock.ts");
-const hex = (n, w) => n.toString(16).padStart(w, "0");
-
-test("bays: a ticket keeps its Atlas bay whichever history window holds the playhead; selection is kept", async () => {
-  // Six belts an hour apart: each window of the replay holds a different few.
-  const events = [];
-  for (let n = 1; n <= 6; n++) {
-    const run = beltRun({ ticket: `LOCAL-${hex(n, 4)}`, slice: `SLICE-${hex(n, 4)}`, wave: `WAVE-${hex(n, 3)}`, execution: `x${hex(n, 12)}`, intakeGen: hex(n, 8), cellGen: hex(n * 7919, 8).slice(-8), t0: T0 + n * 3_600_000 });
-    events.push(...run.events);
-  }
-  const server = fakeObserver({ series: true });
-  server.commit(finalize(events));
-  const client = live.createObserverClient({ fetch: server.fetch });
-  const { store, windows } = await live.createReplay(client, { clock: manualClock(), windowEvents: 500, keep: 2 });
-  const until = async (cond) => {
-    for (let i = 0; i < 400 && !cond(); i++) await settle(2);
-  };
-  const span = windows.span();
-  assert.ok(span && span.end - span.start > span.windowMs * 3, "several windows");
-  const seen = new Map();
-  const logs = new Set();
-  const visit = async (at) => {
-    store.seek(at);
-    await until(() => !store.getState().windowLoading);
-    const st = store.getState();
-    logs.add(st.log);
-    const order = bayOrder(st.log);
-    order.slots.forEach((slot, i) => {
-      if (seen.has(slot.ticketId)) assert.equal(i, seen.get(slot.ticketId), `${slot.ticketId} keeps bay ${seen.get(slot.ticketId)} at ${at}`);
-      else seen.set(slot.ticketId, i);
-    });
-    return order;
-  };
-  // Forward, then a jump to the end, then back to the start (windows evicted and re-read: keep is 2).
-  const points = [0.05, 0.3, 0.55, 0.95, 0.75, 0.1, 0.5].map((f) => span.start + f * (span.end - span.start));
-  store.select("cell:LOCAL-0001");
-  for (const at of points) {
-    await visit(at);
-    assert.equal(store.getState().selection, "cell:LOCAL-0001", "selection is kept across windows");
-  }
-  assert.ok(logs.size >= 3, `several window logs were shown (${logs.size})`);
-  assert.ok(seen.size >= 6, `every ticket got a bay (${seen.size})`);
-  // A window that has not seen a later ticket still draws the bays it was given (none moves, none goes).
-  const first = await visit(points[0]);
-  assert.equal(first.slots.length, seen.size);
-  // Logs of another history (another replay) have bays of their own.
-  const other = await live.createReplay(client, { clock: manualClock(), windowEvents: 500 });
-  await until(() => !other.store.getState().windowLoading);
-  assert.notEqual(bayOrder(other.store.getState().log), first);
-  store.dispose();
-  other.store.dispose();
-});
-
 // ---------------------------------------------------------------- task 1: the observer's new fields
 
 /** A fetch answering with the observer's own shapes (field names as apps/observer/internal writes them). */
@@ -204,7 +150,6 @@ test("observer client: history completeness, runtime states, plan facts and evid
         ingest: { runtime: RUNTIME, delivery: { last_hold_ms: 40, hold_ms_p95: 300 } },
         freshness: { sources: [{ key: "stream/x466e1b0a645d", state: "live", runtime: { name: "claude-code", version: "2.1.324", state: "incompatible", proven_versions: ["2.1.322"], records_accepted: 900, records_refused: 3, refused_by_class: { "assistant-shape": 3 }, reason: "some records did not match the known shapes and were refused" } }] },
       },
-      "/snapshot": { cursor: "g1.10", generation: "g1", pos: 10, reconstructed: false, state: { cells: { [TICKET]: { ticket_id: TICKET, slice_id: SLICE, stage: "planned", risk: "High", app_type: "library", plan: { app_type: "library", risk: "High", contracts: 2, tasks: 7, recorded_by: "c:LOCAL-001:b2:6" }, round: 1 } }, history: HISTORY } },
       [`/cells/${TICKET}`]: { ticket_id: TICKET, slice_id: SLICE, stage: "planned", risk: "High", app_type: "library", plan: { app_type: "library", risk: "High", contracts: 2, tasks: 7, recorded_by: "c:LOCAL-001:b2:6" }, round: 1, cursor: "g1.10" },
       "/artifacts": {
         items: [
@@ -226,10 +171,6 @@ test("observer client: history completeness, runtime states, plan facts and evid
   assert.deepEqual(health.history.notInterpreted, { "unknown-type": 17 });
   assert.equal(health.runtime.state, "compatible-unproven");
   assert.deepEqual(health.sources[0].runtime, { state: "incompatible", version: "2.1.324", reason: "some records did not match the known shapes and were refused", recordsAccepted: 900, recordsRefused: 3 });
-
-  const snap = await client.snapshot();
-  assert.equal(snap.state.history.completeness, "partial");
-  assert.deepEqual(snap.state.cells[0].plan, { app_type: "library", risk: "High", contracts: 2, tasks: 7, recorded_by: "c:LOCAL-001:b2:6" });
 
   const cell = await client.cell(TICKET);
   assert.deepEqual(cell.plan, { appType: "library", risk: "High", contracts: 2, tasks: 7, recordedBy: "c:LOCAL-001:b2:6" });

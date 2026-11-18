@@ -129,7 +129,7 @@ function App() {
           sourceLabel={LABELS[mode ?? ""] ?? `Simulated history, seed ${seed ?? 6502}`}
           view={view}
           onView={onView}
-          onOpen={(ref, where, interval) => setOpened(`${where}: ${ref}${interval ? ` (${clockText(interval.from)} to ${clockText(interval.to)})` : ""}`)}
+          onOpen={(ref, where) => setOpened(`${where}: ${ref}`)}
         />
       </div>
       {opened ? (

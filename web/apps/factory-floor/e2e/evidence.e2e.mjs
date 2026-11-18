@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiGet, apiSession, consoleErrors, ensureStack, launch, openApp, sceneReady, sleep, startObserver, synthProject } from "../scripts/timeline-e2e-lib.mjs";
+import { apiGet, apiSession, consoleErrors, ensureStack, launch, openApp, sceneReady, sleep, startObserver, synthProject } from "../scripts/e2e-lib.mjs";
 
 const PORT = 4247;
 let browser;
@@ -79,7 +79,7 @@ test("the player opens from the address over a live observer, lists the checks, 
     return;
   }
   t.diagnostic(`ticket ${target.ticket}, check ${target.check}, ${target.catalogued} catalogued artifacts, text file ${target.artifactId ?? "none"}`);
-  const { page, context } = await openApp(browser, obs, `#atlas?evidence=${target.ticket}&check=${target.check}`, { waitReady: false });
+  const { page, context } = await openApp(browser, obs, `#floor?evidence=${target.ticket}&check=${target.check}`, { waitReady: false });
   try {
     await sceneReady(page, { optional: true });
     const dialog = page.locator("[data-evidence-player]");
@@ -151,9 +151,15 @@ test("the player opens from the address over a live observer, lists the checks, 
 });
 
 test("the simulation: its checks with sample content the app draws itself, labelled; a recording says there is none; nothing is requested", async () => {
-  const { page, context } = await openApp(browser, null, "?simulation#atlas?at=3000000&evidence=LOCAL-031&check=AC-01", { waitReady: false });
+  const { page, context } = await openApp(browser, null, "?simulation#floor?evidence=LOCAL-031&check=AC-01", { waitReady: false });
   try {
     await sceneReady(page, { optional: true });
+    // The simulation runs on its own; the development hook holds it at a moment LOCAL-031 has checks.
+    await page.waitForFunction(() => Boolean(window.__machSim), undefined, { timeout: 15_000 });
+    await page.evaluate(() => {
+      window.__machSim.useManualClock();
+      window.__machSim.seek(3_000_000);
+    });
     const dialog = page.locator("[data-evidence-player]");
     await dialog.waitFor({ timeout: 30_000 });
     await page.locator("[data-evidence-simulation]").waitFor({ timeout: 15_000 });

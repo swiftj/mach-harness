@@ -6,7 +6,7 @@
 //
 // Serves the `vite build --mode capture` bundle with `vite preview` on 127.0.0.1:4186, drives it
 // through window.__machSim on the manual clock (nothing moves unless the script moves it), and writes
-// screenshots/<NN>-<beat>-<view>-<theme>[@2x].png at 1920x1080, in story order. See
+// screenshots/<NN>-<beat>-atlas-<theme>[@2x].png at 1920x1080, in story order. See
 // screenshots/README.md for the list.
 //
 // Framing: the Atlas owner's beats (factory second, focus target, zoom). `focus` frames a target
@@ -27,37 +27,32 @@ const only = onlyIndex > 0 ? process.argv[onlyIndex + 1] : null;
 const FFMPEG = process.env.FFMPEG ?? "/opt/homebrew/bin/ffmpeg";
 
 /**
- * The story, in order. Times in factory seconds. `atlas` and `blueprint` say how each view frames the
- * beat: `select` (inspector + dimming), `focus` (camera only), `zoom` (Atlas zoom after the focus),
- * `around` (Atlas: centre the camera on these entities after zooming), `expand` (Blueprint: open these
- * tree items so agents and tool calls show).
+ * The story, in order. Times in factory seconds. `atlas` says how the Atlas frames the beat: `select`
+ * (inspector + dimming), `focus` (camera only), `zoom` (zoom after the focus), `around` (centre the
+ * camera on these entities after zooming).
  */
 const BEATS = [
-  { id: "01-opening", t: 0, hero: true, atlas: {}, blueprint: {} },
+  { id: "01-opening", t: 0, hero: true, atlas: {} },
   {
     id: "02-wave-arrives",
     t: 34,
     atlas: { focus: "wave:WAVE-007", zoom: 1.3, around: ["wave:WAVE-007", "slice:SLICE-021", "slice:SLICE-025", "cell:LOCAL-031"] },
-    blueprint: { select: "wave:WAVE-007", bp: { ref: "wave:WAVE-007", k: 0.8 } },
   },
-  { id: "03-three-bays", t: 640, hero: true, theater: true, atlas: { focus: "cell:LOCAL-032", zoom: 1.1 }, blueprint: {} },
+  { id: "03-three-bays", t: 640, hero: true, theater: true, atlas: { focus: "cell:LOCAL-032", zoom: 1.1 } },
   {
     id: "04-agent-inspected",
     t: 640,
     atlas: { select: "agent:ag-031-08" },
-    blueprint: { select: "agent:ag-031-08", expand: ["agent:ag-031-08"], bp: { ref: "agent:ag-031-08", k: 1.3 } },
   },
   {
     id: "05-review-fan-out",
     t: 1601,
     atlas: { select: "gate:LOCAL-033/review#1" },
-    blueprint: { select: "gate:LOCAL-033/review#1", bp: { ref: "gate:LOCAL-033/review#1", k: 1.1 } },
   },
   {
     id: "06-outvoted-blocker",
     t: 1612,
     atlas: { select: "finding:LOCAL-033/r1/product/1" },
-    blueprint: { select: "finding:LOCAL-033/r1/product/1" },
   },
   {
     id: "07-verify-fail-return",
@@ -66,7 +61,6 @@ const BEATS = [
     theater: true,
     atlas: { select: "gate:LOCAL-031/verification#1", focus: "cell:LOCAL-031", zoom: 2.0 },
     heroAtlas: { focus: "cell:LOCAL-031", zoom: 2.0 },
-    blueprint: { select: "gate:LOCAL-031/verification#1", bp: { ref: "gate:LOCAL-031/verification#1", k: 1.1 } },
   },
   {
     id: "08-rejection-crosses",
@@ -75,7 +69,6 @@ const BEATS = [
     theater: true,
     atlas: { select: "gate:LOCAL-032/review#1", focus: "cell:LOCAL-032", zoom: 0.85, around: ["cell:LOCAL-032", "gate:review"] },
     heroAtlas: { focus: "cell:LOCAL-032", zoom: 0.85, around: ["cell:LOCAL-032", "gate:review"] },
-    blueprint: { select: "gate:LOCAL-032/review#1", bp: { ref: "gate:LOCAL-032/review#1", k: 1.0 } },
   },
   {
     id: "09-integration",
@@ -84,7 +77,6 @@ const BEATS = [
     // `nudge` moves the drawing down so the yard and the approval and review regions above it fill the frame
     // (centred on the merge machine alone, the lower half was empty ground past the plant's edge).
     atlas: { select: "cell:LOCAL-031", focus: "station:merge", zoom: 1.15, around: ["station:merge"], nudge: [-120, 230] },
-    blueprint: { select: "cell:LOCAL-031", bp: { ref: "cell:LOCAL-031", k: 0.9 } },
   },
   {
     id: "10-dependency-unlocks",
@@ -92,13 +84,11 @@ const BEATS = [
     theater: true,
     atlas: { select: "dependency:SLICE-024->SLICE-021", focus: "dependency:SLICE-024->SLICE-021", zoom: 1.0 },
     heroAtlas: { focus: "dependency:SLICE-024->SLICE-021", zoom: 1.0 },
-    blueprint: { select: "dependency:SLICE-024->SLICE-021", bp: { ref: "dependency:SLICE-024->SLICE-021", k: 0.9 } },
   },
   {
     id: "11-human-gate-held",
     t: 2852,
     atlas: { select: "gate:LOCAL-032/human-approval", focus: "gate:LOCAL-032/human-approval", zoom: 1.8 },
-    blueprint: { select: "gate:LOCAL-032/human-approval", bp: { ref: "gate:LOCAL-032/human-approval", k: 1.1 } },
   },
   {
     id: "12-human-gate-released",
@@ -107,22 +97,16 @@ const BEATS = [
     theater: true,
     atlas: { select: "gate:LOCAL-032/human-approval", focus: "gate:LOCAL-032/human-approval", zoom: 1.8 },
     heroAtlas: { focus: "gate:LOCAL-032/human-approval", zoom: 1.8 },
-    blueprint: { select: "gate:LOCAL-032/human-approval", bp: { ref: "gate:LOCAL-032/human-approval", k: 1.1 } },
   },
-  { id: "13-end-of-run", t: 3350.2, hero: true, atlas: { focus: "overview" }, blueprint: { focus: "overview" } },
+  { id: "13-end-of-run", t: 3350.2, hero: true, atlas: { focus: "overview" } },
 ];
 
 const THEMES = ["dark", "light"];
 const want = (name) => !only || name.startsWith(only);
 const shots = [];
 
-/** Wait until the Atlas camera has stopped moving (or a fixed time for the Blueprint). */
-async function settleCamera(page, view) {
-  if (view !== "atlas") {
-    await sleep(1100);
-    await frames(page, 3);
-    return;
-  }
+/** Wait until the Atlas camera has stopped moving. */
+async function settleCamera(page) {
   await sleep(200);
   let last = "";
   for (let i = 0; i < 40; i++) {
@@ -162,62 +146,13 @@ async function centreOn(page, refs) {
   }, refs);
 }
 
-/** Open Blueprint tree items (an agent shows its tool calls) by keyboard, as a person would. */
-async function expand(page, refs) {
-  for (const ref of refs) {
-    const item = page.locator(`[data-stage-active] [role=treeitem][data-ref="${ref}"]`).first();
-    if (!(await item.count())) continue;
-    if ((await item.getAttribute("aria-expanded")) === "false") {
-      await item.focus();
-      await page.keyboard.press("ArrowRight");
-      await sleep(500);
-    }
-  }
-}
-
-/**
- * Blueprint framing: zoom to `k` about the entity (Ctrl + wheel zooms to the cursor, as a person
- * would), then pan it to the middle of the stage with a plain wheel.
- */
-async function bpFrame(page, { ref, k }) {
-  const box = () =>
-    page.evaluate((r) => {
-      const root = document.querySelector('[data-stage-view="blueprint"]');
-      const view = root.getBoundingClientRect();
-      const els = [...root.querySelectorAll(`[data-ref="${CSS.escape(r)}"]`)].map((e) => e.getBoundingClientRect()).filter((b) => b.width || b.height);
-      const scaled = root.querySelector('[style*="scale("]');
-      const scale = Number(/scale\(([\d.]+)\)/.exec(scaled?.style.transform ?? "")?.[1] ?? 1);
-      if (!els.length) return { view, scale, x: null, y: null };
-      const x0 = Math.min(...els.map((b) => b.left));
-      const x1 = Math.max(...els.map((b) => b.right));
-      const y0 = Math.min(...els.map((b) => b.top));
-      const y1 = Math.max(...els.map((b) => b.bottom));
-      return { view: { left: view.left, top: view.top, width: view.width, height: view.height }, scale, x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
-    }, ref);
-  let b = await box();
-  if (b.x === null) return;
-  const cx = Math.min(Math.max(b.x, b.view.left + 20), b.view.left + b.view.width - 20);
-  const cy = Math.min(Math.max(b.y, b.view.top + 20), b.view.top + b.view.height - 20);
-  await page.mouse.move(cx, cy);
-  await page.keyboard.down("Control");
-  await page.mouse.wheel(0, -Math.log(k / b.scale) / Math.log(1.0015));
-  await page.keyboard.up("Control");
-  await frames(page, 2);
-  b = await box();
-  if (b.x === null) return;
-  await page.mouse.wheel(b.x - (b.view.left + b.view.width / 2), b.y - (b.view.top + b.view.height / 2));
-  await frames(page, 2);
-  // Park the pointer on the top bar so no hover state shows in the still.
-  await page.mouse.move(600, 24);
-}
-
 /** Put the app in a beat's state: time, selection, camera. */
-async function stage(page, view, t, frame) {
+async function stage(page, t, frame) {
   await sim(page, "seek", S(t));
   if (frame.select) await sim(page, "select", frame.select);
   if (frame.focus) await sim(page, "focus", frame.focus);
-  await settleCamera(page, view);
-  if (view === "atlas" && frame.zoom) {
+  await settleCamera(page);
+  if (frame.zoom) {
     await page.evaluate((z) => window.__atlasCamera.zoomTo(z), frame.zoom);
     if (frame.around) await centreOn(page, frame.around);
     if (frame.nudge) await page.evaluate(([dx, dy]) => {
@@ -226,9 +161,7 @@ async function stage(page, view, t, frame) {
     }, frame.nudge);
     await frames(page, 3);
   }
-  if (view === "blueprint" && frame.expand) await expand(page, frame.expand);
-  if (view === "blueprint" && frame.bp) await bpFrame(page, frame.bp);
-  // Nothing in the app may hold keyboard focus rings in a still (the Blueprint expansion focuses a node).
+  // Nothing in the app may hold keyboard focus rings in a still.
   await page.evaluate(() => document.activeElement?.blur?.());
   await sleep(300);
   await frames(page, 3);
@@ -289,7 +222,7 @@ async function layoutCheck(page) {
         selection = { ref: sel, shareInView: Math.round((100 * iw * ih) / Math.max(1, (x1 - x0) * (y1 - y0))) };
       } else selection = { ref: sel, shareInView: null };
     }
-    return { view: act.dataset.stageView, overlayTextOutsideStage: clipped, textOverlaps: overlaps, selection };
+    return { view: "atlas", overlayTextOutsideStage: clipped, textOverlaps: overlaps, selection };
   });
 }
 
@@ -315,19 +248,19 @@ async function one(browser, options, name, fn) {
   }
 }
 
-async function storyPass(browser, theme, view, dpr) {
-  for (const beat of BEATS.filter((b) => (dpr === 2 ? b.hero && view === "atlas" : true))) {
-    const frame = dpr === 2 ? (beat.heroAtlas ?? beat.atlas) : beat[view];
-    await one(browser, { theme, view, dpr }, `${beat.id}-${view}-${theme}${dpr === 2 ? "@2x" : ""}`, (page) => stage(page, view, beat.t, frame));
+async function storyPass(browser, theme, dpr) {
+  for (const beat of BEATS.filter((b) => (dpr === 2 ? b.hero : true))) {
+    const frame = dpr === 2 ? (beat.heroAtlas ?? beat.atlas) : beat.atlas;
+    await one(browser, { theme, dpr }, `${beat.id}-atlas-${theme}${dpr === 2 ? "@2x" : ""}`, (page) => stage(page, beat.t, frame));
   }
 }
 
 async function theaterPass(browser, theme) {
   for (const beat of BEATS.filter((b) => b.theater)) {
-    await one(browser, { theme, view: "atlas", dpr: 2 }, `${beat.id}-theater-${theme}@2x`, async (page) => {
+    await one(browser, { theme, dpr: 2 }, `${beat.id}-theater-${theme}@2x`, async (page) => {
       await sim(page, "setTheater", true);
       await sleep(400);
-      await stage(page, "atlas", beat.t, beat.heroAtlas ?? { ...beat.atlas, select: undefined });
+      await stage(page, beat.t, beat.heroAtlas ?? { ...beat.atlas, select: undefined });
       // The transport bar shows for 2.5 s after the pointer moves; a still shows Theater at rest.
       await sleep(2800);
     });
@@ -335,24 +268,11 @@ async function theaterPass(browser, theme) {
 }
 
 async function extrasPass(browser, theme) {
-  // The mode-switch pair: the same selection, Atlas then Blueprint, switched with the real key "2".
-  if (want("20")) {
-    const { context, page } = await openApp(browser, { theme, view: "atlas" });
-    try {
-      await stage(page, "atlas", 1940, { select: "cell:LOCAL-032" });
-      await shoot(page, `20-mode-switch-a-atlas-${theme}`);
-      await page.keyboard.press("2");
-      await settleCamera(page, "blueprint");
-      await shoot(page, `20-mode-switch-b-blueprint-${theme}`);
-    } finally {
-      await context.close();
-    }
-  }
   // The keyboard help sheet, opened with "?".
   if (want("21")) {
-    const { context, page } = await openApp(browser, { theme, view: "atlas" });
+    const { context, page } = await openApp(browser, { theme });
     try {
-      await stage(page, "atlas", 640, { focus: "overview" });
+      await stage(page, 640, { focus: "overview" });
       await page.keyboard.press("?");
       await page.getByRole("dialog").waitFor();
       await sleep(600);
@@ -364,15 +284,10 @@ async function extrasPass(browser, theme) {
   // Reduced motion: mid-way through the return-to-build loop, the same moment with and without.
   if (want("22")) {
     for (const reducedMotion of ["no-preference", "reduce"]) {
-      const { context, page } = await openApp(browser, { theme, view: "atlas", reducedMotion });
+      const { context, page } = await openApp(browser, { theme, reducedMotion });
       try {
-        await stage(page, "atlas", 1646, { focus: "cell:LOCAL-031", zoom: 2.0 });
+        await stage(page, 1646, { focus: "cell:LOCAL-031", zoom: 2.0 });
         await shoot(page, `22-reduced-motion-${reducedMotion === "reduce" ? "b-on" : "a-off"}-atlas-${theme}`);
-        if (reducedMotion === "reduce") {
-          await sim(page, "setMode", "blueprint");
-          await settleCamera(page, "blueprint");
-          await shoot(page, `22-reduced-motion-c-on-blueprint-${theme}`);
-        }
       } finally {
         await context.close();
       }
@@ -380,7 +295,7 @@ async function extrasPass(browser, theme) {
   }
   // 1100 wide: the inspector becomes an overlay that opens on a selection.
   if (want("23")) {
-    const { context, page } = await openApp(browser, { theme, view: "atlas", width: 1100, height: 800 });
+    const { context, page } = await openApp(browser, { theme, width: 1100, height: 800 });
     try {
       for (const [n, beat, frame] of [
         ["a", "01-opening", { focus: "overview" }],
@@ -391,7 +306,7 @@ async function extrasPass(browser, theme) {
         const t = BEATS.find((b) => b.id === beat).t;
         // One page for the four: clear what the last shot selected, so its drawer does not carry over.
         await sim(page, "select", null);
-        await stage(page, "atlas", t, frame);
+        await stage(page, t, frame);
         await sleep(400);
         // The drawer covers the right of the stage when something is selected: frame the selection in
         // the part left visible (the app's own framing centres it in the whole stage).
@@ -445,8 +360,8 @@ const server = await startPreview();
 const browser = await chromium.launch();
 try {
   for (const theme of THEMES) {
-    for (const view of ["atlas", "blueprint"]) await storyPass(browser, theme, view, 1);
-    await storyPass(browser, theme, "atlas", 2);
+    await storyPass(browser, theme, 1);
+    await storyPass(browser, theme, 2);
     await theaterPass(browser, theme);
     await extrasPass(browser, theme);
   }

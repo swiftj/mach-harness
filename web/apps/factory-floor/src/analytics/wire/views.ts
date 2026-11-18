@@ -61,11 +61,9 @@ export class ViewSession {
   /** Set while this view pins the shared cursor: called with its cursor once known (or null on failure). */
   release: Release | null = null;
   private readonly data: AnalyticsData;
-  private readonly asOfMs: number | null;
   private readonly shared: SharedCursor;
-  constructor(data: AnalyticsData, asOfMs: number | null, shared: SharedCursor) {
+  constructor(data: AnalyticsData, shared: SharedCursor) {
     this.data = data;
-    this.asOfMs = asOfMs;
     this.shared = shared;
   }
 
@@ -75,7 +73,7 @@ export class ViewSession {
     const gen = this.generation;
     this.starting = (async () => {
       const { cursor, release } = await this.shared.enter();
-      const s = beginSnapshot(this.data, { asOfMs: this.asOfMs, at: cursor });
+      const s = beginSnapshot(this.data, { at: cursor });
       if (gen !== this.generation) {
         release?.(null);
         s.abort();

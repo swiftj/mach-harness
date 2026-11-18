@@ -81,43 +81,6 @@ export interface EventsPage {
   readonly watermark: number | null;
 }
 
-export interface ObserverSnapshot {
-  /** The cursor the state is at: stream from it (`after=`) for no gap and no repeat. */
-  readonly cursor: string;
-  readonly generation: string;
-  /** Rebuilt from the observer's nearest checkpoint (a cursor earlier than its projection). */
-  readonly reconstructed: boolean;
-  /** The projected state, normalised to the shape the reducer reads (every part optional). */
-  readonly state: ObserverSnapshotState;
-}
-
-/** A window of history in `order` (`GET /api/v1/history`), for replay. */
-export interface HistoryPage {
-  readonly generation: string;
-  readonly events: readonly unknown[];
-  /** Page on with `from_order` = this while `more`. */
-  readonly nextFromOrder: string | null;
-  readonly more: boolean;
-  /** False when part of the window may have left the observer's memory. */
-  readonly complete: boolean;
-  readonly watermark: number | null;
-  /** M6.3: the page stopped at the observer's scan cap (`more` is then true too); absent from an older observer. */
-  readonly capped?: boolean;
-}
-
-/** Counts of events per time bucket (`GET /api/v1/series`), for drawing a long history without loading it. */
-export interface SeriesData {
-  readonly fromMs: number;
-  readonly toMs: number;
-  readonly bucketMs: number;
-  /** Sparse: buckets with no event are absent. `atLeast`: the count is a lower bound (coarse sampling). */
-  readonly buckets: readonly { readonly fromMs: number; readonly count: number; readonly atLeast?: boolean }[];
-  /** Events in the range, as the observer counts them (null for coarse sampling). */
-  readonly total: number | null;
-  /** True when sampled through `/history` because `/series` is not served. */
-  readonly coarse: boolean;
-}
-
 /** The parts of `GET /api/v1/health` the Factory Floor reads (observer M6.2; absent parts are null). */
 export interface ObserverHealth {
   readonly delivery: { readonly lastHoldMs: number | null; readonly p95HoldMs: number | null } | null;
@@ -398,13 +361,7 @@ export interface ObserverClient {
   session(): Promise<ObserverSession>;
   /** Events after a cursor, in delivery order. */
   events(after: string, limit?: number): Promise<EventsPage>;
-  /** History in `order` within a window (`from_order` inclusive start, `to_order` end), for replay. */
-  history(window?: { readonly fromOrder?: string | null; readonly toOrder?: string | null; readonly fromMs?: number | null; readonly toMs?: number | null; readonly limit?: number }): Promise<HistoryPage>;
-  /** The projected state at a cursor (default: the observer's own position) and that cursor. */
-  snapshot(at?: string): Promise<ObserverSnapshot>;
   factoryStatus(): Promise<FactoryStatus>;
-  /** Counts per time bucket; throws not_found on an observer without the route. */
-  series(window?: { readonly fromMs?: number | null; readonly toMs?: number | null; readonly bucketMs?: number | null }): Promise<SeriesData>;
   health(): Promise<ObserverHealth>;
   /** One cell's detail (`/cells/{ticket}`): its plan facts and stage. */
   cell(ticket: string): Promise<ObserverCell>;
@@ -424,15 +381,8 @@ export interface ObserverClient {
   artifactText?(id: string, signal?: AbortSignal): Promise<ArtifactTextResult>;
   /** The URL an image or video element loads (the content route, by catalog id only); null for anything that is not a catalog id. */
   artifactContentUrl?(id: string): string | null;
-  // ---- M6.3 (Execution Timeline). Optional so other implementations keep compiling; createObserverClient has them all.
-  /** One page of `/api/v1/spans` (windowed, filtered), items unparsed: src/timeline/data reads them. */
-  spans?(query: ObserverSpansQuery): Promise<ObserverSpansPage>;
-  /** One page of `/api/v1/marks`; throws not_found on an observer without the route. */
-  marks?(query: ObserverMarksQuery): Promise<ObserverMarksPage>;
-  /** `/api/v1/concurrency`, unparsed; throws not_found on an observer without the route. */
+  /** `/api/v1/concurrency`, unparsed (Analytics reads it); throws not_found on an observer without the route. */
   concurrency?(query: ObserverConcurrencyQuery): Promise<Readonly<Record<string, unknown>>>;
-  /** `/api/v1/series` with a filter (ticket, execution, event kinds), each bucket's counts by kind kept. */
-  seriesFor?(query: ObserverSeriesQuery): Promise<FilteredSeries>;
   // ---- M6.5 (Factory Analytics). Optional like the M6.3 methods; each returns the reply's `data`
   // unparsed (src/analytics/data validates it). A 404 (`not_found`) means an observer without
   // analytics; a 400 (`invalid`) carries the observer's reason in its message.
@@ -460,8 +410,6 @@ export interface ObserverAnalyticsQuery {
   readonly fromMs?: number | null;
   readonly toMs?: number | null;
   readonly lastRuns?: number | null;
-  /** `as_of_ms` (a playhead): nothing recorded later is counted; combinable with `at`. An observer without it answers 400. */
-  readonly asOfMs?: number | null;
   readonly filters?: Readonly<Partial<Record<ObserverAnalyticsFilter, string>>>;
   readonly signal?: AbortSignal;
 }
@@ -489,7 +437,6 @@ export interface ObserverAnalyticsRunsQuery extends ObserverAnalyticsQuery {
 export function analyticsParams(query: ObserverAnalyticsQuery): URLSearchParams {
   const q = new URLSearchParams();
   if (query.at) q.set("at", query.at);
-  if (typeof query.asOfMs === "number" && Number.isFinite(query.asOfMs)) q.set("as_of_ms", String(Math.max(0, Math.floor(query.asOfMs))));
   if (typeof query.fromMs === "number" && Number.isFinite(query.fromMs)) q.set("from_ms", String(Math.max(0, Math.floor(query.fromMs))));
   if (typeof query.toMs === "number" && Number.isFinite(query.toMs)) q.set("to_ms", String(Math.max(0, Math.ceil(query.toMs))));
   if (typeof query.lastRuns === "number" && query.lastRuns > 0) q.set("last_runs", String(Math.floor(query.lastRuns)));
@@ -500,52 +447,6 @@ export function analyticsParams(query: ObserverAnalyticsQuery): URLSearchParams 
   return q;
 }
 
-/** `/api/v1/spans` (M6.3): `from_ms`/`to_ms` overlap, `span` exact, `sort=start`. */
-export interface ObserverSpansQuery {
-  readonly fromMs?: number | null;
-  readonly toMs?: number | null;
-  readonly kinds?: readonly string[];
-  readonly ticket?: string;
-  readonly execution?: string;
-  readonly wave?: string;
-  readonly span?: string;
-  readonly limit?: number;
-  readonly offset?: number;
-  readonly signal?: AbortSignal;
-}
-export interface ObserverSpansPage {
-  readonly items: readonly unknown[];
-  /** The reply's `total` (after the observer's cap), null when absent. */
-  readonly total: number | null;
-  /** `total_uncapped` (M6.3), null from an observer that does not say. */
-  readonly totalUncapped: number | null;
-  /** `truncated` (M6.3), null from an observer that does not say. */
-  readonly truncated: boolean | null;
-  readonly more: boolean;
-  readonly offset: number;
-  readonly cursor: string | null;
-}
-/** `/api/v1/marks` (M6.3): a window, or the nearest strictly after or before a time. */
-export interface ObserverMarksQuery {
-  readonly fromMs?: number | null;
-  readonly toMs?: number | null;
-  readonly afterMs?: number | null;
-  readonly beforeMs?: number | null;
-  readonly kinds?: readonly string[];
-  readonly limit?: number;
-  /** Paging within a window (round 4); an observer without paging ignores it. */
-  readonly offset?: number;
-  readonly signal?: AbortSignal;
-}
-export interface ObserverMarksPage {
-  readonly items: readonly unknown[];
-  readonly truncated: boolean | null;
-  readonly cursor: string | null;
-  /** Round 4 paging: more marks follow at `offset + items.length`; null when the reply does not say. */
-  readonly more?: boolean | null;
-  readonly total?: number | null;
-  readonly offset?: number | null;
-}
 export interface ObserverConcurrencyQuery {
   readonly fromMs: number;
   readonly toMs: number;
@@ -553,30 +454,6 @@ export interface ObserverConcurrencyQuery {
   readonly kinds?: readonly string[];
   readonly signal?: AbortSignal;
 }
-export interface ObserverSeriesQuery {
-  readonly fromMs?: number | null;
-  readonly toMs?: number | null;
-  readonly bucketMs?: number | null;
-  readonly ticket?: string;
-  readonly execution?: string;
-  /** Event kinds to count (`kinds=`); an observer that ignores it counts everything, and `kindsApplied` says so. */
-  readonly kinds?: readonly string[];
-  readonly signal?: AbortSignal;
-}
-export interface FilteredSeries {
-  readonly fromMs: number;
-  readonly toMs: number;
-  readonly bucketMs: number;
-  /** Sparse; `kinds` is each bucket's count by event kind when the reply has it. */
-  readonly buckets: readonly { readonly fromMs: number; readonly count: number; readonly kinds: Readonly<Record<string, number>> | null }[];
-  readonly total: number | null;
-  /** The reply's `complete`; null when it does not say. */
-  readonly complete: boolean | null;
-  /** Whether `kinds` was honoured: counts were taken from each bucket's by-kind map, or the reply echoed it. */
-  readonly kindsApplied: boolean;
-  readonly cursor: string | null;
-}
-
 export const EVENT_SCHEMA = 3;
 
 const bool = (value: unknown): boolean | null => (typeof value === "boolean" ? value : null);
@@ -898,42 +775,8 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
         watermark: timeOf(d.watermark_ms ?? d.watermark),
       };
     },
-    async history(window = {}) {
-      const q = new URLSearchParams();
-      if (window.fromOrder) q.set("from_order", window.fromOrder);
-      else if (typeof window.fromMs === "number") q.set("from_ms", String(Math.max(0, Math.floor(window.fromMs))));
-      if (window.toOrder) q.set("to_order", window.toOrder);
-      else if (typeof window.toMs === "number") q.set("to_ms", String(Math.max(0, Math.floor(window.toMs))));
-      q.set("limit", String(window.limit ?? 1000));
-      const d = await get(`/history?${q.toString()}`);
-      return {
-        generation: str(d.generation) ?? "",
-        events: Array.isArray(d.events) ? d.events : [],
-        nextFromOrder: str(d.next_from_order),
-        more: d.more === true,
-        complete: d.complete !== false,
-        watermark: timeOf(d.watermark_ms),
-        ...(typeof d.capped === "boolean" ? { capped: d.capped } : {}),
-      };
-    },
-    async snapshot(at) {
-      const d = await get(at ? `/snapshot?at=${encodeURIComponent(at)}` : "/snapshot");
-      return { cursor: str(d.cursor) ?? "", generation: str(d.generation) ?? "", reconstructed: d.reconstructed === true, state: readSnapshotState(d.state) };
-    },
     async factoryStatus() {
       return readFactoryStatus(await get("/factory/status"));
-    },
-    async series(window = {}) {
-      const q = new URLSearchParams();
-      if (typeof window.fromMs === "number") q.set("from_ms", String(Math.max(0, Math.floor(window.fromMs))));
-      if (typeof window.toMs === "number") q.set("to_ms", String(Math.max(0, Math.floor(window.toMs))));
-      if (typeof window.bucketMs === "number") q.set("bucket_ms", String(Math.max(1000, Math.round(window.bucketMs / 1000) * 1000))); // whole seconds (observer M6.2)
-      const d = await get(`/series${q.size ? `?${q.toString()}` : ""}`);
-      const buckets = list(d.buckets)
-        .map((x) => obj(x))
-        .map((b) => ({ fromMs: num(b.from_ms) ?? 0, count: num(b.count) ?? 0 }))
-        .filter((b) => b.count > 0);
-      return { fromMs: num(d.from_ms) ?? buckets[0]?.fromMs ?? 0, toMs: num(d.to_ms) ?? 0, bucketMs: num(d.bucket_ms) ?? 60_000, buckets, total: num(d.total), coarse: false };
     },
     async health() {
       const d = await get("/health");
@@ -1046,39 +889,6 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
       const state = readSnapshotState({ waves: waves.items, slices, cells, executions: runs, history });
       return { cursor, state };
     },
-    async spans(query) {
-      const q = new URLSearchParams();
-      if (query.span) q.set("span", query.span);
-      else {
-        if (typeof query.fromMs === "number") q.set("from_ms", String(Math.max(0, Math.floor(query.fromMs))));
-        if (typeof query.toMs === "number") q.set("to_ms", String(Math.max(0, Math.ceil(query.toMs))));
-        if (query.kinds?.length) q.set("kinds", query.kinds.join(","));
-        if (query.ticket) q.set("ticket", query.ticket);
-        if (query.execution) q.set("execution", query.execution);
-        if (query.wave) q.set("wave", query.wave);
-        q.set("sort", "start");
-        q.set("limit", String(query.limit ?? 1000));
-        if (query.offset) q.set("offset", String(query.offset));
-      }
-      const d = await get(`/spans?${q.toString()}`, query.signal);
-      // `span=` may answer with the list shape (0 or 1 item) or one `span` object.
-      const items = d.span && typeof d.span === "object" ? [d.span] : list(d.items);
-      return { items, total: num(d.total), totalUncapped: num(d.total_uncapped), truncated: bool(d.truncated), more: d.more === true, offset: num(d.offset) ?? query.offset ?? 0, cursor: str(d.cursor) };
-    },
-    async marks(query) {
-      const q = new URLSearchParams();
-      if (typeof query.afterMs === "number") q.set("after_ms", String(Math.max(0, Math.floor(query.afterMs))));
-      else if (typeof query.beforeMs === "number") q.set("before_ms", String(Math.max(0, Math.ceil(query.beforeMs))));
-      else {
-        if (typeof query.fromMs === "number") q.set("from_ms", String(Math.max(0, Math.floor(query.fromMs))));
-        if (typeof query.toMs === "number") q.set("to_ms", String(Math.max(0, Math.ceil(query.toMs))));
-      }
-      if (query.kinds?.length) q.set("kinds", query.kinds.join(","));
-      if (typeof query.limit === "number") q.set("limit", String(query.limit));
-      if (typeof query.offset === "number" && query.offset > 0) q.set("offset", String(Math.floor(query.offset)));
-      const d = await get(`/marks?${q.toString()}`, query.signal);
-      return { items: list(d.items), truncated: bool(d.truncated), cursor: str(d.cursor), more: bool(d.more), total: num(d.total), offset: num(d.offset) };
-    },
     async concurrency(query) {
       const q = new URLSearchParams();
       q.set("from_ms", String(Math.max(0, Math.floor(query.fromMs))));
@@ -1086,33 +896,6 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
       q.set("bucket_ms", String(Math.max(1000, Math.round(query.bucketMs / 1000) * 1000)));
       if (query.kinds?.length) q.set("kinds", query.kinds.join(","));
       return get(`/concurrency?${q.toString()}`, query.signal);
-    },
-    async seriesFor(query) {
-      const q = new URLSearchParams();
-      if (typeof query.fromMs === "number") q.set("from_ms", String(Math.max(0, Math.floor(query.fromMs))));
-      if (typeof query.toMs === "number") q.set("to_ms", String(Math.max(0, Math.ceil(query.toMs))));
-      if (typeof query.bucketMs === "number") q.set("bucket_ms", String(Math.max(1000, Math.round(query.bucketMs / 1000) * 1000)));
-      if (query.ticket) q.set("ticket", query.ticket);
-      if (query.execution) q.set("execution", query.execution);
-      if (query.kinds?.length) q.set("kinds", query.kinds.join(","));
-      const d = await get(`/series${q.size ? `?${q.toString()}` : ""}`, query.signal);
-      const want = query.kinds?.length ? new Set(query.kinds) : null;
-      const echoed = Array.isArray(d.kinds_applied) || d.kinds_applied === true;
-      let applied = !want || echoed;
-      const buckets = list(d.buckets)
-        .map((x) => obj(x))
-        .map((b) => {
-          const kinds = b.kinds && typeof b.kinds === "object" ? counts(b.kinds) : null;
-          let count = num(b.count) ?? 0;
-          // Without an echo, count only the asked kinds from the bucket's own by-kind counts.
-          if (want && !echoed && kinds) {
-            count = Object.entries(kinds).reduce((n, [k, v]) => (want.has(k) ? n + v : n), 0);
-            applied = true;
-          }
-          return { fromMs: num(b.from_ms) ?? 0, count, kinds };
-        })
-        .filter((b) => b.count > 0);
-      return { fromMs: num(d.from_ms) ?? buckets[0]?.fromMs ?? 0, toMs: num(d.to_ms) ?? 0, bucketMs: num(d.bucket_ms) ?? 60_000, buckets, total: want && !echoed ? null : num(d.total), complete: bool(d.complete), kindsApplied: applied, cursor: str(d.head) ?? str(d.cursor) };
     },
     // ---- M6.5 analytics (raw `data`; src/analytics/data parses it).
     async analyticsMetrics(query) {

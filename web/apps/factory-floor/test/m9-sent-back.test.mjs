@@ -7,10 +7,7 @@ import assert from "node:assert/strict";
 import { sim, live } from "./_load.mjs";
 import { beltRun, finalize } from "./fixtures/v3.mjs";
 
-const words = await import("../src/timeline/render/words.ts");
-const palette = await import("../src/timeline/render/palette.ts");
-const inspector = await import("../src/timeline/inspector/model.ts");
-const data = await import("../src/timeline/data/scene.ts");
+const outcomes = await import("../src/shell/inspector/outcomes.ts");
 
 const { createSceneLog, provenance, describeEntry, isSentBack, gateStateWords } = sim;
 const sceneOf = (decision) => {
@@ -68,27 +65,16 @@ test("no decision, APPROVED and an unknown value read as an approval, as before"
   }
 });
 
-test("the Timeline: the wait ends 'sent back', its mark is not an approval, and the words say so", () => {
+test("the inspector and the Line: a send-back is worded as one, never as an approval", () => {
   const scene = sceneOf("SENT_BACK").head();
-  const spans = data.spansOfScene(scene);
-  const wait = spans.find((s) => s.kind === "gate-wait" && s.entity === "gate:LOCAL-031/human-approval");
-  assert.equal(wait.outcome, "sent-back");
-  assert.equal(words.personApproved(wait, Number.MAX_SAFE_INTEGER), false);
-  const marks = data.marksOfScene(scene, spans);
-  const answer = marks.find((m) => m.id === `human-approved:${wait.id}`);
-  assert.equal(answer.verdict, "sent-back");
-  assert.match(answer.label, /sent the change back/);
-  assert.equal(marks.some((m) => m.entity === wait.entity && m.verdict === "approved"), false);
-  // The observer's spelling of the same outcome.
-  assert.equal(words.outcomeWords("sent-back"), "sent back to the build station by a person");
-  assert.equal(words.outcomeWords("human.approval_recorded"), "approved by a person");
-  assert.equal(palette.outcomeTone("sent-back"), "fail");
-  assert.equal(inspector.outcomeWordsOf("sent-back").words, "sent back to the build station by a person");
-  const approved = data.spansOfScene(sceneOf(undefined).head()).find((s) => s.kind === "gate-wait" && s.entity === "gate:LOCAL-031/human-approval");
-  assert.equal(approved.outcome, "passed");
-  assert.equal(words.personApproved(approved, Number.MAX_SAFE_INTEGER), true);
+  const visit = scene.cells["LOCAL-031"].visits.at(-1);
+  assert.equal(outcomes.visitStateWords(visit), "Sent back to the build station by a person");
+  // The observer's spelling of the same outcome, and the station's.
+  assert.deepEqual(outcomes.outcomeWordsOf("sent-back"), { words: "sent back to the build station by a person", own: "sent-back" });
+  assert.equal(outcomes.outcomeWordsOf("SENT_BACK").words, "sent back to the build station by a person");
+  assert.equal(outcomes.outcomeWordsOf("human.approval_recorded").words, "closed by a human.approval_recorded record");
+  assert.doesNotMatch(outcomes.gatePositionWords(scene.gates["LOCAL-031/human-approval"]), /approv/i);
 });
-
 test("the observer's snapshot: a human gate closed by a send-back is refused, one closed by an approval passed", () => {
   const state = live.readSnapshotState({
     gates: [

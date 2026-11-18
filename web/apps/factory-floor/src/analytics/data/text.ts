@@ -1,6 +1,6 @@
 /**
  * Containment of prose in Analytics replies (M6_5_SECURITY.md section 6 B). The containment itself
- * (`UncheckedText`, the session's display policy) is shared with the floor and Timeline inspectors
+ * (`UncheckedText`, the session's display policy) is shared with the floor's inspectors
  * and lives in `src/text/`; this file adds what only Analytics replies need: which group dimensions
  * carry prose. Group keys of `group_by=phase` (phase titles, `agent.*.data.phase`, at most 60
  * characters) are the one place they do today; the rest is identifiers, codes, numbers and the

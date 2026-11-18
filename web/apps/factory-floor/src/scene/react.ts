@@ -1,15 +1,15 @@
 /**
  * React bindings for the one store. React 19's useSyncExternalStore; no other dependency.
  *
- *   const playhead = useSceneStore((s) => s.playhead);
- *   const scene = useScene();                       // log.sceneAt(playhead), stable between events
+ *   const now = useSceneStore((s) => s.now);
+ *   const scene = useScene();                       // log.sceneAt(now), stable between events
  *   const cell = useScene((scene) => scene.cells["LOCAL-031"]);
- *   const { select, seek } = useSceneActions();
+ *   const { select, hover } = useSceneActions();
  *
  * Selectors must return a value that is the same (===) when nothing it depends on changed: a field,
  * or an object taken from the scene. Derive new objects with useMemo, not inside the selector.
  */
-import { createContext, createElement, useContext, useEffect, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, createElement, useContext, useEffect, useLayoutEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import type { Scene } from "../sim/model";
 import { SCENARIO } from "../sim/scenario";
 import { browserClock, switchableClock } from "./clock";
@@ -17,7 +17,7 @@ import { createSceneStore, installMachSimHook, shouldExposeHook, type SceneStore
 
 let defaultStore: SceneStore | null = null;
 
-/** The app's store: the M6.0 scenario on the browser clock, with reduced motion from the media query. */
+/** The app's simulation store: the M6.0 scenario on the browser clock, running on its own, with reduced motion from the media query. */
 export function getSceneStore(): SceneStore {
   if (defaultStore) return defaultStore;
   const media = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
@@ -46,15 +46,15 @@ export function useSceneStore<T>(selector: (state: SceneStoreState) => T): T {
   return useSyncExternalStore(store.subscribe, () => selector(store.getState()), () => selector(store.getState()));
 }
 
-/** The scene at the playhead (or a part of it). Re-renders only when the selected value changes. */
+/** The scene now (or a part of it). Re-renders only when the selected value changes. */
 export function useScene(): Scene;
 export function useScene<T>(selector: (scene: Scene) => T): T;
 export function useScene<T>(selector?: (scene: Scene) => T): T | Scene {
   const store = useStore();
   const read = () => {
     const s = store.getState();
-    // Any source: simulation, live or replay. The log returns the same object for the same moment while it is in use.
-    const scene = s.log.sceneAt(s.playhead);
+    // Either source. The log returns the same object for the same moment while it is in use.
+    const scene = s.log.sceneAt(s.now);
     return selector ? selector(scene) : scene;
   };
   return useSyncExternalStore(store.subscribe, read, read);
@@ -65,21 +65,26 @@ export function useSceneActions(): Omit<SceneStore, "getState" | "subscribe" | "
   return useStore();
 }
 
-/** Space toggles play, arrows step by event: wire once in the shell if it wants the defaults. */
-export function usePlaybackKeys(enabled = true): void {
+/**
+ * Frame-rate updates without React renders: calls `onNow` with the store state whenever the moment
+ * shown moves (and once at mount), so a component can write a running time straight to a DOM node.
+ */
+export function useNowEffect(onNow: (s: SceneStoreState) => void, deps: readonly unknown[]): void {
   const store = useStore();
+  const latest = useRef(onNow);
+  useLayoutEffect(() => {
+    latest.current = onNow;
+  });
   useEffect(() => {
-    if (!enabled) return;
-    const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(target.tagName))) return;
-      if (e.key === " ") store.toggle();
-      else if (e.key === "ArrowRight" && e.shiftKey) store.stepNext();
-      else if (e.key === "ArrowLeft" && e.shiftKey) store.stepPrevious();
-      else return;
-      e.preventDefault();
+    let now = Number.NaN;
+    const run = () => {
+      const s = store.getState();
+      if (s.now === now) return;
+      now = s.now;
+      latest.current(s);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [enabled, store]);
+    run();
+    return store.subscribe(run);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store, ...deps]);
 }

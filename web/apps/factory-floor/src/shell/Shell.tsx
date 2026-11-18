@@ -1,73 +1,47 @@
 /**
- * The MACH Factory Floor frame around its workspaces (M6.0 Shell, M6.2 sources, M6.3 workspaces): top
- * bar with identity, the permanent source badge (Live Factory, Historical replay or Simulation), the
- * connection and completeness badges, the workspace switch, the stage, the contextual inspector, the
- * synchronized timeline, Theater Mode, the keyboard map and its help sheet, and the screen-reader announcer.
+ * The MACH Factory Floor frame around its workspaces: top bar with identity, the permanent source
+ * badge (Live Factory or Simulation), the connection and completeness badges, the workspace switch,
+ * the stage, the contextual inspector, Theater Mode, the keyboard map and its help sheet, and the
+ * screen-reader announcer.
  *
- * Three workspaces (the store's `workspace`): the Atlas (the stage with its two views, and the
- * docked timeline under it), the Execution Timeline and Factory Analytics, each of which takes the
- * place of both. The header (source badge, connection, theme, workspace switch) and the inspector
- * stay. The floor's stage stays mounted while another workspace is up: hidden, inert, and reading a
- * held view of the store (heldStore), so it does no work and returns exactly as it was. The Timeline
- * and Analytics are mounted only while shown. Analytics has no transport: it reads the playhead
- * through useAnalyticsAsOf (./analyticsAsOf.ts) and says which history it describes.
+ * Three workspaces (the store's `workspace`): the Line (the default: stations as columns, a row for
+ * each ticket, with its own side panel), the Floor (the isometric Factory Atlas, with the inspector) and Factory Analytics (with the inspector on request). The Floor's stage stays
+ * mounted while another workspace is up: hidden, inert, and reading a held view of the store
+ * (heldStore), so it does no work and returns exactly as it was. The Line and Analytics are mounted
+ * only while shown. Everything shows the present: there is no playhead.
  *
- * Owned here: panel sizes, open and closed panels, the help sheet. Everything about the factory and
- * the playback (playhead, selection, focus, mode, workspace, Theater Mode) is the store's.
+ * Owned here: the inspector's open state, the help sheet. Everything about the factory (selection,
+ * focus, workspace, Theater Mode) is the store's.
  */
-import { CircleHelp, Monitor, Moon, PanelRight, PanelRightClose, Sun, TvMinimalPlay, X } from "lucide-react";
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { CircleHelp, Monitor, Moon, PanelRight, PanelRightClose, Sun, TvMinimalPlay } from "lucide-react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn, useTheme, type ThemePreference } from "@mach/ui";
 import { refKind } from "../sim";
-import { heldStore, SceneStoreProvider, showInAnalytics, showInTimeline, showOnFloor, useSceneStore, useStore, type SceneStore } from "../scene";
+import { heldStore, SceneStoreProvider, showInAnalytics, showOnFloor, showOnLine, useSceneStore, useStore, type SceneStore } from "../scene";
 import { AnalyticsWorkspace } from "../analytics/Workspace";
-import { timelineDataFor } from "../timeline/data";
-import { TIMELINE_CHROME_HEIGHT } from "../timeline/controls/frame";
-import { TimelineWorkspace } from "../timeline/Workspace";
-import { focusTracks } from "../timeline/a11y/skip";
+import { LineWorkspace } from "../line/Workspace";
 import { Announcer } from "./Announcer";
-import { Brand, ModeSwitch, RunIdentity, WorkspaceSwitch } from "./chrome";
+import { Brand, PlacesChip, RunIdentity, WorkspaceSwitch } from "./chrome";
 import { CompletenessBadge, ConnectionBadge, FactoryStateChip, SOURCE_WORDS, SourceBadge, StageNotice } from "./SourceBadge";
 import { useSource } from "./source/context";
-import { parseHash, type HashAt } from "./source/hash";
-import { applyHash, browserHashHost, createHashSync, type LostReason } from "./source/hashSync";
-import { locateEvent } from "./source/locate";
+import { parseHash } from "./source/hash";
+import { applyHash, browserHashHost, createHashSync } from "./source/hashSync";
 import { HelpSheet } from "./HelpSheet";
 import { EvidencePlayer } from "../evidence/EvidencePlayer";
 import { Inspector } from "./inspector/Inspector";
 import { useShellKeys } from "./keyboard";
-import { Stage } from "./Stage";
+import { AtlasView } from "../atlas";
 import { THEATER_BOTTOM, THEATER_TOP, TheaterOverlay } from "./Theater";
-import { Timeline } from "./timeline/Timeline";
-import { IconButton } from "./timeline/Transport";
+import { FollowState } from "./FollowState";
+import { IconButton } from "./IconButton";
 import "./shell.css";
 import { FreeTextLabel } from "./inspector/FreeText";
 
 const TOP = 48;
-/**
- * Default proportions (spec f.8, revised after the review): the stage is the product, so the panels
- * start small. The inspector is a column on wide windows, an overlay drawer below 1280 px; the
- * timeline starts as transport, chapter ruler and one summary row of every track, and opens to all
- * tracks on request or when dragged taller.
- */
+/** The inspector is a column on wide windows, an overlay drawer below 1280 px. */
 const INSPECTOR_W = { regular: 344, large: 368, overlay: 392 } as const;
-/** The top border (1) + transport (40) + chapter ruler (38) + time axis (25) + one summary row (38). */
-const SUMMARY_TIMELINE = 142;
-/** Transport only, plus the top border. */
-const COLLAPSED_TIMELINE = 41;
 const WIDE = "(min-width: 1280px)";
 const LARGE = "(min-width: 1680px)";
-/** At or below this width the inspector starts closed in the Timeline (X20). */
-const NARROW = "(max-width: 1100px)";
-/** Below this height (a 1080 p screen at 200% zoom is 540) the timeline starts collapsed to its transport. */
-const SHORT = "(max-height: 600px)";
-/**
- * M6.6 (WCAG 1.4.10, 320 CSS px): below this width the transport wraps onto a second row (the docked
- * timeline grows by that row) and the inspector opens as a full-width sheet under the header.
- */
-const TINY = "(max-width: 639px)";
-/** The transport's second row when it wraps below TINY. */
-const TINY_TRANSPORT_EXTRA = 40;
 
 /** The header's height, live: one row of 48 px, more when its controls wrap (M6.6). */
 function useHeaderHeight(ref: { current: HTMLElement | null }): number {
@@ -96,62 +70,23 @@ function useMedia(query: string): boolean {
   return match;
 }
 
-/**
- * The workspace, view, selection, playhead and Timeline window in the address
- * (#blueprint?sel=cell:LOCAL-031, #timeline?sel=...&at=...&win=...&group=...), both ways. Grammar and
- * rules: source/hash.ts and source/hashSync.ts.
- */
-function useHashSync(): { lost: { at: HashAt; why: LostReason } | null; dismiss: () => void } {
+/** The workspace and the selection in the address (#line?sel=cell:LOCAL-031), both ways. Grammar: source/hash.ts. */
+function useHashSync(): void {
   const store = useStore();
-  const { client = null } = useSource();
-  const [lost, setLost] = useState<{ at: HashAt; why: LostReason } | null>(null);
-  // Read once before the first render, so the stage mounts the view (and the workspace) the address
-  // names (no switch, and no transition, at start-up). `at` waits for history: createHashSync below.
+  // Read once before the first render, so the stage mounts the workspace the address names (no switch, and no transition, at start-up).
   useState(() => {
     if (typeof window !== "undefined") applyHash(store, parseHash(window.location.hash));
     return true;
   });
   useEffect(() => {
-    const data = timelineDataFor(store, client);
-    const sync = createHashSync(store, browserHashHost(), undefined, {
-      // An event the history held does not reach: found through the Timeline's marks and span ends, over the whole history.
-      locate: (id) => {
-        const s = store.getState();
-        const ext = data.extent();
-        const whole = { from: Math.min(s.extent.start, ext?.from ?? s.extent.start), to: Math.max(s.liveAt, s.extent.end, ext?.to ?? s.liveAt) };
-        return locateEvent(data, whole, id);
-      },
-      onLost: (at, why) => setLost({ at, why }),
-    });
+    const sync = createHashSync(store, browserHashHost());
     return () => sync.dispose();
-  }, [store, client]);
-  return { lost, dismiss: useCallback(() => setLost(null), []) };
-}
-
-/** Said when the address named a moment that was not applied: never dropped silently. */
-function LostMomentNotice({ at, why, onDismiss }: { at: HashAt; why: LostReason; onDismiss: () => void }) {
-  const what = at.kind === "event" ? `the event ${at.id.length > 64 ? `${at.id.slice(0, 61)}…` : at.id}` : "that time";
-  const text =
-    why === "after-end"
-      ? "The link's moment is after this history ends; showing its last event."
-      : why === "before-start"
-        ? "The link's moment is before this history begins; showing its first event."
-        : why === "not-found"
-          ? `The address names a moment (${what}) that could not be located in the history held. The playhead was left where it was.`
-          : `The moment the address names (${what}) was not applied: you moved first.`;
-  return (
-    <div role="status" className="absolute bottom-4 left-1/2 z-40 flex w-[min(560px,calc(100%-32px))] -translate-x-1/2 items-start gap-2 rounded-md border border-line bg-surface-raised px-3 py-2 text-body-sm text-ink shadow-2" data-lost-moment={why}>
-      <span className="min-w-0 flex-1">{text}</span>
-      <IconButton label="Dismiss" onClick={onDismiss} className="-my-1 size-7">
-        <X aria-hidden="true" />
-      </IconButton>
-    </div>
-  );
+  }, [store]);
 }
 
 /**
- * The floor's view of the store: held still while another workspace is up. It holds and releases
- * itself in the store's own change handler (heldStore, A3), so the change that leaves the floor never
+ * The Floor's view of the store: held still while another workspace is up. It holds and releases
+ * itself in the store's own change handler (heldStore, A3), so the change that leaves the Floor never
  * reaches it and the one that returns catches it up at once, before any render.
  */
 function useFloorStore(store: SceneStore) {
@@ -203,33 +138,32 @@ function ThemeChoice() {
 }
 
 function TopBar({ inspectorOpen, onInspector, onHelp, sourceOpen, onSource }: { inspectorOpen: boolean; onInspector: () => void; onHelp: () => void; sourceOpen: boolean; onSource: (open: boolean) => void }) {
-  const view = useSceneStore((s) => s.view);
   const workspace = useSceneStore((s) => s.workspace);
   const store = useStore();
   const onFloor = workspace === "floor";
-  // Reflows down to 960 CSS px (a 1920 px screen at 200% zoom) without cutting anything off: the
-  // brand's second word and the Theater word give way first; the run's title truncates; the
-  // source badge, the panel buttons and the mode switch never shrink.
-  // M6.6 (WCAG 1.4.10): whatever still does not fit wraps onto a further row (the header's grid row
-  // grows with it) instead of being cut off: at 320 CSS px every control stays on screen, and at
-  // 1280 px a crowded floor header wraps its workspace switch rather than clipping it. The run's
-  // title has no width of its own in the line breaking (basis 0), so it never forces a wrap; below
-  // 640 px it takes a row of its own.
+  // Reflows down to 320 CSS px (M6.6, WCAG 1.4.10): whatever does not fit wraps onto a further row
+  // instead of being cut off. The run's title has no width of its own (basis 0), so it never forces a
+  // wrap; below 640 px it takes a row of its own.
   return (
     <div className="flex min-h-12 min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-canvas px-3 py-1 min-[1100px]:gap-x-4 min-[1100px]:px-4" data-top-bar="">
       <Brand />
+      <nav aria-label="Workspaces" className="flex shrink-0 flex-wrap items-center gap-1.5">
+        <WorkspaceSwitch value={workspace} onChange={(w) => (w === "line" ? showOnLine(store) : w === "analytics" ? showInAnalytics(store) : showOnFloor(store))} />
+      </nav>
+      <span className="h-5 w-px shrink-0 bg-line max-[639px]:hidden" aria-hidden="true" />
+      <div className="min-w-0 flex-1 basis-0 overflow-hidden max-[639px]:order-last max-[639px]:basis-full">
+        <RunIdentity />
+      </div>
       <div className="flex shrink-0 flex-wrap items-center gap-1.5">
         <SourceBadge open={sourceOpen} onOpenChange={onSource} />
         <ConnectionBadge />
         <CompletenessBadge />
         <FactoryStateChip />
-      </div>
-      <span className="h-5 w-px shrink-0 bg-line max-[639px]:hidden" aria-hidden="true" />
-      <div className="min-w-0 flex-1 basis-0 overflow-hidden max-[639px]:order-last max-[639px]:basis-full">
-        <RunIdentity />
+        <PlacesChip />
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        {/* Theater Mode is the floor's: not offered while the Timeline is up. */}
+        {onFloor ? <FollowState /> : null}
+        {/* Theater Mode is the Floor's: not offered elsewhere. */}
         <button
           type="button"
           hidden={!onFloor}
@@ -244,37 +178,18 @@ function TopBar({ inspectorOpen, onInspector, onHelp, sourceOpen, onSource }: { 
             Theater
           </span>
         </button>
-        <IconButton label={inspectorOpen ? "Hide the inspector" : "Show the inspector"} shortcut="I" onClick={onInspector} pressed={inspectorOpen}>
-          {inspectorOpen ? <PanelRightClose aria-hidden="true" /> : <PanelRight aria-hidden="true" />}
-        </IconButton>
+        {workspace === "line" ? null : (
+          <IconButton label={inspectorOpen ? "Hide the inspector" : "Show the inspector"} shortcut="I" onClick={onInspector} pressed={inspectorOpen}>
+            {inspectorOpen ? <PanelRightClose aria-hidden="true" /> : <PanelRight aria-hidden="true" />}
+          </IconButton>
+        )}
         <IconButton label="Keyboard shortcuts" shortcut="?" onClick={onHelp}>
           <CircleHelp aria-hidden="true" />
         </IconButton>
         <ThemeChoice />
       </div>
-      <span className="h-5 w-px shrink-0 bg-line max-[639px]:hidden" aria-hidden="true" />
-      <nav aria-label="Workspaces" className="flex shrink-0 flex-wrap items-center gap-1.5">
-        <WorkspaceSwitch value={workspace} onChange={(w) => (w === "timeline" ? showInTimeline(store) : w === "analytics" ? showInAnalytics(store) : showOnFloor(store))} />
-        {onFloor ? <ModeSwitch value={view} onChange={store.setView} /> : null}
-      </nav>
     </div>
   );
-}
-
-/** The window's inner height, live. */
-function useViewportHeight(): number {
-  const [h, setH] = useState(() => (typeof window !== "undefined" ? window.innerHeight : 900));
-  useEffect(() => {
-    const on = () => setH(window.innerHeight);
-    window.addEventListener("resize", on);
-    return () => window.removeEventListener("resize", on);
-  }, []);
-  return h;
-}
-
-/** The open timeline's height with every track showing: as tall as its tracks, at most 40% of the window. */
-function defaultOpenHeight(viewportH: number): number {
-  return Math.round(Math.max(180, Math.min(300, viewportH * 0.4)));
 }
 
 /** The page title names the source, so a window or tab can never pass a simulation off as real. */
@@ -287,24 +202,25 @@ function usePageTitle() {
   }, [source, project]);
 }
 
+const STAGE_LABEL = { line: "Line", floor: "Floor: Factory Atlas", analytics: "Factory Analytics" } as const;
+
 export function Shell() {
   const store = useStore();
-  const lostMoment = useHashSync();
+  useHashSync();
   usePageTitle();
   const source = useSceneStore((s) => s.source);
   const theater = useSceneStore((s) => s.theater);
-  const view = useSceneStore((s) => s.view);
   const workspace = useSceneStore((s) => s.workspace);
   const reduced = useSceneStore((s) => s.reducedMotion);
   const onFloor = workspace === "floor";
-  const inTimeline = workspace === "timeline";
+  const onLine = workspace === "line";
   const inAnalytics = workspace === "analytics";
   const floorStore = useFloorStore(store);
   const floorRef = useRef<HTMLDivElement>(null);
-  const timelineRef = useRef<HTMLDivElement>(null);
+  const lineRef = useRef<HTMLDivElement>(null);
   const analyticsRef = useRef<HTMLDivElement>(null);
   useArrival(floorRef, onFloor, reduced);
-  useArrival(timelineRef, inTimeline, reduced);
+  useArrival(lineRef, onLine, reduced);
   useArrival(analyticsRef, inAnalytics, reduced);
   const selection = useSceneStore((s) => s.selection);
   // For browser tests: the scene's first state is applied (the simulation at once; live once history
@@ -317,23 +233,13 @@ export function Shell() {
   }, []);
   const wide = useMedia(WIDE);
   const large = useMedia(LARGE);
-  const short = useMedia(SHORT);
-  const narrow = useMedia(NARROW);
-  const tiny = useMedia(TINY);
   const headerRef = useRef<HTMLElement>(null);
   const topH = useHeaderHeight(headerRef);
-  const viewportH = useViewportHeight();
   const [inspectorWanted, setInspectorWanted] = useState(true);
   const [overlayOpen, setOverlayOpen] = useState(false);
   // Analytics takes the whole width: the inspector there starts closed and opens only when asked
   // (I, the inspector button) or when a selection is made while Analytics is on screen.
   const [analyticsInspector, setAnalyticsInspector] = useState(false);
-  // null: not chosen by the person, so it follows the window (collapsed on a short one).
-  const [collapsedChoice, setCollapsedChoice] = useState<boolean | null>(null);
-  const timelineCollapsed = collapsedChoice ?? short;
-  const [tracksOpen, setTracksOpen] = useState(false);
-  const [timelineH, setTimelineH] = useState(() => defaultOpenHeight(typeof window !== "undefined" ? window.innerHeight : 900));
-  const [resizing, setResizing] = useState(false);
   const [help, setHelp] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
   const helpOpener = useRef<Element | null>(null);
@@ -344,123 +250,40 @@ export function Shell() {
 
   // On a narrow window the inspector is an overlay: it opens when something is selected and closes
   // when the selection is cleared (derived during render, not in an effect).
-  // X20: at 1100 px wide or less the drawer would cover half the Timeline, so there it starts closed
-  // and a selection does not open it (I, or the inspector button, does).
-  const compactTimeline = narrow && !onFloor;
   const [seenSelection, setSeenSelection] = useState(selection);
   if (seenSelection !== selection) {
     setSeenSelection(selection);
-    setOverlayOpen(Boolean(selection) && !compactTimeline);
+    setOverlayOpen(Boolean(selection));
     if (inAnalytics && selection) setAnalyticsInspector(true);
   }
-  const [seenCompact, setSeenCompact] = useState(compactTimeline);
-  if (seenCompact !== compactTimeline) {
-    setSeenCompact(compactTimeline);
-    if (compactTimeline) setOverlayOpen(false);
-  }
 
-  // After a mode switch, ask the new view to keep the selection in view.
-  const firstView = useRef(true);
-  useEffect(() => {
-    if (firstView.current) {
-      firstView.current = false;
-      return;
-    }
-    const s = store.getState();
-    if (s.selection) store.focusOn(s.selection, "api");
-  }, [view, store]);
-
-  const inspectorOpen = inAnalytics ? analyticsInspector : wide ? inspectorWanted : overlayOpen;
+  // The Line has its own side panel; the inspector belongs to the Floor and Analytics.
+  const inspectorOpen = onLine ? false : inAnalytics ? analyticsInspector : wide ? inspectorWanted : overlayOpen;
   const inspectorW = wide ? (large ? INSPECTOR_W.large : INSPECTOR_W.regular) : INSPECTOR_W.overlay;
   const toggleInspector = useCallback(() => (inAnalytics ? setAnalyticsInspector((v) => !v) : wide ? setInspectorWanted((v) => !v) : setOverlayOpen((v) => !v)), [wide, inAnalytics]);
-  const toggleTimeline = useCallback(() => setCollapsedChoice(!timelineCollapsed), [timelineCollapsed]);
   const commands = useMemo(
     () => ({
       toggleInspector,
-      toggleTimeline,
       openHelp: () => {
         helpOpener.current = document.activeElement;
         setHelp(true);
       },
       openSource: () => setSourceOpen(true),
-      // The help sheet, or the evidence player (M6.4): a panel over the workspace that owns the keyboard while open.
-      modalOpen: () => helpRef.current || store.getState().evidence !== null,
+      // The help sheet, the evidence player (M6.4) or a ticket's full record: a panel over the workspace that owns the keyboard while open.
+      modalOpen: () => helpRef.current || store.getState().evidence !== null || document.querySelector("[data-line-record]") !== null,
     }),
-    [toggleInspector, toggleTimeline, store],
+    [toggleInspector, store],
   );
   useShellKeys(commands);
 
-  // The hidden floor's Blueprint still listens on the window for its zoom keys when nothing holds
-  // focus; while the Timeline is up those keys are not the floor's, so they stop here.
-  useEffect(() => {
-    if (onFloor) return;
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (!(e.key === "+" || e.key === "=" || e.key === "-" || e.key === "0")) return;
-      const active = document.activeElement;
-      if (!active || active === document.body || active.id === "stage") e.preventDefault();
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [onFloor]);
-
-  // The timeline never takes more than 62% of the window, whatever was dragged on a taller one.
-  const maxH = Math.round(viewportH * 0.62);
-  const clampH = useCallback((h: number) => Math.round(Math.max(SUMMARY_TIMELINE + 40, Math.min(window.innerHeight * 0.62, h))), []);
-  const tl = (timelineCollapsed ? COLLAPSED_TIMELINE : tracksOpen ? Math.min(timelineH, maxH) : SUMMARY_TIMELINE) + (tiny ? TINY_TRANSPORT_EXTRA : 0);
-  // The Timeline workspace takes the stage and the docked timeline's rows; Theater Mode is the floor's.
-  const rows = theater && onFloor ? `0px minmax(0,1fr) 0px` : `minmax(${TOP}px,auto) minmax(0,1fr) ${onFloor ? tl : 0}px`;
+  // Theater Mode is the Floor's.
+  const rows = theater && onFloor ? `0px minmax(0,1fr)` : `minmax(${TOP}px,auto) minmax(0,1fr)`;
   const cols = `minmax(0,1fr) ${!theater && wide && inspectorOpen ? inspectorW : 0}px`;
-
-  const setTracks = useCallback(
-    (open: boolean) => {
-      setTracksOpen(open);
-      if (open) setCollapsedChoice(false);
-    },
-    [],
-  );
-
-  // Resizing the timeline: drag its top edge (or the empty parts of the transport bar), or arrow keys
-  // on the handle. Dragging or growing it opens every track; Enter collapses it to the transport.
-  const drag = useRef<{ y: number; h: number } | null>(null);
-  const onResizeDown = (e: PointerEvent<HTMLButtonElement>) => {
-    if (e.button !== 0) return;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    drag.current = { y: e.clientY, h: tl };
-    setResizing(true);
-  };
-  const onResizeMove = (e: PointerEvent<HTMLButtonElement>) => {
-    if (!drag.current) return;
-    const want = drag.current.h + (drag.current.y - e.clientY);
-    if (Math.abs(want - drag.current.h) < 4) return;
-    setCollapsedChoice(false);
-    setTracksOpen(true);
-    setTimelineH(clampH(want));
-  };
-  const onResizeUp = () => {
-    drag.current = null;
-    setResizing(false);
-  };
-  const onResizeKey = (e: KeyboardEvent<HTMLButtonElement>) => {
-    if (e.key === "ArrowUp") {
-      setCollapsedChoice(false);
-      setTimelineH(clampH((tracksOpen ? Math.min(timelineH, maxH) : SUMMARY_TIMELINE) + 24));
-      setTracksOpen(true);
-    } else if (e.key === "ArrowDown") {
-      if (tracksOpen && Math.min(timelineH, maxH) - 24 < SUMMARY_TIMELINE + 40) setTracksOpen(false);
-      else if (tracksOpen) setTimelineH((h) => clampH(Math.min(h, maxH) - 24));
-      else setCollapsedChoice(true);
-    } else if (e.key === "Enter") setCollapsedChoice(!timelineCollapsed);
-    else return;
-    e.preventDefault();
-    e.stopPropagation();
-  };
-
-  const stageLabel = inTimeline ? "Execution Timeline" : inAnalytics ? "Factory Analytics" : view === "atlas" ? "Factory Atlas" : "Execution Blueprint";
+  const stageLabel = STAGE_LABEL[workspace];
   const selectionWord = selection ? refKind(selection) : null;
 
   return (
-    <div className="mach-frame text-ink" style={{ gridTemplateRows: rows, gridTemplateColumns: cols }} data-resizing={resizing ? "" : undefined} data-theater={theater ? "" : undefined} data-scene-ready={mountedOnce && sceneApplied ? "" : undefined}>
+    <div className="mach-frame text-ink" style={{ gridTemplateRows: rows, gridTemplateColumns: cols }} data-theater={theater ? "" : undefined} data-scene-ready={mountedOnce && sceneApplied ? "" : undefined} data-workspace-shown={workspace}>
       <a
         href="#stage"
         onClick={(e) => {
@@ -469,37 +292,28 @@ export function Shell() {
         }}
         className="sr-only z-[70] rounded-sm bg-surface-raised px-3 py-2 text-label text-ink shadow-2 focus:not-sr-only focus:fixed focus:left-3 focus:top-3"
       >
-        {onFloor ? "Skip to the factory view" : inAnalytics ? "Skip to the analytics" : "Skip to the timeline"}
+        {onFloor ? "Skip to the factory view" : inAnalytics ? "Skip to the analytics" : "Skip to the line"}
       </a>
-      {/* The Timeline's tracks are past its transport and toolbar: the page's second Tab stop goes straight to them. */}
-      {!inTimeline ? null : (
-        <a
-          href="#stage"
-          data-skip-tracks=""
-          onClick={(e) => {
-            e.preventDefault();
-            focusTracks(document, document.getElementById("stage"));
-          }}
-          className="sr-only z-[70] rounded-sm bg-surface-raised px-3 py-2 text-label text-ink shadow-2 focus:not-sr-only focus:fixed focus:left-3 focus:top-3"
-        >
-          Skip to the tracks
-        </a>
-      )}
 
       <header ref={headerRef} className="min-w-0 overflow-hidden [grid-area:top]" inert={theater}>
-        <TopBar sourceOpen={sourceOpen} onSource={setSourceOpen} inspectorOpen={inspectorOpen} onInspector={toggleInspector} onHelp={() => {
-          helpOpener.current = document.activeElement;
-          setHelp(true);
-        }} />
+        <TopBar
+          sourceOpen={sourceOpen}
+          onSource={setSourceOpen}
+          inspectorOpen={inspectorOpen}
+          onInspector={toggleInspector}
+          onHelp={() => {
+            helpOpener.current = document.activeElement;
+            setHelp(true);
+          }}
+        />
       </header>
 
       <main id="stage" tabIndex={-1} aria-label={`${stageLabel} (${SOURCE_WORDS[source].label})`} className="relative min-h-0 min-w-0 overflow-clip bg-factory-ground outline-none [grid-area:stage]">
-        {/* In Theater Mode the views are inset by two strips that hold the Theater chrome. */}
-        {/* The floor: always mounted; while the Timeline is up, hidden, inert and held still. */}
+        {/* The Floor: always mounted; while another workspace is up, hidden, inert and held still. In Theater Mode it is inset by two strips that hold the Theater chrome. */}
         <div
           ref={floorRef}
-          // isolate: the stage's layers carry their own z-index and `visibility: visible`, which would
-          // otherwise paint through the hidden wrapper and over the Timeline.
+          // isolate: the Atlas's layers carry their own z-index and `visibility: visible`, which would
+          // otherwise paint through the hidden wrapper and over another workspace.
           className={cn("absolute inset-0 isolate", onFloor ? "" : "opacity-0")}
           data-workspace="floor"
           inert={!onFloor}
@@ -507,12 +321,12 @@ export function Shell() {
           style={{ visibility: onFloor ? "visible" : "hidden" }}
         >
           <SceneStoreProvider store={floorStore}>
-            <div className="absolute inset-x-0" style={{ top: theater ? THEATER_TOP : 0, bottom: theater ? THEATER_BOTTOM : 0 }}>
-              <Stage />
+            <div className="absolute inset-x-0" style={{ top: theater ? THEATER_TOP : 0, bottom: theater ? THEATER_BOTTOM : 0 }} data-stage-active="">
+              <AtlasView />
             </div>
           </SceneStoreProvider>
           {theater || !onFloor ? null : <StageNotice />}
-          {/* One label for the panel (I-05, C3): the floor draws agent labels, finding titles and recorded reasons bounded, never labelled one by one. */}
+          {/* One label for the panel (I-05, C3): the Floor draws agent labels, finding titles and recorded reasons bounded, never labelled one by one. */}
           {theater || !onFloor || source === "simulation" ? null : (
             <p className="pointer-events-none absolute left-3 top-2 z-20 whitespace-nowrap rounded-xs bg-surface/90 px-2 py-0.5 text-caption text-ink-muted" data-free-text-panel-note="">
               <FreeTextLabel what="Titles, labels and reasons" className="inline" />
@@ -520,9 +334,9 @@ export function Shell() {
           )}
           {theater && onFloor ? <TheaterOverlay /> : null}
         </div>
-        {inTimeline ? (
-          <div ref={timelineRef} className="absolute inset-0 isolate z-10 bg-surface" data-workspace="timeline">
-            <TimelineWorkspace />
+        {onLine ? (
+          <div ref={lineRef} className="absolute inset-0 isolate z-10 bg-surface" data-workspace="line">
+            <LineWorkspace />
           </div>
         ) : null}
         {inAnalytics ? (
@@ -530,55 +344,29 @@ export function Shell() {
             <AnalyticsWorkspace />
           </div>
         ) : null}
-        {lostMoment.lost ? <LostMomentNotice at={lostMoment.lost.at} why={lostMoment.lost.why} onDismiss={lostMoment.dismiss} /> : null}
       </main>
 
       <aside
         tabIndex={-1}
         aria-label={selectionWord ? `Inspector: ${selectionWord}` : "Inspector: the run now"}
         inert={theater || !inspectorOpen}
+        hidden={onLine}
         className={cn(
           "min-h-0 min-w-0 overflow-hidden border-line bg-surface outline-none [grid-area:inspector]",
           wide
             ? "border-l"
             : cn(
-                // A drawer over the stage and the timeline, never wider than the window less a margin;
-                // below 640 px a full-width sheet (M6.6, WCAG 1.4.10).
-                "fixed right-0 z-30 w-[min(392px,calc(100vw-32px))] border-l shadow-3 max-[639px]:w-full max-[639px]:border-l-0 transition-transform duration-[var(--mach-duration-slow)] ease-enter",
+                // A drawer over the stage, never wider than the window less a margin; below 640 px a full-width sheet (M6.6, WCAG 1.4.10).
+                "fixed bottom-0 right-0 z-30 w-[min(392px,calc(100vw-32px))] border-l shadow-3 max-[639px]:w-full max-[639px]:border-l-0 transition-transform duration-[var(--mach-duration-slow)] ease-enter",
                 inspectorOpen && !theater ? "translate-x-0" : "translate-x-full",
               ),
         )}
-        // As a drawer it stops at the timeline, so the transport stays in reach while it is open; over
-        // the Timeline workspace it starts under that workspace's transport and toolbar, for the same reason
-        // (Analytics has no transport: it starts under the header).
-        style={wide ? undefined : { top: theater ? 0 : inTimeline && !tiny ? topH + TIMELINE_CHROME_HEIGHT : topH, bottom: theater || !onFloor || tiny ? 0 : tl }}
+        style={wide ? undefined : { top: theater ? 0 : topH }}
       >
         <div className="h-full" style={{ width: wide ? inspectorW : "100%" }}>
           <Inspector />
         </div>
       </aside>
-
-      <section aria-label="Execution timeline" hidden={!onFloor} inert={theater || !onFloor} className="relative min-h-0 min-w-0 overflow-hidden border-t border-line bg-surface [grid-area:timeline]">
-        {/* The resize handle: a 24 px target along the top edge (WCAG 2.5.8), drawn as a hairline. It
-            lies under the transport's controls, so it takes only the bar's empty space. */}
-        <button
-          type="button"
-          aria-label="Resize the timeline: drag, or use the up and down arrows; Enter collapses it"
-          aria-keyshortcuts="ArrowUp ArrowDown Enter"
-          title="Drag to resize the timeline"
-          onPointerDown={onResizeDown}
-          onPointerMove={onResizeMove}
-          onPointerUp={onResizeUp}
-          onPointerCancel={onResizeUp}
-          onKeyDown={onResizeKey}
-          data-timeline-resize=""
-          className="group absolute inset-x-0 top-0 z-0 h-6 cursor-row-resize touch-none outline-none"
-        >
-          <span aria-hidden="true" className="absolute inset-x-0 top-0 h-[3px] group-hover:bg-line-strong group-focus-visible:bg-focus" />
-        </button>
-        {/* The docked timeline belongs to the floor; the Timeline workspace replaces it. */}
-        {onFloor ? <Timeline collapsed={timelineCollapsed} onCollapse={toggleTimeline} tracksOpen={tracksOpen} onTracks={setTracks} /> : null}
-      </section>
 
       <Announcer />
       <HelpSheet open={help} onOpenChange={setHelp} opener={helpOpener} />

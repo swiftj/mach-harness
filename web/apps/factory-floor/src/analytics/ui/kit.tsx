@@ -14,7 +14,6 @@ import { densityOf, durationShows, verdictAllowed, type Density } from "../model
 import { nextMark } from "../model/series";
 import { chartKey } from "./keys";
 import { useRemembered } from "./remember";
-import { dayCutTag, lastWholeDay } from "../wire/query";
 import { HISTORY_SUSPECT_WORDS, historyWords } from "../wire/history";
 import { spoken } from "./charts/a11y";
 import type { AreaData, AreaSource, Interval, OnOpen, RowsRequest } from "./types";
@@ -63,7 +62,7 @@ export function useWidth<T extends HTMLElement>(fallback = 600, min = 120): [Ref
 
 // ------------------------------------------------------------------------------------ area frame
 
-const SOURCE_WORDS: Readonly<Record<AreaSource, string>> = { simulation: "simulated", live: "live", replay: "replay" };
+const SOURCE_WORDS: Readonly<Record<AreaSource, string>> = { simulation: "simulated", live: "live" };
 
 /**
  * One area: its heading and introduction always; below them the figures when the data is ready, or
@@ -87,11 +86,6 @@ export function AreaFrame({ id, title, intro, props, children, aside }: { id: Ar
         {aside}
       </header>
       {snapshot?.history ? <HistoryLine history={snapshot.history} /> : null}
-      {snapshot?.no_whole_day ? (
-        <p className="max-w-[72ch] rounded-md border border-line bg-surface-sunken px-3 py-2 text-body-sm text-ink-muted" role="note" data-no-whole-day="">
-          <span className="font-semibold text-ink">No whole UTC day before the playhead.</span> Figures counted by whole UTC days have nothing to count yet; that is not the same as nothing recorded. The flow drawing and the rows behind a figure run to the playhead.
-        </p>
-      ) : null}
       {d.state === "ready" && d.stale ? (
         <p className="an-stale flex items-start gap-2 rounded-md border border-line px-3 py-2 text-body-sm text-ink-muted" role="status" data-state="stale">
           <span className="font-semibold text-ink">Not current.</span> {d.stale.reason} The figures below are as they were; {props.asOf.charAt(0).toLowerCase() + props.asOf.slice(1)}.
@@ -117,7 +111,7 @@ export function AreaFrame({ id, title, intro, props, children, aside }: { id: Ar
 }
 
 /**
- * M6.6 (I-03): incomplete history over the figures of this area, in the Timeline's words for a gap
+ * M6.6 (I-03): incomplete history over the figures of this area, in the words for a gap
  * ("History is missing here"): the observer's partial reason, each gap's time and class, and the UTC
  * days it marks suspect. Nothing when the history is complete.
  */
@@ -221,12 +215,6 @@ export function Definition({ row, children, label }: { row: MetricRow; children?
               </dd>
             </>
           ) : null}
-          {row.as_of && !row.as_of.exact && row.as_of.effective_to_ms !== null ? (
-            <>
-              <dt className="text-ink-muted">Counted to</dt>
-              <dd className="an-num">The end of {lastWholeDay(row.as_of.effective_to_ms)} (UTC): whole UTC days before the playhead; the playhead's own day is not in this figure</dd>
-            </>
-          ) : null}
           {row.status === "partial" ? (
             <>
               <dt className="text-ink-muted">In part</dt>
@@ -317,12 +305,6 @@ export function Readout({ row, label, drill, size = "md", note }: { row: MetricR
         {isDuration && shows.p90 && row.p90_ms !== undefined ? <span className="an-num">90th {p90Text(row)}</span> : null}
         {row.coverage.share !== null && row.coverage.share < 1 ? <span className="an-num">coverage {coverageText(row.coverage)}</span> : null}
         {row.basis !== "measured" && h.text !== null && !missing ? <span>{BASIS_WORDS[row.basis]}</span> : null}
-        {/* M6.6 (I-08): counted by whole UTC days under a playhead: the figure says its last day itself, so it never reads as the playhead's moment. */}
-        {row.as_of && !row.as_of.exact && row.as_of.effective_to_ms !== null && h.text !== null && !missing ? (
-          <span className="an-num" data-day-cut="" title={`Counted through the end of ${lastWholeDay(row.as_of.effective_to_ms)} (UTC), the last whole day before the playhead; the playhead's own day is not in this figure.`}>
-            {dayCutTag(row.as_of.effective_to_ms)}
-          </span>
-        ) : null}
         {/* M6.6 (I-03): history in this window is incomplete (a gap in the observer's record): said where the figure is. */}
         {row.suspect && h.text !== null && !missing ? (
           <span data-history-suspect="" title={HISTORY_SUSPECT_WORDS}>

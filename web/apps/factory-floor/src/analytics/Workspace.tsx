@@ -2,32 +2,28 @@
  * The Factory Analytics workspace as the Shell mounts it (M6.5.4, M6.5.6).
  *
  * It reads the store's Analytics state (`state.analytics`, which the address carries) and the source:
- * the Simulation reads the seeded fixture (`simulatedAnalytics`, labelled Simulated everywhere), live
- * and replay read the observer (`observerAnalytics`). A source and a provider that disagree are never
- * shown together (wire/query.ts `sourceCheck`).
+ * the Simulation reads the seeded fixture (`simulatedAnalytics`, labelled Simulated everywhere), the
+ * live Factory reads the observer (`observerAnalytics`). A source and a provider that disagree are
+ * never shown together (wire/query.ts `sourceCheck`).
  *
- * One snapshot per view (period, filters, "as of"): every area of the view reads at its cursor, and a
+ * One snapshot per view (period, filters): every area of the view reads at its cursor, and a
  * new period or filter keeps that cursor, so the figures of one view always describe one state of the
  * projection. A new head is read only when the person asks ("Refresh"), when the view begins, or when
  * the cursor can no longer be read. While live, a view whose edge has moved says it is not current.
  *
- * Every way out goes through the scene store: a row opens its entity in the Timeline (with the
- * interval it measured as the window) or on the floor; the Shell's address sync gives each such move a
- * history entry, so the browser's Back returns here with the same area, period, filters, pick and drawer.
- * Analytics never fetches an artifact: a verification or review row opens in the Timeline, whose
- * inspector holds the guarded access.
+ * Every way out goes through the scene store: a row shows its ticket on the Line or its entity on the
+ * Floor; the Shell's address sync gives each such move a history entry, so the browser's Back returns
+ * here with the same area, period, filters, pick and drawer. Analytics never fetches an artifact: a
+ * verification or review row opens on the Line, whose full record reaches the evidence player.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { EmptyState } from "@mach/ui";
 import type { ObserverClient } from "../live/observer";
-import { showInTimeline, showOnFloor, useSceneStore, useStore } from "../scene";
+import { showOnFloor, showOnLine, sourceLabel as sourceLabelOf, useSceneStore, useStore } from "../scene";
 import type { SceneStore } from "../scene/store";
 import type { AnyRef, EntityRef } from "../sim/model";
-import { useAnalyticsAsOf } from "../shell/analyticsAsOf";
 import { useSource } from "../shell/source/context";
-import { addressMomentPending } from "../shell/source/hashSync";
-import { parseHash } from "../shell/source/hash";
 import type { AnalyticsSnapshot, ContributorPage } from "./contract";
 import { toContractContributors } from "./data/adapt";
 import { observerAnalytics } from "./data/observer";
@@ -38,11 +34,11 @@ import type { InsightsReply } from "./data/types";
 import { FIXTURE_END } from "./fixtures";
 import type { RunConfigs } from "./model/cohorts";
 import { capitalFirst, insightPopulation, insightRowsKey } from "./model/insights";
-import type { AreaData, Interval, OpenWhere, RowsRequest } from "./ui/types";
+import type { AreaData, OpenWhere, RowsRequest } from "./ui/types";
 import { AnalyticsView, type AnalyticsUiView } from "./ui/Workspace";
 import { absenceState, failureState } from "./wire/load";
 import { loadView, SharedCursor, ViewSession } from "./wire/views";
-import { asOfWords, DAY_MS, listsGroupOf, listsRowsOf, filtersQuery, momentWords, planFor, providerFor, sourceCheck, sourceWords, viewKey, windowQuery } from "./wire/query";
+import { asOfWords, DAY_MS, listsGroupOf, listsRowsOf, filtersQuery, planFor, providerFor, sourceCheck, sourceWords, viewKey, windowQuery } from "./wire/query";
 import { StageNotice } from "../shell/SourceBadge";
 import { focusOfRowsKey, fromUiPatch, parseRowsKey, rowsOfFocus, toUiView, type RowsMemo } from "./wire/view";
 import { failedCostOf, type FailedCost } from "./model/costCoverage";
@@ -80,10 +76,6 @@ interface Loaded {
   readonly insights: AreaData<InsightsReply> | undefined;
   readonly configs: RunConfigs | undefined;
   readonly cursor: string | null;
-  readonly metricsExact: boolean | null;
-  readonly widened: boolean;
-  readonly dayCut: number | null;
-  readonly noWholeDay: boolean;
   readonly notes: readonly string[];
 }
 
@@ -106,32 +98,22 @@ function rowsWindow(pop: RowsRequest["population"] | null, wq: { readonly fromMs
   return { fromMs: wq.fromMs, toMs: wq.toMs };
 }
 
-/** A Timeline window around an interval, with a margin so the span is not flush with the edges. */
-function framed(iv: Interval): Interval {
-  const pad = Math.max(60_000, Math.round((iv.to - iv.from) * 0.05));
-  return { from: iv.from - pad, to: iv.to + pad };
-}
-
 export function AnalyticsWorkspace() {
   const store = useStore();
   const { client = null } = useSource();
   const state = useSceneStore((s) => s.analytics);
   const sceneSource = useSceneStore((s) => s.source);
-  const asOf = useAnalyticsAsOf();
+  const liveLabel = useSceneStore(sourceLabelOf);
   // The newest record's day (a preset ends with it); re-renders once a day, not per event.
   const newestDay = useSceneStore((s) => {
     const h = s.log.headTime();
     return h === null ? null : Math.floor(h / DAY_MS);
   });
   const headCursor = useSceneStore((s) => s.connection?.cursor ?? null);
-  // D1: the address names a moment the source cannot honour yet (live history still arriving): wait for
-  // it, rather than read the whole history first and the moment after.
-  const momentPending = useSceneStore(() => addressMomentPending(store) ?? (typeof window !== "undefined" && parseHash(window.location.hash).at !== null));
   const data = providerOf(store, client);
   const check = sourceCheck(sceneSource, data?.source ?? null);
   const area = check.ok ? check.area : "live";
 
-  const asOfMs = area === "simulation" ? null : asOf.toMs;
   // The newest event the observer applied (from its replies) decides where a preset ends; until a reply says, the scene log's newest.
   const [observedDay, setObservedDay] = useState<number | null>(() => {
     const t = memoOf(store).shared.lastEventMs;
@@ -139,8 +121,8 @@ export function AnalyticsWorkspace() {
   });
   const newestDayUsed = observedDay ?? newestDay;
   const newestMs = newestDayUsed === null ? null : newestDayUsed * DAY_MS;
-  const wq = data ? windowQuery(state.window, { provider: data.source, asOfMs, newestMs, fixtureEnd: FIXTURE_END }) : null;
-  const key = data && wq ? viewKey(data.source, wq, state.filters, asOfMs) : "none";
+  const wq = data ? windowQuery(state.window, { provider: data.source, newestMs, fixtureEnd: FIXTURE_END }) : null;
+  const key = data && wq ? viewKey(data.source, wq, state.filters) : "none";
 
   // The view's snapshot: a new one per view key, at the cursor the views read at; `refresh` asks the head again.
   const [refresh, setRefresh] = useState(0);
@@ -148,8 +130,8 @@ export function AnalyticsWorkspace() {
     if (!data) return null;
     void key;
     void refresh; // a refresh forgot the cursor first (forgetCursor)
-    return new ViewSession(data, asOfMs, memoOf(store).shared);
-    // A new period, filter, "as of" or refresh begins a new snapshot; nothing else does.
+    return new ViewSession(data, memoOf(store).shared);
+    // A new period, filter or refresh begins a new snapshot; nothing else does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, key, refresh]);
   useEffect(() => () => session?.abort(), [session]);
@@ -166,7 +148,6 @@ export function AnalyticsWorkspace() {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   useEffect(() => {
     if (!session || !data || !wq || !wq.ok || !check.ok) return;
-    if (momentPending && asOfMs === null) return;
     let live = true;
     loadView(session, memoOf(store).shared, {
       data,
@@ -177,7 +158,7 @@ export function AnalyticsWorkspace() {
       filters: filtersQuery(state.filters, false),
       model,
       contractFilters: { window: "all", risk: state.filters.risk, app_type: (state.filters.appType as never) ?? null, model: (model as never) ?? null },
-      endMs: check.area === "simulation" ? FIXTURE_END : asOfMs ?? (newestMs !== null ? newestMs + DAY_MS : null),
+      endMs: check.area === "simulation" ? FIXTURE_END : newestMs !== null ? newestMs + DAY_MS : null,
     }).then(
       (r) => {
         if (!live) return;
@@ -186,11 +167,11 @@ export function AnalyticsWorkspace() {
           return;
         }
         if (r.lastEventMs != null && Math.floor(r.lastEventMs / DAY_MS) !== observedDay) setObservedDay(Math.floor(r.lastEventMs / DAY_MS));
-        setLoaded({ key: loadKey, data: r.data, insights: r.insights, configs: r.configs, cursor: r.cursor, metricsExact: r.asOf ? r.asOf.exact : null, widened: r.asOf?.widened ?? false, dayCut: r.dayCut ?? null, noWholeDay: r.noWholeDay ?? false, notes: r.notes });
+        setLoaded({ key: loadKey, data: r.data, insights: r.insights, configs: r.configs, cursor: r.cursor, notes: r.notes });
       },
       (e: unknown) => {
         if (!live || (e instanceof DOMException && e.name === "AbortError")) return;
-        setLoaded({ key: loadKey, data: failureState(e), insights: undefined, configs: undefined, cursor: null, metricsExact: null, widened: false, dayCut: null, noWholeDay: false, notes: [] });
+        setLoaded({ key: loadKey, data: failureState(e), insights: undefined, configs: undefined, cursor: null, notes: [] });
       },
     );
     return () => {
@@ -198,11 +179,11 @@ export function AnalyticsWorkspace() {
     };
     // loadKey names everything the load reads.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadKey, session, momentPending]);
+  }, [loadKey, session]);
 
   const current = loaded && loaded.key === loadKey ? loaded : null;
   // Live at the edge: once the stream's cursor has moved past the view's, the view says it is not current.
-  const edgeMoved = area === "live" && asOf.through === "edge" && !!current?.cursor && shouldRefresh(current.cursor, headCursor, 0, 0);
+  const edgeMoved = area === "live" && !!current?.cursor && shouldRefresh(current.cursor, headCursor, 0, 0);
   const areaData: AreaData<AnalyticsSnapshot> = !wq ? { state: "loading" } : !wq.ok ? { state: "unavailable", reason: wq.reason } : !current ? { state: "loading" } : current.data.state === "ready" && edgeMoved ? { ...current.data, stale: { reason: "New events have been recorded since these figures were read." } } : current.data;
 
   // The drawer: the store's focus, or one the store cannot hold (an insight's rows over several groups).
@@ -237,7 +218,8 @@ export function AnalyticsWorkspace() {
   }, [rowsKey, popKey, loadKey, session]);
   // D8: the cost failed executions recorded in their own results, from the view's executions list at its cursor (never a second one).
   const [failedCost, setFailedCost] = useState<{ key: string; value: FailedCost } | null>(null);
-  const failedKey = `${loadKey}|${current?.dayCut ?? ""}`;
+  // Read once the view's own figures are (so at the cursor they pinned).
+  const failedKey = `${loadKey}|${current ? "read" : ""}`;
   useEffect(() => {
     if (state.area !== "economics" || !session || !wq?.ok || !current) return;
     let live = true;
@@ -247,7 +229,7 @@ export function AnalyticsWorkspace() {
       .then(
         (r) => {
           if (!live) return;
-          const v = r.status === "ok" ? failedCostOf(r.value.items, r.value.more || (r.value.total !== null && r.value.total > r.value.items.length + r.value.after_as_of), current.dayCut) : null;
+          const v = r.status === "ok" ? failedCostOf(r.value.items, r.value.more || (r.value.total !== null && r.value.total > r.value.items.length)) : null;
           setFailedCost({ key: failedKey, value: v });
         },
         () => live && setFailedCost({ key: failedKey, value: null }),
@@ -282,9 +264,9 @@ export function AnalyticsWorkspace() {
     [store],
   );
   const onOpen = useCallback(
-    (ref: EntityRef, where: OpenWhere, interval?: Interval) => {
-      if (where === "timeline") showInTimeline(store, ref, interval ? { window: framed(interval) } : undefined);
-      else showOnFloor(store, undefined, { ref });
+    (ref: EntityRef, where: OpenWhere) => {
+      if (where === "line") showOnLine(store, ref);
+      else showOnFloor(store, { ref });
     },
     [store],
   );
@@ -299,11 +281,9 @@ export function AnalyticsWorkspace() {
     );
   }
 
-  const caption = asOfWords({ area, asOfMs, window: state.window, metricsExact: current?.metricsExact ?? null, widened: current?.widened ?? false, dayCut: current?.dayCut ?? null, noWholeDay: current?.noWholeDay ?? false, cut: wq?.ok ? wq.cut : false }, momentWords);
+  const caption = asOfWords({ area, window: state.window });
   // I-02: the source in the store's words (with the link's state); Simulated stays the fixture's own label.
-  const sourceLabel = area === "simulation" ? sourceWords(area) : asOf.sourceLabel;
-  // I-13: counted to an earlier moment, the way back (the transport's follow-live; L and End here too).
-  const backToLive = asOfMs !== null ? { label: sceneSource === "replay" ? "Go to its last event" : "Back to live", run: () => store.followLive() } : undefined;
+  const sourceLabel = area === "simulation" ? sourceWords(area) : liveLabel;
   return (
     <div className="relative flex h-full min-h-0 flex-col" data-analytics-home="" tabIndex={-1} data-analytics-cursor={current?.cursor ?? undefined} data-analytics-pending={current ? undefined : ""}>
       <div className="min-h-0 flex-1">
@@ -315,7 +295,6 @@ export function AnalyticsWorkspace() {
           source={area}
           asOf={caption}
           sourceLabel={sourceLabel}
-          {...(backToLive ? { backToLive } : {})}
           view={view}
           onView={onView}
           onOpen={onOpen}

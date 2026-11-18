@@ -1,11 +1,10 @@
 // M6.6 Phase 2 items owned by "words": one duration and moment vocabulary (I-09, I-10, I-11), the
-// Timeline -> Analytics and Timeline -> floor journeys (I-12, I-14), Back restoring Analytics' view
-// ephemera (I-15), plain words for developer words (I-17), the Factory-level station (I-22) and the
+// visit -> Analytics journey (I-12), Back restoring Analytics' view ephemera (I-15), plain words for developer words (I-17), the Factory-level station (I-22) and the
 // artifact section's wording (I-45).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { sim } from "./_load.mjs";
+import "./_load.mjs";
 
 const time = await import("../src/shell/time.ts");
 const Fmt = await import("../src/analytics/model/format.ts");
@@ -15,9 +14,6 @@ const place = await import("../src/analytics/model/visitPlace.ts");
 const words = await import("../src/shell/inspector/words.ts");
 const timing = await import("../src/shell/inspector/timing.ts");
 const analytics = await import("../src/scene/analytics.ts");
-const model = await import("../src/timeline/inspector/model.ts");
-const { createSceneStore, showOnFloorAt } = await import("../src/scene/store.ts");
-const { manualClock } = await import("../src/scene/clock.ts");
 const remember = await import("../src/analytics/ui/remember.ts");
 
 const src = (path) => readFileSync(new URL(`../src/${path}`, import.meta.url), "utf8");
@@ -47,18 +43,18 @@ test("I-09: one duration vocabulary: the shell's, Analytics' and the data layer'
   for (let h = 1; h < 72; h++) assert.doesNotMatch(Fmt.durationText(h * 3_600_000), / 0 (min|h)$/);
 });
 
-test("I-09: a moment reads as the Timeline's ruler and inspector say it: day, then HH:MM:SS UTC", () => {
+test("I-09: a moment reads as the shell says it: day, then HH:MM:SS UTC", () => {
   const t = Date.UTC(2026, 10, 4, 9, 29, 43);
   assert.equal(Fmt.clockText(t), "4 Nov, 09:29:43 UTC");
   assert.equal(Fmt.clockText(t), `${Fmt.dayText(t)}, ${time.utcClock(t)} UTC`);
 });
 
-test("I-10: basis words are the Timeline's: measured, bounded, inferred, open, unknown, not recorded", () => {
+test("I-10: basis words are the shared ones: measured, bounded, inferred, open, unknown, not recorded", () => {
   assert.deepEqual({ ...Fmt.BASIS_WORDS }, { measured: "measured", open: "open", inferred: "inferred (placed by rule)", bounded: "bounded", unknown: "unknown", "not-recorded": "not recorded" });
   for (const w of Object.values(Fmt.BASIS_WORDS)) assert.doesNotMatch(w, /still open|reconstructed/);
 });
 
-test("I-11: trend columns take the Timeline ruler's ticks and day words, at UTC midnights, never crowded", () => {
+test("I-11: trend columns take ruler ticks and day words, at UTC midnights, never crowded", () => {
   const from = Date.UTC(2026, 10, 1);
   const days = Array.from({ length: 14 }, (_, i) => ({ from: from + i * DAY, to: from + (i + 1) * DAY }));
   const ticks = charts.rulerTicks(days, 700);
@@ -108,34 +104,6 @@ test("I-12: the visit inspector offers it; Flow reads the one selection (no seco
   assert.match(flow, /pickedVisitOf/);
   assert.match(flow, /mark=\{from && from\.ms !== null/);
   assert.doesNotMatch(flow, /createContext|setSelection|useState<.*Visit/, "no second selection store");
-});
-
-// ---------------------------------------------------------------- I-14: the floor at the failure's moment
-
-test("I-14: a failed verification or rejected review is decided at its recorded end; nothing else offers it", () => {
-  const span = (kind, outcome, end, ids = {}) => ({ id: "s", kind, entity: "visit:T/verify#1", ids, attrs: {}, start: { at: 0 }, end: end === null ? null : { at: end, precision: "ms" }, outcome, authority: "authoritative" });
-  assert.equal(model.failedJudgementAt(span("visit", "FAIL_WITH_EVIDENCE", 500, { station: "verify" }), 1000), 500);
-  assert.equal(model.failedJudgementAt(span("visit", "REJECTED", 500, { station: "review" }), 1000), 500);
-  assert.equal(model.failedJudgementAt(span("round", "REJECTED", 500), 1000), 500);
-  assert.equal(model.failedJudgementAt(span("visit", "PASS", 500, { station: "verify" }), 1000), null, "passed");
-  assert.equal(model.failedJudgementAt(span("visit", "FAIL_WITH_EVIDENCE", 500, { station: "build" }), 1000), null, "not a judgement");
-  assert.equal(model.failedJudgementAt(span("visit", "FAIL_WITH_EVIDENCE", 1500, { station: "verify" }), 1000), null, "decided after the playhead: not known yet");
-});
-
-test("I-14: 'Show the Atlas at this moment' moves the one playhead, keeps the selection, shows the Atlas; 'Show in the Atlas' stays", () => {
-  const store = createSceneStore({ fixture: sim.SCENARIO, clock: manualClock() });
-  store.setWorkspace("timeline");
-  store.select("cell:TKT-101", { focus: false });
-  const t = Math.round(sim.SCENARIO.events.at(-1).t / 2);
-  showOnFloorAt(store, t);
-  const s = store.getState();
-  assert.equal(s.workspace, "floor");
-  assert.equal(s.selection, "cell:TKT-101");
-  assert.ok(Math.abs(s.playhead - t) < 1, `playhead ${s.playhead} at ${t}`);
-  const section = src("timeline/inspector/InTimeSection.tsx");
-  assert.match(section, /Show the Atlas at this moment/);
-  assert.match(section, /"Show in the Atlas"/);
-  assert.match(section, /showOnFloorAt\(store, at\)/);
 });
 
 // ---------------------------------------------------------------- I-15: Back restores the view ephemera
@@ -198,17 +166,12 @@ test("I-45 (updated for M6.4): the artifact section shows recorded facts; a file
   assert.match(artifact, /\{ARTIFACT_CONTENT_NOTE\}/);
   assert.match(artifact, /<OpenEvidence ticket=\{artifact\.ticketId\} check=\{citing\.checkId\}/, "a cited file opens the player at its check");
   assert.doesNotMatch(artifact, /artifactContent|artifactText|artifactContentUrl/, "the inspector itself reads no content");
-  const intime = src("timeline/inspector/InTimeSection.tsx");
-  assert.match(intime, /Recorded facts here; a file a verification check cites opens in the evidence player, by its catalog id\./);
-  assert.doesNotMatch(intime, /waits for the Evidence Theater/);
-  assert.doesNotMatch(intime, /artifactContent|artifactText|artifactContentUrl/, "the Timeline's inspector reads no content");
 });
 
-test("I-03 (for states): a trend column whose period holds a suspect day is marked; a later day under a playhead is not named", () => {
+test("I-03 (for states): a trend column whose period holds a suspect day is marked", () => {
   const from = Date.UTC(2026, 10, 1);
   const days = Array.from({ length: 4 }, (_, i) => ({ from: from + i * DAY, to: from + (i + 1) * DAY }));
   assert.deepEqual(charts.suspectColumns(days, ["2026-11-02", "2026-11-04"]), [false, true, false, true]);
-  assert.deepEqual(charts.suspectColumns(days, ["2026-11-02", "2026-11-04"], from + 2 * DAY), [false, true, false, false]);
   assert.deepEqual(charts.suspectColumns([{ from, to: from + 7 * DAY }], ["2026-11-05"]), [true], "a week holding the day");
   assert.deepEqual(charts.suspectColumns([{}], ["2026-11-02"]), [false]);
   assert.match(src("analytics/ui/charts/index.tsx"), /HISTORY_SUSPECT_WORDS/);
@@ -241,7 +204,7 @@ test("D8: cost exclusions are said in the observer's words; a failed execution's
   assert.doesNotMatch(eco, /failedCost\.usd\s*\+|\+\s*failedCost/);
 });
 
-test("Pulse under a playhead with no whole day: no bare dash, the step's own null reason, no '– recorded'", () => {
+test("Pulse with a value not recorded: no bare dash, the step's own null reason, no '– recorded'", () => {
   const pulse = src("analytics/ui/areas/Pulse.tsx");
   assert.doesNotMatch(pulse, /dayText\(s\.runs\[0\]\.closed_at\.ms\) : "–"/);
   assert.match(pulse, /st\.row\?\.null_reason \?/);
@@ -260,7 +223,6 @@ test("D8: the failed executions' own cost comes from the view's executions list:
   assert.deepEqual(cut, { kind: "some" });
   assert.match(C.failedCostWords(cut), /^Not in this figure: some failed executions recorded a cost in their own results/);
   assert.doesNotMatch(C.failedCostWords(cut), /\$\d/);
-  assert.deepEqual(C.failedCostOf([x("failed", 1, 50), x("failed", 2, 500)], false, 100), { kind: "sum", usd: 1, executions: 1 }, "under a day cut, as the figure");
   const ws = src("analytics/Workspace.tsx");
   assert.match(ws, /session\s*\.get\(\)\s*\.then\(\(x\) => x\.executions\(/, "read at the view's cursor");
   assert.doesNotMatch(src("analytics/ui/areas/Economics.tsx"), /\+\s*(?:listed|carried|failed)/);
@@ -270,10 +232,4 @@ test("I-12: Flow says the visit it was opened from even when the view counts no 
   const flow = src("analytics/ui/areas/Flow.tsx");
   assert.match(flow, /\{cameFrom \? <CameFrom visit=\{cameFrom\} group=\{groupOf\(c1, cameFrom\.station\)\} why=/);
   assert.match(flow, /This view counts no measured \$\{STATION_WORDS\[visit\.station\]\.toLowerCase\(\)\} visits to compare it with/);
-});
-
-test("D4: with no whole UTC day before the playhead, no area shows 'Nothing has been recorded yet'", () => {
-  for (const a of ["Compare", "Economics", "Flow", "Reliability", "Pulse", "Quality"]) {
-    assert.match(src(`analytics/ui/areas/${a}.tsx`), /density === "empty" && !s\.no_whole_day/, a);
-  }
 });

@@ -1,6 +1,6 @@
 /**
- * The session's free-text display policy (`/session` `display_policy`) for the floor and Timeline
- * (M6.6, I-05): read once per observer client, shared by every inspector. Analytics reads the same
+ * The session's free-text display policy (`/session` `display_policy`) for the Line, the Floor and the
+ * inspector (M6.6, I-05): read once per observer client, shared by every inspector. Analytics reads the same
  * reply through its provider (`analytics/data/observer.ts`). Until it answers, without an observer
  * (the simulation), or when it declares nothing, the policy is UNDECLARED_POLICY: every field the
  * observer is known to keep as prose is still contained (`text/fields.ts`), so containment never
@@ -19,7 +19,7 @@ export function displayPolicyOf(client: ObserverClient): Promise<DisplayPolicy> 
   let hit = cache.get(client);
   if (!hit) {
     hit = (client.displayPolicy ? client.displayPolicy().then(readDisplayPolicy) : Promise.resolve(UNDECLARED_POLICY)).then((p) => {
-      // Drawing code (Blueprint, Atlas, the Timeline's canvas) reads the same policy outside React.
+      // Drawing code (the Atlas) reads the same policy outside React.
       setSessionPolicy(p);
       return p;
     });

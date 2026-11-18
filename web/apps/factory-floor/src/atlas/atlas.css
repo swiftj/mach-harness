@@ -117,7 +117,7 @@
 
 /*
  * M6.2, live: the connection is stale or lost. The whole plant is drawn as last seen: desaturated
- * and a little faded, with its stamp. The playhead is frozen at what was confirmed, so nothing moves;
+ * and a little faded, with its stamp. The moment shown is frozen at what was confirmed, so nothing moves;
  * executing things carry the stale mark, never "paused" and never "working".
  */
 .atlas-viewport[data-connection="stale"] .atlas-camera {

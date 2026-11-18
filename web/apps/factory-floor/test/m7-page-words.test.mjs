@@ -7,7 +7,6 @@ import { sim, live } from "./_load.mjs";
 import { ev, finalize } from "./fixtures/v3.mjs";
 
 const pulse = await import("../src/analytics/model/pulse.ts");
-const words = await import("../src/timeline/render/words.ts");
 
 test("a repeat review and a voided decision are worded from codes", () => {
   assert.equal(sim.reviewRepeatWords(1, "branch-changed-after-approval"), "Review repeated after the approval was voided: the branch changed");
@@ -26,10 +25,6 @@ test("killed and released executions, and a parked ticket, in words", () => {
   assert.equal(sim.executionStatusOf({ ...base, state: "completed", how: "exited", releasedAt: null }).word, "Completed");
   assert.equal(sim.parkedWords("same-refusal"), "Parked: the build stopped on the same task with the same refusal twice");
   assert.equal(sim.parkedWords("anything else"), null);
-  const span = (state) => ({ kind: "execution", attrs: { state }, end: null, duration: { ms: null, maxMs: null } });
-  assert.equal(words.stoppedState(span("killed")), "killed");
-  assert.equal(words.stoppedState(span("released")), "released");
-  assert.match(words.stoppedWords(span("released"), "released"), /^released before starting; nothing ran/);
 });
 
 test("the live reducer: a released claim, a killed run and a parked ticket from the supervisor's events", () => {

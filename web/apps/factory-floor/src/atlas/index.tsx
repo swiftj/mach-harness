@@ -13,7 +13,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { FactoryScene, StateMark, factoryTokens, lodForZoom, screenBounds, type Lod, type RegionKind } from "@mach/ui";
-import { cameraFollows, isStale, timeScaleOf, useScene, useSceneActions, useSceneStore, useStore } from "../scene";
+import { isStale, timeScaleOf, useScene, useSceneActions, useSceneStore, useStore } from "../scene";
 import { bayOrder, distinctSliceCount, refKind, type EntityRef, type Scene } from "../sim";
 import { AtlasContext, useHighlight, type AtlasContextValue } from "./context";
 import { createCamera, frame, visibleRect, zoomAt, type Camera, type ScreenRect } from "./camera";
@@ -106,7 +106,7 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
   const logVersion = useSceneStore((s) => s.logVersion);
   const stale = useSceneStore((s) => isStale(s.connection));
   // What the stale stamp says: the connection's state and the last confirmed moment (factory time).
-  const staleSince = useSceneStore((s) => (isStale(s.connection) ? `${s.connection!.state}|${s.connection!.staleSince ?? s.liveAt}` : null));
+  const staleSince = useSceneStore((s) => (isStale(s.connection) ? `${s.connection!.state}|${s.connection!.staleSince ?? s.now}` : null));
   const provenanceLabel = log.provenance.label;
   // The plant from what is known so far, never from the end of a run: the bays from the log's
   // assignment table (bayOrder), in which a bay index never changes once given, late waves included.
@@ -140,7 +140,7 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
   const [detailBays, setDetailBays] = useState<string>("*");
   const [focused, setFocused] = useState<EntityRef | null>(null);
   const [dragging, setDragging] = useState(false);
-  // Follow is the store's one flag (cameraFollows); the Atlas keeps only how it follows: the sticky
+  // Follow is the store's one flag (`follow`); the Atlas keeps only how it follows: the sticky
   // primary, the zoom the person chose, which places were active lately, and the framing it asked for.
   const followPrimary = useRef<string | null>(null);
   const pendingFollow = useRef<Camera | null>(null);
@@ -274,10 +274,10 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
   useEffect(() => {
     let lastNonce = store.getState().focus?.nonce ?? -1;
     let lastFollowCheck = 0;
-    let wasFollowing = cameraFollows(store.getState());
+    let wasFollowing = store.getState().follow;
     const followNow = (s: ReturnType<typeof store.getState>) => {
       followBase.current ??= camera.get().zoom;
-      const members = withGrace(activeMembers(layout, s.log.sceneAt(s.playhead), s.playhead), s.playhead, followSeen.current);
+      const members = withGrace(activeMembers(layout, s.log.sceneAt(s.now), s.now), s.now, followSeen.current);
       const d = followDecision(camera.get(), camera.viewport, members, followPrimary.current, followBase.current);
       followPrimary.current = d.primary;
       return { d, members };
@@ -285,9 +285,9 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
     return store.subscribe(() => {
       const s = store.getState();
       const ms = s.reducedMotion ? 0 : factoryTokens.motion.cameraFocus;
-      const follows = cameraFollows(s);
+      const follows = s.follow;
       if (follows && !wasFollowing) {
-        // Follow came back on (followLive, setFollow(true)): follow from the zoom the person is at.
+        // Follow came back on (setFollow(true)): follow from the zoom the person is at.
         followBase.current = camera.get().zoom;
         lastFollowCheck = 0;
       }
@@ -303,18 +303,18 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
           fitAll(ms);
         } else {
           camera.setFitted(false);
-          const scene = s.log.sceneAt(s.playhead);
+          const scene = s.log.sceneAt(s.now);
           const kind = refKind(s.focus.target);
           const pad = kind === "cell" || kind === "slice" ? 40 * 0.9 : 8;
-          const r = locateScreen(layout, scene, s.playhead, s.focus.target, pad, mode);
+          const r = locateScreen(layout, scene, s.now, s.focus.target, pad, mode);
           if (r) {
             const minZoom = kind === "cell" || kind === "slice" || kind === "wave" || kind === "dependency" ? Z.far + 0.06 : kind === "gate" ? Z.far + 0.06 : Z.near + 0.06;
             camera.animateTo(frame(r, camera.viewport, 2.2, Math.min(minZoom, camera.get().zoom > minZoom ? camera.get().zoom : minZoom)), ms);
           }
         }
       }
-      // The follow camera (follow.ts has the rule): only while cameraFollows and playing, at most every 4 s (6 s reduced).
-      if (follows && s.playing) {
+      // The follow camera (follow.ts has the rule): only while follow is on and the Factory is moving (never on a held frame), at most every 4 s (6 s reduced).
+      if (follows && (s.source === "simulation" || !isStale(s.connection))) {
         const now = performance.now();
         if (now - lastFollowCheck < (s.reducedMotion ? 6000 : 4000)) return;
         lastFollowCheck = now;

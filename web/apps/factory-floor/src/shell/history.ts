@@ -1,9 +1,9 @@
 /**
- * What the shell reads from a history besides the scene: its significant moments (for the ruler,
- * Theater's caption, the announcer and the inspector's "latest moment"), its landmarks (the
- * simulation's storyboard chapters; for real history, real moments: a wave arriving, the Factory
- * enabled or paused, executions starting and ending, verdicts, a person needed or approving) and the
- * Factory track's marks.
+ * What the shell reads from a history besides the scene: its significant moments (for the Line's
+ * "What just happened", Theater's caption, the announcer and the inspector's "latest moment") and its
+ * landmarks (the simulation's storyboard chapters; for real history, real moments: a wave arriving,
+ * the Factory enabled or paused, executions starting and ending, verdicts, a person needed or
+ * approving).
  *
  * For a live log this is built incrementally by the scene model's shared folds (src/sim/fold.ts, the
  * same one `moments(log)` uses): each call reads only the entries added since the last one, so a
@@ -15,14 +15,11 @@ import {
   createLogFold,
   describeEntry,
   moments as momentsOf,
-  ref,
-  type AnyRef,
   type Fixture,
-  type LogEntry,
   type Moment,
   type SceneLog,
 } from "../sim";
-import { codesOnlyWords, eventQuotesFreeText } from "../text/fields";
+import { eventQuotesFreeText } from "../text/fields";
 
 export interface Landmark {
   /** The event's id (simulation: the chapter's id). */
@@ -37,22 +34,12 @@ export interface Landmark {
   readonly eventType: string | null;
 }
 
-export interface FactoryMark {
-  readonly ref: AnyRef | null;
-  readonly t: number;
-  readonly kind: "fail" | "person" | "attention" | "merge" | "decision" | "integrated" | "wave";
-  readonly text: string;
-  /** The event behind it (live and replay), for "Go to event". */
-  readonly eventId: string | null;
-}
-
 export interface HistoryIndex {
   /** Changes whenever anything below changes. */
   readonly version: number;
   /** Major and chapter-significance moments, ascending by t. */
   readonly moments: readonly Moment[];
   readonly landmarks: readonly Landmark[];
-  readonly factoryMarks: readonly FactoryMark[];
   /** True for the simulation's storyboard chapters; false for real moments. */
   readonly storyboard: boolean;
 }
@@ -72,50 +59,12 @@ const LANDMARK_KINDS: Readonly<Record<string, Landmark["kind"]>> = {
   "human.approval_recorded": "person",
 };
 
-interface V3Like {
-  readonly type: string;
-  readonly ids: { readonly wave_id: string | null; readonly slice_id: string | null; readonly ticket_id: string | null };
-  readonly data: Record<string, unknown>;
-}
-
-/** The Factory track's mark for an entry, people by role only ("a person"). */
-function factoryMarkOf(entry: LogEntry): FactoryMark | null {
-  const event = entry.event as unknown as V3Like;
-  if ((entry.event as { schema_version?: number }).schema_version !== 3) return null;
-  const { ids } = event;
-  // A mark is named in hover cards: an event that carries prose is said by its kind, never quoted (C1).
-  const text = (): string => {
-    const words = describeEntry(entry);
-    return (eventQuotesFreeText(event, undefined, words) ? codesOnlyWords(event.type, ids.ticket_id ?? ids.slice_id ?? ids.wave_id) : null) ?? words;
-  };
-  switch (event.type) {
-    case "factory.activated":
-    case "factory.paused":
-    case "factory.resumed":
-    case "factory.disabled":
-      return { ref: null, t: entry.t, kind: "person", text: text(), eventId: entry.id };
-    case "wave.discovered":
-      return { ref: ids.wave_id ? ref.wave(ids.wave_id) : null, t: entry.t, kind: "wave", text: text(), eventId: entry.id };
-    case "scheduling.decided":
-      return { ref: ref.actor("supervisor"), t: entry.t, kind: "decision", text: text(), eventId: entry.id };
-    case "slice.integrated":
-      return { ref: ids.slice_id ? ref.slice(ids.slice_id) : null, t: entry.t, kind: "integrated", text: text(), eventId: entry.id };
-    case "human.required":
-      return { ref: ids.ticket_id ? ref.cell(ids.ticket_id) : ids.slice_id ? ref.slice(ids.slice_id) : null, t: entry.t, kind: "attention", text: text(), eventId: entry.id };
-    case "human.approval_recorded":
-      return { ref: ids.ticket_id ? ref.cell(ids.ticket_id) : null, t: entry.t, kind: "person", text: text(), eventId: entry.id };
-    default:
-      return null;
-  }
-}
-
 const landmarkFold = createLogFold<Landmark>((entry) => {
   const kind = LANDMARK_KINDS[entry.event.type];
   if (!kind || entry.event.schema_version !== 3) return null;
   const title = describeEntry(entry);
   return { id: entry.id, t: entry.t, title, kind, summary: null, eventType: eventQuotesFreeText(entry.event, undefined, title) ? entry.event.type : null };
 });
-const markFold = createLogFold<FactoryMark>(factoryMarkOf);
 
 const fixtureHeld = new WeakMap<Fixture, HistoryIndex>();
 
@@ -126,11 +75,10 @@ const indexes = new WeakMap<SceneLog, { parts: readonly unknown[]; index: Histor
 export function historyIndexOf(log: SceneLog): HistoryIndex {
   const moments = momentsOf(log, "major");
   const landmarks = landmarkFold(log);
-  const marks = markFold(log);
   const held = indexes.get(log);
-  const parts = [moments, landmarks, marks];
+  const parts = [moments, landmarks];
   if (held && held.parts.every((p, i) => p === parts[i])) return held.index;
-  const index: HistoryIndex = { version: (held?.index.version ?? 0) + 1, moments, landmarks: landmarks.items, factoryMarks: marks.items, storyboard: false };
+  const index: HistoryIndex = { version: (held?.index.version ?? 0) + 1, moments, landmarks: landmarks.items, storyboard: false };
   indexes.set(log, { parts, index });
   return index;
 }
@@ -143,7 +91,6 @@ export function fixtureIndexOf(fixture: Fixture): HistoryIndex {
     version: 0,
     moments: momentsOf(fixture, "major"),
     landmarks: storyChapters(fixture).map((c) => ({ id: c.id, t: c.t, title: c.title, kind: "chapter" as const, summary: c.summary, eventType: null })),
-    factoryMarks: [],
     storyboard: true,
   };
   fixtureHeld.set(fixture, index);

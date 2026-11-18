@@ -59,7 +59,7 @@ function EconomicsBody({ model, setModel }: { model: string | null; setModel(m: 
   const { snapshot: s, density, rows } = useAnalytics();
   const listed = useFailedCost();
   const t = s.totals;
-  if (density === "empty" && !s.no_whole_day) return <NothingYet about="No execution was claimed in this window, so nothing was recorded as spent. Economics reads:" />;
+  if (density === "empty") return <NothingYet about="No execution was claimed in this window, so nothing was recorded as spent. Economics reads:" />;
   const k1 = t.K1;
   // One count each, used everywhere it is said: the members the observer excluded (cost: K1's; usage: K2's, over completed executions).
   const excludedOf = (c: { of: number | null; covered: number | null; excluded?: readonly { count: number }[] } | undefined) =>

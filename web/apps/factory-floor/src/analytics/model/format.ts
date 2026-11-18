@@ -21,9 +21,9 @@ export const SMALL_SAMPLE = 5;
 const group3 = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 
 /**
- * A duration in the Timeline's and the shell's words (`shell/time.ts duration`, I-09): 48 s, 4 min 12 s,
+ * A duration in the shell's words (`shell/time.ts duration`, I-09): 48 s, 4 min 12 s,
  * 1 h 3 min, 1 d 15 h; under a second in ms; "–" when there is none. One formatter, so a visit reads the
- * same in Analytics as in the Timeline's inspector.
+ * same in Analytics as in the floor's inspector.
  */
 export function durationText(ms: number | null | undefined): string {
   if (ms === null || ms === undefined || !Number.isFinite(ms)) return "–";
@@ -123,7 +123,7 @@ export function coverageText(c: MetricRow["coverage"]): string {
   return `${count(c.covered)} of ${count(c.of)} (${pct(c.share)})`;
 }
 
-/** How a value is known, in the Timeline's words (I-10): measured, bounded, inferred (placed by rule), open, unknown, not recorded. */
+/** How a value is known, in the Floor's words (I-10): measured, bounded, inferred (placed by rule), open, unknown, not recorded. */
 export const BASIS_WORDS: Readonly<Record<Basis, string>> = {
   measured: "measured",
   open: "open",
@@ -142,7 +142,7 @@ export function dayText(t: number): string {
 export function windowText(from: number, to: number): string {
   return `${dayText(from)} – ${dayText(to - 1)}`;
 }
-/** A moment in the Timeline's words (I-09): "4 Nov, 09:29:43 UTC", the day as the ruler names it and the clock as the inspector does. */
+/** A moment in the Floor's words (I-09): "4 Nov, 09:29:43 UTC", the day as a ruler names it and the clock as the inspector does. */
 export function clockText(t: number): string {
   return `${dayText(t)}, ${utcClock(t)} UTC`;
 }
