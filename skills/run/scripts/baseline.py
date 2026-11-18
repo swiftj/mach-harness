@@ -415,7 +415,8 @@ def baseline(root: Path, config: Any, A: Any, redact: Callable[[str], str], audi
         existing = [adr for adr in listing["adrs"] if f"topic:{topic}" in (adr.get("applies_to") or [])]
         if existing:  # an ADR for it exists, proposed or not yet committed: never drafted again, whatever the record says
             waiting.append({"topic": topic, "adrs": [{"id": adr.get("id"), "file": adr.get("file"), "status": adr.get("status"),
-                                                      "committed": bool(adr.get("committed")), "problems": adr.get("problems") or []} for adr in existing],
+                                                      "committed": bool(adr.get("committed")), "problems": adr.get("problems") or [],
+                                                      "open_points": A.open_points(adr.get("text"))} for adr in existing],
                             "what": "An ADR for this topic exists but does not bind yet: an engineer corrects it, accepts it and commits it on the main branch."})
             continue
         entry = topics.get(topic)

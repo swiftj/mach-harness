@@ -762,10 +762,12 @@ def accept_text(text: str, by: str) -> str:
         raise ADRError("it cannot be read: " + "; ".join(problems[:3]))
     if record["status"] != "proposed":
         raise ADRError(f"it is {record['status']}, not proposed; only a proposed ADR is accepted here")
+    if OPEN_POINTS_MARK in text:
+        raise ADRError(f"it still lists {len(open_points(text))} open point(s): settle each one first (adr settle, or the baseline interview)")
     if "<!--" in text:
         raise ADRError("it still holds a template comment: fill in that section, or remove it, first")
-    if OPEN_POINTS_MARK in text:
-        raise ADRError("it still lists open points: an engineer settles each one in the text, removes the list, and then accepts it")
+    if "## Decision Outcome" in text and not decision_parts(text)["decision"]:
+        raise ADRError("its decision is empty: a required topic is never covered by points left undecided alone; state what is decided first")
     accepted = set_status(text, "accepted")
     fields, _, _ = front_matter(accepted)
     if "decision-makers" not in fields:
@@ -777,3 +779,107 @@ def accept_text(text: str, by: str) -> str:
         lines.insert(index + 1, f"decision-makers: {name}")
         accepted = "\n".join(lines)
     return accepted
+
+
+# ---------------------------------------------------------------- settling a draft's open points (run.py adr settle)
+#
+# A drafted ADR lists what the repository did not show as open points under `## More Information`. The baseline
+# interview settles them one at a time with the engineer; each answer is written into `## Decision Outcome` by script,
+# never free-hand. A point the engineer chooses not to decide now is recorded there as not decided, on their word.
+
+SETTLED_MARK = "Settled with the engineer:"
+NOT_DECIDED_MARK = "Not decided here (the engineer chose to leave these open; a plan that needs one proposes its own decision):"
+ANSWER_LIMIT = 1000
+
+
+def _one_line(text: Any, limit: int = ANSWER_LIMIT) -> str:
+    clean = " ".join("".join(ch for ch in str(text or "") if ch.isprintable() or ch in "\t\n").split())
+    return clean[:limit]
+
+
+def _list_after(lines: List[str], mark: str, start: int = 0, end: Optional[int] = None) -> Tuple[Optional[int], List[int]]:
+    """The line of a list's lead-in sentence and the lines of its '- ' items (after at most one blank line)."""
+    end = len(lines) if end is None else end
+    at = next((index for index in range(start, end) if lines[index].startswith(mark)), None)
+    if at is None:
+        return None, []
+    items, index = [], at + 1
+    if index < end and not lines[index].strip():
+        index += 1
+    while index < end and lines[index].startswith("- "):
+        items.append(index)
+        index += 1
+    return at, items
+
+
+def open_points(text: str) -> List[str]:
+    """The open points a drafted ADR still lists, in order (point 1 first)."""
+    lines = str(text or "").split("\n")
+    _, items = _list_after(lines, OPEN_POINTS_MARK)
+    return [lines[index][2:].strip() for index in items]
+
+
+def _section(lines: List[str], heading: str) -> Tuple[int, int]:
+    start = next((index for index, line in enumerate(lines) if line.strip() == heading), None)
+    if start is None:
+        raise ADRError(f"it has no '{heading}' section")
+    end = next((index for index in range(start + 1, len(lines)) if re.match(r"^#{1,2}\s", lines[index])), len(lines))
+    sub = next((index for index in range(start + 1, end) if lines[index].startswith("### ")), end)
+    return start, sub
+
+
+def decision_parts(text: str) -> Dict[str, Any]:
+    """`## Decision Outcome` read as the decision itself, the points settled with the engineer and those not decided."""
+    lines = str(text or "").split("\n")
+    start, end = _section(lines, "## Decision Outcome")
+    settled_at, settled = _list_after(lines, SETTLED_MARK, start, end)
+    not_at, not_decided = _list_after(lines, NOT_DECIDED_MARK, start, end)
+    stop = min([index for index in (settled_at, not_at) if index is not None] or [end])
+    decision = "\n".join(lines[start + 1:stop]).strip()
+    return {"decision": decision, "settled": [lines[index][2:] for index in settled], "not_decided": [lines[index][2:] for index in not_decided],
+            "start": start, "end": end}
+
+
+def settle(text: str, point: int, answer: str, *, decision: Optional[str] = None, not_decided: bool = False) -> Tuple[str, str]:
+    """A proposed ADR with one open point settled: the point leaves the open list, and `point: answer` joins the decision
+    (or the not-decided list). `decision`, when given, replaces the decision's own text. Returns (new text, the point)."""
+    record = parse(text, "docs/adr/0000-x.md")
+    problems = [problem for problem in record["problems"] if not problem.startswith("the file name")]
+    if problems:
+        raise ADRError("it cannot be read: " + "; ".join(problems[:3]))
+    if record["status"] != "proposed":
+        raise ADRError(f"it is {record['status']}, not proposed; only a proposed ADR's open points are settled here")
+    answer = _one_line(answer)
+    if len(answer) < 2:
+        raise ADRError("--answer must give the engineer's answer (or, with --not-decided, their reason)")
+    lines = text.split("\n")
+    mark, items = _list_after(lines, OPEN_POINTS_MARK)
+    if not items:
+        raise ADRError("it has no open points left")
+    if not 1 <= point <= len(items):
+        raise ADRError(f"it has no open point {point}; its open points are 1 to {len(items)}")
+    settled_point = lines[items[point - 1]][2:].strip()
+    # 1. the point leaves the open list; the list and its lead-in go once it is empty
+    drop = {items[point - 1]}
+    if len(items) == 1:
+        drop |= {mark} | ({mark + 1} if mark + 1 < len(lines) and not lines[mark + 1].strip() else set())
+    lines = [line for index, line in enumerate(lines) if index not in drop]
+    # 2. the answer joins the decision, which is rewritten as one block: the decision, then the two lists
+    parts = decision_parts("\n".join(lines))
+    own = _one_line(decision) if decision is not None else parts["decision"]
+    if decision is not None and len(own) < 10:
+        raise ADRError("--decision must state the revised decision in a sentence")
+    entry = f"{_one_line(settled_point, 300)}: {answer}"
+    settled = parts["settled"] + ([] if not_decided else [entry])
+    undecided = parts["not_decided"] + ([entry] if not_decided else [])
+    block = ["", own, ""]
+    if settled:
+        block += [SETTLED_MARK, "", *[f"- {item}" for item in settled], ""]
+    if undecided:
+        block += [NOT_DECIDED_MARK, "", *[f"- {item}" for item in undecided], ""]
+    lines = lines[:parts["start"] + 1] + block + lines[parts["end"]:]
+    # 3. a 'More Information' section left with nothing in it goes too
+    out = "\n".join(lines)
+    out = re.sub(r"\n## More Information\n\s*(?=\n## |\Z)", "\n", out)
+    out = re.sub(r"\n{3,}", "\n\n", out).rstrip("\n") + "\n"
+    return out, settled_point

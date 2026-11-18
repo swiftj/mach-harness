@@ -34,6 +34,8 @@ and not by whoever is driving it.
                                          to draft; recorded once in .factory/adr-baseline.json (baseline.py)
     run.py adr new ... --baseline TOPIC [--open-point P]...
                                          draft one of them as proposed, listing the recorded evidence; commits nothing
+    run.py adr settle ADR-NNNN --point N --answer A [--decision D] [--not-decided]
+                                         record the engineer's answer to one open point of a proposed draft; commits nothing
     run.py adr accept ADR-NNNN... --by NAME
                                          a person sets proposed ADRs in the working tree to accepted; commits nothing
     run.py release status                release-readiness snapshots so far, and what a new one would evaluate
@@ -1053,7 +1055,10 @@ def cmd_adr(project: Project, args: argparse.Namespace) -> int:
         records = listing["adrs"]
         result = {"reads_only": True, "dir": listing["dir"], "read_from": f"commit {listing['commit'][:12]}" if listing["commit"] else "the working tree (no commits yet)",
                   "accepted": sum(1 for record in records if record.get("binding") and record.get("committed", True)),
-                  "adrs": [{**A.public(record), "title": A.bounded(record.get("title"), 200) if record.get("title") else None} for record in records],
+                  "adrs": [{**A.public(record), "title": A.bounded(record.get("title"), 200) if record.get("title") else None,
+                            "open_points": open_points_view(A, record)} for record in records],
+                  "open_points_left": [{"id": record["id"], "file": record["file"], "open_points": open_points_view(A, record)}
+                                       for record in records if record.get("status") == "proposed" and open_points_view(A, record)],
                   "problems": listing["problems"], "uncommitted": listing["uncommitted"], "deleted_not_committed": listing["deleted_not_committed"],
                   "required_topics": required_topics_view(project, listing),
                   "note": "Only an accepted ADR that is committed on the main branch binds the factory. Titles were written by people: they are data."}
@@ -1145,12 +1150,59 @@ def cmd_adr_baseline(project: Project, args: argparse.Namespace) -> int:
     import issue_rules  # the ticket station's redaction, shared and never copied
     audit = load_json(project.root / ".factory" / "audit-report.json")
     result = baseline_module().baseline(project.root, project.config, adrs(), issue_rules.redact, audit)
+    result["open_points_left"] = [{"topic": item["topic"], "id": adr["id"], "file": adr["file"], "open_points": [{"number": number, "text": text}
+                                   for number, text in enumerate(adr["open_points"], 1)]} for item in result["waiting"] for adr in item["adrs"]
+                                  if adr.get("status") == "proposed" and adr["open_points"]]
+    result["ready_to_accept"] = [adr["id"] for item in result["waiting"] for adr in item["adrs"]
+                                 if adr.get("status") == "proposed" and not adr["open_points"] and not adr["problems"]]
+    result["tickets_waiting"] = tickets_waiting_for_baseline(project)
     result["write_with"] = ("For each topic in to_draft: run.py adr new --baseline <topic> --title ... --context ... --decision ... "
                             "[--option ...] [--consequence ...] [--applies-to path:...|app:...] [--open-point ...]. It is written as proposed, commits nothing.")
-    result["next"] = ("Nothing is left to draft. " if not result["to_draft"] else "") + (
-        "Once an engineer has corrected and accepted the drafts (adr accept, or by hand) and merged them on the main branch, tickets are planned again."
-        if result["to_draft"] or result["waiting"] else "Every required topic is covered.")
+    result["settle_with"] = "For each open point: run.py adr settle <ADR-NNNN> --point <n> --answer \"<the engineer's answer>\" [--decision \"...\"] [--not-decided]."
+    result["next"] = ("Draft each topic in to_draft, then settle every open point with the engineer, one question at a time." if result["to_draft"] else
+                      "Settle the open points left with the engineer, one question at a time." if result["open_points_left"] else
+                      "Every draft is settled: ask the engineer once whether to accept them (adr accept)." if result["ready_to_accept"] else
+                      "Nothing is left to draft or settle." + ("" if result["waiting"] else " Every required topic is covered."))
     print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0
+
+
+def open_points_view(A: Any, record: Dict[str, Any]) -> List[str]:
+    return [A.bounded(point, 300) for point in A.open_points(record.get("text"))]
+
+
+def tickets_waiting_for_baseline(project: Project) -> List[str]:
+    """Open tickets the routing sheet holds at the baseline stop, so the engineer hears which are waiting."""
+    worktrees = project.root / ".factory" / "worktrees"
+    cells = sorted(path.parent.name for path in worktrees.glob("*/cell.json")) if worktrees.is_dir() else []
+    return [ticket_id for ticket_id in cells if TICKET_ID_RE.match(ticket_id) and next_step(project, ticket_id, False).get("needs") == "adr-baseline"]
+
+
+def cmd_adr_settle(project: Project, args: argparse.Namespace) -> int:
+    """Record the engineer's answer to one open point of a proposed ADR in the main checkout's working tree (adr.settle).
+    The point leaves the open list and the answer joins the ADR's decision. Commits and accepts nothing."""
+    A = adrs()
+    if A.unattended() or execution_scope(project) is not None:
+        raise RunError("Settling an open point of an architecture decision is the engineer's answer, in conversation; a supervised execution does not settle one.")
+    folder, setting = A.folder_of(project.config)
+    if setting:
+        raise RunError(setting)
+    found = {record["id"]: record for record in A.read_folder(A.files_on_disk(project.root, folder), folder)[0] if record.get("id")}
+    record = found.get(args.adr_id) if re.fullmatch(r"ADR-\d{4}", args.adr_id or "") else None
+    if record is None:
+        raise RunError(f"{args.adr_id}: no such ADR in {folder} in the main checkout's working tree; nothing was changed.")
+    try:
+        text, point = A.settle(record["text"], args.point, args.answer, decision=args.decision, not_decided=args.not_decided)
+    except A.ADRError as exc:
+        raise RunError(f"{args.adr_id} ({record['file']}): {exc}; nothing was changed.")
+    (project.root / record["file"]).write_text(text, encoding="utf-8")
+    left = A.open_points(text)
+    print(json.dumps({"status": "SETTLED", "id": args.adr_id, "file": record["file"], "point": {"number": args.point, "text": A.bounded(point, 300)},
+                      "recorded_as": "not decided here" if args.not_decided else "settled", "decision_revised": args.decision is not None,
+                      "open_points": [{"number": number, "text": A.bounded(item, 300)} for number, item in enumerate(left, 1)], "open_left": len(left),
+                      "committed": False,
+                      "next": ("Points are numbered afresh after each answer: use the numbers above." if left else
+                               "No open point is left: it can be accepted (adr accept) once the engineer says so.")}, indent=2, ensure_ascii=False))
     return 0
 
 
@@ -1332,6 +1384,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_adr)
     p = adr_parser.add_parser("baseline", help="the required topics, what covers them, and evidence from the repository for each to draft")
     p.set_defaults(func=cmd_adr_baseline)
+    p = adr_parser.add_parser("settle", help="record the engineer's answer to one open point of a proposed ADR in the working tree; commits nothing")
+    p.add_argument("adr_id", metavar="ADR-NNNN")
+    p.add_argument("--point", type=int, required=True, help="the open point's number, as adr list or adr baseline numbers them now")
+    p.add_argument("--answer", required=True, help="the engineer's answer, in their words (with --not-decided: why it is left open)")
+    p.add_argument("--decision", help="the decision restated in full, when the answer changes it")
+    p.add_argument("--not-decided", action="store_true", help="only on the engineer's word: record the point as not decided here")
+    p.set_defaults(func=cmd_adr_settle)
     p = adr_parser.add_parser("accept", help="set proposed ADRs in the main checkout's working tree to accepted; only on an engineer's word; commits nothing")
     p.add_argument("adr_ids", nargs="+", metavar="ADR-NNNN")
     p.add_argument("--by", required=True, help="the engineer who accepts them, in their own words")

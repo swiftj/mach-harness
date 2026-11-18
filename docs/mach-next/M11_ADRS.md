@@ -149,6 +149,24 @@ No ticket is planned or built until the project's basic technical decisions are 
   what is missing. **Audit**: the note names the missing topics (still a note). **Doctor**: `adr.baseline`, a
   warning while a topic is missing.
 
+## The baseline interview (2026-11-18)
+
+The first live run drafted six ADRs and stopped at a table of open points for the engineer to edit by hand. The
+owner's decision: the gaps are closed by the same interview the slice uses.
+
+- **`run.py adr settle <ADR-NNNN> --point <n> --answer "<text>" [--decision "<text>"] [--not-decided]`** records one
+  answer against one open point of a `proposed` ADR in the main checkout's working tree: the point leaves the list
+  under `## More Information`, and `point: answer` joins `## Decision Outcome` under "Settled with the engineer:"
+  (or under "Not decided here", with `--not-decided`). `--decision` replaces the decision's own text. The evidence
+  list is kept; the section goes when nothing is left in it. Refused for an ADR that is not `proposed`, a point that
+  does not exist, and inside a supervised execution. Commits nothing. Proposals on a ticket's branch are not in scope.
+- **`adr list` and `adr baseline`** report each proposed ADR's remaining open points, numbered; `adr baseline` also
+  gives `open_points_left`, `ready_to_accept` and `tickets_waiting`, so a later session resumes where the last stopped.
+- **`adr accept`** refuses while a point is open, and refuses a decision that is empty apart from points left
+  undecided: a required topic is never covered by an empty decision.
+- **The skill** (`skills/run/SKILL.md`, "Drafting the baseline") looks each fact up before asking, turns a conflict in
+  the evidence into the question, asks once to accept when nothing is open, and offers the pull request.
+
 ## Limits
 
 - Topics are matched as whole words (and hyphen-joined pairs) of the spec's title, requirements and scenarios, the
