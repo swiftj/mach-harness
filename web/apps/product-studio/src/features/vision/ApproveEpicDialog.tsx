@@ -20,14 +20,14 @@ export function ApproveEpicDialog({ epic, sliceTitles = [], onOpenChange }: Appr
         onOpenChange(open);
       }}
       title={epic ? `Approve ${epic.epic_id}: ${epic.title}?` : ""}
-      description="Approving puts this capability in the product's scope, so its slices can be approved one by one. It is product approval only: nothing is sent to engineering and no work starts."
+      description="Approving puts this capability in the product's scope, so its slices can be marked ready to build one by one. Nothing goes to the builders until you mark a slice ready."
       confirmLabel="Approve epic"
       error={act.shown}
       onConfirm={async () => {
         if (!epic) return;
         const result = await act.run("epic.approve", { epic_id: epic.epic_id });
         if (!result) return false;
-        toast({ tone: "success", title: `Approved ${epic.epic_id}`, description: "Its slices can now be approved. Nothing has been sent to engineering." });
+        toast({ tone: "success", title: `Approved ${epic.epic_id}`, description: "Its slices can now be marked ready. Nothing has gone to the builders." });
       }}
     >
       {sliceTitles.length ? (

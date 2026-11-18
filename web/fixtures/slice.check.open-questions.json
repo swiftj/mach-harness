@@ -1,8 +1,8 @@
 {
   "exit_code": 0,
   "data": {
-    "slice_id": "SLICE-002",
-    "spec": "/project/.factory/studio/draft/specs/slices/SLICE-002-invite-teammate.md",
+    "slice_id": "SLICE-007",
+    "spec": "/project/.factory/studio/draft/specs/slices/SLICE-007-invite-teammate.md",
     "errors": [],
     "warnings": [],
     "diagnostics": [],

@@ -8,12 +8,14 @@ import { cn } from "../lib/cn";
  *   half (half-filled)      interviewing: being worked out
  *   ready (ring with dot)   ready for approval: settled, waiting for a person
  *   approved (solid, tick)  approved by a person
- *   submitted (solid, arrow) sent to engineering, under review
- *   accepted (double ring)  accepted into the shared project
+ *   submitted (solid, arrow) handed to the builders: ready to build
+ *   building (three quarters) being built
+ *   question (solid, mark)   the builders asked a question
+ *   accepted (double ring)  shipped, or an epic completed
  *   blocked (octagon, bar)  cannot move until something is fixed
  *   superseded (ring, slash) replaced; kept for history
  */
-export type GlyphShape = "open" | "half" | "ready" | "approved" | "submitted" | "accepted" | "blocked" | "superseded";
+export type GlyphShape = "open" | "half" | "ready" | "approved" | "submitted" | "building" | "question" | "accepted" | "blocked" | "superseded";
 
 export interface StateGlyphProps {
   shape: GlyphShape;
@@ -67,6 +69,21 @@ export function StateGlyph({ shape, size = 14, className, title }: StateGlyphPro
         <svg {...common}>
           <circle cx="8" cy="8" r="7" fill="currentColor" />
           <path d="M5 8h5.5M8.4 5.4L11 8l-2.6 2.6" stroke="var(--mach-surface)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
+    case "building":
+      return (
+        <svg {...common}>
+          <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.6" />
+          <path d="M8 2a6 6 0 1 1-6 6h6z" fill="currentColor" />
+        </svg>
+      );
+    case "question":
+      return (
+        <svg {...common}>
+          <circle cx="8" cy="8" r="7" fill="currentColor" />
+          <path d="M6.2 6.3a1.9 1.9 0 1 1 2.6 1.8c-.5.2-.8.6-.8 1.1v.4" stroke="var(--mach-surface)" strokeWidth="1.6" strokeLinecap="round" />
+          <circle cx="8" cy="11.6" r="0.95" fill="var(--mach-surface)" />
         </svg>
       );
     case "accepted":

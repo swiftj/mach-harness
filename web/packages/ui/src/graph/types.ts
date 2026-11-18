@@ -8,16 +8,17 @@ export type GraphNodeKind = "product" | "epic" | "slice";
 /**
  * Visual states on the graph. One vocabulary for both products:
  *
- *   proposed      nothing settled yet (draft slice, proposed epic, draft project)
- *   interviewing  being worked out
- *   ready         settled, waiting for a person's approval
- *   approved      a person approved it
- *   submitted     sent to engineering, under review
- *   accepted      accepted into the shared project
- *   blocked       cannot move until something is fixed
- *   superseded    replaced; kept for history
+ *   proposed        nothing settled yet (draft slice, proposed epic, draft project)
+ *   interviewing    being worked out
+ *   ready           settled, waiting for a person's approval
+ *   approved        a person approved it
+ *   ready_to_build  saved for the builders, waiting for them
+ *   building        the builders are building it
+ *   question        the builders asked the product manager a question
+ *   shipped         built and merged (an epic: completed)
+ *   superseded      replaced; kept for history
  */
-export type GraphState = "proposed" | "interviewing" | "ready" | "approved" | "submitted" | "accepted" | "blocked" | "superseded";
+export type GraphState = "proposed" | "interviewing" | "ready" | "approved" | "ready_to_build" | "building" | "question" | "shipped" | "superseded";
 
 export interface GraphStateDescriptor {
   label: string;
@@ -34,9 +35,10 @@ export const graphStates: Record<GraphState, GraphStateDescriptor> = {
   interviewing: { label: "Interviewing", tone: "info", glyph: "half", border: "solid" },
   ready: { label: "Ready for approval", tone: "accent", glyph: "ready", border: "solid" },
   approved: { label: "Approved", tone: "success", glyph: "approved", border: "solid" },
-  submitted: { label: "Sent for review", tone: "info", glyph: "submitted", border: "solid" },
-  accepted: { label: "Accepted", tone: "success", glyph: "accepted", border: "double" },
-  blocked: { label: "Blocked", tone: "danger", glyph: "blocked", border: "heavy" },
+  ready_to_build: { label: "Ready to build", tone: "info", glyph: "submitted", border: "solid" },
+  building: { label: "Being built", tone: "info", glyph: "building", border: "solid" },
+  question: { label: "Question from the builders", tone: "warning", glyph: "question", border: "heavy" },
+  shipped: { label: "Shipped", tone: "success", glyph: "accepted", border: "double" },
   superseded: { label: "Superseded", tone: "neutral", glyph: "superseded", border: "dashed", muted: true },
 };
 
@@ -48,9 +50,9 @@ export interface MachNodeData extends Record<string, unknown> {
   state: GraphState;
   /** Overrides the state's label when the engine's own word is more precise ("Deferred", "Draft"). */
   stateLabel?: string;
-  /** A short secondary fact: "2 open questions", "WAVE-001". */
+  /** A short secondary fact: "2 open questions", "#41". */
   meta?: string;
-  /** Something the person must settle on this item ("Conflict", "Needs a new number"). Shown with a warning mark. */
+  /** Something the person must settle on this item ("Changed on GitHub", "Number taken"). Shown with a warning mark. */
   attention?: string;
 }
 

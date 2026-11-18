@@ -16,22 +16,17 @@ var (
 	ProjectIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,63}$`)
 	EpicIDPattern    = regexp.MustCompile(`^EPIC-[0-9]{3,}$`)
 	SliceIDPattern   = regexp.MustCompile(`^SLICE-[0-9]{3,}$`)
-	WaveIDPattern    = regexp.MustCompile(`^WAVE-[0-9]{3,}$`)
 	// SpecNamePattern is product.SPEC_NAME_RE: the only file names a slice spec may have.
 	SpecNamePattern = regexp.MustCompile(`^(SLICE-[0-9]{3,})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$`)
-
-	artifactPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
-	fieldPattern    = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 )
 
 // Limits on request shapes. Generous for a person typing; small enough to bound every call.
 const (
-	maxIDLength    = 32
-	maxShortText   = 300   // names, titles, an approver's name
-	maxLongText    = 4000  // a vision, an outcome, a criterion, a pause note
-	maxListItems   = 50    // outcomes, criteria, dependencies, slices in a wave
-	maxArtifactLen = 200   // a path or ID listed under needs_reconciling
-	MaxBodyBytes   = 65536 // an operation's JSON body
+	maxIDLength  = 32
+	maxShortText = 300   // names, titles, an approver's name
+	maxLongText  = 4000  // a vision, an outcome, a criterion, a pause note
+	maxListItems = 50    // outcomes, criteria, dependencies
+	MaxBodyBytes = 65536 // an operation's JSON body
 )
 
 // InvalidError is a request the host rejects before the engine sees it.

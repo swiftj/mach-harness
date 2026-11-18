@@ -1,0 +1,9 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "SLICE-005 is already used on GitHub by another slice (#77). Give your draft a new number, then mark it ready.",
+  "hint": {
+    "kind": "renumber_slice",
+    "target": "SLICE-005"
+  }
+}

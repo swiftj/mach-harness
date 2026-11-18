@@ -27,7 +27,7 @@ M5 gives the product manager a graphical interface to the Product Studio that M1
         <project>/.factory/studio/   drafts, base copies, ledger, interviews
 ```
 
-**One engine, two interfaces.** `studio.py` decides every ID, state, validation, approval, reconciliation and the bytes of every artifact. The host turns a typed request into a fixed argument vector and returns what the engine printed. The app shows it. When the app needed a fact the engine did not report, the engine gained a read-only field with a test (`slice show`, `status.next_actions`, slice `dependencies`, `editable`, `in_waves`, epic acceptance criteria); nothing is computed in Go or TypeScript. A conformance suite holds the two interfaces to the same result.
+**One engine, two interfaces.** `studio.py` decides every ID, state, validation, approval, reconciliation and the bytes of every artifact. The host turns a typed request into a fixed argument vector and returns what the engine printed. The app shows it. When the app needed a fact the engine did not report, the engine gained a read-only field with a test (`slice show`, `status.next_actions`, slice `dependencies`, `editable`, a slice's `github` place, epic acceptance criteria); nothing is computed in Go or TypeScript. A conformance suite holds the two interfaces to the same result.
 
 **No second command line.** The host is started by the Product Studio skill ("open the app"), not by a new user-facing MACH command. Its flags exist for the skill and for tests.
 
@@ -47,7 +47,7 @@ The interview is the same one the terminal skill runs: the method in `skills/int
 
 - One Claude Code session per slice, one `claude -p --resume` process per reply. The session survives a reload and a host restart.
 - Every turn runs restricted: the person's own settings and MCP servers are not loaded, nothing can prompt, the tool list is explicit, and the environment carries no variable that looks like a key, token or secret. No permission-skipping flag is used anywhere.
-- The interviewer may run only the engine's non-approving operations on its own slice, and edit only that slice's spec and why. It cannot approve, send or reconcile. Those are buttons the product manager presses.
+- The interviewer may run only the engine's non-approving operations on its own slice, and edit only that slice's spec and why. It cannot mark a slice ready, approve, reopen or choose between versions. Those are buttons the product manager presses.
 - Claude's stream is reduced to nine event kinds (`state`, `text`, `message`, `question`, `activity`, `draft_changed`, `turn`, `ended`, `error`) and served as server-sent events with replay. The raw stream never leaves the host.
 - A lock per slice, a spending cap and a time limit per turn, interrupt, stop, and a clean stop on shutdown.
 - When Claude Code is missing, too old or signed out, the app says why and offers the exact command to continue the interview in Claude Code instead. The rest of the app works without it.
@@ -63,11 +63,12 @@ A pnpm workspace: `@mach/ui` (tokens, themes, primitives, shell, lifecycle, depe
 | `/` | Project home, the default screen: name and vision, links to every other screen, the first of the engine's `next_actions`, what waits for the product manager, each epic with its slices. No rail: the other screens are also in the top bar's "More" menu |
 | `/vision` | Vision and outcomes |
 | `/roadmap` | Epics and slices, and the dependency graph |
-| `/slices/:id` | Specification workspace: structured view, the why, source, approve / reopen / pause |
-| `/slices/:id/interview` | Guided interview |
-| `/inbox` | Decisions waiting for the product manager |
-| `/waves`, `/waves/:id/send`, `/waves/:id/review` | Delivery waves, sending to engineering, review feedback |
-| `/shared` | The shared project: what arrived, what changed, conflicts and collisions |
+| `/slices/:id` | Specification workspace: structured view, the why, source, mark ready to build / reopen / pause, and where the slice is with the builders |
+| `/slices/:id/interview` | Guided interview, which offers "Mark ready to build" once nothing is open |
+| `/inbox` | Decisions waiting for the product manager: a slice changed on GitHub after approval, a newer version saved by someone else (mine or theirs), a number already taken (renumber), a save to finish, a question from the builders, approvals withdrawn, open questions, requests |
+| `/github` | On GitHub: the project's and epics' issue numbers, each slice's state with the builders and its issue, slices others saved; refresh |
+
+Since M11 (`M11_DESIGN.md`, `M11_STUDIO_ISSUES.md`) there are no delivery waves: "Mark ready to build" (`slice ready`) saves a slice as a GitHub issue under its epic's issue, or, where GitHub cannot be used, to a folder, and the app shows where it went in the engine's words.
 
 Wording follows the skill's first guardrail: no Git, branch, commit, JSON or hash in anything the product manager reads. An engine refusal is shown in the engine's words.
 

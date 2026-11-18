@@ -1,0 +1,9 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "Someone else saved a newer version of SLICE-004 on GitHub (version 2). Choose yours or theirs before marking it ready.",
+  "hint": {
+    "kind": "reconcile",
+    "target": "SLICE-004"
+  }
+}

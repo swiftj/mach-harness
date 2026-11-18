@@ -56,7 +56,7 @@ export function ContinueInClaudeCode({ sliceId, capability }: { sliceId: string;
             <Text tone="muted">The host did not report the command. Ask Claude Code to continue {sliceId} with the product studio skill.</Text>
           )}
         </li>
-        <li>Answer the interviewer there. Come back here to read the specification and approve it.</li>
+        <li>Answer the interviewer there. Come back here to read the specification and mark it ready to build.</li>
       </ol>
       <Button variant="secondary" asChild className="self-start">
         <Link to={`/slices/${sliceId}`}>Open the specification</Link>

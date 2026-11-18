@@ -11,32 +11,29 @@
         "Teams can work together",
         "Admins stay in control of who has access"
       ],
-      "source": "published"
+      "source": "draft",
+      "issue": 1
     },
     "approvals_withdrawn": [
       {
         "artifact": "SLICE-001",
         "kind": "slice",
         "reason": "You reopened it to change it.",
-        "at": "2026-11-11T20:44:16Z"
-      },
-      {
-        "artifact": "WAVE-001",
-        "kind": "wave",
-        "reason": "SLICE-001 was reopened, so this wave went back to draft.",
-        "at": "2026-11-11T20:44:16Z"
+        "at": "2026-11-18T05:28:08Z"
       }
     ],
     "epics": [
       {
         "epic_id": "EPIC-001",
-        "title": "People and access",
+        "title": "Team membership",
         "status": "approved",
-        "revision": 3,
+        "revision": 2,
         "acceptance_criteria": [
-          "Only invited people can join"
+          "Only invited people can join",
+          "Admins can see who is invited"
         ],
-        "source": "draft"
+        "source": "draft",
+        "issue": 2
       }
     ],
     "slices": [
@@ -50,57 +47,122 @@
         "spec": "specs/slices/SLICE-001-invite-teammate.md",
         "has_intent": true,
         "source": "draft",
-        "resume_note": null,
+        "resume_note": "Settled who may invite and the seat limit. Next: do invitations expire?",
         "dependencies": [],
         "editable": true,
-        "in_waves": [
-          "WAVE-001"
-        ]
+        "github": {
+          "saved": null,
+          "unfinished": false,
+          "issue": 3,
+          "url": "https://github.com/acme/team-space/issues/3",
+          "state_label": "mach:building",
+          "revision": 1,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "shipped_issues": []
+        }
       },
       {
         "slice_id": "SLICE-002",
-        "title": "Invite a teammate by email",
+        "title": "Remove a teammate",
         "epic_id": "EPIC-001",
-        "status": "interviewing",
-        "revision": 1,
-        "open_questions": 2,
+        "status": "approved_for_engineering",
+        "revision": 2,
+        "open_questions": 0,
         "spec": "specs/slices/SLICE-002-invite-teammate.md",
         "has_intent": true,
         "source": "draft",
         "resume_note": null,
-        "dependencies": [],
-        "editable": true,
-        "in_waves": []
-      }
-    ],
-    "waves": [
-      {
-        "wave_id": "WAVE-001",
-        "status": "draft",
-        "revision": 3,
-        "slices": [
+        "dependencies": [
           "SLICE-001"
         ],
-        "approval": null,
+        "editable": false,
+        "github": {
+          "saved": "github",
+          "unfinished": false,
+          "issue": 4,
+          "url": "https://github.com/acme/team-space/issues/4",
+          "state_label": "mach:question",
+          "revision": 1,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "shipped_issues": []
+        }
+      },
+      {
+        "slice_id": "SLICE-003",
+        "title": "Resend an invitation",
+        "epic_id": "EPIC-001",
+        "status": "approved_for_engineering",
+        "revision": 2,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-003-invite-teammate.md",
+        "has_intent": true,
         "source": "draft",
-        "sent": false,
-        "pull_request": null
+        "resume_note": null,
+        "dependencies": [],
+        "editable": false,
+        "github": {
+          "saved": "github",
+          "unfinished": false,
+          "issue": 5,
+          "url": "https://github.com/acme/team-space/issues/5",
+          "state_label": "mach:shipped",
+          "revision": 1,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "shipped_issues": []
+        }
+      },
+      {
+        "slice_id": "SLICE-004",
+        "title": "Rename a teammate",
+        "epic_id": "EPIC-001",
+        "status": "approved_for_engineering",
+        "revision": 2,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-004-invite-teammate.md",
+        "has_intent": true,
+        "source": "draft",
+        "resume_note": null,
+        "dependencies": [],
+        "editable": false,
+        "github": {
+          "saved": "github",
+          "unfinished": false,
+          "issue": 6,
+          "url": "https://github.com/acme/team-space/issues/6",
+          "state_label": "mach:ready",
+          "revision": 1,
+          "changed_on_github": true,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "shipped_issues": []
+        }
       }
     ],
-    "current_slice": "SLICE-002",
+    "github": {
+      "repository": "acme/team-space",
+      "form": "sub_issues",
+      "last_read": "2026-11-18T05:28:08Z"
+    },
+    "current_slice": "SLICE-004",
     "needs_reconciling": {
       "conflicts": [],
       "collisions": [],
       "details": {}
     },
     "shared_project": "the shared project",
-    "last_refreshed": "2026-11-11T20:44:16Z",
+    "last_refreshed": "2026-11-18T05:28:08Z",
     "structurally_valid": true,
     "structural_errors": [],
     "factory_authorized": false,
     "suggested_next": [
       "Continue the interview for SLICE-001: Invite a teammate (slice resume SLICE-001).",
-      "Continue the interview for SLICE-002: Invite a teammate by email (slice resume SLICE-002)."
+      "SLICE-004 was changed on GitHub after you approved it: mark it ready again to put your approved version back (slice ready SLICE-004)."
     ],
     "next_actions": [
       {
@@ -111,10 +173,10 @@
         "related": []
       },
       {
-        "kind": "continue_interview",
-        "target": "SLICE-002",
-        "title": "Continue the interview for SLICE-002",
-        "reason": "Invite a teammate by email is still being defined.",
+        "kind": "mark_ready",
+        "target": "SLICE-004",
+        "title": "Mark SLICE-004 ready again",
+        "reason": "Rename a teammate was changed on GitHub after you approved it, so the builders will not take it.",
         "related": []
       }
     ]

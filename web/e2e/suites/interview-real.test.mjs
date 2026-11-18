@@ -119,7 +119,7 @@ test("real claude: start, one parsed question, answer, the next, stop", { skip: 
     // Nothing the person must do was done by the interviewer.
     const status = world.status();
     assert.notEqual(status.slices[0].status, "approved_for_engineering");
-    assert.equal(status.waves.length, 0);
+    assert.equal(world.issues().length, 0, "nothing was saved on GitHub");
   });
 
   await t.test("no console error, CSP violation or outside request", async () => {

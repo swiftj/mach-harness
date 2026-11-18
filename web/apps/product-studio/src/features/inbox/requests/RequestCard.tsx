@@ -34,7 +34,7 @@ export function RequestCard({ item, status, onChanged }: { item: RequestItem; st
         {item.title ? <p className="break-words text-body font-semibold text-ink">{item.title}</p> : null}
         {accepted && item.labelled_by ? (
           <Text size="body-sm" tone="muted">
-            Labelled as a request by @{item.labelled_by}
+            Marked as a request by @{item.labelled_by}
           </Text>
         ) : null}
         {item.picked_up_here ? (

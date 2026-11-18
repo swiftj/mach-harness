@@ -20,11 +20,11 @@ import {
   type Status,
 } from "@mach/ui";
 import { GraphOutline, ProductGraph, graphStates, productGraphFromStatus, type GraphState, type MachEdge, type MachNode } from "@mach/ui/graph";
-import { useFeedback, useStatus } from "../../api/store";
+import { useStatus } from "../../api/store";
 import { NewSliceDialog } from "./NewSliceDialog";
 import { NodeSheet } from "./NodeSheet";
 
-const stateOrder: GraphState[] = ["proposed", "interviewing", "ready", "approved", "submitted", "accepted", "blocked", "superseded"];
+const stateOrder: GraphState[] = ["proposed", "interviewing", "ready", "approved", "ready_to_build", "building", "question", "shipped", "superseded"];
 
 export function RoadmapScreen() {
   const status = useStatus();
@@ -70,14 +70,13 @@ export function RoadmapScreen() {
 }
 
 function Roadmap({ status }: { status: Status }) {
-  const feedback = useFeedback(status.waves.some((w) => w.sent));
   const [view, setView] = useState<"graph" | "list">("graph");
   const [epicFilter, setEpicFilter] = useState("all");
   const [states, setStates] = useState<Set<GraphState>>(new Set());
   const [selected, setSelected] = useState<MachNode | null>(null);
   const [newSlice, setNewSlice] = useState<{ epicId: string | null } | null>(null);
 
-  const full = useMemo(() => productGraphFromStatus({ status, reviews: feedback.data?.waves ?? [] }), [status, feedback.data]);
+  const full = useMemo(() => productGraphFromStatus({ status }), [status]);
   const present = useMemo(() => new Set(full.nodes.filter((n) => n.data.kind === "slice").map((n) => n.data.state)), [full]);
   const shown = useMemo(() => filterGraph(full.nodes, full.edges, epicFilter, states), [full, epicFilter, states]);
   const filtered = epicFilter !== "all" || states.size > 0;
@@ -213,7 +212,7 @@ function Roadmap({ status }: { status: Status }) {
       )}
 
       <Text as="p" size="caption" tone="subtle">
-        Approved means you approved the definition. Accepted means engineering took it into the shared project. Neither means it has been built.
+        Approved means you approved the text and marked it ready. Ready to build, being built and shipped are where the builders have it, as read from GitHub at the last refresh.
       </Text>
 
       <NodeSheet node={selected} status={status} onClose={() => setSelected(null)} onSelect={setSelected} nodes={full.nodes} onNewSlice={(epicId) => setNewSlice({ epicId })} />

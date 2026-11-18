@@ -1,0 +1,25 @@
+{
+  "exit_code": 0,
+  "data": {
+    "reopened": true,
+    "slice": {
+      "dependencies": [],
+      "epic_id": "EPIC-001",
+      "open_questions": [],
+      "project_id": "team-space",
+      "revision": 3,
+      "schema_version": 1,
+      "slice_id": "SLICE-001",
+      "spec_path": "specs/slices/SLICE-001-invite-teammate.md",
+      "spec_sha256": null,
+      "status": "interviewing",
+      "title": "Invite a teammate"
+    },
+    "github": {
+      "where": "folder"
+    },
+    "note": "Its ready folder was removed. You can change it now. Mark it ready again when it is done."
+  },
+  "refused": null,
+  "hint": null
+}

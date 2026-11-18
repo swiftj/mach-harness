@@ -59,7 +59,7 @@ test("every state of D8 renders with its own buttons", async () => {
 
     // Accepted, not picked up.
     assert.deepEqual(await buttons(page, 41), ["Pick up", "Link a draft slice"]);
-    assert.match(await card(page, 41).innerText(), /Labelled as a request by @riley-lead/);
+    assert.match(await card(page, 41).innerText(), /Marked as a request by @riley-lead/);
     const github = card(page, 41).getByRole("link", { name: /^View on GitHub/ });
     assert.equal(await github.getAttribute("href"), "https://github.com/team-space/app/issues/41");
     assert.equal(await github.getAttribute("rel"), "noopener noreferrer");

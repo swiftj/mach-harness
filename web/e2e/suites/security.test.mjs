@@ -224,12 +224,12 @@ test("draft routes stay inside the draft workspace", async (t) => {
     assert.equal(w.json?.ok, true, w.text);
     assert.equal(w.json.data.path, "product/intents/SLICE-001.md");
     const added = readdirSync(world.root, { recursive: true }).map(String).filter((p) => !before.has(p));
-    const unexpected = added.filter((p) => !/^pm\/\.factory\/studio\//.test(p) && !/^outside$/.test(p) && !/^bin\/calls/.test(p) && p !== "gh.json");
+    const unexpected = added.filter((p) => !/^pm\/\.factory\/studio\//.test(p) && !/^outside$/.test(p) && !/^bin\/calls/.test(p) && !/^gh\.json(\.calls|\.lock|\.[^/]*\.tmp)?$/.test(p));
     assert.deepEqual(unexpected, [], "files appeared outside the Product Studio workspace");
     assert.equal(readFileSync(canary, "utf8"), "canary\n");
   });
-  await t.test("an approved slice's drafts are read-only", async () => {
-    assert.equal((await a.op("slice.approve", { slice_id: "SLICE-001" })).ok, true);
+  await t.test("a slice marked ready has read-only drafts", async () => {
+    assert.equal((await a.op("slice.ready", { slice_id: "SLICE-001" })).ok, true);
     const r = record(await a.send("PUT", "/api/drafts/spec/SLICE-001", { markdown: "# changed\n" }));
     assert.equal(r.json?.ok, false);
     assert.equal(r.json.error.kind, "refused");
@@ -251,7 +251,7 @@ test("the page: CSP, no other origin, nothing secret readable", async (t) => {
       }
     });
     await page.goto(second.url, { waitUntil: "networkidle" });
-    for (const route of ["/", "/vision", "/roadmap", "/slices/SLICE-001", "/slices/SLICE-002/interview", "/inbox", "/waves", "/shared"]) {
+    for (const route of ["/", "/vision", "/roadmap", "/slices/SLICE-001", "/slices/SLICE-002/interview", "/inbox", "/github"]) {
       await page.goto(`${second.origin}/#${route}`);
       await settle(page, 500);
     }
@@ -359,13 +359,13 @@ test("nothing can reach the Factory", async (t) => {
     assert.equal(edits.length, 2, edits.join("\n"));
     for (const e of edits) assert.match(e, /SLICE-002(-\*)?\.md\)$/);
     assert.deepEqual(allowed.filter((r) => !/^(Read|Glob|Grep|Bash\(|Edit\()/.test(r)), []);
-    for (const word of ["slice approve", "epic approve", "wave", "send", "reconcile"]) assert.ok(denied.some((r) => r.includes(` ${word}`)), `denied rules do not name ${word}`);
+    for (const word of ["slice ready", "slice approve", "epic approve", "wave", "send", "feedback", "reconcile"]) assert.ok(denied.some((r) => r.includes(` ${word}`)), `denied rules do not name ${word}`);
     assert.ok(!call.argv.some((x) => /dangerously|bypassPermissions|acceptEdits/.test(x)));
     const stop = record(await a.send("POST", `/api/interview/${started.json.data.interview_id}/stop`, {}));
     assert.equal(stop.json?.ok, true, stop.text);
   });
 
-  await t.test("a whole delivery through the host never writes .factory/local/ and every report says factory_authorized: false", async () => {
+  await t.test("marking ready, the builders' progress, reopening and marking ready again through the host never write .factory/local/, and every report says factory_authorized: false", async () => {
     const reports = [];
     const op = async (name, args) => {
       const r = await a.op(name, args);
@@ -373,12 +373,10 @@ test("nothing can reach the Factory", async (t) => {
       reports.push([name, r.data]);
       return r.data;
     };
-    await op("wave.new", { slice: ["SLICE-001"] });
-    await op("wave.approve", { wave_id: "WAVE-001" });
-    await op("send.preview", { wave_id: "WAVE-001" });
-    await op("send", { wave_id: "WAVE-001" });
-    await op("feedback", { wave_id: "WAVE-001" });
-    world.land("product/WAVE-001");
+    world.setStateLabel(world.issues("mach:slice")[0].number, "mach:building");
+    await op("refresh", {});
+    await op("slice.reopen", { slice_id: "SLICE-001" });
+    await op("slice.ready", { slice_id: "SLICE-001" });
     await op("refresh", {});
     await op("status", {});
     await op("where", {});

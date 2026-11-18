@@ -34,7 +34,7 @@ function useHash(): string {
 export function App({ product }: { product: ProductName }) {
   const hash = useHash() || "foundations";
   const other: ProductName = product === "factory-floor" ? "product-studio" : "factory-floor";
-  const status = fx.statusPublished;
+  const status = fx.statusRich;
   // The factory grammar (M6) is its own page, so the design-system page above stays exactly as it was.
   const factory = hash === "factory" || hash.startsWith("factory-");
   return (
@@ -63,7 +63,7 @@ export function App({ product }: { product: ProductName }) {
           status={
             <ConnectionIndicator
               host="online"
-              shared={{ reachable: true, lastRefreshed: status.last_refreshed, description: status.shared_project }}
+              shared={{ reachable: true, lastRefreshed: status.last_refreshed, description: fx.refreshOnGithub.shared_project }}
             />
           }
           actions={

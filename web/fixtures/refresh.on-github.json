@@ -1,0 +1,73 @@
+{
+  "exit_code": 0,
+  "data": {
+    "refreshed": true,
+    "problem": null,
+    "problem_detail": null,
+    "shared_project": "the shared project",
+    "arrived": [],
+    "updated": [],
+    "merged": [],
+    "approvals_withdrawn": [],
+    "needs_reconciling": {
+      "conflicts": [],
+      "collisions": [],
+      "details": {}
+    },
+    "requests": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "refreshed_at": "2026-11-18T05:28:06Z",
+      "problem": null,
+      "truncated": false,
+      "truncated_note": null,
+      "items": [],
+      "updates_waiting": 0,
+      "updates_waiting_note": null,
+      "could_not_update": [],
+      "could_not_update_note": null
+    },
+    "github": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "problem": null,
+      "refreshed_at": "2026-11-18T05:28:06Z",
+      "form": "sub_issues",
+      "project_issue": 1,
+      "epics": {
+        "EPIC-001": 2
+      },
+      "slices": [
+        {
+          "slice_id": "SLICE-001",
+          "in_workspace": true,
+          "saved": "github",
+          "unfinished": false,
+          "issue": 3,
+          "url": "https://github.com/acme/team-space/issues/3",
+          "state_label": "mach:ready",
+          "revision": 1,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "shipped_issues": [],
+          "on_github": [
+            {
+              "issue": 3,
+              "state": "open",
+              "state_label": "mach:ready",
+              "revision": 1,
+              "title": "Invite a teammate",
+              "matches_approval": true,
+              "approved_by": "ada-pm"
+            }
+          ],
+          "title": "Invite a teammate"
+        }
+      ]
+    },
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

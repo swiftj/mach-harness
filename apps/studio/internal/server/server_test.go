@@ -321,9 +321,9 @@ func TestOperationsReturnTheEnginesWords(t *testing.T) {
 	h := start(t)
 	h.login()
 	h.startSlice()
-	status, env := h.call("POST", "/api/ops/slice.approve", `{"slice_id":"SLICE-001"}`, nil)
+	status, env := h.call("POST", "/api/ops/slice.ready", `{"slice_id":"SLICE-001"}`, nil)
 	expect(t, status, env, 422, engine.KindRefused)
-	if !strings.Contains(env.Error.Message, "SLICE-001 cannot be approved yet") {
+	if !strings.Contains(env.Error.Message, "SLICE-001 cannot be marked ready yet") {
 		t.Fatalf("the refusal is the engine's: %q", env.Error.Message)
 	}
 	status, env = h.call("POST", "/api/ops/slice.check", `{"slice_id":"SLICE-001"}`, nil)
@@ -400,7 +400,7 @@ func TestDraftWritesAreCheckedAndConfined(t *testing.T) {
 	}
 
 	h.mustOp("epic.approve", `{"epic_id":"EPIC-001"}`)
-	h.mustOp("slice.approve", `{"slice_id":"SLICE-001"}`)
+	h.mustOp("slice.ready", `{"slice_id":"SLICE-001"}`)
 	status, env = h.call("PUT", "/api/drafts/spec/SLICE-001", specBody(t, ""), nil)
 	expect(t, status, env, 422, engine.KindRefused)
 	if !strings.Contains(env.Error.Message, "reopen it first") {
@@ -597,7 +597,7 @@ func TestLogsHoldNoSecretsOrContents(t *testing.T) {
 	h.login()
 	h.startSlice()
 	h.call("PUT", "/api/drafts/spec/SLICE-001", specBody(t, "invite-teammate"), nil)
-	h.op("slice.approve", `{"slice_id":"SLICE-001"}`)
+	h.op("slice.ready", `{"slice_id":"SLICE-001"}`)
 	logs := h.logs.String()
 	for _, secret := range []string{token, h.cookie.Value, h.csrf, "Invite a teammate by email", "Workspace admin", "?t="} {
 		if strings.Contains(logs, secret) {

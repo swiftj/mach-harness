@@ -12,8 +12,8 @@ import {
   Page,
   Skeleton,
   SkeletonText,
+  SliceGithubPills,
   SliceStatusPill,
-  SourceBadge,
   Text,
   cn,
   describeError,
@@ -25,12 +25,14 @@ import {
   type StatusEpicRow,
 } from "@mach/ui";
 import { useRefresh, useStatus } from "../../api/store";
-import { describePath } from "../../api/describe";
+import { describePath, titleFor } from "../../api/describe";
 import { nextActions, routeFor } from "../../api/nextActions";
 import { destinations } from "../registry";
 import { useRequestList } from "../inbox/requests/api";
 import { ApproveEpicDialog } from "../vision/ApproveEpicDialog";
 import { NewSliceDialog } from "../roadmap/NewSliceDialog";
+import { IssueLink, IssueNumber } from "../../shared/IssueLink";
+import { RenumberDialog } from "../../shared/RenumberDialog";
 import { FirstRun } from "./FirstRun";
 
 /** Refresh once per visit, when the project home first opens. */
@@ -73,6 +75,7 @@ function ProjectHome({ status }: { status: Status }) {
   const navigate = useNavigate();
   const [approveEpic, setApproveEpic] = useState<string | null>(null);
   const [newSlice, setNewSlice] = useState<{ epicId: string | null } | null>(null);
+  const [renumber, setRenumber] = useState<string | null>(null);
   const [next] = nextActions(status);
 
   const runRoute = (action: NextAction) => {
@@ -80,7 +83,7 @@ function ProjectHome({ status }: { status: Status }) {
     if (route.type === "navigate") void navigate(route.to, route.state === undefined ? undefined : { state: route.state });
     else if (route.type === "approve-epic") setApproveEpic(route.epicId);
     else if (route.type === "new-slice") setNewSlice({ epicId: route.epicId });
-    else void refresh.run();
+    else setRenumber(route.id);
   };
 
   // Requests from GitHub issues: only for a project whose shared repository is on GitHub (the engine
@@ -95,9 +98,12 @@ function ProjectHome({ status }: { status: Status }) {
       <div className="flex flex-col gap-10">
         <header className="flex flex-col gap-4">
           <div className="flex flex-col gap-3">
-            <Heading level={1} size="display">
-              {project.name}
-            </Heading>
+            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+              <Heading level={1} size="display">
+                {project.name}
+              </Heading>
+              {project.issue ? <IssueNumber number={project.issue} /> : null}
+            </div>
             <Text size="body-lg" className="max-w-reading text-ink-muted">
               {project.vision}
             </Text>
@@ -122,7 +128,7 @@ function ProjectHome({ status }: { status: Status }) {
 
         <Notices status={status} refresh={refresh.data} refreshError={refresh.error ? describeError(refresh.error).message : null} onRetry={() => void refresh.run()} />
 
-        {next ? <CarryOn action={next} onGo={() => runRoute(next)} busy={routeFor(next).type === "refresh" && refresh.loading} /> : null}
+        {next ? <CarryOn action={next} onGo={() => runRoute(next)} /> : null}
 
         <section aria-labelledby="epics-title" className="flex flex-col gap-8">
           <Heading level={2} size="title-3" id="epics-title" className="sr-only">
@@ -165,6 +171,7 @@ function ProjectHome({ status }: { status: Status }) {
         onOpenChange={(open) => !open && setApproveEpic(null)}
       />
       <NewSliceDialog open={newSlice !== null} onOpenChange={(open) => !open && setNewSlice(null)} epics={status.epics} epicId={newSlice?.epicId} />
+      <RenumberDialog id={renumber} onOpenChange={(open) => !open && setRenumber(null)} />
     </Page>
   );
 }
@@ -180,7 +187,7 @@ function RowLink({ to, state, children }: { to: string; state?: unknown; childre
 }
 
 /** The engine's first recommended step, in its own words, with the one button that does it. */
-function CarryOn({ action, onGo, busy }: { action: NextAction; onGo: () => void; busy: boolean }) {
+function CarryOn({ action, onGo }: { action: NextAction; onGo: () => void }) {
   const route = routeFor(action);
   return (
     <section aria-labelledby="carry-on-title" className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4 rounded-md border border-line bg-surface px-6 py-5">
@@ -193,7 +200,7 @@ function CarryOn({ action, onGo, busy }: { action: NextAction; onGo: () => void;
         </Heading>
         {action.reason ? <Text tone="muted">{action.reason}</Text> : null}
       </div>
-      <Button variant="primary" size="lg" loading={busy} onClick={onGo}>
+      <Button variant="primary" size="lg" onClick={onGo}>
         {route.label}
         {route.type === "navigate" ? <ArrowRight aria-hidden="true" /> : null}
       </Button>
@@ -201,35 +208,33 @@ function CarryOn({ action, onGo, busy }: { action: NextAction; onGo: () => void;
   );
 }
 
-/** Everything the engine reports as waiting for the PM, in one notice, plus problems reaching the shared project. */
+/** Everything the engine reports as waiting for the PM, in one notice, plus problems reaching GitHub. */
 function Notices({ status, refresh, refreshError, onRetry }: { status: Status; refresh: Refresh | null; refreshError: string | null; onRetry: () => void }) {
   const notices: ReactNode[] = [];
   if (refreshError) {
     notices.push(
-      <Banner key="host" tone="danger" live="assertive" title="Could not check the shared project" actions={<Button size="sm" onClick={onRetry}>Try again</Button>}>
+      <Banner key="host" tone="danger" live="assertive" title="Could not check GitHub" actions={<Button size="sm" onClick={onRetry}>Try again</Button>}>
         {refreshError}
       </Banner>,
     );
-  } else if (refresh && !refresh.refreshed) {
+  } else if (refresh?.github.problem) {
     notices.push(
-      <Banner key="offline" tone="warning" live="polite" title={refresh.problem ?? "The shared project could not be reached"} actions={<Button size="sm" onClick={onRetry}>Try again</Button>}>
-        Your drafts are safe and you can keep working. What others have approved will appear when you are connected.
-        {refresh.problem_detail ? (
-          <Disclosure summary="Details for an engineer" className="mt-1.5 bg-transparent">
-            <span className="font-mono text-caption text-ink-muted">{refresh.problem_detail}</span>
-          </Disclosure>
-        ) : null}
+      <Banner key="offline" tone="warning" live="polite" title="GitHub could not be read" actions={<Button size="sm" onClick={onRetry}>Try again</Button>}>
+        {refresh.github.problem} Your drafts are safe and you can keep working; what is shown is from the last time GitHub was read.
       </Banner>,
     );
   }
 
   const waiting: ReactNode[] = [];
-  const conflicts = status.needs_reconciling.conflicts.length;
-  const collisions = status.needs_reconciling.collisions.length;
-  if (conflicts) waiting.push(<li key="conflicts">{conflicts === 1 ? "One item was changed" : `${conflicts} items were changed`} both in your draft and in the shared project: choose which version to keep.</li>);
-  if (collisions) waiting.push(<li key="collisions">{collisions === 1 ? "One item needs" : `${collisions} items need`} a new number, because someone else's work took it first.</li>);
-  const withdrawn = status.approvals_withdrawn ?? refresh?.approvals_withdrawn.map((artifact) => ({ artifact, reason: null, at: null })) ?? [];
-  for (const w of withdrawn) {
+  const named = (slice: Status["slices"][number]) => <span className="font-semibold">{slice.title}</span>;
+  for (const slice of status.slices) {
+    if (slice.github.changed_on_github) waiting.push(<li key={`c-${slice.slice_id}`}>{named(slice)} was changed on GitHub after you approved it: the builders will not take it until you mark it ready again.</li>);
+    if (slice.github.newer_elsewhere) waiting.push(<li key={`n-${slice.slice_id}`}>Someone else saved a newer version of {named(slice)}: choose theirs or keep yours.</li>);
+    if (slice.github.number_taken) waiting.push(<li key={`t-${slice.slice_id}`}>{named(slice)} needs a new number, because another slice on GitHub uses it.</li>);
+    if (slice.github.unfinished) waiting.push(<li key={`u-${slice.slice_id}`}>Saving {named(slice)} to GitHub stopped part way: mark it ready again to finish.</li>);
+    if (slice.github.state_label === "mach:question") waiting.push(<li key={`b-${slice.slice_id}`}>The builders have a question about {named(slice)}.</li>);
+  }
+  for (const w of status.approvals_withdrawn) {
     waiting.push(
       <li key={`w-${w.artifact}`}>
         Your approval of <span className="font-semibold">{titled(w.artifact, status)}</span> no longer holds{w.reason ? `: ${w.reason}` : "."}
@@ -240,7 +245,7 @@ function Notices({ status, refresh, refreshError, onRetry }: { status: Status; r
   for (const slice of status.slices.filter((s) => s.open_questions > 0)) {
     waiting.push(
       <li key={`q-${slice.slice_id}`}>
-        <span className="font-semibold">{slice.title}</span> has {plural(slice.open_questions, "open question")}.
+        {named(slice)} has {plural(slice.open_questions, "open question")}.
       </li>,
     );
   }
@@ -260,6 +265,13 @@ function Notices({ status, refresh, refreshError, onRetry }: { status: Status; r
       </Banner>,
     );
   }
+  if (status.github_updates_note || status.github_updates_not_made_note) {
+    notices.push(
+      <Banner key="updates" tone="info" title="Updates to GitHub">
+        {[status.github_updates_note, status.github_updates_not_made_note].filter(Boolean).join(" ")}
+      </Banner>,
+    );
+  }
 
   if (status.structural_errors.length) {
     // The engine's message names files; the PM sees the items they belong to, the exact words behind a disclosure.
@@ -268,7 +280,7 @@ function Notices({ status, refresh, refreshError, onRetry }: { status: Status; r
       <Banner key="structure" tone="danger" title="Some of your drafts no longer fit together">
         <p>
           {affected.length === 1 ? "Look at " : "Look at these: "}
-          {affected.join("; ")}. Anything that disagrees with the shared project is on the Decisions screen.
+          {affected.join("; ")}.
         </p>
         <Disclosure summary="What the check reported" className="mt-2 bg-transparent">
           <ul className="flex flex-col gap-1">
@@ -285,15 +297,10 @@ function Notices({ status, refresh, refreshError, onRetry }: { status: Status; r
   return notices.length ? <div className="flex flex-col gap-3">{notices}</div> : null;
 }
 
-/** "Slice SLICE-001, Invite a teammate" for an engine ID; workspace paths through describePath. */
+/** "Invite a teammate (SLICE-001)" for an engine ID. */
 function titled(id: string, status: Status): string {
-  if (id.includes("/")) return describePath(id, status).label;
-  const slice = status.slices.find((s) => s.slice_id === id);
-  if (slice) return `${slice.title} (${id})`;
-  const epic = status.epics.find((e) => e.epic_id === id);
-  if (epic) return `${epic.title} (${id})`;
-  if (id.startsWith("WAVE-")) return `delivery wave ${id}`;
-  return id;
+  const title = titleFor(status, id);
+  return title ? `${title} (${id})` : id;
 }
 
 function EpicBlock({ epic, status, onApprove, onAddSlice }: { epic: StatusEpicRow; status: Status; onApprove: () => void; onAddSlice: () => void }) {
@@ -309,7 +316,7 @@ function EpicBlock({ epic, status, onApprove, onAddSlice }: { epic: StatusEpicRo
         </Heading>
         <ArtifactId>{epic.epic_id}</ArtifactId>
         <EpicStatusPill status={epic.status} size="sm" />
-        <SourceBadge source={epic.source} />
+        {epic.issue ? <IssueNumber number={epic.issue} /> : null}
         {epic.status === "proposed" ? (
           <Button size="sm" className="ml-auto" onClick={onApprove}>
             Approve {epic.epic_id}
@@ -370,8 +377,9 @@ function SliceList({ slices, status }: { slices: Status["slices"]; status: Statu
                 </span>
               ) : null}
             </div>
-            <SourceBadge source={slice.source} />
             <SliceStatusPill status={slice.status} size="sm" />
+            <SliceGithubPills github={slice.github} size="sm" />
+            {slice.github.issue ? <IssueLink number={slice.github.issue} url={slice.github.url} /> : null}
             {interview ? (
               <Button size="sm" variant={current ? "secondary" : "ghost"} asChild>
                 <Link to={`/slices/${slice.slice_id}/interview`} aria-label={`${interview}: ${slice.title}`}>

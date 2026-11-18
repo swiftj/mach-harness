@@ -289,57 +289,45 @@ test("keyboard only: the lifecycle's main path", async (t) => {
       await page.getByText("ready for you to approve").waitFor({ timeout: 30000 });
     });
 
-    await step("approve the slice", async () => {
+    await step("mark the slice ready to build", async () => {
       await tabTo("Open the full specification", { back: true }).catch(() => tabTo("Open the full specification"));
       await press("Enter");
       await page.getByRole("heading", { level: 1, name: "Invite a teammate" }).waitFor();
       await settle(page);
-      await tabTo("Approve SLICE-001", { back: true }).catch(() => tabTo("Approve SLICE-001"));
+      await tabTo("Mark ready to build", { back: true }).catch(() => tabTo("Mark ready to build"));
       await press("Enter");
       await dialog().waitFor();
-      await tabTo("Approve SLICE-001", { within: "dialog" });
+      await tabTo("Mark ready to build", { within: "dialog" });
+      await press("Enter");
+      await page.getByRole("dialog", { name: "SLICE-001 is ready to build" }).waitFor({ timeout: 60000 });
+      await tabTo("Done", { within: "dialog" });
       await press("Enter");
       await dialog().waitFor({ state: "detached" });
-      await afterClose("approving a slice");
+      await afterClose("marking a slice ready");
       assert.equal(world.status().slices[0].status, "approved_for_engineering");
+      assert.equal(world.issues("mach:slice").length, 1);
     });
 
-    await step("create, approve and send a wave", async () => {
+    await step("reopen it", async () => {
+      await settle(page);
+      await tabTo("Reopen SLICE-001", { back: true }).catch(() => tabTo("Reopen SLICE-001"));
+      await press("Enter");
+      await dialog().waitFor();
+      await tabTo("Reopen SLICE-001", { within: "dialog" });
+      await press("Enter");
+      await dialog().waitFor({ state: "detached" });
+      await afterClose("reopening a slice");
+      assert.equal(world.status().slices[0].status, "interviewing");
+    });
+
+    await step("the GitHub screen from the More menu", async () => {
       await tabTo("More", { back: true });
       await press("Enter");
-      await tabTo(/^Send to engineering/);
+      await tabTo(/^On GitHub/);
       await press("Enter");
-      await page.getByRole("heading", { level: 1, name: "Delivery waves" }).waitFor();
+      await page.getByRole("heading", { level: 1, name: "On GitHub" }).waitFor();
       await settle(page);
-      await tabTo("Start a wave");
-      await press("Enter");
-      await dialog().waitFor();
-      await tabTo(/SLICE-001/, { within: "dialog" });
-      await press("Space");
-      await tabTo("Create a wave with 1 slice", { within: "dialog" });
-      await press("Enter");
-      await dialog().waitFor({ state: "detached" });
-      await afterClose("creating a wave");
-      await settle(page);
-      await tabTo("Approve WAVE-001", { back: true }).catch(() => tabTo("Approve WAVE-001"));
-      await press("Enter");
-      await dialog().waitFor();
-      await tabTo("Approve WAVE-001", { within: "dialog" });
-      await press("Enter");
-      await dialog().waitFor({ state: "detached" });
-      await afterClose("approving a wave");
-      await settle(page);
-      await tabTo("Review and send WAVE-001", { back: true }).catch(() => tabTo("Review and send WAVE-001"));
-      await press("Enter");
-      await page.getByRole("heading", { level: 1, name: "Send WAVE-001 to engineering" }).waitFor();
-      await settle(page);
-      await tabTo("Send WAVE-001 to engineering…");
-      await press("Enter");
-      await dialog().waitFor();
-      await tabTo("Send WAVE-001", { within: "dialog" });
-      await press("Enter");
-      await page.getByText("WAVE-001 was sent to engineering").waitFor({ timeout: 60000 });
-      assert.equal(world.gh().prs.length, 1);
+      await tabTo("Refresh");
     });
 
     await t.test("one Escape closes an open dialog", () => {

@@ -53,17 +53,12 @@ No Electron, no Go/WASM, no single-file HTML, no CDN: every asset is bundled and
 | `slice.resume` | `slice resume [<id>]` | yes (marks interviewing) |
 | `slice.pause` | `slice pause <id> --note` | yes |
 | `slice.check` | `slice check <id> [--ready]` | bookkeeping only; exit 1 when there are errors, **with JSON on stdout** |
-| `slice.approve` | `slice approve <id>` | yes, **approval** |
-| `slice.reopen` | `slice reopen <id>` | yes |
+| `slice.ready` | `slice ready <id>` | yes, **approval**; saves the slice as a GitHub issue (or to the ready folder) |
+| `slice.reopen` | `slice reopen <id>` | yes; takes the slice back from GitHub first |
 | `slice.renumber` | `slice renumber <id>` | yes |
-| `wave.new` | `wave new --slice...` | yes |
-| `wave.add` / `wave.remove` | `wave add\|remove <id> <slice>...` | yes |
-| `wave.approve` | `wave approve <id> [--actor]` | yes, **approval** |
-| `wave.renumber` | `wave renumber <id>` | yes |
-| `reconcile` | `reconcile <artifact> --take mine\|theirs [--field]` | yes, **a person's choice** |
-| `send.preview` | `send <wave> --dry-run` | no |
-| `send` | `send <wave>` | **publishes** |
-| `feedback` | `feedback [<wave>]` | fetches |
+| `reconcile` | `reconcile <slice> --take mine\|theirs` | yes, **a person's choice**; reads the slice's issue |
+
+Since M11 (section 8.5) this table replaces the wave, send, feedback and `slice approve` operations.
 
 To be added to the engine for the web app, read-only, each with a test:
 
@@ -142,7 +137,7 @@ These replace anything above that they contradict. They record what was built an
 ### 8.1 The API as built (`apps/studio/README.md` is the reference)
 
 - `GET /api/session` → `{project: {folder, path, name|null, project_id|null}, csrf_token, capabilities: {interview, interview_reason}, versions: {host, api, engine_install}, engine_problem}`.
-- Operation arguments use the engine's own names. The ones that are not obvious: `{identifier}` for the three renumber operations; `{wave_id, slice_ids: []}` for `wave.add` and `wave.remove`; `{slice: []}` for `wave.new`; `{outcome: []}` and `{criterion: []}` for lists; an empty `depends_on` clears it.
+- Operation arguments use the engine's own names. The ones that are not obvious: `{identifier}` for the two renumber operations; `{slice_id, take}` for `reconcile`; `{outcome: []}` and `{criterion: []}` for lists; an empty `depends_on` clears it.
 - `validate` and `slice.check` return `ok: true` with their report even when the report says something is wrong.
 - `PUT /api/drafts/spec/<slice>` takes `{markdown, name?}` (`name`, such as `invite-teammate`, only for a slice's first spec) and returns `{slice_id, kind, path, check}`. `PUT /api/drafts/intent/<slice>` takes `{markdown}`.
 - Every engine call for a project is serialised. A request that waits more than 30 seconds gets `conflict`.
@@ -171,7 +166,7 @@ Only a parsed `question` gets Yes/No actions. Any other final message is shown a
 
 Routes: `POST /api/interview {slice_id, idea?}` (the app calls `slice.new` first for a new idea; `conflict` while the slice's lock is held; `refused` for an approved slice), `GET /api/interview/<id>/events`, `POST .../reply {text}`, `POST .../interrupt` (stop this turn, keep the interview), `POST .../stop` (end it; the draft, the saved note and the session remain).
 
-The interviewer may run only `where`, `status`, `validate`, `refresh`, and on its own slice `slice resume`, `slice check`, `slice pause`, `slice set`; it may edit only its own slice's spec and why. Creating slices and epics, and every approval, send and reconcile, are the app's own operations, done by the PM.
+The interviewer may run only `where`, `status`, `validate`, `refresh`, and on its own slice `slice resume`, `slice check`, `slice pause`, `slice set`; it may edit only its own slice's spec and why. Creating slices and epics, marking a slice ready, every approval, reopening and reconciling are the app's own operations, done by the PM.
 
 The interviewer process, always: `--restricted --strict-mcp-config --permission-mode default --permission-prompts none --tools Read,Glob,Grep,Edit,Write,Bash`, allow rules generated from the interpreter and script paths resolved at start-up (absolute `Edit(//...)` rules; quoted and unquoted spellings of the script path), the skill loaded through a stable one-skill plugin at `.factory/studio/interviews/plugin/`, a minimal environment (never the host's own), the project's real path as working folder, and a spending cap and time limit per turn. A test asserts the exact argument vector. The raw stream never leaves the host.
 
@@ -192,7 +187,7 @@ The app is split by feature. Each folder under `web/apps/product-studio/src/feat
 
 A feature owner who needs something shared (a component, a client method, a type) builds it inside their own feature folder and names it in their report for promotion. Nobody edits another owner's files.
 
-Routes: `/` workspace, `/vision`, `/roadmap`, `/slices/:sliceId` specification, `/slices/:sliceId/interview`, `/inbox` decisions, `/waves` (with the send flow beneath it), `/shared` collaboration and refresh.
+Routes: `/` workspace, `/vision`, `/roadmap`, `/slices/:sliceId` specification, `/slices/:sliceId/interview`, `/inbox` decisions, `/github` where everything stands on GitHub, and refresh (section 8.5; the `/waves` and `/shared` screens were removed).
 
 ### 8.4 Requests from GitHub issues (M8)
 
@@ -209,3 +204,14 @@ From `M8_DESIGN.md` D3 and D8; `apps/studio/README.md` has the exact arguments.
 `<n>` is a whole number from 1 to 999,999,999, sent as a JSON number. `refresh` is unchanged as an operation and its report gains a `requests` block. The interviewer's allowed operations (8.2) do not change: it may not pick up, link or close a request, and sees a request only through its own slice's `slice resume` and `slice show`.
 
 Item states are the engine's: `accepted`, `not_accepted`, and the state of an issue filed by a monitoring account, which the app matches by its `handled_by_` prefix and shows with no action. In the app, issue text is a React text node in a bounded, focusable region, never markup, a link, an attribute, the document title, the address or browser storage; a request's accessible name is "Request #N". The five operations' types live in the Inbox feature (`features/inbox/requests/api.ts`) for promotion to `@mach/ui`'s `Operations` table.
+
+### 8.5 Slices as GitHub issues, no delivery waves (M11)
+
+From `M11_DESIGN.md` sections 2, 3 and 10 and `M11_STUDIO_ISSUES.md`.
+
+- The allowlist gains `slice.ready` (`{slice_id}` → `slice ready <id>`) and the slice form of `reconcile` (`{slice_id, take}` → `reconcile <slice> --take mine|theirs`); both, and `slice.reopen`, may reach GitHub and get the longer time limit. It loses `slice.approve`, every `wave.*`, `send`, `send.preview` and `feedback`. The engine keeps those commands, and `acceptance record|show`, only for the Factory's tests; the host reaches none of them (`apps/studio/internal/engine/ops_test.go`, `internal/server/m7_adversarial_test.go`, `web/e2e/suites/conformance.test.mjs`).
+- "Mark ready to build" is the approval act, confirmed in a dialog that says it saves the slice to the project on GitHub under its epic, tells the builders it is ready, and records that the product manager approved exactly this text. Its result is shown as the engine returned it: the issue number linked to the engine's `url`, or the folder, the engine's reason and its two `ways_on` lines as written.
+- A slice's place with the builders is `slices[].github` (`status`, `slice show`): `state_label` (ready to build, being built, question from the builders, shipped) and `changed_on_github`, `newer_elsewhere`, `number_taken`, `unfinished`, `saved: "folder"`. Each is shown as a word and a shape. Projects and epics show their `issue` number; the engine reports no address for them.
+- "Carry on" maps the engine's `next_actions` kinds `define_project`, `add_epic`, `approve_epic`, `start_slice`, `continue_interview`, `mark_ready`, `finish_ready`, `reconcile` and `renumber_slice`. An approved slice is offered "Mark ready again" only when `next_actions` names it with `mark_ready` or `finish_ready`.
+- The file-level conflict and collision cards are gone with the shared product files. `status` and `refresh` still carry `needs_reconciling` and `source` from the engine's leftover sync; the app does not show them.
+

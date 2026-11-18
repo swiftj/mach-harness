@@ -6,8 +6,8 @@
 export const devState = {
   /** Set when the scripted interview's write-up turn reports draft_changed. */
   writtenUp: false,
-  /** Set after a successful approval in fixture mode; cleared by reopen. */
-  approved: new Set<string>(),
+  /** Set after a reopen in fixture mode; cleared by marking the slice ready again. */
+  reopened: new Set<string>(),
 };
 
 /** Query parameters before the hash: http://127.0.0.1:5173/?show=errors#/slices/SLICE-002 */

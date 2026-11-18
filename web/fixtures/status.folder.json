@@ -1,0 +1,89 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Teams work together.",
+      "outcomes": [
+        "Teams can work together"
+      ],
+      "source": "draft",
+      "issue": null
+    },
+    "approvals_withdrawn": [],
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "Team membership",
+        "status": "approved",
+        "revision": 2,
+        "acceptance_criteria": [
+          "Only invited people can join"
+        ],
+        "source": "draft",
+        "issue": null
+      }
+    ],
+    "slices": [
+      {
+        "slice_id": "SLICE-001",
+        "title": "Invite a teammate",
+        "epic_id": "EPIC-001",
+        "status": "approved_for_engineering",
+        "revision": 2,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-001-invite-teammate.md",
+        "has_intent": true,
+        "source": "draft",
+        "resume_note": null,
+        "dependencies": [],
+        "editable": false,
+        "github": {
+          "saved": "folder",
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": 1,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "shipped_issues": []
+        }
+      }
+    ],
+    "github": {
+      "repository": null,
+      "form": null,
+      "last_read": null
+    },
+    "current_slice": "SLICE-001",
+    "needs_reconciling": {
+      "conflicts": [],
+      "collisions": [],
+      "details": {}
+    },
+    "shared_project": "the shared project",
+    "last_refreshed": null,
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Start a new slice (slice new --epic EPIC-NNN --title \"...\")."
+    ],
+    "next_actions": [
+      {
+        "kind": "start_slice",
+        "target": null,
+        "title": "Start a new slice",
+        "reason": "No slice is being defined right now.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

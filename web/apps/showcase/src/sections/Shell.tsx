@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Send } from "lucide-react";
+import { CircleCheck } from "lucide-react";
 import {
   Button,
   ConnectionIndicator,
@@ -22,8 +22,11 @@ const fixtureTransport: Transport = async ({ path }) => {
   if (path === "/api/session") {
     return { status: 200, json: { ok: true, data: { project: { name: "Team Space", folder: "team-space" }, csrf_token: "showcase", capabilities: { interview: false, interview_reason: "Showcase" }, versions: {} } } };
   }
-  if (path === "/api/ops/status") return { status: 200, json: { ok: true, data: fx.statusConflicts } };
-  if (path === "/api/ops/send") return { status: 200, json: { ok: false, error: { kind: "refused", message: runs.sendRefusedOffline.refused } } };
+  if (path === "/api/ops/status") return { status: 200, json: { ok: true, data: fx.statusSliceReady } };
+  if (path === "/api/ops/slice.ready") {
+    const refused = runs.sliceReadyRefusedEpic;
+    return { status: 200, json: { ok: false, error: { kind: "refused", message: refused.refused, hint: refused.hint } } };
+  }
   return { status: 404, json: { ok: false, error: { kind: "invalid", message: `No such operation: ${path}` } } };
 };
 
@@ -31,7 +34,7 @@ export function ShellSection() {
   const [client] = useState(() => createClient({ transport: fixtureTransport }));
   const [status, setStatus] = useState<Status | null>(null);
   const [error, setError] = useState<MachApiError | null>(null);
-  const [sending, setSending] = useState(false);
+  const [marking, setMarking] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -44,15 +47,15 @@ export function ShellSection() {
     };
   }, [client]);
 
-  const send = async () => {
-    setSending(true);
+  const markReady = async () => {
+    setMarking(true);
     setError(null);
     try {
-      await client.op("send", { wave_id: "WAVE-001" });
+      await client.op("slice.ready", { slice_id: "SLICE-001" });
     } catch (e) {
       if (isMachApiError(e)) setError(e);
     } finally {
-      setSending(false);
+      setMarking(false);
     }
   };
 
@@ -64,11 +67,11 @@ export function ShellSection() {
     >
       <Specimen
         title="Connection indicator"
-        source="status.published.json, refresh.offline.json"
+        source="status.rich.json, refresh.on-github.json, refresh.offline.json"
         note="Two links: the browser to the local host, and the workspace to the shared project. Icon and words for each; the popover explains."
       >
         <div className="grid grid-cols-2 gap-x-8 gap-y-4">
-          <ConnectionIndicator host="online" shared={{ reachable: true, lastRefreshed: fx.statusPublished.last_refreshed, description: fx.statusPublished.shared_project }} />
+          <ConnectionIndicator host="online" shared={{ reachable: true, lastRefreshed: fx.statusRich.last_refreshed, description: fx.refreshOnGithub.shared_project }} />
           <ConnectionIndicator host="connecting" />
           <ConnectionIndicator
             host="online"
@@ -81,7 +84,7 @@ export function ShellSection() {
 
       <Specimen
         title="The client, running against fixtures"
-        source="status.conflicts.json, send.refused-offline.json"
+        source="status.slice-ready.json, slice.ready.refused-epic.json"
         note="createClient() with a fixture transport. In the apps the transport is fetch against the host."
       >
         <div className="flex flex-col gap-5">
@@ -99,21 +102,21 @@ export function ShellSection() {
             <LoadingState label="Reading your workspace" />
           )}
           <div className="flex items-center gap-3">
-            <Button onClick={send} loading={sending}>
-              <Send aria-hidden="true" />
-              Send WAVE-001
+            <Button variant="primary" onClick={markReady} loading={marking}>
+              <CircleCheck aria-hidden="true" />
+              Mark SLICE-001 ready to build
             </Button>
             <Text as="span" size="body-sm" tone="muted">
               The fixture answers with the engine's refusal.
             </Text>
           </div>
-          {error ? <ErrorState title={describeError(error).title} message={describeError(error).message} /> : null}
+          {error ? <ErrorState title="SLICE-001 was not marked ready" message={error.kind === "refused" ? error.message : describeError(error).message} hint={error.hint} /> : null}
           <pre className="overflow-x-auto rounded-md bg-surface-sunken p-4 font-mono text-mono text-ink">
 {`const client = createClient();          // fetch, same origin
 await client.session();                 // stores the CSRF token
 const status = await client.op("status", {});
-await client.op("slice.approve", { slice_id: "SLICE-001" });
-// failure: MachApiError { kind: "refused", message: "SLICE-001 cannot be approved yet: ..." }`}
+await client.op("slice.ready", { slice_id: "SLICE-001" });
+// failure: MachApiError { kind: "refused", message: "SLICE-001 cannot be marked ready yet: ...", hint }`}
           </pre>
         </div>
       </Specimen>
