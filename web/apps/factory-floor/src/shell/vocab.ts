@@ -19,7 +19,7 @@ import { ENTITY_KINDS, gateNameWords, MODELS, type ActorId, type AgentRole, type
 // ---------------------------------------------------------------- time
 
 // The time words live in a module of their own (no grammar import), so plain tests can read them.
-export { setTimeBase, getTimeBase, utcClock, utcDate, timecode, clockAt, duration, spokenTime, timeCodeText, isMoment, type TimeBase } from "./time";
+export { setTimeBase, getTimeBase, utcClock, utcDate, timecode, duration, isMoment, type TimeBase } from "./time";
 
 // ---------------------------------------------------------------- grammar mapping
 
@@ -162,7 +162,7 @@ export function gateState(state: GateState["state"]): FactoryState {
   return ({ open: "active", passed: "succeeded", failed: "failed", waiting: "human", skipped: "idle", overridden: "succeeded" } as const)[state];
 }
 
-// One source of truth for a gate's state in words, shared with the Atlas and the Blueprint (D10).
+// One source of truth for a gate's state in words, shared with the Atlas (D10).
 export { GATE_STATE_WORDS, gateStateWords } from "../sim";
 
 /** A gate's name: its kind's words, or a recorded gate's own lifecycle name ("Frozen tests"). */

@@ -15,7 +15,7 @@ const ZONES_X = "ABCDEFGHJK";
 /** `titled`: the title block and key are drawn at the establishing (fit) view only, where they sit in the sheet's empty corners. */
 export const Sheet = memo(function Sheet({ width, height, lod, titled }: { width: number; height: number; lod: Lod; titled: boolean }) {
   // The title block names what is known so far, and where it comes from (live, replay, simulation).
-  const title = useSceneStore((s) => titleOf(s.log, s.playhead, s.connection !== null && s.connection.state !== "live" && s.connection.state !== "connecting" ? s.connection.state : null));
+  const title = useSceneStore((s) => titleOf(s.log, s.now, s.connection !== null && s.connection.state !== "live" && s.connection.state !== "connecting" ? s.connection.state : null));
   const live = useSceneStore((s) => s.source !== "simulation");
   if (width < 200 || height < 200) return null;
   const o = 8;

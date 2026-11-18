@@ -1,8 +1,8 @@
 // M6.4: the evidence player (docs/mach-next/M6_4_EVIDENCE_PLAYER.md sections 3, 4 and 6). The client's
 // new calls (a cell's evidence, served text with its headers, refusals as reason codes, one retry on
 // 503), the player's model (grouping by run, the failed filter, stepping across files and checks, every
-// withheld state and its words, the integrity banner, what is requested and when, media off, the replay
-// cut-off, the simulation's own content), the scene-id to catalog-id mapping, and the address.
+// withheld state and its words, the integrity banner, what is requested and when, media off, the
+// simulation's own content), the scene-id to catalog-id mapping, and the address.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -62,7 +62,7 @@ function reply({ media = true } = {}) {
   };
 }
 
-const model = (opts = {}) => M.buildLiveModel(live.readCellEvidence(reply(opts), T), { source: "live", heldAt: null, ...opts });
+const model = (opts = {}) => M.buildLiveModel(live.readCellEvidence(reply(opts), T), { ...opts });
 
 // ---------------------------------------------------------------- the client
 
@@ -236,7 +236,7 @@ test("where the player starts: a check id from the address (newest run), a file 
   assert.deepEqual(M.initialSelection(m, { artifactId: id(2) }), { check: `1|${T}/verify#1/AC-01`, file: id(2) });
   assert.deepEqual(M.initialSelection(m, { path: "evidence/huge.log" }), { check: `1|${T}/verify#1/R1`, file: id(5) });
   assert.deepEqual(M.initialSelection(m, { check: "NOPE" }), M.initialSelection(m), "an unknown check: the first");
-  assert.deepEqual(M.initialSelection(M.buildLiveModel(live.readCellEvidence({ ticket_id: T, checks: [] }, T), { source: "live", heldAt: null })), M.NO_SELECTION);
+  assert.deepEqual(M.initialSelection(M.buildLiveModel(live.readCellEvidence({ ticket_id: T, checks: [] }, T))), M.NO_SELECTION);
 });
 
 // ---------------------------------------------------------------- states, words, integrity
@@ -341,45 +341,27 @@ test("media off: images and video are listed with their facts and never requeste
   assert.equal(M.contentRequest(m, { check: text[0].key, file: text[1].key }).kind, "text");
   // The setting from the session when the reply does not say; off when neither says (fail closed).
   const quiet = { ...reply(), settings: undefined };
-  assert.equal(M.buildLiveModel(live.readCellEvidence(quiet, T), { source: "live", heldAt: null, sessionMedia: true }).mediaEnabled, true);
-  assert.equal(M.buildLiveModel(live.readCellEvidence(quiet, T), { source: "live", heldAt: null }).mediaEnabled, false);
+  assert.equal(M.buildLiveModel(live.readCellEvidence(quiet, T), { sessionMedia: true }).mediaEnabled, true);
+  assert.equal(M.buildLiveModel(live.readCellEvidence(quiet, T)).mediaEnabled, false);
   // Even if a reply said "media" for one file while the setting is off, nothing is requested.
   const odd = reply({ media: false });
   odd.checks[0].evidence[0].content_access = "media";
-  const om = M.buildLiveModel(live.readCellEvidence(odd, T), { source: "live", heldAt: null });
+  const om = M.buildLiveModel(live.readCellEvidence(odd, T));
   assert.equal(M.contentRequest(om, M.initialSelection(om, { artifactId: id(1) })).kind, "none");
 });
 
-// ---------------------------------------------------------------- replay and archive
-
-test("replay: checks recorded after the playhead are not shown (a check with no time neither), unless what happened after is revealed", () => {
-  const held = M.buildLiveModel(live.readCellEvidence(reply(), T), { source: "replay", heldAt: T0 + 30_000 });
-  assert.deepEqual(held.runs.map((r) => r.round), [1], "round 2 was after the playhead");
-  assert.equal(held.hiddenAfter, 2);
-  const noTime = reply();
-  noTime.checks[0].at = null;
-  assert.deepEqual(M.listedChecks(M.buildLiveModel(live.readCellEvidence(noTime, T), { source: "replay", heldAt: T0 + 30_000 })).map((c) => c.id), ["R1", "H-1"]);
-  const revealed = M.buildLiveModel(live.readCellEvidence(reply(), T), { source: "replay", heldAt: null });
-  assert.equal(revealed.runs.length, 2);
-  assert.equal(M.shownAt(5, 5), true);
-  assert.equal(M.shownAt(6, 5), false);
-  assert.equal(M.shownAt(null, null), true);
-  // The cut-off is the one shared playhead rule (asOfPlayhead: behind the live edge and not revealed).
-  const player = readFileSync(new URL("../src/evidence/EvidencePlayer.tsx", import.meta.url), "utf8");
-  assert.match(player, /const a = asOfPlayhead\(s\);/);
-  assert.match(player, /store\.setTimelineView\(\{ revealAfter: on \}\)/, "the same 'Show what happened after this moment' as the Timeline");
-});
+// ---------------------------------------------------------------- the archive
 
 test("archived cells work as live ones and say they are read from the archive", () => {
   const r = reply();
   for (const a of r.artifacts) a.origin = "archive";
-  const m = M.buildLiveModel(live.readCellEvidence(r, T), { source: "live", heldAt: null });
+  const m = M.buildLiveModel(live.readCellEvidence(r, T));
   assert.equal(m.readFrom, "archive");
   assert.equal(M.listedChecks(m)[0].files[0].origin, "archive");
   assert.equal(M.contentRequest(m, M.initialSelection(m)).kind, "image");
   assert.match(M.ARCHIVE_WORDS, /archive/);
   r.artifacts[0].origin = "cell";
-  assert.equal(M.buildLiveModel(live.readCellEvidence(r, T), { source: "live", heldAt: null }).readFrom, "both");
+  assert.equal(M.buildLiveModel(live.readCellEvidence(r, T)).readFrom, "both");
 });
 
 // ---------------------------------------------------------------- the simulation
@@ -409,33 +391,14 @@ test("simulation: the scenario's checks with content the app makes itself, label
   const json = M.simulatedText({ ticket: "LOCAL-032", checkId: "R1", kind: "matrix rule", result: "pass", round: 1, note: "one charge", path: "evidence/r1-charged-once.json" });
   assert.equal(JSON.parse(json).simulation, "sample written by the Factory Floor; not a capture");
   assert.match(M.simulatedText({ ticket: "T", checkId: "X", kind: null, result: null, round: null, note: null, path: "evidence/test.log" }), /^# Simulation: sample written by the Factory Floor; not a capture/);
-  // Held at an earlier moment: the scene there holds fewer checks, and nothing later.
-  const early = M.buildSimModel(log.sceneAt(sim.SCENARIO.duration / 3).cells["LOCAL-031"] ?? cell, { heldAt: sim.SCENARIO.duration / 3 });
+  // At an earlier moment: the scene there holds fewer checks, and nothing later.
+  const early = M.buildSimModel(log.sceneAt(sim.SCENARIO.duration / 3).cells["LOCAL-031"] ?? cell);
   for (const c of M.listedChecks(early)) assert.ok(c.atMs <= sim.SCENARIO.duration / 3);
 });
 
 // ---------------------------------------------------------------- scene ids and catalog ids
 
-test("a Timeline evidence reference's scene id maps to the observer's catalog id, as the inspector's free-text label maps it", () => {
-  const entries = live.readCellEvidence(reply(), T).artifacts;
-  const scene = (path, sha = null) => ({ id: `${T}:${path}${sha ? `@${sha}` : ""}`, ticketId: T, path, sha });
-  assert.equal(M.catalogIdOf(entries, scene("evidence/r1.json")), id(3));
-  // Two versions of the same path: the one whose hash is the scene's.
-  assert.equal(M.catalogIdOf(entries, scene("evidence/ac-01.png", "s7")), id(7));
-  assert.equal(M.catalogIdOf(entries, scene("evidence/ac-01.png", "s1")), id(1));
-  assert.equal(M.catalogIdOf(entries, scene("evidence/nothing.txt")), null);
-  // The live cell's file over the archive's when nothing else tells them apart.
-  const two = [
-    { ...entries[2], id: id(20), origin: "archive" },
-    { ...entries[2], id: id(21), origin: "cell" },
-  ];
-  assert.equal(M.catalogIdOf(two, scene("evidence/r1.json")), id(21));
-  // The exact ref first.
-  const exact = [{ ...entries[2], id: id(30), ref: `artifact:${T}:evidence/r1.json@abc` }, { ...entries[2], id: id(31), ref: `artifact:${T}:evidence/r1.json` }];
-  assert.equal(M.catalogIdOf(exact, { id: `${T}:evidence/r1.json@abc`, ticketId: T, path: "evidence/r1.json" }), id(30));
-});
-
-test("the check that cites a file, newest round first (the artifact inspector and the Timeline's references open the player there)", () => {
+test("the check that cites a file, newest round first (the artifact inspector opens the player there)", () => {
   const cell = { ticketId: T, verifications: [
     { round: 1, checks: [{ targetId: "AC-01", evidence: [`${T}:evidence/ac-01.png`] }] },
     { round: 2, checks: [{ targetId: "AC-01", evidence: ["evidence/ac-01.png"] }, { targetId: "R1", evidence: ["evidence/r1.json"] }] },
@@ -450,16 +413,16 @@ test("the check that cites a file, newest round first (the artifact inspector an
 // ---------------------------------------------------------------- the address and the store
 
 test("the address carries only the ticket and the check; a path, a file name or prose is never accepted or written", () => {
-  const w = { route: "atlas", sel: null, at: null, win: null, group: "product" };
-  assert.equal(H.formatHash({ ...w, evidence: { ticket: T, check: "AC-01" } }), `#atlas?evidence=${T}&check=AC-01`);
-  assert.equal(H.formatHash({ ...w, evidence: { ticket: T, check: null } }), `#atlas?evidence=${T}`);
-  assert.equal(H.formatHash(w), "#atlas", "closed: nothing written");
-  assert.equal(H.formatHash({ ...w, evidence: { ticket: "evidence/ac-01.png", check: "AC-01" } }), "#atlas", "a path is not a ticket");
-  assert.equal(H.formatHash({ ...w, evidence: { ticket: T, check: "a file.png" } }), `#atlas?evidence=${T}`);
-  assert.deepEqual(H.parseHash(`#timeline?evidence=${T}&check=R1`).evidence, { ticket: T, check: "R1" });
-  assert.equal(H.parseHash("#atlas?evidence=..%2F..%2Fetc").evidence, null);
-  assert.deepEqual(H.parseHash(`#atlas?evidence=${T}&check=%3Cb%3E`).evidence, { ticket: T, check: null });
-  for (const route of ["atlas", "blueprint", "timeline", "analytics"]) {
+  const w = { route: "floor", sel: null };
+  assert.equal(H.formatHash({ ...w, evidence: { ticket: T, check: "AC-01" } }), `#floor?evidence=${T}&check=AC-01`);
+  assert.equal(H.formatHash({ ...w, evidence: { ticket: T, check: null } }), `#floor?evidence=${T}`);
+  assert.equal(H.formatHash(w), "#floor", "closed: nothing written");
+  assert.equal(H.formatHash({ ...w, evidence: { ticket: "evidence/ac-01.png", check: "AC-01" } }), "#floor", "a path is not a ticket");
+  assert.equal(H.formatHash({ ...w, evidence: { ticket: T, check: "a file.png" } }), `#floor?evidence=${T}`);
+  assert.deepEqual(H.parseHash(`#line?evidence=${T}&check=R1`).evidence, { ticket: T, check: "R1" });
+  assert.equal(H.parseHash("#floor?evidence=..%2F..%2Fetc").evidence, null);
+  assert.deepEqual(H.parseHash(`#floor?evidence=${T}&check=%3Cb%3E`).evidence, { ticket: T, check: null });
+  for (const route of ["line", "floor", "analytics"]) {
     const text = H.formatHash({ ...w, route, evidence: { ticket: T, check: "AC-02" } });
     assert.deepEqual(H.parseHash(text).evidence, { ticket: T, check: "AC-02" }, route);
   }
@@ -467,34 +430,31 @@ test("the address carries only the ticket and the check; a path, a file name or 
 
 test("the store opens the player for identifiers only; the file to start at stays in memory, never in the address", async () => {
   const { createHashSync } = await import("../src/shell/source/hashSync.ts");
-  const store = createSceneStore({ fixture: sim.SCENARIO, clock: manualClock(0) });
+  const store = createSceneStore({ fixture: sim.SCENARIO, clock: manualClock(0), workspace: "floor" });
   store.openEvidence("not a ticket/../x");
   assert.equal(store.getState().evidence, null);
-  let hash = "#atlas";
+  let hash = "#floor";
   const host = {
     getHash: () => hash,
     replaceHash: (h) => (hash = h),
     onHashChange: () => () => {},
-    onInteraction: () => () => {},
-    setTimeout: (fn) => (fn(), 0),
-    clearTimeout: () => {},
   };
-  const sync = createHashSync(store, host, 0);
+  const sync = createHashSync(store, host);
   store.openEvidence("LOCAL-031", { check: "AC-01", start: { sceneArtifactId: "LOCAL-031:evidence/ac-01-overdue-filter.png", path: "evidence/ac-01-overdue-filter.png" } });
-  assert.equal(hash, "#atlas?evidence=LOCAL-031&check=AC-01");
+  assert.equal(hash, "#floor?evidence=LOCAL-031&check=AC-01");
   assert.doesNotMatch(hash, /png|evidence%2F|overdue/);
   store.setEvidenceCheck("R4");
-  assert.equal(hash, "#atlas?evidence=LOCAL-031&check=R4");
+  assert.equal(hash, "#floor?evidence=LOCAL-031&check=R4");
   store.setEvidenceCheck("evidence/x.png");
   assert.equal(store.getState().evidence.check, null);
   store.closeEvidence();
-  assert.equal(hash, "#atlas");
+  assert.equal(hash, "#floor");
   sync.dispose();
   // Opened from the address (Back to it), and closed by an address without it.
   const { applyHash } = await import("../src/shell/source/hashSync.ts");
-  applyHash(store, H.parseHash("#atlas?evidence=LOCAL-032&check=R2"));
+  applyHash(store, H.parseHash("#floor?evidence=LOCAL-032&check=R2"));
   assert.deepEqual(store.getState().evidence, { ticket: "LOCAL-032", check: "R2", start: null });
-  applyHash(store, H.parseHash("#atlas"));
+  applyHash(store, H.parseHash("#floor"));
   assert.equal(store.getState().evidence, null);
   store.dispose?.();
 });

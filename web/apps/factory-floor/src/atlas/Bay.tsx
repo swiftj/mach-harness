@@ -42,7 +42,7 @@ import {
 import { AgentHead, FloorLettering, PlanDimension, StationSymbol, TaskBoard as TaskBoardMark, cellAnatomy, cellStages, factoryTokens, lampPool, markLook, useFactoryIds, type MarkState, type StationKind, type TaskCell } from "@mach/ui";
 import { BELT_PHASES, activityLabel, activityOf, capacityWaitOf, type CapacityWaitState, type GateRefusal, type ActivityState, agentTimingAt, isKnown, ref, visitTimingAt, type CellState, type EntityRef, type ExecutionState, type GateState, type SceneLog, type StationId } from "../sim";
 import { useScene, useSceneStore } from "../scene";
-import { Hit, isDimmed, useAtlas, useHighlight, usePlayheadKeyed } from "./context";
+import { Hit, isDimmed, useAtlas, useHighlight, useNowKeyed } from "./context";
 import { activityMark, activityWord, visitMark, visitWord, animating, anim, callsOf, countedToolsOf, fmtElapsed, idOf, secondOf, lampLevel, gateView, gateWord, latestGate, placeAgents, q, toolFamily, uiArtifact, uiRole, uiTier, type PadName, type PlacedAgent, type ViewMode } from "./derive";
 import { FLOOR_Z, PLATE_Z, boxAt, type BaySlot, type PlantLayout } from "./layout";
 import { Card } from "./reduced";
@@ -104,7 +104,7 @@ export interface BayProps {
   summary?: boolean;
 }
 
-/** A bay subscribes to its own cell and the playhead; other bays do not re-render with it. */
+/** A bay subscribes to its own cell and the moment shown; other bays do not re-render with it. */
 export const Bay = memo(function Bay({ bay, visible, summary = false }: BayProps) {
   const cell = useScene((s) => s.cells[bay.ticketId]);
   const slice = useScene((s) => s.slices[bay.sliceId]);
@@ -126,8 +126,8 @@ function SummaryBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; vis
   const highlight = useHighlight();
   const ids = useFactoryIds();
   const ticket = cell.ticketId;
-  const t = usePlayheadKeyed((s) => {
-    const now = s.playhead;
+  const t = useNowKeyed((s) => {
+    const now = s.now;
     if (animating(s.log, now, (e) => idOf(e, "ticket_id") === ticket && (e.event.type === "agent.started" || e.event.type === "agent.finished" || e.event.type === "station.entered" || e.event.type === "station.exited" || e.event.type === "station.left"))) return now;
     // Settled: re-render only when an agent comes or goes or the lamp changes (no elapsed is lettered here).
     const c = s.log.sceneAt(now).cells[ticket];
@@ -309,9 +309,9 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
   const { lod, layout: L, mode } = useAtlas();
   const highlight = useHighlight();
   const ticket = cell.ticketId;
-  // Re-render with the playhead only while one of this cell's animations runs.
-  const t = usePlayheadKeyed((s) => {
-    const now = s.playhead;
+  // Re-render with the moment shown only while one of this cell's animations runs.
+  const t = useNowKeyed((s) => {
+    const now = s.now;
     if (animating(s.log, now, (e) => idOf(e, "ticket_id") === ticket)) return now;
     const c = s.log.sceneAt(now).cells[ticket];
     if (!c) return "none";
@@ -319,7 +319,7 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
     // agent or of the current station passes another second. The ticks change once a minute, but the
     // elapsed time is also lettered and in the accessible names ("Build: Working, for 6 min 56 s"),
     // so it is re-rendered at every second it shows; otherwise the name would depend on how the
-    // playhead got here (findings D8). Keyed on what is shown, so this is still a pure function of t.
+    // moment shown got here (findings D8). Keyed on what is shown, so this is still a pure function of t.
     const visit = c.station ? c.visits[c.visits.length - 1] : undefined;
     let k = visit && visit.leftAt === null ? String(secondOf(visitTimingAt(visit, now).elapsed)) : "-";
     for (const id of c.activeAgentIds) k += `,${secondOf(agentTimingAt(c.agents[id]!, now).elapsed)}`;

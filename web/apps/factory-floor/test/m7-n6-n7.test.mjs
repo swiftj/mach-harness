@@ -4,10 +4,6 @@ import assert from "node:assert/strict";
 import { sim, live } from "./_load.mjs";
 import { ev, finalize } from "./fixtures/v3.mjs";
 
-const words = await import("../src/timeline/render/words.ts");
-const inv = await import("../src/timeline/investigate/model.ts");
-const parse = await import("../src/timeline/data/parse.ts");
-
 function run() {
   let seq = 0;
   const t0 = Date.UTC(2026, 10, 15, 1, 0, 0, 999);
@@ -34,18 +30,6 @@ test("N6: a killed execution that did not move the ticket reads killed, with its
   const a = sim.activityOf(s, sim.ref.execution("x207c3682ca00"));
   assert.equal(a.label, "Killed");
   assert.match(a.reason, /exit -9/);
-  const span = { kind: "execution", attrs: { state: "killed", exitCode: -9 }, end: { reason: "interrupted", basis: "recorded", at: 2, notBefore: null, notAfter: 2 }, duration: { ms: 1, maxMs: 1 } };
-  assert.equal(words.stoppedState(span), "killed");
-  assert.match(words.stoppedWords(span, "killed"), /^killed \(exit -9\)/);
-  assert.equal(inv.stopWord(span), "killed (exit -9)");
-  assert.equal(inv.stopWord({ attrs: {} }), "interrupted");
-  assert.equal(parse.readAttrs({ state: "killed", exit_code: -9 }).exitCode, -9);
-});
-
-test("N6: a released claim's span ends with its own reason", () => {
-  const sp = parse.readSpan({ span_id: "claim:execution:xa1b6c30c0e44", kind: "claim", entity: "execution:xa1b6c30c0e44", start: { at: "2026-11-15T01:00:00.999Z", basis: "recorded" }, end: { at: "2026-11-15T01:00:00.999Z", basis: "inferred", reason: "released" }, duration: { basis: "bounded" }, attrs: {} });
-  assert.ok(sp);
-  assert.equal(sp.end.reason, "released");
 });
 
 test("N7: an abandoned ticket waits on nobody and says what it was reissued as", () => {

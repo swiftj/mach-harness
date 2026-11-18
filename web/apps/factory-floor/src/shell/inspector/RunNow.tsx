@@ -1,5 +1,5 @@
 /**
- * The inspector with nothing selected: the run at the playhead. What chapter this is (simulation) or
+ * The inspector with nothing selected: the run now. What chapter this is (simulation) or
  * the latest landmark (real history), the latest significant moment, the connection (live), what is
  * working now, who is waiting and why, and the counts so far, from received facts only.
  */
@@ -11,7 +11,7 @@ import { indexFor, lastAtOrBefore, quotingKindOf } from "../history";
 import { ConnectionFacts } from "../SourceBadge";
 import { ACTOR_WORDS, schedulerLook, stageLook, timecode } from "../vocab";
 import { mayBeUnderReported, recordedCost } from "./anatomies";
-import { Facts, JumpButton, NotRecorded, RefLink, RefList, Section } from "./parts";
+import { Facts, NotRecorded, RefLink, RefList, Section } from "./parts";
 import { FreeText, FreeTextLabel, KindWords } from "./FreeText";
 import { sliceTitle } from "./words";
 
@@ -19,8 +19,8 @@ export function RunNow() {
   const index = useSceneStore(indexFor);
   const source = useSceneStore((s) => s.source);
   const connection = useSceneStore((s) => s.connection);
-  const chapter = useSceneStore((s) => lastAtOrBefore(indexFor(s).landmarks, s.playhead));
-  const moment = useSceneStore((s) => lastAtOrBefore(indexFor(s).moments, s.playhead));
+  const chapter = useSceneStore((s) => lastAtOrBefore(indexFor(s).landmarks, s.now));
+  const moment = useSceneStore((s) => lastAtOrBefore(indexFor(s).moments, s.now));
   const log = useSceneStore((s) => s.log);
   // A key per cell (stage and how many agents work): the list re-renders when one of those changes,
   // not on every tool call.
@@ -40,7 +40,7 @@ export function RunNow() {
   return (
     <div>
       <div className="px-5 pb-4 pt-5">
-        <p className="text-caption text-ink-subtle">{source === "simulation" ? "Nothing selected. The run at the playhead." : "Nothing selected. What has been received, as of the playhead."}</p>
+        <p className="text-caption text-ink-subtle">{source === "simulation" ? "Nothing selected. The run now." : "Nothing selected. What has been received so far."}</p>
         {chapter && index.storyboard ? (
           <>
             <p className="mt-3 text-caption text-ink-subtle tabular">
@@ -57,9 +57,6 @@ export function RunNow() {
             <h2 className="mt-0.5 font-sans text-title-3 font-bold text-ink">
               <KindWords kind={chapter.eventType} text={chapter.title} />
             </h2>
-            <div className="mt-1">
-              <JumpButton eventId={chapter.id} label="Go to event" />
-            </div>
           </>
         ) : null}
         {moment && moment.id !== chapter?.id ? (
@@ -68,9 +65,6 @@ export function RunNow() {
             <p className="mt-0.5 text-body-sm text-ink">
               <KindWords kind={source === "simulation" ? null : quotingKindOf(log, moment)} text={moment.text} />
             </p>
-            <div className="mt-1">
-              <JumpButton eventId={moment.id} label={source === "simulation" ? "Go to this moment" : "Go to event"} />
-            </div>
           </div>
         ) : null}
         {!chapter && !moment && source !== "simulation" ? <p className="mt-3 text-body-sm text-ink-muted">No significant moment has been received yet.</p> : null}
@@ -202,7 +196,7 @@ function ReceivedCounts() {
     <Section title="So far">
       <Facts
         facts={[
-          ["Events", `${events.toLocaleString("en-GB")} received up to the playhead`],
+          ["Events", `${events.toLocaleString("en-GB")} received so far`],
           ["Executions", `${counters.executionsRunning} running, ${executionCount} seen`],
           ["Agents", `${counters.agentsActive} working, ${counters.agentsStarted} started${unobserved ? `; not observed in ${unobserved} of ${executionCount} execution${executionCount === 1 ? "" : "s"}` : ""}`],
           ["Tool calls", countOnly ? `${perCall.toLocaleString("en-GB")} observed one by one; ${counted.toLocaleString("en-GB")} reported as counts by ${countOnly} workflow agent${countOnly === 1 ? "" : "s"}` : `${perCall.toLocaleString("en-GB")} observed`],

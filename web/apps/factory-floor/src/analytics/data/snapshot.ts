@@ -11,58 +11,21 @@
  * Replies are kept in a cache keyed by (cursor, route, query), shared by every snapshot of one
  * provider (`snapshotCache`), so going back to a view at the same cursor reads nothing again.
  * Requests are abortable: `snapshot.abort()` cancels every request of the session.
- *
- * "As of" (a replay at the playhead): every query asks `as_of_ms` = the playhead, beside the view's
- * cursor. The observer answers flow, contributors and runs exactly (nothing recorded later), and
- * metrics and insights by whole UTC days before the playhead (`asOf.exact` false, `asOf.rule` its
- * words, which the UI shows). An observer without `as_of_ms` answers 400. Counted figures (metrics,
- * flow, insights) are then not available as of the playhead (M6.6, I-32): that observer could only cut
- * the window at the end of the playhead's day, which may include later outcomes, so the snapshot
- * answers `unsupported` with `AS_OF_UNSUPPORTED` rather than widening. Lists (runs, executions,
- * contributors) fall back to `to_ms` = the playhead (an earlier `to_ms` is kept) and are cut here at
- * the playhead: items placed after it, or with no recorded time, are dropped and counted
- * (`after_as_of`), never shown.
  */
 import { parseCursor } from "../../live/observer";
 import type { AnalyticsData, AnalyticsQuery, AnalyticsResult, AnalyticsRoute, CallOptions, ContributorsQuery, MetricsQuery, RunsQuery } from "./provider";
 import { queryKey } from "./provider";
 import type { ContributorsReply, ExecutionsReply, FlowReply, InsightsReply, MetricsReply, RunsReply } from "./types";
 
-/** The quickest a view refreshes on its own when the live edge advances: the Timeline's structure cadence (timeline/data/observer.ts STRUCTURE_REFRESH_MS). */
+/** The quickest a view refreshes on its own when the live edge advances. */
 export const SNAPSHOT_REFRESH_MS = 2000;
 /** Replies kept per provider. */
 export const SNAPSHOT_CACHE_MAX = 64;
 
-/** Said when the observer could not answer as of the playhead and the window's end was cut instead. */
-export const WIDENED_RULE = "counted to the end of the playhead's UTC day: outcomes later that day may be included";
-
-/**
- * M6.6 (I-32): why counted figures are not shown as of the playhead by an observer without `as_of_ms`.
- * Widening to the end of the playhead's day could count outcomes after the playhead, so nothing is shown.
- */
-export const AS_OF_UNSUPPORTED =
-  "This observer cannot count figures as of the playhead: it is older than exact playhead cuts, and counting to the end of the playhead's UTC day could include outcomes after the playhead. Nothing is shown in their place. Return to live to read the whole recorded history, or open this history with an observer from this release.";
-
-/** The routes whose replies are counts, not lists of placed items: never widened past the playhead. */
-const COUNTED: ReadonlySet<AnalyticsRoute> = new Set<AnalyticsRoute>(["metrics", "flow", "insights"]);
-
-/** What a reply says about the "as of" time it was asked for. */
-export interface AsOf {
-  readonly ms: number;
-  /** The observer counted nothing recorded after `ms` (`as_of.exact`). */
-  readonly exact: boolean;
-  /** The observer's rule when not exact ("whole UTC days before the playhead; …"), or this client's for the fallback. */
-  readonly rule: string | null;
-  /** The observer counted up to this time (its effective window end), later than `ms`: same-day outcomes after the playhead may be in the figure. */
-  readonly widened: boolean;
-  readonly effectiveToMs: number | null;
-}
-
-export type SnapshotResult<T> = AnalyticsResult<T & { readonly asOf: AsOf | null }>;
+/** A reply read through a view's snapshot (at its cursor). */
+export type SnapshotResult<T> = AnalyticsResult<T>;
 
 export interface SnapshotOptions {
-  /** A replay's playhead (Unix ms): nothing after it is shown. Null or absent: the whole recorded history (or the query's window). */
-  readonly asOfMs?: number | null;
   /** A cursor to read at (a view restored at a known state); null: the head. */
   readonly at?: string | null;
   readonly cache?: SnapshotCache;
@@ -71,7 +34,6 @@ export interface SnapshotOptions {
 export interface AnalyticsSnapshotSession {
   /** The cursor every query of this view reads at; null until the first reply. */
   readonly cursor: string | null;
-  readonly asOfMs: number | null;
   /** True after a reply came back at another cursor than the view's (it is not used) or the cursor is gone: begin a new snapshot. */
   readonly broken: boolean;
   metrics(query: MetricsQuery): Promise<SnapshotResult<MetricsReply>>;
@@ -117,20 +79,11 @@ export function createSnapshotCache(max = SNAPSHOT_CACHE_MAX): SnapshotCache {
 }
 
 const caches = new WeakMap<AnalyticsData, SnapshotCache>();
-/** Providers whose observer answered 400 to `as_of_ms` (an observer before it): "as of" falls back to `to_ms`. */
-const asOfUnsupported = new WeakSet<AnalyticsData>();
 /** The cache shared by every snapshot of a provider. */
 export function snapshotCache(data: AnalyticsData): SnapshotCache {
   let c = caches.get(data);
   if (!c) caches.set(data, (c = createSnapshotCache()));
   return c;
-}
-
-/** The query with the "as of" time applied to its window end (an earlier end is kept). A `last_runs` query keeps its population and is cut as a list. */
-export function asOfQuery<Q extends AnalyticsQuery>(query: Q, asOfMs: number | null): Q {
-  if (asOfMs === null || query.lastRuns) return query;
-  const to = typeof query.toMs === "number" ? Math.min(query.toMs, asOfMs) : asOfMs;
-  return { ...query, toMs: to };
 }
 
 /**
@@ -146,60 +99,38 @@ export function shouldRefresh(viewCursor: string | null, headCursor: string | nu
   return a.generation !== b.generation || b.pos > a.pos;
 }
 
-/** Whether a reply was read for this view's cut: "as of" the same playhead, or through the whole history when the view has none. */
-export function sameCut(r: SnapshotResult<unknown>, asOfMs: number | null): boolean {
-  if (r.status !== "ok") return true;
-  const at = (r.value as { readonly asOf?: AsOf | null }).asOf?.ms ?? null;
-  return at === asOfMs;
-}
-
 function abortError(): DOMException {
   return new DOMException("The analytics snapshot was abandoned.", "AbortError");
 }
 
 export function beginSnapshot(data: AnalyticsData, options: SnapshotOptions = {}): AnalyticsSnapshotSession {
   const cache = options.cache ?? snapshotCache(data);
-  const asOfMs = typeof options.asOfMs === "number" && Number.isFinite(options.asOfMs) ? options.asOfMs : null;
   const controller = new AbortController();
   let cursor: string | null = options.at ?? null;
   let broken = false;
   // While the first query is out, the others wait for its cursor; a failed first query lets the next one go first.
   let pinning: Promise<void> | null = null;
 
-  const call = async <T extends { readonly cursor: string; readonly window?: { readonly effective_to_ms: number | null }; readonly as_of?: { readonly exact: boolean; readonly effective_to_ms: number | null; readonly rule: string | null } | null }, Q extends AnalyticsQuery>(
+  const call = async <T extends { readonly cursor: string }, Q extends AnalyticsQuery>(
     route: AnalyticsRoute,
     query: Q,
     fetch: (query: Q, options: CallOptions) => Promise<AnalyticsResult<T>>,
-    cut: (value: T) => T = (v) => v,
   ): Promise<SnapshotResult<T>> => {
     if (controller.signal.aborted) throw abortError();
     while (!cursor && pinning) {
       await pinning.catch(() => undefined);
       if (controller.signal.aborted) throw abortError();
     }
-    // Exact "as of" unless this observer refused as_of_ms: then a list's window end is cut instead, and a count is not shown (I-32).
-    const widen = () => asOfMs !== null && asOfUnsupported.has(data);
-    if (widen() && COUNTED.has(route)) return { status: "unsupported", reason: AS_OF_UNSUPPORTED };
-    const asked = (): Q => (widen() ? asOfQuery(query, asOfMs) : query);
-    // M6.6 (D1): the "as of" cut is part of a reply's identity. Two views at one cursor, one through the
-    // whole history and one held at a playhead, never share a cached reply: before, the held view took the
-    // whole-history totals the first view had cached ("nothing recorded later" over later outcomes).
-    const key = (c: string) => `${c}|${asOfMs ?? "-"}|${widen() ? "to" : "at"}|${queryKey(route, asked())}`;
+    const key = (c: string) => `${c}|${queryKey(route, query)}`;
     if (cursor) {
       const hit = cache.get(key(cursor)) as SnapshotResult<T> | undefined;
-      if (hit && sameCut(hit, asOfMs)) return hit;
+      if (hit) return hit;
     }
     const first = !cursor;
     let release: () => void = () => undefined;
     if (first) pinning = new Promise<void>((resolve) => (release = resolve));
     try {
-      const opts = (): CallOptions => ({ at: cursor, signal: controller.signal, ...(asOfMs !== null && !widen() ? { asOfMs } : {}) });
-      let result = await fetch(asked(), opts());
-      if (asOfMs !== null && !widen() && result.status === "invalid" && /as_of_ms/.test(result.reason)) {
-        asOfUnsupported.add(data);
-        if (COUNTED.has(route)) return { status: "unsupported", reason: AS_OF_UNSUPPORTED };
-        result = await fetch(asked(), opts());
-      }
+      const result = await fetch(query, { at: cursor, signal: controller.signal });
       if (controller.signal.aborted) throw abortError();
       if (result.status !== "ok") {
         if (result.status === "cursor-gone") broken = true;
@@ -212,21 +143,7 @@ export function beginSnapshot(data: AnalyticsData, options: SnapshotOptions = {}
         broken = true;
         return { status: "cursor-gone", reason: "The reply describes another state of the projection than this view's." };
       }
-      let asOf: AsOf | null = null;
-      if (asOfMs !== null && value.as_of) {
-        asOf = { ms: asOfMs, exact: value.as_of.exact, rule: value.as_of.exact ? null : value.as_of.rule, effectiveToMs: value.as_of.effective_to_ms, widened: false };
-      } else if (asOfMs !== null) {
-        // Cut by to_ms (an observer without as_of_ms, or a reply that did not say): the day may be widened past the playhead.
-        const eff = value.window?.effective_to_ms ?? null;
-        const widened = eff === null || eff > asOfMs;
-        asOf = { ms: asOfMs, exact: false, rule: widened ? WIDENED_RULE : null, effectiveToMs: eff, widened };
-      }
-      const answer: SnapshotResult<T> = { status: "ok", value: { ...cut(value), asOf } };
-      // A reply that came back for another cut than this view's is never used (D1).
-      if (!sameCut(answer, asOfMs)) {
-        broken = true;
-        return { status: "cursor-gone", reason: "The reply describes another moment than this view's." };
-      }
+      const answer: SnapshotResult<T> = { status: "ok", value };
       cache.set(key(value.cursor), answer);
       return answer;
     } finally {
@@ -237,30 +154,19 @@ export function beginSnapshot(data: AnalyticsData, options: SnapshotOptions = {}
     }
   };
 
-  /** Items after the playhead, or with no recorded time, are dropped and counted. */
-  const cutList = <V extends { readonly items: readonly unknown[]; readonly after_as_of: number }>(value: V, timeOf: (item: V["items"][number]) => number | null): V => {
-    if (asOfMs === null) return value;
-    const kept = value.items.filter((i) => {
-      const t = timeOf(i);
-      return t !== null && t <= asOfMs; // an item with no recorded time may be later: not shown
-    });
-    return { ...value, items: kept, after_as_of: value.items.length - kept.length };
-  };
-
   return {
     get cursor() {
       return cursor;
     },
-    asOfMs,
     get broken() {
       return broken;
     },
     metrics: (q) => call("metrics", q, (x, o) => data.metrics(x, o)),
     flow: (q) => call("flow", q, (x, o) => data.flow(x, o)),
     insights: (q) => call("insights", q, (x, o) => data.insights(x, o)),
-    contributors: (q) => call("contributors", q, (x, o) => data.contributors(x, o), (v) => cutList(v, (i) => i.at_ms)),
-    runs: (q) => call("runs", q, (x, o) => data.runs(x, o), (v) => cutList(v, (r) => r.closed_at?.at_ms ?? null)),
-    executions: (q) => call("executions", q, (x, o) => data.executions(x, o), (v) => cutList(v, (x) => x.started_ms)),
+    contributors: (q) => call("contributors", q, (x, o) => data.contributors(x, o)),
+    runs: (q) => call("runs", q, (x, o) => data.runs(x, o)),
+    executions: (q) => call("executions", q, (x, o) => data.executions(x, o)),
     abort() {
       controller.abort(abortError());
     },

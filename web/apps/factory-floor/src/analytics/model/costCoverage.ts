@@ -41,10 +41,9 @@ export type FailedCost = { readonly kind: "sum"; readonly usd: number; readonly 
  * The cost failed executions recorded in their own stream results (`usage.cost_usd`), from the view's
  * executions list. A number only when the list is complete for the window; when it was cut short, only
  * that some did (never a partial sum read as the whole). Null when no failed execution recorded one.
- * `cutMs`: under a day cut, executions from that midnight on are not in the figure's window either.
  */
-export function failedCostOf(items: readonly { readonly state: string; readonly started_ms: number | null; readonly usage: { readonly cost_usd: number | null } }[], truncated: boolean, cutMs: number | null = null): FailedCost {
-  const failed = items.filter((x) => x.state === "failed" && x.usage.cost_usd !== null && x.usage.cost_usd > 0 && (cutMs === null || (x.started_ms !== null && x.started_ms < cutMs)));
+export function failedCostOf(items: readonly { readonly state: string; readonly usage: { readonly cost_usd: number | null } }[], truncated: boolean): FailedCost {
+  const failed = items.filter((x) => x.state === "failed" && x.usage.cost_usd !== null && x.usage.cost_usd > 0);
   if (!failed.length) return null;
   if (truncated) return { kind: "some" };
   return { kind: "sum", usd: failed.reduce((n, x) => n + (x.usage.cost_usd ?? 0), 0), executions: failed.length };

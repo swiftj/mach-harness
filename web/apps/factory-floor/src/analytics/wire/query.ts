@@ -3,20 +3,19 @@
  * syntax only (test/analytics-wire.test.mjs loads it directly).
  *
  * - The source decides the provider and the label, and nothing else may: simulated data never under
- *   a live or replay label, an observer's never under Simulated (`sourceCheck`).
- * - The period: a preset ends at the newest record the source holds, or at the playhead when the
- *   view describes the history through it; a chosen interval is cut at the playhead (a replay never
- *   shows a later outcome). The simulation's fixture has its own fixed end.
+ *   the live label, an observer's never under Simulated (`sourceCheck`).
+ * - The period: a preset ends at the newest record the source holds; a chosen interval is asked as
+ *   chosen. The simulation's fixture has its own fixed end.
  * - Filters are codes (`High`, `cli`, `sonnet`). The model narrows Economics alone.
- * - One snapshot per view: the view's key is its period, filters and "as of", never the area, so
- *   moving between areas reads at the same cursor.
+ * - One snapshot per view: the view's key is its period and filters, never the area, so moving
+ *   between areas reads at the same cursor.
  */
 import type { AnalyticsArea, AnalyticsFilters, AnalyticsWindow } from "../../scene/analytics";
 import type { SceneSource } from "../../sim/provenance";
 import type { AnalyticsSource } from "../data/types";
 import type { AreaSource, Pick } from "../ui/types";
 import { utcClock } from "../../shell/time";
-import { dayLabel } from "../../timeline/render/scale";
+import { dayLabel } from "../model/scale";
 
 export const DAY_MS = 86_400_000;
 const PRESET_DAYS = { "7d": 7, "14d": 14, "28d": 28 } as const;
@@ -43,15 +42,13 @@ export function sourceCheck(scene: SceneSource, provider: AnalyticsSource | null
 
 /** The words for where the figures come from. Simulated is said for the simulation and nowhere else. */
 export function sourceWords(area: AreaSource): string {
-  return area === "simulation" ? "Simulated history (not real execution)" : area === "live" ? "Live Factory" : "Historical replay";
+  return area === "simulation" ? "Simulated history (not real execution)" : "Live Factory";
 }
 
 // --------------------------------------------------------------------------------------- window
 
 export interface WindowInput {
   readonly provider: AnalyticsSource;
-  /** The playhead when the view describes the history through it; null: up to the edge. */
-  readonly asOfMs: number | null;
   /** The newest record the source holds (the scene log's head time); null when nothing is held yet. */
   readonly newestMs: number | null;
   /** The simulation fixture's end (fixtures FIXTURE_END). */
@@ -59,35 +56,30 @@ export interface WindowInput {
 }
 
 export type WindowQuery =
-  | { readonly ok: true; readonly fromMs: number | null; readonly toMs: number | null; readonly cut: boolean }
+  | { readonly ok: true; readonly fromMs: number | null; readonly toMs: number | null }
   | { readonly ok: false; readonly reason: string };
 
 const startOfDay = (t: number) => Math.floor(t / DAY_MS) * DAY_MS;
 
 /**
- * The query window for a period. A preset is whole UTC days ending with the day of the newest record
- * (or of the playhead); `toMs` is left open: the "as of" cut (`as_of_ms`) bounds it, never a guess.
- * An interval ending after the playhead is cut there (`cut`); one that begins after it has nothing to show.
+ * The query window for a period. A preset is whole UTC days ending with the day of the newest record,
+ * asked with both ends so the period the label states is the period the observer counts. A chosen
+ * interval is asked as chosen.
  */
 export function windowQuery(w: AnalyticsWindow, input: WindowInput): WindowQuery {
   if (input.provider === "simulation") {
     // The fixture answers its presets only (data/simulation.ts); an interval is passed on and refused there, with its reason.
-    if (w === "all") return { ok: true, fromMs: null, toMs: null, cut: false };
-    if (typeof w === "string") return { ok: true, fromMs: input.fixtureEnd - PRESET_DAYS[w] * DAY_MS, toMs: null, cut: false };
-    return { ok: true, fromMs: w.from, toMs: w.to, cut: false };
+    if (w === "all") return { ok: true, fromMs: null, toMs: null };
+    if (typeof w === "string") return { ok: true, fromMs: input.fixtureEnd - PRESET_DAYS[w] * DAY_MS, toMs: null };
+    return { ok: true, fromMs: w.from, toMs: w.to };
   }
-  if (w === "all") return { ok: true, fromMs: null, toMs: null, cut: false };
+  if (w === "all") return { ok: true, fromMs: null, toMs: null };
   if (typeof w === "string") {
-    // The last N whole UTC days ending with the day of the newest recorded event (or of the playhead),
-    // asked with both ends so the period the label states is the period the observer counts.
-    const end = input.asOfMs ?? input.newestMs;
-    if (end === null) return { ok: true, fromMs: null, toMs: null, cut: false };
-    const last = startOfDay(end) + DAY_MS;
-    return { ok: true, fromMs: last - PRESET_DAYS[w] * DAY_MS, toMs: input.asOfMs !== null ? null : last, cut: false };
+    if (input.newestMs === null) return { ok: true, fromMs: null, toMs: null };
+    const last = startOfDay(input.newestMs) + DAY_MS;
+    return { ok: true, fromMs: last - PRESET_DAYS[w] * DAY_MS, toMs: last };
   }
-  if (input.asOfMs !== null && w.from >= input.asOfMs) return { ok: false, reason: "The chosen period begins after the playhead: nothing in it had happened yet. Choose an earlier period, or move the playhead." };
-  if (input.asOfMs !== null && w.to > input.asOfMs) return { ok: true, fromMs: w.from, toMs: input.asOfMs, cut: true };
-  return { ok: true, fromMs: w.from, toMs: w.to, cut: false };
+  return { ok: true, fromMs: w.from, toMs: w.to };
 }
 
 // --------------------------------------------------------------------------------------- filters
@@ -103,69 +95,30 @@ export function filtersQuery(f: AnalyticsFilters, withModel: boolean): QueryFilt
   return out;
 }
 
-/** The identity of a view's snapshot: period, filters (not the model), "as of" and provider. Areas share it. */
-export function viewKey(provider: AnalyticsSource, w: WindowQuery, f: AnalyticsFilters, asOfMs: number | null): string {
+/** The identity of a view's snapshot: period, filters (not the model) and provider. Areas share it. */
+export function viewKey(provider: AnalyticsSource, w: WindowQuery, f: AnalyticsFilters): string {
   const win = w.ok ? `${w.fromMs ?? ""}-${w.toMs ?? ""}` : "none";
-  return `${provider}|${win}|${f.risk ?? ""}|${f.appType ?? ""}|${asOfMs ?? ""}`;
+  return `${provider}|${win}|${f.risk ?? ""}|${f.appType ?? ""}`;
 }
 
 // --------------------------------------------------------------------------------------- as of
 
 export interface AsOfFacts {
   readonly area: AreaSource;
-  /** The playhead when the view is through it. */
-  readonly asOfMs: number | null;
   readonly window: AnalyticsWindow;
-  /** The metrics reply's "as of": exact (lists) or by whole UTC days (metrics), or cut by the window's end (an older observer). */
-  readonly metricsExact: boolean | null;
-  readonly widened: boolean;
-  readonly cut: boolean;
-  /** The UTC midnight the figures are counted to (metrics by whole days, finished tickets cut there too); null when not cut so. */
-  readonly dayCut?: number | null;
-  /** D4: no whole UTC day of the history is complete before the playhead. */
-  readonly noWholeDay?: boolean;
 }
 
-/** A moment as the Timeline says it, to the second: "4 Nov 14:20:05 UTC" (its `dayLabel` and `utcClock`). */
+/** A moment to the second: "4 Nov 14:20:05 UTC" (`dayLabel` and `utcClock`). */
 export const momentWords = (t: number): string => `${dayLabel(t)} ${utcClock(t)} UTC`;
 
-/** The last whole UTC day a day cut counts through: the day before the midnight `dayCut` ("3 Nov"). */
-export const lastWholeDay = (dayCut: number): string => dayLabel(dayCut - 1);
-
-/**
- * The caption: which history the figures describe, in words. The complete recorded history, a
- * selected window, or through the playhead. Under a day cut (M6.6, I-07/I-08) it names the last whole
- * UTC day counted, never a midnight that reads as including the next day, says the playhead is later,
- * and names the parts cut at the playhead itself (the flow drawing and the rows behind a figure).
- */
-export function asOfWords(f: AsOfFacts, clock: (t: number) => string, day: (dayCut: number) => string = lastWholeDay): string {
+/** The caption: which history the figures describe, in words. The complete recorded history, or a selected window. */
+export function asOfWords(f: AsOfFacts): string {
   if (f.area === "simulation") {
-    // I-31: the fixture has no moments the floor's playhead could cut it at; said so beside "Simulated".
-    return f.window === "all" ? "The whole simulated history; the playhead does not apply to it, so these figures may run past the moment the Atlas shows" : "A selected window of the simulated history; the playhead does not apply to it";
-  }
-  const cut = f.cut ? " The chosen period was cut at the playhead." : "";
-  if (f.asOfMs !== null && f.noWholeDay) {
-    return `No whole UTC day is complete before the playhead at ${clock(f.asOfMs)}; day-counted figures are not available. The flow drawing and the rows behind a figure run to the playhead.${cut}`.replace(/\.$/, "");
-  }
-  if (f.asOfMs !== null && f.dayCut != null && !f.widened) {
-    const playDay = dayLabel(f.asOfMs);
-    const today = f.asOfMs > f.dayCut ? ` The playhead is at ${clock(f.asOfMs)}; the part of ${playDay} before it is not in these figures.` : ` The playhead is at ${clock(f.asOfMs)}.`;
-    return `Counted through the end of ${day(f.dayCut)} (UTC), the last whole day before the playhead.${today} The flow drawing and the rows behind a figure run to the playhead itself.${cut}`.replace(/\.$/, "");
-  }
-  if (f.asOfMs !== null) {
-    const head = `Through the playhead at ${clock(f.asOfMs)}: nothing recorded later is counted`;
-    const metrics = f.widened
-      ? "; an observer without exact playhead cuts counts the metrics to the end of the playhead's UTC day, so outcomes later that day may be included"
-      : f.metricsExact === false
-        ? "; the flow drawing and the rows behind a figure run to the playhead itself, while metrics count whole UTC days before it"
-        : "";
-    return `${head}${metrics}${f.cut ? ". The chosen period was cut at the playhead" : ""}`;
+    // I-31: the fixture is not the simulated run the Atlas shows; said so beside "Simulated".
+    return f.window === "all" ? "The whole simulated history; these figures may run past the moment the Atlas shows" : "A selected window of the simulated history";
   }
   return f.window === "all" ? "The complete recorded history" : "A selected window of the recorded history";
 }
-
-/** Each figure's own tag under a day cut (I-08, T-03): a readout seen alone never reads as the playhead's moment. */
-export const dayCutTag = (effectiveToMs: number): string => `to end of ${lastWholeDay(effectiveToMs)}`;
 
 // --------------------------------------------------------------------------------------- plan
 

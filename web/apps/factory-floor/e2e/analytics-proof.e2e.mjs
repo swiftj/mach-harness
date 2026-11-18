@@ -182,7 +182,7 @@ describe("Analytics, proof page (simulated fixture)", { skip: run ? false : `E2E
     await context.close();
   });
 
-  test("Rows lists the entities behind a figure, each a reference link to the Timeline", async () => {
+  test("Rows lists the entities behind a figure, each a reference link to the Line", async () => {
     const problems = [];
     let opened = 0;
     for (const a of AREAS) {
@@ -202,7 +202,7 @@ describe("Analytics, proof page (simulated fixture)", { skip: run ? false : `E2E
       if (!links.length && !/None recorded|No rows recorded/.test(await drawer.innerText())) problems.push(`${a.id}: the rows list neither entities nor "none recorded"`);
       for (const l of links) {
         if (!/^[a-z][a-z-]*:\S+$/.test(l.ref ?? "")) problems.push(`${a.id}: a row's reference is not in the entity-ref grammar: ${l.ref}`);
-        if (!l.href?.startsWith("#timeline?") || !l.href.includes(`sel=${encodeURIComponent(l.ref)}`)) problems.push(`${a.id}: a row does not open the Timeline with that entity: ${l.href}`);
+        if (!l.href?.startsWith("#line?") || !l.href.includes(`sel=${encodeURIComponent(l.ref)}`)) problems.push(`${a.id}: a row does not open the Line with that entity: ${l.href}`);
       }
       await page.keyboard.press("Escape");
       await sleep(200);

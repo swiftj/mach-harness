@@ -1,35 +1,27 @@
 /**
- * The global keyboard map (M6_0_VISUAL_SPEC.md f.10), implemented once. The help sheet renders the
- * same table, so what is listed is what works.
+ * The global keyboard map, implemented once. The help sheet renders the same table, so what is listed
+ * is what works.
  *
- * Keys the views own (marked `view`: the Atlas's and the Blueprint's arrows, Shift+arrows, + - 0,
- * Enter and Space on an entity, the Blueprint tree's Home, End, Alt+arrows and `*`, and the timeline's
- * playhead, tracks and resize edge) are listed for discovery but never handled here: each is bound in
- * the element that owns it (src/atlas, src/blueprint, src/shell/timeline, the resize edge in Shell.tsx),
- * which prevents the default so this map skips the event.
+ * Keys the views own (marked `view`: the Line's rows, the Atlas's arrows, Shift+arrows, + - 0, Enter
+ * and Space on an entity) are listed for discovery but never handled here: each is bound in the
+ * element that owns it (src/line, src/atlas), which prevents the default so this map skips the event.
  */
 import { useEffect } from "react";
-import { showInAnalytics, showInTimeline, showOnFloor, SPEEDS, useStore, type SceneStore, type Workspace } from "../scene";
-import { indexFor, lastAtOrBefore } from "./history";
-import { asOfPlayhead } from "../timeline/controls/frame";
-
-/** Whether the playhead is held behind the live edge (Analytics then counts to an earlier moment). */
-const behindLive = (s: { readonly following: boolean; readonly playhead: number; readonly liveAt: number }): boolean => asOfPlayhead(s).behind;
+import { showInAnalytics, showOnFloor, showOnLine, useStore, type SceneStore, type Workspace } from "../scene";
 
 export interface ShellCommands {
   toggleInspector(): void;
-  toggleTimeline(): void;
   openHelp(): void;
   /** Open the source menu. */
   openSource(): void;
-  /** True while a dialog (the help sheet) owns the keyboard. */
+  /** True while a dialog (the help sheet, the evidence player, a ticket's full record) owns the keyboard. */
   modalOpen(): boolean;
 }
 
 export interface KeyBinding {
   keys: string[];
   action: string;
-  group: "Playback" | "Views" | "Panels" | "In a view" | "Atlas" | "Blueprint" | "Timeline" | "Timeline workspace" | "Analytics";
+  group: "Workspaces" | "Panels" | "Line" | "Floor";
   /** Handled by the views, listed for discovery only. */
   view?: true;
   /** Active only in this workspace, or these workspaces (absent: in every one). */
@@ -42,157 +34,33 @@ export function activeIn(binding: Pick<KeyBinding, "workspace">, workspace: Work
   return w === undefined || (typeof w === "string" ? w === workspace : w.includes(workspace));
 }
 
-/**
- * The workspaces with a playhead on screen: the floor (its docked transport) and the Timeline.
- * Analytics shows no transport, so the playback keys (and F, which frames on a canvas) do nothing
- * there rather than move the playhead out of sight; Space, Home and End then belong to its content.
- */
-const WITH_PLAYHEAD: readonly Workspace[] = ["floor", "timeline"];
-
-/** What the Timeline workspace's keys ask of it (handled by its toolbar while it is up). */
-export type TimelineKeyCommand = "grouping" | "filters" | "next-mark" | "previous-mark" | "zoom-selection" | "show-all";
-
-let timelineKeys: ((command: TimelineKeyCommand) => boolean) | null = null;
-
-/**
- * The Timeline workspace registers the handler for its keys while it is mounted (and the map routes
- * them only while the workspace is "timeline"). Returns the unregister function. Last one wins.
- */
-export function registerTimelineKeys(handler: (command: TimelineKeyCommand) => boolean): () => void {
-  timelineKeys = handler;
-  return () => {
-    if (timelineKeys === handler) timelineKeys = null;
-  };
-}
-
-/** The Timeline workspace's own keys, free in the global map (test/timeline-shell.test.mjs holds that). */
-export const TIMELINE_KEYS: Readonly<Record<string, TimelineKeyCommand>> = {
-  g: "grouping",
-  "/": "filters",
-  n: "next-mark",
-  p: "previous-mark",
-  z: "zoom-selection",
-  a: "show-all",
-};
+/** The workspaces with the inspector: the Line has its own side panel. */
+const WITH_INSPECTOR: readonly Workspace[] = ["floor", "analytics"];
 
 export const KEYMAP: KeyBinding[] = [
-  { keys: ["Space"], action: "Play or pause", group: "Playback", workspace: WITH_PLAYHEAD },
-  { keys: [",", "."], action: "Previous / next event", group: "Playback", workspace: WITH_PLAYHEAD },
-  { keys: ["Shift+,", "Shift+."], action: "Back / forward 10 s of factory time", group: "Playback", workspace: WITH_PLAYHEAD },
-  { keys: ["[", "]"], action: "Previous / next chapter (real history: previous / next landmark, such as a wave arriving or an execution ending)", group: "Playback", workspace: WITH_PLAYHEAD },
-  { keys: ["{", "}"], action: "Slower / faster (real history: 5× to 160× real time; simulation: 0.5× to 16×)", group: "Playback", workspace: WITH_PLAYHEAD },
-  { keys: ["Home", "End"], action: "Start of what is held / live edge (replay: its last event)", group: "Playback", workspace: WITH_PLAYHEAD },
-  { keys: ["L"], action: "Return to live (and follow); live keeps arriving while you look back", group: "Playback", workspace: WITH_PLAYHEAD },
-  { keys: ["1", "2"], action: "Atlas: Factory Atlas / Execution Blueprint (from the Timeline: keeping the selection and playhead, framed there)", group: "Views" },
-  { keys: ["3"], action: "Timeline, keeping the selection and the playhead (Show in Timeline)", group: "Views" },
-  { keys: ["4"], action: "Analytics, keeping the selection and the playhead", group: "Views" },
-  { keys: ["T"], action: "Theater Mode (Atlas only; does nothing in the Timeline or Analytics)", group: "Views" },
-  { keys: ["F"], action: "Focus the selection (in the Timeline: reveal its tracks and span)", group: "Views", workspace: WITH_PLAYHEAD },
-  { keys: ["Shift+F"], action: "Camera follow back on", group: "Views", workspace: WITH_PLAYHEAD },
-  { keys: ["Escape"], action: "Clear highlight, then selection, then leave Theater Mode", group: "Views" },
-  { keys: ["I"], action: "Show or hide the inspector", group: "Panels" },
-  { keys: ["Shift+T"], action: "Expand or collapse the docked timeline (Atlas)", group: "Panels", workspace: "floor" },
+  { keys: ["1"], action: "Line: the stations left to right, a row for each ticket", group: "Workspaces" },
+  { keys: ["2"], action: "Floor: the Factory Atlas, keeping the selection", group: "Workspaces" },
+  { keys: ["3"], action: "Analytics, keeping the selection", group: "Workspaces" },
+  { keys: ["Escape"], action: "Clear the highlight, then the selection, then leave Theater Mode", group: "Workspaces" },
+  { keys: ["I"], action: "Show or hide the inspector (Floor and Analytics)", group: "Panels", workspace: WITH_INSPECTOR },
   { keys: ["?"], action: "This list", group: "Panels" },
-  { keys: ["S"], action: "Choose the source: Live Factory, Historical replay or Simulation", group: "Panels" },
+  { keys: ["S"], action: "Choose the source: Live Factory or Simulation", group: "Panels" },
   // M6.4: the evidence player's own keys, handled inside its panel (which owns the keyboard while open).
   { keys: [",", "."], action: "Evidence player: previous / next file", group: "Panels", view: true },
   { keys: ["[", "]"], action: "Evidence player: previous / next check", group: "Panels", view: true },
-  { keys: ["+", "-", "0"], action: "Zoom in / out / fit", group: "In a view", view: true },
-  { keys: ["Shift+Arrows"], action: "Pan", group: "In a view", view: true },
-  { keys: ["Enter", "Space"], action: "Select the focused entity", group: "In a view", view: true },
-  { keys: ["Arrows"], action: "Move to the nearest entity in that direction on screen", group: "Atlas", view: true },
-  { keys: ["↑", "↓"], action: "Previous / next visible item", group: "Blueprint", view: true },
-  { keys: ["→"], action: "Open the item, or move into it", group: "Blueprint", view: true },
-  { keys: ["←"], action: "Close the item, or move out to its parent", group: "Blueprint", view: true },
-  { keys: ["Alt+→", "Alt+←"], action: "Open / close without moving", group: "Blueprint", view: true },
-  { keys: ["Home", "End"], action: "First / last item", group: "Blueprint", view: true },
-  { keys: ["*"], action: "Open every sibling of the focused item (on a lane: every lane of the wave)", group: "Blueprint", view: true },
-  { keys: ["←", "→"], action: "Previous / next event (playhead or tracks focused)", group: "Timeline", view: true },
-  { keys: ["PageUp", "PageDown"], action: "Previous / next chapter or landmark (playhead focused)", group: "Timeline", view: true },
-  { keys: ["↑", "↓"], action: "Previous / next track (tracks focused)", group: "Timeline", view: true },
-  { keys: ["Enter"], action: "Select the focused track's entity", group: "Timeline", view: true },
-  { keys: ["Alt+→", "Alt+←"], action: "Expand / collapse the focused track (* also expands)", group: "Timeline", view: true },
-  { keys: ["+", "-", "0"], action: "Narrow / widen the time window, or show the whole run (tracks focused)", group: "Timeline", view: true },
-  { keys: ["↑", "↓"], action: "Taller / shorter timeline (its top edge focused; Enter collapses or restores it)", group: "Timeline", view: true },
-  { keys: ["G"], action: "Group by product or by execution", group: "Timeline workspace", workspace: "timeline" },
-  { keys: ["/"], action: "Filters", group: "Timeline workspace", workspace: "timeline" },
-  { keys: ["N", "P"], action: "Next / previous mark of the kind last jumped to (failure at first)", group: "Timeline workspace", workspace: "timeline" },
-  { keys: ["Z"], action: "Zoom to the selection", group: "Timeline workspace", workspace: "timeline" },
-  { keys: ["A"], action: "Show all of the history held", group: "Timeline workspace", workspace: "timeline" },
-  // M6.6 (I-13): the same keys as the transport's "Return to live", only while Analytics shows an earlier moment.
-  { keys: ["L", "End"], action: "Back to live, while the figures are counted to an earlier moment (live: the live edge; replay: its last event)", group: "Analytics", workspace: "analytics" },
+  { keys: ["↑", "↓"], action: "Previous / next ticket", group: "Line", view: true },
+  { keys: ["Space"], action: "Show the focused ticket or station in the side panel", group: "Line", view: true },
+  { keys: ["Enter"], action: "Open the focused ticket's full record (double-click does the same)", group: "Line", view: true },
+  { keys: ["T"], action: "Theater Mode", group: "Floor", workspace: "floor" },
+  { keys: ["F"], action: "Frame the selection", group: "Floor", workspace: "floor" },
+  { keys: ["Shift+F"], action: "Camera follow back on", group: "Floor", workspace: "floor" },
+  { keys: ["+", "-", "0"], action: "Zoom in / out / fit", group: "Floor", view: true },
+  { keys: ["Shift+Arrows"], action: "Pan", group: "Floor", view: true },
+  { keys: ["Enter", "Space"], action: "Select the focused entity", group: "Floor", view: true },
+  { keys: ["Arrows"], action: "Move to the nearest entity in that direction on screen", group: "Floor", view: true },
 ];
 
 const TYPING = /^(INPUT|TEXTAREA|SELECT)$/;
-/** The keys (as the handler normalises them) that need a playhead on screen: the bindings marked WITH_PLAYHEAD. */
-const PLAYHEAD_KEYS: ReadonlySet<string> = new Set([" ", ",", ".", "<", ">", "[", "]", "{", "}", "Home", "End", "l", "L", "f", "F"]);
-
-/** Elements where Space and Enter belong to the element itself. */
-function ownsActivation(target: HTMLElement | null): boolean {
-  if (!target) return false;
-  if (TYPING.test(target.tagName) || target.isContentEditable) return true;
-  if (target.tagName === "BUTTON" || target.tagName === "A") return true;
-  const role = target.getAttribute("role");
-  return role === "button" || role === "radio" || role === "slider" || role === "checkbox" || role === "menuitem" || role === "tab";
-}
-
-/** Elements where Home and End move within the element: a slider, and the Timeline's table (a treegrid) and its cells. */
-function ownsHomeEnd(target: HTMLElement | null): boolean {
-  if (!target) return false;
-  if (target.getAttribute("role") === "slider") return true;
-  return Boolean(target.closest?.("[role='treegrid']"));
-}
-
-/**
- * Step by chapter (the simulation's storyboard) or, for real history, by landmark: a real moment
- * such as a wave arriving, the Factory enabled or paused, an execution starting or ending, a verdict,
- * a person needed or approving. Never past the live edge.
- */
-export function stepChapter(store: SceneStore, direction: 1 | -1): void {
-  const state = store.getState();
-  const { playhead } = state;
-  const index = indexFor(state);
-  const marks = index.landmarks;
-  const go = (mark: { id: string; t: number } | undefined) => {
-    if (!mark) return;
-    if (index.storyboard) store.seekToChapter(mark.id);
-    else store.seek(mark.t);
-  };
-  if (direction > 0) {
-    go(marks.find((c) => c.t > playhead + 1 && c.t <= state.liveAt + (state.source === "simulation" ? Infinity : 0)));
-    return;
-  }
-  // Back: to the start of the current one, or the one before when already at its start.
-  const current = lastAtOrBefore(marks, playhead);
-  const at = current ? marks.indexOf(current) : 0;
-  go(current && playhead - current.t > 1500 ? current : marks[Math.max(0, at - 1)]);
-}
-
-/**
- * Space and the play button. Live at the edge, "pause" holds the view on the moment shown (a replay
- * of what was received; ingest goes on, and nothing in the Factory Floor can pause the Factory);
- * playing from there runs towards the edge and re-attaches when it gets there. Otherwise play or pause.
- */
-export function togglePlayback(store: SceneStore): void {
-  const s = store.getState();
-  if (s.source === "live" && s.following) {
-    store.seek(s.playhead - 1);
-    store.pause();
-    return;
-  }
-  store.toggle();
-}
-
-export function stepSpeed(store: SceneStore, direction: 1 | -1): void {
-  const i = SPEEDS.indexOf(store.getState().speed);
-  const next = SPEEDS[Math.min(SPEEDS.length - 1, Math.max(0, i + direction))];
-  if (next !== undefined) store.setSpeed(next);
-}
-
-/** Move the playhead by factory time; playback keeps its state. */
-export function nudge(store: SceneStore, ms: number): void {
-  store.seek(store.getState().playhead + ms);
-}
 
 /**
  * The global map's keydown handler (no React, no window: the hook installs it; tests drive it with
@@ -200,109 +68,42 @@ export function nudge(store: SceneStore, ms: number): void {
  */
 export function shellKeyHandler(store: SceneStore, commands: ShellCommands): (e: KeyboardEvent) => void {
   return (e: KeyboardEvent) => {
-    if (e.defaultPrevented || e.metaKey || e.ctrlKey || typeof e.key !== "string") return;
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || typeof e.key !== "string") return;
     // M6.6: a keydown dispatched at the document (or any non-element) has no attributes to read.
     const raw = e.target as HTMLElement | null;
     const target = raw && typeof raw.getAttribute === "function" ? raw : null;
     if (target && (TYPING.test(target.tagName) || target.isContentEditable)) return;
     if (commands.modalOpen()) return;
     const s = store.getState();
-    const inTimeline = s.workspace === "timeline";
     const onFloor = s.workspace === "floor";
-    const withPlayhead = WITH_PLAYHEAD.includes(s.workspace);
-    if (inTimeline && !e.altKey && Object.hasOwn(TIMELINE_KEYS, e.key)) {
-      const command = TIMELINE_KEYS[e.key] as TimelineKeyCommand;
-      if (timelineKeys?.(command)) e.preventDefault();
-      return;
-    }
-    // Shift with , and . is < and > on most layouts; some report the unshifted key.
-    const key = e.shiftKey && e.key === "," ? "<" : e.shiftKey && e.key === "." ? ">" : e.key;
-    // Analytics shows no transport: the playback keys and F are not its own (see WITH_PLAYHEAD), except
-    // L and End while it shows an earlier moment (I-13): its "Back to live" does what the transport's does.
-    if (!withPlayhead && PLAYHEAD_KEYS.has(key)) {
-      if (s.workspace !== "analytics" || !(key === "l" || key === "L" || (key === "End" && !ownsHomeEnd(target))) || !behindLive(s)) return;
-      e.preventDefault();
-      store.followLive();
-      return;
-    }
     let handled = true;
-    switch (key) {
-      case " ":
-        if (ownsActivation(target) || e.altKey) handled = false;
-        else togglePlayback(store);
-        break;
-      case ",":
-        store.stepPrevious();
-        break;
-      case ".":
-        store.stepNext();
-        break;
-      case "<":
-        nudge(store, -10_000);
-        break;
-      case ">":
-        nudge(store, 10_000);
-        break;
-      case "[":
-        stepChapter(store, -1);
-        break;
-      case "]":
-        stepChapter(store, 1);
-        break;
-      case "{":
-        stepSpeed(store, -1);
-        break;
-      case "}":
-        stepSpeed(store, 1);
-        break;
-      case "Home":
-        if (ownsHomeEnd(target)) handled = false;
-        else store.seek(s.extent.start);
-        break;
-      case "End":
-        if (ownsHomeEnd(target)) handled = false;
-        else store.followLive();
-        break;
-      case "l":
-      case "L":
-        store.followLive();
-        break;
+    switch (e.key) {
       case "1":
-      case "2": {
-        const view = key === "1" ? "atlas" : "blueprint";
-        // From the Timeline: back to the Atlas keeping selection and playhead, framing the selection there.
-        if (!onFloor) showOnFloor(store, view);
-        else {
-          store.setView(view);
-          store.setWorkspace("floor");
-        }
+        showOnLine(store);
         break;
-      }
+      case "2":
+        showOnFloor(store);
+        break;
       case "3":
-        showInTimeline(store);
-        break;
-      case "4":
         showInAnalytics(store);
         break;
       case "t":
-        // Theater Mode is the floor's; elsewhere the key does nothing (and says so in the help).
+        // Theater Mode is the Floor's; elsewhere the key does nothing (and says so in the help).
         if (!onFloor) handled = false;
         else store.setTheater(!s.theater);
         break;
-      case "T":
-        if (!onFloor) handled = false;
-        else commands.toggleTimeline();
-        break;
       case "f":
-        if (s.selection) store.focusOn(s.selection, "api");
-        else store.focusOn("overview", "api");
+        if (!onFloor) handled = false;
+        else store.focusOn(s.selection ?? "overview", "api");
         break;
       case "F":
-        store.setFollow(true);
+        if (!onFloor) handled = false;
+        else store.setFollow(true);
         break;
       case "i":
       case "I":
-        commands.toggleInspector();
+        if (!WITH_INSPECTOR.includes(s.workspace)) handled = false;
+        else commands.toggleInspector();
         break;
       case "?":
         commands.openHelp();
@@ -336,19 +137,15 @@ export function useShellKeys(commands: ShellCommands): void {
 }
 
 /**
- * The keyboard home of the workspace on screen: the active Atlas view's canvas, the
- * Timeline's tracks, or Analytics' sheet (its `[data-analytics-home]`, else the workspace itself).
- * The hidden workspace is inert, so its canvas is skipped.
+ * The keyboard home of the workspace on screen: the Line's board, the Atlas's canvas,
+ * or Analytics' sheet (its `[data-analytics-home]`, else the workspace itself). The hidden workspace
+ * is inert, so its canvas is skipped.
  */
 export function activeCanvas(): HTMLElement | null {
   for (const el of document.querySelectorAll<HTMLElement>("[data-analytics-workspace] [data-analytics-home], [data-analytics-workspace]")) {
     if (!el.closest("[inert]")) return el;
   }
-  // The Timeline's tracks are its one canvas tab stop (role="application"); the label column's resize separator comes first in the DOM.
-  for (const el of document.querySelectorAll<HTMLElement>("[data-timeline-workspace] [role='application'][tabindex='0']")) {
-    if (!el.closest("[inert]")) return el;
-  }
-  for (const el of document.querySelectorAll<HTMLElement>("[data-stage-active] [tabindex='0'], [data-timeline-workspace] [tabindex='0']")) {
+  for (const el of document.querySelectorAll<HTMLElement>("[data-line-home], [data-stage-active] [tabindex='0']")) {
     if (!el.closest("[inert]")) return el;
   }
   return null;

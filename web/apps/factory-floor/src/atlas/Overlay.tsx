@@ -15,7 +15,7 @@ import { memo, type ReactNode } from "react";
 import { Callout, SelectionBrackets, fc, modelTiers, project, regions, round, screenBounds, type Lod, type PlanBox, type RegionKind } from "@mach/ui";
 import { isKnown, refId, refKind, sliceHoldOf, type EntityRef, type Scene } from "../sim";
 import { useScene, useSceneStore } from "../scene";
-import { useAtlas, usePlayheadKeyed } from "./context";
+import { useAtlas, useNowKeyed } from "./context";
 import { AFTERGLOW, agentsElapsedKey, animating, anim, fmtElapsed, fmtElapsedKnown, chamberOccupant, latestGate, ticketOfRef, placeAgents, q, uiTier, type ViewMode } from "./derive";
 import { agentName } from "./Bay";
 import { containedWords } from "../text/fields";
@@ -78,13 +78,13 @@ interface Offer extends Upright {
 
 export const Overlay = memo(function Overlay({ zoom, lod, focused, theater, view }: OverlayProps) {
   const { layout: L, mode } = useAtlas();
-  const t = usePlayheadKeyed((s) => {
-    const now = s.playhead;
+  const t = useNowKeyed((s) => {
+    const now = s.now;
     if (animating(s.log, now, (e) => e.event.type === "verification.verdict" || e.event.type === "gate.evaluated" || e.event.type === "review.decided" || e.event.type === "human.approval_recorded" || e.event.type === "dependency.resolved")) return now;
     if (lod === "near" && animating(s.log, now, (e) => e.event.type === "agent.started" || e.event.type === "agent.finished")) return now;
     const scene = s.log.sceneAt(now);
     // At near zoom the agents' elapsed time is lettered: re-render exactly when one of them changes
-    // (keyed on each agent's own elapsed second, not the playhead's, so no route can leave it stale).
+    // (keyed on each agent's own elapsed second, not the moment shown, so no route can leave it stale).
     // A count-only agent's label also carries its tool-call count and last tool: re-render when one changes.
     const elapsedKey = lod === "near" ? `${agentsElapsedKey(scene, now)}${mode.live ? countsKey(scene) : ""}` : "";
     const occ = chamberOccupant(scene, now);
@@ -377,7 +377,7 @@ function obstacles(L: PlantLayout, scene: Scene, t: number, mode: ViewMode, pref
 
 /**
  * Callouts (spec b.7, "Callout placement"): offered in priority order (escalation, failure, waiting
- * for a person, then the event under the playhead). Each may take a leader up-right (45°), up-left,
+ * for a person, then the latest event). Each may take a leader up-right (45°), up-left,
  * right, left, down-right, down-left, straight up or straight down, at 36, 64 then 96 px; its label box
  * is 6.2 px per character, two lines 30 px tall, 4 px padding. Keeping the label inside the stage
  * (flipping it left at the right edge, spec c.5) is what stops "Rejected · security bl…" being cut off

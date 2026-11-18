@@ -1,21 +1,17 @@
 /**
  * Screen-reader announcements. Two polite live regions:
- * - the transport's state when it changes (playing, paused, speed, live or replay, back at the live
- *   edge), never per tick; the view when the mode switches ("Factory Atlas", "Execution Blueprint";
- *   spec c.6) and the workspace when it switches ("Execution Timeline", "Atlas: ..."; under
- *   reduced motion the switch is a cut, so this is how it is noticed); and, live, the connection when it changes state (once per change: live, stale,
- *   reconnecting, disconnected), never its counters;
- * - significant moments while time moves (playing, or following the live edge): chapters or real
- *   landmarks always, other major moments at most one per few seconds of wall time, folding any in
- *   between into "and n more".
+ * - the workspace when it switches ("Line", "Floor: Factory Atlas", "Factory Analytics: ..."; under
+ *   reduced motion the switch is a cut, so this is how it is noticed); and, live, the connection when it changes state (once per change: live,
+ *   stale, reconnecting, disconnected), never its counters;
+ * - significant moments as they happen: chapters (the simulation) or real landmarks always, other
+ *   major moments at most one per few seconds of wall time, folding any in between into "and n more".
  * The words come from the history (its own sentences per event), never invented here.
  */
 import { useEffect, useRef, useState } from "react";
-import { ANALYTICS_AREA_WORDS, playbackFactorWords, useStore } from "../scene";
+import { ANALYTICS_AREA_WORDS, useStore } from "../scene";
 import { countAtOrBefore, indexFor, lastAtOrBefore, quotingKindOf } from "./history";
 import { connectionLook } from "./SourceBadge";
 import { lookKey, unavailableSourceWords } from "./notices";
-import { spokenTime } from "./vocab";
 import { codesOnlyWords } from "../text/fields";
 
 const MIN_GAP_MS = 4000;
@@ -29,31 +25,22 @@ export function Announcer() {
   useEffect(() => {
     let prev = store.getState();
     const first = indexFor(prev);
-    last.current.index = countAtOrBefore(first.moments, prev.playhead);
-    last.current.chapter = lastAtOrBefore(first.landmarks, prev.playhead)?.id ?? "";
+    last.current.index = countAtOrBefore(first.moments, prev.now);
+    last.current.chapter = lastAtOrBefore(first.landmarks, prev.now)?.id ?? "";
     last.current.connection = prev.connection ? lookKey(connectionLook(prev.connection, unavailableSourceWords(prev.factoryStatus?.sources))) : "";
     return store.subscribe(() => {
       const s = store.getState();
       const index = indexFor(s);
-      // A workspace switch is said once, with where it lands (the floor's view when returning to it).
+      // A workspace switch is said once, with where it lands (the Floor's drawing when returning to it).
       if (s.workspace !== prev.workspace)
         setStatus(
-          s.workspace === "timeline"
-            ? "Execution Timeline"
+          s.workspace === "line"
+            ? "Line: stations left to right, a row for each ticket"
             : s.workspace === "analytics"
               ? `Factory Analytics: ${ANALYTICS_AREA_WORDS[s.analytics.area]}`
-              : `Atlas: ${s.view === "atlas" ? "Factory Atlas" : "Execution Blueprint"}`,
+              : "Floor: Factory Atlas",
         );
       else if (s.workspace === "analytics" && s.analytics.area !== prev.analytics.area) setStatus(`Factory Analytics: ${ANALYTICS_AREA_WORDS[s.analytics.area]}`);
-      else if (s.view !== prev.view) setStatus(s.view === "atlas" ? "Factory Atlas" : "Execution Blueprint");
-      if (s.source === "simulation" && (s.playing !== prev.playing || s.speed !== prev.speed || s.following !== prev.following)) {
-        const words = s.playing ? `Playing at ${playbackFactorWords(s.source, s.speed)}` : `Paused at ${spokenTime(s.playhead)}`;
-        setStatus(`${words}${s.following ? ", live" : ", replay"}.`);
-      } else if (s.source !== "simulation" && (s.following !== prev.following || (!s.following && s.playing !== prev.playing))) {
-        if (s.following) setStatus("Back at the live edge.");
-        else if (s.playing) setStatus(`Replaying at ${playbackFactorWords(s.source, s.speed)} from ${spokenTime(s.playhead)}.`);
-        else setStatus(`Holding ${spokenTime(s.playhead)}${s.source === "live" ? "; events keep arriving" : ""}.`);
-      }
       // One announcement per connection change, never for its counters.
       if (s.connection) {
         // M6.6: a source going unavailable, or returning, is a change of the connection's words too.
@@ -66,13 +53,12 @@ export function Announcer() {
         }
       }
       // While history loads (connecting) the backlog is not news: it is caught up silently.
-      const moving = s.playing || (s.source === "live" && s.following && s.connection?.state === "live");
-      const count = countAtOrBefore(index.moments, s.playhead);
-      const chapter = lastAtOrBefore(index.landmarks, s.playhead);
+      const moving = s.source === "simulation" || s.connection?.state === "live";
+      const count = countAtOrBefore(index.moments, s.now);
+      const chapter = lastAtOrBefore(index.landmarks, s.now);
       const newChapter = chapter && chapter.id !== last.current.chapter ? chapter : null;
       if (chapter) last.current.chapter = chapter.id;
       if (!moving) {
-        // Seeking and stepping are announced by the controls themselves; keep the cursor in step.
         last.current.index = count;
         last.current.pending = 0;
       } else if (count > last.current.index || newChapter) {
@@ -98,7 +84,7 @@ export function Announcer() {
 
   return (
     <>
-      <div role="status" aria-live="polite" className="sr-only" data-announcer="transport">
+      <div role="status" aria-live="polite" className="sr-only" data-announcer="status">
         {status}
       </div>
       <div aria-live="polite" aria-atomic="true" className="sr-only" data-announcer="moments">

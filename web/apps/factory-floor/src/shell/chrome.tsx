@@ -1,10 +1,11 @@
 /**
- * Frame pieces: the source stamp, the brand and run identity, the workspace switch and the mode switch.
+ * Frame pieces: the source stamp, the brand and run identity, the workspace switch, and how many
+ * places the Factory has at work.
  */
 import { useId } from "react";
 import { cn, MachMark, fc } from "@mach/ui";
 import { SCENARIO, WAVE } from "../sim";
-import { useScene, useSceneStore, type ViewMode, type Workspace } from "../scene";
+import { useScene, useSceneStore, type Workspace } from "../scene";
 import { SourceStamp } from "./SourceBadge";
 import { useSource } from "./source/context";
 import { utcClock, utcDate } from "./vocab";
@@ -60,7 +61,6 @@ function SimulatedRun({ compact }: { compact?: boolean }) {
 
 /** Real history: the observer's project, the waves received so far, and where the history held begins. */
 function RealRun({ compact }: { compact?: boolean }) {
-  const source = useSceneStore((s) => s.source);
   const { project } = useSource();
   const start = useSceneStore((s) => s.extent.start);
   const held = useSceneStore((s) => s.log.size() > 0);
@@ -78,7 +78,7 @@ function RealRun({ compact }: { compact?: boolean }) {
       {/* The run's name gives way last: the history's start, then the waves, are cut first. */}
       <h1 className="max-w-[45%] shrink-0 truncate font-sans text-body-lg font-bold leading-none text-ink">
         {title}
-        <span className="sr-only">, {source === "live" ? "real execution of the MACH Factory, live" : "real execution of the MACH Factory, replayed"}</span>
+        <span className="sr-only">, real execution of the MACH Factory, live</span>
       </h1>
       {list.length ? (
         <span className="shrink-0 font-mono text-caption text-ink-subtle max-[799px]:hidden" title={list.join(", ")}>
@@ -100,60 +100,10 @@ export function RunIdentity({ compact }: { compact?: boolean }) {
   return source === "simulation" ? <SimulatedRun compact={compact} /> : <RealRun compact={compact} />;
 }
 
-const MODES: Array<{ value: ViewMode; label: string; key: string; hint: string }> = [
-  { value: "atlas", label: "Atlas", key: "1", hint: "Factory Atlas: the plant in space" },
-  { value: "blueprint", label: "Blueprint", key: "2", hint: "Execution Blueprint: the run as a drawing" },
-];
-
-function ModeIcon({ mode }: { mode: ViewMode }) {
-  return (
-    <svg aria-hidden="true" width="16" height="14" viewBox="0 0 16 14" className="shrink-0">
-      {mode === "atlas" ? (
-        <>
-          <path d="M1.5 6L8 2.5L14.5 6L8 9.5Z" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.2, strokeLinejoin: "round" }} />
-          <path d="M1.5 6V8.5L8 12L14.5 8.5V6" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.2, strokeLinejoin: "round" }} />
-        </>
-      ) : (
-        <>
-          <path d="M1.5 2.5H14.5V11.5H1.5Z" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.2 }} />
-          <path d="M1.5 7H14.5" style={{ stroke: "currentColor", strokeWidth: 0.8 }} />
-          <circle cx="5" cy="4.8" r="1.2" style={{ fill: "currentColor" }} />
-          <path d="M8 9.2L9.4 7.8L10.8 9.2L9.4 10.6Z" style={{ fill: "currentColor" }} />
-        </>
-      )}
-    </svg>
-  );
-}
-
-/** "Atlas | Blueprint": a radio group, so arrow keys move between the two and the choice is announced. */
-export function ModeSwitch({ value, onChange }: { value: ViewMode; onChange: (v: ViewMode) => void }) {
-  const name = useId();
-  return (
-    <fieldset className="flex shrink-0 rounded-sm border border-line bg-surface-sunken p-0.5" data-mode-switch="">
-      <legend className="sr-only">View</legend>
-      {MODES.map((m) => (
-        <label
-          key={m.value}
-          title={`${m.hint} (${m.key})`}
-          className={cn(
-            "relative flex h-7 cursor-pointer items-center gap-1.5 rounded-xs px-2.5 text-body-sm text-ink-muted transition-colors duration-[var(--mach-duration-fast)]",
-            "has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-1 has-[:focus-visible]:outline-focus",
-            value === m.value ? "bg-surface font-semibold text-ink shadow-1" : "hover:text-ink",
-          )}
-        >
-          <input type="radio" name={name} value={m.value} checked={value === m.value} onChange={() => onChange(m.value)} className="sr-only" />
-          <ModeIcon mode={m.value} />
-          <span>{m.label}</span>
-        </label>
-      ))}
-    </fieldset>
-  );
-}
-
 const WORKSPACE_CHOICES: Array<{ value: Workspace; label: string; keys: string; hint: string }> = [
-  { value: "floor", label: "Atlas", keys: "1, 2", hint: "Atlas: the plant now, as the Factory Atlas or the Execution Blueprint" },
-  { value: "timeline", label: "Timeline", keys: "3", hint: "Execution Timeline: what the Factory did, when, and how it is known" },
-  { value: "analytics", label: "Analytics", keys: "4", hint: "Factory Analytics: what the recorded history measures, with its sample, coverage and source" },
+  { value: "line", label: "Line", keys: "1", hint: "Line: the stations left to right, a row for each ticket" },
+  { value: "floor", label: "Floor", keys: "2", hint: "Floor: the Factory Atlas, the factory drawn in space" },
+  { value: "analytics", label: "Analytics", keys: "3", hint: "Factory Analytics: what the recorded history measures, with its sample, coverage and source" },
 ];
 
 function WorkspaceIcon({ workspace }: { workspace: Workspace }) {
@@ -164,10 +114,12 @@ function WorkspaceIcon({ workspace }: { workspace: Workspace }) {
           <path d="M1.5 4.5L8 1.5L14.5 4.5L8 7.5Z" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.2, strokeLinejoin: "round" }} />
           <path d="M1.5 8.5L8 11.5L14.5 8.5" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.2, strokeLinejoin: "round" }} />
         </>
-      ) : workspace === "timeline" ? (
+      ) : workspace === "line" ? (
         <>
-          <path d="M1.5 3.5H9M4 7H14.5M1.5 10.5H7.5" style={{ stroke: "currentColor", strokeWidth: 2, strokeLinecap: "butt" }} />
-          <path d="M11 1V13" style={{ stroke: "currentColor", strokeWidth: 0.9 }} />
+          <path d="M1 3.5H15M1 7H15M1 10.5H15" style={{ stroke: "currentColor", strokeWidth: 0.9, strokeDasharray: "1.5 1.5" }} />
+          <circle cx="4" cy="3.5" r="1.6" style={{ fill: "currentColor" }} />
+          <circle cx="9" cy="7" r="1.6" style={{ fill: "currentColor" }} />
+          <circle cx="12.5" cy="10.5" r="1.6" style={{ fill: "currentColor" }} />
         </>
       ) : (
         <>
@@ -180,9 +132,8 @@ function WorkspaceIcon({ workspace }: { workspace: Workspace }) {
 }
 
 /**
- * The primary navigation (M6.3 design section 3): the workspace. A radio group in the same language as
- * the Atlas/Blueprint switch, which is shown beside it in the Atlas only. Later experiences (Evidence)
- * are not drawn until they exist.
+ * The primary navigation: the workspace (Line, Floor, Analytics), as a radio group, so arrow keys
+ * move between them and the choice is announced.
  */
 export function WorkspaceSwitch({ value, onChange }: { value: Workspace; onChange: (w: Workspace) => void }) {
   const name = useId();
@@ -215,5 +166,31 @@ export function RegistrationMark() {
       <path d="M4.5 0V9M0 4.5H9" style={{ stroke: fc("plate-edge"), strokeWidth: 1 }} />
       <circle cx="4.5" cy="4.5" r="2" style={{ fill: "none", stroke: fc("plate-edge"), strokeWidth: 1 }} />
     </svg>
+  );
+}
+
+/**
+ * How many places the Factory has at work: executions running now, of the most it may run at once
+ * when the Factory recorded its limit (`factory.activated`); without a recorded limit, the count alone.
+ * Not shown before anything is recorded.
+ */
+export function PlacesChip() {
+  const running = useScene((s) => s.counters.executionsRunning);
+  const limit = useScene((s) => s.factory.limits?.max_parallel ?? null);
+  const known = useScene((s) => s.factory.enabled || Object.keys(s.executions).length > 0);
+  if (!known) return null;
+  const n = Math.max(0, running);
+  const words = limit !== null ? `${n} of ${limit} place${limit === 1 ? "" : "s"} working` : `${n} working`;
+  return (
+    <span className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-xs px-1 text-caption text-ink-muted" data-places={`${n}/${limit ?? ""}`}>
+      {limit !== null && limit <= 8 ? (
+        <span aria-hidden="true" className="inline-flex gap-[3px]">
+          {Array.from({ length: limit }, (_, i) => (
+            <span key={i} className={cn("size-[9px] rounded-[2px] border-[1.5px] border-factory-ink-soft", i < n && "bg-factory-ink-soft")} />
+          ))}
+        </span>
+      ) : null}
+      <span className="max-[1279px]:sr-only">{words}</span>
+    </span>
   );
 }

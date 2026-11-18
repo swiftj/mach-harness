@@ -10,7 +10,7 @@
  */
 import { EVENT_CATALOG, findAgent, refKind, sourceRuntimeOf, streamObservationOf, type AnyRef, type AnySimEvent, type EntityMeta, type Scene } from "../../sim";
 import { useScene, useSceneStore } from "../../scene";
-import { AuthorityBadge, Facts, JumpButton, Mono, precisionWords, Section, TelemetryBadge, useEntityEvents } from "./parts";
+import { AuthorityBadge, Facts, Mono, precisionWords, Section, TelemetryBadge, useEntityEvents } from "./parts";
 import { runtimeStateWords } from "./words";
 
 const FIELD_WORDS: Readonly<Record<string, string>> = {
@@ -111,11 +111,6 @@ export function Provenance({ entity, value }: { entity: AnyRef; value: unknown }
             latest ? ["Source record", <Mono key="r">{latest.id}</Mono>] : null,
           ]}
         />
-        {latest ? (
-          <div className="mt-2">
-            <JumpButton eventId={latest.id} label="Go to event" />
-          </div>
-        ) : null}
       </Section>
     );
   }
@@ -136,11 +131,6 @@ export function Provenance({ entity, value }: { entity: AnyRef; value: unknown }
           fields.length ? ["Fields from elsewhere", <span key="f">{fields.map(([f, a]) => `${fieldWord(f)}: ${a}`).join("; ")}</span>] : null,
         ]}
       />
-      {recordId ? (
-        <div className="mt-2">
-          <JumpButton eventId={recordId} label="Go to event" />
-        </div>
-      ) : null}
       {meta?.unknown.length ? (
         <div className="mt-3">
           <p className="text-caption font-semibold text-ink">Not recorded</p>

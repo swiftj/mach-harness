@@ -3,7 +3,7 @@
  * scheduler, holding pads, audit), the review chamber (seats, fan-out, findings, votes, consensus
  * gate), the approval gatehouse, integration (revalidation gate, merge machine, merge commits on
  * the main line) and the archive corner (cleanup, observe, the archive stack). Each reads the scene
- * and the playhead; nothing here keeps state.
+ * and the moment shown; nothing here keeps state.
  */
 import {
   AgentMarker,
@@ -32,15 +32,15 @@ import { chamberGate } from "./consensus";
 import { FloorLettering } from "@mach/ui";
 import { PANELS, capacityWaitOf, capacityWaits, eventsInWindow, sliceHoldOf, type CapacityWaitState, type SliceHold, isKnown, ref, type Risk, type CellState, type EntityRef, type GateState, type LogEntry, type Scene, type SceneLog, type SliceState } from "../sim";
 import { useScene, useSceneStore } from "../scene";
-import { Hit, isDimmed, useAtlas, useHighlight, usePlayheadKeyed } from "./context";
+import { Hit, isDimmed, useAtlas, useHighlight, useNowKeyed } from "./context";
 import { AFTERGLOW, RATE, agentsElapsedKey, animating, anim, chamberOccupant, gateView, gateWord, latestGate, panelsSitting, placeAgents, q, ticketOfRef, type PlacedAgent } from "./derive";
 import { PLATE_Z, type BaySlot, type PlantLayout } from "./layout";
 import { AgentFigure, AgentPost, agentLabel, onShelf } from "./Bay";
 import { Card } from "./reduced";
 
-/** The playhead keyed to a part's own animations (see usePlayheadKeyed), with the scene and flags. */
+/** The moment shown, keyed to a part's own animations (see useNowKeyed), with the scene and flags. */
 function useFrame(key: (log: SceneLog, t: number) => string | number) {
-  const t = usePlayheadKeyed((s) => key(s.log, s.playhead));
+  const t = useNowKeyed((s) => key(s.log, s.now));
   const reduced = useSceneStore((s) => s.reducedMotion);
   const scene = useScene();
   const log = useSceneStore((s) => s.log);

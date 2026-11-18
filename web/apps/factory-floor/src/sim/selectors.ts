@@ -98,7 +98,7 @@ export interface Changes {
   readonly refs: readonly EntityRef[];
 }
 
-/** What changed between two playhead times, in either direction. */
+/** What changed between two times, in either direction. */
 export function changesBetween(fixture: Fixture, t1: number, t2: number): Changes;
 export function changesBetween(log: SceneLog, t1: number, t2: number): LogChanges;
 export function changesBetween(history: History, t1: number, t2: number): Changes | LogChanges {
@@ -609,7 +609,7 @@ export interface AgentTimeline extends AgentSpan {
 const timelineCache = new WeakMap<Scene, readonly CellTimeline[]>();
 
 /**
- * One timeline per cell, in the order the cells were opened, as known at playhead time t: spans
+ * One timeline per cell, in the order the cells were opened, as known at time t: spans
  * still open at t have `end: null` and no outcome, and nothing that starts after t is listed. Pass
  * `fixture.duration` for the whole recorded run (then hide what lies beyond the live edge).
  * Cached per scene: the same object for every t between two events.
@@ -776,7 +776,7 @@ export function chapters(history: History): readonly Chapter[] {
   return isSceneLog(history) ? [] : history.chapters;
 }
 
-/** The chapter the playhead is in (the last one that has started), or null before the first (and always, live). */
+/** The chapter time t is in (the last one that has started), or null before the first (and always, live). */
 export function chapterAt(history: History, t: number): Chapter | null {
   let found: Chapter | null = null;
   for (const chapter of chapters(history)) if (chapter.t <= t) found = chapter;
@@ -1304,10 +1304,9 @@ function firstOrder(log: SceneLog, entity: EntityRef): string | null {
  * late. A slice outside any wave and a cell whose slice is not known each get a bay too; when a
  * cell's slice becomes known, its bay is kept and re-keyed to the slice.
  *
- * The table belongs to the log's lineage, not to the log: the windows of a long history (and the
- * live log they are read behind) are separate logs of one history, and a ticket keeps its bay
- * whichever window holds the playhead. A window that does not know something another one did never
- * takes it away (a bay stays; a ticket learned stays learned).
+ * The table belongs to the log's lineage, not to the log: separate logs of one history share it, so a
+ * ticket keeps its bay whichever of them is read. A log that does not know something another one did
+ * never takes it away (a bay stays; a ticket learned stays learned).
  */
 export function bayOrder(log: SceneLog): BayOrder {
   const lineage = log.lineage ?? log;

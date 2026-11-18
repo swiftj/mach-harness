@@ -1,5 +1,5 @@
 /**
- * Motion as a function of the playhead. A view never keeps progress of its own: it asks how far
+ * Motion as a function of the moment shown. A view never keeps progress of its own: it asks how far
  * along an event-driven motion is at time t, so pausing, scrubbing and changing speed always show
  * the right frame. All functions are pure.
  */

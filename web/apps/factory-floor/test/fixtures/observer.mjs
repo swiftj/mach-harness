@@ -1,11 +1,12 @@
-// An in-memory observer for the live source's tests: the documented /api/v1 routes (session, events
-// after a cursor, history in order, snapshot at a cursor, factory status, in the shapes
+// An in-memory observer for the live source's tests: the documented /api/v1 routes the Factory Floor
+// reads (session, events after a cursor, the summaries, factory status, health, concurrency, in the
+// shapes
 // apps/observer/README.md documents) behind an injected fetch, and a server-sent event stream
 // behind an injected EventSource factory (hello, events with id = cursor, heartbeat, gap, reset).
 // Built from M6_1_OBSERVER_DESIGN.md sections 8, 11 and 12 and the contract's section 14. It never
-// starts the Go binary.
+// starts the Go binary. `/snapshot` answers only so a test can prove the client never asks for it.
 
-export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false, heartbeatMs = 15000, history = true, series = false, summaries = true } = {}) {
+export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false, heartbeatMs = 15000, summaries = true } = {}) {
   const server = {
     generation,
     events: [], // in pos order
@@ -19,33 +20,16 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
       supervisor: { lease_present: true, heartbeat_fresh: true, heartbeat_age_seconds: 4, lease_expired: false },
       freshness: { ingest: { stale: false, watermark_ms: null, catching_up: false }, sources: [{ key: "i:0badc0de", state: "live", lag_bytes: 0, last_read_age_ms: 120 }] },
     },
-    historyRoute: history,
-    seriesRoute: series,
     /** `/waves`, `/slices`, `/cells`, `/runs`, `/project`, `/cells/{t}`, `/artifacts` (observer M6.2 summaries). */
     summaryRoutes: summaries,
     summaries: { waves: [], slices: [], cells: [], runs: [], artifacts: [], history: { completeness: "complete", lost: {}, not_interpreted: {}, classes: {}, gaps: {}, partial: "", not_v3: 0 } },
     /** `/health` `ingest.runtime`. */
     runtime: null,
-    /** The events in history order, kept like the observer's index (rebuilt only when events change). */
-    inOrder: null,
     /** Cursors snapshots were asked at (null: the default). */
     snapshotsAt: [],
     streams: [],
     requests: [],
     down: false,
-    // ---- M6.3 (Execution Timeline): /spans windowed, /marks, /concurrency, /series by kind.
-    /** Spans in the observer's wire shape (span_id, kind, start/end with RFC 3339 `at`, attrs...). */
-    spans: [],
-    /** "m63": windowed with `truncated`/`total_uncapped`; "m61": today's route (no window, silent cap); false: 404. */
-    spansRoute: "m63",
-    /** The observer's cap on spans per reply (MaxSpans). */
-    spanCap: 5000,
-    /** Marks in the wire shape (mark_id, kind, at, until, event_id, entity, label, verdict, authority); null: no route (404). */
-    marks: null,
-    /** Round 4: `/marks` pages with `offset` and `more` (false: an M6.3 observer that only says `truncated`). */
-    marksPaging: false,
-    /** The observer's cap on marks per reply (MaxMarks). */
-    marksCap: 1000,
     /** `/concurrency`: a function (from, to, bucket) => reply data, or null for no route (404). */
     concurrency: null,
     /** While true, every reply waits for `release()` (to test superseded and aborted requests). */
@@ -60,18 +44,6 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
     return due.length;
   };
   const head = () => (server.events.length ? server.events.at(-1).pos : 0);
-  const sorted = () => (server.inOrder ??= [...server.events].sort((a, b) => (a.order < b.order ? -1 : a.order > b.order ? 1 : 0)));
-  /** First index in history order whose order key is >= key. */
-  const lowerOrder = (list, key) => {
-    let lo = 0;
-    let hi = list.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (list[mid].order < key) lo = mid + 1;
-      else hi = mid;
-    }
-    return lo;
-  };
   const cur = (pos) => `${server.generation}.${pos}`;
   const ok = (data) => ({ status: 200, json: async () => ({ ok: true, data }) });
   const fail = (status, kind, extra = {}) => ({ status, json: async () => ({ ok: false, error: { kind, message: kind, ...extra } }) });
@@ -113,18 +85,6 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
       const next = page.length ? cur(page.at(-1).pos) : after;
       return ok({ generation: server.generation, events: page, next, head: cur(head()), floor: cur(server.floor), more: page.length > 0 && page.at(-1).pos < head() });
     }
-    if (path === "/history") {
-      if (!server.historyRoute) return fail(404, "not_found");
-      const from = u.searchParams.get("from_order") ?? (u.searchParams.get("from_ms") ? String(Number(u.searchParams.get("from_ms"))).padStart(15, "0") : null);
-      const to = u.searchParams.get("to_order") ?? (u.searchParams.get("to_ms") ? String(Number(u.searchParams.get("to_ms"))).padStart(15, "0") : null);
-      const limit = Number(u.searchParams.get("limit") ?? 1000);
-      const inOrder = sorted();
-      const start = from === null ? 0 : lowerOrder(inOrder, from);
-      const end = to === null ? inOrder.length : lowerOrder(inOrder, to);
-      const page = inOrder.slice(start, Math.min(end, start + limit));
-      const more = end - start > limit;
-      return ok({ generation: server.generation, schema: 3, events: page, from_order: from, to_order: to, next_from_order: more ? inOrder[start + limit].order : null, more, complete: server.floor === 0, head: cur(head()), floor: cur(server.floor), watermark_ms: null });
-    }
     if (path === "/snapshot") {
       if (!server.snapshotCapability) return fail(404, "not_found");
       const at = u.searchParams.get("at");
@@ -136,33 +96,6 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
       }
       return ok({ cursor: cur(head()), generation: server.generation, pos: head(), reconstructed: false, authority: "projection", state: server.snapshotState });
     }
-    if (path === "/series") {
-      // As documented (observer M6.2): counts per bucket by order_ms, sparse, over the held history.
-      if (!server.seriesRoute) return fail(404, "not_found");
-      const inOrder = sorted();
-      const fromMs = u.searchParams.get("from_ms") ? Number(u.searchParams.get("from_ms")) : (inOrder[0]?.time.order_ms ?? 0);
-      const toMs = u.searchParams.get("to_ms") ? Number(u.searchParams.get("to_ms")) : (inOrder.at(-1)?.time.order_ms ?? 0) + 1;
-      const bucketMs = Number(u.searchParams.get("bucket_ms") ?? Math.max(1000, Math.ceil((toMs - fromMs) / 500)));
-      const counts = new Map();
-      let total = 0;
-      const kindsParam = u.searchParams.get("kinds");
-      const kinds = kindsParam ? new Set(kindsParam.split(",")) : null;
-      const ticket = u.searchParams.get("ticket");
-      const execution = u.searchParams.get("execution");
-      for (const e of inOrder) {
-        const t = e.time.order_ms;
-        if (t < fromMs || t >= toMs) continue;
-        if (kinds && !kinds.has(e.type)) continue;
-        if (ticket && e.ids?.ticket_id !== ticket) continue;
-        if (execution && e.ids?.execution_id !== execution) continue;
-        const k = fromMs + Math.floor((t - fromMs) / bucketMs) * bucketMs;
-        counts.set(k, (counts.get(k) ?? 0) + 1);
-        total += 1;
-      }
-      return ok({ from_ms: fromMs, to_ms: toMs, bucket_ms: bucketMs, buckets: [...counts].map(([from_ms, count]) => ({ from_ms, count, kinds: {}, authorities: {} })), total, kinds: {}, authorities: {}, head: cur(head()), watermark_ms: null, complete: server.floor === 0, ...(kinds ? { kinds_applied: [...kinds] } : {}) });
-    }
-    if (path === "/spans") return spansReply(u);
-    if (path === "/marks") return marksReply(u);
     if (path === "/concurrency") {
       if (!server.concurrency) return fail(404, "not_found");
       const n = (k) => Number(u.searchParams.get(k));
@@ -190,63 +123,6 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
     }
     if (path === "/health") return ok({ status: "ok", index: { head: cur(head()), floor: cur(server.floor) }, projection: { history: server.summaries.history }, ingest: { runtime: server.runtime, delivery: { last_hold_ms: 120, hold_ms_p95: 300 } }, freshness: server.status.freshness });
     return fail(404, "not_found");
-  };
-
-  /** Earliest and latest a wire span can touch (ms), for the window filter. */
-  const wireMs = (v) => (typeof v === "string" ? Date.parse(v) : typeof v === "number" ? v : null);
-  const wireExtent = (sp) => {
-    const s = sp.start;
-    const e = sp.end;
-    const from = s ? (wireMs(s.not_before) ?? wireMs(s.at)) : e ? (wireMs(e.not_before) ?? wireMs(e.at)) : null;
-    const to = e ? (wireMs(e.not_after) ?? wireMs(e.at) ?? from) : Infinity;
-    return from === null ? null : { from, to };
-  };
-  const spansReply = (u) => {
-    if (!server.spansRoute) return fail(404, "not_found");
-    const q = (k) => u.searchParams.get(k);
-    const limit = Math.min(1000, Number(q("limit") ?? 200));
-    const offset = Number(q("offset") ?? 0);
-    const kinds = q("kinds") ? new Set(q("kinds").split(",")) : null;
-    let all = server.spans.filter((sp) => (!kinds || kinds.has(sp.kind)) && (!q("ticket") || sp.ids?.ticket_id === q("ticket")) && (!q("execution") || sp.ids?.execution_id === q("execution")) && (!q("wave") || sp.ids?.wave_id === q("wave")));
-    if (server.spansRoute === "m61") {
-      all = all.slice(0, server.spanCap);
-      return ok({ items: all.slice(offset, offset + limit), total: all.length, offset, more: offset + limit < all.length, cursor: cur(head()), basis_vocabulary: [] });
-    }
-    if (q("span")) {
-      const one = server.spans.filter((sp) => sp.span_id === q("span"));
-      return one.length ? ok({ items: one, total: 1, offset: 0, more: false, cursor: cur(head()), truncated: false, total_uncapped: 1 }) : fail(404, "not_found");
-    }
-    const from = q("from_ms") === null ? -Infinity : Number(q("from_ms"));
-    const to = q("to_ms") === null ? Infinity : Number(q("to_ms"));
-    all = all.filter((sp) => {
-      const x = wireExtent(sp);
-      return x !== null && x.from <= to && x.to >= from;
-    });
-    all.sort((a, b) => wireExtent(a).from - wireExtent(b).from);
-    const uncapped = all.length;
-    all = all.slice(0, server.spanCap);
-    return ok({ items: all.slice(offset, offset + limit), total: all.length, offset, more: offset + limit < all.length, cursor: cur(head()), truncated: uncapped > all.length, total_uncapped: uncapped, basis_vocabulary: [] });
-  };
-  const marksReply = (u) => {
-    if (!server.marks) return fail(404, "not_found");
-    const q = (k) => u.searchParams.get(k);
-    const kinds = q("kinds") ? new Set(q("kinds").split(",")) : null;
-    let list = server.marks.filter((m) => !kinds || kinds.has(m.kind)).map((m) => ({ m, at: wireMs(m.at), until: wireMs(m.until) }));
-    list.sort((a, b) => a.at - b.at);
-    if (q("after_ms") !== null) list = list.filter((x) => x.at > Number(q("after_ms")));
-    else if (q("before_ms") !== null) list = list.filter((x) => x.at < Number(q("before_ms"))).reverse();
-    else {
-      const from = q("from_ms") === null ? -Infinity : Number(q("from_ms"));
-      const to = q("to_ms") === null ? Infinity : Number(q("to_ms"));
-      list = list.filter((x) => x.at <= to && (x.until ?? x.at) >= from);
-    }
-    const limit = Math.min(server.marksCap, Number(q("limit") ?? 1000));
-    if (server.marksPaging) {
-      const offset = Number(q("offset") ?? 0);
-      const page = list.slice(offset, offset + limit);
-      return ok({ items: page.map((x) => x.m), total: list.length, offset, more: offset + page.length < list.length, truncated: offset + page.length < list.length, cursor: cur(head()) });
-    }
-    return ok({ items: list.slice(0, limit).map((x) => x.m), truncated: list.length > limit, cursor: cur(head()) });
   };
 
   server.openStream = (url) => {
@@ -290,7 +166,6 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
     let pos = head();
     const committed = events.map((e) => ({ ...e, pos: ++pos }));
     for (const e of committed) server.events.push(e);
-    server.inOrder = null;
     for (const es of server.live()) for (const e of committed) es.emit("message", e, cur(e.pos));
     return committed;
   };
@@ -308,7 +183,6 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
   server.rebuild = (newGeneration) => {
     server.generation = newGeneration;
     server.events = server.events.map((e, i) => ({ ...e, pos: i + 1 }));
-    server.inOrder = null;
     server.floor = 0;
     for (const es of server.live()) es.emit("reset", { reason: "generation", generation: newGeneration });
   };

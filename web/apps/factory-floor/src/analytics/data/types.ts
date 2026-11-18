@@ -36,12 +36,12 @@ export interface HistoryGap {
 export interface HistorySource {
   /** "stream" covers execution streams and execution records. */
   readonly source: "intake" | "lifecycle" | "stream" | "runs" | "unknown";
-  /** The recorded time of the newest event of that class applied (at the cursor, or as of the playhead). */
+  /** The recorded time of the newest event of that class applied (at the cursor). */
   readonly last_event_ms: number | null;
   readonly events: number | null;
-  /** When the observer last read a file of that class, on its own clock now: not a replay value, not comparable across observers. */
+  /** When the observer last read a file of that class, on its own clock now: not comparable across observers. */
   readonly last_read_ms: number | null;
-  /** "hour" with as_of_ms when the playhead's hour also held later events: whole hours before it are counted. */
+  /** How precise `last_event_ms` is, when the observer says (it says "hour" only for a query cut with `as_of_ms`, which the Floor does not ask). */
   readonly precision: string | null;
   /** Why a value is null: no-events, no-recorded-time, not-tracked, not-read. */
   readonly reason: readonly string[];
@@ -72,10 +72,9 @@ export interface AnalyticsEnvelope {
   readonly filters: Readonly<Record<string, string>>;
   readonly history: AnalyticsHistory;
   /**
-   * `as_of` (when `as_of_ms` was asked and honoured): `exact` true when nothing recorded after `ms` is
-   * counted (flow, contributors, runs); false when the figure is cut at whole UTC days before it
-   * (metrics, insights: `effective_to_ms` is the playhead's midnight). `rule` is the observer's words,
-   * to show whenever `exact` is false. Null otherwise.
+   * `as_of` (only when `as_of_ms` was asked and honoured, which the Floor does not ask): `exact` true
+   * when nothing recorded after `ms` is counted; false when cut at whole UTC days before it. Read as
+   * the observer sends it; null otherwise.
    */
   readonly as_of: { readonly ms: number; readonly exact: boolean; readonly effective_to_ms: number | null; readonly rule: string | null } | null;
   /** The observer's stated rules for the reply (one string or several in the wire format; always a list here). */
@@ -221,7 +220,7 @@ export interface MetricRow extends Figure {
   readonly groups_omitted: number | null;
   readonly buckets: readonly TrendBucket[] | null;
   readonly suspect: boolean;
-  /** How this row is cut at the playhead (as_of_ms): whole UTC days before it; null when not asked. */
+  /** How this row is cut by `as_of_ms` (whole UTC days before it); null when not asked, as the Floor never does. */
   readonly as_of: { readonly ms: number; readonly exact: boolean; readonly effective_to_ms: number | null; readonly rule: string | null } | null;
 }
 
@@ -355,8 +354,6 @@ export interface ContributorsReply extends AnalyticsEnvelope {
   readonly by_basis: Readonly<Record<string, number>>;
   readonly order: "impact" | "recent" | "unknown";
   readonly limit: number | null;
-  /** Items dropped by this client because they fall after the "as of" time (a replay) or have no recorded time: counted, never shown. */
-  readonly after_as_of: number;
 }
 
 // ---------------------------------------------------------------------------------------- runs
@@ -433,8 +430,6 @@ interface RunsCommon extends AnalyticsEnvelope {
   readonly offset: number | null;
   readonly more: boolean;
   readonly excluded: readonly Excluded[];
-  /** Items dropped by this client because they fall after the "as of" time or have no recorded time: counted, never shown. */
-  readonly after_as_of: number;
 }
 export interface RunsReply extends RunsCommon {
   readonly of: "runs";

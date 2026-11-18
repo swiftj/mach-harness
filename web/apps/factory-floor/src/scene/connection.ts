@@ -1,6 +1,6 @@
 /**
- * The live connection's state, as the store holds it and every view may read it. Simulation and
- * replay have no connection (`null`). The live source (src/live/source.ts) is the only writer.
+ * The live connection's state, as the store holds it and every view may read it. The simulation has
+ * no connection (`null`). The live source (src/live/source.ts) is the only writer.
  *
  * - `connecting`: no stream yet (first load, or after a reset while history reloads);
  * - `live`: the stream is open and a message (event or heartbeat) arrived within the stale bound;
@@ -168,13 +168,13 @@ export function isStale(status: ConnectionStatus | null): boolean {
 
 /**
  * When the history shown is no longer live, its last recorded time; else null. No longer live: a
- * replay, or a Factory whose own records leave it disabled (factory.disabled last) with no supervisor
+ * Factory whose own records leave it disabled (factory.disabled last) with no supervisor
  * lease held. Then work still open at the end is "no end recorded", never running (presentation only:
  * nothing is closed). A live, enabled Factory, or one whose status is not read yet, is live.
  */
 export function historyEndedAt(s: { readonly source: string; readonly factoryStatus: FactoryStatus | null; readonly extent: { readonly events: number }; readonly log?: { headTime?(): number | null } | null }): number | null {
   const f = s.factoryStatus;
-  const closed = s.source === "replay" || (s.source === "live" && f?.recordedState === "disabled" && f.supervisor.leasePresent === false);
+  const closed = s.source === "live" && f?.recordedState === "disabled" && f.supervisor.leasePresent === false;
   if (!closed || s.extent.events === 0) return null;
   return s.log?.headTime?.() ?? null;
 }

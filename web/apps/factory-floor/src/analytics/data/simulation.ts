@@ -210,7 +210,7 @@ export function simulatedAnalytics(seed = 6502, options: SimulatedAnalyticsOptio
         for (const c of all) byBasis[c.basis] = (byBasis[c.basis] ?? 0) + 1;
         return {
           status: "ok",
-          value: { ...env, metric: query.metric, figure: null, group: Object.fromEntries(group), items: sorted.slice(0, limit), total: all.length, truncated: all.length > limit, by_basis: byBasis, order, limit, after_as_of: 0 },
+          value: { ...env, metric: query.metric, figure: null, group: Object.fromEntries(group), items: sorted.slice(0, limit), total: all.length, truncated: all.length > limit, by_basis: byBasis, order, limit },
         };
       }),
     runs: (query, options) =>
@@ -219,7 +219,7 @@ export function simulatedAnalytics(seed = 6502, options: SimulatedAnalyticsOptio
         const offset = Math.max(0, query.offset ?? 0);
         const limit = Math.max(1, query.limit ?? 100);
         const items = all.slice(offset, offset + limit);
-        return { status: "ok", value: { ...env, of: "runs", items, total: all.length, offset, more: offset + limit < all.length, excluded: [], after_as_of: 0 } };
+        return { status: "ok", value: { ...env, of: "runs", items, total: all.length, offset, more: offset + limit < all.length, excluded: [] } };
       }),
     executions: async (_query, options) => {
       aborted(options?.signal);

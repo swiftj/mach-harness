@@ -1,7 +1,7 @@
-// Factory Analytics as the Shell mounts it (#analytics, key 4), over the built-in Simulation
+// Factory Analytics as the Shell mounts it (#analytics, key 3), over the built-in Simulation
 // (`?simulation`). Mode `proof`: needs only the dev server. Workspace keys, the address grammar
 // (`#analytics?area=&win=&risk=&app=&model=&station=&sel=&cmp=&focus=`), the Rows drill-down into the
-// Timeline and the Atlas, and Back restoring the Analytics view.
+// Line and the Floor, and Back restoring the Analytics view.
 /* global document, location */
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -53,21 +53,21 @@ const pressBody = async (page, key) => {
 };
 
 describe("Analytics in the Shell (Simulation)", { skip: run ? false : `E2E_AN_MODE=${MODE}` }, () => {
-  test("keys 1, 2, 3 and 4 switch workspaces; 4 brings Analytics back with its area and window", async () => {
+  test("keys 1, 2 and 3 switch workspaces; 3 brings Analytics back with its area and window", async () => {
     const { page, context } = await open("#analytics?area=quality&win=7d&risk=high");
     const s0 = await workspaceState(page);
     assert.equal(s0.sheet, "Quality and remediation");
     assert.ok(s0.simulatedChip, "Analytics over the Simulation is not labelled Simulated");
     const seen = [];
-    for (const key of ["1", "2", "3", "4"]) {
+    for (const key of ["1", "2", "3"]) {
       await pressBody(page, key);
       seen.push(`${key}→${route(await page.evaluate(() => location.hash))}`);
     }
-    assert.deepEqual(seen, ["1→atlas", "2→blueprint", "3→timeline", "4→analytics"]);
+    assert.deepEqual(seen, ["1→line", "2→floor", "3→analytics"]);
     await analyticsReady(page);
     const s = await workspaceState(page);
     const p = hashParams(s.hash);
-    assert.equal(s.sheet, "Quality and remediation", "4 did not return to the same area");
+    assert.equal(s.sheet, "Quality and remediation", "3 did not return to the same area");
     assert.equal(p.win, "7d", `the window is ${p.win} after the round trip`);
     assert.equal(p.risk, "high", `the risk filter is ${p.risk} after the round trip`);
     assert.equal(await page.getByRole("radio", { name: "Analytics" }).isChecked(), true, "the Workspace switch does not show Analytics");
@@ -106,7 +106,7 @@ describe("Analytics in the Shell (Simulation)", { skip: run ? false : `E2E_AN_MO
     await context.close();
   });
 
-  test("Rows → an entity opens the Timeline with it selected and in the window; 1 shows it on the floor; Back restores Analytics", async (t) => {
+  test("Rows → an entity shows its ticket on the Line, selected; 2 shows it on the Floor; Back restores Analytics", async (t) => {
     const start = "#analytics?area=flow&win=all&risk=medium";
     const { page, context } = await open(start);
     const rows = page.getByRole("button", { name: /^Rows$/ });
@@ -123,23 +123,18 @@ describe("Analytics in the Shell (Simulation)", { skip: run ? false : `E2E_AN_MO
     assert.ok(await link.count(), "the rows list no entity");
     const ref = await link.getAttribute("data-ref");
     await link.click();
-    const went = await page.waitForFunction(() => location.hash.startsWith("#timeline"), undefined, { timeout: 5000 }).then(() => true, () => false);
+    const went = await page.waitForFunction(() => location.hash.startsWith("#line"), undefined, { timeout: 5000 }).then(() => true, () => false);
     assert.ok(went, `"${await link.getAttribute("aria-label")}" did nothing (the address stayed ${await page.evaluate(() => location.hash)}): ${ref} comes from the simulated Analytics fixture and is not an entity of the simulated run, so the Shell cannot open it [areas, shell]`);
-    await page.waitForSelector("[data-timeline-workspace][data-timeline-ready]", { timeout: 30000 });
+    await page.waitForSelector("[data-line-workspace]", { timeout: 30000 });
     const h = hashParams(await page.evaluate(() => location.hash));
-    assert.equal(h.sel, ref, "the Timeline's address does not carry the entity");
-    const selected = await page.evaluate(() => ({
-      inspector: (document.querySelector("[data-inspector]")?.innerText ?? "").slice(0, 400),
-      window: document.querySelector("[data-timeline-window]")?.getAttribute("data-timeline-window") ?? null,
-      known: document.querySelector("[data-inspector] [data-entity-ref], [data-inspector] h2") !== null,
-    }));
-    if (!selected.known || /not (found|in this history)|no such/i.test(selected.inspector)) {
+    assert.equal(h.sel, ref, "the Line's address does not carry the entity");
+    if (!(await page.locator("[data-line-panel='ticket']").count())) {
       await context.close();
-      return skip(t, `the Simulation's scene has no entity ${ref}: the prototype's rows come from the simulated Analytics fixture, not the simulated run (live mode asserts this strictly)`);
+      return skip(t, `the Simulation's scene has no ticket for ${ref}: the prototype's rows come from the simulated Analytics fixture, not the simulated run (live mode asserts this strictly)`);
     }
-    await pressBody(page, "1");
-    assert.equal(route(await page.evaluate(() => location.hash)), "atlas");
-    assert.equal(hashParams(await page.evaluate(() => location.hash)).sel, ref, "the floor lost the selection");
+    await pressBody(page, "2");
+    assert.equal(route(await page.evaluate(() => location.hash)), "floor");
+    assert.equal(hashParams(await page.evaluate(() => location.hash)).sel, ref, "the Floor lost the selection");
     for (let i = 0; i < 4 && route(await page.evaluate(() => location.hash)) !== "analytics"; i++) {
       await page.goBack();
       await sleep(500);
@@ -152,15 +147,15 @@ describe("Analytics in the Shell (Simulation)", { skip: run ? false : `E2E_AN_MO
     await context.close();
   });
 
-  test("Back from the Timeline restores Analytics' area, window and filters", async () => {
+  test("Back from the Line restores Analytics' area, window and filters", async () => {
     const { page, context } = await open("#analytics?area=economics&win=7d&model=opus");
-    await pressBody(page, "3");
-    assert.equal(route(await page.evaluate(() => location.hash)), "timeline");
+    await pressBody(page, "1");
+    assert.equal(route(await page.evaluate(() => location.hash)), "line");
     await page.goBack();
     await sleep(600);
     // A key switch may replace, not push, the entry: then Back leaves the app's first entry; say which.
     const h = await page.evaluate(() => location.hash);
-    assert.equal(route(h), "analytics", `Back from the Timeline went to ${h || page.url()} [shell: hashSync writes the address with history.replaceState only, so a workspace switch leaves no entry to go back to]`);
+    assert.equal(route(h), "analytics", `Back from the Line went to ${h || page.url()} [shell: hashSync writes the address with history.replaceState only, so a workspace switch leaves no entry to go back to]`);
     await analyticsReady(page);
     const p = hashParams(h);
     assert.deepEqual({ area: p.area, win: p.win, model: p.model }, { area: "economics", win: "7d", model: "opus" });
@@ -188,7 +183,7 @@ describe("Analytics in the Shell (Simulation)", { skip: run ? false : `E2E_AN_MO
     const offenders = pages.flatMap((p) => requestOffenders(p).map((r) => `${r.method} ${r.url}`));
     const prose = proseInUrls([...new Set(pages.flatMap((p) => [...p.urls, ...p.requests.map((r) => r.url)]))]);
     // Under ?simulation the app still asks /api/v1/session whether an observer is there; the dev
-    // server without one answers 404 (the Timeline's suite sees the same). Nothing else is excused.
+    // server without one answers 404. Nothing else is excused.
     const errors = pages.flatMap((p) => consoleErrors(p)).filter((e) => !/\/api\/v1\/session/.test(e));
     assert.deepEqual(offenders, []);
     assert.deepEqual(prose, []);

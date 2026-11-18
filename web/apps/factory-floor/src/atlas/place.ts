@@ -1,7 +1,7 @@
 /**
  * One deterministic placement pass for the Atlas's upright labels (callouts, the selection's label,
  * agents' labels): findings D7. A pure function of the labels offered, in the order offered, and the
- * visible stage, so the same playhead and camera always give the same placement. Nothing is
+ * visible stage, so the same moment and camera always give the same placement. Nothing is
  * remembered between frames: a label keeps its slot for as long as the inputs that decided it (the
  * set of labels, their anchors, and the stage, which the view quantises) are unchanged, and labels
  * whose boxes would otherwise breathe (an agent's elapsed time) reserve their widest text, so time

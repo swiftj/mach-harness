@@ -5,8 +5,6 @@
  * `source` and every scene's `provenance` remain the authority for labelling what is drawn.
  */
 import { createContext, useContext, useMemo } from "react";
-import { indexFor, type HistoryIndex } from "../history";
-import { useSceneStore } from "../../scene";
 import type { SourceChoice } from "./boot";
 import type { ObserverClient } from "../../live";
 
@@ -40,11 +38,6 @@ export const SourceContext = createContext<SourceInfo>(FALLBACK);
 
 export function useSource(): SourceInfo {
   return useContext(SourceContext);
-}
-
-/** The history's moments, landmarks and Factory marks, kept up to date as events arrive. */
-export function useHistoryIndex(): HistoryIndex {
-  return useSceneStore(indexFor);
 }
 
 /** The value for the provider, stable while its parts are. */

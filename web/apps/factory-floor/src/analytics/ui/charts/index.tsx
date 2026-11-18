@@ -17,7 +17,7 @@ import { cardWords, Ctx, Mark, useMarkNav, useTip, useWidth, type Card } from ".
 import { HISTORY_SUSPECT_WORDS } from "../../wire/history";
 import { suspectColumns } from "../../model/charts";
 import type { Interval } from "../types";
-import { tickLabel, ticksFor } from "../../../timeline/render/scale";
+import { tickLabel, ticksFor } from "../../model/scale";
 
 const NUM = { fontFamily: "var(--mach-font-sans)", fontVariantNumeric: "tabular-nums" } as const;
 const AXIS_TEXT = { ...NUM, fontSize: 11, fill: "var(--an-subtle)" } as const;
@@ -76,11 +76,11 @@ export function Columns({ points, height = 150, format, tone = "var(--an-bar)", 
       }
     });
   }
-  // Columns that carry their periods take the Timeline ruler's ticks and words (I-11); others keep their own labels.
+  // Columns that carry their periods take ruler ticks and day words (I-11); others keep their own labels.
   const ruler = rulerTicks(points, plotW);
   // A column whose period holds a day the observer marks suspect (I-03): hatched, and its card says so.
   const history = useContext(Ctx)?.snapshot.history;
-  const suspect = suspectColumns(points, history?.suspect_days ?? [], history?.as_of_ms ?? null);
+  const suspect = suspectColumns(points, history?.suspect_days ?? []);
   const brushable = !!onWindow && points.length > 1 && points.every((p) => p.from !== undefined && p.to !== undefined);
   const periods = brushable ? points.map((p) => ({ from: p.from!, to: p.to! })) : [];
 
@@ -187,7 +187,7 @@ export function Columns({ points, height = 150, format, tone = "var(--an-bar)", 
               </text>
             ))
           : null}
-        {/* Weekend days banded, as on the Timeline's ruler (day columns only). */}
+        {/* Weekend days banded (day columns only). */}
         {points.map((p, i) => {
           if (p.from === undefined || p.to === undefined || p.to - p.from !== 86_400_000) return null;
           const d = new Date(p.from).getUTCDay();
@@ -473,7 +473,7 @@ export function LogNote() {
  * on a log time axis (labelled as such), the median and, with enough members, the 90th percentile
  * as rules (each read as the observer reads it: the upper bound of its bucket).
  */
-export function DurationHistogram({ buckets, p50, p90, mark, height = 124, name, tone = "var(--an-bar)" }: { buckets: readonly HistBucket[] | undefined; p50?: number | undefined; p90?: number | undefined; /** One duration to mark (the visit opened from the Timeline), with its words. */ mark?: { readonly ms: number; readonly label: string } | undefined; height?: number; name: string; tone?: string }) {
+export function DurationHistogram({ buckets, p50, p90, mark, height = 124, name, tone = "var(--an-bar)" }: { buckets: readonly HistBucket[] | undefined; p50?: number | undefined; p90?: number | undefined; /** One duration to mark (the visit Analytics was opened from), with its words. */ mark?: { readonly ms: number; readonly label: string } | undefined; height?: number; name: string; tone?: string }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [, setTip, tipNode] = useTip(width);
   const bins: HistBin[] = histogramBins(buckets);
@@ -657,7 +657,7 @@ export interface StepLine {
 }
 
 /**
- * The Timeline's concurrency lens, at the scale of days: one small panel per line, each on its own
+ * Concurrency at the scale of days: one small panel per line, each on its own
  * scale labelled 0 and its top, the recorded limit as a dashed rule only where recorded.
  */
 export function StepPanels({ lines, from, to, bucketMs }: { lines: readonly StepLine[]; from: number; to: number; bucketMs: number }) {
@@ -668,7 +668,7 @@ export function StepPanels({ lines, from, to, bucketMs }: { lines: readonly Step
   const height = lines.length * (panelH + gap) + 18;
   const x = linear(from, to, gutter, width - 4);
   const D = 86_400_000;
-  // The Timeline's ruler: its tick steps and labels (timeline/render/scale.ts), and the weekend days banded.
+  // Tick steps and labels (model/scale.ts), and the weekend days banded.
   const ticks = ticksFor({ from, to }, Math.max(1, width - gutter - 4));
   const weekends: number[] = [];
   for (let t = Math.floor(from / D) * D; t < to; t += D) {

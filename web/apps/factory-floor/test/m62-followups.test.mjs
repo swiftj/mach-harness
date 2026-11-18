@@ -252,21 +252,19 @@ test("8. visit, seat, workflow, execution and project are entity kinds, found by
 
 // ---------------------------------------------------------------- 9. one time scale
 
-test("9. one store-level time scale: 1 at the live edge, the chosen playback rate everywhere else", () => {
-  assert.equal(timeScaleOf({ source: "live", following: true, speed: 4 }), 1);
-  assert.equal(timeScaleOf({ source: "live", following: false, speed: 1 }), PLAYBACK_BASE_RATE, "scrubbed back inside a live store: playback");
-  assert.equal(timeScaleOf({ source: "live", following: false, speed: 4 }), PLAYBACK_BASE_RATE * 4);
-  assert.equal(timeScaleOf({ source: "replay", following: false, speed: 2 }), PLAYBACK_BASE_RATE * 2);
-  assert.equal(timeScaleOf({ source: "simulation", following: true, speed: 1 }), PLAYBACK_BASE_RATE);
-  // It is the rate the playhead actually moves at while playing.
+test("9. one store-level time scale: 1 for the live Factory, the simulation's own rate for the simulation", () => {
+  assert.equal(timeScaleOf({ source: "live" }), 1);
+  assert.equal(timeScaleOf({ source: "simulation" }), PLAYBACK_BASE_RATE);
+  // It is the rate the simulation actually runs at while watched.
   const clock = manualClock(0);
-  const store = createSceneStore({ source: "replay", log: logOf(EVENTS), clock, at: EVENTS[0].time.order_ms });
-  store.setSpeed(2);
-  store.play();
+  const store = createSceneStore({ fixture: SCENARIO, clock, at: 60_000 });
+  const off = store.subscribe(() => undefined);
   clock.frames(1, 0);
-  const t0 = store.getState().playhead;
+  const t0 = store.getState().now;
   clock.frames(10, 100);
-  assert.equal(store.getState().playhead - t0, 1000 * timeScaleOf(store.getState()));
+  assert.equal(store.getState().now - t0, 1000 * timeScaleOf(store.getState()));
+  off();
+  store.dispose();
 });
 
 // ---------------------------------------------------------------- 10. incremental folds
@@ -392,27 +390,6 @@ test("13. after a gap, history continues from the observer's floor; the summarie
   source.stop();
 });
 
-test("13. replay reads /history windows in order, marks a window that starts part-way, and falls back to paged /events", async () => {
-  const server = fakeObserver();
-  server.commit(EVENTS.map(unpos));
-  const client = live.createObserverClient({ fetch: server.fetch });
-  const whole = await live.loadHistory(client, { pageLimit: 64 });
-  assert.equal(whole.size(), EVENTS.length);
-  assert.ok(server.requests.some((r) => r.includes("/history")));
-  assert.ok(!server.requests.some((r) => r.includes("/events")));
-  assert.equal(whole.head().completeness.state, "complete");
-  const from = EVENTS[100].time.order_ms;
-  const windowed = await live.loadHistory(client, { pageLimit: 64, fromMs: from });
-  assert.ok(windowed.size() < EVENTS.length);
-  assert.equal(windowed.head().completeness.state, "partial", "history before the window is not loaded, and the scene says so");
-  assert.equal(windowed.head().completeness.gaps[0].reason, "before-window");
-  const old = fakeObserver({ history: false });
-  old.commit(EVENTS.map(unpos));
-  const fallback = await live.loadHistory(live.createObserverClient({ fetch: old.fetch }), { pageLimit: 64 });
-  assert.equal(fallback.size(), EVENTS.length);
-  assert.ok(old.requests.some((r) => r.includes("/events")));
-});
-
 test("14. cost completeness comes from execution.usage.cost_complete and its reasons, never guessed", () => {
   const usage = EVENTS.find((e) => e.type === "execution.usage");
   const x = (data) => logOf(EVENTS.map((e) => (e.id === usage.id ? { ...e, data: { ...e.data, ...data } } : e))).head().executions.x1a2b3c4d5e6f;
@@ -436,10 +413,6 @@ test("15. a live store runs its follow loop only while watched: one made and dro
   assert.equal(clock.pending, 1, "one loop, not one per frame");
   off();
   assert.equal(clock.pending, 0, "the last watcher leaving stops it");
-  // Explicit playback runs without a watcher (tests and the capture script).
-  watched.seek(EVENTS[10].time.order_ms);
-  watched.play();
-  assert.equal(clock.pending, 1);
   watched.dispose();
   dropped.dispose();
   assert.equal(clock.pending, 0);

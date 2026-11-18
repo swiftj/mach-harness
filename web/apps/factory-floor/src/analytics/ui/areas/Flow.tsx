@@ -24,15 +24,15 @@ import { visitPlace, visitPlaceWords } from "../../model/visitPlace";
 import { cappedCount, cappedText, countOr } from "../../model/capped";
 
 /**
- * The station visit selected when Analytics was opened from the Timeline (I-12, journey 3): the one
- * selection the store holds, read here, never a second one. "station|ms|ticket|round", a string so the
+ * The station visit selected when Analytics was opened (I-12): the one selection the store holds,
+ * read here, never a second one. "station|ms|ticket|round", a string so the
  * selector is stable; ms is empty when the visit has no measured length. Null for anything else.
  */
 function useCameFromVisit(): { station: Station; ms: number | null; ticketId: string; round: number } | null {
   const key = useSceneStore((s) => {
     if (s.source === "simulation" || !s.selection) return null;
-    const scene = s.log.sceneAt(s.playhead);
-    const picked = pickedVisitOf(scene, s.selection, s.selectionDetail);
+    const scene = s.log.sceneAt(s.now);
+    const picked = pickedVisitOf(scene, s.selection);
     const own = kindOf(s.selection as AnyRef) === "visit" ? (selectEntity(scene, s.selection as AnyRef) as VisitEntity | null) : null;
     const v = picked ?? own;
     const station = v ? analyticsStationOf(v.station) : null;
@@ -59,7 +59,7 @@ function FlowBody({ station, setStation }: { station: Station | null; setStation
   const loads = useMemo(() => bottleneckRanking(c1), [c1]);
   const cameFrom = useCameFromVisit();
   const missing = rowMissing(t.C1);
-  if (density === "empty" && !s.no_whole_day) return <NothingYet about="No cell has entered a station in this window. Flow is read from each cell's lifecycle log:" />;
+  if (density === "empty") return <NothingYet about="No cell has entered a station in this window. Flow is read from each cell's lifecycle log:" />;
   const facts: Partial<Record<Station, FlowStationFacts>> = {};
   for (const g of c1?.groups ?? []) {
     const st = g.key as Station;
@@ -202,8 +202,8 @@ function FlowBody({ station, setStation }: { station: Station | null; setStation
 
 /**
  * The station visit Analytics was opened from (I-12, journey 3): its measured length and where it sits
- * among this view's measured visits of its station; when the view counts none (a playhead held on the
- * history's first day), why, so the line never reads as a comparison it is not.
+ * among this view's measured visits of its station; when the view counts none, why, so the line never
+ * reads as a comparison it is not.
  */
 function CameFrom({ visit, group, why }: { visit: { station: Station; ms: number | null; ticketId: string; round: number }; group: ReturnType<typeof groupOf>; why: string | null }) {
   const bins = histogramBins(group?.distribution?.histogram);

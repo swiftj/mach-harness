@@ -76,8 +76,6 @@ export interface AnalyticsViewProps {
   readonly canOpen?: (ref: string) => boolean;
   /** A line about this view (not current, parts not read), shown at the top of the sheet. */
   readonly notice?: ReactNode;
-  /** M6.6 (I-13): while the figures are counted to an earlier moment, the way back to the live edge (the store's follow-live; keys L and End). */
-  readonly backToLive?: { readonly label: string; readonly run: () => void };
 }
 
 const WINDOWS: readonly { key: WindowKey; label: string }[] = [
@@ -89,7 +87,7 @@ const WINDOWS: readonly { key: WindowKey; label: string }[] = [
 
 const sameWindow = (a: WindowChoice, b: WindowChoice) => (typeof a === "string" || typeof b === "string" ? a === b : a.from === b.from && a.to === b.to);
 
-export function AnalyticsView({ data, insights, configs, source, asOf, sourceLabel, view, onView, onOpen, rowsFor, canOpen, notice, backToLive }: AnalyticsViewProps) {
+export function AnalyticsView({ data, insights, configs, source, asOf, sourceLabel, view, onView, onOpen, rowsFor, canOpen, notice }: AnalyticsViewProps) {
   const sheet = useRef<HTMLElement>(null);
   const [undo, setUndo] = useState<WindowChoice | null>(null);
   // The control that opened the Rows drawer gets focus back when it closes.
@@ -151,7 +149,7 @@ export function AnalyticsView({ data, insights, configs, source, asOf, sourceLab
           ) : null}
           <span className="an-num min-w-0 truncate text-caption text-ink-muted" title={`${sourceLabel}. ${asOf}`} data-analytics-source-label={sourceLabel}>
             {sourceLabel}. {snapshot ? `${windowText(snapshot.window.from_ms, snapshot.window.to_ms)}. ` : ""}
-            {backToLive ? null : asOf}
+            {asOf}
           </span>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-3" role="group" aria-label="Filters for every area">
@@ -194,16 +192,6 @@ export function AnalyticsView({ data, insights, configs, source, asOf, sourceLab
           ) : null}
         </div>
       </div>
-
-      {/* M6.6 (I-07, I-13): counted to an earlier moment, the whole as-of sentence on its own line (never cut off), with the way back. */}
-      {backToLive ? (
-        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-line bg-surface-sunken px-5 py-2 text-caption text-ink-muted" data-analytics-asof="">
-          <p className="an-num min-w-0 max-w-[110ch] flex-1">{asOf}.</p>
-          <button type="button" onClick={backToLive.run} aria-keyshortcuts="L End" data-analytics-back-to-live="" className="shrink-0 whitespace-nowrap font-semibold text-accent-ink underline decoration-1 underline-offset-[3px] hover:decoration-2">
-            {backToLive.label}
-          </button>
-        </div>
-      ) : null}
 
       <div className="an-layout relative min-h-0" data-drill={view.rows ? "open" : "closed"}>
         <nav aria-label="Analytics areas" className="overflow-y-auto border-r border-line bg-surface-nav py-3">

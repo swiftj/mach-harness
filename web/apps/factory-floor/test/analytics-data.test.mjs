@@ -22,9 +22,6 @@ const R = {
   insightsWindow: rec("insights-window"),
   concurrency: rec("concurrency"),
   status: rec("factory-status"),
-  asof: rec("asof"),
-  asofFlow: rec("asof-flow"),
-  asofMetrics: rec("asof-metrics"),
   sourcesHead: rec("sources-head"),
   sourcesAsOf: rec("sources-asof"),
   engine: rec("metrics-engine"),
@@ -49,7 +46,7 @@ function fakeClient(route) {
 }
 const byRoute = (url) => {
   if (url.startsWith("/session")) return [200, R.session.body];
-  if (url.startsWith("/analytics/metrics")) return [url.includes("as_of_ms") ? 400 : 200, (url.includes("as_of_ms") ? R.asof : url.includes("phase") ? R.phase : url.includes("last_runs") ? R.last : url.includes("ids=T1%2CQ2%2CK1") ? R.head : R.metrics).body];
+  if (url.startsWith("/analytics/metrics")) return [200, (url.includes("phase") ? R.phase : url.includes("last_runs") ? R.last : url.includes("ids=T1%2CQ2%2CK1") ? R.head : R.metrics).body];
   if (url.startsWith("/analytics/flow")) return [200, R.flow.body];
   if (url.startsWith("/analytics/contributors")) return [200, R.contributors.body];
   if (url.startsWith("/analytics/runs")) return [200, (url.includes("of=executions") ? R.executions : R.runs).body];
@@ -67,15 +64,11 @@ test("the client builds each analytics route's query from identifiers and number
   await client.analyticsFlow({ lastRuns: 20 });
   await client.analyticsContributors({ metric: "C1", group: { station: "verify", round: "1" }, order: "recent", limit: 5 });
   await client.analyticsRuns({ of: "executions", limit: 3, offset: 6 });
-  await client.analyticsInsights({ asOfMs: 5000.7 });
-  await client.analyticsFlow({ at: "e.5", asOfMs: 5000 });
   assert.deepEqual(paths, [
     "/api/v1/analytics/metrics?at=e.5&from_ms=1000&to_ms=2001&risk=High&station=verify&ids=T1%2CQ2&group_by=risk%2Capp_type&bucket=week&distribution=1",
     "/api/v1/analytics/flow?last_runs=20",
     "/api/v1/analytics/contributors?metric=C1&group=station%3Averify%2Cround%3A1&order=recent&limit=5",
     "/api/v1/analytics/runs?of=executions&limit=3&offset=6",
-    "/api/v1/analytics/insights?as_of_ms=5000",
-    "/api/v1/analytics/flow?at=e.5&as_of_ms=5000",
   ]);
   assert.equal(analyticsParams({ filters: { risk: "", model: undefined } }).toString(), "", "empty filters are not sent");
 });
@@ -231,19 +224,17 @@ test("flow, contributors, runs and executions parse with their counts and bases 
 // ------------------------------------------------------------------------------------ snapshot
 
 /** A provider whose replies carry the cursor it is asked at, or `head` when none. */
-function countingProvider(head = "g.10", asOf = "none") {
+function countingProvider(head = "g.10") {
   const calls = [];
   let current = head;
   const answer = (route) => async (query, options) => {
-    calls.push({ route, at: options?.at ?? null, asOfMs: options?.asOfMs ?? null, query });
-    if (options?.asOfMs != null && asOf === "refused") return { status: "invalid", reason: 'Unknown parameter "as_of_ms".' };
+    calls.push({ route, at: options?.at ?? null, query });
     const cursor = options?.at ?? current; // the head when asked
     await new Promise((r) => setTimeout(r, 5));
     if (options?.signal?.aborted) throw options.signal.reason;
     const items = route === "runs" ? [{ ticket_id: "A", closed_at: { at_ms: 100 }, executions: [] }, { ticket_id: "B", closed_at: { at_ms: 300 }, executions: [] }, { ticket_id: "C", closed_at: null, executions: [] }] : [];
-    const exactRoute = route !== "metrics" && route !== "insights";
-    const env = { cursor, as_of: options?.asOfMs != null && asOf === "served" ? { ms: options.asOfMs, exact: exactRoute, effective_to_ms: exactRoute ? options.asOfMs : 0, rule: exactRoute ? "nothing later" : "whole UTC days before the playhead; the day of the playhead is not included" } : null, window: { effective_to_ms: query.toMs === undefined || query.toMs === null ? null : Math.ceil(query.toMs / 1000) * 1000 } };
-    if (route === "runs") return { status: "ok", value: { ...env, of: "runs", items, after_as_of: 0 } };
+    const env = { cursor, as_of: null, window: { effective_to_ms: query.toMs === undefined || query.toMs === null ? null : Math.ceil(query.toMs / 1000) * 1000 } };
+    if (route === "runs") return { status: "ok", value: { ...env, of: "runs", items } };
     return { status: "ok", value: { ...env, metrics: [] } };
   };
   return {
@@ -297,71 +288,6 @@ test("abort cancels the view's requests and refuses later ones", async () => {
   s.abort();
   await assert.rejects(pending, (e) => e.name === "AbortError");
   await assert.rejects(s.flow({}), (e) => e.name === "AbortError");
-});
-
-test("as of a playhead: every query asks as_of_ms beside the view's cursor; exact where the observer says so, its rule where not", async () => {
-  const p = countingProvider("g.10", "served");
-  const s = D.beginSnapshot(p.data, { asOfMs: 200, cache: D.createSnapshotCache() });
-  const m = await s.metrics({ toMs: 5000 });
-  assert.equal(p.calls[0].asOfMs, 200);
-  assert.equal(p.calls[0].query.toMs, 5000, "the window is not cut by the client");
-  assert.deepEqual(m.value.asOf, { ms: 200, exact: false, rule: "whole UTC days before the playhead; the day of the playhead is not included", effectiveToMs: 0, widened: false });
-  const f = await s.flow({});
-  assert.equal(p.calls[1].at, "g.10");
-  assert.equal(p.calls[1].asOfMs, 200, "as_of_ms combines with at");
-  assert.deepEqual(f.value.asOf, { ms: 200, exact: true, rule: null, effectiveToMs: 200, widened: false });
-  const runs = await s.runs({});
-  assert.deepEqual(runs.value.items.map((r) => r.ticket_id), ["A"], "lists are still cut at the playhead");
-  assert.equal(runs.value.after_as_of, 2, "after the playhead, or with no recorded time");
-});
-
-test("recorded as_of replies: flow exact, metrics by whole UTC days with the observer's rule", async () => {
-  const route = (url) => (url.startsWith("/analytics/flow") ? [200, R.asofFlow.body] : url.startsWith("/analytics/metrics") ? [200, R.asofMetrics.body] : byRoute(url));
-  const { client, paths } = fakeClient(route);
-  const data = D.observerAnalytics(client);
-  const s = D.beginSnapshot(data, { asOfMs: 1794456000000, cache: D.createSnapshotCache() });
-  const flow = await s.flow({});
-  assert.equal(flow.status, "ok");
-  assert.equal(flow.value.asOf.exact, true);
-  assert.equal(flow.value.as_of.effective_to_ms, 1794456000000);
-  assert.equal(flow.value.history.from_precision, "minute");
-  assert.ok(flow.value.history.from_ms > 0, "history.from_ms is filled");
-  const m = await s.metrics({ ids: ["T1"] });
-  assert.equal(m.status, "ok", m.reason);
-  assert.equal(m.value.asOf.exact, false);
-  assert.match(m.value.asOf.rule, /whole UTC days/);
-  assert.equal(m.value.asOf.effectiveToMs, 1794441600000, "the playhead's UTC midnight");
-  assert.ok(paths.filter((u) => u.includes("/analytics/")).every((u) => u.includes("as_of_ms=1794456000000")));
-});
-
-test("as of a playhead on an observer without as_of_ms (M6.6 I-32): one 400; counted figures are not available as of then, never widened to the day's end; lists are cut at the playhead", async () => {
-  const p = countingProvider("g.10", "refused");
-  const s = D.beginSnapshot(p.data, { asOfMs: 200, cache: D.createSnapshotCache() });
-  const m = await s.metrics({ toMs: 5000 });
-  assert.equal(p.calls.length, 1, "asked once with as_of_ms, never again without it");
-  assert.equal(p.calls[0].asOfMs, 200);
-  assert.equal(m.status, "unsupported");
-  assert.equal(m.reason, D.AS_OF_UNSUPPORTED);
-  assert.match(m.reason, /cannot count figures as of the playhead/);
-  for (const route of ["flow", "insights"]) assert.equal((await s[route]({})).status, "unsupported", route);
-  assert.equal(p.calls.length, 1, "remembered: no counted route is asked again");
-  // A list falls back to to_ms = the playhead (the earlier end wins) and is cut there.
-  const r = await s.runs({ toMs: 5000 });
-  assert.equal(r.status, "ok");
-  assert.equal(p.calls.at(-1).asOfMs, null);
-  assert.equal(p.calls.at(-1).query.toMs, 200, "the earlier end wins");
-  assert.deepEqual(r.value.items.map((i) => i.ticket_id), ["A"], "nothing after the playhead, nothing without a time");
-  // The provider is remembered: a later view does not ask as_of_ms again.
-  const s2 = D.beginSnapshot(p.data, { asOfMs: 200, cache: D.createSnapshotCache() });
-  assert.equal((await s2.metrics({})).status, "unsupported");
-  assert.deepEqual(D.asOfQuery({ lastRuns: 20 }, 200), { lastRuns: 20 }, "last_runs keeps its population");
-});
-
-test("the real observer before as_of_ms answers 400 naming it (recorded), which is what the fallback keys on", async () => {
-  const { client } = fakeClient(byRoute);
-  const r = await D.observerAnalytics(client).metrics({ ids: ["T1"] }, { asOfMs: 1793232000000 });
-  assert.equal(r.status, "invalid");
-  assert.match(r.reason, /as_of_ms/);
 });
 
 test("shouldRefresh: only when the live edge passed the view, and not faster than the live cadence", () => {
@@ -530,7 +456,7 @@ test("concurrency and freshness from the observer's own routes; the contract ada
   assert.equal((await sim.freshness()).status, "unsupported");
 });
 
-test("history.sources: the four classes with their newest applied event and count; hour precision as of a playhead; reasons kept", () => {
+test("history.sources: the four classes with their newest applied event and count; a recorded as_of reply's hour precision is read; reasons kept", () => {
   const head = D.readFlow(R.sourcesHead.body.data, "observer").history.sources;
   assert.deepEqual(head.map((x) => x.source), ["intake", "lifecycle", "stream", "runs"]);
   const runs = head.find((x) => x.source === "runs");
@@ -543,7 +469,7 @@ test("history.sources: the four classes with their newest applied event and coun
   const asOf = D.readFlow(R.sourcesAsOf.body.data, "observer");
   assert.equal(asOf.as_of.exact, true);
   for (const x of asOf.history.sources) {
-    assert.ok(x.last_event_ms <= asOf.as_of.ms, `${x.source}: nothing after the playhead`);
+    assert.ok(x.last_event_ms <= asOf.as_of.ms, `${x.source}: nothing after as_of`);
     assert.ok(x.events <= head.find((y) => y.source === x.source).events);
   }
   assert.equal(asOf.history.sources.find((x) => x.source === "intake").precision, "hour");
@@ -563,7 +489,7 @@ test("history.sources: the four classes with their newest applied event and coun
   assert.equal(D.freshnessFor(f, D.readFlow(R.sourcesHead.body.data, "observer").history, null)[0].events, 57);
 });
 
-test("the engine's percentile basis and bounds, per-row as_of and coverage units are read and carried to the contract", () => {
+test("the engine's percentile basis and bounds, per-row as_of and coverage units are read; basis and coverage are carried to the contract", () => {
   const m = D.readMetrics(R.engine.body.data, "observer");
   const c1 = m.metrics.find((r) => r.id === "C1");
   assert.equal(c1.percentile_basis, "exact");
@@ -578,7 +504,6 @@ test("the engine's percentile basis and bounds, per-row as_of and coverage units
   assert.equal(m.metrics.find((r) => r.id === "Q2").percentile_basis, null, "a rate has no percentiles: null, not guessed");
   const row = D.toContractRow(c1);
   assert.equal(row.percentile_basis, "exact");
-  assert.deepEqual(row.as_of, { effective_to_ms: 1793232000000, exact: false });
   assert.equal(D.toContractRow(k2).coverage.unit, "completed executions");
   // Histogram percentiles with bounds, exclusions in another unit, an exact distribution: synthetic, as the medium project has none.
   const syn = D.readMetricRow({

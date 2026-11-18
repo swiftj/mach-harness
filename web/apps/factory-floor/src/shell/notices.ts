@@ -2,7 +2,7 @@
  * The words for the observer connection and the honest empty and failure notices, as pure functions
  * (SourceBadge.tsx draws them). Round 6, defect 12: the Factory's steady state on this machine (not
  * enabled, paused) is a chip in the top bar, chosen apart from the notice over the stage, so it never
- * covers the Atlas or the Blueprint and never hides an empty or failing stage's notice.
+ * covers the Atlas and never hides an empty or failing stage's notice.
  */
 import { isStale, type ConnectionStatus } from "../scene/connection";
 import type { SceneSource } from "../sim";
@@ -120,7 +120,7 @@ export function noticesFor({ source, connection, empty, settled, notice, observe
       return { key: "no-factory", tone: "info", title: "No Factory state in this project", body: "The observer is running, but this project has no .factory folder yet, so there is nothing to show. It appears here when MACH is installed and work starts." };
     }
     if (empty && settled && (!connection || connection.state === "live")) {
-      return { key: "empty", tone: "info", title: source === "replay" ? "No history to replay" : "No Factory activity recorded yet", body: source === "replay" ? "The observer holds no events for this project." : "Connected and waiting: events appear here as the Factory records them." };
+      return { key: "empty", tone: "info", title: "No Factory activity recorded yet", body: "Connected and waiting: events appear here as the Factory records them." };
     }
     return null;
   })();

@@ -1,8 +1,14 @@
 # MACH Factory Floor (`@mach/factory-floor`)
 
-The Factory Floor is MACH's read-only view of the Factory in the browser. Embedded in `mach-observer` (`apps/observer/build.sh`), it reads the observer and is labelled **Live Factory** or **Historical replay**; with no observer, or no Factory state, it plays one deterministic recorded run (one delivery wave of five slices, 2,126 events over 55:50 of factory time) from a fixture compiled into the bundle, labelled **Simulation** on every screen. It starts nothing and has no control that changes the Factory.
+The Factory Floor is MACH's read-only view of the Factory in the browser. `mach-observer` embeds it (`apps/observer/build.sh`). When an observer answers, it shows the **Live Factory**. With no observer, or with `?simulation`, it shows one recorded run (one delivery wave of five slices, 2,126 events over 55:50 of factory time) from a fixture compiled into the bundle, labelled **Simulation** on every screen. The Simulation runs forward on its own and stops at its last moment. The Factory Floor shows only the present: there is no playback, no replay and no playhead. It starts nothing and has no control that changes the Factory. Where a person must act, it shows the `/mach` command to run in Claude Code.
 
-Three workspaces: the **Atlas**, with its two views of the same run, the **Factory Atlas** (the plant in axonometric) and the **Execution Blueprint** (the run as an engineering sheet), a docked timeline, a contextual inspector and Theater Mode; the **Timeline** (Execution Timeline, `src/timeline/`); and **Analytics** (Factory Analytics, `src/analytics/`). The sections below begin with the M6.0 simulation, where the app started.
+Three workspaces:
+
+- **Line** (the default, `src/line/`): the stations left to right as columns, and a row for each ticket at the station it stands at. A "Needs you" strip on top, a side panel for a ticket or a station, a ticket's full record, and "What just happened" when nothing is selected.
+- **Floor** (`src/atlas/`): the Factory Atlas, the plant drawn in axonometric, with the inspector, camera follow and Theater Mode.
+- **Analytics** (`src/analytics/`): Factory Analytics, with the inspector on request.
+
+The evidence player (`src/evidence/`) opens over any workspace.
 
 ## Run
 
@@ -13,7 +19,10 @@ pnpm install
 pnpm --filter @mach/factory-floor dev        # http://127.0.0.1:4176
 ```
 
-The development server binds `127.0.0.1:4176` only (`vite.config.ts`, `strictPort`). Two single-view development entries are also served, outside the shell: `/dev/atlas.html` and `/dev/blueprint.html`.
+The development server binds `127.0.0.1:4176` only (`vite.config.ts`, `strictPort`). Set `MACH_OBSERVER_PORT` to a running observer's port to proxy `/api` to it. Two development pages are also served, outside the shell:
+
+- `/dev/atlas.html`: the Atlas alone on the Simulation.
+- `/src/atlas/dev/live.html`: the Atlas on a live store fed by a test fixture (see the comment at the top of `src/atlas/dev/live.tsx`).
 
 ## Build, preview, test
 
@@ -21,127 +30,110 @@ The development server binds `127.0.0.1:4176` only (`vite.config.ts`, `strictPor
 pnpm --filter @mach/factory-floor build      # tsc, then vite build into dist/
 pnpm --filter @mach/factory-floor preview    # serves dist/ on 127.0.0.1:4176
 pnpm --filter @mach/factory-floor typecheck
-pnpm --filter @mach/factory-floor test       # node --test test/*.test.mjs, no browser, no dependencies
+pnpm --filter @mach/factory-floor test       # node --test test/*.test.mjs: no browser
 ```
 
-The 70 tests cover the simulation and the store: the scenario against MACH's own rules, the reducer's determinism, scrubbing, the clock, the capture hook, that nothing is shown before it happens (`test/no-early-outcomes.test.mjs`), and the inspector's time and review-tally wording (`test/inspector-wording.test.mjs`). From `web/`, `pnpm lint`, `pnpm typecheck` and `pnpm build` check the whole workspace.
+From `web/`, `pnpm lint`, `pnpm typecheck` and `pnpm build` check the whole workspace.
 
-## Capture and record
+The browser suites run Playwright's Chromium against the Vite dev server. They build `mach-observer` and `mach-synth` from this working tree with `go build` into a scratch folder, so they need Go. They never run `build.sh`.
 
-Screenshots and recordings are made by the scripts in `scripts/`, which build the app with `vite build --mode capture` (the production build plus the development hook below), serve it locally under the M5 Content-Security-Policy, and drive it on the manual clock so every frame is a function of the playhead. How to run them, and what each output shows:
+```sh
+pnpm --filter @mach/factory-floor test:e2e:floor       # the Line over the Simulation; an empty live project
+pnpm --filter @mach/factory-floor test:e2e:evidence    # the evidence player, live and simulated
+pnpm --filter @mach/factory-floor test:e2e:analytics   # Analytics: proof page, shell, live observer
+```
 
-- `screenshots/README.md`
-- `recordings/README.md`
+`e2e/journeys-m66.e2e.mjs` is run on its own; its header gives the command.
 
-The package's `capture` script (`pnpm --filter @mach/factory-floor capture`) runs `scripts/capture.mjs`; see the two READMEs for the others. Outputs in `screenshots/` and `recordings/` are git-ignored except their READMEs.
+## Screenshots
 
-**The current outputs are not of the final build.** The screenshots were taken after the change to an all-sans typeface but before the last round of Blueprint, Atlas and shell fixes and before the light layer was removed (so the help-sheet shots still show its switch). The recordings are older still: they pre-date the typeface change and show the former serif. They were not re-captured; the product owner chose to review the app by hand. Details in each folder's README.
+`pnpm --filter @mach/factory-floor capture` runs `scripts/capture.mjs`. It builds the app with `vite build --mode capture` (the production build plus the development hook below), serves it with `vite preview` on `127.0.0.1:4186`, opens the Floor and takes screenshots of the Atlas on the Simulation's manual clock. See `screenshots/README.md`. It has not been run since the redesign.
 
-## URL parameters
+## Addresses
 
 Main app (`/`):
 
-| Parameter | Effect |
+| Address | Effect |
 |---|---|
-| `?theme=light` or `?theme=dark` | Pin the theme (default: follow the system; the Factory Floor's own default is dark) |
-| `#atlas`, `#blueprint` | The mode. Kept in step with the app |
-| `#blueprint?sel=cell:LOCAL-031` | Select an entity (any `EntityRef`, such as `gate:LOCAL-032/human-approval`) and frame it. Kept in step with the app |
-| `#atlas?theater=1` | Open in Theater Mode |
+| `?simulation` | Show the Simulation, even when an observer answers |
+| `?theme=light` or `?theme=dark` | Pin the theme (default: follow the system) |
+| `#line`, `#floor`, `#analytics` | The workspace. Kept in step with the app; a workspace change is a new history entry |
+| `?sel=<ref>` after any route, e.g. `#line?sel=cell:LOCAL-031` | Select an entity (any `EntityRef`). The Floor also frames it |
+| `#floor?theater=1` | Open the Floor in Theater Mode |
+| `#analytics?area=&win=&risk=&app=&model=&station=&cmp=&focus=&pick=` | Analytics' area, period, filters, comparison, open rows and cross-filter (grammar in `src/shell/source/hash.ts`) |
+| `evidence=<ticket>&check=<id>` after any route | Open the evidence player for one ticket at one check |
 
-Development entries (`/dev/atlas.html`, `/dev/blueprint.html`): `?theme=`, `?t=<factory ms>` (seek), `?play=<speed>` (play at that speed), `?meter` (frame-time meter). In the main app's development build, `?meter` shows the Atlas's frame meter.
+The address never names a moment. Anything it does not recognise is ignored.
+
+In development builds, `?meter` shows the Atlas's frame meter. `/dev/atlas.html` takes `?theme=`, `?meter` and `?t=<factory ms>` (start the Simulation at that moment).
 
 ## Development hook
 
-In development and capture builds only (never in a production build), `window.__machSim` drives the app:
+In development and capture builds only (never in a production build), `window.__machSim` holds the Simulation at a moment for tests and screenshots. Nothing in the interface can move the Simulation's moment.
 
 ```js
-const sim = window.__machSim;
-sim.duration; sim.eventCount; sim.chapters;    // chapters: [{ id, title, t, seq }]
-sim.seek(t); sim.seekToSeq(seq); sim.seekToChapter("human-gate"); sim.step(n);
-sim.play(); sim.pause(); sim.setSpeed(4);      // 0.5, 1, 2, 4, 8, 16
+const sim = window.__machSim;            // version 2
+sim.duration; sim.eventCount; sim.fixtureId;
+sim.seek(t);                             // move the Simulation to scenario time t, either way; it runs on from there
 sim.select("cell:LOCAL-031"); sim.focus("overview");
-sim.setMode("blueprint"); sim.setTheater(true); sim.setFollow(true); sim.followLive();
-sim.state();                                   // playhead, liveAt, following, playing, speed, view, selection, follow, clock, ...
-sim.useManualClock(); sim.advance(1000 / 30); sim.useLiveClock();   // frame-exact rendering
+sim.setWorkspace("floor"); sim.setTheater(true); sim.setFollow(true);
+sim.state();                             // now, cursor, workspace, theater, selection, follow, focus, reducedMotion, clock
+sim.useManualClock(); sim.advance(1000 / 30); sim.useLiveClock();
 ```
 
-The full reference is `src/sim/README.md`, section 6. The Atlas also exposes `window.__atlasCamera` (`get`, `set`, `zoomTo`, `fit`, `follow`, `lod`) in the same builds.
+On the manual clock the Simulation moves only through `advance(ms)`. The full reference is `src/sim/README.md`, section 6. The Atlas also exposes `window.__atlasCamera` (`get`, `set`, `zoomTo`, `fit`, `follow`, `lod`) in the same builds.
 
 ## Keyboard
 
-Generated from `src/shell/keyboard.ts` (`KEYMAP`); `?` shows it in the app.
+From `src/shell/keyboard.ts` (`KEYMAP`); `?` shows the same list in the app.
 
 | Keys | Action |
 |---|---|
-| `Space` | Play or pause |
-| `,` / `.` | Previous / next event |
-| `Shift+,` / `Shift+.` | Back / forward 10 s of factory time |
-| `[` / `]` | Previous / next chapter |
-| `{` / `}` | Slower / faster (0.5× to 16×) |
-| `Home` / `End` | Start of the run / live edge |
-| `L` | Return to live (and follow) |
-| `1` / `2` | Factory Atlas / Execution Blueprint |
+| `1` | Line |
+| `2` | Floor, keeping the selection |
+| `3` | Analytics, keeping the selection |
+| `Escape` | Clear the highlight, then the selection, then leave Theater Mode |
+| `I` | Show or hide the inspector (Floor and Analytics) |
+| `?` | The list of keys |
+| `S` | Choose the source: Live Factory or Simulation |
+
+On the Line, with a ticket's row focused:
+
+| Keys | Action |
+|---|---|
+| `↑` / `↓` | Previous / next ticket |
+| `Space` | Show the ticket in the side panel |
+| `Enter` | Open the ticket's full record (double-click does the same) |
+
+On the Floor:
+
+| Keys | Action |
+|---|---|
 | `T` | Theater Mode |
-| `F` | Focus the selection |
+| `F` | Frame the selection |
 | `Shift+F` | Camera follow back on |
-| `Escape` | Clear highlight, then selection, then leave Theater Mode |
-| `I` | Show or hide the inspector |
-| `Shift+T` | Expand or collapse the timeline |
-| `?` | This list |
-
-In either view (Atlas or Blueprint focused):
-
-| Keys | Action |
-|---|---|
-| `+` / `-` / `0` | Zoom in / out / fit |
-| `Shift+Arrows` | Pan |
+| `+` / `-` / `0` | Zoom in / out / fit (the Atlas focused) |
+| `Shift+Arrows` | Pan (the Atlas focused) |
+| `Arrows` | Move to the nearest entity in that direction (the Atlas focused) |
 | `Enter` / `Space` | Select the focused entity |
 
-Atlas:
-
-| Keys | Action |
-|---|---|
-| `Arrows` | Move to the nearest entity in that direction on screen |
-
-Blueprint (an ARIA tree):
-
-| Keys | Action |
-|---|---|
-| `↑` / `↓` | Previous / next visible item |
-| `→` | Open the item, or move into it |
-| `←` | Close the item, or move out to its parent |
-| `Alt+→` / `Alt+←` | Open / close without moving |
-| `Home` / `End` | First / last item |
-| `*` | Open every sibling of the focused item (on a lane: every lane of the wave) |
-
-Timeline:
-
-| Keys | Action |
-|---|---|
-| `←` / `→` | Previous / next event (playhead or tracks focused) |
-| `PageUp` / `PageDown` | Previous / next chapter (playhead focused) |
-| `↑` / `↓` | Previous / next track (tracks focused) |
-| `Enter` | Select the focused track's entity |
-| `Alt+→` / `Alt+←` | Expand / collapse the focused track (`*` also expands) |
-| `+` / `-` / `0` | Narrow / widen the time window, or show the whole run (tracks focused) |
-| `↑` / `↓` | Taller / shorter timeline (its top edge focused; `Enter` collapses or restores it) |
-
-Each view is one tab stop; arrow keys move inside it. The Tab order is skip link, top bar, the view, the inspector, the timeline.
+In the evidence player: `,` / `.` for the previous / next file, `[` / `]` for the previous / next check.
 
 ## Rendering choices
 
-- **SVG only.** The brief asked for a WebGL light-layer experiment. It was built on PixiJS 8 and measured, then rejected: its glow sat above the whole drawing (covering machines, agents and text), it cost about 0.8 ms per frame, and as decoration it could carry no information the drawing did not already have. It was removed with the PixiJS dependency on the product owner's decision on 2026-11-12 (commit "chore(factory-floor): remove the WebGL light layer experiment and the PixiJS dependency"). The code is in Git history if a WebGL renderer is ever wanted, most plausibly for scale (many more cells than SVG can hold), which was never measured.
-- **React Flow is installed but not used.** `@xyflow/react` stays a dependency on the product owner's decision; the Blueprint is one hand-drawn SVG. It is to be considered for future features where it adds real value (editing a graph, free-form layouts, very large graphs), not adopted by default.
+- **SVG and HTML only.** A WebGL light layer on PixiJS 8 was built for the M6.0 brief, measured and rejected: its glow covered machines, agents and text, it cost about 0.8 ms per frame, and it carried no information. It was removed with the PixiJS dependency on the product owner's decision on 2026-11-12. The code is in Git history.
+- **React Flow is installed but not used.** `@xyflow/react` stays a dependency on the product owner's decision. Nothing in the app imports it.
 
-Both are explained in `docs/mach-next/M6_0_ARCHITECTURE.md` section 6.
+`docs/mach-next/M6_0_ARCHITECTURE.md` section 6 has the original reasoning.
 
 ## Documents
 
 | Document | What it holds |
 |---|---|
-| `docs/mach-next/M6_0_CONTRACT.md` | The rules the prototype was built to |
-| `docs/mach-next/M6_0_ARCHITECTURE.md` | How the scenes are built and drawn, the tradeoffs, and the path to production |
-| `docs/mach-next/M6_0_VISUAL_SPEC.md` | The visual grammar, camera and interaction, rendering recommendation |
+| `docs/mach-next/M6_0_CONTRACT.md` | The rules the M6.0 prototype was built to |
+| `docs/mach-next/M6_0_ARCHITECTURE.md` | How the scenes are built and drawn (written for M6.0: it still describes playback and the Blueprint) |
+| `docs/mach-next/M6_0_VISUAL_SPEC.md` | The Atlas's visual grammar, camera and interaction |
 | `docs/mach-next/M6_0_TELEMETRY_GAPS.md` | What the real Factory records today and what it would need to emit |
-| `docs/mach-next/M6_0_FINDINGS.md` | Review findings and captured evidence |
+| `docs/mach-next/M6_0_FINDINGS.md` | Review findings from M6.0 |
 | `src/sim/README.md` | The simulation's API, event model, store, scenario and storyboard |
+| `src/live/README.md` | The live source: the observer's stream into the scene log |

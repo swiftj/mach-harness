@@ -1,14 +1,12 @@
-// Shared plumbing for the M6.0 capture scripts (capture.mjs, record.mjs, measure.mjs, audit.mjs,
-// honesty.mjs): the capture build, the preview server on 127.0.0.1:4186, and opening the app on the
-// manual clock so every frame is a function of the playhead.
+// Shared plumbing for the capture script (capture.mjs) and the browser suites: the capture build, the
+// preview server on 127.0.0.1:4186, and opening the app on the manual clock so every frame is a
+// function of the simulation's moment.
 //
 // The capture build is `vite build --mode capture` into dist/capture (git-ignored). It is the
 // production build plus window.__machSim (src/sim/README.md section 6); nothing else differs.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
-import { dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const app = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -19,11 +17,6 @@ export const PORT = 4186;
 export const ORIGIN = `http://${HOST}:${PORT}`;
 
 /** The M5 host's policy, verbatim (apps/studio/internal/security/headers.go). */
-export const M5_CSP =
-  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
-  "font-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; " +
-  "frame-ancestors 'none'; object-src 'none'";
-
 export const args = new Set(process.argv.slice(2));
 export const log = (...parts) => console.log(`[${new Date().toISOString().slice(11, 19)}]`, ...parts);
 
@@ -99,63 +92,19 @@ export async function startPreview() {
   return { origin: ORIGIN, stop };
 }
 
-const TYPES = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".woff2": "font/woff2",
-  ".woff": "font/woff",
-  ".json": "application/json",
-  ".map": "application/json",
-};
-
 /**
- * A tiny static server for the capture build that sends the M5 host's security headers, so the
- * build can be played through under the real Content-Security-Policy (honesty check b).
+ * A browser context and page on the app, on the Floor (the Atlas). The theme is pinned with ?theme=. The sim clock is switched to manual and the simulation set to t=0 unless `live` is set.
  */
-export async function startCspServer({ port = PORT, csp = M5_CSP } = {}) {
-  const root = dist + sep;
-  const server = createServer(async (req, res) => {
-    const path = decodeURIComponent(new URL(req.url, "http://x").pathname);
-    let file = normalize(join(dist, path === "/" ? "index.html" : path));
-    if (!file.startsWith(root)) {
-      res.writeHead(403).end();
-      return;
-    }
-    if (!existsSync(file) || statSync(file).isDirectory()) file = join(dist, "index.html");
-    const body = await readFile(file);
-    res.writeHead(200, {
-      "Content-Type": TYPES[extname(file)] ?? "application/octet-stream",
-      "Content-Security-Policy": csp,
-      "X-Content-Type-Options": "nosniff",
-      "Cross-Origin-Opener-Policy": "same-origin",
-      "Cross-Origin-Resource-Policy": "same-origin",
-      "Referrer-Policy": "no-referrer",
-    });
-    res.end(body);
-  });
-  await new Promise((ok, fail) => server.once("error", fail).listen(port, HOST, ok));
-  log("CSP static server on", `http://${HOST}:${port}`);
-  return { origin: `http://${HOST}:${port}`, stop: () => new Promise((ok) => server.close(ok)) };
-}
-
-/**
- * A browser context and page on the app. The theme is pinned with ?theme=, the view and selection
- * through the hash. The sim clock is switched to manual and paused at t=0 unless `live` is set.
- */
-export async function openApp(browser, { origin = ORIGIN, theme = "dark", width = 1920, height = 1080, dpr = 1, reducedMotion = "no-preference", view = "atlas", live = false, beforeLoad } = {}) {
+export async function openApp(browser, { origin = ORIGIN, theme = "dark", width = 1920, height = 1080, dpr = 1, reducedMotion = "no-preference", live = false, beforeLoad } = {}) {
   const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: dpr, colorScheme: theme, reducedMotion });
   const page = await context.newPage();
   if (beforeLoad) await beforeLoad(page, context);
-  await page.goto(`${origin}/?theme=${theme}#${view}`, { waitUntil: "load" });
+  await page.goto(`${origin}/?theme=${theme}#floor`, { waitUntil: "load" });
   await page.waitForFunction(() => Boolean(window.__machSim), undefined, { timeout: 20000 });
   await page.evaluate(() => document.fonts.ready);
   if (!live) {
     await page.evaluate(() => {
       const sim = window.__machSim;
-      sim.pause();
       sim.useManualClock();
       sim.seek(0);
     });
@@ -179,19 +128,6 @@ export async function frames(page, n = 2) {
 /** Drive the hook: `await sim(page, "seek", 1000)`. */
 export function sim(page, method, ...params) {
   return page.evaluate(([m, p]) => window.__machSim[m](...p), [method, params]);
-}
-
-/**
- * The stage keeps both views mounted; the inactive one is hidden (`visibility: hidden`, `inert`,
- * `aria-hidden`) and still has layout boxes. Every selector, box and count about "the view on screen"
- * must be scoped to the active layer.
- */
-export const ACTIVE = "[data-stage-active]";
-export const ACTIVE_ATLAS = `${ACTIVE} [data-view=atlas]`;
-
-/** Wait until both views are mounted (the stage prepares the hidden one while the browser is idle). */
-export async function waitPrepared(page, timeout = 8000) {
-  await page.waitForFunction(() => document.querySelectorAll("[data-stage-view]").length === 2, undefined, { timeout }).catch(() => {});
 }
 
 export const S = (seconds) => seconds * 1000;

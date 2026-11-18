@@ -1,6 +1,6 @@
 /**
- * What the page shows before there is anything to draw: looking for the observer, loading a history
- * to replay, no session with the observer, a history that could not be loaded. Each says what is
+ * What the page shows before there is anything to draw: looking for the observer, or no session with
+ * the observer. Each says what is
  * happening in plain words and offers only reading choices (the simulation, a retry); nothing here
  * can start or change anything in the Factory.
  */
@@ -46,21 +46,6 @@ export function NoSession({ message, onSimulation, onRetry }: { message: string;
           Show the simulation instead
         </Button>
         <SourceStamp source="simulation" />
-      </div>
-    </Page>
-  );
-}
-
-export function LoadFailed({ title, message, onRetry, onSimulation }: { title: string; message: string; onRetry: () => void; onSimulation: () => void }) {
-  return (
-    <Page>
-      <h1 className="font-sans text-title-2 font-bold text-ink">{title}</h1>
-      <p className="mt-3 text-body text-ink">{message}</p>
-      <div className="mt-6 flex flex-wrap items-center gap-3">
-        <Button variant="primary" onClick={onRetry}>Try again</Button>
-        <Button variant="secondary" onClick={onSimulation}>
-          Show the simulation instead
-        </Button>
       </div>
     </Page>
   );

@@ -32,7 +32,7 @@ const PICK_WORDS: Readonly<Record<string, string>> = { target_kind: "Failed chec
 function QualityBody({ pick, setPick }: { pick: Pick | null; setPick(p: Pick | null): void }) {
   const { snapshot: s, density, open } = useAnalytics();
   const t = s.totals;
-  if (density === "empty" && !s.no_whole_day) return <NothingYet about="No ticket finished, and no verification or review was recorded, in this window. Quality is read from:" />;
+  if (density === "empty") return <NothingYet about="No ticket finished, and no verification or review was recorded, in this window. Quality is read from:" />;
   const q4 = rankGroups(s.grouped[groupedKey("Q4", "target_kind")]);
   const r2 = rankGroups(s.grouped[groupedKey("R2", "rule")]);
   const active = pick && (pick.dim === "target_kind" || pick.dim === "rule") ? pick : null;
@@ -118,7 +118,7 @@ function QualityBody({ pick, setPick }: { pick: Pick | null; setPick(p: Pick | n
         <SectionHead title="Remediation paths" question="How finished tickets reached their outcome, from the run records.">
           {chip}
         </SectionHead>
-        <Paths paths={remediationPaths(runs)} total={runs.length} onOpen={(id) => open(`cell:${id}`, "timeline")} narrowed={active && picked ? `${PICK_WORDS[active.dim]} ${active.value}` : null} />
+        <Paths paths={remediationPaths(runs)} total={runs.length} onOpen={(id) => open(`cell:${id}`, "line")} narrowed={active && picked ? `${PICK_WORDS[active.dim]} ${active.value}` : null} />
       </section>
 
       <div className="an-grid-2">
@@ -267,7 +267,7 @@ function Paths({ paths, total, onOpen, narrowed }: { paths: readonly Remediation
                     {i ? ", " : ""}
                     <a
                       className="an-link an-mono"
-                      href={`#timeline?sel=${encodeURIComponent(`cell:${id}`)}`}
+                      href={`#line?sel=${encodeURIComponent(`cell:${id}`)}`}
                       data-ref={`cell:${id}`}
                       translate="no"
                       onClick={(e) => {
@@ -321,7 +321,7 @@ function QualityCost({ runs: all }: { runs: readonly RunRecord[] }) {
       chart="quality-cost"
       title="Recorded cost per merged ticket, by rounds"
       summary={rows.map((n) => `${n} rounds: ${known.filter((k) => k.r.rounds === n).length} tickets, median ${usd(medianOf(known.filter((k) => k.r.rounds === n).map((k) => k.cost)))}`).join("; ")}
-      table={{ columns: [{ label: "Ticket" }, { label: "Rounds", num: true }, { label: "Recorded cost", num: true }], rows: known.map((k) => [<button key={k.r.ticket_id} type="button" className="an-link an-mono inline-flex min-h-6 items-center" onClick={() => open(`cell:${k.r.ticket_id}`, "timeline")}>{k.r.ticket_id}</button>, count(k.r.rounds), usd(k.cost)]) }}
+      table={{ columns: [{ label: "Ticket" }, { label: "Rounds", num: true }, { label: "Recorded cost", num: true }], rows: known.map((k) => [<button key={k.r.ticket_id} type="button" className="an-link an-mono inline-flex min-h-6 items-center" onClick={() => open(`cell:${k.r.ticket_id}`, "line")}>{k.r.ticket_id}</button>, count(k.r.rounds), usd(k.cost)]) }}
       foot={<>Each dot is one ticket (filled: passed in one round; open: needed more); the tick is the median of a row of at least {SMALL_SAMPLE}. {missing ? `${plural(missing, "merged ticket")} with no recorded cost (hand-driven, or no execution result) are not placed. ` : ""}The table view lists every ticket with a link. This compares groups of tickets as they happened; it does not say that rounds caused the cost.</>}
     >
       <div ref={ref} className="relative" style={{ height }}>
@@ -350,7 +350,7 @@ function QualityCost({ runs: all }: { runs: readonly RunRecord[] }) {
                 {dots.map((d) => {
                   const k = these.find((z) => z.r.ticket_id === d.id)!;
                   return (
-                    <Mark key={d.id} nav={nav} index={known.indexOf(k)} x={d.x - 3.5} y={d.y - 3.5} w={7} h={7} tipAt={{ x: d.x, y: d.y - 5 }} card={{ title: d.id, rows: [["recorded cost", usd(k.cost)], ["judging rounds", String(n)], ["dot", n === 1 ? "filled: passed first time" : "open ring: needed more rounds"]], foot: "Enter opens it in the Timeline." }} onTip={setTip} onActivate={() => open(`cell:${d.id}`, "timeline")}>
+                    <Mark key={d.id} nav={nav} index={known.indexOf(k)} x={d.x - 3.5} y={d.y - 3.5} w={7} h={7} tipAt={{ x: d.x, y: d.y - 5 }} card={{ title: d.id, rows: [["recorded cost", usd(k.cost)], ["judging rounds", String(n)], ["dot", n === 1 ? "filled: passed first time" : "open ring: needed more rounds"]], foot: "Enter shows it on the Line." }} onTip={setTip} onActivate={() => open(`cell:${d.id}`, "line")}>
                       {n === 1 ? <circle cx={d.x} cy={d.y} r={3.4} style={{ fill: "var(--an-pass)", stroke: "var(--mach-canvas)", strokeWidth: 1 }} /> : <circle cx={d.x} cy={d.y} r={3} style={{ fill: "var(--mach-canvas)", stroke: "var(--an-wait)", strokeWidth: 1.6 }} />}
                     </Mark>
                   );

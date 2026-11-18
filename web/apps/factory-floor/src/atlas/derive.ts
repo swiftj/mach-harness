@@ -1,7 +1,7 @@
 /**
- * Everything the Atlas draws, derived from the scene and the playhead. Pure functions: the same
+ * Everything the Atlas draws, derived from the scene and the moment shown. Pure functions: the same
  * (log, t) always gives the same picture, forwards or backwards. The only time source is the
- * playhead; every motion is `animationProgress(name, (t - event.t) / RATE)`, i.e. the spec's
+ * moment; every motion is `animationProgress(name, (t - event.t) / RATE)`, i.e. the spec's
  * durations (wall ms at 1x) converted to factory ms.
  *
  * M6.2: events come from the store's scene log (`LogEntry`), whatever the source. The simulation and
@@ -57,7 +57,7 @@ export function kindOf(entry: LogEntry): string {
 
 /**
  * Animation windows by event kind (spec ms, wall time at 1x): how long after an event its motion is
- * still changing on screen. A part re-renders with the playhead only while one of its events is
+ * still changing on screen. A part re-renders with the moment shown only while one of its events is
  * inside its window; otherwise its picture is settled and it does not re-render (spec g: React
  * commits). Simulation kinds and v3 kinds side by side; `agent.progressed` (a workflow agent's
  * count) has no window: a count changes, nothing moves.
@@ -788,7 +788,7 @@ export function secondOf(ms: number): number {
 /**
  * A render key that changes exactly when any shown elapsed time changes: the whole seconds of every
  * working agent (optionally only those `which` accepts). Parts that letter or name an elapsed time
- * re-render on it, so the same playhead gives the same text however it was reached.
+ * re-render on it, so the same moment gives the same text however it was reached.
  */
 export function agentsElapsedKey(scene: Scene, t: number, which?: (a: AgentState) => boolean): string {
   let k = "";

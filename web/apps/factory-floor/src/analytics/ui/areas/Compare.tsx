@@ -37,7 +37,7 @@ function CompareBody({ configs, choice, onChoice }: { configs: CompareProps["con
   const by: CohortBy = choice?.by ?? "risk";
   const mid = (s.window.from_ms + s.window.to_ms) / 2;
   const options = useMemo(() => cohortOptions(by, s.runs, configs, mid), [by, s.runs, configs, mid]);
-  if (density === "empty" && !s.no_whole_day) return <NothingYet about="No ticket finished in this window, so there is nothing to compare. Compare groups finished tickets, from:" />;
+  if (density === "empty") return <NothingYet about="No ticket finished in this window, so there is nothing to compare. Compare groups finished tickets, from:" />;
   const [da, db] = defaultPair(options);
   const a = choice?.a && options.some((o) => o.key === choice.a) ? choice.a : da;
   const b = choice?.b && options.some((o) => o.key === choice.b) ? choice.b : db;
@@ -189,7 +189,7 @@ function DotCompare({ chart, title, cohorts, values, kind, cut = false }: { char
       chart={chart}
       title={title}
       summary={rows.map((r) => `${r.c.label}: ${r.known.length} placed, median ${r.known.length >= SMALL_SAMPLE ? fmt(medianOf(r.known.map((k) => k.v))!) : "not drawn"}, ${missingWords(r.missing)}`).join("; ")}
-      table={{ columns: [{ label: "Ticket" }, { label: "Cohort" }, { label: kind === "ms" ? "Dispatch to merge" : "Recorded cost", num: true }], rows: rows.flatMap((r) => r.known.map((k) => [<button key={k.id} type="button" className="an-link an-mono inline-flex min-h-6 items-center" onClick={() => open(`cell:${k.id}`, "timeline")}>{k.id}</button>, r.c.label, fmt(k.v)])) }}
+      table={{ columns: [{ label: "Ticket" }, { label: "Cohort" }, { label: kind === "ms" ? "Dispatch to merge" : "Recorded cost", num: true }], rows: rows.flatMap((r) => r.known.map((k) => [<button key={k.id} type="button" className="an-link an-mono inline-flex min-h-6 items-center" onClick={() => open(`cell:${k.id}`, "line")}>{k.id}</button>, r.c.label, fmt(k.v)])) }}
       foot={<>{rows.map((r) => `${r.c.label}: ${missingWords(r.missing)}`).join("; ")}. Cohorts smaller than {SMALL_SAMPLE} show their dots but no median. {kind === "ms" ? <LogNote /> : "The cost axis starts at zero."}</>}
     >
       <div ref={ref} className="relative" style={{ height }}>
@@ -216,7 +216,7 @@ function DotCompare({ chart, title, cohorts, values, kind, cut = false }: { char
                   const k = r.known.find((z) => z.id === d.id)!;
                   const my = idx++;
                   return (
-                    <Mark key={d.id} nav={nav} index={my} x={d.x - 3} y={d.y - 3} w={6} h={6} tipAt={{ x: d.x, y: d.y - 4 }} card={{ title: d.id, rows: [[kind === "ms" ? "dispatch to merge" : "recorded cost", fmt(k.v)], ["cohort", r.c.label]], foot: "Enter opens it in the Timeline." }} onTip={setTip} onActivate={() => open(`cell:${d.id}`, "timeline")}>
+                    <Mark key={d.id} nav={nav} index={my} x={d.x - 3} y={d.y - 3} w={6} h={6} tipAt={{ x: d.x, y: d.y - 4 }} card={{ title: d.id, rows: [[kind === "ms" ? "dispatch to merge" : "recorded cost", fmt(k.v)], ["cohort", r.c.label]], foot: "Enter shows it on the Line." }} onTip={setTip} onActivate={() => open(`cell:${d.id}`, "line")}>
                       <circle cx={d.x} cy={d.y} r={3.2} style={{ fill: i === 0 ? "var(--an-live)" : "var(--an-bar)", stroke: "var(--mach-canvas)", strokeWidth: 1 }} />
                     </Mark>
                   );

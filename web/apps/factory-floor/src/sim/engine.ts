@@ -77,7 +77,7 @@ export function cursorAt(fixture: Fixture, t: number): number {
   return fixtureLog(fixture).cursorAt(t);
 }
 
-/** The complete scene at playhead time t. The same object for every t between two events. */
+/** The complete scene at time t. The same object for every t between two events. */
 export function sceneAt(fixture: Fixture, t: number): Scene {
   return fixtureLog(fixture).sceneAt(t);
 }

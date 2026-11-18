@@ -5,7 +5,7 @@
  */
 import type { CellState, ReviewRoundState, StationVisit, WaveState } from "../../sim";
 
-/** Where an entity stands at the playhead, and the moment that standing began. */
+/** Where an entity stands now, and the moment that standing began. */
 export interface Timing {
   readonly phase: "running" | "finished";
   /** The moment the line names: when it started (running) or when it ended (finished). */
@@ -30,7 +30,7 @@ export function waveTiming(wave: Pick<WaveState, "discoveredAt">): Timing {
   return { phase: "finished", since: wave.discoveredAt, sinceWord: "Arrived at" };
 }
 
-/** The words before the time in "Finished at 42:42, as of the playhead." */
+/** The words before the time in "Finished at 42:42." */
 export function timingWords(t: Timing): string {
   return t.sinceWord ?? (t.phase === "running" ? "In progress since" : "Finished at");
 }

@@ -1,0 +1,19 @@
+/* The Line's one rule utilities cannot say: the working marker's pulse, only when motion is welcome. */
+.mach-line-pulse {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .mach-line-pulse {
+    animation: mach-line-pulse 2.4s var(--mach-ease-standard) infinite;
+  }
+}
+@keyframes mach-line-pulse {
+  0% {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.12);
+  }
+}

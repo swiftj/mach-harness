@@ -3,14 +3,13 @@
  *
  * Every analytics reply says how complete the history it counted is: `history.partial` (the
  * projection's reason), `history.gaps` (each class, time and count), the metrics reply's
- * `suspect_days` and each row's and bucket's `suspect`. The Timeline draws a gap as a mark saying
- * "History is missing here"; Analytics says the same words where the figures the gap affects are: one
- * line over the area, and "history incomplete here" beside a figure or a day the observer marks.
- * Nothing is filled in. Under a playhead nothing later than it is named.
+ * `suspect_days` and each row's and bucket's `suspect`. Analytics says "History is missing here"
+ * where the figures the gap affects are: one line over the area, and "history incomplete here"
+ * beside a figure or a day the observer marks. Nothing is filled in.
  */
 import { gapClassWord } from "../../sim/provenance";
 import { momentWords } from "./query";
-import { dayLabel } from "../../timeline/render/scale";
+import { dayLabel } from "../model/scale";
 
 /** What a snapshot carries about its history's completeness. */
 export interface SnapshotHistory {
@@ -19,8 +18,6 @@ export interface SnapshotHistory {
   readonly gaps: readonly { readonly class: string; readonly at_ms: number | null; readonly count: number | null }[];
   /** UTC days ("2026-11-04") whose figures a gap may affect. */
   readonly suspect_days: readonly string[];
-  /** The playhead the view is cut at, if any: gaps and days after it are not named. */
-  readonly as_of_ms?: number | null;
 }
 
 /** The words beside a figure or a column the observer marks suspect. */
@@ -37,11 +34,10 @@ const dayOf = (iso: string): number | null => {
 
 /** The incomplete-history line for a view, or null when its history is complete. */
 export function historyWords(h: SnapshotHistory, moment: (t: number) => string = momentWords): { readonly title: string; readonly body: string; readonly days: readonly number[] } | null {
-  const asOf = h.as_of_ms ?? null;
-  const gaps = h.gaps.filter((g) => asOf === null || g.at_ms === null || g.at_ms <= asOf);
+  const gaps = h.gaps;
   const days = h.suspect_days
     .map(dayOf)
-    .filter((d): d is number => d !== null && (asOf === null || d <= asOf))
+    .filter((d): d is number => d !== null)
     .sort((a, b) => a - b);
   if (!gaps.length && !days.length && !h.partial) return null;
   const parts: string[] = [];

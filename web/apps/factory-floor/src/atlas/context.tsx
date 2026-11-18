@@ -125,12 +125,12 @@ export const Hit = memo(function Hit({ entity, label, children, points, alias = 
 const PROXY = { fill: "transparent" } as const;
 
 /**
- * The playhead, for a part that should re-render only when `key` changes. `key` returns the
- * playhead itself while the part animates, or a settled value (a quantised step, a flag) when it
- * does not; the part then reads the current playhead at render, so every render is still a pure
- * function of the playhead.
+ * The moment shown (`now`), for a part that should re-render only when `key` changes. `key` returns
+ * the moment itself while the part animates, or a settled value (a quantised step, a flag) when it
+ * does not; the part then reads the current moment at render, so every render is still a pure
+ * function of the moment shown.
  */
-export function usePlayheadKeyed(key: (s: SceneStoreState) => string | number): number {
+export function useNowKeyed(key: (s: SceneStoreState) => string | number): number {
   useSceneStore(key);
-  return useStore().getState().playhead;
+  return useStore().getState().now;
 }

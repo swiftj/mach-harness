@@ -1,10 +1,7 @@
 /**
- * Time in words for the shell: the time base (scenario or wall clock), time codes, dates, durations,
- * and what the transport's time code says (with an empty state for a history with nothing in it).
+ * Time in words for the shell: the time base (scenario or wall clock), time codes, dates and durations.
  * No grammar import, so the words are tested in plain node (test/m62-recheck-fixes.test.mjs).
  */
-import { isoAt } from "../sim/scenario/recorder";
-
 /**
  * What a time `t` means, set once by the app when it chooses its source (App.tsx):
  * - `scenario`: the simulation's ms from the scenario start, printed as a time code (mm:ss.s);
@@ -46,14 +43,8 @@ export function timecode(t: number, tenths = true): string {
   return `${String(m).padStart(2, "0")}:${ss}`;
 }
 
-/** The wall clock at time t (UTC, HH:MM:SS): simulated for the simulation, real for real history. */
-export function clockAt(t: number): string {
-  if (timeBase === "wall") return utcClock(t);
-  return isoAt(Math.max(0, Math.floor(t / 1000) * 1000)).slice(11, 19);
-}
-
 /**
- * A duration in plain words, the one vocabulary of the Factory Floor (the Atlas, the Timeline and
+ * A duration in plain words, the one vocabulary of the Factory Floor (the Line, the Floor and
  * Analytics; the observer's insight wording matches it): 48 s, 4 min 12 s, 1 h 3 min, 1 h, 1 d 15 h,
  * 2 d. Two units at most, the smaller left out when it is zero.
  */
@@ -66,30 +57,6 @@ export function duration(ms: number): string {
   if (h < 24) return m % 60 ? `${h} h ${m % 60} min` : `${h} h`;
   const d = Math.floor(h / 24);
   return h % 24 ? `${d} d ${h % 24} h` : `${d} d`;
-}
-
-/** Spoken form of a time code, for screen readers. */
-export function spokenTime(t: number): string {
-  if (timeBase === "wall") {
-    const d = new Date(Math.max(0, t));
-    return `${d.getUTCHours()} ${pad2(d.getUTCMinutes())} and ${d.getUTCSeconds()} seconds UTC`;
-  }
-  const total = Math.floor(Math.max(0, t) / 1000);
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m} minute${m === 1 ? "" : "s"} ${s} second${s === 1 ? "" : "s"}`;
-}
-
-/**
- * The transport's time code and the line under it (R7). Real history: wall-clock UTC and the date,
- * or, before anything is known (no moment yet: an empty project before its first event, with no
- * wall clock), an empty state, never 1 January 1970. The simulation: scenario time and its clock.
- */
-export function timeCodeText(s: { readonly playhead: number; readonly liveAt: number; readonly source: "simulation" | "live" | "replay" }, size: "md" | "lg" = "md"): { readonly code: string; readonly clock: string } {
-  const wall = timeBase === "wall" || s.source !== "simulation";
-  if (!wall) return { code: timecode(s.playhead), clock: `${clockAt(s.playhead)} UTC` };
-  if (!isMoment(s.playhead)) return { code: "--:--:--", clock: s.source === "replay" ? "No events in this history" : "No events yet" };
-  return { code: `${utcClock(s.playhead, true)}${size === "lg" ? " UTC" : ""}`, clock: `UTC, ${utcDate(s.playhead)}` };
 }
 
 /** Whether a real-history time is a moment at all (Unix ms below a day is none: nothing is known yet, never 1970). */

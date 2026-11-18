@@ -17,7 +17,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { Banner, Button, Dialog, DialogContent, Kbd, cn } from "@mach/ui";
 import { useSceneStore, useStore, type EvidenceOpen } from "../scene";
-import { asOfPlayhead } from "../timeline/controls/frame";
 import { useSource } from "../shell/source/context";
 import { StateGlyph } from "../shell/glyphs";
 import { FREE_TEXT_LABEL, ObserverError, type ArtifactTextResult, type CellEvidence, type ObserverClient } from "../live/observer";
@@ -27,7 +26,6 @@ import type { CellState } from "../sim";
 import {
   ARCHIVE_WORDS,
   CLASS_WORDS,
-  HELD_WORDS,
   INTEGRITY_WORDS,
   MEDIA_SETTING,
   MEDIA_SETTING_FILE,
@@ -78,30 +76,19 @@ export function EvidencePlayer() {
 
 type Loaded = { readonly status: "loading" } | { readonly status: "ready"; readonly model: EvidenceModel } | { readonly status: "error"; readonly words: string };
 
-/** The playhead the player is cut at: the playhead while it is held behind the live edge and nothing after it is revealed. */
-function useHeldAt(): { readonly heldAt: number | null; readonly behind: boolean; readonly revealed: boolean } {
-  const key = useSceneStore((s) => {
-    const a = asOfPlayhead(s);
-    // To the second, rounded down: while a replay plays this changes once a second, and never shows a moment past the playhead.
-    return `${a.behind ? 1 : 0}|${a.revealed ? 1 : 0}|${a.behind && !a.revealed ? Math.floor(s.playhead / 1000) * 1000 : ""}`;
-  });
-  const [behind, revealed, at] = key.split("|");
-  return { behind: behind === "1", revealed: revealed === "1", heldAt: at ? Number(at) : null };
-}
-
-/** The simulation: the scene at the playhead (or, revealed, at the live edge), which already holds nothing later. */
-function useSimModel(ticket: string, heldAt: number | null, revealed: boolean, enabled: boolean): Loaded {
-  const cell = useSceneStore((s) => (enabled ? (s.log.sceneAt(revealed ? s.liveAt : s.playhead).cells[ticket] ?? null) : null)) as CellState | null;
+/** The simulation: the scene now. */
+function useSimModel(ticket: string, enabled: boolean): Loaded {
+  const cell = useSceneStore((s) => (enabled ? (s.log.sceneAt(s.now).cells[ticket] ?? null) : null)) as CellState | null;
   return useMemo<Loaded>(() => {
     if (!enabled) return { status: "loading" };
     if (!cell) return { status: "error", words: `The simulation has no cell ${ticket} at this moment.` };
-    return { status: "ready", model: buildSimModel(cell, { heldAt }) };
-  }, [cell, enabled, heldAt, ticket]);
+    return { status: "ready", model: buildSimModel(cell) };
+  }, [cell, enabled, ticket]);
 }
 
-/** Live and replay: `/cells/{ticket}/evidence`, read again when the cell records another check. One retry when the observer is busy. */
-function useLiveModel(client: ObserverClient | null, ticket: string, source: "live" | "replay", heldAt: number | null, enabled: boolean): Loaded {
-  const recorded = useSceneStore((s) => (enabled ? (s.log.sceneAt(s.liveAt).cells[ticket]?.verifications.reduce((n, v) => n + v.checks.filter((c) => c.result !== "pending").length, 0) ?? 0) : 0));
+/** Live: `/cells/{ticket}/evidence`, read again when the cell records another check. One retry when the observer is busy. */
+function useLiveModel(client: ObserverClient | null, ticket: string, enabled: boolean): Loaded {
+  const recorded = useSceneStore((s) => (enabled ? (s.log.sceneAt(s.now).cells[ticket]?.verifications.reduce((n, v) => n + v.checks.filter((c) => c.result !== "pending").length, 0) ?? 0) : 0));
   const [reply, setReply] = useState<{ readonly ticket: string; readonly data: CellEvidence | null; readonly words: string | null; readonly media: boolean | null } | null>(null);
   useEffect(() => {
     if (!enabled || !client?.cellEvidence) return;
@@ -151,8 +138,8 @@ function useLiveModel(client: ObserverClient | null, ticket: string, source: "li
     if (enabled && !client?.cellEvidence) return { status: "error", words: "This observer does not serve a cell's evidence." };
     if (!enabled || !reply || reply.ticket !== ticket) return { status: "loading" };
     if (!reply.data) return { status: "error", words: reply.words ?? "The observer did not answer." };
-    return { status: "ready", model: buildLiveModel(reply.data, { source, heldAt, sessionMedia: reply.media }) };
-  }, [enabled, client, reply, ticket, source, heldAt]);
+    return { status: "ready", model: buildLiveModel(reply.data, { sessionMedia: reply.media }) };
+  }, [enabled, client, reply, ticket]);
 }
 
 // ---------------------------------------------------------------- the panel
@@ -161,10 +148,9 @@ function PlayerPanel({ open }: { open: EvidenceOpen }) {
   const store = useStore();
   const source = useSceneStore((s) => s.source);
   const { client } = useSource();
-  const { heldAt, behind, revealed } = useHeldAt();
   const sim = source === "simulation";
-  const simLoaded = useSimModel(open.ticket, heldAt, revealed, sim);
-  const liveLoaded = useLiveModel(client ?? null, open.ticket, source === "replay" ? "replay" : "live", heldAt, !sim);
+  const simLoaded = useSimModel(open.ticket, sim);
+  const liveLoaded = useLiveModel(client ?? null, open.ticket, !sim);
   const loaded = sim ? simLoaded : liveLoaded;
   const model = loaded.status === "ready" ? loaded.model : null;
   const [failedOnly, setFailedOnly] = useState(false);
@@ -220,7 +206,7 @@ function PlayerPanel({ open }: { open: EvidenceOpen }) {
       footer={<Stepping onStep={step} disabled={!model || !current} />}
     >
       <div className="flex flex-col gap-3 pb-1">
-        <Notices model={model} source={source} behind={behind} revealed={revealed} />
+        <Notices model={model} source={source} />
         {loaded.status === "loading" ? (
           <p role="status" className="text-body-sm text-ink-muted">
             Reading the checks…
@@ -231,7 +217,7 @@ function PlayerPanel({ open }: { open: EvidenceOpen }) {
           </p>
         ) : model && listedChecks(model).length === 0 ? (
           <p className="text-body-sm text-ink-muted" data-evidence-empty="">
-            {behind && !revealed ? "No check was recorded for this ticket by the playhead." : "No verification check has been recorded for this ticket yet."}
+            No verification check has been recorded for this ticket yet.
           </p>
         ) : model && current ? (
           <div className="grid min-h-0 gap-3 lg:h-[68vh] lg:grid-cols-[minmax(280px,320px)_minmax(220px,280px)_minmax(0,1fr)]">
@@ -264,23 +250,13 @@ function Stepping({ onStep, disabled }: { onStep: (what: "file" | "check", direc
   );
 }
 
-function Notices({ model, source, behind, revealed }: { model: EvidenceModel | null; source: string; behind: boolean; revealed: boolean }) {
-  const store = useStore();
-  const reveal = useCallback((on: boolean) => store.setTimelineView({ revealAfter: on }), [store]);
+function Notices({ model, source }: { model: EvidenceModel | null; source: string }) {
   return (
     <>
       {source === "simulation" ? (
         <p className="rounded-sm border border-dashed border-line-strong bg-surface-sunken px-3 py-2 text-body-sm text-ink" data-evidence-simulation="">
           Simulation. {SIM_CONTENT_NOTE}
         </p>
-      ) : null}
-      {behind ? (
-        <div className="flex flex-wrap items-center gap-3 rounded-sm border border-line px-3 py-2 text-body-sm text-ink-muted" data-evidence-held="">
-          <span className="min-w-0 flex-1">{revealed ? "Showing what happened after the playhead as well." : HELD_WORDS}</span>
-          <Button size="sm" variant="ghost" aria-pressed={revealed} onClick={() => reveal(!revealed)}>
-            Show what happened after this moment
-          </Button>
-        </div>
       ) : null}
       {model && (model.readFrom === "archive" || model.readFrom === "both") ? (
         <p className="text-body-sm text-ink-muted" data-evidence-archive="">

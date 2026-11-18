@@ -1,14 +1,14 @@
 // The Factory Floor live on a project with nothing recorded (a fresh MACH project: `.factory/` with
 // an empty ticket queue, inbox, worktrees and archive; no intake ledger, no cell, no supervisor), over
-// a real mach-observer. A real user's tab froze here: holding the moment at the live edge looped
-// without end asking for a history window that cannot exist. The page must keep answering while it
-// sits open, after the hold, and while it plays from the hold.
+// a real mach-observer. A real user's tab once froze here, looping on a history window that could not
+// exist. The page must keep answering while it sits open on the Line, says something useful about the
+// empty line, and keeps answering on the Floor and back.
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { launch, openApp, scratch, sleep, startObserver } from "../scripts/timeline-e2e-lib.mjs";
+import { launch, openApp, scratch, sleep, startObserver } from "../scripts/e2e-lib.mjs";
 
 const PORT = 4243;
 /** A page that takes longer than this to run `1` is not answering. */
@@ -63,19 +63,24 @@ after(async () => {
 });
 
 describe("Factory Floor live on an empty project (real observer)", () => {
-  test("open on the Atlas for 20 s, hold the moment, play from it: the page answers throughout", async () => {
-    const { page, context } = await openApp(browser, obs, "#atlas", { width: 2000, height: 1125, waitReady: false });
+  test("open on the Line for 20 s, then the Floor and back: an empty line says so, and the page answers throughout", async () => {
+    const { page, context } = await openApp(browser, obs, "#line", { width: 2000, height: 1125, waitReady: false });
     try {
-      await page.waitForSelector("text=Connected: receiving live", { timeout: 30000 });
-      await keepsAnswering(page, 20, "sitting open");
-      const play = page.locator("[data-transport=play]").first();
-      assert.match((await play.getAttribute("aria-label")) ?? "", /^Hold this moment/);
-      // A frozen page can stall the click itself: what matters is whether the page answers after it.
-      await play.click({ timeout: 5000, noWaitAfter: true }).catch(() => undefined);
-      await keepsAnswering(page, 5, "after holding the moment");
-      assert.equal(await play.getAttribute("aria-label"), "Play", "held: the button offers play");
-      await play.click({ timeout: 5000 });
-      await keepsAnswering(page, 5, "playing from the hold");
+      await page.waitForSelector("[data-connection='live']", { timeout: 30000 });
+      await keepsAnswering(page, 20, "sitting open on the Line");
+      const empty = page.locator("[data-line-empty]");
+      await empty.waitFor({ timeout: 5000 });
+      assert.match(await empty.innerText(), /No tickets on the line yet|Factory/);
+      assert.equal(await page.locator("[data-needs-none]").count(), 1, "nothing is waiting for a person");
+      assert.equal(await page.locator("[data-feed-empty]").count(), 1, "nothing has happened yet, and the feed says so");
+      assert.equal(await page.locator("[data-station-heading]").count(), 7, "every station still has its heading");
+      assert.equal(await page.locator("[data-transport], [role='slider']").count(), 0, "no playback control to hold the moment with");
+      await page.locator("body").press("2");
+      await page.locator("[data-workspace-shown='floor']").waitFor({ timeout: 5000 });
+      await keepsAnswering(page, 5, "on the Floor");
+      await page.locator("body").press("1");
+      await page.locator("[data-workspace-shown='line']").waitFor({ timeout: 5000 });
+      await keepsAnswering(page, 5, "back on the Line");
       assert.deepEqual(page.consoleErrors, [], "no console errors");
     } finally {
       await context.close();

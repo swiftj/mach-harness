@@ -1,17 +1,16 @@
 // M6.5.6 shell groundwork: Analytics as a third workspace. The store's interface slice, the address's
 // grammar for all three workspaces (property-style round trips), the keyboard map in three contexts,
-// switching that never moves the selection or the playhead, the held floor, and the navigation helpers.
+// switching that never moves the selection, the held floor, and the navigation helpers.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sim } from "./_load.mjs";
 
-const { createSceneStore, heldStore, showInAnalytics, showInTimeline, showOnFloor, WORKSPACES } = await import("../src/scene/store.ts");
+const { createSceneStore, heldStore, showInAnalytics, showOnFloor, showOnLine, WORKSPACES } = await import("../src/scene/store.ts");
 const A = await import("../src/scene/analytics.ts");
 const { manualClock } = await import("../src/scene/clock.ts");
 const { parseHash, formatHash } = await import("../src/shell/source/hash.ts");
 const { applyHash, createHashSync } = await import("../src/shell/source/hashSync.ts");
-const { KEYMAP, TIMELINE_KEYS, activeIn, shellKeyHandler } = await import("../src/shell/keyboard.ts");
-const { analyticsAsOf } = await import("../src/shell/analyticsAsOf.ts");
+const { KEYMAP, activeIn, shellKeyHandler } = await import("../src/shell/keyboard.ts");
 const { SCENARIO } = sim;
 
 const make = (extra = {}) => createSceneStore({ fixture: SCENARIO, clock: manualClock(), ...extra });
@@ -57,14 +56,13 @@ function randomView(r) {
   };
 }
 const SELS = [null, "cell:LOCAL-031", "station:LOCAL-031/build", "gate:LOCAL-031/review#2", "execution:x/1 2"];
-const ATS = [null, { kind: "ms", ms: 300000 }, { kind: "event", id: "sim:12" }];
 
 // ---------------------------------------------------------------- the store's slice
 
-test("workspaces: three, the floor by default; 'analytics' is accepted, anything else ignored", () => {
-  assert.deepEqual([...WORKSPACES], ["floor", "timeline", "analytics"]);
+test("workspaces: three, the Line by default; 'analytics' is accepted, anything else ignored", () => {
+  assert.deepEqual([...WORKSPACES], ["line", "floor", "analytics"]);
   const store = make();
-  assert.equal(store.getState().workspace, "floor");
+  assert.equal(store.getState().workspace, "line");
   assert.deepEqual(store.getState().analytics, A.INITIAL_ANALYTICS_VIEW);
   store.setWorkspace("analytics");
   assert.equal(store.getState().workspace, "analytics");
@@ -96,24 +94,21 @@ test("setAnalyticsView: merges filters key by key, ignores invalid members one b
   assert.equal(store.getState().analytics.filters.station, null, "null clears a filter");
 });
 
-test("switching workspaces never changes selection, hover, playhead, playback, speed or the floor's view", () => {
+test("switching workspaces never changes selection, hover or the moment shown", () => {
   const r = rng(11);
   const store = make();
   store.select("cell:LOCAL-031");
-  store.seek(400_000);
-  store.setSpeed(4);
-  store.setView("blueprint");
   for (let i = 0; i < 60; i++) {
     const before = store.getState();
-    const w = pick(r, ["floor", "timeline", "analytics"]);
+    const w = pick(r, ["line", "floor", "analytics"]);
     const how = pick(r, ["set", "helper"]);
     if (how === "set") store.setWorkspace(w);
     else if (w === "analytics") showInAnalytics(store);
-    else if (w === "timeline") showInTimeline(store);
+    else if (w === "line") showOnLine(store);
     else showOnFloor(store);
     const s = store.getState();
     assert.equal(s.workspace, w);
-    for (const k of ["selection", "hovered", "playhead", "playing", "speed", "view", "following"]) assert.equal(s[k], before[k], `${k} after switching to ${w} (${how})`);
+    for (const k of ["selection", "hovered", "now", "view"]) assert.equal(s[k], before[k], `${k} after switching to ${w} (${how})`);
   }
 });
 
@@ -127,7 +122,7 @@ test("Theater Mode is the floor's: it ends on leaving for Analytics and cannot s
 });
 
 test("the floor is held (inert to changes) while Analytics is up, and catches up once on return", () => {
-  const store = make();
+  const store = make({ workspace: "floor" });
   const held = heldStore(store);
   let told = 0;
   held.subscribe(() => told++);
@@ -138,7 +133,6 @@ test("the floor is held (inert to changes) while Analytics is up, and catches up
   // The target is set while the floor is still up (one notification, interface state only); nothing after.
   told = 0;
   store.select("cell:LOCAL-032");
-  store.seek(500_000);
   store.setAnalyticsView({ area: "quality" });
   assert.equal(told, 0, "nothing reached the hidden floor");
   assert.equal(held.getState(), frozen);
@@ -168,23 +162,17 @@ test("showInAnalytics: sets the target (filters replaced, focus and pick reset) 
   assert.equal(store.getState().analytics, before, "no target: only the switch");
 });
 
-test("from Analytics: showInTimeline with a window focuses the interval; showOnFloor with a ref selects it", () => {
+test("from Analytics: showOnLine and showOnFloor with a ref select it", () => {
   const store = make();
   showInAnalytics(store, { area: "flow" });
-  showInTimeline(store, "cell:LOCAL-033", { window: { from: 100_000, to: 200_000 } });
+  showOnLine(store, "cell:LOCAL-033");
   let s = store.getState();
-  assert.equal(s.workspace, "timeline");
+  assert.equal(s.workspace, "line");
   assert.equal(s.selection, "cell:LOCAL-033");
-  assert.deepEqual(s.timeline.window, { from: 100_000, to: 200_000 });
-  assert.equal(s.focus.target, "cell:LOCAL-033", "the Timeline is asked to reveal it");
   showInAnalytics(store);
-  showInTimeline(store, null, { window: { from: 5, to: 5 } });
-  assert.deepEqual(store.getState().timeline.window, { from: 100_000, to: 200_000 }, "an empty interval is ignored");
-  showInAnalytics(store);
-  showOnFloor(store, "blueprint", { ref: "cell:LOCAL-031" });
+  showOnFloor(store, { ref: "cell:LOCAL-031" });
   s = store.getState();
   assert.equal(s.workspace, "floor");
-  assert.equal(s.view, "blueprint");
   assert.equal(s.selection, "cell:LOCAL-031");
   assert.equal(s.focus.target, "cell:LOCAL-031");
 });
@@ -198,48 +186,39 @@ test("analyticsStationOf: the floor's station kinds map to Analytics' stations; 
 
 // ---------------------------------------------------------------- the address
 
-test("hash: every Analytics view round-trips exactly, with any selection and moment (500 random views)", () => {
+test("hash: every Analytics view round-trips exactly, with any selection (500 random views)", () => {
   const r = rng(6505);
   for (let i = 0; i < 500; i++) {
     const view = randomView(r);
     const sel = pick(r, SELS);
-    const at = pick(r, ATS);
-    const hash = formatHash({ route: "analytics", sel, at, win: null, group: "product", analytics: view });
+    const hash = formatHash({ route: "analytics", sel, analytics: view });
     const h = parseHash(hash);
     assert.equal(h.route, "analytics", hash);
     assert.equal(h.sel, sel, hash);
-    assert.deepEqual(h.at, at, hash);
     assert.ok(A.sameAnalyticsView(h.analytics, view), `${hash}\n${JSON.stringify(view)}\n${JSON.stringify(h.analytics)}`);
-    assert.equal(h.win, null, "the Timeline's parameters are not read for Analytics");
     assert.equal(h.theater, false);
-    assert.equal(formatHash({ route: "analytics", sel, at, win: null, group: "product", analytics: h.analytics }), hash, "canonical");
+    assert.equal(formatHash({ route: "analytics", sel, analytics: h.analytics }), hash, "canonical");
   }
 });
 
-test("hash: #atlas, #blueprint and #timeline round-trip exactly as before (property-style)", () => {
+test("hash: #line and #floor round-trip exactly, with no Analytics parameter (property-style)", () => {
   const r = rng(63);
   for (let i = 0; i < 300; i++) {
-    const route = pick(r, ["atlas", "blueprint", "timeline"]);
+    const route = pick(r, ["line", "floor"]);
     const sel = pick(r, SELS);
-    const at = pick(r, ATS);
-    const timeline = route === "timeline";
-    const win = timeline ? pick(r, [null, { from: 70000, to: 370000 }, { from: -Infinity, to: Infinity }, { from: -60000, to: Infinity }]) : null;
-    const group = timeline ? pick(r, ["product", "execution"]) : "product";
-    const lens = timeline ? pick(r, [null, "retries", "waits"]) : null;
-    const table = timeline ? r() < 0.5 : false;
-    const hash = formatHash({ route, sel, at, win, group, lens, table, analytics: randomView(r) });
+    const hash = formatHash({ route, sel, analytics: randomView(r) });
     assert.ok(!/area=|risk=|cmp=|focus=|pick=/.test(hash), `no Analytics parameter outside Analytics: ${hash}`);
     const h = parseHash(hash);
     assert.equal(h.route, route);
     assert.equal(h.analytics, null);
-    assert.equal(formatHash({ route, sel: h.sel, at: h.at, win: h.win, group: h.group ?? "product", lens: h.lens, table: h.table }), hash);
+    assert.equal(formatHash({ route, sel: h.sel }), hash);
   }
-  // Known old addresses, byte for byte.
-  for (const old of ["#atlas", "#blueprint?sel=cell%3ALOCAL-031", "#timeline?sel=cell%3ALOCAL-031&at=300000&win=70000-370000&group=execution&lens=retries&table=1", "#timeline?win=all", "#timeline?win=live-60000"]) {
+  for (const old of ["#line", "#floor", "#floor?sel=cell%3ALOCAL-031"]) {
     const h = parseHash(old);
-    assert.equal(formatHash({ route: h.route, sel: h.sel, at: h.at, win: h.win, group: h.group ?? "product", lens: h.lens, table: h.table }), old);
+    assert.equal(formatHash({ route: h.route, sel: h.sel }), old);
   }
-  assert.equal(parseHash("#atlas?theater=1").theater, true, "Theater from the address still applies on the floor");
+  assert.equal(parseHash("#floor?theater=1").theater, true, "Theater from the address still applies on the Floor");
+  for (const gone of ["#atlas", "#blueprint", "#timeline"]) assert.equal(parseHash(gone).route, null, `${gone} is not a route`);
 });
 
 test("hash: unknown or malformed Analytics values are dropped alone, never thrown on", () => {
@@ -266,9 +245,9 @@ test("hash: unknown or malformed Analytics values are dropped alone, never throw
   }
 });
 
-test("hashSync: an Analytics view is written as #analytics (never as #atlas), and an address lands exactly", () => {
-  const store = make();
-  const host = { hash: "#atlas", getHash: () => host.hash, replaceHash: (h) => (host.hash = h), onHashChange: (l) => ((host.change = l), () => {}), onInteraction: () => () => {}, setTimeout: () => 0, clearTimeout: () => {} };
+test("hashSync: an Analytics view is written as #analytics (never as #floor), and an address lands exactly", () => {
+  const store = make({ workspace: "floor" });
+  const host = { hash: "#floor", getHash: () => host.hash, replaceHash: (h) => (host.hash = h), onHashChange: (l) => ((host.change = l), () => {}), onInteraction: () => () => {}, setTimeout: () => 0, clearTimeout: () => {} };
   const sync = createHashSync(store, host);
   store.select("cell:LOCAL-031");
   showInAnalytics(store, { area: "flow", filters: { station: "build" } });
@@ -276,7 +255,7 @@ test("hashSync: an Analytics view is written as #analytics (never as #atlas), an
   store.setAnalyticsView({ focus: { metric: "C1", group: { dim: "station", value: "build" } } });
   assert.equal(host.hash, "#analytics?area=flow&station=build&sel=cell%3ALOCAL-031&focus=C1,station:build");
   showOnFloor(store);
-  assert.equal(host.hash, "#atlas?sel=cell%3ALOCAL-031");
+  assert.equal(host.hash, "#floor?sel=cell%3ALOCAL-031");
   // Back to an Analytics address (the browser's Back): the whole view as written.
   host.hash = "#analytics?area=quality&win=7d&risk=high&cmp=risk:high~risk:low";
   host.change();
@@ -293,9 +272,9 @@ test("hashSync: an Analytics view is written as #analytics (never as #atlas), an
 
 // ---------------------------------------------------------------- keys
 
-test("key map: no key bound twice in any of the three workspaces; 4 opens Analytics from anywhere", () => {
+test("key map: no key bound twice in any of the three workspaces; 3 opens Analytics from anywhere", () => {
   const global = KEYMAP.filter((k) => !k.view);
-  for (const ctx of ["floor", "timeline", "analytics"]) {
+  for (const ctx of ["line", "floor", "analytics"]) {
     const seen = new Map();
     for (const b of global) {
       if (!activeIn(b, ctx)) continue;
@@ -305,78 +284,50 @@ test("key map: no key bound twice in any of the three workspaces; 4 opens Analyt
         seen.set(k, b.action);
       }
     }
-    for (const k of ["1", "2", "3", "4"]) assert.ok(seen.has(k), `${ctx}: ${k}`);
-    if (ctx !== "timeline") for (const k of Object.keys(TIMELINE_KEYS)) assert.ok(!seen.has(k), `${ctx}: ${k} is the Timeline's`);
+    for (const k of ["1", "2", "3"]) assert.ok(seen.has(k), `${ctx}: ${k}`);
   }
-  assert.ok(KEYMAP.some((b) => b.keys.includes("4")), "4 is listed in the help");
+  assert.ok(KEYMAP.some((b) => b.keys.includes("3") && /Analytics/.test(b.action)), "3 is listed in the help as Analytics");
 });
 
 function press(store, key, extra = {}) {
   const calls = [];
-  const commands = { toggleInspector: () => calls.push("inspector"), toggleTimeline: () => calls.push("timeline"), openHelp: () => calls.push("help"), openSource: () => calls.push("source"), modalOpen: () => false };
+  const commands = { toggleInspector: () => calls.push("inspector"), openHelp: () => calls.push("help"), openSource: () => calls.push("source"), modalOpen: () => false };
   const e = { key, shiftKey: false, altKey: false, metaKey: false, ctrlKey: false, defaultPrevented: false, target: null, prevented: false, preventDefault() { this.prevented = true; }, ...extra };
   shellKeyHandler(store, commands)(e);
   return { e, calls };
 }
 
-test("keys: 1 2 3 4 switch from every workspace keeping selection and playhead", () => {
+test("keys: 1 2 3 switch from every workspace keeping the selection", () => {
   const store = make();
   store.select("cell:LOCAL-031");
-  store.seek(300_000);
-  const route = [["4", "analytics"], ["3", "timeline"], ["4", "analytics"], ["2", "floor"], ["4", "analytics"], ["1", "floor"], ["3", "timeline"], ["1", "floor"]];
+  const route = [["3", "analytics"], ["1", "line"], ["3", "analytics"], ["2", "floor"], ["3", "analytics"], ["1", "line"], ["2", "floor"]];
   for (const [key, w] of route) {
     const { e } = press(store, key);
     const s = store.getState();
     assert.equal(s.workspace, w, key);
     assert.ok(e.prevented);
     assert.equal(s.selection, "cell:LOCAL-031");
-    assert.equal(s.playhead, 300_000);
   }
-  press(store, "4");
-  press(store, "2");
-  assert.equal(store.getState().view, "blueprint", "2 from Analytics lands on the Blueprint");
 });
 
-test("keys in Analytics: playback keys, F and T do nothing (no transport there); I, ?, S and Escape still work", () => {
+test("keys in Analytics: F and T do nothing (they are the floor's); I, ?, S and Escape still work", () => {
   const store = make();
   store.select("cell:LOCAL-031");
-  store.seek(300_000);
   showInAnalytics(store);
   const before = store.getState();
-  for (const key of [" ", ",", ".", "[", "]", "{", "}", "Home", "End", "l", "L", "f", "F", "t", "T"]) {
+  for (const key of [" ", ",", ".", "[", "]", "Home", "End", "l", "L", "f", "F", "t", "T"]) {
     const { e } = press(store, key);
     assert.equal(e.prevented, false, `${JSON.stringify(key)} is not handled in Analytics`);
   }
   const s = store.getState();
-  for (const k of ["playhead", "playing", "speed", "following", "theater", "follow", "focus"]) assert.equal(s[k], before[k], k);
+  for (const k of ["now", "theater", "follow", "focus"]) assert.equal(s[k], before[k], k);
   assert.deepEqual(press(store, "i").calls, ["inspector"]);
   assert.deepEqual(press(store, "?").calls, ["help"]);
   assert.deepEqual(press(store, "s").calls, ["source"]);
   press(store, "Escape");
   assert.equal(store.getState().selection, null);
-  // And the same keys still play on the floor.
+  // And T is still Theater Mode on the floor.
   showOnFloor(store);
-  assert.ok(press(store, " ").e.prevented);
-  assert.equal(store.getState().playing, true);
-});
-
-// ---------------------------------------------------------------- as of
-
-test("analyticsAsOf: the whole history at the edge; through the playhead when it is held behind; the source said", () => {
-  const clock = (t) => `T${t}`;
-  const edge = analyticsAsOf({ source: "live", following: true, playhead: 9e12, liveAt: 9e12, connection: { state: "live" } }, clock);
-  assert.equal(edge.through, "edge");
-  assert.equal(edge.toMs, null);
-  assert.equal(edge.sourceLabel, "Live Factory");
-  // M6.6 (I-02): a link that is not live is said in the badge's words.
-  assert.equal(analyticsAsOf({ source: "live", following: true, playhead: 9e12, liveAt: 9e12, connection: { state: "no-session" } }, clock).sourceLabel, "Live Factory (no session)");
-  assert.equal(analyticsAsOf({ source: "live", following: false, playhead: 1, liveAt: 9e12, connection: { state: "stale" } }, clock).sourceLabel, "Live Factory, reviewing an earlier moment (stale)");
-  const behind = analyticsAsOf({ source: "replay", following: false, playhead: 1_700_000_123_456, liveAt: 1_700_000_900_000, connection: null }, clock);
-  assert.equal(behind.through, "playhead");
-  assert.equal(behind.toMs, 1_700_000_123_000);
-  assert.equal(behind.sourceLabel, "Historical replay");
-  assert.match(behind.caption, /Through the playhead at T1700000123000/);
-  const sim = analyticsAsOf({ source: "simulation", following: true, playhead: 10, liveAt: 10, connection: null }, clock);
-  assert.equal(sim.sourceLabel, "Simulation");
-  assert.match(sim.caption, /simulated/i);
+  assert.ok(press(store, "t").e.prevented);
+  assert.equal(store.getState().theater, true);
 });

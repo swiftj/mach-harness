@@ -91,17 +91,14 @@ test("rows keys: the store holds a metric and one group; more groups stay out of
 test("label rule: simulated figures never under a real source, an observer's never under Simulated", () => {
   assert.deepEqual(Q.sourceCheck("simulation", "simulation"), { ok: true, area: "simulation" });
   assert.deepEqual(Q.sourceCheck("live", "observer"), { ok: true, area: "live" });
-  assert.deepEqual(Q.sourceCheck("replay", "observer"), { ok: true, area: "replay" });
   assert.equal(Q.sourceCheck("live", "simulation").ok, false);
-  assert.equal(Q.sourceCheck("replay", "simulation").ok, false);
   assert.equal(Q.sourceCheck("simulation", "observer").ok, false);
   assert.equal(Q.sourceCheck("live", null).ok, false);
   assert.equal(Q.providerFor("live", false), null, "no observer: nothing, never the fixture");
   assert.equal(Q.providerFor("simulation", true), "simulation");
   assert.equal(Q.sourceWords("live"), "Live Factory");
-  assert.equal(Q.sourceWords("replay"), "Historical replay");
   assert.match(Q.sourceWords("simulation"), /^Simulated/);
-  for (const s of ["live", "replay"]) assert.doesNotMatch(Q.sourceWords(s), /simulat/i);
+  assert.doesNotMatch(Q.sourceWords("live"), /simulat/i);
 });
 
 test("the loader labels a snapshot by its source", async () => {
@@ -112,43 +109,35 @@ test("the loader labels a snapshot by its source", async () => {
   assert.ok(r.cursor?.startsWith("simulation."));
 });
 
-// ------------------------------------------------------------------------------------ period and as of
+// ------------------------------------------------------------------------------------ period and caption
 
-test("periods: presets end with the newest record's day (or the playhead's); intervals are cut at the playhead", () => {
+test("periods: presets end with the newest record's day; intervals are asked as chosen", () => {
   const newest = Date.UTC(2026, 10, 12, 6);
-  const base = { provider: "observer", asOfMs: null, newestMs: newest, fixtureEnd: FIXTURE_END };
+  const base = { provider: "observer", newestMs: newest, fixtureEnd: FIXTURE_END };
   // The last 7 whole UTC days ending with the newest event's day (6..12 Nov), asked with both ends.
-  assert.deepEqual(Q.windowQuery("7d", base), { ok: true, fromMs: Date.UTC(2026, 10, 6), toMs: Date.UTC(2026, 10, 13), cut: false });
+  assert.deepEqual(Q.windowQuery("7d", base), { ok: true, fromMs: Date.UTC(2026, 10, 6), toMs: Date.UTC(2026, 10, 13) });
   for (const [w, n] of [["7d", 7], ["14d", 14], ["28d", 28]]) {
     const q = Q.windowQuery(w, base);
     assert.equal((q.toMs - q.fromMs) / D, n, `${w} spans ${n} whole days`);
     assert.equal(q.toMs, Date.UTC(2026, 10, 13), `${w} ends with the newest event's day`);
   }
-  assert.deepEqual(Q.windowQuery("all", base), { ok: true, fromMs: null, toMs: null, cut: false });
-  assert.deepEqual(Q.windowQuery("7d", { ...base, newestMs: null }), { ok: true, fromMs: null, toMs: null, cut: false });
-  const playhead = Date.UTC(2026, 9, 31, 2, 26, 40);
-  assert.deepEqual(Q.windowQuery("14d", { ...base, asOfMs: playhead }), { ok: true, fromMs: Date.UTC(2026, 9, 18), toMs: null, cut: false });
+  assert.deepEqual(Q.windowQuery("all", base), { ok: true, fromMs: null, toMs: null });
+  assert.deepEqual(Q.windowQuery("7d", { ...base, newestMs: null }), { ok: true, fromMs: null, toMs: null });
   const iv = { from: Date.UTC(2026, 9, 25), to: Date.UTC(2026, 10, 5) };
-  assert.deepEqual(Q.windowQuery(iv, base), { ok: true, fromMs: iv.from, toMs: iv.to, cut: false });
-  assert.deepEqual(Q.windowQuery(iv, { ...base, asOfMs: playhead }), { ok: true, fromMs: iv.from, toMs: playhead, cut: true });
-  assert.equal(Q.windowQuery({ from: playhead + D, to: playhead + 2 * D }, { ...base, asOfMs: playhead }).ok, false);
+  assert.deepEqual(Q.windowQuery(iv, base), { ok: true, fromMs: iv.from, toMs: iv.to });
   // The simulation's fixture has its own fixed end.
-  assert.deepEqual(Q.windowQuery("28d", { ...base, provider: "simulation" }), { ok: true, fromMs: FIXTURE_END - 28 * D, toMs: null, cut: false });
+  assert.deepEqual(Q.windowQuery("28d", { ...base, provider: "simulation" }), { ok: true, fromMs: FIXTURE_END - 28 * D, toMs: null });
   // The view key ignores the area and the model (Economics' model is part of its queries, not of the view).
   const f = { risk: "high", appType: null, model: "sonnet", station: null };
-  assert.equal(Q.viewKey("observer", Q.windowQuery("7d", base), f, null), Q.viewKey("observer", Q.windowQuery("7d", base), { ...f, model: null }, null));
-  assert.notEqual(Q.viewKey("observer", Q.windowQuery("7d", base), f, null), Q.viewKey("observer", Q.windowQuery("7d", base), f, playhead));
+  assert.equal(Q.viewKey("observer", Q.windowQuery("7d", base), f), Q.viewKey("observer", Q.windowQuery("7d", base), { ...f, model: null }));
+  assert.notEqual(Q.viewKey("observer", Q.windowQuery("7d", base), f), Q.viewKey("observer", Q.windowQuery("14d", base), f));
 });
 
-test("as-of caption in words: complete history, a selected window, through the playhead (exact lists, whole days for metrics)", () => {
-  const clock = () => "31 Oct, 02:26 UTC";
-  assert.equal(Q.asOfWords({ area: "live", asOfMs: null, window: "all", metricsExact: null, widened: false, cut: false }, clock), "The complete recorded history");
-  assert.equal(Q.asOfWords({ area: "live", asOfMs: null, window: "7d", metricsExact: null, widened: false, cut: false }, clock), "A selected window of the recorded history");
-  const through = Q.asOfWords({ area: "replay", asOfMs: 1, window: "all", metricsExact: false, widened: false, cut: false }, clock);
-  assert.match(through, /^Through the playhead at 31 Oct, 02:26 UTC/);
-  assert.match(through, /the flow drawing and the rows behind a figure run to the playhead itself, while metrics count whole UTC days before it/);
-  assert.match(Q.asOfWords({ area: "replay", asOfMs: 1, window: "all", metricsExact: false, widened: true, cut: true }, clock), /outcomes later that day may be included.*cut at the playhead/);
-  assert.match(Q.asOfWords({ area: "simulation", asOfMs: null, window: "all", metricsExact: null, widened: false, cut: false }, clock), /simulated/);
+test("caption in words: complete history or a selected window; the simulation says it is simulated", () => {
+  assert.equal(Q.asOfWords({ area: "live", window: "all" }), "The complete recorded history");
+  assert.equal(Q.asOfWords({ area: "live", window: "7d" }), "A selected window of the recorded history");
+  assert.match(Q.asOfWords({ area: "simulation", window: "all" }), /simulated/);
+  assert.match(Q.asOfWords({ area: "simulation", window: "7d" }), /simulated/);
 });
 
 // ------------------------------------------------------------------------------------ queries
@@ -176,7 +165,7 @@ test("filters are codes; the model only for Economics", () => {
 function fakeData(answer) {
   const calls = [];
   const route = (name) => async (query, options = {}) => {
-    calls.push({ name, query, at: options.at ?? null, asOfMs: options.asOfMs ?? null });
+    calls.push({ name, query, at: options.at ?? null });
     return answer(name, query, options);
   };
   return {
@@ -202,8 +191,8 @@ test("one cursor per view: the totals pin it, every other query of the area read
   const { data, calls } = fakeData((name) => {
     if (name === "metrics") return { status: "ok", value: { ...env("g.40"), metrics: [], definitions_version: 2, group_overflow: 0, suspect_days: [] } };
     if (name === "flow") return { status: "ok", value: { ...env("g.40"), stations: [], transitions: [], waits: [], bottlenecks: [], coverage: { tickets: 0, tickets_with_lifecycle: 0, visits: 0, visits_measured: 0 }, unit: "ms", wait_kinds: [], missing: [] } };
-    if (name === "runs") return { status: "ok", value: { ...env("g.40"), of: "runs", items: [], total: 0, offset: 0, more: false, excluded: [], after_as_of: 0 } };
-    if (name === "contributors") return { status: "ok", value: { ...env("g.40"), metric: "W1", figure: null, group: {}, items: [], total: 0, truncated: false, by_basis: {}, order: "impact", limit: 500, after_as_of: 0 } };
+    if (name === "runs") return { status: "ok", value: { ...env("g.40"), of: "runs", items: [], total: 0, offset: 0, more: false, excluded: [] } };
+    if (name === "contributors") return { status: "ok", value: { ...env("g.40"), metric: "W1", figure: null, group: {}, items: [], total: 0, truncated: false, by_basis: {}, order: "impact", limit: 500 } };
     return { status: "unsupported", reason: "not in this fake" };
   });
   const r = await L.loadArea(input(data));
@@ -232,12 +221,6 @@ test("the area's state from the observer's answer: no analytics, refused, cursor
   assert.deepEqual(fail.data, { state: "error", status: null, reason: "connection refused" });
 });
 
-test("as of the playhead: every query of the view carries it", async () => {
-  const { data, calls } = fakeData((name) => (name === "metrics" ? { status: "ok", value: { ...env("g.9"), metrics: [], definitions_version: 2, group_overflow: 0, suspect_days: [] } } : { status: "unsupported", reason: "-" }));
-  await L.loadArea(input(data, { session: beginSnapshot(data, { asOfMs: 3 * D }), plan: Q.planFor("quality", null) }));
-  for (const c of calls) assert.equal(c.asOfMs, 3 * D, c.name);
-});
-
 // ------------------------------------------------------------------------------------ back navigation
 
 function host(initial) {
@@ -263,14 +246,14 @@ test("Back returns to Analytics: a workspace or area change is a new history ent
   const store = createSceneStore({ fixture: sim.SCENARIO, clock: manualClock() });
   store.setAnalyticsView({ area: "flow", window: "28d", filters: { risk: "medium" }, focus: { metric: "C1", group: { dim: "station", value: "build" } }, pick: { dim: "station", value: "build" } });
   store.setWorkspace("analytics");
-  const h = host(formatHash({ route: "analytics", sel: null, at: null, win: null, group: "product", lens: null, table: false, analytics: store.getState().analytics }));
-  const sync = createHashSync(store, h, 0);
+  const h = host(formatHash({ route: "analytics", sel: null, analytics: store.getState().analytics }));
+  const sync = createHashSync(store, h);
   store.setAnalyticsView({ filters: { appType: "cli" } });
   assert.equal(h.pushes.length, 0, "a filter replaces the entry");
   const analyticsEntry = h.hash;
-  store.setWorkspace("timeline");
+  store.setWorkspace("line");
   assert.equal(h.pushes.length, 1, "leaving Analytics pushes an entry");
-  assert.match(h.hash, /^#timeline/);
+  assert.match(h.hash, /^#line/);
   // The browser's Back: the earlier entry's address, then its hashchange.
   h.hash = analyticsEntry;
   h.change();
@@ -284,7 +267,6 @@ test("Back returns to Analytics: a workspace or area change is a new history ent
   assert.equal(h.pushes.length, 1, "Back itself writes no new entry");
   store.setAnalyticsView({ area: "quality" });
   assert.equal(h.pushes.length, 2, "an area change is an entry");
-  store.setView("blueprint");
   sync.dispose();
 });
 
@@ -321,8 +303,8 @@ test("window and filter churn with a slow provider: every query of every view ca
     const delay = () => new Promise((ok) => setTimeout(ok, Math.floor(r() * 8)));
     const reply = (name) => {
       if (name === "metrics") return { status: "ok", value: { ...env("c.1"), metrics: [], definitions_version: 2, group_overflow: 0, suspect_days: [] } };
-      if (name === "runs") return { status: "ok", value: { ...env("c.1"), of: "runs", items: [], total: 0, offset: 0, more: false, excluded: [], after_as_of: 0 } };
-      if (name === "contributors") return { status: "ok", value: { ...env("c.1"), metric: "K4", figure: null, group: {}, items: [], total: 0, truncated: false, by_basis: {}, order: "impact", limit: 500, after_as_of: 0 } };
+      if (name === "runs") return { status: "ok", value: { ...env("c.1"), of: "runs", items: [], total: 0, offset: 0, more: false, excluded: [] } };
+      if (name === "contributors") return { status: "ok", value: { ...env("c.1"), metric: "K4", figure: null, group: {}, items: [], total: 0, truncated: false, by_basis: {}, order: "impact", limit: 500 } };
       return { status: "unsupported", reason: "-" };
     };
     const route = (name) => async (query, options = {}) => {
@@ -338,7 +320,7 @@ test("window and filter churn with a slow provider: every query of every view ca
     for (let i = 0; i < 12; i++) {
       // A new period or filter: the previous view is left (React's cleanup), sometimes before its first query answered.
       if (prev && r() < 0.8) prev.abort();
-      const v = new W.ViewSession(data, null, shared);
+      const v = new W.ViewSession(data, shared);
       const p = W.loadView(v, shared, { data, source: "live", plan: Q.planFor(pick(r, ["quality", "pulse", "economics"]), null), fromMs: pick(r, [null, 7 * D]), toMs: null, filters: {}, model: null, contractFilters: { window: "all", risk: null, app_type: null, model: null }, endMs: 9 * D }).then(
         (x) => x,
         (e) => (e?.name === "AbortError" ? "aborted" : Promise.reject(e)),
@@ -387,28 +369,6 @@ test("a percentile read inside a histogram bucket is never printed as exact", ()
   assert.equal(F.p90Text({ p50_ms: 1 }), "–");
 });
 
-test("under a playhead, finished tickets are cut at the metrics' midnight, so a count from the run list and from /metrics agree", async () => {
-  const mid = 10 * D;
-  const runs = [mid - 3_600_000, mid - 1, mid, mid + 3_600_000].map((t, i) => ({ ticket_id: `T${i}`, slice_id: null, record_version: 2, outcome: "merged", rounds: 1, first_pass: true, verify_failures: 0, review_rejections: 0, escalated: false, human_approval: false, deviations: 0, blockers: 0, tests_seen_failing_first: 0, tests_passing_on_first_run: 0, risk: null, app_type: null, merge_method: null, merge_commit: null, closed_at: { at_ms: t, precision: "ms" }, executions: [] }));
-  const { data } = fakeData((name) => {
-    const e = { ...env("c.2"), as_of: { ms: mid + 7_200_000, exact: false, effective_to_ms: mid, rule: "whole UTC days before the playhead" } };
-    if (name === "metrics") return { status: "ok", value: { ...e, metrics: [], definitions_version: 2, group_overflow: 0, suspect_days: [] } };
-    if (name === "runs") return { status: "ok", value: { ...e, of: "runs", items: runs, total: runs.length, offset: 0, more: false, excluded: [], after_as_of: 0 } };
-    return { status: "unsupported", reason: "-" };
-  });
-  const r = await L.loadArea(input(data, { session: beginSnapshot(data, { asOfMs: mid + 7_200_000 }), plan: Q.planFor("quality", null) }));
-  assert.equal(r.dayCut, mid);
-  assert.deepEqual(r.data.value.runs.map((x) => x.ticket_id), ["T0", "T1"], "closed before the midnight only");
-  // M6.6 (I-08): the last whole day counted is named (the day before the midnight), never the midnight itself;
-  // the playhead's own day is said to be left out, and the parts cut exactly at the playhead are named.
-  const words = Q.asOfWords({ area: "replay", asOfMs: mid + 7_200_000, window: "all", metricsExact: false, widened: false, cut: false, dayCut: mid }, Q.momentWords);
-  assert.equal(words, "Counted through the end of 10 Jan (UTC), the last whole day before the playhead. The playhead is at 11 Jan 02:00:00 UTC; the part of 11 Jan before it is not in these figures. The flow drawing and the rows behind a figure run to the playhead itself");
-  assert.doesNotMatch(words, /Jan,? 00:00/, "no midnight that reads as including the playhead's day");
-  assert.equal(Q.dayCutTag(mid), "to end of 10 Jan");
-  // A playhead at the midnight itself: nothing of its day to leave out.
-  assert.match(Q.asOfWords({ area: "replay", asOfMs: mid, window: "all", metricsExact: false, widened: false, cut: true, dayCut: mid }, Q.momentWords), /^Counted through the end of 10 Jan \(UTC\)[^]*The playhead is at 11 Jan 00:00:00 UTC\. The flow drawing[^]*The chosen period was cut at the playhead$/);
-});
-
 // ------------------------------------------------------------------------------------ last fix round
 
 const U = await import("../src/analytics/model/unobserved.ts");
@@ -438,25 +398,4 @@ test("a per-model figure's sample is model–execution pairs, and durations have
   assert.equal(F.sampleText({ kind: "mean", unit: "tokens", denominator: "executions that used the model", numerator_value: 1, denominator_value: 1846 }), "1,846 model–execution pairs");
   assert.equal(F.durationText(411_000), "6 min 51 s");
   assert.equal(F.durationCompact, undefined);
-});
-
-test("D4 (M6.6, real run): held on the history's first day, the window is never inverted and the caption says no whole day is complete", async () => {
-  const today = 20 * D;
-  const playhead = today + 15 * 3_600_000 + 16 * 60_000;
-  const { data } = fakeData((name, q, o) => {
-    const e = { ...env("c.471"), history: { ...env("c.471").history, from_ms: today + 9 * 3_600_000 }, window: { from_ms: null, to_ms: null, effective_from_ms: today, effective_to_ms: today, last_runs: null }, as_of: { ms: o.asOfMs, exact: name !== "metrics", effective_to_ms: name === "metrics" ? today : o.asOfMs, rule: "whole UTC days before the playhead" } };
-    if (name === "metrics") return { status: "ok", value: { ...e, metrics: [], definitions_version: 2, group_overflow: 0, suspect_days: [] } };
-    if (name === "runs") return { status: "ok", value: { ...e, of: "runs", items: [], total: 0, offset: 0, more: false, excluded: [], after_as_of: 0 } };
-    return { status: "unsupported", reason: "-" };
-  });
-  const r = await L.loadArea(input(data, { session: beginSnapshot(data, { asOfMs: playhead }), plan: Q.planFor("quality", null), endMs: playhead }));
-  assert.equal(r.noWholeDay, true);
-  assert.equal(r.data.value.no_whole_day, true, "the areas can tell it from nothing recorded");
-  const w = r.data.value.window;
-  assert.ok(w.to_ms > w.from_ms, `inverted window ${w.from_ms}–${w.to_ms}`);
-  assert.equal(w.from_ms, today);
-  assert.equal(w.to_ms, playhead);
-  const words = Q.asOfWords({ area: "replay", asOfMs: playhead, window: "all", metricsExact: false, widened: false, cut: false, dayCut: today, noWholeDay: true }, Q.momentWords);
-  assert.equal(words, "No whole UTC day is complete before the playhead at 21 Jan 15:16:00 UTC; day-counted figures are not available. The flow drawing and the rows behind a figure run to the playhead");
-  assert.equal(L.NO_WHOLE_DAY_REASON, "no whole UTC day is complete before the playhead, so there is nothing to count by day");
 });

@@ -1,6 +1,6 @@
 /**
  * The one component that renders `UncheckedText` (M6_5_SECURITY.md 6 B), in Analytics and in the
- * floor and Timeline inspectors: React text nodes only (C1), truncated to the field's limit with the
+ * inspector and the Line: React text nodes only (C1), truncated to the field's limit with the
  * full words on explicit expansion only (C2), and labelled (C3) unless the panel already carries the
  * label once (`labelled`). It never builds a `title` or an `aria-label` from the words (C1) and never
  * puts them anywhere else (C4).

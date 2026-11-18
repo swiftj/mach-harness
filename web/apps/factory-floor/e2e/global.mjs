@@ -1,8 +1,8 @@
-// Global setup and teardown for the Timeline end-to-end suite (node --test --test-global-setup).
+// Global setup and teardown for the Factory Floor and evidence end-to-end suites (node --test --test-global-setup).
 // Setup: build mach-observer and mach-synth from the working tree into the scratch folder, start the
 // relay and the Vite dev server. Teardown: kill every process any test file recorded, by pid, even
-// when tests failed (scripts/timeline-e2e-lib.mjs).
-import { buildTools, killRegistered, log, scratch, spawnDevServer, spawnRelay } from "../scripts/timeline-e2e-lib.mjs";
+// when tests failed (scripts/e2e-lib.mjs).
+import { buildTools, killRegistered, log, scratch, spawnDevServer, spawnRelay } from "../scripts/e2e-lib.mjs";
 
 export async function globalSetup() {
   log("scratch:", scratch);

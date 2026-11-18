@@ -5,22 +5,20 @@
  * What it decides:
  * - the checks, grouped by verification run (round and visit), newest first, each with its files;
  * - each file's class (image, video, text), state (ready, withheld and why, missing, changed since it
- *   was recorded) and integrity, from the observer's catalog (live and replay) or the scene (simulation);
+ *   was recorded) and integrity, from the observer's catalog (live) or the scene (simulation);
  * - stepping across files and checks, with the failed-checks filter;
  * - what may be requested, and only for the one file selected (`contentRequest`): nothing ahead, nothing
- *   in bulk, nothing the catalog withholds, no image or video while media is off;
- * - which checks are hidden while the playhead is held at an earlier moment.
+ *   in bulk, nothing the catalog withholds, no image or video while media is off.
  *
  * Words for people live here too (`*_WORDS`, `reasonWords`), so the tests pin them.
  */
 import type { ArtifactEntry, ArtifactRefusal, CellEvidence, CellEvidenceCheck } from "../live/observer";
 import type { ArtifactState, CellState, VerificationCheck, VerificationState } from "../sim";
-import { catalogEntriesOf } from "../shell/inspector/free-text";
 
 export type FileClass = "image" | "video" | "text" | "none";
 export type FileState = "ready" | "withheld" | "missing" | "changed";
 export type Integrity = "match" | "mismatch" | "missing" | "unchecked" | "simulated";
-export type EvidenceSource = "live" | "replay" | "simulation";
+export type EvidenceSource = "live" | "simulation";
 
 /** Why a file is not shown: the content route's reason codes, and what the player itself knows. */
 export type EvidenceReason = ArtifactRefusal | "missing" | "not-catalogued";
@@ -97,10 +95,6 @@ export interface EvidenceModel {
   readonly mediaEnabled: boolean;
   /** Where the files are read from: every one from the cell folder, every one from the archive, both, or none known. */
   readonly readFrom: "cell" | "archive" | "both" | "simulation" | null;
-  /** The playhead the model is cut at (nothing recorded after it is in `runs`), or null when not held. */
-  readonly heldAt: number | null;
-  /** Checks left out because they were recorded after the playhead, or have no recorded time while held. Never shown as a number to the person. */
-  readonly hiddenAfter: number;
   /** The observer's note on what verified evidence is; null in the simulation. */
   readonly note: string | null;
 }
@@ -189,7 +183,6 @@ export const INTEGRITY_WORDS: Readonly<Record<Integrity, { readonly fact: string
 export const SIM_CONTENT_NOTE = "The simulation's own sample, drawn or written by the Factory Floor itself. It is not a capture of anything.";
 export const SIM_RECORDING_WORDS = "There is no recording in a simulation. In a real Factory this is the verifier's recording of the flow.";
 export const ARCHIVE_WORDS = "Read from the ticket's archive: the cell was cleaned up after it finished.";
-export const HELD_WORDS = "Held at an earlier moment: checks recorded after the playhead are not shown.";
 
 // ---------------------------------------------------------------- classes and states
 
@@ -260,17 +253,11 @@ function stateOf(input: { artifactId: string | null; integrity: Integrity; conte
 
 // ---------------------------------------------------------------- building the model
 
-/** A check's time for the replay cut-off: when it was recorded, else the latest it can have been. */
+/** A check's time: when it was recorded, else the latest it can have been. */
 export function checkTime(check: Pick<CellEvidenceCheck, "at">): number | null {
   const at = check.at;
   if (!at) return null;
   return at.atMs ?? at.notAfterMs ?? null;
-}
-
-/** Whether a check recorded at `atMs` is shown while the playhead is held at `heldAt` (null: not held). A check with no time is not shown while held. */
-export function shownAt(atMs: number | null, heldAt: number | null): boolean {
-  if (heldAt === null) return true;
-  return atMs !== null && atMs <= heldAt;
 }
 
 const runKeyOf = (round: number | null, visitId: string | null): string => `${round ?? "-"}|${visitId ?? ""}`;
@@ -299,22 +286,15 @@ function readFromOf(files: readonly EvidenceFile[]): EvidenceModel["readFrom"] {
 }
 
 /**
- * The model for a live or replayed cell, from `/cells/{ticket}/evidence`. `heldAt`: the playhead when it
- * is held behind the live edge and "Show what happened after this moment" is off; null otherwise.
- * `mediaEnabled`: the reply's setting, else the session's capability, else off (fail closed).
+ * The model for a live cell, from `/cells/{ticket}/evidence`. `mediaEnabled`: the reply's setting, else the session's capability, else off (fail closed).
  */
-export function buildLiveModel(reply: CellEvidence, options: { readonly source: "live" | "replay"; readonly heldAt: number | null; readonly sessionMedia?: boolean | null }): EvidenceModel {
+export function buildLiveModel(reply: CellEvidence, options: { readonly sessionMedia?: boolean | null } = {}): EvidenceModel {
   const mediaEnabled = reply.evidenceMedia ?? options.sessionMedia ?? false;
   const byId = new Map<string, ArtifactEntry>();
   for (const a of reply.artifacts) byId.set(a.id, a);
-  let hidden = 0;
   const checks: EvidenceCheck[] = [];
   for (const k of reply.checks) {
     const atMs = checkTime(k);
-    if (!shownAt(atMs, options.heldAt)) {
-      hidden += 1;
-      continue;
-    }
     const runKey = runKeyOf(k.round, k.visitId);
     const files = k.evidence.map((ev, i): EvidenceFile => {
       const entry = ev.artifactId ? byId.get(ev.artifactId) : undefined;
@@ -350,7 +330,7 @@ export function buildLiveModel(reply: CellEvidence, options: { readonly source: 
     checks.push({ key: `${runKey}/${k.targetId}`, id: k.targetId, kind: k.targetKind, result: k.result, round: k.round, visitId: k.visitId, atMs, files, runKey });
   }
   const runs = groupRuns(checks);
-  return { ticket: reply.ticketId, source: options.source, runs, mediaEnabled, readFrom: readFromOf(checks.flatMap((c) => c.files)), heldAt: options.heldAt, hiddenAfter: hidden, note: reply.note };
+  return { ticket: reply.ticketId, source: "live", runs, mediaEnabled, readFrom: readFromOf(checks.flatMap((c) => c.files)), note: reply.note };
 }
 
 /** The path a simulated check's evidence names (`LOCAL-031:evidence/x.png`), without the ticket. */
@@ -394,21 +374,15 @@ export function simulatedText(input: { readonly ticket: string; readonly checkId
   ].join("\n");
 }
 
-/** The model for a cell of the simulation, from the scene at the playhead (which already holds nothing later). */
-export function buildSimModel(cell: CellState, options: { readonly heldAt?: number | null } = {}): EvidenceModel {
-  const heldAt = options.heldAt ?? null;
+/** The model for a cell of the simulation, from the scene now. */
+export function buildSimModel(cell: CellState): EvidenceModel {
   const checks: EvidenceCheck[] = [];
-  let hidden = 0;
   for (const v of cell.verifications as readonly VerificationState[]) {
     const visit = cell.visits.find((x) => x.station === "verify" && x.round === v.round) ?? null;
     const visitId = visit?.visitId ?? null;
     const runKey = runKeyOf(v.round, visitId);
     for (const c of v.checks as readonly VerificationCheck[]) {
       if (c.result === "pending") continue;
-      if (!shownAt(c.at, heldAt)) {
-        hidden += 1;
-        continue;
-      }
       const files = c.evidence.map((ref, i): EvidenceFile => {
         const path = simPath(cell.ticketId, ref);
         const art = simArtifact(cell, path, v.round, c.at);
@@ -441,7 +415,7 @@ export function buildSimModel(cell: CellState, options: { readonly heldAt?: numb
       checks.push({ key: `${runKey}/${c.targetId}`, id: c.targetId, kind: c.targetKind, result: c.result, round: v.round, visitId, atMs: c.at, files, runKey });
     }
   }
-  return { ticket: cell.ticketId, source: "simulation", runs: groupRuns(checks), mediaEnabled: true, readFrom: checks.length ? "simulation" : null, heldAt, hiddenAfter: hidden, note: null };
+  return { ticket: cell.ticketId, source: "simulation", runs: groupRuns(checks), mediaEnabled: true, readFrom: checks.length ? "simulation" : null, note: null };
 }
 
 // ---------------------------------------------------------------- the list, the filter, stepping
@@ -486,7 +460,7 @@ export function initialSelection(
   return check ? { check: check.key, file: check.files[0]?.key ?? null } : NO_SELECTION;
 }
 
-/** Two names for the same file: equal, or one ends with the other as a path (as the Timeline's evidence references match). */
+/** Two names for the same file: equal, or one ends with the other as a path. */
 export function sameFile(a: string, b: string): boolean {
   if (!a || !b) return false;
   return a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`);
@@ -595,24 +569,7 @@ export function fileAccessibleName(file: Pick<EvidenceFile, "cls" | "state">, in
   return `${CLASS_WORDS[file.cls]} ${index + 1} of ${count}, check ${checkId}, ${STATE_WORDS[file.state].toLowerCase()}`;
 }
 
-// ---------------------------------------------------------------- scene artifacts and catalog ids
-
-/**
- * The observer's catalog id for a scene artifact (a Timeline evidence reference carries the scene's id,
- * `<ticket>:<path>[@<sha>]`): its catalog entries found as the inspector's free-text label finds them
- * (`catalogEntriesOf`), the exact ref first, then the live cell's file over the archive's, then the one
- * whose hash is the scene's. Null when the catalog has none.
- */
-export function catalogIdOf(entries: readonly ArtifactEntry[], artifact: Pick<ArtifactState, "id" | "ticketId" | "path"> & { readonly sha?: string | null }): string | null {
-  const found = catalogEntriesOf(entries, artifact);
-  if (!found.length) return null;
-  const exact = `artifact:${artifact.id}`;
-  const score = (e: ArtifactEntry): number =>
-    (e.ref === exact ? 8 : 0) + (artifact.sha && e.sha256 && (e.sha256 === artifact.sha || e.sha256.startsWith(artifact.sha) || artifact.sha.startsWith(e.sha256)) ? 4 : 0) + (e.origin === "cell" ? 2 : 0) + (e.integrity === "match" ? 1 : 0);
-  let best: ArtifactEntry | null = null;
-  for (const e of found) if (e.id && (!best || score(e) > score(best))) best = e;
-  return best?.id ?? null;
-}
+// ---------------------------------------------------------------- scene artifacts
 
 /** The check in a cell's verifications that names a file (by path), newest round first: for opening the player at an artifact. */
 export function checkCitingPath(cell: Pick<CellState, "ticketId" | "verifications">, path: string): { readonly checkId: string; readonly round: number } | null {

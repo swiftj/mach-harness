@@ -7,7 +7,7 @@
 import { ArtifactCard, DependencyLink, Escalation, Packet, RetryLoop, RoutePath, fc, pointAlong, project, round, type Vec3 } from "@mach/ui";
 import { ref, type CellState } from "../sim";
 import { useScene, useSceneStore } from "../scene";
-import { Hit, isDimmed, useAtlas, useHighlight, usePlayheadKeyed } from "./context";
+import { Hit, isDimmed, useAtlas, useHighlight, useNowKeyed } from "./context";
 import { animating, anim, legsInFlight, onFloor, q, workStation } from "./derive";
 import { FLOOR_Z, PLATE_Z, type PlantLayout } from "./layout";
 import { conduitPath } from "./Plant";
@@ -21,7 +21,7 @@ function sliceAnchor(L: PlantLayout, cells: Readonly<Record<string, CellState>>,
 
 export function Dependencies() {
   const { layout: L } = useAtlas();
-  const t = usePlayheadKeyed((s) => (animating(s.log, s.playhead, (e) => e.event.type === "dependency.resolved" || e.event.type === "slice.integrated") ? s.playhead : "settled"));
+  const t = useNowKeyed((s) => (animating(s.log, s.now, (e) => e.event.type === "dependency.resolved" || e.event.type === "slice.integrated") ? s.now : "settled"));
   const reduced = useSceneStore((s) => s.reducedMotion);
   const deps = useScene((s) => s.dependencies);
   const cells = useScene((s) => s.cells);
@@ -48,8 +48,8 @@ export function Dependencies() {
 export function Transit() {
   const { layout: L, lod, visibleBays, mode } = useAtlas();
   const log = useSceneStore((s) => s.log);
-  const t = usePlayheadKeyed((s) => {
-    const now = s.playhead;
+  const t = useNowKeyed((s) => {
+    const now = s.now;
     if (legsInFlight(s.log, L, now, s.reducedMotion).length > 0) return now;
     return animating(s.log, now, (e) => e.event.type === "review.decided" || e.event.type === "build.revised") ? now : "settled";
   });

@@ -18,16 +18,15 @@
  *   by events), then the newest `liveWindow` events (`/events?after=`), and seeds from the summaries
  *   only what no event of the window touches (its state then held through the window), as a
  *   reconstructed `client.snapshot_applied`; a `client.history_missing` marker says history before
- *   the window is not loaded. The timeline's density comes from `/series`; scrubbing back reads
- *   `/history` windows on demand (`windows.ts`).
+ *   the window is not loaded.
  * - **gap** (the cursor fell below the observer's floor): history between is missing. A
  *   `client.history_missing` marker goes into the log (the scene says partial), then the bounded
  *   start again from the observer's newest window.
  * - **reset** (the index was rebuilt: a new epoch): ids and order are deterministic (contract 6.4),
  *   so history is fetched again (the bounded start for a long history, else from the start of the
  *   new epoch); what is already held de-duplicates.
- * - Neither touches selection, hover, view, camera follow or a replay's playhead: they live in the
- *   store, and the store keeps them across `logChanged`.
+ * - Neither touches selection, hover, view or camera follow: they live in the store, and the store
+ *   keeps them across `logChanged`.
  * - **Staleness.** No message (event or heartbeat) for `staleAfterMs` (default 2.5 heartbeats):
  *   `stale`, with `staleSince` the last confirmed moment. Any message: `live` again.
  * - **Lost observer.** A dropped stream is `reconnecting`; after DISCONNECTED_AFTER failed attempts
@@ -53,10 +52,8 @@ import { DISCONNECTED_AFTER, INITIAL_CONNECTION } from "../scene/connection";
 import type { SceneStore } from "../scene/store";
 import { createSceneStore } from "../scene/store";
 import type { ObserverClient } from "./observer";
-import type { SceneSource } from "../sim/provenance";
 import { ObserverError, parseCursor, timeOf } from "./observer";
 import { clientEvent } from "./markers";
-import { createWindowedHistory, type WindowedHistory } from "./windows";
 
 /** The parts of the browser's EventSource the source uses. */
 export interface EventSourceLike {
@@ -95,14 +92,9 @@ export interface LiveSourceOptions {
   readonly settleMs?: number;
   /**
    * The most recent events loaded at start (default 20,000). A longer history starts from the
-   * observer's summaries and this many events (D17); what is before them is read in windows, on
-   * demand, when the person scrubs back (`windows`).
+   * observer's summaries and this many events (D17); what is before them is never loaded.
    */
   readonly liveWindow?: number;
-  /** A long history read in windows: initialised here once connected (its span, the series). */
-  readonly windows?: WindowedHistory;
-  /** How often the series is read again (default 30 s). */
-  readonly seriesEveryMs?: number;
 }
 
 export interface LiveSource {
@@ -135,7 +127,6 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
   let recovering = false;
   let markers = 0;
   let refused = 0;
-  let seriesTimer: unknown = null;
   const liveWindow = Math.max(1000, options.liveWindow ?? 20_000);
 
   const publish = (patch: Partial<ConnectionStatus>): void => {
@@ -337,7 +328,6 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
       const cursor = await backfill(start);
       publish({ cursor });
       openLive();
-      void startWindows();
     } catch (error) {
       if (error instanceof ObserverError && error.kind === "cursor_expired") return recover("expired");
       if (error instanceof ObserverError && error.kind === "cursor_reset") return recover("reset");
@@ -407,27 +397,6 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
     return cursor;
   };
 
-  /** The history before what is held: its span and series, so scrubbing back loads windows and the timeline draws it all. */
-  const startWindows = async (): Promise<void> => {
-    try {
-      if (options.windows && !options.windows.span()) await options.windows.init();
-      const series = options.windows?.series() ?? null;
-      if (series) store.setSeries(series);
-      else await readSeries();
-    } catch {
-      // Advisory: without the span the store holds only what it received.
-    }
-  };
-
-  const readSeries = async (): Promise<void> => {
-    try {
-      const s = await client.series();
-      store.setSeries({ bucketMs: s.bucketMs, buckets: s.buckets, total: s.total, coarse: s.coarse });
-    } catch {
-      // `/series` is optional (observer M6.2).
-    }
-  };
-
   const checkStale = (): void => {
     if (status.state !== "live") return;
     if (clock.now() - lastMessageWall > staleAfterMs) publish({ state: "stale", staleSince: confirmed() || null, reason: "Nothing heard from the observer; what is shown may have changed." });
@@ -459,7 +428,6 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
       publish({ state: "connecting" });
       staleTimer = timers.setInterval(checkStale, 1000);
       statusTimer = timers.setInterval(() => void readStatus(), options.statusEveryMs ?? 10_000);
-      seriesTimer = timers.setInterval(() => void (options.windows?.series() ? undefined : readSeries()), options.seriesEveryMs ?? 30_000);
       void readStatus();
       await connect();
     },
@@ -470,8 +438,7 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
       if (retryTimer !== null) timers.clearTimeout(retryTimer);
       if (staleTimer !== null) timers.clearInterval(staleTimer);
       if (statusTimer !== null) timers.clearInterval(statusTimer);
-      if (seriesTimer !== null) timers.clearInterval(seriesTimer);
-      retryTimer = staleTimer = statusTimer = seriesTimer = null;
+      retryTimer = staleTimer = statusTimer = null;
       publish({ state: "disconnected", attempts: 0, reason: "Closed.", staleSince: confirmed() || null });
     },
     status: () => ({ ...status, received: status.received }),
@@ -521,90 +488,9 @@ export function createLiveLog(options: { readonly retain?: number; readonly chec
 }
 
 /** A store and a source wired together: the Live Factory. The caller starts the source. */
-export function createLiveFactory(options: Omit<LiveSourceOptions, "log" | "store" | "windows"> & { readonly retain?: number; readonly windowEvents?: number; readonly wallClock?: () => number }): { readonly store: SceneStore; readonly source: LiveSource; readonly log: SceneLog; readonly windows: WindowedHistory } {
-  // One history: the live log and the windows read behind it share a lineage, so a ticket keeps its
-  // Atlas bay when the playhead moves between them.
-  const lineage = {};
-  const log = createLiveLog({ retain: options.retain, lineage });
-  // Scrubbing back past what the live log holds reads the history in windows (D17).
-  const windows = createWindowedHistory({ client: options.client, definitions: LIVE_DEFINITIONS, source: "live", windowEvents: options.windowEvents, lineage });
-  const store = createSceneStore({ source: "live", log, clock: options.clock, windows, wallClock: options.wallClock });
-  const source = createLiveSource({ ...options, log, store, windows });
-  return { store, source, log, windows };
-}
-
-/**
- * Historical replay of a long history (D17): nothing is loaded up front but the span and the series;
- * the store shows the window holding the playhead, starting at the history's first moment. Falls
- * back to loading the whole retained history (`loadHistory`) when the observer serves no `/history`.
- */
-export async function createReplay(client: ObserverClient, options: { readonly clock: Clock; readonly reducedMotion?: boolean; readonly windowEvents?: number; readonly keep?: number }): Promise<{ readonly store: SceneStore; readonly windows: WindowedHistory | null }> {
-  const session = await client.session();
-  const windows = createWindowedHistory({ client, definitions: LIVE_DEFINITIONS, source: "replay", origin: session.project, windowEvents: options.windowEvents, keep: options.keep });
-  try {
-    await windows.init();
-  } catch (error) {
-    if (!(error instanceof ObserverError) || (error.kind !== "not_found" && error.kind !== "unavailable")) throw error;
-    const log = await loadHistory(client);
-    return { store: createSceneStore({ source: "replay", log, clock: options.clock, reducedMotion: options.reducedMotion, at: log.floorTime() ?? undefined }), windows: null };
-  }
-  const span = windows.span();
-  if (!span) {
-    const log = createSceneLog({ definitions: LIVE_DEFINITIONS, provenance: provenance("replay", session.project) });
-    return { store: createSceneStore({ source: "replay", log, clock: options.clock, reducedMotion: options.reducedMotion }), windows: null };
-  }
-  // The store's own log is the last window (the replay's end); every other moment is a window on demand.
-  const last = await windows.load(span.end);
-  const store = createSceneStore({ source: "replay", log: last.log, clock: options.clock, reducedMotion: options.reducedMotion, windows, at: span.start });
-  store.setSeries(windows.series());
-  return { store, windows };
-}
-
-/**
- * Historical Replay: load an observer's history into a log (no stream), for a replay store. Nothing
- * here touches the Factory; it reads.
- *
- * It reads `/api/v1/history` in `order`, one window page after another (late events are where they
- * belong), optionally between `fromMs` and `toMs`. When the window starts after the history's
- * beginning, or the observer says part of it may have left its memory (`complete: false`), a
- * `client.history_missing` marker at the window's start makes the scene say `partial` from there.
- * An observer without `/history` (404, 503) is read with the paged `/events` instead. With `retain`,
- * a long history keeps only its newest events (the rest compacted into the floor).
- */
-export async function loadHistory(
-  client: ObserverClient,
-  options: { readonly pageLimit?: number; readonly fromMs?: number | null; readonly toMs?: number | null; readonly retain?: number; readonly source?: SceneSource } = {},
-): Promise<SceneLog> {
-  const session = await client.session();
-  const log = createSceneLog({ definitions: LIVE_DEFINITIONS, provenance: provenance(options.source ?? "replay", session.project), checkpointEvery: 128, cacheSize: 256, retain: options.retain });
-  const limit = options.pageLimit ?? 1000;
-  const parse = (raw: readonly unknown[]) => raw.map(parseV3).filter((e): e is NonNullable<typeof e> => e !== null);
-  try {
-    let fromOrder: string | null = null;
-    let first = true;
-    for (;;) {
-      const page = await client.history({ fromOrder, fromMs: fromOrder ? null : (options.fromMs ?? null), toMs: options.toMs ?? null, limit });
-      const events = parse(page.events);
-      if (first && events.length && (!page.complete || (options.fromMs ?? null) !== null)) {
-        // What came before the window is not loaded: say so where the window begins.
-        const t = Math.min(...events.map((e) => e.time.order_ms));
-        log.ingest([clientEvent("client.history_missing", 1, t, { reason: "window", after: null, resumed_at: null } as AnyV3Event["data"])]);
-      }
-      first = false;
-      log.ingest(events);
-      if (!page.more || !page.nextFromOrder) break;
-      fromOrder = page.nextFromOrder;
-    }
-    return log;
-  } catch (error) {
-    if (!(error instanceof ObserverError) || (error.kind !== "not_found" && error.kind !== "unavailable")) throw error;
-  }
-  // The paged /events fallback: the whole retained history in delivery order (the log sorts it).
-  let cursor = `${session.generation}.0`;
-  for (;;) {
-    const page = await client.events(cursor, limit);
-    log.ingest(parse(page.events));
-    cursor = page.next ?? cursor;
-    if (!page.more) return log;
-  }
+export function createLiveFactory(options: Omit<LiveSourceOptions, "log" | "store"> & { readonly retain?: number; readonly wallClock?: () => number }): { readonly store: SceneStore; readonly source: LiveSource; readonly log: SceneLog } {
+  const log = createLiveLog({ retain: options.retain });
+  const store = createSceneStore({ source: "live", log, clock: options.clock, wallClock: options.wallClock });
+  const source = createLiveSource({ ...options, log, store });
+  return { store, source, log };
 }

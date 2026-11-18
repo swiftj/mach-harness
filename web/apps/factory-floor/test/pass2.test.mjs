@@ -4,14 +4,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sim } from "./_load.mjs";
 
-const { createSceneStore, installMachSimHook, cameraFollows, PLAYBACK_BASE_RATE } = await import("../src/scene/store.ts");
+const { createSceneStore, installMachSimHook, PLAYBACK_BASE_RATE } = await import("../src/scene/store.ts");
 const { manualClock, switchableClock } = await import("../src/scene/clock.ts");
 const { SCENARIO, sceneAt, finalScene, entityAt, eventsFor, latestEventFor, actorOfEvent, actorOf, allAgents, agentTimingAt, toolCallTimingAt, visitTimingAt, ACTOR_KINDS } = sim;
 
+// The simulation runs forward on its own only while someone watches it: a subscriber stands in for the page.
 const withHook = () => {
   const base = manualClock(1000);
   const clock = switchableClock(base);
   const store = createSceneStore({ fixture: SCENARIO, clock });
+  store.subscribe(() => {});
   const target = {};
   installMachSimHook(store, target, clock);
   return { base, clock, store, hook: target.__machSim };
@@ -19,7 +21,7 @@ const withHook = () => {
 
 // ---------------------------------------------------------------- (1) the capture hook
 
-test("hook: the capture script can select, focus, switch mode and theater, set speed, play and pause", () => {
+test("hook: the capture script can select, focus, switch workspace, mode and theater", () => {
   const { hook } = withHook();
   hook.select("cell:LOCAL-031");
   assert.equal(hook.state().selection, "cell:LOCAL-031");
@@ -27,16 +29,10 @@ test("hook: the capture script can select, focus, switch mode and theater, set s
   assert.equal(hook.state().focus, "gate:LOCAL-032/human-approval");
   hook.focus("overview");
   assert.equal(hook.state().focus, "overview");
-  hook.setMode("blueprint");
-  assert.equal(hook.state().view, "blueprint");
+  hook.setWorkspace("floor");
+  assert.equal(hook.state().workspace, "floor");
   hook.setTheater(true);
   assert.equal(hook.state().theater, true);
-  hook.setSpeed(8);
-  assert.equal(hook.state().speed, 8);
-  hook.play();
-  assert.equal(hook.state().playing, true);
-  hook.pause();
-  assert.equal(hook.state().playing, false);
   hook.select(null);
   assert.equal(hook.state().selection, null);
 });
@@ -48,65 +44,65 @@ test("hook: the manual clock advances factory time by exact milliseconds, frame 
   assert.equal(hook.clockMode(), "manual");
   assert.equal(hook.state().clock, "manual");
   hook.seek(10 * 60000);
-  hook.setSpeed(2);
-  hook.play();
   hook.advance(0); // the first frame sets the reference time
   base.frames(30, 100); // browser frames are ignored while manual
-  assert.equal(hook.state().playhead, 10 * 60000);
+  assert.equal(hook.state().now, 10 * 60000);
   hook.advance(1000);
-  assert.equal(hook.state().playhead, 10 * 60000 + 1000 * PLAYBACK_BASE_RATE * 2);
+  assert.equal(hook.state().now, 10 * 60000 + 1000 * PLAYBACK_BASE_RATE);
   // Thirty frames of exactly 40 ms each: 1.2 s of wall time.
   for (let i = 0; i < 30; i++) hook.advance(40);
-  assert.equal(hook.state().playhead, 10 * 60000 + 2200 * PLAYBACK_BASE_RATE * 2);
+  assert.equal(hook.state().now, 10 * 60000 + 2200 * PLAYBACK_BASE_RATE);
   // The same steps from the same start give the same frames.
   const again = withHook().hook;
   again.useManualClock();
   again.seek(10 * 60000);
-  again.setSpeed(2);
-  again.play();
   again.advance(0);
   again.advance(1000);
   for (let i = 0; i < 30; i++) again.advance(40);
-  assert.equal(again.state().playhead, hook.state().playhead);
+  assert.equal(again.state().now, hook.state().now);
   assert.equal(again.state().cursor, hook.state().cursor);
 });
 
 test("hook: back to the live clock, time continues without a leap", () => {
   const { hook, base } = withHook();
   hook.useManualClock();
-  hook.play();
   hook.advance(500);
-  const at = hook.state().playhead;
+  const at = hook.state().now;
   hook.useLiveClock();
   base.frames(1, 100);
-  assert.equal(hook.state().playhead, at + 100 * PLAYBACK_BASE_RATE);
+  assert.equal(hook.state().now, at + 100 * PLAYBACK_BASE_RATE);
 });
 
-test("hook: without a switchable clock the manual controls refuse, and version 1 is unchanged", () => {
+test("hook: seek moves the simulation either way; without a switchable clock the manual controls refuse; version 2 has no playback controls", () => {
   const store = createSceneStore({ fixture: SCENARIO, clock: manualClock() });
   const target = {};
   installMachSimHook(store, target);
   const hook = target.__machSim;
-  assert.equal(hook.version, 1);
+  assert.equal(hook.version, 2);
   assert.equal(hook.clockMode(), "fixed");
   assert.throws(() => hook.useManualClock());
   assert.throws(() => hook.advance(100));
-  for (const name of ["seek", "seekToSeq", "seekToChapter", "step", "play", "pause", "setSpeed", "state"]) assert.equal(typeof hook[name], "function", name);
+  for (const name of ["seek", "state", "select", "focus", "setWorkspace", "setTheater", "setFollow", "advance"]) assert.equal(typeof hook[name], "function", name);
+  for (const name of ["play", "pause", "setSpeed", "followLive", "seekToSeq", "seekToChapter", "step", "setMode"]) assert.equal(hook[name], undefined, name);
+  hook.seek(20 * 60000);
+  assert.equal(hook.state().now, 20 * 60000);
+  hook.seek(5 * 60000);
+  assert.equal(hook.state().now, 5 * 60000, "the hook, unlike the interface, can move it back");
+  hook.seek(SCENARIO.duration + 60000);
+  assert.equal(hook.state().now, SCENARIO.duration, "held at its end");
   const live = switchableClock(manualClock());
   assert.throws(() => live.advance(10), /manual/);
 });
 
 // ---------------------------------------------------------------- (2) camera follow
 
-test("follow: on by default, off when the person pans or zooms, back on with return-to-live", () => {
+test("follow: on by default, off when the person pans or zooms, back on with setFollow", () => {
   const { store } = withHook();
   assert.equal(store.getState().follow, true);
-  assert.equal(cameraFollows(store.getState()), true);
   store.setFollow(false); // what a view calls on pan or zoom
-  assert.equal(cameraFollows(store.getState()), false);
-  store.followLive();
+  assert.equal(store.getState().follow, false);
+  store.setFollow(true);
   assert.equal(store.getState().follow, true);
-  assert.equal(cameraFollows(store.getState()), true);
 });
 
 test("follow: a camera request the person made releases it; the follow camera's own requests do not", () => {
@@ -118,19 +114,15 @@ test("follow: a camera request the person made releases it; the follow camera's 
   store.setFollow(true);
   store.select("cell:LOCAL-031", { focus: false });
   assert.equal(store.getState().follow, true, "selecting without framing leaves follow alone");
-  store.seekToChapter("blocker");
+  store.focusOn("overview", "api");
   assert.equal(store.getState().follow, false);
 });
 
-test("follow: the camera follows only live; Theater Mode does not force live or change follow", () => {
+test("follow: Theater Mode does not change follow", () => {
   const { store } = withHook();
-  store.seek(SCENARIO.duration);
-  store.seek(5 * 60000); // replay
-  assert.equal(store.getState().follow, true);
-  assert.equal(cameraFollows(store.getState()), false, "replaying: nothing live to follow");
+  store.setWorkspace("floor");
   store.setTheater(true);
-  assert.equal(store.getState().following, false);
-  assert.equal(store.getState().playhead, 5 * 60000);
+  assert.equal(store.getState().theater, true);
   assert.equal(store.getState().follow, true);
   store.setFollow(false);
   store.setTheater(false);

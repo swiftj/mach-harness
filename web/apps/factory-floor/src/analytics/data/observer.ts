@@ -1,5 +1,5 @@
 /**
- * `observerAnalytics(client)`: Analytics read from the observer (live and replay) through the
+ * `observerAnalytics(client)`: Analytics read from the observer (the live Factory) through the
  * ObserverClient the shell already holds (its cookie, its in-flight sharing). Each reply is
  * validated (parse.ts); a 404 is "this observer has no analytics", a 400 surfaces the observer's
  * reason, a 409 or 410 means the view's cursor is gone. Anything else rejects.
@@ -18,7 +18,6 @@ function common(query: AnalyticsQuery, options: CallOptions | undefined): Observ
     fromMs: query.fromMs ?? null,
     toMs: query.toMs ?? null,
     lastRuns: query.lastRuns ?? null,
-    asOfMs: options?.asOfMs ?? null,
     ...(query.filters ? { filters: query.filters } : {}),
     ...(options?.signal ? { signal: options.signal } : {}),
   };
