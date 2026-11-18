@@ -525,18 +525,26 @@ test("what the latest write added to the slice is marked, in words", async () =>
     await doc.getByText("FR-01", { exact: true }).waitFor({ timeout: 20000 });
     await ask.getByRole("button", { name: "Yes, accept" }).waitFor({ timeout: 20000 });
     assert.equal(await doc.getByText("New", { exact: true }).count(), 0, "nothing is marked on the first read");
+    let sawSummaryYes = false;
     // Answer every turn of the scripted interview until it writes the specification up.
     for (let turn = 0; turn < 12 && !(await doc.getByText("INV-01", { exact: true }).count()); turn++) {
       // Act only once the interviewer has finished its turn.
       await page.getByRole("status").filter({ hasText: "Waiting for you" }).waitFor({ timeout: 30000 });
       const accept = ask.getByRole("button", { name: "Yes, accept" });
+      // The summary to confirm has the same one-press yes as a question; its text box is for what is missing.
+      const writeUp = ask.getByRole("button", { name: "Yes, write it up" });
       if (await accept.count()) await accept.click();
-      else {
-        await ask.getByRole("textbox", { name: /Your reply|Does this capture the intent/ }).fill("yes");
+      else if (await writeUp.count()) {
+        await ask.getByRole("textbox", { name: "Or say what is missing or needs refining" }).waitFor();
+        sawSummaryYes = true;
+        await writeUp.click();
+      } else {
+        await ask.getByRole("textbox", { name: "Your reply" }).fill("yes");
         await ask.getByRole("button", { name: "Send reply" }).click();
       }
       await page.getByRole("status").filter({ hasText: "Waiting for you" }).waitFor({ state: "detached", timeout: 10000 }).catch(() => {});
     }
+    assert.ok(sawSummaryYes, "the summary to confirm offered a Yes button, and pressing it had the specification written up");
     const added = doc.getByRole("listitem").filter({ hasText: "INV-01" });
     await added.getByText("New", { exact: true }).waitFor({ timeout: 30000 });
     const kept = doc.getByRole("listitem").filter({ hasText: "FR-01" }).first();

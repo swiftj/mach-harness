@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
-import { ArrowLeft, CircleAlert, MessagesSquare, Pause, SearchX, Square, Users, WifiOff } from "lucide-react";
+import { ArrowLeft, Check, CircleAlert, MessagesSquare, Pause, SearchX, Square, Users, WifiOff } from "lucide-react";
 import {
   Badge,
   Banner,
@@ -272,6 +272,7 @@ function Current({ iv, busy, sliceId, show, onApproved }: { iv: InterviewControl
       </div>
     );
   } else {
+    const confirming = awaiting?.kind === "confirmation" && !approval;
     body = (
       <div className="flex flex-col gap-6">
         {approval}
@@ -284,12 +285,22 @@ function Current({ iv, busy, sliceId, show, onApproved }: { iv: InterviewControl
             <RichText text={awaiting.text} editorial className="text-ink" />
           </div>
         ) : null}
+        {confirming ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="primary" size="lg" loading={iv.sending === "reply"} onClick={() => iv.reply("Yes.", "accepted")}>
+              <Check aria-hidden="true" />
+              Yes, write it up
+            </Button>
+            <Text size="body-sm" tone="muted">
+              The interviewer writes the specification from this summary.
+            </Text>
+          </div>
+        ) : null}
         <Composer
           key={model.awaiting ?? "free"}
-          focusOnMount={Boolean(awaiting) && !approval}
+          focusOnMount={Boolean(awaiting) && !approval && !confirming}
           busy={iv.sending === "reply"}
-          label={approval ? "Or tell the interviewer what is missing" : awaiting?.kind === "confirmation" ? "Does this capture the intent?" : "Your reply"}
-          hint={awaiting?.kind === "confirmation" && !approval ? "Say yes to have the specification written up, or say what is missing." : undefined}
+          label={approval ? "Or tell the interviewer what is missing" : confirming ? "Or say what is missing or needs refining" : "Your reply"}
           onSend={(text) => iv.reply(text, "reply")}
         />
       </div>
