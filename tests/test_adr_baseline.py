@@ -404,6 +404,27 @@ class AcceptTest(Repository):
     def write(self, name, text):
         (self.adr_dir / name).write_text(text)
 
+    def test_how_accepted_decisions_reach_the_main_branch_is_a_project_setting(self):
+        """A team (the default) uses a pull request; one engineer may commit to main. MACH needs only the commit."""
+        self.write("0001-python.md", adr_text("Python 3.12 and the standard library", status="proposed", applies=["topic:language"]))
+        landing = json.loads(self.run_cmd("adr", "baseline")[1])["landing"]
+        self.assertEqual((landing["how"], landing["setting"], landing["problem"]), ("pull-request", "adr.landing", None))
+        self.assertIn("no review", landing["needed_by_mach"])
+        config_path = self.project / ".factory/config.json"
+        config = json.loads(config_path.read_text()) if config_path.is_file() else {}
+        for value, how, problem in (("main", "main", False), ("pull-request", "pull-request", False), ("whatever", "pull-request", True)):
+            config.setdefault("adr", {})["landing"] = value
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(json.dumps(config))
+            landing = json.loads(self.run_cmd("adr", "baseline")[1])["landing"]
+            self.assertEqual((landing["how"], bool(landing["problem"])), (how, problem), value)
+        config["adr"]["landing"] = "main"
+        config_path.write_text(json.dumps(config))
+        code, out, err = self.run_cmd("adr", "accept", "ADR-0001", "--by", "Ana Silva")
+        self.assertEqual(code, 0, err)
+        result = json.loads(out)
+        self.assertEqual((result["landing"]["how"], result["committed"]), ("main", False), "accept says how; it still commits nothing itself")
+
     def test_accept_sets_the_status_names_the_person_and_commits_nothing(self):
         self.write("0001-python.md", adr_text("Python 3.12 and the standard library", status="proposed", applies=["topic:language"]))
         code, _, err = self.run_cmd("adr", "accept", "ADR-0001", "--by", "Ana Silva", env=UNATTENDED)

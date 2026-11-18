@@ -1156,6 +1156,7 @@ def cmd_adr_baseline(project: Project, args: argparse.Namespace) -> int:
     result["ready_to_accept"] = [adr["id"] for item in result["waiting"] for adr in item["adrs"]
                                  if adr.get("status") == "proposed" and not adr["open_points"] and not adr["problems"]]
     result["tickets_waiting"] = tickets_waiting_for_baseline(project)
+    result["landing"] = adrs().landing(project.config)
     result["write_with"] = ("For each topic in to_draft: run.py adr new --baseline <topic> --title ... --context ... --decision ... "
                             "[--option ...] [--consequence ...] [--applies-to path:...|app:...] [--open-point ...]. It is written as proposed, commits nothing.")
     result["settle_with"] = "For each open point: run.py adr settle <ADR-NNNN> --point <n> --answer \"<the engineer's answer>\" [--decision \"...\"] [--not-decided]."
@@ -1234,8 +1235,9 @@ def cmd_adr_accept(project: Project, args: argparse.Namespace) -> int:
     for record, text in changes:
         (project.root / record["file"]).write_text(text, encoding="utf-8")
     print(json.dumps({"status": "ACCEPTED", "adrs": [{"id": record["id"], "file": record["file"]} for record, _ in changes], "by": by, "committed": False,
+                      "landing": A.landing(project.config),
                       "next": "They now say accepted in the main checkout's working tree and bind nothing yet: they bind tickets planned after they are "
-                              "committed on the main branch. Commit them on a branch and merge them by your usual pull request."}, indent=2, ensure_ascii=False))
+                              "committed on the main branch. See 'landing' for how this project puts them there."}, indent=2, ensure_ascii=False))
     return 0
 
 

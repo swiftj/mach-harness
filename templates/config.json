@@ -35,6 +35,7 @@
   },
   "adr": {
     "dir": "docs/adr",
+    "landing": "pull-request",
     "required_topics": ["language", "framework", "storage", "testing", "deployment", "coding-standards"]
   },
   "factory": {

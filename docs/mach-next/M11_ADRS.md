@@ -167,6 +167,13 @@ owner's decision: the gaps are closed by the same interview the slice uses.
 - **The skill** (`skills/run/SKILL.md`, "Drafting the baseline") looks each fact up before asking, turns a conflict in
   the evidence into the question, asks once to accept when nothing is open, and offers the pull request.
 
+## Getting accepted decisions onto the main branch (2026-11-18)
+
+MACH needs only that an accepted ADR is committed on the main branch; it asks for no review of its own.
+`adr.landing` in `.factory/config.json` says how a project does that: `pull-request` (the default, for a team) or
+`main` (one engineer). `run.py adr baseline` and `adr accept` report it as `landing`; the run skill offers the
+project's way first, names the other, and does either only on the engineer's word. The scripts still commit nothing.
+
 ## Limits
 
 - Topics are matched as whole words (and hyphen-joined pairs) of the spec's title, requirements and scenarios, the
