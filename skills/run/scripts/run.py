@@ -24,6 +24,9 @@ and not by whoever is driving it.
     run.py product dispatch <slice>...   open the cells for chosen ready slices (or --ready); starts nothing
     run.py product events [--since N]    the intake ledger's transitions, for a supervisor or a dashboard
     run.py product reconcile [--fetch]   intake and a recorded plan in one locked step; never dispatches
+    run.py pull [--limit n] [--sequential] [--dry-run] [--json]
+                                         take in every slice marked ready, choose the next batch with the schedule and
+                                         dispatch it; prints what starts, what waits and why, and the tickets to run (pull.py)
     run.py adr list                      every architecture decision: ID, title, status, applies-to, problems; reads only (adr.py)
     run.py adr new --title T --context C --decision D [--option O]... [--consequence X]... [--applies-to A]...
                                          write a new ADR as proposed in the main checkout's working tree; commits nothing
@@ -970,6 +973,24 @@ def cmd_product(project: Project, args: argparse.Namespace) -> int:
     return 1 if args.action == "intake" and result.get("refused") and not result.get("created") and not result.get("unchanged") else 0
 
 
+def cmd_pull(project: Project, args: argparse.Namespace) -> int:
+    """Take in what is ready and start the next batch (pull.py): reconcile, choose with the schedule, dispatch. An engineer's
+    command: it reads no machine-local authorization, enables nothing and starts no agent."""
+    if execution_scope(project) is not None:
+        raise RunError("Pulling ready work is an engineer's command, in conversation; a supervised execution does not take in or dispatch work.")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import pull
+    import schedule
+    intake, line = factory(project)
+    try:
+        report = pull.pull(args, project.root, config=project.config, line=line, schedule=schedule, claims=claims(), sibling=sibling,
+                           next_step=lambda ticket_id: next_step(project, ticket_id, True), workflow=workflow_name(), run_one=skill("run"))
+    except (pull.PullError, intake.IntakeError) as exc:
+        raise RunError(str(exc))
+    print(json.dumps(report, indent=2, ensure_ascii=False) if args.json else pull.human(report))
+    return 0
+
+
 def cmd_release(project: Project, args: argparse.Namespace) -> int:
     """Release qualification (qualify.py). It reads and measures; it lands, publishes and starts nothing."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -1175,7 +1196,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--since", type=int, default=0, help="only events after this sequence number")
     p.set_defaults(func=cmd_product)
 
-    adr_parser = sub.add_parser("adr", help="architecture decisions: list them, or write a new one as proposed").add_subparsers(dest="action", required=True)
+    p = sub.add_parser("pull", help="take in every slice marked ready and dispatch the next batch the schedule allows; starts no agent")
+    p.add_argument("--limit", type=int, help="run at most this many at once (never above the settings ceiling)")
+    p.add_argument("--sequential", action="store_true", help="one ticket at a time")
+    p.add_argument("--dry-run", action="store_true", help="change nothing; print the same schedule")
+    p.add_argument("--json", action="store_true", help="the report as JSON, for the run skill")
+    p.set_defaults(func=cmd_pull)
+    adr_parser = sub.add_parser("adr",help="architecture decisions: list them, or write a new one as proposed").add_subparsers(dest="action", required=True)
     adr_parser.add_parser("list", help="every ADR: ID, title, status, applies-to and problems; reads only").set_defaults(func=cmd_adr)
     p = adr_parser.add_parser("new", help="write a new ADR as proposed in the main checkout's working tree; commits nothing")
     p.add_argument("--title", required=True, help="the decision in a few words")
