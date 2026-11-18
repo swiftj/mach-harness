@@ -253,7 +253,7 @@ function ProjectEditor({ status }: { status: Status }) {
               Vision
             </Heading>
             <ArtifactId>{project.project_id}</ArtifactId>
-            {project.issue ? <IssueNumber number={project.issue} /> : null}
+            {project.issue ? <IssueNumber number={project.issue} url={project.url} /> : null}
           </div>
           <Text editorial size="body-lg" tone="muted">
             What the product is for and what people will get from it. Changes are saved to your draft; the project&apos;s issue on GitHub follows
@@ -340,7 +340,7 @@ function Epics({ status }: { status: Status }) {
                       {epic.title}
                     </Heading>
                     <EpicStatusPill status={epic.status} size="sm" />
-                    {epic.issue ? <IssueNumber number={epic.issue} /> : null}
+                    {epic.issue ? <IssueNumber number={epic.issue} url={epic.url} /> : null}
                   </div>
                   {criteria ? (
                     <ul className="flex flex-col gap-0.5 pl-0.5">

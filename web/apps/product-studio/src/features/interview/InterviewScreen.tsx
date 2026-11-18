@@ -1,5 +1,5 @@
-import { useEffect, type ReactNode } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { useEffect, useRef, type ReactNode } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { ArrowLeft, CircleAlert, MessagesSquare, Pause, SearchX, Square, Users, WifiOff } from "lucide-react";
 import {
   Badge,
@@ -29,6 +29,7 @@ import { useInterview, type InterviewController } from "./useInterview";
 import { useSliceShow } from "../../api/useSliceShow";
 import { useStatus } from "../../api/store";
 import { MarkReadyDialog } from "../spec/SliceActs";
+import { BuildersQuestion } from "../../shared/BuildersQuestion";
 
 const PAUSE_REQUEST = "I need to stop here. Please save where we are so I can continue later.";
 
@@ -55,6 +56,15 @@ function InterviewWorkspace({ sliceId }: { sliceId: string }) {
   const status = useStatus();
   const iv = useInterview(sliceId);
   const { model } = iv;
+  // Reached from "Answer it": start (or join) the interview at once; the host opens a turn on the builders' question.
+  const answering = Boolean((useLocation().state as { answer?: boolean } | null)?.answer);
+  const started = useRef(false);
+  useEffect(() => {
+    if (answering && (iv.phase === "idle" || iv.phase === "live") && !started.current) {
+      started.current = true;
+      iv.start();
+    }
+  }, [answering, iv]);
 
   // Reload the validated draft when the host reports a write. Several arrive close together.
   const reload = show.reload;
@@ -87,6 +97,7 @@ function InterviewWorkspace({ sliceId }: { sliceId: string }) {
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.15fr)_minmax(22rem,1fr)]">
         <section aria-label="Interview" className="min-h-0 overflow-y-auto px-10 py-10">
           <div className="mx-auto flex max-w-[44rem] flex-col gap-10">
+            {show.data ? <BuildersQuestion github={show.data.github} /> : null}
             <Current iv={iv} busy={busy} sliceId={sliceId} show={show.data} onApproved={show.reload} />
             <Settled decisions={model.decisions} />
             {iv.phase === "live" && model.timeline.length ? (

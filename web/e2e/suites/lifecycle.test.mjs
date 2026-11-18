@@ -180,7 +180,7 @@ test("lifecycle: from nothing to a slice ready to build, through the UI only", a
     assert.equal(world.issues().length, 0, "nothing is on GitHub before the PM marks the slice ready");
     await main().getByRole("button", { name: "Mark ready to build" }).click();
     const confirm = page.getByRole("dialog", { name: "Mark SLICE-001 ready to build?" });
-    await confirm.getByText("saves the slice to the project on GitHub, under its epic", { exact: false }).waitFor();
+    await confirm.getByText("saves the slice to the project on GitHub, under the epic “Team membership” (EPIC-001)", { exact: false }).waitFor();
     await confirm.getByText("records that you approved exactly this text", { exact: false }).waitFor();
     await shoot(page, FOLDER, "07b-mark-ready-dialog");
     const marked = page.waitForResponse((r) => r.url().endsWith("/api/ops/slice.ready"));
@@ -295,6 +295,38 @@ test("lifecycle: from nothing to a slice ready to build, through the UI only", a
     await shoot(page, FOLDER, "11-ready-again");
   });
 
+  const QUESTION = "FR-02 holds a seat for a pending invitation, but INV-03 counts only accepted members. Which one wins?";
+  await step("11b the builders ask a question: quoted in Decisions; Answer it reopens the slice and its interview starts from it", async () => {
+    world.onGithub(`issue = state["issues"][str(args[0])]
+body = issue_rules.comment("question", ["SLICE-001@r2"], "0" * 32, question=args[1])["body"]
+issue["comments"].append({"login": "erin-eng", "body": body, "created_at": "2026-11-17T12:00:00Z", "updated_at": "2026-11-17T12:00:00Z"})
+issue["labels"] = [l for l in issue["labels"] if l["name"] not in issue_rules.SLICE_STATE_LABELS] + [{"name": "mach:question"}]`, issue, QUESTION);
+    await go("/github");
+    await main().getByRole("button", { name: "Refresh" }).click();
+    await settle(page, 800);
+    const [before] = engineStatus().slices;
+    assert.equal(before.github.question, QUESTION);
+    assert.equal(engineStatus().next_actions[0].kind, "answer_question");
+    await go("/inbox");
+    const card = main().getByRole("article", { name: /SLICE-001/ });
+    await card.locator("blockquote").waitFor({ timeout: 20000 });
+    assert.equal(await card.locator("blockquote").innerText(), QUESTION);
+    await shoot(page, FOLDER, "11b-decisions-builders-question");
+    const calls = world.claudeCalls().length;
+    await card.getByRole("button", { name: /^Answer it/ }).click();
+    await page.getByRole("dialog", { name: "Answer the builders' question on SLICE-001?" }).getByRole("button", { name: "Reopen and answer" }).click();
+    await page.waitForURL(/#\/slices\/SLICE-001\/interview$/);
+    assert.equal(engineStatus().slices[0].status, "interviewing");
+    await main().locator("blockquote").getByText("Which one wins?", { exact: false }).waitFor();
+    for (let i = 0; i < 100 && world.claudeCalls().length === calls; i++) await page.waitForTimeout(200);
+    const opening = world.claudeCalls()[calls];
+    assert.ok(opening, "the interview started");
+    const message = opening.argv[opening.argv.length - 1];
+    assert.match(message, /The builders have asked a question about this slice/);
+    assert.ok(!message.includes("Which one wins"), "the question's text never goes in the opening message");
+    await shoot(page, FOLDER, "11c-interview-on-the-question");
+  });
+
   await step("12 nothing leaked, nothing reached the Factory, the checkout is untouched", async () => {
     const problems = await session.problems();
     assert.deepEqual(problems.external, [], "requests to other origins");
@@ -306,13 +338,14 @@ test("lifecycle: from nothing to a slice ready to build, through the UI only", a
     assert.deepEqual(world.checkout(), before0, "the PM's checkout changed");
   });
 
-  await check("12b no API request failed during the lifecycle (engine refusals aside)", async () => {
+  await check("12b no API request failed during the lifecycle (engine refusals and joining an open interview aside)", async () => {
     const problems = await session.problems();
-    assert.deepEqual(problems.apiFailures.filter((f) => !f.startsWith("422 ")), []);
+    // Joining an interview already open on this host is answered 409 with its ID, by contract ("Answer it" in 11b).
+    assert.deepEqual(problems.apiFailures.filter((f) => !f.startsWith("422 ") && f !== "409 POST /api/interview"), []);
   });
 
   await check("12c no console error during the lifecycle (engine refusals aside)", async () => {
     const problems = await session.problems();
-    assert.deepEqual([...new Set(problems.consoleErrors.filter((m) => !/status of 422/.test(m)).map((m) => m.split("\n")[0]))], []);
+    assert.deepEqual([...new Set(problems.consoleErrors.filter((m) => !/status of (422|409)/.test(m)).map((m) => m.split("\n")[0]))], []);
   });
 });

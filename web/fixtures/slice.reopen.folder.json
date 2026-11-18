@@ -18,7 +18,8 @@
     "github": {
       "where": "folder"
     },
-    "note": "Its ready folder was removed. You can change it now. Mark it ready again when it is done."
+    "note": "Its ready folder was removed. You can change it now. Mark it ready again when it is done.",
+    "factory_authorized": false
   },
   "refused": null,
   "hint": null

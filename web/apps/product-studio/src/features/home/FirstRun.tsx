@@ -1,16 +1,15 @@
 import { Link } from "react-router";
 import { ArrowRight } from "lucide-react";
 import { Button, Heading, Page, Spinner, Text } from "@mach/ui";
-import type { Status } from "@mach/ui/api";
 
 const steps = [
   { title: "Say what the product is for", body: "A name, a one-sentence vision, and the outcomes people should get from it." },
   { title: "Name the larger capabilities", body: "Epics, such as “Team membership”, each with a few criteria for when it is done." },
-  { title: "Define one slice at a time", body: "A guided interview turns an idea into a specification engineering can build without asking you more." },
+  { title: "Define one slice at a time", body: "A guided interview turns an idea into a specification the builders can build without asking you more." },
 ];
 
 /** An empty project: what Product Studio is for, and the one action that starts it. */
-export function FirstRun({ status, refreshing }: { status: Status; refreshing: boolean }) {
+export function FirstRun({ refreshing }: { refreshing: boolean }) {
   return (
     <Page width="reading">
       <div className="flex flex-col gap-10 pt-6">
@@ -46,7 +45,7 @@ export function FirstRun({ status, refreshing }: { status: Status; refreshing: b
           </Button>
           {refreshing ? (
             <span role="status" className="inline-flex items-center gap-2 text-body-sm text-ink-muted">
-              <Spinner size="sm" /> Checking whether colleagues have already defined it in {status.shared_project}
+              <Spinner size="sm" /> Checking GitHub for changes
             </span>
           ) : null}
         </div>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Activity, Boxes, Factory, Layers, MousePointerClick, Network, Palette, PanelsTopLeft, SquareStack } from "lucide-react";
-import { AppShell, Brand, ConnectionIndicator, Heading, NavItem, NavRail, NavSection, Page, Text, ThemeSwitch, TopBar, type ProductName } from "@mach/ui";
+import { AppShell, Brand, ConnectionIndicator, Heading, savedState, NavItem, NavRail, NavSection, Page, Text, ThemeSwitch, TopBar, type ProductName } from "@mach/ui";
 import { Foundations } from "./sections/Foundations";
 import { Controls } from "./sections/Controls";
 import { Overlays } from "./sections/Overlays";
@@ -63,7 +63,7 @@ export function App({ product }: { product: ProductName }) {
           status={
             <ConnectionIndicator
               host="online"
-              shared={{ reachable: true, lastRefreshed: status.last_refreshed, description: fx.refreshOnGithub.shared_project }}
+              saved={savedState(status.saved)}
             />
           }
           actions={

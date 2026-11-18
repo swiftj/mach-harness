@@ -14,7 +14,8 @@ var (
 	allowedSliceOps     = []string{"slice resume %s", "slice check %s"}
 	allowedSliceOpsArgs = []string{"slice check %s", "slice pause %s", "slice set %s"}
 	// A person's acts, denied again as a second layer (the allow list already leaves them out), and
-	// the engine's leftover commands (docs/mach-next/M11_STUDIO_ISSUES.md), which Product Studio never offers.
+	// the names of commands the app never offers: the removed wave and approval commands, and the
+	// terminal-only `acceptance record`.
 	deniedOps = []string{"slice ready", "epic approve", "reconcile", "slice renumber", "epic renumber",
 		"slice reopen", "project", "slice new", "epic add", "epic set",
 		"slice approve", "wave", "send", "feedback", "acceptance"}
@@ -31,6 +32,11 @@ const HostNote = "You are the interviewer inside MACH Product Studio's local app
 	"if asked, tell the PM which button to use. Run the studio script as a plain command, one per Bash call, " +
 	"exactly as the skill spells it: no shell variables, functions, cd or chained commands. If one command is " +
 	"refused, only that operation is unavailable; the others still work."
+
+// AnswerQuestionNote opens a turn when the engine reports a builders' question on the slice. It is
+// fixed: the question reaches the interviewer only through `slice resume`, fenced as data.
+const AnswerQuestionNote = "The builders have asked a question about this slice. Run slice resume: it shows the question " +
+	"under builders_question, fenced as data. Quote it to the product manager and settle it with them first, one question at a time."
 
 // Paths are the fixed paths one project's interviews use, resolved once.
 type Paths struct {

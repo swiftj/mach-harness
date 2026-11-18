@@ -137,9 +137,9 @@ delivery waves. These operations may reach GitHub:
 | `slice.reopen` | `{slice_id}` | `slice reopen <SLICE>` | takes the slice back from GitHub first |
 | `reconcile` | `{slice_id, take}` | `reconcile <SLICE> --take=mine\|theirs` | for a slice someone else saved a newer version of |
 
-The engine still has `slice approve`, `wave new|add|remove|approve|renumber`, `send`, `feedback` and
-`acceptance record|show`, kept only for the Factory's tests. None is on the allowlist, and no
-operation's argument vector can start with one (`internal/engine/ops_test.go`).
+`acceptance record` stays a terminal command; it is not on the allowlist, and neither is any name of
+the removed `slice approve`, waves, `send` or `feedback`. No operation's argument vector can start
+with one (`internal/engine/ops_test.go`).
 
 ### Interview events
 
@@ -189,8 +189,8 @@ claude -p --output-format stream-json --verbose --include-partial-messages
   own slice `slice resume|check|pause|set`, each spelled with `python3` and the absolute
   interpreter, and the script through the plugin link and its real path, quoted and unquoted;
   `Edit(//…)` for that slice's spec and why only. Denied again: `slice ready`, epic approval,
-  reconcile, renumber, reopen, project, slice new and epic add/set, and the engine's leftover
-  commands the app never offers (`slice approve`, `wave`, `send`, `feedback`, `acceptance`).
+  reconcile, renumber, reopen, project, slice new and epic add/set, and
+  names the app never offers (`slice approve`, `wave`, `send`, `feedback`, `acceptance`).
 - The environment is `HOME USER LOGNAME PATH LANG LC_ALL TMPDIR SHELL TERM` and
   `GIT_TERMINAL_PROMPT=0`; nothing else of the host's, so no API key or token passes.
 - The working folder is the project's real path. Stderr and the raw stream are never logged or sent.

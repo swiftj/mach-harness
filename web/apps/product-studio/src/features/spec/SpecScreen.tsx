@@ -11,6 +11,8 @@ import { useSliceShow } from "../../api/useSliceShow";
 import { useStatus } from "../../api/store";
 import { WithdrawnNote } from "../../shared/WithdrawnNote";
 import { IssueLink } from "../../shared/IssueLink";
+import { AnswerQuestionButton, BuildersQuestion } from "../../shared/BuildersQuestion";
+import { SliceTimes } from "../../shared/SliceTimes";
 
 type View = "spec" | "why" | "source";
 
@@ -133,7 +135,10 @@ function SpecHeader({ show, onChanged, refreshing, refreshError }: { show: Slice
         ) : null}
       </div>
       <SliceLifecycle status={slice.status} openQuestions={openCount} />
+      <SliceTimes github={show.github} mode="all" />
+      <BuildersQuestion github={show.github} />
       <div className="flex flex-wrap items-center gap-2">
+        {show.github.question ? <AnswerQuestionButton sliceId={slice.slice_id} approved={approved} /> : null}
         {approved ? (
           <>
             {again ? <MarkReadyDialog show={show} onDone={onChanged} primary /> : null}

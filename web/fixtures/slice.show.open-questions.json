@@ -718,7 +718,16 @@
       "changed_on_github": false,
       "newer_elsewhere": false,
       "number_taken": false,
-      "shipped_issues": []
+      "question": null,
+      "question_note": null,
+      "shipped_issues": [],
+      "times": {
+        "marked_ready": null,
+        "building": null,
+        "question": null,
+        "shipped": null
+      },
+      "progress": "interviewing"
     },
     "factory_authorized": false
   },

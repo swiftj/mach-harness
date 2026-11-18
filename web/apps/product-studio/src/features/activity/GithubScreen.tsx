@@ -1,6 +1,6 @@
 import { CircleAlert, RefreshCw } from "lucide-react";
 import { Link } from "react-router";
-import { ArtifactId, Banner, Button, ErrorState, Heading, Page, Skeleton, SliceGithubPills, SliceStatusPill, EpicStatusPill, Text, builderStates, describeError, formatWhen, type RefreshGithubSlice, type Status } from "@mach/ui";
+import { ArtifactId, Banner, Button, ErrorState, Heading, Page, Skeleton, SliceGithubPills, SliceStatusPill, EpicStatusPill, Text, builderStates, describeError, formatWhen, type OnGithubIssue, type RefreshGithubSlice, type Status } from "@mach/ui";
 import { useRefresh, useStatus } from "../../api/store";
 import { IssueLink, IssueNumber } from "../../shared/IssueLink";
 
@@ -90,7 +90,7 @@ function Where({ status }: { status: Status }) {
         {project ? (
           <li className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5">
             <span className="min-w-0 flex-1 text-body font-semibold text-ink">{project.name}</span>
-            {project.issue ? <IssueNumber number={project.issue} /> : <NotSaved />}
+            {project.issue ? <IssueNumber number={project.issue} url={project.url} /> : <NotSaved />}
           </li>
         ) : null}
         {status.epics.map((epic) => (
@@ -100,7 +100,7 @@ function Where({ status }: { status: Status }) {
               <span className="text-body text-ink">{epic.title}</span>
             </span>
             <EpicStatusPill status={epic.status} size="sm" />
-            {epic.issue ? <IssueNumber number={epic.issue} /> : <NotSaved />}
+            {epic.issue ? <IssueNumber number={epic.issue} url={epic.url} /> : <NotSaved />}
           </li>
         ))}
       </ul>
@@ -187,21 +187,23 @@ function Elsewhere({ slices }: { slices: RefreshGithubSlice[] }) {
         </Text>
       </div>
       <ul className="flex flex-col divide-y divide-line rounded-md border border-line bg-surface">
-        {slices.flatMap((slice) =>
-          slice.on_github.map((issue) => (
-            <li key={issue.issue} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5">
+        {slices.map((slice) => {
+          const latest = slice.on_github.reduce<OnGithubIssue | null>((best, issue) => (best && best.issue > issue.issue ? best : issue), null);
+          if (!latest) return null;
+          return (
+            <li key={slice.slice_id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5">
               <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
                 <ArtifactId>{slice.slice_id}</ArtifactId>
-                <span className="min-w-0 break-words text-body text-ink">{issue.title ?? ""}</span>
+                <span className="min-w-0 break-words text-body text-ink">{latest.title ?? ""}</span>
               </span>
               <Text as="span" size="body-sm" tone="muted">
-                {issue.state_label ? builderStates[issue.state_label].label : issue.state === "closed" ? "Closed" : "Open"}
-                {issue.approved_by ? `, approved by ${issue.approved_by}` : ""}
+                {latest.state_label ? builderStates[latest.state_label].label : latest.state === "closed" ? "Closed" : "Open"}
+                {latest.approved_by ? `, approved by ${latest.approved_by}` : ""}
               </Text>
-              <IssueNumber number={issue.issue} />
+              <IssueNumber number={latest.issue} url={null} />
             </li>
-          )),
-        )}
+          );
+        })}
       </ul>
     </section>
   );

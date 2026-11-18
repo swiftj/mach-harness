@@ -5,18 +5,17 @@
     "approvals_withdrawn": [],
     "epics": [],
     "slices": [],
+    "saved": {
+      "everything_saved": true,
+      "note": "Everything is saved.",
+      "not_saved": []
+    },
     "github": {
       "repository": null,
       "form": null,
       "last_read": null
     },
     "current_slice": null,
-    "needs_reconciling": {
-      "conflicts": [],
-      "collisions": [],
-      "details": {}
-    },
-    "shared_project": "the shared project",
     "last_refreshed": null,
     "structurally_valid": null,
     "structural_errors": [],

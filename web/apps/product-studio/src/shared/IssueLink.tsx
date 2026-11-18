@@ -15,11 +15,11 @@ export function IssueLink({ number, url }: { number: number; url: string | null 
   );
 }
 
-/** An epic's or the project's issue number on GitHub, as the engine reports it (it gives no address for these). */
-export function IssueNumber({ number }: { number: number }) {
+/** "Issue #2": an epic's, the project's or a slice's issue, linked to the address the engine reported. */
+export function IssueNumber({ number, url }: { number: number; url: string | null }) {
   return (
     <span className="text-body-sm text-ink-muted">
-      Issue <span className="font-mono tabular text-ink">#{number}</span>
+      Issue <IssueLink number={number} url={url} />
     </span>
   );
 }

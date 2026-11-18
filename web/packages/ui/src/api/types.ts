@@ -96,8 +96,42 @@ export interface SliceGithub {
   newer_elsewhere: boolean;
   /** Another slice on GitHub already uses this draft's number. */
   number_taken: boolean;
+  /** The builders' question, written by them on the slice's issue: data, shown as their words. */
+  question: string | null;
+  /** The engine's sentence saying whose words the question is. */
+  question_note: string | null;
   /** Earlier issues of this slice that have shipped. */
   shipped_issues: number[];
+  /** When this version was marked ready, taken by the builders, asked about and shipped (ISO 8601, UTC); null when not known. */
+  times: { marked_ready: string | null; building: string | null; question: string | null; shipped: string | null };
+  /** One word for where the slice is: its draft's state until approved, then where it is with the builders. */
+  progress: SliceProgress | null;
+}
+
+export type SliceProgress =
+  | "draft"
+  | "interviewing"
+  | "ready_for_approval"
+  | "approved"
+  | "ready_to_build"
+  | "being_built"
+  | "question"
+  | "shipped"
+  | "superseded";
+
+/** An epic's slices by place (`epics[].counts`), and how many are ready or further, with what that means in words. */
+export interface EpicCounts {
+  total: number;
+  by_progress: Partial<Record<SliceProgress, number>>;
+  ready_or_further: number;
+  ready_or_further_means: string;
+}
+
+/** `status.saved`: whether everything has reached where it is kept, and each thing that has not, in the engine's words. */
+export interface SavedReport {
+  everything_saved: boolean;
+  note: string;
+  not_saved: Array<{ kind: "unfinished" | "changed_since_ready" | "refresh_failed" | "request_updates" | (string & {}); target: string | null; text: string }>;
 }
 
 export interface StatusEpicRow {
@@ -106,8 +140,10 @@ export interface StatusEpicRow {
   status: EpicStatus;
   revision: number;
   acceptance_criteria: string[];
-  /** The epic's issue on GitHub, once a slice under it was saved there. */
+  /** The epic's issue on GitHub, once a slice under it was saved there, and its address. */
   issue: number | null;
+  url: string | null;
+  counts: EpicCounts;
 }
 
 export interface StatusSliceRow {
@@ -139,7 +175,7 @@ export interface ApprovalWithdrawn {
 }
 
 export interface Status {
-  project: (Omit<Project, "schema_version"> & { issue: number | null }) | null;
+  project: (Omit<Project, "schema_version"> & { issue: number | null; url: string | null }) | null;
   /** Approvals the engine withdrew (a reopen, a renumber, a version taken from GitHub), with the reason. */
   approvals_withdrawn: ApprovalWithdrawn[];
   epics: StatusEpicRow[];
@@ -147,9 +183,8 @@ export interface Status {
   /** The GitHub repository the project's issues live in, and when they were last read. */
   github: { repository: string | null; form: "sub_issues" | "task_list" | null; last_read: string | null };
   current_slice: string | null;
-  /** Plain words for the shared project, e.g. "the shared project". */
-  shared_project: string;
   last_refreshed: string | null;
+  saved: SavedReport;
   /** Updates to requests' issues not made yet, in plain words. Absent when there are none. */
   github_updates_note?: string;
   github_updates_not_made_note?: string;
@@ -201,6 +236,7 @@ export type NextActionKind =
   | "approve_epic"
   | "start_slice"
   | "continue_interview"
+  | "answer_question"
   | "mark_ready"
   | "finish_ready"
   | "reconcile"
@@ -227,6 +263,8 @@ export interface OnGithubIssue {
   matches_approval: boolean | null;
   /** The GitHub account that approved this version. */
   approved_by: string | null;
+  /** The builders' question on this issue, their words; null when there is none. */
+  question: string | null;
 }
 
 /** `refresh.github.slices[]`: every slice the workspace or GitHub knows. */
@@ -245,18 +283,17 @@ export interface RefreshGithub {
   refreshed_at: string | null;
   form: "sub_issues" | "task_list" | null;
   project_issue: number | null;
+  project_url: string | null;
   epics: Record<string, number>;
+  epic_urls: Record<string, string>;
   slices: RefreshGithubSlice[];
 }
 
 export interface Refresh {
+  /** Whether GitHub was read. */
   refreshed: boolean;
-  /** Why the shared project could not be reached, in plain words, when refreshed is false. */
+  /** Why GitHub could not be read, in plain words, when refreshed is false. */
   problem: string | null;
-  /** Git's own last line, for an engineer. Show only behind a disclosure. */
-  problem_detail?: string | null;
-  shared_project: string;
-  approvals_withdrawn: string[];
   github: RefreshGithub;
   factory_authorized: false;
 }
@@ -322,6 +359,8 @@ export interface SliceResume extends SlicePaths {
   open_questions: string[];
   check: SliceCheck | null;
   ids: SliceIds;
+  /** The builders' question, fenced as data for the interviewer; absent when there is none. */
+  builders_question?: { issue: number; url: string | null; fenced: string; sha256: string; note: string };
 }
 
 export interface SlicePause {
@@ -375,6 +414,7 @@ export interface SliceReopen {
   github: { where: "github" | "folder" | null; issue?: number; building?: boolean; question?: boolean; shipped?: boolean };
   /** The engine's note: what reopening did and what follows, in the PM's words. */
   note: string;
+  factory_authorized: false;
 }
 
 export interface Renumber {

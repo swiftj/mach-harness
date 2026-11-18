@@ -6,7 +6,7 @@
  * the scenario:
  *
  *   ?fixture=status.states                                which status the app sees
- *   ?show=ready | open-questions | errors | on-github     which slice.show the slice screens see
+ *   ?show=ready | open-questions | errors | on-github | question   which slice.show the slice screens see
  *   ?ready=refused | folder                               slice.ready answers with the engine's refusal, or saves to the folder
  *   ?refresh=refresh.offline                              which refresh the app sees
  *   ?interview=unavailable                                the session reports interview: false
@@ -67,6 +67,8 @@ async function sliceShow(sliceId: string): Promise<SliceShow | null> {
       return data<SliceShow>("slice.show.ready");
     case "on-github":
       return data<SliceShow>("slice.show.on-github");
+    case "question":
+      return data<SliceShow>("slice.show.question");
     case "open-questions":
       return data<SliceShow>("slice.show.open-questions");
     case "errors":

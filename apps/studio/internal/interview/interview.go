@@ -38,6 +38,10 @@ type StartRequest struct {
 	SliceID string
 	EpicID  string
 	Idea    string
+	// BuildersQuestion is the builders' question the engine reports on the slice (slice show). The
+	// host never sends its text to the interviewer: an opening turn says only that there is one,
+	// and the interviewer reads it from `slice resume`, fenced as data.
+	BuildersQuestion string
 }
 
 // Started answers POST /api/interview.

@@ -3,8 +3,7 @@
   "data": {
     "counts": {
       "epics": 2,
-      "slices": 7,
-      "waves": 0
+      "slices": 7
     },
     "errors": [],
     "factory_authorized": false,

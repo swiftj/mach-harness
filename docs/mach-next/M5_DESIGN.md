@@ -60,7 +60,7 @@ A pnpm workspace: `@mach/ui` (tokens, themes, primitives, shell, lifecycle, depe
 
 | Route | Experience |
 |-------|------------|
-| `/` | Project home, the default screen: name and vision, links to every other screen, the first of the engine's `next_actions`, what waits for the product manager, each epic with its slices. No rail: the other screens are also in the top bar's "More" menu |
+| `/` | Project home, the default screen: name and vision, links to every other screen ("Add an epic" opens its dialog here), the first of the engine's `next_actions`, what waits for the product manager, each epic with "N of M slices ready or further" and its slices, each with where it is and when it got there. No rail: the other screens are also in the top bar's "More" menu, and the top bar says whether everything is saved |
 | `/vision` | Vision and outcomes |
 | `/roadmap` | Epics and slices, and the dependency graph |
 | `/slices/:id` | Specification workspace: structured view, the why, source, mark ready to build / reopen / pause, and where the slice is with the builders |

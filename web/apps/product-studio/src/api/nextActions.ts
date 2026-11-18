@@ -12,7 +12,11 @@ export type ActionRoute =
   /** Start a slice: ask for its title, then open its interview. */
   | { type: "new-slice"; epicId: string | null; label: string }
   /** Give a draft the next free number, confirmed in place. */
-  | { type: "renumber"; id: string; label: string };
+  | { type: "renumber"; id: string; label: string }
+  /** Add an epic, in a dialog on the screen that asked. */
+  | { type: "add-epic"; label: string }
+  /** Answer the builders' question: reopen the slice (confirmed in place), then its interview. */
+  | { type: "answer-question"; sliceId: string; label: string };
 
 export function routeFor(action: NextAction): ActionRoute {
   const id = action.target;
@@ -22,7 +26,7 @@ export function routeFor(action: NextAction): ActionRoute {
     case "define_project":
       return { type: "navigate", to: "/vision", label: "Define the project" };
     case "add_epic":
-      return { type: "navigate", to: "/vision", label: "Add an epic", state: { focus: "epics" } };
+      return { type: "add-epic", label: "Add an epic" };
     case "approve_epic":
       return id && kind === "epic" ? { type: "approve-epic", epicId: id, label: "Review and approve" } : { type: "navigate", to: "/vision", label: "Open" };
     case "start_slice":
@@ -33,6 +37,8 @@ export function routeFor(action: NextAction): ActionRoute {
       return slice ? { type: "navigate", to: `/slices/${slice}`, label: "Read it and mark it ready" } : { type: "navigate", to: "/roadmap", label: "Open" };
     case "finish_ready":
       return slice ? { type: "navigate", to: `/slices/${slice}`, label: "Finish marking it ready" } : { type: "navigate", to: "/roadmap", label: "Open" };
+    case "answer_question":
+      return slice ? { type: "answer-question", sliceId: slice, label: "Answer it" } : { type: "navigate", to: "/inbox", label: "Open decisions" };
     case "reconcile":
       return { type: "navigate", to: "/inbox", label: "Choose a version" };
     case "renumber_slice":

@@ -1,0 +1,72 @@
+{
+  "exit_code": 0,
+  "data": {
+    "refreshed": true,
+    "problem": null,
+    "requests": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "refreshed_at": "2026-11-18T13:57:29Z",
+      "problem": null,
+      "truncated": false,
+      "truncated_note": null,
+      "items": [],
+      "updates_waiting": 0,
+      "updates_waiting_note": null,
+      "could_not_update": [],
+      "could_not_update_note": null
+    },
+    "github": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "problem": null,
+      "refreshed_at": "2026-11-18T13:57:29Z",
+      "form": null,
+      "project_issue": null,
+      "project_url": null,
+      "epics": {},
+      "epic_urls": {},
+      "slices": [
+        {
+          "slice_id": "SLICE-001",
+          "in_workspace": false,
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": null,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": null,
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": null,
+          "on_github": [
+            {
+              "issue": 3,
+              "state": "open",
+              "state_label": "mach:ready",
+              "revision": 1,
+              "title": "Invite a teammate",
+              "matches_approval": true,
+              "approved_by": "ada-pm",
+              "question": null
+            }
+          ],
+          "title": "Invite a teammate"
+        }
+      ]
+    },
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

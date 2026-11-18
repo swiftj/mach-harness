@@ -24,6 +24,7 @@ import {
   type Status,
   type StatusEpicRow,
 } from "@mach/ui";
+import type { failureText } from "@mach/ui/api";
 import { useRefresh, useStatus } from "../../api/store";
 import { describePath, titleFor } from "../../api/describe";
 import { nextActions, routeFor } from "../../api/nextActions";
@@ -33,6 +34,9 @@ import { ApproveEpicDialog } from "../vision/ApproveEpicDialog";
 import { NewSliceDialog } from "../roadmap/NewSliceDialog";
 import { IssueLink, IssueNumber } from "../../shared/IssueLink";
 import { RenumberDialog } from "../../shared/RenumberDialog";
+import { AnswerQuestionDialog } from "../../shared/BuildersQuestion";
+import { SliceTimes } from "../../shared/SliceTimes";
+import { EpicSheet } from "../vision/EpicSheet";
 import { FirstRun } from "./FirstRun";
 
 /** Refresh once per visit, when the project home first opens. */
@@ -60,7 +64,7 @@ export function HomeScreen() {
     );
   }
   const data = status.data as Status;
-  if (!data.project) return <FirstRun status={data} refreshing={refresh.loading} />;
+  if (!data.project) return <FirstRun refreshing={refresh.loading} />;
   return <ProjectHome status={data} />;
 }
 
@@ -76,6 +80,9 @@ function ProjectHome({ status }: { status: Status }) {
   const [approveEpic, setApproveEpic] = useState<string | null>(null);
   const [newSlice, setNewSlice] = useState<{ epicId: string | null } | null>(null);
   const [renumber, setRenumber] = useState<string | null>(null);
+  const [addEpic, setAddEpic] = useState(false);
+  const [answer, setAnswer] = useState<string | null>(null);
+  const [answerError, setAnswerError] = useState<ReturnType<typeof failureText> | null>(null);
   const [next] = nextActions(status);
 
   const runRoute = (action: NextAction) => {
@@ -83,7 +90,12 @@ function ProjectHome({ status }: { status: Status }) {
     if (route.type === "navigate") void navigate(route.to, route.state === undefined ? undefined : { state: route.state });
     else if (route.type === "approve-epic") setApproveEpic(route.epicId);
     else if (route.type === "new-slice") setNewSlice({ epicId: route.epicId });
-    else setRenumber(route.id);
+    else if (route.type === "add-epic") setAddEpic(true);
+    else if (route.type === "answer-question") {
+      const row = status.slices.find((s) => s.slice_id === route.sliceId);
+      if (row && !row.editable) setAnswer(route.sliceId);
+      else void navigate(`/slices/${route.sliceId}/interview`, { state: { answer: true } });
+    } else setRenumber(route.id);
   };
 
   // Requests from GitHub issues: only for a project whose shared repository is on GitHub (the engine
@@ -102,7 +114,7 @@ function ProjectHome({ status }: { status: Status }) {
               <Heading level={1} size="display">
                 {project.name}
               </Heading>
-              {project.issue ? <IssueNumber number={project.issue} /> : null}
+              {project.issue ? <IssueNumber number={project.issue} url={project.url} /> : null}
             </div>
             <Text size="body-lg" className="max-w-reading text-ink-muted">
               {project.vision}
@@ -110,9 +122,11 @@ function ProjectHome({ status }: { status: Status }) {
           </div>
           <nav aria-label="Project">
             <ul className="flex flex-wrap items-center gap-x-5 gap-y-2 text-body-sm">
-              <RowLink to="/vision" state={{ focus: "epics" }}>
-                Add an epic
-              </RowLink>
+              <li>
+                <button type="button" onClick={() => setAddEpic(true)} className="rounded-xs font-semibold text-accent-ink underline-offset-2 hover:underline">
+                  Add an epic
+                </button>
+              </li>
               <RowLink to="/vision">Edit the vision and outcomes</RowLink>
               {requestCount > 0 ? <RowLink to="/inbox">{plural(requestCount, "request")} from other people</RowLink> : null}
               {destinations
@@ -147,10 +161,8 @@ function ProjectHome({ status }: { status: Status }) {
           ) : (
             <div className="flex flex-col items-start gap-3 rounded-md border border-dashed border-line-strong px-5 py-5">
               <Text>No epics yet. An epic is a larger capability, such as “Team membership”, that several slices deliver.</Text>
-              <Button asChild variant="primary" size="sm">
-                <Link to="/vision" state={{ focus: "epics" }}>
-                  Add the first epic
-                </Link>
+              <Button variant="primary" size="sm" onClick={() => setAddEpic(true)}>
+                Add the first epic
               </Button>
             </div>
           )}
@@ -172,6 +184,15 @@ function ProjectHome({ status }: { status: Status }) {
       />
       <NewSliceDialog open={newSlice !== null} onOpenChange={(open) => !open && setNewSlice(null)} epics={status.epics} epicId={newSlice?.epicId} />
       <RenumberDialog id={renumber} onOpenChange={(open) => !open && setRenumber(null)} />
+      <EpicSheet state={addEpic ? { mode: "add" } : null} onClose={() => setAddEpic(false)} />
+      <AnswerQuestionDialog
+        sliceId={answer}
+        open={answer !== null}
+        onOpenChange={(open) => !open && setAnswer(null)}
+        error={answerError}
+        setError={setAnswerError}
+        onReopened={() => answer && void navigate(`/slices/${answer}/interview`, { state: { answer: true } })}
+      />
     </Page>
   );
 }
@@ -306,6 +327,7 @@ function titled(id: string, status: Status): string {
 function EpicBlock({ epic, status, onApprove, onAddSlice }: { epic: StatusEpicRow; status: Status; onApprove: () => void; onAddSlice: () => void }) {
   const slices = status.slices.filter((s) => s.epic_id === epic.epic_id);
   const headingId = `epic-${epic.epic_id}-title`;
+  const counts = epic.counts;
   // The same epics the start-a-slice dialog offers.
   const open = epic.status !== "superseded" && epic.status !== "completed";
   return (
@@ -316,7 +338,13 @@ function EpicBlock({ epic, status, onApprove, onAddSlice }: { epic: StatusEpicRo
         </Heading>
         <ArtifactId>{epic.epic_id}</ArtifactId>
         <EpicStatusPill status={epic.status} size="sm" />
-        {epic.issue ? <IssueNumber number={epic.issue} /> : null}
+        {epic.issue ? <IssueNumber number={epic.issue} url={epic.url} /> : null}
+        {counts.total ? (
+          <Text as="span" size="body-sm" tone="muted">
+            {counts.ready_or_further} of {plural(counts.total, "slice")} ready or further
+            <span className="sr-only"> ({counts.ready_or_further_means})</span>
+          </Text>
+        ) : null}
         {epic.status === "proposed" ? (
           <Button size="sm" className="ml-auto" onClick={onApprove}>
             Approve {epic.epic_id}
@@ -335,6 +363,11 @@ function EpicBlock({ epic, status, onApprove, onAddSlice }: { epic: StatusEpicRo
           </ul>
         </div>
       ) : null}
+      {counts.total ? (
+        <Text size="caption" tone="subtle">
+          Ready or further means {counts.ready_or_further_means}.
+        </Text>
+      ) : null}
       {slices.length ? (
         <SliceList slices={slices} status={status} />
       ) : (
@@ -352,7 +385,7 @@ function EpicBlock({ epic, status, onApprove, onAddSlice }: { epic: StatusEpicRo
   );
 }
 
-/** Each slice with the engine's state for it, and the way into its interview or its specification. */
+/** Each slice with the engine's state for it, when it got there, and the way into its interview or its specification. */
 function SliceList({ slices, status }: { slices: Status["slices"]; status: Status }) {
   return (
     <ul className="flex flex-col divide-y divide-line rounded-md border border-line bg-surface">
@@ -376,6 +409,7 @@ function SliceList({ slices, status }: { slices: Status["slices"]; status: Statu
                     .join(" · ")}
                 </span>
               ) : null}
+              <SliceTimes github={slice.github} mode="latest" />
             </div>
             <SliceStatusPill status={slice.status} size="sm" />
             <SliceGithubPills github={slice.github} size="sm" />

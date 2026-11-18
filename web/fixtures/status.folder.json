@@ -10,8 +10,8 @@
       "outcomes": [
         "Teams can work together"
       ],
-      "source": "draft",
-      "issue": null
+      "issue": null,
+      "url": null
     },
     "approvals_withdrawn": [],
     "epics": [
@@ -23,8 +23,16 @@
         "acceptance_criteria": [
           "Only invited people can join"
         ],
-        "source": "draft",
-        "issue": null
+        "issue": null,
+        "url": null,
+        "counts": {
+          "total": 1,
+          "by_progress": {
+            "ready_to_build": 1
+          },
+          "ready_or_further": 1,
+          "ready_or_further_means": "marked ready to build, being built, or shipped"
+        }
       }
     ],
     "slices": [
@@ -37,7 +45,6 @@
         "open_questions": 0,
         "spec": "specs/slices/SLICE-001-invite-teammate.md",
         "has_intent": true,
-        "source": "draft",
         "resume_note": null,
         "dependencies": [],
         "editable": false,
@@ -51,22 +58,30 @@
           "changed_on_github": false,
           "newer_elsewhere": false,
           "number_taken": false,
-          "shipped_issues": []
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": null,
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "ready_to_build"
         }
       }
     ],
+    "saved": {
+      "everything_saved": true,
+      "note": "Everything is saved.",
+      "not_saved": []
+    },
     "github": {
       "repository": null,
       "form": null,
       "last_read": null
     },
     "current_slice": "SLICE-001",
-    "needs_reconciling": {
-      "conflicts": [],
-      "collisions": [],
-      "details": {}
-    },
-    "shared_project": "the shared project",
     "last_refreshed": null,
     "structurally_valid": true,
     "structural_errors": [],

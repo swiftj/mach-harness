@@ -37,6 +37,9 @@ type showView struct {
 	Why struct {
 		Markdown *string `json:"markdown"`
 	} `json:"why"`
+	Github struct {
+		Question *string `json:"question"`
+	} `json:"github"`
 }
 
 func show(ctx context.Context, tx *engine.Tx, sliceID string) (*showView, engine.Envelope) {

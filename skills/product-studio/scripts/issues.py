@@ -76,13 +76,18 @@ def view(project: Path, repository: str, number: int) -> Tuple[Optional[Dict[str
     return found, None
 
 
+TIME_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z$")
+
+
 def comments(project: Path, repository: str, number: int) -> Tuple[Optional[List[Dict[str, Any]]], Failure]:
-    """The issue's comments as {login, body}; read to find MACH's own approval comments."""
+    """The issue's comments as {login, body, created_at}; read to find MACH's own approval and
+    status comments. `created_at` is GitHub's date of the comment (UTC), or None when it gave none."""
     found, failure = collab._gh_json(project, "issue", "view", str(int(number)), "--repo", repository, "--json", "comments")
     if failure:
         return None, failure
     items = found.get("comments") if isinstance(found, dict) else None
-    return [{"login": ((c.get("author") or {}).get("login") if isinstance(c.get("author"), dict) else None), "body": str(c.get("body") or "")}
+    return [{"login": ((c.get("author") or {}).get("login") if isinstance(c.get("author"), dict) else None), "body": str(c.get("body") or ""),
+             "created_at": c["createdAt"][:19] + "Z" if isinstance(c.get("createdAt"), str) and TIME_RE.fullmatch(c["createdAt"]) else None}
             for c in items or [] if isinstance(c, dict)], None
 
 

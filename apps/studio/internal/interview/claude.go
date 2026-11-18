@@ -182,6 +182,8 @@ type record struct {
 	Created        string   `json:"created"`
 	Updated        string   `json:"updated,omitempty"`
 	LastMessage    *Message `json:"last_message,omitempty"`
+	// SettledQuestion is the SHA-256 of the builders' question an opening turn was last started for.
+	SettledQuestion string `json:"settled_question,omitempty"`
 }
 
 type session struct {
@@ -346,6 +348,9 @@ func (c *Claude) Start(ctx context.Context, req StartRequest) (Started, error) {
 	}
 	if s := c.bySlice[req.SliceID]; s != nil {
 		c.mu.Unlock()
+		if err := s.answerQuestion(questionDigest(req.BuildersQuestion)); err != nil {
+			return Started{}, err
+		}
 		return Started{}, openHere(req.SliceID, s.id)
 	}
 	c.mu.Unlock()
@@ -385,7 +390,9 @@ func (c *Claude) Start(ctx context.Context, req StartRequest) (Started, error) {
 	s.newTurnLocked()
 	s.emitLocked("state", map[string]any{"state": "starting", "slice_id": req.SliceID, "resumed": resumed})
 	last := rec.LastMessage
-	if resumed && last != nil && last.Text != "" {
+	digest := questionDigest(req.BuildersQuestion)
+	answering := digest != "" && digest != rec.SettledQuestion
+	if resumed && last != nil && last.Text != "" && !answering {
 		// Show the question the PM was answering; their reply resumes the same Claude session.
 		s.emitMessageLocked(*last)
 		s.lastFinal, s.pending = s.pending, nil
@@ -405,12 +412,47 @@ func (c *Claude) Start(ctx context.Context, req StartRequest) (Started, error) {
 			message += ". The app just created it in " + epic + " for this idea from the product manager: " + req.Idea
 		}
 	}
+	if answering {
+		// A fixed sentence: the question itself reaches the interviewer only from the engine, fenced as data.
+		message += " " + AnswerQuestionNote
+		s.rec.SettledQuestion = digest
+		if err := c.saveRecord(s.rec); err != nil {
+			s.mu.Unlock()
+			return Started{}, err
+		}
+	}
 	err = s.startTurnLocked(message)
 	s.mu.Unlock()
 	if err != nil {
 		return Started{}, err
 	}
 	return Started{InterviewID: s.id, SliceID: req.SliceID, Resumed: resumed}, nil
+}
+
+// questionDigest identifies a builders' question without keeping its text; "" for none.
+func questionDigest(question string) string {
+	if question == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(question))
+	return hex.EncodeToString(sum[:])
+}
+
+// answerQuestion: a live interview that has not yet been told of this builders' question gets a
+// turn that says so in fixed words, when it is waiting for the product manager. The app then
+// attaches to it as usual.
+func (s *session) answerQuestion(digest string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if digest == "" || digest == s.rec.SettledQuestion || s.ended || s.running != nil {
+		return nil
+	}
+	s.rec.SettledQuestion = digest
+	if err := s.c.saveRecord(s.rec); err != nil {
+		return err
+	}
+	s.newTurnLocked()
+	return s.startTurnLocked(AnswerQuestionNote)
 }
 
 // openHere: this host already runs the slice's interview; the app attaches to it by its ID.

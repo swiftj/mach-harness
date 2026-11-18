@@ -11,11 +11,6 @@
       "specs/slices/SLICE-006-invite-teammate.md"
     ],
     "needs_approval_again": [],
-    "needs_reconciling": {
-      "conflicts": [],
-      "collisions": [],
-      "details": {}
-    },
     "structurally_valid": true,
     "structural_errors": []
   },

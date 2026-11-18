@@ -20,8 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT / "skills" / "ticket" / "scripts"))
 import issue_rules  # noqa: E402
-from test_mach_product_collab import intent_for, spec_for  # noqa: E402
-from test_mach_product_issues import IssuesBase  # noqa: E402
+from test_mach_product_issues import IssuesBase, intent_for, spec_for  # noqa: E402
 
 OUT = Path(__file__).resolve().parent
 
@@ -51,14 +50,27 @@ class Scenario(IssuesBase):
         """The slice ID the engine allocated for a title (IDs skip numbers a spec reserves)."""
         return [p.stem for p in sorted(self.draft(self.a, "product/slices").glob("SLICE-*.json")) if json.loads(p.read_text()).get("title") == title][-1]
 
-    def labelled(self, number, *names, closed=False):
-        self.change_issue(number, labels=[{"name": "mach:slice"}, *({"name": n} for n in names)], **({"state": "CLOSED"} if closed else {}))
+    def factory_says(self, number, moment, question=None):
+        """What the Factory writes on a slice's issue (the ticket station's own template), dated by the stand-in's clock."""
+        state = self.gh()
+        issue = state["issues"][str(number)]
+        marker = issue_rules.parse_slice_body(issue["body"])
+        body = issue_rules.comment(moment, [f"{marker['slice_id']}@r{marker['revision']}"], "0" * 32, question=question)["body"]
+        state["clock"] = state.get("clock", 0) + 3600
+        at = "2026-11-17T%02d:%02d:%02dZ" % (10 + state["clock"] // 3600, (state["clock"] // 60) % 60, state["clock"] % 60)
+        issue["comments"].append({"login": "erin-eng", "body": body, "created_at": at, "updated_at": at})
+        issue["labels"] = [{"name": "mach:slice"}, {"name": {"building": "mach:building", "question": "mach:question", "shipped": "mach:shipped"}[moment]}]
+        if moment == "shipped":
+            issue["state"] = "CLOSED"
+        self.gh_state.write_text(json.dumps(state))
 
 
 def main():
     for name in OUT.glob("*.json"):
         name.unlink()
     on_github()
+    builders_question()
+    someone_elses()
     without_gh()
     print("wrote", len(list(OUT.glob("*.json"))), "fixtures to", OUT)
 
@@ -104,9 +116,10 @@ def on_github():
         fourth = s.ok(s.a, "slice", "ready", rename)["issue"]
 
         # The builders take the first, ask about the second, ship the third; someone edits the fourth.
-        s.labelled(first, "mach:building")
-        s.labelled(second, "mach:question")
-        s.labelled(third, "mach:shipped", closed=True)
+        s.factory_says(first, "building")
+        s.factory_says(second, "question", QUESTION)
+        s.factory_says(third, "building")
+        s.factory_says(third, "shipped")
         s.change_issue(fourth, body=s.issue(fourth)["body"].replace("An admin", "Anyone"))
         s.capture("refresh.states", "refresh")
         s.capture("status.states", "status")
@@ -169,6 +182,43 @@ def on_github():
         # GitHub cannot be reached.
         s.fail("*", once=False)
         s.capture("refresh.offline", "refresh")
+        s.capture("status.offline", "status")
+    finally:
+        s.doCleanups()
+
+
+QUESTION = "FR-02 says a pending invitation holds a seat, but INV-03 says only accepted members count against the seat limit. Which one wins?"
+
+
+def builders_question():
+    """The builders ask a question about a slice; the product manager reopens it and the interview starts from it."""
+    s = Scenario()
+    s.setUp()
+    try:
+        s.project_and_epic()
+        s.drafted()
+        number = s.ready()["issue"]
+        s.factory_says(number, "question", QUESTION)
+        s.capture("refresh.question", "refresh")
+        s.capture("status.question", "status")
+        s.capture("slice.show.question", "slice", "show", "SLICE-001")
+        s.capture("slice.reopen.question", "slice", "reopen", "SLICE-001")
+        s.capture("slice.resume.question", "slice", "resume", "SLICE-001")
+    finally:
+        s.doCleanups()
+
+
+def someone_elses():
+    """Ben's workspace has the project; Ada saved a slice he does not have, which refresh lists as on GitHub only."""
+    s = Scenario()
+    s.setUp()
+    try:
+        s.project_and_epic()
+        s.drafted()
+        s.ready()
+        s.ok(s.b, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
+        s.capture("refresh.elsewhere", "refresh", project=s.b)
+        s.capture("status.elsewhere", "status", project=s.b)
     finally:
         s.doCleanups()
 

@@ -5,6 +5,7 @@ import type { MachApiError, SliceReady, SliceShow } from "@mach/ui/api";
 import { IssueLink } from "../../shared/IssueLink";
 import { client as studioClient } from "../../api/client";
 import { toApiError } from "../../api/session";
+import { useStatus } from "../../api/store";
 
 function Failure({ error, what }: { error: MachApiError; what: string }) {
   // A refusal is the engine's own words, shown as written; the title names what did not happen.
@@ -26,6 +27,9 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
   const check = show.check;
   const problems = diagnostics(check);
   const again = show.slice.status === "approved_for_engineering";
+  const epicId = show.slice.epic_id;
+  const epicTitle = useStatus().data?.epics.find((e) => e.epic_id === epicId)?.title;
+  const epicName = epicTitle ? `the epic “${epicTitle}” (${epicId})` : `its epic, ${epicId}`;
 
   const markReady = () => {
     setBusy(true);
@@ -83,7 +87,7 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
         <DialogContent
           width="lg"
           title={again ? `Mark ${id} ready again?` : `Mark ${id} ready to build?`}
-          description="This saves the slice to the project on GitHub, under its epic, and tells the builders it is ready. It records that you approved exactly this text. The slice cannot change until you reopen it."
+          description={`This saves the slice to the project on GitHub, under ${epicName}, and tells the builders it is ready. It records that you approved exactly this text. The slice cannot change until you reopen it.`}
           footer={
             <>
               <DialogClose asChild>

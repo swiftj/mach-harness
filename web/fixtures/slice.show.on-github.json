@@ -690,12 +690,21 @@
       "unfinished": false,
       "issue": 3,
       "url": "https://github.com/acme/team-space/issues/3",
-      "state_label": null,
+      "state_label": "mach:ready",
       "revision": 1,
       "changed_on_github": false,
       "newer_elsewhere": false,
       "number_taken": false,
-      "shipped_issues": []
+      "question": null,
+      "question_note": null,
+      "shipped_issues": [],
+      "times": {
+        "marked_ready": "2026-11-18T13:57:22Z",
+        "building": null,
+        "question": null,
+        "shipped": null
+      },
+      "progress": "ready_to_build"
     },
     "factory_authorized": false
   },

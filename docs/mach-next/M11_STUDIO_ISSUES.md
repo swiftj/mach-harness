@@ -9,7 +9,7 @@ what was built, what was decided where the design left a choice, and what is lef
 |---|---|
 | `slice ready <SLICE-ID>` | Runs the approval gates, approves the slice, and hands it over: a GitHub issue under its epic's issue, or the ready folder. This replaces `slice approve`, `wave approve` and `send`. |
 | `slice reopen <SLICE-ID>` | Takes `mach:ready` off the issue (or removes the folder) first, then makes the draft editable. If GitHub cannot be reached, it refuses and changes nothing. |
-| `refresh` | Does what it did before, and also reads the project, epic and slice issues. The result has a new `github` block. |
+| `refresh` | Reads the project, epic and slice issues (and the requests). `refreshed` and `problem` are the GitHub read's; the `github` block has each slice, the project's and epics' issues and their addresses. A read that fails is kept until one succeeds (`status.saved`). |
 | `reconcile <SLICE-ID> --take mine\|theirs` | For a slice someone else saved a newer version of on GitHub. |
 | `slice renumber <SLICE-ID>` | Unchanged. It now refuses a slice that has been marked ready, and skips the slice IDs GitHub holds. |
 
@@ -61,25 +61,25 @@ The tests interrupt each step two ways, by failing before the write and by losin
 12. **Taking theirs.** Only a version whose body is intact and carries an approval for that revision and those hashes can be taken. The text is written verbatim (it is hash-checked, not redacted), and the slice returns to `ready_for_approval`, or `interviewing` if it no longer passes.
 13. **Requests.** When a slice made from a request is marked ready, the request gets one comment from the new `ready` template: `SLICE-NNN, made from this request, is ready to be built: #n.` It goes through the existing outbox, and repeats are skipped by marker. `request met` now needs a slice that is marked ready (approved), as before.
 14. **Taking another product manager's slice into a workspace** without a local draft is not built. `refresh` lists every slice issue, and `reconcile` works for slices already linked.
-15. **Acceptance.** `acceptance record` is hidden along with the other leftovers, because publishing a decision needs the hidden `send --acceptance`.
+15. **Acceptance.** `acceptance record <EPIC-ID>` posts the decision on the epic's issue (`M11_FACTORY_INTAKE.md`). It stays a terminal command; the visual app's host does not offer it.
 
-## Leftovers kept only for the Factory's tests (remove in step 3)
+## Removed in step 3
 
-The Factory's intake, release-qualification, requests-intake and supervisor tests build their fixtures by publishing waves through Product Studio. Everything below is kept, unchanged in behaviour, hidden from help and the skill, and used by no new code.
+The wave, send, feedback and `slice approve` commands, the three-way sync of product files and the request status labels were removed with the Factory's step 3; `M11_FACTORY_INTAKE.md` lists them.
 
-| What | Where |
-|---|---|
-| `slice approve` | `studio.py` `cmd_slice_approve` (shares the gates with `slice ready` through `approval_problems`) |
-| `wave new\|add\|remove\|approve\|renumber` | `studio.py` `cmd_wave_*`, `editable_wave`, `check_wave_slices`, `wave_problems`, `cmd_renumber` (kind `wave`) |
-| `send`, `send --acceptance` | `studio.py` `cmd_send`, `closure`, `validate_tree`, `request_text`, `need_shared`, `describe_file`; `collab.py` `build_commit`, `remove_worktree`, `digest_of`, `open_pull_request`, `find_pull_request`, `latest_request`; `requests_in.py` `queue_sent` |
-| `feedback` | `studio.py` `cmd_feedback`; `collab.py` `review_state`, `in_words`, `waiting_for`, `unsigned` |
-| `acceptance record\|show` | `studio.py` `cmd_acceptance_record`, `cmd_acceptance_show`, `acceptance_path` |
-| Three-way sync of merged product files | `studio.py` `Studio.sync`, `sent_version`, `settle`, `theirs`, `base_file`, `set_base`, `ledger`/`save_ledger` (`publications.json`), `cmd_reconcile` for paths, `withdraw_slice`, `stray_revision_only`; `collab.py` `Shared`, `merge_fields`, `describe_change`, `spec_changes`, `changed_fields` |
-| Reopening returns waves to draft | `studio.py` `cmd_slice_reopen` (the wave loop) and the `waves_returned_to_draft` field, present only when a wave changed |
-| Hint kinds `approve_wave`, `renumber_wave`, `name_approver` | `studio.py` `HINT_KINDS`, given only by the commands above; `actor` |
-| `mach:grooming` on `request pick` | `requests_in.py` `_record_pick` (`queue(..., "label", GROOMING)`), `check_pick` and `decide` (`picked_up_by`); `issue_rules.py` `GROOMING` and `STATUS_LABELS`; `ticket.py` `REQUEST_MOMENTS["merged"]`, which adds `mach:ready` to a request's issue. `tests/test_mach_intake_requests.py` asserts both. |
-| Read by intake and qualify | `collab.py` `files_at`, `tracked`, `git_bytes`, `TRACKED`; `product.py` (`validate_workspace`, wave and acceptance shapes) |
-| Their tests | `tests/test_mach_product_collab.py` (its `Base` and helpers are the fixtures), the wave parts of `tests/test_mach_requests.py`, `tests/test_mach_product_contracts.py` (waves) |
+## Step 5: what the screens show, and what the engine reports for them
+
+The engine decides every figure and word; the app shows them.
+
+| Report | Where | What |
+|---|---|---|
+| The builders' question | `slices[].github.question`, `question_note`, `times.question` (status, `slice show`, refresh rows) | The Factory's question comment on the slice's issue, redacted and bounded there. `slice resume` adds `builders_question` (`issue`, `url`, `fenced`, `sha256`, `note`): the question fenced as `<<<QUESTION-DATA …>>>` (`issue_rules.question_fence`), for the interviewer to settle first. |
+| Where a slice is | `slices[].github.progress` | `draft`, `interviewing`, `ready_for_approval`, `approved` (saving not finished), `ready_to_build` (saved on GitHub or to the folder), `being_built`, `question`, `shipped`, `superseded`. |
+| Counts per epic | `epics[].counts` | `total` (not superseded), `by_progress`, `ready_or_further` and `ready_or_further_means` ("marked ready to build, being built, or shipped"). |
+| When | `slices[].github.times` | `marked_ready` (the approval comment for this version and these hashes), `building`, `question`, `shipped` (the latest MACH status comment of that moment), as GitHub dated the comments at the last refresh; set to now for `marked_ready` right after `slice ready`. Unknown stays `null`. |
+| Everything saved | `status.saved` | `everything_saved`, `note`, and `not_saved[]` (`kind`, `target`, `text`): `unfinished` (a save to GitHub that stopped part way), `changed_since_ready` (a reopened slice whose spec or why no longer matches what was saved for the builders), `refresh_failed` (the last read of GitHub did not finish; cleared by one that does), `request_updates` (updates to requests not yet made). |
+
+The visual app's host opens an interview with a fixed sentence when `slice show` reports a builders' question (`interview.AnswerQuestionNote`), once per question (`settled_question` in the interview record); the question's text reaches the interviewer only through `slice resume`. "Answer it" in the app reopens an approved slice, confirmed in a dialog, then starts that interview.
 
 ## GitHub shapes relied on
 
@@ -95,3 +95,4 @@ The Factory's intake, release-qualification, requests-intake and supervisor test
 | Maximum sub-issues per parent; maximum pinned issues | **Not confirmed** |
 | `gh api user` returns the signed-in account's `login` | Not stated on the `gh api` page; it is the REST "get the authenticated user" endpoint |
 | `gh issue view --json comments` gives `author.login` and `body` | Not checked against the manual; the M8 request code already relies on `body` |
+| `gh issue view --json comments` gives each comment's `createdAt` (ISO 8601, UTC) | **Not confirmed** against the manual; the times in `slices[].github.times` rely on it, and a comment without it gives no time |

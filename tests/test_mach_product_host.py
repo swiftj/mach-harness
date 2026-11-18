@@ -6,6 +6,7 @@ Skipped cleanly when Go is not installed.
 
 import http.client
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -34,10 +35,14 @@ def make_project(parent: Path, name: str) -> Path:
     return project
 
 
+TIME_RE = re.compile(rb"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
+
+
 def workspace(project: Path):
-    """Every file Product Studio keeps, by path, with its bytes."""
+    """Every file Product Studio keeps, by path, with its bytes; the moments it records (when a
+    slice was marked ready) are the only bytes that may differ between two runs."""
     home = project / ".factory" / "studio"
-    return {p.relative_to(home).as_posix(): p.read_bytes() for p in sorted(home.rglob("*")) if p.is_file()}
+    return {p.relative_to(home).as_posix(): TIME_RE.sub(b"<TIME>", p.read_bytes()) for p in sorted(home.rglob("*")) if p.is_file()}
 
 
 @unittest.skipIf(GO is None, "go is not installed")

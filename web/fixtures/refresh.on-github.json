@@ -3,21 +3,10 @@
   "data": {
     "refreshed": true,
     "problem": null,
-    "problem_detail": null,
-    "shared_project": "the shared project",
-    "arrived": [],
-    "updated": [],
-    "merged": [],
-    "approvals_withdrawn": [],
-    "needs_reconciling": {
-      "conflicts": [],
-      "collisions": [],
-      "details": {}
-    },
     "requests": {
       "repository": "acme/team-space",
       "refreshed": true,
-      "refreshed_at": "2026-11-18T05:28:06Z",
+      "refreshed_at": "2026-11-18T13:57:22Z",
       "problem": null,
       "truncated": false,
       "truncated_note": null,
@@ -31,11 +20,15 @@
       "repository": "acme/team-space",
       "refreshed": true,
       "problem": null,
-      "refreshed_at": "2026-11-18T05:28:06Z",
+      "refreshed_at": "2026-11-18T13:57:22Z",
       "form": "sub_issues",
       "project_issue": 1,
+      "project_url": "https://github.com/acme/team-space/issues/1",
       "epics": {
         "EPIC-001": 2
+      },
+      "epic_urls": {
+        "EPIC-001": "https://github.com/acme/team-space/issues/2"
       },
       "slices": [
         {
@@ -50,7 +43,16 @@
           "changed_on_github": false,
           "newer_elsewhere": false,
           "number_taken": false,
+          "question": null,
+          "question_note": null,
           "shipped_issues": [],
+          "times": {
+            "marked_ready": "2026-11-17T10:00:07Z",
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "ready_to_build",
           "on_github": [
             {
               "issue": 3,
@@ -59,7 +61,8 @@
               "revision": 1,
               "title": "Invite a teammate",
               "matches_approval": true,
-              "approved_by": "ada-pm"
+              "approved_by": "ada-pm",
+              "question": null
             }
           ],
           "title": "Invite a teammate"

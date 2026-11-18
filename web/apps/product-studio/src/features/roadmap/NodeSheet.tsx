@@ -247,7 +247,7 @@ function EpicDetail({
         </Fact>
         {epic.issue ? (
           <Fact term="Issue">
-            <IssueNumber number={epic.issue} />
+            <IssueNumber number={epic.issue} url={epic.url} />
           </Fact>
         ) : null}
       </Facts>

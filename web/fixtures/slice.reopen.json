@@ -22,7 +22,8 @@
       "question": false,
       "shipped": false
     },
-    "note": "It is no longer marked ready on GitHub (#3). You can change it now. Mark it ready again when it is done. The builders have already started on it; when you mark it ready again they will be told it changed."
+    "note": "It is no longer marked ready on GitHub (#3). You can change it now. Mark it ready again when it is done. The builders have already started on it; when you mark it ready again they will be told it changed.",
+    "factory_authorized": false
   },
   "refused": null,
   "hint": null

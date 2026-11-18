@@ -42,17 +42,17 @@ func TestAllowlistIsExactlyTheContract(t *testing.T) {
 	}
 }
 
-// The engine still has commands kept only for another team's tests (docs/mach-next/M11_STUDIO_ISSUES.md,
-// "Leftovers"): slice approve, waves, send, feedback and acceptance. None is reachable by name,
-// and no operation's argument vector starts with one, whatever its arguments.
-func TestTheEnginesLeftoverCommandsAreUnreachable(t *testing.T) {
+// Commands the app never offers: the removed slice approve, waves, send and feedback, and acceptance
+// record, which stays a terminal command. None is reachable by name, and no operation's argument
+// vector starts with one, whatever its arguments.
+func TestCommandsTheAppNeverOffersAreUnreachable(t *testing.T) {
 	for _, name := range []string{"slice.approve", "wave.new", "wave.add", "wave.remove", "wave.approve", "wave.renumber",
 		"send", "send.preview", "feedback", "acceptance.record", "acceptance.show", "acceptance"} {
 		if _, ok := engine.Lookup(name); ok {
 			t.Errorf("%s is reachable", name)
 		}
 	}
-	leftover := func(argv []string) bool {
+	offered := func(argv []string) bool {
 		if len(argv) == 0 {
 			return false
 		}
@@ -67,8 +67,8 @@ func TestTheEnginesLeftoverCommandsAreUnreachable(t *testing.T) {
 	for _, name := range engine.Names() {
 		for _, body := range bodies {
 			got, err := argv(t, name, body)
-			if err == nil && leftover(got) {
-				t.Errorf("%s %s reaches a leftover command: %q", name, body, got)
+			if err == nil && offered(got) {
+				t.Errorf("%s %s reaches a command the app never offers: %q", name, body, got)
 			}
 		}
 	}

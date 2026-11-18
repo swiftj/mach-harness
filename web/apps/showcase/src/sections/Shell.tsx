@@ -3,6 +3,7 @@ import { CircleCheck } from "lucide-react";
 import {
   Button,
   ConnectionIndicator,
+  savedState,
   ErrorState,
   LoadingState,
   SliceStatusPill,
@@ -67,15 +68,15 @@ export function ShellSection() {
     >
       <Specimen
         title="Connection indicator"
-        source="status.rich.json, refresh.on-github.json, refresh.offline.json"
-        note="Two links: the browser to the local host, and the workspace to the shared project. Icon and words for each; the popover explains."
+        source="status.rich.json, status.offline.json"
+        note="Two facts: the browser's link to the local host, and whether everything is saved, in the engine's words. Icon and words for each; the popover lists what is not saved."
       >
         <div className="grid grid-cols-2 gap-x-8 gap-y-4">
-          <ConnectionIndicator host="online" shared={{ reachable: true, lastRefreshed: fx.statusRich.last_refreshed, description: fx.refreshOnGithub.shared_project }} />
+          <ConnectionIndicator host="online" saved={savedState(fx.statusRich.saved)} />
           <ConnectionIndicator host="connecting" />
           <ConnectionIndicator
             host="online"
-            shared={{ reachable: false, lastRefreshed: null, description: fx.refreshOffline.shared_project, problem: fx.refreshOffline.problem }}
+            saved={savedState(fx.statusOffline.saved)}
           />
           <ConnectionIndicator host="offline" />
           <ConnectionIndicator host="unauthorized" />

@@ -26,6 +26,7 @@ export * from "./components/focus-return";
 export * from "./components/sheet";
 export * from "./components/popover";
 export * from "./components/tooltip";
+export * from "./components/relative-time";
 export * from "./components/tabs";
 export * from "./components/badge";
 export * from "./components/typography";

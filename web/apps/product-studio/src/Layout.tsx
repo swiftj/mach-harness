@@ -1,7 +1,7 @@
 import { Link, Outlet, useLocation } from "react-router";
-import { AppShell, Badge, ConnectionIndicator, HintProvider, MachMark, NavMenu, NavMenuItem, ThemeSwitch, TopBar, useConnectionState, type Status } from "@mach/ui";
+import { AppShell, Badge, ConnectionIndicator, HintProvider, MachMark, NavMenu, NavMenuItem, ThemeSwitch, TopBar, savedState, useConnectionState, type Status } from "@mach/ui";
 import { client, usingFixtures } from "./api/client";
-import { useRefresh, useSession, useStatus } from "./api/store";
+import { useSession, useStatus } from "./api/store";
 import { destinationFor, destinations } from "./features/registry";
 import { AppHint } from "./shared/AppHint";
 
@@ -15,7 +15,6 @@ export function Layout() {
   const host = useConnectionState(client.connection);
   const session = useSession();
   const status = useStatus();
-  const refresh = useRefresh();
   const projectName = status.data?.project?.name ?? session.data?.project.name ?? session.data?.project.folder ?? "Project";
   const here = location.pathname;
   const atHome = here === "/";
@@ -36,19 +35,7 @@ export function Layout() {
           status={
             <>
               {usingFixtures ? <Badge tone="warning">Fixture data</Badge> : null}
-              <ConnectionIndicator
-                host={host}
-                shared={
-                  status.data
-                    ? {
-                        reachable: refresh.data ? refresh.data.refreshed : refresh.error ? false : null,
-                        lastRefreshed: status.data.last_refreshed,
-                        description: status.data.shared_project,
-                        problem: refresh.data?.problem ?? null,
-                      }
-                    : undefined
-                }
-              />
+              <ConnectionIndicator host={host} saved={status.data ? savedState(status.data.saved) : undefined} />
             </>
           }
           actions={

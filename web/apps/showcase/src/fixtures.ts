@@ -24,6 +24,7 @@ import type {
 import statusEmptyJson from "../../../fixtures/status.empty.json";
 import statusSliceReadyJson from "../../../fixtures/status.slice-ready.json";
 import statusStatesJson from "../../../fixtures/status.states.json";
+import statusOfflineJson from "../../../fixtures/status.offline.json";
 import statusRichJson from "../../../fixtures/status.rich.json";
 import statusWithDependencyJson from "../../../fixtures/status.with-dependency.json";
 import sliceCheckErrorsJson from "../../../fixtures/slice.check.errors.json";
@@ -58,6 +59,7 @@ export const runs = {
   statusSliceReady: fixture<Status>(statusSliceReadyJson),
   statusStates: fixture<Status>(statusStatesJson),
   statusRich: fixture<Status>(statusRichJson),
+  statusOffline: fixture<Status>(statusOfflineJson),
   statusWithDependency: fixture<Status>(statusWithDependencyJson),
   sliceCheckErrors: fixture<SliceCheck>(sliceCheckErrorsJson),
   sliceReady: fixture<SliceReadyOnGithub>(sliceReadyJson),
@@ -81,6 +83,7 @@ export const fx = {
   statusSliceReady: data(runs.statusSliceReady, "status.slice-ready"),
   statusStates: data(runs.statusStates, "status.states"),
   statusRich: data(runs.statusRich, "status.rich"),
+  statusOffline: data(runs.statusOffline, "status.offline"),
   statusWithDependency: data(runs.statusWithDependency, "status.with-dependency"),
   sliceCheckErrors: data(runs.sliceCheckErrors, "slice.check.errors"),
   sliceReady: data(runs.sliceReady, "slice.ready"),

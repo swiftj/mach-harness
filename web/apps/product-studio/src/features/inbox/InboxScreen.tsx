@@ -6,6 +6,7 @@ import { useStatus } from "../../api/store";
 import { titleFor } from "../../api/describe";
 import { IssueLink } from "../../shared/IssueLink";
 import { RenumberDialog } from "../../shared/RenumberDialog";
+import { AnswerQuestionButton, BuildersQuestion } from "../../shared/BuildersQuestion";
 import { NewerVersionCard } from "./NewerVersionCard";
 import { OpenQuestionsCard } from "./OpenQuestionsCard";
 import { useRequestList } from "./requests/api";
@@ -42,7 +43,7 @@ function SliceCard({ slice, label, children, action }: { slice: StatusSliceRow; 
         <SliceGithubPills github={slice.github} size="sm" />
         {slice.github.issue ? <IssueLink number={slice.github.issue} url={slice.github.url} /> : null}
       </header>
-      <Text>{children}</Text>
+      <div className="text-body text-ink">{children}</div>
       <div className="flex flex-wrap gap-2">{action}</div>
     </article>
   );
@@ -236,19 +237,15 @@ export function InboxScreen() {
         ) : null}
 
         {builders.length ? (
-          <Group id="builders" title="Questions from the builders" hint="The builders asked a question about these slices on GitHub." count={builders.length}>
+          <Group id="builders" title="Questions from the builders" hint="The builders need your answer before they go on. Answering reopens the slice and starts its interview from their question." count={builders.length}>
             {builders.map((slice) => (
               <SliceCard
                 key={slice.slice_id}
                 slice={slice}
                 label="builders"
-                action={
-                  <Button asChild>
-                    <Link to={`/slices/${slice.slice_id}`}>Open the slice</Link>
-                  </Button>
-                }
+                action={<AnswerQuestionButton sliceId={slice.slice_id} approved={!slice.editable} />}
               >
-                The builders need your answer before they go on. Product Studio does not show their question yet; it is on the slice&apos;s issue.
+                <BuildersQuestion github={slice.github} headingLevel={3} />
               </SliceCard>
             ))}
           </Group>
