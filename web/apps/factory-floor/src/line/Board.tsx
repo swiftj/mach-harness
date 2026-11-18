@@ -16,6 +16,7 @@ import { duration } from "../shell/time";
 import { LINE_STATIONS, STATE_WORDS, timesWords, type LineRow, type StationStat } from "./model";
 import { Marker, PassedNode } from "./Marks";
 import { modelWords } from "./words";
+import { EpicLine } from "./Epic";
 
 const COLS = LINE_STATIONS.length;
 /** The centre of a column, as a share of the lane's width (in %). */
@@ -149,7 +150,7 @@ export function Board({ rows, stats, now, landedHidden, selectedTicket, selected
         </div>
         <div className="relative flex flex-col justify-end pb-2 pr-2">
           <span className="text-label text-factory-ink">Tickets</span>
-          <FreeTextLabel what="Titles" className="text-[12px] leading-tight text-factory-ink-soft" />
+          <FreeTextLabel what="Titles and epic names" className="text-[12px] leading-tight text-factory-ink-soft" />
         </div>
         {LINE_STATIONS.map((s, i) => (
           <StationHeading key={s.key} column={i} stat={stats[i]} selected={selectedColumn === i} onPick={onStation} />
@@ -201,6 +202,7 @@ export function Board({ rows, stats, now, landedHidden, selectedTicket, selected
                   ) : (
                     <span className="mt-0.5 text-caption text-factory-ink-soft">title not recorded</span>
                   )}
+                  <EpicLine row={row} labelled className="mt-0.5 line-clamp-1 text-caption text-factory-ink-soft" />
                 </div>
                 <div className={cn("col-span-7 min-w-0", selected ? "bg-surface/60" : "group-hover:bg-surface/40")}>
                   <Lane row={row} now={now} />

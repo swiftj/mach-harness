@@ -28,8 +28,6 @@ export function locate(L: PlantLayout, scene: Scene, t: number, entity: EntityRe
     // actor:scheduler and actor:supervisor (the simulation's non-agent actors).
     case "actor":
       return id === "scheduler" ? [boxAt(L.intake.scheduler, 18, 18, 26), boxAt(L.intake.schedulerDesk, 28, 18, 8)] : [boxAt(L.intake.supervisor, 32, 24, 12)];
-    case "wave":
-      return [{ ...L.dock, z: 0, h: 20 }, { x: 40, y: L.mid - 30, w: 40, d: 60, z: PLATE_Z, h: 16 }];
     case "slice": {
       const bay = L.bayBySlice.get(id);
       if (!bay) return [];

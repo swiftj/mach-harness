@@ -34,7 +34,6 @@ import {
   type SliceState,
   type ToolCallState,
   type VisitEntity,
-  type WaveState,
   type WorkflowEntity,
   executionEndedAt,
   parkedWords,
@@ -191,42 +190,18 @@ function DeclaredPhases({ phases }: { phases: readonly string[] }) {
   );
 }
 
-// ---------------------------------------------------------------- wave
+// ---------------------------------------------------------------- slice
 
-export function WaveAnatomy({ wave }: { wave: WaveState }) {
-  const slices = useScene((s) => s.slices);
+/** A slice's epic: its recorded name (free text, contained) and its id; "not recorded" when neither is. */
+function EpicWords({ epicId, epicTitle }: { epicId: string | null; epicTitle: string | null }) {
+  if (!epicId && !epicTitle) return <NotRecorded />;
   return (
-    <>
-      <Section title="Facts">
-        <Facts
-          facts={[
-            ["Epic", isKnown(wave.meta, "epicTitle") && wave.epicTitle ? wave.epicTitle : <NotRecorded key="e" />],
-            ["Approved by", wave.approvedAt ? `${wave.approvedBy}, ${wave.approvedAt.slice(11, 16)} UTC` : <span key="a">{wave.approvedBy}, time <NotRecorded /></span>],
-            ["Intake", wave.state === "validated" ? "Verified against its source commit" : "Seen, not yet verified"],
-            ["Arrived", at(wave.discoveredAt)],
-            ["Slices", wave.sliceIds.length],
-          ]}
-        />
-      </Section>
-      <Section title="Slices">
-        <RefList>
-          {wave.sliceIds.map((id) => {
-            const slice = slices[id];
-            if (!slice) return null;
-            const look = schedulerLook(slice.scheduler);
-            return (
-              <RefLink key={id} to={ref.slice(id)} glyph={<SliceGlyph size={18} state={look.state} mark={look.mark} />} detail={look.label}>
-                <span className="font-mono text-[12px]">{id}</span> <FreeText field="sliceTitle" text={slice.title} labelled expandable={false} />
-              </RefLink>
-            );
-          })}
-        </RefList>
-      </Section>
-    </>
+    <span>
+      {epicTitle ? <FreeText field="epicTitle" text={epicTitle} /> : null}
+      {epicId ? <span className="ml-1 font-mono text-[12px] text-ink-muted">{epicId}</span> : null}
+    </span>
   );
 }
-
-// ---------------------------------------------------------------- slice
 
 export function SliceAnatomy({ slice }: { slice: SliceState }) {
   const deps = useScene((s) => s.dependencies);
@@ -246,6 +221,8 @@ export function SliceAnatomy({ slice }: { slice: SliceState }) {
             hold ? ["Held since", at(hold.since)] : null,
             ["Risk", isKnown(slice.meta, "risk") ? slice.risk : <NotRecorded key="r" />],
             ["Ticket", slice.ticketId ? <Mono key="t">{slice.ticketId}</Mono> : <NotRecorded key="t" />],
+            ["Issue", slice.issue !== null ? <Mono key="i">#{slice.issue}</Mono> : <NotRecorded key="i" />],
+            ["Epic", <EpicWords key="e" epicId={slice.epicId} epicTitle={slice.epicTitle} />],
             slice.integratedCommit ? ["Integrated", <Mono key="c">{slice.integratedCommit.slice(0, 7)}</Mono>] : null,
           ]}
         />
@@ -286,9 +263,6 @@ export function SliceAnatomy({ slice }: { slice: SliceState }) {
               <span className="font-mono text-[12px]">{d.from}</span> waits for this
             </RefLink>
           ))}
-          <RefLink to={ref.wave(slice.waveId)} detail="wave">
-            <span className="font-mono text-[12px]">{slice.waveId}</span>
-          </RefLink>
         </RefList>
       </Section>
       <Section title="History">
@@ -1374,7 +1348,6 @@ export function ProjectAnatomy({ project }: { project: ProjectEntity }) {
           ["Name", project.name ?? <NotRecorded key="n" />],
           ["Integration branch", project.integrationBranch ? <Mono key="b">{project.integrationBranch}</Mono> : <NotRecorded key="b" />],
           ["Factory", f.enabled ? `${f.paused ? "Paused" : "Enabled"}${f.autonomy ? `, ${f.autonomy}` : ""}` : "Not enabled in the history received"],
-          ["Waves", project.waves],
           ["Slices", project.slices],
           ["Cells", project.cells],
           ["Executions", project.executions],

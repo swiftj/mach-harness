@@ -76,8 +76,8 @@ function linkHistory(rand) {
   const sliceAt = T0 + Math.floor(rand() * 4000);
   const cellAt = T0 + Math.floor(rand() * 4000);
   const scheduledAt = T0 + 4000 + Math.floor(rand() * 2000);
-  f.intake("wave.discovered", T0 - 1000, { slices: [SLICE], approval: { approved_at: null, by_role: "person" } }, { wave_id: "WAVE-001" }, ["wave:WAVE-001"]);
-  f.intake("slice.materialized", sliceAt, { digest: "d", adopted: false, dependencies: [], reissued: null }, { wave_id: "WAVE-001", slice_id: SLICE, ticket_id: TICKET }, ["wave:WAVE-001", `slice:${SLICE}`, `cell:${TICKET}`]);
+  f.intake("intake.validated", T0 - 1000, { digest: "d" }, { epic_id: "EPIC-001", slice_id: SLICE }, [`slice:${SLICE}`]);
+  f.intake("slice.materialized", sliceAt, { digest: "d", adopted: false, dependencies: [], reissued: null }, { epic_id: "EPIC-001", slice_id: SLICE, ticket_id: TICKET }, [`slice:${SLICE}`, `cell:${TICKET}`]);
   // The slice id reaches the lifecycle on a random later record only (or never).
   const sliceOn = Math.floor(rand() * 4);
   const ids = (k) => (k === sliceOn ? { slice_id: SLICE } : {});

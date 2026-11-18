@@ -26,15 +26,15 @@ func (w *world) setup() {
 	n := w.o.Cells
 	waveAt := []float64{300, 5400, 12600}
 	for i := 0; i < 3; i++ {
-		w.waves = append(w.waves, &wave{id: fmt.Sprintf("WAVE-%03d", i+1), at: waveAt[i]})
+		w.epics = append(w.epics, &epic{id: fmt.Sprintf("EPIC-%03d", i+1), at: waveAt[i]})
 	}
 	third := (n + 2) / 3
 	for i := 0; i < n; i++ {
-		wv := w.waves[min(i/third, 2)]
+		wv := w.epics[min(i/third, 2)]
 		if n == 12 {
-			wv = w.waves[i/4]
+			wv = w.epics[i/4]
 		}
-		s := &slice{id: fmt.Sprintf("SLICE-%03d", i+1), n: i, wave: wv, ticket: fmt.Sprintf("SYN-%03d", i+1), rev: 1}
+		s := &slice{id: fmt.Sprintf("SLICE-%03d", i+1), n: i, epic: wv, ticket: fmt.Sprintf("SYN-%03d", i+1), rev: 1}
 		prof := firstProfiles[min(i, len(firstProfiles)-1)]
 		if i >= len(firstProfiles) {
 			prof = moreProfiles[(i-len(firstProfiles))%len(moreProfiles)]
@@ -47,9 +47,9 @@ func (w *world) setup() {
 		w.cells = append(w.cells, c)
 	}
 	// A slice that never gets a cell: it waits on the escalated cell for the whole history.
-	extra := &slice{id: fmt.Sprintf("SLICE-%03d", n+1), n: n, wave: w.waves[2], ticket: fmt.Sprintf("SYN-%03d", n+1), rev: 1}
+	extra := &slice{id: fmt.Sprintf("SLICE-%03d", n+1), n: n, epic: w.epics[2], ticket: fmt.Sprintf("SYN-%03d", n+1), rev: 1}
 	extra.phases = [][]*cell{{w.cells[min(5, n-1)]}} // the escalated cell; the last one in a world of fewer than 6 (M6.6)
-	w.waves[2].slices = append(w.waves[2].slices, extra)
+	w.epics[2].slices = append(w.epics[2].slices, extra)
 	w.slices = append(w.slices, extra)
 	w.feature["blocked_at_end_slice"] = extra.id
 	for i, phases := range depsFor {
@@ -110,16 +110,10 @@ func (w *world) simulate() float64 {
 	pass := 0
 	for t := passEvery; t <= stopAt && t < w.loopCap(); t += passEvery {
 		pass++
-		// Waves arrive.
-		for _, wv := range w.waves {
+		// Epics arrive.
+		for _, wv := range w.epics {
 			if wv.at > t-passEvery && wv.at <= t {
-				ids := []any{}
-				for _, s := range wv.slices {
-					ids = append(ids, s.id)
-				}
-				w.intakeAdd(wv.at, "intake.validated", "intake", nil, nil, nil, map[string]any{"digest": w.hex(64)}).wave = wv.id
-				w.intakeAdd(wv.at+1, "wave.discovered", "intake", nil, nil, nil, map[string]any{"slices": ids,
-					"approval": map[string]any{"approved_at": mt(wv.at - 3600)}}).wave = wv.id
+				w.intakeAdd(wv.at, "intake.validated", "intake", nil, nil, nil, map[string]any{"digest": w.hex(64)}).epic = wv.id
 				for _, s := range wv.slices {
 					w.materialize(s, wv.at+2)
 					if len(s.phases) == 0 {

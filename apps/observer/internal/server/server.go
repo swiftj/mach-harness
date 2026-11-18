@@ -195,8 +195,6 @@ func New(opts Options) *Server {
 		"stream":                        s.stream,
 		"snapshot":                      s.snapshot,
 		"project":                       s.project,
-		"waves":                         s.waves,
-		"waves/{wave}":                  s.wave,
 		"slices":                        s.slices,
 		"slices/{slice}":                s.slice,
 		"cells":                         s.cells,

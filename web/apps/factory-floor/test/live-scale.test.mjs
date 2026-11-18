@@ -35,7 +35,7 @@ function factory({ lanes, rounds, progressEvery = 1, approve = true }) {
       const run = beltRun({
         ticket,
         slice: `SLICE-${hex(n, 4)}`,
-        wave: `WAVE-${hex(r, 3)}`,
+        epic: `EPIC-${hex(r, 3)}`,
         execution: `x${hex(n, 12)}`,
         intakeGen: hex(n, 8),
         cellGen: hex(n * 7919, 8).slice(-8),

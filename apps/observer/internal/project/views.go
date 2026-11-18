@@ -482,7 +482,7 @@ func ticketWait(s *State, ticket, slice string) *Wait {
 	return nil
 }
 
-// ---- project, waves, slices, cells ----
+// ---- project, slices, cells ----
 
 // OpenGates lists open human gates.
 func OpenGates(s *State) []*HumanGate {
@@ -526,7 +526,6 @@ func ProjectView(s *State) map[string]any {
 		"executions_active": running,
 		"human_gates_open":  OpenGates(s),
 		"intake":            map[string]any{"last_validated": TV(s.Project.LastValidated), "refused": s.Project.IntakeRefused},
-		"waves":             len(s.Waves),
 		"slices":            len(s.Slices),
 		"cells":             len(s.Cells),
 		"history":           HistoryFacts(s),
@@ -555,29 +554,6 @@ func FactoryView(s *State) map[string]any {
 		"held": nonNil(f.Held), "dispatched": nonNilS(f.Dispatched), "started": nonNilS(f.Started)}
 }
 
-// WaveView summarises a wave.
-func WaveView(s *State, w *Wave) map[string]any {
-	counts := map[string]int{}
-	for _, id := range w.Slices {
-		if sl := s.Slices[id]; sl != nil {
-			counts[sl.State]++
-		} else {
-			counts["not-materialized"]++
-		}
-	}
-	return map[string]any{"wave_id": w.WaveID, "revision": w.Revision, "slices": nonNilS(w.Slices), "approved": w.Approved, "approved_at": w.ApprovedAt,
-		"first_seen_at": TV(w.FirstSeen), "state_counts": counts}
-}
-
-// Waves lists waves by id.
-func Waves(s *State) []map[string]any {
-	out := []map[string]any{}
-	for _, id := range sortedKeys(s.Waves) {
-		out = append(out, WaveView(s, s.Waves[id]))
-	}
-	return out
-}
-
 // SliceView is one slice with its scheduler state and recorded wait.
 func SliceView(s *State, sl *Slice) map[string]any {
 	revs := sl.Revisions
@@ -588,38 +564,19 @@ func SliceView(s *State, sl *Slice) map[string]any {
 	if hist == nil {
 		hist = []StateChange{}
 	}
-	var title any
-	if sl.Title != "" {
-		title = sl.Title
-	}
-	return map[string]any{"slice_id": sl.SliceID, "title": title, "wave_id": sl.WaveID, "revision": sl.Revision, "ticket_id": sl.TicketID, "state": sl.State,
+	return map[string]any{"slice_id": sl.SliceID, "title": orNil(sl.Title), "epic_id": orNil(sl.EpicID), "epic_title": orNil(sl.EpicTitle), "issue": issueOrNil(sl.Issue), "revision": sl.Revision, "ticket_id": sl.TicketID, "state": sl.State,
 		"dependencies": nonNilS(sl.Dependencies), "depends_on": nonNilS(sl.DependsOn), "last_reasons": nonNilS(sl.Reasons), "waiting": SliceWait(s, sl),
 		"commit": sl.Commit, "materialized_at": TV(sl.Materialized), "blocked_at": TV(sl.Blocked), "resolved_at": TV(sl.Resolved),
 		"dispatched_at": TV(sl.Scheduled), "integrated_at": TV(sl.Integrated), "superseded_at": TV(sl.Superseded),
 		"earlier_revisions": revs, "history": hist}
 }
 
-// WaveDetail is a wave with its slices.
-func WaveDetail(s *State, w *Wave) map[string]any {
-	v := WaveView(s, w)
-	slices := []map[string]any{}
-	for _, id := range w.Slices {
-		if sl := s.Slices[id]; sl != nil {
-			slices = append(slices, SliceView(s, sl))
-		} else {
-			slices = append(slices, map[string]any{"slice_id": id, "state": "unknown", "waiting": nil, "note": "named by the wave; not materialized yet"})
-		}
-	}
-	v["slices"] = slices
-	return v
-}
-
-// Slices lists slices by id, optionally of one wave or one state.
-func Slices(s *State, wave, state string) []map[string]any {
+// Slices lists slices by id, optionally of one epic or one state.
+func Slices(s *State, epic, state string) []map[string]any {
 	out := []map[string]any{}
 	for _, id := range sortedKeys(s.Slices) {
 		sl := s.Slices[id]
-		if (wave == "" || sl.WaveID == wave) && (state == "" || sl.State == state) {
+		if (epic == "" || sl.EpicID == epic) && (state == "" || sl.State == state) {
 			out = append(out, SliceView(s, sl))
 		}
 	}
@@ -632,7 +589,7 @@ func CellSummary(c *Cell) map[string]any {
 	if n := len(c.Visits); n > 0 {
 		last = c.Visits[n-1].Outcome
 	}
-	return map[string]any{"ticket_id": c.TicketID, "cell_instance": c.CellInstance, "slice_id": c.SliceID, "wave_id": c.WaveID, "stage": c.Stage,
+	return map[string]any{"ticket_id": c.TicketID, "cell_instance": c.CellInstance, "slice_id": c.SliceID, "epic_id": orNil(c.EpicID), "issue": issueOrNil(c.Issue), "stage": c.Stage,
 		"stage_source": c.StageSource, "risk": orNil(c.Risk), "app_type": orNil(c.AppType),
 		"plan": map[string]any{"app_type": orNil(c.AppType), "risk": orNil(c.Risk), "contracts": c.Contracts, "tasks": c.TasksPlanned,
 			"recorded_by": orNil(c.AppTypeSource)}, "created_at": TV(c.FirstSeen), "updated_at": TV(c.Updated),
@@ -745,10 +702,6 @@ func SnapshotView(s *State) map[string]any {
 	for _, id := range sortedKeys(s.Slices) {
 		slices[id] = SliceView(s, s.Slices[id])
 	}
-	waves := map[string]any{}
-	for _, id := range sortedKeys(s.Waves) {
-		waves[id] = WaveView(s, s.Waves[id])
-	}
 	execs := map[string]any{}
 	for _, id := range sortedKeys(s.Executions) {
 		x := s.Executions[id]
@@ -758,7 +711,7 @@ func SnapshotView(s *State) map[string]any {
 	for _, k := range sortedKeys(s.Gates) {
 		gates = append(gates, s.Gates[k])
 	}
-	return map[string]any{"factory": FactoryView(s), "project": ProjectView(s), "waves": waves, "slices": slices, "cells": cells,
+	return map[string]any{"factory": FactoryView(s), "project": ProjectView(s), "slices": slices, "cells": cells,
 		"executions": execs, "gates": gates, "gaps": orEmpty(s.Gaps), "history": HistoryFacts(s)}
 }
 
@@ -816,4 +769,12 @@ func orNil(s string) any {
 		return nil
 	}
 	return s
+}
+
+// issueOrNil is an issue number, or null when none is recorded (0).
+func issueOrNil(n int64) any {
+	if n <= 0 {
+		return nil
+	}
+	return n
 }

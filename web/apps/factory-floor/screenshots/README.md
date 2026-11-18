@@ -26,16 +26,16 @@ Names: `NN-beat-atlas-theme[@2x].png`, 1920 x 1080 CSS px (3840 x 2160 for `@2x`
 | Beat | Time | Atlas framing |
 |---|---|---|
 | `01-opening` | 00:00 | fit |
-| `02-wave-arrives` | 00:34 | focus `wave:WAVE-007`, zoom 1.3 |
-| `03-three-bays` | 10:40 | focus `cell:LOCAL-032`, zoom 1.1 |
-| `04-agent-inspected` | 10:40 | select `agent:ag-031-08` |
-| `05-review-fan-out` | 26:41 | select `gate:LOCAL-033/review#1` |
-| `06-outvoted-blocker` | 26:52 | select `finding:LOCAL-033/r1/product/1` |
-| `07-verify-fail-return` | 27:40 | select `gate:LOCAL-031/verification#1`; focus `cell:LOCAL-031`, zoom 2.0 |
-| `08-rejection-crosses` | 32:20 | select `gate:LOCAL-032/review#1`; focus `cell:LOCAL-032`, zoom 0.85 |
-| `09-integration` | 42:47 | select `cell:LOCAL-031`; focus `station:merge`, zoom 1.15, nudged |
+| `02-slices-arrive` | 00:34 | focus `slice:SLICE-021`, zoom 1.3 |
+| `03-three-bays` | 10:40 | focus `cell:132`, zoom 1.1 |
+| `04-agent-inspected` | 10:40 | select `agent:ag-131-08` |
+| `05-review-fan-out` | 26:41 | select `gate:133/review#1` |
+| `06-outvoted-blocker` | 26:52 | select `finding:133/r1/product/1` |
+| `07-verify-fail-return` | 27:40 | select `gate:131/verification#1`; focus `cell:131`, zoom 2.0 |
+| `08-rejection-crosses` | 32:20 | select `gate:132/review#1`; focus `cell:132`, zoom 0.85 |
+| `09-integration` | 42:47 | select `cell:131`; focus `station:merge`, zoom 1.15, nudged |
 | `10-dependency-unlocks` | 43:42 | select and focus `dependency:SLICE-024->SLICE-021`, zoom 1.0 |
-| `11-human-gate-held` | 47:32 | select and focus `gate:LOCAL-032/human-approval`, zoom 1.8 |
+| `11-human-gate-held` | 47:32 | select and focus `gate:132/human-approval`, zoom 1.8 |
 | `12-human-gate-released` | 52:05 | as above |
 | `13-end-of-run` | 55:50 | fit |
 

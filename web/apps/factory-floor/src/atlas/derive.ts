@@ -42,8 +42,8 @@ export function q(p: number): number {
 
 // ---------------------------------------------------------------- log entries
 
-/** An id an event names (`ticket_id`, `slice_id`, `wave_id`): the v3 envelope's `ids`, or the simulation's own field. */
-export function idOf(entry: LogEntry, key: "ticket_id" | "slice_id" | "wave_id"): string | null {
+/** An id an event names (`ticket_id`, `slice_id`): the v3 envelope's `ids`, or the simulation's own field. */
+export function idOf(entry: LogEntry, key: "ticket_id" | "slice_id"): string | null {
   const e = entry.event as unknown as { ids?: Record<string, unknown> } & Record<string, unknown>;
   const v = e.ids?.[key] ?? e[key];
   return typeof v === "string" && v ? v : null;
@@ -88,7 +88,7 @@ export const WINDOWS: Readonly<Record<string, number>> = {
   "station.left": 1400,
   "station.exited": 1400,
   "work.scheduled": 1400,
-  "wave.discovered": 1400,
+  "intake.validated": 1400,
   "slice.materialized": 1900,
   "dependency.resolved": 800,
   "slice.integrated": 800,
@@ -376,7 +376,7 @@ export function padOf(station: StationId | null): PadName | null {
 
 // ---------------------------------------------------------------- legs: work travelling between places
 
-export type LegKind = "wave" | "cut" | "dispatch" | "handoff" | "travel" | "return" | "integrate";
+export type LegKind = "arrive" | "cut" | "dispatch" | "handoff" | "travel" | "return" | "integrate";
 
 export interface Leg {
   id: string;
@@ -451,10 +451,9 @@ export function routeBetween(L: PlantLayout, bay: BaySlot, from: StationId | nul
 interface LegEvent {
   readonly t: number;
   readonly id: string;
-  readonly type: "wave.discovered" | "slice.materialized" | "work.scheduled" | "merge.completed";
+  readonly type: "intake.validated" | "slice.materialized" | "work.scheduled" | "merge.completed";
   readonly ticket: string | null;
   readonly slice: string | null;
-  readonly wave: string | null;
   readonly late: boolean;
 }
 
@@ -465,8 +464,8 @@ interface LegEvent {
  */
 const legEvents = createLogFold<LegEvent>((entry) => {
   const type = entry.event.type;
-  if (type !== "wave.discovered" && type !== "slice.materialized" && type !== "work.scheduled" && type !== "merge.completed") return null;
-  return { t: entry.t, id: entry.id, type, ticket: idOf(entry, "ticket_id"), slice: idOf(entry, "slice_id"), wave: idOf(entry, "wave_id"), late: entry.late };
+  if (type !== "intake.validated" && type !== "slice.materialized" && type !== "work.scheduled" && type !== "merge.completed") return null;
+  return { t: entry.t, id: entry.id, type, ticket: idOf(entry, "ticket_id"), slice: idOf(entry, "slice_id"), late: entry.late };
 });
 
 /**
@@ -488,9 +487,10 @@ export function legsOf(log: SceneLog, L: PlantLayout): readonly Leg[] {
     if (LIVE && entry.late) continue;
     const t = entry.t;
     const ticket = entry.ticket;
-    if (type === "wave.discovered") {
-      const wave = entry.wave;
-      out.push({ id: `wave:${entry.id}`, ticketId: wave ?? "", kind: "wave", start: t, dur: TRAVEL_MS, route: [L.intake.dockEdge, { ...L.intake.hopper, x: L.intake.hopper.x - 22 }], state: "active", card: "spec", label: `${wave ?? "A wave"} arrives`, priority: 3, motion: "packetTravel" });
+    if (type === "intake.validated") {
+      // A slice marked ready arrives at the dock and travels to the hopper, where it is verified.
+      const slice = entry.slice;
+      out.push({ id: `arrive:${entry.id}`, ticketId: ticket ?? slice ?? "", kind: "arrive", start: t, dur: TRAVEL_MS, route: [L.intake.dockEdge, { ...L.intake.hopper, x: L.intake.hopper.x - 22 }], state: "active", card: "spec", label: `${slice ?? "A slice"} arrives`, priority: 3, motion: "packetTravel" });
     } else if (type === "slice.materialized") {
       const slice = entry.slice;
       const bay = slice ? L.bayBySlice.get(slice) : undefined;

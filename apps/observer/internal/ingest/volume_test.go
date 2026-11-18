@@ -32,11 +32,11 @@ func TestLargeVolume(t *testing.T) {
 	for i := 1; i <= intake; i++ {
 		switch i % 3 {
 		case 0:
-			buf.Write(v2(i, "dependency.blocked", "intake", fmt.Sprintf("T-%d", i%500), "", map[string]any{"reasons": []any{"waiting for SLICE-000 to be integrated"}}))
+			buf.Write(v3(i, "dependency.blocked", "intake", fmt.Sprintf("T-%d", i%500), "", map[string]any{"reasons": []any{"waiting for SLICE-000 to be integrated"}}))
 		case 1:
-			buf.Write(v2(i, "station.observed", "supervisor", fmt.Sprintf("T-%d", i%500), "", map[string]any{"from_stage": "planned", "stage": "building"}))
+			buf.Write(v3(i, "station.observed", "supervisor", fmt.Sprintf("T-%d", i%500), "", map[string]any{"from_stage": "planned", "stage": "building"}))
 		default:
-			buf.Write(v2(i, "scheduling.decided", "supervisor", "", "", map[string]any{"state": "supervised", "dispatched": []any{}, "started": []any{},
+			buf.Write(v3(i, "scheduling.decided", "supervisor", "", "", map[string]any{"state": "supervised", "dispatched": []any{}, "started": []any{},
 				"held": []any{map[string]any{"ticket_id": fmt.Sprintf("T-%d", i%7), "why": "all 2 place(s) are in use"}}}))
 		}
 	}

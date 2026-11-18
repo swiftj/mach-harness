@@ -99,14 +99,14 @@ func GatherFlow(ix *project.FlowIndex, in *Input, p Params) {
 		}
 	}
 	if in.FlowReason == "" {
-		q := project.FlowQuery{Risk: p.Filters["risk"], AppType: p.Filters["app_type"], Wave: p.Filters["wave"], Station: p.Filters["station"]}
+		q := project.FlowQuery{Risk: p.Filters["risk"], AppType: p.Filters["app_type"], Epic: p.Filters["epic"], Station: p.Filters["station"]}
 		q.Window, q.From, q.To = windowMS(in.Window)
 		rep := ix.Flow(q)
 		in.Flow = &rep
 	}
 
 	cq := func(w Span, group map[string]string) project.ContributorQuery {
-		q := project.ContributorQuery{Risk: p.Filters["risk"], AppType: p.Filters["app_type"], Wave: p.Filters["wave"], Group: group, Order: "recent", Limit: math.MaxInt32}
+		q := project.ContributorQuery{Risk: p.Filters["risk"], AppType: p.Filters["app_type"], Epic: p.Filters["epic"], Group: group, Order: "recent", Limit: math.MaxInt32}
 		q.Window, q.From, q.To = windowMS(w)
 		return q
 	}

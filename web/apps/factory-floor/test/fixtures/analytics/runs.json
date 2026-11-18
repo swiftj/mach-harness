@@ -67,7 +67,7 @@
         "supervisor_cost_usd": 4.7979,
         "tokens_total": 3522336
        },
-       "wave": "WAVE-001"
+       "epic": "EPIC-001"
       },
       {
        "app_type": "web",
@@ -98,7 +98,7 @@
         "supervisor_cost_usd": 4.3694,
         "tokens_total": 2789634
        },
-       "wave": "WAVE-001"
+       "epic": "EPIC-001"
       }
      ],
      "first_pass": true,
@@ -115,7 +115,7 @@
      "tests_seen_failing_first": 3,
      "ticket_id": "SYN-006",
      "verify_failures": 0,
-     "wave": "WAVE-001"
+     "epic": "EPIC-001"
     },
     {
      "app_type": "cli",
@@ -164,7 +164,7 @@
         "supervisor_cost_usd": 6.9462,
         "tokens_total": 4269954
        },
-       "wave": "WAVE-001"
+       "epic": "EPIC-001"
       },
       {
        "app_type": "cli",
@@ -195,7 +195,7 @@
         "supervisor_cost_usd": 5.0046,
         "tokens_total": 3223492
        },
-       "wave": "WAVE-001"
+       "epic": "EPIC-001"
       }
      ],
      "first_pass": true,
@@ -212,7 +212,7 @@
      "tests_seen_failing_first": 2,
      "ticket_id": "SYN-007",
      "verify_failures": 0,
-     "wave": "WAVE-001"
+     "epic": "EPIC-001"
     },
     {
      "app_type": "api",
@@ -260,7 +260,7 @@
         "supervisor_cost_usd": 5.2834,
         "tokens_total": 3017206
        },
-       "wave": "WAVE-001"
+       "epic": "EPIC-001"
       },
       {
        "app_type": "api",
@@ -292,7 +292,7 @@
         "supervisor_cost_usd": 5.6876,
         "tokens_total": 4562721
        },
-       "wave": "WAVE-001"
+       "epic": "EPIC-001"
       }
      ],
      "first_pass": true,
@@ -309,7 +309,7 @@
      "tests_seen_failing_first": 3,
      "ticket_id": "SYN-008",
      "verify_failures": 0,
-     "wave": "WAVE-001"
+     "epic": "EPIC-001"
     }
    ],
    "more": true,
@@ -337,6 +337,6 @@
   "ok": true
  },
  "path": "/analytics/runs?limit=3",
- "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --waves 8 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
+ "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --epics 8; its wave fields renamed by hand for M11 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
  "status": 200
 }

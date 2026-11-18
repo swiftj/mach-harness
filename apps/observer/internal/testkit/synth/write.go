@@ -21,7 +21,7 @@ type Summary struct {
 	Seed    uint64  `json:"seed"`
 	Cells   int     `json:"cells"`
 	Slices  int     `json:"slices"`
-	Waves   int     `json:"waves"`
+	Epics   int     `json:"epics"`
 	Hours   float64 `json:"hours"`
 	Start   string  `json:"start"`
 	End     string  `json:"end"`
@@ -135,7 +135,7 @@ func (g *gen) resolve(v any) any {
 
 func (g *gen) write() error {
 	w := g.w
-	g.spans = map[string]int{"wave": len(w.waves), "capacity-wait": w.capacityWaits}
+	g.spans = map[string]int{"capacity-wait": w.capacityWaits}
 	for _, d := range []string{".factory/intake", ".factory/worktrees", ".factory/local/executions", ".factory/archive", ".factory/observations"} {
 		if err := os.MkdirAll(g.path(d), 0o755); err != nil {
 			return err
@@ -222,7 +222,7 @@ func (g *gen) writeIntake() error {
 			g.cnt.add("intake-log", "history.gap", 1)
 			w.feature["intake_gap"] = fmt.Sprintf("seq %d-%d missing", seq-2, seq-1)
 		}
-		var ticket, x, slice, wave, rev any
+		var ticket, x, slice, epic, rev any
 		if r.ticket != "" {
 			ticket = r.ticket
 		}
@@ -232,11 +232,11 @@ func (g *gen) writeIntake() error {
 		if r.slice != "" {
 			slice, rev = r.slice, r.rev
 		}
-		if r.wave != "" {
-			wave = r.wave
+		if r.epic != "" {
+			epic = r.epic
 		}
-		line, _ := json.Marshal(map[string]any{"schema_version": 2, "seq": seq, "at": isoS(w.ms(r.t)), "type": r.typ, "project_id": "P-SYNTH",
-			"source_commit": nil, "wave_id": wave, "slice_id": slice, "revision": rev, "ticket_id": ticket, "runner_id": "runner-synth",
+		line, _ := json.Marshal(map[string]any{"schema_version": 3, "seq": seq, "at": isoS(w.ms(r.t)), "type": r.typ, "project_id": "P-SYNTH",
+			"source_commit": nil, "epic_id": epic, "issue": nil, "slice_id": slice, "revision": rev, "ticket_id": ticket, "runner_id": "runner-synth",
 			"execution_id": x, "source": r.source, "cause": nil, "refs": nil, "data": g.resolve(r.data)})
 		buf.Write(line)
 		buf.WriteByte('\n')
@@ -272,7 +272,7 @@ func (g *gen) writeLedger() error {
 				state = "integrated"
 			}
 		}
-		slices[s.id] = map[string]any{"ticket_id": s.ticket, "wave_id": s.wave.id, "revision": s.rev, "state": state}
+		slices[s.id] = map[string]any{"ticket_id": s.ticket, "epic": map[string]any{"epic_id": s.epic.id, "issue": nil, "title": "Synthetic epic " + s.epic.id[len("EPIC-"):]}, "revision": s.rev, "state": state}
 	}
 	execs := map[string]any{}
 	for _, x := range w.execs {
@@ -352,7 +352,7 @@ func (g *gen) writeCell(c *cell) error {
 	}
 	cellJSON, _ := json.MarshalIndent(map[string]any{"ticket_id": c.ticket, "stage": stage, "created_at": isoS(w.ms(c.created)), "round": c.round,
 		"mode": "headless", "risk_tier": c.risk, "app_type": "cli", "slice_id": c.slice.id,
-		"product": map[string]any{"slice_id": c.slice.id, "wave_id": c.slice.wave.id, "revision": c.slice.rev}, "synthetic": true}, "", "  ")
+		"product": map[string]any{"slice_id": c.slice.id, "epic_id": c.slice.epic.id, "source": "folder", "revision": c.slice.rev}, "synthetic": true}, "", "  ")
 	files := map[string][]byte{"cell.json": append(cellJSON, '\n')}
 	if c.an != nil {
 		files["cell.json"] = g.cellJSONA(c, stage)
@@ -437,7 +437,7 @@ func (g *gen) appendRun(c *cell) error {
 		"rounds": c.round, "first_pass": verifyFails+rejections == 0, "verify_failures": verifyFails, "review_rejections": rejections, "escalated": false,
 		"human_approval": false, "sent_back_by_person": 0, "deviations": []any{}, "blockers": []any{}, "risk": c.risk, "app_type": "cli", "tests_seen_failing_first": 2,
 		"tests_passing_on_first_run": 2, "integration": map[string]any{"method": "local", "merge_commit": c.head},
-		"product": map[string]any{"slice_id": c.slice.id, "wave_id": c.slice.wave.id, "revision": c.slice.rev}})
+		"product": map[string]any{"slice_id": c.slice.id, "epic_id": c.slice.epic.id, "source": "folder", "revision": c.slice.rev}})
 	path := g.path(".factory", "archive", "runs.jsonl")
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
 	if err != nil {
@@ -520,7 +520,7 @@ func (g *gen) summary() *Summary {
 	for _, c := range w.cells {
 		tickets = append(tickets, c.ticket)
 	}
-	return &Summary{Seed: w.o.Seed, Cells: len(w.cells), Slices: len(w.slices), Waves: len(w.waves), Hours: w.o.Hours,
+	return &Summary{Seed: w.o.Seed, Cells: len(w.cells), Slices: len(w.slices), Epics: len(w.epics), Hours: w.o.Hours,
 		Start: isoMS(w.startMS), End: isoMS(w.ms(w.endT)), StartMS: w.startMS, EndMS: w.ms(w.endT), Scale: math.Round(w.k*1000) / 1000, MaxPar: w.maxPar(),
 		Target: w.o.Events, Events: total, ByType: g.cnt.byType, BySource: g.cnt.bySource, Reconstruct: g.recon, Spans: g.spans,
 		Executions: len(w.execs), Agents: g.agents, Files: g.files, Bytes: g.bytes,

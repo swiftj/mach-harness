@@ -75,9 +75,9 @@ func (s *State) sliceCapacity(st, prev *Stamp, held []Held) {
 	for _, id := range sortedKeys(now) {
 		w := s.Pending.SliceCapacity[id]
 		if w == nil {
-			wave := ""
+			epic := ""
 			if sl := s.Slices[id]; sl != nil {
-				wave = sl.WaveID
+				epic = sl.EpicID
 			}
 			// It began after the previous decision, but never before the Factory was last activated or
 			// resumed (nothing decided while it was off) nor before the slice was eligible: when either
@@ -86,7 +86,7 @@ func (s *State) sliceCapacity(st, prev *Stamp, held []Held) {
 			if sl := s.Slices[id]; lo == nil || s.Factory.Since != nil && s.Factory.Since.Pos > lo.Pos || sl != nil && sl.eligible() != nil && sl.eligible().Pos > lo.Pos {
 				opened = st
 			}
-			w = &SliceCapacityWait{SliceID: id, WaveID: wave, Opened: opened}
+			w = &SliceCapacityWait{SliceID: id, EpicID: epic, Opened: opened}
 			s.Pending.SliceCapacity[id] = w
 		}
 		w.Limit, w.Why, w.LastHeld = limits[id], now[id].Why, st
@@ -221,7 +221,7 @@ func (s *State) span(id string, d []metrics.Dim, dd string, start, end *Stamp) {
 }
 
 // cdims are a metric's dimensions plus the ticket the member belongs to. The ticket's risk, app
-// type and wave are not written into the cell: a read joins them from the projection at its
+// type and epic are not written into the cell: a read joins them from the projection at its
 // cursor (TicketDims), so a ticket's figures do not split by when its classification became known
 // and do not depend on the order events arrived in (M6.5 D8).
 func (s *State) cdims(ticket string, kv ...string) []metrics.Dim {
@@ -234,14 +234,14 @@ func (s *State) cdims(ticket string, kv ...string) []metrics.Dim {
 	return append(d, metrics.Dim{Key: "ticket", Value: ticket})
 }
 
-// TicketDims is a ticket's risk, app type and wave as the projection knows them now: what a
+// TicketDims is a ticket's risk, app type and epic as the projection knows them now: what a
 // metric read joins to the ticket-keyed cells.
 func TicketDims(s *State, ticket string) map[string]string {
 	c := s.Cells[ticket]
 	if c == nil {
 		return nil
 	}
-	return map[string]string{"risk": c.Risk, "app_type": c.AppType, "wave": s.waveOf(c)}
+	return map[string]string{"risk": c.Risk, "app_type": c.AppType, "epic": s.epicOf(c)}
 }
 
 // MetricQuery evaluates metrics with the ticket dimensions joined from this state.
@@ -250,13 +250,13 @@ func (s *State) MetricQuery(q metrics.Query) []metrics.Row {
 	return s.Metrics.Query(q)
 }
 
-// waveOf is a cell's wave, from the cell or its slice.
-func (s *State) waveOf(c *Cell) string {
-	if c.WaveID != "" {
-		return c.WaveID
+// epicOf is a cell's epic, from the cell or its slice.
+func (s *State) epicOf(c *Cell) string {
+	if c.EpicID != "" {
+		return c.EpicID
 	}
 	if sl := s.Slices[c.SliceID]; sl != nil {
-		return sl.WaveID
+		return sl.EpicID
 	}
 	return ""
 }
@@ -337,8 +337,11 @@ func (s *State) cell(e *feed.Event, st *Stamp) *Cell {
 	if v := feed.Str(e.IDs.SliceID); v != "" {
 		c.SliceID = v
 	}
-	if v := feed.Str(e.IDs.WaveID); v != "" {
-		c.WaveID = v
+	if v := feed.Str(e.IDs.EpicID); v != "" {
+		c.EpicID = v
+	}
+	if e.IDs.Issue != nil && *e.IDs.Issue > 0 {
+		c.Issue = *e.IDs.Issue
 	}
 	if e.IDs.Revision != nil {
 		c.Revision = e.IDs.Revision
@@ -369,8 +372,11 @@ func (s *State) slice(e *feed.Event) *Slice {
 		s.Slices[id] = sl
 	}
 	s.touch(entSlice, id)
-	if v := feed.Str(e.IDs.WaveID); v != "" {
-		sl.WaveID = v
+	if v := feed.Str(e.IDs.EpicID); v != "" {
+		sl.EpicID = v
+	}
+	if e.IDs.Issue != nil && *e.IDs.Issue > 0 {
+		sl.Issue = *e.IDs.Issue
 	}
 	return sl
 }
@@ -439,7 +445,7 @@ func (s *State) endSliceWait(sl *Slice, st *Stamp) {
 		if w.Blocked != nil {
 			s.Metrics.OpenAdd("W1", day(w.Blocked), -1)
 		}
-		s.Metrics.Exclude("W1", s.cdims(sl.TicketID, "wave", sl.WaveID), day(st), "the wait ended because the slice was replaced, not resolved", 1)
+		s.Metrics.Exclude("W1", s.cdims(sl.TicketID, "epic", sl.EpicID), day(st), "the wait ended because the slice was replaced, not resolved", 1)
 	}
 	sl.endWait(st)
 }
@@ -487,39 +493,8 @@ func (s *State) closeRequired(ticket, slice string, st *Stamp, by string) {
 func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 	m := s.Metrics
 	switch e.Type {
-	case "wave.discovered":
-		id := feed.Str(e.IDs.WaveID)
-		if id == "" {
-			return
-		}
-		var d struct {
-			Slices   []string `json:"slices"`
-			Approval *struct {
-				ApprovedAt *string `json:"approved_at"`
-			} `json:"approval"`
-		}
-		e.DataAs(&d)
-		w := s.Waves[id]
-		if w == nil {
-			w = &Wave{WaveID: id, FirstSeen: st}
-			s.Waves[id] = w
-		}
-		s.touch(entWave, id)
-		w.Revision = e.IDs.Revision
-		if d.Slices != nil {
-			w.Slices = d.Slices
-		}
-		if d.Approval != nil && d.Approval.ApprovedAt != nil {
-			w.Approved, w.ApprovedAt = true, *d.Approval.ApprovedAt
-		}
 	case "intake.validated":
 		s.Project.LastValidated = st
-		// A wave's later approved revision is validated by intake (M7 D6: wave.discovered is
-		// recorded once, at the first revision); the wave then carries the newer revision.
-		if w := s.Waves[feed.Str(e.IDs.WaveID)]; w != nil && e.IDs.Revision != nil && (w.Revision == nil || *e.IDs.Revision > *w.Revision) {
-			w.Revision = e.IDs.Revision
-			s.touch(entWave, w.WaveID)
-		}
 	case "intake.refused":
 		s.Project.IntakeRefused++
 	case "slice.materialized":
@@ -529,7 +504,8 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		}
 		var d struct {
 			Dependencies []string `json:"dependencies"`
-			Title        *string  `json:"title"` // M6.6: from the intake ledger, for this revision
+			Title        *string  `json:"title"`      // M6.6: from the intake ledger, for this revision
+			EpicTitle    *string  `json:"epic_title"` // M11: likewise
 			Reissued     *bool    `json:"reissued"`
 		}
 		e.DataAs(&d)
@@ -538,7 +514,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 			sl.Revisions = append(sl.Revisions, SliceRevision{Revision: sl.Revision, TicketID: sl.TicketID, State: sl.State, At: sl.Materialized})
 			s.endSliceWait(sl, st) // a new revision replaced the slice while it waited
 			sl.Blocked, sl.Resolved, sl.Scheduled, sl.Integrated, sl.Superseded = nil, nil, nil, nil, nil
-			sl.Reasons, sl.DependsOn, sl.Commit, sl.Title, sl.Holds = []string{}, []string{}, "", "", nil
+			sl.Reasons, sl.DependsOn, sl.Commit, sl.Title, sl.EpicTitle, sl.Holds = []string{}, []string{}, "", "", "", nil
 		}
 		if old := sl.TicketID; old != "" && e.Ticket() != "" && old != e.Ticket() && !followUp {
 			// Reissued (M7 N7): the slice's earlier ticket is closed and its work goes on as this one.
@@ -556,6 +532,9 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		if d.Title != nil {
 			sl.Title = *d.Title
 		}
+		if d.EpicTitle != nil {
+			sl.EpicTitle = *d.EpicTitle
+		}
 		if d.Dependencies != nil {
 			sl.Dependencies = d.Dependencies
 		}
@@ -572,8 +551,8 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		e.DataAs(&d)
 		sl.Integrated, sl.Commit = st, d.Commit
 		sl.recompute(st)
-		m.Count("T2", s.cdims(sl.TicketID, "wave", sl.WaveID), day(st), 1)
-		s.span("C4", s.cdims(sl.TicketID, "wave", sl.WaveID), day(st), sl.eligible(), st)
+		m.Count("T2", s.cdims(sl.TicketID, "epic", sl.EpicID), day(st), 1)
+		s.span("C4", s.cdims(sl.TicketID, "epic", sl.EpicID), day(st), sl.eligible(), st)
 		s.closeRequired(sl.TicketID, sl.SliceID, st, e.Type)
 	case "dependency.resolved":
 		sl := s.slice(e)
@@ -585,7 +564,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 		}
 		e.DataAs(&d)
 		if sl.Blocked != nil && (sl.Resolved == nil || sl.Resolved.Pos < sl.Blocked.Pos) {
-			s.span("W1", s.cdims(sl.TicketID, "wave", sl.WaveID), day(st), sl.Blocked, st)
+			s.span("W1", s.cdims(sl.TicketID, "epic", sl.EpicID), day(st), sl.Blocked, st)
 		}
 		if w := sl.openWait(); w != nil {
 			w.Resolved, w.DependsOn = st, nonNilS(d.DependsOn)
@@ -642,7 +621,7 @@ func (s *State) applyIntake(e *feed.Event, st *Stamp) {
 				if t == "" {
 					t = e.Ticket()
 				}
-				s.span("W2", s.cdims(t, "wave", sl.WaveID), day(st), sl.eligible(), st)
+				s.span("W2", s.cdims(t, "epic", sl.EpicID), day(st), sl.eligible(), st)
 			}
 			sl.Scheduled = st
 			s.releaseSliceCapacity(sl.SliceID, st)

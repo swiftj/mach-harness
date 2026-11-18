@@ -151,10 +151,10 @@ test("the player opens from the address over a live observer, lists the checks, 
 });
 
 test("the simulation: its checks with sample content the app draws itself, labelled; a recording says there is none; nothing is requested", async () => {
-  const { page, context } = await openApp(browser, null, "?simulation#floor?evidence=LOCAL-031&check=AC-01", { waitReady: false });
+  const { page, context } = await openApp(browser, null, "?simulation#floor?evidence=131&check=AC-01", { waitReady: false });
   try {
     await sceneReady(page, { optional: true });
-    // The simulation runs on its own; the development hook holds it at a moment LOCAL-031 has checks.
+    // The simulation runs on its own; the development hook holds it at a moment 131 has checks.
     await page.waitForFunction(() => Boolean(window.__machSim), undefined, { timeout: 15_000 });
     await page.evaluate(() => {
       window.__machSim.useManualClock();

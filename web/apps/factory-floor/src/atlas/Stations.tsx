@@ -30,7 +30,7 @@ import {
 } from "@mach/ui";
 import { chamberGate } from "./consensus";
 import { FloorLettering } from "@mach/ui";
-import { PANELS, capacityWaitOf, capacityWaits, eventsInWindow, sliceHoldOf, type CapacityWaitState, type SliceHold, isKnown, ref, type Risk, type CellState, type EntityRef, type GateState, type LogEntry, type Scene, type SceneLog, type SliceState } from "../sim";
+import { PANELS, capacityWaitOf, capacityWaits, epicsInArrivalOrder, eventsInWindow, sliceHoldOf, type CapacityWaitState, type SliceHold, ref, type Risk, type CellState, type EntityRef, type GateState, type LogEntry, type Scene, type SceneLog, type SliceState } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { Hit, isDimmed, useAtlas, useHighlight, useNowKeyed } from "./context";
 import { AFTERGLOW, RATE, agentsElapsedKey, animating, anim, chamberOccupant, gateView, gateWord, latestGate, panelsSitting, placeAgents, q, ticketOfRef, type PlacedAgent } from "./derive";
@@ -65,17 +65,17 @@ function actorKey(log: SceneLog, t: number): string {
     .join("");
 }
 
-const INTAKE_KINDS: readonly string[] = ["wave.discovered", "slice.materialized", "intake.validated"];
+const INTAKE_KINDS: readonly string[] = ["slice.materialized", "intake.validated"];
 const DECISION_KINDS: readonly string[] = ["scheduling.decided", "dependency.blocked", "dependency.resolved", "work.scheduled"];
 const GATE_KINDS: readonly string[] = ["gate.checked", "gate.evaluated"];
 
-/** The most sheets the wave's manifest stacks (the simulation's wave has five slices). */
+/** The most sheets the dock's manifest stacks (the simulation's epic has five slices). */
 const MAX_SHEETS = 5;
 
 export function IntakeWorks() {
   const { lod, layout: L } = useAtlas();
   const { t, reduced, scene, log } = useFrame((f, now) =>
-    animating(f, now, has("wave.discovered", "slice.materialized", "gate.checked", "gate.evaluated", "work.scheduled"))
+    animating(f, now, has("intake.validated", "slice.materialized", "gate.checked", "gate.evaluated", "work.scheduled"))
       ? now
       : `${recentOf(f, now, INTAKE_KINDS, 14_000)}${recentOf(f, now, DECISION_KINDS, AFTERGLOW)}${recentOf(f, now, GATE_KINDS, AFTERGLOW)}|${actorKey(f, now)}`,
   );
@@ -83,10 +83,14 @@ export function IntakeWorks() {
   const I = L.intake;
   const recent = (kinds: readonly string[], ms = AFTERGLOW) => eventsInWindow(log, t, ms, kinds);
   const intakeBusy = recent(INTAKE_KINDS, 14_000).length > 0;
-  // The manifest on the dock is the latest wave received (each wave stacks its own sheets).
-  const waves = Object.values(scene.waves).sort((a, b) => a.discoveredAt - b.discoveredAt);
-  const anyWave = waves[waves.length - 1];
-  const hopperState: FactoryState = intakeBusy ? "active" : anyWave ? "succeeded" : "idle";
+  // The manifest on the dock: the slices of the latest epic received (or, with no epic recorded, every
+  // slice received), one sheet each, in the order they arrived.
+  const epics = epicsInArrivalOrder(scene);
+  const epic = epics.at(-1) ?? null;
+  const manifest = Object.values(scene.slices)
+    .filter((s) => (epic ? s.epicId === epic : true))
+    .sort((a, b) => a.since - b.since || (a.id < b.id ? -1 : 1));
+  const hopperState: FactoryState = intakeBusy ? "active" : manifest.length ? "succeeded" : "idle";
   const decided = recent(DECISION_KINDS);
   // The two actors of the record that are not agents: lit while their last act is recent.
   const actorBusy = (a: { lastActedAt: number | null } | undefined) => Boolean(a && a.lastActedAt !== null && t - a.lastActedAt < AFTERGLOW);
@@ -102,21 +106,21 @@ export function IntakeWorks() {
   const auditBusy = auditGate?.decidedAt != null && t - auditGate.decidedAt < AFTERGLOW;
   return (
     <g>
-      {/* The wave's manifest: one sheet per slice, stacked on the dock. */}
-      {anyWave ? (
-        <Hit entity={ref.wave(anyWave.id)} label={`Wave ${anyWave.id}, ${isKnown(anyWave.meta, "title") ? anyWave.title : "title not recorded"}: ${anyWave.sliceIds.length} slices, approved by ${isKnown(anyWave.meta, "approvedBy") ? anyWave.approvedBy : "(not recorded)"}${waves.length > 1 ? `; ${waves.length} waves received` : ""}`}>
-          <g style={{ opacity: isDimmed(highlight, ref.wave(anyWave.id)) ? 0.28 : 1 }}>
-            {/* At far zoom the stack is one sheet (spec b.7: artifacts as a count only; the name says how many).
+      {/* The manifest: one sheet per slice received, stacked on the dock. Decorative: each slice is selectable in its bay. */}
+      {manifest.length ? (
+        <g aria-hidden="true">
+          <g style={{ opacity: isDimmed(highlight, ...manifest.map((s) => ref.slice(s.id))) ? 0.28 : 1 }}>
+            {/* At far zoom the stack is one sheet (spec b.7: artifacts as a count only; the lettering says how many).
                 Elsewhere one sheet per slice, at most MAX_SHEETS (the element budget of a dense plant; the
-                simulation's wave never has more): the lettering then says how many slices. */}
-            {anyWave.sliceIds.slice(0, lod === "far" ? 1 : MAX_SHEETS).map((s, i) => (
-              <Card key={s} reduced={reduced} kind="spec" progress={q(anim("artifactMaterialise", t - anyWave.discoveredAt - i * 60 * RATE, reduced))} at={{ x: I.manifest.x - i * 2.4, y: I.manifest.y - i * 2, z: PLATE_Z - 2 }} lod={lod} showLabel={false} />
+                simulation's epic never has more): the lettering then says how many slices. */}
+            {manifest.slice(0, lod === "far" ? 1 : MAX_SHEETS).map((s, i) => (
+              <Card key={s.id} reduced={reduced} kind="spec" progress={q(anim("artifactMaterialise", t - s.since, reduced))} at={{ x: I.manifest.x - i * 2.4, y: I.manifest.y - i * 2, z: PLATE_Z - 2 }} lod={lod} showLabel={false} />
             ))}
           </g>
           {lod !== "far" ? (
-            <FloorLettering at={{ x: L.dock.x + 6, y: L.dock.y + L.dock.d - 16, z: PLATE_Z - 2 }} text={anyWave.sliceIds.length > MAX_SHEETS ? `${anyWave.id} · ${anyWave.sliceIds.length} slices` : anyWave.id} size={9} font="mono" tone="ink" weight={600} decorative />
+            <FloorLettering at={{ x: L.dock.x + 6, y: L.dock.y + L.dock.d - 16, z: PLATE_Z - 2 }} text={`${epic ?? "no epic recorded"} · ${manifest.length} slice${manifest.length === 1 ? "" : "s"}`} size={9} font="mono" tone="ink" weight={600} decorative />
           ) : null}
-        </Hit>
+        </g>
       ) : null}
       {/* Supervisor console at the back of intake, its conduit running to the floor. It lights while
           the supervisor's last act is recent (actor:supervisor in the record). */}
@@ -137,9 +141,9 @@ export function IntakeWorks() {
           <FloorLettering at={{ x: I.supervisor.x - 18, y: I.supervisor.y + 32, z: PLATE_Z }} text={`${unplacedWaits.length} WAIT FOR AN EXECUTION PLACE · ${unplacedWaits.slice(0, 2).map((w) => w.ticketId).join(", ")}${unplacedWaits.length > 2 ? " …" : ""}`} size={6.5} font="mono" tone="wait" weight={600} decorative />
         </g>
       ) : null}
-      {/* Inbound: the hopper where the wave is validated and cut into tickets. */}
+      {/* Inbound: the hopper where each ready slice is verified and filed as its ticket. */}
       <Hit entity={ref.station("intake")} label={`Intake: ${hopperState}`}>
-        <StationMachine nameplate showLabel={false} kind="intake" state={hopperState} at={I.hopper} lod={lod} planned={!anyWave} />
+        <StationMachine nameplate showLabel={false} kind="intake" state={hopperState} at={I.hopper} lod={lod} planned={!manifest.length} />
       </Hit>
       {/* The scheduler at its desk. Not an agent in the record: it lights only on scheduling events. */}
       {/* Furniture is detail: dropped at far zoom (spec b.7, the far element budget). */}
@@ -462,11 +466,11 @@ export function IntegrationWorks() {
   const lastMerge = Object.values(scene.cells).reduce((m, c) => Math.max(m, c.merged?.at ?? -1), -1);
   const state: FactoryState = merging.length ? "active" : lastMerge >= 0 && t - lastMerge < AFTERGLOW ? "succeeded" : lastMerge >= 0 ? "succeeded" : "idle";
   const merged = Object.values(scene.cells).filter((c) => c.merged).sort((a, b) => (a.merged!.at - b.merged!.at));
-  const waveKnown = Object.values(scene.waves).length > 0;
+  const slicesKnown = Object.keys(scene.slices).length > 0;
   const berth = (index: number): Vec3 => ({ x: I.merge.x - 130 - index * 120, y: I.trunkY, z: PLATE_Z });
   return (
     <g>
-      {/* Berths on the main line, one per slice of the wave (the merges this run expects), drawn
+      {/* Berths on the main line, one per slice received (the merges this history expects), drawn
           dashed until their merge commit lands; lettered only once intake knows the slices. */}
       <g aria-hidden="true">
         <g transform={planeTransform(PLATE_Z)}>
@@ -482,9 +486,9 @@ export function IntegrationWorks() {
               return <FloorLettering key={b.ticketId} at={{ x: at.x - 10, y: at.y + 18, z: PLATE_Z }} text={known ? `${b.ticketId} · berth` : `Berth ${b.index + 1}`} size={7.5} font={known ? "mono" : "sans"} tone="subtle" weight={500} decorative />;
             })
           : null}
-        {lod !== "far" && waveKnown ? (
+        {lod !== "far" && slicesKnown ? (
           // Behind the main line, clear of the berths' lettering in front of it.
-          <PlanDimension from={{ ...berth(L.bays.length - 1), x: berth(L.bays.length - 1).x - 11, y: I.trunkY - 14 }} to={{ ...berth(0), x: berth(0).x + 11, y: I.trunkY - 14 }} offset={8} label={`${L.bays.length} berths · one per slice of the wave`} />
+          <PlanDimension from={{ ...berth(L.bays.length - 1), x: berth(L.bays.length - 1).x - 11, y: I.trunkY - 14 }} to={{ ...berth(0), x: berth(0).x + 11, y: I.trunkY - 14 }} offset={8} label={`${L.bays.length} berths · one per slice received`} />
         ) : null}
       </g>
       <Hit entity={gate ? `gate:${gate.id}` : "gate:merge-revalidation"} label={`${revalText}: merge revalidation gate${gate ? `, ${gate.ticketId}` : ""}: ${revalWord}`}>
@@ -540,7 +544,7 @@ export function ArchiveWorks() {
       {lod !== "far" ? (
         <FloorLettering at={{ x: A.observe.x - 40, y: A.observe.y - 28, z: PLATE_Z }} text={`Observe pass after 5 finished · ${archived.length} of 5`} size={7.5} font="sans" tone="subtle" weight={500} decorative />
       ) : null}
-      {/* The runs.jsonl shelf: one slot per slice of the wave, dashed until that ticket's run is archived. */}
+      {/* The runs.jsonl shelf: one slot per slice received, dashed until that ticket's run is archived. */}
       <g aria-hidden="true" transform={planeTransform(PLATE_Z)}>
         <DashedRects merge={L.bays.length > 6} rects={L.bays.filter((b) => !scene.cells[b.ticketId]?.archived).map((b) => ({ x: shelfAt(b.index).x - 8, y: shelfAt(b.index).y - 2, w: 16, h: 4, r: 0 }))} dash="2 2" />
       </g>

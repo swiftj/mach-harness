@@ -15,14 +15,14 @@ const (
 	X6 = "x00000000000f"
 )
 
-// product files a wave, its slice and ticket, and the dispatch: wave.discovered at w,
+// product files a slice of an epic and its ticket, and the dispatch: intake.validated at w,
 // slice.materialized at w+10s (no dependencies), work.scheduled at sched.
-func (f *fx) product(wave, slice, ticket string, w, sched time.Time, risk string) {
-	f.slice(slice, ticket, wave, 1)
+func (f *fx) product(epic, slice, ticket string, w, sched time.Time, risk string) {
+	f.slice(slice, ticket, epic, 1)
 	f.intake(
-		L{At: w, Type: "wave.discovered", Wave: wave, Source: "intake", Data: M{"slices": []string{slice}}},
-		L{At: w.Add(10 * sec), Type: "slice.materialized", Wave: wave, Slice: slice, Ticket: ticket, Source: "intake", Data: M{"dependencies": []string{}}},
-		L{At: sched, Type: "work.scheduled", Wave: wave, Slice: slice, Ticket: ticket, Data: M{"stage": "spec-ready", "risk": risk}},
+		L{At: w, Type: "intake.validated", Epic: epic, Source: "intake", Data: M{"digest": "ab"}},
+		L{At: w.Add(10 * sec), Type: "slice.materialized", Epic: epic, Slice: slice, Ticket: ticket, Source: "intake", Data: M{"dependencies": []string{}}},
+		L{At: sched, Type: "work.scheduled", Epic: epic, Slice: slice, Ticket: ticket, Data: M{"stage": "spec-ready", "risk": risk}},
 	)
 }
 

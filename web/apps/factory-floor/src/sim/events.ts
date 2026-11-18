@@ -1,6 +1,7 @@
 /**
- * The event model. The envelope is the real MACH Factory event, version 2
- * (docs/mach-next/schemas/factory-event.schema.json; intake.py Factory.emit), field for field.
+ * The event model. The envelope is the real MACH Factory event, version 3 (M11: intake.py
+ * Factory.emit, EVENT_VERSION 3; no project_id or wave_id, an epic_id and the slice's issue), field
+ * for field.
  * Real kinds (`RealKind`) carry the `data` fields the real emitters write. Simulation kinds
  * (`SimKind`) are what the experience needs and MACH does not emit today; each is described, with
  * its telemetry status, in catalog.ts.
@@ -23,11 +24,10 @@ import type {
   ToolName,
 } from "./vocabulary";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
-/** The 22 kinds in intake.py EVENT_TYPES, unchanged. */
+/** The 21 kinds in intake.py EVENT_TYPES, unchanged. */
 export const REAL_KINDS = [
-  "wave.discovered",
   "intake.validated",
   "intake.refused",
   "slice.materialized",
@@ -52,7 +52,7 @@ export const REAL_KINDS = [
 ] as const;
 export type RealKind = (typeof REAL_KINDS)[number];
 
-/** Kinds the simulation adds. Not part of factory-event v2. */
+/** Kinds the simulation adds. Not part of factory-event v3. */
 export const SIM_KINDS = [
   "workflow.started",
   "workflow.phase",
@@ -108,7 +108,6 @@ export type TestContext = "baseline" | "red" | "green" | "done" | "finish" | "ve
 /** `data` by kind. Real kinds: exactly the fields their emitter writes. */
 export interface EventDataMap {
   // ---- real: intake and scheduling (intake.py) ----
-  "wave.discovered": { slices: string[]; approval: { actor: string; approved_at: string } };
   "intake.validated": { digest: string };
   "intake.refused": { problems: string[] };
   "slice.materialized": { digest: string; adopted: boolean; dependencies: string[] };
@@ -281,16 +280,18 @@ export interface EventDataMap {
   "cleanup.completed": { archive: string; outcome: "merged" | "abandoned"; rounds: number; first_pass: boolean; run_record: string };
 }
 
-/** The factory-event v2 envelope, typed by kind. */
+/** The factory-event v3 envelope, typed by kind. */
 export interface FactoryEvent<K extends EventKind = EventKind> {
-  readonly schema_version: 2;
+  readonly schema_version: 3;
   readonly seq: number;
   /** UTC, whole seconds, `YYYY-MM-DDTHH:MM:SSZ`, as intake.now() writes it. */
   readonly at: string;
   readonly type: K;
-  readonly project_id: string | null;
   readonly source_commit: string | null;
-  readonly wave_id: string | null;
+  /** The epic the slice belongs to. */
+  readonly epic_id: string | null;
+  /** The slice's GitHub issue number; null for a slice from a ready folder, and on events about no slice. */
+  readonly issue: number | null;
   readonly slice_id: string | null;
   readonly revision: number | null;
   readonly ticket_id: string | null;
@@ -306,7 +307,7 @@ export interface FactoryEvent<K extends EventKind = EventKind> {
 /**
  * A fixture event: the envelope plus `t`, milliseconds since the scenario's start. `t` is the
  * simulation's clock (the envelope's `at` has one-second resolution, as in MACH). It is the only
- * field that is not part of factory-event v2.
+ * field that is not part of factory-event v3.
  */
 export type SimEvent<K extends EventKind = EventKind> = FactoryEvent<K> & { readonly t: number };
 

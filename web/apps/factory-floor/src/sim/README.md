@@ -55,9 +55,9 @@ function CellCard({ ticketId }: { ticketId: string }) {
 | `SCENARIO: Fixture` | The M6.0 run (section 8). Built once at module load; deterministic. |
 | `buildScenario(): Fixture` | Builds it again (tests compare the two byte for byte). |
 | `EVENT_CATALOG: Record<EventKind, CatalogEntry>`, `CATALOG_ENTRIES` | Every kind: meaning, payload, telemetry class, source (section 7). |
-| `REAL_KINDS`, `SIM_KINDS` | The 22 kinds MACH emits today (`intake.EVENT_TYPES`), and the 29 the simulation adds. |
+| `REAL_KINDS`, `SIM_KINDS` | The 21 kinds MACH emits today (`intake.EVENT_TYPES`), and the 29 the simulation adds. |
 | `STATIONS`, `CELL_STAGES`, `STEP_ACTIONS`, `ACTION_STATION`, `NEXT_ACTIONS`, `STAGE_TRANSITIONS`, `SCHEDULER_STATES`, `MODELS`, `TIER_MODEL`, `AGENT_ROLES`, `AGENT_TYPES`, `REVIEW_SEATS`, `PANELS`, `MAX_ROUNDS`, `BELT_PHASES`, `TASK_KINDS`, `TASK_STEP`, `TOOLS`, `GATE_KINDS`, `ARTIFACT_KINDS` | MACH's vocabulary as data, each copied from the file named beside it in `vocabulary.ts`. |
-| `PEOPLE`, `PROJECT`, `WAVE`, `TICKETS`, `SLICE_IDS`, `SCENARIO_START`, `isoAt(t)` | Scenario constants. |
+| `PEOPLE`, `PROJECT`, `EPIC`, `ISSUES`, `TICKETS`, `SLICE_IDS`, `SCENARIO_START`, `isoAt(t)` | Scenario constants. |
 
 ### The scene
 
@@ -100,21 +100,20 @@ The signature takes the `Fixture`, not a bare event array: titles, risks and app
 
 ### Entity references
 
-One string names anything selectable: `` `${kind}:${id}` `` (`EntityRef`). Build them with `ref.cell("LOCAL-031")` etc.; read them with `refKind`, `refId`; gate IDs with `gateId(ticket, gate, round?)`.
+One string names anything selectable: `` `${kind}:${id}` `` (`EntityRef`). Build them with `ref.cell("131")` etc.; read them with `refKind`, `refId`; gate IDs with `gateId(ticket, gate, round?)`.
 
 | Kind | Example |
 |---|---|
-| `wave` | `wave:WAVE-007` |
 | `slice` | `slice:SLICE-021` |
-| `cell` | `cell:LOCAL-031` |
-| `station` | `station:LOCAL-031/build` (one cell's visits) or `station:build` (the station) |
+| `cell` | `cell:131` |
+| `station` | `station:131/build` (one cell's visits) or `station:build` (the station) |
 | `execution` | `execution:x4856eca1812e` |
-| `agent` | `agent:ag-031-07` |
-| `tool` | `tool:tc-031-0042` |
-| `artifact` | `artifact:LOCAL-031:plan.md`, `artifact:LOCAL-031:commit:3f2a9c1` |
-| `gate` | `gate:LOCAL-031/audit`, `gate:LOCAL-031/verification#1`, `gate:LOCAL-032/review#2`, `gate:LOCAL-032/human-approval`, `gate:LOCAL-031/merge-revalidation`, `gate:LOCAL-031/red-before-green`, `gate:LOCAL-031/plan-check` |
+| `agent` | `agent:ag-131-07` |
+| `tool` | `tool:tc-131-0042` |
+| `artifact` | `artifact:131:plan.md`, `artifact:131:commit:3f2a9c1` |
+| `gate` | `gate:131/audit`, `gate:131/verification#1`, `gate:132/review#2`, `gate:132/human-approval`, `gate:131/merge-revalidation`, `gate:131/red-before-green`, `gate:131/plan-check` |
 | `dependency` | `dependency:SLICE-024->SLICE-021` (the first waits for the second) |
-| `finding` | `finding:LOCAL-032/r1/security/1` |
+| `finding` | `finding:132/r1/security/1` |
 
 ### Actors: the supervisor and the scheduler
 
@@ -125,7 +124,7 @@ The line supervisor and the scheduler act in the record without being agents, so
 | `actor:supervisor` | `supervisor.py` (`Supervisor.once`, `observe`, `decided`, `start`, `recover`, `finish`, `park`) | `revision.discovered`, `scheduling.decided`, `work.claimed`, `execution.started`, `station.observed`, `recovery.started`, `execution.completed`, `execution.failed`; `human.required` when the supervisor parks a ticket |
 | `actor:scheduler` | `intake.py` (`Factory.plan`, `record`, `dispatch`, `open_cell`) | `dependency.resolved`, `dependency.blocked`, `slice.integrated`, `work.scheduled`; `human.required` from the recorded plan (reason `waiting for ...`) |
 
-Intake's own kinds (`wave.discovered`, `intake.validated`, `slice.materialized`), the engineer's commands and the stations' facts belong to no actor. In the fixture every attributed event has `source: "supervisor"`, because both act inside the supervisor's tick.
+Intake's own kinds (`intake.validated`, `slice.materialized`), the engineer's commands and the stations' facts belong to no actor. In the fixture every attributed event has `source: "supervisor"`, because both act inside the supervisor's tick.
 
 `scene.actors.supervisor` and `scene.actors.scheduler` hold `{ id, title, code, acts, lastActedAt, lastSeq, lastKind }`. `entityAt(scene, "actor:scheduler")` returns `{ kind: "actor", value }`; `eventsFor(fixture, "actor:scheduler", t?)` and `latestEventFor` work as for any entity, so a figure can light on its own events and the inspector can say why.
 
@@ -135,11 +134,11 @@ Intake's own kinds (`wave.discovered`, `intake.validated`, `slice.materialized`)
 
 ## 3. The event model
 
-The envelope is the real Factory event, version 2 (`docs/mach-next/schemas/factory-event.schema.json`, written by `intake.py Factory.emit`), field for field: `schema_version`, `seq`, `at`, `type`, `project_id`, `source_commit`, `wave_id`, `slice_id`, `revision`, `ticket_id`, `runner_id`, `execution_id`, `source`, `cause`, `refs`, `data`. These are the schema's names, which M6_0_CONTRACT.md section 4 also uses.
+The envelope is the real Factory event, version 3 since M11 (`docs/mach-next/schemas/factory-event.schema.json`, written by `intake.py Factory.emit`), field for field: `schema_version`, `seq`, `at`, `type`, `source_commit`, `epic_id`, `issue`, `slice_id`, `revision`, `ticket_id`, `runner_id`, `execution_id`, `source`, `cause`, `refs`, `data`. These are the schema's names, which M6_0_CONTRACT.md section 4 also uses.
 
 The simulation adds one field, `t`: milliseconds since the scenario's start. `at` is what MACH writes (UTC, whole seconds, `YYYY-MM-DDTHH:MM:SSZ`) and is too coarse to order or animate by, so the engine uses `t`. Tests check that removing `t` leaves exactly the schema's required fields.
 
-- **Real kinds** (`REAL_KINDS`, 22) are used unchanged, with exactly the `data` fields their real emitter writes (checked by test against `intake.py`). Their `cause` is `null`, because no MACH emitter sets it today.
+- **Real kinds** (`REAL_KINDS`, 21) are used unchanged, with exactly the `data` fields their real emitter writes (checked by test against `intake.py`). Their `cause` is `null`, because no MACH emitter sets it today.
 - **Simulation kinds** (`SIM_KINDS`, 29) are what the experience needs and MACH does not emit: workflow, station, stage, agent, tool, artifact, gate, task, test, verification, review, merge and cleanup events. They set `cause` where one event led to another. Their `source` stays within the schema's enum (`supervisor` for work inside an execution, `engineer` for the person's approval).
 - `switch (event.type)` narrows `event.data` (`AnySimEvent` is a discriminated union).
 
@@ -147,7 +146,7 @@ The beats the brief names, and the kind that carries each:
 
 | Beat | Kind |
 |---|---|
-| Wave arrives / becomes tickets | `wave.discovered`, `intake.validated`, `slice.materialized` (real) |
+| Ready slices arrive / become their tickets | `intake.validated`, `slice.materialized` (real) |
 | Scheduler decisions; waiting and why | `dependency.blocked`, `dependency.resolved`, `scheduling.decided` (real) |
 | Slice eligible / dependency satisfied | `dependency.resolved` (real); edges turn `satisfied` on `slice.integrated` (real) |
 | Dispatched | `work.scheduled` (real) |
@@ -176,8 +175,7 @@ The beats the brief names, and the kind that carries each:
 | `cursor`, `at`, `lastSeq` | Events applied, time and seq of the last one. |
 | `project`, `factory` | Project; whether the Factory is enabled, autonomy, by whom, limits, the product commit read. |
 | `supervisor` | `lastDecision` (dispatched, started, held with why), `attention` (what a person must decide, by ticket or slice). |
-| `waves[id]` | Title, slices, who approved and when, `discovered` or `validated`. |
-| `slices[id]` | Title, summary, risk, ticket, `dependsOn`, scheduler state (`materialized`, `waiting-on-dependency`, `eligible`, `dispatched`, `integrated`), the scheduler's own `reasons`, history. |
+| `slices[id]` | Title, summary, epic (id and name) and issue number where recorded, risk, ticket, `dependsOn`, scheduler state (`materialized`, `waiting-on-dependency`, `eligible`, `dispatched`, `integrated`), the scheduler's own `reasons`, history. |
 | `dependencies["A->B"]` | `from` waits for `to`; `blocking` or `satisfied`, and when. |
 | `cells[ticket]` | See below. Exists from the moment intake opens the cell; stays (with `archived` set) after cleanup. |
 | `executions[id]` | Claim, start, the workflow's phase, end, outcome and cost. |
@@ -238,8 +236,8 @@ sim.eventCount;
 sim.seek(t);            // move the Simulation to factory ms t, either way; it runs on from there
 sim.state();            // { now, cursor, workspace, theater, selection, follow, focus, reducedMotion,
                         //   clock: "live" | "manual" | "fixed" }
-sim.select("cell:LOCAL-031");   // or null; also frames it (and releases camera follow)
-sim.focus("gate:LOCAL-032/human-approval");  // or "overview"
+sim.select("cell:131");   // or null; also frames it (and releases camera follow)
+sim.focus("gate:132/human-approval");  // or "overview"
 sim.setWorkspace("floor");      // "line", "floor" or "analytics"
 sim.setTheater(true);
 sim.setFollow(true);
@@ -282,42 +280,42 @@ sim.useLiveClock();             // back to browser frames; time continues withou
 | `merge.revalidated`, `merge.completed` | derivable | `cell.json revalidated`, `merged` (nothing is written when no revalidation is needed) |
 | `cleanup.completed` | derivable | archive and `runs.jsonl` |
 
-The fixture's 2,126 events by class: **exists 75, derivable 1,940, missing 111** (`workflow.phase` 34, `station.entered` 26, `station.left` 25, `task.started` 26). Of the derivable ones, 1,565 (agents and tool calls) depend on the unverified question of whether workflow sub-agents appear in `stream.jsonl` (M6_0_TELEMETRY_GAPS.md section 7, item 1).
+The fixture's 2,129 events by class: **exists 78, derivable 1,940, missing 111** (`workflow.phase` 34, `station.entered` 26, `station.left` 25, `task.started` 26). Of the derivable ones, 1,565 (agents and tool calls) depend on the unverified question of whether workflow sub-agents appear in `stream.jsonl` (M6_0_TELEMETRY_GAPS.md section 7, item 1).
 
 ## 8. The scenario and its storyboard
 
-One approved delivery wave, `WAVE-007` "Invoicing: get paid on time" (epic EPIC-004, approved in Product Studio by Maya Lindqvist), for "Tally", a B2B billing web app. Priya Raman enables the Factory (supervised, `max_parallel` 3, merging allowed, `poll_seconds` 60). Daniel Okafor, who owns payments, signs off the High-risk change.
+Five slices of one epic, `EPIC-004` "Collect what customers owe" (issue #130), each a GitHub issue marked ready to build in Product Studio by Maya Lindqvist, for "Tally", a B2B billing web app. Each slice's issue number is its ticket (#131 to #135). Priya Raman enables the Factory (supervised, `max_parallel` 3, merging allowed, `poll_seconds` 60). Daniel Okafor, who owns payments, signs off the High-risk change.
 
 | Slice | Ticket | Risk | Waits for | What happens |
 |---|---|---|---|---|
-| SLICE-021 Invoice list with status filters | LOCAL-031 | Medium | | Verification fails on R4 (an invoice due today listed as overdue), revise round 2, passes, review round 2 approves 3 of 3, merged with revalidation |
-| SLICE-022 Charge a saved card for an open invoice | LOCAL-032 | High | | Changes an existing contract (`payments.proto`); review round 1 rejected by a security blocker (INV-02: a timed-out charge could charge twice); delta review round 2 approves 3 of 3; stops for a person; approved; a second execution merges it with revalidation |
-| SLICE-023 Download an invoice as a PDF | LOCAL-033 | Medium | | First-pass: approved 2 of 3 with the product seat's blocker outvoted (reported, not hidden); first to merge, no revalidation |
-| SLICE-024 Email a reminder when an invoice becomes overdue | LOCAL-034 | Medium | SLICE-021 | Waits; becomes eligible and is dispatched on the tick after SLICE-021 is integrated; still building at the end |
-| SLICE-025 Pay-now link in overdue reminders | LOCAL-035 | High | SLICE-022, SLICE-024 | Waits throughout |
+| SLICE-021 Invoice list with status filters | 131 | Medium | | Verification fails on R4 (an invoice due today listed as overdue), revise round 2, passes, review round 2 approves 3 of 3, merged with revalidation |
+| SLICE-022 Charge a saved card for an open invoice | 132 | High | | Changes an existing contract (`payments.proto`); review round 1 rejected by a security blocker (INV-02: a timed-out charge could charge twice); delta review round 2 approves 3 of 3; stops for a person; approved; a second execution merges it with revalidation |
+| SLICE-023 Download an invoice as a PDF | 133 | Medium | | First-pass: approved 2 of 3 with the product seat's blocker outvoted (reported, not hidden); first to merge, no revalidation |
+| SLICE-024 Email a reminder when an invoice becomes overdue | 134 | Medium | SLICE-021 | Waits; becomes eligible and is dispatched on the tick after SLICE-021 is integrated; still building at the end |
+| SLICE-025 Pay-now link in overdue reminders | 135 | High | SLICE-022, SLICE-024 | Waits throughout |
 
 Each execution runs `mach:belt` for one ticket, as the supervisor starts it: preflight clerks (locate run.py, check the project, read the status), then for every step a Haiku clerk running `run.py next <ticket> --headless`, then the worker it names: the plan worker on Opus with the `contract-engineer` sub-agent; `mach:builder` on Sonnet doing red and green task by task through `build.py`; `mach:verifier` on Sonnet driving Playwright and recording each scenario and matrix rule through `verify.py`; a clerk seating the panel, three `mach:reviewer` seats at once (Opus for High risk, Sonnet otherwise), a clerk tallying; Haiku workers for merge and cleanup; then the Learn phase's clerk. The supervisor's records (`station.observed`, `execution.completed`, `slice.integrated`, `dependency.*`, `human.required`, claims and starts, `scheduling.decided`) fall on its 60-second ticks.
 
-Scenario time zero is 2026-11-10T14:00:00Z. Duration 55:50 (last event 55:30, plus a 20-second hold). 2,126 events, 93 agents (up to 6 at once), 690 tool calls, 171 artifacts.
+Scenario time zero is 2026-11-10T14:00:00Z. Duration 55:50 (last event 55:30, plus a 20-second hold). 2,129 events, 93 agents (up to 6 at once), 690 tool calls, 171 artifacts.
 
 ### Chapters (`fixture.chapters`)
 
 | Time | Chapter | Focus |
 |---|---|---|
 | 00:00 | `enabled`: The Factory is enabled | overview |
-| 00:30 | `wave`: An approved wave arrives | `wave:WAVE-007` |
-| 00:31 | `dispatch`: Three cells start | `wave:WAVE-007` |
-| 01:22 | `plan`: Contracts and plans | `cell:LOCAL-031` |
-| 06:55 | `build`: Test-first construction | `cell:LOCAL-031` |
-| 21:10 | `verify`: Verification | `cell:LOCAL-033` |
-| 24:23 | `review`: Review panels | `cell:LOCAL-033` |
-| 27:11 | `integrate`: First work lands | `cell:LOCAL-033` |
-| 27:19 | `verify-fail`: R4 fails, back to build | `gate:LOCAL-031/verification#1` |
-| 32:08 | `blocker`: A security blocker | `gate:LOCAL-032/review#1` |
+| 00:30 | `ready`: Ready slices arrive | `slice:SLICE-021` |
+| 00:31 | `dispatch`: Three cells start | `cell:131` |
+| 01:22 | `plan`: Contracts and plans | `cell:131` |
+| 06:55 | `build`: Test-first construction | `cell:131` |
+| 21:10 | `verify`: Verification | `cell:133` |
+| 24:23 | `review`: Review panels | `cell:133` |
+| 27:11 | `integrate`: First work lands | `cell:133` |
+| 27:19 | `verify-fail`: R4 fails, back to build | `gate:131/verification#1` |
+| 32:08 | `blocker`: A security blocker | `gate:132/review#1` |
 | 43:30 | `unblocked`: SLICE-024 is free to start | `dependency:SLICE-024->SLICE-021` |
-| 46:42 | `human-gate`: A person must approve | `gate:LOCAL-032/human-approval` |
-| 51:57 | `approved`: Daniel Okafor approves | `gate:LOCAL-032/human-approval` |
-| 54:20 | `last-merge`: Revalidated and merged | `cell:LOCAL-032` |
+| 46:42 | `human-gate`: A person must approve | `gate:132/human-approval` |
+| 51:57 | `approved`: Daniel Okafor approves | `gate:132/human-approval` |
+| 54:20 | `last-merge`: Revalidated and merged | `cell:132` |
 
 Exact times are in `SCENARIO.chapters` (use those, not this table, in the capture script).
 
@@ -326,50 +324,50 @@ Exact times are in `SCENARIO.chapters` (use those, not this table, in the captur
 | Time | Seq | Kind | Beat |
 |---|---|---|---|
 | 00:00 | 1 | `factory.activated` | Priya Raman enables the Factory (supervised, 3 cells at once). |
-| 00:30 | 2 | `wave.discovered` | WAVE-007 arrives with 5 slices; 5 `slice.materialized` follow (LOCAL-031 to 035). |
-| 00:30 | 9 | `dependency.resolved` | SLICE-021, 022, 023 depend on nothing; SLICE-024 and 025 are `dependency.blocked`. |
-| 00:31 to 00:33 | 20, 26, 32 | `work.scheduled` | Cells LOCAL-031, 032, 033 opened at spec-ready. |
-| 00:34 to 00:37 | 36, 38, 40 | `execution.started` | One mach:belt execution per cell. |
-| 00:37 | 41 | `scheduling.decided` | Dispatched 3, started 3. |
-| 01:11 to 01:13 | 100 to 110 | `station.entered` | All three at plan: contract engineers on Opus. |
-| 03:38 to 03:43 | 246 to 259 | `station.entered` | All three at build: builders red and green, task by task (busiest stretch). |
-| 20:11 | 746 | `station.entered` | LOCAL-033 at verify. |
-| 24:06 | 878 | `verification.verdict` | LOCAL-033 PASS, 5 of 5. |
-| 24:23 | 897 | `review.started` | LOCAL-033 round 1: three seats fan out. |
-| 26:47 | 1053 | `review.decided` | LOCAL-033 APPROVED 2 of 3; the product seat's blocker (FR-02, tax ID) is outvoted. |
-| 27:11 | 1079 | `merge.completed` | LOCAL-033 lands; no revalidation (main has not moved). |
-| 27:19 | 1094 | `verification.verdict` | LOCAL-031 FAIL_WITH_EVIDENCE: R4, 7 of 8. |
-| 27:30 | 1119 | `slice.integrated` | SLICE-023 integrated. |
-| 27:36 | 1123 | `build.revised` | LOCAL-031 back to build, round 2 of 3. |
-| 27:39 | 1133 | `cleanup.completed` | LOCAL-033 archived. |
-| 28:57 | 1193 | `verification.verdict` | LOCAL-032 PASS, 7 of 7. |
-| 29:14 | 1207 | `review.started` | LOCAL-032 round 1, three Opus seats, 3 approvals needed. |
-| 32:08 | 1334 | `review.decided` | LOCAL-032 REJECTED: security blocker (INV-02). |
-| 32:25 | 1354 | `build.revised` | LOCAL-032 back to build, round 2. |
-| 38:36 | 1506 | `verification.verdict` | LOCAL-031 PASS, 8 of 8. |
-| 38:52 | 1527 | `review.started` | LOCAL-031 round 2 (its first review: round 2, no delta). |
-| 41:21 | 1654 | `review.decided` | LOCAL-031 APPROVED 3 of 3, notes only. |
-| 42:42 | 1698 | `merge.completed` | LOCAL-031 lands after revalidation on top of LOCAL-033. |
-| 43:30 | 1742 | `slice.integrated` | SLICE-021 integrated. |
-| 43:30 | 1743 | `dependency.resolved` | SLICE-024 eligible. |
-| 43:31 | 1750 | `work.scheduled` | SLICE-024 dispatched as LOCAL-034; started at 43:33. |
-| 43:31 | 1751 | `verification.verdict` | LOCAL-032 PASS, round 2. |
-| 43:48 | 1775 | `review.started` | LOCAL-032 round 2: delta review (since the rejected head; earlier blocker file listed). |
-| 44:09 | 1823 | `station.entered` | LOCAL-034 at plan. |
-| 46:35 | 1936 | `station.entered` | LOCAL-034 at build. |
-| 46:42 | 1946 | `review.decided` | LOCAL-032 AWAITING_HUMAN: 3 of 3, High risk. |
-| 46:51 | 1955 | `station.entered` | LOCAL-032 at the human-approval gate; its execution returns. |
-| 47:30 | 1967, 1968 | `execution.completed`, `human.required` | The execution ends waiting for human-approval; the supervisor asks for a person. Quieter stretch: only LOCAL-034 at work. |
-| 51:57 | 2018 | `human.approval_recorded` | Daniel Okafor approves. |
-| 52:32 | 2028 | `execution.started` | A second execution for LOCAL-032 (next: merge). |
-| 54:20 | 2082 | `merge.completed` | LOCAL-032 lands after revalidation on top of LOCAL-033 and LOCAL-031. |
-| 54:30 | 2094 | `slice.integrated` | SLICE-022 integrated; SLICE-025 still waits for SLICE-024. |
-| 54:49 | 2108 | `cleanup.completed` | LOCAL-032 archived. |
-| 55:30 | 2126 | `execution.completed` | Last event. LOCAL-034's builder is still at work. |
+| 00:30 | 2 to 11 | `intake.validated`, `slice.materialized` | Each of the 5 slices is verified and filed as its ticket, its own issue (131 to 135). |
+| 00:30 | 12 | `dependency.resolved` | SLICE-021, 022, 023 depend on nothing; SLICE-024 and 025 are `dependency.blocked`. |
+| 00:31 to 00:33 | 23, 29, 35 | `work.scheduled` | Cells 131, 132, 133 opened at spec-ready. |
+| 00:34 to 00:37 | 39, 41, 43 | `execution.started` | One mach:belt execution per cell. |
+| 00:37 | 44 | `scheduling.decided` | Dispatched 3, started 3. |
+| 01:11 to 01:13 | 103 to 113 | `station.entered` | All three at plan: contract engineers on Opus. |
+| 03:38 to 03:43 | 249 to 262 | `station.entered` | All three at build: builders red and green, task by task (busiest stretch). |
+| 20:11 | 749 | `station.entered` | 133 at verify. |
+| 24:06 | 881 | `verification.verdict` | 133 PASS, 5 of 5. |
+| 24:23 | 900 | `review.started` | 133 round 1: three seats fan out. |
+| 26:47 | 1056 | `review.decided` | 133 APPROVED 2 of 3; the product seat's blocker (FR-02, tax ID) is outvoted. |
+| 27:11 | 1082 | `merge.completed` | 133 lands; no revalidation (main has not moved). |
+| 27:19 | 1097 | `verification.verdict` | 131 FAIL_WITH_EVIDENCE: R4, 7 of 8. |
+| 27:30 | 1122 | `slice.integrated` | SLICE-023 integrated. |
+| 27:36 | 1126 | `build.revised` | 131 back to build, round 2 of 3. |
+| 27:39 | 1136 | `cleanup.completed` | 133 archived. |
+| 28:57 | 1196 | `verification.verdict` | 132 PASS, 7 of 7. |
+| 29:14 | 1210 | `review.started` | 132 round 1, three Opus seats, 3 approvals needed. |
+| 32:08 | 1337 | `review.decided` | 132 REJECTED: security blocker (INV-02). |
+| 32:25 | 1357 | `build.revised` | 132 back to build, round 2. |
+| 38:36 | 1509 | `verification.verdict` | 131 PASS, 8 of 8. |
+| 38:52 | 1530 | `review.started` | 131 round 2 (its first review: round 2, no delta). |
+| 41:21 | 1657 | `review.decided` | 131 APPROVED 3 of 3, notes only. |
+| 42:42 | 1701 | `merge.completed` | 131 lands after revalidation on top of 133. |
+| 43:30 | 1745 | `slice.integrated` | SLICE-021 integrated. |
+| 43:30 | 1746 | `dependency.resolved` | SLICE-024 eligible. |
+| 43:31 | 1753 | `work.scheduled` | SLICE-024 dispatched as 134; started at 43:33. |
+| 43:31 | 1754 | `verification.verdict` | 132 PASS, round 2. |
+| 43:48 | 1778 | `review.started` | 132 round 2: delta review (since the rejected head; earlier blocker file listed). |
+| 44:09 | 1826 | `station.entered` | 134 at plan. |
+| 46:35 | 1939 | `station.entered` | 134 at build. |
+| 46:42 | 1949 | `review.decided` | 132 AWAITING_HUMAN: 3 of 3, High risk. |
+| 46:51 | 1958 | `station.entered` | 132 at the human-approval gate; its execution returns. |
+| 47:30 | 1970, 1971 | `execution.completed`, `human.required` | The execution ends waiting for human-approval; the supervisor asks for a person. Quieter stretch: only 134 at work. |
+| 51:57 | 2021 | `human.approval_recorded` | Daniel Okafor approves. |
+| 52:32 | 2031 | `execution.started` | A second execution for 132 (next: merge). |
+| 54:20 | 2085 | `merge.completed` | 132 lands after revalidation on top of 133 and 131. |
+| 54:30 | 2097 | `slice.integrated` | SLICE-022 integrated; SLICE-025 still waits for SLICE-024. |
+| 54:49 | 2111 | `cleanup.completed` | 132 archived. |
+| 55:30 | 2129 | `execution.completed` | Last event. 134's builder is still at work. |
 
 ## 9. Cost, determinism and tests
 
-- **Cost** (measured by `test/reducer.test.mjs`, Node 25, Apple silicon): indexing the 2,126-event fixture takes about 5 ms, once, on first use; `sceneAt` is a binary search into precomputed scenes, about 0.07 µs per call; the index keeps about 4 MB of heap (scenes share every part an event did not touch). Calling it every frame for the whole run is free.
+- **Cost** (measured by `test/reducer.test.mjs`, Node 25, Apple silicon): indexing the 2,129-event fixture takes about 5 ms, once, on first use; `sceneAt` is a binary search into precomputed scenes, about 0.07 µs per call; the index keeps about 4 MB of heap (scenes share every part an event did not touch). Calling it every frame for the whole run is free.
 - **Determinism**: no `Math.random`, `Date.now`, timers or wall clock anywhere in `src/sim` (source-scanned by test); hashes and IDs come from FNV-1a over labels. `buildScenario()` twice gives identical JSON. The scene for a given `t` is the same however it is reached.
 - **Tests** (`pnpm --filter @mach/factory-floor test`, `node --test`, no dependencies): `test/scenario.test.mjs` (envelope, seq, causes, real data fields, catalog coverage, every beat, durations, agent and tool-call lifetimes, artifact writers, station order against `run.py`'s table, stage transitions, three-round limit and round numbering, vote and decision rules, dependency dispatch order, the human gate, commit-bound merges, supervisor ticks); `test/reducer.test.mjs` (the reducer, selectors and the highlight sets); `test/no-early-outcomes.test.mjs` (nothing at `t` is derived from a later event); `test/store.test.mjs`; `test/pass2.test.mjs` (the capture hook's driving controls and manual clock, camera follow, the actors, known timing); `test/purity.test.mjs` (source scans, and the catalog and agents checked against MACH's own files); `test/inspector-wording.test.mjs` (the inspector's "Finished at" times and review tallies, such as "3 of 3 approved, 2 needed"; a decided review gate's detail reads "<outcome>: N approved, M needed", never approvals over approvals needed).
 - **TypeScript for node**: the sources use erasable syntax only and import without extensions (the app's tsconfig has `allowImportingTsExtensions: false`). `test/_load.mjs` registers a resolve hook that adds `.ts`, so node runs the same files tsc checks.

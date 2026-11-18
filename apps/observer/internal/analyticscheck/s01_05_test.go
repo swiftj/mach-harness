@@ -45,16 +45,16 @@ func TestS01NoHistory(t *testing.T) {
 	common(t, o)
 }
 
-// Scenario 2: one successful integrated slice. One wave, one slice, one ticket (T-1), one
+// Scenario 2: one successful integrated slice. One epic, one slice, one ticket (T-1), one
 // supervised execution, one judging round with three seats, five station visits.
 func TestS02OneIntegratedSlice(t *testing.T) {
 	f := newFx(t)
-	f.product("WAVE-001", "SLICE-001", "T-1", at(0), at(1*min_), "Medium")
+	f.product("EPIC-001", "SLICE-001", "T-1", at(0), at(1*min_), "Medium")
 	f.happyCell("T-1", X1, 0, "Medium", "cli")
 	f.supervised("T-1", X1, at(2*min_), at(40*min_+5*sec), at(40*min_+30*sec), 1.25)
 	f.usage(X1, at(40*min_), 1.25, U{Model: "claude-sonnet-5-5", Cost: 1.0, Input: 10, Output: 20, CacheRead: 30, CacheCreation: 40},
 		U{Model: "claude-opus-5-5", Cost: 0.25, Input: 1, Output: 2, CacheRead: 3, CacheCreation: 4})
-	f.intake(L{At: at(45 * min_), Type: "slice.integrated", Wave: "WAVE-001", Slice: "SLICE-001", Ticket: "T-1", Source: "intake", Data: M{"commit": "fedcba987654"}})
+	f.intake(L{At: at(45 * min_), Type: "slice.integrated", Epic: "EPIC-001", Slice: "SLICE-001", Ticket: "T-1", Source: "intake", Data: M{"commit": "fedcba987654"}})
 	f.run("T-1", at(50*min_), map[string]any{"tests_seen_failing_first": 2, "tests_passing_on_first_run": 0})
 	o := observe(f)
 
@@ -148,7 +148,7 @@ func TestS02OneIntegratedSlice(t *testing.T) {
 
 	// The same cursor gives the same answer after a second ticket arrives.
 	cursorStable(t, o, func() {
-		f.product("WAVE-002", "SLICE-002", "T-2", at(2*hour), at(2*hour+min_), "High")
+		f.product("EPIC-002", "SLICE-002", "T-2", at(2*hour), at(2*hour+min_), "High")
 		f.happyCell("T-2", X2, 2*hour, "High", "web")
 		f.supervised("T-2", X2, at(2*hour+2*min_), at(2*hour+40*min_), at(2*hour+41*min_), 2.0)
 		f.run("T-2", at(3*hour), map[string]any{"risk": "High", "app_type": "web"})
@@ -164,18 +164,18 @@ func TestS02OneIntegratedSlice(t *testing.T) {
 // after build; the slice is reissued to T-2, which merges; the slice integrates once.
 func TestS03TicketsOfOneSlice(t *testing.T) {
 	f := newFx(t)
-	f.product("WAVE-001", "SLICE-001", "T-1", at(0), at(1*min_), "Medium")
+	f.product("EPIC-001", "SLICE-001", "T-1", at(0), at(1*min_), "Medium")
 	f.lifecycle("T-1", append(planVisit(at(70*sec), at(100*sec), "Medium", "cli"),
 		visit("build", 1, 1, "", at(3*min_), at(13*min_), "built", task(at(5*min_), "T1"))...)...)
 	f.run("T-1", at(20*min_), map[string]any{"outcome": "abandoned", "first_pass": false, "integration": nil, "tests_seen_failing_first": 1,
 		"tests_passing_on_first_run": 1})
-	f.slice("SLICE-001", "T-2", "WAVE-001", 1)
+	f.slice("SLICE-001", "T-2", "EPIC-001", 1)
 	f.intake(
-		L{At: at(25 * min_), Type: "slice.materialized", Wave: "WAVE-001", Slice: "SLICE-001", Ticket: "T-2", Source: "intake", Data: M{"dependencies": []string{}, "reissued": true}},
-		L{At: at(26 * min_), Type: "work.scheduled", Wave: "WAVE-001", Slice: "SLICE-001", Ticket: "T-2", Data: M{"stage": "spec-ready", "risk": "Medium"}},
+		L{At: at(25 * min_), Type: "slice.materialized", Epic: "EPIC-001", Slice: "SLICE-001", Ticket: "T-2", Source: "intake", Data: M{"dependencies": []string{}, "reissued": true}},
+		L{At: at(26 * min_), Type: "work.scheduled", Epic: "EPIC-001", Slice: "SLICE-001", Ticket: "T-2", Data: M{"stage": "spec-ready", "risk": "Medium"}},
 	)
 	f.happyCell("T-2", "", 25*min_, "Medium", "cli")
-	f.intake(L{At: at(60 * min_), Type: "slice.integrated", Wave: "WAVE-001", Slice: "SLICE-001", Ticket: "T-2", Source: "intake", Data: M{"commit": "fedcba987654"}})
+	f.intake(L{At: at(60 * min_), Type: "slice.integrated", Epic: "EPIC-001", Slice: "SLICE-001", Ticket: "T-2", Source: "intake", Data: M{"commit": "fedcba987654"}})
 	f.run("T-2", at(62*min_), map[string]any{"tests_seen_failing_first": 3, "tests_passing_on_first_run": 0})
 	o := observe(f)
 	d := o.metrics(allIDs(), "")

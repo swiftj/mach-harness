@@ -182,11 +182,11 @@ func TestS13PartialLifecycle(t *testing.T) {
 
 // dupHistory is scenario 2's history.
 func dupHistory(f *fx) {
-	f.product("WAVE-001", "SLICE-001", "T-1", at(0), at(1*min_), "Medium")
+	f.product("EPIC-001", "SLICE-001", "T-1", at(0), at(1*min_), "Medium")
 	f.happyCell("T-1", X1, 0, "Medium", "cli")
 	f.supervised("T-1", X1, at(2*min_), at(40*min_+5*sec), at(40*min_+30*sec), 1.25)
 	f.usage(X1, at(40*min_), 1.25, U{Model: "claude-sonnet-5-5", Cost: 1.0, Input: 10, Output: 20, CacheRead: 30, CacheCreation: 40})
-	f.intake(L{At: at(45 * min_), Type: "slice.integrated", Wave: "WAVE-001", Slice: "SLICE-001", Ticket: "T-1", Source: "intake", Data: M{"commit": "fedcba987654"}})
+	f.intake(L{At: at(45 * min_), Type: "slice.integrated", Epic: "EPIC-001", Slice: "SLICE-001", Ticket: "T-1", Source: "intake", Data: M{"commit": "fedcba987654"}})
 	f.run("T-1", at(50*min_), nil)
 }
 
@@ -319,7 +319,7 @@ func TestS14Duplicates(t *testing.T) {
 // still answers as it did.
 func TestS15LateEvents(t *testing.T) {
 	f := newFx(t)
-	f.product("WAVE-001", "SLICE-001", "T-1", at(0), at(1*min_), "Medium")
+	f.product("EPIC-001", "SLICE-001", "T-1", at(0), at(1*min_), "Medium")
 	b := T0
 	early := planVisit(b.Add(70*sec), b.Add(100*sec), "Medium", "cli")
 	early = append(early, visit("build", 1, 1, X1, b.Add(3*min_), b.Add(13*min_), "built", task(b.Add(5*min_), "T1"))...)
@@ -330,7 +330,7 @@ func TestS15LateEvents(t *testing.T) {
 		R{At: b.Add(32 * min_), Type: "merge.completed", Data: M{"method": "local", "merge_commit": "fedcba987654"}})
 	f.lifecycle("T-1", early...)
 	f.supervised("T-1", X1, at(2*min_), at(40*min_), at(40*min_+30*sec), 1.0)
-	f.intake(L{At: at(45 * min_), Type: "slice.integrated", Wave: "WAVE-001", Slice: "SLICE-001", Ticket: "T-1", Source: "intake", Data: M{"commit": "fedcba987654"}})
+	f.intake(L{At: at(45 * min_), Type: "slice.integrated", Epic: "EPIC-001", Slice: "SLICE-001", Ticket: "T-1", Source: "intake", Data: M{"commit": "fedcba987654"}})
 	o := observe(f)
 	// A second ticket's lifecycle, written later in the day, is delivered live first.
 	f.lifecycle("T-2", visit("build", 1, 1, "", at(3*hour), at(3*hour+10*min_), "built")...)

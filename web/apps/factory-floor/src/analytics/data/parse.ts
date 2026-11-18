@@ -351,7 +351,7 @@ export function readContributor(v: unknown): ContributorItem | null {
     to_ms: num(c.to_ms),
     risk: str(c.risk),
     app_type: str(c.app_type),
-    wave: str(c.wave),
+    epic: str(c.epic),
     group: codes(c.group),
   };
 }
@@ -413,7 +413,7 @@ export function readExecution(v: unknown): ExecutionItem | null {
     started_ms: num(x.started_ms),
     risk: str(x.risk),
     app_type: str(x.app_type),
-    wave: str(x.wave),
+    epic: str(x.epic),
     usage: readUsage(x.usage),
     config_id: prov ? str(prov.config_id) : null,
     provenance_recorded: recorded,
@@ -444,7 +444,7 @@ export function readRun(v: unknown): RunItem | null {
     tests_passing_on_first_run: num(r.tests_passing_on_first_run),
     risk: str(r.risk),
     app_type: str(r.app_type),
-    wave: str(r.wave),
+    epic: str(r.epic),
     merge_method: str(r.merge_method),
     merge_commit: str(r.merge_commit),
     closed_at: readStamp(r.closed_at),

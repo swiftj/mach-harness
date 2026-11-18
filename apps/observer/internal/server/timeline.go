@@ -22,7 +22,7 @@ const (
 	MaxMarks     = 1000
 )
 
-var spanKinds = map[string]bool{"wave": true, "slice-wait": true, "slice-eligible": true, "capacity-wait": true, "cell": true, "round": true, "visit": true,
+var spanKinds = map[string]bool{"slice-wait": true, "slice-eligible": true, "capacity-wait": true, "cell": true, "round": true, "visit": true,
 	"gate-wait": true, "person-wait": true, "seat": true, "claim": true, "execution": true, "workflow": true, "agent-queue": true, "agent": true, "tool": true, "task": true}
 
 var markKinds = func() map[string]bool {
@@ -64,7 +64,7 @@ func kindsParam(q url.Values, known map[string]bool, what string) (map[string]bo
 	return out, nil
 }
 
-// spans: GET /api/v1/spans?ticket|execution|wave|entity|span&kinds&from_ms&to_ms&sort=start&limit&offset
+// spans: GET /api/v1/spans?ticket|execution|epic|entity|span&kinds&from_ms&to_ms&sort=start&limit&offset
 // Sorted by start (earliest bound); at most MaxSpans after filtering, and a cut is said
 // (truncated, total_uncapped).
 func (s *Server) spans(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +75,7 @@ func (s *Server) spans(w http.ResponseWriter, r *http.Request) {
 	for _, p := range []struct {
 		name string
 		dst  *string
-	}{{"ticket", &f.Ticket}, {"execution", &f.Execution}, {"wave", &f.Wave}} {
+	}{{"ticket", &f.Ticket}, {"execution", &f.Execution}, {"epic", &f.Epic}} {
 		if *p.dst, e = optIdent(q, p.name); e != nil {
 			bad(*e)
 			return

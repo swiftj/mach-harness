@@ -56,11 +56,10 @@ const sim = (
 
 const ENTRIES: readonly CatalogEntry[] = [
   // ---------------------------------------------------------------- real: intake and scheduling
-  real("wave.discovered", "An approved delivery wave was seen on the integration branch for the first time.", "slices, approval{actor, approved_at}; envelope wave_id, revision",
-    "skills/run/scripts/intake.py Factory._intake", "chapter"),
-  real("intake.validated", "The wave's source commit and every artifact passed verification.", "digest", "intake.py Factory._intake", "minor"),
-  real("intake.refused", "Verification of approved product work failed; nothing was taken in.", "problems[]", "intake.py Factory._intake", "major"),
-  real("slice.materialized", "An execution ticket now exists for a slice revision: the wave becoming tickets.", "digest, adopted, dependencies[]; envelope ticket_id",
+  real("intake.validated", "A slice revision marked ready (its issue, or a ready folder) passed verification and was taken in.", "digest; envelope epic_id, issue, slice_id, revision",
+    "skills/run/scripts/intake.py Factory.intake", "minor"),
+  real("intake.refused", "A slice issue or folder is not accepted, with the reason; nothing was taken in.", "problems[]", "intake.py Factory.intake", "major"),
+  real("slice.materialized", "A slice revision has its ticket: its own issue, or a local ticket for a folder.", "digest, adopted, dependencies[]; envelope ticket_id, epic_id, issue",
     "intake.py Factory.materialize / reissue", "major"),
   real("slice.integrated", "The plan saw the slice's merge commit on the integration branch.", "commit",
     "intake.py Factory.record (stamped when the plan noticed, not when it merged)", "major"),

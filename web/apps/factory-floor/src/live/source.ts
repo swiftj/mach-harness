@@ -14,7 +14,7 @@
  * - **Bounded start (D17).** A history longer than `liveWindow` events (or one the observer no longer
  *   holds from its beginning) is never fetched whole, and neither is the observer's whole projected
  *   state (`/snapshot`: about 35 MB of JSON at 230,000 events). The source reads the observer's
- *   summaries (`/waves`, `/slices`, `/cells`, `/runs`, `/project`: bounded by how many there are, not
+ *   summaries (`/slices`, `/cells`, `/runs`, `/project`: bounded by how many there are, not
  *   by events), then the newest `liveWindow` events (`/events?after=`), and seeds from the summaries
  *   only what no event of the window touches (its state then held through the window), as a
  *   reconstructed `client.snapshot_applied`; a `client.history_missing` marker says history before
@@ -45,7 +45,7 @@ import type { SceneLog } from "../sim/log";
 import type { ProductDefinitions } from "../sim/model";
 import { provenance } from "../sim/provenance";
 import type { AnyV3Event, EngineEvent, ObserverSnapshotState } from "../sim/v3";
-import { parseV3 } from "../sim/v3";
+import { isV3, parseV3 } from "../sim/v3";
 import type { Clock } from "../scene/clock";
 import type { ConnectionStatus } from "../scene/connection";
 import { DISCONNECTED_AFTER, INITIAL_CONNECTION } from "../scene/connection";
@@ -147,8 +147,8 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
     if (!events.length) return;
     // The observer's own `late` flag, on events not already held (a re-delivery is not late twice).
     let flagged = 0;
-    for (const e of events) if (e.schema_version === 3 && e.late && !log.entry(e.id)) flagged += 1;
-    for (const e of events) if (e.schema_version === 3 && !e.id.startsWith("k:")) seeTotal(e.pos);
+    for (const e of events) if (isV3(e) && e.late && !log.entry(e.id)) flagged += 1;
+    for (const e of events) if (isV3(e) && !e.id.startsWith("k:")) seeTotal(e.pos);
     const result = log.ingest(events);
     if (result.added) store.logChanged();
     const head = log.headTime();
@@ -384,7 +384,7 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
     }
     if (!events.length) return cursor;
     let t0 = Infinity;
-    for (const e of events) if (e.schema_version === 3 && e.time.order_ms < t0) t0 = e.time.order_ms;
+    for (const e of events) if (isV3(e) && e.time.order_ms < t0) t0 = e.time.order_ms;
     markers += 1;
     const seeds: EngineEvent[] = [clientEvent("client.history_missing", markers, t0 - 1, { reason: "window", after: null, resumed_at: null } as AnyV3Event["data"])];
     const seed = summaries ? untouched(summaries.state, events) : null;
@@ -455,20 +455,18 @@ export function createLiveSource(options: LiveSourceOptions): LiveSource {
 export function untouched(state: ObserverSnapshotState, events: readonly EngineEvent[]): ObserverSnapshotState | null {
   const touched = new Set<string>();
   for (const e of events) {
-    if (e.schema_version !== 3) continue;
+    if (!isV3(e)) continue;
     const ids = e.ids;
-    if (ids.wave_id) touched.add(`wave:${ids.wave_id}`);
     if (ids.slice_id) touched.add(`slice:${ids.slice_id}`);
     if (ids.ticket_id) touched.add(`cell:${ids.ticket_id}`);
     if (ids.execution_id) touched.add(`execution:${ids.execution_id}`);
     for (const r of e.entities) touched.add(r);
   }
-  const waves = (state.waves ?? []).filter((w) => !touched.has(`wave:${w.wave_id}`));
   const slices = (state.slices ?? []).filter((x) => !touched.has(`slice:${x.slice_id}`) && !(x.ticket_id && touched.has(`cell:${x.ticket_id}`)));
   const cells = (state.cells ?? []).filter((c) => !touched.has(`cell:${c.ticket_id}`) && !(c.slice_id && touched.has(`slice:${c.slice_id}`)));
   const executions = (state.executions ?? []).filter((x) => !touched.has(`execution:${x.execution_id}`) && !(x.ticket_id && touched.has(`cell:${x.ticket_id}`)));
-  if (!waves.length && !slices.length && !cells.length && !executions.length) return null;
-  return { waves, slices, cells, executions, gates: [], history: state.history ?? null };
+  if (!slices.length && !cells.length && !executions.length) return null;
+  return { slices, cells, executions, gates: [], history: state.history ?? null };
 }
 
 function safeJson(text: string): unknown {
@@ -480,7 +478,7 @@ function safeJson(text: string): unknown {
 }
 
 /** The definitions a live scene has: none (titles come from records; what is missing is marked unknown). */
-export const LIVE_DEFINITIONS: ProductDefinitions = { project: { id: "", name: "", integrationBranch: "" }, waves: {}, slices: {} };
+export const LIVE_DEFINITIONS: ProductDefinitions = { project: { id: "", name: "", integrationBranch: "" }, epics: {}, slices: {} };
 
 /** A live log: checkpoints every 128 events, 256 scenes cached, the newest 50,000 events retained (about 60 MB of heap, measured). */
 export function createLiveLog(options: { readonly retain?: number; readonly checkpointEvery?: number; readonly origin?: string | null; readonly lineage?: object } = {}): SceneLog {

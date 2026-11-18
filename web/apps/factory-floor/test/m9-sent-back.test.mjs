@@ -24,8 +24,8 @@ test("isSentBack: SENT_BACK in any case; anything else, a missing decision inclu
 test("a send-back closes the person's gate without an approval, and the visit returns to build", () => {
   const log = sceneOf("SENT_BACK");
   const scene = log.head();
-  const cell = scene.cells["LOCAL-031"];
-  const gate = scene.gates["LOCAL-031/human-approval"];
+  const cell = scene.cells["131"];
+  const gate = scene.gates["131/human-approval"];
   assert.equal(gate.state, "failed");
   assert.equal(gate.detail, "Sent back to the build station by a person.");
   assert.notEqual(gate.decidedAt, null);
@@ -42,7 +42,7 @@ test("a send-back closes the person's gate without an approval, and the visit re
   assert.equal(visit.station, "human-approval");
   assert.equal(visit.outcomeWord, "sent-back");
   assert.equal(visit.outcome, "rejected");
-  assert.equal(scene.supervisor.attention["LOCAL-031"], undefined, "the person answered; the ticket no longer waits for one");
+  assert.equal(scene.supervisor.attention["131"], undefined, "the person answered; the ticket no longer waits for one");
   const entry = log.entries().find((x) => x.event.type === "human.approval_recorded");
   const text = describeEntry(entry);
   assert.match(text, /sent back to the build station by a person/);
@@ -53,10 +53,10 @@ test("no decision, APPROVED and an unknown value read as an approval, as before"
   for (const decision of [undefined, "APPROVED", "approve", "maybe"]) {
     const log = sceneOf(decision);
     const scene = log.head();
-    const gate = scene.gates["LOCAL-031/human-approval"];
+    const gate = scene.gates["131/human-approval"];
     assert.equal(gate.state, "passed", String(decision));
     assert.equal(gate.detail, "Approved by a person.");
-    const last = scene.cells["LOCAL-031"].reviews.at(-1);
+    const last = scene.cells["131"].reviews.at(-1);
     assert.equal(last.humanApproval.by, "a person");
     assert.equal(last.humanSentBack, null);
     assert.equal(scene.counters.humanApprovals, 1);
@@ -67,13 +67,13 @@ test("no decision, APPROVED and an unknown value read as an approval, as before"
 
 test("the inspector and the Line: a send-back is worded as one, never as an approval", () => {
   const scene = sceneOf("SENT_BACK").head();
-  const visit = scene.cells["LOCAL-031"].visits.at(-1);
+  const visit = scene.cells["131"].visits.at(-1);
   assert.equal(outcomes.visitStateWords(visit), "Sent back to the build station by a person");
   // The observer's spelling of the same outcome, and the station's.
   assert.deepEqual(outcomes.outcomeWordsOf("sent-back"), { words: "sent back to the build station by a person", own: "sent-back" });
   assert.equal(outcomes.outcomeWordsOf("SENT_BACK").words, "sent back to the build station by a person");
   assert.equal(outcomes.outcomeWordsOf("human.approval_recorded").words, "closed by a human.approval_recorded record");
-  assert.doesNotMatch(outcomes.gatePositionWords(scene.gates["LOCAL-031/human-approval"]), /approv/i);
+  assert.doesNotMatch(outcomes.gatePositionWords(scene.gates["131/human-approval"]), /approv/i);
 });
 test("the observer's snapshot: a human gate closed by a send-back is refused, one closed by an approval passed", () => {
   const state = live.readSnapshotState({

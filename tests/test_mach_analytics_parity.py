@@ -364,7 +364,7 @@ class ObserverParityTest(unittest.TestCase):
         out = Path(tempfile.mkdtemp(prefix="mach-parity-gen-"))
         try:
             project = out / "medium"
-            done = subprocess.run(["go", "run", "./internal/testkit/cmd/mach-synth", "--out", str(project), "--analytics", "--cells", "60", "--waves", "8", "--seed", "1"],
+            done = subprocess.run(["go", "run", "./internal/testkit/cmd/mach-synth", "--out", str(project), "--analytics", "--cells", "60", "--epics", "8", "--seed", "1"],
                                   cwd=OBSERVER_SRC, capture_output=True, text=True)
             self.assertEqual(done.returncode, 0, done.stderr)
             self.assertEqual((project / ".factory" / "archive" / "runs.jsonl").read_text(encoding="utf-8"),

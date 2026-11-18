@@ -25,7 +25,7 @@ var planted = map[string]string{
 	"Linus Committer":       "build-report.json tasks[].author",
 	"linus@example.org":     "build-report.json tasks[].committer_email",
 	"Margaret Hamilton":     "the intake log's factory.activated by",
-	"Katherine Johnson":     "the intake log's wave approval actor, named again in a human.required reason",
+	"Katherine Johnson":     "the engineer who paused the Factory in the intake log, named again in a human.required reason",
 	"Dorothy Vaughan":       "runner.json enabled_by",
 	"Barbara Liskov":        "the git reflog's committer, named in a vote finding's title and a ledger reason",
 	"barbara@example.net":   "the git reflog's e-mail",
@@ -50,8 +50,7 @@ func peopleFixture(t *testing.T) string {
 	var ledger []byte
 	ledger = append(ledger, testkit.LedgerLine(1, "factory.activated", "", map[string]any{"autonomy": "observe", "by": "Margaret Hamilton",
 		"allow_merge": false, "persistent": false, "limits": map[string]any{}})...)
-	ledger = append(ledger, testkit.LedgerLine(2, "wave.discovered", "", map[string]any{"slices": []any{"SLICE-001"},
-		"approval": map[string]any{"actor": "Katherine Johnson", "approved_at": "2026-11-12T09:00:00Z"}})...)
+	ledger = append(ledger, testkit.LedgerLine(2, "factory.paused", "", map[string]any{"by": "Katherine Johnson", "reason": "a short break"})...)
 	ledger = append(ledger, testkit.LedgerLine(3, "human.required", "T-1", map[string]any{"reason": "waiting for Katherine Johnson and Barbara Liskov"})...)
 	testkit.Append(t, testkit.LedgerPath(root), ledger)
 
@@ -109,7 +108,7 @@ func TestPeopleNeverReachTheBrowser(t *testing.T) {
 		return b
 	}
 	for _, p := range []string{"/api/v1/health", "/api/v1/factory/status", "/api/v1/session", "/api/v1/events?limit=1000",
-		"/api/v1/history?limit=5000", "/api/v1/snapshot", "/api/v1/project", "/api/v1/waves", "/api/v1/slices", "/api/v1/cells",
+		"/api/v1/history?limit=5000", "/api/v1/snapshot", "/api/v1/project", "/api/v1/slices", "/api/v1/cells",
 		"/api/v1/cells/T-1", "/api/v1/cells/T-1/evidence", "/api/v1/runs", "/api/v1/spans", "/api/v1/analytics/runs",
 		"/api/v1/analytics/metrics?group_by=day", "/api/v1/series"} {
 		get(p)

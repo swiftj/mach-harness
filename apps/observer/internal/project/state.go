@@ -1,5 +1,5 @@
 // Package project folds the observer's version 3 events into the Factory's projected state:
-// the Factory's mode, the project, delivery waves and slices with their scheduler state and
+// the Factory's mode, the project, slices (each with its epic and issue) with their scheduler state and
 // recorded waits, cells with their station history, executions with their measured cost and
 // tokens, workflow agents and main-loop tool calls, open human gates, run records, and the
 // analytics aggregates.
@@ -19,7 +19,7 @@ import (
 
 // FormatVersion changes whenever State's shape or a fold rule changes: a persisted projection
 // built under another version is discarded and rebuilt.
-const FormatVersion = 8 // 8: a person's decision at the approval gate (M9: approved or sent back); 7: M7 released claims, slice revision changes and pending revisions, wave revisions from intake, killed executions; 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history; 4: slice capacity waits; 5: dropped waits folded, source tallies; 6: slice titles and holds, a required gate ended by the approval it waited for
+const FormatVersion = 9 // 9: M11, waves gone, a slice and a cell carry their epic and issue; 8: a person's decision at the approval gate (M9: approved or sent back); 7: M7 released claims, slice revision changes and pending revisions, wave revisions from intake, killed executions; 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history; 4: slice capacity waits; 5: dropped waits folded, source tallies; 6: slice titles and holds, a required gate ended by the approval it waited for
 
 // Bounds on lists one hostile source could grow without limit; what is dropped is counted.
 const (
@@ -48,7 +48,6 @@ type State struct {
 	Partial    string                `json:"partial,omitempty"`
 	Factory    Factory               `json:"factory"`
 	Project    Project               `json:"project"`
-	Waves      map[string]*Wave      `json:"waves"`
 	Slices     map[string]*Slice     `json:"slices"`
 	Cells      map[string]*Cell      `json:"cells"`
 	Executions map[string]*Execution `json:"executions"`
@@ -83,7 +82,7 @@ type State struct {
 	spanCache *spanSet
 	markCache *markSet
 
-	// dirty names the entities (cells, slices, executions, waves) an event has touched since the
+	// dirty names the entities (cells, slices, executions) an event has touched since the
 	// last checkpoint, so a checkpoint re-encodes only those and shares the rest (checkpoint.go).
 	dirty map[string]struct{}
 }
@@ -93,7 +92,6 @@ const (
 	entCell      = "c\x00"
 	entSlice     = "s\x00"
 	entExecution = "x\x00"
-	entWave      = "w\x00"
 )
 
 // touch notes that an entity may have changed.
@@ -115,9 +113,6 @@ func NewState(epoch string) *State {
 func (s *State) fill() {
 	if s.Kinds == nil {
 		s.Kinds = map[string]int64{}
-	}
-	if s.Waves == nil {
-		s.Waves = map[string]*Wave{}
 	}
 	if s.Slices == nil {
 		s.Slices = map[string]*Slice{}
@@ -230,7 +225,7 @@ type CapacityWait struct {
 // that first held it; Released: from the last decision that held it to what ended it).
 type SliceCapacityWait struct {
 	SliceID string `json:"slice_id"`
-	WaveID  string `json:"wave_id,omitempty"`
+	EpicID  string `json:"epic_id,omitempty"`
 	// Limit is the number of places the sentence says were in use of ("<n> of <limit> in use").
 	Limit    int64  `json:"limit"`
 	Why      string `json:"why"`
@@ -263,20 +258,11 @@ type Project struct {
 	IntakeRefused int64  `json:"intake_refused"`
 }
 
-// Wave is a delivery wave.
-type Wave struct {
-	WaveID     string   `json:"wave_id"`
-	Revision   *int64   `json:"revision"`
-	Slices     []string `json:"slices"`
-	Approved   bool     `json:"approved"`
-	ApprovedAt string   `json:"approved_at,omitempty"`
-	FirstSeen  *Stamp   `json:"first_seen"`
-}
-
 // Slice is a product slice and its current revision's scheduler facts.
 type Slice struct {
 	SliceID      string   `json:"slice_id"`
-	WaveID       string   `json:"wave_id,omitempty"`
+	EpicID       string   `json:"epic_id,omitempty"` // M11: the epic it belongs to, "" when not recorded
+	Issue        int64    `json:"issue,omitempty"`   // M11: its GitHub issue number, 0 when it came from a folder or is not recorded
 	Revision     *int64   `json:"revision"`
 	TicketID     string   `json:"ticket_id,omitempty"`
 	State        string   `json:"state"` // completed | active | ready | blocked | superseded | unknown
@@ -305,6 +291,8 @@ type Slice struct {
 	// Title is the slice's title for its current revision, as the intake ledger records it
 	// (slice.materialized data.title, product prose: see redact.FreeTextFields); "" when not recorded.
 	Title string `json:"title,omitempty"`
+	// EpicTitle is the name of its epic, recorded the same way (slice.materialized data.epic_title, M11).
+	EpicTitle string `json:"epic_title,omitempty"`
 	// Holds are the scheduler's recorded reasons for holding the slice other than a free place
 	// (scheduling.decided held[].why, prose), each with the first decision that recorded it,
 	// oldest first, at most maxSliceHolds. A capacity hold is a SliceCapacityWait instead.
@@ -352,7 +340,8 @@ type Cell struct {
 	TicketID     string `json:"ticket_id"`
 	CellInstance string `json:"cell_instance,omitempty"`
 	SliceID      string `json:"slice_id,omitempty"`
-	WaveID       string `json:"wave_id,omitempty"`
+	EpicID       string `json:"epic_id,omitempty"`
+	Issue        int64  `json:"issue,omitempty"`
 	Revision     *int64 `json:"revision"`
 	Stage        string `json:"stage,omitempty"`
 	StageSource  string `json:"stage_source,omitempty"` // the event kind that set it

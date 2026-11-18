@@ -12,8 +12,8 @@ import (
 	"mach/observer/internal/testkit"
 )
 
-// v2 writes one intake log line as intake.Factory.emit does.
-func v2(seq int, typ, source, ticket, execution string, data map[string]any) []byte {
+// v3 writes one intake log line as intake.Factory.emit does (version 3, M11).
+func v3(seq int, typ, source, ticket, execution string, data map[string]any) []byte {
 	var tk, x any
 	if ticket != "" {
 		tk = ticket
@@ -21,38 +21,47 @@ func v2(seq int, typ, source, ticket, execution string, data map[string]any) []b
 	if execution != "" {
 		x = execution
 	}
-	b, _ := json.Marshal(map[string]any{"schema_version": 2, "seq": seq, "at": "2026-11-12T10:00:00Z", "type": typ, "project_id": "P-1",
-		"source_commit": "abcdef1", "wave_id": "WAVE-001", "slice_id": "SLICE-001", "revision": 1, "ticket_id": tk, "runner_id": "R-1",
+	b, _ := json.Marshal(map[string]any{"schema_version": 3, "seq": seq, "at": "2026-11-12T10:00:00Z", "type": typ, "project_id": "P-1",
+		"source_commit": "abcdef1", "epic_id": "EPIC-001", "issue": 41, "slice_id": "SLICE-001", "revision": 1, "ticket_id": tk, "runner_id": "R-1",
 		"execution_id": x, "source": source, "cause": nil, "refs": map[string]any{"cell": ".factory/worktrees/T-1/cell.json"}, "data": data})
+	return append(b, '\n')
+}
+
+// v2Wave writes a version 2 wave.discovered line, as intake wrote it before M11.
+func v2Wave(seq int, data map[string]any) []byte {
+	b, _ := json.Marshal(map[string]any{"schema_version": 2, "seq": seq, "at": "2026-11-12T10:00:00Z", "type": "wave.discovered", "project_id": "P-1",
+		"source_commit": "abcdef1", "wave_id": "WAVE-001", "slice_id": "SLICE-001", "revision": 1, "ticket_id": nil, "runner_id": "R-1",
+		"execution_id": nil, "source": "intake", "cause": nil, "refs": map[string]any{"cell": ".factory/worktrees/T-1/cell.json"}, "data": data})
 	return append(b, '\n')
 }
 
 // intakeSample is one record of every intake kind, as the writers emit them.
 func intakeSample() [][]byte {
 	return [][]byte{
-		v2(1, "wave.discovered", "intake", "", "", map[string]any{"slices": []any{"SLICE-001"}, "approval": map[string]any{"actor": "Ada Lovelace", "approved_at": "2026-11-11T09:00:00Z"}}),
-		v2(2, "intake.validated", "intake", "", "", map[string]any{"digest": strings.Repeat("ab", 32)}),
-		v2(3, "intake.refused", "intake", "", "", map[string]any{"problems": []any{"the wave has no recorded approval"}}),
-		v2(4, "slice.materialized", "intake", "T-1", "", map[string]any{"digest": strings.Repeat("cd", 32), "adopted": false, "dependencies": []any{"SLICE-000"}}),
-		v2(5, "slice.integrated", "intake", "T-1", "", map[string]any{"commit": "0123456789abcdef"}),
-		v2(6, "dependency.resolved", "intake", "T-1", "", map[string]any{"depends_on": []any{"SLICE-000"}}),
-		v2(7, "dependency.blocked", "intake", "T-1", "", map[string]any{"reasons": []any{"waiting for SLICE-000 to be integrated"}}),
-		v2(8, "work.scheduled", "engineer", "T-1", "", map[string]any{"stage": "spec-ready", "risk": "Medium", "branch": "feature/T-1", "by": "Ada Lovelace", "authorization": nil}),
-		v2(9, "revision.superseded", "intake", "T-1", "", map[string]any{"from_revision": 1, "effect": "The waiting ticket now carries the new revision."}),
-		v2(10, "human.required", "intake", "T-1", "", map[string]any{"reason": "It is approved. This machine does not merge unattended, so a person merges it."}),
-		v2(11, "factory.activated", "engineer", "", "", map[string]any{"autonomy": "supervised", "by": "Ada Lovelace", "limits": map[string]any{"max_parallel": 2, "max_budget_usd_per_run": 5}, "allow_merge": false, "persistent": true, "backlog": "include", "excluded_slices": []any{}}),
-		v2(12, "factory.paused", "engineer", "", "", map[string]any{"by": "Ada Lovelace", "reason": "lunch"}),
-		v2(13, "factory.resumed", "engineer", "", "", map[string]any{"by": "Ada Lovelace", "retrying": []any{"T-1"}}),
-		v2(14, "revision.discovered", "supervisor", "", "", map[string]any{"from_commit": "1111111", "commit": "2222222"}),
-		v2(15, "scheduling.decided", "supervisor", "", "", map[string]any{"state": "supervised", "dispatched": []any{}, "started": []any{}, "held": []any{map[string]any{"ticket_id": "T-2", "why": "all 2 place(s) are in use"}}}),
-		v2(16, "work.claimed", "supervisor", "T-1", x1, map[string]any{"stage": "planned", "next": "build", "attempt": 1}),
-		v2(17, "execution.started", "supervisor", "T-1", x1, map[string]any{"session_id": "00000000-0000-4000-8000-000000000001", "until": "merge", "workflow": "mach:belt", "limits": map[string]any{"minutes": 60, "budget_usd": 5}}),
-		v2(18, "station.observed", "supervisor", "T-1", "", map[string]any{"from_stage": "planned", "stage": "building"}),
-		v2(19, "recovery.started", "supervisor", "T-1", x1, map[string]any{"kind": "still-running"}),
-		v2(20, "execution.completed", "supervisor", "T-1", x1, map[string]any{"stage": "built", "next": "verify", "waiting_for": nil, "how": "exited", "seen_to_end": true, "cost_usd": 1.82, "session_id": "s", "refused_tools": []any{"Bash: git push"}}),
-		v2(21, "execution.failed", "supervisor", "T-1", x1, map[string]any{"stage": "built", "next": "verify", "how": "exited", "claude_error": "error_max_budget_usd", "exit_code": 1, "attempt": 2, "session_id": "s"}),
-		v2(22, "scheduling.decided", "supervisor", "", "", map[string]any{"state": "supervised", "dispatched": []any{}, "started": []any{"T-2"}, "held": []any{}}),
-		v2(23, "factory.disabled", "engineer", "", "", map[string]any{"by": "Ada Lovelace", "stopped": true}),
+		// A version 2 history's wave arrival, as M7's intake wrote it: read and dropped (M11 removed waves).
+		v2Wave(1, map[string]any{"slices": []any{"SLICE-001"}, "approval": map[string]any{"actor": "Ada Lovelace", "approved_at": "2026-11-11T09:00:00Z"}}),
+		v3(2, "intake.validated", "intake", "", "", map[string]any{"digest": strings.Repeat("ab", 32)}),
+		v3(3, "intake.refused", "intake", "", "", map[string]any{"problems": []any{"the approval comment was edited"}}),
+		v3(4, "slice.materialized", "intake", "T-1", "", map[string]any{"digest": strings.Repeat("cd", 32), "adopted": false, "dependencies": []any{"SLICE-000"}}),
+		v3(5, "slice.integrated", "intake", "T-1", "", map[string]any{"commit": "0123456789abcdef"}),
+		v3(6, "dependency.resolved", "intake", "T-1", "", map[string]any{"depends_on": []any{"SLICE-000"}}),
+		v3(7, "dependency.blocked", "intake", "T-1", "", map[string]any{"reasons": []any{"waiting for SLICE-000 to be integrated"}}),
+		v3(8, "work.scheduled", "engineer", "T-1", "", map[string]any{"stage": "spec-ready", "risk": "Medium", "branch": "feature/T-1", "by": "Ada Lovelace", "authorization": nil}),
+		v3(9, "revision.superseded", "intake", "T-1", "", map[string]any{"from_revision": 1, "effect": "The waiting ticket now carries the new revision."}),
+		v3(10, "human.required", "intake", "T-1", "", map[string]any{"reason": "It is approved. This machine does not merge unattended, so a person merges it."}),
+		v3(11, "factory.activated", "engineer", "", "", map[string]any{"autonomy": "supervised", "by": "Ada Lovelace", "limits": map[string]any{"max_parallel": 2, "max_budget_usd_per_run": 5}, "allow_merge": false, "persistent": true, "backlog": "include", "excluded_slices": []any{}}),
+		v3(12, "factory.paused", "engineer", "", "", map[string]any{"by": "Ada Lovelace", "reason": "lunch"}),
+		v3(13, "factory.resumed", "engineer", "", "", map[string]any{"by": "Ada Lovelace", "retrying": []any{"T-1"}}),
+		v3(14, "revision.discovered", "supervisor", "", "", map[string]any{"from_commit": "1111111", "commit": "2222222"}),
+		v3(15, "scheduling.decided", "supervisor", "", "", map[string]any{"state": "supervised", "dispatched": []any{}, "started": []any{}, "held": []any{map[string]any{"ticket_id": "T-2", "why": "all 2 place(s) are in use"}}}),
+		v3(16, "work.claimed", "supervisor", "T-1", x1, map[string]any{"stage": "planned", "next": "build", "attempt": 1}),
+		v3(17, "execution.started", "supervisor", "T-1", x1, map[string]any{"session_id": "00000000-0000-4000-8000-000000000001", "until": "merge", "workflow": "mach:belt", "limits": map[string]any{"minutes": 60, "budget_usd": 5}}),
+		v3(18, "station.observed", "supervisor", "T-1", "", map[string]any{"from_stage": "planned", "stage": "building"}),
+		v3(19, "recovery.started", "supervisor", "T-1", x1, map[string]any{"kind": "still-running"}),
+		v3(20, "execution.completed", "supervisor", "T-1", x1, map[string]any{"stage": "built", "next": "verify", "waiting_for": nil, "how": "exited", "seen_to_end": true, "cost_usd": 1.82, "session_id": "s", "refused_tools": []any{"Bash: git push"}}),
+		v3(21, "execution.failed", "supervisor", "T-1", x1, map[string]any{"stage": "built", "next": "verify", "how": "exited", "claude_error": "error_max_budget_usd", "exit_code": 1, "attempt": 2, "session_id": "s"}),
+		v3(22, "scheduling.decided", "supervisor", "", "", map[string]any{"state": "supervised", "dispatched": []any{}, "started": []any{"T-2"}, "held": []any{}}),
+		v3(23, "factory.disabled", "engineer", "", "", map[string]any{"by": "Ada Lovelace", "stopped": true}),
 	}
 }
 
@@ -66,9 +75,18 @@ func TestIntakeLogEveryKind(t *testing.T) {
 	h.validate()
 	evs := h.events()
 	k := kinds(evs)
-	for _, kind := range event.Kinds[:22] {
+	for _, kind := range event.Kinds[:21] {
 		if k[kind] == 0 {
 			t.Errorf("no %s", kind)
+		}
+	}
+	// The version 2 wave.discovered line is dropped: no event, no gap, and nothing names a wave.
+	if k["wave.discovered"] != 0 || k["history.gap"] != 0 {
+		t.Errorf("wave.discovered %d, gaps %d", k["wave.discovered"], k["history.gap"])
+	}
+	for _, raw := range h.raws() {
+		if strings.Contains(string(raw), "WAVE-001") || strings.Contains(string(raw), "wave") {
+			t.Errorf("a wave is served: %s", raw)
 		}
 	}
 	for _, raw := range h.raws() {
@@ -115,9 +133,9 @@ func TestIntakeLogEveryKind(t *testing.T) {
 
 func TestIntakeGapsAndUnknownKinds(t *testing.T) {
 	root := testkit.Project(t)
-	testkit.Append(t, testkit.LedgerPath(root), v2(1, "intake.validated", "intake", "", "", map[string]any{"digest": strings.Repeat("ab", 32)}))
+	testkit.Append(t, testkit.LedgerPath(root), v3(1, "intake.validated", "intake", "", "", map[string]any{"digest": strings.Repeat("ab", 32)}))
 	testkit.Append(t, testkit.LedgerPath(root), []byte("{\"schema_version\":2,\"seq\":2,\"type\":\"intake.val\n"))
-	testkit.Append(t, testkit.LedgerPath(root), v2(4, "brand.new_kind", "intake", "", "", map[string]any{"secret": "sk-ant-api03-AAAAAAAAAAAAAAAA"}))
+	testkit.Append(t, testkit.LedgerPath(root), v3(4, "brand.new_kind", "intake", "", "", map[string]any{"secret": "sk-ant-api03-AAAAAAAAAAAAAAAA"}))
 	h := newHarness(t, root, "", false)
 	h.drain()
 	h.validate()
@@ -135,7 +153,7 @@ func TestIntakeGapsAndUnknownKinds(t *testing.T) {
 
 func TestExecutionRecordsAndRunRecord(t *testing.T) {
 	root := testkit.Project(t)
-	testkit.Append(t, testkit.LedgerPath(root), v2(1, "work.claimed", "supervisor", "T-1", x1, map[string]any{"stage": "planned", "next": "build", "attempt": 1}))
+	testkit.Append(t, testkit.LedgerPath(root), v3(1, "work.claimed", "supervisor", "T-1", x1, map[string]any{"stage": "planned", "next": "build", "attempt": 1}))
 	dir := testkit.ExecDir(root, x1)
 	testkit.WriteFile(t, filepath.Join(dir, "started.json"), mustJSON(map[string]any{"execution_id": x1, "wrapper_pid": 1, "child_pid": 2, "started_at": "2026-11-12T10:00:00Z"}))
 	testkit.WriteFile(t, filepath.Join(dir, "result.json"), mustJSON(map[string]any{"execution_id": x1, "ended": "timed-out", "exit_code": nil, "ended_at": "2026-11-12T11:00:00Z", "seconds": 3600, "error": "/Users/someone/x"}))
@@ -143,7 +161,7 @@ func TestExecutionRecordsAndRunRecord(t *testing.T) {
 		"abandon_reason": nil, "rounds": 2, "first_pass": false, "verify_failures": 1, "review_rejections": 0, "escalated": false, "human_approval": true,
 		"deviations": []any{map[string]any{"type": "scope", "detail": "/Users/someone"}}, "blockers": []any{map[string]any{"title": "x"}}, "notes": []any{},
 		"tests_seen_failing_first": 4, "tests_passing_on_first_run": 1, "risk": "Medium", "app_type": "cli", "closed_at": "2026-11-12T12:00:00+00:00",
-		"integration": map[string]any{"method": "local", "merge_commit": "abcdef0123456789"}, "product": map[string]any{"slice_id": "SLICE-001", "revision": 1, "wave_id": "WAVE-001"}})
+		"integration": map[string]any{"method": "local", "merge_commit": "abcdef0123456789"}, "product": map[string]any{"slice_id": "SLICE-001", "revision": 1, "epic_id": "EPIC-001", "source": "github", "issue": map[string]any{"repository": "acme/app", "number": 41}}})
 	testkit.Append(t, filepath.Join(root, ".factory", "archive", "runs.jsonl"), append(run, '\n'))
 	h := newHarness(t, root, "", false)
 	h.drain()
@@ -154,7 +172,7 @@ func TestExecutionRecordsAndRunRecord(t *testing.T) {
 		t.Fatalf("%+v %+v", st, end)
 	}
 	r := ofType(evs, "run.recorded")
-	if len(r) != 1 || r[0].Data["deviations"] != int64(1) && r[0].Data["deviations"] != float64(1) || r[0].Data["merge_method"] != "local" || r[0].IDs.WaveID != "WAVE-001" {
+	if len(r) != 1 || r[0].Data["deviations"] != int64(1) && r[0].Data["deviations"] != float64(1) || r[0].Data["merge_method"] != "local" || r[0].IDs.EpicID != "EPIC-001" || r[0].IDs.Issue != 41 {
 		t.Fatalf("%+v", r)
 	}
 	for _, raw := range h.raws() {
@@ -168,7 +186,7 @@ func TestExecutionRecordsAndRunRecord(t *testing.T) {
 func cell(t *testing.T, root, ticket string, records []testkit.Record) {
 	dir := testkit.CellDir(root, ticket)
 	testkit.WriteFile(t, filepath.Join(dir, "cell.json"), mustJSON(map[string]any{"stage": "approved", "created_at": "2026-11-12T09:00:00+00:00",
-		"product": map[string]any{"slice_id": "SLICE-009", "revision": 2, "wave_id": "WAVE-003"}}))
+		"product": map[string]any{"slice_id": "SLICE-009", "revision": 2, "epic_id": "EPIC-003"}}))
 	testkit.WriteFile(t, filepath.Join(dir, "spec.json"), mustJSON(map[string]any{"scenarios": []any{map[string]any{"id": "AC-01"}, map[string]any{"id": "AC-02"}},
 		"decision_matrix": map[string]any{"rules": []any{map[string]any{"id": "R1"}}}}))
 	testkit.WriteFile(t, filepath.Join(dir, "evidence", "ac-01.png"), []byte("png bytes"))

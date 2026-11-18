@@ -84,7 +84,7 @@ test("moments at t are only those that have happened; without t, the whole run (
 });
 
 test("a span that ends in failure reads as plain work until its end", () => {
-  // The verification of LOCAL-031 round 1 fails: one millisecond before its verdict it is still running.
+  // The verification of 131 round 1 fails: one millisecond before its verdict it is still running.
   const verdict = events.find((e) => e.type === "verification.verdict" && e.data.status === "FAIL_WITH_EVIDENCE");
   const before = sceneAt(SCENARIO, verdict.t - 1);
   assert.equal(before.gates[`${verdict.ticket_id}/verification#1`].state, "open");

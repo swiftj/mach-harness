@@ -108,7 +108,7 @@ export const BELT: readonly Station[] = STATIONS.filter((s) => s !== "human");
 
 /**
  * M7 D11: the newest release readiness snapshot (GET /api/v1/release/readiness, `latest`) as one
- * line, from codes and commits only: "Release WAVE-002-e325cb6f23ba at e325cb6f23ba: qualified;
+ * line, from codes and commits only: "Release EPIC-002-e325cb6f23ba at e325cb6f23ba: qualified;
  * product acceptance: accepted". Null when there is none or it is not readable: acceptance is never
  * inferred.
  */

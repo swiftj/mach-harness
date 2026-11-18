@@ -147,7 +147,7 @@ export interface FxRound {
 export interface FxTicket {
   readonly id: string;
   readonly slice: string | null;
-  readonly wave: string | null;
+  readonly epic: string | null;
   readonly risk: Risk;
   readonly app: AppType;
   readonly writer: "supervisor" | "hand";
@@ -251,29 +251,29 @@ export function generateHistory(opts: HistoryOptions = {}): FxHistory {
     return at;
   };
 
-  // Arrivals: waves of product slices dispatched together, and hand-driven or telemetry tickets between.
-  type Arrival = { at: number; wave: string | null; slice: string | null; writer: "supervisor" | "hand"; id: string };
+  // Arrivals: epics of product slices dispatched together, and hand-driven or telemetry tickets between.
+  type Arrival = { at: number; epic: string | null; slice: string | null; writer: "supervisor" | "hand"; id: string };
   const arrivals: Arrival[] = [];
   let sliceN = 1;
-  let waveN = 1;
+  let epicN = 1;
   let localN = 1;
   if (opts.size === "sparse") {
-    arrivals.push({ at: start + 4 * H, wave: "WAVE-001", slice: "SLICE-001", writer: "supervisor", id: "SYN-001" });
-    arrivals.push({ at: start + 30 * H, wave: "WAVE-001", slice: "SLICE-002", writer: "supervisor", id: "SYN-002" });
+    arrivals.push({ at: start + 4 * H, epic: "EPIC-001", slice: "SLICE-001", writer: "supervisor", id: "SYN-001" });
+    arrivals.push({ at: start + 30 * H, epic: "EPIC-001", slice: "SLICE-002", writer: "supervisor", id: "SYN-002" });
   } else {
     for (let t = start + 6 * H; t < end - 6 * H; ) {
-      const wave = `WAVE-${String(waveN++).padStart(3, "0")}`;
+      const epic = `EPIC-${String(epicN++).padStart(3, "0")}`;
       const size = 4 + Math.floor(r() * 6);
       for (let i = 0; i < size; i++) {
         const slice = `SLICE-${String(sliceN).padStart(3, "0")}`;
-        arrivals.push({ at: t + Math.floor(r() * 15 * MIN), wave, slice, writer: r() < 0.88 ? "supervisor" : "hand", id: `SYN-${String(sliceN).padStart(3, "0")}` });
+        arrivals.push({ at: t + Math.floor(r() * 15 * MIN), epic, slice, writer: r() < 0.88 ? "supervisor" : "hand", id: `SYN-${String(sliceN).padStart(3, "0")}` });
         sliceN++;
       }
-      // Between waves: a non-product ticket or two (hand-driven, telemetry).
+      // Between epics: a non-product ticket or two (hand-driven, telemetry).
       const extra = Math.floor(r() * 2.2);
       for (let i = 0; i < extra; i++) {
         const auto = r() < 0.4;
-        arrivals.push({ at: t + Math.floor(r() * 3 * D), wave: null, slice: null, writer: auto ? "supervisor" : "hand", id: auto ? `AUTO-${String(localN++).padStart(3, "0")}` : `LOCAL-${String(localN++).padStart(3, "0")}` });
+        arrivals.push({ at: t + Math.floor(r() * 3 * D), epic: null, slice: null, writer: auto ? "supervisor" : "hand", id: auto ? `AUTO-${String(localN++).padStart(3, "0")}` : `LOCAL-${String(localN++).padStart(3, "0")}` });
       }
       t += Math.floor(2.4 * D + r() * 2.4 * D);
     }
@@ -498,7 +498,7 @@ export function generateHistory(opts: HistoryOptions = {}): FxHistory {
     const tests = 6 + Math.floor(r() * 16);
     const failFirst = Math.min(tests, Math.round(tests * (0.8 + r() * 0.22)));
     tickets.push({
-      id, slice: a.slice, wave: a.wave, risk, app, writer: a.writer, lifecycle, eligibleAt, scheduledAt, outcome, mergedAt, integratedAt, closedAt,
+      id, slice: a.slice, epic: a.epic, risk, app, writer: a.writer, lifecycle, eligibleAt, scheduledAt, outcome, mergedAt, integratedAt, closedAt,
       rounds: round, firstPass, humanApproval, deviations: pick(r, [[0, 6], [1, 3], [2, 1]]), testsFailFirst: failFirst, testsPassFirst: tests - failFirst,
       mergeMethod: r() < 0.7 ? "local" : "pr",
     });

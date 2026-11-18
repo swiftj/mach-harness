@@ -16,11 +16,11 @@ import (
 func i64(v int64) *int64 { return &v }
 
 func intake(typ string, ms int64) *feedtest.Ev {
-	return feedtest.New("intake-log", typ, ms).ID("project_id", "P-1").ID("wave_id", "WAVE-009")
+	return feedtest.New("intake-log", typ, ms).ID("project_id", "P-1").ID("epic_id", "EPIC-009")
 }
 
 func slice(e *feedtest.Ev, id string) *feedtest.Ev {
-	return e.ID("slice_id", id).ID("revision", 1).Entity("slice:" + id).Entity("wave:WAVE-009")
+	return e.ID("slice_id", id).ID("revision", 1).Entity("slice:" + id)
 }
 
 func lc(typ string, ms int64, ticket, visit string, round int) *feedtest.Ev {
@@ -265,7 +265,7 @@ func TestMarksOrderAndNextPrevious(t *testing.T) {
 				t.Fatalf("incomplete %+v", mk)
 			}
 		}
-		for _, k := range []string{"failure", "retry", "gate", "review", "human", "recovery", "interruption", "gap", "wave", "merge"} {
+		for _, k := range []string{"failure", "retry", "gate", "review", "human", "recovery", "interruption", "gap", "merge"} {
 			if kinds[k] == 0 {
 				t.Errorf("no %s mark in the scenario: %v", k, kinds)
 			}

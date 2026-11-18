@@ -16,18 +16,16 @@ import (
 func m66Run() []map[string]any {
 	const x1 = "xeb8b948e8cf9"
 	i := func(typ string, ms int64) *feedtest.Ev {
-		return feedtest.New("intake-log", typ, ms).ID("project_id", "textkit").ID("wave_id", "WAVE-001")
+		return feedtest.New("intake-log", typ, ms).ID("project_id", "textkit").ID("epic_id", "EPIC-001")
 	}
 	sl := func(e *feedtest.Ev, slice string) *feedtest.Ev {
-		return e.ID("slice_id", slice).ID("revision", 2).Entity("slice:" + slice).Entity("wave:WAVE-001")
+		return e.ID("slice_id", slice).ID("revision", 2).Entity("slice:" + slice)
 	}
 	c := func(typ string, ms int64, visit string, round int) *feedtest.Ev {
-		return feedtest.New("cell-lifecycle", typ, ms).Ticket("LOCAL-001").ID("slice_id", "SLICE-001").ID("wave_id", "WAVE-001").Visit("LOCAL-001", visit, round)
+		return feedtest.New("cell-lifecycle", typ, ms).Ticket("LOCAL-001").ID("slice_id", "SLICE-001").ID("epic_id", "EPIC-001").Visit("LOCAL-001", visit, round)
 	}
 	var out []map[string]any
 	add := func(e *feedtest.Ev) { out = append(out, e.Build()) }
-	add(i("wave.discovered", 0).Entity("wave:WAVE-001").Data(map[string]any{"slices": []string{"SLICE-001", "SLICE-003"},
-		"approval": map[string]any{"approved_at": "2026-11-13T09:00:00Z", "by_role": "person"}}))
 	add(sl(i("slice.materialized", 0), "SLICE-001").Ticket("LOCAL-001").Data(map[string]any{"digest": "abc", "adopted": false, "dependencies": []string{}, "reissued": nil, "title": "Make a link name"}))
 	add(sl(i("slice.materialized", 0), "SLICE-003").Ticket("LOCAL-003").Data(map[string]any{"digest": "def", "adopted": false, "dependencies": []string{"SLICE-001"}, "reissued": nil, "title": "Unique link name"}))
 	add(sl(i("dependency.blocked", 0), "SLICE-003").Ticket("LOCAL-003").Data(map[string]any{"reasons": []string{"SLICE-001 is not integrated yet"}}))
@@ -118,11 +116,11 @@ func TestRequiredGateWithoutAnAwaitedApprovalStaysOpen(t *testing.T) {
 // N6: a ticket filed at intake has no cell yet; it is not an active cell.
 func TestTicketWithNoCellIsNotAnActiveCell(t *testing.T) {
 	run := m66Run()
-	active := ProjectView(m66State(t, run[:5]))["active_cells"].([]string)
+	active := ProjectView(m66State(t, run[:4]))["active_cells"].([]string)
 	if len(active) != 0 {
 		t.Fatalf("before any cell opened: active %v", active)
 	}
-	active = ProjectView(m66State(t, run[:7]))["active_cells"].([]string)
+	active = ProjectView(m66State(t, run[:6]))["active_cells"].([]string)
 	if len(active) != 1 || active[0] != "LOCAL-001" {
 		t.Fatalf("after dispatch: active %v", active)
 	}
@@ -166,7 +164,7 @@ func m66Retry() []map[string]any {
 		return feedtest.New("intake-log", typ, ms).ID("project_id", "P-1")
 	}
 	sl := func(e *feedtest.Ev, slice, ticket string) *feedtest.Ev {
-		return e.ID("slice_id", slice).ID("revision", 1).ID("wave_id", "WAVE-001").Entity("slice:" + slice).Ticket(ticket)
+		return e.ID("slice_id", slice).ID("revision", 1).ID("epic_id", "EPIC-001").Entity("slice:" + slice).Ticket(ticket)
 	}
 	rec := func(typ string, ms int64, x string) *feedtest.Ev {
 		return feedtest.New("execution-record", typ, ms).Exec(x).Ticket("LOCAL-001")

@@ -22,10 +22,11 @@ func TestSessionDeclaresProjectionFreeText(t *testing.T) {
 	for _, e := range events {
 		if e["type"] == "slice.materialized" {
 			e["data"].(map[string]any)["title"] = mark + " slice title"
+			e["data"].(map[string]any)["epic_title"] = mark + " epic name"
 		}
 	}
 	i := func(typ string, ms int64) *feedtest.Ev {
-		return feedtest.New("intake-log", typ, ms).ID("project_id", "P-1").ID("wave_id", "WAVE-001")
+		return feedtest.New("intake-log", typ, ms).ID("project_id", "P-1").ID("epic_id", "EPIC-001")
 	}
 	add := func(e *feedtest.Ev) { events = append(events, e.Build()) }
 	add(feedtest.New("observer", "review.finding", 25000).Ticket("T-1").Visit("T-1", "review#1", 2).ID("seat", "security").
@@ -71,7 +72,7 @@ func TestSessionDeclaresProjectionFreeText(t *testing.T) {
 
 	routes := map[string]string{
 		"/api/v1/project": "/api/v1/project", "/api/v1/factory/status": "/api/v1/factory/status", "/api/v1/snapshot": "/api/v1/snapshot",
-		"/api/v1/waves": "/api/v1/waves", "/api/v1/waves/WAVE-001": "/api/v1/waves/{wave}", "/api/v1/slices": "/api/v1/slices",
+		"/api/v1/slices":           "/api/v1/slices",
 		"/api/v1/slices/SLICE-002": "/api/v1/slices/{slice}", "/api/v1/slices/SLICE-001": "/api/v1/slices/{slice}",
 		"/api/v1/cells": "/api/v1/cells", "/api/v1/cells/T-1": "/api/v1/cells/{ticket}", "/api/v1/cells/T-2": "/api/v1/cells/{ticket}",
 		"/api/v1/cells/T-1/evidence": "/api/v1/cells/{ticket}/evidence",

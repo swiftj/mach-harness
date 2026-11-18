@@ -20,7 +20,7 @@ import (
 //
 // Placement: a visit, wait or transition belongs to the UTC day it began (the earliest bound of
 // its start); a gate evaluation to the day it was recorded. A visit spanning midnight is counted
-// once, on the day it was entered. Filters (risk, app type, wave) are the cell's recorded values at
+// once, on the day it was entered. Filters (risk, app type, epic) are the cell's recorded values at
 // the position read; "" is reported as unknown.
 
 // StampMS is the time a stamp is placed at: the recorded time, else the earliest bound, else the
@@ -108,7 +108,7 @@ const (
 
 type flowDims struct {
 	day             int64
-	risk, app, wave string
+	risk, app, epic string
 }
 
 type stationKey struct {
@@ -275,7 +275,7 @@ func BuildFlow(s *State, spans []*Span) *FlowIndex {
 	for _, t := range sortedKeys(s.Cells) {
 		c := s.Cells[t]
 		td := TicketDims(s, t) // the metric engine's join, so flow and metrics group alike
-		base := flowDims{risk: td["risk"], app: td["app_type"], wave: td["wave"]}
+		base := flowDims{risk: td["risk"], app: td["app_type"], epic: td["epic"]}
 		first := int64(math.MaxInt64)
 		stationOf := map[string]string{}
 		prev, prevVisit := "", (*Visit)(nil)
@@ -371,7 +371,7 @@ func BuildFlow(s *State, spans []*Span) *FlowIndex {
 	// Waits no longer kept one by one: folded when they were dropped (flow_dropped.go).
 	for _, k := range sortedKeys(s.DroppedWaits) {
 		c := s.DroppedWaits[k]
-		wk := waitKey{flowDims{day: c.Day, risk: c.Risk, app: c.AppType, wave: c.Wave}, c.Kind, c.Next}
+		wk := waitKey{flowDims{day: c.Day, risk: c.Risk, app: c.AppType, epic: c.Epic}, c.Kind, c.Next}
 		if a := ix.waits[wk]; a != nil {
 			a.merge(durAggOf(c))
 		} else {
@@ -381,9 +381,9 @@ func BuildFlow(s *State, spans []*Span) *FlowIndex {
 	for _, sp := range waits {
 		kind := waitKindOf(sp)
 		t := sp.meta.ticket
-		d := flowDims{day: flowDay(sp.from), wave: sp.meta.wave}
+		d := flowDims{day: flowDay(sp.from), epic: sp.meta.epic}
 		if td := TicketDims(s, t); t != "" && td != nil {
-			d.risk, d.app, d.wave = td["risk"], td["app_type"], td["wave"]
+			d.risk, d.app, d.epic = td["risk"], td["app_type"], td["epic"]
 		}
 		next := ""
 		for _, e := range entries[t] {
@@ -424,14 +424,14 @@ func (ix *FlowIndex) transition(k transKey) *transAgg {
 type FlowQuery struct {
 	Window                       bool
 	From, To                     int64
-	Risk, AppType, Wave, Station string
+	Risk, AppType, Epic, Station string
 }
 
 func (q FlowQuery) wantDims(d flowDims) bool {
 	if q.Window && (d.day < q.From || d.day >= q.To) {
 		return false
 	}
-	return want(q.Risk, d.risk) && want(q.AppType, d.app) && want(q.Wave, d.wave)
+	return want(q.Risk, d.risk) && want(q.AppType, d.app) && want(q.Epic, d.epic)
 }
 
 // want: a filter value ("" asks nothing; "unknown" matches what recorded no value).

@@ -271,7 +271,7 @@ test("a long history starts from the summaries (with the observer's history) and
   server.commit(finalize(f.out));
   server.summaries.history = HISTORY;
   server.summaries.cells = [{ ticket_id: "LOCAL-077", slice_id: "SLICE-077", stage: "merged", round: 1, app_type: "web", plan: { app_type: "web", risk: "Low", contracts: 0, tasks: 3, recorded_by: null } }];
-  server.summaries.waves = [{ wave_id: "WAVE-077", slices: ["SLICE-077"], revision: 1 }];
+  server.summaries.slices = [{ slice_id: "SLICE-078", ticket_id: "78", state: "ready", dependencies: [], revision: 1, title: "Seeded slice", epic_id: "EPIC-077", epic_title: "Seeded epic", issue: 78 }];
   const client = live.createObserverClient({ fetch: server.fetch });
   const { log, source } = live.createLiveFactory({ client, openStream: server.openStream, clock: manualClock(), timers: fakeTimers(), liveWindow: 1000, pageLimit: 100 });
   await source.start();
@@ -286,7 +286,7 @@ test("a long history starts from the summaries (with the observer's history) and
   big.commit(finalize(g.out));
   big.summaries.history = HISTORY;
   big.summaries.cells = server.summaries.cells;
-  big.summaries.waves = server.summaries.waves;
+  big.summaries.slices = server.summaries.slices;
   const b = live.createLiveFactory({ client: live.createObserverClient({ fetch: big.fetch }), openStream: big.openStream, clock: manualClock(), timers: fakeTimers(), liveWindow: 1000, pageLimit: 100 });
   await b.source.start();
   await settle();
@@ -297,7 +297,8 @@ test("a long history starts from the summaries (with the observer's history) and
   assert.deepEqual(head.completeness.observer.lost, { evicted: 1, "not-received": 2 }, "the observer's own history facts, from /project");
   assert.equal(head.cells["LOCAL-077"].stage, "merged");
   assert.equal(head.cells["LOCAL-077"].plan.tasks, 3);
-  assert.ok(head.waves["WAVE-077"], "an untouched wave is seeded");
+  const seeded = head.slices["SLICE-078"];
+  assert.ok(seeded && seeded.epicId === "EPIC-077" && seeded.epicTitle === "Seeded epic" && seeded.issue === 78, "an untouched slice is seeded with its epic and issue");
   assert.ok(!head.cells[TICKET].meta.eventId.startsWith("k:"), "the window's own cell is never seeded");
   const words = await import("../src/shell/inspector/words.ts");
   assert.match(words.completenessWords(head.completeness).why, /seeded from the observer's projected state.*The observer's own history is partial \(no longer held by the observer: 1, not received: 2\)/);

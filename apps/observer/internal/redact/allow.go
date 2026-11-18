@@ -56,10 +56,9 @@ var provenanceShape = obj("schema", "config_id",
 // Allow is the per-kind data allowlist: the schema's $defs (factory-event.v3.schema.json),
 // key for key. A kind not here is not served.
 var Allow = map[string]*Shape{
-	"wave.discovered":     obj("slices", leafList, "approval", obj("approved_at", "by_role")),
 	"intake.validated":    obj("digest"),
 	"intake.refused":      obj("problems", leafList),
-	"slice.materialized":  obj("digest", "adopted", "dependencies", leafList, "reissued", "title"),
+	"slice.materialized":  obj("digest", "adopted", "dependencies", leafList, "reissued", "title", "epic_title"),
 	"slice.integrated":    obj("commit"),
 	"dependency.resolved": obj("depends_on", leafList),
 	"dependency.blocked":  obj("reasons", leafList),
@@ -126,7 +125,7 @@ var Allow = map[string]*Shape{
 // RequiredIDs are the ids each kind must carry (the schema's allOf); an event without one of
 // them is not served (ingest reports the record as a gap instead).
 var RequiredIDs = map[string][]string{
-	"wave.discovered": {"wave_id"}, "slice.materialized": {"slice_id", "ticket_id"}, "slice.integrated": {"slice_id"},
+	"slice.materialized": {"slice_id", "ticket_id"}, "slice.integrated": {"slice_id"},
 	"dependency.resolved": {"slice_id"}, "dependency.blocked": {"slice_id"}, "work.scheduled": {"slice_id", "ticket_id"},
 	"revision.superseded": {"slice_id"}, "work.claimed": {"ticket_id", "execution_id"}, "execution.started": {"ticket_id", "execution_id"},
 	"station.observed": {"ticket_id"}, "execution.completed": {"ticket_id", "execution_id"}, "execution.failed": {"ticket_id", "execution_id"},
@@ -152,8 +151,6 @@ func MissingID(ev *event.Event) string {
 	for _, k := range RequiredIDs[ev.Type] {
 		var empty bool
 		switch k {
-		case "wave_id":
-			empty = ev.IDs.WaveID == ""
 		case "slice_id":
 			empty = ev.IDs.SliceID == ""
 		case "ticket_id":

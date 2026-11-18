@@ -72,8 +72,8 @@ func TestS06ReviewRejectionRemediated(t *testing.T) {
 // once, and nothing is merged or apportioned between them.
 func TestS07ConcurrentExecutions(t *testing.T) {
 	f := newFx(t)
-	f.product("WAVE-001", "SLICE-A", "T-7a", at(0), at(1*min_), "Medium")
-	f.product("WAVE-001", "SLICE-B", "T-7b", at(20*sec), at(2*min_), "Medium")
+	f.product("EPIC-001", "SLICE-A", "T-7a", at(0), at(1*min_), "Medium")
+	f.product("EPIC-001", "SLICE-B", "T-7b", at(20*sec), at(2*min_), "Medium")
 	f.happyCell("T-7a", X1, 0, "Medium", "cli")
 	f.happyCell("T-7b", X2, 1*min_, "Medium", "cli") // overlaps T-7a at every station
 	// X1: claim 09:02:00, process 09:02:05 .. 09:40:00. X2: claim 09:03:00, process starts at
@@ -118,7 +118,7 @@ func TestS07ConcurrentExecutions(t *testing.T) {
 // still blocked at the head.
 func TestS08DependencyWaits(t *testing.T) {
 	f := newFx(t)
-	w := "WAVE-008"
+	w := "EPIC-008"
 	f.slice("SLICE-A", "T-8a", w, 1)
 	f.slice("SLICE-B", "T-8b", w, 1)
 	f.slice("SLICE-C", "T-8c", w, 1)
@@ -127,13 +127,13 @@ func TestS08DependencyWaits(t *testing.T) {
 		if deps == nil {
 			deps = []string{}
 		}
-		return L{At: at, Type: "slice.materialized", Wave: w, Slice: s, Ticket: tk, Source: "intake", Data: M{"dependencies": deps}}
+		return L{At: at, Type: "slice.materialized", Epic: w, Slice: s, Ticket: tk, Source: "intake", Data: M{"dependencies": deps}}
 	}
 	ev := func(typ, s, tk string, at time.Time, data M) L {
-		return L{At: at, Type: typ, Wave: w, Slice: s, Ticket: tk, Data: data}
+		return L{At: at, Type: typ, Epic: w, Slice: s, Ticket: tk, Data: data}
 	}
 	f.intake(
-		L{At: at(0), Type: "wave.discovered", Wave: w, Source: "intake", Data: M{"slices": []string{"SLICE-A", "SLICE-B", "SLICE-C", "SLICE-D"}}},
+		L{At: at(0), Type: "intake.validated", Epic: w, Source: "intake", Data: M{"digest": "ab"}},
 		mat("SLICE-A", "T-8a", at(10*sec)),
 		mat("SLICE-B", "T-8b", at(10*sec), "SLICE-A"),
 		mat("SLICE-C", "T-8c", at(10*sec), "SLICE-A"),
@@ -144,7 +144,7 @@ func TestS08DependencyWaits(t *testing.T) {
 		ev("dependency.blocked", "SLICE-C", "T-8c", at(12*min_), M{"reasons": []string{"waits again"}}),
 		ev("dependency.resolved", "SLICE-C", "T-8c", at(20*min_), M{"depends_on": []string{"SLICE-A"}}),
 		ev("work.scheduled", "SLICE-C", "T-8c", at(21*min_), M{"stage": "spec-ready", "risk": "Low"}),
-		L{At: at(39 * min_), Type: "slice.integrated", Wave: w, Slice: "SLICE-A", Ticket: "T-8a", Source: "intake", Data: M{"commit": "fedcba987654"}},
+		L{At: at(39 * min_), Type: "slice.integrated", Epic: w, Slice: "SLICE-A", Ticket: "T-8a", Source: "intake", Data: M{"commit": "fedcba987654"}},
 		ev("dependency.resolved", "SLICE-B", "T-8b", at(40*min_), M{"depends_on": []string{"SLICE-A"}}),
 		ev("work.scheduled", "SLICE-B", "T-8b", at(41*min_), M{"stage": "spec-ready", "risk": "Low"}),
 		mat("SLICE-D", "T-8d", at(45*min_), "SLICE-B"),
@@ -198,10 +198,10 @@ func TestS08DependencyWaits(t *testing.T) {
 		}
 	}
 	// Waits are not additive into elapsed time: B and C waited at the same time. The sum of wait
-	// durations (3,430,000) exceeds the wall time any slice waited (B: 2,380,000); W1 by wave
+	// durations (3,430,000) exceeds the wall time any slice waited (B: 2,380,000); W1 by epic
 	// still reconciles as a sum of waits.
-	byWave := metric(t, o.metrics("W1", "&group_by=wave"), "W1")
-	reconcile(t, "W1 by wave", byWave)
+	byEpic := metric(t, o.metrics("W1", "&group_by=epic"), "W1")
+	reconcile(t, "W1 by epic", byEpic)
 	common(t, o)
 }
 

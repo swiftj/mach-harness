@@ -65,8 +65,6 @@ export function selectEntity(scene: Scene, entity: AnyRef): unknown {
   switch (kindOf(entity)) {
     case "actor":
       return scene.actors[id as ActorId] ?? null;
-    case "wave":
-      return scene.waves[id] ?? null;
     case "slice":
       return scene.slices[id] ?? null;
     case "cell":
@@ -122,10 +120,6 @@ export function identityOf(entity: AnyRef, scene: Scene): Identity {
   switch (kind) {
     case "actor":
       return { ...base, name: ACTOR_WORDS[id as ActorId]?.role ?? id };
-    case "wave": {
-      const w = scene.waves[id];
-      return { ...base, name: w && isKnown(w.meta, "title") ? w.title : `Wave ${id}` };
-    }
     case "slice": {
       const sl = scene.slices[id];
       return { ...base, name: sl && sl.title && isKnown(sl.meta, "title") ? sl.title : `Slice ${id}` };

@@ -68,28 +68,27 @@ func TestS16RestartAndRebuild(t *testing.T) {
 // superseded during build; revision 2 is dispatched to T-17b, merged and integrated.
 func TestS17SupersededRevision(t *testing.T) {
 	f := newFx(t)
-	w, s := "WAVE-017", "SLICE-017"
+	w, s := "EPIC-017", "SLICE-017"
 	f.slice(s, "T-17", w, 1)
 	f.intake(
-		L{At: at(0), Type: "wave.discovered", Wave: w, Source: "intake", Data: M{"slices": []string{s}}},
-		L{At: at(10 * sec), Type: "slice.materialized", Wave: w, Slice: s, Rev: 1, Ticket: "T-17", Source: "intake", Data: M{"dependencies": []string{}}},
-		L{At: at(1 * min_), Type: "work.scheduled", Wave: w, Slice: s, Rev: 1, Ticket: "T-17", Data: M{"stage": "spec-ready", "risk": "Medium"}},
-		L{At: at(20 * min_), Type: "revision.superseded", Wave: w, Slice: s, Rev: 1, Ticket: "T-17", Source: "intake", Data: M{"from_revision": 1, "effect": "flagged"}},
-		L{At: at(21 * min_), Type: "slice.materialized", Wave: w, Slice: s, Rev: 2, Ticket: "T-17b", Source: "intake", Data: M{"dependencies": []string{}}},
-		L{At: at(22 * min_), Type: "work.scheduled", Wave: w, Slice: s, Rev: 2, Ticket: "T-17b", Data: M{"stage": "spec-ready", "risk": "Medium"}},
+		L{At: at(0), Type: "intake.validated", Epic: w, Source: "intake", Data: M{"digest": "ab"}},
+		L{At: at(10 * sec), Type: "slice.materialized", Epic: w, Slice: s, Rev: 1, Ticket: "T-17", Source: "intake", Data: M{"dependencies": []string{}}},
+		L{At: at(1 * min_), Type: "work.scheduled", Epic: w, Slice: s, Rev: 1, Ticket: "T-17", Data: M{"stage": "spec-ready", "risk": "Medium"}},
+		L{At: at(20 * min_), Type: "revision.superseded", Epic: w, Slice: s, Rev: 1, Ticket: "T-17", Source: "intake", Data: M{"from_revision": 1, "effect": "flagged"}},
+		L{At: at(21 * min_), Type: "slice.materialized", Epic: w, Slice: s, Rev: 2, Ticket: "T-17b", Source: "intake", Data: M{"dependencies": []string{}}},
+		L{At: at(22 * min_), Type: "work.scheduled", Epic: w, Slice: s, Rev: 2, Ticket: "T-17b", Data: M{"stage": "spec-ready", "risk": "Medium"}},
 	)
 	f.lifecycle("T-17", append(planVisit(at(70*sec), at(100*sec), "Medium", "cli"), visit("build", 1, 1, "", at(3*min_), at(13*min_), "built")...)...)
 	f.run("T-17", at(25*min_), map[string]any{"outcome": "abandoned", "first_pass": false, "integration": nil})
 	f.slice(s, "T-17b", w, 2)
 	f.happyCell("T-17b", "", 21*min_, "Medium", "cli")
-	f.intake(L{At: at(60 * min_), Type: "slice.integrated", Wave: w, Slice: s, Rev: 2, Ticket: "T-17b", Source: "intake", Data: M{"commit": "fedcba987654"}})
+	f.intake(L{At: at(60 * min_), Type: "slice.integrated", Epic: w, Slice: s, Rev: 2, Ticket: "T-17b", Source: "intake", Data: M{"commit": "fedcba987654"}})
 	f.run("T-17b", at(62*min_), nil)
 	o := observe(f)
 	d := o.metrics(allIDs(), "")
-	// One slice integrated (revision 2): T2 = 1. One ticket merged: T1 = 1. T3 is deferred.
+	// One slice integrated (revision 2): T2 = 1. One ticket merged: T1 = 1. (T3 was retired in M11.)
 	fig(t, "T2", metric(t, d, "T2"), f64(1), f64(1), none, f64(1))
 	fig(t, "T1", metric(t, d, "T1"), f64(1), f64(1), none, f64(1))
-	fig(t, "T3", metric(t, d, "T3"), none, none, none, nil)
 	// C4: revision 2 became eligible when materialized, 09:21:00.999, integrated 10:00:00.999:
 	// 39 min = 2,340,000. Revision 1's history does not stretch it.
 	fig(t, "C4", metric(t, d, "C4"), f64(2340000), f64(2340000), f64(1), f64(1))
@@ -109,14 +108,14 @@ func TestS17SupersededRevision(t *testing.T) {
 // backfill, and a cursor taken at the end of backfill answers the same after the live part.
 func TestS18Backfill(t *testing.T) {
 	f := newFx(t)
-	f.product("WAVE-001", "SLICE-001", "T-1", at(0), at(1*min_), "Medium")
+	f.product("EPIC-001", "SLICE-001", "T-1", at(0), at(1*min_), "Medium")
 	f.happyCell("T-1", X1, 0, "Medium", "cli")
 	f.supervised("T-1", X1, at(2*min_), at(40*min_+5*sec), at(40*min_+30*sec), 1.25)
 	o := observe(f)
 	cursorStable(t, o, func() {
-		f.intake(L{At: at(45 * min_), Type: "slice.integrated", Wave: "WAVE-001", Slice: "SLICE-001", Ticket: "T-1", Source: "intake", Data: M{"commit": "fedcba987654"}})
+		f.intake(L{At: at(45 * min_), Type: "slice.integrated", Epic: "EPIC-001", Slice: "SLICE-001", Ticket: "T-1", Source: "intake", Data: M{"commit": "fedcba987654"}})
 		f.run("T-1", at(50*min_), nil)
-		f.product("WAVE-002", "SLICE-002", "T-2", at(1*hour), at(1*hour+min_), "Low")
+		f.product("EPIC-002", "SLICE-002", "T-2", at(1*hour), at(1*hour+min_), "Low")
 		f.happyCell("T-2", X2, 1*hour, "Low", "api")
 		f.supervised("T-2", X2, at(1*hour+2*min_), at(1*hour+40*min_), at(1*hour+41*min_), 0.75)
 	}, analyticsPaths...)
@@ -201,10 +200,10 @@ func TestS19MismatchedVersions(t *testing.T) {
 // those of the live cell plus the cleanup visit.
 func TestS20Archived(t *testing.T) {
 	f := newFx(t)
-	f.product("WAVE-001", "SLICE-001", "T-20", at(0), at(1*min_), "Medium")
+	f.product("EPIC-001", "SLICE-001", "T-20", at(0), at(1*min_), "Medium")
 	f.happyCell("T-20", X1, 0, "Medium", "cli")
 	f.supervised("T-20", X1, at(2*min_), at(40*min_+5*sec), at(40*min_+30*sec), 1.25)
-	f.intake(L{At: at(45 * min_), Type: "slice.integrated", Wave: "WAVE-001", Slice: "SLICE-001", Ticket: "T-20", Source: "intake", Data: M{"commit": "fedcba987654"}})
+	f.intake(L{At: at(45 * min_), Type: "slice.integrated", Epic: "EPIC-001", Slice: "SLICE-001", Ticket: "T-20", Source: "intake", Data: M{"commit": "fedcba987654"}})
 	// cleanup 09:46:00 .. 09:46:20 (20,000 ms), recorded only in the archived copy.
 	f.lifecycle("T-20", visit("cleanup", 1, 0, "", at(46*min_), at(46*min_+20*sec), "archived",
 		R{At: at(46*min_ + 10*sec), Type: "cleanup.completed", Data: M{"outcome": "merged", "archive": "T-20.tar.gz", "bundle": false}})...)

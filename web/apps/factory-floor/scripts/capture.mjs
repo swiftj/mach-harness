@@ -34,41 +34,41 @@ const FFMPEG = process.env.FFMPEG ?? "/opt/homebrew/bin/ffmpeg";
 const BEATS = [
   { id: "01-opening", t: 0, hero: true, atlas: {} },
   {
-    id: "02-wave-arrives",
+    id: "02-slices-arrive",
     t: 34,
-    atlas: { focus: "wave:WAVE-007", zoom: 1.3, around: ["wave:WAVE-007", "slice:SLICE-021", "slice:SLICE-025", "cell:LOCAL-031"] },
+    atlas: { focus: "slice:SLICE-021", zoom: 1.3, around: ["slice:SLICE-021", "slice:SLICE-025", "cell:131"] },
   },
-  { id: "03-three-bays", t: 640, hero: true, theater: true, atlas: { focus: "cell:LOCAL-032", zoom: 1.1 } },
+  { id: "03-three-bays", t: 640, hero: true, theater: true, atlas: { focus: "cell:132", zoom: 1.1 } },
   {
     id: "04-agent-inspected",
     t: 640,
-    atlas: { select: "agent:ag-031-08" },
+    atlas: { select: "agent:ag-131-08" },
   },
   {
     id: "05-review-fan-out",
     t: 1601,
-    atlas: { select: "gate:LOCAL-033/review#1" },
+    atlas: { select: "gate:133/review#1" },
   },
   {
     id: "06-outvoted-blocker",
     t: 1612,
-    atlas: { select: "finding:LOCAL-033/r1/product/1" },
+    atlas: { select: "finding:133/r1/product/1" },
   },
   {
     id: "07-verify-fail-return",
     t: 1660,
     hero: true,
     theater: true,
-    atlas: { select: "gate:LOCAL-031/verification#1", focus: "cell:LOCAL-031", zoom: 2.0 },
-    heroAtlas: { focus: "cell:LOCAL-031", zoom: 2.0 },
+    atlas: { select: "gate:131/verification#1", focus: "cell:131", zoom: 2.0 },
+    heroAtlas: { focus: "cell:131", zoom: 2.0 },
   },
   {
     id: "08-rejection-crosses",
     t: 1940,
     hero: true,
     theater: true,
-    atlas: { select: "gate:LOCAL-032/review#1", focus: "cell:LOCAL-032", zoom: 0.85, around: ["cell:LOCAL-032", "gate:review"] },
-    heroAtlas: { focus: "cell:LOCAL-032", zoom: 0.85, around: ["cell:LOCAL-032", "gate:review"] },
+    atlas: { select: "gate:132/review#1", focus: "cell:132", zoom: 0.85, around: ["cell:132", "gate:review"] },
+    heroAtlas: { focus: "cell:132", zoom: 0.85, around: ["cell:132", "gate:review"] },
   },
   {
     id: "09-integration",
@@ -76,7 +76,7 @@ const BEATS = [
     // Centred between the merge machine and the approval yard, so the trunk, the gate and what fed it fill the frame.
     // `nudge` moves the drawing down so the yard and the approval and review regions above it fill the frame
     // (centred on the merge machine alone, the lower half was empty ground past the plant's edge).
-    atlas: { select: "cell:LOCAL-031", focus: "station:merge", zoom: 1.15, around: ["station:merge"], nudge: [-120, 230] },
+    atlas: { select: "cell:131", focus: "station:merge", zoom: 1.15, around: ["station:merge"], nudge: [-120, 230] },
   },
   {
     id: "10-dependency-unlocks",
@@ -88,15 +88,15 @@ const BEATS = [
   {
     id: "11-human-gate-held",
     t: 2852,
-    atlas: { select: "gate:LOCAL-032/human-approval", focus: "gate:LOCAL-032/human-approval", zoom: 1.8 },
+    atlas: { select: "gate:132/human-approval", focus: "gate:132/human-approval", zoom: 1.8 },
   },
   {
     id: "12-human-gate-released",
     t: 3125,
     hero: true,
     theater: true,
-    atlas: { select: "gate:LOCAL-032/human-approval", focus: "gate:LOCAL-032/human-approval", zoom: 1.8 },
-    heroAtlas: { focus: "gate:LOCAL-032/human-approval", zoom: 1.8 },
+    atlas: { select: "gate:132/human-approval", focus: "gate:132/human-approval", zoom: 1.8 },
+    heroAtlas: { focus: "gate:132/human-approval", zoom: 1.8 },
   },
   { id: "13-end-of-run", t: 3350.2, hero: true, atlas: { focus: "overview" } },
 ];
@@ -286,7 +286,7 @@ async function extrasPass(browser, theme) {
     for (const reducedMotion of ["no-preference", "reduce"]) {
       const { context, page } = await openApp(browser, { theme, reducedMotion });
       try {
-        await stage(page, 1646, { focus: "cell:LOCAL-031", zoom: 2.0 });
+        await stage(page, 1646, { focus: "cell:131", zoom: 2.0 });
         await shoot(page, `22-reduced-motion-${reducedMotion === "reduce" ? "b-on" : "a-off"}-atlas-${theme}`);
       } finally {
         await context.close();
@@ -299,9 +299,9 @@ async function extrasPass(browser, theme) {
     try {
       for (const [n, beat, frame] of [
         ["a", "01-opening", { focus: "overview" }],
-        ["b", "03-three-bays", { focus: "cell:LOCAL-032", zoom: 1.1 }],
-        ["c", "07-verify-fail-return", { select: "gate:LOCAL-031/verification#1", focus: "cell:LOCAL-031", zoom: 1.6 }],
-        ["d", "11-human-gate-held", { focus: "gate:LOCAL-032/human-approval", zoom: 1.5 }],
+        ["b", "03-three-bays", { focus: "cell:132", zoom: 1.1 }],
+        ["c", "07-verify-fail-return", { select: "gate:131/verification#1", focus: "cell:131", zoom: 1.6 }],
+        ["d", "11-human-gate-held", { focus: "gate:132/human-approval", zoom: 1.5 }],
       ]) {
         const t = BEATS.find((b) => b.id === beat).t;
         // One page for the four: clear what the last shot selected, so its drawer does not carry over.

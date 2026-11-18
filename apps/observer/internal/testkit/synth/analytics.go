@@ -1,7 +1,7 @@
 package synth
 
 // The analytics mode (Options.Analytics, mach-synth --analytics): a project fit for Factory
-// Analytics. Hundreds of tickets over many delivery waves and weeks, each run to its end by the
+// Analytics. Hundreds of tickets over many epics and weeks, each run to its end by the
 // same scheduler and execution model as the Timeline history, plus what analytics needs and the
 // Timeline did not: every finished cell archived with the run record exactly as the cleanup
 // station writes it (skills/cleanup/scripts/cleanup.py run_record), abandoned and escalated
@@ -32,8 +32,8 @@ func (o *Options) analyticsDefaults() {
 	if o.Cells == 0 {
 		o.Cells = 300
 	}
-	if o.Waves == 0 {
-		o.Waves = max(1, (o.Cells+7)/8)
+	if o.Epics == 0 {
+		o.Epics = max(1, (o.Cells+7)/8)
 	}
 	if o.Hours == 0 {
 		o.Hours = 24 * 21
@@ -55,8 +55,8 @@ func (o Options) analyticsCheck() error {
 		return fmt.Errorf("an output folder is required")
 	case o.Cells < 1 || o.Cells > 2000:
 		return fmt.Errorf("with --analytics, cells must be between 1 and 2000")
-	case o.Waves < 1 || o.Waves > o.Cells:
-		return fmt.Errorf("with --analytics, waves must be between 1 and the number of cells")
+	case o.Epics < 1 || o.Epics > o.Cells:
+		return fmt.Errorf("with --analytics, epics must be between 1 and the number of cells")
 	case o.Hours < 1 || o.Hours > 24*120:
 		return fmt.Errorf("with --analytics, hours must be between 1 and 2880")
 	case o.Events < 0:
@@ -238,24 +238,24 @@ func (w *world) pickAppType() string {
 	return "cli"
 }
 
-// setupAnalytics lays out the waves, slices, cells and dependencies.
+// setupAnalytics lays out the epics, slices, cells and dependencies.
 func (w *world) setupAnalytics() {
 	o := w.o
 	n := o.Cells
 	w.an = &analyticsWorld{}
-	// Waves arrive spread over the work the line can do: about 4,600 model seconds of execution
+	// Epics arrive spread over the work the line can do: about 4,600 model seconds of execution
 	// per ticket, max_parallel at a time.
 	span := float64(n) * 4600 / float64(o.MaxParallel)
 	if w.real() {
 		w.realisticStart()
 		span = realisticSpan(n, o.MaxParallel)
 	}
-	for i := 0; i < o.Waves; i++ {
-		at := 300 + span*0.85*float64(i)/float64(o.Waves)
+	for i := 0; i < o.Epics; i++ {
+		at := 300 + span*0.85*float64(i)/float64(o.Epics)
 		if w.real() {
 			at = w.nextAwake(at) // a product manager publishes in working hours
 		}
-		w.waves = append(w.waves, &wave{id: fmt.Sprintf("WAVE-%03d", i+1), at: at})
+		w.epics = append(w.epics, &epic{id: fmt.Sprintf("EPIC-%03d", i+1), at: at})
 	}
 	profiles := make([]profile, n)
 	for i := range profiles {
@@ -275,8 +275,8 @@ func (w *world) setupAnalytics() {
 		profiles[n-2], profiles[n-5], profiles[n-8] = pOpen, pHumanOpen, pEscalate
 	}
 	for i := 0; i < n; i++ {
-		wv := w.waves[i*o.Waves/n]
-		s := &slice{id: fmt.Sprintf("SLICE-%03d", i+1), n: i, wave: wv, ticket: fmt.Sprintf("SYN-%03d", i+1), rev: 1}
+		wv := w.epics[i*o.Epics/n]
+		s := &slice{id: fmt.Sprintf("SLICE-%03d", i+1), n: i, epic: wv, ticket: fmt.Sprintf("SYN-%03d", i+1), rev: 1}
 		prof := profiles[i]
 		c := &cell{n: i, ticket: s.ticket, slice: s, prof: prof, risk: prof.risk, round: 1, visits: map[string]int{}, heldSince: -1,
 			files: map[string][]byte{}}
@@ -297,7 +297,7 @@ func (w *world) setupAnalytics() {
 		w.cells = append(w.cells, c)
 	}
 	// Dependencies: on an earlier slice whose ticket will be integrated, in the same or an earlier
-	// wave. A few slices are blocked twice: a new revision adds a second dependency (superseded).
+	// epic. A few slices are blocked twice: a new revision adds a second dependency (superseded).
 	for i := 1; i < n; i++ {
 		if w.rng.IntN(100) >= 25 {
 			continue
@@ -342,8 +342,8 @@ func (w *world) setupAnalytics() {
 	if n >= 20 {
 		for _, c := range w.cells {
 			if c.prof.name == aEscalateAbandon.name || c.prof.name == aAbandon.name {
-				last := w.waves[len(w.waves)-1]
-				extra := &slice{id: fmt.Sprintf("SLICE-%03d", n+1), n: n, wave: last, ticket: fmt.Sprintf("SYN-%03d", n+1), rev: 1}
+				last := w.epics[len(w.epics)-1]
+				extra := &slice{id: fmt.Sprintf("SLICE-%03d", n+1), n: n, epic: last, ticket: fmt.Sprintf("SYN-%03d", n+1), rev: 1}
 				extra.phases = [][]*cell{{c}}
 				last.slices = append(last.slices, extra)
 				w.slices = append(w.slices, extra)
@@ -786,7 +786,7 @@ func (g *gen) cellJSONA(c *cell, stage string) []byte {
 	m := map[string]any{"ticket_id": c.ticket, "title": c.an.title, "mode": "headless", "stage": stage, "isolation": "worktree",
 		"branch": "feature/" + c.ticket, "slice_id": c.slice.id, "spec_path": "specs/slices/" + c.slice.id + "-synthetic.md", "risk": c.risk,
 		"app_type": c.an.appType, "contracts": []any{}, "created_at": w.pyTime(c.created), "round": c.round, "synthetic": true,
-		"product": map[string]any{"slice_id": c.slice.id, "wave_id": c.slice.wave.id, "revision": c.slice.rev, "digest": c.slice.digest}}
+		"product": map[string]any{"slice_id": c.slice.id, "epic_id": c.slice.epic.id, "source": "folder", "revision": c.slice.rev, "digest": c.slice.digest}}
 	if c.an.mergedAt > 0 && g.in(c.an.mergedAt) {
 		m["merged"] = map[string]any{"method": c.an.method, "commit": c.an.mergeCommit, "landed_commit": c.an.approvedHead, "at": w.pyTime(c.an.mergedAt)}
 		if c.an.method == "pr" {
@@ -838,7 +838,7 @@ type Expected struct {
 	Generator  map[string]any            `json:"generator"`
 	Tickets    map[string]any            `json:"tickets"`
 	Slices     map[string]any            `json:"slices"`
-	Waves      map[string]any            `json:"waves"`
+	Epics      map[string]any            `json:"epics"`
 	Visits     map[string]int            `json:"visits"`
 	VisitsLogs map[string]int            `json:"visits_in_logs"`
 	Executions map[string]any            `json:"executions"`
@@ -912,7 +912,7 @@ func (g *gen) writeExpected() error {
 	in := g.in
 	e := Expected{Note: "Ground truth from the generator's own plan (its model of what happened), not from the files or the observer. " +
 		"'visits' counts what happened; 'visits_in_logs' what the lifecycle logs carry (partial and absent logs lose some). Costs are recorded values only."}
-	e.Generator = map[string]any{"seed": w.o.Seed, "cells": w.o.Cells, "waves": w.o.Waves, "hours": w.o.Hours, "max_parallel": w.o.MaxParallel,
+	e.Generator = map[string]any{"seed": w.o.Seed, "cells": w.o.Cells, "epics": w.o.Epics, "hours": w.o.Hours, "max_parallel": w.o.MaxParallel,
 		"agents_per_execution": w.o.AgentsPerExecution, "events_target": w.o.Events, "start": isoMS(w.startMS), "end": isoMS(w.ms(w.endT))}
 	// Tickets.
 	var done []*cell
@@ -958,7 +958,7 @@ func (g *gen) writeExpected() error {
 	e.Tickets = map[string]any{"total": len(w.cells), "dispatched": dispatched, "finished": len(done), "merged": byOutcome["merged"],
 		"abandoned": byOutcome["abandoned"], "escalated": escalated, "escalated_then_abandoned": escAbandoned, "first_pass": firstPass,
 		"unfinished_by_stage_at_end": atEnd, "finished_by_risk": byRisk, "finished_by_app_type": byApp, "by_profile": byProfile}
-	// Slices and waves.
+	// Slices and epics.
 	integrated, blockedEver, never, superseded := 0, 0, 0, 0
 	for _, s := range w.slices {
 		if s.cell != nil && s.cell.integrated > 0 && in(s.cell.integrated) {
@@ -972,21 +972,9 @@ func (g *gen) writeExpected() error {
 		}
 		superseded += s.rev - 1
 	}
-	delivered := 0
-	for _, wv := range w.waves {
-		all := true
-		for _, s := range wv.slices {
-			if s.cell == nil || s.cell.integrated == 0 || !in(s.cell.integrated) {
-				all = false
-			}
-		}
-		if all {
-			delivered++
-		}
-	}
 	e.Slices = map[string]any{"total": len(w.slices), "integrated": integrated, "ever_dependency_blocked": blockedEver, "never_dispatched": never,
 		"revisions_superseded": superseded, "blocked_at_end_without_cell": w.an.blockedEnd}
-	e.Waves = map[string]any{"total": len(w.waves), "delivered": delivered}
+	e.Epics = map[string]any{"total": len(w.epics)}
 	// Visits, gates, rounds, from the model's lifecycle records.
 	e.Visits, e.VisitsLogs = map[string]int{}, map[string]int{}
 	gates := map[string]int{}

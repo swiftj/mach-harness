@@ -62,7 +62,7 @@ var (
 )
 
 func init() {
-	for _, k := range event.Kinds[22:33] {
+	for _, k := range event.Kinds[21:32] {
 		lifecycleKinds[k] = true
 	}
 }
@@ -171,7 +171,7 @@ func (l *Lifecycle) Line(line []byte, r Read) []*event.Event {
 	}
 	if l.Identity != nil {
 		p := l.Identity.ProductOf(ticket)
-		ids.SliceID, ids.WaveID, ids.Revision, ids.ProjectID = p.SliceID, p.WaveID, p.Revision, l.Identity.ProjectID
+		ids.SliceID, ids.EpicID, ids.Issue, ids.Revision, ids.ProjectID = p.SliceID, p.EpicID, p.Issue, p.Revision, l.Identity.ProjectID
 	}
 	cell := event.CellRef(ticket, l.k)
 	visitRef := "visit:" + ids.VisitID

@@ -32,7 +32,7 @@
                   "schema_revision": {
                                        "type": "integer",
                                        "minimum": 0,
-                                       "description": "Additive revisions within version 3. Consumers ignore fields and kinds they do not know. Revision 1: execution.usage gains cost_complete and cost_incomplete_reasons. Revision 2: history.gap gains class and history_lost (and the reasons unexpected-shape and evicted); origin gains runtime_state on execution-stream events. Revision 3: execution.started gains source_commit, provenance (the snapshot the supervisor took at start, or null) and provenance_reason."
+                                       "description": "Additive revisions within version 3. Consumers ignore fields and kinds they do not know. Revision 1: execution.usage gains cost_complete and cost_incomplete_reasons. Revision 2: history.gap gains class and history_lost (and the reasons unexpected-shape and evicted); origin gains runtime_state on execution-stream events. Revision 3: execution.started gains source_commit, provenance (the snapshot the supervisor took at start, or null) and provenance_reason. Revision 4 (M11) is not additive, as MACH has no users yet: ids.wave_id is replaced by ids.epic_id, ids.issue is added, wave.discovered is removed, and slice.materialized gains epic_title."
                                      },
                   "id": {
                           "type": "string",
@@ -42,7 +42,6 @@
                         },
                   "type": {
                             "enum": [
-                                      "wave.discovered",
                                       "intake.validated",
                                       "intake.refused",
                                       "slice.materialized",
@@ -182,7 +181,8 @@
                            "additionalProperties": false,
                            "required": [
                                          "project_id",
-                                         "wave_id",
+                                         "epic_id",
+                                         "issue",
                                          "slice_id",
                                          "revision",
                                          "ticket_id",
@@ -200,7 +200,8 @@
                                        ],
                            "properties": {
                                            "project_id": {"type": ["string", "null"]},
-                                           "wave_id": {"type": ["string", "null"]},
+                                           "epic_id": {"type": ["string", "null"], "description": "Revision 4 (M11): the epic the slice belongs to."},
+                                           "issue": {"type": ["integer", "null"], "minimum": 1, "description": "Revision 4 (M11): the slice's GitHub issue number; null for a slice from a ready folder."},
                                            "slice_id": {"type": ["string", "null"]},
                                            "revision": {"type": ["integer", "null"]},
                                            "ticket_id": {"type": ["string", "null"]},
@@ -254,7 +255,7 @@
                                 "type": "array",
                                 "items": {
                                            "type": "string",
-                                           "pattern": "^(project|workflow|wave|slice|cell|station|visit|execution|agent|tool|artifact|gate|dependency|finding|seat|actor):.+$",
+                                           "pattern": "^(project|workflow|slice|cell|station|visit|execution|agent|tool|artifact|gate|dependency|finding|seat|actor):.+$",
                                            "maxLength": 300
                                          },
                                 "uniqueItems": true,
@@ -262,7 +263,7 @@
                               },
                   "parent": {
                               "type": ["string", "null"],
-                              "pattern": "^(project|workflow|wave|slice|cell|station|visit|execution|agent|tool|artifact|gate|dependency|finding|seat|actor):.+$",
+                              "pattern": "^(project|workflow|slice|cell|station|visit|execution|agent|tool|artifact|gate|dependency|finding|seat|actor):.+$",
                               "description": "The enclosing span's entity (a tool call's agent, an agent's parent agent or visit, a visit's execution when recorded)."
                             },
                   "cause": {
@@ -326,16 +327,6 @@
                   "data": {"type": "object"}
                 },
   "allOf": [
-             {
-               "if": {"properties": {"type": {"const": "wave.discovered"}}, "required": ["type"]},
-               "then": {
-                         "properties": {
-                                         "data": {"$ref": "#/$defs/data_wave_discovered"},
-                                         "origin": {"properties": {"stream": {"const": "intake-log"}}},
-                                         "ids": {"properties": {"wave_id": {"not": {"type": "null"}}}}
-                                       }
-                       }
-             },
              {
                "if": {"properties": {"type": {"const": "intake.validated"}}, "required": ["type"]},
                "then": {
@@ -962,26 +953,6 @@
              }
            ],
   "$defs": {
-             "data_wave_discovered": {
-                                       "type": "object",
-                                       "additionalProperties": false,
-                                       "required": ["slices", "approval"],
-                                       "properties": {
-                                                       "slices": {"type": "array", "items": {"type": "string"}},
-                                                       "approval": {
-                                                                     "type": "object",
-                                                                     "additionalProperties": false,
-                                                                     "required": ["approved_at", "by_role"],
-                                                                     "properties": {
-                                                                                     "approved_at": {
-                                                                                                      "type": ["string", "null"],
-                                                                                                      "format": "date-time"
-                                                                                                    },
-                                                                                     "by_role": {"enum": ["person"]}
-                                                                                   }
-                                                                   }
-                                                     }
-                                     },
              "data_intake_validated": {
                                         "type": "object",
                                         "additionalProperties": false,
@@ -1003,7 +974,8 @@
                                                           "adopted": {"type": "boolean"},
                                                           "dependencies": {"type": "array", "items": {"type": "string"}},
                                                           "reissued": {"type": ["boolean", "null"]},
-                                                          "title": {"type": ["string", "null"], "description": "M6.6. The slice's title as the intake ledger records it for this revision; null when not recorded. Product prose: a free-text field (display_policy.free_text)."}
+                                                          "title": {"type": ["string", "null"], "description": "M6.6. The slice's title as the intake ledger records it for this revision; null when not recorded. Product prose: a free-text field (display_policy.free_text)."},
+                                                          "epic_title": {"type": ["string", "null"], "description": "Revision 4 (M11). The name of the slice's epic as the intake ledger records it for this revision; null when not recorded. Product prose: a free-text field (display_policy.free_text)."}
                                                         }
                                         },
              "data_slice_integrated": {

@@ -4,17 +4,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sim } from "./_load.mjs";
 
-const { cellTiming, stationTiming, waveTiming, timingWords, reviewTally } = await import("../src/shell/inspector/timing.ts");
+const { cellTiming, stationTiming, timingWords, reviewTally } = await import("../src/shell/inspector/timing.ts");
 const { SCENARIO, finalScene, sceneAt } = sim;
 const end = finalScene(SCENARIO);
 const mergeOf = (ticket) => SCENARIO.events.find((e) => e.type === "merge.completed" && e.ticket_id === ticket);
 
-test("a merged cell is finished at its merge, not at its dispatch (LOCAL-031)", () => {
-  const cell = end.cells["LOCAL-031"];
-  assert.ok(cell?.merged, "LOCAL-031 merges in the scenario");
+test("a merged cell is finished at its merge, not at its dispatch (131)", () => {
+  const cell = end.cells["131"];
+  assert.ok(cell?.merged, "131 merges in the scenario");
   const timing = cellTiming(cell);
   assert.equal(timing.phase, "finished");
-  assert.equal(timing.since, mergeOf("LOCAL-031").t);
+  assert.equal(timing.since, mergeOf("131").t);
   assert.notEqual(timing.since, cell.openedAt);
   assert.equal(timingWords(timing), "Finished at");
 });
@@ -25,8 +25,8 @@ test("every merged cell names its merge time; an open cell names when it opened"
     if (cell.merged) assert.equal(timing.since, mergeOf(cell.ticketId).t, cell.ticketId);
     else assert.deepEqual([timing.phase, timing.since], ["running", cell.openedAt], cell.ticketId);
   }
-  const t = mergeOf("LOCAL-031").t;
-  const before = sceneAt(SCENARIO, t - 1).cells["LOCAL-031"];
+  const t = mergeOf("131").t;
+  const before = sceneAt(SCENARIO, t - 1).cells["131"];
   assert.deepEqual([cellTiming(before).phase, cellTiming(before).since], ["running", before.openedAt]);
 });
 
@@ -36,12 +36,6 @@ test("a station visit is finished when the cell left it", () => {
   for (const cell of Object.values(end.cells)) {
     for (const visit of cell.visits) if (visit.leftAt !== null) assert.equal(stationTiming(visit).since, visit.leftAt);
   }
-});
-
-test("a wave says when it arrived, never that it finished", () => {
-  const timing = waveTiming({ discoveredAt: 31000 });
-  assert.equal(timingWords(timing), "Arrived at");
-  assert.equal(timing.since, 31000);
 });
 
 test("a review tally reads approvals of seats, then approvals needed, never 'x of needed'", () => {

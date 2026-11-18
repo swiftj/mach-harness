@@ -85,11 +85,11 @@ func TestEveryProseCallSiteIsDeclared(t *testing.T) {
 			m += len(scrub.FindAllString(line, -1))
 		}
 	}
-	// 14 Text call sites (M6.6 added slice.materialized data.title) and 1 Scrub call site
-	// (execution.completed data.refused_tools[]); agent.queued and agent.started share the label
-	// and phase call sites, so the list declares 17 fields.
-	if n != 14 || m != 1 || len(FreeTextFields) != 17 {
-		t.Fatalf("prose call sites in internal/normalize: %d Text (want 14), %d Scrub (want 1), declared fields: %d (want 17); declare the new field in redact.FreeTextFields", n, m, len(FreeTextFields))
+	// 15 Text call sites (M6.6 added slice.materialized data.title, M11 data.epic_title) and 1 Scrub
+	// call site (execution.completed data.refused_tools[]); agent.queued and agent.started share the
+	// label and phase call sites, so the list declares 18 fields.
+	if n != 15 || m != 1 || len(FreeTextFields) != 18 {
+		t.Fatalf("prose call sites in internal/normalize: %d Text (want 15), %d Scrub (want 1), declared fields: %d (want 18); declare the new field in redact.FreeTextFields", n, m, len(FreeTextFields))
 	}
 }
 

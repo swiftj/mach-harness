@@ -50,7 +50,7 @@
       "supervisor_cost_usd": 4.7979,
       "tokens_total": 3522336
      },
-     "wave": "WAVE-001"
+     "epic": "EPIC-001"
     },
     {
      "app_type": "web",
@@ -83,7 +83,7 @@
       "supervisor_cost_usd": 7.3615,
       "tokens_total": 3563182
      },
-     "wave": "WAVE-001"
+     "epic": "EPIC-001"
     },
     {
      "app_type": "cli",
@@ -115,7 +115,7 @@
       "supervisor_cost_usd": 6.9462,
       "tokens_total": 4269954
      },
-     "wave": "WAVE-001"
+     "epic": "EPIC-001"
     }
    ],
    "more": true,
@@ -143,6 +143,6 @@
   "ok": true
  },
  "path": "/analytics/runs?of=executions&limit=3",
- "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --waves 8 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
+ "recorded": "mach-observer (worktree build) over the synthetic medium project (mach-synth --cells 60 --epics 8; its wave fields renamed by hand for M11 --seed 1 --analytics), after its position stopped advancing (12684); synthetic data",
  "status": 200
 }

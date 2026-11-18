@@ -62,12 +62,6 @@ function touch(prev: EntityMeta, e: Pick<FactoryEventV3, "authority" | "id" | "l
   return { ...prev, authority: e.authority as Authority, eventId: e.id, late: e.late === true, ...patch };
 }
 
-/** The union of two id lists in order of first sight: everything already held keeps its place. */
-function union(held: readonly string[], more: readonly string[]): readonly string[] {
-  const added = more.filter((id, i) => !held.includes(id) && more.indexOf(id) === i);
-  return added.length ? [...held, ...added] : held;
-}
-
 /** A recorded risk reaches the cell's slice too: the slice's risk is the cell's once one is recorded. */
 function withSliceRisk(s: Scene, sliceId: string | null | undefined, risk: SliceState["risk"] | null, e: AnyV3Event): Scene {
   if (!risk) return s;
@@ -425,35 +419,8 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       return { ...s, factory: { ...s.factory, paused: false } };
     case "revision.discovered":
       return { ...s, factory: { ...s.factory, productCommit: e.data.commit } };
-    case "wave.discovered": {
-      const id = e.ids.wave_id ?? "";
-      const def = definitions.waves[id];
-      const prior = s.waves[id];
-      // A wave discovered again (a new revision, a re-read) adds to what is known of it, never replaces
-      // it: its slices are the union in order of first sight, and it keeps the moment it was first seen.
-      return {
-        ...s,
-        waves: put(s.waves, id, {
-          id,
-          title: def?.title ?? id,
-          epicTitle: def?.epicTitle ?? "",
-          revision: e.ids.revision ?? prior?.revision ?? null,
-          sliceIds: prior ? union(prior.sliceIds, e.data.slices) : union([], e.data.slices),
-          approvedBy: e.data.approval.by_role === "person" ? "a person" : e.data.approval.by_role,
-          approvedAt: e.data.approval.approved_at ?? prior?.approvedAt ?? "",
-          state: prior?.state ?? "discovered",
-          discoveredAt: prior?.discoveredAt ?? at,
-          seq: prior?.seq ?? seq,
-          meta: prior ? touch(prior.meta, e) : metaOf(e, { unknown: def ? [] : ["title", "epicTitle"] }),
-        }),
-      };
-    }
-    case "intake.validated": {
-      const wave = s.waves[e.ids.wave_id ?? ""];
-      return wave ? { ...s, waves: put(s.waves, wave.id, { ...wave, state: "validated", meta: touch(wave.meta, e) }) } : s;
-    }
     case "intake.refused":
-      return { ...s, supervisor: { ...s.supervisor, attention: put(s.supervisor.attention, e.ids.wave_id ?? "intake", { reason: e.data.problems.join(" "), at: t, seq }) } };
+      return { ...s, supervisor: { ...s.supervisor, attention: put(s.supervisor.attention, e.ids.slice_id ?? "intake", { reason: e.data.problems.join(" "), at: t, seq }) } };
     case "slice.materialized": {
       const id = e.ids.slice_id ?? "";
       const def = definitions.slices[id];
@@ -465,11 +432,16 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       const cellRisk = knownCell && isKnownField(knownCell.meta, "risk") ? knownCell.risk : null;
       // M6.6: the observer carries the intake ledger's title for this revision (free text, contained where shown).
       const recordedTitle = typeof e.data.title === "string" && e.data.title.trim() ? e.data.title : null;
+      // M11: its epic and the epic's name (free text, the same way), and its own issue number.
+      const epicId = e.ids.epic_id ?? def?.epicId ?? null;
+      const recordedEpic = typeof e.data.epic_title === "string" && e.data.epic_title.trim() ? e.data.epic_title : null;
       const slice: SliceState = {
         id,
         title: def?.title ?? recordedTitle ?? id,
         summary: def?.summary ?? "",
-        waveId: e.ids.wave_id ?? "",
+        epicId,
+        epicTitle: (epicId ? definitions.epics[epicId]?.title : undefined) ?? recordedEpic,
+        issue: e.ids.issue ?? def?.issue ?? null,
         revision: e.ids.revision,
         risk: def?.risk ?? (cellRisk ?? prior?.risk ?? "Medium"),
         ticketId: ticket ?? "",
@@ -1429,10 +1401,6 @@ function applySnapshot(input: Scene, e: E<"client.snapshot_applied">, at: number
   let s = input;
   const st = e.data.state;
   const meta = (unknown: string[] = []): EntityMeta => ({ authority: "reconstructed", eventId: e.id, fields: {}, unknown, inferred: {}, start: "unknown", end: "unknown", late: false });
-  for (const w of st.waves ?? []) {
-    if (s.waves[w.wave_id]) continue;
-    s = { ...s, waves: put(s.waves, w.wave_id, { id: w.wave_id, title: definitions.waves[w.wave_id]?.title ?? w.wave_id, epicTitle: "", revision: w.revision ?? null, sliceIds: w.slices ?? [], approvedBy: "a person", approvedAt: "", state: "validated", discoveredAt: at, seq: 0, meta: meta(["title", "epicTitle", "approvedAt", "discoveredAt"]) }) };
-  }
   for (const x of st.slices ?? []) {
     const scheduler = x.state ? SCHEDULER_WORDS[x.state] : undefined;
     const prior = s.slices[x.slice_id];
@@ -1442,7 +1410,9 @@ function applySnapshot(input: Scene, e: E<"client.snapshot_applied">, at: number
           id: x.slice_id,
           title: definitions.slices[x.slice_id]?.title ?? (typeof x.title === "string" && x.title.trim() ? x.title : x.slice_id),
           summary: "",
-          waveId: "",
+          epicId: x.epic_id ?? null,
+          epicTitle: typeof x.epic_title === "string" && x.epic_title.trim() ? x.epic_title : null,
+          issue: x.issue ?? null,
           revision: x.revision ?? null,
           risk: "Medium",
           ticketId: x.ticket_id ?? "",
@@ -1452,7 +1422,7 @@ function applySnapshot(input: Scene, e: E<"client.snapshot_applied">, at: number
           since: at,
           integratedCommit: null,
           history: [],
-          meta: meta([...(typeof x.title === "string" && x.title.trim() ? [] : ["title"]), "summary", "risk", "waveId", "since", ...(scheduler ? [] : ["scheduler"])]),
+          meta: meta([...(typeof x.title === "string" && x.title.trim() ? [] : ["title"]), "summary", "risk", "since", ...(scheduler ? [] : ["scheduler"])]),
         };
     s = { ...s, slices: put(s.slices, slice.id, slice) };
   }

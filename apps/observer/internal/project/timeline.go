@@ -123,7 +123,7 @@ func (c *timelineCache) decode(cp checkpoint) (*State, error) {
 	if err := json.Unmarshal(cp.top, &s); err != nil {
 		return nil, err
 	}
-	s.Waves, s.Slices, s.Cells, s.Executions = map[string]*Wave{}, map[string]*Slice{}, map[string]*Cell{}, map[string]*Execution{}
+	s.Slices, s.Cells, s.Executions = map[string]*Slice{}, map[string]*Cell{}, map[string]*Execution{}
 	objs := make(map[string]any, len(cp.ents))
 	for k, data := range cp.ents {
 		obj := c.prevObjs[k]
@@ -136,8 +136,6 @@ func (c *timelineCache) decode(cp checkpoint) (*State, error) {
 				obj = &Slice{}
 			case entExecution:
 				obj = &Execution{}
-			case entWave:
-				obj = &Wave{}
 			default:
 				continue
 			}
@@ -157,8 +155,6 @@ func (c *timelineCache) decode(cp checkpoint) (*State, error) {
 			s.Slices[id] = v
 		case *Execution:
 			s.Executions[id] = v
-		case *Wave:
-			s.Waves[id] = v
 		}
 	}
 	c.prevEnts, c.prevObjs = cp.ents, objs

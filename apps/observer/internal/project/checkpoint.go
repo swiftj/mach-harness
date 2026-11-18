@@ -9,17 +9,17 @@ import (
 )
 
 // Checkpoints share what did not change (D18 of the M6.2 acceptance). A projection of a long
-// history is mostly cells, slices, executions and waves that no longer change; encoding the whole
+// history is mostly cells, slices and executions that no longer change; encoding the whole
 // state at every checkpoint cost a full copy each time (64 checkpoints of a 20 MB state held 1.2 GB
 // while a 230,000-event history was read). A checkpoint is now the state's top level (everything
-// but those four maps) plus one encoded blob per entity; an entity's blob is re-encoded only when
+// but those three maps) plus one encoded blob per entity; an entity's blob is re-encoded only when
 // an event touched it (State.touch), and the same bytes are shared by every checkpoint in which
 // it did not change. Decoding a checkpoint gives exactly the state json.Marshal would have.
 
 // checkpoint is the projection at one position.
 type checkpoint struct {
 	pos  uint64
-	top  []byte            // the State with Waves, Slices, Cells and Executions left out
+	top  []byte            // the State with Slices, Cells and Executions left out
 	ents map[string][]byte // entity key (entCell + id, ...) -> its encoding; shared, never changed
 }
 
@@ -39,14 +39,14 @@ const entMetric = "m\x00"
 
 // encodeTop encodes the state without its entity maps and metric cells.
 func encodeTop(s *State) ([]byte, error) {
-	waves, slices, cells, execs := s.Waves, s.Slices, s.Cells, s.Executions
-	s.Waves, s.Slices, s.Cells, s.Executions = nil, nil, nil, nil
+	slices, cells, execs := s.Slices, s.Cells, s.Executions
+	s.Slices, s.Cells, s.Executions = nil, nil, nil
 	var mcells map[string]map[string]*metrics.Agg
 	if s.Metrics != nil {
 		mcells, s.Metrics.Cells = s.Metrics.Cells, nil
 	}
 	data, err := json.Marshal(s)
-	s.Waves, s.Slices, s.Cells, s.Executions = waves, slices, cells, execs
+	s.Slices, s.Cells, s.Executions = slices, cells, execs
 	if s.Metrics != nil {
 		s.Metrics.Cells = mcells
 	}
@@ -70,10 +70,6 @@ func encodeEntity(s *State, key string) ([]byte, error) {
 		if x := s.Executions[id]; x != nil {
 			v = x
 		}
-	case entWave:
-		if w := s.Waves[id]; w != nil {
-			v = w
-		}
 	case entMetric:
 		if m := s.Metrics.Part(id); m != nil {
 			v = m
@@ -87,7 +83,7 @@ func encodeEntity(s *State, key string) ([]byte, error) {
 
 // allEntityKeys lists every entity of the state.
 func allEntityKeys(s *State) []string {
-	keys := make([]string, 0, len(s.Cells)+len(s.Slices)+len(s.Executions)+len(s.Waves))
+	keys := make([]string, 0, len(s.Cells)+len(s.Slices)+len(s.Executions))
 	for id := range s.Cells {
 		keys = append(keys, entCell+id)
 	}
@@ -96,9 +92,6 @@ func allEntityKeys(s *State) []string {
 	}
 	for id := range s.Executions {
 		keys = append(keys, entExecution+id)
-	}
-	for id := range s.Waves {
-		keys = append(keys, entWave+id)
 	}
 	for _, part := range s.Metrics.PartKeys() {
 		keys = append(keys, entMetric+part)
@@ -162,7 +155,7 @@ func decodeCheckpoint(c checkpoint) (*State, error) {
 	if err := json.Unmarshal(c.top, &s); err != nil {
 		return nil, err
 	}
-	s.Waves, s.Slices, s.Cells, s.Executions = map[string]*Wave{}, map[string]*Slice{}, map[string]*Cell{}, map[string]*Execution{}
+	s.Slices, s.Cells, s.Executions = map[string]*Slice{}, map[string]*Cell{}, map[string]*Execution{}
 	if s.Metrics == nil {
 		s.Metrics = metrics.NewTable()
 	}
@@ -183,10 +176,6 @@ func decodeCheckpoint(c checkpoint) (*State, error) {
 			v := &Execution{}
 			err = json.Unmarshal(data, v)
 			s.Executions[id] = v
-		case entWave:
-			v := &Wave{}
-			err = json.Unmarshal(data, v)
-			s.Waves[id] = v
 		case entMetric:
 			v := map[string]*metrics.Agg{}
 			err = json.Unmarshal(data, &v)

@@ -7,11 +7,11 @@ import (
 	"mach/observer/internal/project"
 )
 
-// analyticsRun is one run record (run.recorded, as before) with the ticket's wave and its
+// analyticsRun is one run record (run.recorded, as before) with the ticket's epic and its
 // executions' usage and provenance. Every field the listing served before is kept.
 type analyticsRun struct {
 	*project.RunRecord
-	Wave       *string              `json:"wave"`
+	Epic       *string              `json:"epic"`
 	Executions []analyticsExecution `json:"executions"`
 }
 
@@ -24,7 +24,7 @@ type analyticsExecution struct {
 	StartedMS   *int64             `json:"started_ms"` // the claim, else the start: where it is placed in a window
 	Risk        *string            `json:"risk"`
 	AppType     *string            `json:"app_type"`
-	Wave        *string            `json:"wave"`
+	Epic        *string            `json:"epic"`
 	Usage       project.UsageFacts `json:"usage"`
 	// Provenance is the snapshot the supervisor recorded when it started the execution (section 5),
 	// passed through from /runs as recorded; null with provenance_recorded false and a reason
@@ -49,7 +49,7 @@ func execItem(st *project.State, x *project.Execution) analyticsExecution {
 		e.StartedMS = &ms
 	}
 	if c := st.Cells[x.TicketID]; c != nil {
-		e.Risk, e.AppType, e.Wave = nilIfEmpty(c.Risk), nilIfEmpty(c.AppType), nilIfEmpty(c.WaveID)
+		e.Risk, e.AppType, e.Epic = nilIfEmpty(c.Risk), nilIfEmpty(c.AppType), nilIfEmpty(c.EpicID)
 	}
 	e.Provenance, e.ProvenanceRecorded, e.ProvenanceReason, e.SourceCommit = rv.Provenance, rv.ProvenanceRecorded, rv.ProvenanceReason, rv.SourceCommit
 	return e
@@ -81,10 +81,10 @@ func usesModel(x *project.Execution, model string) bool {
 }
 
 // analyticsRuns: GET /api/v1/analytics/runs (M6_5_DESIGN.md 3.4). of=runs (the default): the run
-// records, as before, with window (closed_at), filters (risk, app_type, outcome, wave) and
+// records, as before, with window (closed_at), filters (risk, app_type, outcome, epic) and
 // last_runs (the last N by closed_at, the observe station's population), each with its ticket's
 // executions. of=executions: the executions, placed by their claim, filtered by risk, app_type,
-// wave and model (any model with recorded usage). Paged by limit and offset.
+// epic and model (any model with recorded usage). Paged by limit and offset.
 func (s *Server) analyticsRuns(w http.ResponseWriter, r *http.Request) {
 	p, status, bad := s.parseAnalytics(r, map[string]bool{"limit": true, "offset": true, "of": true})
 	if bad != nil {
@@ -106,9 +106,9 @@ func (s *Server) analyticsRuns(w http.ResponseWriter, r *http.Request) {
 	switch of {
 	case "", "runs":
 		of = "runs"
-		bad = unsupported(p, "risk", "app_type", "outcome", "wave", "last_runs", "provenance")
+		bad = unsupported(p, "risk", "app_type", "outcome", "epic", "last_runs", "provenance")
 	case "executions":
-		bad = unsupported(p, "risk", "app_type", "wave", "model", "provenance")
+		bad = unsupported(p, "risk", "app_type", "epic", "model", "provenance")
 	default:
 		writeJSON(w, http.StatusBadRequest, fail(KindInvalid, "of must be runs or executions."))
 		return
@@ -130,7 +130,7 @@ func (s *Server) analyticsRuns(w http.ResponseWriter, r *http.Request) {
 			start = min(off, total)
 			page := []analyticsRun{}
 			for _, rr := range list[start:min(start+limit, total)] {
-				item := analyticsRun{RunRecord: rr.rec, Wave: nilIfEmpty(rr.wave), Executions: []analyticsExecution{}}
+				item := analyticsRun{RunRecord: rr.rec, Epic: nilIfEmpty(rr.epic), Executions: []analyticsExecution{}}
 				for _, x := range byTicket[rr.rec.TicketID] {
 					item.Executions = append(item.Executions, execItem(st, x))
 				}
@@ -181,7 +181,7 @@ func (s *Server) analyticsRuns(w http.ResponseWriter, r *http.Request) {
 
 type runRow struct {
 	rec  *project.RunRecord
-	wave string
+	epic string
 }
 
 func runItems(st *project.State, p analyticsParams, excluded map[string]int) ([]runRow, map[string][]*project.Execution) {
@@ -210,9 +210,9 @@ func runItems(st *project.State, p analyticsParams, excluded map[string]int) ([]
 	}
 	out := []runRow{}
 	for _, rr := range runs {
-		risk, app, wave := rr.Risk, rr.AppType, ""
+		risk, app, epic := rr.Risk, rr.AppType, ""
 		if c := st.Cells[rr.TicketID]; c != nil {
-			wave = c.WaveID
+			epic = c.EpicID
 			if risk == "" {
 				risk = c.Risk
 			}
@@ -224,7 +224,7 @@ func runItems(st *project.State, p analyticsParams, excluded map[string]int) ([]
 		if outcome != "merged" && outcome != "abandoned" {
 			outcome = "unknown"
 		}
-		if !matchFilter(p.Risk, risk) || !matchFilter(p.AppType, app) || !matchFilter(p.Wave, wave) || !matchFilter(p.Outcome, outcome) {
+		if !matchFilter(p.Risk, risk) || !matchFilter(p.AppType, app) || !matchFilter(p.Epic, epic) || !matchFilter(p.Outcome, outcome) {
 			continue
 		}
 		matched := p.Provenance == ""
@@ -232,7 +232,7 @@ func runItems(st *project.State, p analyticsParams, excluded map[string]int) ([]
 			matched = matched || wantProvenance(p.Provenance, x)
 		}
 		if matched {
-			out = append(out, runRow{rr, wave})
+			out = append(out, runRow{rr, epic})
 		}
 	}
 	return out, byTicket
@@ -255,11 +255,11 @@ func execItems(st *project.State, p analyticsParams, excluded map[string]int) []
 		if windowed && !p.InWindow(at) {
 			continue
 		}
-		risk, app, wave := "", "", ""
+		risk, app, epic := "", "", ""
 		if c := st.Cells[x.TicketID]; c != nil {
-			risk, app, wave = c.Risk, c.AppType, c.WaveID
+			risk, app, epic = c.Risk, c.AppType, c.EpicID
 		}
-		if !matchFilter(p.Risk, risk) || !matchFilter(p.AppType, app) || !matchFilter(p.Wave, wave) || !wantProvenance(p.Provenance, x) || !usesModel(x, p.Model) {
+		if !matchFilter(p.Risk, risk) || !matchFilter(p.AppType, app) || !matchFilter(p.Epic, epic) || !wantProvenance(p.Provenance, x) || !usesModel(x, p.Model) {
 			continue
 		}
 		list = append(list, keyed{at, x})

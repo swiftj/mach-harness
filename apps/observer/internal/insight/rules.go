@@ -736,7 +736,7 @@ func (e *eval) link(figure string, group map[string]string, order, relation, not
 	for _, k := range sortedKeys(e.in.Filters) {
 		v := e.in.Filters[k]
 		switch {
-		case k == "risk" || k == "app_type" || k == "wave":
+		case k == "risk" || k == "app_type" || k == "epic":
 			q.Set(k, v)
 		case (k == "station" || k == "model") && dims[k]:
 			if _, set := c.Group[k]; !set {

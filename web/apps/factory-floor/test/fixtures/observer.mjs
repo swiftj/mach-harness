@@ -12,7 +12,7 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
     events: [], // in pos order
     floor: 0, // positions <= floor are no longer held
     snapshotCapability: snapshot,
-    snapshotState: { cells: [], slices: [], executions: [], gates: [], waves: [] },
+    snapshotState: { cells: [], slices: [], executions: [], gates: [] },
     /** `/factory/status`'s documented parts (apps/observer/README.md). */
     status: {
       factory_present: true,
@@ -20,9 +20,9 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
       supervisor: { lease_present: true, heartbeat_fresh: true, heartbeat_age_seconds: 4, lease_expired: false },
       freshness: { ingest: { stale: false, watermark_ms: null, catching_up: false }, sources: [{ key: "i:0badc0de", state: "live", lag_bytes: 0, last_read_age_ms: 120 }] },
     },
-    /** `/waves`, `/slices`, `/cells`, `/runs`, `/project`, `/cells/{t}`, `/artifacts` (observer M6.2 summaries). */
+    /** `/slices`, `/cells`, `/runs`, `/project`, `/cells/{t}`, `/artifacts` (observer M6.2 summaries). */
     summaryRoutes: summaries,
-    summaries: { waves: [], slices: [], cells: [], runs: [], artifacts: [], history: { completeness: "complete", lost: {}, not_interpreted: {}, classes: {}, gaps: {}, partial: "", not_v3: 0 } },
+    summaries: { slices: [], cells: [], runs: [], artifacts: [], history: { completeness: "complete", lost: {}, not_interpreted: {}, classes: {}, gaps: {}, partial: "", not_v3: 0 } },
     /** `/health` `ingest.runtime`. */
     runtime: null,
     /** Cursors snapshots were asked at (null: the default). */
@@ -110,7 +110,6 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
         const slice = items.slice(offset, offset + limit);
         return ok({ items: slice, total: items.length, offset, more: offset + slice.length < items.length, cursor: cur(head()) });
       };
-      if (path === "/waves") return ok({ items: server.summaries.waves, cursor: cur(head()) });
       if (path === "/slices") return page(server.summaries.slices);
       if (path === "/cells") return page(server.summaries.cells);
       if (path === "/runs") return page(server.summaries.runs);

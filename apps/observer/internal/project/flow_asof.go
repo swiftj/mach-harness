@@ -25,12 +25,6 @@ func CutAt(s *State, t int64) *State {
 	n := *s
 	n.spanCache, n.markCache, n.dirty = nil, nil, nil
 	n.LastMS = min(s.LastMS, t)
-	n.Waves = map[string]*Wave{}
-	for id, w := range s.Waves {
-		if !later(w.FirstSeen, t) {
-			n.Waves[id] = w
-		}
-	}
 	n.Executions = map[string]*Execution{}
 	for id, x := range s.Executions {
 		if c := cutExecution(s, x, t); c != nil {
