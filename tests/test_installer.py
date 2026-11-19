@@ -958,6 +958,22 @@ class SourceArchiveTest(Base):
         done = self.sh(MACH_REQUIRE_PROVENANCE="1")
         self.assertEqual(done.returncode, 0, done.stderr)
 
+    def test_the_newest_release_is_read_from_the_release_page_when_the_api_does_not_answer(self):
+        """GitHub's API limits unsigned requests per network, and some networks block it; the release page's
+        redirect names the newest release without it. (Simulated: the fake curl answers the redirect.)"""
+        (self.web / f"api.github.com/repos/{REPO}/releases/latest").unlink()
+        done = self.sh()
+        self.assert_refused(done, "GitHub's API did not answer")
+        self.assertIn(f"set MACH_VERSION, for example MACH_VERSION=", done.stderr)
+        curl = self.bin / "curl"
+        body = curl.read_text(encoding="utf-8")
+        curl.write_text('#!/bin/sh\ncase "$*" in *url_effective*) printf %s "https://github.com/' + REPO + '/releases/tag/v' + NEW + '"; exit 0 ;; esac\n'
+                        + body.split("\n", 1)[1], encoding="utf-8")
+        done = self.sh()
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertTrue((self.project / SKILL).is_file())
+        self.assertIn(f"release v{NEW}", self.note(done))
+
     def test_the_default_install_of_an_old_release_points_at_a_newer_verifiable_candidate(self):
         """With no version asked for, the newest full release is installed; when that one predates source
         archives and a later candidate exists, the person is told how to get the one that can be verified."""

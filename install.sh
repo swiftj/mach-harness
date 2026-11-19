@@ -76,6 +76,16 @@ download() {  # $1: URL, $2: file. Only https (a redirect too); curl -f fails on
   curl -fsSL --proto '=https' --proto-redir '=https' --retry 2 "$1" -o "$2" 2>/dev/null
 }
 
+newest_from_page() {  # prints the newest full release's tag, read from where the release page redirects to
+  local url
+  url="$(curl -fsSL --proto '=https' --proto-redir '=https' --retry 2 -o /dev/null -w '%{url_effective}' \
+    "https://github.com/$REPO/releases/latest" 2>/dev/null)" || return 1
+  case "$url" in
+    */releases/tag/v*) printf '%s' "${url##*/releases/tag/}" ;;
+    *) return 1 ;;
+  esac
+}
+
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | awk '{print $1}'
@@ -116,9 +126,14 @@ else
   VERSION="${MACH_VERSION:-}"
   VERSION="${VERSION#v}"
   if [ -z "$VERSION" ]; then
-    download "https://api.github.com/repos/$REPO/releases/latest" "$WORK/latest.json" \
-      || refuse "the newest MACH release of github.com/$REPO could not be found; check the internet connection, or set MACH_VERSION"
-    VERSION="$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["tag_name"])' "$WORK/latest.json" 2>/dev/null || true)"
+    if download "https://api.github.com/repos/$REPO/releases/latest" "$WORK/latest.json"; then
+      VERSION="$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["tag_name"])' "$WORK/latest.json" 2>/dev/null || true)"
+    else
+      # GitHub's API answers only so many unsigned requests an hour from one address, and some networks
+      # block it. The release page needs neither: it redirects to the newest release's own address.
+      VERSION="$(newest_from_page || true)"
+      [ -n "$VERSION" ] || refuse "the newest MACH release of github.com/$REPO could not be found (GitHub's API did not answer, which also happens when its hourly limit for this network is used up, and the release page did not name one); check the internet connection, or set MACH_VERSION, for example MACH_VERSION=0.13.0"
+    fi
     VERSION="${VERSION#v}"
   fi
   # The pattern lives in a variable so that a plain POSIX shell can still parse this file (sh -n).
