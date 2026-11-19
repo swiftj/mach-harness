@@ -132,7 +132,7 @@ else
       # GitHub's API answers only so many unsigned requests an hour from one address, and some networks
       # block it. The release page needs neither: it redirects to the newest release's own address.
       VERSION="$(newest_from_page || true)"
-      [ -n "$VERSION" ] || refuse "the newest MACH release of github.com/$REPO could not be found (GitHub's API did not answer, which also happens when its hourly limit for this network is used up, and the release page did not name one); check the internet connection, or set MACH_VERSION, for example MACH_VERSION=0.13.0"
+      [ -n "$VERSION" ] || refuse "the newest MACH release of github.com/$REPO could not be found (GitHub's API did not answer, which also happens when its hourly limit for this network is used up, and the release page did not name one); check the internet connection, or set MACH_VERSION, for example MACH_VERSION=0.14.0"
     fi
     VERSION="${VERSION#v}"
   fi

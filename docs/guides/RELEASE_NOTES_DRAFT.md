@@ -1,6 +1,26 @@
-# MACH release notes (draft) `<version>`
+# MACH release notes: 0.14.0
 
-Status: release candidate, draft. MACH is not claimed to be ready for regulated or enterprise production use. Facts come from the code at this commit and the M7 documents in `docs/mach-next/`. Anything not shown is marked "not tested". The acceptance matrix (`docs/mach-next/M7_ACCEPTANCE_MATRIX.md`, version 3) lists every scenario with its status.
+Status: a full release. MACH is not claimed to be ready for regulated or enterprise production use. The first part of this document is what changed in 0.14.0 and how far each change was tested. Everything from "Supported platforms" on was written for 0.13.0 from its test runs (the M7 documents in `docs/mach-next/`); where 0.14.0 replaced something it describes, the rows below say so, and the 0.13.0 test record was not repeated for this release.
+
+## What changed in 0.14.0
+
+| Change | What it is | How far it was tested |
+|---|---|---|
+| Slices as GitHub issues | Product Studio saves a finished slice as an issue under its epic's issue and marks it ready; that issue is the Factory's ticket. The project is one pinned issue. Without `gh`, the same slice is written to a folder. | Automated tests with a stand-in `gh`. **Real** GitHub once, by a person: three issues created, the sub-issue link, pinning and the approval comment as designed. |
+| Removed from Product Studio | Delivery waves, `slice approve`, `send`, `feedback`, the product pull request, epic approval. An epic is a container: `open` or `deferred`. | Automated tests. A draft made by 0.13.0 with an epic `proposed` needs `epic set <EPIC-ID> --status open` once. |
+| Factory intake from issues | `/mach product` takes in issues marked ready (and committed ready folders), checks who marked them and that the text matches its approval, and reports back on the issue: being built, a question, shipped and closed. | Automated tests. **Real** once: one issue accepted and dispatched. The status writes back to the issue, the builders' question and closing on merge were **not seen live**. |
+| `/mach pull` | One command for the engineer: take in what is ready, schedule it, dispatch it, then run it. | Automated tests. **Real** once, as far as dispatch; it then stopped at the technical baseline as designed. A build started by it was **not seen live**. |
+| Architecture decisions | MADR files in `docs/adr`. Accepted ones bind planning, building and review. No ticket is planned until the required topics (language, framework, storage, testing, deployment, coding standards) each have an accepted decision on the main branch. `/mach adr baseline` drafts them from the repository and settles open points by interview. `adr.landing` says how they reach main: a pull request (default) or a direct commit. | Automated tests. **Real** once: the baseline stop, six drafts, the interview, acceptance, commit. A plan made under them was **not seen live**. |
+| Release qualification per epic | `release qualify --epic`, or a named list of slices; product acceptance is a comment on the epic's issue. | Automated tests only. |
+| Factory Floor: the Line | A 2D view, stations as columns and tickets as rows, is the default. The isometric Floor and Analytics remain. The Timeline, the Execution Blueprint and all playback were removed. Epics replace waves. | Automated tests and the built-in sample factory. Not checked against a real run of this release. |
+| Product Studio's screens | A project home in place of the navigation rail, a roomier interview with a Yes button on its summary, "Mark ready to build", each slice's place with the builders, the builders' question with "Answer it", slice order, "On GitHub". | End-to-end suites with stand-ins; used by a person on one Mac. |
+| Requests, scheduling, decisions | GitHub issues as requests in Product Studio (M8); several tickets scheduled by script, one worker per ticket and the walkthrough of decisions (M9); notifications when a ticket waits (M10); the evidence player; `/mach` as the one command; `doctor` and `explain`. | Automated tests; parts were seen in the live checks recorded in `docs/mach-next/`. |
+| Installer | An updated program is moved into place as a new file, so macOS no longer stops it. The newest release is found from the release page when GitHub's API does not answer. | Automated tests. The first was seen fixed on one Mac; the second was run against the real release page, not on the machine that reported it. |
+| `make test` | Runs each test class in its own process, one worker per core. | Used for every change since. |
+
+**The main thing not proven:** no ticket has yet been built from start to merge through the new hand-off. Every step has automated tests; a person has seen the steps up to the build.
+
+Rows of the component table below that 0.14.0 replaced: "Product Studio, terminal" and "Product acceptance record" (no waves; acceptance is per epic), "Product intake and scheduling" (issues and ready folders, not merged waves; `product resolve` is gone), and "Factory Floor" (Line, Floor, Analytics). In "Upgrade guidance", the version examples are 0.13.0's. In "Tested scenarios", every row about sending, reviewing or accepting waves describes 0.13.0.
 
 ## Supported platforms
 

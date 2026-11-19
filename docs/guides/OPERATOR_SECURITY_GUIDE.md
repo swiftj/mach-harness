@@ -42,7 +42,7 @@ By default the supervisor runs only approved product work. With `--monitoring-re
 
 - An execution's environment is a fixed list: `HOME`, `USER`, `LOGNAME`, `PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TMPDIR`, `SHELL`, `TERM`, `CLAUDE_CONFIG_DIR`, plus proxy variables that carry no user:password. Any name matching key, token, secret and similar is dropped. `GIT_TERMINAL_PROMPT=0` makes a Git command that wants a password fail.
 - Files under `HOME` (`~/.ssh`, `~/.config/gh/hosts.yml`, the keychain through a Git credential helper) remain readable by any Python the run starts (section 2).
-- Product Studio's interview turn is narrower: tools `Read`, `Glob`, `Grep`, `Edit`, `Write` and `Bash` limited to listed Studio operations. Editing is limited to that slice's draft spec and why. Approve, send and reconcile are denied. The host passes a filtered environment to it.
+- Product Studio's interview turn is narrower: tools `Read`, `Glob`, `Grep`, `Edit`, `Write` and `Bash` limited to listed Studio operations. Editing is limited to that slice's draft spec and why. Marking a slice ready, reopening it and reconciling are denied. The host passes a filtered environment to it.
 - The M7 tests used the real `gh` login only through an environment variable and masked it in logs. Do not put tokens in project files or tracked settings.
 - Machine-local authorization (`runner.json`) is mode `0600`, owner-checked, and reads as disabled if Git tracks it (committed or `git add -f`: status says the policy "came from the repository", so a file that arrives through a clone or a pull request is not a grant, and `tick` does nothing), if it is symlinked, group or world writable, or written for another machine or folder. Shown on a copy of a real project, not on the project itself.
 

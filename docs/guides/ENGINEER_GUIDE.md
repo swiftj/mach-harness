@@ -126,7 +126,7 @@ Still open: a blocker from a non-security seat that is not marked as security is
 
 Ask the run skill to "open the Factory Floor". It starts `mach-observer` (from `.factory/bin/` or a checkout's build) and gives you a one-time link to `127.0.0.1`. A second browser takes the link kept in `.factory/local/observer/link`. It is read-only: it enables, starts, pauses, dispatches, approves and merges nothing, takes no lock and runs no MACH script. Stopping it never affects the line.
 
-Three workspaces: the **Atlas** (the Factory Atlas and the Execution Blueprint, keys 1 and 2), the **Timeline** (the Execution Timeline, key 3) and **Analytics** (key 4). It is labelled **Live Factory** when it reads this machine's state, and **Simulation** (invented work) when there is none.
+Three workspaces: the **Line** (stations as columns and tickets as rows; the default, key 1), the **Floor** (the isometric Factory Atlas, key 2) and **Analytics** (key 3). It shows the Factory as it is now; there is no playback. It is labelled **Live Factory** when it reads this machine's state, and **Simulation** (invented work) when there is none.
 
 "Held at an earlier moment" means the playhead sits behind the live edge, so Analytics counts only what was recorded up to that moment. Nothing recorded after it is read. `L` or `End` returns to live.
 
