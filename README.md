@@ -78,6 +78,14 @@ curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh
 
 This installs the newest release, after checking it, and prints one `MACH source:` line saying what it verified. Restart Claude Code afterwards. Run it again later to update.
 
+If it says the newest release could not be found, GitHub's API did not answer from your network (it allows a limited number of unsigned requests an hour). Name the release yourself:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh | MACH_VERSION=0.13.0 bash
+```
+
+The newest release is 0.13.0. Work merged since then (slices saved as GitHub issues, `/mach pull`, architecture decisions, the Line view) is on the `main` branch and reaches you with `MACH_REF=main` in place of `MACH_VERSION`; a branch install is not checksum-verified, and the installer says so.
+
 **Then check the setup:**
 
 ```

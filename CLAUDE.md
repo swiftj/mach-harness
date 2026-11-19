@@ -78,8 +78,9 @@ MACH maps specialized sub-agent roles to Anthropic's Claude 5 model tiers:
 ├── apps/observer/              # mach-observer: the Factory Floor's read-only observer; loopback only, GET only, embeds the Factory Floor
 ├── web/                        # pnpm workspace: @mach/ui design system, showcase, product-studio app, fixtures, e2e; and factory-floor, the Factory Floor (workspaces Line, Floor, Analytics), which reads the observer or a fixture labelled Simulation
 ├── templates/                  # What gets scaffolded into a project
+├── video/                      # The two demo films: Remotion scenes, capture scripts for the footage, and the timing model; audio, footage and renders are git-ignored
 ├── tests/                      # unittest suites and fixtures
-└── docs/                       # Original design notes per station, prd-slice (reference), and mach-next/ (milestone designs and reports)
+└── docs/                       # Original design notes per station, prd-slice (reference), mach-next/ (milestone designs, reports and the family style guide), and images/ (the README's screenshots)
 ```
 
 Skill folders are named for the station (`skills/intent/`). As a plugin the command is `/mach:intent`; the installer copies the same folder to `.claude/skills/mach-intent/` and the command is `/mach-intent`. Agents are renamed the same way (`mach:contract-engineer` / `mach-contract-engineer`). One skill is the exception: the run skill (`skills/run/`) is the factory's one command. In a project it is installed as `.claude/skills/mach/` and the command is `/mach`; as a plugin it is `/mach:run`, because a plugin's command always carries the plugin's name. This file writes it `/mach`.
