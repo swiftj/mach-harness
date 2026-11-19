@@ -186,3 +186,13 @@ project's way first, names the other, and does either only on the engineer's wor
   `adr-conflict`, `adr-exception`, `adr-accepted`, `adr-changed`). Reviewers' ADR citations are kept in their votes;
   the Factory Floor's rule IDs (spec and matrix IDs) are unchanged.
 - No upgrade path for cells planned before this: MACH has no users yet.
+
+## Diagrams (decided 2026-11-19)
+
+An ADR and a plan may carry a Mermaid diagram where the structure or the sequence is the decision. Slice specs carry none: the product owner chose that, which keeps the decision table the one authority and leaves Product Studio (which does not draw Markdown) unchanged.
+
+- `skills/intent/scripts/diagrams.py` is the one check: each block closed, an allowed kind (`flowchart`, `graph`, `sequenceDiagram`, `stateDiagram`, `stateDiagram-v2`, `erDiagram`, `classDiagram`), at most two in a document, at most 40 lines and 200 characters a line, no link, click action, HTML (a line break and a class stereotype are fine) or `%%{ }%%` directive.
+- `cell.py check-plan` applies it to `plan.md` and to each ADR the ticket proposes. Lines inside a diagram are not read as placeholders left to fill in.
+- `run.py adr new --diagram "<source>"` checks the source and draws it under "Decision Outcome". The run skill drafts the picture and asks one yes-or-no question; the engineer never writes Mermaid.
+- ADRs people write and commit are not checked, and nothing changes how an ADR is parsed, selected or bound.
+- Limit: standard-library Python cannot parse Mermaid, so a diagram that passes can still fail to draw. Not tested: how GitHub draws what MACH writes.

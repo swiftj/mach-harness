@@ -632,8 +632,11 @@ def slug(title: str) -> str:
 
 
 def render(title: str, *, applies_to: Sequence[str] = (), context: str = "", options: Sequence[str] = (), decision: str = "",
-           consequences: Sequence[str] = (), date: Optional[str] = None, evidence: Sequence[str] = (), open_points: Sequence[str] = ()) -> str:
-    """A MADR file with status `proposed`. Empty sections carry a template comment, which check-plan refuses."""
+           consequences: Sequence[str] = (), date: Optional[str] = None, evidence: Sequence[str] = (), open_points: Sequence[str] = (),
+           diagram: str = "") -> str:
+    """A MADR file with status `proposed`. Empty sections carry a template comment, which check-plan refuses.
+
+    `diagram` is Mermaid source the caller has checked (diagrams.problems); it is drawn under the decision."""
     title = " ".join(title.split())
     header = ["---", "status: proposed", f"date: {date or datetime.now(timezone.utc).date().isoformat()}"]
     if applies_to:
@@ -654,6 +657,7 @@ def render(title: str, *, applies_to: Sequence[str] = (), context: str = "", opt
         "## Context and Problem Statement", "", block(context, "What needs deciding, and why now. Two or three sentences."), "",
         "## Considered Options", "", items(options, "One line per option, the chosen one included."), "",
         "## Decision Outcome", "", block(decision, "Chosen option, and why it was chosen over the others."), "",
+        *(["```mermaid", diagram.strip("\n"), "```", ""] if diagram.strip() else []),
         "### Consequences", "", items(consequences, "Good, because ... / Bad, because ..."), "",
     ]
     if evidence or open_points:  # an ADR drafted from the repository (run.py adr new --baseline) says what it was read from
