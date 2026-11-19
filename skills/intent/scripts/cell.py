@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import validate_slice  # noqa: E402
 import adr  # noqa: E402  (architecture decisions: the shared helper beside this script)
+import diagrams  # noqa: E402  (Mermaid diagrams in a plan and in a proposed ADR)
 
 try:  # M6.1 station telemetry: observational only; if it cannot be loaded nothing is recorded
     import lifecycle  # noqa: E402
@@ -397,10 +398,14 @@ def fields(lines: Sequence[str]) -> Dict[str, str]:
 
 def leftover(text: str) -> List[str]:
     problems = []
+    # Mermaid writes <<interface>> and <br/> inside a diagram; those are not placeholders left to fill in.
+    drawn = {start + offset for start, body in diagrams.blocks(text)[0] for offset in range(1, len(body) + 1)}
     for number, line in enumerate(text.splitlines(), start=1):
         bare = validate_slice.strip_quotes(validate_slice.INLINE_CODE_RE.sub("", line))
         if "<!--" in line:
             problems.append(f"line {number}: remove the template comment")
+        elif number in drawn:
+            continue
         elif validate_slice.PLACEHOLDER_RE.search(bare):
             problems.append(f"line {number}: replace the placeholder {validate_slice.PLACEHOLDER_RE.search(bare).group(0)}")
     return problems
@@ -586,6 +591,7 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
         raise CellError(f"{plan} is missing.")
     text = plan.read_text(encoding="utf-8")
     problems = leftover(text)
+    problems.extend(diagrams.problems(text, "plan.md"))
     sections = markdown_sections(text)
     header = fields(sections[""])
     for name in PLAN_FIELDS:
@@ -741,6 +747,7 @@ def plan_adrs(project: Path, root: Path, cell: Dict[str, Any], header: Dict[str,
         leftovers = leftover(record.get("text") or "")
         if leftovers:
             problems.append(f"{record['file']}: " + "; ".join(leftovers[:3]))
+        problems.extend(diagrams.problems(record.get("text") or "", record["file"]))
     files = plan_files(text)
     touching = [name for name in files if adr.in_folder(name, folder)]
     if touching:

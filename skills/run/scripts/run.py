@@ -28,7 +28,7 @@ and not by whoever is driving it.
                                          take in every slice marked ready, choose the next batch with the schedule and
                                          dispatch it; prints what starts, what waits and why, and the tickets to run (pull.py)
     run.py adr list                      every architecture decision: ID, title, status, applies-to, problems; reads only (adr.py)
-    run.py adr new --title T --context C --decision D [--option O]... [--consequence X]... [--applies-to A]...
+    run.py adr new --title T --context C --decision D [--option O]... [--consequence X]... [--applies-to A]... [--diagram M]
                                          write a new ADR as proposed in the main checkout's working tree; commits nothing
     run.py adr baseline                  the required topics, what covers them, and evidence from the committed files for each still
                                          to draft; recorded once in .factory/adr-baseline.json (baseline.py)
@@ -1072,6 +1072,17 @@ def cmd_adr(project: Project, args: argparse.Namespace) -> int:
     context, decision = (args.context or "").strip(), (args.decision or "").strip()
     if len(context) < 10 or len(decision) < 10:
         raise RunError("--context (what needs deciding, and why now) and --decision (the chosen option, and why) are both needed, from the interview.")
+    diagram = (args.diagram or "").strip("\n")
+    if diagram.strip():
+        import importlib.util  # the shared check beside adr.py, in the intent station's scripts
+        spec = importlib.util.spec_from_file_location("mach_diagrams", sibling("intent") / "scripts" / "diagrams.py")
+        diagrams = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(diagrams)
+        if "```" in diagram or "~~~" in diagram:
+            raise RunError("--diagram takes the Mermaid source alone, without the ``` lines around it.")
+        wrong = diagrams.problems(f"```mermaid\n{diagram}\n```\n", "--diagram")
+        if wrong:
+            raise RunError("; ".join(wrong) + ". " + diagrams.WHEN)
     evidence = baseline_evidence(project, args.baseline) if args.baseline else []
     given = list(args.applies_to or []) + ([f"topic:{args.baseline}"] if args.baseline and f"topic:{args.baseline}" not in (args.applies_to or []) else [])
     applies, problems = A.check_applies(given) if given else ([], [])
@@ -1087,7 +1098,7 @@ def cmd_adr(project: Project, args: argparse.Namespace) -> int:
         raise RunError(f"{name} already exists; nothing was written.")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(A.render(title, applies_to=applies, context=context, options=args.option or [], decision=decision,
-                             consequences=args.consequence or [], evidence=evidence, open_points=args.open_point or []), encoding="utf-8")
+                             consequences=args.consequence or [], evidence=evidence, open_points=args.open_point or [], diagram=diagram), encoding="utf-8")
     if args.baseline:
         record_baseline_draft(project, args.baseline, f"ADR-{number:04d}", name)
     print(json.dumps({"status": "WRITTEN", "id": f"ADR-{number:04d}", "file": name, "adr_status": "proposed", "committed": False,
@@ -1383,6 +1394,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--applies-to", action="append", default=[], help="path:<glob>, app:<type>, topic:<word> or all (repeatable; default all)")
     p.add_argument("--baseline", metavar="TOPIC", help="a required topic adr baseline gathered evidence for: lists that evidence and records the draft")
     p.add_argument("--open-point", action="append", default=[], help="something the repository does not show, for an engineer to settle (repeatable)")
+    p.add_argument("--diagram", help="Mermaid source drawn under the decision, only where the structure or the sequence is the decision; without the ``` lines")
     p.set_defaults(func=cmd_adr)
     p = adr_parser.add_parser("baseline", help="the required topics, what covers them, and evidence from the repository for each to draft")
     p.set_defaults(func=cmd_adr_baseline)

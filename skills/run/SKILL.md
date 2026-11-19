@@ -172,6 +172,7 @@ Engineers record the project's technology decisions (stack, libraries, languages
 4. The decision and why it beats the others.
 5. The consequences, good and bad.
 6. What it applies to: `all`, paths (`path:services/api/**`), app types (`app:web`) or topics (`topic:database`). Recommend the narrowest that is true; say that a path glob makes every plan touching those files name the ADR.
+7. A diagram, only where the structure or the sequence is the decision: component boundaries, a data flow, a sequence between parts, a state machine, a data model. Most decisions need none; do not offer one for a choice of library, language or standard. When one would carry the decision better than a paragraph, draft it yourself in Mermaid (`flowchart`, `sequenceDiagram`, `stateDiagram-v2`, `erDiagram` or `classDiagram`; at most 40 lines; no links, click actions, HTML or `%%{ }%%` directives), show it, and ask one yes-or-no question: does this picture match the decision? Never ask the engineer to write Mermaid. Pass it as `--diagram "<the Mermaid source, without the fence lines>"`; the script checks it and draws it under the decision. GitHub draws it where the ADR is read. The same holds for a baseline draft (`adr new --baseline <topic>`): a deployment layout or a component structure may earn one, a language or a test runner never does.
 
 Use their words for the text. Then show the whole file you are about to write and ask once to write it. Never run it unattended or inside a supervised Factory execution, where the script refuses it.
 
