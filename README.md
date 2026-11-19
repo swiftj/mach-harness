@@ -6,7 +6,7 @@ MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A
 
 ![The Factory Floor: an isometric drawing of the factory with three tickets being built, each in its own cell](docs/images/factory-floor-isometric.jpg)
 
-*The Factory Floor, showing its built-in sample factory. Two short films: [an introduction to MACH](https://youtu.be/M1HSnETFg5Q) and [the software factory in Claude Code](https://youtu.be/ejPnwHeqsI8).*
+*The Factory Floor, showing its built-in sample factory. [Two short films](#what-it-looks-like) show MACH at work.*
 
 ## Contents
 
@@ -24,6 +24,13 @@ MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A
 - [Guides](#guides)
 
 ## What it looks like
+
+Two short films. GitHub does not play YouTube inside a README, so each picture opens its film on YouTube.
+
+| | |
+|---|---|
+| [![Introducing MACH: watch on YouTube](docs/images/film-introduction.jpg)](https://youtu.be/M1HSnETFg5Q) | [![MACH: The Agentic Software Factory in Claude Code: watch on YouTube](docs/images/film-factory.jpg)](https://youtu.be/ejPnwHeqsI8) |
+| **[Introducing MACH](https://youtu.be/M1HSnETFg5Q)** (2 min). From product intent to merged code, for product managers and engineers. | **[The software factory in Claude Code](https://youtu.be/ejPnwHeqsI8)** (2 min). The factory itself: the floor, the line, and why scripts decide what counts. |
 
 MACH runs in Claude Code. Two local pages, served on your own machine, show the work: Product Studio for the product manager and the Factory Floor for whoever is watching the line.
 
