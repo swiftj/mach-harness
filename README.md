@@ -4,8 +4,13 @@ MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A
 
 > **Status: 0.13.0.** [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
 
+![The Factory Floor: an isometric drawing of the factory with three tickets being built, each in its own cell](docs/images/factory-floor-isometric.jpg)
+
+*The Factory Floor, showing its built-in sample factory. [Watch the two-minute introduction.](https://youtu.be/M1HSnETFg5Q)*
+
 ## Contents
 
+- [What it looks like](#what-it-looks-like)
 - [Who does what](#who-does-what)
 - [Install](#install)
 - [The two commands](#the-two-commands)
@@ -17,6 +22,25 @@ MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A
 - [Every command](#every-command)
 - [Settings](#settings)
 - [Guides](#guides)
+
+## What it looks like
+
+MACH runs in Claude Code. Two local pages, served on your own machine, show the work: Product Studio for the product manager and the Factory Floor for whoever is watching the line.
+
+**The Line.** Every ticket at its station, why it is waiting, where the time went and the command that moves it on.
+
+![The Line view: stations as columns, tickets as rows, and a side panel for the selected ticket](docs/images/factory-floor-line.jpg)
+
+| | |
+|---|---|
+| ![The interview: one yes-or-no question with a recommended answer](docs/images/product-studio-interview.jpg) | ![The written slice specification with its decision table](docs/images/product-studio-spec.jpg) |
+| **The interview.** One yes-or-no question at a time, each with a recommended answer. | **The spec.** Requirements, a complete decision table and scenarios, written from the answers. |
+| ![Product Studio's project home with epics and slices](docs/images/product-studio-home.jpg) | ![Factory Analytics: recorded moves between stations](docs/images/factory-floor-analytics.jpg) |
+| **Product Studio.** A project's epics and slices, and where each stands with the builders. | **Analytics.** Where time and rework go, from what the factory recorded. |
+
+![The Factory Floor in dark mode](docs/images/factory-floor-isometric-dark.jpg)
+
+The Factory Floor pictures show the sample factory the page ships with, which it labels "Simulation". Product Studio's pictures use demonstration data.
 
 ## Who does what
 
