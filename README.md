@@ -25,8 +25,6 @@ MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A
 
 ## What it looks like
 
-Two short films. GitHub does not play YouTube inside a README, so each picture opens its film on YouTube.
-
 | | |
 |---|---|
 | [![Introducing MACH: watch on YouTube](docs/images/film-introduction.jpg)](https://youtu.be/M1HSnETFg5Q) | [![MACH: The Agentic Software Factory in Claude Code: watch on YouTube](docs/images/film-factory.jpg)](https://youtu.be/ejPnwHeqsI8) |
