@@ -6,7 +6,7 @@ MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A
 
 ![The Factory Floor: an isometric drawing of the factory with three tickets being built, each in its own cell](docs/images/factory-floor-isometric.jpg)
 
-*The Factory Floor, showing its built-in sample factory. [Watch the two-minute introduction.](https://youtu.be/M1HSnETFg5Q)*
+*The Factory Floor, showing its built-in sample factory. Two short films: [an introduction to MACH](https://youtu.be/M1HSnETFg5Q) and [the software factory in Claude Code](https://youtu.be/ejPnwHeqsI8).*
 
 ## Contents
 
