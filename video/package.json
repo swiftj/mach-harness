@@ -1,0 +1,26 @@
+{
+  "name": "mach-demo-video",
+  "private": true,
+  "type": "module",
+  "description": "The MACH demo film: Testreel captures, Remotion scenes, ElevenLabs voice and music.",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts MachDemo out/mach-demo.mp4",
+    "render:factory": "remotion render src/index.ts MachFactory out/mach-factory.mp4",
+    "still": "remotion still src/index.ts MachDemo"
+  },
+  "dependencies": {
+    "@fontsource-variable/jetbrains-mono": "5.3.0",
+    "@fontsource-variable/source-sans-3": "5.3.1",
+    "@remotion/cli": "4.0.545",
+    "@remotion/google-fonts": "4.0.545",
+    "@remotion/media-utils": "4.0.545",
+    "@types/react": "19.3.0",
+    "playwright": "1.65.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.545",
+    "testreel": "0.2.0",
+    "typescript": "7.0.2"
+  }
+}

@@ -1,0 +1,6 @@
+node_modules/
+out/
+capture/raw/
+capture/**/testreel-output/
+public/footage/
+public/audio/
