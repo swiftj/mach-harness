@@ -24,8 +24,8 @@ Settings, in .factory/config.json under "merge":
             with the pull request method, post the approving round's findings on the pull request
             once, as one review of type comment (default true; only an explicit false turns it off)
 
-An approval that rests on a person's security exception (review.py except) is bound to the commit like any
-approval, and once an exception's expiry has passed nothing is merged: the ticket waits for a person. The pull
+An approval that rests on a person's security exception (review.py except), including a reject vote it cleared, is
+bound to the commit like any approval, and once an exception's expiry has passed nothing is merged: the ticket waits for a person. The pull
 request body lists each exception with who accepted it and why.
 
 A pull request for a slice that came as a GitHub issue says "Refs #<n>" (never a closing keyword:
@@ -421,6 +421,7 @@ def pr_body(cell: Cell) -> str:
         f"Approved by a person: {inert(human.get('by') if isinstance(human, dict) else human)}." if human else "No person's approval was required for this ticket.",
         "",
         *exceptions_section(cell),
+        *scan_section(cell),
         "## Build",
         f"{inert(cell.build.get('diff', ''), 400)}. Tests seen failing before their code was written: {inert(cell.build.get('tests_seen_failing_first', 0))}. "
         f"Gate overrides recorded: {len(cell.build.get('deviations') or [])}.",
@@ -444,6 +445,11 @@ def exceptions_section(cell: Cell) -> List[str]:
     rules = issue_rules()
     lines = ["## Security exceptions",
              "The review panel's security veto was excepted by a person for the approved commit. The finding stands: it was accepted, not fixed."]
+    before, after = cell.decision.get("approvals_before_exception"), cell.decision.get("approvals_after_exception")
+    if isinstance(before, int) and isinstance(after, int) and after != before:
+        cleared = [inert(seat, 40) for seat in cell.decision.get("rejects_cleared_by_exception") or []][:3]
+        lines.append(f"Reject votes that rested only on excepted findings were counted as approvals: {before} approvals before the exception, "
+                     f"{after} after" + (f" ({', '.join(cleared)} seat)." if cleared else "."))
     for item in items[:20]:
         reason = item.get("reason") if isinstance(item.get("reason"), str) else ""
         reason = rules.redact(reason) if rules is not None else reason
@@ -453,6 +459,32 @@ def exceptions_section(cell: Cell) -> List[str]:
                      f"**{inert(item.get('title'), TITLE_LIMIT)}**, breaks {inert(item.get('rule'), RULE_LIMIT)}. Accepted by {inert(item.get('by'), 80)}"
                      + (f", until {inert(item.get('expires'), 10)}" if item.get("expires") else "") + f": \"{inert(reason, DETAIL_LIMIT)}\""
                      + (" (renews an expired one)" if item.get("renews") is not None else ""))
+    return lines + [""]
+
+
+def scan_section(cell: Cell) -> List[str]:
+    """What the security scan flagged and how the security seat answered: counts, places and package names, never a
+    secret's value. Nothing when the scan flagged nothing; one line when it was switched off."""
+    summary = cell.decision.get("security_scan")
+    if not isinstance(summary, dict):
+        return []
+    if summary.get("enabled") is False:
+        return ["## Security scan", "The security scan was switched off for this review (security.scan.enabled is false): no secret candidate "
+                "or new dependency was checked.", ""]
+    secrets = [item for item in summary.get("secrets") or [] if isinstance(item, dict)]
+    deps = [item for item in summary.get("dependencies") or [] if isinstance(item, dict)]
+    if not secrets and not deps:
+        return []
+    lines = ["## Security scan"]
+    for item in secrets[:20]:
+        lines.append(f"- Possible secret ({inert(item.get('kind'), 40)}) at `{inert(item.get('file'), 200)}:{inert(item.get('line'), 10)}`"
+                     + (", recorded by the builder as not a secret" if item.get("overridden_by_builder") else "")
+                     + f": answered {inert(item.get('answer'), 20)} by the security seat.")
+    for item in deps[:30]:
+        lines.append(f"- {inert(item.get('ecosystem'), 20)} `{inert(item.get('name'), 120)}` {inert(item.get('version'), 60)} "
+                     f"({inert(item.get('change'), 10)}{', development only' if item.get('dev') else ''}): answered {inert(item.get('answer'), 20)}.")
+    if deps:
+        lines.append("Dependencies were not checked against a vulnerability database: a model's knowledge ends at its training date.")
     return lines + [""]
 
 

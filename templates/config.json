@@ -21,6 +21,9 @@
     "medium": { "approvals": 2, "reviewers": 3, "human_approval": false },
     "low": { "approvals": 1, "reviewers": 1, "human_approval": false }
   },
+  "security": {
+    "scan": { "enabled": true }
+  },
   "audit": {
     "gold": 90,
     "silver": 70

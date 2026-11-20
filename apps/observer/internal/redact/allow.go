@@ -90,8 +90,10 @@ var Allow = map[string]*Shape{
 	"review.decided":            obj("outcome", "approvals", "approvals_needed", "votes", anyKeys(scalar), "blockers", "security_veto", "human_approval_required"),
 	"human.approval_recorded":   obj("by_role", "note_given", "decision"),                                                     // decision: Enums (M9)
 	"review.exception_recorded": obj("findings", list(obj("seat", "index", "impact")), "expires_given", "renewal", "outcome"), // M12: codes only
-	"merge.completed":           obj("method", "merge_commit", "approved_commit", "landed_commit", "revalidated", "pull_request"),
-	"cleanup.completed":         obj("outcome", "archive", "bundle", "uncommitted_saved"),
+	"review.scan_recorded": obj("enabled", "flagged", "panel_raised", "secret_candidates", "real", "not_a_secret", "overridden_by_builder",
+		"dependencies", "dependencies_added", "acceptable", "concerns", "lockfile_only"), // M12: counts only
+	"merge.completed":   obj("method", "merge_commit", "approved_commit", "landed_commit", "revalidated", "pull_request"),
+	"cleanup.completed": obj("outcome", "archive", "bundle", "uncommitted_saved"),
 
 	"execution.process_started": obj(),
 	"execution.process_ended":   obj("ended", "exit_code", "seconds"),
@@ -141,7 +143,7 @@ var RequiredIDs = map[string][]string{
 
 func init() {
 	for _, k := range []string{"station.entered", "station.exited", "gate.evaluated", "build.task_completed", "verify.check_recorded",
-		"review.round_started", "review.decided", "human.approval_recorded", "review.exception_recorded", "merge.completed", "cleanup.completed"} {
+		"review.round_started", "review.decided", "human.approval_recorded", "review.exception_recorded", "review.scan_recorded", "merge.completed", "cleanup.completed"} {
 		RequiredIDs[k] = []string{"ticket_id", "cell_instance", "visit_id", "station"}
 	}
 	RequiredIDs["review.verdict_submitted"] = []string{"ticket_id", "cell_instance", "visit_id", "station", "seat"}

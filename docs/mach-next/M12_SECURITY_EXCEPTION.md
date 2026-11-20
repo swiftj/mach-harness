@@ -26,8 +26,12 @@ counting from 1. `run.py explain` lists each blocker with its `ref`.
    those. A note, or an ordinary blocker, is refused: "an ordinary blocker is outvoted or fixed, never excepted". The
    list is fixed at the tally, so changing `security_veto` afterwards changes nothing. A round decided before this
    field existed is recounted with today's setting.
-3. **Only a round the veto alone rejected.** The decision's `security_veto` must be true (approvals met the
-   threshold). A round that failed on the count is refused with that explanation.
+3. **Only a round the recount lets through** (changed after the first build, on the product owner's word: see
+   "Clearing a reject vote" below). Votes follow from findings, so for the exception a seat whose every blocker is an
+   excepted vetoing blocker counts as approving. The exception is accepted only when, with the named findings and those
+   already recorded for the round, the recount meets the tier's threshold and no vetoing blocker is left without one.
+   Otherwise it is refused, naming the seat and finding that still block, and nothing is written. A round with no
+   vetoing blocker at all is refused as "rejected by ordinary blockers".
 4. **Only before a revision, on the reviewed commit.** The round must be the latest decision (not sent back by the
    merge station or a person), the cell must be where the tally left it (`built` for `REJECTED`, `blocked` for
    `ESCALATE`), `build.json`'s loop must not have moved past the round, and the branch must be the reviewed commit.
@@ -43,9 +47,11 @@ counting from 1. `run.py explain` lists each blocker with its `ref`.
 9. **What is written.** `exceptions[]` in the round's `decision.json` and in `review/decision.json`: round, seat,
    index, title, rule, file, line, class, impact, `vetoed_as` (`security-class` or `security-seat`), `head` (the commit
    reviewed), `by`, `reason`, `expires`, `recorded_at`, `recorded_by`. No vote and no finding is edited.
-10. **What the round becomes.** While another vetoing blocker has none, nothing changes and the output lists
-    `remaining`. Once each has one, the outcome is what the count alone gives: `APPROVED`, or `AWAITING_HUMAN` where
-    the tier or a Silver audit needs a person (`outcome_before_exception` keeps `REJECTED` or `ESCALATE`). The cell
+10. **What the round becomes.** The outcome the recount gives: `APPROVED`, or `AWAITING_HUMAN` where the tier or a
+    Silver audit needs a person, which High risk always does (`outcome_before_exception` keeps `REJECTED` or
+    `ESCALATE`; `approvals_before_exception`, `approvals_after_exception` and `rejects_cleared_by_exception` record
+    the count before and after and whose reject votes were cleared). `remaining` is now always empty for a new
+    exception, since a partial one is refused. The cell
     moves to `approved` or `awaiting-human` through the script. An exception is not a person's approval:
     `approve-human` is still needed, and it refuses while an exception has expired.
 11. **No judging round is used**, and the three-round limit is unchanged.
@@ -53,8 +59,30 @@ counting from 1. `run.py explain` lists each blocker with its `ref`.
     round (same commit, or the merge station's revalidated commit). The new entry carries `renews` (the index of the
     expired one, which is kept). While it is in force, a second one is refused.
 
-Under the default thresholds an exception is reachable only at Medium risk: at High (3 of 3) and Low (1 of 1) the
-vetoing seat's own reject already fails the count, so the round failed on the count and is refused (rule 3).
+## Clearing a reject vote (product owner's decision, after the first build)
+
+As first built, an exception was reachable only at Medium under the default thresholds: at High (3 of 3) and Low
+(1 of 1) the seat that raised the vetoing blocker also voted reject, so the count failed and the exception was
+refused. The product owner decided that an exception must also clear the excepted reviewer's reject vote, so that it
+works on High-risk tickets. As built:
+
+- The tally records `blockers_by_seat` (each rejecting seat's blockers as references, split into `vetoing` and
+  `other`) and `exceptable` (whether excepting every vetoing blocker would pass the recount). A round rejected on the
+  count because of a vetoing seat is told apart from one rejected by ordinary blockers. A round decided before these
+  fields existed is recomputed from its votes.
+- `recount` in `review.py` is arithmetic over that record: approvals = the seats that approved + the seats whose every
+  blocker is an excepted vetoing blocker. No vote or finding file is rewritten, and `votes` in the decision keeps each
+  seat's vote as cast.
+- High risk, 3 of 3, with the security seat's only blocker excepted: 3 approvals, `AWAITING_HUMAN`; `approve-human`
+  is still needed, and the output says so. A seat with an excepted blocker and an ordinary one still rejects, and the
+  exception is refused. Low risk, 1 of 1: the general seat's reject is cleared when its only blocker is excepted. Two
+  vetoing blockers from two seats: both must be named, in one call.
+- Under `review.security_veto` every blocker from the security seat vetoes, so the security seat's blockers are all
+  exceptable; an ordinary blocker is one from another seat that is not a high or critical security-class blocker.
+- `run.py decide` offers the exception only where `exception_state` accepts it, which now means the recount with
+  every open vetoing blocker excepted passes; the option names them all.
+- Release qualification is unchanged: an excepted blocker stays an open check carrying the person's exception, so the
+  best outcome is `qualified_with_exceptions`.
 
 ## Binding at merge (`skills/merge/scripts/merge.py`)
 
@@ -69,7 +97,8 @@ vetoing seat's own reject already fails the count, so the round failed on the co
   lifecycle gate record) and changes nothing: the cell stays `approved`. `run.py next` stops with
   `needs: security-exception-expired` (also at `awaiting-human`), which notifications carry like any other wait.
 - **The pull request body** gains "Security exceptions": each finding, who accepted it, until when, and the reason,
-  redacted, bounded and linking nothing.
+  redacted, bounded and linking nothing; and, when the exception cleared a reject vote, the approvals before and after
+  and whose vote it was.
 
 ## Where it is recorded
 
@@ -85,7 +114,7 @@ vetoing seat's own reject already fails the count, so the round failed on the co
   blocker.
 - **`run.py decide`.** An option "Record a security exception", never recommended, only where `exception_state`
   accepts it: for a ticket a person names after a vetoed rejection (state `security-veto`, beside letting the builder
-  fix it and abandoning), for an escalated round the veto alone rejected, and for an expired one
+  fix it and abandoning), for an escalated round the recount would let through, and for an expired one
   (state `exception-expired`). The walkthrough of every waiting ticket does not list a vetoed rejection: the line
   revises it, and nothing offers an exception unprompted. decide loads `review.py` for its read-only check, which asks
   Git for the branch's commit.
@@ -118,8 +147,9 @@ vetoing seat's own reject already fails the count, so the round failed on the co
 ## Decisions made where the design was silent
 
 - Several findings may be excepted in one call (`--finding` repeated), all or nothing, so one person's decision on
-  two related findings is recorded at once and never half applied.
-- An escalated round (`ESCALATE`, the last round) can be excepted when the veto alone rejected it: escalation there
+  two related findings is recorded at once and never half applied. Since the recount, a call that would leave the
+  round rejected is refused whole, so two vetoing findings are excepted together or not at all.
+- An escalated round (`ESCALATE`, the last round) can be excepted when the recount lets it through: escalation there
   came only from the veto. The output says to take the `blocked-requires-sme` label off.
 - An expired exception stops for a person instead of voiding the approval; the person renews it or abandons the
   ticket. Voiding would send the ticket back through verification and a fresh review with no person asked.

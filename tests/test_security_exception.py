@@ -160,11 +160,22 @@ class WhatMayBeExceptedTest(Base):
         result = self.excepted("1/security/1")
         self.assertEqual(result["outcome"], "APPROVED")
 
-    def test_refused_when_the_round_failed_on_the_count(self):
-        code, done = self.vetoed(architecture=[self.blocker()])
+    def test_refused_when_an_ordinary_blocker_still_fails_the_count(self):
+        code, done = self.vetoed(architecture=[self.blocker()], product=[self.security(), self.blocker(rule="FR-02", title="Another plain defect")])
         self.assertEqual((done["outcome"], done["approvals"], self.decision()["security_veto"]), ("REJECTED", 1, False))
-        self.assertIn("failed on the count", self.except_refused())
+        self.assertFalse(self.decision()["exceptable"], "the tally records that excepting every vetoing blocker would not pass the count")
+        err = self.except_refused()
+        self.assertIn("would still fail with every vetoing blocker excepted", err)
+        self.assertIn("the architecture seat still rejects on 1/architecture/1", err)
+        self.assertIn("the product seat still rejects on 1/product/2", err)
         self.assertEqual(self.cell_json()["stage"], "built")
+
+    def test_a_round_with_only_ordinary_blockers_has_no_veto_to_except(self):
+        code, done = self.vetoed(product=[self.blocker()], architecture=[self.blocker()])
+        self.assertEqual((done["outcome"], self.decision()["vetoing"], self.decision()["exceptable"]), ("REJECTED", [], False))
+        self.assertEqual(self.decision()["blockers_by_seat"], {"architecture": {"vetoing": [], "other": ["1/architecture/1"]},
+                                                              "product": {"vetoing": [], "other": ["1/product/1"]}})
+        self.assertIn("rejected by ordinary blockers", self.except_refused())
 
     def test_refused_for_an_approved_round_or_a_round_not_yet_tallied(self):
         self.verified()
@@ -186,21 +197,95 @@ class WhatMayBeExceptedTest(Base):
         self.assertEqual(self.tally()[1]["outcome"], "REJECTED")
         self.assertIn("factory-tuning", self.except_refused())
 
-    def test_every_vetoing_blocker_needs_its_own_exception(self):
+    def test_every_vetoing_blocker_needs_an_exception_and_a_partial_one_is_refused(self):
         self.vetoed(product=[self.security(), self.security(impact="critical", title="SQL built by concatenation", line=1)])
         self.assertEqual(self.decision()["vetoing"], ["1/product/1", "1/product/2"])
-        first = self.excepted("1/product/1")
-        self.assertEqual((first["outcome"], first["stage"], first["remaining"]), ("REJECTED", "built", ["1/product/2"]))
-        self.assertIn("already recorded", self.except_refused("1/product/1"))
-        second = self.excepted("1/product/2", by="Lee Park")
-        self.assertEqual((second["outcome"], second["stage"]), ("APPROVED", "approved"))
-        self.assertEqual([(e["index"], e["by"]) for e in self.decision()["exceptions"]], [(1, "Dana Smith"), (2, "Lee Park")])
+        err = self.except_refused("1/product/1")
+        self.assertIn("would still be rejected", err)
+        self.assertIn("1/product/2", err, "the refusal names what still blocks")
+        self.assertNotIn("exceptions", self.decision(), "nothing is written")
+        both = self.excepted("1/product/1", "1/product/2")
+        self.assertEqual((both["outcome"], both["stage"]), ("APPROVED", "approved"))
+        self.assertEqual([e["index"] for e in self.decision()["exceptions"]], [1, 2])
 
     def test_several_findings_at_once_are_all_or_nothing(self):
         self.vetoed(product=[self.security(), self.security(impact="critical", title="SQL built by concatenation", line=1)])
         self.assertIn("has no finding 3", self.except_refused("1/product/1", "1/product/3"))
         self.assertNotIn("exceptions", self.decision(), "nothing is written when one of them is refused")
         self.assertEqual(self.excepted("1/product/1", "1/product/2")["outcome"], "APPROVED")
+
+
+class RecountTest(Base):
+    """A recorded exception also clears the reject vote of a seat whose every blocker it excepts (product owner, M12 follow-up),
+    so an exception works at every tier. Votes are never rewritten; the decision records both counts."""
+
+    def test_high_risk_three_of_three_with_the_security_seats_only_blocker_excepted_awaits_a_person(self):
+        code, done = self.vetoed(risk="High", product=[], security=[self.security()])
+        self.assertEqual((done["outcome"], done["approvals"], done["approvals_needed"]), ("REJECTED", 2, 3))
+        decision = self.decision()
+        self.assertEqual((decision["security_veto"], decision["exceptable"], decision["vetoing"]), (False, True, ["1/security/1"]))
+        self.assertEqual(decision["blockers_by_seat"], {"security": {"vetoing": ["1/security/1"], "other": []}})
+        votes_before = {p.name: p.read_bytes() for p in (self.round / "votes").glob("*.json")}
+        result = self.excepted("1/security/1")
+        self.assertEqual((result["outcome"], result["stage"], result["rejects_cleared"]), ("AWAITING_HUMAN", "awaiting-human", ["security"]))
+        self.assertIn("approve-human", result["next"], "an exception is not a person's approval")
+        decision = self.decision()
+        self.assertEqual((decision["approvals"], decision["approvals_before_exception"], decision["approvals_after_exception"],
+                          decision["rejects_cleared_by_exception"], decision["outcome_before_exception"]), (2, 2, 3, ["security"], "REJECTED"))
+        self.assertEqual(decision["votes"]["security"], "REJECT", "the vote stands as cast")
+        self.assertEqual({p.name: p.read_bytes() for p in (self.round / "votes").glob("*.json")}, votes_before, "no vote file is rewritten")
+        self.assertIsNone(decision["human_approval"])
+        self.r_ok("approve-human", TICKET, "--by", "Release Owner")
+        self.assertEqual(self.cell_json()["stage"], "approved")
+
+    def test_a_seat_with_an_excepted_and_an_ordinary_blocker_still_rejects(self):
+        code, done = self.vetoed(risk="High", product=[self.security(), self.blocker(rule="FR-02", title="A plain defect")])
+        self.assertFalse(self.decision()["exceptable"])
+        err = self.except_refused("1/product/1")
+        self.assertIn("the product seat still rejects on 1/product/2", err)
+        self.assertNotIn("exceptions", self.decision())
+        self.assertEqual(self.cell_json()["stage"], "built")
+        self.assertIsNone(decide.exception_offer(self.project, TICKET), "the walkthrough offers it only where the script would accept it")
+
+    def test_low_risk_one_of_one_follows_the_recount(self):
+        self.verified()
+        self.edit_json("cell.json", risk="Low")
+        self.r_ok("start", TICKET)
+        self.vote("general", self.security())
+        code, done = self.tally()
+        self.assertEqual((done["outcome"], done["approvals"], done["approvals_needed"]), ("REJECTED", 0, 1))
+        self.assertEqual(self.excepted("1/general/1")["outcome"], "APPROVED")
+        self.assertEqual((self.decision()["approvals_after_exception"], self.decision()["rejects_cleared_by_exception"]), (1, ["general"]))
+
+    def test_low_risk_with_an_ordinary_blocker_beside_the_veto_is_refused(self):
+        self.verified()
+        self.edit_json("cell.json", risk="Low")
+        self.r_ok("start", TICKET)
+        self.vote("general", self.security(), self.blocker(rule="FR-02", title="A plain defect"))
+        self.tally()
+        self.assertIn("the general seat still rejects on 1/general/2", self.except_refused("1/general/1"))
+
+    def test_two_vetoing_blockers_from_two_seats_need_both_excepted(self):
+        code, done = self.vetoed(risk="High", product=[self.security()], security=[self.security(title="Token in a log line", line=1)])
+        self.assertEqual((done["approvals"], self.decision()["vetoing"]), (1, ["1/security/1", "1/product/1"]))
+        self.assertIn("would still be rejected", self.except_refused("1/security/1"))
+        self.assertIn("would still be rejected", self.except_refused("1/product/1"))
+        result = self.excepted("1/security/1", "1/product/1")
+        self.assertEqual((result["outcome"], result["rejects_cleared"]), ("AWAITING_HUMAN", ["product", "security"]))
+        self.assertEqual(self.decision()["approvals_after_exception"], 3)
+
+    def test_the_walkthrough_explain_and_the_pull_request_carry_the_recount(self):
+        self.vetoed(risk="High", product=[], security=[self.security()])
+        offer = decide.exception_offer(self.project, TICKET)
+        self.assertEqual(offer["open"], ["1/security/1"])
+        self.assertIn("recount", decide.exception_option(TICKET, offer)["does"])
+        self.excepted("1/security/1")
+        facts = self.explain()
+        self.assertEqual((facts["exception_recount"]["approvals_before"], facts["exception_recount"]["approvals_after"],
+                          facts["exception_recount"]["rejects_cleared"]), (2, 3, ["security"]))
+        self.r_ok("approve-human", TICKET, "--by", "Release Owner")
+        body = merge.pr_body(merge.Cell(self.project, TICKET))
+        self.assertIn("2 approvals before the exception, 3 after (security seat)", body)
 
 
 class WhoAndWhyTest(Base):
@@ -425,7 +510,8 @@ class ExplainAndDecideTest(Base):
         self.assertIn("revise", options)
 
     def test_decide_does_not_offer_it_when_the_count_failed_or_a_revision_started(self):
-        code, done = self.vetoed(architecture=[self.blocker()])
+        # The product seat's veto comes with an ordinary blocker, and architecture rejects too: excepting the veto cannot pass the count.
+        code, done = self.vetoed(architecture=[self.blocker()], product=[self.security(), self.blocker(rule="FR-02", title="A plain defect")])
         self.assertEqual(self.decide(TICKET)["tickets"], [])
         self.setUp()
         code, done = self.vetoed()

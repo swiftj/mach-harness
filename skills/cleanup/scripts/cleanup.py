@@ -367,7 +367,26 @@ def run_record(cell: Cell, outcome: str, reason: Optional[str], archive: str, pl
     }
     if exceptions:  # optional: present only for a ticket that had one, so every other record keeps its shape (record_version stays 2)
         record["security_exceptions"] = exceptions
+    scanned = scan_record(decisions)
+    if scanned:  # optional, the same way: present only when the scan flagged something or was switched off
+        record["security_scan"] = scanned
     return record
+
+
+def scan_record(decisions: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Counts from the security scan of the last decided round that has one: candidates, how many were real, dependencies
+    added, concerns. Counts only; the items and the reasons stay in the archived decision.json."""
+    summary = next((decision.get("security_scan") for decision in reversed(decisions) if isinstance(decision.get("security_scan"), dict)), None)
+    if summary is None:
+        return None
+    if summary.get("enabled") is False:
+        return {"enabled": False}
+    counts = summary.get("counts") if isinstance(summary.get("counts"), dict) else {}
+    whole = {key: counts.get(key) if isinstance(counts.get(key), int) and not isinstance(counts.get(key), bool) else 0
+             for key in ("secret_candidates", "real", "dependencies_added", "concerns")}
+    if not any(whole.values()) and not counts.get("dependencies"):
+        return None
+    return dict(whole, enabled=True)
 
 
 def observe_due(project: Path) -> Dict[str, Any]:

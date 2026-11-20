@@ -398,6 +398,11 @@ def target_path(value: str) -> str:
     return name[2:] if name.startswith("./") else name
 
 
+# The secrets and dependency scan is never tuned by the observe station: a proposal that mentions it is refused.
+SCAN_RE = re.compile(r"(?i)security\.scan|security_scan|scan_answers|not[-_ ]a[-_ ]secret|secrets?[- ](?:gate|scan(?:ner)?)|dependenc(?:y|ies)[- ]scan|"
+                     r"\bscan\.py\b|secret candidates?")
+
+
 def allowed_target(name: str) -> bool:
     parts = name.split("/")
     if not name or name.startswith("/") or "\\" in name or ".." in parts or "" in parts:
@@ -431,6 +436,10 @@ def check_report(text: str, metrics: Dict[str, Any]) -> Tuple[List[str], List[Di
         if found.get("target") and not allowed_target(target):
             problems.append(f"Proposed change '{title}' targets '{target}'. A proposal may only target REVIEW.md, CLAUDE.md, AGENTS.md, "
                             "a SKILL.md, or a file under a skill's references/; anything else is a person's decision and belongs under 'Not proposed'.")
+        if SCAN_RE.search("\n".join(body)):
+            problems.append(f"Proposed change '{title}' concerns the security scan (the build station's secrets gate, the review packet's security_scan, "
+                            "the security seat's scan answers or security.scan in the settings). Switching it off, narrowing it or changing how it "
+                            "is answered is a person's decision; move it under 'Not proposed'.")
         if found.get("evidence"):
             known = cited(found["evidence"], ticket_ids)
             if len(known) < 2:
@@ -536,6 +545,7 @@ def cmd_file_ticket(project: Path, args: argparse.Namespace) -> int:
         "Rules for this ticket:",
         "- Change only the files named as targets below.",
         "- Add or sharpen rules only. Do not remove a rule, weaken a gate, lower a threshold, raise a limit, or edit any script or setting.",
+        "- Do not switch off, narrow or change the security scan (the secrets gate, the scan in the review packet, or how the security seat answers it).",
         "- Use the exact text given under each change.",
         "",
         "## Changes",

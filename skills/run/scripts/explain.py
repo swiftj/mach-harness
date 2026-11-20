@@ -233,6 +233,30 @@ def exception_facts(decision: Dict[str, Any]) -> List[Dict[str, Any]]:
     return found[:20]
 
 
+def scan_facts(decision: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """What the security scan flagged on the latest decision and how it was answered: counts, places, package names and the
+    answering seat's reasons as bounded data. Never a secret's value (the scan never recorded one). None when nothing was flagged."""
+    summary = decision.get("security_scan")
+    if not isinstance(summary, dict):
+        return None
+    if summary.get("enabled") is False:
+        return {"enabled": False, "source_file": "review/decision.json"}
+    secrets = [{"id": clean(item.get("id"), 10), "file": clean(item.get("file"), 200), "line": item.get("line") if isinstance(item.get("line"), int) else None,
+                "kind": clean(item.get("kind"), 40), "answer": clean(item.get("answer"), 20), "reason": clean(item.get("reason")),
+                "overridden_by_builder": bool(item.get("overridden_by_builder"))}
+               for item in summary.get("secrets") or [] if isinstance(item, dict)][:20]
+    deps = [{"id": clean(item.get("id"), 10), "name": clean(item.get("name"), 120), "version": clean(item.get("version"), 60), "change": clean(item.get("change"), 10),
+             "ecosystem": clean(item.get("ecosystem"), 20), "dev": item.get("dev") if isinstance(item.get("dev"), bool) else None,
+             "answer": clean(item.get("answer"), 20), "reason": clean(item.get("reason"))}
+            for item in summary.get("dependencies") or [] if isinstance(item, dict)][:30]
+    if not secrets and not deps and not summary.get("lockfile_only"):
+        return None
+    counts = summary.get("counts") if isinstance(summary.get("counts"), dict) else {}
+    return {"enabled": True, "flagged": bool(summary.get("flagged")), "counts": {key: value for key, value in counts.items() if isinstance(value, int)},
+            "secrets": secrets, "dependencies": deps, "lockfile_only": [clean(name, 200) for name in summary.get("lockfile_only") or []][:20],
+            "panel_change": [clean(text, 300) for text in summary.get("panel_change") or []][:3], "source_file": "review/decision.json"}
+
+
 def round_folder(cellroot: Path, decision: Dict[str, Any]) -> Path:
     """The decided round's folder: from the decision's findings path when it lies inside this cell's review folder."""
     review = cellroot / "review"
@@ -414,6 +438,13 @@ def explain(root: Path, ticket_id: str, next_info: Dict[str, Any], config: Optio
     exceptions = exception_facts(decision)
     if exceptions:
         base["security_exceptions"] = exceptions
+        if isinstance(decision.get("approvals_after_exception"), int):
+            base["exception_recount"] = {"approvals_before": decision.get("approvals_before_exception"), "approvals_after": decision.get("approvals_after_exception"),
+                                         "rejects_cleared": [clean(seat, 40) for seat in decision.get("rejects_cleared_by_exception") or []][:3],
+                                         "source_file": "review/decision.json"}
+    scanned = scan_facts(decision)
+    if scanned:
+        base["security_scan"] = scanned
     if not causes and nxt.get("stop") and nxt.get("needs") not in (None, "nothing"):
         headline = "waiting_for_person"
         reasons = decision.get("human_approval_reasons") if stage == "awaiting-human" and isinstance(decision.get("human_approval_reasons"), list) else []
@@ -467,6 +498,19 @@ def human(report: Dict[str, Any]) -> str:
         state = "expired" if item.get("expired") else "in force" if item.get("in_force") else "renewed"
         lines.append(f"- [security exception] {item['ref']} accepted by {item.get('by')}" + (f" until {item['expires']}" if item.get("expires") else "")
                      + f" ({state}): \"{item.get('reason') or ''}\"")
+    recount = report.get("exception_recount") or {}
+    if recount:
+        lines.append(f"- [security exception] approvals {recount.get('approvals_before')} before, {recount.get('approvals_after')} after"
+                     + (f"; reject votes cleared: {', '.join(recount.get('rejects_cleared') or [])}" if recount.get("rejects_cleared") else ""))
+    scanned = report.get("security_scan") or {}
+    if scanned.get("enabled") is False:
+        lines.append("- [security scan] switched off for this review (security.scan.enabled is false)")
+    for item in scanned.get("secrets") or []:
+        lines.append(f"- [security scan] {item['id']} possible secret ({item['kind']}) at {item['file']}:{item['line']}: answered {item.get('answer') or 'none'}"
+                     + (" (the builder recorded it as not a secret)" if item.get("overridden_by_builder") else "") + (f': "{item["reason"]}"' if item.get("reason") else ""))
+    for item in scanned.get("dependencies") or []:
+        lines.append(f"- [security scan] {item['id']} {item['ecosystem']} {item['name']} {item.get('version') or ''} {item['change']}: answered {item.get('answer') or 'none'}"
+                     + (f': "{item["reason"]}"' if item.get("reason") else ""))
     if report.get("overrides"):
         lines.append(f"Gate overrides recorded by the builder: {len(report['overrides'])} (see build-report.json).")
     facts = report.get("adrs") or {}

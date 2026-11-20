@@ -313,6 +313,8 @@ class ActivationTest(Base):
             (lambda: self.config(review={"medium": {"reviewers": 1}}), "security_review", "review.medium.reviewers is 1: Medium-risk tickets would be reviewed without the security seat"),
             (lambda: self.config(review={"high": {"reviewers": 1}}), "security_review", "review.high.reviewers is 1"),
             (lambda: self.config(review={"high": {"human_approval": False}}), "security_review", "a person can still run that ticket by hand"),
+            # Secrets and dependency scan: switching it off in tracked settings refuses unattended work too.
+            (lambda: self.config(security={"scan": {"enabled": False}}), "security_review", "security.scan.enabled is false"),
             (lambda: self.config(factory={"supervisor": False}), "project_allows", "not allowed here"),
             (lambda: self.local("supervisor.json").parent.mkdir(exist_ok=True) or self.local("supervisor.json").write_text(json.dumps(
                 {"instance": "other", "runner_id": "r", "pid": os.getpid(), "host": supervisor.platform.node(), "heartbeat_at": "x", "expires_at": "2099-01-01T00:00:00Z"})),
@@ -854,6 +856,13 @@ class LimitsTest(Base):
                 self.assertIn(policy.security_review_problems({"review": review})[0], self.factory("status")["restricted_by_project"])
                 # A long-running supervisor holds the config it started with; the check reads the file on disk instead.
                 self.assertEqual(policy.effective(policy.read(self.eng), {})["security_review_problems"], policy.security_review_problems({"review": review}))
+        with self.subTest(security="scan off"):
+            self.config(security={"scan": {"enabled": False}})
+            report = self.tick()
+            self.assertEqual((report["state"], report["dispatched"], report["started"]), ("observe", [], []))
+            self.assertIn(policy.security_review_problems({"security": {"scan": {"enabled": False}}})[0], self.factory("status")["restricted_by_project"])
+        self.assertEqual(policy.security_review_problems({"security": {"scan": {"enabled": True}}}), [], "the scan on is no problem")
+        self.config(security={"scan": {"enabled": True}})
         self.assertEqual(self.calls(), [])
         self.config(review={"medium": {"reviewers": 3, "approvals": 3}})  # raising a threshold is never refused
         self.assertEqual(len(self.tick()["started"]), 1)

@@ -123,8 +123,9 @@ def exception_option(ticket: str, state: Dict[str, Any]) -> Dict[str, Any]:
     if state.get("mode") == "renew":
         does = f"The review station records the person's new exception to {', '.join(refs)} for the approved commit, with their reason, in place of the expired one."
     else:
-        does = (f"The review station records the person's exception to {', '.join(refs)} for the reviewed commit, with their reason, and the round takes "
-                "the outcome its count of approvals gives.")
+        does = (f"The review station records the person's exception to {', '.join(refs)} for the reviewed commit, with their reason. A reject vote that "
+                "rested only on those findings counts as an approval, and the round takes the outcome that recount gives; a person's approval is "
+                "still needed wherever the tier asks for one.")
     return option("exception", "Record a security exception", does, f'except {ticket} {" ".join(refs)} "<why>"', needs_reason=True)
 
 

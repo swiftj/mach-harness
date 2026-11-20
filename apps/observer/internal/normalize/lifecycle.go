@@ -62,7 +62,7 @@ var (
 )
 
 func init() {
-	for _, k := range event.Kinds[21:33] {
+	for _, k := range event.Kinds[21:34] {
 		lifecycleKinds[k] = true
 	}
 }
@@ -510,6 +510,21 @@ func (l *Lifecycle) data(ev *event.Event, typ, station string, in map[string]any
 		d["outcome"] = enum(get("outcome"), "APPROVED", "AWAITING_HUMAN", "REJECTED", "ESCALATE")
 		get("round")
 		ev.Ref(event.RefActor("person"))
+	case "review.scan_recorded":
+		// What the security scan flagged in one review round and how it was answered (M12): booleans and counts only.
+		// File names, package names, previews and the reviewers' reasons stay in the cell's decision.json.
+		d["enabled"] = boolOr(get("enabled"), false)
+		d["flagged"] = boolOr(get("flagged"), false)
+		d["panel_raised"] = boolOr(get("panel_raised"), false)
+		for _, k := range []string{"secret_candidates", "real", "not_a_secret", "overridden_by_builder", "dependencies", "dependencies_added",
+			"acceptable", "concerns", "lockfile_only"} {
+			if n, ok := redact.Int(get(k)); ok && n >= 0 {
+				d[k] = n
+			} else {
+				d[k] = nil
+			}
+		}
+		get("round")
 	case "merge.completed":
 		require(ev, d, "method", enum(get("method"), "local", "pr"), "local")
 		for _, k := range []string{"merge_commit", "approved_commit", "landed_commit"} {

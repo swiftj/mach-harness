@@ -362,6 +362,16 @@ class ReportTest(Base):
         for target in ("`skills/build/scripts/build.py`", "`.factory/config.json`", "`README.md`", "`../REVIEW.md`", "`/etc/REVIEW.md`", "`docs/references/x.md`", "`skills/build/NOTSKILL.md`", "Makefile"):
             self.refused(report(proposal(target=target)), "targets '")
 
+    def test_a_proposal_never_switches_off_or_narrows_the_security_scan(self):
+        """The observe station never proposes turning the secrets and dependency scan off or narrowing it: the settings file is not
+        a target, and a proposal to a rule file that concerns the scan is refused (M12)."""
+        self.six()
+        self.collect()
+        self.refused(report(proposal(target="`.factory/config.json`", change="Set security.scan.enabled to false.")), "targets '")
+        for change in ("Let builders use --not-a-secret for test keys without a reason.", "Skip the secrets gate for docs files.",
+                       "The security seat may leave scan_answers out for dev dependencies.", "Ignore secret candidates under examples/."):
+            self.refused(report(proposal(change=change)), "concerns the security scan")
+
     def test_allowed_targets(self):
         for target in ("REVIEW.md", "CLAUDE.md", "AGENTS.md", "./REVIEW.md", "skills/build/SKILL.md", ".claude/skills/mach-build/SKILL.md", "skills/verify/references/evidence-runners.md"):
             self.assertTrue(observe.allowed_target(observe.target_path(target)), target)
