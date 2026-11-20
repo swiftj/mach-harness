@@ -15,10 +15,14 @@ var (
 	allowedSliceOpsArgs = []string{"slice check %s", "slice pause %s", "slice set %s"}
 	// A person's acts, denied again as a second layer (the allow list already leaves them out), and
 	// the names of commands the app never offers: the removed wave and approval commands, and the
-	// terminal-only `acceptance record`.
+	// terminal-only `acceptance record`. Since M15 also every act M13 and M14 added that the engine
+	// does only on a person's word (principles, a policy owner's acceptance, Jira keys and the export,
+	// the PRD on-ramp's import, map, settle, apply, draft and confirm, design mocks), and their reads,
+	// which the interview has no need of: the app's own buttons do them.
 	deniedOps = []string{"slice ready", "reconcile", "slice renumber", "epic renumber",
 		"slice reopen", "slice move", "slice take", "project", "slice new", "epic add", "epic set",
-		"slice approve", "wave", "send", "feedback", "acceptance"}
+		"slice approve", "wave", "send", "feedback", "acceptance",
+		"principle", "policy", "epic link", "slice link", "epic current", "jira", "prd", "slice mock"}
 )
 
 // Tools is the only tool set the interviewer gets: no Agent, Skill or web tools.
@@ -28,7 +32,8 @@ const Tools = "Read,Glob,Grep,Edit,Write,Bash"
 const HostNote = "You are the interviewer inside MACH Product Studio's local app. Each of your messages is shown to the " +
 	"product manager as is, and their reply comes back as the next message. The app created the slice before " +
 	"this session started. Marking a slice ready to build, reopening, choosing between versions and " +
-	"renumbering are the product manager's own acts, done with the app's buttons; you cannot run them here, so " +
+	"renumbering, and changing principles, accepting a policy concern, Jira keys, design mocks and PRD steps, " +
+	"are the product manager's own acts, done with the app's buttons; you cannot run them here, so " +
 	"if asked, tell the PM which button to use. Run the studio script as a plain command, one per Bash call, " +
 	"exactly as the skill spells it: no shell variables, functions, cd or chained commands. If one command is " +
 	"refused, only that operation is unavailable; the others still work."

@@ -1,0 +1,24 @@
+{
+  "exit_code": 0,
+  "data": {
+    "epic": {
+      "acceptance_criteria": [
+        "Only invited people can join"
+      ],
+      "epic_id": "EPIC-001",
+      "project_id": "team-space",
+      "revision": 3,
+      "schema_version": 1,
+      "status": "open",
+      "title": "Team membership",
+      "tracking": {
+        "jira": "TEAM-2"
+      }
+    },
+    "already_ready": [],
+    "factory_authorized": false,
+    "note": "Linked to TEAM-2. Slices of this epic without a key of their own carry it when they are marked ready."
+  },
+  "refused": null,
+  "hint": null
+}

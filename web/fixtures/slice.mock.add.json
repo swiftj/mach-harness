@@ -1,0 +1,47 @@
+{
+  "exit_code": 0,
+  "data": {
+    "slice": {
+      "dependencies": [],
+      "epic_id": "EPIC-001",
+      "mocks": [
+        {
+          "binding": true,
+          "bytes": 69,
+          "for": "AC-01",
+          "format": "png",
+          "height": 3,
+          "note": "The invite form",
+          "sha256": "d3a67710b6bcc7b5cb13cfa10d2fd256d372a44903e1c4056f00fabba1a073c0",
+          "width": 4
+        }
+      ],
+      "open_questions": [],
+      "project_id": "team-space",
+      "revision": 3,
+      "schema_version": 1,
+      "slice_id": "SLICE-001",
+      "spec_path": null,
+      "spec_sha256": null,
+      "status": "draft",
+      "title": "Invite a teammate",
+      "tracking": {
+        "jira": "TEAM-12"
+      }
+    },
+    "mock": {
+      "sha256": "d3a67710b6bcc7b5cb13cfa10d2fd256d372a44903e1c4056f00fabba1a073c0",
+      "format": "png",
+      "width": 4,
+      "height": 3,
+      "bytes": 69,
+      "for": "AC-01",
+      "binding": true,
+      "note": "The invite form"
+    },
+    "factory_authorized": false,
+    "note": "Attached to SLICE-001. It goes to the builders with the slice when you mark it ready."
+  },
+  "refused": null,
+  "hint": null
+}

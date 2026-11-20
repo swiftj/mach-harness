@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"mach/studio/internal/security"
 )
 
 // Config fixes everything about how the engine is run. It is resolved once, at start-up.
@@ -81,7 +83,33 @@ func (e *Engine) Do(ctx context.Context, name string, body []byte) Envelope {
 	if err := Decode(body, args); err != nil {
 		return Fail(KindInvalid, err.Error())
 	}
-	return e.Transaction(ctx, func(tx *Tx) Envelope { return tx.Call(ctx, name, args) })
+	files, ok := args.(FileArgs)
+	if !ok {
+		return e.Transaction(ctx, func(tx *Tx) Envelope { return tx.Call(ctx, name, args) })
+	}
+	// An operation that reads a file: check the request first, then stage the file inside the
+	// Studio workspace under the project lock, run the one command, and remove the file whatever
+	// the engine answered.
+	fileName, data, err := files.Staged()
+	if err != nil {
+		var bad *InvalidError
+		if errors.As(err, &bad) {
+			return Fail(KindInvalid, bad.Message)
+		}
+		return Fail(KindInternal, "The file could not be prepared.")
+	}
+	return e.Transaction(ctx, func(tx *Tx) Envelope {
+		path, cleanup, err := security.StageUpload(e.cfg.Project, fileName, data)
+		defer cleanup()
+		if err != nil {
+			if errors.Is(err, security.ErrUnsafePath) {
+				return Fail(KindInvalid, "Product Studio's folder has a symbolic link or an unexpected entry where the file goes, so nothing was done.")
+			}
+			return Fail(KindInternal, "The file could not be staged for the product engine.")
+		}
+		files.SetPath(path)
+		return tx.Call(ctx, name, files)
+	})
 }
 
 // Tx is the right to call the engine while holding the project lock.

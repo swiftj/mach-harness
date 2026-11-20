@@ -12,7 +12,7 @@
       "schema_version": 1,
       "slice_id": "SLICE-001",
       "spec_path": "specs/slices/SLICE-001-invite-a-teammate.md",
-      "spec_sha256": "b0097bdf9d525aac493e1f8038476fc27984db47a22b6f3d229d6fd3ca4c15aa",
+      "spec_sha256": "9e25acf6b16c84bd3bbf1cd58a36f7a1883b90f7a7305dd72a8f32fdc8dc6ba7",
       "status": "approved_for_engineering",
       "title": "Invite a teammate"
     },

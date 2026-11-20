@@ -1,0 +1,13 @@
+{
+  "exit_code": 0,
+  "data": {
+    "accepted": "POL-privacy-02",
+    "slice_id": "SLICE-001",
+    "by": "Data protection officer",
+    "open_left": [],
+    "factory_authorized": false,
+    "note": "The spec now records the owner's decision in their words. The slice can be marked ready once no concern and no question is open."
+  },
+  "refused": null,
+  "hint": null
+}

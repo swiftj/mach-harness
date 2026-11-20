@@ -12,11 +12,15 @@
  *   ?take=refused                                         slice.take answers with the engine's refusal (a different epic here)
  *   ?interview=unavailable                                the session reports interview: false
  *
+ * M15 (principles, policies, effects, the epic today, the PRD on-ramp, Jira, mocks): see
+ * memoryTransport.ts for its parameters; ?show=, ?ready=, ?fixture= and ?refresh= take its names too.
+ *
  * Every answer is a real engine run from web/fixtures. The only adjustment: the slice.ready and
  * slice.reopen fixtures are for SLICE-001, so their slice ID is set to the slice the screen asked about.
  */
 import type { EngineRun, SliceCheck, SliceShow, Transport, TransportResponse } from "@mach/ui/api";
 import { devParam, devState } from "./devState";
+import { memoryRoute, memoryShow } from "./memoryTransport";
 
 const files = import.meta.glob<EngineRun<unknown>>("../../../../fixtures/*.json", { import: "default" });
 
@@ -76,7 +80,8 @@ async function sliceShow(sliceId: string): Promise<SliceShow | null> {
     case "errors":
       return data<SliceShow>("slice.show.errors");
     default:
-      return null;
+      // M15: open-concern, concern-accepted, effects, mocks-and-jira (memoryTransport.ts).
+      return (memoryShow(scenario) as SliceShow | null) ?? null;
   }
 }
 
@@ -102,6 +107,14 @@ async function sliceRoute(path: string, method: string, args: Record<string, unk
       // time, then, slowly enough to see the button working, marked ready.
       const mode = devParam("ready");
       const first = devState.readyAsked++ === 0;
+      if (mode === "refused-open-concern") {
+        const refused = await load("slice.ready.refused-open-concern");
+        return fail("refused", refused?.refused ?? "Refused.", 422, refused?.hint ?? null);
+      }
+      if (mode === "with-mocks") {
+        devState.reopened.delete(sliceId);
+        return ok(await forSlice("slice.ready.with-mocks", sliceId));
+      }
       if (mode === "refused" || (mode === "refused-once" && first)) {
         const refused = await load(mode === "refused" ? "slice.ready.refused-open-questions" : "slice.ready.refused-number-taken");
         return fail("refused", refused?.refused ?? "Refused.", 422, refused?.hint ?? null);
@@ -162,6 +175,8 @@ export const fixtureTransport: Transport = async ({ path, method, body }) => {
   const args = body ? (JSON.parse(body) as Record<string, unknown>) : {};
   const slice = await sliceRoute(path, method, args);
   if (slice) return slice;
+  const memory = memoryRoute(path, args);
+  if (memory) return memory;
 
   const op = path.startsWith("/api/ops/") ? path.slice("/api/ops/".length) : null;
   if (op === "slice.take") {

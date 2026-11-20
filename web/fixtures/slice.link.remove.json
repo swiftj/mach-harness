@@ -1,0 +1,25 @@
+{
+  "exit_code": 0,
+  "data": {
+    "slice": {
+      "dependencies": [
+        "SLICE-001"
+      ],
+      "epic_id": "EPIC-001",
+      "open_questions": [],
+      "project_id": "team-space",
+      "revision": 1,
+      "schema_version": 1,
+      "slice_id": "SLICE-002",
+      "spec_path": null,
+      "spec_sha256": null,
+      "status": "draft",
+      "title": "Remove a teammate"
+    },
+    "jira": "TEAM-1",
+    "factory_authorized": false,
+    "note": "No Jira key of its own. It is handed over with the key when you mark it ready."
+  },
+  "refused": null,
+  "hint": null
+}

@@ -4,6 +4,7 @@ import { client, usingFixtures } from "./api/client";
 import { useSession, useStatus } from "./api/store";
 import { destinationFor, destinations } from "./features/registry";
 import { AppHint } from "./shared/AppHint";
+import { sliceSectionLabel } from "./shared/SliceSections";
 
 /**
  * The frame of every screen. No rail: the project home is the default screen and leads everywhere;
@@ -63,12 +64,22 @@ export function Layout() {
 /** Project / (epic /) where you are. The project's name always leads back to the project home. */
 function Breadcrumb({ projectName, path, status }: { projectName: string; path: string; status: Status | null }) {
   const steps: string[] = [];
-  const slice = path.match(/^\/slices\/([^/]+)(\/interview)?$/);
+  const slice = path.match(/^\/slices\/([^/]+)(\/[a-z]+)?$/);
+  const epicPage = path.match(/^\/epics\/([^/]+)\/today$/);
+  const prdPage = path.match(/^\/prds\/([^/]+)$/);
   if (slice) {
     const row = status?.slices.find((s) => s.slice_id === slice[1]);
     const epic = row ? status?.epics.find((e) => e.epic_id === row.epic_id) : undefined;
     if (epic) steps.push(epic.title);
     steps.push(row?.title ?? slice[1] ?? "");
+    // M15: a slice's own pages (effects, principles and policies, mocks, from the PRD).
+    const section = slice[2] && slice[2] !== "/interview" ? sliceSectionLabel(slice[2]) : null;
+    if (section) steps.push(section);
+  } else if (epicPage) {
+    const epic = status?.epics.find((e) => e.epic_id === epicPage[1]);
+    steps.push(epic?.title ?? epicPage[1] ?? "", "How it works today");
+  } else if (prdPage) {
+    steps.push("Start from a PRD", prdPage[1] ?? "");
   } else {
     const destination = destinationFor(path);
     if (destination) steps.push(destination.label);

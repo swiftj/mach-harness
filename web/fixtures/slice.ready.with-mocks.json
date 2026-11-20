@@ -1,0 +1,64 @@
+{
+  "exit_code": 0,
+  "data": {
+    "ready": true,
+    "saved_to": "github",
+    "slice": {
+      "dependencies": [],
+      "epic_id": "EPIC-001",
+      "mocks": [
+        {
+          "binding": true,
+          "bytes": 69,
+          "for": "AC-01",
+          "format": "png",
+          "height": 3,
+          "note": "The invite form",
+          "sha256": "d3a67710b6bcc7b5cb13cfa10d2fd256d372a44903e1c4056f00fabba1a073c0",
+          "width": 4
+        }
+      ],
+      "open_questions": [],
+      "project_id": "team-space",
+      "revision": 6,
+      "schema_version": 1,
+      "slice_id": "SLICE-001",
+      "spec_path": "specs/slices/SLICE-001-invite-teammate.md",
+      "spec_sha256": "9e25acf6b16c84bd3bbf1cd58a36f7a1883b90f7a7305dd72a8f32fdc8dc6ba7",
+      "status": "approved_for_engineering",
+      "title": "Invite a teammate",
+      "tracking": {
+        "jira": "TEAM-12"
+      }
+    },
+    "issue": 3,
+    "url": "https://github.com/acme/team-space/issues/3",
+    "revision": 1,
+    "follows": null,
+    "epic_issue": 2,
+    "project_issue": 1,
+    "approved_by": "ada-pm",
+    "risk": "High",
+    "counts": {
+      "invariants": 4,
+      "functional_requirements": 9,
+      "matrix_rules": 5,
+      "scenarios": 3
+    },
+    "warnings": [],
+    "request_updates": null,
+    "factory_authorized": false,
+    "mocks": {
+      "folder": "/project/.factory/studio/draft/product/ready/SLICE-001/mocks",
+      "commit_as": "product/ready/SLICE-001/mocks/",
+      "files": [
+        "d3a67710b6bcc7b5cb13cfa10d2fd256d372a44903e1c4056f00fabba1a073c0.png"
+      ],
+      "factory_waits": true,
+      "note": "The builders hold SLICE-001 until its design mocks are in the project's repository. Add the pictures from this folder to the repository at product/ready/SLICE-001/mocks/, or hand them to an engineer to add."
+    },
+    "note": "Saved to GitHub as #3 and marked ready. The builders take it from there; nothing has started yet. The builders hold SLICE-001 until its design mocks are in the project's repository. Add the pictures from this folder to the repository at product/ready/SLICE-001/mocks/, or hand them to an engineer to add."
+  },
+  "refused": null,
+  "hint": null
+}
