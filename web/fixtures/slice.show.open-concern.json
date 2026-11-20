@@ -663,7 +663,7 @@
           "rule": "policy-concern-open",
           "line": 95,
           "section": "Policies",
-          "message": "POL-privacy-02's concern is open: it waits for Data protection officer (@acme/privacy) to accept it (policy accept), or for the spec to change so the statement is met. A spec with an open concern is not ready."
+          "message": "POL-privacy-02's concern is open: it waits for Data protection officer (@acme/privacy) to accept it on the slice's Principles and policies page, or for the spec to change so the statement is met. A spec with an open concern is not ready."
         }
       ]
     },
@@ -719,7 +719,7 @@
       "spec": "specs/slices/SLICE-001-invite-teammate.md",
       "errors": [],
       "warnings": [
-        "SLICE-001-invite-teammate.md:95: POL-privacy-02's concern is open: it waits for Data protection officer (@acme/privacy) to accept it (policy accept), or for the spec to change so the statement is met. A spec with an open concern is not ready. [policy-concern-open]"
+        "SLICE-001-invite-teammate.md:95: POL-privacy-02's concern is open: it waits for Data protection officer (@acme/privacy) to accept it on the slice's Principles and policies page, or for the spec to change so the statement is met. A spec with an open concern is not ready. [policy-concern-open]"
       ],
       "diagnostics": [
         {
@@ -727,7 +727,7 @@
           "rule": "policy-concern-open",
           "line": 95,
           "section": "Policies",
-          "message": "POL-privacy-02's concern is open: it waits for Data protection officer (@acme/privacy) to accept it (policy accept), or for the spec to change so the statement is met. A spec with an open concern is not ready."
+          "message": "POL-privacy-02's concern is open: it waits for Data protection officer (@acme/privacy) to accept it on the slice's Principles and policies page, or for the spec to change so the statement is met. A spec with an open concern is not ready."
         }
       ],
       "open_questions": [],
@@ -740,7 +740,7 @@
       },
       "title": "Invite a teammate by email",
       "shipped": {
-        "commit": "8737d19d10c9862888f2392cd8f19e22a67dc202",
+        "commit": "d80feb6fab2c7450f2317db8ce170db53c93d493",
         "branch": "main",
         "rules": 0,
         "notes": [

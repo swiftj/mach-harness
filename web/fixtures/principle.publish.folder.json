@@ -1,0 +1,23 @@
+{
+  "exit_code": 0,
+  "data": {
+    "published": true,
+    "saved_to": "folder",
+    "revision": 1,
+    "sha256": "4b3eb5956520dd8c3bbfba31f2514f637ffa076ae7e7b234387bdb686b6d73c3",
+    "folder": "/project/.factory/studio/draft/product/ready/PRINCIPLES",
+    "why_folder": "You are not signed in to GitHub on this computer.",
+    "files": [
+      "/project/.factory/studio/draft/product/ready/PRINCIPLES/principles.json"
+    ],
+    "active": 1,
+    "factory_authorized": false,
+    "ways_on": [
+      "Add this folder to the project's repository; the builders read it from there.",
+      "Slices marked ready from now on answer these principles."
+    ],
+    "note": "Published to the folder. Nothing was sent to GitHub and no work has started."
+  },
+  "refused": null,
+  "hint": null
+}

@@ -4,7 +4,6 @@ import { CircleAlert, Layers } from "lucide-react";
 import { Banner, Button, EmptyState, ErrorState, Skeleton, SkeletonText, Text, describeError, plural, type Status } from "@mach/ui";
 import { ScreenFrame } from "../../shared/ScreenFrame";
 import { useStatus } from "../../api/store";
-import { useLearnedEpicKeys, useWorkOrders } from "./data";
 import { ExportPanel } from "./ExportPanel";
 import { KeysBack } from "./KeysBack";
 import { KeysLedger } from "./KeysLedger";
@@ -44,9 +43,7 @@ export function JiraScreen() {
 }
 
 function Jira({ status }: { status: Status }) {
-  const learned = useLearnedEpicKeys();
-  const { orders, error } = useWorkOrders(status.slices.map((s) => ({ id: s.slice_id, revision: s.revision })));
-  const ledger = buildLedger(status, orders, learned);
+  const ledger = buildLedger(status);
   const facts = ledgerFacts(ledger);
 
   if (ledger.length === 0) {
@@ -75,16 +72,10 @@ function Jira({ status }: { status: Status }) {
           </Text>
           <Text size="body-sm" tone="muted" className="max-w-reading">
             {plural(facts.epics, "epic")} · {plural(facts.slices, "slice")} · {plural(facts.sliceKeys, "slice")} with a key of its own
-            {facts.epicsUnknown > 0 ? ". An epic's key shows here once you set it on this page." : "."}
           </Text>
-          {!facts.reading && facts.sliceKeys === 0 && facts.epicKeys === 0 ? (
+          {facts.sliceKeys === 0 && facts.epicKeys === 0 ? (
             <Banner tone="info" title="No slice has a Jira key of its own yet">
               Export the file below, import it into Jira, then bring the keys back. Or set a key by hand where you already know it.
-            </Banner>
-          ) : null}
-          {error ? (
-            <Banner tone="warning" title="Some slices could not be read">
-              Their keys show as “Reading…”. {describeError(error).message}
             </Banner>
           ) : null}
           <KeysLedger ledger={ledger} />

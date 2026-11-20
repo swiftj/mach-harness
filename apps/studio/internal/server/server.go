@@ -69,6 +69,7 @@ func New(opts Options) *Server {
 		s.api.HandleFunc("PUT /api/drafts/"+kind+"/{slice}", s.putDraft(kind))
 	}
 	s.api.HandleFunc("GET /api/downloads/{token}/{name}", s.download)
+	s.api.HandleFunc("GET /api/slices/{slice}/mocks/{sha}", s.mockPreview)
 	s.api.HandleFunc("POST /api/interview", s.interviewStart)
 	s.api.HandleFunc("GET /api/interview", s.interviewCurrent)
 	s.api.HandleFunc("GET /api/interview/history", s.interviewHistory)

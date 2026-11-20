@@ -16,10 +16,7 @@ export interface RuleGroup {
   rules: ShippedRule[];
 }
 
-export interface NotApplied {
-  slice_id: string;
-  problems: Array<{ line: number | null; code: string | null; message: string }>;
-}
+export type NotApplied = EpicView["not_applied"][number];
 
 export interface EpicPage {
   /** The rules in force, by kind, then the rules shipped before effects were declared, then those no longer in force. Empty groups are left out. */
@@ -37,28 +34,6 @@ const KIND_GROUPS: Array<{ id: GroupId; kind: string; title: string; hint: strin
   { id: "decisions", kind: "decision rule", title: "Decisions", hint: "Each combination of conditions and the outcome it leads to." },
 ];
 
-/** `not_applied` as the engine lists it ({slice_id, problems}); anything else is left out. */
-export function notApplied(items: unknown[] | null | undefined): NotApplied[] {
-  const out: NotApplied[] = [];
-  for (const item of items ?? []) {
-    if (!item || typeof item !== "object") continue;
-    const record = item as { slice_id?: unknown; problems?: unknown };
-    if (typeof record.slice_id !== "string") continue;
-    const problems = Array.isArray(record.problems) ? record.problems : [];
-    out.push({
-      slice_id: record.slice_id,
-      problems: problems
-        .filter((p): p is { line?: unknown; code?: unknown; message: string } => !!p && typeof p === "object" && typeof (p as { message?: unknown }).message === "string")
-        .map((p) => ({ line: typeof p.line === "number" ? p.line : null, code: typeof p.code === "string" ? p.code : null, message: p.message })),
-    });
-  }
-  return out;
-}
-
-/** `conflicts` as the engine lists them: sentences. */
-export function conflicts(items: unknown[] | null | undefined): string[] {
-  return (items ?? []).filter((c): c is string => typeof c === "string" && c.trim() !== "");
-}
 
 /** The page's groups, in reading order. */
 export function epicPage(epic: EpicView): EpicPage {
@@ -81,8 +56,8 @@ export function epicPage(epic: EpicView): EpicPage {
   if (epic.no_longer_in_force.length) {
     groups.push({ id: "no-longer", title: "No longer in force", hint: "Kept for history: what each one was, and what a later slice did to it.", rules: epic.no_longer_in_force });
   }
-  const skipped = notApplied(epic.not_applied);
-  const clashes = conflicts(epic.conflicts);
+  const skipped = epic.not_applied;
+  const clashes = epic.conflicts;
   const jumps: EpicPage["jumps"] = groups.map((g) => ({ id: g.id, title: g.title, count: g.rules.length }));
   if (skipped.length) jumps.push({ id: "not-applied", title: "Effects not applied", count: skipped.length });
   if (clashes.length) jumps.push({ id: "conflicts", title: "Conflicts", count: clashes.length });

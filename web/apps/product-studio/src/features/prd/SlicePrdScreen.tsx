@@ -23,7 +23,6 @@ import type { PrdAnswer, PrdForSlice } from "@mach/ui/api";
 import { useEngineAct } from "../../api/act";
 import { interviewCapability } from "../../api/session";
 import { useSession } from "../../api/store";
-import { useOperation } from "../../api/useOperation";
 import { useSliceShow } from "../../api/useSliceShow";
 import { SliceScreenFrame } from "../../shared/ScreenFrame";
 import { answerGroups, confirmArgs, confirmLabel, fencedLines, quote, rangeWords } from "./model";
@@ -33,24 +32,23 @@ import { DataNotice, PrdQuote, linesLabel } from "./parts";
  * A slice made from a PRD: the lines it rests on, and the answers drafted from them. The product
  * manager accepts drafted answers as a group, naming the ones to discuss instead (`prd.confirm`).
  * Points the PRD does not settle and contradictions are always asked in the interview.
- * `slice.resume` reads the PRD part (and, as in the terminal, makes this the slice being worked on).
+ * `slice.show` carries the PRD part and changes nothing (it does not make this the slice being worked on).
  */
 export function SlicePrdScreen() {
   const sliceId = useParams().sliceId ?? "";
   const show = useSliceShow(sliceId);
-  const resume = useOperation("slice.resume", { slice_id: sliceId });
-  const prd = resume.data?.prd ?? null;
+  const prd = show.data?.prd ?? null;
 
   let body;
-  if (!resume.data && resume.loading) body = <LoadingState label={`Reading what ${sliceId} was made from`} />;
-  else if (!resume.data) {
-    const shown = resume.error ? describeError(resume.error) : { title: "Not available right now", message: "" };
+  if (!show.data && show.loading) body = <LoadingState label={`Reading what ${sliceId} was made from`} />;
+  else if (!show.data) {
+    const shown = show.error ? describeError(show.error) : { title: "Not available right now", message: "" };
     body = (
       <ErrorState
         icon={<CircleAlert />}
-        title={resume.error?.kind === "refused" ? `Could not read ${sliceId}` : shown.title}
+        title={show.error?.kind === "refused" ? `Could not read ${sliceId}` : shown.title}
         message={shown.message}
-        action={<Button onClick={resume.reload}>Try again</Button>}
+        action={<Button onClick={show.reload}>Try again</Button>}
       />
     );
   } else if (!prd) {
@@ -66,7 +64,7 @@ export function SlicePrdScreen() {
       />
     );
   } else {
-    body = <FromPrd key={sliceId} sliceId={sliceId} sliceTitle={show.data?.slice.title ?? sliceId} prd={prd} problems={show.data?.check.prd_problems ?? []} onConfirmed={show.reload} />;
+    body = <FromPrd key={sliceId} sliceId={sliceId} sliceTitle={show.data.slice.title ?? sliceId} prd={prd} problems={show.data.check.prd_problems ?? []} onConfirmed={show.reload} />;
   }
 
   return (

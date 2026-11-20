@@ -64,7 +64,7 @@
         "state": "settled",
         "settled": {
           "as": "slice",
-          "at": "2026-11-20T20:16:29Z",
+          "at": "2026-11-20T22:05:47Z",
           "reason": "The opening belongs to inviting.",
           "slice": "M1"
         }
@@ -107,10 +107,10 @@
       5
     ],
     "can_apply": false,
-    "note": "2 sections of PRD-01 no slice cites: 4, 5. Ask the product manager about each: a slice, out of scope, or later (prd settle).",
+    "note": "2 sections of PRD-01 no slice cites: 4, 5. Settle each: a slice, out of scope, or later.",
     "settled": {
       "section": 1,
-      "at": "2026-11-20T20:16:29Z",
+      "at": "2026-11-20T22:05:47Z",
       "as": "slice",
       "slice": "M1",
       "reason": "The opening belongs to inviting."

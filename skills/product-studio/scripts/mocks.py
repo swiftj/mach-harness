@@ -96,7 +96,8 @@ def cmd_add(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str, Any]:
             raise host.StudioError(f"'{scenario[:20]}' is not a scenario in {args.slice_id}'s spec. "
                                    + (f"Its scenarios are {', '.join(known)}." if known else "Write the spec's scenarios first."))
     if args.binding and scenario is None:
-        raise host.StudioError("A binding mock is binding for one scenario: name it with --for AC-NN.")
+        raise host.StudioError(host.say("A binding mock is binding for one scenario: name it with --for AC-NN.",
+                                        "A binding mock is binding for one scenario: choose the scenario it shows."))
     note = " ".join(args.note.split()) if args.note else None
     if note is not None and not rules.is_mock_note(note):
         raise host.StudioError(f"The note must be one line of plain text, at most {rules.MOCK_NOTE_LIMIT} characters, without ` < or >.")
@@ -120,8 +121,10 @@ def find(host: Any, items: List[Dict[str, Any]], slice_id: str, given: str) -> D
         wanted = wanted[:-len(suffix)] if wanted.endswith(suffix) else wanted
     matches = [item for item in items if len(wanted) >= 8 and item["sha256"].startswith(wanted)]
     if len(matches) != 1:
-        raise host.StudioError(f"No single design mock of {slice_id} starts with '{given[:70]}'. Name it by the start of its SHA-256 "
-                               "(at least 8 characters), as `slice mock list` shows it.")
+        raise host.StudioError(host.say(f"No single design mock of {slice_id} starts with '{given[:70]}'. Name it by the start of its SHA-256 "
+                                        "(at least 8 characters), as `slice mock list` shows it.",
+                                        f"No single design mock of {slice_id} starts with '{given[:70]}'. It may have been removed already; "
+                                        "the slice's Design mocks page lists the ones it has."))
     return matches[0]
 
 

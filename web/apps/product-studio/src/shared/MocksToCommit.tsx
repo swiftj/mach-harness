@@ -6,11 +6,9 @@ import type { MocksToCommit as ToCommit } from "@mach/ui/api";
  * The delivery step after "Mark ready to build": the pictures do not travel in the GitHub issue.
  * With the engine's answer, its folder, place and note are shown as written; without it (this
  * window did not mark the slice ready), the step is still said, from the slice's own record.
- *
- * Named for promotion: the ready dialog (features/spec/SliceActs.tsx) could show this panel under
- * `SavedPlace` when `slice.ready` answers with `mocks`.
+ * Shown on the Design mocks tab and in the ready dialog's saved state.
  */
-export function MocksToCommitPanel({ sliceId, toCommit, files }: { sliceId: string; toCommit: ToCommit | null; files: string[] }) {
+export function MocksToCommitPanel({ sliceId, toCommit, files, level = 2 }: { sliceId: string; toCommit: ToCommit | null; files: string[]; level?: 2 | 3 }) {
   const headingId = `mocks-to-commit-${sliceId}`;
   const names = toCommit?.files.length ? toCommit.files : files;
   return (
@@ -18,7 +16,7 @@ export function MocksToCommitPanel({ sliceId, toCommit, files }: { sliceId: stri
       <div className="flex items-start gap-3">
         <FolderUp aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-warning-ink" />
         <div className="flex min-w-0 flex-col gap-1">
-          <Heading level={2} size="title-3" id={headingId}>
+          <Heading level={level} size="title-3" id={headingId}>
             Waiting for its pictures to be committed
           </Heading>
           <Text className="max-w-reading">

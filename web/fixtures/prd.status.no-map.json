@@ -40,7 +40,7 @@
         "lines": "20-22"
       }
     ],
-    "note": "PRD-01 has no map yet. Propose one and record it with prd map."
+    "note": "PRD-01 has no map yet. Ask Claude Code to propose one."
   },
   "refused": null,
   "hint": null

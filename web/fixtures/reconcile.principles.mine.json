@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "data": {
+    "reconciled": "principles",
+    "took": "mine",
+    "github_version": 4,
+    "note": "Your principles stay as they are. Publishing them replaces the version on GitHub.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

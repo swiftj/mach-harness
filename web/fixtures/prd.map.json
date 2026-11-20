@@ -103,7 +103,7 @@
       5
     ],
     "can_apply": false,
-    "note": "The map is recorded; nothing is reserved or made yet. 3 sections of PRD-01 no slice cites: 1, 4, 5. Ask the product manager about each: a slice, out of scope, or later (prd settle).",
+    "note": "The map is recorded; nothing is reserved or made yet. 3 sections of PRD-01 no slice cites: 1, 4, 5. Settle each: a slice, out of scope, or later.",
     "recorded": true,
     "settlements_dropped": []
   },

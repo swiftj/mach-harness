@@ -4,24 +4,17 @@
  * what goes in the file and whether a key is acceptable are the engine's; this only arranges what
  * the engine reported, in the product manager's order, with names beside the IDs.
  */
-import type { JiraExport, JiraKeys, SliceGithub, SliceStatus, Status, StatusEpicRow, WorkOrder } from "@mach/ui/api";
+import type { JiraExport, JiraKeys, SliceGithub, SliceStatus, Status, StatusEpicRow, StatusSliceRow } from "@mach/ui/api";
 
 /* ── The keys each epic and slice carries ─────────────────────────────── */
 
 /**
- * A Jira key as far as this page knows it.
+ * A Jira key, as status reports it (`tracking` on each epic and slice row).
  * - `own`: the item's own key, as the engine stored it.
  * - `inherited`: a slice with no key of its own whose epic has one; the slice is handed over with it.
- * - `inherits-unknown`: a slice with no key of its own, under an epic whose key this page has not read.
  * - `none`: no key, and (for a slice) none from its epic either.
- * - `unknown`: not read yet, or could not be read.
  */
-export type KeyFact =
-  | { kind: "own"; key: string }
-  | { kind: "inherited"; key: string; from: string }
-  | { kind: "inherits-unknown"; from: string }
-  | { kind: "none" }
-  | { kind: "unknown" };
+export type KeyFact = { kind: "own"; key: string } | { kind: "inherited"; key: string; from: string } | { kind: "none" };
 
 export interface LedgerSlice {
   id: string;
@@ -42,30 +35,16 @@ export interface LedgerEpic {
   slices: LedgerSlice[];
 }
 
-/**
- * An epic's key. The engine stores it on the epic (`tracking`), but `status` does not report it,
- * so this page knows it only from a row that carries it (should status ever report it) or from
- * the engine's answer to an act on this page (`epic.link`, or `slice.link`'s `jira`).
- * `learned` maps an epic ID to its key, or to null when the engine said it has none.
- */
-export function epicKey(row: StatusEpicRow, learned: Readonly<Record<string, string | null>>): KeyFact {
-  if (Object.prototype.hasOwnProperty.call(learned, row.epic_id)) {
-    const key = learned[row.epic_id];
-    return key ? { kind: "own", key } : { kind: "none" };
-  }
-  const reported = (row as StatusEpicRow & { tracking?: { jira?: unknown } }).tracking;
-  if (reported && typeof reported.jira === "string") return { kind: "own", key: reported.jira };
-  return { kind: "unknown" };
+/** An epic's key, as its status row reports it. */
+export function epicKey(row: StatusEpicRow): KeyFact {
+  return row.tracking ? { kind: "own", key: row.tracking.jira } : { kind: "none" };
 }
 
 /** A slice's key: its own, else its epic's (shown as inherited), as the engine hands it over. */
-export function sliceKey(order: WorkOrder | null | undefined, epic: KeyFact, epicId: string): KeyFact {
-  if (!order) return { kind: "unknown" };
-  const own = order.tracking?.jira;
-  if (own) return { kind: "own", key: own };
+export function sliceKey(row: StatusSliceRow, epic: KeyFact, epicId: string): KeyFact {
+  if (row.tracking) return { kind: "own", key: row.tracking.jira };
   if (epic.kind === "own") return { kind: "inherited", key: epic.key, from: epicId };
-  if (epic.kind === "none") return { kind: "none" };
-  return { kind: "inherits-unknown", from: epicId };
+  return { kind: "none" };
 }
 
 /**
@@ -73,31 +52,24 @@ export function sliceKey(order: WorkOrder | null | undefined, epic: KeyFact, epi
  * each, the order status reports (`order[].slices`, the slices in this workspace), then any slice
  * of the epic the order does not name, in status's order.
  */
-export function buildLedger(
-  status: Pick<Status, "epics" | "slices" | "order">,
-  workOrders: Readonly<Record<string, WorkOrder | null | undefined>>,
-  learned: Readonly<Record<string, string | null>>,
-): LedgerEpic[] {
+export function buildLedger(status: Pick<Status, "epics" | "slices" | "order">): LedgerEpic[] {
   const byId = new Map(status.slices.map((s) => [s.slice_id, s]));
   return status.epics.map((row) => {
-    const key = epicKey(row, learned);
+    const key = epicKey(row);
     const ordered = status.order.find((o) => o.epic_id === row.epic_id)?.slices.filter((s) => s.in_workspace).map((s) => s.slice_id) ?? [];
     const rest = status.slices.filter((s) => s.epic_id === row.epic_id && !ordered.includes(s.slice_id)).map((s) => s.slice_id);
     const slices = [...ordered, ...rest]
       .map((id) => byId.get(id))
       .filter((s): s is NonNullable<typeof s> => s !== undefined && s.epic_id === row.epic_id)
-      .map((s) => {
-        const order = workOrders[s.slice_id];
-        return {
-          id: s.slice_id,
-          title: s.title,
-          status: s.status,
-          github: s.github,
-          editable: s.editable,
-          key: sliceKey(order, key, row.epic_id),
-          ownKey: order?.tracking?.jira ?? null,
-        };
-      });
+      .map((s) => ({
+        id: s.slice_id,
+        title: s.title,
+        status: s.status,
+        github: s.github,
+        editable: s.editable,
+        key: sliceKey(s, key, row.epic_id),
+        ownKey: s.tracking?.jira ?? null,
+      }));
     return { id: row.epic_id, title: row.title, key, slices };
   });
 }
@@ -107,12 +79,8 @@ export interface LedgerFacts {
   slices: number;
   /** Slices with a key of their own. */
   sliceKeys: number;
-  /** Epics whose key this page knows. */
+  /** Epics with a key. */
   epicKeys: number;
-  /** Epics whose key this page has not read. */
-  epicsUnknown: number;
-  /** True while some slice's work order has not been read. */
-  reading: boolean;
 }
 
 export function ledgerFacts(ledger: readonly LedgerEpic[]): LedgerFacts {
@@ -122,19 +90,7 @@ export function ledgerFacts(ledger: readonly LedgerEpic[]): LedgerFacts {
     slices: slices.length,
     sliceKeys: slices.filter((s) => s.key.kind === "own").length,
     epicKeys: ledger.filter((e) => e.key.kind === "own").length,
-    epicsUnknown: ledger.filter((e) => e.key.kind === "unknown").length,
-    reading: slices.some((s) => s.key.kind === "unknown"),
   };
-}
-
-/**
- * What an epic's key is, learned from an answer the engine gave on this page. `epic.link` names it
- * outright. `slice.link` says the key a slice is handed over with: when the slice has no key of its
- * own, that is its epic's (or none).
- */
-export function learnFromSliceLink(answer: { slice: WorkOrder; jira: string | null }): { epic: string; key: string | null } | null {
-  if (answer.slice.tracking?.jira) return null;
-  return { epic: answer.slice.epic_id, key: answer.jira };
 }
 
 /* ── The export ──────────────────────────────────────────────────────── */

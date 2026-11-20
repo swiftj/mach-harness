@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { conflicts, earlierText, epicPage, notApplied, sliceEffectsWords, sliceTitle } from "../src/features/epic-today/model.ts";
+import { earlierText, epicPage, sliceEffectsWords, sliceTitle } from "../src/features/epic-today/model.ts";
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`../../../fixtures/${name}.json`, import.meta.url), "utf8")).data;
 const current = fixture("epic.current");
@@ -45,18 +45,20 @@ test("every kind has its group; an unknown kind is kept, never dropped", () => {
   assert.deepEqual(page.groups.map((g) => g.id), ["invariants", "requirements", "other"]);
 });
 
-test("not applied and conflicts: read in the engine's shapes, and listed in the jumps", () => {
-  const withProblems = {
-    ...epic,
-    not_applied: [{ slice_id: "SLICE-007", problems: [{ line: 40, code: "effects-row", message: "Line 40 is not a row." }] }, "junk", null],
-    conflicts: ["SLICE-001/FR-02 is replaced by SLICE-003 and changed by SLICE-005.", 4, ""],
-  };
-  const page = epicPage(withProblems);
-  assert.deepEqual(page.notApplied, [{ slice_id: "SLICE-007", problems: [{ line: 40, code: "effects-row", message: "Line 40 is not a row." }] }]);
-  assert.deepEqual(page.conflicts, ["SLICE-001/FR-02 is replaced by SLICE-003 and changed by SLICE-005."]);
+test("not applied and conflicts: as the engine lists them, and listed in the jumps", () => {
+  const page = epicPage(fixture("epic.current.problems").epic);
+  assert.deepEqual(page.notApplied, [{ slice_id: "SLICE-022", problems: [{ line: 45, code: "effects-not-shipped", message: "SLICE-001 has no FR-09 in its shipped spec." }] }]);
+  assert.deepEqual(page.conflicts, ["SLICE-021 says SLICE-001/FR-02 is replaced, but SLICE-003 already replaced or retired it."]);
   assert.deepEqual(page.jumps.slice(-2).map((j) => j.id), ["not-applied", "conflicts"]);
-  assert.deepEqual(notApplied(undefined), []);
-  assert.deepEqual(conflicts(null), []);
+  assert.deepEqual(epicPage(epic).notApplied, []);
+});
+
+test("specs whose rules cannot be read: the engine's notes, per slice and for the whole view", () => {
+  const unreadable = fixture("epic.current.unreadable");
+  assert.deepEqual(unreadable.notes, ["specs/slices/invite-notes.md is not named SLICE-NNN-name.md, so it is not read as a slice spec."]);
+  const bulk = unreadable.epic.slices.find((s) => s.slice_id === "SLICE-023");
+  assert.deepEqual(bulk.notes, ["Its decision matrix could not be read, so its decision rules are not listed."]);
+  assert.equal(sliceTitle(unreadable.epic, "SLICE-023"), "Invite in bulk");
 });
 
 test("nothing shipped: the engine returns no epic and says why", () => {

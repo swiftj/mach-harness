@@ -19,7 +19,6 @@ import {
   type ConcernRow,
   type PolicyRow,
   type PrincipleRow,
-  type SliceRowWithPolicies,
 } from "./model";
 import { Findings, StatePill } from "./parts";
 
@@ -63,7 +62,7 @@ function Answers({ show, onChanged }: { show: SliceShow; onChanged: () => void }
   const principleList = useOperation("principle.list", state === "answers" && model?.principles?.length ? {} : null);
   const packList = useOperation("policy.list", state === "answers" && model?.policies?.length ? {} : null);
   const status = useStatus();
-  const row = status.data?.slices.find((s) => s.slice_id === sliceId) as SliceRowWithPolicies | undefined;
+  const row = status.data?.slices.find((s) => s.slice_id === sliceId);
   const findings = answerFindings(show.check);
 
   if (state === "no-spec") {

@@ -1,0 +1,44 @@
+{
+  "exit_code": 0,
+  "data": {
+    "principles": [
+      {
+        "id": "PP-01",
+        "reason": "Readers trust what they saw.",
+        "revision": 1,
+        "statement": "A published version MUST NOT be edited in place.",
+        "status": "active",
+        "title": "Versions stay as published"
+      }
+    ],
+    "active": [
+      "PP-01"
+    ],
+    "retired": [],
+    "unpublished_changes": false,
+    "published": {
+      "saved": "github",
+      "unfinished": false,
+      "revision": 2,
+      "sha256": "6bcfb8f15e124d4531d753ba8b2f4d2801f4b7cd31dc690683c4d70d55f26128",
+      "approved_by": "ada-pm",
+      "published_at": "2026-11-20T22:05:56Z",
+      "issue": 1,
+      "url": "https://github.com/acme/team-space/issues/1",
+      "github": {
+        "revision": 2,
+        "approved": false,
+        "approved_by": null,
+        "read_at": "2026-11-20T22:05:57Z"
+      },
+      "newer_elsewhere": false,
+      "changed_on_github": true
+    },
+    "slices_answered_under_older": [],
+    "next": null,
+    "note": "A principle is one sentence that must hold in every slice. Each slice's spec answers every active one; a principle added or changed binds slices marked ready afterwards.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

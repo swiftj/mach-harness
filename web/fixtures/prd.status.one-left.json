@@ -63,7 +63,7 @@
         "state": "settled",
         "settled": {
           "as": "slice",
-          "at": "2026-11-20T20:16:29Z",
+          "at": "2026-11-20T22:05:47Z",
           "reason": "The opening belongs to inviting.",
           "slice": "M1"
         }
@@ -94,7 +94,7 @@
         "state": "settled",
         "settled": {
           "as": "later",
-          "at": "2026-11-20T20:16:29Z",
+          "at": "2026-11-20T22:05:47Z",
           "reason": "Not this quarter."
         }
       },
@@ -110,7 +110,7 @@
       5
     ],
     "can_apply": false,
-    "note": "1 section of PRD-01 no slice cites: 5. Ask the product manager about each: a slice, out of scope, or later (prd settle)."
+    "note": "1 section of PRD-01 no slice cites: 5. Settle each: a slice, out of scope, or later."
   },
   "refused": null,
   "hint": null

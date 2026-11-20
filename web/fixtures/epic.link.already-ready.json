@@ -7,17 +7,19 @@
       ],
       "epic_id": "EPIC-001",
       "project_id": "team-space",
-      "revision": 3,
+      "revision": 2,
       "schema_version": 1,
       "status": "open",
       "title": "Team membership",
       "tracking": {
-        "jira": "TEAM-2"
+        "jira": "TEAM-5"
       }
     },
-    "already_ready": [],
+    "already_ready": [
+      "SLICE-001"
+    ],
     "factory_authorized": false,
-    "note": "Linked to TEAM-2. Slices of this epic without a key of their own carry it when they are marked ready."
+    "note": "Linked to TEAM-5. Slices of this epic without a key of their own carry it when they are marked ready. Already marked ready with the old key: SLICE-001; reopen and mark each ready again to carry the new one."
   },
   "refused": null,
   "hint": null

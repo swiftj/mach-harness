@@ -20,7 +20,7 @@
       },
       {
         "id": "SLICE-002",
-        "reason": "it is not marked ready yet (export with --state all to include drafts)"
+        "reason": "it is not marked ready yet (choose to include drafts to export it)"
       },
       {
         "id": "EPIC-001",
@@ -29,7 +29,7 @@
     ],
     "cut": [],
     "factory_authorized": false,
-    "note": "Nothing to export: no slice is marked ready yet (export with --state all to include drafts)."
+    "note": "Nothing to export: no slice is marked ready yet. Choose to include drafts to export them."
   },
   "refused": null,
   "hint": null

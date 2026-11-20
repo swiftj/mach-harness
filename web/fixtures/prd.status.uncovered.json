@@ -103,7 +103,7 @@
       5
     ],
     "can_apply": false,
-    "note": "3 sections of PRD-01 no slice cites: 1, 4, 5. Ask the product manager about each: a slice, out of scope, or later (prd settle)."
+    "note": "3 sections of PRD-01 no slice cites: 1, 4, 5. Settle each: a slice, out of scope, or later."
   },
   "refused": null,
   "hint": null

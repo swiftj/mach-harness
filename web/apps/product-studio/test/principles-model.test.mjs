@@ -54,16 +54,29 @@ test("newer elsewhere comes first, over unpublished changes", () => {
   assert.equal(publishState(list), "newer-elsewhere");
 });
 
-test("the remaining states follow the engine's flags", () => {
-  const base = data("principle.list.unpublished");
-  const with_ = (published, extra = {}) => ({ ...base, ...extra, published: { ...base.published, ...published } });
-  assert.equal(publishState(with_({}, { unpublished_changes: false })), "published");
+test("the remaining states follow the engine's flags, each from a real run", () => {
+  assert.equal(publishState(data("principle.list.published")), "published");
   assert.equal(publishOffered("published"), false);
-  assert.equal(publishState(with_({ unfinished: true })), "unfinished");
-  assert.equal(publishState(with_({ changed_on_github: true })), "changed-on-github");
-  assert.equal(publishState(with_({ saved: null, revision: null })), "never-published");
+  assert.equal(publishState(data("principle.list.folder")), "published");
+  assert.equal(publishState(data("principle.list.unfinished")), "unfinished");
+  assert.equal(publishState(data("principle.list.changed-on-github")), "changed-on-github");
+  assert.equal(publishState(data("principle.list.never-published")), "never-published");
   // A run that stopped part way is shown even before any principle is listed.
-  assert.equal(publishState(with_({ unfinished: true }, { principles: [] })), "unfinished");
+  assert.equal(publishState({ ...data("principle.list.unfinished"), principles: [] }), "unfinished");
+});
+
+test("unpublished principles are not saved: the top bar's saved state says so in the engine's words", () => {
+  const saved = data("status.principles").saved;
+  assert.equal(saved.everything_saved, false);
+  assert.deepEqual(saved.not_saved.map((item) => item.kind), ["principles_unpublished"]);
+  assert.match(saved.not_saved[0].text, /not published/);
+  assert.deepEqual(data("status.principles-unfinished").saved.not_saved.map((item) => item.kind), ["principles_unfinished"]);
+  assert.equal(data("status.principles-published").saved.everything_saved, true);
+});
+
+test("publishing refused part way or with GitHub out of reach: the engine's words", () => {
+  assert.match(fixture("principle.publish.refused-stopped").refused, /stopped part way/);
+  assert.match(fixture("principle.publish.refused-offline").refused, /GitHub could not be reached/);
 });
 
 test("every state has a word and a shape, not only a tone", () => {
@@ -131,30 +144,21 @@ test("publish outcome: GitHub with its issue and approver", () => {
 });
 
 test("publish outcome: the folder, with why and the ways on", () => {
-  const outcome = publishOutcome({
-    published: true,
-    saved_to: "folder",
-    revision: 1,
-    sha256: "0".repeat(64),
-    folder: "/p/.factory/studio/draft/product/ready/PRINCIPLES",
-    why_folder: "The GitHub tool (gh) is not installed on this computer.",
-    files: [],
-    ways_on: ["Commit the folder product/ready/PRINCIPLES to the repository; the builders read it from the main branch."],
-    active: 1,
-    factory_authorized: false,
-    note: "Published to the folder. Nothing was sent to GitHub and no work has started.",
-  });
+  const outcome = publishOutcome(data("principle.publish.folder"));
   assert.equal(outcome.where, "folder");
-  assert.equal(outcome.whyFolder, "The GitHub tool (gh) is not installed on this computer.");
-  assert.equal(outcome.waysOn.length, 1);
-  assert.equal(publishOutcome({ ...outcome, saved_to: "folder", ways_on: [], why_folder: undefined }).whyFolder, null);
+  assert.equal(outcome.whyFolder, "You are not signed in to GitHub on this computer.");
+  assert.equal(outcome.waysOn.length, 2);
+  assert.doesNotMatch(outcome.waysOn.join(" "), /branch/, "the app's wording");
 });
 
-test("reconcile answers carry the engine's note", () => {
-  const result = data("reconcile.principles");
-  assert.equal(result.reconciled, "principles");
-  assert.equal(result.took, "theirs");
-  assert.ok(result.note.length > 0);
+test("reconcile answers carry the engine's note: take theirs, keep mine", () => {
+  const theirs = data("reconcile.principles");
+  assert.equal(theirs.reconciled, "principles");
+  assert.equal(theirs.took, "theirs");
+  assert.ok(theirs.note.length > 0);
+  const mine = data("reconcile.principles.mine");
+  assert.equal(mine.took, "mine");
+  assert.match(mine.note, /Publishing them replaces the version on GitHub/);
 });
 
 test("counts in words", () => {

@@ -1,0 +1,47 @@
+{
+  "exit_code": 0,
+  "data": {
+    "reads_only": true,
+    "dir": "policies",
+    "commit": "ad4b8960257f9cc53e75aad690d6bdca9d16fc81",
+    "packs": [
+      {
+        "id": "POL-brand",
+        "pack": "brand",
+        "file": "policies/brand/policy.md",
+        "title": "Brand",
+        "owner": "Data protection officer (@acme/privacy)",
+        "owner_handle": "@acme/privacy",
+        "status": "active",
+        "applies_to": [
+          "all"
+        ],
+        "digest": "3876a0844f5f880da11a33cf50895cd0b142e72b3d06e95338539cccafe7f0b9",
+        "binding": false,
+        "problems": [
+          "the header says id 'POL-branding', but a pack in the folder 'brand' is POL-brand"
+        ],
+        "short": "3876a0844f5f",
+        "statements": [
+          {
+            "id": "POL-brand-01",
+            "text": "An invitation email MUST name the workspace that sent it."
+          },
+          {
+            "id": "POL-brand-02",
+            "text": "Personal data MUST NOT be sent to a service outside the EU region."
+          }
+        ]
+      }
+    ],
+    "problems": [
+      "policies/security: the folder has no policy.md",
+      "policies/brand/policy.md: the header says id 'POL-branding', but a pack in the folder 'brand' is POL-brand"
+    ],
+    "slices_answered_under_older": {},
+    "factory_authorized": false,
+    "note": "Packs are the organisation's policies, changed by an engineer's pull request. A pack changed later binds slices marked ready afterwards; slices already answered are flagged, never reopened."
+  },
+  "refused": null,
+  "hint": null
+}

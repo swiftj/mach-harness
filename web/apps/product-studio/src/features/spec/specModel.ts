@@ -25,6 +25,9 @@ export const sectionTitles: Record<SpecSectionId, string> = {
   dependencies: "Services and permissions",
   assumptions: "Assumptions and accepted defaults",
   "open-questions": "Open questions",
+  effects: "Effects on shipped behaviour",
+  principles: "Principles",
+  policies: "Policies",
   why: "Why this slice",
   source: "Source",
 };

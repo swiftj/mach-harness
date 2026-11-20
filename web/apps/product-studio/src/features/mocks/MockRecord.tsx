@@ -1,8 +1,9 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Eye, FileImage, Lock, Trash2 } from "lucide-react";
 import { Banner, Button, FactList, Heading, StatusPill, Text } from "@mach/ui";
 import type { DesignMock } from "@mach/ui/api";
-import { byteWords, dimensionWords, fingerprint, kindWords, mockPurpose, type ScenarioName } from "./model";
+import { mockPictureUrl } from "../../api/mockPicture";
+import { byteWords, dimensionWords, fingerprint, kindWords, mockAlt, mockPurpose, type ScenarioName } from "./model";
 
 export type ListedMock = DesignMock & { file?: string; problem?: string | null };
 
@@ -20,18 +21,35 @@ export function BindingPill({ binding }: { binding: boolean }) {
 }
 
 /**
- * One attached picture, as a labelled record. The host does not serve the picture to the browser,
- * so nothing here pretends to show it: the left-hand frame says so in words.
+ * The picture itself, as the host serves the draft's own file (checked against its hash). When the
+ * host cannot show it (the file changed or is missing, or no host answers), the frame says so in words.
  */
-export function MockRecord({ mock, index, scenarios, onRemove }: { mock: ListedMock; index: number; scenarios: readonly ScenarioName[]; onRemove?: () => void }) {
-  const headingId = `mock-${mock.sha256.slice(0, 16)}`;
-  const purpose = mockPurpose(mock, scenarios);
-  return (
-    <article aria-labelledby={headingId} className="grid grid-cols-[7rem_minmax(0,1fr)] gap-5 rounded-md border border-line bg-surface p-5">
+function MockPicture({ sliceId, mock, alt }: { sliceId: string; mock: ListedMock; alt: string }) {
+  const url = mock.problem ? null : mockPictureUrl(sliceId, mock.sha256);
+  const [failed, setFailed] = useState(false);
+  if (!url || failed) {
+    return (
       <div className="flex aspect-square flex-col items-center justify-center gap-1.5 rounded-sm border border-dashed border-line-strong bg-surface-sunken px-2 text-center">
         <FileImage aria-hidden="true" className="size-6 text-ink-subtle" />
         <span className="text-caption text-ink-muted">Picture not shown here</span>
       </div>
+    );
+  }
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" className="block self-start rounded-sm border border-line bg-surface-sunken">
+      <img src={url} alt={alt} width={mock.width} height={mock.height} loading="lazy" decoding="async" onError={() => setFailed(true)} className="block h-auto max-h-80 w-full rounded-sm object-contain" />
+      <span className="sr-only"> (opens the picture at full size)</span>
+    </a>
+  );
+}
+
+/** One attached picture, shown beside its record. */
+export function MockRecord({ sliceId, mock, index, scenarios, onRemove }: { sliceId: string; mock: ListedMock; index: number; scenarios: readonly ScenarioName[]; onRemove?: () => void }) {
+  const headingId = `mock-${mock.sha256.slice(0, 16)}`;
+  const purpose = mockPurpose(mock, scenarios);
+  return (
+    <article aria-labelledby={headingId} className="grid grid-cols-1 gap-5 rounded-md border border-line bg-surface p-5 sm:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
+      <MockPicture sliceId={sliceId} mock={mock} alt={mockAlt(mock, scenarios)} />
       <div className="flex min-w-0 flex-col gap-3">
         <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
           <div className="flex min-w-0 flex-col gap-1">

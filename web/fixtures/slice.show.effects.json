@@ -597,6 +597,7 @@
         ],
         "effects": [
           {
+            "line": 87,
             "shipped_rule": "SLICE-002/FR-01",
             "slice_id": "SLICE-002",
             "rule_id": "FR-01",
@@ -692,7 +693,7 @@
       },
       "title": "Invite a teammate by email",
       "shipped": {
-        "commit": "e91f18f1778277b63e0926669f46c7aa9ae75a58",
+        "commit": "2ede7286fc780d46d4111da93ace96634be3d3d4",
         "branch": "main",
         "rules": 8,
         "notes": []

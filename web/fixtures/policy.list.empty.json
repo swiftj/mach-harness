@@ -1,0 +1,15 @@
+{
+  "exit_code": 0,
+  "data": {
+    "reads_only": true,
+    "dir": "policies",
+    "commit": "5e9905b90d26267fc6602adfe10a35054fc9fc66",
+    "packs": [],
+    "problems": [],
+    "slices_answered_under_older": {},
+    "factory_authorized": false,
+    "note": "Packs are the organisation's policies, changed by an engineer's pull request. A pack changed later binds slices marked ready afterwards; slices already answered are flagged, never reopened."
+  },
+  "refused": null,
+  "hint": null
+}

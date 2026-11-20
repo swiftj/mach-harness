@@ -2,7 +2,8 @@
  * Where each recommended next step leads. The engine decides what is next (`status.next_actions`);
  * this only maps its kind and target to a screen or an in-place act.
  */
-import { artifactKind, type ApiErrorHint, type NextAction, type Status } from "@mach/ui/api";
+import type { ApiErrorHint, NextAction, Status } from "@mach/ui/api";
+import { artifactKind } from "@mach/ui/ids";
 
 export type ActionRoute =
   /** Go to a screen. */
@@ -36,7 +37,8 @@ export function routeFor(action: NextAction): ActionRoute {
     case "answer_question":
       return slice ? { type: "answer-question", sliceId: slice, label: "Answer it" } : { type: "navigate", to: "/inbox", label: "Open decisions" };
     case "reconcile":
-      return { type: "navigate", to: "/inbox", label: "Choose a version" };
+      // The engine's target is a slice, or "principles" when someone else published newer product principles.
+      return id === "principles" ? { type: "navigate", to: "/principles", label: "Choose a version of the principles" } : { type: "navigate", to: "/inbox", label: "Choose a version" };
     case "renumber_slice":
       return slice ? { type: "renumber", id: slice, label: "Give it a new number" } : { type: "navigate", to: "/inbox", label: "Open decisions" };
     default:

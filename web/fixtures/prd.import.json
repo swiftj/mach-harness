@@ -55,7 +55,7 @@
       }
     ],
     "factory_authorized": false,
-    "note": "Imported as PRD-01. It is data from now on: read it with prd show, propose a map, and the product manager confirms. Nothing was sent anywhere."
+    "note": "Imported as PRD-01. It is data from now on: ask Claude Code to propose a map of it, then confirm the map here. Nothing was sent anywhere."
   },
   "refused": null,
   "hint": null

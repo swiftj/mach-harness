@@ -5,10 +5,10 @@ import { Button, EmptyState, ErrorState, Heading, SkeletonText, Text, describeEr
 import { useOperation } from "../../api/useOperation";
 import { useSliceShow } from "../../api/useSliceShow";
 import { SliceScreenFrame } from "../../shared/ScreenFrame";
-import { useReadyAnswer } from "./delivery";
+import { useReadyAnswer } from "../../shared/mocksDelivery";
 import { AddMockDialog, PICTURE_RULE, RemoveMockDialog } from "./MockDialogs";
 import { MockRecord, type ListedMock } from "./MockRecord";
-import { MocksToCommitPanel } from "./MocksToCommit";
+import { MocksToCommitPanel } from "../../shared/MocksToCommit";
 import { addAvailability, deliveryState, type ScenarioName } from "./model";
 
 /**
@@ -153,7 +153,7 @@ function MocksBody({ sliceId, mocks, limit, loading, error, retry, show, toCommi
               <span className="tabular">
                 {mocks.length} of {limit}
               </span>{" "}
-              pictures a slice can have. Product Studio shows each picture&apos;s facts, not the picture itself.
+              pictures a slice can have. Open a picture to see it at full size.
             </Text>
           </div>
           {availability === "available" ? (
@@ -175,7 +175,7 @@ function MocksBody({ sliceId, mocks, limit, loading, error, retry, show, toCommi
         <ul className="flex flex-col gap-4">
           {mocks.map((mock, index) => (
             <li key={mock.sha256}>
-              <MockRecord mock={mock} index={index} scenarios={scenarios} onRemove={editable ? () => onRemove(index) : undefined} />
+              <MockRecord sliceId={sliceId} mock={mock} index={index} scenarios={scenarios} onRemove={editable ? () => onRemove(index) : undefined} />
             </li>
           ))}
         </ul>

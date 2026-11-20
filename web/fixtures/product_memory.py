@@ -17,12 +17,13 @@ sys.path.insert(0, str(ROOT / "skills" / "intent" / "scripts"))
 
 from mock_pictures import jpeg, png  # noqa: E402
 from test_current import EFFECTS_HEAD, make_spec  # noqa: E402
-from test_mach_policy_packs import OWNER, concern, pack_text  # noqa: E402
+from test_mach_policy_packs import OWNER, STATEMENT_1, STATEMENT_2, concern, followed, pack_text  # noqa: E402
 from test_mach_product_issues import git, spec_for  # noqa: E402
 from test_mach_product_prd import ANSWERS, MAP, PRD_TEXT  # noqa: E402
 from test_mach_product_principles import SECOND, STATEMENT, row, with_rows  # noqa: E402
 
 MEMBERSHIP = ("Team membership", "EPIC-001", None)
+STATEMENT_3 = "An invitation MUST NOT be kept longer than 30 days."
 
 
 def generate(Scenario, out: Path) -> None:
@@ -31,6 +32,13 @@ def generate(Scenario, out: Path) -> None:
     prd_onramp(Scenario)
     jira_and_mocks(Scenario)
     idea_request(Scenario)
+    # M15 clean-up: the cases the screens built by hand from other fixtures.
+    principles_published(Scenario)
+    principles_in_the_folder(Scenario)
+    policies_awkward(Scenario)
+    policies_none(Scenario)
+    jira_keys_awkward(Scenario)
+    four_mocks(Scenario)
 
 
 def run(Scenario, body):
@@ -143,6 +151,12 @@ def shipped_behaviour(Scenario):
         path = spec_path(s, missing)
         path.write_text(path.read_text().replace("## Effects on shipped behaviour\n\nNone.\n\n", ""))
         s.capture("slice.check.effects-missing", "slice", "check", missing)
+        s.capture("slice.show.effects-missing", "slice", "show", missing)
+        # A section with problems: a rule that never shipped, and a kept rule with no scenario.
+        broken = s.ok(s.a, "slice", "new", "--epic", "EPIC-001", "--title", "Invite again")["slice"]["slice_id"]
+        s.write_slice(s.a, broken, extra="## Effects on shipped behaviour\n\n" + EFFECTS_HEAD
+                      + "| SLICE-001/FR-09 | kept | AC-01 | Nothing like it shipped. |\n| SLICE-002/FR-01 | kept | | Still holds. |\n")
+        s.capture("slice.show.effects-problems", "slice", "show", broken)
         commit_to_main(s, {"specs/slices/SLICE-020-no-resend.md": make_spec(
             20, "Stop resending", frs=[("FR-01", "The system SHALL show a new link instead of resending.")],
             effects_section=EFFECTS_HEAD + "| SLICE-002/FR-01 | retired | | Admins share a new link instead. |\n", epic=MEMBERSHIP)},
@@ -150,6 +164,24 @@ def shipped_behaviour(Scenario):
         s.capture("status.shipped-moved", "status")
         s.capture("refresh.shipped-moved", "refresh")
         s.capture("epic.current.after-retire", "epic", "current", "EPIC-001", "--json")
+        # Two shipped slices replace the same rule (a conflict), and one names a rule that never shipped (not applied).
+        commit_to_main(s, {
+            "specs/slices/SLICE-021-expire-sooner.md": make_spec(
+                21, "Expire sooner", frs=[("FR-01", "The system SHALL expire an invitation after 3 days.")],
+                effects_section=EFFECTS_HEAD + "| SLICE-001/FR-02 | replaced | FR-01 | |\n", epic=MEMBERSHIP),
+            "specs/slices/SLICE-022-reminders.md": make_spec(
+                22, "Send reminders", frs=[("FR-01", "The system SHALL remind the invitee once.")],
+                effects_section=EFFECTS_HEAD + "| SLICE-001/FR-09 | kept | AC-01 | Reminders never change sending. |\n", epic=MEMBERSHIP),
+        }, "a conflict and effects that cannot be applied")
+        s.capture("epic.current.problems", "epic", "current", "EPIC-001", "--json")
+        # Specs whose shipped rules cannot be read: a file not named for a slice, and a decision matrix that cannot be parsed.
+        unreadable = make_spec(23, "Invite in bulk", frs=[("FR-01", "The system SHALL invite every listed address.")],
+                               rules=[("R1", "Yes", "Sent")], effects_section="None.", epic=MEMBERSHIP)
+        commit_to_main(s, {
+            "specs/slices/SLICE-023-bulk.md": unreadable.replace("| Rule | Signed in | Expected outcome | Side effects | Covers |", "| Rule | Outcome |"),
+            "specs/slices/invite-notes.md": "# Notes on inviting\n\nNot a slice spec.\n",
+        }, "specs whose rules cannot be read")
+        s.capture("epic.current.unreadable", "epic", "current", "EPIC-001", "--json")
     run(Scenario, body)
 
 
@@ -186,6 +218,9 @@ def prd_onramp(Scenario):
         s.capture("slice.resume.from-prd", "slice", "resume", first)
         s.capture("prd.confirm.refused-nothing-drafted", "prd", "confirm", first, "--accept", "all")
         s.capture("prd.draft", "prd", "draft", first, "--from", str(s.root / "files" / "answers.json"))
+        # Four drafted answers waiting: two drafted, one contradiction, one the PRD does not settle.
+        s.capture("slice.show.prd-drafted", "slice", "show", first)
+        s.capture("slice.resume.prd-drafted", "slice", "resume", first)
         s.capture("slice.check.prd-pending", "slice", "check", first)
         s.capture("prd.confirm.refused-contradiction", "prd", "confirm", first, "--accept", "3")
         s.capture("prd.confirm", "prd", "confirm", first, "--accept", "1", "--discuss", "2")
@@ -220,7 +255,7 @@ def jira_and_mocks(Scenario):
         # Marked ready on GitHub: the picture waits in the workspace for the product manager to commit it.
         s.capture("slice.ready.with-mocks", "slice", "ready", first)
         s.capture("slice.mock.add.refused-ready", "slice", "mock", "add", first, str(files / "whole.jpg"))
-        s.capture("epic.link.already-ready", "epic", "link", "EPIC-001", "--jira", "TEAM-2")
+        s.ok(s.a, "epic", "link", "EPIC-001", "--jira", "TEAM-2")
         s.capture("status.jira-mocks", "status")
         s.capture("jira.export", "jira", "export")
         s.capture("jira.export.all", "jira", "export", "--state", "all", "--flavour", "data-center")
@@ -260,3 +295,154 @@ def idea_request(Scenario):
         picked = s.capture("request.pick.idea", "request", "pick", "43", "--epic", "EPIC-001", "--title", "Admins add colleagues")
         s.capture("slice.resume.idea-request", "slice", "resume", picked["slice"]["slice_id"])
     run(IdeaScenario, body)
+
+
+# ---- M15 clean-up: the principles in every state the screens show ----
+
+def principles_published(Scenario):
+    def body(s):
+        s.project_and_epic()
+        s.ok(s.a, "principle", "add", "--title", "Versions stay as published", "--statement", STATEMENT, "--reason", "Readers rely on what they saw.")
+        s.capture("principle.list.never-published", "principle", "list")
+        s.ok(s.a, "principle", "publish")
+        s.capture("principle.list.published", "principle", "list")
+        s.capture("status.principles-published", "status")
+        # Publishing stops part way: the comment that approves the new version is lost.
+        s.ok(s.a, "principle", "set", "PP-01", "--reason", "Readers trust what they saw.")
+        s.lose("issue comment")
+        s.capture("principle.publish.refused-stopped", "principle", "publish")
+        s.capture("principle.list.unfinished", "principle", "list")
+        s.capture("status.principles-unfinished", "status")
+        s.ok(s.a, "principle", "publish")
+        # Someone edits the principles in the project's issue after they were approved.
+        state = s.gh()
+        for issue in state["issues"].values():
+            if "mach:project" in [label["name"] for label in issue["labels"]]:
+                issue["body"] = issue["body"].replace("MUST NOT be edited in place", "should not be edited in place")
+        s.set_gh(issues=state["issues"])
+        s.ok(s.a, "refresh")
+        s.capture("principle.list.changed-on-github", "principle", "list")
+        # GitHub cannot be reached at all.
+        s.ok(s.a, "principle", "set", "PP-01", "--reason", "Readers rely on it.")
+        s.fail("*", once=False)
+        s.capture("principle.publish.refused-offline", "principle", "publish")
+        s.set_gh(fail={})
+        s.ok(s.a, "principle", "publish")
+        # Ben publishes a newer version while Ada has a change of her own: she keeps hers.
+        s.project_and_epic(s.b)
+        s.set_gh(me="ben-pm")
+        s.ok(s.b, "refresh")
+        s.ok(s.b, "principle", "add", "--title", "Senders are named", "--statement", SECOND, "--reason", "People trust a name.")
+        s.ok(s.b, "principle", "publish")
+        s.set_gh(me="ada-pm")
+        s.ok(s.a, "principle", "set", "PP-01", "--reason", "Ada's reason.")
+        s.ok(s.a, "refresh")
+        s.capture("reconcile.principles.mine", "reconcile", "principles", "--take", "mine")
+    run(Scenario, body)
+
+
+def principles_in_the_folder(Scenario):
+    def body(s):
+        s.set_gh(signed_in=False)
+        s.project_and_epic()
+        s.ok(s.a, "principle", "add", "--title", "Versions stay as published", "--statement", STATEMENT, "--reason", "Readers rely on what they saw.")
+        s.capture("principle.publish.folder", "principle", "publish")
+        s.capture("principle.list.folder", "principle", "list")
+    run(Scenario, body)
+
+
+# ---- M15 clean-up: policy packs ----
+
+DPO = "Data protection officer (@dana-dpo)"
+
+
+def policies_none(Scenario):
+    def body(s):
+        os.environ.pop("MACH_EXECUTION_ID", None)
+        s.project_and_epic()
+        s.capture("policy.list.empty", "policy", "list")
+        commit_to_main(s, {"policies/brand/policy.md": pack_text("brand", title="Brand").replace("id: POL-brand", "id: POL-branding"),
+                           "policies/security/README.md": "The security pack is still being written.\n"}, "a malformed pack and a folder without policy.md")
+        s.capture("policy.list.problems", "policy", "list")
+    run(Scenario, body)
+
+
+def policies_awkward(Scenario):
+    def body(s):
+        pack = pack_text(owner=DPO)
+        commit_to_main(s, {"policies/privacy/policy.md": pack}, "privacy pack owned by a named person")
+        os.environ.pop("MACH_EXECUTION_ID", None)
+        s.project_and_epic()
+        s.ok(s.a, "principle", "add", "--title", "Versions stay as published", "--statement", STATEMENT, "--reason", "Readers rely on what they saw.")
+        s.ok(s.a, "principle", "add", "--title", "Senders are named", "--statement", SECOND, "--reason", "People trust a name.")
+        s.ok(s.a, "principle", "publish")
+        applies = (row(), row("PP-02", 1, SECOND, "Applies", "AC-01."))
+
+        def drafted(title, text):
+            slice_id = s.ok(s.a, "slice", "new", "--epic", "EPIC-001", "--title", title)["slice"]["slice_id"]
+            s.write_slice(s.a, slice_id)
+            spec_path(s, slice_id).write_text(text(spec_for(slice_id)))
+            return slice_id
+
+        followed_one = drafted("Invite a teammate", lambda text: followed(with_rows(text, *applies), pack))
+        s.capture("slice.show.policy-followed", "slice", "show", followed_one)
+        changed = drafted("Remove a teammate", lambda text: concern(with_rows(text, *applies), resolution="spec changed.", owner=DPO, pack=pack))
+        s.capture("slice.show.concern-spec-changed", "slice", "show", changed)
+        excepted = drafted("Rename the workspace", lambda text: followed(with_rows(
+            text, row("PP-01", 1, STATEMENT, "Does not apply", "Renaming changes no published version."),
+            row("PP-02", 1, SECOND, "Exception", "The pilot sends from a shared address for one month.")), pack))
+        s.capture("slice.show.principle-exceptions", "slice", "show", excepted)
+        waiting = drafted("Leave the workspace", lambda text: concern(with_rows(text, *applies), owner=DPO, pack=pack))
+        s.capture("policy.accept.refused-owner", "policy", "accept", waiting, "POL-privacy-02", "--by", "Data protection officer",
+                  "--reason", "Accepted for the pilot only.")
+        s.capture("policy.accept.checked", "policy", "accept", waiting, "POL-privacy-02", "--by", "dana-dpo", "--reason", "Accepted for the pilot only.")
+        # The pack gains a statement after these slices answered it.
+        commit_to_main(s, {"policies/privacy/policy.md": pack_text(owner=DPO, statements=(STATEMENT_1, STATEMENT_2, STATEMENT_3))}, "a third privacy statement")
+        s.capture("policy.list.older", "policy", "list")
+        s.capture("status.policies-changed", "status")
+    run(Scenario, body)
+
+
+# ---- M15 clean-up: Jira keys back with slices to reopen, and a description cut to fit ----
+
+def jira_keys_awkward(Scenario):
+    def body(s):
+        s.project_and_epic()
+        first = s.drafted()
+        s.ready(first)
+        s.capture("epic.link.already-ready", "epic", "link", "EPIC-001", "--jira", "TEAM-5")
+        s.capture("epic.link.remove", "epic", "link", "EPIC-001", "--no-jira")
+        long_why = s.drafted(title="Remove a teammate")
+        intent = s.draft(s.a, f"product/intents/{long_why}.md")
+        intent.write_text(intent.read_text().replace("An admin cannot bring a colleague in.", "word " * 4000))
+        keys = s.root / "files" / "jira-keys.csv"
+        keys.parent.mkdir()
+        keys.write_text("Issue key,Summary,Custom field (MACH ID),Labels,Labels\r\n"
+                        "TEAM-5,Team membership,EPIC-001,mach,EPIC-001\r\n"
+                        f"TEAM-6,Invite a teammate,{first},mach,{first}\r\n")
+        s.capture("jira.keys.reopen", "jira", "keys", str(keys))
+        s.capture("jira.export.cut", "jira", "export", "--state", "all")
+    run(Scenario, body)
+
+
+# ---- M15 clean-up: four design mocks, one of them changed in the workspace ----
+
+def four_mocks(Scenario):
+    def body(s):
+        files = s.root / "files"
+        files.mkdir()
+        s.project_and_epic()
+        first = s.drafted()
+        pictures = [("form.png", png(shade=10), ("--for", "AC-01", "--binding", "--note", "The invite form")),
+                    ("sent.png", png(shade=80), ("--note", "After sending")),
+                    ("error.png", png(shade=160), ("--note", "When the address is wrong")),
+                    ("mobile.jpg", jpeg(), ())]
+        for name, data, options in pictures:
+            (files / name).write_bytes(data)
+            s.ok(s.a, "slice", "mock", "add", first, str(files / name), *options)
+        s.capture("slice.show.four-mocks", "slice", "show", first)
+        # One picture in the workspace is changed by hand: the list says so.
+        changed = sorted((s.a / ".factory/studio/draft/product/mocks" / first).glob("*.png"))[0]
+        changed.write_bytes(png(shade=200))
+        s.capture("slice.mock.list.problem", "slice", "mock", "list", first)
+    run(Scenario, body)
