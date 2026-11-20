@@ -169,11 +169,21 @@ func (n *Runs) Line(line []byte, r Read) []*event.Event {
 	for _, k := range []string{"tests_seen_failing_first", "tests_passing_on_first_run"} {
 		require(ev, d, k, numOrNil(raw[k]), float64(0))
 	}
+	// Revision 7 (M13): the slice's Jira key (checked again; an identifier) and the change record's
+	// path and SHA-256 (the path shown as text), each null when the record has none.
+	d["jira"] = nil
+	if k, ok := JiraKey(raw["jira"]); ok {
+		d["jira"] = k
+	}
+	d["change_record"] = nil
+	if rec := ChangeRecord(raw["change_record"]); rec != nil {
+		d["change_record"] = rec
+	}
 	ev.Data = d
 	used := map[string]bool{"record_version": true, "ticket_id": true, "slice_id": true, "product": true, "integration": true, "closed_at": true,
 		"rounds": true, "first_pass": true, "escalated": true, "human_approval": true, "deviations": true, "blockers": true, "risk": true,
 		"app_type": true, "outcome": true, "verify_failures": true, "review_rejections": true, "tests_seen_failing_first": true,
-		"tests_passing_on_first_run": true}
+		"tests_passing_on_first_run": true, "jira": d["jira"] != nil, "change_record": d["change_record"] != nil}
 	for k := range raw {
 		if !used[k] {
 			ev.Withheld++ // title, abandon_reason, notes, verify_findings, archive path, created_at, mode

@@ -200,6 +200,26 @@ export interface CellEvidenceFile {
   readonly integrity: string;
   /** The catalog entry's `content_access`, when catalogued. */
   readonly contentAccess: string | null;
+  /** M15: for a design mock's check, which file this is: the approved mock or the capture of the built screen. Null otherwise. */
+  readonly role?: MockRole | null;
+}
+
+export type MockRole = "approved-mock" | "capture";
+
+/**
+ * M15: a design mock's side-by-side record, as the observer serves it from results.json (M14 part C).
+ * The verifier's words are free text, not checked for names; nothing is compared here or in the page.
+ */
+export interface MockFacts {
+  /** `matches`, `differs`, `cannot compare`; null when not compared yet or a word this page does not know. */
+  readonly compared: "matches" | "differs" | "cannot compare" | null;
+  /** Whether a difference fails the check; null when not recorded. */
+  readonly binding: boolean | null;
+  /** The scenario it was approved for (`AC-NN`), when recorded. */
+  readonly forScenario: string | null;
+  readonly note: string | null;
+  readonly differences: readonly string[];
+  readonly freeText: boolean;
 }
 
 /** One recorded verification check with its files. */
@@ -212,6 +232,8 @@ export interface CellEvidenceCheck {
   readonly visitId: string | null;
   readonly at: ObserverTimeView | null;
   readonly evidence: readonly CellEvidenceFile[];
+  /** M15: a design mock's record (target kind `design mock`); null for every other check. */
+  readonly mock?: MockFacts | null;
 }
 
 /** `GET /api/v1/cells/{ticket}/evidence`: the cell's catalogued artifacts and its recorded checks. */
@@ -315,13 +337,30 @@ export function readCellEvidence(data: unknown, ticket: string): CellEvidence {
         at: timeView(k.at),
         evidence: list(k.evidence).map((x) => {
           const f = obj(x);
-          return { file: str(f.file) ?? "", sha256: str(f.sha256) || null, artifactId: str(f.artifact_id) || null, integrity: str(f.integrity) ?? "missing", contentAccess: str(f.content_access) || null };
+          const role = f.role === "approved-mock" || f.role === "capture" ? f.role : null;
+          return { file: str(f.file) ?? "", sha256: str(f.sha256) || null, artifactId: str(f.artifact_id) || null, integrity: str(f.integrity) ?? "missing", contentAccess: str(f.content_access) || null, ...(role ? { role } : {}) };
         }),
+        mock: readMockFacts(k.mock),
       })),
     evidenceMedia: settings ? bool(settings.evidence_media) : null,
     settingsSource: settings ? str(settings.source) : null,
     cursor: str(d.cursor),
     note: str(d.note),
+  };
+}
+
+/** A check's `mock` (M15), read tolerantly: an unknown result reads as not compared, never as a match. */
+export function readMockFacts(value: unknown): MockFacts | null {
+  if (!value || typeof value !== "object") return null;
+  const m = obj(value);
+  const compared = m.compared === "matches" || m.compared === "differs" || m.compared === "cannot compare" ? m.compared : null;
+  return {
+    compared,
+    binding: typeof m.binding === "boolean" ? m.binding : null,
+    forScenario: str(m.for) || null,
+    note: str(m.note) || null,
+    differences: strings(m.differences),
+    freeText: m.free_text === true,
   };
 }
 

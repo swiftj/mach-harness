@@ -3,8 +3,9 @@
  * sceneAt(fixture, t) returns. Everything is plain, serialisable data. Scene objects are frozen by
  * convention (never mutate them): the engine shares unchanged parts between moments.
  */
-import type { AnySimEvent, FactoryLimits, ReviewOutcome, StationOutcome, TargetKind, VerificationStatus } from "./events";
+import type { AnySimEvent, FactoryLimits, ReviewOutcome, SimMockRecord, StationOutcome, TargetKind, VerificationStatus } from "./events";
 import type { Authority, Completeness, EntityMeta, SceneProvenance } from "./provenance";
+import type { ChangeRecordRef, StopCode } from "./v3";
 import type {
   AgentRole,
   AppType,
@@ -261,8 +262,27 @@ export interface SupervisorState {
    */
   readonly holds?: Readonly<Record<string, { readonly why: string; readonly since: number; readonly seq: number }>>;
   /** Things a person must decide, by slice or ticket (human.required). */
-  readonly attention: Readonly<Record<string, { readonly reason: string; readonly at: number; readonly seq: number; readonly code?: NotProgressing | null }>>;
+  readonly attention: Readonly<Record<string, AttentionEntry>>;
 }
+
+/**
+ * What a person must decide for a slice or ticket (human.required, intake.refused). `needs` (M15): the
+ * routing sheet's stop code when the record names a known one (revision 7 `data.needs`), or
+ * "waiting-mocks" for a slice issue intake holds until its design mocks are committed; absent or null
+ * otherwise, and the recorded words are then the only account. `issue` and `revision`: the slice's, for
+ * an intake refusal.
+ */
+export interface AttentionEntry {
+  readonly reason: string;
+  readonly at: number;
+  readonly seq: number;
+  readonly code?: NotProgressing | null;
+  readonly needs?: AttentionNeeds | null;
+  readonly issue?: number | null;
+  readonly revision?: number | null;
+}
+
+export type AttentionNeeds = StopCode | "waiting-mocks";
 
 export interface SliceState {
   readonly id: string;
@@ -277,6 +297,8 @@ export interface SliceState {
   readonly epicTitle: string | null;
   /** Its GitHub issue number, when recorded; null for a slice from a ready folder or when not recorded. */
   readonly issue: number | null;
+  /** Its Jira key, when recorded (M13; revision 7): an identifier, shown as text, never a link. */
+  readonly jira?: string | null;
   readonly revision: number | null;
   readonly risk: Risk;
   readonly ticketId: string;
@@ -368,6 +390,8 @@ export interface VerificationCheck {
   readonly evidence: readonly string[];
   readonly note: string | null;
   readonly at: number | null;
+  /** M15: a design mock's side-by-side record, in the simulation (live mocks come from the observer's catalogue). */
+  readonly mock?: SimMockRecord;
 }
 
 export interface VerificationState {
@@ -439,6 +463,11 @@ export interface ReviewRoundState {
   /** The decision's event, and whether it arrived late. */
   readonly decidedEventId: string | null;
   readonly decidedLate: boolean;
+  /**
+   * M15: k for the k-th repeat of this judging round (review/round-N.k), opened after the merge station
+   * voided its approval; it uses no judging round. 0 or absent for the round itself.
+   */
+  readonly repeat?: number;
 }
 
 export interface ToolCallState {
@@ -592,6 +621,10 @@ export interface CellState {
   readonly runRecord: { readonly outcome: "merged" | "abandoned"; readonly rounds: number | null; readonly firstPass: boolean; readonly at: number } | null;
   /** Live: where this cell's history begins when it begins part-way (history.began). */
   readonly historyBegan: { readonly reason: string; readonly at: number } | null;
+  /** M15: the slice's Jira key, when a run record carries it (identifier, never a link). */
+  readonly jira?: string | null;
+  /** M15: the change record the merge station wrote (merge.completed, then the run record): its path, shown as text. */
+  readonly changeRecord?: ChangeRecordRef | null;
   readonly meta: EntityMeta;
 }
 
@@ -604,6 +637,8 @@ export interface GateEvaluation {
   readonly at: number;
   readonly eventId: string;
   readonly late: boolean;
+  /** The record's counts (whole numbers and flags), as recorded; absent in scenes built before M15. */
+  readonly counts?: Readonly<Record<string, number | boolean>>;
   /**
    * The gate state this evaluation set (`scene.gates` id), or null when no gate state stands for it
    * (a refused `build.start`, `verify.start`, `merge.run`, the round limit...): such an evaluation is
@@ -648,7 +683,7 @@ export interface ExecutionState {
   readonly startedAt: number | null;
   readonly workflowFinishedAt: number | null;
   readonly endedAt: number | null;
-  readonly outcome: { readonly stage: CellStage | null; readonly next: StepAction; readonly waitingFor: string | null; readonly costUsd: number } | null;
+  readonly outcome: { readonly stage: CellStage | null; readonly next: StepAction; readonly waitingFor: string | null; readonly costUsd: number; readonly needs?: StopCode | null } | null;
   // ---- added in M6.2 (live; the simulation leaves them empty)
   /** The process's own start and end (execution.process_started / _ended), measured to the second. */
   readonly processStartedAt: number | null;

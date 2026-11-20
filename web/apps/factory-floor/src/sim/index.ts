@@ -18,6 +18,7 @@ export { modelIdOf, gapClassOf } from "./reduce-v3";
 export { emptyScene, reduce } from "./reducer";
 export * from "./selectors";
 export * from "./gates";
+export * from "./stops";
 export * from "./fold";
 export { describe } from "./describe";
 export { actorOf, ACTOR_INFO, ACTOR_KINDS } from "./actors";

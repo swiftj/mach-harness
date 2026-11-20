@@ -31,6 +31,7 @@ type Lifecycle struct {
 	visits   map[string]*visit // open visit id -> entry
 	rounds   map[int64]map[string]string
 	started  map[int64]string // round -> review.round_started event id
+	decided  map[int64]int64  // round -> review.decided records read (a later start of that round is its repeat)
 	stage    string           // the stage the log implies (the last record that carried one)
 	lastLine int64
 }
@@ -44,7 +45,7 @@ type visit struct {
 // NewLifecycle makes the normaliser for one lifecycle file generation.
 func NewLifecycle(ticket, gen, root string, identity *Identity) *Lifecycle {
 	return &Lifecycle{Ticket: ticket, Gen: gen, Root: root, Identity: identity, key: event.CellKey(ticket, gen),
-		visits: map[string]*visit{}, rounds: map[int64]map[string]string{}, started: map[int64]string{}}
+		visits: map[string]*visit{}, rounds: map[int64]map[string]string{}, started: map[int64]string{}, decided: map[int64]int64{}}
 }
 
 // Key is the partition key.
@@ -55,9 +56,10 @@ func (l *Lifecycle) ImpliedStage() (string, int64) { return l.stage, l.lastLine 
 
 var (
 	visitRe        = regexp.MustCompile(`^(groom|plan|audit|build|verify|review|human-approval|merge|cleanup)#([1-9][0-9]{0,5})$`)
-	gateRe         = regexp.MustCompile(`^[a-z][a-z-]*(?:\.[a-z][a-z-]*)?$`)
+	gateRe         = regexp.MustCompile(`^[a-z][a-z-]*(?:\.[a-z][a-z_-]*)?$`) // revision 7: an underscore after the dot (merge.landed_overlap, M13)
 	taskRe         = regexp.MustCompile(`^(?:R\d+-)?T\d+$`)
 	ruleIDRe       = regexp.MustCompile(`\b(?:(?:FR|INV|AC)-\d{2,}|R\d{1,3})\b`)
+	mockIDRe       = regexp.MustCompile(`^MOCK-[1-9][0-9]{0,2}$`)
 	lifecycleKinds = map[string]bool{}
 )
 
@@ -371,7 +373,7 @@ func (l *Lifecycle) data(ev *event.Event, typ, station string, in map[string]any
 			ev.AddUnknown("data.target_id")
 		}
 		d["target_id"] = target
-		kind := enum(get("kind"), "scenario", "matrix rule", "holdout")
+		kind := enum(get("kind"), "scenario", "matrix rule", "holdout", "design mock") // revision 7: a mock compared (M14 part C)
 		if kind == nil {
 			kind = targetKindOf(target)
 			ev.Infer("data.target_kind", "label")
@@ -427,6 +429,13 @@ func (l *Lifecycle) data(ev *event.Event, typ, station string, in map[string]any
 		r := ev.IDs.Round
 		_, again := l.started[r]
 		d["restarted"] = again
+		// Revision 7 (M13 merge check): a start of a judging round that was already decided is its
+		// repeat (review/round-N.k, opened after the merge station voided the approval); it uses no
+		// judging round. Counted from the decisions this log recorded before it.
+		d["repeat"] = l.decided[r]
+		if l.decided[r] > 0 {
+			ev.Infer("data.repeat", "decided-before")
+		}
 		l.rounds[r] = m
 		l.started[r] = ev.ID
 		gate := "gate:" + l.cellName() + "/review#" + itoa(r)
@@ -481,6 +490,7 @@ func (l *Lifecycle) data(ev *event.Event, typ, station string, in map[string]any
 		if id, ok := l.started[ev.IDs.Round]; ok {
 			ev.Cause = &event.Cause{EventID: id, Basis: "identity"}
 		}
+		l.decided[ev.IDs.Round]++
 		ev.Ref("gate:" + l.cellName() + "/review#" + itoa(ev.IDs.Round))
 	case "human.approval_recorded":
 		d["by_role"] = "person"
@@ -532,6 +542,20 @@ func (l *Lifecycle) data(ev *event.Event, typ, station string, in map[string]any
 		}
 		d["revalidated"] = boolOr(get("revalidated"), false)
 		d["pull_request"] = intOrNil(get("pull_request"))
+		// Revision 7 (M13): the change record merge.py wrote before landing, from the cell's own
+		// cell.json (the lifecycle line does not carry it): its path, shown as text, and SHA-256.
+		d["change_record"] = nil
+		if l.Files != nil {
+			if data, ok := l.Files.Read("cell.json", 1<<20); ok {
+				var cell map[string]any
+				if json.Unmarshal(data, &cell) == nil {
+					if rec := ChangeRecord(cell["change_record"]); rec != nil {
+						d["change_record"] = rec
+						ev.Infer("data.change_record", "cell-file")
+					}
+				}
+			}
+		}
 		if c, ok := d["merge_commit"].(string); ok {
 			ref := "artifact:" + l.cellName() + ":commit/" + c
 			ev.Artifacts = append(ev.Artifacts, event.Artifact{Ref: ref, Commit: c})
@@ -559,6 +583,8 @@ func targetKindOf(id string) string {
 	switch {
 	case strings.HasPrefix(id, "H-"):
 		return "holdout"
+	case mockIDRe.MatchString(id):
+		return "design mock"
 	case regexp.MustCompile(`^R\d+$`).MatchString(id):
 		return "matrix rule"
 	}

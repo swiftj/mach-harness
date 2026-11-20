@@ -42,7 +42,10 @@ import {
   kindWords,
   lineCount,
   listedChecks,
+  mockResultWords,
+  mockSides,
   reasonWords,
+  ROLE_WORDS,
   resultLook,
   runWords,
   selectedFile,
@@ -408,6 +411,7 @@ function ViewerColumn({ model, check, file, client }: { model: EvidenceModel; ch
       </section>
     );
   }
+  if (check.mock) return <MockCompare model={model} check={check} file={file} client={client} />;
   const index = check.files.indexOf(file);
   const banner = INTEGRITY_WORDS[file.integrity].banner;
   return (
@@ -426,12 +430,91 @@ function ViewerColumn({ model, check, file, client }: { model: EvidenceModel; ch
   );
 }
 
+/**
+ * M15: a design mock's check (M14 part C): the approved mock and the captured screen side by side (stacked
+ * when narrow), each named in words, with the recorded result and the verifier's words beside them as
+ * plain text. The page compares nothing: what it says is what verify.py compare recorded. Selecting the
+ * check is selecting the pair: both pictures are requested, by catalog id, and only while media is on.
+ */
+function MockCompare({ model, check, file, client }: { model: EvidenceModel; check: EvidenceCheck; file: EvidenceFile; client: ObserverClient | null }) {
+  const mock = check.mock!;
+  const { approved, captures } = mockSides(check);
+  const sides: Array<readonly [EvidenceFile | null, string]> = [[approved, ROLE_WORDS["approved-mock"]], ...(captures.length ? captures.map((c) => [c, ROLE_WORDS.capture] as const) : [[null, ROLE_WORDS.capture] as const])];
+  const look = resultLook(check.result);
+  const sim = model.source === "simulation";
+  return (
+    <section aria-label={`Viewer, check ${check.id}: the approved mock beside the captured screen`} className="flex min-h-0 flex-col gap-3 overflow-y-auto rounded-sm border border-line p-3" data-evidence-viewer="" data-evidence-mock={mock.compared ?? "not-recorded"}>
+      <div className="flex flex-col gap-1" data-mock-result="">
+        <p className="flex flex-wrap items-center gap-2 text-body-sm text-ink">
+          <StateGlyph state={look.state} size={12} />
+          <span className="font-semibold">{mockResultWords(mock)}</span>
+        </p>
+        <p className="text-caption text-ink-muted">
+          {mock.forScenario ? (
+            <>
+              Approved for <span className="font-mono text-[12px] text-ink">{mock.forScenario}</span>. The scenarios stay the authority; a mock adds no requirement.
+            </>
+          ) : (
+            "Approved for the whole slice. The scenarios stay the authority; a mock adds no requirement."
+          )}{" "}
+          Nothing here is compared by the Factory Floor: this is what the verifier recorded.
+        </p>
+        {mock.differences.length ? (
+          <div className="mt-1" data-mock-differences="">
+            <p className="text-label text-ink-muted">Differences the verifier recorded</p>
+            <ul className="mt-1 flex list-disc flex-col gap-0.5 pl-5 text-body-sm text-ink">
+              {mock.differences.map((d, i) => (
+                <li key={i}>
+                  <UncheckedText text={unchecked(d, "mock difference", 280)} max={280} />
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {mock.note ? (
+          <p className="mt-1 text-body-sm text-ink">
+            <span className="text-ink-muted">The verifier's note: </span>
+            <UncheckedText text={unchecked(mock.note, "mock note", 280)} max={280} />
+          </p>
+        ) : null}
+        {mock.freeText ? <UncheckedNote className="text-caption text-ink-subtle opacity-70" /> : null}
+      </div>
+      <div className="grid min-h-0 gap-3 sm:grid-cols-2" data-mock-sides="">
+        {sides.map(([f, words], i) => (
+          <figure key={f?.key ?? `none-${i}`} className={cn("flex min-h-[220px] min-w-0 flex-col gap-1.5 rounded-sm border p-2", f && f.key === file.key ? "border-line-strong" : "border-line")} data-mock-side={f?.role ?? "missing"}>
+            <figcaption className="text-label text-ink">
+              {words}
+              {sim ? <span className="ml-1 font-normal text-ink-subtle">(the simulation's sample)</span> : null}
+            </figcaption>
+            {f ? (
+              <>
+                {INTEGRITY_WORDS[f.integrity].banner ? (
+                  <p role="note" className={cn("rounded-sm border px-2 py-1 text-caption", f.integrity === "mismatch" ? "border-factory-fail bg-factory-fail-soft text-ink" : "border-line-strong bg-surface-sunken text-ink")} data-evidence-integrity={f.integrity}>
+                    {INTEGRITY_WORDS[f.integrity].banner}
+                  </p>
+                ) : null}
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <Viewer key={`${check.key}/${f.key}`} model={model} check={check} file={f} index={check.files.indexOf(f)} client={client} />
+                </div>
+                <p className="text-caption text-ink-subtle">{INTEGRITY_WORDS[f.integrity].fact}</p>
+              </>
+            ) : (
+              <Withheld words={`The check names no ${words.toLowerCase()}.`} />
+            )}
+          </figure>
+        ))}
+      </div>
+      <FileFacts file={file} model={model} />
+    </section>
+  );
+}
+
 function Viewer({ model, check, file, index, client }: { model: EvidenceModel; check: EvidenceCheck; file: EvidenceFile; index: number; client: ObserverClient | null }) {
   const request = contentRequest(model, { check: check.key, file: file.key });
   const what = `${CLASS_WORDS[file.cls]}, check ${check.id}, file ${index + 1}`;
   switch (request.kind) {
     case "simulated":
-      if (request.content.kind === "image") return <SimulatedImage checkId={request.content.checkId} result={request.content.result} round={request.content.round} label={`Simulated screenshot, check ${check.id}`} />;
+      if (request.content.kind === "image") return <SimulatedImage checkId={request.content.checkId} result={request.content.result} round={request.content.round} role={request.content.role ?? null} label={`Simulated ${request.content.role ? ROLE_WORDS[request.content.role].toLowerCase() : "screenshot"}, check ${check.id}`} />;
       if (request.content.kind === "video") return <Withheld words={SIM_RECORDING_WORDS} />;
       return <TextBody text={request.content.text} label={`Simulated text, check ${check.id}, file ${index + 1}`} truncated={false} freeText={false} redacted={null} simulated />;
     case "text":
@@ -581,8 +664,10 @@ function useRetryOnce(attempt: number, setAttempt: (n: number) => void, setFaile
 }
 
 /** The simulation's own drawing in place of a screenshot: a plain sketch of a page, labelled as such. */
-function SimulatedImage({ checkId, result, round, label }: { checkId: string; result: string | null; round: number | null; label: string }) {
+function SimulatedImage({ checkId, result, round, role = null, label }: { checkId: string; result: string | null; round: number | null; role?: "approved-mock" | "capture" | null; label: string }) {
   const failed = result === "fail";
+  // M15: the sample mock and its capture differ in one place the sample's difference names (a filled or an outlined chip).
+  const chipFill = (i: number) => (role === "approved-mock" && i === 0 ? "var(--mach-factory-pass)" : i === 1 && failed ? "var(--mach-factory-fail-soft)" : "var(--mach-factory-pass-soft)");
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-1.5" data-evidence-simulated-image="">
       <p className="text-caption text-ink-subtle">Drawn by the Factory Floor for the simulation; not a screenshot.</p>
@@ -600,7 +685,7 @@ function SimulatedImage({ checkId, result, round, label }: { checkId: string; re
           {[0, 1, 2, 3, 4].map((i) => (
             <g key={i}>
               <rect x="32" y={66 + i * 38} width="300" height="24" rx="4" fill="var(--mach-surface-sunken)" stroke="var(--mach-line)" />
-              <rect x="348" y={66 + i * 38} width="100" height="24" rx="12" fill={i === 1 && failed ? "var(--mach-factory-fail-soft)" : "var(--mach-factory-pass-soft)"} stroke={i === 1 && failed ? "var(--mach-factory-fail)" : "var(--mach-factory-pass)"} />
+              <rect x="348" y={66 + i * 38} width="100" height="24" rx="12" fill={chipFill(i)} stroke={i === 1 && failed ? "var(--mach-factory-fail)" : "var(--mach-factory-pass)"} />
             </g>
           ))}
           <text x="240" y="282" textAnchor="middle" fontFamily="var(--mach-font-sans)" fontSize="13" fill="var(--mach-ink-muted)">

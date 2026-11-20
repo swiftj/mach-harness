@@ -11,7 +11,7 @@ import { useSceneStore } from "../scene";
 import { FreeText, FreeTextLabel, KindWords } from "../shell/inspector/FreeText";
 import { quotingKindOf } from "../shell/history";
 import { duration, timecode } from "../shell/time";
-import { LINE_STATIONS, sentBackWords, type LineRow, type StationStat, type StationTime } from "./model";
+import { LINE_STATIONS, sentBackWords, timesWords, type LineRow, type StationStat, type StationTime } from "./model";
 import { StatePill } from "./Marks";
 import { costWords, modelWords } from "./words";
 import { EpicName, issueWords } from "./Epic";
@@ -104,7 +104,12 @@ export function TicketPanel({ row, now, onBack, onRecord, onFloor }: { row: Line
       <Part title="What it needs from you">
         <p className="text-body-sm text-ink">{row.needs}</p>
         <CommandLine className="mt-2" command={row.command} purpose={`for ${row.ticketId}`} />
-        {row.state === "stopped" ? <CommandLine className="mt-1.5" command={`/mach explain ${row.ticketId}`} purpose={`to explain ${row.ticketId}`} /> : null}
+        {row.alsoCommand ? (
+          <CommandLine className="mt-1.5" command={row.alsoCommand} purpose={`also for ${row.ticketId}`} />
+        ) : row.state === "stopped" ? (
+          <CommandLine className="mt-1.5" command={`/mach explain ${row.ticketId}`} purpose={`to explain ${row.ticketId}`} />
+        ) : null}
+        {row.stop === "policy-owner" ? <p className="mt-1.5 text-caption text-ink-muted">Fill in the policy's ID and the owner's own words; only the owner accepts a concern.</p> : null}
       </Part>
       <Part title="Where the time went">
         <TimeBars times={row.times} />
@@ -119,8 +124,11 @@ export function TicketPanel({ row, now, onBack, onRecord, onFloor }: { row: Line
                 {row.epicTitle && row.epicId ? <span className="ml-1 font-mono text-caption text-ink-muted">{row.epicId}</span> : null}
               </span>
             ) : "not recorded"],
+            ["Jira", row.jira ? <span key="j" className="font-mono text-[13px]">{row.jira}</span> : "not recorded"],
             ["Risk", row.risk ?? "not recorded"],
             ["Rounds used", `${row.roundsUsed} of ${MAX_ROUNDS}`],
+            ...(row.rechecks ? ([["Rechecked", `the merge-time check sent it back ${timesWords(row.rechecks)}; no judging round used`]] as const) : []),
+            ["Change record", row.changeRecord ? <span key="c" className="break-all font-mono text-[13px]">{row.changeRecord}</span> : "not recorded"],
             ["Cost", costWords(row.cost)],
           ]}
         />

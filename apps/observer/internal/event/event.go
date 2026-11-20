@@ -28,9 +28,14 @@ import (
 // wave.discovered is gone, and slice.materialized gains epic_title. Revision 5 (M12) adds one
 // cell-lifecycle kind, review.exception_recorded: a person's exception to a security blocker. Revision 6
 // (M12) adds one more, review.scan_recorded: what the security scan flagged in a review round, as counts.
+// Revision 7 (M15) is additive: human.required and execution.completed gain needs (the routing
+// sheet's stop code, from MACH's own record, only when known), intake.refused gains waiting ("mocks"),
+// review.round_started gains repeat (a repeat of a judging round after a voided approval),
+// verify.check_recorded's target_kind gains "design mock", slice.materialized and run.recorded gain
+// jira, and merge.completed and run.recorded gain change_record (path and SHA-256).
 const (
 	Version  = 3
-	Revision = 6
+	Revision = 7
 )
 
 // Gap classes (history.gap data.class, revision 2): what a gap means for the history a reader

@@ -39,6 +39,7 @@ import type {
 import { gateId, isActorRef, ref, refId, refKind } from "./model";
 import type { CapacityWaitState, GateEvaluation, LiveEntityKind, LiveRef } from "./model";
 import { gateOfRef } from "./gates";
+import { cellStopOf } from "./stops";
 
 /**
  * Where events come from: a simulation fixture (the M6.0 API, returning the fixture's own events) or
@@ -1009,6 +1010,11 @@ function cellActivity(scene: Scene, cell: CellState): Activity {
     const again = reissuedAs(scene, cell);
     return { state: "failed", reason: again ? `Abandoned; reissued as ${again}.` : "Abandoned.", since: cell.runRecord.at, authority, label: again ? `Abandoned, reissued as ${again}` : "Abandoned" };
   }
+  // M15: the waits M13 and M14 added, read once for every view (stops.ts), drawn as the Line draws them.
+  const stop = cellStopOf(scene, cell);
+  if (stop?.kind === "policy-owner") return { state: "waiting-person", reason: "The spec is held only by a policy concern; the policy's owner settles it.", since: stop.since, authority, label: "Waits for the policy's owner" };
+  if (stop?.kind === "main-conflict") return { state: "waiting-person", reason: "Bringing its branch up to date with the main branch conflicts; a person resolves it.", since: stop.since, authority, label: "Waits for a person: conflict with main" };
+  if (stop?.kind === "merge-recheck" && !cell.station) return { state: "unknown", reason: "The merge-time check sent it back to be verified and reviewed again; no judging round is used.", since: stop.since, authority, label: "Held: back to verify" };
   if (cell.stage === "awaiting-human" || cell.stage === "spec-open") return { state: "waiting-person", reason: cell.stage === "spec-open" ? "The spec has open questions." : "A person must approve.", since: cell.stageHistory.at(-1)?.at ?? null, authority };
   if (cell.stage === "blocked") return { state: "waiting-person", reason: "Escalated to a person.", since: cell.stageHistory.at(-1)?.at ?? null, authority };
   // The human gate's id is the ticket's (one per ticket): looked up, never a scan of every gate per cell.

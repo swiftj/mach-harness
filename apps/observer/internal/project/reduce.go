@@ -1155,6 +1155,7 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 			AuditTier  *string `json:"audit_tier"`
 		}
 		e.DataAs(&d)
+		verdictBefore := d.Gate == "verify.verdict" && round != nil && *round == 1 && hasVerdict(c, 1)
 		if len(c.Gates) < maxGatesPerCell {
 			c.Gates = append(c.Gates, &Gate{Gate: d.Gate, Verdict: d.Verdict, ReasonCode: feed.Str(d.ReasonCode), Subject: feed.Str(d.Subject),
 				Status: feed.Str(d.Status), AuditTier: feed.Str(d.AuditTier), VisitID: visitID, Round: round, At: st})
@@ -1166,7 +1167,9 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 			// A numerator cell carries the gate; the denominator (build tasks) does not (Def.Split).
 			m.Rate("X3", s.cdims(c.TicketID, "gate", d.Gate, "reason_code", feed.Str(d.ReasonCode)), day(st), 1, 0)
 		}
-		if d.Gate == "verify.verdict" && round != nil && *round == 1 {
+		// Q1 counts a ticket's first round-1 verdict only: after the merge station voids an approval
+		// (M13 merge check) the ticket is verified again in round 1, which is not a first pass.
+		if d.Gate == "verify.verdict" && round != nil && *round == 1 && !verdictBefore {
 			if d.Status != nil {
 				m.Rate("Q1", s.cdims(c.TicketID), day(st), b2f(*d.Status == "PASS"), 1)
 			} else {
@@ -1275,6 +1278,11 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 			// A repeat of this judging round after a voided approval (review/round-N.k, M7): the
 			// round is judged once; its standing decision replaces the voided one in R1.
 			m.Rate("R1", s.cdims(c.TicketID, "round", itoa(round)), day(r.Decided), -b2f(r.Outcome == "REJECTED" || r.Outcome == "ESCALATE"), -1)
+			if r.SecuritySeat {
+				// R3 the same way (M15): the voided decision's veto, or its absence, gives way to the repeat's.
+				m.Rate("R3", s.cdims(c.TicketID), day(r.Decided), -b2f(r.SecurityVeto), -1)
+				r.SecuritySeat = false
+			}
 			r.Repeats++
 		}
 		r.Outcome, r.Approvals, r.Votes, r.Blockers, r.SecurityVeto, r.Decided = d.Outcome, d.Approvals, d.Votes, d.Blockers, d.SecurityVeto, st
@@ -1288,6 +1296,7 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 		}
 		if hasSecurity {
 			m.Rate("R3", s.cdims(c.TicketID), day(st), b2f(d.SecurityVeto), 1)
+			r.SecuritySeat = true
 		}
 		if d.Outcome == "AWAITING_HUMAN" {
 			key := "approval:" + c.TicketID + "#" + itoa(round)

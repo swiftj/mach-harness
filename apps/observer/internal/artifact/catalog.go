@@ -98,9 +98,10 @@ type Entry struct {
 	FreeTextNote *string    `json:"free_text_note"`
 	Provenance   Provenance `json:"provenance"`
 
-	member    string // archive member name
-	free      bool   // the file's text holds prose (redact.HasFreeText), whatever its access
-	duplicate bool   // the archive holds this name more than once (M6.6 F7): which one is meant is unknown
+	mocks     []MockCheck // a verification-results entry: its design mock records (M14 part C)
+	member    string      // archive member name
+	free      bool        // the file's text holds prose (redact.HasFreeText), whatever its access
+	duplicate bool        // the archive holds this name more than once (M6.6 F7): which one is meant is unknown
 }
 
 // Refusal reasons that name what is wrong with the file itself (M6.6 F7), for access_reason and
@@ -111,7 +112,7 @@ const (
 )
 
 // Voided says how a review decision was voided (merge.py's void record): a reason code
-// ("branch-changed-after-approval" for the sentence merge.py writes, else "recorded"), the outcome
+// ("branch-changed-after-approval" or "landed-overlap" for the sentences merge.py writes, else "recorded"), the outcome
 // it had, and the commit approved and the one the branch then held.
 type Voided struct {
 	ReasonCode     string `json:"reason_code"`
@@ -146,8 +147,11 @@ func voidOf(data []byte) *Voided {
 			v.BranchCommit = d.Void.BranchCommit
 		}
 	}
-	if reason == "The branch changed after it was approved." {
+	switch reason {
+	case "The branch changed after it was approved.":
 		v.ReasonCode = "branch-changed-after-approval"
+	case "Work that landed on the main branch after approval touches the same ground as this ticket.":
+		v.ReasonCode = "landed-overlap" // M13: the merge-time recheck (merge.py check_landed)
 	}
 	if d.OutcomeBefore == "APPROVED" || d.OutcomeBefore == "AWAITING_HUMAN" {
 		v.OutcomeBefore = d.OutcomeBefore
@@ -167,7 +171,111 @@ type Target struct {
 	ID     string `json:"id"`
 	Kind   string `json:"kind,omitempty"`
 	Result string `json:"result,omitempty"`
+	// Role, for a design mock's check (M14 part C, MOCK-N): "approved-mock" for the copy of the picture
+	// the product manager approved (results.json's mocks names it by path and SHA-256), "capture" for the
+	// verifier's capture of the built screen. Compared is the recorded result (matches, differs, cannot
+	// compare) and Binding whether a difference fails the check. Absent for every other check.
+	Role     string `json:"role,omitempty"`
+	Compared string `json:"compared,omitempty"`
+	Binding  *bool  `json:"binding,omitempty"`
 }
+
+// Mock roles.
+const (
+	RoleApprovedMock = "approved-mock"
+	RoleCapture      = "capture"
+)
+
+// MockCheck is one design mock's side-by-side record in a verification run (results.json's mocks and
+// mock_records, written by verify.py start and compare): the check MOCK-N, the approved mock and the
+// capture it cites, the recorded result and the verifier's words. Nothing is compared here.
+type MockCheck struct {
+	ID       string `json:"id"`
+	Folder   string `json:"-"` // the evidence folder of its run (evidence, evidence/previous-N)
+	Round    *int64 `json:"round"`
+	Result   string `json:"result,omitempty"` // the check's pass or fail, as results.json records it
+	Compared string `json:"compared"`         // matches | differs | cannot compare | "" (not compared yet)
+	Binding  *bool  `json:"binding"`
+	For      string `json:"for,omitempty"` // the scenario it is approved for (AC-NN), when recorded
+	// MockFile and Captures are the files' paths relative to the evidence folder, as results.json names them.
+	MockFile   string   `json:"mock_file"`
+	MockSHA256 string   `json:"mock_sha256,omitempty"`
+	Captures   []string `json:"captures"`
+	// Note and Differences are the verifier's words: free text, scrubbed and bounded, labelled as not
+	// checked for names wherever served.
+	Note        string   `json:"note,omitempty"`
+	Differences []string `json:"differences"`
+}
+
+// mockFileRe is the mock copy verify.py writes into the evidence folder: mocks/<sha256>.<png|jpg>.
+var mockFileRe = regexp.MustCompile(`^mocks/([0-9a-f]{64})\.(png|jpg)$`)
+
+// mocksOf reads a run's mock records. Only a check verify.py itself recorded as a design mock with
+// its approved copy named counts.
+func mocksOf(res results, folder string, round *int64, root string, people *redact.People) []MockCheck {
+	var ids []string
+	for id := range res.Mocks {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var out []MockCheck
+	for _, id := range ids {
+		m := res.Mocks[id]
+		if !mockIDRe.MatchString(id) || len(out) >= 16 {
+			continue
+		}
+		file := mockFileRe.FindStringSubmatch(m.File)
+		if file == nil || file[1] != m.SHA256 {
+			continue
+		}
+		mc := MockCheck{ID: id, Folder: folder, Round: round, Binding: m.Binding, MockFile: m.File, MockSHA256: m.SHA256, Captures: []string{}, Differences: []string{}}
+		if m.For != nil && scenarioRe.MatchString(*m.For) {
+			mc.For = *m.For
+		}
+		if rec, ok := res.Records[id]; ok && (rec.Result == "pass" || rec.Result == "fail") {
+			mc.Result = rec.Result
+		}
+		if r, ok := res.MockRecords[id]; ok {
+			switch r.Result {
+			case "matches", "differs", "cannot compare":
+				mc.Compared = r.Result
+			}
+			for _, c := range r.Capture {
+				if plainRel(c) && !mockFileRe.MatchString(c) && len(mc.Captures) < 8 {
+					mc.Captures = append(mc.Captures, c)
+				}
+			}
+			mc.Note = proseOf(r.Note, root, people)
+			for _, d := range r.Differences {
+				if t := proseOf(d, root, people); t != "" && len(mc.Differences) < 16 {
+					mc.Differences = append(mc.Differences, t)
+				}
+			}
+		}
+		out = append(out, mc)
+	}
+	return out
+}
+
+var (
+	mockIDRe   = regexp.MustCompile(`^MOCK-[1-9][0-9]{0,2}$`)
+	scenarioRe = regexp.MustCompile(`^AC-[0-9]{2,}$`)
+)
+
+// proseOf scrubs and bounds a verifier's words (credentials, paths, known people replaced).
+func proseOf(s, root string, people *redact.People) string {
+	t, ok := redact.Text(s, root, redact.MaxText)
+	if !ok || strings.TrimSpace(t) == "" {
+		return ""
+	}
+	if people != nil {
+		t, _ = people.Replace(t)
+	}
+	return t
+}
+
+// Mocks are the design mock records of a verification run's results.json entry; nil for any other entry.
+func (e Entry) Mocks() []MockCheck { return e.mocks }
 
 // Provenance says which MACH record named the artifact.
 type Provenance struct {
@@ -386,6 +494,20 @@ type results struct {
 			SHA256 string `json:"sha256"`
 		} `json:"evidence"`
 	} `json:"records"`
+	// M14 part C: the design mocks this run compares (verify.py start) and each side-by-side record
+	// (verify.py compare).
+	Mocks map[string]struct {
+		SHA256  string  `json:"sha256"`
+		File    string  `json:"file"`
+		For     *string `json:"for"`
+		Binding *bool   `json:"binding"`
+	} `json:"mocks"`
+	MockRecords map[string]struct {
+		Result      string   `json:"result"`
+		Note        string   `json:"note"`
+		Differences []string `json:"differences"`
+		Capture     []string `json:"capture"`
+	} `json:"mock_records"`
 }
 
 var hexRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -462,7 +584,7 @@ type source interface {
 }
 
 // plan lists what a cell's records name, as entries without hashes; fill completes them.
-func plan(src source, ticket string, folders []string, rounds []roundFolder, people *redact.People) []*Entry {
+func plan(src source, ticket string, folders []string, rounds []roundFolder, people *redact.People, root string) []*Entry {
 	var out []*Entry
 	for _, folder := range folders {
 		var res results
@@ -478,9 +600,14 @@ func plan(src source, ticket string, folders []string, rounds []roundFolder, peo
 		if commitRe.MatchString(res.Head) {
 			commit = res.Head
 		}
+		mocks := mocksOf(res, folder, round, root, people)
+		byMock := map[string]MockCheck{}
+		for _, m := range mocks {
+			byMock[m.ID] = m
+		}
 		if err == nil {
 			out = append(out, &Entry{Path: folder + "/results.json", Kind: "verification-results", Nature: "record", Round: round, Commit: commit,
-				Provenance: Provenance{NamedBy: folder + "/results.json", Writer: "verify.py"}})
+				Provenance: Provenance{NamedBy: folder + "/results.json", Writer: "verify.py"}, mocks: mocks})
 		}
 		for _, name := range []string{"summary.json", "findings.md"} {
 			kind, nature := "verification-summary", "record"
@@ -515,7 +642,16 @@ func plan(src source, ticket string, folders []string, rounds []roundFolder, peo
 					files[rel] = e
 					out = append(out, e)
 				}
-				e.Targets = append(e.Targets, Target{ID: id, Kind: rec.Kind, Result: rec.Result})
+				t := Target{ID: id, Kind: rec.Kind, Result: rec.Result}
+				if m, ok := byMock[id]; ok {
+					// Which file is the approved picture and which the capture: the mock copy is the file
+					// results.json's mocks names, with that hash; every other file the check cites is a capture.
+					t.Role, t.Compared, t.Binding = RoleCapture, m.Compared, m.Binding
+					if ev.File == m.MockFile && ev.SHA256 == m.MockSHA256 {
+						t.Role = RoleApprovedMock
+					}
+				}
+				e.Targets = append(e.Targets, t)
 			}
 		}
 	}
@@ -653,7 +789,7 @@ func (c *Catalog) scanCell(root *os.Root, ticket string) []*Entry {
 		folders = nil
 	}
 	rounds := roundFolders(listDir(root, prefix+"review"))
-	return c.fill(src, "cell", plan(src, ticket, folders, rounds, redact.PeopleFor(c.root)))
+	return c.fill(src, "cell", plan(src, ticket, folders, rounds, redact.PeopleFor(c.root), c.root))
 }
 
 // ---- archives ----
@@ -758,7 +894,7 @@ func (c *Catalog) scanArchive(root *os.Root, ticket string) []*Entry {
 			roundNames = append(roundNames, parts[1])
 		}
 	}
-	entries := c.fill(src, "archive", plan(src, ticket, evidenceFolders(uniq(folderNames)), roundFolders(uniq(roundNames)), redact.PeopleFor(c.root)))
+	entries := c.fill(src, "archive", plan(src, ticket, evidenceFolders(uniq(folderNames)), roundFolders(uniq(roundNames)), redact.PeopleFor(c.root), c.root))
 	for _, e := range entries {
 		e.member = ticket + "/" + e.Path
 		e.duplicate = members[e.Path].duplicate
