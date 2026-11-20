@@ -71,7 +71,10 @@ def redact(text: str) -> str:
 
 DEFAULT_REQUEST_LABEL = "mach:request"
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$")
-LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
+# A GitHub account name. The one place the rule lives: Product Studio and every marker below use it.
+# An Enterprise Managed User's name ends in an underscore and the enterprise's short code (handle_shortcode).
+LOGIN_PATTERN = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:_[A-Za-z0-9-]{1,39})?"
+LOGIN_RE = re.compile("^" + LOGIN_PATTERN + "$")
 GHOST = "ghost"
 WRITE_PERMISSIONS = ("admin", "write")
 DECISION_MAX_AGE_HOURS = 24
@@ -425,7 +428,7 @@ SLICE_MARKER_RE = re.compile(
     r"     spec-sha256=([0-9a-f]{64}) why-sha256=([0-9a-f]{64}) -->\n")
 FOLLOWS_RE = re.compile(r"\AChanges #([0-9]{1,9}), which has shipped\.\n")
 PRODUCT_MARKER_RE = re.compile(r"\A<!-- mach:(project|epic) id=([A-Za-z0-9-]{1,64}) -->\n")
-APPROVAL_RE = re.compile(r"<!-- mach:approval id=(SLICE-[0-9]{3,}) revision=([0-9]{1,6}) by=([A-Za-z0-9-]{1,39}) "
+APPROVAL_RE = re.compile(r"<!-- mach:approval id=(SLICE-[0-9]{3,}) revision=([0-9]{1,6}) by=(" + LOGIN_PATTERN + r") "
                          r"spec-sha256=([0-9a-f]{64}) why-sha256=([0-9a-f]{64}) -->")
 WHY_HEADING = "## Why\n"
 SPEC_HEADING = "\n## Specification\n"
@@ -676,7 +679,7 @@ def slice_acceptance(issue: Dict[str, Any], events: Sequence[Dict[str, Any]], co
 RELEASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 ACCEPTANCE_RE = re.compile(r"<!-- mach:acceptance epic=(EPIC-[0-9]{3,}) release=([A-Za-z0-9][A-Za-z0-9._-]{0,79}) commit=([0-9a-f]{40}) "
-                           r"decision=(accepted|rejected) by=([A-Za-z0-9-]{1,39}) readiness-sha256=([0-9a-f]{64}) -->")
+                           r"decision=(accepted|rejected) by=(" + LOGIN_PATTERN + r") readiness-sha256=([0-9a-f]{64}) -->")
 DECISIONS = ("accepted", "rejected")
 
 

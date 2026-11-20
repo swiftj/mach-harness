@@ -325,6 +325,20 @@ class IssueIntakeTest(Base):
         self.assertEqual([(c["slice_id"], c["ticket_id"]) for c in taken["created"]], [("SLICE-001", str(number))])
         self.assertEqual(taken["not_accepted"], [])
 
+    def test_an_enterprise_managed_account_marks_a_slice_ready_and_the_factory_accepts_it(self):
+        """An Enterprise Managed User's name ends in an underscore and the enterprise's short code. Sign-in,
+        slice ready, the approval comment and the Factory's checks must all take it."""
+        self.set_gh(me="CGR273_cof")
+        self.project_and_epic()
+        self.drafted()
+        number = self.ok(self.a, "slice", "ready", "SLICE-001")["issue"]
+        bodies = [c["body"] for c in self.gh()["issues"][str(number)]["comments"]]
+        self.assertEqual([a["by"] for a in issue_rules.approvals(bodies)], ["CGR273_cof"])
+        self.set_gh(me="erin-eng_cof")
+        taken = self.product("intake")
+        self.assertEqual([(c["slice_id"], c["ticket_id"]) for c in taken["created"]], [("SLICE-001", str(number))])
+        self.assertEqual(taken["not_accepted"], [])
+
 
 class AcceptanceTest(Base):
     """Design section 4: only an issue that passes every check is taken in; anything else is listed with its reason."""

@@ -10,6 +10,7 @@ which uses the same two helpers.
 Standard library only. Imported by studio.py, issues.py and requests_in.py; not a command of its own.
 """
 
+import importlib.util
 import json
 import re
 import shutil
@@ -125,6 +126,26 @@ def _gh_write(project: Path, *args: str) -> Failure:
     return None
 
 
+_RULES: List[Any] = []
+
+
+def is_login(login: Any) -> bool:
+    """Whether this is a GitHub account name, by the ticket skill's one rule (issue_rules.LOGIN_RE), loaded from
+    the sibling skill folder whichever way MACH is installed and never copied. No rule found means no."""
+    if not _RULES:
+        found = None
+        skills = Path(__file__).resolve().parent.parent.parent
+        for name in ("mach-ticket", "ticket"):
+            path = skills / name / "scripts" / "issue_rules.py"
+            if path.is_file():
+                spec = importlib.util.spec_from_file_location("mach_ticket_issue_rules", path)
+                found = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(found)
+                break
+        _RULES.append(found)
+    return bool(_RULES[0] and isinstance(login, str) and _RULES[0].LOGIN_RE.fullmatch(login))
+
+
 GITHUB_REMOTE_RE = re.compile(r"^(?:https://(?:[^/@\s]+@)?github\.com/|ssh://git@github\.com/|git@github\.com:)([A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}?)(?:\.git)?/?$")
 
 
@@ -168,7 +189,7 @@ def issue_label_events(project: Path, repository: str, number: int) -> Tuple[Opt
 
 
 def collaborator_permission(project: Path, repository: str, login: str) -> Tuple[Optional[Dict[str, Any]], Failure]:
-    if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})", login or ""):
+    if not is_login(login):
         return None, {"kind": "other", "reason": "not an account name", "link": ""}
     found, failure = _gh_json(project, "api", *API_HEADERS, PERMISSION_PATH.format(repository=repository, login=login), "--jq", PERMISSION_JQ)
     if failure:
