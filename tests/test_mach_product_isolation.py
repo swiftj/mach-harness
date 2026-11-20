@@ -200,6 +200,20 @@ class NothingIsWiredInTest(unittest.TestCase):
         for word in ("collab", "issues.", "handoff", "requests_in", "import subprocess", "urllib", "socket"):
             self.assertNotIn(word, sources["prd.py"], word)
 
+    def test_studio_reaches_the_run_skill_only_for_the_compiler_and_it_only_reads_git(self):
+        """M13 C: `epic current` loads the run skill's current.py and nothing else of the run skill. current.py, and the
+        intake function it borrows to name the integration branch, only read Git: no fetch, no push, no write."""
+        source = (PRODUCT_SCRIPTS / "studio.py").read_text()
+        self.assertEqual(re.findall(r'/ "scripts" / "([a-z_]+\.py)"', source), ["current.py"])
+        for name in ("intake.py", "supervisor.py", "executor.py", "policy.py", "Factory("):
+            self.assertNotIn(name, source)
+        current = (ROOT / "skills" / "run" / "scripts" / "current.py").read_text()
+        self.assertEqual(set(re.findall(r'_git\(root, "([a-z-]+)"', current)), {"rev-parse", "merge-base", "ls-tree", "cat-file"})
+        self.assertEqual(re.findall(r"subprocess\.run\(\[\"git\", \*args\]", current), ['subprocess.run(["git", *args]'] * 2)
+        intake_source = (ROOT / "skills" / "run" / "scripts" / "intake.py").read_text()
+        borrowed = intake_source[intake_source.index("    def integration(self)"):intake_source.index("    def git_bytes(")]
+        self.assertEqual(set(re.findall(r"git\(self\.root, \"([a-z-]+)\"", borrowed)), {"symbolic-ref", "show-ref", "rev-parse", "merge-base", "diff", "rev-list"})
+
     def test_the_hand_off_uses_only_the_gh_calls_it_is_meant_to(self):
         """M11: issues.py holds every GitHub call that saves a slice as an issue; handoff.py decides and
         records, and reaches GitHub only through it. No Git at all, no closing, deleting, locking or
