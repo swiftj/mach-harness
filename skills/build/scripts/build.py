@@ -28,6 +28,13 @@ about to be committed are scanned for credentials by their well-known shapes. A 
 done accept --not-a-secret "<why>", recorded with the places it covered (file, line, kind; never the value) for the
 reviewers. security.scan.enabled: false in .factory/config.json switches the gate off, and the build report says so.
 
+Building on today's main (M13): `start` and `revise` first bring the ticket's branch up to date with the main checkout's
+committed HEAD (one merge commit made by this station, recorded in build.json and the build report), and never at any other
+step, so never inside a red-to-green pair. A conflict aborts the merge, changes nothing, records `main_conflict` in cell.json
+for the routing sheet and refuses for a person. The merge is not a task: the scope, frozen-test and secrets gates judge only
+what the builder changes after it, and the report's files and diff leave out what main brought. build.update_from_main:
+false in .factory/config.json switches it off.
+
 Standard library only. It runs the project's test and lint commands inside the cell.
 """
 
@@ -706,24 +713,95 @@ def ensure_isolated(cell: Cell) -> None:
     cell.save_info()
 
 
-def sync_with_main(cell: Cell) -> Optional[str]:
-    """A cell planned a while ago may be behind the main checkout. Bring it up to date before building,
-    so the baseline it is measured against is today's code and not the code from when it was groomed."""
-    if cell.info.get("isolation") != "worktree":
+def update_from_main_enabled(cell: Cell) -> bool:
+    """build.update_from_main in .factory/config.json; anything but an explicit false is on."""
+    return cell.section("build").get("update_from_main") is not False
+
+
+def main_name(cell: Cell) -> str:
+    return git(cell.project, "branch", "--show-current").stdout.strip() or "main"
+
+
+def is_ancestor(cell: Cell, older: str, newer: str = "HEAD") -> bool:
+    return bool(older) and git(cell.work, "merge-base", "--is-ancestor", older, newer).returncode == 0
+
+
+def spec_unchanged(cell: Cell) -> bool:
+    spec = cell.work / str(cell.info.get("spec_path"))
+    return spec.is_file() and hashlib.sha256(spec.read_text(encoding="utf-8-sig").encode("utf-8")).hexdigest() == cell.info.get("spec_sha256")
+
+
+def bring_up_to_date(cell: Cell, when: str, loop: int, findings: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Bring the ticket's branch up to date with the main checkout's committed HEAD, at the start of a build and at the
+    start of a revision, never between those (so never inside a red-to-green pair).
+
+    Already up to date: nothing happens and None is returned (unless a person resolved an earlier conflict, which is
+    recorded). A clean merge: one merge commit made by this station, returned as a record for build.json and the build
+    report. A conflict, or a merge that would change the slice spec: the merge is aborted, the branch is left exactly as it
+    was, and the step is refused for a person. The merge commit is not a task: its content came from main, so it is not
+    judged by the scope, frozen-test or secrets gates, and later tasks are compared with the merged result."""
+    if not update_from_main_enabled(cell) or cell.info.get("isolation") != "worktree":
         return None
-    main_head = git(cell.project, "rev-parse", "HEAD").stdout.strip()
-    if not main_head or git(cell.work, "merge-base", "--is-ancestor", main_head, "HEAD").returncode == 0:
-        return None
-    merged = git(cell.work, "merge", "--no-edit", "-m", f"Merge main into {cell.info.get('branch')} before building [{cell.ticket_id}]", main_head)
+    main_head = git(cell.project, "rev-parse", "--verify", "-q", "HEAD").stdout.strip()
+    head = git(cell.work, "rev-parse", "HEAD").stdout.strip()
+    main = main_name(cell)
+    branch = cell.info.get("branch") or f"feature/{cell.ticket_id}"
+    waiting = cell.info.get("main_conflict") if isinstance(cell.info.get("main_conflict"), dict) else None
+    if not main_head or is_ancestor(cell, main_head):
+        if waiting is None:
+            return None
+        cell.info.pop("main_conflict", None)
+        cell.save_info()
+        if head == waiting.get("branch_commit") or not is_ancestor(cell, str(waiting.get("branch_commit") or "")):
+            return None
+        # A person merged main into the branch and resolved the conflict; the revision or build starts from their commit.
+        return {"when": when, "loop": loop, "by": "a person", "main": main, "main_commit": git(cell.work, "merge-base", "HEAD", main_head).stdout.strip() or None,
+                "branch_commit": waiting.get("branch_commit"), "merge_commit": head, "behind": waiting.get("behind"), "at": now()}
+    dirty = changed_files(cell)
+    if dirty:
+        raise BuildError(f"The cell has uncommitted changes ({', '.join(dirty[:5])}), so it cannot be brought up to date with {main}. "
+                         "Commit or remove them first.", code="uncommitted-changes")
+    behind = int(git(cell.work, "rev-list", "--count", f"HEAD..{main_head}").stdout.strip() or 0)
+    merged = git(cell.work, "merge", "--no-ff", "--no-commit", main_head)
     if merged.returncode != 0:
-        conflicts = git(cell.work, "diff", "--name-only", "--diff-filter=U").stdout.split()
+        conflicts = [name for name in git(cell.work, "diff", "--name-only", "--diff-filter=U").stdout.splitlines() if name.strip()]
         git(cell.work, "merge", "--abort")
+        if not conflicts:
+            raise BuildError(f"git could not merge {main} into {branch}, so nothing was changed: "
+                             + (merged.stderr.strip() or merged.stdout.strip())[-600:], code="main-merge-failed")
+        cell.info["main_conflict"] = {"during": when, "main": main, "main_commit": main_head, "branch_commit": head, "behind": behind,
+                                      "files": conflicts[:50], "folder": str(cell.work), "findings": findings, "at": now()}
+        cell.save_info()
+        then = "then start the build again" if when == "start" else "then start the revision again (build.py revise)"
         raise BuildError(
-            f"The cell's branch is behind the main checkout and cannot be brought up to date automatically: merging main conflicts in "
-            f"{', '.join(conflicts) or 'some files'}. A person must merge main into {cell.info.get('branch')} in {cell.work} and resolve the conflict; "
-            "if the conflict is in the spec or a contract, the ticket needs regrooming.", code="main-conflict"
-        )
-    return main_head
+            f"{main} has moved on since this ticket's branch was last brought up to date, and bringing the branch up to date conflicts in "
+            f"{', '.join(conflicts[:10])}{f' and {len(conflicts) - 10} more' if len(conflicts) > 10 else ''}. Nothing was changed. "
+            f"A person must merge {main} into {branch} in {cell.work} and resolve it; {then}. If the conflict is in the spec or a contract, "
+            "the ticket needs regrooming.", code="main-conflict")
+    if not spec_unchanged(cell):
+        git(cell.work, "merge", "--abort")
+        raise BuildError(f"Bringing the cell up to date with {main} would change its slice spec, so nothing was changed. "
+                         "Regroom the ticket with the intent skill before building.", code="spec-changed")
+    purpose = "before building" if when == "start" else f"before revision {loop}"
+    done = git(cell.work, "commit", "-q", "--no-edit", "-m", f"Merge {main} into {branch} {purpose} [{cell.ticket_id}]")
+    if done.returncode != 0:
+        git(cell.work, "merge", "--abort")
+        raise BuildError(f"git could not commit the merge of {main}, so nothing was changed: " + (done.stderr.strip() or done.stdout.strip())[-600:],
+                         code="main-merge-failed")
+    if waiting is not None:
+        cell.info.pop("main_conflict", None)
+        cell.save_info()
+    return {"when": when, "loop": loop, "by": "build station", "main": main, "main_commit": main_head, "branch_commit": head,
+            "merge_commit": git(cell.work, "rev-parse", "HEAD").stdout.strip(), "behind": behind, "at": now()}
+
+
+def merge_note(record: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not record:
+        return None
+    if record.get("by") == "a person":
+        return f"A person brought the branch up to date with {record.get('main')} and resolved the conflict; work continues from {str(record.get('merge_commit'))[:10]}."
+    return (f"The branch was {record.get('behind')} commit(s) behind {record.get('main')} and has been brought up to date "
+            f"({str(record.get('main_commit'))[:10]}, merge commit {str(record.get('merge_commit'))[:10]}).")
 
 
 def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
@@ -754,17 +832,21 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         raise BuildError(f"The plan cannot follow {cell.info['adr_conflict'].get('adr')}, and an engineer has not decided yet.", code="adr-conflict")
     for task in tasks:
         task["status"] = "pending"
-    synced = sync_with_main(cell)
+    # A start refused after an earlier merge (a failing suite) keeps that merge on the branch: carry its record forward.
+    merges = [item for item in cell.state.get("main_merges") or [] if isinstance(item, dict) and item.get("when") == "start"
+              and is_ancestor(cell, str(item.get("merge_commit") or ""))] if cell.info.get("isolation") == "worktree" else []
+    synced = bring_up_to_date(cell, "start", 0)
     if synced:
-        spec_now = cell.work / str(cell.info.get("spec_path"))
-        if hashlib.sha256(spec_now.read_text(encoding="utf-8-sig").encode("utf-8")).hexdigest() != cell.info.get("spec_sha256"):
-            raise BuildError("Bringing the cell up to date with main changed its slice spec. Regroom the ticket with the intent skill before building.", code="spec-changed")
+        merges.append(synced)
+        cell.state["main_merges"] = merges
+        cell.save()  # recorded at once: the merge stays on the branch even if the start is refused below
     hardening = HARDENING_LABEL in ticket_labels(cell)
     cell.state = {
         "ticket_id": cell.ticket_id, "slice_id": cell.info.get("slice_id"), "loop": 0, "started_at": now(),
         "baseline": git(cell.work, "rev-parse", "HEAD").stdout.strip(), "audit": gate, "hardening": hardening,
         "test_cmd": find_command(cell, "test", args.test_cmd), "lint_cmd": find_command(cell, "lint", args.lint_cmd),
-        "suite": "unknown", "tasks": tasks, "test_files": [], "deviations": [], "synced_with_main": synced,
+        "suite": "unknown", "tasks": tasks, "test_files": [], "deviations": [], "main_merges": merges,
+        "update_from_main": update_from_main_enabled(cell),
     }
     baseline: Dict[str, Any] = {"skipped": "Hardening ticket with no test command yet."}
     if hardening and not args.no_baseline and cell.state.get("test_cmd"):
@@ -783,9 +865,22 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         cell.deviation(None, "no-baseline", args.no_baseline)
     elif not hardening:
         baseline = run_tests(cell)
+        if not baseline["passed"] and merges:
+            last = merges[-1]
+            raise BuildError(
+                f"The tests fail in the cell now that {last.get('main')} ({str(last.get('main_commit'))[:10]}) is merged into the branch, so building cannot start. "
+                "Nothing has been built for this ticket yet, so its own work is not the cause. "
+                + ("The audit found the main checkout's tests passing at this commit, so the failure comes from what the branch held from grooming "
+                   f"(its spec and contracts) together with the newer code on {last.get('main')}. " if gate.get("tier") in ("Gold", "Silver") else
+                   f"Either {last.get('main')}'s own tests fail at this commit (run the audit), or what the branch held from grooming (its spec and "
+                   f"contracts) does not fit the newer code on {last.get('main')}. ")
+                + "Look at the output below; plan the ticket again or abandon it if the contracts no longer fit.\n" + baseline["output_tail"][-800:],
+                code="baseline-red-after-main")
         if not baseline["passed"]:
-            raise BuildError("The tests already fail in the cell before any change, so building cannot start. The cell is up to date with the main checkout, "
-                             "so the main checkout's tests fail too: run the audit, and harden the repository first.\n" + baseline["output_tail"][-800:],
+            behind = cell.info.get("isolation") == "worktree" and not is_ancestor(cell, git(cell.project, "rev-parse", "HEAD").stdout.strip())
+            where = ("The cell's branch was not brought up to date with the main checkout (build.update_from_main is off), so this is the branch's own state."
+                     if behind else "The cell is up to date with the main checkout, so the main checkout's tests fail too: run the audit, and harden the repository first.")
+            raise BuildError("The tests already fail in the cell before any change, so building cannot start. " + where + "\n" + baseline["output_tail"][-800:],
                              code="baseline-red")
         cell.state["suite"] = "green"
         cell.state["test_file_check"] = calibrate_test_file(cell)
@@ -802,7 +897,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         "tasks": len(tasks), "test_cmd": cell.state["test_cmd"], "lint_cmd": cell.state["lint_cmd"], "audit": gate,
         "new_tests_run_alone": cell.state.get("test_file_check") or {"trusted": False, "why": "no passing baseline run to check a single-file run against"},
         "adrs": adrs_in_force(cell),
-        "synced_with_main": f"The cell was behind main and has been brought up to date ({synced[:10]})." if synced else None,
+        "synced_with_main": merge_note(synced),
         "next": f"{tasks[0]['id']} [{tasks[0]['kind']}]",
     }, indent=2))
     return 0
@@ -1065,9 +1160,37 @@ def cmd_add_task(cell: Cell, args: argparse.Namespace) -> int:
     return 0
 
 
-def ui_findings(cell: Cell, baseline: str) -> List[str]:
+def own_changes(cell: Cell) -> Dict[str, Any]:
+    """What this ticket's build changed, without what came in from main.
+
+    With no merge of main since the build started, that is simply baseline..HEAD, as it always was. Once main has been
+    merged in (at a revision, or by a person resolving a conflict), baseline..HEAD would also show every other ticket's
+    work that main brought. Then the files are those the branch's own commits touched (first parent, merges left out), and
+    each is compared with the main commit the branch was last brought up to date with (its merge base with main)."""
+    baseline = cell.state["baseline"]
+    if not git(cell.work, "rev-list", "--first-parent", "--merges", f"{baseline}..HEAD").stdout.strip():
+        return {"base": baseline, "paths": None, "note": None}
+    main_head = git(cell.project, "rev-parse", "HEAD").stdout.strip()
+    base = (git(cell.work, "merge-base", "HEAD", main_head).stdout.strip() if main_head else "") or baseline
+    touched = set()
+    for sha in git(cell.work, "rev-list", "--first-parent", "--no-merges", f"{baseline}..HEAD").stdout.split():
+        touched |= {name for name in git(cell.work, "diff-tree", "--no-commit-id", "--name-only", "-r", sha).stdout.splitlines() if name.strip()}
+    paths = [name for name in git(cell.work, "diff", "--name-only", f"{base}..HEAD", "--", *sorted(touched)).stdout.splitlines() if name.strip()] if touched else []
+    return {"base": base, "paths": paths,
+            "note": f"Main was merged into the branch during the build, so this ticket's changes are its own commits' files compared with {base[:10]}."}
+
+
+def diff_args(changes: Dict[str, Any]) -> List[str]:
+    """git diff arguments for this ticket's own changes, from own_changes."""
+    paths = changes.get("paths")
+    if paths is None:
+        return [f"{changes['base']}..HEAD"]
+    return [f"{changes['base']}..HEAD", "--", *paths] if paths else [f"{changes['base']}..{changes['base']}"]
+
+
+def ui_findings(cell: Cell, changes: Dict[str, Any]) -> List[str]:
     """Added lines in interface files that hard-code styling instead of using the design system."""
-    diff = git(cell.work, "diff", "--unified=0", f"{baseline}..HEAD").stdout
+    diff = git(cell.work, "diff", "--unified=0", *diff_args(changes)).stdout
     findings: List[str] = []
     current = ""
     for line in diff.splitlines():
@@ -1172,9 +1295,10 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
         return 1
 
     baseline = cell.state["baseline"]
-    stat = git(cell.work, "diff", "--shortstat", f"{baseline}..HEAD").stdout.strip()
-    files = git(cell.work, "diff", "--name-only", f"{baseline}..HEAD").stdout.split()
-    styling = ui_findings(cell, baseline)
+    changes = own_changes(cell)
+    stat = git(cell.work, "diff", "--shortstat", *diff_args(changes)).stdout.strip()
+    files = [name for name in git(cell.work, "diff", "--name-only", *diff_args(changes)).stdout.splitlines() if name.strip()]
+    styling = ui_findings(cell, changes)
     report = {
         "ticket_id": cell.ticket_id, "slice_id": cell.info.get("slice_id"), "status": "BUILT", "finished_at": now(),
         "branch": cell.info.get("branch"), "baseline": baseline, "head": git(cell.work, "rev-parse", "HEAD").stdout.strip(),
@@ -1188,7 +1312,11 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
         "tests_passing_on_first_run": [t["id"] for t in cell.state["tasks"] if t.get("first_run") == "pass"],
         "tests_written_early": [t["id"] for t in cell.state["tasks"] if t.get("first_run") == "not-run"],
         "impls_already_done": sorted({d.get("task") for d in cell.state.get("deviations") or [] if d.get("type") == "impl-already-done" and d.get("task")}),
-        "deviations": cell.state.get("deviations", []), "files_changed": files, "diff": stat,
+        "deviations": cell.state.get("deviations", []), "files_changed": files, "diff": stat, "compared_with": changes["base"],
+        "main_merges": {"enabled": update_from_main_enabled(cell), "merges": cell.state.get("main_merges") or [],
+                        "note": "Each merge brought the main checkout's committed HEAD into the branch at the start of the build or of a revision. "
+                                "A merge is not a task: what it brought came from main, so it is not in files_changed or diff and was not "
+                                "scanned for secrets as this ticket's added lines." + (" " + changes["note"] if changes["note"] else "")},
         "test_files": cell.state.get("test_files", []), "styling_findings": styling,
         "timing": timing(cell, tests),
         "adrs": adrs_report(cell),
@@ -1244,19 +1372,38 @@ def cmd_revise(cell: Cell, args: argparse.Namespace) -> int:
         }, indent=2))
         return 1
     findings = None
+    if args.findings and not Path(args.findings).is_file():
+        raise BuildError(f"{Path(args.findings)}: findings file not found.", code="findings-missing")
+    # Bring the branch up to date with main before any revision work, so the revision is built, verified and reviewed on
+    # the code that is really there. A conflict refuses here and changes nothing: no round is used, no findings copied.
+    synced = bring_up_to_date(cell, "revise", loop, str(Path(args.findings).resolve()) if args.findings else None)
+    after_merge = None
+    if synced:
+        if cell.state.get("test_cmd"):
+            try:
+                ran = run_tests(cell)
+                synced["tests_after"] = {"passed": ran["passed"], "exit_code": ran["exit_code"], "seconds": ran["seconds"], "command": ran["command"]}
+                cell.state["suite"] = "green" if ran["passed"] else "red"
+                if not ran["passed"]:
+                    after_merge = (f"The test suite passed when this ticket was last built and fails now that {synced['main']} is merged in: the newer code on "
+                                   f"{synced['main']} and this ticket's work do not fit together yet. This revision must make the whole suite pass again.\n"
+                                   + ran["output_tail"][-800:])
+            except BuildError as exc:
+                synced["tests_after"] = {"passed": None, "not_run": str(exc)}
+        cell.state.setdefault("main_merges", []).append(synced)
     if args.findings:
         source = Path(args.findings)
-        if not source.is_file():
-            raise BuildError(f"{source}: findings file not found.", code="findings-missing")
         findings = cell.root / f"review-findings-{loop}.md"
         findings.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     cell.state["loop"] = loop
     cell.info["stage"] = "building"
     cell.save()
     cell.save_info()
-    telemetry(cell.root, "station.entered", "build", lambda: {"stage": "building", "revision": loop, "findings_copied": findings is not None})
+    telemetry(cell.root, "station.entered", "build", lambda: {"stage": "building", "revision": loop, "findings_copied": findings is not None,
+                                                             "synced_with_main": bool(synced)})
     print(json.dumps({
         "status": "REVISING", "loop": loop, "round": loop + 1, "rounds_left": limit - loop - 1, "findings": str(findings) if findings else None,
+        "synced_with_main": merge_note(synced), "suite": cell.state.get("suite"), "tests_after_merge": after_merge,
         "next": "Add one task per finding with 'add-task' (a [test] task first for any behavior that was wrong), then work them with red, green and done.",
     }, indent=2))
     return 0

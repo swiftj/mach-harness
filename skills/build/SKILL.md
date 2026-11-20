@@ -37,7 +37,10 @@ Run `BUILD start <ticket>`. It checks, and refuses with a reason if any fails:
 - the ticket is groomed: the cell's stage is `planned` and the spec has not changed since;
 - the cell is isolated on its own branch and has no stray changes;
 - a High-risk ticket whose plan proposes a new ADR has had it accepted by an engineer;
-- the tests pass in the cell before you touch anything.
+- the branch is up to date with the main checkout: if main has moved on, the station merges it in itself (one merge commit, reported under `synced_with_main`); if that merge conflicts or would change the slice spec, it changes nothing and refuses for a person;
+- the tests pass in the cell before you touch anything, on the merged result.
+
+`BUILD revise` brings the branch up to date the same way before the revision starts, and reports `tests_after_merge` if the suite fails only because of what main brought: the revision must make the whole suite pass again. No other step merges. What the merge brought is main's, not yours: the gates judge only what you change after it. Never merge, pull or resolve a conflict yourself; a conflict is a person's (`build.update_from_main: false` switches all of this off).
 
 If it says no test command is known, find the one the plan's Tasks section or the project documents and pass it with `--test-cmd`. Do not invent one. If the tests fail at the start only because the project has no test suite yet, and the audit gate is switched off or this is a hardening ticket, add `--no-baseline "<why>"`; it is recorded for the reviewers. If it says building has already started, the build is being resumed: go to step 3 and continue from `BUILD next`. If it refuses for any other reason, report the reason and stop: do not work around it.
 
