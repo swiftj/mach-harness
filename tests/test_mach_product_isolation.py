@@ -152,14 +152,17 @@ class NothingIsWiredInTest(unittest.TestCase):
     GIT_ALLOWED = {
         # reading
         "rev-parse", "check-ignore", "config", "remote", "symbolic-ref", "ls-tree", "show", "cat-file", "for-each-ref", "diff", "merge-base",
+        # M16 B: Shape's sizing lists the integration commits that added or changed a shipped slice's spec, to find what it changed. A read.
+        "rev-list",
         # (M11: no fetch, worktree, commit or push: a slice reaches the builders as an issue or a folder)
     }
 
     def test_studio_uses_only_the_git_and_gh_commands_it_is_meant_to(self):
         """Product Studio may read, fetch, build a contribution in its own temporary worktree and
         push that one branch. It may never rewrite history or move the product manager's checkout."""
-        sources = {name: (PRODUCT_SCRIPTS / name).read_text() for name in ("studio.py", "collab.py", "requests_in.py", "prd.py", "shape.py", "validate_brief.py")}
-        for name in ("studio.py", "requests_in.py", "prd.py", "shape.py", "validate_brief.py"):
+        sources = {name: (PRODUCT_SCRIPTS / name).read_text() for name in ("studio.py", "collab.py", "requests_in.py", "prd.py", "shape.py", "validate_brief.py",
+                                                                            "shape_route.py")}
+        for name in ("studio.py", "requests_in.py", "prd.py", "shape.py", "validate_brief.py", "shape_route.py"):
             imported = set()
             for node in ast.walk(ast.parse(sources[name])):
                 if isinstance(node, ast.Import):
@@ -209,6 +212,9 @@ class NothingIsWiredInTest(unittest.TestCase):
         self.assertFalse(re.findall(r"\b(?:git|git_bytes|gh|gh_json|gh_write)\(", validator))
         for word in ("collab", "issues", "handoff", "requests_in", "open(", "write_text", "unlink", "os.system"):
             self.assertNotIn(word, validator.split("def main(")[0], word)
+        # M16 B: sizing reads Git only to list what a shipped slice changed: these three reads and no other Git command.
+        route = sources["shape_route.py"]
+        self.assertEqual(set(re.findall(r"git\(\[\"([a-z-]+)\"", route)), {"rev-list", "rev-parse", "diff"})
 
     def test_studio_reaches_the_run_skill_only_for_the_compiler_and_it_only_reads_git(self):
         """M13 C: `epic current` loads the run skill's current.py and nothing else of the run skill. current.py, and the
@@ -296,6 +302,19 @@ class NothingIsWiredInTest(unittest.TestCase):
         for word in ("mach:ready", "mach:slice", "mach:request", "issues.close", "\"close\"", "\"delete\"", "\"lock\"", "transfer", "pin(", "push", "runner.json",
                      "ticket.py", "cell.py", "start_slice", "add_epic"):
             self.assertNotIn(word, shape_source, word)
+        # M16 B: Part B reaches GitHub only through Part A's comment_once, for the one look-back comment from its fixed template; it reads
+        # the hand-off's own record (load) and asks its channel who is signed in; it makes epics and draft slices only through Studio's own
+        # epic add and slice new (host.add_epic, host.start_slice, by way of prd.apply_map), and nothing in it reaches the Factory.
+        route = (PRODUCT_SCRIPTS / "shape_route.py").read_text()
+        self.assertFalse(re.findall(r"collab\.|\bissues\.|\b(?:gh|gh_json|gh_write|_gh_json|_gh_write)\(", route))
+        self.assertEqual(set(re.findall(r"\bshape\.(comment_once)\(", route)), {"comment_once"})
+        self.assertEqual(re.findall(r"text = rules\.([a-z_]+)\(", route), ["shape_lookback_comment"])
+        self.assertEqual(sorted(set(re.findall(r"\.handoff\(\)\.([a-z_]+)\(", route))), ["channel", "load"])
+        self.assertEqual(set(re.findall(r"\bhandoff\.([A-Za-z_]+)\(", route)), {"slice_view"})
+        self.assertEqual(set(re.findall(r"\bhost\.(add_epic|start_slice)\(", route)), {"add_epic", "start_slice"})
+        for word in ("mach:ready", "mach:slice", "mach:request", "\"close\"", "\"delete\"", "\"lock\"", "transfer", "pin(", "push", "runner.json",
+                     "ticket.py", "cell.py", "intake", "Factory(", "subprocess", "claude -p"):
+            self.assertNotIn(word, route, word)
         # M13 E: linking a slice or an epic to Jira reaches neither GitHub nor Jira; the key travels only in the fixed templates.
         for name in ("cmd_slice_link", "cmd_epic_link", "jira_key", "with_tracking", "effective_jira", "link_slice", "link_epic"):
             body = studio_source[studio_source.index(f"def {name}("):]
@@ -352,10 +371,11 @@ class NothingIsWiredInTest(unittest.TestCase):
                 self.assertNotIn(node.id, ("subprocess", "os", "socket"))
 
     def test_report_never_authorizes(self):
-        for name in ("product.py", "studio.py", "collab.py", "requests_in.py", "issues.py", "handoff.py", "prd.py", "jira_export.py", "shape.py", "validate_brief.py"):
+        for name in ("product.py", "studio.py", "collab.py", "requests_in.py", "issues.py", "handoff.py", "prd.py", "jira_export.py", "shape.py", "validate_brief.py",
+                     "shape_route.py"):
             source = (PRODUCT_SCRIPTS / name).read_text()
             self.assertNotIn('"factory_authorized": True', source)
-        for name in ("product.py", "studio.py", "prd.py", "jira_export.py", "shape.py"):
+        for name in ("product.py", "studio.py", "prd.py", "jira_export.py", "shape.py", "shape_route.py"):
             self.assertIn('"factory_authorized": False', (PRODUCT_SCRIPTS / name).read_text())
 
 

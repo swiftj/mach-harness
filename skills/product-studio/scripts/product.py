@@ -32,7 +32,10 @@ SHAPES = {
     "slice": ("schema_version", "slice_id", "project_id", "epic_id", "revision", "title", "status", "dependencies", "open_questions", "spec_path", "spec_sha256"),
 }
 # Fields an artifact may carry or leave out. A slice without them is byte-for-byte what it was before.
-OPTIONAL = {"slice": ("origin", "source", "tracking", "mocks"), "epic": ("tracking",)}
+OPTIONAL = {"slice": ("origin", "source", "tracking", "mocks", "serves"), "epic": ("tracking", "serves")}
+# The idea and its outcomes an epic or a slice made by Shape's `idea apply` serves (M16 B): identifiers only, never the brief.
+IDEA_RE = re.compile(r"^IDEA-[0-9]{3,}$")
+OUTCOME_RE = re.compile(r"^O-[1-9][0-9]{0,3}$")
 # A slice's design mocks (M14 C): up to four pictures by SHA-256, the same form as issue_rules.mock_problems, which stays authoritative.
 MOCK_KEYS = {"sha256", "format", "width", "height", "bytes", "for", "binding", "note"}
 SCENARIO_RE = re.compile(r"^AC-[0-9]{2,}$")
@@ -108,6 +111,14 @@ def _is_source(value: Any) -> bool:
             and all(isinstance(r, list) and len(r) == 2 and all(type(n) is int for n in r) and 1 <= r[0] <= r[1] for r in lines))
 
 
+def _is_serves(value: Any) -> bool:
+    if not (isinstance(value, dict) and set(value) == {"idea", "outcomes"} and isinstance(value["idea"], str) and IDEA_RE.fullmatch(value["idea"])):
+        return False
+    outcomes = value["outcomes"]
+    return (isinstance(outcomes, list) and 1 <= len(outcomes) <= 50 and all(isinstance(o, str) and OUTCOME_RE.fullmatch(o) for o in outcomes)
+            and outcomes == sorted(set(outcomes), key=lambda o: int(o[2:])))
+
+
 def _is_mocks(value: Any) -> bool:
     if not isinstance(value, list) or not 1 <= len(value) <= 4:
         return False
@@ -164,6 +175,8 @@ def _shape(kind: str, data: Dict[str, Any], location: str, errors: List[str]) ->
             _error(errors, location, "source must be {kind: prd, prd_id: PRD-NN, sha256, lines: [[first, last], ...], map_slice}")
         if "mocks" in data and not _is_mocks(data["mocks"]):
             _error(errors, location, "mocks must be 1 to 4 pictures in SHA-256 order, each {sha256, format: png or jpeg, width, height, bytes, for, binding, note}")
+    if "serves" in data and not _is_serves(data["serves"]):
+        _error(errors, location, "serves must be {idea: IDEA-NNN, outcomes: [O-N, ...] in order, each once}")
     if "tracking" in data and not (isinstance(data["tracking"], dict) and set(data["tracking"]) == {"jira"}
                                     and isinstance(data["tracking"]["jira"], str) and JIRA_RE.fullmatch(data["tracking"]["jira"])):
         _error(errors, location, "tracking must be {jira: a Jira issue key such as ABC-123}")

@@ -150,7 +150,7 @@ def sections_of(lines: Sequence[str], one_line: Callable[[str, int], str]) -> Li
 # ---- line ranges ----
 
 
-def parse_range(value: Any, line_count: int) -> Tuple[int, int]:
+def parse_range(value: Any, line_count: int, document: str = "the PRD") -> Tuple[int, int]:
     match = RANGE_RE.fullmatch(value) if isinstance(value, str) else None
     if not match:
         raise PrdError(f"'{value}' is not a line range such as 12-18 or 12.")
@@ -159,7 +159,7 @@ def parse_range(value: Any, line_count: int) -> Tuple[int, int]:
     if start < 1 or end < start:
         raise PrdError(f"'{value}' is not a line range: it must run forward from line 1 or later.")
     if end > line_count:
-        raise PrdError(f"lines {value} do not exist: the PRD has {line_count} lines.")
+        raise PrdError(f"lines {value} do not exist: {document} has {line_count} lines.")
     return start, end
 
 
@@ -194,9 +194,16 @@ def one_line_field(value: Any, limit: int, what: str, problems: List[str]) -> st
     return value.strip()
 
 
-def check_map(raw: Any, line_count: int, epics_here: Sequence[str], slices_here: Sequence[str]) -> Tuple[Dict[str, Any], List[str]]:
-    """The proposed map, checked whole. Every problem is listed; a map with any is not recorded."""
+def check_map(raw: Any, line_count: int, epics_here: Sequence[str], slices_here: Sequence[str], document: str = "the PRD",
+              extra: Sequence[str] = (), check_extra: Optional[Callable[[Dict[str, Any], str, List[str]], Dict[str, Any]]] = None
+              ) -> Tuple[Dict[str, Any], List[str]]:
+    """The proposed map, checked whole. Every problem is listed; a map with any is not recorded.
+
+    Shared with Shape (M16 B), whose slices also name the brief's outcomes they carry: `extra` names a slice's further
+    fields, `check_extra(item, key, problems)` checks them and returns what to keep, and `document` names what the
+    cited lines are lines of."""
     problems: List[str] = []
+    slice_fields = ("key", "title", "scope", "epic", "depends_on", "cites", *extra)
     if not isinstance(raw, dict) or set(raw) - {"epics", "slices"}:
         return {}, ["The map must be a JSON object with 'epics' (new epics, may be empty) and 'slices', and nothing else."]
     epics_in, slices_in = raw.get("epics", []), raw.get("slices")
@@ -228,8 +235,8 @@ def check_map(raw: Any, line_count: int, epics_here: Sequence[str], slices_here:
     slices: List[Dict[str, Any]] = []
     for index, item in enumerate(slices_in, start=1):
         where = f"slice {index}"
-        if not isinstance(item, dict) or set(item) - {"key", "title", "scope", "epic", "depends_on", "cites"}:
-            problems.append(f"{where}: a slice has 'key', 'title', 'scope', 'epic', 'depends_on' and 'cites', and nothing else.")
+        if not isinstance(item, dict) or set(item) - set(slice_fields):
+            problems.append(f"{where}: a slice has " + ", ".join(f"'{name}'" for name in slice_fields[:-1]) + f" and '{slice_fields[-1]}', and nothing else.")
             continue
         key = item.get("key")
         if not isinstance(key, str) or not MAP_KEY_RE.fullmatch(key) or ID_LIKE_RE.fullmatch(key):
@@ -251,14 +258,15 @@ def check_map(raw: Any, line_count: int, epics_here: Sequence[str], slices_here:
         cites_in = item.get("cites")
         cites: List[List[int]] = []
         if not isinstance(cites_in, list) or not cites_in or len(cites_in) > MAX_CITES:
-            problems.append(f"slice {key}: it must cite between 1 and {MAX_CITES} line ranges of the PRD it rests on.")
+            problems.append(f"slice {key}: it must cite between 1 and {MAX_CITES} line ranges of {document} it rests on.")
         else:
             for value in cites_in:
                 try:
-                    cites.append(list(parse_range(value, line_count)))
+                    cites.append(list(parse_range(value, line_count, document)))
                 except PrdError as exc:
                     problems.append(f"slice {key}: {exc}")
-        slices.append({"key": key, "title": title, "scope": scope, "epic": epic, "depends_on": list(depends), "cites": merge(cites)})
+        kept = check_extra(item, key, problems) if check_extra else {}
+        slices.append({"key": key, "title": title, "scope": scope, "epic": epic, "depends_on": list(depends), "cites": merge(cites), **kept})
     order = {item["key"]: index for index, item in enumerate(slices)}
     graph = {item["key"]: [d for d in item["depends_on"] if d in order] for item in slices}
     cycle = cycle_of(graph)
@@ -750,9 +758,6 @@ def cmd_apply(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str, Any
     prds = Prds(host, studio)
     meta = prds.meta(args.prd_id)
     prds.intact(meta)
-    made: Dict[str, List[str]] = {"epics": [], "slices": []}
-    kept: Dict[str, List[str]] = {"epics": [], "slices": []}
-    missing: List[str] = []
     with prds.held(prds.map_path(args.prd_id)):
         record = prds.map(args.prd_id)
         if record is None:
@@ -765,58 +770,18 @@ def cmd_apply(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str, Any
                            f"and the product manager has not settled ({', '.join(str(n) for n in waiting)}). Settle each first (prd settle).",
                            app=f"Nothing was made: {len(waiting)} section{'s' if len(waiting) != 1 else ''} of {args.prd_id} no slice cites "
                                f"and you have not settled ({', '.join(str(n) for n in waiting)}). Settle each first.")
-        applied = record.setdefault("applied", {"epics": {}, "slices": {}})
-        epics_here = studio.all("epic")
-        for epic in record["epics"]:
-            known = applied["epics"].get(epic["key"])
-            if isinstance(known, str) and known in epics_here:
-                kept["epics"].append(known)
-                continue
-            if known == "trying":  # made, but the record of it was lost: take the one epic with that title
-                same = [eid for eid, data in epics_here.items() if data.get("title") == epic["title"]]
-                if len(same) == 1:
-                    applied["epics"][epic["key"]] = same[0]
-                    prds.save(prds.map_path(args.prd_id), record)
-                    kept["epics"].append(same[0])
-                    continue
-            applied["epics"][epic["key"]] = "trying"
-            prds.save(prds.map_path(args.prd_id), record)
-            data = host.add_epic(studio, epic["title"], epic["criteria"])
-            applied["epics"][epic["key"]] = data["epic_id"]
-            prds.save(prds.map_path(args.prd_id), record)
-            made["epics"].append(data["epic_id"])
-            epics_here = studio.all("epic")
-        first: Optional[str] = None
-        for item in record["slices"]:
-            slices_here = studio.all("slice")
-            known = applied["slices"].get(item["key"])
-            if not (isinstance(known, str) and known in slices_here):
-                known = next((sid for sid, work in sorted(slices_here.items()) if (work.get("source") or {}).get("prd_id") == args.prd_id
-                              and (work.get("source") or {}).get("map_slice") == item["key"]), None)
-                if known is None and applied["slices"].get(item["key"]):
-                    missing.append(item["key"])  # made once and since removed: never made again
-                    continue
-                if known is not None:
-                    applied["slices"][item["key"]] = known
-                    prds.save(prds.map_path(args.prd_id), record)
-            if known is not None:
-                kept["slices"].append(known)
-                continue
-            epic_id = applied["epics"].get(item["epic"], item["epic"])
-            depends = []
-            for dependency in item["depends_on"]:
-                resolved = applied["slices"].get(dependency, dependency)
-                if not SLICE_ID_RE.fullmatch(str(resolved)):
-                    raise PrdError(f"Slice {item['key']} depends on {dependency}, which was not made. Nothing more was made; the slices made so far are kept.")
-                depends.append(resolved)
+
+        def made_before(item: Dict[str, Any], slices_here: Dict[str, Dict[str, Any]]) -> Optional[str]:
+            return next((sid for sid, work in sorted(slices_here.items()) if (work.get("source") or {}).get("prd_id") == args.prd_id
+                         and (work.get("source") or {}).get("map_slice") == item["key"]), None)
+
+        def new_slice(item: Dict[str, Any], epic_id: str, depends: List[str]) -> str:
             lines = effective_cites(record, meta["sections"], item["key"])
             source = {"kind": "prd", "prd_id": args.prd_id, "sha256": meta["sha256"], "lines": lines, "map_slice": item["key"]}
-            started = host.start_slice(studio, epic_id, item["title"], depends, None, None, source)
-            slice_id = started["slice"]["slice_id"]
-            applied["slices"][item["key"]] = slice_id
-            prds.save(prds.map_path(args.prd_id), record)
-            made["slices"].append(slice_id)
-            first = first or slice_id
+            return host.start_slice(studio, epic_id, item["title"], depends, None, None, source)["slice"]["slice_id"]
+
+        made, kept, missing, first = apply_map(studio, record, lambda: prds.save(prds.map_path(args.prd_id), record),
+                                               lambda epic: host.add_epic(studio, epic["title"], epic["criteria"]), new_slice, made_before)
     if first:
         session = studio.session()
         session["current_slice"] = first
@@ -829,6 +794,68 @@ def cmd_apply(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str, Any
                   + (f" Not made again, because they were removed after being made: {', '.join(missing)}." if missing else "")
                   + " Nothing is approved, sent or started; each slice is confirmed with the product manager when it is resumed.")
     return report
+
+
+def apply_map(studio: Any, record: Dict[str, Any], save: Callable[[], None], new_epic: Callable[[Dict[str, Any]], Dict[str, Any]],
+              new_slice: Callable[[Dict[str, Any], str, List[str]], str],
+              made_before: Callable[[Dict[str, Any], Dict[str, Dict[str, Any]]], Optional[str]]
+              ) -> Tuple[Dict[str, List[str]], Dict[str, List[str]], List[str], Optional[str]]:
+    """Make what a map names, in map order, recording each thing in record["applied"] (and saving) as soon as it exists,
+    so running it again makes nothing twice. Shared by `prd apply` and Shape's `idea apply` (M16 B): `new_epic` and
+    `new_slice` make one through Studio's own code paths, and `made_before` finds a slice an earlier run made whose record
+    was lost. Returns (made, kept, missing, the first slice made)."""
+    made: Dict[str, List[str]] = {"epics": [], "slices": []}
+    kept: Dict[str, List[str]] = {"epics": [], "slices": []}
+    missing: List[str] = []
+    applied = record.setdefault("applied", {"epics": {}, "slices": {}})
+    epics_here = studio.all("epic")
+    for epic in record["epics"]:
+        known = applied["epics"].get(epic["key"])
+        if isinstance(known, str) and known in epics_here:
+            kept["epics"].append(known)
+            continue
+        if known == "trying":  # made, but the record of it was lost: take the one epic with that title
+            same = [eid for eid, data in epics_here.items() if data.get("title") == epic["title"]]
+            if len(same) == 1:
+                applied["epics"][epic["key"]] = same[0]
+                save()
+                kept["epics"].append(same[0])
+                continue
+        applied["epics"][epic["key"]] = "trying"
+        save()
+        data = new_epic(epic)
+        applied["epics"][epic["key"]] = data["epic_id"]
+        save()
+        made["epics"].append(data["epic_id"])
+        epics_here = studio.all("epic")
+    first: Optional[str] = None
+    for item in record["slices"]:
+        slices_here = studio.all("slice")
+        known = applied["slices"].get(item["key"])
+        if not (isinstance(known, str) and known in slices_here):
+            known = made_before(item, slices_here)
+            if known is None and applied["slices"].get(item["key"]):
+                missing.append(item["key"])  # made once and since removed: never made again
+                continue
+            if known is not None:
+                applied["slices"][item["key"]] = known
+                save()
+        if known is not None:
+            kept["slices"].append(known)
+            continue
+        epic_id = applied["epics"].get(item["epic"], item["epic"])
+        depends = []
+        for dependency in item["depends_on"]:
+            resolved = applied["slices"].get(dependency, dependency)
+            if not SLICE_ID_RE.fullmatch(str(resolved)):
+                raise PrdError(f"Slice {item['key']} depends on {dependency}, which was not made. Nothing more was made; the slices made so far are kept.")
+            depends.append(resolved)
+        slice_id = new_slice(item, epic_id, depends)
+        applied["slices"][item["key"]] = slice_id
+        save()
+        made["slices"].append(slice_id)
+        first = first or slice_id
+    return made, kept, missing, first
 
 
 def source_of(studio: Any, slice_id: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:

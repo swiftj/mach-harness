@@ -61,7 +61,7 @@ POLICY_RE = re.compile(r"^POL-[a-z][a-z0-9]*(?:-[a-z][a-z0-9]*)*(?:-[0-9]{2,})?$
 
 SCHEMA_VERSION = 1
 STAGES = ("new", "exploring", "brief", "decided", "shaped")
-SOURCE_KINDS = ("typed", "idea", "request", "fault")
+SOURCE_KINDS = ("typed", "idea", "request", "fault", "change")  # change: Part B's `idea change`, from one shipped rule
 VERDICTS = ("go", "not-now", "no")
 ROUTES = ("one-slice", "epic", "several-epics")
 OUTCOME_RESULTS = ("met", "not-met", "too-early")
@@ -112,7 +112,7 @@ def source_problems(source: Any, rules: Any) -> List[str]:
         return ["source is {kind: typed|idea|request|fault, ...}"]
     kind = source["kind"]
     allowed = {"typed": {"kind"}, "idea": {"kind", "repository", "number"}, "request": {"kind", "repository", "number"},
-               "fault": {"kind", "ticket"}}[kind]
+               "fault": {"kind", "ticket"}, "change": {"kind", "rule"}}[kind]
     problems = [f"source has an unexpected field {key}" for key in sorted(set(source) - allowed)]
     if kind in ("idea", "request"):
         if type(source.get("number")) is not int or not 1 <= source["number"] < 10 ** 9:
@@ -122,6 +122,8 @@ def source_problems(source: Any, rules: Any) -> List[str]:
             problems.append("source.repository is OWNER/REPO")
     if kind == "fault" and not FAULT_RE.fullmatch(str(source.get("ticket") or "")):
         problems.append("source.ticket is a fault ticket's ID, such as AUTO-20261120T101500Z")
+    if kind == "change" and not SHIPPED_RULE_RE.fullmatch(str(source.get("rule") or "")):
+        problems.append("source.rule is a shipped rule's ID, such as SLICE-007/INV-01")
     return problems
 
 
@@ -148,7 +150,7 @@ def route_problems(route: Any) -> List[str]:
     """Part B's `route`: checked for shape only."""
     if not isinstance(route, dict):
         return ["route is an object"]
-    problems = [f"route has an unexpected field {key}" for key in sorted(set(route) - {"route", "counted", "why", "at", "revision"})]
+    problems = [f"route has an unexpected field {key}" for key in sorted(set(route) - {"route", "counted", "why", "at", "revision", "brief_sha256"})]
     if route.get("route") not in ROUTES:
         problems.append("route.route is one-slice, epic or several-epics")
     if not isinstance(route.get("counted"), dict):
@@ -157,6 +159,8 @@ def route_problems(route: Any) -> List[str]:
         problems.append("route.why is one sentence")
     if not _is_time(route.get("at")):
         problems.append("route.at is a date-time")
+    if route.get("brief_sha256") is not None and not HEX_RE.fullmatch(str(route["brief_sha256"])):
+        problems.append("route.brief_sha256 is the SHA-256 of the brief it was sized on")
     return problems
 
 
@@ -272,6 +276,10 @@ class Ideas:
 
     def lookups_path(self, idea_id: str) -> Path:
         return self.root / f"{self.check_id(idea_id)}.lookups.json"
+
+    def map_path(self, idea_id: str) -> Path:
+        """Part B's map of the work an idea becomes (shape_route.py)."""
+        return self.root / f"{self.check_id(idea_id)}.map.json"
 
     # -- records --
 
@@ -582,7 +590,11 @@ def source_view(ideas: Ideas, source: Dict[str, Any]) -> Dict[str, Any]:
     rules = ideas.host.ticket_rules()
     kind = source.get("kind")
     view: Dict[str, Any] = {"kind": kind, "words": {"typed": "Typed by the product manager", "idea": "Filed in the idea template",
-                                                      "request": "From a request", "fault": "A fault from production"}.get(kind, kind)}
+                                                      "request": "From a request", "fault": "A fault from production",
+                                                      "change": "A change to a rule that has shipped"}.get(kind, kind)}
+    if kind == "change":
+        view["rule"] = source["rule"]
+        return view
     if kind in ("idea", "request"):
         number = source["number"]
         data = ideas.studio.requests().load()
@@ -718,6 +730,10 @@ def lookups_view(ideas: Ideas, idea_id: str) -> Optional[Dict[str, Any]]:
 
 # ---- what an idea needs next ----
 
+# Part B's next steps after a Go (sizing, the map, applying it, looking back): shape_route sets this when it is loaded, so
+# Studio without Part B reads as before. Called as LATER(ideas, record, github) and gives {"kind", "sentence"} or None.
+LATER: Optional[Callable[[Any, Dict[str, Any], Dict[str, Any]], Optional[Dict[str, str]]]] = None
+
 
 def next_step(ideas: Ideas, record: Dict[str, Any], github: Dict[str, Any]) -> Dict[str, str]:
     """One sentence for the terminal (ending in the command) and one for the app. Never a recommended verdict."""
@@ -736,7 +752,11 @@ def next_step(ideas: Ideas, record: Dict[str, Any], github: Dict[str, Any]) -> D
         return step("renumber", host.say(f"Another idea on GitHub already uses {idea_id}: give yours the next free number (idea renumber {idea_id}).",
                     f"Another idea on GitHub already uses {idea_id}. Give yours the next free number."))
     if record["stage"] == "shaped":
-        return step("none", host.say(f"{idea_id} is shaped into work. Nothing waits here.", f"{idea_id} is shaped into work. Nothing waits here."))
+        if github.get("saved") == "github" and not github.get("up_to_date"):
+            return step("publish", host.say(f"{idea_id} is shaped into work: publish it again so its issue says so (idea publish {idea_id}).",
+                        f"{idea_id} is shaped into work. Save it again so its issue says so."))
+        later = LATER(ideas, record, github) if LATER else None
+        return later or step("none", host.say(f"{idea_id} is shaped into work. Nothing waits here.", f"{idea_id} is shaped into work. Nothing waits here."))
     if record["stage"] == "new" and text is None:
         return step("explore", host.say(f"Explore {idea_id}: open questions, one at a time (idea stage {idea_id} exploring).",
                     f"Explore {idea_id}: open questions, one at a time."))
@@ -758,7 +778,8 @@ def next_step(ideas: Ideas, record: Dict[str, Any], github: Dict[str, Any]) -> D
         return step("publish", host.say(f"Save {idea_id} as a GitHub issue so others can read the brief and the verdict (idea publish {idea_id}).",
                     f"Save {idea_id} as a GitHub issue so others can read the brief and the verdict."))
     if view["decision"] == "go":
-        return step("size", host.say(f"{idea_id} has a Go verdict. Sizing and routing it comes next.", f"{idea_id} has a Go verdict. Sizing and routing it comes next."))
+        later = LATER(ideas, record, github) if LATER else None
+        return later or step("size", host.say(f"{idea_id} has a Go verdict. Sizing and routing it comes next.", f"{idea_id} has a Go verdict. Sizing and routing it comes next."))
     return step("none", host.say(f"{idea_id} is decided ({view['decision']}). It stays findable with its reason.",
                 f"{idea_id} is decided. It stays findable with its reason."))
 
@@ -1068,7 +1089,7 @@ def row_of(ideas: Ideas, ledger: Dict[str, Any], record: Dict[str, Any]) -> Dict
     view = verdict_view(record, brief_sha)
     source = record["source"]
     return {"idea_id": record["idea_id"], "title": record["title"], "stage": record["stage"], "stage_words": STAGE_WORDS[record["stage"]],
-            "source": {key: source[key] for key in source if key in ("kind", "number", "ticket")},
+            "source": {key: source[key] for key in source if key in ("kind", "number", "ticket", "rule")},
             "created": record["created"], "revision": record["revision"], "has_brief": text is not None,
             "brief_checked": bool(text is not None and (record.get("brief") or {}).get("sha256") == brief_sha),
             "brief_passes": bool(text is not None and (record.get("brief") or {}).get("sha256") == brief_sha and (record.get("brief") or {}).get("passes")),
@@ -1274,8 +1295,11 @@ def cmd_idea_renumber(host: Any, studio: Any, args: argparse.Namespace) -> Dict[
         raise ShapeError(f"{old} is already saved, so its number stays.")
     with ideas.held(old):
         record = ideas.load(old)
+        if record.get("made") or record["stage"] == "shaped":
+            raise ShapeError(f"{old} is shaped into work, and its epics and slices name it, so its number stays.")
         new = ideas.next_id()
-        moves = [(ideas.brief_path(old), ideas.brief_path(new)), (ideas.case_path(old), ideas.case_path(new)), (ideas.lookups_path(old), ideas.lookups_path(new))]
+        moves = [(ideas.brief_path(old), ideas.brief_path(new)), (ideas.case_path(old), ideas.case_path(new)), (ideas.lookups_path(old), ideas.lookups_path(new)),
+                 (ideas.map_path(old), ideas.map_path(new))]
         for source, target in moves:
             if source.is_file() and not source.is_symlink():
                 text = source.read_text(encoding="utf-8")
