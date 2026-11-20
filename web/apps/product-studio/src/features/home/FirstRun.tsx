@@ -5,7 +5,7 @@ import { Button, Heading, Page, Spinner, Text } from "@mach/ui";
 const steps = [
   { title: "Say what the product is for", body: "A name, a one-sentence vision, and the outcomes people should get from it." },
   { title: "Name the larger capabilities", body: "Epics, such as “Team membership”, each with a few criteria for when it is done." },
-  { title: "Define one slice at a time", body: "A guided interview turns an idea into a specification the builders can build without asking you more." },
+  { title: "Define one slice of intent at a time", body: "A guided interview turns an idea into a specification the builders can build without asking you more." },
 ];
 
 /** An empty project: what Product Studio is for, and the one action that starts it. */

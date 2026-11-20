@@ -268,7 +268,7 @@
         "kind": "start_slice",
         "target": null,
         "title": "Start a new slice",
-        "reason": "No slice is being defined right now.",
+        "reason": "No slice of intent is being defined right now.",
         "related": []
       }
     ]

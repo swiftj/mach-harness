@@ -72,7 +72,7 @@ Change it later with `STUDIO project set` (`--name`, `--vision`, `--outcome` rep
 
 ## Epics
 
-An epic is a larger capability that several slices deliver, with acceptance criteria that say when the whole capability is done. It is a container for slices and is never approved: a slice is approved on its own, when it is marked ready.
+An epic is a larger capability that several slices of intent deliver, with acceptance criteria that say when the whole capability is done. It is a container for slices and is never approved: a slice is approved on its own, when it is marked ready.
 
 - `STUDIO epic add --title "<title>" --criterion "<criterion>"` (repeat `--criterion`). It is `open`.
 - `STUDIO epic set <EPIC-ID>` changes the title or criteria; `--status deferred` sets it aside and `--status open` brings it back.
@@ -84,7 +84,7 @@ Do not interview an epic in depth. Its slices carry the detail; the epic needs a
 
 ## Slices
 
-A slice is one complete, verifiable business outcome for one kind of user: thin enough to build and check in one go.
+A slice of intent is one complete, verifiable business outcome for one kind of user: thin enough to build and check in one go.
 
 ### Starting or continuing
 

@@ -58,6 +58,7 @@ async function axe(page) {
 }
 
 const home = (page) => page.getByRole("heading", { level: 1, name: "Team Space" });
+const SIGN_IN_NOTE = "An issue in a private repository opens only in a browser signed in to GitHub with access to it.";
 
 test("the project home: name, vision, the row of links first, carry on, epics with their slices", async () => {
   const watched = await open("/");
@@ -254,6 +255,22 @@ test("each epic lists its slices in the engine's order, and Move up / Move down 
     await clean(unfinished);
   } finally {
     await unfinished.context.close();
+  }
+});
+
+test("On GitHub: one line says a private repository's issue opens only when signed in, once, not beside each link", async () => {
+  const watched = await open("/github", "fixture=status.on-github");
+  const { page } = watched;
+  try {
+    const main = page.getByRole("main");
+    const where = main.getByRole("region", { name: "The project and its epics" });
+    await where.getByText("Saved in the repository", { exact: false }).waitFor();
+    assert.equal(await main.getByText(SIGN_IN_NOTE, { exact: true }).count(), 1, "said once on the screen");
+    assert.equal(await where.getByText(SIGN_IN_NOTE, { exact: true }).count(), 1, "under the repository it names");
+    assert.ok((await main.getByRole("link", { name: /^#\d+/ }).count()) > 1, "the screen holds several issue links");
+    await clean(watched);
+  } finally {
+    await watched.context.close();
   }
 });
 
@@ -486,6 +503,8 @@ test("when nothing is open, the interview offers to mark it ready, confirmed in 
     const done = page.getByRole("dialog", { name: "SLICE-001 is ready to build" });
     await done.getByText("Saved to GitHub as #3 and marked ready.", { exact: false }).waitFor();
     assert.equal(await done.getByRole("link", { name: /^#3/ }).getAttribute("href"), "https://github.com/acme/team-space/issues/3");
+    // One quiet line under the link: a private repository's issue needs a browser signed in to GitHub. Said once.
+    assert.equal(await done.getByText(SIGN_IN_NOTE, { exact: true }).count(), 1, "the sign-in note is under the issue link, once");
     assert.deepEqual(await axe(page), []);
     await done.getByRole("button", { name: "Done" }).click();
     await home(page).waitFor();
@@ -604,6 +623,58 @@ test("what the latest write added to the slice is marked, in words", async () =>
     await added.getByText("New", { exact: true }).waitFor({ timeout: 30000 });
     const kept = doc.getByRole("listitem").filter({ hasText: "FR-01" }).first();
     assert.equal(await kept.getByText("New", { exact: true }).count(), 0, "a statement that was already there is not marked");
+    await clean(watched);
+  } finally {
+    await watched.context.close();
+  }
+});
+
+test("the summary to confirm takes focus, says Y writes it up, and Y does so only when it should", async () => {
+  const watched = await open("/slices/SLICE-002/interview", "speed=fast");
+  const { page } = watched;
+  try {
+    await page.getByRole("button", { name: /^(Start|Continue) the interview$/ }).click();
+    const ask = page.getByRole("region", { name: "Interview" });
+    const waiting = page.getByRole("status").filter({ hasText: "Waiting for you" });
+    const writeUp = ask.getByRole("button", { name: "Yes, write it up" });
+    // Answer each turn of the scripted interview until the summary to confirm arrives.
+    for (let turn = 0; turn < 10 && !(await writeUp.count()); turn++) {
+      await waiting.waitFor({ timeout: 30000 });
+      if (await writeUp.count()) break;
+      const accept = ask.getByRole("button", { name: "Yes, accept" });
+      if (await accept.count()) await accept.click();
+      else {
+        await ask.getByRole("textbox", { name: "Your reply" }).fill("yes");
+        await ask.getByRole("button", { name: "Send reply" }).click();
+      }
+      await waiting.waitFor({ state: "detached", timeout: 10000 }).catch(() => {});
+    }
+    await writeUp.waitFor({ timeout: 30000 });
+
+    // Focus lands on the summary, a region named for what it is; its hint is read inside it, as a question's is.
+    const summary = ask.getByRole("region", { name: "Summary to confirm" });
+    await summary.waitFor();
+    assert.ok(await summary.evaluate((el) => el === document.activeElement), "the summary has focus when it arrives");
+    assert.match(await summary.innerText(), /Y\s*writes it up/, "the hint sits with the button");
+    assert.equal(await summary.locator("kbd").innerText(), "Y");
+
+    // Typing in the reply box is typing: Y goes into the text and nothing is sent.
+    const box = ask.getByRole("textbox", { name: "Or say what is missing or needs refining" });
+    await box.click();
+    await page.keyboard.press("y");
+    assert.equal(await box.inputValue(), "y");
+    await box.fill("");
+    // With a modifier held, Y is not the shortcut.
+    await summary.focus();
+    for (const chord of ["Control+y", "Meta+y", "Alt+y"]) await page.keyboard.press(chord);
+    await settle(page, 300);
+    assert.equal(await writeUp.count(), 1, "nothing was sent by Y in the text box or with a modifier");
+    await waiting.waitFor();
+
+    // Y alone, with the summary focused, confirms it: the interviewer goes on to write it up.
+    await summary.focus();
+    await page.keyboard.press("y");
+    await writeUp.waitFor({ state: "detached", timeout: 5000 });
     await clean(watched);
   } finally {
     await watched.context.close();

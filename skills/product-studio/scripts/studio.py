@@ -534,7 +534,7 @@ def next_actions(project, epics, slice_rows) -> List[Dict[str, Any]]:
             "Define the project: its name, vision and outcomes (project init).")
         return actions
     if not epics:
-        act("add_epic", None, "Add the first epic", "An epic is a larger capability that several slices deliver.",
+        act("add_epic", None, "Add the first epic", "An epic is a larger capability that several slices of intent deliver.",
             "Add the first epic (epic add).")
         return actions
     for row in slice_rows:
@@ -562,7 +562,7 @@ def next_actions(project, epics, slice_rows) -> List[Dict[str, Any]]:
             act("mark_ready", sid, f"Mark {sid} ready again", f"{row['title']} was changed on GitHub after you approved it, so the builders will not take it.",
                 f"{sid} was changed on GitHub after you approved it: mark it ready again to put your approved version back (slice ready {sid}).")
     if not any(row["status"] in EDITABLE_SLICE for row in slice_rows):
-        act("start_slice", None, "Start a new slice", "No slice is being defined right now.",
+        act("start_slice", None, "Start a new slice", "No slice of intent is being defined right now.",
             "Start a new slice (slice new --epic EPIC-NNN --title \"...\").")
     return actions
 

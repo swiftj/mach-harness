@@ -56,7 +56,7 @@ export function RoadmapScreen() {
           headingLevel={1}
           icon={<Network />}
           title="No roadmap yet"
-          description="The roadmap shows the project, its epics and their slices. Define the project first."
+          description="The roadmap shows the project, its epics and their slices of intent. Define the project first."
           action={
             <Button variant="primary" asChild>
               <Link to="/vision">Define the project</Link>
@@ -94,7 +94,7 @@ function Roadmap({ status }: { status: Status }) {
       <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
         <div className="flex max-w-reading flex-col gap-1">
           <Heading level={1}>Roadmap</Heading>
-          <Text tone="muted">Everything in {status.project!.name}, from the project to its slices. Select an item to see where it stands and what you can do.</Text>
+          <Text tone="muted">Everything in {status.project!.name}, from the project to its slices of intent. Select an item to see where it stands and what you can do.</Text>
         </div>
         <Button variant="primary" onClick={() => setNewSlice({ epicId: epicFilter === "all" ? null : epicFilter })} disabled={!status.epics.length}>
           <Plus aria-hidden="true" />
@@ -171,7 +171,7 @@ function Roadmap({ status }: { status: Status }) {
       {!status.epics.length ? (
         <EmptyState
           title="No epics yet"
-          description="Add the larger capabilities of the product first; their slices then appear here."
+          description="Add the larger capabilities of the product first; their slices of intent then appear here."
           action={
             <Button variant="primary" asChild>
               <Link to="/vision" state={{ focus: "epics" }}>

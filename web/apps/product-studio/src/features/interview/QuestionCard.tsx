@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { Check, HelpCircle, Send } from "lucide-react";
 import { Button, Field, Kbd, RichText, Text, Textarea } from "@mach/ui";
 import { answerText, type AnswerKind } from "./model";
+import { shortcutKey } from "./shortcuts";
 import { type ParsedQuestion } from "@mach/ui/api";
 
 export interface QuestionCardProps {
@@ -38,9 +39,7 @@ export function QuestionCard({ question, onAnswer, busy }: QuestionCardProps) {
   };
 
   const shortcuts = (event: KeyboardEvent<HTMLElement>) => {
-    const target = event.target as HTMLElement;
-    if (event.metaKey || event.ctrlKey || event.altKey || target.closest("textarea, input")) return;
-    const key = event.key.toLowerCase();
+    const key = shortcutKey(event);
     if (key === "y") {
       event.preventDefault();
       accept();
