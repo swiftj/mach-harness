@@ -592,13 +592,14 @@ class AppWordingTest(Base):
                 self.assertIsNone(self.BANNED.search(words), f"{name}:{node.lineno}: {words}")
 
     # A terminal command, option, script or quoted command in text a person reads.
-    COMMAND = re.compile(r"\((principle|policy|prd|jira|reconcile|slice|epic) [a-z]|\b(principle (add|set|retire|publish|list)|policy (accept|list)"
+    COMMAND = re.compile(r"\((principle|policy|prd|jira|reconcile|slice|epic|idea|brief|case|verdict) [a-z]|\b(principle (add|set|retire|publish|list)|policy (accept|list)"
                          r"|reconcile principles|prd (import|list|show|map|settle|status|apply|draft|confirm)|jira (export|keys)"
-                         r"|(slice|epic) (link|mock|current))\b|--[a-z]|\b(studio|run|cell)\.py\b|`[a-z]+ [a-z]+")
+                         r"|(slice|epic) (link|mock|current)|idea (add|list|show|stage|lookups|publish|renumber)|brief (check|show)|case (show|check)"
+                         r"|verdict record)\b|--[a-z]|\b(studio|run|cell)\.py\b|`[a-z]+ [a-z]+")
     # The M13 and M14 commands (principle, policy, prd, jira, slice link, epic link, slice mock, epic current): whole modules, and
     # studio.py's and handoff.py's functions behind them.
     NEW_COMMANDS = {
-        "prd.py": None, "mocks.py": None, "jira_export.py": None,
+        "prd.py": None, "mocks.py": None, "jira_export.py": None, "shape.py": None, "validate_brief.py": None,  # M16 A: Shape
         "handoff.py": {"publish_principles"},
         "studio.py": {"principle_flags", "principles_status", "saved_state", "cmd_epic_current", "jira_key", "effective_jira", "link_slice", "link_epic",
                       "cmd_slice_link", "cmd_epic_link", "principles_field", "policies_field", "policies_changed", "cmd_policy_list", "cmd_policy_accept",

@@ -90,6 +90,7 @@ ENGINEER = "engineer"  # the only caller that may dispatch without an authorizat
 IGNORE_LINE = ".factory/intake/"
 READY_DIR = "product/ready"
 PRINCIPLES_FOLDER = "PRINCIPLES"  # product/ready/PRINCIPLES/: the published product principles (M13), never a slice
+IDEAS_FOLDER = "IDEAS"  # product/ready/IDEAS/: Shape's ideas and briefs (M16), never read
 SLICE_ID_RE = re.compile(r"^SLICE-[0-9]{3,}$")
 FOLDER_KEYS = {"schema_version", "slice_id", "title", "revision", "epic", "dependencies", "spec_sha256", "why_sha256"}
 # The header MACH writes under a spec's title when it commits the spec on the ticket's branch (decision 2).
@@ -644,6 +645,8 @@ class Factory:
         folders: Dict[str, Dict[str, bytes]] = {}
         for path in listing:
             parts = path.split("/")
+            if len(parts) > 3 and parts[2] == IDEAS_FOLDER:
+                continue  # M16: Shape's ideas and briefs, for people; never read by the Factory
             if len(parts) == 5 and parts[3] == "mocks":  # M14 C: a slice's design mocks; for a slice saved as an issue, the folder holds only these
                 data = self.git_bytes("show", f"{commit}:{path}")
                 found["mock_files"].setdefault("/".join(parts[:3]), {})[parts[4]] = data if data is not None else b""

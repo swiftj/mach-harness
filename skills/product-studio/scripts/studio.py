@@ -41,6 +41,7 @@ import mocks  # noqa: E402
 import prd  # noqa: E402
 import product  # noqa: E402
 import requests_in  # noqa: E402
+import shape  # noqa: E402
 
 
 class StudioError(Exception):
@@ -658,6 +659,7 @@ def describe(studio: Studio) -> Dict[str, Any]:
         "last_refreshed": session.get("refreshed_at"),
         **github_updates_waiting(studio),
         **prd.status_field(sys.modules[__name__], studio),  # M13 D: imported PRDs; nothing when there are none
+        **shape.status_field(sys.modules[__name__], studio),  # M16 A: ideas by stage; nothing when there are none
         "structurally_valid": structural["valid"] if structural else None,
         "structural_errors": structural["errors"] if structural else [],
         "factory_authorized": False,
@@ -697,6 +699,7 @@ def saved_state(studio: Studio, ledger: Dict[str, Any], slices: Dict[str, Dict[s
         else:
             waiting.append({"kind": "principles_unpublished", "target": None,
                             "text": "The product principles have changes that are not published. Publish them so the builders get them."})
+    waiting += shape.not_saved(sys.modules[__name__], studio)  # M16 A: an idea's save to GitHub unfinished, or changed since
     problem = (ledger.get("seen") or {}).get("problem")
     if problem:
         waiting.append({"kind": "refresh_failed", "target": None, "text": f"The last check of GitHub did not finish: {problem}"})
@@ -1789,6 +1792,7 @@ def cmd_refresh(studio: Studio, args: argparse.Namespace) -> int:
         "github": github,
         **({"principles_taken": taken} if taken else {}),
         **shipped_moved_field(studio),
+        **shape.refresh_field(sys.modules[__name__], studio),  # M16 A: the idea issues read back; nothing when there are no ideas
         "factory_authorized": False,
     })
 
@@ -2045,7 +2049,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MACH Product Studio operations (drafts only; never starts Factory work)")
     parser.add_argument("--project", type=Path, help="project root (default: nearest folder with .factory/ or .git)")
     parser.add_argument("--app", action="store_true", help="word refusals and reports for the local web app: no terminal commands, plus a hint")
-    sub = parser.add_subparsers(dest="command", required=True, metavar="{where,status,validate,refresh,reconcile,project,epic,slice,principle,policy,prd,request,acceptance,jira}")
+    sub = parser.add_subparsers(dest="command", required=True, metavar="{where,status,validate,refresh,reconcile,project,epic,slice,principle,policy,prd,request,acceptance,jira,idea,brief,case,verdict}")
 
     sub.add_parser("where", help="print the workspace and the files the interview needs").set_defaults(func=cmd_where)
     sub.add_parser("status", help="every artifact with its state, and what to do next").set_defaults(func=cmd_status)
@@ -2210,6 +2214,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_acceptance_record)
     prd.add_commands(sub, sys.modules[__name__])  # M13 D: the PRD on-ramp (prd.py)
     jira_export.add_commands(sub, sys.modules[__name__])  # M13 E: the Jira export and the keys back (jira_export.py)
+    shape.add_commands(sub, sys.modules[__name__])  # M16 A: Shape, ideas before epics: idea, brief, case, verdict (shape.py)
     return parser
 
 
