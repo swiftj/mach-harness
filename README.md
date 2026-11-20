@@ -379,6 +379,7 @@ A cost appears only where one was recorded, which today means work the superviso
 | Command | What it does |
 |---|---|
 | `/mach-product-studio` | Project, epics, slices; mark a slice ready (a GitHub issue); requests from GitHub issues; `refresh`; "open the app" |
+| `/mach-idea` | For anyone: describe an idea in your own words and send it to the product team as a GitHub issue (or get the text to paste) |
 | `/mach <ticket>` | Move one ticket to the next point a person is needed |
 | `/mach <ticket> <ticket> ...` | Run several tickets, scheduled by script; `--dry-run`, `--limit <n>`, `--sequential` |
 | `/mach status` | Every open ticket and its next step |

@@ -76,7 +76,7 @@ REQUIRED_FLAGS = ("--restricted", "--strict-mcp-config", "--plugin-dir", "--perm
 TOOL_NAME_RE = re.compile(r"^[A-Z][A-Za-z]*$")
 PLUGIN_FOLDER = "claude-plugin"
 PLUGIN_STAMP = ".mach-factory-plugin.json"
-NOT_FOR_THE_FACTORY = ("product-studio",)  # a product manager's skill; an unattended run has no use for it
+NOT_FOR_THE_FACTORY = ("product-studio", "idea")  # people's skills (a product manager's, anyone's idea); an unattended run has no use for them
 
 
 def now() -> str:
