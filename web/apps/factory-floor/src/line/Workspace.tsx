@@ -9,7 +9,7 @@ import { useCallback, useMemo, useState } from "react";
 import { cn } from "@mach/ui";
 import { refId, refKind, type EntityRef } from "../sim";
 import { showOnFloor, useScene, useSceneStore, useStore } from "../scene";
-import { indexFor } from "../shell/history";
+import { indexFor, lastAtOrBefore } from "../shell/history";
 import { ticketOfRef } from "../atlas/derive";
 import { duration } from "../shell/time";
 import { useStageNotice } from "../shell/SourceBadge";
@@ -79,9 +79,12 @@ export function LineWorkspace() {
   const now = useSceneStore((s) => (s.source === "simulation" ? Math.floor(s.now / 10_000) * 10_000 : Math.floor(s.now / 1000) * 1000));
   const selection = useSceneStore((s) => s.selection);
   const moments = useSceneStore((s) => indexFor(s).moments);
+  // The feed's clock: the time of the last moment at or before now, so the feed changes only when a
+  // moment is reached (not every frame) and never lists one later than the clock.
+  const feedNow = useSceneStore((s) => lastAtOrBefore(indexFor(s).moments, s.now)?.t ?? Number.NEGATIVE_INFINITY);
   const model = useMemo(() => lineModel(scene, now), [scene, now]);
   const stats = useMemo(() => stationStats(scene, model.rows), [scene, model.rows]);
-  const feed = useMemo(() => feedOf(moments), [moments]);
+  const feed = useMemo(() => feedOf(moments, feedNow), [moments, feedNow]);
   const notice = useStageNotice();
   const [record, setRecord] = useState<string | null>(null);
 
