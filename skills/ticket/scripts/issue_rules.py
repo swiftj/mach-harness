@@ -1047,3 +1047,58 @@ def epic_criteria(body: Any) -> List[str]:
         if text:
             found.append(text)
     return found
+
+
+# ---- the epic's current view (M13 part C) ----
+#
+# One comment on an epic's issue, written by the Factory each time a slice of that epic ships: a hidden marker naming the
+# epic, the commit described and the SHA-256 of the text under it, a heading, one fixed sentence, then the view the run
+# skill's compiler made (spec text already made inert there). The Factory finds its own comment by this marker and
+# the account it runs as, and edits it in place; it never touches another comment. Nothing reads it as a decision.
+
+EPIC_VIEW_MARKER_RE = re.compile(r"\A<!-- mach:epic-view v1 epic=(EPIC-[0-9]{3,}) commit=([0-9a-f]{40}) sha256=([0-9a-f]{64}) -->\n")
+EPIC_VIEW_HEADING = "## How this epic works today"
+EPIC_VIEW_LEAD = ("Compiled by the MACH Factory from the slices of this epic that have shipped. The slices are the authority; "
+                  "this comment is replaced each time a slice of this epic ships.")
+EPIC_VIEW_CUT = "_This view was cut to fit in one comment. Run `/mach current {epic}` for all of it._"
+EPIC_VIEW_ROOM = 1024  # what the heading, the sentence, the marker and the note take, with room to spare
+
+
+def epic_view_limit() -> int:
+    """How long the compiled view may be for the whole comment to fit GitHub's limit: what the caller asks the compiler for."""
+    return ISSUE_BODY_LIMIT - EPIC_VIEW_ROOM
+
+
+def epic_view_comment(epic_id: str, commit: str, view: Any, limit: int = ISSUE_BODY_LIMIT) -> str:
+    """The Factory's comment holding an epic's current view, at most `limit` characters. The view is cleaned again and
+    made unable to open a hidden comment, mention anyone or link an issue; one too long is cut at a line with a plain note."""
+    if not EPIC_ID_RE.fullmatch(str(epic_id)) or not COMMIT_RE.fullmatch(str(commit)):
+        raise ValueError("an epic view names an EPIC-ID and a full commit")
+    text = clean_text(view if isinstance(view, str) else "").replace("<", "&lt;")
+    text = MENTION_RE.sub("@" + BREAK, REFERENCE_RE.sub(lambda m: m.group(1) + BREAK, text)).strip("\n")
+    head = f"{EPIC_VIEW_HEADING}\n\n{EPIC_VIEW_LEAD}\n\n"
+    marker_length = len(f"<!-- mach:epic-view v1 epic={epic_id} commit={commit} sha256={'0' * 64} -->\n")
+    note = "\n\n" + EPIC_VIEW_CUT.format(epic=epic_id)
+    room = limit - marker_length - len(head) - 1
+    if len(text) > room:
+        kept, used = [], 0
+        for line in text.split("\n"):
+            if used + len(line) + 1 + len(note) > room:
+                break
+            kept.append(line)
+            used += len(line) + 1
+        text = "\n".join(kept).rstrip("\n") + note
+    body = head + text + "\n"
+    return f"<!-- mach:epic-view v1 epic={epic_id} commit={commit} sha256={hashlib.sha256(body.encode('utf-8')).hexdigest()} -->\n{body}"
+
+
+def epic_view_marker(body: Any) -> Optional[Dict[str, Any]]:
+    """The marker of a comment holding an epic's current view: {epic_id, commit, sha256, intact}, or None."""
+    if not isinstance(body, str):
+        return None
+    body = body.replace("\r\n", "\n")
+    found = EPIC_VIEW_MARKER_RE.match(body)
+    if not found:
+        return None
+    intact = hashlib.sha256(body[found.end():].encode("utf-8")).hexdigest() == found.group(3)
+    return {"epic_id": found.group(1), "commit": found.group(2), "sha256": found.group(3), "intact": intact}

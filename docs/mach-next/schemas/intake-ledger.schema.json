@@ -348,8 +348,14 @@
        "question",
        "shipped",
        "blocked",
-       "changed"
+       "changed",
+       "epic-view"
       ]
+     },
+     "epic_id": {
+      "type": "string",
+      "pattern": "^EPIC-[0-9]{3,}$",
+      "description": "For the epic-view moment (M13): the epic whose current-view comment is replaced; issue is then the epic's issue and slice_id the slice that shipped."
      },
      "state": {
       "enum": [

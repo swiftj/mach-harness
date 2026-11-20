@@ -84,6 +84,7 @@ MAX_TEXT_BYTES = 256 * 1024  # a ready folder's file larger than this is refused
 RISK_FLOOR = "Medium"  # product-sourced work is never reviewed below this tier
 STATUS_MAX_ATTEMPTS = 20  # a status write GitHub could not be reached for is given up after this many tries
 STATUS_GIVE_UP_KINDS = ("auth", "refused", "not_found", "moved", "no_github", "no_gh")  # failures a retry cannot fix
+EPIC_VIEW_MOMENT = "epic-view"  # M13: the outbox write that replaces the epic's current-view comment
 LOCK_STALE_SECONDS = 15 * 60  # a lock older than this, or held by a process that is gone, is taken over
 ENGINEER = "engineer"  # the only caller that may dispatch without an authorization
 IGNORE_LINE = ".factory/intake/"
@@ -1100,15 +1101,18 @@ class Factory:
                 write.update(state="gave_up", kind=write.get("kind") or "network", gave_up_at=now())
                 self.save(ledger)
                 continue
-            argv = ["slice-status", str(write["issue"]), "--repository", str(write["repository"]), "--moment", str(write["moment"]), "--nonce", self.nonce(ledger)]
-            for ref in write.get("refs") or []:
-                argv += ["--ref", str(ref)]
-            with tempfile.TemporaryDirectory(prefix="mach-question-") as folder:
-                if write.get("question") is not None:
-                    path = Path(folder) / "question.md"
-                    path.write_text(str(write["question"]), encoding="utf-8")
-                    argv += ["--question-file", str(path)]
-                done = self.ticket(*argv)
+            if write.get("moment") == EPIC_VIEW_MOMENT:
+                done = self.send_epic_view(write)
+            else:
+                argv = ["slice-status", str(write["issue"]), "--repository", str(write["repository"]), "--moment", str(write["moment"]), "--nonce", self.nonce(ledger)]
+                for ref in write.get("refs") or []:
+                    argv += ["--ref", str(ref)]
+                with tempfile.TemporaryDirectory(prefix="mach-question-") as folder:
+                    if write.get("question") is not None:
+                        path = Path(folder) / "question.md"
+                        path.write_text(str(write["question"]), encoding="utf-8")
+                        argv += ["--question-file", str(path)]
+                    done = self.ticket(*argv)
             try:
                 answer = json.loads(done.stdout) if done.stdout.strip() else {}
             except ValueError:
@@ -1132,6 +1136,61 @@ class Factory:
                 counts[str(write.get("state"))] = counts.get(str(write.get("state")), 0) + 1
         if counts:
             report["issue_status"] = {state: counts[state] for state in sorted(counts)}
+
+    # ---- M13 part C: the epic's current view, one comment on the epic's issue ----
+
+    def current(self) -> Any:
+        """The run skill's compiler of how an epic works today (current.py beside this file), loaded by path once."""
+        if getattr(self, "_current", None) is None:
+            import importlib.util
+            found = importlib.util.spec_from_file_location("mach_current_for_intake", Path(__file__).resolve().parent / "current.py")
+            module = importlib.util.module_from_spec(found)
+            found.loader.exec_module(module)
+            self._current = module
+        return self._current
+
+    def queue_epic_views(self, ledger: Dict[str, Any], entry: Dict[str, Any], refs: List[str]) -> None:
+        """When a slice from an issue ships: one write of its epic's current view on the epic's issue, and one for every
+        other epic with an issue whose rules this slice changed, replaced or retired. Recorded before tried, like every
+        status write. Nothing when status comments are off, or for a slice from a ready folder or with no epic issue."""
+        github = (self.config.get("tickets") or {}).get("github") if isinstance(self.config.get("tickets"), dict) else None
+        if (isinstance(github, dict) and github.get("status_comments") is False) or entry.get("source") != "github" or not entry.get("repository"):
+            return
+        epic = entry.get("epic") or {}
+        targets = {epic["epic_id"]: int(epic["issue"])} if epic.get("epic_id") and epic.get("issue") else {}
+        try:  # the other epics this slice acted on, from the specs at the commit it landed on
+            current = self.current()
+            commit = (entry.get("integrated") or {}).get("commit") or self.integration().get("commit")
+            view = current.compile_view(current.read_specs(self.root, commit)[0])
+            touched = {rule["epic_id"] for rule in view["rules"] for by in rule["superseded_by"] if by["slice_id"] == entry.get("slice_id")}
+            targets.update({item["epic_id"]: int(item["issue"]) for item in view["epics"]
+                            if item["epic_id"] in touched and item.get("issue") and item["epic_id"] not in targets})
+        except Exception:  # a view that cannot be compiled never holds up the line; its own epic's write is still queued
+            pass
+        for epic_id, issue in sorted(targets.items()):
+            key = sha("\n".join([EPIC_VIEW_MOMENT, str(entry["repository"]), str(issue), *sorted(refs)]).encode("utf-8"))[:16]
+            if key not in ledger["status"]:
+                ledger["status"][key] = {"moment": EPIC_VIEW_MOMENT, "repository": entry["repository"], "issue": issue, "epic_id": epic_id, "refs": list(refs),
+                                         "slice_id": entry.get("slice_id"), "state": "pending", "queued_at": now(), "attempts": 0, "last_attempt_at": None,
+                                         "kind": None, "done_at": None}
+
+    def send_epic_view(self, write: Dict[str, Any]) -> subprocess.CompletedProcess:
+        """One write of an epic's current view, compiled now at the integration branch's head so it shows the latest, through
+        the ticket station's epic-view. A view that cannot be compiled is a pending write, retried on the next pass."""
+        commit = self.integration().get("commit")
+        try:
+            current = self.current()
+            epics = current.report(self.root, commit, epic=str(write["epic_id"]), branch=None)["epics"] if commit else []
+            text = current.epic_markdown(epics[0], commit, self.rules.epic_view_limit()) if epics else None
+        except Exception:
+            text = None
+        if text is None:
+            return subprocess.CompletedProcess([], 4, json.dumps({"status": "pending", "kind": "no_view"}), "")
+        with tempfile.TemporaryDirectory(prefix="mach-epic-view-") as folder:
+            path = Path(folder) / "view.md"
+            path.write_text(text, encoding="utf-8")
+            return self.ticket("epic-view", str(write["issue"]), "--repository", str(write["repository"]), "--epic-id", str(write["epic_id"]),
+                               "--commit", commit, "--view-file", str(path))
 
     def status_summary(self) -> Dict[str, Any]:
         """Status updates to slices' issues waiting to reach GitHub, and any given up. Nothing when there are none."""
@@ -1322,6 +1381,7 @@ class Factory:
                 self.emit(ledger, "slice.integrated", **about, commit=row.get("integrated_commit"))
                 if not entry.get("product_pending"):
                     self.queue_status(ledger, entry, "shipped", refs)
+                    self.queue_epic_views(ledger, entry, refs)  # M13: the epic's current view, and any other epic it changed
                 changed = True
             if row["state"] == "ready" and before != "ready":
                 self.emit(ledger, "dependency.resolved", **about, depends_on=[dep.get("slice_id") or dep.get("name") for dep in row["depends_on"]])

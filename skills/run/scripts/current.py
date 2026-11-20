@@ -24,6 +24,7 @@ It reads only: no file is written, nothing is fetched, nothing under .factory/ i
 Deterministic for a given commit: no clock, sorted output.
 
 Functions other scripts call (pure unless noted):
+    integration(root, config)                -> the integration branch and its local head, as intake names them
     read_specs(root, commit)                 -> (specs, notes)     reads Git objects at the commit; nothing else
     compile_view(specs)                      -> {"epics", "rules", "conflicts", "notes"}
     report(root, commit, branch=..., epic=..., everything=..., on_branch=...) -> the command's whole answer
@@ -38,6 +39,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 SCHEMA = "mach.current-behaviour"
@@ -129,6 +131,16 @@ def resolve_commit(root: Path, given: str) -> str:
 
 def contains(root: Path, commit: str, tip: Optional[str]) -> bool:
     return bool(tip) and _git(root, "merge-base", "--is-ancestor", commit, str(tip)).returncode == 0
+
+
+def integration(root: Path, config: Dict[str, Any]) -> Dict[str, Any]:
+    """The integration branch and its local head, named exactly as intake names it (intake's Factory.integration, reused,
+    not copied), for a caller with no intake ledger: Product Studio's `epic current`. Reads Git only."""
+    section = config.get("factory") if isinstance(config.get("factory"), dict) else {}
+    merge = config.get("merge") if isinstance(config.get("merge"), dict) else {}
+    reader = SimpleNamespace(root=root, named_branch=section.get("integration_branch") or merge.get("into"),
+                             git=lambda cwd, *args: subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, errors="replace"))
+    return intake_module().Factory.integration(reader)
 
 
 def read_specs(root: Path, commit: str) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:

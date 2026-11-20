@@ -94,7 +94,7 @@ A **rule** in `rules`: `rule`, `slice_id`, `id`, `kind`, `epic_id`, `in_force`, 
 ## Left for others
 
 - The validator calls `effects.parse` and `effects.check` (with this spec's own IDs and the shipped rules), and refuses a spec whose section has problems or is missing once part B's template requires it.
-- Studio's `epic current <EPIC-ID>` and the Factory's comment on the epic's issue call `current.report(...)` and `current.epic_markdown(...)` with the marker's length taken off the limit.
+- Studio's `epic current <EPIC-ID>` and the Factory's comment on the epic's issue call `current.report(...)` and `current.epic_markdown(...)` with the marker's length taken off the limit. (Built: `M13_EPIC_VIEW.md`.)
 - The interview and the contract engineer's fact lookup use `run.py current --epic <epic> --json` as the skill text says; their instruction files are not changed here.
 - Part B layer 4 (the merge station checks whether a slice that landed in between changed a rule this ticket's spec lists) can use the same `rules` list.
 

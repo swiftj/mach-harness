@@ -299,7 +299,9 @@ class BoundariesTest(unittest.TestCase):
                 text = path.read_text(encoding="utf-8", errors="ignore")
                 if re.search(r"current\.py|import current\b|\brun\.py current\b|RUN current\b", text):
                     callers.append(str(path.relative_to(ROOT)))
-        self.assertEqual(callers, ["skills/intent/scripts/effects.py", "skills/run/SKILL.md", "skills/run/scripts/current.py", "skills/run/scripts/run.py"])  # effects.py names it in prose
+        # effects.py names it in prose; Product Studio's `epic current` and intake's comment on the epic's issue (M13) load it.
+        self.assertEqual(callers, ["skills/intent/scripts/effects.py", "skills/product-studio/scripts/studio.py", "skills/run/SKILL.md",
+                                   "skills/run/scripts/current.py", "skills/run/scripts/intake.py", "skills/run/scripts/run.py"])
 
 
 if __name__ == "__main__":

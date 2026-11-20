@@ -740,6 +740,44 @@ def cmd_epic_set(studio: Studio, args: argparse.Namespace) -> int:
     return emit({"epic": studio.load("epic", args.epic_id)})
 
 
+def current_compiler():
+    """The run skill's current.py, loaded by path whichever way MACH is installed: it compiles how an epic works today."""
+    for folder in (SKILL_DIR.parent / "mach", SKILL_DIR.parent / "run"):
+        path = folder / "scripts" / "current.py"
+        if path.is_file():
+            import importlib.util
+            found = importlib.util.spec_from_file_location("mach_current_for_studio", path)
+            module = importlib.util.module_from_spec(found)
+            found.loader.exec_module(module)
+            return module
+    raise StudioError(f"The MACH run skill, which compiles how an epic works today, is not installed next to this one ({SKILL_DIR.parent}).")
+
+
+def cmd_epic_current(studio: Studio, args: argparse.Namespace) -> int:
+    """How an epic works today (M13 part C), compiled by the run skill's current.py from the slice specs on this machine's
+    copy of the integration branch. Local Git objects only: no network, no GitHub, and nothing is saved."""
+    wanted = args.epic.strip().lstrip("#")
+    if not (product.EPIC_RE.fullmatch(wanted.upper()) or wanted.isdigit()):
+        raise StudioError(f"'{args.epic[:40]}' is not an epic. Name it as EPIC-NNN or by its issue number.")
+    compiler = current_compiler()
+    source = compiler.integration(studio.project, studio.cell.load_config(studio.project))
+    if not source.get("commit"):
+        raise StudioError(say(" ".join(source.get("problems") or ["No integration branch was found in this repository."]),
+                              "Nothing has been merged on this computer yet, so there is no shipped work to show."))
+    try:
+        found = compiler.report(studio.project, source["commit"], branch=source["branch"], epic=wanted.upper() if not wanted.isdigit() else wanted)
+    except compiler.CurrentError as exc:
+        raise StudioError(str(exc))
+    note = (f"This shows what is merged on this machine's copy of the integration branch ({source['branch']} at {source['commit'][:12]}), "
+            "which may be behind GitHub. The slices are the authority.")
+    view = found["epics"][0] if found["epics"] else None
+    if not args.json:
+        print(note + "\n" + compiler.human(found))
+        return 0
+    return emit({"epic_id": (view or {}).get("epic_id") or (wanted.upper() if not wanted.isdigit() else None), "branch": source["branch"],
+                 "commit": source["commit"], "note": note, "epic": view, "notes": found["notes"], "factory_authorized": False})
+
+
 def slice_paths(studio: Studio, slice_id: str) -> Dict[str, Any]:
     spec = studio.spec_of(slice_id)
     return {
@@ -1762,6 +1800,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--criterion", action="append", help="repeat for each criterion; replaces the list")
     p.add_argument("--status", choices=product.ENUMS["epic"]["status"], help="deferred sets it aside; open brings it back")
     p.set_defaults(func=cmd_epic_set)
+    p = epic.add_parser("current", help="how the epic works today, from the slices merged on this machine's copy of the integration branch")
+    p.add_argument("epic", metavar="EPIC-ID", help="the epic, or its issue number")
+    p.add_argument("--json", action="store_true", help="the answer as data")
+    p.set_defaults(func=cmd_epic_current)
     p = epic.add_parser("renumber", help="give an unpublished draft the next free number")
     p.add_argument("identifier")
     p.set_defaults(func=cmd_renumber, kind="epic")
