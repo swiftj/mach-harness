@@ -121,7 +121,8 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
     ├── intake/                 # The Factory's intake ledger (ledger.json), its event log (events.jsonl) and received/ (each slice revision's verified why and spec); git-ignored
     ├── release/<release-id>/   # Release qualification: readiness.json, run.json, logs, exceptions; scans/ holds scanner reports
     ├── local/                  # Machine-local authorization (runner.json), the supervisor's lease, and each execution's output; git-ignored, never shared
-    │   └── observer/           # The observer's redacted index, its lock and the next one-time link; the only place it writes
+    │   ├── observer/           # The observer's redacted index, its lock and the next one-time link; the only place it writes
+    │   └── faults/             # MACH's own internal errors (<id>.json, redacted) and a report waiting for a person's yes
     └── worktrees/              # Cells: one per ticket
         └── <ticket_id>/
             ├── cell.json       # Cell state: stage, mode, slice ID, risk tier, app type, contracts
@@ -394,6 +395,16 @@ A person is told when a ticket that nobody is watching stops for them: by one ou
 * **Sending**: standard library, one POST, five seconds, redirects refused. A failure changes no result, step or exit code; it is retried while the ticket still waits, five attempts in all, then given up and shown in `notify status`.
 * **The banner** (`notify banner on|off`, macOS only; refused elsewhere, and a stored switch on another system reads as off): `/usr/bin/osascript` with no shell and a fixed script, the words passed as arguments and never written into the script. Same triggers, same fixed words, once per wait on each channel that is on; the channels fail and retry independently. "Ran" means the command exited 0: MACH cannot see whether macOS showed it.
 * **Never**: listens, approves, starts or changes anything; nothing but `run.py` and the supervisor it builds reads the address, and `doctor`, `explain`, `decide`, intake, release qualification, Product Studio and the observer never do.
+
+### Self-reporting (`/mach report`)
+
+MACH records its own defects on the machine where they happen and files one as a GitHub issue on MACH's repository only on a person's yes after they read it. Code: `skills/intent/scripts/faults.py` (recording, shared by every script), `skills/run/scripts/selfreport.py` (`run.py report`). Design: `docs/mach-next/M14_DESIGN.md` part E; as built: `docs/mach-next/M14_SELF_REPORT.md`.
+
+* **Recording**: every script with an entry point (each `skills/*/scripts/*.py` with a `__main__` block, and `bin/mach`) carries two lines before `sys.exit(main())` that load `faults.py` by path and install a hook for an uncaught exception; without the file the script runs as before. Only an internal error is recorded: never one of MACH's own exception classes (a refusal), `SystemExit` (usage errors, every exit code), `KeyboardInterrupt` or a broken pipe. The hook then hands the exception on unchanged, so stderr and the exit code are what they were; a failure to record is silent. One private file per fingerprint (script, exception type, innermost MACH frame) in `.factory/local/faults/`, counted when it recurs, at most 50; nothing where there is no `.factory`.
+* **What a record holds**: MACH's version and install kind, the script, sub-command names (never values), the exception type, MACH's own frames (path inside MACH, line, function; no source line, no local), the message scrubbed (secret shapes and the shared redaction, addresses, paths outside MACH, every argument, environment, user, host, project, remote and ticket value, and every word that is neither MACH's nor Python's), the platform, Python, and whether it ran in a supervised execution.
+* **The offer**: while an unreported fault exists, `next` and `status` (the digest's `faults`) and `doctor` add one fixed line. The doctor still never opens `.factory/local/`: `run.py doctor` reads the records and hands it the check (`faults`, by fingerprint and count) and the line.
+* **Report**: `run.py report [<fault-id>] ["<words>"]` builds the title and body from a fixed template (the person's words bounded and made inert; the doctor's checks by name and state only), redacts and scans the finished text and refuses it if a secret shape remains, and prints it with a code that expires in ten minutes; `--confirm <code>` files exactly that text (by its hash) with `gh issue create` on `report.repository` (default `swiftj/mach-harness`, owner/name on github.com), adding the `mach:self-report` label only where it already exists. An open issue carrying the same fingerprint gets a short fixed comment instead (`--new` for a new issue). Without `gh`, signed out or without access, it gives the `--print` text and a plain sentence. The record is then marked reported with the issue's address.
+* **Never**: automatic, inside a supervised execution, called by a station, agent, workflow or the supervisor, or with repository names, ticket or spec text, file contents or environment values. `report.enabled: false` in the tracked settings removes the offer and refuses the command.
 
 ### The Factory Floor
 

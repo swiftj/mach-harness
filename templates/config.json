@@ -45,6 +45,10 @@
   "observe": {
     "every": 5
   },
+  "report": {
+    "enabled": true,
+    "repository": "swiftj/mach-harness"
+  },
   "adr": {
     "dir": "docs/adr",
     "landing": "pull-request",
