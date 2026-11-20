@@ -87,7 +87,7 @@ import subprocess
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*$")
 ROLES = {
@@ -111,6 +111,7 @@ IMPACTS = ("critical", "high", "medium", "low")
 VETO_IMPACTS = ("critical", "high")
 MAX_LOOPS = 3
 TUNING_LABEL = "factory-tuning"
+PANEL_ORDER = ("Low", "Medium", "High")  # lowest first, for the security-scan floor
 EXCEPTION_REF_RE = re.compile(r"^(\d{1,3}(?:\.\d{1,3})?)/([a-z]+)/(\d{1,3})$")
 EXCEPTION_REASON_LIMIT = 2000
 EXECUTION_ENV = "MACH_EXECUTION_ID"  # set by the Factory's executor for supervised work; the same name adr.py and lifecycle.py read
@@ -317,6 +318,21 @@ def round_folders(root: Path, number: int) -> List[Path]:
     return [root / "review" / f"round-{number}"] + [path for _, path in sorted(repeats)]
 
 
+def hold_risk_floor(labels: List[str], risk: str) -> Tuple[str, Optional[Dict[str, str]]]:
+    """M15: the floor a security-scan ticket's labels set (scan.risk_floor, the rule cell.py finalize applies to the cell).
+    Grooming has already raised the cell's tier; this holds a tier that was groomed before the rule, or changed by hand,
+    so the panel is never seated below it. Returns the tier to review at, and what was raised when it was."""
+    if not any(str(label).strip().lower() == "security-scan" for label in labels):
+        return risk, None
+    if scan is None:
+        raise ReviewError("This ticket is labelled security-scan, and the intent station's scan.py is not installed beside this skill, so its "
+                          "risk floor cannot be held. Install MACH again; nothing was started.", code="scan-helper-missing")
+    floor = scan.risk_floor(labels)
+    if floor and PANEL_ORDER.index(risk) < PANEL_ORDER.index(floor):
+        return floor, {"from": risk, "to": floor, "why": scan.SCAN_FLOOR_WHY[floor]}
+    return risk, None
+
+
 def ticket_labels(cell: Cell) -> List[str]:
     labels = list((load_json(cell.project / ".factory" / "inbox" / f"{cell.ticket_id}.json", {}) or {}).get("labels") or [])
     local = cell.project / ".factory" / "tickets" / f"{cell.ticket_id}.md"
@@ -389,7 +405,9 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     if missing:
         raise ReviewError(f"Evidence listed in the verification summary is missing: {', '.join(missing[:5])}. Verify the ticket again.", code="evidence-missing")
     risk = cell.info.get("risk") if cell.info.get("risk") in PANELS else "High"
-    tuning = TUNING_LABEL in ticket_labels(cell)
+    labels = ticket_labels(cell)
+    tuning = TUNING_LABEL in labels
+    risk, floored = hold_risk_floor(labels, risk)
     # Review everything the ticket's branch adds, including the spec and contracts committed before the build started.
     main_branch = git(cell.project, "branch", "--show-current").stdout.strip()
     fork = git(cell.work, "merge-base", "HEAD", main_branch).stdout.strip() if main_branch and cell.info.get("isolation") == "worktree" else ""
@@ -448,6 +466,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         "head": head, "baseline": baseline, "branch": cell.info.get("branch"), "started_at": now(),
         "repeat_of": str(round_folders(cell.root, cell.loop + 1)[-2]) if cell.folder.name != f"round-{cell.loop + 1}" else None,
         "panel": rules["panel"], "delta": delta, **({"recheck_after_landing": recheck} if recheck else {}),
+        **({"risk_floor": floored} if floored else {}),
         "paths": {
             "workdir": str(cell.work), "diff": str(cell.folder / "diff.patch"), "review_rules": str(review_rules) if review_rules else None,
             "intent": str(cell.root / "intent.md"), "spec": str(cell.root / "spec.json"), "plan": str(cell.root / "plan.md"),

@@ -31,6 +31,7 @@ import adr  # noqa: E402  (architecture decisions: the shared helper beside this
 import diagrams  # noqa: E402  (Mermaid diagrams in a plan and in a proposed ADR)
 import shipped  # noqa: E402  (M13: the shipped rules a spec's effects are checked against, from the current-behaviour view)
 import policies  # noqa: E402  (M14: the organisation's policy packs a spec answers in '## Policies')
+import scan  # noqa: E402  (M15: the risk floor a security-scan ticket's labels set)
 
 try:  # M6.1 station telemetry: observational only; if it cannot be loaded nothing is recorded
     import lifecycle  # noqa: E402
@@ -780,6 +781,23 @@ def set_aside_plan(root: Path, cell: Dict[str, Any], reason: str) -> Optional[Di
 SPEC_CHANGED = "The spec changed after the plan was written."
 
 
+def hold_risk_floor(project: Path, cell: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """M15: a security-scan ticket's labels set the lowest tier it may have (scan.risk_floor). A tier below it is raised in
+    the cell and recorded as `risk_floor`, the record monitoring.py writes for its own floor; review reads the cell's tier.
+    A record this rule wrote earlier is dropped once grooming itself reaches the floor. Returns the record when it raised."""
+    floor = scan.risk_floor(ticket_labels(project, cell["ticket_id"]))
+    if floor is None:
+        return None
+    why = scan.SCAN_FLOOR_WHY[floor]
+    if RISK_TIERS.index(cell["risk"]) > RISK_TIERS.index(floor):
+        cell["risk_floor"] = {"from": cell["risk"], "to": floor, "why": why}
+        cell["risk"] = floor
+        return cell["risk_floor"]
+    if isinstance(cell.get("risk_floor"), dict) and cell["risk_floor"].get("why") in scan.SCAN_FLOOR_WHY.values():
+        cell.pop("risk_floor")
+    return None
+
+
 def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     cell = read_cell(project, args.ticket_id)
     root = cell_dir(project, args.ticket_id)
@@ -808,6 +826,7 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     cell["slice_id"] = model.get("slice_id")
     cell["title"] = cell.get("title") or model.get("title") or ""
     cell["risk"] = intent["risk"]
+    floored = hold_risk_floor(project, cell)
     cell["spec_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
     # What the spec's effects were checked against (M13): the integration branch's commit, for the timing flag in status.
     cell["shipped"] = {"commit": found["commit"], "branch": found.get("branch"), "rules": len(found["rules"]), "checked_at": now()}
@@ -854,7 +873,8 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
         # The branch as it stands at spec-ready: where a re-plan returns it to (cell.py replan).
         cell["spec_commit"] = git(["rev-parse", "HEAD"], workdir(project, cell)).stdout.strip() or None
         write_cell(project, cell)
-    print(json.dumps({"status": "READY", "slice_id": cell["slice_id"], "risk": cell["risk"], **counts, **({"replanned": replanned} if replanned else {})}, indent=2))
+    print(json.dumps({"status": "READY", "slice_id": cell["slice_id"], "risk": cell["risk"], **counts, **({"replanned": replanned} if replanned else {}),
+                      **({"risk_floor": floored} if floored else {})}, indent=2))
     print(f"READY: wrote {root / 'spec.md'} and {spec_json}." + (" The spec changed after its plan was written, so the old plan is kept on record and "
                                                                 "the contract engineer writes a new one: go to stage 2." if replanned else ""))
     return 0
