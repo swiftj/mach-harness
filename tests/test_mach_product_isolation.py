@@ -237,6 +237,23 @@ class NothingIsWiredInTest(unittest.TestCase):
         # studio.py reads issues only to settle a slice someone else changed; it writes through handoff.py.
         studio_source = (PRODUCT_SCRIPTS / "studio.py").read_text()
         self.assertEqual(set(re.findall(r"\bissues\.([a-z_]+)\(", studio_source)), {"view", "comments"})
+        # M13: publishing the principles added no GitHub call. handoff.py uses exactly these of issues.py's calls.
+        self.assertEqual(set(re.findall(r"\bissues\.([a-z_]+)\(", handoff_source)),
+                         {"add_labels", "add_sub_issue", "comment", "comments", "create", "create_label", "database_id", "label_names", "labels",
+                          "list_issues", "pin", "place_sub_issue", "remove_ready", "rewrite", "signed_in", "sub_issue_numbers", "sub_issues",
+                          "unavailable", "view"})
+        publish = handoff_source[handoff_source.index("    def publish_principles("):handoff_source.index("    def write_principles_folder(")]
+        self.assertEqual(set(re.findall(r"\bissues\.([a-z_]+)\(", publish)), {"labels", "create_label", "comments", "comment"})
+        self.assertIn("principles_approval_comment(", publish)  # the only comment it writes is the fixed approval template
+
+    def test_the_principles_check_only_reads(self):
+        """M13: ticket.py principles-check reads the project's issue, its comments and the approver's role; it writes nothing."""
+        source = (ROOT / "skills" / "ticket" / "scripts" / "ticket.py").read_text()
+        body = source[source.index("def cmd_principles_check("):source.index("def cmd_slice_status(")]
+        self.assertEqual(sorted(set(re.findall(r"gh_read\(ctx, (\"[^\"]+\", \"[^\"]+\")", body))), ['"issue", "list"'])
+        self.assertEqual(set(re.findall(r"\b(read_[a-z]+)\(", body)), {"read_issue", "read_comments", "read_permission"})
+        for word in ("gh_call(", "--method", "\"edit\"", "\"comment\"", "\"close\"", "\"create\"", "write_text", "--add-label"):
+            self.assertNotIn(word, body, word)
 
     def test_studio_imports_only_the_rules_from_the_ticket_skill(self):
         """Product Studio shares the ticket skill's issue rules and nothing else from it."""

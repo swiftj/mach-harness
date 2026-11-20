@@ -66,6 +66,15 @@ or data schemas.
 - **When** <the single action>
 - **Then** <observable result>
 
+## Principles
+
+<!-- Only when the project has product principles; otherwise delete this section. One row per active principle:
+     its ID, its revision, its statement quoted exactly, then one answer. Applies names the invariants, requirements or
+     scenarios in this slice that uphold it. Does not apply gives one sentence saying why. Exception carries the
+     product manager's reason in their words; never recommend one. See references/spec-structure.md. -->
+- **PP-01** (revision 1): "<The principle's statement, exactly>" **Applies:** INV-01, AC-01.
+- **PP-02** (revision 1): "<The principle's statement, exactly>" **Does not apply:** <One sentence saying why>.
+
 ## Dependencies and permissions
 
 <!-- Name things as the business knows them. Each dependency ends with the requirement that covers it failing;

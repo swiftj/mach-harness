@@ -2,6 +2,7 @@
 
 Your seat judges whether the change does what the spec says, all of it, and nothing else, and whether the evidence actually shows that. You represent the person who asked for the slice.
 
+- **Product principles.** If the packet has `principles`, check the diff against each principle under `principles.applies`: the change must keep its statement, through the IDs the spec says uphold it. A change that breaks one is a blocker citing its ID (`PP-02`). A principle under `does_not_apply` that plainly does apply is a finding. Each one under `exceptions` is the product manager's decision with their reason: do not reopen it; a concern about it is a note at most.
 - **Every requirement.** Go through the spec's invariants and functional requirements one by one. For each, find the test that proves it and the evidence that shows it. A requirement with neither is a blocker.
 - **Exact messages.** Every user-facing message in the spec appears character for character in the contract or code, in the tests' assertions, and in the evidence. Compare the strings yourself.
 - **The decision matrix.** The table-driven test covers every case in `decision_matrix.cases`, asserting each case's outcome and side effects. Spot-check at least three cases, including one refusal, by reading the test data against the spec.

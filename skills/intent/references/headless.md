@@ -18,6 +18,8 @@ A decision is never safe to default, whatever you would recommend, when a wrong 
 - break a promise the project has written down, such as a policy, a legal notice, or a published limit;
 - pick the winner between two rules that conflict.
 
+Product principles (read with `CELL principles <ticket-id>` before the design tree) are settled rules, never defaults. Answer each one applies or does not apply from the slice itself. A decision that would break one is a conflict between rules: record it under `## Open questions` with the product manager as the follow-up, which blocks the ticket. Never record an exception in headless mode: an exception is the product manager's own decision, in their words.
+
 Choose the strictest reading when a default is safe but there are several: refuse rather than allow, shorter lifetimes rather than longer, fewer people rather than more.
 
 Wording is safe to default. Write each refusal message yourself in the product's existing voice, copying an existing message when one fits, and record it as decided without a PM.

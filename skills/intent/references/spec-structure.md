@@ -24,7 +24,19 @@ These H2 sections are required, each exactly once, in this order [missing-sectio
 9. `## Accepted defaults`
 10. `## Open questions`
 
+One optional section sits between `## Acceptance criteria` and `## Dependencies and permissions`: `## Principles`, present only when the project has product principles (below).
+
 Any other H2 section is a warning, because downstream agents may ignore it [extra-section].
+
+## Principles
+
+A product principle is one sentence, `PP-NN`, that must hold in every slice; the product manager keeps them in Product Studio. When the project has any, the spec answers every active one, one line each, in this form:
+
+- `- **PP-01** (revision 2): "A published version MUST NOT be edited in place." **Applies:** INV-02, AC-03.`
+- `- **PP-02** (revision 1): "<statement>" **Does not apply:** This slice only reads versions.`
+- `- **PP-03** (revision 1): "<statement>" **Exception:** <the product manager's reason, in their words>.`
+
+The validator is given the principles as a file (`--principles`, which `cell.py` and Product Studio pass for you) and refuses a spec that leaves an active principle unanswered [principle-unanswered], quotes its statement other than exactly [principle-quote], names a revision that is not its current one [principle-revision], or answers a principle that does not exist [principle-unknown]. A row for a retired principle is a warning [principle-retired]. Without the principles file, each row is still checked on its own. `Applies` names at least one INV-NN, FR-NN or AC-NN that this spec defines [principle-applies]; `Does not apply` and `Exception` need a reason [principle-reason]; a line in any other form is an error [principle-format]. A project with no principles has no section, and nothing else changes. An exception is the product manager's decision: never recommend one.
 
 ## Section content
 

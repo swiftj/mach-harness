@@ -129,6 +129,41 @@ def _shape(kind: str, data: Dict[str, Any], location: str, errors: List[str]) ->
             _error(errors, location, "origin must be {kind: github_issue, repository: OWNER/REPO, number: a positive integer}")
 
 
+PRINCIPLE_RE = re.compile(r"^PP-[0-9]{2,}$")
+PRINCIPLE_FIELDS = ("id", "title", "statement", "reason", "status", "revision")
+PRINCIPLE_STATUSES = ("active", "retired")
+
+
+def _principles(data: Optional[Dict[str, Any]], project_id: Any, errors: List[str]) -> None:
+    """product/principles.json (M13): the project's product principles, PP-NN, each active or retired."""
+    location = "product/principles.json"
+    if data is None:
+        return
+    if set(data) != {"schema_version", "project_id", "principles"} or data.get("schema_version") != 1:
+        _error(errors, location, "must hold exactly schema_version 1, project_id and principles")
+        return
+    if data.get("project_id") != project_id:
+        _error(errors, location, "project_id does not match project.json")
+    items = data.get("principles")
+    if not isinstance(items, list):
+        _error(errors, location, "principles must be a list")
+        return
+    seen = set()
+    for item in items:
+        ident = item.get("id") if isinstance(item, dict) else None
+        if not isinstance(item, dict) or set(item) != set(PRINCIPLE_FIELDS) or not isinstance(ident, str) or not PRINCIPLE_RE.fullmatch(ident):
+            _error(errors, location, "each principle needs exactly: " + ", ".join(PRINCIPLE_FIELDS))
+            continue
+        if ident in seen:
+            _error(errors, location, "duplicate principle {}".format(ident))
+        seen.add(ident)
+        if item["status"] not in PRINCIPLE_STATUSES or type(item["revision"]) is not int or item["revision"] < 1:
+            _error(errors, location, "{} needs status active or retired and a positive revision".format(ident))
+        for key in ("title", "statement", "reason"):
+            if not isinstance(item[key], str) or not item[key].strip():
+                _error(errors, location, "{} {} must be nonempty text".format(ident, key))
+
+
 def _safe_spec(root: Path, value: str, slice_id: str) -> Tuple[Optional[Path], Optional[str]]:
     if "\\" in value or "\x00" in value or "//" in value:
         return None, "unsafe spec_path"
@@ -261,6 +296,9 @@ def validate_workspace(root: Path) -> Dict[str, Any]:
     cycle = _cycle_nodes(graph)
     if cycle:
         _error(errors, "product/slices", "dependency cycle: {}".format(" -> ".join(cycle)))
+    principles_path = root / "product" / "principles.json"
+    if principles_path.exists() or principles_path.is_symlink():
+        _principles(_read_json(principles_path, errors, root), project_id, errors)
     return {
         "valid": not errors,
         "validation_scope": "structural_only",

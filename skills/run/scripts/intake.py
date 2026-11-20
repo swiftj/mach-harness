@@ -88,6 +88,7 @@ LOCK_STALE_SECONDS = 15 * 60  # a lock older than this, or held by a process tha
 ENGINEER = "engineer"  # the only caller that may dispatch without an authorization
 IGNORE_LINE = ".factory/intake/"
 READY_DIR = "product/ready"
+PRINCIPLES_FOLDER = "PRINCIPLES"  # product/ready/PRINCIPLES/: the published product principles (M13), never a slice
 SLICE_ID_RE = re.compile(r"^SLICE-[0-9]{3,}$")
 FOLDER_KEYS = {"schema_version", "slice_id", "title", "revision", "epic", "dependencies", "spec_sha256", "why_sha256"}
 # The header MACH writes under a spec's title when it commits the spec on the ticket's branch (decision 2).
@@ -594,6 +595,8 @@ class Factory:
             folders.setdefault("/".join(parts[:3]), {})[parts[3]] = data if data is not None else b""
         for where in sorted(folders):
             name = where.split("/")[-1]
+            if name == PRINCIPLES_FOLDER:
+                continue  # the product principles (M13), read by the intent station; not a slice
             row, reason = self.read_folder(folders[where], where, "folder")
             if row is not None and row["slice_id"] != name:
                 row, reason = None, f"Not accepted: {where} holds {row['slice_id']}."

@@ -15,6 +15,7 @@
                                           a status label, comment or close on a slice's own issue (M11)
     ticket.py epic-check N [--release R --commit C]
                                           read only: an epic's slices in order and its acceptance comments (M11)
+    ticket.py principles-check [N]        read only: the product principles on the project's issue, and whether they count (M13)
 
 Providers: local (Markdown files in .factory/tickets/, the default), github (gh), gitea-cli (gt),
 jira, fossil. Local and GitHub are fully handled here. For the others this script runs the
@@ -1173,6 +1174,70 @@ def cmd_epic_check(ctx: Context, args: argparse.Namespace) -> int:
     return 0
 
 
+PROJECT_LIST_LIMIT = "20"
+
+
+def cmd_principles_check(ctx: Context, args: argparse.Namespace) -> int:
+    """The product principles published on the project's issue (M13), and whether they count: the section is intact, and
+    an unedited approval for exactly that revision and SHA-256 was written by the account it names, a person with the
+    triage role or above. The principles are printed only when they count, verbatim (they are checked by their SHA-256).
+    Without N, the project's issue is the one open issue carrying mach:project and a project marker. Reads only."""
+    number = None
+    if args.number is not None:
+        number = int(args.number) if str(args.number).isdigit() else 0
+        if not issue_rules.is_issue_number(number):
+            raise TicketError(f"'{args.number}' is not an issue number.")
+    repository, failure = here(ctx)
+    report: Dict[str, Any] = {"repository": repository, "number": number, "decision": None, "failure": failure}
+
+    def done(decision: Dict[str, Any]) -> int:
+        report["decision"] = decision
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return 0
+
+    def unconfirmed(failure: Optional[Dict[str, str]]) -> int:
+        report["failure"] = failure
+        report["transient"] = (failure or {}).get("kind") == "network"
+        return done({"state": "not_accepted", "reason": f"Not accepted: GitHub could not be read for it ({(failure or {}).get('kind', 'other')}).",
+                     "revision": None, "sha256": None, "approved_by": None, "principles": None})
+
+    if repository is None:
+        return unconfirmed(failure)
+    if number is None:
+        out, failure = gh_read(ctx, "issue", "list", "--repo", repository, "--label", "mach:project", "--state", "open",
+                               "--limit", PROJECT_LIST_LIMIT, "--json", "number,body")
+        if out is None:
+            return unconfirmed(failure)
+        try:
+            listed = json.loads(out)
+        except ValueError:
+            listed = None
+        projects = [item["number"] for item in listed or [] if isinstance(item, dict) and issue_rules.is_issue_number(item.get("number"))
+                    and (issue_rules.product_marker(item.get("body")) or ("",))[0] == "project"] if isinstance(listed, list) else []
+        if len(projects) != 1:
+            return done({"state": "none" if not projects else "not_accepted", "reason": issue_rules.PRINCIPLES_NOT_ACCEPTED["no_project" if not projects else "several"],
+                         "revision": None, "sha256": None, "approved_by": None, "principles": None})
+        number = report["number"] = projects[0]
+    issue, failure = read_issue(ctx, repository, number)
+    if issue is None:
+        return unconfirmed(failure)
+    if "mach:project" not in issue["labels"] or (issue_rules.product_marker(issue.get("body")) or ("",))[0] != "project":
+        return done({"state": "not_accepted", "reason": f"Not accepted: issue #{number} is not a project issue written by MACH Product Studio.",
+                     "revision": None, "sha256": None, "approved_by": None, "principles": None})
+    comments: List[Dict[str, Any]] = []
+    roles: Dict[str, Any] = {}
+    if issue_rules.parse_principles_section(issue.get("body")) is not None:
+        comments, failure = read_comments(ctx, repository, number)
+        if comments is None:
+            return unconfirmed(failure)
+        for login in issue_rules.principles_approvers(issue.get("body"), comments)[:3]:
+            answer, failed = read_permission(ctx, repository, login)
+            roles[login] = answer
+            if answer is None:
+                report["transient"] = (failed or {}).get("kind") == "network"
+    return done(issue_rules.principles_acceptance(issue.get("body"), comments, roles))
+
+
 def cmd_slice_status(ctx: Context, args: argparse.Namespace) -> int:
     """One status write on a slice's own issue: labels, a comment from a fixed template with its hidden marker, and,
     when it ships, closing the issue. A comment whose outcome was lost is found again by its marker, never posted twice.
@@ -1405,6 +1470,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--release")
     p.add_argument("--commit")
     p.set_defaults(func=cmd_epic_check)
+    p = sub.add_parser("principles-check", help="read only: the product principles on the project's issue, and whether they count")
+    p.add_argument("number", nargs="?", help="the project's issue number (default: the one open issue labelled mach:project)")
+    p.set_defaults(func=cmd_principles_check)
     p = sub.add_parser("slice-status", help="a status label, comment or close on a slice's own issue (called by intake)")
     p.add_argument("number")
     p.add_argument("--repository", required=True, help="OWNER/REPO: must be the origin remote's repository")
