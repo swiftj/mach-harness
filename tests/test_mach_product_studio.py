@@ -486,9 +486,14 @@ class NextActionsTest(Base):
     def test_each_stage_names_its_next_action(self):
         self.assertEqual(self.actions()[1], [("define_project", None)])
         self.ok("project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "v", "--outcome", "o")
-        self.assertEqual(self.actions()[1], [("add_epic", None)])
+        status, kinds = self.actions()
+        self.assertEqual(kinds, [("add_epic", None)])
+        # Where the engine explains what a slice is, it is a slice of intent.
+        self.assertEqual(status["next_actions"][0]["reason"], "An epic is a larger capability that several slices of intent deliver.")
         self.ok("epic", "add", "--title", "Team membership", "--criterion", "Only invited people can join")
-        self.assertEqual(self.actions()[1], [("start_slice", None)])
+        status, kinds = self.actions()
+        self.assertEqual(kinds, [("start_slice", None)])
+        self.assertEqual(status["next_actions"][0]["reason"], "No slice of intent is being defined right now.")
         self.ok("slice", "new", "--epic", "EPIC-001", "--title", "Invite a teammate")
         self.assertEqual(self.actions()[1], [("continue_interview", "SLICE-001")])
         self.write_spec()

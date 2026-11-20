@@ -499,7 +499,7 @@ class ReadyTest(IssuesBase):
         refused = self.refused(self.a, "slice", "ready", slice_id)
         self.assertIn("too large to save", refused)
         self.assertIn("65,536", refused)
-        self.assertIn("not thin", refused)
+        self.assertIn("A slice of intent that large is not thin", refused)
         self.assertEqual(self.writes(), [])
         self.assertEqual(self.artifact(self.a, f"product/slices/{slice_id}.json")["status"], "interviewing")
 

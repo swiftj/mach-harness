@@ -887,7 +887,7 @@ class Handoff:
 
 def too_large(slice_id: str, length: int, limit: int) -> str:
     return (f"{slice_id} is too large to save: with its why it is {length:,} characters, and GitHub takes at most {limit:,} in one issue. "
-            "A slice that large is not thin; split it into smaller slices.")
+            "A slice of intent that large is not thin; split it into smaller slices.")
 
 
 def slice_view(data: Dict[str, Any], slice_id: str, work: Optional[Dict[str, Any]], rules: Any) -> Dict[str, Any]:

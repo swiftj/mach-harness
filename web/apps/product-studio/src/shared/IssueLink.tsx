@@ -1,4 +1,5 @@
 import { ExternalLink } from "lucide-react";
+import { cn } from "@mach/ui";
 
 /**
  * A slice's issue number, linked to the address the engine reported for it. Without an address it
@@ -13,6 +14,15 @@ export function IssueLink({ number, url }: { number: number; url: string | null 
       <span className="sr-only"> (opens GitHub in a new tab)</span>
     </a>
   );
+}
+
+/**
+ * One quiet line beside the first place a screen offers an issue link: GitHub answers "not found"
+ * for a private repository's issue in a browser that is not signed in, which reads as a broken link.
+ * The app never checks sign-in and makes no request of its own; it only says how GitHub behaves.
+ */
+export function SignInNote({ className }: { className?: string }) {
+  return <p className={cn("text-caption text-ink-subtle", className)}>An issue in a private repository opens only in a browser signed in to GitHub with access to it.</p>;
 }
 
 /** "Issue #2": an epic's, the project's or a slice's issue, linked to the address the engine reported. */

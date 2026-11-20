@@ -6,7 +6,7 @@ import { failureText } from "@mach/ui/api";
 import { client } from "../../api/client";
 import { toApiError } from "../../api/session";
 import { useRefresh, useStatus } from "../../api/store";
-import { IssueLink, IssueNumber } from "../../shared/IssueLink";
+import { IssueLink, IssueNumber, SignInNote } from "../../shared/IssueLink";
 
 /**
  * Where the project, its epics and its slices stand on GitHub, as the engine recorded them and as
@@ -27,7 +27,7 @@ export function GithubScreen() {
           <div className="flex max-w-reading flex-col gap-2">
             <Heading level={1}>On GitHub</Heading>
             <Text tone="muted">
-              A slice you mark ready is saved to the project on GitHub, under its epic, where the builders take it. Refreshing reads what is there
+              A slice of intent you mark ready is saved to the project on GitHub, under its epic, where the builders take it. Refreshing reads what is there
               now; it never changes your drafts.
             </Text>
           </div>
@@ -82,9 +82,12 @@ function Where({ status }: { status: Status }) {
         The project and its epics
       </Heading>
       {status.github.repository ? (
-        <Text size="body-sm" tone="muted">
-          Saved in the repository <span className="font-mono text-ink">{status.github.repository}</span>.
-        </Text>
+        <div className="flex flex-col gap-0.5">
+          <Text size="body-sm" tone="muted">
+            Saved in the repository <span className="font-mono text-ink">{status.github.repository}</span>.
+          </Text>
+          <SignInNote />
+        </div>
       ) : (
         <Text size="body-sm" tone="muted">
           Nothing from this workspace has been saved on GitHub yet.

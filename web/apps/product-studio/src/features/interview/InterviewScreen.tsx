@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
-import { ArrowLeft, Check, CircleAlert, MessagesSquare, Pause, SearchX, Square, Users, WifiOff } from "lucide-react";
+import { ArrowLeft, CircleAlert, MessagesSquare, Pause, SearchX, Square, Users, WifiOff } from "lucide-react";
 import {
   Badge,
   Banner,
@@ -24,6 +24,7 @@ import { ContinueInClaudeCode } from "./ContinueInClaudeCode";
 import { isBusy, type Decision } from "./model";
 import { QuestionCard } from "./QuestionCard";
 import { SliceDocument } from "./SliceDocument";
+import { SummaryCard } from "./SummaryCard";
 import { Transcript } from "./Transcript";
 import { useInterview, type InterviewController } from "./useInterview";
 import { useSliceShow } from "../../api/useSliceShow";
@@ -259,8 +260,10 @@ function Current({ iv, busy, sliceId, show, onApproved }: { iv: InterviewControl
   } else if (awaiting?.question) {
     body = <QuestionCard key={awaiting.question.message_id} question={awaiting.question} busy={iv.sending === "reply"} onAnswer={iv.reply} />;
   } else if (busy) {
+    // Keyed apart from the answering body below, so the whole of it (the summary card with it) is
+    // replaced when a reply starts rather than patched in place: patching left the focused summary behind.
     body = (
-      <div className="flex flex-col gap-4">
+      <div key="working" className="flex flex-col gap-4">
         <p className="flex items-center gap-2 text-body text-ink-muted">
           <Spinner size="sm" />
           {model.lastActivity ?? "The interviewer is working on a reply"}
@@ -274,26 +277,17 @@ function Current({ iv, busy, sliceId, show, onApproved }: { iv: InterviewControl
   } else {
     const confirming = awaiting?.kind === "confirmation" && !approval;
     body = (
-      <div className="flex flex-col gap-6">
+      <div key="answer" className="flex flex-col gap-6">
         {approval}
-        {awaiting ? (
+        {confirming ? (
+          <SummaryCard key={model.awaiting} text={awaiting.text} busy={iv.sending === "reply"} onConfirm={() => iv.reply("Yes.", "accepted")} />
+        ) : awaiting ? (
           <div className="flex flex-col gap-2">
             <span className="flex items-center gap-2 text-body-sm text-ink-muted">
               The interviewer
               {awaiting.kind === "confirmation" ? <Badge tone="info">Summary to confirm</Badge> : null}
             </span>
             <RichText text={awaiting.text} editorial className="text-ink" />
-          </div>
-        ) : null}
-        {confirming ? (
-          <div className="flex flex-wrap items-center gap-3">
-            <Button variant="primary" size="lg" loading={iv.sending === "reply"} onClick={() => iv.reply("Yes.", "accepted")}>
-              <Check aria-hidden="true" />
-              Yes, write it up
-            </Button>
-            <Text size="body-sm" tone="muted">
-              The interviewer writes the specification from this summary.
-            </Text>
           </div>
         ) : null}
         <Composer
