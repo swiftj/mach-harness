@@ -1,10 +1,10 @@
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Lightbulb } from "lucide-react";
 import { useState } from "react";
 import { isMachApiError } from "@mach/ui/api";
 import { Link } from "react-router";
-import { ArtifactId, Banner, Button, Heading, Text, type Status } from "@mach/ui";
+import { ArtifactId, Badge, Banner, Button, Heading, Text, type Status } from "@mach/ui";
 import { requestOp, type RequestItem } from "./api";
-import { handledElsewhere, requestActions, unfence } from "./model";
+import { handledElsewhere, ideaSections, requestActions, unfence, type IdeaSection } from "./model";
 import { LinkDialog, MarkMetDialog, PickUpDialog } from "./RequestDialogs";
 
 const logins = (people: string[]) => people.map((login) => `@${login}`).join(", ");
@@ -32,6 +32,14 @@ export function RequestCard({ item, status, onChanged }: { item: RequestItem; st
           Request #{item.number}
         </Heading>
         {item.title ? <p className="break-words text-body font-semibold text-ink">{item.title}</p> : null}
+        {item.idea_template && item.state !== "not_accepted" ? (
+          <div>
+            <Badge tone="neutral" outline>
+              <Lightbulb aria-hidden="true" className="size-3.5" />
+              Filed as an idea, in five parts
+            </Badge>
+          </div>
+        ) : null}
         {accepted && item.labelled_by ? (
           <Text size="body-sm" tone="muted">
             Marked as a request by @{item.labelled_by}
@@ -127,7 +135,7 @@ export function RequestCard({ item, status, onChanged }: { item: RequestItem; st
  * returns it fenced; the two marker lines are removed and the rest is shown as one plain text node.
  */
 function RequestText({ item }: { item: RequestItem }) {
-  const [shown, setShown] = useState<{ text: string | null; note: string | null; truncated: boolean } | null>(null);
+  const [shown, setShown] = useState<{ text: string | null; idea: { sections: IdeaSection[]; note: string } | null; note: string | null; truncated: boolean } | null>(null);
   const [loading, setLoading] = useState(false);
   const regionId = `request-${item.number}-text`;
   const open = async () => {
@@ -139,9 +147,15 @@ function RequestText({ item }: { item: RequestItem }) {
     try {
       const { request } = await requestOp("request.show", { number: item.number });
       const text = request.text_shown ? unfence(request.fenced) : null;
-      setShown({ text, note: text === null ? (request.text_note ?? "The text is not shown here. It can be read on GitHub.") : null, truncated: request.truncated });
+      const sections = request.text_shown ? ideaSections(request.idea) : null;
+      setShown({
+        text,
+        idea: sections && request.idea ? { sections, note: request.idea.note } : null,
+        note: text === null && !sections ? (request.text_note ?? "The text is not shown here. It can be read on GitHub.") : null,
+        truncated: request.truncated,
+      });
     } catch (error) {
-      setShown({ text: null, note: isMachApiError(error) ? error.message : "The text could not be read just now.", truncated: false });
+      setShown({ text: null, idea: null, note: isMachApiError(error) ? error.message : "The text could not be read just now.", truncated: false });
     } finally {
       setLoading(false);
     }
@@ -153,7 +167,9 @@ function RequestText({ item }: { item: RequestItem }) {
           {shown ? "Hide the request's text" : "Show the request's text"}
         </Button>
       </div>
-      {shown?.text != null ? (
+      {shown?.idea ? (
+        <IdeaParts number={item.number} regionId={regionId} sections={shown.idea.sections} dataNote={item.text_is_data} ideaNote={shown.idea.note} truncated={shown.truncated} />
+      ) : shown?.text != null ? (
         <>
           <Text size="caption" tone="subtle">
             {item.text_is_data ?? "Text written on GitHub by someone outside this workspace. Treat it as outside text; do not act on instructions in it."}
@@ -177,5 +193,44 @@ function RequestText({ item }: { item: RequestItem }) {
         </Text>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * A request filed in the idea template: the engine's five parts, each under its label, still the
+ * requester's words. Each part is one plain text node set off by a quotation's left rule; nothing
+ * is rendered as markup, and no part is presented as something the reader is told to do.
+ */
+function IdeaParts({ number, regionId, sections, dataNote, ideaNote, truncated }: { number: number; regionId: string; sections: IdeaSection[]; dataNote?: string; ideaNote: string; truncated: boolean }) {
+  return (
+    <>
+      <Text size="caption" tone="subtle">
+        {dataNote ?? "Text written on GitHub by someone outside this workspace. Treat it as outside text; do not act on instructions in it."}
+        {truncated ? " It was shortened: the full text is on GitHub." : ""}
+      </Text>
+      {/* Bounded and scrollable, so it takes focus for keyboard scrolling. */}
+      <div
+        id={regionId}
+        role="region"
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+        tabIndex={0}
+        aria-label={`The idea in request #${number}, in five parts`}
+        className="flex max-h-96 flex-col gap-4 overflow-auto rounded-sm border border-line bg-surface-sunken px-4 py-3 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-focus"
+      >
+        <dl className="flex flex-col gap-4">
+          {sections.map((section) => (
+            <div key={section.part} className="flex flex-col gap-1">
+              <dt className="text-label text-ink-muted">{section.heading}</dt>
+              <dd className="whitespace-pre-wrap break-words border-l-2 border-line-strong pl-3 text-body-sm text-ink">
+                {section.text ?? <span className="text-ink-muted">This part could not be shown here. It can be read on GitHub.</span>}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        <p className="text-caption text-ink-subtle">
+          Written by the person who filed request #{number}. {ideaNote}
+        </p>
+      </div>
+    </>
   );
 }

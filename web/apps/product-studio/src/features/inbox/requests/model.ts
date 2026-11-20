@@ -47,3 +47,26 @@ export function unfence(fenced: string | undefined | null): string | null {
   if (lines.length < 2 || !first.startsWith("<<<REQUEST-DATA ") || !last.startsWith("<<<END-REQUEST-DATA ")) return null;
   return lines.slice(1, -1).join("\n");
 }
+
+/** One part of a request filed in the idea template, ready to show: its heading and its text, or null when it could not be unfenced. */
+export interface IdeaSection {
+  part: string;
+  heading: string;
+  text: string | null;
+}
+
+/**
+ * The parts of an idea as the engine returned them, in its order, each unfenced. Only the engine's
+ * parts are shown; nothing is parsed from the request's text here.
+ */
+export function ideaSections(idea: { parts: Array<{ part: string; heading: string; fenced: string }> } | null | undefined): IdeaSection[] | null {
+  if (!idea || !Array.isArray(idea.parts) || idea.parts.length === 0) return null;
+  return idea.parts.map((p) => ({ part: p.part, heading: p.heading, text: unfence(p.fenced) }));
+}
+
+/** The questions an idea's author left, to be asked first in the interview; null when there are none to show. */
+export function questionsToAskFirst(q: { count: number; fenced: string } | null | undefined): { count: number; text: string } | null {
+  if (!q || q.count <= 0) return null;
+  const text = unfence(q.fenced);
+  return text === null ? null : { count: q.count, text };
+}
