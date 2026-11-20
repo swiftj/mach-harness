@@ -1,5 +1,7 @@
 # M6.3 Execution Timeline: performance method and results
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Status: measured on commit `ad925b4` (2026-11-13); results in section 5. The budget is
 `M6_3_DESIGN.md` section 8. This document says what is measured, on what, how, and where the numbers
 go. Nothing here changes what the observer or the Factory Floor do.

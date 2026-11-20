@@ -1,5 +1,7 @@
 # MACH Next — M2 Design: Publishing and collaboration
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Status: **accepted and built.** Four deviations from this text, each made while building:
 
 1. **`git merge` is used, inside the temporary worktree only.** Section 4 said it would stay forbidden. A request that fell behind cannot be brought up to date without it unless history is rewritten, which is worse. It never runs in the PM's checkout and never merges a pull request.

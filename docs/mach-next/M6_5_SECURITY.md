@@ -1,5 +1,7 @@
 # M6.5 security: observer privacy and artifact redaction
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Status: review done on `feature/mach-next-m6-5-factory-analytics` (baseline `b37c036`), fixes in the observer with
 tests. Scope: the observer's HTTP surface as it stands (`apps/observer/internal/security`, `server`, `artifact`,
 `redact`), the open privacy items of the M6.2 acceptance (`M6_2_ACCEPTANCE.md`, `M6_2_COMPLETION.md` section 9), and

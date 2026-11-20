@@ -1,5 +1,7 @@
 # M7 Factory acceptance: one supervised run on a real product (Phases 2, 3, 7 and 8)
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Status: run complete, Factory disabled, nothing left running. One live run, 2026-11-14 22:31–23:12 UTC, on the
 throwaway "Team Lending Desk" project the Product Manager half built (`M7_PM_ACCEPTANCE.md`). Everything below was
 run once. Where a check was done on copied records instead of the live line, it says so.

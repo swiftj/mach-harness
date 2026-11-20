@@ -1,5 +1,7 @@
 # MACH Next M7: release qualification report
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 This report says what was shown about MACH as a whole product, with what kind of evidence, and what was
 not shown. It recommends a decision; the product owner makes it. It does not authorize a release.
 

@@ -1,5 +1,7 @@
 # M7 — Release-readiness inventory (Phase 0)
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Version 1. Baseline `106f4d3` (main, M6.6 merged). Newest tag `v0.12.0` (commit `235cb2c`, published
 2026-11-12 with `mach-studio-{darwin-amd64,darwin-arm64,linux-amd64,linux-arm64}` and `SHA256SUMS`, no
 `mach-observer`; read with `gh release view v0.12.0`). `.claude-plugin/plugin.json` at the baseline still says

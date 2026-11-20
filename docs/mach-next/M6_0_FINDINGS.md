@@ -1,5 +1,7 @@
 # MACH Next — M6.0 findings: performance, accessibility and honesty
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 **How to read this document.** Section 0 is the current status, at `f9fe87e`, after a second fix round and two product-owner decisions. Sections 1 to 7 are the independent re-measure made at `8a83ab0`, before that round; their numbers were **measured at `8a83ab0` and not re-measured since**, and are kept as the record. Where a later change made a statement in them untrue, it is marked.
 
 ## 0. Status at `f9fe87e` (current)

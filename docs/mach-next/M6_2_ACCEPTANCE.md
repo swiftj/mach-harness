@@ -1,5 +1,7 @@
 # MACH Next — M6.1/M6.2 end-to-end acceptance: a real, authorized Factory run watched live by the Factory Floor
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 ## Re-check after the fix rounds (2026-11-12 evening, local; 13 Nov 02:10–03:20 UTC)
 
 Independent re-test of everything that failed or was partial below, against the current code: observer and Factory

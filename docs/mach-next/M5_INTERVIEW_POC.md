@@ -1,5 +1,7 @@
 # MACH Next — M5 interview bridge: proof of concept
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Status: **done**. These findings replace the provisional section 6 of `M5_CONTRACT.md`. All of them come from real runs of Claude Code **2.1.322** on this machine (macOS) on 2026-11-11, in a scratch project with MACH script-installed. The prototype is in `poc/interview/` (`bridge.py`, `README.md`).
 
 ## 0. Verdict

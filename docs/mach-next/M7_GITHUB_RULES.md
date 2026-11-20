@@ -1,5 +1,7 @@
 # M7: GitHub branch rules against Product Studio's real send and feedback
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 **The test repository `swiftj/mach-m7-acceptance` was switched from private to PUBLIC and is still public.** The
 product owner approved the switch so that branch rules could be set. They can decide whether to switch it back.
 All rules and rulesets added here were removed afterwards; `main` is unprotected.

@@ -1,5 +1,7 @@
 # MACH Next M6.6: Factory Floor integration and production hardening — acceptance report
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 M6.6 made the three Factory Floor workspaces (Atlas, Execution Timeline, Factory Analytics) behave as
 one product, checked them against real MACH Factory execution, and hardened the observer boundary. It added no
 workspace and no execution authority. The full Evidence Theater stays deferred.

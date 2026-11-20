@@ -1,5 +1,7 @@
 # M6.3 Execution Timeline: completion report
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Branch `feature/mach-next-m6-3-execution-timeline`, from baseline `5bb379e` (M6.2 on `main`). Not merged.
 Companion documents: `M6_3_DESIGN.md` (the contract, as built), `M6_3_TESTING.md`, `M6_3_ACCESSIBILITY.md`,
 `M6_3_PERFORMANCE.md`.

@@ -1,5 +1,7 @@
 # MACH Next — M6.1: what a real execution stream contains (stream compatibility, version 1)
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Gate: the first technical gate of M6.1. Question: when the Factory runs a MACH Dynamic Workflow, what does the
 `stream.jsonl` it records actually contain, and what can a live observer rely on? Everything here was **observed** in
 real runs unless it says *inference* or *docs*. One machine, one runtime version, six runs: treat every "observed" as
