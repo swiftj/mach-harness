@@ -183,6 +183,20 @@ def adrs() -> Any:
     return _ADR[0]
 
 
+_CELL: List[Any] = []
+
+
+def intent_cell() -> Any:
+    """The intent station's cell.py, loaded once, for its read-only timing checks (rules_changed)."""
+    if not _CELL:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("mach_cell", sibling("intent") / "scripts" / "cell.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _CELL.append(module)
+    return _CELL[0]
+
+
 _FAULTS: List[Any] = []
 
 
@@ -674,7 +688,22 @@ def digest(project: Project, info: Dict[str, Any]) -> Dict[str, Any]:
     note = adr_note(project, ticket_id) if isinstance(ticket_id, str) and TICKET_ID_RE.match(ticket_id) else None
     if note:
         shown["adrs"] = note
+    older = rules_changed(project, ticket_id) if isinstance(ticket_id, str) and TICKET_ID_RE.match(ticket_id) else []
+    if older:
+        shown["rules_changed"] = older
     return shown
+
+
+def rules_changed(project: Project, ticket_id: str, cache: Optional[Dict[str, Any]] = None) -> List[str]:
+    """Product principles, policy packs and shipped rules that changed after this ticket's spec answered them (M15): one fixed
+    line each, from cell.py's rules_changed. Flagged, never acted on, as ADR timing is. Local reads only: no GitHub call."""
+    cell = load_json(project.cell_dir(ticket_id) / "cell.json")
+    if not isinstance(cell, dict) or cell.get("ticket_id") != ticket_id:
+        return []
+    try:
+        return intent_cell().rules_changed(project.root, cell, cache)
+    except Exception as exc:  # a flag is advice: it never stops the routing sheet, and a failure to check it is said
+        return [f"Whether the rules this ticket's spec answered changed since could not be checked ({exc.__class__.__name__})."]
 
 
 def adr_flags(project: Project, ticket_id: str) -> List[Dict[str, Any]]:
@@ -711,6 +740,10 @@ def status_digest(project: Project, rows: List[Dict[str, Any]]) -> Dict[str, Any
     if flagged:
         shown["adrs"] = (f"Architecture decisions changed after {', '.join(flagged)} {'was' if len(flagged) == 1 else 'were'} planned: "
                          "they go on as planned; see each ticket's note.")
+    older = [row["ticket_id"] for row in rows if row.get("rules_changed")]
+    if older:
+        shown["rules_changed"] = (f"Principles, policy packs or shipped rules changed after {', '.join(older)} {'was' if len(older) == 1 else 'were'} "
+                                  "answered: they go on as answered; see each ticket's lines.")
     offer = fault_offer(project)
     if offer:
         shown["faults"] = offer
@@ -1045,6 +1078,7 @@ def cmd_status(project: Project, args: argparse.Namespace) -> int:
     rows = []
     C = claims()
     limit = C.minutes(project.config)
+    read_once: Dict[str, Any] = {}  # the packs, the shipped rules and the principles, read once for every ticket
     for ticket_id in ids:
         info = next_step(project, ticket_id, args.headless)
         row = {key: info[key] for key in ("ticket_id", "stage", "action", "needs", "reason")}
@@ -1054,6 +1088,9 @@ def cmd_status(project: Project, args: argparse.Namespace) -> int:
         note = adr_note(project, ticket_id)
         if note:
             row["adrs"] = note  # decided after it was planned: flagged, never restarted or blocked
+        older = rules_changed(project, ticket_id, read_once)
+        if older:
+            row["rules_changed"] = older  # M15: the same for principles, policy packs and shipped rules
         rows.append(row)
     tuning = [row["ticket_id"] for row in rows if row["action"] != "stop" and "claim" not in row and "factory-tuning" in project.ticket_labels(row["ticket_id"])]
     due = project.observe_due()

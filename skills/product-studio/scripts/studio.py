@@ -598,9 +598,11 @@ def describe(studio: Studio) -> Dict[str, Any]:
         spec = studio.spec_of(slice_id)
         flags = principle_flags(studio, slice_id, current)
         moved = studio.shipped_moved(slice_id, data)
+        older_packs = policies_changed(studio, spec)
         slice_rows.append({
             **({"principles": flags} if flags is not None else {}),
             **({"shipped_moved": moved} if moved else {}),
+            **({"policies_changed": older_packs} if older_packs else {}),
             "slice_id": slice_id, "title": data.get("title"), "epic_id": data.get("epic_id"), "status": data.get("status"),
             "revision": data.get("revision"), "open_questions": len(data.get("open_questions") or []),
             "spec": studio.relative(spec) if spec else None, "has_intent": studio.intent_path(slice_id).is_file(),
@@ -1066,6 +1068,18 @@ def policies_field(studio: Studio) -> Dict[str, Any]:
     return {"policies": policies_helper().for_interview(found)}
 
 
+def policies_changed(studio: Studio, spec: Optional[Path]) -> Optional[str]:
+    """M15: for status, the one line saying a pack this slice's spec answered has changed since (policies.drift_text). Only a
+    spec with a Policies section is compared, so a project whose specs answer no pack causes no Git read. Flagged, never reopened."""
+    if spec is None:
+        return None
+    P = policies_helper()
+    text = spec.read_text(encoding="utf-8-sig")
+    if not P.parse_section(text)["rows"]:
+        return None
+    return P.drift_text(P.drift(text, studio.policy_listing()))
+
+
 def cmd_policy_list(studio: Studio, args: argparse.Namespace) -> int:
     """The policy packs, their problems, and the slices answered under an older version of one. Changes nothing."""
     P = policies_helper()
@@ -1095,11 +1109,16 @@ def cmd_policy_accept(studio: Studio, args: argparse.Namespace) -> int:
     if spec is None:
         raise StudioError(f"{args.slice_id} has no spec yet, so it has no concern to accept.")
     try:
-        text = P.accept(spec.read_text(encoding="utf-8-sig"), args.policy_id, args.by, args.reason)
+        config = studio.cell.load_config(studio.project)
+    except Exception:  # noqa: BLE001  unreadable settings: no extra list, so only the pack's own owner can be checked
+        config = {}
+    try:
+        text, check = P.accept(spec.read_text(encoding="utf-8-sig"), args.policy_id, args.by, args.reason, allowed=P.accept_by(config))
     except ValueError as exc:
         raise StudioError(str(exc))
     write(spec, text)
     return emit({"accepted": args.policy_id, "slice_id": args.slice_id, "by": " ".join(args.by.split()),
+                 "owner_check": check, "owner_check_note": P.ACCEPT_GUARD,
                  "open_left": [item["statement_id"] for item in P.open_concerns(text)], "factory_authorized": False,
                  "note": "The spec now records the owner's decision in their words. The slice can be marked ready once no concern and no question is open."})
 
