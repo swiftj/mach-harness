@@ -60,6 +60,9 @@ BYPRODUCT_RE = re.compile(
     r"|\.py[co]$|(^|/)\.coverage(\..*)?$|(^|/)\.DS_Store$|\.egg-info(/|$)|\.tsbuildinfo$"
 )
 TIERS = ("High", "Medium", "Low")
+# tickets.jira.browse_url (M13 E): an https address with no user name, password, query or fragment, ending in "/".
+BROWSE_URL_RE = re.compile(r"^https://[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~-]+)*/$")
+BROWSE_URL_LIMIT = 200
 
 
 class MergeError(Exception):
@@ -156,6 +159,7 @@ class Cell:
         self.inline_findings = pr.get("inline_findings") is not False
         self.revalidate_overlap = merge.get("revalidate_overlap") is not False
         self.records = change_record.settings(config)
+        self.jira, self.jira_url, self.jira_problem = jira_settings(self.info, config)
 
     def head(self) -> str:
         return git(self.work, "rev-parse", "HEAD").stdout.strip()
@@ -163,6 +167,30 @@ class Cell:
     def save_info(self) -> None:
         self.info["updated_at"] = now()
         write_json(self.root / "cell.json", self.info)
+
+
+def jira_settings(info: Dict[str, Any], config: Any) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """(key, browse_url, problem) for M13 part E. The key is the slice's, from cell.json, used only when it passes the ticket
+    station's check of Jira's form; the browse_url only when it is a plain https address. Nothing here calls Jira."""
+    product = info.get("product") if isinstance(info.get("product"), dict) else {}
+    rules = issue_rules()
+    key = product.get("jira") if rules is not None and rules.is_jira_key(product.get("jira")) else None
+    tickets = config.get("tickets") if isinstance(config, dict) and isinstance(config.get("tickets"), dict) else {}
+    jira = tickets.get("jira") if isinstance(tickets.get("jira"), dict) else {}
+    url = jira.get("browse_url")
+    if url is None:
+        return key, None, None
+    if not isinstance(url, str) or len(url) > BROWSE_URL_LIMIT or not BROWSE_URL_RE.fullmatch(url):
+        return key, None, ("tickets.jira.browse_url in .factory/config.json must be an https address with no user name, password, query or fragment, "
+                           f"ending in /, such as https://example.atlassian.net/browse/ (at most {BROWSE_URL_LIMIT} characters). Fix it or remove it.")
+    return key, url, None
+
+
+def jira_text(cell: "Cell") -> Optional[str]:
+    """The key as Markdown: a link through the browse_url when one is set, else plain text. None without a key."""
+    if not cell.jira:
+        return None
+    return f"[{cell.jira}]({cell.jira_url}{cell.jira})" if cell.jira_url else cell.jira
 
 
 def default_branch(project: Path) -> str:
@@ -253,6 +281,9 @@ def survey(cell: Cell, by_person: bool) -> Dict[str, Any]:
         refusals.append("The cell has uncommitted changes. Everything in an approved cell is committed; look at what changed.")
     if cell.records["problem"]:
         refusals.append(cell.records["problem"])
+    if cell.jira_problem:
+        refusals.append(cell.jira_problem)
+    plan["jira"] = cell.jira
     if cell.method == "pr":
         if not git(cell.project, "remote", "get-url", "origin").stdout.strip():
             refusals.append("merge.method is 'pr' but the repository has no 'origin' remote.")
@@ -303,7 +334,7 @@ def write_record(cell: Cell, revalidated: Optional[Dict[str, Any]]) -> Dict[str,
     try:
         path = change_record.path_for(cell.records["dir"], cell.ticket_id, taken, earlier.get("path") if earlier else None)
         text = change_record.render(cell.root, cell.info, cell.ticket_id, {
-            "approved": cell.decision.get("head"), "revalidated": reval.get("head"), "onto": reval.get("onto"), "base": base}, issue_rules())
+            "approved": cell.decision.get("head"), "revalidated": reval.get("head"), "onto": reval.get("onto"), "base": base}, issue_rules(), cell.jira_url)
         text = change_record.mask(text, path, scan)
     except change_record.RecordError as exc:
         raise MergeError(str(exc), code="record-refused")
@@ -666,7 +697,9 @@ def refs_line(cell: Cell) -> Optional[str]:
 
 
 def pr_title(cell: Cell) -> str:
-    return inert(f"{cell.ticket_id}: {cell.info.get('title') or cell.info.get('slice_id') or 'change'}", 240)
+    """The pull request's title; a slice's Jira key (M13), checked, comes first, which Jira's GitHub integration reads."""
+    title = inert(f"{cell.ticket_id}: {cell.info.get('title') or cell.info.get('slice_id') or 'change'}", 240)
+    return f"{cell.jira} {title}" if cell.jira else title
 
 
 def pr_body(cell: Cell) -> str:
@@ -680,7 +713,7 @@ def pr_body(cell: Cell) -> str:
     lines = [
         f"**Ticket:** {inert(cell.ticket_id)}  ",
         f"**Slice:** {inert(cell.info.get('slice_id'))} (`{inert(cell.info.get('spec_path'))}`)  ",
-        f"**Risk tier:** {inert(cell.info.get('risk'))}",
+        f"**Risk tier:** {inert(cell.info.get('risk'))}" + (f"  \n**Jira:** {jira_text(cell)}" if cell.jira else ""),
         "",
         "## Verification",
         f"{inert(cell.summary.get('status', 'unknown'))}: {passed} of {len(checks)} checks passed, "
@@ -1077,12 +1110,13 @@ def land(cell: Cell, args: argparse.Namespace, plan: Dict[str, Any]) -> int:
     record = write_record(cell, revalidated) if cell.records["enabled"] else None
     head = cell.head()
     result: Dict[str, Any] = {"ticket_id": cell.ticket_id, "branch": cell.branch, "into": main, "method": cell.method,
-                              "approved_commit": cell.decision.get("head"), "landed_commit": head, "revalidated": revalidated,
+                              "approved_commit": cell.decision.get("head"), "landed_commit": head, "revalidated": revalidated, "jira": cell.jira,
                               "change_record": {key: record.get(key) for key in ("path", "sha256", "commit", "written")} if record
                               else {"written": False, "reason": "records.enabled is false in .factory/config.json."}}
     if cell.method == "local":
         title = cell.info.get("title") or cell.info.get("slice_id") or "change"
-        merged = git(cell.project, "merge", "--no-ff", "-m", f"Merge {cell.ticket_id}: {title}", cell.branch)
+        message = (f"{cell.jira} " if cell.jira else "") + f"Merge {cell.ticket_id}: {title}"  # a checked Jira key first (M13)
+        merged = git(cell.project, "merge", "--no-ff", "-m", message, cell.branch)
         if merged.returncode != 0:
             git(cell.project, "merge", "--abort")
             raise MergeError("git could not merge the branch into the main checkout: " + ((merged.stderr.strip() or merged.stdout.strip()).splitlines() or ["merge failed"])[-1],

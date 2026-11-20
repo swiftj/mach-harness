@@ -213,7 +213,7 @@ def capped(lines: List[str], items: int, limit: int, what: str) -> List[str]:
 
 # ---------------------------------------------------------------- the record
 
-def render(root: Path, info: Dict[str, Any], ticket_id: str, commits: Dict[str, Optional[str]], rules: Any) -> str:
+def render(root: Path, info: Dict[str, Any], ticket_id: str, commits: Dict[str, Optional[str]], rules: Any, jira_url: Optional[str] = None) -> str:
     """The record's text for the cell at `root`. Deterministic for the same files and commits."""
     t = Text(rules)
     lines = [
@@ -225,7 +225,7 @@ def render(root: Path, info: Dict[str, Any], ticket_id: str, commits: Dict[str, 
         "so the archive can be checked against this record.",
         "",
     ]
-    lines += ticket_section(t, info, ticket_id)
+    lines += ticket_section(t, info, ticket_id, rules, jira_url)
     lines += ["## Why", "", *t.block(read_text(root / "intent.md"), INTENT_LIMIT), ""]
     lines += plan_section(t, root, info)
     lines += verification_section(t, root)
@@ -235,7 +235,7 @@ def render(root: Path, info: Dict[str, Any], ticket_id: str, commits: Dict[str, 
     return "\n".join(lines).rstrip() + "\n"
 
 
-def ticket_section(t: Text, info: Dict[str, Any], ticket_id: str) -> List[str]:
+def ticket_section(t: Text, info: Dict[str, Any], ticket_id: str, rules: Any = None, jira_url: Optional[str] = None) -> List[str]:
     product = info.get("product") if isinstance(info.get("product"), dict) else {}
     slice_id = product.get("slice_id") or info.get("slice_id")
     revision = product.get("revision")
@@ -246,6 +246,9 @@ def ticket_section(t: Text, info: Dict[str, Any], ticket_id: str) -> List[str]:
     issue = product.get("issue") if isinstance(product.get("issue"), dict) else None
     if issue and isinstance(issue.get("repository"), str) and type(issue.get("number")) is int:
         lines.append(f"- Slice issue: {t.one(issue['repository'], 140)}, issue number {issue['number']}")
+    jira = product.get("jira")
+    if rules is not None and rules.is_jira_key(jira):  # M13: the Jira key, checked again; a link only through the checked browse_url
+        lines.append(f"- Jira: [{jira}]({jira_url}{jira})" if jira_url else f"- Jira: {jira}")
     lines += [f"- Spec: {t.one(info.get('spec_path'), 200)}", f"- Risk tier: {t.one(info.get('risk'), 20)}", f"- App type: {t.one(info.get('app_type'), 20)}", ""]
     return lines
 

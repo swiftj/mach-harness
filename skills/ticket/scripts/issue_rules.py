@@ -422,11 +422,21 @@ PROJECT_ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 SLICE_MARKER_RE = re.compile(
     r"\A<!-- mach:slice id=(SLICE-[0-9]{3,}) revision=([0-9]{1,6}) epic=#([0-9]{1,9}) depends=(none|#[0-9]{1,9}(?:,#[0-9]{1,9})*)\n"
-    r"     spec-sha256=([0-9a-f]{64}) why-sha256=([0-9a-f]{64}) -->\n")
+    r"     spec-sha256=([0-9a-f]{64}) why-sha256=([0-9a-f]{64})(?: jira=(\S+))? -->\n")
 FOLLOWS_RE = re.compile(r"\AChanges #([0-9]{1,9}), which has shipped\.\n")
 PRODUCT_MARKER_RE = re.compile(r"\A<!-- mach:(project|epic) id=([A-Za-z0-9-]{1,64}) -->\n")
 APPROVAL_RE = re.compile(r"<!-- mach:approval id=(SLICE-[0-9]{3,}) revision=([0-9]{1,6}) by=([A-Za-z0-9-]{1,39}) "
-                         r"spec-sha256=([0-9a-f]{64}) why-sha256=([0-9a-f]{64}) -->")
+                         r"spec-sha256=([0-9a-f]{64}) why-sha256=([0-9a-f]{64})(?: jira=([A-Z][A-Z0-9_]{1,31}-[1-9][0-9]{0,8}))? -->")
+# M13 part E: a Jira issue key, in Jira's form. Identifiers only: MACH never calls Jira and holds no Jira credentials.
+JIRA_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,31}-[1-9][0-9]{0,8}$")
+JIRA_KEY_LIMIT = 42  # the longest key the form allows
+JIRA_LINE = "Jira: {}\n"
+
+
+def is_jira_key(value: Any) -> bool:
+    """True for a Jira issue key such as ABC-123: a project key of 2 to 32 capitals, digits or underscores starting
+    with a letter, a hyphen, and an issue number with no leading zero."""
+    return isinstance(value, str) and len(value) <= JIRA_KEY_LIMIT and bool(JIRA_KEY_RE.fullmatch(value))
 WHY_HEADING = "## Why\n"
 SPEC_HEADING = "\n## Specification\n"
 
@@ -442,24 +452,30 @@ def text_sha256_of(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def slice_marker(slice_id: str, revision: int, epic: int, depends: Sequence[int], spec_sha256: str, why_sha256: str) -> str:
+def slice_marker(slice_id: str, revision: int, epic: int, depends: Sequence[int], spec_sha256: str, why_sha256: str,
+                 jira: Optional[str] = None) -> str:
     if not SLICE_ID_RE.fullmatch(slice_id) or type(revision) is not int or not 1 <= revision < 10 ** 6 or not is_issue_number(epic):
         raise ValueError("a slice marker names a slice ID, a revision and its epic's issue")
     if any(not is_issue_number(n) for n in depends) or not HEX64_RE.fullmatch(spec_sha256) or not HEX64_RE.fullmatch(why_sha256):
         raise ValueError("a slice marker carries issue numbers and SHA-256 digests only")
+    if jira is not None and not is_jira_key(jira):
+        raise ValueError("a Jira key is in Jira's form, such as ABC-123")
     listed = ",".join(f"#{n}" for n in depends) or "none"
     return (f"<!-- mach:slice id={slice_id} revision={revision} epic=#{epic} depends={listed}\n"
-            f"     spec-sha256={spec_sha256} why-sha256={why_sha256} -->\n")
+            f"     spec-sha256={spec_sha256} why-sha256={why_sha256}{f' jira={jira}' if jira else ''} -->\n")
 
 
 def slice_issue_body(slice_id: str, revision: int, epic: int, depends: Sequence[int], why: str, spec: str,
-                     follows: Optional[int] = None) -> str:
-    """A slice's issue body: the marker, then the why and the spec exactly as approved."""
-    head = slice_marker(slice_id, revision, epic, depends, text_sha256_of(spec), text_sha256_of(why))
+                     follows: Optional[int] = None, jira: Optional[str] = None) -> str:
+    """A slice's issue body: the marker, then the why and the spec exactly as approved. A slice with a Jira key
+    (M13) carries it in the marker and in one line, `Jira: KEY-123`, before the why; one without is unchanged."""
+    head = slice_marker(slice_id, revision, epic, depends, text_sha256_of(spec), text_sha256_of(why), jira)
     if follows is not None:
         if not is_issue_number(follows):
             raise ValueError("not an issue number")
         head += f"Changes #{follows}, which has shipped.\n"
+    if jira:
+        head += JIRA_LINE.format(jira)
     return head + WHY_HEADING + why + SPEC_HEADING + spec
 
 
@@ -475,14 +491,19 @@ def parse_slice_body(body: Any) -> Optional[Dict[str, Any]]:
         if not found:
             continue
         depends = [] if found.group(4) == "none" else [int(part[1:]) for part in found.group(4).split(",")]
+        key = found.group(7)
         marker = {"slice_id": found.group(1), "revision": int(found.group(2)), "epic": int(found.group(3)), "depends": depends,
-                  "spec_sha256": found.group(5), "why_sha256": found.group(6), "follows": None}
+                  "spec_sha256": found.group(5), "why_sha256": found.group(6), "follows": None,
+                  "jira": key if is_jira_key(key) else None, "jira_invalid": key is not None and not is_jira_key(key)}
         rest = text[found.end():]
         follows = FOLLOWS_RE.match(rest)
         if follows:
             marker["follows"] = int(follows.group(1))
             rest = rest[follows.end():]
         split = None
+        if marker["jira"]:  # the visible line must say the key the marker carries; otherwise the body was changed
+            line = JIRA_LINE.format(marker["jira"])
+            rest = rest[len(line):] if rest.startswith(line) else "(changed)"
         if rest.startswith(WHY_HEADING):
             rest = rest[len(WHY_HEADING):]
             at = rest.find(SPEC_HEADING)
@@ -498,15 +519,19 @@ def parse_slice_body(body: Any) -> Optional[Dict[str, Any]]:
     return result
 
 
-def approval_comment(slice_id: str, revision: int, login: str, spec_sha256: str, why_sha256: str) -> str:
-    """The comment that records a product manager's approval of one revision of a slice."""
+def approval_comment(slice_id: str, revision: int, login: str, spec_sha256: str, why_sha256: str, jira: Optional[str] = None) -> str:
+    """The comment that records a product manager's approval of one revision of a slice. A Jira key (M13) is one of
+    the approved fields: a body whose key is not the approved one is not accepted."""
     if not LOGIN_RE.fullmatch(login or "") or not SLICE_ID_RE.fullmatch(slice_id) or type(revision) is not int:
         raise ValueError("an approval names a slice, a revision and a GitHub account")
     if not HEX64_RE.fullmatch(spec_sha256) or not HEX64_RE.fullmatch(why_sha256):
         raise ValueError("an approval carries SHA-256 digests")
+    if jira is not None and not is_jira_key(jira):
+        raise ValueError("a Jira key is in Jira's form, such as ABC-123")
     return (f"Approved in MACH Product Studio by {login}: {slice_id}, revision {revision}.\n\n"
-            f"- Specification SHA-256: `{spec_sha256}`\n- Why SHA-256: `{why_sha256}`\n\n"
-            f"<!-- mach:approval id={slice_id} revision={revision} by={login} spec-sha256={spec_sha256} why-sha256={why_sha256} -->")
+            f"- Specification SHA-256: `{spec_sha256}`\n- Why SHA-256: `{why_sha256}`\n" + (f"- Jira: `{jira}`\n" if jira else "") + "\n"
+            f"<!-- mach:approval id={slice_id} revision={revision} by={login} spec-sha256={spec_sha256} why-sha256={why_sha256}"
+            f"{f' jira={jira}' if jira else ''} -->")
 
 
 def approvals(bodies: Iterable[Any]) -> List[Dict[str, Any]]:
@@ -515,7 +540,7 @@ def approvals(bodies: Iterable[Any]) -> List[Dict[str, Any]]:
     for body in bodies:
         for match in APPROVAL_RE.finditer(body if isinstance(body, str) else ""):
             found.append({"slice_id": match.group(1), "revision": int(match.group(2)), "by": match.group(3),
-                          "spec_sha256": match.group(4), "why_sha256": match.group(5)})
+                          "spec_sha256": match.group(4), "why_sha256": match.group(5), **({"jira": match.group(6)} if match.group(6) else {})})
     return found
 
 
@@ -820,6 +845,8 @@ SLICE_NOT_ACCEPTED = {
     "no_role": "Not accepted: mach:ready was added by an account without the triage, write, maintain or admin role on this repository.",
     "no_approval": "Not accepted: there is no approval comment for this revision by the account that marked it ready.",
     "approval_edited": "Not accepted: the approval comment was edited after it was written.",
+    "bad_jira": "Not accepted: the Jira key in its body is not in Jira's form (such as ABC-123). The product manager marks it ready again in Product Studio.",
+    "jira_changed": "Not accepted: its Jira key is not the one that was approved. The product manager marks it ready again in Product Studio.",
 }
 
 
@@ -869,7 +896,9 @@ def slice_acceptance(issue: Dict[str, Any], events: Sequence[Dict[str, Any]], co
     parsed = parse_slice_body(issue.get("body"))
     if parsed is None:
         return refuse(SLICE_NOT_ACCEPTED["no_marker"])
-    result["marker"] = {key: parsed[key] for key in ("slice_id", "revision", "epic", "depends", "spec_sha256", "why_sha256", "follows")}
+    result["marker"] = {key: parsed[key] for key in ("slice_id", "revision", "epic", "depends", "spec_sha256", "why_sha256", "follows", "jira")}
+    if parsed["jira_invalid"]:
+        return refuse(SLICE_NOT_ACCEPTED["bad_jira"])
     if not parsed["intact"]:
         return refuse(SLICE_NOT_ACCEPTED["edited"])
     event = deciding_event(events, READY_LABEL)
@@ -883,13 +912,16 @@ def slice_acceptance(issue: Dict[str, Any], events: Sequence[Dict[str, Any]], co
     if not role_counts(permission):
         return refuse(SLICE_NOT_ACCEPTED["no_role"])
     login, account = event["login"], event["id"]
-    matching = [item for item in comments
-                if item.get("login") == login and item.get("id") == account and not item.get("app") and item.get("type") == "User"
+
+    def approving(item: Dict[str, Any], same_key: bool) -> bool:
+        return (item.get("login") == login and item.get("id") == account and not item.get("app") and item.get("type") == "User"
                 and any(found["slice_id"] == parsed["slice_id"] and found["revision"] == parsed["revision"] and found["by"] == login
                         and found["spec_sha256"] == parsed["spec_sha256"] and found["why_sha256"] == parsed["why_sha256"]
-                        for found in approvals([item.get("body")]))]
+                        and (not same_key or found.get("jira") == parsed["jira"]) for found in approvals([item.get("body")])))
+
+    matching = [item for item in comments if approving(item, True)]
     if not matching:
-        return refuse(SLICE_NOT_ACCEPTED["no_approval"])
+        return refuse(SLICE_NOT_ACCEPTED["jira_changed" if any(approving(item, False) for item in comments) else "no_approval"])
     if not any(unedited(item) for item in matching):
         return refuse(SLICE_NOT_ACCEPTED["approval_edited"])
     result.update(state="accepted", approved_by=login, why=parsed["why"], spec=parsed["spec"])
@@ -1015,7 +1047,7 @@ def slice_take_check(issue: Dict[str, Any], comments: Sequence[Dict[str, Any]]) 
     if parsed is None:
         result["problem"] = "not_ours"
         return result
-    result["marker"] = {key: parsed[key] for key in ("slice_id", "revision", "epic", "depends", "spec_sha256", "why_sha256", "follows")}
+    result["marker"] = {key: parsed[key] for key in ("slice_id", "revision", "epic", "depends", "spec_sha256", "why_sha256", "follows", "jira")}
     if str(issue.get("state") or "").lower() == "closed" or "mach:shipped" in labels:
         result["problem"] = "shipped"
         return result
@@ -1024,7 +1056,7 @@ def slice_take_check(issue: Dict[str, Any], comments: Sequence[Dict[str, Any]]) 
         return result
     approved = [found for item in comments if isinstance(item, dict) for found in approvals([item.get("body")])
                 if found["by"] == item.get("login") and found["slice_id"] == parsed["slice_id"] and found["revision"] == parsed["revision"]
-                and (found["spec_sha256"], found["why_sha256"]) == (parsed["spec_sha256"], parsed["why_sha256"])]
+                and (found["spec_sha256"], found["why_sha256"], found.get("jira")) == (parsed["spec_sha256"], parsed["why_sha256"], parsed["jira"])]
     if not approved:
         result["problem"] = "no_approval"
         return result

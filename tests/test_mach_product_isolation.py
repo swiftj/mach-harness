@@ -249,6 +249,12 @@ class NothingIsWiredInTest(unittest.TestCase):
         publish = handoff_source[handoff_source.index("    def publish_principles("):handoff_source.index("    def write_principles_folder(")]
         self.assertEqual(set(re.findall(r"\bissues\.([a-z_]+)\(", publish)), {"labels", "create_label", "comments", "comment"})
         self.assertIn("principles_approval_comment(", publish)  # the only comment it writes is the fixed approval template
+        # M13 E: linking a slice or an epic to Jira reaches neither GitHub nor Jira; the key travels only in the fixed templates.
+        for name in ("cmd_slice_link", "cmd_epic_link", "jira_key", "with_tracking", "effective_jira"):
+            body = studio_source[studio_source.index(f"def {name}("):]
+            body = body[:body.index("\ndef ", 1)]
+            for word in ("issues.", "collab.", "handoff()", "requests()", "gh(", "git(", "http", "urllib", "socket"):
+                self.assertNotIn(word, body, (name, word))
 
     def test_the_principles_check_only_reads(self):
         """M13: ticket.py principles-check reads the project's issue, its comments and the approver's role; it writes nothing."""

@@ -17,6 +17,13 @@
     "open_questions": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "spec_path": {"type": ["string", "null"]},
     "spec_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+    "tracking": {
+      "description": "Optional (M13 E): the Jira issue this belongs to. An identifier only; MACH never calls Jira.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jira"],
+      "properties": {"jira": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,31}-[1-9][0-9]{0,8}$"}}
+    },
     "origin": {
       "description": "Optional (M8): the request a slice came from. Identifiers only; never the issue's text, link or author.",
       "type": "object",

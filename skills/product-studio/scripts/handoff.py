@@ -208,8 +208,9 @@ class Handoff:
     # ---- marking ready on GitHub ----
 
     def prepare(self, data: Dict[str, Any], channel: Channel, slice_id: str, title: str, epic: Dict[str, Any], project: Dict[str, Any],
-                dependencies: Sequence[str], why: str, spec: str) -> Dict[str, Any]:
-        """Every read and every decision before the first write. Returns the plan of the run, or refuses."""
+                dependencies: Sequence[str], why: str, spec: str, jira: Optional[str] = None) -> Dict[str, Any]:
+        """Every read and every decision before the first write. Returns the plan of the run, or refuses. A changed
+        Jira key (M13) is a change like a changed spec: a new revision."""
         data = self.for_repository(data, str(channel.repository))
         snapshot = self.snapshot(str(channel.repository))
         self.remember(data, snapshot)
@@ -223,7 +224,7 @@ class Handoff:
         run = entry.get("run") or {}
         if own:
             marker = own["marker"]
-            same = (marker["spec_sha256"], marker["why_sha256"]) == (spec_sha, why_sha)
+            same = (marker["spec_sha256"], marker["why_sha256"], marker.get("jira")) == (spec_sha, why_sha, jira)
             if marker["revision"] > entry["base_revision"] and not same and marker["revision"] != run.get("revision"):
                 raise HandoffError(f"Someone else saved a newer version of {slice_id} on GitHub (version {marker['revision']}). "
                                    f"Choose yours or theirs before marking it ready.", {"kind": "reconcile", "target": slice_id})
@@ -238,7 +239,8 @@ class Handoff:
             revision = marker["revision"] if own and same else max(entry["base_revision"], marker["revision"]) + 1
         else:
             follows = max(entry["shipped"]) if entry["shipped"] else None
-            revision = run.get("revision") if run.get("spec_sha256") == spec_sha and run.get("why_sha256") == why_sha and run.get("revision") else entry["base_revision"] + 1
+            revision = (run.get("revision") if run.get("spec_sha256") == spec_sha and run.get("why_sha256") == why_sha and run.get("jira") == jira
+                        and run.get("revision") else entry["base_revision"] + 1)
         depends = []
         for dependency in dependencies:
             number = self.published_number(data, snapshot, dependency)
@@ -248,11 +250,11 @@ class Handoff:
             depends.append(number)
         epic_issue = self.find_epic(data, snapshot, epic)
         project_issue = self.find_project(data, snapshot, project)
-        body = self.rules.slice_issue_body(slice_id, revision, epic_issue or 999999999, depends, why, spec, follows)
+        body = self.rules.slice_issue_body(slice_id, revision, epic_issue or 999999999, depends, why, spec, follows, jira)
         if len(body) > self.rules.ISSUE_BODY_LIMIT:
             raise HandoffError(too_large(slice_id, len(body), self.rules.ISSUE_BODY_LIMIT))
-        same_run = run.get("revision") == revision and run.get("spec_sha256") == spec_sha and run.get("why_sha256") == why_sha
-        entry["run"] = {"revision": revision, "spec_sha256": spec_sha, "why_sha256": why_sha, "login": channel.login,
+        same_run = run.get("revision") == revision and run.get("spec_sha256") == spec_sha and run.get("why_sha256") == why_sha and run.get("jira") == jira
+        entry["run"] = {"revision": revision, "spec_sha256": spec_sha, "why_sha256": why_sha, "jira": jira, "login": channel.login,
                         "depends": depends, "follows": follows, "title": title, "epic_id": epic["epic_id"],
                         "steps": dict(run.get("steps") or {}) if same_run else {}, "started_at": run.get("started_at") if same_run else utc_now()}
         if own:
@@ -370,7 +372,7 @@ class Handoff:
         epic_number = data["epics"][epic["epic_id"]]["number"]
 
         if step("slice"):
-            body = self.rules.slice_issue_body(slice_id, run["revision"], epic_number, run["depends"], why, spec, run.get("follows"))
+            body = self.rules.slice_issue_body(slice_id, run["revision"], epic_number, run["depends"], why, spec, run.get("follows"), run.get("jira"))
             title = self.rules.issue_title(run["title"])
             names = ["mach:slice"]
             number, failure = self.ensure(repository, entry.get("number"), title, body, names, "mach:slice", f"slice-{slice_id}")
@@ -384,11 +386,12 @@ class Handoff:
             found, failure = issues.comments(self.project, repository, number)
             if failure:
                 stop(failure)
-            wanted = {"slice_id": slice_id, "revision": run["revision"], "by": run["login"], "spec_sha256": run["spec_sha256"], "why_sha256": run["why_sha256"]}
+            wanted = {"slice_id": slice_id, "revision": run["revision"], "by": run["login"], "spec_sha256": run["spec_sha256"], "why_sha256": run["why_sha256"],
+                      **({"jira": run["jira"]} if run.get("jira") else {})}
             mine = [c["body"] for c in found or [] if c.get("login") == run["login"]]
             if wanted not in self.rules.approvals(mine):
                 failure = issues.comment(self.project, repository, number,
-                                         self.outgoing_file("approval", self.rules.approval_comment(slice_id, run["revision"], run["login"], run["spec_sha256"], run["why_sha256"])))
+                                         self.outgoing_file("approval", self.rules.approval_comment(slice_id, run["revision"], run["login"], run["spec_sha256"], run["why_sha256"], run.get("jira"))))
                 if failure:
                     stop(failure)
             finished("approval")
@@ -410,7 +413,7 @@ class Handoff:
             finished("ready")
 
         entry.update(saved="github", revision=run["revision"], base_revision=run["revision"], spec_sha256=run["spec_sha256"],
-                     why_sha256=run["why_sha256"], approved_by=run["login"], ready_at=utc_now(), run=None)
+                     why_sha256=run["why_sha256"], jira=run.get("jira"), approved_by=run["login"], ready_at=utc_now(), run=None)
         # What was just written is what the issue now says, without waiting for the next refresh.
         seen_rows = data.setdefault("seen", {}).setdefault("slices", {}).setdefault(slice_id, [])
         row = next((item for item in seen_rows if item.get("issue") == number), None)
@@ -696,14 +699,14 @@ class Handoff:
         return self.draft / "product" / "ready" / slice_id
 
     def write_folder(self, data: Dict[str, Any], slice_id: str, title: str, epic: Dict[str, Any], dependencies: Sequence[str],
-                     why: str, spec: str) -> Dict[str, Any]:
+                     why: str, spec: str, jira: Optional[str] = None) -> Dict[str, Any]:
         entry = self.entry(data, slice_id)
         spec_sha, why_sha = self.rules.text_sha256_of(spec), self.rules.text_sha256_of(why)
-        same = (entry.get("spec_sha256"), entry.get("why_sha256")) == (spec_sha, why_sha) and entry.get("saved") == "folder"
+        same = (entry.get("spec_sha256"), entry.get("why_sha256"), entry.get("jira")) == (spec_sha, why_sha, jira) and entry.get("saved") == "folder"
         revision = entry.get("revision") if same else int(entry.get("base_revision") or 0) + 1
         record = {"schema_version": 1, "slice_id": slice_id, "title": title, "revision": revision,
                   "epic": {"epic_id": epic["epic_id"], "title": epic.get("title")}, "dependencies": list(dependencies),
-                  "spec_sha256": spec_sha, "why_sha256": why_sha}
+                  "spec_sha256": spec_sha, "why_sha256": why_sha, **({"jira": jira} if jira else {})}  # M13: the Jira key, only when set
         target = self.folder(slice_id)
         target.parent.mkdir(parents=True, exist_ok=True)
         staging = Path(tempfile.mkdtemp(prefix=f".{slice_id}.", dir=str(target.parent)))
@@ -716,7 +719,7 @@ class Handoff:
             os.replace(str(staging), str(target))
         finally:
             shutil.rmtree(staging, ignore_errors=True)
-        entry.update(saved="folder", revision=revision, base_revision=revision, spec_sha256=spec_sha, why_sha256=why_sha, ready_at=utc_now(), run=None)
+        entry.update(saved="folder", revision=revision, base_revision=revision, spec_sha256=spec_sha, why_sha256=why_sha, jira=jira, ready_at=utc_now(), run=None)
         self.save(data)
         return {"folder": str(target), "revision": revision}
 
@@ -815,7 +818,8 @@ class Handoff:
         marker = item["marker"]
         latest = [a for a in self.rules.approvals([c["body"] for c in found or []]) if a["slice_id"] == marker["slice_id"] and a["revision"] == marker["revision"]]
         approved = latest[-1] if latest else None
-        matches = bool(marker["intact"] and approved and (approved["spec_sha256"], approved["why_sha256"]) == (marker["spec_sha256"], marker["why_sha256"]))
+        matches = bool(marker["intact"] and approved and (approved["spec_sha256"], approved["why_sha256"], approved.get("jira"))
+                       == (marker["spec_sha256"], marker["why_sha256"], marker.get("jira")))  # M13: the Jira key is part of what was approved
         state_label = next((name for name in ("mach:question", "mach:shipped", "mach:building", "mach:ready") if name in item["labels"]), None)
         return {"issue": item["number"], "state": item["state"], "state_label": state_label, "revision": marker["revision"],
                 "title": self.rules.list_title(item.get("title")), "epic_issue": marker["epic"],
@@ -1042,7 +1046,7 @@ class Handoff:
         self.remember(data, read["snapshot"])
         entry = self.entry(data, slice_id)
         entry.update(number=read["number"], id=None, base_revision=marker["revision"], revision=marker["revision"], spec_sha256=marker["spec_sha256"],
-                     why_sha256=marker["why_sha256"], saved=saved, approved_by=check["approved_by"], run=None, taken_at=utc_now(),
+                     why_sha256=marker["why_sha256"], jira=marker.get("jira"), saved=saved, approved_by=check["approved_by"], run=None, taken_at=utc_now(),
                      shipped=sorted(set(entry.get("shipped") or []) | ({marker["follows"]} if marker.get("follows") else set())))
         data["epics"][epic_id] = {"number": read["epic"]["number"]}
         item = {"number": read["number"], "state": read["state"], "labels": read["labels"], "title": read["title"], "marker": {**marker, "intact": True}}

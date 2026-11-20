@@ -55,7 +55,7 @@ Run `CLEANUP run <ticket>` with the same arguments you planned with. In order, i
 3. if `records.publish_command` is set in `.factory/config.json`, runs it once with the archive's path (no shell; `{archive}` and `{ticket}` are filled in, and without `{archive}` the path is the last argument). Its result is reported as `published` and kept in the run record; a failure never stops cleanup;
 4. removes the worktree, then the cell folder `.factory/worktrees/<ticket>/`;
 5. deletes the local branch with `git branch -d`, which git itself refuses if the branch is not merged;
-6. appends one line to `.factory/archive/runs.jsonl`: outcome, review rounds, verification failures, reviewer blockers, builder deviations, and for a merged ticket the merge station's change record (`change_record`: its path, SHA-256 and commit).
+6. appends one line to `.factory/archive/runs.jsonl`: outcome, review rounds, verification failures, reviewer blockers, builder deviations, and for a merged ticket the merge station's change record (`change_record`: its path, SHA-256 and commit), and the slice's Jira key (`jira`) when it has one.
 
 With `--merged-as`, the outcome is `merged` and the branch is deleted with `-D`, because a squashed or rebased branch is never an ancestor of the default branch. The stage must still be `approved`.
 

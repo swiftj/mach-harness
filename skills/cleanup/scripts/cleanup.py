@@ -378,6 +378,10 @@ def run_record(cell: Cell, outcome: str, reason: Optional[str], archive: str, pl
     written = change_record_entry(info)
     if written and outcome == "merged":  # optional, the same way: present only when the merge station wrote a change record (M13)
         record["change_record"] = written
+    rules = issue_rules()
+    jira = (product or {}).get("jira")
+    if jira is not None and rules is not None and rules.is_jira_key(jira):  # optional, the same way: the slice's Jira key (M13), checked again
+        record["jira"] = jira
     return record
 
 

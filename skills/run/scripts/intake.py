@@ -536,11 +536,15 @@ class Factory:
                 found["not_accepted"].append({"issue": issue, "slice_id": marker["slice_id"], "revision": marker["revision"],
                                               "reason": "Not accepted: its spec does not pass the intent station's gates: " + "; ".join(problems[:5])})
                 continue
+            if marker.get("jira") is not None and not self.rules.is_jira_key(marker.get("jira")):  # M13: issue text is data; checked again here
+                found["not_accepted"].append({"issue": issue, "slice_id": marker["slice_id"], "revision": marker["revision"],
+                                              "reason": self.rules.SLICE_NOT_ACCEPTED["bad_jira"]})
+                continue
             order = epic.get("order") or []
             found["rows"].append({
                 "source": "github", "repository": found["repository"], "issue": issue, "slice_id": marker["slice_id"], "revision": marker["revision"],
                 "title": checked.get("title"), "epic": {"epic_id": epic.get("epic_id"), "issue": marker["epic"], "title": epic.get("title")},
-                "depends": [{"issue": dep} for dep in marker.get("depends") or []], "follows": marker.get("follows"),
+                "depends": [{"issue": dep} for dep in marker.get("depends") or []], "follows": marker.get("follows"), "jira": marker.get("jira"),
                 "order": order.index(issue) if issue in order else None, "ready_at": decision.get("ready_at"), "approved_by": decision.get("approved_by"),
                 "why": why, "spec": spec, "why_sha256": text_sha(why), "spec_sha256": text_sha(spec), "digest": digest_of(why, spec),
                 "key": self.source_key("github", found["repository"], issue, marker["slice_id"], marker["revision"])})
@@ -563,7 +567,9 @@ class Factory:
         except (ValueError, UnicodeDecodeError, RecursionError):
             return None, f"Not accepted: {where} could not be read as text and JSON."
         epic = record.get("epic") if isinstance(record, dict) else None
-        if (not isinstance(record, dict) or set(record) != FOLDER_KEYS or record.get("schema_version") != 1 or not SLICE_ID_RE.fullmatch(str(record.get("slice_id")))
+        if isinstance(record, dict) and "jira" in record and not self.rules.is_jira_key(record["jira"]):  # M13: optional, in Jira's form
+            return None, f"Not accepted: the Jira key in {where}/slice.json is not in Jira's form (such as ABC-123)."
+        if (not isinstance(record, dict) or set(record) - {"jira"} != FOLDER_KEYS or record.get("schema_version") != 1 or not SLICE_ID_RE.fullmatch(str(record.get("slice_id")))
                 or type(record.get("revision")) is not int or record["revision"] < 1 or not isinstance(record.get("title"), str)
                 or not isinstance(epic, dict) or set(epic) != {"epic_id", "title"} or not self.rules.EPIC_ID_RE.fullmatch(str(epic.get("epic_id")))
                 or not isinstance(record.get("dependencies"), list) or not all(isinstance(dep, str) and SLICE_ID_RE.fullmatch(dep) for dep in record["dependencies"])):
@@ -575,7 +581,7 @@ class Factory:
             return None, "Not accepted: its spec does not pass the intent station's gates: " + "; ".join(problems[:5])
         return {"source": source, "repository": None, "issue": None, "slice_id": record["slice_id"], "revision": record["revision"],
                 "title": self.rules.issue_title(record["title"]), "epic": {"epic_id": epic["epic_id"], "issue": None, "title": self.rules.issue_title(epic.get("title"))},
-                "depends": [{"slice_id": dep} for dep in record["dependencies"]], "follows": None, "order": None, "ready_at": None, "approved_by": None,
+                "depends": [{"slice_id": dep} for dep in record["dependencies"]], "follows": None, "jira": record.get("jira"), "order": None, "ready_at": None, "approved_by": None,
                 "why": why, "spec": spec, "why_sha256": record["why_sha256"], "spec_sha256": record["spec_sha256"], "digest": digest_of(why, spec),
                 "key": self.source_key(source, None, None, record["slice_id"], record["revision"])}, None
 
@@ -887,7 +893,7 @@ class Factory:
     def definition(self, row: Dict[str, Any]) -> Dict[str, Any]:
         return {"source": row["source"], "repository": row["repository"], "issue": row["issue"], "title": row.get("title"), "epic": dict(row["epic"]),
                 "revision": row["revision"], "digest": row["digest"], "spec_sha256": row["spec_sha256"], "why_sha256": row["why_sha256"],
-                "depends": list(row["depends"]), "follows": row.get("follows"), "order": row.get("order"), "ready_at": row.get("ready_at") or now(),
+                "depends": list(row["depends"]), "follows": row.get("follows"), "jira": row.get("jira"), "order": row.get("order"), "ready_at": row.get("ready_at") or now(),
                 "approved_by": row.get("approved_by"), "intake_key": row["key"], "stored": self.store(row), "available": True, "unavailable_reason": None}
 
     def new_entry(self, row: Dict[str, Any], history: List[Dict[str, Any]], earlier_runs: int = 0, ticket_id: Optional[str] = None) -> Dict[str, Any]:
@@ -1472,6 +1478,8 @@ class Factory:
         # M13 (merge check): the slices this one depends on, as slice IDs, for the merge station's look at what landed.
         slices = self.ledger().get("slices") or {}
         found["depends_on"] = sorted({dep.get("slice_id") or self.resolve_dep(dep, slices)[1] for dep in entry.get("depends") or []} - {None})
+        # M13 (Jira): the slice's Jira key, checked against Jira's form again before it reaches the cell.
+        found["jira"] = entry.get("jira") if self.rules.is_jira_key(entry.get("jira")) else None
         return found
 
     def write_cell_spec(self, entry: Dict[str, Any], ticket_id: str) -> Dict[str, Any]:
