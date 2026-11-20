@@ -52,9 +52,10 @@ Run `CLEANUP run <ticket>` with the same arguments you planned with. In order, i
 
 1. writes `.factory/archive/<ticket>.tar.gz` with everything in the cell folder except the worktree `repo/`, and never overwrites an earlier archive (a second one is `<ticket>-2.tar.gz`);
 2. checks the archive is complete; if it is not, it stops and deletes nothing;
-3. removes the worktree, then the cell folder `.factory/worktrees/<ticket>/`;
-4. deletes the local branch with `git branch -d`, which git itself refuses if the branch is not merged;
-5. appends one line to `.factory/archive/runs.jsonl`: outcome, review rounds, verification failures, reviewer blockers, builder deviations.
+3. if `records.publish_command` is set in `.factory/config.json`, runs it once with the archive's path (no shell; `{archive}` and `{ticket}` are filled in, and without `{archive}` the path is the last argument). Its result is reported as `published` and kept in the run record; a failure never stops cleanup;
+4. removes the worktree, then the cell folder `.factory/worktrees/<ticket>/`;
+5. deletes the local branch with `git branch -d`, which git itself refuses if the branch is not merged;
+6. appends one line to `.factory/archive/runs.jsonl`: outcome, review rounds, verification failures, reviewer blockers, builder deviations, and for a merged ticket the merge station's change record (`change_record`: its path, SHA-256 and commit).
 
 With `--merged-as`, the outcome is `merged` and the branch is deleted with `-D`, because a squashed or rebased branch is never an ancestor of the default branch. The stage must still be `approved`.
 
@@ -74,7 +75,7 @@ Only after `run` succeeds, update the ticket with the ticket skill: state `close
 
 ### 4. Report
 
-Briefly: the outcome, where the archive is, what was removed, whether the branch was deleted, for an abandoned ticket how to restore it, and that the ticket was closed. Mention that archives and `runs.jsonl` are local: `.factory/archive/` is git-ignored, so they are not shared or backed up by pushing.
+Briefly: the outcome, where the archive is, what was removed, whether the branch was deleted, for an abandoned ticket how to restore it, whether the publish command ran and how it went, and that the ticket was closed. Mention that archives and `runs.jsonl` are local: `.factory/archive/` is git-ignored, so they are not shared or backed up by pushing. What is shared is the change record the merge station landed with the code (`docs/changes/<ticket>.md`), which names each evidence file in the archive with its SHA-256.
 
 ## Leftovers
 

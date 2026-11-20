@@ -243,7 +243,10 @@ class WholeBeltTest(Base):
         approval = next(r for r in records if r["type"] == "human.approval_recorded")
         self.assertEqual((approval["visit"], approval["round"], approval["data"]["decision"]), ("human-approval#1", 3, "APPROVED"))
         landed = next(r for r in records if r["type"] == "merge.completed")["data"]
-        self.assertEqual((landed["method"], landed["pull_request"], landed["approved_commit"]), ("local", None, landed["landed_commit"]))
+        self.assertEqual((landed["method"], landed["pull_request"]), ("local", None))
+        # M13: what landed is the approved commit with the merge station's change record on top.
+        parent = subprocess.run(["git", "rev-parse", "--short=12", landed["landed_commit"] + "^"], cwd=str(self.project), capture_output=True, text=True).stdout.strip()
+        self.assertEqual(parent, landed["approved_commit"])
         done = next(r for r in records if r["type"] == "cleanup.completed")["data"]
         self.assertEqual((done["outcome"], done["archive"]), ("merged", ".factory/archive/LOCAL-001.tar.gz"))
         audit_gate = next(r for r in records if r["station"] == "audit" and r["type"] == "gate.evaluated")["data"]
