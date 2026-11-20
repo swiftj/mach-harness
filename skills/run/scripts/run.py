@@ -56,6 +56,9 @@ and not by whoever is driving it.
     run.py notify banner on|off [--label WORDS]
                                          a macOS Notification Center banner on this Mac, beside or instead of the webhook
     run.py notify test | off             one test message on each channel that is on; remove the stored address (the banner stays)
+    run.py eval collect|add|status|run|compare|show
+                                         factory evals (M14, skills/observe/scripts/evals.py): past tickets replayed in throwaway
+                                         clones; a run only on a person's command, with a budget and a confirmation code
 
 `next <ticket> --headless` that stops for a person sends one message on each channel on for this machine (notify.py),
 once per wait, and never inside a supervised execution. No other command here sends or reads the address.
@@ -1107,6 +1110,84 @@ def cmd_release(project: Project, args: argparse.Namespace) -> int:
     return 0
 
 
+# ---- M14 Factory evals (skills/observe/scripts/evals.py): past tickets replayed in throwaway clones, on a person's command ----
+
+
+def cmd_eval(project: Project, args: argparse.Namespace) -> int:
+    """Factory evals. collect, add and run are a person's commands and refused inside a supervised execution (evals.py checks).
+    A run goes through the executor's boundary with its own narrow settings; no machine-local authorization is read."""
+    import importlib.util
+    here = Path(__file__).resolve()
+    sys.path.insert(0, str(here.parent))
+    import executor
+    import policy
+    import provenance
+    spec = importlib.util.spec_from_file_location("mach_evals", sibling("observe") / "scripts" / "evals.py")
+    E = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(E)
+    evals = E.Evals(project.root, project.config, sibling=sibling, run_script=here, executor=executor, policy=policy, provenance=provenance)
+    try:
+        if args.action == "collect":
+            result = evals.collect(args.ticket or [])
+        elif args.action == "add":
+            result = evals.add(from_ticket=args.from_ticket, spec=Path(args.spec) if args.spec else None, base=args.base, intent=Path(args.intent) if args.intent else None,
+                               title=args.title, reason=args.reason, case_id=args.case, must_pass=args.must_pass)
+        elif args.action == "status":
+            result = evals.status(args.ticket)
+        elif args.action == "run" and args.confirm:
+            result = evals.run(code=args.confirm, accept_risk=args.accept_execution_risk, keep=args.keep)
+        elif args.action == "run":
+            if not args.plan:
+                raise RunError("An eval run starts with its plan: eval run --plan --budget <USD>. It shows what would run and gives a code; nothing is spent.")
+            result = evals.plan(budget=args.budget, chosen=args.cases or [], limit=args.limit, ticket=args.ticket, max_minutes=args.max_minutes)
+        elif args.action == "compare":
+            result = evals.compare(args.before, args.after)
+        else:
+            result = evals.show(args.name)
+    except E.EvalError as exc:
+        raise RunError(str(exc))
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0
+
+
+def eval_parser(sub: Any) -> None:
+    ev = sub.add_parser("eval", help="factory evals: past tickets replayed when the Factory's rules, skills or models change").add_subparsers(dest="action", required=True)
+    p = ev.add_parser("collect", help="cases from merged tickets' archives, redacted, without evidence media")
+    p.add_argument("--ticket", action="append", metavar="T", help="only this ticket (repeatable)")
+    p = ev.add_parser("add", help="an escaped defect (--from-ticket), a case by hand (--spec, --base), or mark a case (--case)")
+    p.add_argument("--from-ticket", metavar="T")
+    p.add_argument("--spec", metavar="FILE", help="a slice spec, SLICE-NNN-name.md")
+    p.add_argument("--base", metavar="COMMIT", help="with --spec: the commit the work starts from")
+    p.add_argument("--intent", metavar="FILE", help="with --spec: its intent.md")
+    p.add_argument("--title")
+    p.add_argument("--reason", help="the person's words: why this case is kept (for an escaped defect, the defect)")
+    p.add_argument("--case", metavar="C", help="an existing case, with --must-pass or --no-must-pass")
+    p.add_argument("--must-pass", dest="must_pass", action="store_true", default=None)
+    p.add_argument("--no-must-pass", dest="must_pass", action="store_false")
+    p = ev.add_parser("status", help="cases, the last run, and what changed in the configuration since; starts nothing")
+    p.add_argument("--ticket", metavar="T", help="the configuration on this ticket's branch (a factory-tuning change)")
+    p = ev.add_parser("run", help="--plan shows what would run and its ceiling and spends nothing; --confirm runs it, on a person's yes")
+    p.add_argument("--plan", action="store_true")
+    p.add_argument("--budget", type=float, metavar="USD", help="with --plan: the most the whole run may spend, in US dollars")
+    p.add_argument("--cases", nargs="+", metavar="C")
+    p.add_argument("--limit", type=int)
+    p.add_argument("--ticket", metavar="T", help="with --plan: evaluate the configuration on this ticket's branch")
+    p.add_argument("--max-minutes", type=int, help="with --plan: stop one case after this many minutes (5 to 720, default 120)")
+    p.add_argument("--confirm", metavar="CODE", help="the code the plan printed, after the person has said yes")
+    p.add_argument("--accept-execution-risk", action="store_true", help="with --confirm: the person has read the execution risk and accepts it")
+    p.add_argument("--keep", action="store_true", help="with --confirm: keep each throwaway clone for inspection")
+    p = ev.add_parser("compare", help="two runs, deterministically: pass rate, changed outcomes, cost and time")
+    p.add_argument("before")
+    p.add_argument("after")
+    p = ev.add_parser("show", help="one case, run or comparison")
+    p.add_argument("name")
+    for parser in ev.choices.values():
+        parser.set_defaults(func=cmd_eval)
+
+
+# ---- end of M14 Factory evals ----
+
+
 def cmd_requests(project: Project, args: argparse.Namespace) -> int:
     """Monitoring requests (M8 D7), on an engineer's explicit command: take issues in and report. Starts no agent."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -1516,6 +1597,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--by", required=True, help="the role of the person who decided, such as release-manager")
     p.add_argument("--reason", required=True)
     p.set_defaults(func=cmd_release)
+    eval_parser(sub)  # M14 Factory evals
 
     fac = sub.add_parser("factory", help="the Factory on this machine: status, enable, pause, resume, disable").add_subparsers(dest="action", required=True)
     fac.add_parser("status", help="what is in force here; changes nothing").set_defaults(func=cmd_factory)

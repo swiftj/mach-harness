@@ -120,6 +120,7 @@ Skill folders are named for the station (`skills/intent/`). As a plugin the comm
     ├── studio/                 # Product Studio's drafts, session, request cache and hand-off record (issues.json); git-ignored, never read by a station
     ├── intake/                 # The Factory's intake ledger (ledger.json), its event log (events.jsonl) and received/ (each slice revision's verified why and spec); git-ignored
     ├── release/<release-id>/   # Release qualification: readiness.json, run.json, logs, exceptions; scans/ holds scanner reports
+    ├── evals/                  # Factory evals (M14): cases/<case-id>/ (shared, redacted) and runs/ (run.json, comparisons; git-ignored)
     ├── local/                  # Machine-local authorization (runner.json), the supervisor's lease, and each execution's output; git-ignored, never shared
     │   └── observer/           # The observer's redacted index, its lock and the next one-time link; the only place it writes
     └── worktrees/              # Cells: one per ticket
@@ -229,7 +230,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Votes follow from findings.** A reviewer submits findings, never a vote: any `blocker` is a reject, none is an approve. A blocker must name the rule or spec ID it breaks and the file that shows it. A vote cannot be revised.
 * **Consensus Thresholds** (set in `.factory/config.json` under `review`):
   * **High Risk** (Auth, Billing, DB Schema, changes to existing contracts): **Unanimous 3/3 + 1 human approval**. Adding a new contract file does not make a ticket High risk.
-  * **Factory tuning** (label `factory-tuning`, rule files only): **Unanimous 3/3 on the contracts tier, no human approval**.
+  * **Factory tuning** (label `factory-tuning`, rule files only): **Unanimous 3/3 on the contracts tier, no human approval**. Its packet carries `evals`: the latest eval comparison for exactly that change (the branch at the reviewed commit), or "not evaluated" (M14); data for the panel, no threshold.
   * **Medium Risk** (Standard features, UI logic): **Majority 2/3**. An outvoted blocker is reported, not hidden. A blocker from the security seat is never outvoted: it rejects the round whatever the count (`review.security_veto`, on unless a project switches it off). Since M7 any seat may mark a blocker `"class": "security"` with an `impact`; one of high or critical impact rejects the round at every tier, no setting switches that off, and a later round may raise it on any file. The supervisor refuses unattended work while tracked settings switch the veto off, take the security seat off Medium or High panels, drop High-risk human approval, or switch the security scan off (`security.scan.enabled: false`); a person can still run that ticket by hand.
   * **Low Risk** (Docs, wording): **1/1**, one general reviewer.
   * A Silver readiness tier also requires a human approval, whatever the risk.
@@ -268,6 +269,7 @@ Every skill in the factory lives in the `mach` namespace: `/mach-<station>` when
 * **Never an ADR**: observe never proposes a rule that targets an architecture decision record, and a tuning ticket never accepts, changes or supersedes one; the review station refuses a tuning change that touches the ADR folder.
 * **No person for tuning**: a `factory-tuning` ticket is decided by a unanimous three-seat panel on the contracts tier, with no human approval, provided its diff touches only rule files and its own spec and tests (the merge station's change record, the path in `cell.json` `change_record`, is not judged). Reviewers must block any change that removes a rule, weakens a gate, lowers a threshold or raises a limit. Observe never proposes such a change: those stay a person's decision.
 * **Output**: `.factory/observations/metrics.json`, `observation-<date>.md`, `last-pass.json`, and the tuning ticket.
+* **Factory evals (M14)**: `skills/observe/scripts/evals.py`, reached only as `/mach eval` (section 5). Observe never starts it.
 
 ### `/mach-product-studio` — Product Manager's Workspace
 * **Design**: `docs/mach-next/` (M1, M5 and M8; M11 for slices as issues, as built in `M11_STUDIO_ISSUES.md`).
@@ -418,6 +420,16 @@ A read-only view of the Factory in the browser. Three workspaces: Line (the defa
 * **Outcome**: `blocked` (a failing check or open blocker), else `incomplete` (a required check missing, not run or not configured: never a pass), else `qualified_with_exceptions` (each gap carries a person's exception for this exact commit, `release except`, only on their explicit word), else `qualified`.
 * **Product acceptance, per epic**: Product Studio's `acceptance record` posts a fixed-template comment on the epic's issue, bound to the release ID and its commit; accepting needs a qualified snapshot. The snapshot reads it through `ticket.py epic-check` and reports `accepted`, `rejected` or `not_recorded`: a comment counts only when written by the account it names, unedited, by someone with the triage role or above; the latest that counts decides; it is never inferred. A release of named slices records no acceptance.
 * **Never**: merges, pushes, tags, deploys, starts a station, or reads the machine-local Factory settings; no station, agent or workflow calls it.
+
+### Factory evals (`/mach eval`)
+
+Past tickets kept as a suite and replayed when the Factory's own rules, skills, agents or model tiers change. `skills/observe/scripts/evals.py`, reached as `run.py eval collect|add|status|run|compare|show`. Design: `docs/mach-next/M14_DESIGN.md` part B; as built: `docs/mach-next/M14_FACTORY_EVALS.md`.
+
+* **Cases**: `eval collect` reads merged tickets' archives (only the cell's own records, never evidence media or bundles) into `.factory/evals/cases/<case-id>/`: the spec as text and data, the intent, the base commit (where the branch left the default branch), and the recorded outcome (verdict, rounds, deviations, test names); redacted with the ticket station's shared rules. Shared by Git; runs are git-ignored. `eval add --from-ticket <T> --reason` makes an escaped defect a case whose reason is a holdout check for the replay's verifier; `--spec --base` adds one by hand; `--must-pass` marks one, on a person's word.
+* **Status**: the configuration under test (rule files, MACH's line digest from `provenance.line`, model tiers) from the main checkout or, with `--ticket`, a cell's branch head; what changed since the last run, by digest.
+* **Run**: `eval run --plan --budget <USD>` lists the cases, the ceiling, the boundary and the execution risk, spends nothing, and gives a code; `eval run --confirm <code> --accept-execution-risk`, on a person's yes, replays each case from planning through verification (the belt stopped before review) in a throwaway clone under the system's temporary folder: fetched from the project with no remote, `protocol.allow never`, local tickets, manual merge, supervisor and notifications off, the configuration laid over the base commit. One execution per case through the executor's own boundary (restricted, no MCP, prompts refused, `policy.default_tools()`, a spending limit per case, a session ID); the clone's ledger scopes `run.py` to the one ticket. Removed afterwards unless `--keep`. Per case: planned, built, verdict, rounds, deviations, time and recorded cost; per run, the provenance snapshot.
+* **Compare**: deterministic; only a recorded PASS is a pass, a missing value never is; `must_pass` cases not passing are listed.
+* **Never**: started by a station, agent, workflow, hook, timer or the supervisor; run inside a supervised execution (`collect`, `add`, `run` refuse); reads `.factory/local/runner.json` or enables the Factory; touches the project's checkout, GitHub, review or merge. No real model run has been made with it yet.
 
 ### Merge station: `/mach-merge`
 

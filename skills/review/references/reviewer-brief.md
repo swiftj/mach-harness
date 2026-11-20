@@ -75,6 +75,7 @@ A ticket whose packet says `"tuning": true` changes the rules the factory itself
 - The ticket's evidence must support the rule: read the tickets it cites in the plan or intent. A rule that the cited tickets do not justify is a blocker.
 - A rule that contradicts an existing rule, contradicts itself, or silently narrows an existing rule is a blocker.
 - A rule placed where it will be lost is a blocker: in `CLAUDE.md`, anything between the `mach:begin` and `mach:end` markers is rewritten when MACH is installed or updated.
+- The packet's `evals` says how past tickets fared when replayed under exactly this change (`evaluated: true`, with the earlier and later pass counts, the cases whose outcome changed and any `must_pass` case not passing), or `"not evaluated"`. It is evidence for you to weigh, not a gate: no threshold applies, "not evaluated" is not a blocker by itself, and a case that is not run or has nothing recorded is never a pass.
 
 ## Submit
 
