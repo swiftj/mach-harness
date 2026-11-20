@@ -1415,7 +1415,9 @@ SHAPE_LEAD = ("Shaped in MACH Product Studio. The brief below is the product man
               "is a comment from Product Studio.\n\n")
 SHAPE_NO_BRIEF = "_No brief has been written yet._\n"
 SHAPE_MARKER_RE = re.compile(r"\A<!-- mach:shape idea=(IDEA-[0-9]{3,}) revision=([0-9]{1,6}) brief-sha256=(none|[0-9a-f]{64})"
-                             r"(?: from=(?:(request|idea):#([0-9]{1,9})|fault:(AUTO-[0-9]{8}T[0-9]{6}Z(?:-[0-9]{1,4})?)))? -->\n")
+                             r"(?: from=(?:(request|idea):#([0-9]{1,9})|fault:(AUTO-[0-9]{8}T[0-9]{6}Z(?:-[0-9]{1,4})?)"
+                             r"|rule:(SLICE-[0-9]{3,}/(?:INV-[0-9]{2,}|FR-[0-9]{2,}|R[0-9]+))))? -->\n")
+SHAPE_RULE_RE = re.compile(r"^SLICE-[0-9]{3,}/(?:INV-[0-9]{2,}|FR-[0-9]{2,}|R[0-9]+)$")
 SHAPE_VERDICT_RE = re.compile(r"<!-- mach:idea-verdict id=(IDEA-[0-9]{3,}) revision=([0-9]{1,6}) decision=(go|not-now|no) by=(" + LOGIN_PATTERN
                               + r") brief-sha256=(none|[0-9a-f]{64}) -->")
 
@@ -1427,6 +1429,8 @@ def shape_source_marker(source: Any) -> str:
         return f" from={kind}:#{source['number']}"
     if kind == "fault" and SHAPE_FAULT_RE.fullmatch(str(source.get("ticket") or "")):
         return f" from=fault:{source['ticket']}"
+    if kind == "change" and SHAPE_RULE_RE.fullmatch(str(source.get("rule") or "")):  # M16 B: `idea change`, from one shipped rule
+        return f" from=rule:{source['rule']}"
     if kind in (None, "typed"):
         return ""
     raise ValueError("an idea's source is identifiers only")
@@ -1453,7 +1457,8 @@ def parse_shape_body(body: Any) -> Optional[Dict[str, Any]]:
     if not found:
         return None
     source = ({"kind": found.group(4), "number": int(found.group(5))} if found.group(4)
-              else {"kind": "fault", "ticket": found.group(6)} if found.group(6) else {"kind": "typed"})
+              else {"kind": "fault", "ticket": found.group(6)} if found.group(6)
+              else {"kind": "change", "rule": found.group(7)} if found.group(7) else {"kind": "typed"})
     digest = None if found.group(3) == "none" else found.group(3)
     rest = text[found.end():]
     brief, intact = None, False
@@ -1504,3 +1509,42 @@ def shape_state_label(stage: str, decision: Optional[str], verdict_current: bool
     if stage in ("brief", "decided"):
         return SHAPE_STATE_LABELS["brief"]
     return SHAPE_STATE_LABELS["exploring" if stage == "exploring" else "new"]
+
+
+# ---- Shape: looking back on an idea (M16 part B) ----
+# Once work made from an idea has shipped, the product manager records, per outcome of its brief, whether it was met, and,
+# per assumption, whether it held, in their own words. Each is one comment from this fixed template on the idea's issue.
+
+SHAPE_LOOKBACK_RESULTS: Dict[str, Tuple[str, ...]] = {"outcome": ("met", "not-met", "too-early"), "assumption": ("confirmed", "wrong", "unknown")}
+SHAPE_LOOKBACK_WORDS = {"met": "met", "not-met": "not met", "too-early": "too early to say", "confirmed": "confirmed", "wrong": "wrong",
+                        "unknown": "still unknown"}
+SHAPE_LOOKBACK_ITEM_RE = re.compile(r"^(?:O|A)-[1-9][0-9]{0,3}$")
+SHAPE_LOOKBACK_RE = re.compile(r"<!-- mach:idea-lookback id=(IDEA-[0-9]{3,}) item=((?:O|A)-[1-9][0-9]{0,3}) "
+                               r"result=(met|not-met|too-early|confirmed|wrong|unknown) by=(" + LOGIN_PATTERN + r") note-sha256=([0-9a-f]{64}) -->")
+
+
+def shape_lookback_comment(idea_id: str, item: str, result: str, login: str, note: str) -> str:
+    """One look-back result on one outcome (O-N) or assumption (A-N) of an idea's brief, in the product manager's words:
+    quoted cleaned, redacted and bounded, with mentions and issue references broken, and able to hold no marker. The marker
+    carries the SHA-256 of the note as recorded, so the same result in the same words is never posted twice."""
+    if not SHAPE_IDEA_ID_RE.fullmatch(idea_id or "") or not SHAPE_LOOKBACK_ITEM_RE.fullmatch(item or "") or not LOGIN_RE.fullmatch(login or ""):
+        raise ValueError("a look-back names an idea, one outcome or assumption, and a GitHub account")
+    kind = "outcome" if item.startswith("O-") else "assumption"
+    if result not in SHAPE_LOOKBACK_RESULTS[kind]:
+        raise ValueError("an outcome is met, not-met or too-early; an assumption is confirmed, wrong or unknown")
+    said = " ".join(quiet(note, SHAPE_REASON_LIMIT).split()).replace("<!--", "‹!--").replace("-->", "--›")
+    if not said:
+        raise ValueError("a look-back carries the person's words")
+    return (f"Looked back in MACH Product Studio by {login}: {idea_id}, {kind} {item}: {SHAPE_LOOKBACK_WORDS[result]}.\n\n"
+            f"In their words: {said}\n\n"
+            f"<!-- mach:idea-lookback id={idea_id} item={item} result={result} by={login} note-sha256={text_sha256_of(note)} -->")
+
+
+def shape_lookbacks(bodies: Iterable[Any]) -> List[Dict[str, Any]]:
+    """Every look-back marker in an issue's comments, in order."""
+    found = []
+    for body in bodies:
+        for match in SHAPE_LOOKBACK_RE.finditer(body if isinstance(body, str) else ""):
+            found.append({"idea_id": match.group(1), "item": match.group(2), "result": match.group(3), "by": match.group(4),
+                          "note_sha256": match.group(5)})
+    return found

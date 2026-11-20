@@ -176,7 +176,7 @@ If the PM has an approved product requirements document and wants to start from 
 
 ## Shaping an idea
 
-If the PM wants to explore an idea before any epic, make the case for it and decide whether it is worth building, read `${CLAUDE_SKILL_DIR}/references/shape.md` and follow it (`STUDIO idea ...`, `brief`, `case`, `verdict`, `lookback`). It is optional, one of the ways to start, and never required before an epic or a slice. Three rules must never be missed:
+If the PM wants to explore an idea before any epic, make the case for it and decide whether it is worth building, read `${CLAUDE_SKILL_DIR}/references/shape.md` and follow it (`STUDIO idea ...`, `brief`, `case`, `verdict`, `lookback`). It is optional, one of the ways to start, and never required before an epic or a slice. `verdict record`, `idea publish`, `idea renumber`, `idea settle`, `idea apply`, `idea change` and `lookback record` are the PM's acts, run only on their word. A slice made from an idea shows `idea` in `slice resume` (the brief as the PM's earlier words, never settled answers) and its why must carry the `why_line` it gives: follow the same file for it. Three rules must never be missed:
 
 - **Never recommend a verdict.** Go, Not now or No is the PM's alone, with their reason in their own words. No hint, no ranking, no summary that leans.
 - **Never route by judgement.** Only `STUDIO idea size` sizes an idea and names its route. If the PM disagrees, the brief changes, not the route.
