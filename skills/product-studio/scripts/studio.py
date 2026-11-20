@@ -93,6 +93,13 @@ def intent_modules():
     return cell, validate_slice
 
 
+def shipped_helper():
+    """The intent skill's shipped.py (M13): the shipped rules on the integration branch, read from local Git objects only."""
+    intent_modules()
+    import shipped  # noqa: E402
+    return shipped
+
+
 def ticket_rules():
     """The ticket skill's issue_rules.py, and nothing else from that skill: which label event
     decides, redaction, bounding and fencing issue text, and the status comment templates."""
@@ -135,6 +142,7 @@ class Studio:
         self.home = project / ".factory" / "studio"
         self.draft = self.home / "draft"
         self.session_path = self.home / "session.json"
+        self._shipped: Optional[Dict[str, Any]] = None
         for folder in (project / ".factory", self.home, self.draft):
             if folder.is_symlink():
                 raise StudioError(f"{folder} is a symbolic link. Product Studio only works in a real folder inside the project.")
@@ -308,9 +316,57 @@ class Studio:
     # ---- slice checks ----
 
     def analyze(self, spec: Path, ready: bool) -> Tuple[List[Any], Dict[str, Any]]:
-        """The intent skill's validator, with every folder that shares the slice ID space and the project's product principles."""
+        """The intent skill's validator, with every folder that shares the slice ID space, the project's product principles,
+        and the shipped rules, so '## Effects on shipped behaviour' is always required (M13)."""
         others = self.validate_slice.sibling_specs(spec, self.cell.registries(self.project, own=spec.parent))
-        return self.validate_slice.analyze(spec.read_text(encoding="utf-8-sig"), spec.name, others, ready=ready, principles=self.principles_for_check())
+        return self.validate_slice.analyze(spec.read_text(encoding="utf-8-sig"), spec.name, others, ready=ready, principles=self.principles_for_check(),
+                                           shipped=self.shipped()["rules"])
+
+    # ---- shipped rules (M13 part B) ----
+
+    def shipped(self) -> Dict[str, Any]:
+        """The shipped rules at the integration branch's local head, read once per command from Git objects: no fetch,
+        no push, no gh. No Git or no specs gives an empty list, and its notes say so."""
+        if self._shipped is None:
+            try:
+                config = self.cell.load_config(self.project)
+            except Exception:  # noqa: BLE001  unreadable settings: the default integration branch
+                config = {}
+            self._shipped = shipped_helper().read(self.project, config)
+        return self._shipped
+
+    @property
+    def shipped_path(self) -> Path:
+        """Studio's own record of what each spec's effects were checked against. Outside the draft, so the product
+        artifacts stay identical for the same operations whatever repository they were made in."""
+        return self.home / "shipped.json"
+
+    def shipped_checked(self) -> Dict[str, Any]:
+        try:
+            data = json.loads(self.shipped_path.read_text(encoding="utf-8")) if self.shipped_path.is_file() else {}
+        except (OSError, ValueError):
+            data = {}
+        slices = data.get("slices") if isinstance(data, dict) else None
+        return slices if isinstance(slices, dict) else {}
+
+    def record_shipped(self, slice_id: str) -> None:
+        """Keep the integration commit and the rule count this slice's spec was just checked against."""
+        found = self.shipped()
+        slices = self.shipped_checked()
+        slices[slice_id] = {"commit": found["commit"], "rules": len(found["rules"])}
+        write(self.shipped_path, canonical({"schema_version": 1, "slices": slices}))
+
+    def shipped_moved(self, slice_id: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """M13: the shipped rules moved since the spec was checked and one of its rows now names a rule no longer in force.
+        Git is read only when the spec names a shipped rule."""
+        checked, spec = self.shipped_checked().get(slice_id), self.spec_of(slice_id)
+        if not isinstance(checked, dict) or spec is None or data.get("status") == "superseded":
+            return None
+        text = spec.read_text(encoding="utf-8-sig")
+        helper = shipped_helper()
+        if not helper.current_module().effects_module().parse(text)["rows"]:
+            return None
+        return helper.moved(text, slice_id, None, checked.get("commit"), self.shipped())
 
     # ---- product principles (M13) ----
 
@@ -403,6 +459,8 @@ class Studio:
                 "scenarios": len(model.get("scenarios") or []),
             }
             result["title"] = model.get("title")
+            found = self.shipped()
+            result["shipped"] = {"commit": found["commit"], "branch": found.get("branch"), "rules": len(found["rules"]), "notes": found["notes"]}
         problems, intent = self.cell.check_intent(self.intent_path(slice_id), header_fields=("Slice", "Status"))
         result["intent_problems"] = [p.replace("assets/intent-template.md before finalizing", "the intent template before approving") for p in problems]
         if APP:  # no file paths in what the app shows
@@ -517,8 +575,10 @@ def describe(studio: Studio) -> Dict[str, Any]:
     for slice_id, data in slices.items():
         spec = studio.spec_of(slice_id)
         flags = principle_flags(studio, slice_id, current)
+        moved = studio.shipped_moved(slice_id, data)
         slice_rows.append({
             **({"principles": flags} if flags is not None else {}),
+            **({"shipped_moved": moved} if moved else {}),
             "slice_id": slice_id, "title": data.get("title"), "epic_id": data.get("epic_id"), "status": data.get("status"),
             "revision": data.get("revision"), "open_questions": len(data.get("open_questions") or []),
             "spec": studio.relative(spec) if spec else None, "has_intent": studio.intent_path(slice_id).is_file(),
@@ -850,6 +910,7 @@ def cmd_slice_resume(studio: Studio, args: argparse.Namespace) -> int:
         **request_field(studio, slice_id, data),
         **question_field(studio, slice_id, data),
         **principles_field(studio),
+        "shipped_rules": shipped_helper().for_interview(studio.shipped()),  # M13: the lookup for '## Effects on shipped behaviour'
         **prd.resume_field(sys.modules[__name__], studio, slice_id, data),  # M13 D: the PRD's cited lines, fenced
     })
 
@@ -905,6 +966,8 @@ def cmd_slice_check(studio: Studio, args: argparse.Namespace) -> int:
     data["spec_sha256"] = None
     data["status"] = "ready_for_approval" if result["ready"] else "interviewing"
     studio.save("slice", data, bump=False)
+    if spec:
+        studio.record_shipped(args.slice_id)  # M13: what its effects were checked against
     result["status"] = data["status"]
     print(json.dumps(result, indent=2, ensure_ascii=False))
     blocking = result["errors"] or result["intent_problems"] or (args.ready and result["open_questions"])
@@ -996,6 +1059,7 @@ def approve_locally(studio: Studio, data: Dict[str, Any], slice_id: str) -> None
     assert spec is not None
     data.update({"status": APPROVED, "open_questions": [], "spec_path": studio.relative(spec), "spec_sha256": sha(spec.read_bytes())})
     studio.commit_or_restore([("slice", data)], f"Approving {slice_id}")
+    studio.record_shipped(slice_id)
     studio.clear_withdrawn(slice_id)
 
 
@@ -1476,8 +1540,15 @@ def cmd_refresh(studio: Studio, args: argparse.Namespace) -> int:
         "requests": requests,
         "github": github,
         **({"principles_taken": taken} if taken else {}),
+        **shipped_moved_field(studio),
         "factory_authorized": False,
     })
+
+
+def shipped_moved_field(studio: Studio) -> Dict[str, Any]:
+    """M13: slices whose effects name a shipped rule that is no longer in force since they were checked. Nothing when none."""
+    moved = {slice_id: flag for slice_id, data in studio.all("slice").items() for flag in [studio.shipped_moved(slice_id, data)] if flag}
+    return {"shipped_moved": moved} if moved else {}
 
 
 # ---- requests: GitHub issues labelled as requests (M8) ----

@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import validate_slice  # noqa: E402
 import adr  # noqa: E402  (architecture decisions: the shared helper beside this script)
 import diagrams  # noqa: E402  (Mermaid diagrams in a plan and in a proposed ADR)
+import shipped  # noqa: E402  (M13: the shipped rules a spec's effects are checked against, from the current-behaviour view)
 
 try:  # M6.1 station telemetry: observational only; if it cannot be loaded nothing is recorded
     import lifecycle  # noqa: E402
@@ -345,12 +346,31 @@ def resolve_spec(project: Path, cell: Dict[str, Any], given: Optional[str]) -> P
     return path
 
 
-def analyze_spec(project: Path, spec: Path, ready: bool, cell_root: Optional[Path] = None) -> Tuple[List[Any], Dict[str, Any]]:
+def analyze_spec(project: Path, spec: Path, ready: bool, cell_root: Optional[Path] = None,
+                 rules: Optional[List[Any]] = None) -> Tuple[List[Any], Dict[str, Any]]:
     """Validate a spec. When the cell holds the project's published product principles (cell.py principles), every
-    active one must be answered in the spec's '## Principles' section."""
+    active one must be answered in the spec's '## Principles' section. With the shipped rules (M13), the spec's
+    '## Effects on shipped behaviour' is required and checked against them."""
     text = spec.read_text(encoding="utf-8-sig")
     others = validate_slice.sibling_specs(spec, registries(project, own=spec.parent))
-    return validate_slice.analyze(text, spec.name, others, ready=ready, principles=cell_principles(cell_root) if cell_root else None)
+    return validate_slice.analyze(text, spec.name, others, ready=ready, principles=cell_principles(cell_root) if cell_root else None, shipped=rules)
+
+
+def shipped_rules(project: Path) -> Dict[str, Any]:
+    """The shipped rules at the integration branch's local head (shipped.py): {"commit", "branch", "rules", "in_force", "notes"}."""
+    return shipped.read(project, load_config(project))
+
+
+def shipped_line(found: Dict[str, Any]) -> str:
+    where = f"at {found['commit'][:12]} on '{found.get('branch')}'" if found.get("commit") else "(none could be read)"
+    notes = " ".join(found.get("notes") or [])
+    return f"shipped rules: {len(found['rules'])} {where}." + (f" {notes}" if notes else "")
+
+
+def cmd_shipped(project: Path, args: argparse.Namespace) -> int:
+    """For the interview: the shipped rules in force, bounded and fenced as data, so the lookup can be done. Reads only."""
+    print(json.dumps(shipped.for_interview(shipped_rules(project)), indent=2, ensure_ascii=False))
+    return 0
 
 
 PRINCIPLES_FILE = "principles.json"
@@ -474,8 +494,10 @@ def print_findings(spec: Path, findings: Sequence[Any]) -> int:
 def cmd_validate(project: Path, args: argparse.Namespace) -> int:
     cell = read_cell(project, args.ticket_id)
     spec = resolve_spec(project, cell, args.spec)
-    findings, _ = analyze_spec(project, spec, args.ready, cell_dir(project, args.ticket_id))
+    found = shipped_rules(project)
+    findings, _ = analyze_spec(project, spec, args.ready, cell_dir(project, args.ticket_id), found["rules"])
     errors = print_findings(spec, findings)
+    print(shipped_line(found))
     status = "FAILED" if errors else ("READY" if args.ready else "PASSED")
     print(f"{status}: {errors} error(s), {len(findings) - errors} warning(s)")
     if cell.get("spec_path") is None:
@@ -579,10 +601,12 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     root = cell_dir(project, args.ticket_id)
     stage_before, spec_before = cell.get("stage"), cell.get("spec_sha256")
     spec = resolve_spec(project, cell, args.spec)
-    findings, model = analyze_spec(project, spec, ready=True, cell_root=root)
+    found = shipped_rules(project)
+    findings, model = analyze_spec(project, spec, ready=True, cell_root=root, rules=found["rules"])
     hard = [f for f in findings if f.severity == "error" and f.rule != "open-questions"]
     open_items = [f for f in findings if f.rule == "open-questions"]
     print_findings(spec, findings)
+    print(shipped_line(found))
     intent_problems, intent = check_intent(root / "intent.md")
     for problem in intent_problems:
         print(f"error: {problem}")
@@ -599,6 +623,8 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     cell["title"] = cell.get("title") or model.get("title") or ""
     cell["risk"] = intent["risk"]
     cell["spec_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    # What the spec's effects were checked against (M13): the integration branch's commit, for the timing flag in status.
+    cell["shipped"] = {"commit": found["commit"], "branch": found.get("branch"), "rules": len(found["rules"]), "checked_at": now()}
     spec_json = root / "spec.json"
     counts = {
         "invariants": len(model.get("invariants") or []),
@@ -1239,9 +1265,27 @@ def cmd_adr_accept(project: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+def shipped_moved(project: Path, cell: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """M13: when the shipped rules moved since the spec was checked and a row of its effects now names a rule no longer
+    in force. Only for a spec that declares rows; the same pure check, run again on today's list."""
+    checked = cell.get("shipped") if isinstance(cell.get("shipped"), dict) else None
+    copy = cell_dir(project, cell["ticket_id"]) / "spec.md"
+    if not checked or not copy.is_file():
+        return None
+    text = copy.read_text(encoding="utf-8-sig")
+    if not shipped.current_module().effects_module().parse(text)["rows"]:
+        return None  # nothing named, so nothing can have moved under it: no Git read
+    return shipped.moved(text, cell.get("slice_id"), None, checked.get("commit"), shipped_rules(project))
+
+
 def cmd_status(project: Path, args: argparse.Namespace) -> int:
     if args.ticket_id:
-        print(json.dumps(describe(project, read_cell(project, args.ticket_id)), indent=2))
+        cell = read_cell(project, args.ticket_id)
+        info = describe(project, cell)
+        flag = shipped_moved(project, cell)
+        if flag:
+            info["shipped_moved"] = flag
+        print(json.dumps(info, indent=2))
         return 0
     worktrees = project / ".factory" / "worktrees"
     cells = []
@@ -1385,6 +1429,10 @@ def build_parser() -> argparse.ArgumentParser:
                        "from GitHub (through the ticket station) or the committed ready folder")
     p.add_argument("ticket_id")
     p.set_defaults(func=cmd_principles)
+
+    p = sub.add_parser("shipped", help="the shipped rules in force on the integration branch, bounded and fenced as data, for the interview's "
+                       "lookup of '## Effects on shipped behaviour'; reads only")
+    p.set_defaults(func=cmd_shipped)
 
     p = sub.add_parser("finalize", help="gate stage 1: validate with --ready, check intent.md, write spec.md and spec.json")
     p.add_argument("ticket_id")

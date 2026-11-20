@@ -394,11 +394,14 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     earlier = load_json(cell.root / "review" / f"round-{cell.loop}" / "packet.json", {}) or {}
     delta = None
     if cell.loop > 0 and earlier.get("head") and earlier["head"] != head:
-        (cell.folder / "delta.patch").write_text(git(cell.work, "diff", f"{earlier['head']}..{head}").stdout, encoding="utf-8")
+        since = delta_start(cell, earlier["head"], head)
+        (cell.folder / "delta.patch").write_text(git(cell.work, "diff", f"{since}..{head}").stdout, encoding="utf-8")
         blocked = sorted({finding.get("file") for vote in (load_json(path, {}) or {} for path in (cell.root / "review" / f"round-{cell.loop}" / "votes").glob("*.json"))
                           for finding in vote.get("findings") or [] if finding.get("severity") == "blocker" and finding.get("file")})
-        delta = {"since_commit": earlier["head"], "diff": str(cell.folder / "delta.patch"),
-                 "files_changed": git(cell.work, "diff", "--name-only", f"{earlier['head']}..{head}").stdout.split(), "earlier_blocker_files": blocked}
+        delta = {"since_commit": since, "diff": str(cell.folder / "delta.patch"),
+                 "files_changed": git(cell.work, "diff", "--name-only", f"{since}..{head}").stdout.split(), "earlier_blocker_files": blocked}
+        if since != earlier["head"]:
+            delta["main_merged_after"] = earlier["head"]  # main was merged in at the revision; its work is not this round's
     previous = cell.root / "review" / f"round-{cell.loop}" / "findings.md"
     verify_findings = sorted((cell.root / "evidence").glob("previous-*/findings.md"))
     review_rules = next((p for p in (cell.work / "REVIEW.md", cell.project / "REVIEW.md") if p.is_file()), None)
@@ -419,7 +422,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         "files_changed": git(cell.work, "diff", "--name-only", f"{baseline}..{head}").stdout.split(),
     }
     if tuning:
-        outside = [name for name in cell.packet["files_changed"] if not TUNING_FILES_RE.search(name)]
+        outside = tuning_outside(cell, cell.packet["files_changed"])
         if outside:
             cell.packet["human_approval_reasons"] = ["the tuning ticket changes files other than the factory's rules: " + ", ".join(outside[:6])]
             cell.packet["human_approval_required"] = True
@@ -1090,7 +1093,8 @@ def exception_state(cell: Cell) -> Dict[str, Any]:
                 "open": [ref for ref in vetoing if ref not in done]}
     if outcome in ("APPROVED", "AWAITING_HUMAN") and decision.get("exceptions"):
         revalidated = (cell.info.get("revalidated") or {}).get("head")
-        if stage not in ("approved", "awaiting-human") or head not in (decision.get("head"), revalidated):
+        if stage not in ("approved", "awaiting-human") or (head not in (decision.get("head"), revalidated)
+                                                           and not record_commit(cell, head, [decision.get("head"), revalidated])):
             raise ReviewError(f"The branch is no longer the commit the panel reviewed ({str(decision.get('head'))[:12]}). An exception is bound to that commit.",
                               code="code-changed")
         expired = [ref for ref, item in current_exceptions(decision).items() if is_expired(item)]
@@ -1122,6 +1126,52 @@ def exception_owners(cell: Cell) -> List[str]:
         raise ReviewError("review.security_exception_by in .factory/config.json must be a list of names (or an empty list for any person). "
                           "Fix the setting; no exception is recorded until it can be read.", code="owners-unreadable")
     return [" ".join(name.split()) for name in names]
+
+
+def tuning_outside(cell: "Cell", files: List[str]) -> List[str]:
+    """The files a factory-tuning ticket changed beyond the factory's rules and its own spec and tests. The merge station's
+    own change record (M13 F, the path cell.json records) is not the ticket's change, so it is left out."""
+    record = cell.info.get("change_record") if isinstance(cell.info.get("change_record"), dict) else {}
+    return [name for name in files if not TUNING_FILES_RE.search(name) and name != record.get("path")]
+
+
+def delta_start(cell: "Cell", earlier_head: str, head: str) -> str:
+    """Where a later round's delta starts (M13). Normally the earlier round's head. When the build station merged main into
+    the branch at the revision (build-report.json main_merges: an entry whose branch_commit is the earlier head), it starts
+    at that merge commit, the last such entry, so other tickets' work that main brought is not shown as this round's."""
+    merges = (cell.build.get("main_merges") or {}).get("merges") if isinstance(cell.build.get("main_merges"), dict) else None
+    since = earlier_head
+    for item in merges if isinstance(merges, list) else []:
+        merged = item.get("merge_commit") if isinstance(item, dict) else None
+        if item.get("branch_commit") == earlier_head and isinstance(merged, str) and re.fullmatch(r"[0-9a-f]{40}", merged) \
+                and git(cell.work, "merge-base", "--is-ancestor", merged, head).returncode == 0:
+            since = merged
+    return since
+
+
+_RECORDS: List[Any] = []
+
+
+def record_commit(cell: "Cell", head: str, bases: List[Optional[str]]) -> bool:
+    """Whether the branch's tip is the merge station's change record commit (M13 F) on top of the approved or revalidated
+    commit, by the merge station's own rule (change_record.holds), loaded as run.py loads it. False without the helper."""
+    if not _RECORDS:
+        module = None
+        skills = Path(__file__).resolve().parent.parent.parent
+        for name in ("mach-merge", "merge"):
+            path = skills / name / "scripts" / "change_record.py"
+            if path.is_file():
+                try:
+                    spec = importlib.util.spec_from_file_location("mach_change_record_for_review", path)
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                except Exception:  # noqa: BLE001  without the helper the tip is treated as changed, and the renewal is refused
+                    module = None
+                break
+        _RECORDS.append(module)
+    if _RECORDS[0] is None:
+        return False
+    return bool(_RECORDS[0].holds(git, cell.work, cell.info.get("change_record"), head, bases))
 
 
 _ISSUE_RULES: List[Any] = []

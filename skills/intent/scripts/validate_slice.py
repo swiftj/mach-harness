@@ -5,6 +5,7 @@ Adapted from the prd-slice validator. Standard library only; reads files, writes
 """
 
 import argparse
+import importlib.util
 import itertools
 import json
 import re
@@ -29,8 +30,9 @@ REQUIRED_SUBSECTIONS = {
     "Scope": ("In scope", "Out of scope"),
     "Acceptance criteria": ("Decision matrix", "Scenarios"),
 }
-# Sections a spec has only when they apply, each with the required section it follows (M13).
-OPTIONAL_SECTIONS = {"Principles": "Acceptance criteria"}
+# Sections a spec has only when they apply, each with the required section it follows (M13). Effects on shipped
+# behaviour is required whenever the caller supplies the shipped rules (check_effects).
+OPTIONAL_SECTIONS = {"Effects on shipped behaviour": "Acceptance criteria", "Principles": "Acceptance criteria"}
 SECTION_ORDER = tuple(name for required in REQUIRED_SECTIONS
                       for name in (required, *[optional for optional, after in OPTIONAL_SECTIONS.items() if after == required]))
 SUMMARY_FIELDS = ("Actor", "Trigger", "Outcome")
@@ -1135,12 +1137,65 @@ def check_principles(
     return rows
 
 
+_EFFECTS: List[Any] = []
+
+
+def effects_parser() -> Any:
+    """The one parser of '## Effects on shipped behaviour' (effects.py beside this file), loaded once by path."""
+    if not _EFFECTS:
+        spec = importlib.util.spec_from_file_location("mach_effects_for_validator", Path(__file__).resolve().parent / "effects.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _EFFECTS.append(module)
+    return _EFFECTS[0]
+
+
+def shipped_shape(given: Any) -> List[Any]:
+    """The shipped rules a spec's effects are checked against: `run.py current --json`'s output or its `rules` list
+    (dicts with a "rule"), or a list of rule strings. Raises ValueError when it is not that shape."""
+    items = given.get("rules") if isinstance(given, dict) else given
+    if not isinstance(items, list) or not all(isinstance(item, str) or (isinstance(item, dict) and isinstance(item.get("rule"), str)) for item in items):
+        raise ValueError("expected a JSON list of shipped rules, or an object with a 'rules' list, as `run.py current --json` prints it")
+    return items
+
+
+def load_shipped(path: Path) -> List[Any]:
+    """Read a shipped-rules file for --shipped. Raises OSError or ValueError when it cannot be used."""
+    return shipped_shape(json.loads(path.read_text(encoding="utf-8")))
+
+
+def check_effects(text: str, shipped: Optional[Sequence[Any]], slice_id: Optional[str], own_ids: Set[str], report: Report) -> Optional[List[Dict[str, Any]]]:
+    """The spec's effects on shipped behaviour (M13 part B), read by effects.py and nothing else. Every problem the
+    parser finds is an error. When the shipped rules are supplied (even an empty list), the section is required, and
+    each row must name a rule that shipped and is still in force; with an empty list only 'None.' is valid. Without
+    them, a spec with no section stays valid and a present section is checked on its own."""
+    E = effects_parser()
+    parsed = E.parse(text)
+    problems = [item for item in parsed["problems"] if item["code"] != "effects-duplicate"]  # check_structure reports a duplicate section
+    if shipped is not None and not parsed["present"]:
+        count = len(shipped)
+        report.error(0, "effects-missing", "Missing section '## Effects on shipped behaviour'. Write 'None.' if this slice changes no shipped behaviour, "
+                     "otherwise one table row per shipped rule it touches; silence is never read as no effects. "
+                     + (f"{count} shipped rule(s) were read." if count else "No rule has shipped yet, so the section is 'None.'.")
+                     + " See references/spec-structure.md.")
+    if parsed["present"]:
+        # Without the shipped list every named rule is taken as shipped, so only this spec's own side is checked.
+        against = shipped if shipped is not None else [row["shipped_rule"] for row in parsed["rows"]]
+        problems += E.check(parsed, against, slice_id=slice_id, own_ids=own_ids)
+    for item in sorted(problems, key=lambda item: (item["line"], item["code"])):
+        report.error(item["line"], item["code"], item["message"])
+    if not parsed["present"]:
+        return None
+    return [{key: row[key] for key in ("shipped_rule", "slice_id", "rule_id", "effect", "in_slice", "note")} for row in parsed["rows"]]
+
+
 def analyze(
     text: str, file_name: str, other_specs: Optional[Union[Mapping[str, str], Sequence[str]]] = None, ready: bool = False,
-    principles: Optional[Sequence[Dict[str, Any]]] = None,
+    principles: Optional[Sequence[Dict[str, Any]]] = None, shipped: Optional[Sequence[Any]] = None,
 ) -> Tuple[List[Finding], Dict[str, Any]]:
     """Check a spec. `principles` is the project's product principles (principles_shape's form), or None when they are not
-    known here: then a Principles section is checked on its own and no answer is required."""
+    known here: then a Principles section is checked on its own and no answer is required. `shipped` is the shipped rules
+    (shipped_shape's form), or None when they are not known here: then '## Effects on shipped behaviour' is not required."""
     report = Report()
     if isinstance(other_specs, abc.Mapping):
         others: Mapping[str, str] = other_specs
@@ -1211,6 +1266,11 @@ def analyze(
                             {str(scenario["id"]) for scenario in scenarios if scenario.get("id")}, report)
     if rows is not None:
         model["principles"] = rows  # only when the spec has the section, so a spec without one exports exactly as before
+    matrix_ids = {str(rule.get("id")) for rule in (model.get("decision_matrix") or {}).get("rules") or [] if rule.get("id")}
+    effects = check_effects(text, list(shipped) if shipped is not None else None, slice_id,
+                            set(requirements) | matrix_ids | {str(scenario["id"]) for scenario in scenarios if scenario.get("id")}, report)
+    if effects is not None:
+        model["effects"] = effects  # only when the spec has the section; [] for 'None.'
     if "Dependencies and permissions" in found:
         patterns = {str(entry["id"]): entry["pattern"] for entry in functional}
         covered_by_scenarios = {identifier for scenario in scenarios for identifier in scenario["covers"]}
@@ -1274,6 +1334,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--principles", type=Path, metavar="FILE",
         help="the project's product principles (a principles.json); every active one must then be answered in '## Principles'",
     )
+    parser.add_argument(
+        "--shipped", type=Path, metavar="FILE",
+        help="the shipped rules (the 'rules' list of `run.py current --json`, or its whole output); '## Effects on shipped behaviour' "
+             "is then required and each row must name a rule that shipped and is still in force",
+    )
     args = parser.parse_args(argv)
     try:
         text = args.spec.read_text(encoding="utf-8-sig")
@@ -1288,7 +1353,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"{args.principles}: cannot read the principles: {exc}", file=sys.stderr)
             return 2
 
-    findings, model = analyze(text, args.spec.name, sibling_specs(args.spec, args.registry), ready=args.ready, principles=principles)
+    shipped = None
+    if args.shipped is not None:
+        try:
+            shipped = load_shipped(args.shipped)
+        except (OSError, UnicodeDecodeError, ValueError, RecursionError) as exc:
+            print(f"{args.shipped}: cannot read the shipped rules: {exc}", file=sys.stderr)
+            return 2
+
+    findings, model = analyze(text, args.spec.name, sibling_specs(args.spec, args.registry), ready=args.ready, principles=principles, shipped=shipped)
     errors = sum(1 for f in findings if f.severity == "error")
     stream = sys.stderr if args.export else sys.stdout
     for finding in findings:

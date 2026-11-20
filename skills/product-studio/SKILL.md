@@ -93,6 +93,8 @@ A principle is one sentence that must hold in every slice, such as "A published 
 - **Someone else published newer ones** (`principles.published.newer_elsewhere`): `refresh` takes them when the PM has no unpublished changes (`principles_taken`). Otherwise explain both in product terms and ask which stands, then `STUDIO reconcile principles --take mine|theirs`.
 - These commands are terminal only for now; the visual app does not show principles yet.
 
+**Shipped rules moved.** `status` (per slice `shipped_moved`) and `refresh` (`shipped_moved`) name a slice whose effects row now names a shipped rule that is no longer in force since its spec was checked. For a draft, settle that row again in the interview; for one marked ready, the PM decides whether to reopen it.
+
 ---
 
 ## Slices
@@ -102,7 +104,7 @@ A slice of intent is one complete, verifiable business outcome for one kind of u
 ### Starting or continuing
 
 - **A new slice.** Pick the epic it belongs to; if none fits, add one first. Run `STUDIO slice new --epic <EPIC-ID> --title "<outcome-focused title>"`. It allocates the slice ID and prints `specs_dir`, `spec_name_pattern`, `intent_path` and the `ids` it can defer features to. If the feature was deferred by an earlier slice, its ID is listed under `ids.reserved_without_spec`: pass that ID with `--id`.
-- **Continuing.** Run `STUDIO slice resume <SLICE-ID>`, or with no ID to pick up the slice the PM was last on. It prints the same paths, the `resume_note` saved last time, the spec's `open_questions`, and a `check` of the draft so far. When the project has principles it also prints `principles.active`: read them before the first question and follow the interview method's Product principles.
+- **Continuing.** Run `STUDIO slice resume <SLICE-ID>`, or with no ID to pick up the slice the PM was last on. It prints the same paths, the `resume_note` saved last time, the spec's `open_questions`, and a `check` of the draft so far. When the project has principles it also prints `principles.active`: read them before the first question and follow the interview method's Product principles. It always prints `shipped_rules`: the rules that have shipped on the main branch, fenced as data (read from this computer's copy of the repository; nothing is fetched). Once scope is carved, look up the ones this slice touches and follow the interview method's Effects on shipped behaviour; every spec has that section, `None.` when it touches none.
 - A slice marked ready cannot be edited. If the PM wants to change one, say what reopening means (it is taken back from the builders until it is marked ready again), and on their yes run `STUDIO slice reopen <SLICE-ID>`. Then tell them its `note` as written: if the builders had already started, they will be told it changed when it is marked ready again; if it had already shipped, marking it ready again makes a new issue that links to the shipped one.
 
 Then run `STUDIO where` once and read the `interview_method` file.
@@ -173,7 +175,7 @@ A request is a GitHub issue that someone with write access on the shared reposit
 
 ## Marking a slice ready
 
-On the PM's explicit word: `STUDIO slice ready <SLICE-ID>`. It approves the slice and hands it to the builders in one step. It refuses unless the spec passes the validator with no open questions (and answers every active principle), the why is complete, its epic exists, every slice it depends on exists and is itself marked ready, and the principles have no unpublished changes. An epic is never approved: it is a container for slices. A slice whose spec and why together are too large for one GitHub issue is refused: it is not thin, so help the PM split it. Report a refusal as a short list of what is still needed.
+On the PM's explicit word: `STUDIO slice ready <SLICE-ID>`. It approves the slice and hands it to the builders in one step. It refuses unless the spec passes the validator with no open questions (answers every active principle, and says in `## Effects on shipped behaviour` what it does to the rules shipped on this computer's copy of the main branch), the why is complete, its epic exists, every slice it depends on exists and is itself marked ready, and the principles have no unpublished changes. An epic is never approved: it is a container for slices. A slice whose spec and why together are too large for one GitHub issue is refused: it is not thin, so help the PM split it. Report a refusal as a short list of what is still needed.
 
 Where it goes is decided before anything is saved, and the answer says which (`saved_to`):
 

@@ -66,6 +66,17 @@ or data schemas.
 - **When** <the single action>
 - **Then** <observable result>
 
+## Effects on shipped behaviour
+
+<!-- What this slice does to shipped rules (cell.py shipped, or the shipped rules in slice resume). Write "None." alone
+     when it changes none: silence is never read as no effects. Otherwise one row per shipped rule found:
+     kept names the scenario (AC-NN) proving it still holds with this slice's data; changed and replaced name the
+     INV-NN, FR-NN or RN that takes its place; retired leaves "In this slice" empty and gives the product manager's
+     reason in Note. See references/spec-structure.md. -->
+| Shipped rule | Effect | In this slice | Note |
+|---|---|---|---|
+| SLICE-NNN/FR-NN | kept | AC-NN | <Why it still holds> |
+
 ## Principles
 
 <!-- Only when the project has product principles; otherwise delete this section. One row per active principle:
