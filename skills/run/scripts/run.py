@@ -40,6 +40,8 @@ and not by whoever is driving it.
                                          record the engineer's answer to one open point of a proposed draft; commits nothing
     run.py adr accept ADR-NNNN... --by NAME
                                          a person sets proposed ADRs in the working tree to accepted; commits nothing
+    run.py policy list                   the organisation's policy packs (M14): ID, owner, status, applies-to, statements, problems;
+                                         reads only (policies.py). An owner's acceptance goes through cell.py policy-accept
     run.py release status                release-readiness snapshots so far, and what a new one would evaluate
     run.py release qualify --epic E | <SLICE>...
                                          evaluate an epic or named slices at one commit; write .factory/release/<id>/readiness.json
@@ -1186,6 +1188,21 @@ def cmd_adr(project: Project, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_policy(project: Project, args: argparse.Namespace) -> int:
+    """Policy packs (M14, the intent station's policies.py): `list` reads the main checkout's committed packs and changes nothing."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("mach_policies", sibling("intent") / "scripts" / "policies.py")
+    P = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(P)
+    found = P.listing(project.root, project.config)
+    print(json.dumps({"reads_only": True, **P.for_validator(found),
+                      "read_from": f"commit {found['commit'][:12]}" if found["commit"] else "the working tree (no commits yet)",
+                      "every_pack": [P.public(record) for record in found["packs"]],
+                      "note": P.DATA_NOTE + " Packs change only by pull request. A pack changed later binds slices marked ready afterwards."},
+                     indent=2, ensure_ascii=False))
+    return 0
+
+
 def required_topics_view(project: Project, listing: Dict[str, Any]) -> Dict[str, Any]:
     """`adr list`'s required topics: which ADR covers each, which are missing, and the ADRs written for them that do not bind yet."""
     found = adrs().coverage(project.root, project.config)
@@ -1467,6 +1484,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", help="change nothing; print the same schedule")
     p.add_argument("--json", action="store_true", help="the report as JSON, for the run skill")
     p.set_defaults(func=cmd_pull)
+    policy_parser = sub.add_parser("policy", help="the organisation's policy packs: list them; reads only").add_subparsers(dest="action", required=True)
+    policy_parser.add_parser("list", help="every policy pack: ID, owner, status, applies-to, statements and problems; reads only").set_defaults(func=cmd_policy)
     adr_parser = sub.add_parser("adr",help="architecture decisions: list them, or write a new one as proposed").add_subparsers(dest="action", required=True)
     adr_parser.add_parser("list", help="every ADR: ID, title, status, applies-to and problems; reads only").set_defaults(func=cmd_adr)
     p = adr_parser.add_parser("new", help="write a new ADR as proposed in the main checkout's working tree; commits nothing")

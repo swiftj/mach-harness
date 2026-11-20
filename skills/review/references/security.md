@@ -10,6 +10,7 @@ Your seat judges whether the change is safe to run and safe to expose. Assume ev
 - **Concurrency and repeats.** The same request sent twice, or two at once, cannot break an invariant such as a count or a once-only rule.
 - **Resource use.** No unbounded loop, query, read into memory, or retry. No work per item that should be done once. Time limits the spec states as invariants are actually enforced.
 - **Dependencies.** A new dependency is pinned, is what it claims to be, and is needed.
+- **Policy packs.** For each pack in the packet's `policies.packs` whose `seats` names `security` or `all` (security and privacy packs), read its kept text (`read`) and check the diff against every statement. A change that breaks one is a blocker citing the statement's ID (`POL-privacy-03`). A concern under `accepted_by_owner` is the owner's decision with their words: not yours to reopen; a note at most.
 
 ## The security scan (`security_scan` in the packet)
 

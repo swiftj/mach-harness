@@ -20,6 +20,8 @@ A decision is never safe to default, whatever you would recommend, when a wrong 
 
 Product principles (read with `CELL principles <ticket-id>` before the design tree) are settled rules, never defaults. Answer each one applies or does not apply from the slice itself. A decision that would break one is a conflict between rules: record it under `## Open questions` with the product manager as the follow-up, which blocks the ticket. Never record an exception in headless mode: an exception is the product manager's own decision, in their words.
 
+Policy packs (read with `CELL policies` before the design tree) are settled rules, never defaults. Follow every statement of each pack that applies and write the pack's line as `Followed.` when the slice meets them all. A statement the slice cannot meet, or two that contradict each other, is a concern with the resolution `open`, and also an entry under `## Open questions` naming the pack's owner as the follow-up; both block the ticket. Never record an owner's acceptance in headless mode.
+
 Shipped rules (read with `CELL shipped`, then looked up as in the interview method's Effects on shipped behaviour) are settled behaviour, never defaults. A `kept` row may be decided without a PM: record it under `## Assumptions` as "Decided without a PM:" with the reason, and add its scenario. A shipped rule this slice would change, replace or retire is a conflict between rules: record it under `## Open questions` with the product manager as the follow-up, which blocks the ticket. Write `None.` only when the lookup found no shipped rule the slice touches.
 
 Choose the strictest reading when a default is safe but there are several: refuse rather than allow, shorter lifetimes rather than longer, fewer people rather than more.
