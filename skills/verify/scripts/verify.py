@@ -26,6 +26,10 @@ decision matrix rule (RN) with data the verifier chooses, and any holdout check 
 in .factory/holdouts/<ticket>/. Matrix rules carry no example data in the spec, so the
 verifier's own data is a holdout the builder never saw.
 
+Neighbours (M15, neighbours.py): up to verify.neighbours (default 2, 0 switches it off) scenarios that shipped
+with other slices of the same epic, chosen by rule at start and proven again on the built result as NEIGHBOUR-N.
+One that fails is a failed check of its own: a shipped scenario no longer holds.
+
 Standard library only. It runs the project's test command inside the cell.
 """
 
@@ -67,6 +71,14 @@ TOOLS = ("playwright", "cypress", "vhs", "asciinema", "ffmpeg", "curl", "grpcurl
 MOCK_APP_TYPES = ("web", "desktop", "mobile")
 MOCK_RESULTS = {"matches": "matches", "differs": "differs", "cannot-compare": "cannot compare"}
 MOCKS_DIR = "mocks"
+NEIGHBOUR_KIND = "neighbour"
+NEIGHBOUR_FINDINGS = ("A shipped scenario of a neighbouring slice no longer holds on this build. Either this change broke behaviour that "
+                      "has shipped, and the builder fixes the code so the scenario holds again (never by changing the shipped scenario, its "
+                      "tests or this spec); or this spec should have declared an effect on that slice's rule in '## Effects on shipped "
+                      "behaviour', which is the product manager's decision, not the builder's. In that case the builder makes no change for "
+                      "it and says so in the revision, and a person sends the ticket back to planning (/mach replan <ticket> \"<why>\"), where "
+                      "the contract engineer puts the question to the product manager (cell.py spec-question) and the ticket waits for "
+                      "their answer (product-answer).")
 
 
 # Files that running a build or test suite leaves behind. They are never part of a change, so the
@@ -87,6 +99,13 @@ class VerifyError(Exception):
     def __init__(self, message: str = "", code: str = "refused") -> None:
         super().__init__(message)
         self.code = code
+
+# M15: the neighbouring shipped scenarios. Beside this script; it reads the shipped specs through the intent and run skills' helpers.
+try:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import neighbours  # noqa: E402
+except Exception:  # noqa: BLE001
+    neighbours = None
 
 # M6.1 station telemetry. The shared helper lives with the intent station. It is observational only: if it
 # cannot be loaded, nothing is recorded and this station behaves exactly as before.
@@ -202,6 +221,11 @@ class Cell:
                             "prove": "Set up one case that matches these conditions, with data you choose yourself, and observe the outcome and side effects."})
         for holdout in self.holdouts():
             targets.append({"id": holdout["id"], "kind": "holdout", "file": holdout["file"], "prove": "Read the file and carry out the check it describes."})
+        for item in (self.results.get("neighbours") or {}).get("chosen") or []:  # M15: chosen at start, by rule
+            targets.append({"id": item["id"], "kind": NEIGHBOUR_KIND, "slice_id": item["slice_id"], "scenario": item["scenario"], "title": item.get("title"),
+                            "steps": item.get("steps"), "why": item.get("why"), "note": neighbours.NOTE_DATA if neighbours else None,
+                            "prove": f"This scenario shipped with {item['slice_id']} ({item['scenario']}). Follow its steps on the built result with "
+                                     "the scenario's own data and capture what happens: it must still hold."})
         return targets
 
     def required_evidence(self) -> List[Dict[str, Any]]:
@@ -346,6 +370,8 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     started = time.time()
     suite = run_logged(cell, command, cell.evidence / "test-suite.log")
     contracts = check_contracts(cell)
+    near = choose_neighbours(cell)
+    cell.results = {"neighbours": near} if near.get("chosen") else {}
     targets = cell.targets()
     tools = [name for name in TOOLS if shutil.which(name)]
     if (cell.work / "node_modules" / ".bin" / "playwright").exists() and "playwright" not in tools:
@@ -354,6 +380,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         "ticket_id": cell.ticket_id, "slice_id": cell.info.get("slice_id"), "app_type": app_type, "head": head, "tools_available": tools,
         "review_loop": cell.build.get("review_loop", 0), "started_at": now(), "started_epoch": started,
         "suite": suite, "contracts": contracts, "records": {},
+        **({"neighbours": near} if near.get("chosen") else {}),
     }
     mocks = prepare_mocks(cell, app_type)  # M14 C: {} for a slice without mocks, and then nothing below changes
     if mocks:
@@ -374,11 +401,37 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
                                     "compare": "Capture the built screen for this mock's scenario in this run, look at the two side by side, then record "
                                                f"'verify.py compare {cell.ticket_id} {key} --result matches|differs|cannot-compare --capture <picture> --note ...', "
                                                "with each difference in plain words (--difference) when it differs."} for key, value in mocks.items()]} if mocks else {}),
+        **({"neighbours": {key: near[key] for key in ("commit", "branch", "epic_id", "limit")}} if near.get("chosen") else
+           {"neighbours_note": near.get("note")}),
+        **({"neighbours_setting": near["setting_note"]} if near.get("setting_note") else {}),
         "records_file": str(cell.root / RECORDS_FILE),
         "next": "Prove each item yourself: write a driver into evidence_dir, run it with 'capture', and record each item with 'record' "
                 "(or all at once with 'record --from' and the records_file).",
     }, indent=2, ensure_ascii=False))
     return 0
+
+
+def choose_neighbours(cell: Cell) -> Dict[str, Any]:
+    """M15: the shipped scenarios to prove again, chosen by rule (neighbours.py). Never raises; without the helper, none."""
+    if neighbours is None:
+        return {"chosen": [], "note": "No neighbouring shipped scenarios: the verify station's neighbours.py is not installed."}
+    try:
+        spec_text = (cell.root / "spec.md").read_text(encoding="utf-8-sig")
+    except OSError:
+        spec_text = ""
+    return neighbours.find(cell.project, cell.info, spec_text, cell.config)
+
+
+def neighbour_summary(cell: Cell, records: Dict[str, Any]) -> Dict[str, Any]:
+    """M15: which shipped scenarios were proven again, why each was chosen, at which commit, and how each came out."""
+    near = cell.results.get("neighbours") or {}
+    if not near.get("chosen"):
+        return {}
+    checks = [{**{key: item.get(key) for key in ("id", "slice_id", "epic_id", "scenario", "title", "why")},
+               "result": (records.get(item["id"]) or {}).get("result")} for item in near["chosen"]]
+    return {"neighbours": {"commit": near.get("commit"), "branch": near.get("branch"), "epic_id": near.get("epic_id"), "limit": near.get("limit"),
+                           "checks": checks, "skipped": near.get("skipped") or []},
+            "neighbour_failures": [item["slice_id"] for item in checks if item["result"] == "fail"]}
 
 
 def evidence_path(cell: Cell, name: str, what: str) -> Path:
@@ -648,7 +701,10 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
             if not path.is_file() or sha(path) != entry["sha256"]:
                 incomplete.append(f"Evidence for {target_id} changed or disappeared after it was recorded: {entry['file']}. Record it again.")
 
-    failures = [f"{target_id} ({record['kind']}): {record['note']}" for target_id, record in records.items() if record["result"] == "fail"]
+    shipped_from = {item["id"]: item for item in (cell.results.get("neighbours") or {}).get("chosen") or []}
+    failures = [(f"{target_id}: a shipped scenario of {shipped_from[target_id]['slice_id']} ({shipped_from[target_id]['scenario']}) no longer holds: {record['note']}"
+                 if record["kind"] == NEIGHBOUR_KIND and target_id in shipped_from else f"{target_id} ({record['kind']}): {record['note']}")
+                for target_id, record in records.items() if record["result"] == "fail"]
     if not suite["passed"]:
         failures.append(f"The test suite fails when rerun in the cell (exit code {suite['exit_code']}); see evidence/{suite['log']}.")
     if not contracts["valid"]:
@@ -673,12 +729,14 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
         "evidence_kinds": {item["kind"]: [name for name in captured if any(fnmatch.fnmatch(Path(name).name.lower(), p.lower()) for p in item["match"])]
                            for item in cell.required_evidence()},
         "tools_available": cell.results.get("tools_available", []),
-        "failures": failures, "timestamp": now(), **mock_summary,
+        "failures": failures, "timestamp": now(), **mock_summary, **neighbour_summary(cell, records),
     }
     if failures:
         findings = [f"# Verification findings for {cell.ticket_id} (review loop {cell.results['review_loop']})", "",
                     "Each item is a behavior that does not match the spec. Evidence is in the cell's evidence/ folder.", ""]
         findings += [f"{index}. {failure}" for index, failure in enumerate(failures, start=1)]
+        if summary.get("neighbour_failures"):
+            findings += ["", "## A shipped scenario no longer holds", "", NEIGHBOUR_FINDINGS]
         (cell.evidence / "findings.md").write_text("\n".join(findings) + "\n", encoding="utf-8")
         summary["evidence_files"].append({"file": "findings.md", "sha256": sha(cell.evidence / "findings.md")})
     (cell.evidence / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

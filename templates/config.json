@@ -16,6 +16,7 @@
   },
   "review": {
     "max_loops": 3,
+    "nit_cap": 5,
     "security_exception_by": [],
     "high": { "approvals": 3, "reviewers": 3, "human_approval": true },
     "medium": { "approvals": 2, "reviewers": 3, "human_approval": false },
@@ -23,6 +24,9 @@
   },
   "security": {
     "scan": { "enabled": true }
+  },
+  "verify": {
+    "neighbours": 2
   },
   "audit": {
     "gold": 90,

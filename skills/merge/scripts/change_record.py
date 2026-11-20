@@ -316,6 +316,7 @@ def verification_section(t: Text, root: Path) -> List[str]:
         if failures:
             lines += ["", "Failures recorded by the verifier:", ""] + [f"- {t.one(item, NOTE_LIMIT)}" for item in failures[:MAX_ITEMS]]
         lines += mock_lines(t, summary.get("mocks"))  # M14 C: nothing for a slice without design mocks
+        lines += neighbour_lines(t, summary.get("neighbours"))  # M15: nothing when no shipped scenario was proven again
         others = sorted(name for name in hashes if name not in cited)
         if others:
             lines += ["", "Other evidence files from this run:", ""]
@@ -336,6 +337,19 @@ def mock_lines(t: Text, mocks: Any) -> List[str]:
                  f"for {t.one(mock.get('for') or 'the whole slice', 20)}{', binding' if mock.get('binding') is True else ''}: {result}.")
         differences = [item for item in mock.get("differences") or [] if isinstance(item, str)]
         lines.append(entry + (" " + "; ".join(t.one(item, NOTE_LIMIT) for item in differences[:MAX_ITEMS]) if differences else ""))
+    return lines
+
+
+def neighbour_lines(t: Text, near: Any) -> List[str]:
+    """M15: the shipped scenarios of neighbouring slices proven again, why each was chosen, and the commit they were read at."""
+    checks = [item for item in (near.get("checks") or []) if isinstance(item, dict)] if isinstance(near, dict) else []
+    if not checks:
+        return []
+    lines = ["", f"Shipped scenarios of neighbouring slices proven again, read at commit {sha(near.get('commit'))}:", ""]
+    for item in checks[:MAX_ITEMS]:
+        result = item.get("result") if item.get("result") in ("pass", "fail") else "not recorded"
+        lines.append(f"- {t.one(item.get('id'), 20)}: {t.one(item.get('slice_id'), 20)} {t.one(item.get('scenario'), 20)} "
+                     f"\"{t.one(item.get('title'), TITLE_LIMIT)}\" ({t.one(item.get('why'), 120)}): {result}.")
     return lines
 
 
@@ -372,6 +386,8 @@ def review_section(t: Text, root: Path) -> List[str]:
                     if isinstance(finding, dict)]
         lines += ["", "Findings:", ""]
         lines += capped([finding_line(t, seat, finding) for seat, finding in findings[:MAX_FINDINGS]], len(findings), MAX_FINDINGS, "findings") or ["- None."]
+        dropped = {seat: vote["nits_dropped"] for seat, vote in sorted(votes.items()) if type(vote.get("nits_dropped")) is int and vote["nits_dropped"] > 0}
+        lines += [f"- {count} more nit{'s' if count != 1 else ''} from {t.one(seat, 40)} not kept (review.nit_cap)." for seat, count in dropped.items()]
         human = decision.get("human_approval") if isinstance(decision.get("human_approval"), dict) else None
         if human:
             lines += ["", f"Approved by a person: {t.one(human.get('by'), 80)}, recorded {t.one(human.get('recorded_at'), 40)}."
@@ -388,6 +404,8 @@ def review_section(t: Text, root: Path) -> List[str]:
 def finding_line(t: Text, seat: str, finding: Dict[str, Any]) -> str:
     severity = finding.get("severity") if finding.get("severity") in ("blocker", "note") else "note"
     label = f"{t.one(seat, 40)}, {severity}"
+    if severity == "note" and finding.get("weight") in ("important", "nit"):  # M15: shown only when the reviewer gave one
+        label += f", {finding['weight']}"
     if finding.get("class") == "security":
         label += f", security, {t.one(finding.get('impact'), 20, 'unstated')} impact"
     line = finding.get("line")
