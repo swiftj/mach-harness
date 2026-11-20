@@ -451,6 +451,8 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
             cell.packet["human_approval_reasons"] = ["the tuning ticket changes files other than the factory's rules: " + ", ".join(outside[:6])]
             cell.packet["human_approval_required"] = True
     cell.packet["tuning"] = tuning
+    if tuning:  # M14: the latest eval comparison for exactly this change, or "not evaluated"; data for the panel, never a gate
+        cell.packet["evals"] = eval_comparison(cell.project, cell.ticket_id, head)
     cell.packet["adrs"] = packet_adrs(cell, baseline, head, tuning)
     principles = packet_principles(cell)
     if principles is not None:  # only for a spec that answers principles, so other packets are exactly as before
@@ -475,6 +477,20 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
                           "answering_seat": found["answering_seat"], "panel_change": found["panel_change"]},
         "next": "Start one fresh reviewer per panel seat, in parallel, each on its seat's model. Then run tally."}, indent=2))
     return 0
+
+
+def eval_comparison(project: Path, ticket_id: str, head: str) -> Dict[str, Any]:
+    """M14 Factory evals: what the observe station's evals.py found for this tuning change at this commit. Never raises."""
+    try:
+        import importlib.util
+        skills = Path(__file__).resolve().parent.parent.parent
+        path = next(p for p in (skills / name / "scripts" / "evals.py" for name in ("mach-observe", "observe")) if p.is_file())
+        spec = importlib.util.spec_from_file_location("mach_review_evals", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.packet_entry(project, ticket_id, head)
+    except Exception:  # noqa: BLE001  the packet is written whatever the eval records hold
+        return {"evaluated": False, "note": "not evaluated", "why": "The eval records could not be read."}
 
 
 def adr_refusals(cell: Cell, baseline: Optional[str], head: str, tuning: bool) -> None:
