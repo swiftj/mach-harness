@@ -2,7 +2,8 @@
 
 The record is one Markdown file, `<records.dir>/<ticket>.md` (default `docs/changes/`), committed on the ticket's branch
 alone, so it arrives in the same pull request or merge commit as the change. It holds, as text only: the why, the slice,
-the plan's tasks and the architecture decisions in force, every verification run with the SHA-256 of each evidence file,
+the product principles, policy packs and effects on shipped behaviour the spec answered (M15, each only when the spec has
+that section), the plan's tasks and the architecture decisions in force, every verification run with the SHA-256 of each evidence file,
 every review round (votes, findings, a person's approval or send-back, security exceptions and the scan's answers), the
 builder's recorded overrides, and the commits. The evidence files themselves stay in the local archive, which can be
 checked against the hashes here.
@@ -227,6 +228,10 @@ def render(root: Path, info: Dict[str, Any], ticket_id: str, commits: Dict[str, 
     ]
     lines += ticket_section(t, info, ticket_id, rules, jira_url)
     lines += ["## Why", "", *t.block(read_text(root / "intent.md"), INTENT_LIMIT), ""]
+    spec = load_dict(root / "spec.json")  # M15: each of the next three sections only when the spec has it
+    lines += principles_section(t, spec, info)
+    lines += policies_section(t, spec, info)
+    lines += effects_section(t, spec, info)
     lines += plan_section(t, root, info)
     lines += verification_section(t, root)
     lines += review_section(t, root)
@@ -251,6 +256,112 @@ def ticket_section(t: Text, info: Dict[str, Any], ticket_id: str, rules: Any = N
         lines.append(f"- Jira: [{jira}]({jira_url}{jira})" if jira_url else f"- Jira: {jira}")
     lines += [f"- Spec: {t.one(info.get('spec_path'), 200)}", f"- Risk tier: {t.one(info.get('risk'), 20)}", f"- App type: {t.one(info.get('app_type'), 20)}", ""]
     return lines
+
+
+def _rows(spec: Dict[str, Any], key: str) -> Optional[List[Dict[str, Any]]]:
+    """spec.json's rows for one section, or None when the spec has no such section (the record then has none either)."""
+    value = spec.get(key)
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else None
+
+
+def principles_section(t: Text, spec: Dict[str, Any], info: Dict[str, Any]) -> List[str]:
+    """M15: the product principles the spec answered, each with its answer, from spec.json (and what cell.json read)."""
+    rows = _rows(spec, "principles")
+    if rows is None:
+        return []
+    lines = ["## Product principles", ""]
+    read = info.get("principles") if isinstance(info.get("principles"), dict) else {}
+    if type(read.get("revision")) is int and SHA256_RE.match(str(read.get("sha256"))):
+        lines += [f"Answered against the published principles, revision {read['revision']} (SHA-256 {sha(read['sha256'])}).", ""]
+    if not rows:
+        return lines + ["- None.", ""]
+    shown: List[str] = []
+    for row in sorted(rows, key=lambda item: natural(item.get("id")))[:MAX_ITEMS]:
+        head = f"- {t.one(row.get('id'), 20)} (revision {t.one(row.get('revision'), 10)}) \"{t.one(row.get('statement'), TITLE_LIMIT)}\": "
+        answer = row.get("answer")
+        if answer == "applies":
+            upheld = [item for item in row.get("upheld_by") or [] if isinstance(item, str)]
+            shown.append(head + "applies, upheld by " + (", ".join(t.one(item, 20) for item in sorted(upheld, key=natural)) or "(not recorded)") + ".")
+        elif answer == "does_not_apply":
+            shown.append(head + f"does not apply: {t.one(row.get('reason'), REASON_LIMIT)}")
+        elif answer == "exception":
+            shown.append(head + f"an exception, the product manager's decision: \"{t.one(row.get('reason'), REASON_LIMIT)}\"")
+        else:
+            shown.append(head + "(answer not recorded)")
+    return lines + capped(shown, len(rows), MAX_ITEMS, "principles") + [""]
+
+
+SHORT_DIGEST_RE = re.compile(r"^[0-9a-f]{12}$")
+OWNER_CHECKS = ("checked against the pack's owner", "checked against the project's list", "not checked against the owner")
+
+
+def policies_section(t: Text, spec: Dict[str, Any], info: Dict[str, Any]) -> List[str]:
+    """M15: the policy packs the spec answered, by digest, and each concern with its resolution: who accepted it, and how
+    that name was checked against the owner (policies.owner_check, carried in spec.json)."""
+    rows = _rows(spec, "policies")
+    if rows is None:
+        return []
+    kept = info.get("policies") if isinstance(info.get("policies"), dict) else {}
+    full = {item.get("id"): item.get("digest") for item in kept.get("packs") or []
+            if isinstance(item, dict) and item.get("matches_main") is True and SHA256_RE.match(str(item.get("digest")))}
+    lines = ["## Policy packs", ""]
+    if SHA_RE.match(str(kept.get("commit"))):
+        lines += [f"Packs read at commit {sha(kept['commit'])}.", ""]
+    accepted = False
+    for row in sorted(rows, key=lambda item: natural(item.get("pack")))[:MAX_ITEMS]:
+        short = row.get("sha256") if SHORT_DIGEST_RE.match(str(row.get("sha256"))) else None
+        digest = f"digest `{short}`" if short else "digest (not recorded)"
+        if short and isinstance(full.get(row.get("pack")), str) and full[row.get("pack")].startswith(short):
+            digest += f", SHA-256 {sha(full[row.get('pack')])}"
+        answer = {"followed": "followed", "concerns": "concerns"}.get(row.get("answer"), "(answer not recorded)")
+        lines.append(f"- {t.one(row.get('pack'), 60)} ({digest}): {answer}.")
+        for concern in [item for item in row.get("concerns") or [] if isinstance(item, dict)][:MAX_ITEMS]:
+            entry = (f"  - {t.one(concern.get('statement_id'), 60)} \"{t.one(concern.get('statement'), TITLE_LIMIT)}\" cannot be met: "
+                     f"{t.one(concern.get('why'), NOTE_LIMIT)} Owner: {t.one(concern.get('owner'), 120)}. ")
+            state = concern.get("resolution")
+            if state == "accepted":
+                accepted = True
+                check = concern.get("owner_check") if concern.get("owner_check") in OWNER_CHECKS else None
+                by = str(concern.get("by") or "")
+                if check and by.endswith(f" ({check})"):
+                    by = by[:-len(check) - 3]
+                entry += (f"Accepted by {t.one(by, 80)} ({check or 'how the name was checked is not recorded'}) on {t.one(concern.get('on'), 12)}: "
+                          f"\"{t.one(concern.get('words'), REASON_LIMIT)}\"")
+            elif state == "spec_changed":
+                entry += "Resolved by changing the spec."
+            elif state == "open":
+                entry += "Still open."
+            else:
+                entry += "Resolution not recorded."
+            lines.append(entry)
+    if not rows:
+        lines.append("- None.")
+    if accepted:
+        lines += ["", "A name is checked against the owner the pack names, or the project's list, never against GitHub: "
+                  "this guards against accident, not forgery."]
+    return lines + [""]
+
+
+def effects_section(t: Text, spec: Dict[str, Any], info: Dict[str, Any]) -> List[str]:
+    """M15: the spec's effects on shipped behaviour, row by row, from spec.json; 'None.' when the spec said so."""
+    rows = _rows(spec, "effects")
+    if rows is None:
+        return []
+    lines = ["## Effects on shipped behaviour", ""]
+    shipped = info.get("shipped") if isinstance(info.get("shipped"), dict) else {}
+    if SHA_RE.match(str(shipped.get("commit"))):
+        lines += [f"Shipped rules read at commit {sha(shipped['commit'])}.", ""]
+    if not rows:
+        return lines + ["- None: this slice changes no shipped behaviour.", ""]
+    shown: List[str] = []
+    for row in sorted(rows, key=lambda item: natural(item.get("shipped_rule")))[:MAX_ITEMS]:
+        effect = row.get("effect") if row.get("effect") in ("kept", "changed", "replaced", "retired") else None
+        here = t.one(row.get("in_slice"), 20)
+        what = {"kept": f"kept, proven again by {here}", "changed": f"changed, by {here} in this slice",
+                "replaced": f"replaced, by {here} in this slice", "retired": "retired"}.get(effect, "(effect not recorded)")
+        note = f" Note: \"{t.one(row.get('note'), NOTE_LIMIT)}\"" if isinstance(row.get("note"), str) and row["note"].strip() else ""
+        shown.append(f"- {t.one(row.get('shipped_rule'), 60)}: {what}.{note}")
+    return lines + capped(shown, len(rows), MAX_ITEMS, "effects") + [""]
 
 
 def plan_section(t: Text, root: Path, info: Dict[str, Any]) -> List[str]:

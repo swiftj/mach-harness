@@ -192,6 +192,128 @@ class InertTest(Base):
         self.assertEqual(self.main_log(), ["work"])
 
 
+PACK_DIGEST = "3f9a1c2b4d5e" + "6f" * 26
+PRINCIPLES_SHA = "ab" * 32
+MAIN_COMMIT = "c" * 40
+
+
+class ProductRulesTest(Base):
+    """M15: the principles the spec answered, the policy packs with their digests and each concern's resolution, and the
+    spec's effects on shipped behaviour: from spec.json and cell.json only, and absent when the spec has no such section."""
+
+    def answered(self, hostile=""):
+        spec = json.loads((self.cellroot / "spec.json").read_text())
+        spec["principles"] = [
+            {"id": "PP-10", "revision": 1, "statement": "Never surprise an admin.", "answer": "does_not_apply", "upheld_by": [], "reason": "No admin sees this."},
+            {"id": "PP-02", "revision": 3, "statement": "Every invite can be undone.", "answer": "applies", "upheld_by": ["INV-02", "AC-01"], "reason": None},
+            {"id": "PP-03", "revision": 2, "statement": "Ask once.", "answer": "exception", "upheld_by": [], "reason": "Launch needs it. " + hostile}]
+        spec["policies"] = [
+            {"pack": "POL-privacy", "sha256": PACK_DIGEST[:12], "answer": "concerns", "concerns": [
+                {"statement_id": "POL-privacy-2", "statement": "Personal data is kept 30 days at most.", "why": "Invites are kept for the audit.",
+                 "owner": "Data protection officer (@dana)", "resolution": "accepted", "by": "dana (checked against the pack's owner)", "on": "2026-11-18",
+                 "words": "Audit needs a year; reviewed with legal. " + hostile, "owner_check": "checked against the pack's owner"},
+                {"statement_id": "POL-privacy-3", "statement": "No tracking.", "why": "A pixel counts opens.", "owner": "Data protection officer (@dana)",
+                 "resolution": "spec_changed"}]},
+            {"pack": "POL-access", "sha256": "0123456789ab", "answer": "followed", "concerns": []}]
+        spec["effects"] = [
+            {"shipped_rule": "SLICE-003/FR-10", "slice_id": "SLICE-003", "rule_id": "FR-10", "effect": "retired", "in_slice": None, "note": "Nobody uses it."},
+            {"shipped_rule": "SLICE-003/FR-02", "slice_id": "SLICE-003", "rule_id": "FR-02", "effect": "changed", "in_slice": "FR-01", "note": ""},
+            {"shipped_rule": "SLICE-002/INV-01", "slice_id": "SLICE-002", "rule_id": "INV-01", "effect": "kept", "in_slice": "AC-02", "note": ""}]
+        self.put(self.cellroot, {"spec.json": json.dumps(spec)})
+        self.set_cell(principles={"source": "folder", "revision": 4, "sha256": PRINCIPLES_SHA, "read_at": "2026-11-17T09:00:00+00:00"},
+                      policies={"commit": MAIN_COMMIT, "dir": "policies", "checked_against_packs": True, "checked_at": "2026-11-17T09:00:00+00:00",
+                                "packs": [{"id": "POL-privacy", "sha256": PACK_DIGEST[:12], "answer": "concerns", "copy": "policies/POL-privacy.md",
+                                           "matches_main": True, "digest": PACK_DIGEST}]},
+                      shipped={"commit": MAIN_COMMIT, "branch": "main", "rules": 3, "checked_at": "2026-11-17T09:00:00+00:00"})
+
+    def render(self):
+        cell = merge.Cell(self.project, "LOCAL-001")
+        return change_record.render(cell.root, cell.info, "LOCAL-001", {"approved": "d" * 40, "base": "d" * 40}, merge.issue_rules())
+
+    def test_the_three_sections_land_with_the_change(self):
+        self.approved(mode="auto")
+        self.answered()
+        self.m_ok("run", "LOCAL-001")
+        text = self.record_text()
+        for expected in (
+            "## Product principles",
+            f"Answered against the published principles, revision 4 (SHA-256 `{PRINCIPLES_SHA}`).",
+            "- PP-02 (revision 3) \"Every invite can be undone.\": applies, upheld by AC-01, INV-02.",
+            "- PP-03 (revision 2) \"Ask once.\": an exception, the product manager's decision: \"Launch needs it.\"",
+            "- PP-10 (revision 1) \"Never surprise an admin.\": does not apply: No admin sees this.",
+            "## Policy packs",
+            f"Packs read at commit `{MAIN_COMMIT}`.",
+            "- POL-access (digest `0123456789ab`): followed.",
+            f"- POL-privacy (digest `{PACK_DIGEST[:12]}`, SHA-256 `{PACK_DIGEST}`): concerns.",
+            "  - POL-privacy-2 \"Personal data is kept 30 days at most.\" cannot be met: Invites are kept for the audit. Owner: Data protection officer (@\u200bdana). "
+            "Accepted by dana (checked against the pack's owner) on 2026-11-18: \"Audit needs a year; reviewed with legal.\"",
+            "  - POL-privacy-3 \"No tracking.\" cannot be met: A pixel counts opens. Owner: Data protection officer (@\u200bdana). Resolved by changing the spec.",
+            "this guards against accident, not forgery.",
+            "## Effects on shipped behaviour",
+            f"Shipped rules read at commit `{MAIN_COMMIT}`.",
+            "- SLICE-002/INV-01: kept, proven again by AC-02.",
+            "- SLICE-003/FR-02: changed, by FR-01 in this slice.",
+            "- SLICE-003/FR-10: retired. Note: \"Nobody uses it.\"",
+        ):
+            self.assertIn(expected, text)
+        # Sorted by ID, and placed after the why and before the plan.
+        self.assertLess(text.index("- PP-02"), text.index("- PP-03"))
+        self.assertLess(text.index("- PP-03"), text.index("- PP-10"))
+        self.assertLess(text.index("## Why"), text.index("## Product principles"))
+        self.assertLess(text.index("## Product principles"), text.index("## Policy packs"))
+        self.assertLess(text.index("## Policy packs"), text.index("## Effects on shipped behaviour"))
+        self.assertLess(text.index("## Effects on shipped behaviour"), text.index("## Plan"))
+
+    def test_a_spec_without_the_sections_gives_exactly_the_record_it_gave_before(self):
+        self.approved(mode="auto")
+        spec = json.loads((self.cellroot / "spec.json").read_text())
+        self.assertEqual(spec.pop("effects"), [], "the fixture's spec says 'None.' for effects, a section the record shows")
+        self.assertFalse({"principles", "policies"} & set(spec))
+        self.put(self.cellroot, {"spec.json": json.dumps(spec)})
+        before = self.render()
+        (self.cellroot / "spec.json").unlink()
+        self.assertEqual(before, self.render(), "spec.json without the sections adds nothing")
+        for heading in ("## Product principles", "## Policy packs", "## Effects on shipped behaviour"):
+            self.assertNotIn(heading, before)
+        # cell.json's own records alone never make a section appear: the spec decides.
+        self.set_cell(principles={"source": "folder", "revision": 4, "sha256": PRINCIPLES_SHA}, shipped={"commit": MAIN_COMMIT},
+                      policies={"commit": MAIN_COMMIT, "packs": []})
+        self.assertEqual(before, self.render())
+
+    def test_none_answers_and_unknown_checks_are_said_plainly(self):
+        self.approved(mode="auto")
+        self.answered()
+        spec = json.loads((self.cellroot / "spec.json").read_text())
+        spec["effects"] = []
+        spec["principles"] = []
+        concern = spec["policies"][0]["concerns"][0]
+        concern.pop("owner_check")
+        concern["by"] = "Dana"  # a resolution line written by hand carries no check
+        spec["policies"][0]["concerns"].append({"statement_id": "POL-privacy-4", "statement": "Ask first.", "why": "Not yet.", "owner": "Data protection officer (@dana)",
+                                                "resolution": "open"})
+        self.put(self.cellroot, {"spec.json": json.dumps(spec)})
+        self.set_cell(policies={"commit": MAIN_COMMIT, "packs": [{"id": "POL-privacy", "matches_main": False, "digest": None}]})
+        text = self.render()
+        self.assertIn("## Effects on shipped behaviour\n\nShipped rules read at commit", text)
+        self.assertIn("- None: this slice changes no shipped behaviour.", text)
+        self.assertIn("## Product principles\n\nAnswered against the published principles, revision 4", text)
+        self.assertIn("Accepted by Dana (how the name was checked is not recorded) on 2026-11-18", text)
+        self.assertIn("  - POL-privacy-4 \"Ask first.\" cannot be met: Not yet. Owner: Data protection officer (@\u200bdana). Still open.", text)
+        self.assertIn(f"- POL-privacy (digest `{PACK_DIGEST[:12]}`): concerns.", text, "no full digest unless the kept copy matched main")
+
+    def test_free_text_in_the_sections_is_inert_redacted_and_deterministic(self):
+        self.approved(mode="auto")
+        self.answered(hostile=HOSTILE)
+        first = self.render()
+        self.set_cell(updated_at="2030-01-01T00:00:00+00:00")
+        self.assertEqual(first, self.render())
+        section = first[first.index("## Product principles"):first.index("## Plan")]
+        for gone in (TOKEN, "@octocat", "<script>", "](https://evil", "acme/app#4"):
+            self.assertNotIn(gone, section)
+        self.assertIsNone(CLOSING.search(section))
+        self.assertIn("@\u200boctocat", section)
+
+
 class ApprovalBindingTest(PullRequestBase):
     def open_pr(self):
         head = self.approved(mode="auto", method="pr")

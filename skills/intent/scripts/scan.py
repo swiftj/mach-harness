@@ -34,6 +34,23 @@ NO_VULNERABILITY_DATABASE = ("Dependencies were not checked against a vulnerabil
 # ---------------------------------------------------------------- the diff
 
 
+# M15: a ticket the ticket station filed from a scanner's export (ticket.py ingest-scan) carries this label and a
+# risk-medium or risk-high label. Its tier is a floor, held as product and monitoring work hold theirs: cell.py finalize
+# raises the cell's tier to it and records `risk_floor`, and review.py never seats a panel below it.
+SCAN_LABEL = "security-scan"
+SCAN_FLOOR_WHY = {"Medium": "a security-scan ticket is never groomed or reviewed below Medium",
+                  "High": "a security-scan ticket labelled risk-high is never groomed or reviewed below High"}
+
+
+def risk_floor(labels: Any) -> Optional[str]:
+    """The lowest risk tier a ticket with these labels may have: High for security-scan with risk-high, Medium for any
+    other security-scan ticket, None for every other ticket. The labels are the source; nothing else is read."""
+    names = {str(label).strip().lower() for label in labels or []} if isinstance(labels, (list, tuple, set)) else set()
+    if SCAN_LABEL not in names:
+        return None
+    return "High" if "risk-high" in names else "Medium"
+
+
 def parse_diff(diff: str) -> List[Dict[str, Any]]:
     """Each file in a unified diff: its new path (old path for a deletion), and its lines in order as
     (sign, old line number or None, new line number or None, text), sign being '+', '-' or ' '."""
