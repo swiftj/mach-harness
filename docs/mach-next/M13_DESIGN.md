@@ -114,6 +114,8 @@ One way, identifiers only, no Jira credentials and no call to Jira.
 
 Using Jira as the Factory's own ticket queue (`tickets.provider: jira`) is separate and unchanged.
 
+Added after part E was built: `jira export` writes a CSV file a person imports into Jira (epics and the slices beneath them, ready or further by default, with a README for the upload), and `jira keys` records the keys Jira gave them, read from a CSV exported from Jira, through the same path as `slice link` and `epic link`. Still no call to Jira and no credential. As built, with what Atlassian's documentation establishes and what it leaves open: `docs/mach-next/M13_JIRA_EXPORT.md`.
+
 ## F. The shared record (decision open)
 
 **Asked: stop git-ignoring `.factory/archive/` so it sits with the code.** Not as it is, for four reasons:

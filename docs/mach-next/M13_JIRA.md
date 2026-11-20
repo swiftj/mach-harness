@@ -40,6 +40,8 @@ Design: `docs/mach-next/M13_DESIGN.md`, part E. Built 2026-11-20. One way, ident
 
 ## Not built
 
+- (Since built: a CSV export for Jira's importer and the keys back, `jira export` and `jira keys`: `docs/mach-next/M13_JIRA_EXPORT.md`.)
+
 - **The visual app** (`apps/studio`, `web/`) neither shows nor sets the key; its host runs a fixed list of operations, which does not include `slice link` or `epic link`. The app's slice screen shows the work order as before.
 - `status` and `refresh` do not list the key per slice (`slice show` shows the work order, which holds it), and do not flag ready slices whose epic's key changed since; `epic link` says so once, at the moment it is set.
 - The epic's issue, the project issue, status comments on the slice's issue, the Factory Floor and `/mach explain` do not show the key.
