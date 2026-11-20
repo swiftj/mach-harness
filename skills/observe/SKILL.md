@@ -40,6 +40,7 @@ Run `OBSERVE collect`, adding `--history-depth <N>` only if the input has it. It
 - `reviewer_notes`: how many non-blocking notes reviewers left, by seat, with recent samples (ticket, seat, title, file). Read them for a problem that keeps coming up but never blocks;
 - `open_cells`: tickets in progress by stage, and those `blocked` waiting for a person;
 - `audit`: the repository's last readiness score and tier, if it has been audited.
+- `bands` (M15): each measure against its control band over every finished ticket on record (`OBSERVE bands` prints the same). Per measure, `state` is `inside`, `outside`, `outside, dismissed` or "not enough finished tickets yet"; `signals` name the Western Electric rule, the ticket and the tickets behind it; `breach` says since which ticket and at which tier; `say` is the one fixed line to quote. A breach is evidence: under "Analyzed data" quote `say` word for word, and under "Patterns" give each undismissed breach its own `### band: <measure>` subsection with its rule and tickets. A proposal may cite a breach's tickets like any pattern's. A breach dismissed by a person is listed, never proposed on. Never propose changing a band, a tier, the window or a rule mapping: `observe.bands` is a person's setting.
 
 ### 2. If there is not enough data
 
@@ -125,5 +126,7 @@ Tell the user, briefly:
 - where the report is, and the tuning ticket's ID if one was filed.
 
 Say plainly that no rule has changed yet: the changes take effect only when the tuning ticket is merged.
+
+`OBSERVE bands` prints the control bands and records each new signal once in `.factory/observations/bands-log.jsonl`; it changes nothing else. `OBSERVE bands dismiss <measure> --reason "<why>" --by <role>` records a person's dismissal of the current breach, only on their explicit word; it is refused inside a supervised execution.
 
 `OBSERVE status` prints the latest metrics summary, whether it is still up to date, and the reports filed so far.

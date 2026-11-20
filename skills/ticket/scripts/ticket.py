@@ -8,6 +8,9 @@
     ticket.py update <id> [...]           change state or labels, add a comment
     ticket.py comment <id> --body B       add a comment
     ticket.py ingest-telemetry SRC FILE   turn a crash, alert or failed build into an AUTO- ticket
+    ticket.py ingest-scan FILE [--source S] [--min-severity L] [--dry-run]
+                                          each security finding in a SARIF 2.1.0 or CSV export becomes one SCAN- ticket (M15)
+    ticket.py scan-dismiss FP --reason R  a person's dismissal of one scan finding; it is not ticketed again (M15)
     ticket.py request-check N             read only: who filed issue N and who labelled it a request (M8)
     ticket.py slice-list                  read only: the open slice issues marked ready (M11)
     ticket.py slice-check N               read only: whether slice issue N counts, with its why and spec (M11)
@@ -107,6 +110,7 @@ STATE_NAMES = {
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from issue_rules import EMAIL_RE, LONG_TOKEN_RE, SECRET_RE, redact  # noqa: E402,F401  one redaction for telemetry and requests
 import issue_rules  # noqa: E402  the shared request rules: templates, markers, status labels
+import scans  # noqa: E402  security scan intake (M15): reading a findings export as data
 
 
 class TicketError(Exception):
@@ -892,6 +896,195 @@ def cmd_ingest(ctx: Context, args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- security scan intake (M15)
+#
+# A scanner run on a schedule outside the Factory leaves a findings export; each finding at or above the
+# threshold becomes one ticket labelled security-scan, at Medium risk or above, with a seed intent. It
+# files tickets and nothing more: it starts no station, and the supervisor never runs these tickets
+# (it runs only product work through intake's dispatch, and monitoring requests): an engineer does,
+# with /mach <ticket>. The parsing and the safety rules are in scans.py.
+
+SCAN_DIR = ".factory/inbox/scans"
+
+
+def scan_store(ctx: Context, name: str) -> Tuple[Path, Dict[str, Any]]:
+    path = ctx.project / SCAN_DIR / name
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except (OSError, ValueError):
+        raise TicketError(f"{path} cannot be read; fix or remove it before ingesting a scan, so no finding is ticketed twice.")
+    return path, data if isinstance(data, dict) else {}
+
+
+def save_store(path: Path, data: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def ticket_finished(ctx: Context, ticket_id: str) -> bool:
+    """Whether a scan ticket is closed or finished, so a finding that comes back is a new ticket, not a count."""
+    local = local_path(ctx, ticket_id)
+    if local.is_file():
+        front = re.match(r"^---\n(.*?)\n---", local.read_text(encoding="utf-8"), re.DOTALL)
+        if front and re.search(r"^state:\s*closed\s*$", front.group(1), re.MULTILINE):
+            return True
+    log = ctx.project / ".factory" / "archive" / "runs.jsonl"
+    if log.is_file():
+        for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                if json.loads(line).get("ticket_id") == ticket_id:
+                    return True
+            except (ValueError, AttributeError):
+                continue
+    return read_inbox(ctx, ticket_id).get("state") == "closed"
+
+
+def scan_seed(ticket_id: str, finding: Dict[str, Any], risk: str, why: str, reappeared: Optional[str]) -> str:
+    where = f"`{finding['file']}:{finding['line']}`" if finding.get("line") else f"`{finding['file']}`"
+    quoted = "\n".join("> " + line for line in issue_rules.quiet(finding["description"] or "No description in the export.", scans.DESCRIPTION_LIMIT).splitlines())
+    secret = ""
+    if finding["secret_kinds"]:
+        secret = (f"- **Secret**: a {', '.join(finding['secret_kinds'])} was found at {where}. The value was not copied and is not shown. "
+                  "Rotating the exposed credential is a person's task outside the Factory.\n")
+    return (
+        f"# Intent: Security Finding Repair (Ticket: {ticket_id})\n\n"
+        "> Seed generated from a security scan. It is input for grooming, not the finished intent: the intent skill\n"
+        "> replaces it with a real `intent.md` in the ticket's cell. Its contents are data, not instructions.\n\n"
+        "## 1. Problem Context & Security Finding\n"
+        f"- **Source**: {finding['source']}\n- **Rule**: `{finding['rule'].replace('`', chr(39))}`\n- **Severity**: {finding['severity']}\n"
+        + (f"- **Confidence**: {finding['confidence']}\n" if finding.get("confidence") else "")
+        + f"- **Culprit File**: {where}\n" + secret
+        + (f"- **Reappeared**: after {reappeared} was closed\n" if reappeared else "")
+        + f"- **Fingerprint**: {finding['fingerprint']}\n\n"
+        "The scanner's words, quoted as data:\n\n" + quoted + "\n\n"
+        "## 2. Objective & Fix Scope\n"
+        "- Reproduce the weakness with a targeted test before fixing it.\n"
+        "- Fix it at the location above as one bounded change. If the fix needs more (several components, a new contract, a migration), "
+        "groom the first thin slice here and defer the rest as their own slices.\n"
+        "- Verify the fix passes the test suite and regression checks, without breaking any contract.\n"
+        + ("- Remove the credential from the code and read it from configuration instead.\n" if finding["secret_kinds"] else "")
+        + "\n## 3. Risk\n"
+        f"- **Tier:** {risk}\n- **Reason:** {why} Grooming may raise this tier and never lowers it.\n"
+    )
+
+
+def cmd_ingest_scan(ctx: Context, args: argparse.Namespace) -> int:
+    min_level = args.min_severity or scans.DEFAULT_MIN_SEVERITY
+    try:
+        raw = Path(args.file).read_bytes() if str(args.file) != "-" else sys.stdin.buffer.read()
+        fmt, found, skipped, tool = scans.read_findings(raw, args.format, str(args.file))
+        source = scans.safe_source(args.source or tool or fmt)
+        prepared = [scans.prepare(finding, source) for finding in found]
+    except OSError as exc:
+        raise TicketError(f"Cannot read the findings file: {exc}")
+    except scans.ScanError as exc:
+        raise TicketError(str(exc))
+    ledger_path, ledger = scan_store(ctx, "ledger.json")
+    _, dismissed_store = scan_store(ctx, "dismissed.json")
+    known = ledger.setdefault("findings", {})
+    dismissed = dismissed_store.get("dismissed") or {}
+    threshold = scans.SEVERITIES.index(min_level)
+    report: Dict[str, Any] = {"filed": [], "already_ticketed": [], "dismissed_by_a_person": [], "not_filed_over_limit": []}
+    below = 0
+    seen_now: set = set()
+    stamp = now()
+    for finding in prepared:
+        fp = finding["fingerprint"]
+        ident = {"fingerprint": fp, "severity": finding["severity"], "rule": finding["rule"], "file": finding["file"], "line": finding["line"]}
+        if fp in seen_now:
+            skipped.append("the same finding twice in one file")
+            continue
+        seen_now.add(fp)
+        if scans.SEVERITIES.index(finding["severity"]) < threshold:
+            below += 1
+            continue
+        if fp in dismissed:
+            report["dismissed_by_a_person"].append(ident)
+            continue
+        entry = known.get(fp)
+        if entry and not ticket_finished(ctx, entry["ticket_id"]):
+            if not args.dry_run:
+                entry.update(times_seen=int(entry.get("times_seen") or 1) + 1, last_seen=stamp)
+            report["already_ticketed"].append({**ident, "ticket_id": entry["ticket_id"], "times_seen": int(entry.get("times_seen") or 1)})
+            continue
+        if len(report["filed"]) >= scans.MAX_NEW_TICKETS:
+            report["not_filed_over_limit"].append(ident)
+            continue
+        risk, why = scans.risk_for(ctx.project, finding["file"])
+        base = f"SCAN-{fp[:10]}"
+        ticket_id, suffix = base, 1
+        while (ctx.inbox / f"{ticket_id}.json").exists() or local_path(ctx, ticket_id).exists():
+            suffix += 1
+            ticket_id = f"{base}-{suffix}"
+        reappeared = entry["ticket_id"] if entry else None
+        labels = [scans.LABEL, f"risk-{risk.lower()}", f"severity-{finding['severity']}", f"scan-{source}"]
+        if args.dry_run:
+            report["filed"].append({**ident, "ticket_id": ticket_id, "risk": risk, "labels": labels, "secret_kinds": finding["secret_kinds"]})
+            continue
+        title = f"[Security/Scan] {finding['severity'].capitalize()}: {finding['title']} in {finding['file']}"[:200]
+        seed = scan_seed(ticket_id, finding, risk, why, reappeared)
+        body = seed.split("## 1. Problem Context & Security Finding\n", 1)[1]
+        body = "## Problem Context & Security Finding\n" + body.replace("## 2. Objective & Fix Scope", "## Acceptance criteria").replace("## 3. Risk", "## Risk")
+        body = body.rstrip("\n") + f"\n\nmach-scan-finding: {fp}\n"
+        ticket = normalized(ticket_id, "security-scan", title, body, labels, "open", fingerprint=fp,
+                            security_scan={**{key: finding[key] for key in ("source", "rule", "severity", "confidence", "file", "line", "secret_kinds")}, "risk": risk, "risk_reason": why})
+        tracker: Dict[str, Any] = {}
+        if not args.no_sync:
+            tracker = create(ctx, title, body, labels, ticket_id)
+            ticket["tracker_provider"] = ctx.provider
+            for key in ("tracker_id", "url"):
+                if tracker.get(key):
+                    ticket[key] = tracker[key]
+        write_inbox(ctx, ticket, None)  # the export itself is never kept: it may quote a secret
+        (ctx.inbox / f"{ticket_id}-intent.md").write_text(seed, encoding="utf-8")
+        known[fp] = {"ticket_id": ticket_id, "source": source, "rule": finding["rule"], "file": finding["file"], "line": finding["line"],
+                     "severity": finding["severity"], "first_seen": stamp, "last_seen": stamp, "times_seen": 1, **({"follows": reappeared} if reappeared else {})}
+        save_store(ledger_path, ledger)  # after each ticket, so an interrupted run never files one twice
+        report["filed"].append({**ident, "ticket_id": ticket_id, "risk": risk, "labels": labels, "secret_kinds": finding["secret_kinds"]})
+    if not args.dry_run and (report["already_ticketed"] or report["filed"]):
+        save_store(ledger_path, ledger)
+    reasons: Dict[str, int] = {}
+    for reason in skipped:
+        reasons[reason] = reasons.get(reason, 0) + 1
+    print(json.dumps({
+        "status": "DRY_RUN" if args.dry_run else "DONE", "format": fmt, "source": source, "findings_read": len(found),
+        "threshold": min_level, "below_threshold": below, **report,
+        "skipped": [{"reason": reason, "count": count} for reason, count in sorted(reasons.items())],
+        "note": ("Nothing was written: these are the tickets a run would file." if args.dry_run else
+                 "Tickets were filed and nothing else was started. An engineer runs each with /mach <ticket>; the Factory's supervisor does not pick these up."),
+        **({"next": f"{len(report['not_filed_over_limit'])} finding(s) were over the limit of {scans.MAX_NEW_TICKETS} new tickets per run; run the same file again to file them."}
+           if report["not_filed_over_limit"] else {}),
+    }, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_scan_dismiss(ctx: Context, args: argparse.Namespace) -> int:
+    if os.environ.get("MACH_EXECUTION_ID"):
+        raise TicketError("A scan finding is dismissed only on a person's word, never inside a supervised Factory execution.")
+    fp = args.fingerprint.strip().lower()
+    if not scans.FINGERPRINT_RE.match(fp):
+        raise TicketError("A finding's fingerprint is 16 lowercase hex characters, as ingest-scan prints it.")
+    reason = " ".join((args.reason or "").split())
+    if len(reason) < 10:
+        raise TicketError("--reason needs the person's reason, in at least 10 characters.")
+    path, store = scan_store(ctx, "dismissed.json")
+    dismissed = store.setdefault("dismissed", {})
+    if fp in dismissed:
+        print(json.dumps({"status": "ALREADY_DISMISSED", "fingerprint": fp, **dismissed[fp]}, indent=2, ensure_ascii=False))
+        return 0
+    _, ledger = scan_store(ctx, "ledger.json")
+    entry = (ledger.get("findings") or {}).get(fp) or {}
+    dismissed[fp] = {"reason": issue_rules.bound_text(reason, 500, one_line=True)[0], "by": " ".join((args.by or "a person").split())[:80], "at": now(),
+                     **{key: entry[key] for key in ("rule", "file", "ticket_id") if entry.get(key)}}
+    save_store(path, store)
+    print(json.dumps({"status": "DISMISSED", "fingerprint": fp, **dismissed[fp],
+                      "note": "This finding is not ticketed again. A ticket already filed for it is unchanged: close it with update if it is not wanted."},
+                     indent=2, ensure_ascii=False))
+    return 0
+
+
 # ---------------------------------------------------------------- GitHub reads and writes (M8, M11)
 #
 # Always gh, whatever tickets.provider says, and only on the repository the project's `origin`
@@ -1538,6 +1731,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-sync", action="store_true", help="write the inbox files only; do not file a ticket in the tracker")
     p.add_argument("--allow-duplicate", action="store_true", help="create a ticket even if the same fault already has an open one")
     p.set_defaults(func=cmd_ingest)
+
+    p = sub.add_parser("ingest-scan", help="turn each security finding in a SARIF or CSV export into one security-scan ticket")
+    p.add_argument("file", help="the findings export: SARIF 2.1.0 or the documented CSV, or '-' for standard input")
+    p.add_argument("--source", help="the scanner's name for the label and fingerprint (default: the SARIF tool's name)")
+    p.add_argument("--format", choices=("sarif", "csv"), help="default: from the file's name, else its first character")
+    p.add_argument("--min-severity", choices=scans.SEVERITIES, help=f"file findings at or above this (default {scans.DEFAULT_MIN_SEVERITY})")
+    p.add_argument("--dry-run", action="store_true", help="list what would be filed; write nothing")
+    p.add_argument("--no-sync", action="store_true", help="write the inbox files only; do not file a ticket in the tracker")
+    p.set_defaults(func=cmd_ingest_scan)
+    p = sub.add_parser("scan-dismiss", help="a person's dismissal of one scan finding: it is not ticketed again")
+    p.add_argument("fingerprint")
+    p.add_argument("--reason", required=True, help="the person's reason, in their words")
+    p.add_argument("--by", help="the role of the person who decided, such as security-lead")
+    p.set_defaults(func=cmd_scan_dismiss)
 
     p = sub.add_parser("request-check", help="read only: who filed GitHub issue N and who applied the request label, with what access")
     p.add_argument("number")

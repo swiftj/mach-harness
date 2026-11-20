@@ -43,7 +43,16 @@
     "dir": "docs/changes"
   },
   "observe": {
-    "every": 5
+    "every": 5,
+    "bands": {
+      "enabled": true,
+      "window": 30,
+      "min_sample": 20,
+      "recent": 8,
+      "measures": ["average_rounds", "first_pass_rate", "escalation_rate", "abandonment_rate", "tests_failing_first_share", "deviations_per_ticket"],
+      "rules": { "1": 2, "2": 2, "3": 3, "4": 3 },
+      "tiers": { "1": ["record"], "2": ["record", "say"], "3": ["record", "say", "observe-pass"] }
+    }
   },
   "report": {
     "enabled": true,

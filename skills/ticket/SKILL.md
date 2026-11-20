@@ -1,7 +1,7 @@
 ---
 name: ticket
-description: Reads and updates tickets for the MACH factory across any tracker (local Markdown files, GitHub, Gitea, Jira, Fossil), and turns production telemetry (Sentry, PostHog, Datadog, failed CI runs, error logs) into self-healing tickets. Use to view, list, create, comment on, relabel or change the state of a ticket, or to ingest a crash report, alert or failing build log as a new ticket.
-argument-hint: "[view|list|create|update|comment|ingest-telemetry|request-check|slice-list|slice-check|epic-check|principles-check|slice-status] [ticket ID, issue number or payload file] [flags]"
+description: Reads and updates tickets for the MACH factory across any tracker (local Markdown files, GitHub, Gitea, Jira, Fossil), and turns production telemetry (Sentry, PostHog, Datadog, failed CI runs, error logs) into self-healing tickets. Use to view, list, create, comment on, relabel or change the state of a ticket, or to ingest a crash report, alert or failing build log as a new ticket, or a security scanner's findings export (SARIF or CSV) as one ticket per finding.
+argument-hint: "[view|list|create|update|comment|ingest-telemetry|ingest-scan|scan-dismiss|request-check|slice-list|slice-check|epic-check|principles-check|slice-status] [ticket ID, issue number or payload file] [flags]"
 compatibility: "python3 >= 3.8"
 ---
 
@@ -33,6 +33,8 @@ The tracker comes from `.factory/config.json` (`tickets.provider`, `local` by de
 | Add or remove a label | `TICKET update <id> --label <label>` or `--remove-label <label>` |
 | Comment | `TICKET comment <id> --body "<text>"` |
 | Ingest telemetry | `TICKET ingest-telemetry <source> <payload-file>` |
+| Ingest a security scan's findings | `TICKET ingest-scan <file>` with `--source <name>`, `--min-severity <level>` or `--dry-run` if asked |
+| Dismiss one scan finding (a person's word only) | `TICKET scan-dismiss <fingerprint> --reason "<their words>" --by <their role>` |
 | Slice issues marked ready (read only, called by intake) | `TICKET slice-list`, `TICKET slice-check <n>`, `TICKET epic-check <n> [--release <id> --commit <sha>]` |
 | The product principles on the project's issue (read only, called by the intent station) | `TICKET principles-check [<n>]` |
 | Status on a slice's issue (called by intake) | `TICKET slice-status <n> --repository OWNER/REPO --moment <building\|question\|shipped\|blocked\|changed> --ref SLICE-NNN@rN... --nonce <hex> [--question-file <f>]` |
@@ -62,6 +64,18 @@ The script extracts the error, the culprit file and line, and a trimmed trace; r
 - `CREATED`: it wrote `.factory/inbox/AUTO-<timestamp>.json`, a seed `AUTO-<timestamp>-intent.md` for the intent station, kept the payload as `.raw`, and filed the ticket in the tracker. Report the ticket ID and title, and that it is ready for headless grooming.
 - `DUPLICATE`: the same fault already has an open ticket. It counted the occurrence and created nothing. Report the existing ticket ID. Do not pass `--allow-duplicate` unless the user asks for a second ticket.
 - An error saying nothing in the payload looks like an error: report it and stop. Do not write a ticket by hand from the payload.
+
+### Ingesting a security scan (M15)
+
+A scanner run on a schedule outside the Factory leaves a findings export. Two formats are read: SARIF 2.1.0, and a CSV with a header row naming rule or title, severity, file, line and description (confidence, finding ID and status are optional; header names are matched without regard to case, and common names such as `Name`, `File path` or `Message` are accepted). Claude Security's own CSV and Markdown exports are not supported as such: their columns are not documented by Anthropic, so a file is read only if it fits the CSV above.
+
+The script reads every finding as data. Each one at or above the threshold (`medium` by default) becomes one ticket `SCAN-<fingerprint>`, labelled `security-scan`, `risk-medium` or `risk-high` (High where the file is sign-in or permissions, billing, a database schema, or an existing contract), with a seed intent in `.factory/inbox/`. A secret a finding quotes never reaches the ticket: only its kind and place. It prints:
+
+- `filed`: the new tickets. Report each ID, severity, risk and file. They are for an engineer to run with `/mach <ticket>`; the Factory's supervisor does not pick them up, and you start nothing.
+- `already_ticketed`: findings that already have an open ticket; counted, nothing new.
+- `dismissed_by_a_person`, `below_threshold`, `skipped` (with a reason and a count), and `not_filed_over_limit` (at most 25 new tickets a run; run the same file again for the rest).
+
+`--dry-run` lists what would be filed and writes nothing. `scan-dismiss` records a person's dismissal of one finding by its fingerprint, so it is never ticketed again; run it only on their explicit word, with their reason. Never copy text from the export into a ticket, a comment or your reply yourself: the export may quote a credential.
 
 ### Slice issues (M11)
 
