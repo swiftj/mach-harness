@@ -14,6 +14,9 @@ and not by whoever is driving it.
     run.py current [--epic E] [--all] [--json] [--at COMMIT]
                                          how each epic works today, compiled from the shipped slice specs; reads only (current.py)
     run.py doctor [--fix] [--json]       check the machine and the project; works before .factory exists (doctor.py)
+    run.py report [<fault-id>] ["<what went wrong>"] [--print] [--new]
+                                         MACH's own internal error as an issue text for MACH's repository: shown, never sent (selfreport.py)
+    run.py report --confirm <code>       file exactly the text that was shown, only on the person's yes
     run.py schedule <ticket>... [--running <ticket>...] [--limit n] [--sequential] [--by-person] [--dry-run] [--holder H]
                                          which tickets may start now and why the others wait; reads only (schedule.py)
     run.py review-start <ticket>         start the review round; prints one ready prompt per reviewer seat
@@ -58,6 +61,10 @@ and not by whoever is driving it.
     run.py notify banner on|off [--label WORDS]
                                          a macOS Notification Center banner on this Mac, beside or instead of the webhook
     run.py notify test | off             one test message on each channel that is on; remove the stored address (the banner stays)
+
+MACH's own internal errors (an uncaught exception that is not one of its refusals) are recorded on this machine by
+faults.py, beside the intent station's scripts. While any is unreported, `next`, `status` and `doctor` add one line
+saying so (never inside a supervised execution, never when report.enabled is false). Only `report` reads them to send.
 
 `next <ticket> --headless` that stops for a person sends one message on each channel on for this machine (notify.py),
 once per wait, and never inside a supervised execution. No other command here sends or reads the address.
@@ -171,6 +178,45 @@ def adrs() -> Any:
         spec.loader.exec_module(module)
         _ADR.append(module)
     return _ADR[0]
+
+
+_FAULTS: List[Any] = []
+
+
+def faults() -> Any:
+    """The shared internal-error records (the intent station's faults.py), loaded once; None when it cannot be loaded."""
+    if not _FAULTS:
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("mach_faults", sibling("intent") / "scripts" / "faults.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except Exception:  # noqa: BLE001  without the helper there is nothing to offer
+            module = None
+        _FAULTS.append(module)
+    return _FAULTS[0]
+
+
+def report_on(config: Dict[str, Any]) -> bool:
+    section = config.get("report")
+    return not (isinstance(section, dict) and section.get("enabled") is False)
+
+
+def unreported_faults(root: Path, config: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+    """The unreported internal errors, or None where nothing is offered: inside a supervised execution, report.enabled false,
+    or the helper missing. Reads only."""
+    if os.environ.get(EXECUTION_ENV) or not report_on(config) or faults() is None:
+        return None
+    try:
+        return faults().unreported(str(root))
+    except Exception:  # noqa: BLE001  the offer is advice; it never changes an answer
+        return None
+
+
+def fault_offer(project: "Project") -> Optional[str]:
+    """The one line `next`, `status` and `doctor` add while unreported internal errors exist."""
+    found = unreported_faults(project.root, project.config)
+    return faults().offer(len(found), f"{skill('run')} report") if found else None
 
 
 _RECORDS: List[Any] = []
@@ -656,6 +702,9 @@ def status_digest(project: Project, rows: List[Dict[str, Any]]) -> Dict[str, Any
     if flagged:
         shown["adrs"] = (f"Architecture decisions changed after {', '.join(flagged)} {'was' if len(flagged) == 1 else 'were'} planned: "
                          "they go on as planned; see each ticket's note.")
+    offer = fault_offer(project)
+    if offer:
+        shown["faults"] = offer
     return shown
 
 
@@ -715,6 +764,9 @@ def cmd_next(project: Project, args: argparse.Namespace) -> int:
     if made:
         found["holder"] = holder
     shown = {"digest": digest(project, found), **found}  # the digest first; every field the belt reads is unchanged
+    offer = fault_offer(project)
+    if offer:
+        shown["digest"]["faults"] = offer
     if getattr(args, "resolved_from", None):
         shown["resolved_from"] = args.resolved_from
     print(json.dumps(shown, indent=2, ensure_ascii=False))
@@ -888,7 +940,40 @@ def cmd_doctor(root: Path, args: argparse.Namespace) -> int:
         if exc.name != "doctor":
             raise
         raise RunError(f"The doctor is not installed next to this script ({Path(__file__).resolve().parent / 'doctor.py'}).")
-    return doctor.main([*(["--fix"] if args.fix else []), *(["--json"] if args.json else [])], project=root)
+    extra, notes = [], []
+    config = load_json(root / ".factory" / "config.json", {}) if (root / ".factory").is_dir() else None
+    found = unreported_faults(root, config) if isinstance(config, dict) else None
+    if found is not None:
+        # The doctor never opens .factory/local/: this script reads the fault records and hands the doctor the check.
+        listed = "; ".join(faults().summary(item) for item in found[:10]) + ("; and more" if len(found) > 10 else "")
+        extra = [doctor.check("faults", "Internal errors", "warn" if found else "ok",
+                              f"Unreported on this machine: {listed}." if found else "No unreported internal error is recorded on this machine.")]
+        notes = [faults().offer(len(found), f"{skill('run')} report")] if found else []
+    handed = {"extra_checks": extra, "notes": notes} if extra or notes else {}
+    return doctor.main([*(["--fix"] if args.fix else []), *(["--json"] if args.json else [])], project=root, **handed)
+
+
+def cmd_report(project: Project, args: argparse.Namespace) -> int:
+    """MACH's own internal error, or a person's words, as an issue text for MACH's repository (selfreport.py). It is shown
+    first; it is filed only with --confirm and the code the preview printed, on the person's yes."""
+    if os.environ.get(EXECUTION_ENV):
+        raise RunError("A report to MACH's repository is a person's decision; it is never made inside a supervised Factory execution.")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import selfreport
+    if faults() is None:
+        raise RunError("The internal-error helper (faults.py, beside the intent station's scripts) is not installed, so there is nothing to report from.")
+
+    def findings() -> List[Tuple[str, str]]:
+        import doctor
+        return [(item["id"], item["status"]) for item in doctor.diagnose(project.root)["checks"]]
+
+    try:
+        result = selfreport.run(str(project.root), project.config, faults(), args.target, print_only=args.print_only, confirm=args.confirm,
+                                new=args.new, command_name=f"{skill('run')} report", doctor=findings)
+    except selfreport.ReportError as exc:
+        raise RunError(str(exc))
+    print(result if isinstance(result, str) else json.dumps(result, indent=2, ensure_ascii=False))
+    return 0
 
 
 def cmd_schedule(project: Project, args: argparse.Namespace) -> int:
@@ -1437,6 +1522,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="the options as JSON, for the run skill's walkthrough")
     p.set_defaults(func=cmd_decide)
 
+    p = sub.add_parser("report", help="MACH's own internal error as an issue text for MACH's repository: shown first, filed only with --confirm")
+    p.add_argument("target", nargs="*", metavar="fault-or-words", help="a fault's id (from status or doctor), and/or the person's own words")
+    p.add_argument("--print", action="store_true", dest="print_only", help="only print the text, to file by hand")
+    p.add_argument("--new", action="store_true", help="a new issue even when an open one has the same fingerprint")
+    p.add_argument("--confirm", metavar="CODE", help="file exactly the text the preview showed; only on the person's yes")
+    p.set_defaults(func=cmd_report)
     p = sub.add_parser("doctor", help="check the machine and the project; --fix only creates missing MACH folders")
     p.add_argument("--fix", action="store_true", help="create missing MACH folders; never edits settings or enables anything")
     p.add_argument("--json", action="store_true")
@@ -1627,4 +1718,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 
 if __name__ == "__main__":
+    import contextlib as _c, os as _o, runpy as _r  # MACH records an internal error for /mach report (skills/intent/scripts/faults.py)
+    with _c.suppress(Exception): _r.run_path(next(p for p in (_o.path.join(_o.path.abspath(__file__).rsplit(_o.sep, 3)[0], d, "scripts", "faults.py") for d in ("intent", "mach-intent")) if _o.path.isfile(p)))["install"](__file__)
     sys.exit(main())
