@@ -30,6 +30,7 @@ import validate_slice  # noqa: E402
 import adr  # noqa: E402  (architecture decisions: the shared helper beside this script)
 import diagrams  # noqa: E402  (Mermaid diagrams in a plan and in a proposed ADR)
 import shipped  # noqa: E402  (M13: the shipped rules a spec's effects are checked against, from the current-behaviour view)
+import policies  # noqa: E402  (M14: the organisation's policy packs a spec answers in '## Policies')
 
 try:  # M6.1 station telemetry: observational only; if it cannot be loaded nothing is recorded
     import lifecycle  # noqa: E402
@@ -347,13 +348,14 @@ def resolve_spec(project: Path, cell: Dict[str, Any], given: Optional[str]) -> P
 
 
 def analyze_spec(project: Path, spec: Path, ready: bool, cell_root: Optional[Path] = None,
-                 rules: Optional[List[Any]] = None) -> Tuple[List[Any], Dict[str, Any]]:
+                 rules: Optional[List[Any]] = None, packs: Optional[Dict[str, Any]] = None) -> Tuple[List[Any], Dict[str, Any]]:
     """Validate a spec. When the cell holds the project's published product principles (cell.py principles), every
     active one must be answered in the spec's '## Principles' section. With the shipped rules (M13), the spec's
     '## Effects on shipped behaviour' is required and checked against them."""
     text = spec.read_text(encoding="utf-8-sig")
     others = validate_slice.sibling_specs(spec, registries(project, own=spec.parent))
-    return validate_slice.analyze(text, spec.name, others, ready=ready, principles=cell_principles(cell_root) if cell_root else None, shipped=rules)
+    return validate_slice.analyze(text, spec.name, others, ready=ready, principles=cell_principles(cell_root) if cell_root else None, shipped=rules,
+                                  policies=packs)
 
 
 def shipped_rules(project: Path) -> Dict[str, Any]:
@@ -484,6 +486,84 @@ def cmd_principles(project: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+# ---- policy packs (M14 part A) ----
+
+def policy_input(project: Path, cell: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The packs a spec is checked against: the main checkout's committed packs for a ticket groomed here. None for a slice
+    from Product Studio, which was checked against the packs when the product manager marked it ready; a pack changed since
+    binds slices marked ready afterwards (its rows are still checked on their own, so an open concern still holds it)."""
+    if cell.get("product"):
+        return None
+    return policies.for_validator(policies.listing(project, load_config(project)))
+
+
+def record_policies(project: Path, root: Path, cell: Dict[str, Any], text: str, packs: Optional[Dict[str, Any]]) -> None:
+    """cell.json `policies`: the commit the packs were read at and each pack the spec answers, with a copy of its text kept in
+    the cell (policies/) when the spec answered the version on the main checkout, for the plan, the builder and the reviewers."""
+    rows = policies.parse_section(text)["rows"]
+    if not rows:
+        cell.pop("policies", None)
+        return
+    found = policies.listing(project, load_config(project))
+    current = policies.by_id(record for record in found["packs"] if not record["problems"])
+    kept = []
+    for row in rows:
+        record = current.get(row["pack"])
+        entry = {"id": row["pack"], "sha256": row["short"], "answer": row["answer"], "copy": None, "matches_main": False}
+        if record and record["digest"][:policies.SHORT] == row["short"]:
+            (root / "policies").mkdir(exist_ok=True)
+            (root / "policies" / f"{row['pack']}.md").write_text(record["text"], encoding="utf-8")
+            entry.update({"copy": f"policies/{row['pack']}.md", "matches_main": True, "digest": record["digest"], "title": record["title"],
+                          "owner": record["owner"], "applies_to": record["applies_to"]})
+        kept.append(entry)
+    cell["policies"] = {"commit": found["commit"], "dir": found["dir"], "checked_against_packs": packs is not None, "packs": kept, "checked_at": now()}
+
+
+def cmd_policies(project: Path, args: argparse.Namespace) -> int:
+    """For the interview and the contract engineer: the active policy packs, bounded and fenced as data. Reads only."""
+    found = policies.listing(project, load_config(project))
+    print(json.dumps(policies.for_validator(found) if args.json else policies.for_interview(found), indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_policy_accept(project: Path, args: argparse.Namespace) -> int:
+    """A policy owner accepts one open concern in this ticket's spec, with their reason in their words. Only on a person's
+    explicit word; refused inside a supervised execution, and for a slice from Product Studio (the product manager records
+    it there, in a new revision). Never recommended by rule."""
+    if policies.unattended():
+        raise CellError(policies.UNATTENDED)
+    cell = read_cell(project, args.ticket_id)
+    root = cell_dir(project, args.ticket_id)
+    if cell.get("product"):
+        raise CellError(f"{args.ticket_id} came from Product Studio: the owner's acceptance is recorded there (policy accept), in a new revision of the slice.")
+    if cell.get("stage") not in STAGES[:2]:
+        raise CellError(f"An owner's acceptance is recorded while the spec is written (interview or spec-open); {args.ticket_id} is '{cell.get('stage')}'.")
+    spec = resolve_spec(project, cell, None)
+    try:
+        text = policies.accept(spec.read_text(encoding="utf-8-sig"), args.policy, args.by, args.reason)
+    except ValueError as exc:
+        raise CellError(str(exc))
+    spec.write_text(text, encoding="utf-8")
+    cell.setdefault("policy_acceptances", []).append({"statement": args.policy, "by": " ".join(args.by.split()),
+                                                      "reason": " ".join(args.reason.split())[:policies.WORDS_LIMIT],
+                                                      "at": now(), "recorded_by": "an agent, on the person's instruction in conversation"})
+    write_cell(project, cell)
+    telemetry(root, "gate.evaluated", "groom", lambda: {"gate": "groom.policy", "outcome": "override", "reason_code": "policy-accepted",
+                                                        "overridden_by_reason": True, "item": args.policy})
+    print(json.dumps({"status": "ACCEPTED", "ticket_id": args.ticket_id, "statement": args.policy, "by": " ".join(args.by.split()),
+                      "open_left": [item["statement_id"] for item in policies.open_concerns(text)],
+                      "next": "The spec records the owner's decision. Finalize it again (cell.py finalize) once no concern and no question is open."}, indent=2))
+    return 0
+
+
+def policies_changed(project: Path, cell: Dict[str, Any]) -> Optional[str]:
+    """M14 timing: packs changed, retired, or newly applying since this spec answered them. Informational only."""
+    copy = cell_dir(project, cell["ticket_id"]) / "spec.md"
+    if not isinstance(cell.get("policies"), dict) or not copy.is_file():
+        return None
+    return policies.drift_text(policies.drift(copy.read_text(encoding="utf-8-sig"), policies.listing(project, load_config(project))))
+
+
 def print_findings(spec: Path, findings: Sequence[Any]) -> int:
     for finding in findings:
         location = f"{spec}:{finding.line}" if finding.line else str(spec)
@@ -495,7 +575,7 @@ def cmd_validate(project: Path, args: argparse.Namespace) -> int:
     cell = read_cell(project, args.ticket_id)
     spec = resolve_spec(project, cell, args.spec)
     found = shipped_rules(project)
-    findings, _ = analyze_spec(project, spec, args.ready, cell_dir(project, args.ticket_id), found["rules"])
+    findings, _ = analyze_spec(project, spec, args.ready, cell_dir(project, args.ticket_id), found["rules"], policy_input(project, cell))
     errors = print_findings(spec, findings)
     print(shipped_line(found))
     status = "FAILED" if errors else ("READY" if args.ready else "PASSED")
@@ -602,9 +682,11 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     stage_before, spec_before = cell.get("stage"), cell.get("spec_sha256")
     spec = resolve_spec(project, cell, args.spec)
     found = shipped_rules(project)
-    findings, model = analyze_spec(project, spec, ready=True, cell_root=root, rules=found["rules"])
-    hard = [f for f in findings if f.severity == "error" and f.rule != "open-questions"]
-    open_items = [f for f in findings if f.rule == "open-questions"]
+    packs = policy_input(project, cell)
+    findings, model = analyze_spec(project, spec, ready=True, cell_root=root, rules=found["rules"], packs=packs)
+    # An open policy concern (M14) holds the spec back like an open question: saved at spec-open, never ready, until the owner accepts it.
+    hard = [f for f in findings if f.severity == "error" and f.rule not in ("open-questions", "policy-concern-open")]
+    open_items = [f for f in findings if f.rule in ("open-questions", "policy-concern-open")]
     print_findings(spec, findings)
     print(shipped_line(found))
     intent_problems, intent = check_intent(root / "intent.md")
@@ -625,6 +707,7 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     cell["spec_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
     # What the spec's effects were checked against (M13): the integration branch's commit, for the timing flag in status.
     cell["shipped"] = {"commit": found["commit"], "branch": found.get("branch"), "rules": len(found["rules"]), "checked_at": now()}
+    record_policies(project, root, cell, text, packs)
     spec_json = root / "spec.json"
     counts = {
         "invariants": len(model.get("invariants") or []),
@@ -644,7 +727,9 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
         telemetry(root, "station.exited", "groom", lambda: {"outcome": "spec-open", "stage": "spec-open", "slice_id": cell["slice_id"]})
         report(commit(project, cell, [cell["spec_path"]], f"spec({cell['slice_id']}): save draft with open questions [{cell['ticket_id']}]", args.no_commit))
         print(json.dumps({"status": "SAVED_NOT_READY", "slice_id": cell["slice_id"], **counts}, indent=2))
-        print("SAVED: the spec is valid but open questions remain, so it is not ready for contracts or building.")
+        print("SAVED: the spec is valid but open questions remain, so it is not ready for contracts or building."
+              + (" An open policy concern waits for its owner: only they accept it (policy accept), or the spec changes so the statement is met."
+                 if any(f.rule == "policy-concern-open" for f in open_items) else ""))
         return 0 if args.allow_open else 1
 
     if spec_before and spec_before != cell["spec_sha256"]:
@@ -892,7 +977,11 @@ def plan_adrs(project: Path, root: Path, cell: Dict[str, Any], header: Dict[str,
     if touching:
         problems.append(f"the plan's tasks change ADR files ({', '.join(touching[:3])}): an ADR is never built. A ticket proposes one while it is "
                         "planned (cell.py adr-draft); only people change an existing ADR")
-    excepted = {item.get("adr") for item in adr.exceptions(cell)}
+    packs_folder = policies.folder_of(load_config(project))[0]  # M14: a policy pack is the organisation's, changed by people
+    touching = [name for name in files if adr.in_folder(name, packs_folder)]
+    if touching:
+        problems.append(f"the plan's tasks change policy pack files ({', '.join(touching[:3])}): a pack is changed only by people, by pull request")
+    excepted ={item.get("adr") for item in adr.exceptions(cell)}
     for record in view["adrs"]:
         if not record["binding"] or record["id"] in named or record["id"] in excepted:
             continue
@@ -1285,6 +1374,9 @@ def cmd_status(project: Path, args: argparse.Namespace) -> int:
         flag = shipped_moved(project, cell)
         if flag:
             info["shipped_moved"] = flag
+        changed = policies_changed(project, cell)
+        if changed:
+            info["policies_changed"] = changed  # M14: flagged, never restarted
         print(json.dumps(info, indent=2))
         return 0
     worktrees = project / ".factory" / "worktrees"
@@ -1434,6 +1526,17 @@ def build_parser() -> argparse.ArgumentParser:
                        "lookup of '## Effects on shipped behaviour'; reads only")
     p.set_defaults(func=cmd_shipped)
 
+    p = sub.add_parser("policies", help="the active policy packs on the main checkout, bounded and fenced as data, for the interview and the plan; reads only")
+    p.add_argument("--json", action="store_true", help="the packs as the validator takes them (validate_slice.py --policies)")
+    p.set_defaults(func=cmd_policies)
+
+    p = sub.add_parser("policy-accept", help="a policy owner accepts one open concern in this ticket's spec; only on a person's explicit word")
+    p.add_argument("ticket_id")
+    p.add_argument("--policy", required=True, help="the statement's ID, such as POL-privacy-03")
+    p.add_argument("--by", required=True, help="the owner who accepted it, as they gave their name or role")
+    p.add_argument("--reason", required=True, help="the owner's reason, in their own words")
+    p.set_defaults(func=cmd_policy_accept)
+
     p = sub.add_parser("finalize", help="gate stage 1: validate with --ready, check intent.md, write spec.md and spec.json")
     p.add_argument("ticket_id")
     p.add_argument("--spec")
@@ -1523,7 +1626,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except CellError as exc:
         print(f"error: {exc}", file=sys.stderr)
         station, gate = {"finalize": ("groom", "groom.finalize"), "check-plan": ("plan", "plan.check"), "replan": ("plan", "plan.replan"),
-                         "adr-conflict": ("plan", "plan.adr"), "adr-exception": ("plan", "plan.adr"), "adr-accept": ("plan", "plan.adr")}.get(args.command, (None, None))
+                         "adr-conflict": ("plan", "plan.adr"), "adr-exception": ("plan", "plan.adr"), "adr-accept": ("plan", "plan.adr"),
+                         "policy-accept": ("groom", "groom.policy")}.get(args.command, (None, None))
         if station:
             telemetry(project / ".factory" / "worktrees" / args.ticket_id, "gate.evaluated", station, lambda: {
                 "gate": gate, "outcome": "refuse", "reason_code": "refused", "overridden_by_reason": False})

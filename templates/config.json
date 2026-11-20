@@ -50,6 +50,9 @@
     "landing": "pull-request",
     "required_topics": ["language", "framework", "storage", "testing", "deployment", "coding-standards"]
   },
+  "policies": {
+    "dir": "policies"
+  },
   "factory": {
     "max_parallel": 3,
     "max_parallel_high": 1

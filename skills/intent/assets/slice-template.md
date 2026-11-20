@@ -86,6 +86,14 @@ or data schemas.
 - **PP-01** (revision 1): "<The principle's statement, exactly>" **Applies:** INV-01, AC-01.
 - **PP-02** (revision 1): "<The principle's statement, exactly>" **Does not apply:** <One sentence saying why>.
 
+## Policies
+
+<!-- Only when a policy pack applies (CELL policies, or policies in slice resume); otherwise delete this section. One line
+     per pack: its ID and digest, then Followed or Concerns. Under Concerns, one line per statement the slice cannot meet,
+     quoted exactly, with the reason, the pack's owner exactly as the pack names them, and the resolution: open, spec
+     changed, or the owner's acceptance, which only policy accept writes. See references/spec-structure.md. -->
+- **POL-<pack>** (sha256 <first 12 hex characters>): Followed.
+
 ## Dependencies and permissions
 
 <!-- Name things as the business knows them. Each dependency ends with the requirement that covers it failing;

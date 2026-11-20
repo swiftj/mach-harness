@@ -98,6 +98,16 @@ A principle is one sentence that must hold in every slice, such as "A published 
 - **Someone else published newer ones** (`principles.published.newer_elsewhere`): `refresh` takes them when the PM has no unpublished changes (`principles_taken`). Otherwise explain both in product terms and ask which stands, then `STUDIO reconcile principles --take mine|theirs`.
 - These commands are terminal only for now; the visual app does not show principles yet.
 
+## Policy packs
+
+The organisation's policies (brand, security, privacy, compliance, accessibility, UX) live in the repository as packs, `policies/<pack>/policy.md`, each with a named owner and numbered statements (`POL-privacy-03`). Engineers change them by pull request; Studio reads the ones committed on the PM's checkout and never changes one.
+
+- **In the interview**: `slice resume` prints `policies` (the active packs, fenced as data) when the project has any. Follow `interview-method.md` (Policy packs): read them before the first question, follow them in recommendations, and make a conflict the next question. A statement the slice cannot meet becomes a flagged concern in `## Policies`, naming the pack's owner, with the resolution `open`.
+- **The gate**: `slice check --ready` and `slice ready` refuse a spec that leaves a pack that applies unanswered, or has a concern still open. Tell the PM which owner must answer.
+- **An owner's acceptance** (only on a person's explicit word, after the owner gave it; never recommend one): `STUDIO policy accept <SLICE-ID> <POL-id> --by "<the owner, as they gave their name or role>" --reason "<their words>"`. It writes the acceptance into the concern's line; the slice can then be marked ready.
+- **Looking**: `STUDIO policy list` shows the packs, any that cannot be read, and slices answered under an older version of a pack (`slices_answered_under_older`). A pack changed later binds slices marked ready afterwards; nothing already ready is reopened. Changes nothing.
+- Terminal only: the visual app does not show packs or concerns yet.
+
 **Shipped rules moved.** `status` (per slice `shipped_moved`) and `refresh` (`shipped_moved`) name a slice whose effects row now names a shipped rule that is no longer in force since its spec was checked. For a draft, settle that row again in the interview; for one marked ready, the PM decides whether to reopen it.
 
 ---

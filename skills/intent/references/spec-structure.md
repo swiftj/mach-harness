@@ -24,7 +24,7 @@ These H2 sections are required, each exactly once, in this order [missing-sectio
 9. `## Accepted defaults`
 10. `## Open questions`
 
-Two more sections sit between `## Acceptance criteria` and `## Dependencies and permissions`, in this order: `## Effects on shipped behaviour`, required whenever the spec is checked against the shipped rules, which `cell.py validate`, `cell.py finalize` and Product Studio always do (below), and `## Principles`, present only when the project has product principles (below).
+Two more sections sit between `## Acceptance criteria` and `## Dependencies and permissions`, in this order: `## Effects on shipped behaviour`, required whenever the spec is checked against the shipped rules, which `cell.py validate`, `cell.py finalize` and Product Studio always do (below), and `## Principles`, present only when the project has product principles (below). `## Policies` follows them, present only when a policy pack applies (below).
 
 Any other H2 section is a warning, because downstream agents may ignore it [extra-section].
 
@@ -37,6 +37,16 @@ A product principle is one sentence, `PP-NN`, that must hold in every slice; the
 - `- **PP-03** (revision 1): "<statement>" **Exception:** <the product manager's reason, in their words>.`
 
 The validator is given the principles as a file (`--principles`, which `cell.py` and Product Studio pass for you) and refuses a spec that leaves an active principle unanswered [principle-unanswered], quotes its statement other than exactly [principle-quote], names a revision that is not its current one [principle-revision], or answers a principle that does not exist [principle-unknown]. A row for a retired principle is a warning [principle-retired]. Without the principles file, each row is still checked on its own. `Applies` names at least one INV-NN, FR-NN or AC-NN that this spec defines [principle-applies]; `Does not apply` and `Exception` need a reason [principle-reason]; a line in any other form is an error [principle-format]. A project with no principles has no section, and nothing else changes. An exception is the product manager's decision: never recommend one.
+
+## Policies
+
+A policy pack is the organisation's: `policies/<pack>/policy.md` in the repository, with an owner and numbered statements `POL-<pack>-NN`, changed by pull request. A pack applies when its applies-to is `all`, or names a topic (`topic:<word>`) the spec talks about. The spec answers each one that applies, in this form:
+
+- `- **POL-security** (sha256 1a2b3c4d5e6f): Followed.`
+- `- **POL-privacy** (sha256 9f8e7d6c5b4a): Concerns.`, then one indented line per concern:
+  `  - **POL-privacy-03**: "<the statement, exactly>" **Cannot be met:** <one sentence>. **Owner:** <the pack's owner, exactly>. **Resolution:** open.`
+
+The digest is the first 12 characters of the pack's SHA-256, as `CELL policies` prints it. A resolution is `open`, `spec changed` (the spec now meets it), or `accepted by <who> on <YYYY-MM-DD>: "<their words>"`, which only `policy accept` writes, on a person's explicit word. The validator is given the packs (`--policies`, which `cell.py` and Product Studio pass for you) and refuses a spec that leaves a pack that applies unanswered [policy-unanswered], names a pack or statement that does not exist [policy-unknown], quotes a statement other than exactly [policy-quote], names the owner otherwise [policy-owner], names an older digest [policy-digest], or cannot be checked because a pack cannot be read [policy-problem]. A retired pack's line is a warning [policy-retired]. Each line is also checked on its own [policy-format] [policy-reason] [policy-resolution]. An open concern is a warning while drafting and an error once the spec is ready [policy-concern-open]: `slice ready` and `cell.py finalize` refuse it. The rows reach `spec.json` as `policies`. A project with no pack that applies has no section, and nothing else changes.
 
 ## Effects on shipped behaviour
 
