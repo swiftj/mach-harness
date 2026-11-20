@@ -838,6 +838,63 @@ def cmd_epic_current(studio: Studio, args: argparse.Namespace) -> int:
                  "commit": source["commit"], "note": note, "epic": view, "notes": found["notes"], "factory_authorized": False})
 
 
+# ---- M13 part E: a Jira key on a slice or an epic. Identifiers only; nothing calls Jira. ----
+
+def jira_key(value: Optional[str], drop: bool) -> Optional[str]:
+    """The key to store (None to remove it), checked against Jira's form with the ticket station's shared rule."""
+    if drop:
+        return None
+    key = (value or "").strip()
+    if not ticket_rules().is_jira_key(key):
+        raise StudioError(f"'{key[:60]}' is not a Jira issue key. Write it as Jira does: the project key in capitals, a hyphen and the number, such as ABC-123.")
+    return key
+
+
+def with_tracking(data: Dict[str, Any], key: Optional[str]) -> None:
+    if key:
+        data["tracking"] = {"jira": key}
+    else:
+        data.pop("tracking", None)
+
+
+def effective_jira(slice_data: Dict[str, Any], epic: Dict[str, Any]) -> Optional[str]:
+    """The key a slice is handed over with: its own, else its epic's."""
+    for item in (slice_data, epic):
+        key = (item.get("tracking") or {}).get("jira") if isinstance(item.get("tracking"), dict) else None
+        if key is not None:
+            if not ticket_rules().is_jira_key(key):
+                raise StudioError(f"The Jira key stored for {item.get('slice_id') or item.get('epic_id')} is not in Jira's form; link it to Jira again.")
+            return key
+    return None
+
+
+def cmd_slice_link(studio: Studio, args: argparse.Namespace) -> int:
+    """Record (or remove) the Jira issue a slice belongs to. A ready slice is reopened first, like any change."""
+    studio.prepare()
+    key = jira_key(args.jira, args.no_jira)
+    data = require_editable(studio, args.slice_id)
+    with_tracking(data, key)
+    studio.commit_or_restore([("slice", data)], "Linking the slice to Jira")
+    epic = studio.all("epic").get(data.get("epic_id")) or {}
+    return emit({"slice": studio.load("slice", args.slice_id), "jira": effective_jira(data, epic), "factory_authorized": False,
+                 "note": ("Linked to " + key if key else "No Jira key of its own") + ". It is handed over with the key when you mark it ready."})
+
+
+def cmd_epic_link(studio: Studio, args: argparse.Namespace) -> int:
+    """Record (or remove) the Jira issue an epic belongs to. Its slices without a key of their own carry it from the next time each is marked ready."""
+    studio.prepare()
+    key = jira_key(args.jira, args.no_jira)
+    data = studio.load("epic", args.epic_id)
+    with_tracking(data, key)
+    studio.commit_or_restore([("epic", data)], "Linking the epic to Jira")
+    ready = sorted(slice_id for slice_id, item in studio.all("slice").items()
+                   if item.get("epic_id") == args.epic_id and item.get("status") == APPROVED and not (item.get("tracking") or {}).get("jira"))
+    note = ("Linked to " + key if key else "No Jira key") + ". Slices of this epic without a key of their own carry it when they are marked ready."
+    if ready:
+        note += f" Already marked ready with the old key: {', '.join(ready)}; reopen and mark each ready again to carry the new one."
+    return emit({"epic": studio.load("epic", args.epic_id), "already_ready": ready, "factory_authorized": False, "note": note})
+
+
 def slice_paths(studio: Studio, slice_id: str) -> Dict[str, Any]:
     spec = studio.spec_of(slice_id)
     return {
@@ -1130,6 +1187,7 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
     project = studio.load("project")
     dependencies = list(data.get("dependencies") or [])
     rules = ticket_rules()
+    jira = effective_jira(data, epic)  # M13: the slice's Jira key, else its epic's
     hand = studio.handoff()
     with hand.exclusive():
         ledger = hand.load()
@@ -1143,12 +1201,12 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
             if waiting:
                 raise StudioError(f"{slice_id} depends on {', '.join(waiting)}, which {'is' if len(waiting) == 1 else 'are'} not ready yet. Mark {waiting[0]} ready first.",
                                   hint("mark_ready", waiting[0]))
-            length = len(rules.slice_issue_body(slice_id, 999999, 999999999, [999999999] * len(dependencies), why, spec))
+            length = len(rules.slice_issue_body(slice_id, 999999, 999999999, [999999999] * len(dependencies), why, spec, jira=jira))
             if length > rules.ISSUE_BODY_LIMIT:
                 raise StudioError(handoff.too_large(slice_id, length, rules.ISSUE_BODY_LIMIT))
             if data.get("status") != APPROVED:
                 approve_locally(studio, data, slice_id)
-            saved = hand.write_folder(ledger, slice_id, data.get("title") or slice_id, epic, dependencies, why, spec)
+            saved = hand.write_folder(ledger, slice_id, data.get("title") or slice_id, epic, dependencies, why, spec, jira)
             folder = Path(saved["folder"])
             return emit({"ready": True, "saved_to": "folder", "slice": studio.load("slice", slice_id), "folder": str(folder),
                          "files": [str(folder / name) for name in ("spec.md", "why.md", "slice.json")], "revision": saved["revision"],
@@ -1159,7 +1217,7 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
                                          "Or hand the folder to the engineer, who brings it in with MACH.")],
                          "factory_authorized": False,
                          "note": "Approved and written to the folder. Nothing was sent to GitHub and no work has started."})
-        plan = hand.prepare(ledger, channel, slice_id, data.get("title") or slice_id, epic, project, dependencies, why, spec)
+        plan = hand.prepare(ledger, channel, slice_id, data.get("title") or slice_id, epic, project, dependencies, why, spec, jira)
         if data.get("status") != APPROVED:
             approve_locally(studio, data, slice_id)
         saved = hand.run(plan, channel, slice_id, project, epic, why, spec)
@@ -1394,6 +1452,7 @@ def cmd_slice_take(studio: Studio, args: argparse.Namespace) -> int:
         work = {"schema_version": 1, "slice_id": slice_id, "project_id": project["project_id"], "epic_id": epic_id, "revision": 1, "title": title,
                 "status": APPROVED if ready_like else "interviewing", "dependencies": dependencies, "open_questions": [],
                 "spec_path": studio.relative(spec_path), "spec_sha256": sha(spec_path.read_bytes()) if ready_like else None}
+        with_tracking(work, marker.get("jira"))  # M13: the key it was approved with, checked by the shared rules when read
         studio.commit_or_restore([("slice", work)], f"Opening {slice_id}")
     if not ready_like:
         result = studio.check_slice(slice_id, ready=True)
@@ -1875,12 +1934,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("epic", metavar="EPIC-ID", help="the epic, or its issue number")
     p.add_argument("--json", action="store_true", help="the answer as data")
     p.set_defaults(func=cmd_epic_current)
+    p = epic.add_parser("link", help="record the Jira issue this epic belongs to (only on the product manager's word)")
+    p.add_argument("epic_id")
+    key = p.add_mutually_exclusive_group(required=True)
+    key.add_argument("--jira", metavar="KEY-123")
+    key.add_argument("--no-jira", action="store_true", help="remove the key")
+    p.set_defaults(func=cmd_epic_link)
     p = epic.add_parser("renumber", help="give an unpublished draft the next free number")
     p.add_argument("identifier")
     p.set_defaults(func=cmd_renumber, kind="epic")
 
     slice_ = sub.add_parser("slice", help="slice work orders, their interview, and marking them ready").add_subparsers(
-        dest="action", required=True, metavar="{new,set,resume,pause,check,show,ready,reopen,renumber,move,take}")
+        dest="action", required=True, metavar="{new,set,link,resume,pause,check,show,ready,reopen,renumber,move,take}")
     p = slice_.add_parser("new")
     p.add_argument("--epic", required=True)
     p.add_argument("--title", required=True)
@@ -1893,6 +1958,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--epic")
     p.add_argument("--depends-on", action="append", help="repeat for each; replaces the list ('none' clears it)")
     p.set_defaults(func=cmd_slice_set)
+    p = slice_.add_parser("link", help="record the Jira issue this slice belongs to (only on the product manager's word)")
+    p.add_argument("slice_id")
+    key = p.add_mutually_exclusive_group(required=True)
+    key.add_argument("--jira", metavar="KEY-123")
+    key.add_argument("--no-jira", action="store_true", help="remove the key; the slice then carries its epic's, if any")
+    p.set_defaults(func=cmd_slice_link)
     p = slice_.add_parser("resume")
     p.add_argument("slice_id", nargs="?")
     p.set_defaults(func=cmd_slice_resume)

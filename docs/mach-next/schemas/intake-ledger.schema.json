@@ -90,6 +90,14 @@
      "history"
     ],
     "properties": {
+     "jira": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "pattern": "^[A-Z][A-Z0-9_]{1,31}-[1-9][0-9]{0,8}$",
+      "description": "M13: the Jira issue key the revision was approved with, checked against Jira's form at intake; null when it has none."
+     },
      "digest": {
       "type": "string",
       "description": "SHA-256 over the why and the spec: the identity of this slice revision."

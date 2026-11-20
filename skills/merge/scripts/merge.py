@@ -60,6 +60,9 @@ BYPRODUCT_RE = re.compile(
     r"|\.py[co]$|(^|/)\.coverage(\..*)?$|(^|/)\.DS_Store$|\.egg-info(/|$)|\.tsbuildinfo$"
 )
 TIERS = ("High", "Medium", "Low")
+# tickets.jira.browse_url (M13 E): an https address with no user name, password, query or fragment, ending in "/".
+BROWSE_URL_RE = re.compile(r"^https://[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~-]+)*/$")
+BROWSE_URL_LIMIT = 200
 
 
 class MergeError(Exception):
@@ -154,7 +157,9 @@ class Cell:
         self.auto = {tier: auto.get(tier.lower(), True) is not False for tier in TIERS}
         pr = merge.get("pr") if isinstance(merge.get("pr"), dict) else {}
         self.inline_findings = pr.get("inline_findings") is not False
+        self.revalidate_overlap = merge.get("revalidate_overlap") is not False
         self.records = change_record.settings(config)
+        self.jira, self.jira_url, self.jira_problem = jira_settings(self.info, config)
 
     def head(self) -> str:
         return git(self.work, "rev-parse", "HEAD").stdout.strip()
@@ -162,6 +167,30 @@ class Cell:
     def save_info(self) -> None:
         self.info["updated_at"] = now()
         write_json(self.root / "cell.json", self.info)
+
+
+def jira_settings(info: Dict[str, Any], config: Any) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """(key, browse_url, problem) for M13 part E. The key is the slice's, from cell.json, used only when it passes the ticket
+    station's check of Jira's form; the browse_url only when it is a plain https address. Nothing here calls Jira."""
+    product = info.get("product") if isinstance(info.get("product"), dict) else {}
+    rules = issue_rules()
+    key = product.get("jira") if rules is not None and rules.is_jira_key(product.get("jira")) else None
+    tickets = config.get("tickets") if isinstance(config, dict) and isinstance(config.get("tickets"), dict) else {}
+    jira = tickets.get("jira") if isinstance(tickets.get("jira"), dict) else {}
+    url = jira.get("browse_url")
+    if url is None:
+        return key, None, None
+    if not isinstance(url, str) or len(url) > BROWSE_URL_LIMIT or not BROWSE_URL_RE.fullmatch(url):
+        return key, None, ("tickets.jira.browse_url in .factory/config.json must be an https address with no user name, password, query or fragment, "
+                           f"ending in /, such as https://example.atlassian.net/browse/ (at most {BROWSE_URL_LIMIT} characters). Fix it or remove it.")
+    return key, url, None
+
+
+def jira_text(cell: "Cell") -> Optional[str]:
+    """The key as Markdown: a link through the browse_url when one is set, else plain text. None without a key."""
+    if not cell.jira:
+        return None
+    return f"[{cell.jira}]({cell.jira_url}{cell.jira})" if cell.jira_url else cell.jira
 
 
 def default_branch(project: Path) -> str:
@@ -252,13 +281,18 @@ def survey(cell: Cell, by_person: bool) -> Dict[str, Any]:
         refusals.append("The cell has uncommitted changes. Everything in an approved cell is committed; look at what changed.")
     if cell.records["problem"]:
         refusals.append(cell.records["problem"])
+    if cell.jira_problem:
+        refusals.append(cell.jira_problem)
+    plan["jira"] = cell.jira
     if cell.method == "pr":
         if not git(cell.project, "remote", "get-url", "origin").stdout.strip():
             refusals.append("merge.method is 'pr' but the repository has no 'origin' remote.")
         if shutil.which("gh") is None:
             refusals.append("merge.method is 'pr' but the gh tool is not installed.")
     record = cell.info.get("change_record") if isinstance(cell.info.get("change_record"), dict) else None
-    plan["would"] = ([] if not plan["behind_main"] else [f"bring {cell.branch} up to date with {main} and rerun the test suite"]) + (
+    plan["would"] = ([] if not plan["behind_main"] else [f"bring {cell.branch} up to date with {main} and rerun the test suite"]
+                     + ([f"check what landed on {main} since approval: a file this ticket also changed, or a shipped rule this ticket's spec "
+                         "relies on that a landed slice changed, sends it back to be verified and reviewed again"] if cell.revalidate_overlap else [])) + (
         [] if not cell.records["enabled"] or record_on_branch(cell, record)
         else [f"add the change record (in {cell.records['dir']}/) to {cell.branch} as a commit of its own"]) + (
         [f"merge {cell.branch} into {main} with a merge commit"] if cell.method == "local"
@@ -300,7 +334,7 @@ def write_record(cell: Cell, revalidated: Optional[Dict[str, Any]]) -> Dict[str,
     try:
         path = change_record.path_for(cell.records["dir"], cell.ticket_id, taken, earlier.get("path") if earlier else None)
         text = change_record.render(cell.root, cell.info, cell.ticket_id, {
-            "approved": cell.decision.get("head"), "revalidated": reval.get("head"), "onto": reval.get("onto"), "base": base}, issue_rules())
+            "approved": cell.decision.get("head"), "revalidated": reval.get("head"), "onto": reval.get("onto"), "base": base}, issue_rules(), cell.jira_url)
         text = change_record.mask(text, path, scan)
     except change_record.RecordError as exc:
         raise MergeError(str(exc), code="record-refused")
@@ -352,15 +386,17 @@ def expired_exceptions(decision: Dict[str, Any]) -> List[Dict[str, Any]]:
     return lapsed
 
 
-def void_approval(cell: Cell) -> None:
-    """Something was added after review: send the ticket back to be verified and reviewed again."""
+def void_approval(cell: Cell, reason: str = "The branch changed after it was approved.", **extra: Any) -> None:
+    """Something was added after review, or something that landed on main touches the same ground (M13): send the
+    ticket back to be verified and reviewed again. No judging round is used: a re-verification that passes goes to a
+    repeat review round (round-N.1); only a failed one, like any failed verification, starts a revision."""
     cell.info.update({"stage": "built", "review": "VOID", "verification": None})
     cell.build["head"] = cell.head()
     write_json(cell.root / "build-report.json", cell.build)
     stale = cell.root / "review" / "decision.json"
     if stale.is_file():
-        void = {"reason": "The branch changed after it was approved.", "voided_at": now(), "approved_commit": cell.decision.get("head"),
-                "branch_commit": cell.build["head"], "by": "merge station"}
+        void = {"reason": reason, "voided_at": now(), "approved_commit": cell.decision.get("head"),
+                "branch_commit": cell.build["head"], "by": "merge station", **extra}
         cell.decision.update({"outcome": "VOID", "void_reason": void["reason"], "void": void})
         write_json(stale, cell.decision)
         # The round's own record keeps who approved, when and which commit, marked voided; the re-review opens a new folder.
@@ -387,11 +423,187 @@ def send_back(cell: Cell, title: str, detail: str) -> Path:
     return path
 
 
+# ---- what landed on main since approval (M13 part B, layer 4) ----
+
+SPEC_DIR = "specs/slices/"
+SLICE_FILE_RE = re.compile(r"^specs/slices/(SLICE-[0-9]{3,})-[^/]*\.md$")
+SLICE_ID_RE = re.compile(r"^SLICE-[0-9]{3,}$")
+OVERLAP_SHOWN = 20
+LANDED_SPECS_READ = 200
+_EFFECTS: List[Any] = []
+
+
+def effects_parser() -> Any:
+    """The intent station's one parser of `## Effects on shipped behaviour` (effects.py), loaded by path whichever way
+    MACH is installed, never copied. None if it cannot be loaded."""
+    if not _EFFECTS:
+        found = None
+        skills = Path(__file__).resolve().parent.parent.parent
+        for name in ("mach-intent", "intent"):
+            path = skills / name / "scripts" / "effects.py"
+            if path.is_file():
+                try:
+                    spec = importlib.util.spec_from_file_location("mach_intent_effects", path)
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    found = module if callable(getattr(module, "parse", None)) else None
+                except Exception:  # noqa: BLE001
+                    found = None
+                break
+        _EFFECTS.append(found)
+    return _EFFECTS[0]
+
+
+def changed_between(cell: Cell, base: str, tip: str) -> Optional[List[str]]:
+    """The files that differ between two commits (renames as a removal and an addition), or None if Git cannot say."""
+    done = git(cell.work, "diff", "--name-only", "--no-renames", "-z", base, tip, "--")
+    return None if done.returncode != 0 else sorted({name for name in done.stdout.split("\0") if name})
+
+
+def own_effects(cell: Cell, approved: str, parser: Any) -> Tuple[Set[str], Optional[str]]:
+    """The shipped rules this ticket's spec lists under Effects on shipped behaviour (any effect), read from the cell's
+    spec.md (the validated copy) with the shared parser; from the spec on the approved commit if the copy is missing.
+    (cell.py's spec.json is not used: the spec's text is the authority and one parser reads it.)"""
+    path = cell.root / "spec.md"
+    text = path.read_text(encoding="utf-8", errors="replace") if path.is_file() and not path.is_symlink() else None
+    spec_path = cell.info.get("spec_path")
+    if text is None and isinstance(spec_path, str) and plain_path(spec_path):
+        shown = git(cell.work, "show", f"{approved}:{spec_path}")
+        text = shown.stdout if shown.returncode == 0 else None
+    if text is None:
+        return set(), None
+    parsed = parser.parse(text)
+    rules = {row["shipped_rule"] for row in parsed.get("rows") or [] if isinstance(row, dict) and isinstance(row.get("shipped_rule"), str)}
+    return rules, ("this ticket's own effects section has problems, so the rules it lists were read only where well formed"
+                   if parsed.get("problems") else None)
+
+
+def depends_on(cell: Cell) -> Set[str]:
+    """The slices this ticket's slice depends on, as intake recorded them in cell.json (product.depends_on)."""
+    product = cell.info.get("product") if isinstance(cell.info.get("product"), dict) else {}
+    return {item for item in product.get("depends_on") or [] if isinstance(item, str) and SLICE_ID_RE.match(item)}
+
+
+def landed_overlap(cell: Cell, before: str, main_head: str) -> Dict[str, Any]:
+    """What landed on main between the commit that was approved and main's head, against this ticket's own change.
+
+    (a) a file a landed commit changed that this ticket's own change also changed. The ticket's files are its diff from
+        its merge base with main, as review's whole-ticket diff computes it; the change record folder and other slices'
+        specs are left out, and so are the byproducts this station already ignores (caches, compiled files).
+    (b) a landed slice spec whose Effects on shipped behaviour changes, replaces or retires a shipped rule this ticket's
+        spec lists in its own effects section, or one that belongs to a slice this ticket's slice depends on.
+    Returns {"files", "slices", "commits", "problems"}; any entry in files, slices or problems means the approval does
+    not carry over. Reads Git and the cell only; changes nothing."""
+    approved = cell.decision.get("head") if isinstance(cell.decision.get("head"), str) and re.fullmatch(r"[0-9a-f]{40,64}", cell.decision.get("head")) else before
+    problems: List[str] = []
+    landed_base = git(cell.work, "merge-base", before, main_head).stdout.strip()
+    own_base = git(cell.work, "merge-base", approved, main_head).stdout.strip()
+    commits = git(cell.work, "rev-list", "--no-merges", f"{before}..{main_head}").stdout.split() if landed_base else []
+    landed = changed_between(cell, landed_base, main_head) if landed_base else None
+    own = changed_between(cell, own_base, approved) if own_base else None
+    if landed is None or own is None:
+        return {"files": [], "slices": [], "commits": commits, "problems": ["Git could not say which files landed on the main branch or which this ticket changed."]}
+    records_dir = cell.records["dir"].rstrip("/") + "/"
+    own_spec = cell.info.get("spec_path") if isinstance(cell.info.get("spec_path"), str) else None
+
+    def counts(name: str) -> bool:
+        if name.startswith(records_dir) or BYPRODUCT_RE.search(name):
+            return False
+        return not (name.startswith(SPEC_DIR) and name != own_spec)
+
+    files = sorted(set(name for name in own if counts(name)) & set(landed))
+    slices: List[Dict[str, Any]] = []
+    specs = [name for name in landed if SLICE_FILE_RE.match(name) and name != own_spec]
+    if specs:
+        parser = effects_parser()
+        if parser is None:
+            problems.append("The intent station's effects parser (effects.py) could not be loaded, so the specs that landed could not be read.")
+        else:
+            listed, own_problem = own_effects(cell, approved, parser)
+            if own_problem:
+                problems.append(own_problem.capitalize() + ".")
+            needed = depends_on(cell)
+            for name in specs[:LANDED_SPECS_READ]:
+                shown = git(cell.work, "show", f"{main_head}:{name}")
+                if shown.returncode != 0:
+                    continue  # removed on main: it states no effect
+                parsed = parser.parse(shown.stdout)
+                landed_id = SLICE_FILE_RE.match(name).group(1)
+                if parsed.get("problems"):
+                    problems.append(f"{landed_id} ({name}) landed with an Effects on shipped behaviour section that cannot be read cleanly, "
+                                    "so what it does to shipped rules is not known.")
+                hits = []
+                for row in parsed.get("rows") or []:
+                    if not isinstance(row, dict) or row.get("effect") not in ("changed", "replaced", "retired"):
+                        continue
+                    rule, owner = row.get("shipped_rule"), row.get("slice_id")
+                    why = ("this ticket's spec lists it" if rule in listed else
+                           f"this ticket's slice depends on {owner}" if owner in needed else None)
+                    if why:
+                        hits.append({"rule": rule, "effect": row["effect"], "why": why})
+                if hits:
+                    slices.append({"slice_id": landed_id, "spec": name, "rules": hits})
+            if len(specs) > LANDED_SPECS_READ:
+                problems.append(f"{len(specs)} slice specs landed; only the first {LANDED_SPECS_READ} were read.")
+    return {"files": files, "slices": slices, "commits": commits, "problems": problems}
+
+
+def overlap_words(found: Dict[str, Any], main: str) -> List[str]:
+    """Each reason the approval does not carry over, in plain words."""
+    lines: List[str] = []
+    for item in found["slices"][:OVERLAP_SHOWN]:
+        rules = "; ".join(f"it {hit['effect']} {hit['rule']}, and {hit['why']}" for hit in item["rules"][:OVERLAP_SHOWN])
+        lines.append(f"{item['slice_id']} landed on {main} ({item['spec']}): {rules}.")
+    if found["files"]:
+        shown = ", ".join(found["files"][:OVERLAP_SHOWN]) + (f" and {len(found['files']) - OVERLAP_SHOWN} more" if len(found["files"]) > OVERLAP_SHOWN else "")
+        lines.append(f"Work that landed on {main} since approval changed files this ticket also changed: {shown}.")
+    lines += found["problems"][:OVERLAP_SHOWN]
+    return lines
+
+
+def check_landed(cell: Cell, main: str, before: str, main_head: str) -> None:
+    """After a clean merge of main and a passing suite: if what landed in between touches this ticket's ground, the
+    approval does not carry over. The merge commit stays on the branch, nothing lands, and the ticket goes back to be
+    verified and reviewed on the merged result, as when the branch is not the approved commit. merge.revalidate_overlap
+    false switches the check off. One lifecycle record of the check; it never changes the result."""
+    if not cell.revalidate_overlap:
+        return
+    found = landed_overlap(cell, before, main_head)
+    reasons = overlap_words(found, main)
+
+    def record() -> None:
+        telemetry(cell.root, "gate.evaluated", "merge", lambda: {
+            "gate": "merge.landed_overlap", "outcome": "refuse" if reasons else "pass", "reason_code": "landed-overlap" if reasons else None,
+            "overridden_by_reason": False, "landed_commits": len(found["commits"]), "files": len(found["files"]),
+            "slices": [item["slice_id"] for item in found["slices"]], "problems": len(found["problems"])})
+
+    if not reasons:
+        record()
+        return
+    path = cell.root / "review" / "merge-recheck.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"# Why {cell.ticket_id} is verified and reviewed again\n\n"
+                    f"The approval was for commit {str(cell.decision.get('head'))[:12]}. Since then {len(found['commits'])} commit"
+                    f"{'s' if len(found['commits']) != 1 else ''} landed on {main}. Merging {main} in was clean and the test suite passes, "
+                    "but what landed touches the same ground as this ticket, so the approval does not carry over:\n\n"
+                    + "".join(f"- {line}\n" for line in reasons)
+                    + f"\nThe branch now holds {main} merged in ({cell.head()[:12]}). Verify and review that result. "
+                    "This is not a rejection: it uses no judging round unless the new verification fails.\n", encoding="utf-8")
+    void_approval(cell, "Work that landed on the main branch after approval touches the same ground as this ticket.",
+                  findings_path=str(path), landed_files=found["files"][:OVERLAP_SHOWN],
+                  landed_slices=[item["slice_id"] for item in found["slices"]][:OVERLAP_SHOWN], main_commit=main_head)
+    record()
+    raise MergeError(f"{main} moved on since approval, and what landed touches the same ground as this ticket:\n- " + "\n- ".join(reasons)
+                     + f"\nNothing was merged. The branch keeps {main} merged in; the ticket goes back to be verified and reviewed on that result "
+                     f"(no judging round is used unless verification fails). Details: {path}.", code="landed-overlap")
+
+
 def revalidate(cell: Cell, main: str) -> Optional[Dict[str, Any]]:
     """Merge-queue step: put the approved work on top of today's main and prove the suite still passes."""
     main_head = git(cell.project, "rev-parse", "HEAD").stdout.strip()
     if git(cell.work, "merge-base", "--is-ancestor", main_head, "HEAD").returncode == 0:
         return None
+    before = cell.head()
     merged = git(cell.work, "merge", "--no-edit", "-m", f"Merge {main} into {cell.branch} before landing [{cell.ticket_id}]", main_head)
     if merged.returncode != 0:
         conflicts = git(cell.work, "diff", "--name-only", "--diff-filter=U").stdout.split()
@@ -405,6 +617,7 @@ def revalidate(cell: Cell, main: str) -> Optional[Dict[str, Any]]:
                          f"The ticket passed on its own, but with the current {main} merged into it `{suite['command']}` fails:\n\n```\n{suite['output_tail']}\n```")
         raise MergeError(f"With the current {main} merged in, the test suite fails, so nothing was merged. The ticket goes back to the build station: findings are in {path}.",
                          code="sent-back")
+    check_landed(cell, main, before, main_head)
     cell.info["revalidated"] = {"head": cell.head(), "onto": main_head, "at": now(), "tests": suite["command"]}
     cell.save_info()
     return cell.info["revalidated"]
@@ -484,7 +697,9 @@ def refs_line(cell: Cell) -> Optional[str]:
 
 
 def pr_title(cell: Cell) -> str:
-    return inert(f"{cell.ticket_id}: {cell.info.get('title') or cell.info.get('slice_id') or 'change'}", 240)
+    """The pull request's title; a slice's Jira key (M13), checked, comes first, which Jira's GitHub integration reads."""
+    title = inert(f"{cell.ticket_id}: {cell.info.get('title') or cell.info.get('slice_id') or 'change'}", 240)
+    return f"{cell.jira} {title}" if cell.jira else title
 
 
 def pr_body(cell: Cell) -> str:
@@ -498,7 +713,7 @@ def pr_body(cell: Cell) -> str:
     lines = [
         f"**Ticket:** {inert(cell.ticket_id)}  ",
         f"**Slice:** {inert(cell.info.get('slice_id'))} (`{inert(cell.info.get('spec_path'))}`)  ",
-        f"**Risk tier:** {inert(cell.info.get('risk'))}",
+        f"**Risk tier:** {inert(cell.info.get('risk'))}" + (f"  \n**Jira:** {jira_text(cell)}" if cell.jira else ""),
         "",
         "## Verification",
         f"{inert(cell.summary.get('status', 'unknown'))}: {passed} of {len(checks)} checks passed, "
@@ -895,12 +1110,13 @@ def land(cell: Cell, args: argparse.Namespace, plan: Dict[str, Any]) -> int:
     record = write_record(cell, revalidated) if cell.records["enabled"] else None
     head = cell.head()
     result: Dict[str, Any] = {"ticket_id": cell.ticket_id, "branch": cell.branch, "into": main, "method": cell.method,
-                              "approved_commit": cell.decision.get("head"), "landed_commit": head, "revalidated": revalidated,
+                              "approved_commit": cell.decision.get("head"), "landed_commit": head, "revalidated": revalidated, "jira": cell.jira,
                               "change_record": {key: record.get(key) for key in ("path", "sha256", "commit", "written")} if record
                               else {"written": False, "reason": "records.enabled is false in .factory/config.json."}}
     if cell.method == "local":
         title = cell.info.get("title") or cell.info.get("slice_id") or "change"
-        merged = git(cell.project, "merge", "--no-ff", "-m", f"Merge {cell.ticket_id}: {title}", cell.branch)
+        message = (f"{cell.jira} " if cell.jira else "") + f"Merge {cell.ticket_id}: {title}"  # a checked Jira key first (M13)
+        merged = git(cell.project, "merge", "--no-ff", "-m", message, cell.branch)
         if merged.returncode != 0:
             git(cell.project, "merge", "--abort")
             raise MergeError("git could not merge the branch into the main checkout: " + ((merged.stderr.strip() or merged.stdout.strip()).splitlines() or ["merge failed"])[-1],

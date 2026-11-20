@@ -32,7 +32,9 @@ SHAPES = {
     "slice": ("schema_version", "slice_id", "project_id", "epic_id", "revision", "title", "status", "dependencies", "open_questions", "spec_path", "spec_sha256"),
 }
 # Fields an artifact may carry or leave out. A slice without them is byte-for-byte what it was before.
-OPTIONAL = {"slice": ("origin", "source")}
+OPTIONAL = {"slice": ("origin", "source", "tracking"), "epic": ("tracking",)}
+# The Jira issue a slice or epic belongs to (M13 E): {"jira": KEY}, the same form as issue_rules.JIRA_KEY_RE, which stays authoritative.
+JIRA_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,31}-[1-9][0-9]{0,8}$")
 # Where a slice came from (M8): identifiers only, never an issue's text, link or author.
 ORIGIN_KINDS = ("github_issue",)
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
@@ -143,6 +145,9 @@ def _shape(kind: str, data: Dict[str, Any], location: str, errors: List[str]) ->
             _error(errors, location, "origin must be {kind: github_issue, repository: OWNER/REPO, number: a positive integer}")
         if "source" in data and not _is_source(data["source"]):
             _error(errors, location, "source must be {kind: prd, prd_id: PRD-NN, sha256, lines: [[first, last], ...], map_slice}")
+    if "tracking" in data and not (isinstance(data["tracking"], dict) and set(data["tracking"]) == {"jira"}
+                                    and isinstance(data["tracking"]["jira"], str) and JIRA_RE.fullmatch(data["tracking"]["jira"])):
+        _error(errors, location, "tracking must be {jira: a Jira issue key such as ABC-123}")
 
 
 PRINCIPLE_RE = re.compile(r"^PP-[0-9]{2,}$")
