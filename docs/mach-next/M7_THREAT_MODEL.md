@@ -1,5 +1,7 @@
 # M7 — Threat model: MACH itself, the software it generates, and its local applications
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Version 1, M7 worktree on baseline `106f4d3` plus the uncommitted M7 changes as of writing. Phases 4 and 5 of the
 M7 brief. Every "stops it today" is read from the code (file:line in this worktree); documents were used only to
 find code. "Evidence" names a test that exists and was run, or says **none**. Severity for this release: **Blocker**

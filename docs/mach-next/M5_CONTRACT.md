@@ -1,5 +1,7 @@
 # MACH Next — M5 working contract
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 The shared agreement for everyone building M5 (the visual Product Studio). Read this before writing anything. It fixes the boundaries so parallel work fits together.
 
 Baseline: M4 commit `b2a98c8`, branch `feature/mach-next-m5-product-studio`.

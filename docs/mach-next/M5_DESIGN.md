@@ -1,5 +1,7 @@
 # MACH Next — M5 design: the visual Product Studio
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Status: built on `feature/mach-next-m5-product-studio`, on top of M4 (`b2a98c8`). Experimental, like the rest of MACH Next.
 
 M5 gives the product manager a graphical interface to the Product Studio that M1 and M2 built for the terminal. It adds no product rule. This note records the decisions; three companion files hold the detail:

@@ -1,5 +1,7 @@
 # MACH Next — M6.1 event contract: one history from five sources
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Status: final design for M6.1/M6.2, on `feature/mach-next-m6-1-live-observability` at `cac989e`, revised after the stream proof (`M6_1_STREAM_COMPATIBILITY.md`, Claude Code 2.1.322, six real runs including a whole belt execution) and the lead's decisions on the open questions (section 16 records them). Nothing here is implemented. Schema: `schemas/factory-event.v3.schema.json`. Inputs read while writing, all uncommitted work in progress on this branch: the lifecycle helper (`skills/intent/scripts/lifecycle.py`, `schemas/cell-lifecycle.schema.json`), the executor's `MACH_EXECUTION_ID`, and the observer (`apps/observer`); section 17 lists the changes the observer must make (the contract wins). Companion documents: `M6_1_ASSESSMENT.md` (what exists, what is missing, per kind), `M6_1_SHARED_CONTRACTS.md` (Execution Timeline, Evidence Theater, Factory Analytics).
 
 Assumptions are marked **[A*n*]** and collected in section 15. Everything about Claude's execution stream is now taken from the proof, for Claude Code 2.1.322; another version is parsed only for what the parser knows (section 10.5).

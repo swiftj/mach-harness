@@ -1,5 +1,7 @@
 # M7 distribution check: release pipeline, fresh install, integrity, upgrade, rollback, uninstall
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Scope: Phase 6 of the M7 brief. It covers what `M6_6_PACKAGING.md` did not (that file validated the Factory Floor's own install path and is not repeated here). Each check was run once. A check run against a stand-in for GitHub is labelled "simulated". Raw output is in `scratchpad/m7/agents/dist/ev/` (paths below are relative to that folder).
 
 ## Environment

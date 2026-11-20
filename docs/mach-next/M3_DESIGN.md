@@ -1,5 +1,7 @@
 # MACH Next — M3: Factory product intake and dependency-aware scheduling
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Status: **built**, on `feature/mach-next-m3-intake-scheduler`, from M2 commit `b52c716`.
 
 M3 is the first milestone where the Factory reads product work. An engineer can take a merged, approved delivery wave into their local Factory, see a dependency-aware plan, and explicitly dispatch ready slices into the existing line. Nothing runs by itself: the supervisor and local activation are M4.

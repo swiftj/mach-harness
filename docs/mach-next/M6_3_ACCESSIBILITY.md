@@ -1,5 +1,7 @@
 # M6.3 Execution Timeline: accessibility
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Status: in progress on `feature/mach-next-m6-3-execution-timeline`. Design section 9 of
 `M6_3_DESIGN.md` sets the aims; this document says what is built, how to reach it, what the audit checks,
 and what it found on 2026-11-13. Every key below was read from the code, not from memory:

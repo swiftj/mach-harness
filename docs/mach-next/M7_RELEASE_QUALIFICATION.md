@@ -1,5 +1,7 @@
 # MACH Next M7: release qualification and product acceptance
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Status: **built**, on `feature/mach-next-m7-release-qualification`. Closes `M7_READINESS_INVENTORY.md` gaps 2 (no release-level qualification or readiness record) and 3 (no product-acceptance record), minimally.
 
 Every slice is verified and reviewed in its own cell. Until now nothing said whether the slices of a delivery wave work together once integrated, nothing recorded a release-readiness decision, and nothing recorded product's decision on the result. M7 adds one script that measures and decides, one product artifact, and no new station, agent, command-line tool, service or execution authority.

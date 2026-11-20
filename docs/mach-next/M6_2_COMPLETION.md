@@ -1,5 +1,7 @@
 # MACH Next — M6.1/M6.2 completion report: production observability and the live Factory Floor
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 13 November 2026. Branch `feature/mach-next-m6-1-live-observability`, 21 commits on top of `cac989e` (M6.0 merged).
 This report follows the twelve items the milestone brief asks for. Where a figure was measured by one agent and not
 re-measured independently, it says so.

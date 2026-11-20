@@ -1,5 +1,7 @@
 # MACH Next — M4: the Autonomous Factory Supervisor
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Status: **built**, on `feature/mach-next-m4-supervisor`, from M3 commit `6b93828`.
 
 M4 turns M3's intake and scheduler into an opt-in, locally hosted Factory that keeps approved work moving on a machine whose engineer has enabled it. The engineer becomes the Factory's steward: they decide whether it runs, within what limits, and they are asked whenever a person is needed. On every other machine, including a product manager's clone of the same repository, nothing changes.

@@ -1,5 +1,7 @@
 # MACH Next — M6.0 visual specification: the Living Factory
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 The art direction, composition, grammar, motion and interaction rules for the Factory Atlas and the Execution Blueprint. Owner: visual design. Builders (Atlas, Blueprint, Shell) follow it literally; where this file and your instinct disagree, this file wins, and a change goes through the visual-design owner.
 
 - Code: `web/packages/ui/src/factory/**`, exported from `@mach/ui` and from the `@mach/ui/factory` subpath.

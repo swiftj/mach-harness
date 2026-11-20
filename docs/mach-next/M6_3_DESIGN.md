@@ -1,5 +1,7 @@
 # M6.3 Execution Timeline: design and shared contract
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Status: built on `feature/mach-next-m6-3-execution-timeline`, from baseline `5bb379e`; brought up to date
 with what was built after five review rounds. This document is the contract every part of M6.3 is built
 against. Where it and the code disagree, fix one of them in the same change.

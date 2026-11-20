@@ -1,5 +1,7 @@
 # MACH Next — M6.0 architecture: how the Living Factory renders
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Status: prototype, built on `feature/mach-next-m6-living-factory` (HEAD `f9fe87e`: the defect fixes `d300d23` to `297c798`, then the second fix round `19b6e20` to `f9fe87e`, which also removed the WebGL light layer), on top of MACH 0.12.0 (`fb86441`). Experimental, like the rest of MACH Next.
 
 M6.0 is a visual-experience prototype of the Factory Floor. It is a simulation: it reads no Factory state and changes nothing about how the Factory runs. This note records how its scenes are built and drawn, as the code has it, for the engineer who will build the production Factory Floor on it. Companion files:

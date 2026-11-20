@@ -1,5 +1,7 @@
 # MACH Next M6.5: Factory Analytics — completion report
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Branch `feature/mach-next-m6-5-factory-analytics`, cut from `main` at `b37c036` (the M6.3 merge). Pushed; not
 merged. M6.6 and the Evidence Theater were not started.
 

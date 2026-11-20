@@ -1,5 +1,7 @@
 # M6.3 Execution Timeline: browser end-to-end suite
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 The Timeline's unit and model tests (`web/apps/factory-floor/test/timeline-*.test.mjs`) check each part on
 fixtures. This suite checks the whole workspace in a real browser, over a real `mach-observer`, on real and
 synthetic Factory histories. It asserts on what a person can perceive: roles and accessible names, the

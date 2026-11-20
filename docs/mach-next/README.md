@@ -1,4 +1,4 @@
-> These documents were updated to the product's current names: the Factory Floor, and its Atlas, Timeline and Analytics workspaces.
+> These documents are the record of each milestone as it was designed and tested. Since M11 (November 2026) the product has no delivery waves, no epic approval, no product pull request, and no Timeline, Blueprint or playback in the Factory Floor, whose workspaces are now the Line, the Floor and Analytics. A document written before that carries a note at its top; `M11_DESIGN.md` and the root `CLAUDE.md` describe the product as it is.
 
 # MACH Next — Branch Foundation
 

@@ -1,5 +1,7 @@
 # MACH Next — M6.1 shared data contracts: Execution Timeline, Evidence Theater, Factory Analytics
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Status: final design, on `feature/mach-next-m6-1-live-observability` at `cac989e`, revised after the stream proof (`M6_1_STREAM_COMPATIBILITY.md`) and the lead's decisions (event contract section 16). Nothing here is implemented in M6.1; the three experiences are later work. They are designed now so the event contract (`M6_1_EVENT_CONTRACT.md`) carries what they need and the observer's index can be built once.
 
 Assumptions are marked **[A*n*]**. What the execution stream can supply is taken from the proof (Claude Code 2.1.322): workflow agents are visible as snapshots (identity, label, phase, model, state, start, duration, tool-call count, last tool name, one token total), never as individual tool calls.

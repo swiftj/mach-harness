@@ -1,5 +1,7 @@
 # M6.6 Factory Floor: accessibility checks
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 No WCAG conformance is claimed. No screen-reader session was run. The first part is what a script could
 measure; the second is what only a person can check.
 
