@@ -540,28 +540,132 @@ def cmd_policy_accept(project: Path, args: argparse.Namespace) -> int:
         raise CellError(f"An owner's acceptance is recorded while the spec is written (interview or spec-open); {args.ticket_id} is '{cell.get('stage')}'.")
     spec = resolve_spec(project, cell, None)
     try:
-        text = policies.accept(spec.read_text(encoding="utf-8-sig"), args.policy, args.by, args.reason)
+        text, check = policies.accept(spec.read_text(encoding="utf-8-sig"), args.policy, args.by, args.reason,
+                                      allowed=policies.accept_by(load_config(project)))
     except ValueError as exc:
         raise CellError(str(exc))
     spec.write_text(text, encoding="utf-8")
-    cell.setdefault("policy_acceptances", []).append({"statement": args.policy, "by": " ".join(args.by.split()),
+    cell.setdefault("policy_acceptances", []).append({"statement": args.policy, "by": " ".join(args.by.split()), "owner_check": check,
                                                       "reason": " ".join(args.reason.split())[:policies.WORDS_LIMIT],
                                                       "at": now(), "recorded_by": "an agent, on the person's instruction in conversation"})
+    if isinstance(cell.get("policy_concerns_open"), int):
+        # The hold for the owner (M15): it lifts with the last open concern; the spec is finalized again before anything else moves.
+        left = len(policies.open_concerns(text))
+        if left:
+            cell["policy_concerns_open"] = left
+        else:
+            cell.pop("policy_concerns_open")
     write_cell(project, cell)
     telemetry(root, "gate.evaluated", "groom", lambda: {"gate": "groom.policy", "outcome": "override", "reason_code": "policy-accepted",
                                                         "overridden_by_reason": True, "item": args.policy})
     print(json.dumps({"status": "ACCEPTED", "ticket_id": args.ticket_id, "statement": args.policy, "by": " ".join(args.by.split()),
+                      "owner_check": check, "owner_check_note": policies.ACCEPT_GUARD,
                       "open_left": [item["statement_id"] for item in policies.open_concerns(text)],
                       "next": "The spec records the owner's decision. Finalize it again (cell.py finalize) once no concern and no question is open."}, indent=2))
     return 0
 
 
-def policies_changed(project: Path, cell: Dict[str, Any]) -> Optional[str]:
-    """M14 timing: packs changed, retired, or newly applying since this spec answered them. Informational only."""
+def policies_changed(project: Path, cell: Dict[str, Any], cache: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """M14 timing: packs changed, retired, or newly applying since this spec answered them. Informational only.
+    `cache` (a dict the caller keeps for one command) reads the packs once for many cells."""
     copy = cell_dir(project, cell["ticket_id"]) / "spec.md"
     if not isinstance(cell.get("policies"), dict) or not copy.is_file():
         return None
-    return policies.drift_text(policies.drift(copy.read_text(encoding="utf-8-sig"), policies.listing(project, load_config(project))))
+    cache = cache if cache is not None else {}
+    if "policies" not in cache:
+        cache["policies"] = policies.listing(project, load_config(project))
+    return policies.drift_text(policies.drift(copy.read_text(encoding="utf-8-sig"), cache["policies"]))
+
+
+# ---- answered under older rules (M15): one fixed line each, flagged and never acted on ----
+
+def newest_principles_read(project: Path) -> Optional[Dict[str, Any]]:
+    """The newest copy of the project's published principles that any cell here read from GitHub (cell.json `principles`):
+    the copy last fetched on this machine. Reads local files only; never asks GitHub."""
+    newest = None
+    worktrees = project / ".factory" / "worktrees"
+    for path in sorted(worktrees.glob("*/cell.json")) if worktrees.is_dir() else []:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        record = data.get("principles") if isinstance(data, dict) else None
+        if (isinstance(record, dict) and record.get("source") == "github" and isinstance(record.get("sha256"), str)
+                and isinstance(record.get("read_at"), str) and (newest is None or record["read_at"] > newest["read_at"])):
+            newest = dict(record, ticket_id=path.parent.name)
+    return newest
+
+
+def principles_changed(project: Path, cell: Dict[str, Any], cache: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """When the product principles this spec answered have changed since. From the folder form: the principles committed on the
+    main checkout now (one local Git read). From GitHub: the newest copy any cell on this machine fetched, and when; GitHub is
+    never asked here. None when nothing changed, nothing was read, or nothing newer is known."""
+    answered = cell.get("principles")
+    if not isinstance(answered, dict) or answered.get("source") not in ("folder", "github") or not isinstance(answered.get("sha256"), str):
+        return None
+    cache = cache if cache is not None else {}
+    revision = answered.get("revision")
+    if answered["source"] == "folder":
+        if "principles_folder" not in cache:
+            shown = git(["show", f"HEAD:{FOLDER_PRINCIPLES}"], project) if git(["rev-parse", "--verify", "-q", "HEAD"], project).returncode == 0 else None
+            try:
+                record = json.loads(shown.stdout) if shown is not None and shown.returncode == 0 else None
+            except ValueError:
+                record = None
+            cache["principles_folder"] = record if isinstance(record, dict) else None
+        now_record = cache["principles_folder"]
+        if now_record is None:
+            return (f"The product principles this spec answered (revision {revision}) are no longer committed on the main checkout "
+                    f"({FOLDER_PRINCIPLES}). This work goes on as it was answered; it is flagged, not restarted.")
+        if now_record.get("sha256") == answered["sha256"]:
+            return None
+        return (f"The product principles changed after this spec answered them (revision {revision} answered; revision "
+                f"{now_record.get('revision')} is committed on the main checkout now). They bind slices marked ready from now on; this work "
+                "goes on as it was answered, and is not restarted.")
+    if "principles_newest" not in cache:
+        cache["principles_newest"] = newest_principles_read(project)
+    newest = cache["principles_newest"]
+    if not newest or newest["sha256"] == answered["sha256"] or newest["read_at"] <= str(answered.get("read_at") or ""):
+        return None
+    return (f"The product principles changed after this spec answered them (revision {revision} answered; revision {newest.get('revision')} "
+            f"was read from GitHub on {newest['read_at'][:10]} for {newest['ticket_id']}, the newest copy on this machine). They bind slices "
+            "marked ready from now on; this work goes on as it was answered, and is not restarted.")
+
+
+def shipped_changed(project: Path, cell: Dict[str, Any], cache: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """shipped_moved as one fixed line, with the shipped rules read once per command through `cache`."""
+    checked = cell.get("shipped") if isinstance(cell.get("shipped"), dict) else None
+    copy = cell_dir(project, cell["ticket_id"]) / "spec.md"
+    if not checked or not copy.is_file():
+        return None
+    text = copy.read_text(encoding="utf-8-sig")
+    if not shipped.current_module().effects_module().parse(text)["rows"]:
+        return None  # nothing named, so nothing can have moved under it: no Git read
+    cache = cache if cache is not None else {}
+    if "shipped" not in cache:
+        cache["shipped"] = shipped_rules(project)
+    flag = shipped.moved(text, cell.get("slice_id"), None, checked.get("commit"), cache["shipped"])
+    if not flag:
+        return None
+    return (f"A shipped rule this spec names is no longer in force on the main branch ({len(flag['problems'])} row"
+            f"{'s' if len(flag['problems']) != 1 else ''}; checked at {str(flag.get('checked_at') or 'an unknown commit')[:12]}, now "
+            f"{str(flag.get('now'))[:12]}). This work goes on as it was answered; it is flagged, not restarted.")
+
+
+def rules_changed(project: Path, cell: Dict[str, Any], cache: Optional[Dict[str, Any]] = None) -> List[str]:
+    """What this cell was answered under that has changed since: principles, policy packs, shipped rules; at most one fixed
+    line each, in that order. Advice only: nothing is restarted, blocked or routed differently, as with ADR timing. A check
+    that fails says so in its line rather than stopping the caller."""
+    cache = cache if cache is not None else {}
+    lines = []
+    for label, check in (("product principles", principles_changed), ("policy packs", policies_changed), ("shipped rules", shipped_changed)):
+        try:
+            line = check(project, cell, cache)
+        except Exception as exc:  # noqa: BLE001 - a flag is advice; a failure to check it is said, never hidden
+            line = f"Whether the {label} changed since this spec answered them could not be checked ({exc.__class__.__name__})."
+        if line:
+            lines.append(line)
+    return lines
 
 
 def print_findings(spec: Path, findings: Sequence[Any]) -> int:
@@ -1381,6 +1485,9 @@ def cmd_status(project: Path, args: argparse.Namespace) -> int:
         changed = policies_changed(project, cell)
         if changed:
             info["policies_changed"] = changed  # M14: flagged, never restarted
+        older = principles_changed(project, cell)
+        if older:
+            info["principles_changed"] = older  # M15: the same, for the product principles
         print(json.dumps(info, indent=2))
         return 0
     worktrees = project / ".factory" / "worktrees"

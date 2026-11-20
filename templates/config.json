@@ -55,7 +55,8 @@
     "required_topics": ["language", "framework", "storage", "testing", "deployment", "coding-standards"]
   },
   "policies": {
-    "dir": "policies"
+    "dir": "policies",
+    "accept_by": []
   },
   "factory": {
     "max_parallel": 3,

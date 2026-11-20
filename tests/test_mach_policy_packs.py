@@ -142,7 +142,7 @@ class ReaderTest(unittest.TestCase):
         self.assertEqual(policies.seats(record), ["security"])
         installer = (ROOT / "bin" / "mach").read_text()
         self.assertNotIn("policies/", installer, "scaffolding never installs a pack; a team copies one in by pull request")
-        self.assertEqual(json.loads((ROOT / "templates" / "config.json").read_text())["policies"], {"dir": "policies"})
+        self.assertEqual(json.loads((ROOT / "templates" / "config.json").read_text())["policies"], {"dir": "policies", "accept_by": []})
 
 
 class ValidatorTest(unittest.TestCase):
@@ -184,7 +184,8 @@ class ValidatorTest(unittest.TestCase):
         self.assertEqual(rules(findings), [])
         self.assertEqual(model["policies"][0]["concerns"][0],
                          {"statement_id": "POL-privacy-02", "statement": STATEMENT_2, "why": "The email service sits outside the EU.", "owner": OWNER,
-                          "resolution": "accepted", "by": "Data protection officer", "on": "2026-11-20", "words": "Accepted for the pilot only."})
+                          "resolution": "accepted", "by": "Data protection officer", "on": "2026-11-20", "words": "Accepted for the pilot only.",
+                          "owner_check": None})
         self.assertEqual(rules(self.check(concern(FIXTURE, "spec changed."), given, ready=True)[0]), [])
         self.assertIn("policy-resolution", rules(self.check(concern(FIXTURE, "maybe later."), given)[0]))
         self.assertIn("policy-resolution", rules(self.check(concern(FIXTURE, 'accepted by X on 2026-13-40: "Words here ok."'), given)[0]))
@@ -253,8 +254,10 @@ class ValidatorTest(unittest.TestCase):
 class AcceptTest(unittest.TestCase):
     def test_only_an_open_concern_is_accepted_in_the_owners_words(self):
         text = concern(FIXTURE)
-        accepted = policies.accept(text, "POL-privacy-02", "Data protection officer", "Accepted for the pilot only.", on="2026-11-20")
-        self.assertIn('**Resolution:** accepted by Data protection officer on 2026-11-20: "Accepted for the pilot only."', accepted)
+        accepted, check = policies.accept(text, "POL-privacy-02", "Data protection officer", "Accepted for the pilot only.", on="2026-11-20")
+        self.assertEqual(check, policies.NOT_CHECKED, "the owner names a team, which cannot be checked without GitHub")
+        self.assertIn('**Resolution:** accepted by Data protection officer (not checked against the owner) on 2026-11-20: "Accepted for the pilot only."',
+                      accepted)
         self.assertEqual(policies.open_concerns(accepted), [])
         self.assertEqual(rules(validate_slice.analyze(accepted, FIXTURE_NAME, policies=packs_for(("privacy", pack_text())), ready=True)[0]), [])
         with self.assertRaises(ValueError):
@@ -448,7 +451,8 @@ class StudioTest(IssuesBase):
                                                                            "--reason", "Wrong statement."))
         accepted = self.ok(self.a, "policy", "accept", slice_id, "POL-privacy-02", "--by", "Data protection officer", "--reason", "Accepted for the pilot only.")
         self.assertEqual((accepted["open_left"], accepted["factory_authorized"]), ([], False))
-        self.assertIn("accepted by Data protection officer on", path.read_text())
+        self.assertIn("accepted by Data protection officer (not checked against the owner) on", path.read_text())
+        self.assertEqual(accepted["owner_check"], "not checked against the owner")
         listed = self.ok(self.a, "policy", "list")
         self.assertEqual(([item["id"] for item in listed["packs"]], listed["slices_answered_under_older"]), (["POL-privacy"], {}))
         self.ready(slice_id)

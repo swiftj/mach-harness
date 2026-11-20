@@ -7,7 +7,7 @@ moves it), changed by pull request like an ADR. The file starts with a header in
     ---
     id: POL-security                  # POL-<the folder's name>
     title: Security
-    owner: Security team (@acme/security)   # a role or team, and a GitHub login or team where there is one
+    owner: Security team (@acme/security)   # a role or team, and a GitHub team or logins (@alice, @bob) where there are any
     status: active                    # active | retired
     applies-to:                       # adr.py's grammar; missing means all
       - topic:security
@@ -30,8 +30,9 @@ The spec answers every pack that applies in an optional section, `## Policies`, 
     - **POL-privacy** (sha256 9f8e7d6c5b4a): Concerns.
       - **POL-privacy-03**: "<the statement, exactly>" **Cannot be met:** <one sentence>. **Owner:** <the pack's owner, exactly>. **Resolution:** open.
 
-A resolution is `open`, `spec changed`, or `accepted by <name> on <YYYY-MM-DD>: "<their words>"` (`policy accept`,
-a person's act). The digest is the first 12 hex characters of the SHA-256 of the pack's policy.md.
+A resolution is `open`, `spec changed`, or `accepted by <name> (<how the name was checked>) on <YYYY-MM-DD>: "<their words>"`
+(`policy accept`, a person's act; M15 checks the name against an owner that names GitHub logins, or policies.accept_by,
+and otherwise says "not checked against the owner"). The digest is the first 12 hex characters of the SHA-256 of the pack's policy.md.
 
 This module holds the one reader, the one selection rule and the one parser and check of that section. The spec
 validator loads it by path and is given the packs as an input, so it stays a pure check. Shared by the intent station
@@ -61,7 +62,16 @@ STATEMENT_ID_RE = re.compile(r"^POL-([a-z][a-z0-9]*(?:-[a-z][a-z0-9]*)*)-(\d{2,}
 CITED_RE = re.compile(r"\bPOL-[a-z][a-z0-9]*(?:-[a-z][a-z0-9]*)*(?:-\d{2,})?\b")
 STATEMENT_LINE_RE = re.compile(r"^[-*+]\s+\*\*(POL-[A-Za-z0-9-]+):\*\*\s+(\S.*)$")
 KEYWORD_RE = re.compile(r"\b(MUST|SHALL|REQUIRED|SHOULD|RECOMMENDED|MAY|OPTIONAL)\b")
-OWNER_RE = re.compile(r"^(?P<role>[^()@*\"<>]{2,120}?)(?:\s+\((?P<handle>@[A-Za-z0-9][A-Za-z0-9-]*(?:/[A-Za-z0-9._-]+)?)\))?$")
+HANDLE = r"@[A-Za-z0-9][A-Za-z0-9-]*(?:/[A-Za-z0-9._-]+)?"  # a GitHub login (@alice) or team (@acme/privacy)
+# A role or team, optionally followed in brackets by one GitHub team, or by one or more GitHub logins separated by commas (M15).
+OWNER_RE = re.compile(rf"^(?P<role>[^()@*\"<>]{{2,120}}?)(?:\s+\((?P<handle>{HANDLE}(?:,\s*{HANDLE})*)\))?$")
+# Who accepted a concern, as `policy accept` checked it (M15). The words follow the name in the resolution line, in brackets.
+CHECKED_OWNER = "checked against the pack's owner"
+CHECKED_LIST = "checked against the project's list"
+NOT_CHECKED = "not checked against the owner"
+OWNER_CHECKS = (CHECKED_OWNER, CHECKED_LIST, NOT_CHECKED)
+ACCEPT_GUARD = ("This guards against accident, not forgery: MACH cannot verify who someone is, and it does not ask GitHub; the name is "
+                "recorded as given.")
 STATUSES = ("active", "retired")
 SHORT = 12
 TEXT_LIMIT = 6000
@@ -162,8 +172,8 @@ def parse(text: str, name: str, pack: Optional[str]) -> Dict[str, Any]:
         owner = " ".join(owner.split())
         match = OWNER_RE.match(owner)
         if not match:
-            problems.append(f"owner '{owner[:80]}' is not a role or team, optionally followed by a GitHub login or team in brackets, such as "
-                            "'Security team (@acme/security)'")
+            problems.append(f"owner '{owner[:80]}' is not a role or team, optionally followed in brackets by a GitHub team or by GitHub logins "
+                            "separated by commas, such as 'Security team (@acme/security)' or 'Data protection officer (@dana, @lee)'")
         else:
             record["owner"], record["owner_role"], record["owner_handle"] = owner, match.group("role").strip(), match.group("handle")
     status = fields.get("status")
@@ -381,7 +391,8 @@ def load(path: Path) -> Dict[str, Any]:
 
 PACK_ROW_RE = re.compile(r"^[-*+]\s+\*\*(POL-[A-Za-z0-9-]+)\*\*\s+\(sha256 ([0-9a-f]{12})\):\s+(Followed|Concerns)\.?\s*$")
 CONCERN_RE = re.compile(r"^[-*+]\s+\*\*(POL-[A-Za-z0-9-]+)\*\*:\s+\"(.*)\"\s+\*\*Cannot be met:\*\*\s*(.*?)\s*\*\*Owner:\*\*\s*(.*?)\s*\*\*Resolution:\*\*\s*(.*?)\s*$")
-ACCEPTED_RE = re.compile(r"^accepted by (?P<by>[^\"*]{2,120}?) on (?P<on>\d{4}-\d{2}-\d{2}): \"(?P<words>[^\"]+)\"\.?$")
+ACCEPTED_RE = re.compile(r"^accepted by (?P<by>[^\"*]{2,200}?) on (?P<on>\d{4}-\d{2}-\d{2}): \"(?P<words>[^\"]+)\"\.?$")
+CHECK_TAIL_RE = re.compile(r"\s\((?P<check>" + "|".join(re.escape(item) for item in OWNER_CHECKS) + r")\)$")
 
 
 def resolution_of(value: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -397,7 +408,11 @@ def resolution_of(value: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
             datetime.strptime(match.group("on"), "%Y-%m-%d")
         except ValueError:
             return None, f"'{match.group('on')}' is not a date (YYYY-MM-DD)"
-        return {"state": "accepted", "by": match.group("by").strip(), "on": match.group("on"), "words": match.group("words").strip()}, None
+        by = match.group("by").strip()
+        tail = CHECK_TAIL_RE.search(by)
+        # `by` keeps the bracketed words, so whoever reads the name reads how it was checked; a line written by hand has none.
+        return {"state": "accepted", "by": by, "on": match.group("on"), "words": match.group("words").strip(),
+                "owner_check": tail.group("check") if tail else None}, None
     return None, "the resolution is 'open', 'spec changed', or 'accepted by <who> on <YYYY-MM-DD>: \"<their words>\"'"
 
 
@@ -526,7 +541,8 @@ def export(parsed: Dict[str, Any]) -> List[Dict[str, Any]]:
         out.append({"pack": row["pack"], "sha256": row["short"], "answer": row["answer"],
                     "concerns": [{"statement_id": item["statement_id"], "statement": item["statement"], "why": item["why"], "owner": item["owner"],
                                   "resolution": (item.get("resolution") or {}).get("state"),
-                                  **({key: item["resolution"][key] for key in ("by", "on", "words")} if (item.get("resolution") or {}).get("state") == "accepted" else {})}
+                                  **({key: item["resolution"].get(key) for key in ("by", "on", "words", "owner_check")}
+                                     if (item.get("resolution") or {}).get("state") == "accepted" else {})}
                                  for item in row["concerns"]]})
     return out
 
@@ -538,12 +554,56 @@ def open_concerns(text: str) -> List[Dict[str, Any]]:
 
 # ---------------------------------------------------------------- a person's act: the owner accepts a concern
 
-def accept(text: str, statement_id: str, by: str, reason: str, on: Optional[str] = None) -> str:
-    """The spec's text with one open concern's resolution set to the owner's acceptance, in their words. Raises ValueError."""
+def owner_logins(owner: Any) -> List[str]:
+    """The GitHub logins a pack's owner names, folded to lower case without '@'. Empty when it names none, or names a team:
+    who belongs to a team cannot be known without asking GitHub, so such an owner cannot be checked."""
+    match = OWNER_RE.match(" ".join(str(owner or "").split()))
+    handles = [item.strip() for item in (match.group("handle") or "").split(",") if item.strip()] if match else []
+    if not handles or any("/" in item for item in handles):
+        return []
+    return [item[1:].casefold() for item in handles]
+
+
+def accept_by(config: Any) -> List[str]:
+    """policies.accept_by in .factory/config.json: an extra list of people (GitHub logins or names) who may record an owner's
+    acceptance on any pack, in the style of review.security_exception_by. Missing or empty: none. Raises ValueError when unreadable."""
+    section = config.get("policies") if isinstance(config, dict) else None
+    if not isinstance(section, dict) or "accept_by" not in section:
+        return []
+    names = section.get("accept_by")
+    if not isinstance(names, list) or not all(isinstance(name, str) and name.strip() for name in names):
+        raise ValueError("policies.accept_by in .factory/config.json must be a list of GitHub logins or names (or an empty list). "
+                         "Fix the setting; no acceptance is recorded until it can be read.")
+    return [" ".join(name.split()) for name in names]
+
+
+def owner_check(owner: Any, by: str, allowed: Sequence[str] = ()) -> str:
+    """How the name given for an acceptance holds against the concern's owner: one of OWNER_CHECKS, or ValueError when the
+    owner (or policies.accept_by) names people and the name is none of them. Compared case-insensitively, with or without '@'.
+    It guards against accident, not forgery, and never asks GitHub."""
+    given = " ".join(str(by or "").split())
+    key = given.lstrip("@").casefold()
+    logins = owner_logins(owner)
+    extra = [" ".join(name.split()).lstrip("@").casefold() for name in allowed]
+    if not logins and not extra:
+        return NOT_CHECKED
+    if key in logins:
+        return CHECKED_OWNER
+    if key in extra:
+        return CHECKED_LIST
+    named = ([f"the pack's owner names {', '.join('@' + item for item in logins)}"] if logins else []) + (
+        ["the project's settings (policies.accept_by) name others"] if extra else [])
+    raise ValueError(f"'{given}' is not one of the people who may accept this concern: {'; '.join(named)}. "
+                     "Give the GitHub login of the owner who accepted it.")
+
+
+def accept(text: str, statement_id: str, by: str, reason: str, on: Optional[str] = None, allowed: Sequence[str] = ()) -> Tuple[str, str]:
+    """The spec's text with one open concern's resolution set to the owner's acceptance, in their words, and how the name was
+    checked (owner_check), which the resolution line carries in brackets after the name. Raises ValueError."""
     name = " ".join(str(by or "").split())
     words = " ".join(str(reason or "").split())
-    if len(name) < 2 or len(name) > 120 or any(bad in name for bad in ('"', "*", "<", ">", "`")):
-        raise ValueError("--by names the owner who accepted it, as a role or a name, without quotation marks or '*'.")
+    if len(name) < 2 or len(name) > 120 or any(bad in name for bad in ('"', "*", "<", ">", "`", "(", ")")):
+        raise ValueError("--by names the owner who accepted it, as a GitHub login, a role or a name, without quotation marks, brackets or '*'.")
     if len(words) < 10 or len(words) > WORDS_LIMIT or any(bad in words for bad in ('"', "<!--", "-->", "**")):
         raise ValueError(f"--reason is the owner's own words, at least 10 and at most {WORDS_LIMIT} characters, without double quotation marks.")
     pending = open_concerns(text)
@@ -551,11 +611,12 @@ def accept(text: str, statement_id: str, by: str, reason: str, on: Optional[str]
     if not target:
         listed = ", ".join(item["statement_id"] for item in pending) or "none"
         raise ValueError(f"{statement_id} has no open concern in this spec. Open concerns: {listed}.")
+    check = owner_check(target[0].get("owner"), name, allowed)
     lines = text.split("\n")
     index = target[0]["line"] - 1
     head, _, _ = lines[index].rpartition("**Resolution:**")
-    lines[index] = f"{head}**Resolution:** accepted by {name} on {on or today()}: \"{words}\"."
-    return "\n".join(lines)
+    lines[index] = f"{head}**Resolution:** accepted by {name} ({check}) on {on or today()}: \"{words}\"."
+    return "\n".join(lines), check
 
 
 # ---------------------------------------------------------------- showing, and what changed since
