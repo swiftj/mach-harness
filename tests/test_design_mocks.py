@@ -353,6 +353,15 @@ class VerifyTest(verify_tests.Base):
         self.assertTrue(any("differs: The heading is larger" in item for item in summary["mock_findings"]))
         self.assertTrue(any("could not be compared" in item for item in summary["mock_findings"]))
 
+    def test_a_binding_mock_that_could_not_be_compared_is_not_proven(self):
+        self.with_mocks((png(), "AC-01", True))
+        self.prove_all()
+        self.v_ok("compare", "LOCAL-001", "MOCK-1", "--result", "cannot-compare", "--note", "The screen needs a login the test project has no account for.")
+        code, out, _ = self.run_verify("finish", "LOCAL-001")
+        self.assertNotEqual(code, 0)
+        self.assertIn("INCOMPLETE_EVIDENCE", out)
+        self.assertIn("it is binding, so it is not proven", out)
+
     def test_a_changed_mock_in_the_cell_stops_verification(self):
         cell = self.cell_json()
         cell["app_type"] = "web"

@@ -717,6 +717,10 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
         "scenarios": len(model.get("scenarios") or []),
         "open_questions": len(model.get("open_questions") or []),
     }
+    concerns = sum(1 for f in open_items if f.rule == "policy-concern-open")
+    cell.pop("policy_concerns_open", None)
+    if concerns and concerns == len(open_items):
+        cell["policy_concerns_open"] = concerns  # nothing else is open: the routing sheet says the ticket waits for the owner
     if open_items:
         cell["stage"] = "spec-open"
         if spec_json.exists():

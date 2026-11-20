@@ -381,6 +381,11 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
     if stage == "interview":
         return step(ticket_id, stage, "groom", "Grooming has started but the spec is not written.", model=project.model("planning"), prompt=groom_prompt, interactive=not headless)
     if stage == "spec-open":
+        waiting = cell.get("policy_concerns_open")
+        if isinstance(waiting, int) and waiting > 0:
+            # Only a flagged policy concern holds the spec (M14): its owner accepts it, or the spec changes to meet the statement.
+            return step(ticket_id, stage, "stop", f"The spec has {waiting} policy concern{'s' if waiting != 1 else ''} waiting for the policy's owner.",
+                        needs="policy-owner", prompt=f"The owner accepts it ({skill('run')} policy accept {ticket_id} <POL-id>), or the interview changes the spec: {skill('intent')} {ticket_id}")
         if headless:
             return step(ticket_id, stage, "stop", "The spec has open questions that only a person can answer.", needs="answers",
                         prompt=f"A person continues the interview with: {skill('intent')} {ticket_id}")
@@ -564,6 +569,7 @@ def resolve_args(project: Project, args: argparse.Namespace) -> Optional[str]:
 
 NEEDS_TEXT = {
     "answers": "Answer the spec's open questions in the grooming interview.",
+    "policy-owner": "A policy's owner accepts the flagged concern, or the spec changes so the policy is met.",
     "human-approval": "Approve the change, or not, after reading the review findings.",
     "merge": "Merge the approved branch; the project's settings keep merging for a person.",
     "person-to-take-over": "Take over the escalated ticket: it used all its judging rounds.",
