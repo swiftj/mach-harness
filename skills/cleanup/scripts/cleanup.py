@@ -17,6 +17,11 @@ are the cell's own feature branch and the old branch tips a re-plan saved under
 refs/mach/replan/<ticket>/ (cell.py replan); the commits those tips hold are kept in the archive
 (replans.bundle) unless the default branch or the archived branch bundle already holds them.
 
+The merge station's change record (M13, docs/changes/<ticket>.md on the branch) is named in the run record with its
+SHA-256. A team that keeps evidence elsewhere sets records.publish_command in .factory/config.json, a list of strings run
+without a shell once the archive is written and checked ({archive} is its path, {ticket} the ticket ID; with no
+{archive} the path is the last argument). Its outcome goes into the run record; a failure never stops cleanup.
+
 Standard library only.
 """
 
@@ -370,7 +375,88 @@ def run_record(cell: Cell, outcome: str, reason: Optional[str], archive: str, pl
     scanned = scan_record(decisions)
     if scanned:  # optional, the same way: present only when the scan flagged something or was switched off
         record["security_scan"] = scanned
+    written = change_record_entry(info)
+    if written and outcome == "merged":  # optional, the same way: present only when the merge station wrote a change record (M13)
+        record["change_record"] = written
+    rules = issue_rules()
+    jira = (product or {}).get("jira")
+    if jira is not None and rules is not None and rules.is_jira_key(jira):  # optional, the same way: the slice's Jira key (M13), checked again
+        record["jira"] = jira
     return record
+
+
+def change_record_entry(info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Where the merge station's change record is, its SHA-256 and the commit that added it: identifiers only."""
+    entry = info.get("change_record") if isinstance(info.get("change_record"), dict) else None
+    if not entry or not isinstance(entry.get("path"), str) or not isinstance(entry.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]):
+        return None
+    commit = entry.get("commit") if isinstance(entry.get("commit"), str) and re.fullmatch(r"[0-9a-f]{40,64}", entry["commit"]) else None
+    return {"path": entry["path"], "sha256": entry["sha256"], "commit": commit}
+
+
+PUBLISH_TIMEOUT = 300
+
+
+def publish_command(project: Path) -> Tuple[Optional[List[str]], Optional[str]]:
+    """records.publish_command in .factory/config.json: a list of strings, run without a shell. {archive} is replaced by the
+    archive's path and {ticket} by the ticket ID; with no {archive} the path is added as the last argument."""
+    records = load_dict(project / ".factory" / "config.json").get("records")
+    value = records.get("publish_command") if isinstance(records, dict) else None
+    if value is None:
+        return None, None
+    if not isinstance(value, list) or not value or not all(isinstance(part, str) and part for part in value):
+        return None, "records.publish_command in .factory/config.json must be a list of strings, such as [\"tool\", \"{archive}\"]."
+    return value, None
+
+
+def publish(project: Path, ticket_id: str, archive: Path) -> Optional[Dict[str, Any]]:
+    """Hand the written and checked archive to the team's own command. Never raises and never blocks cleanup: what happened
+    is returned for the run record. None when no command is set."""
+    template, problem = publish_command(project)
+    if problem:
+        return {"ran": False, "ok": False, "note": problem}
+    if template is None:
+        return None
+    path = str(archive)
+    argv = [part.replace("{archive}", path).replace("{ticket}", ticket_id) if "{" in part else part for part in template]
+    if not any("{archive}" in part for part in template):
+        argv.append(path)
+    if shutil.which(argv[0]) is None and not (project / argv[0]).is_file():
+        return {"ran": False, "ok": False, "note": f"'{argv[0][:80]}' is not installed or not on PATH, so the archive was not published."}
+    try:
+        done = subprocess.run(argv, cwd=str(project), capture_output=True, text=True, errors="replace", timeout=PUBLISH_TIMEOUT, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return {"ran": True, "ok": False, "exit_code": None, "note": f"Still running after {PUBLISH_TIMEOUT} seconds; stopped."}
+    except OSError as exc:
+        return {"ran": False, "ok": False, "note": f"The command could not be started: {exc.strerror or type(exc).__name__}."}
+    last = ((done.stderr or "").strip() or (done.stdout or "").strip()).splitlines()
+    note = " ".join(last[-1].split())[:200] if last else ""
+    rules = issue_rules()
+    return {"ran": True, "ok": done.returncode == 0, "exit_code": done.returncode, "note": (rules.redact(note) if rules is not None else None) or None}
+
+
+_ISSUE_RULES: List[Any] = []
+
+
+def issue_rules() -> Any:
+    """The ticket station's shared rules (redaction), loaded from the sibling skill folder, never copied. None if not found."""
+    if not _ISSUE_RULES:
+        found = None
+        skills = Path(__file__).resolve().parent.parent.parent
+        for name in ("mach-ticket", "ticket"):
+            path = skills / name / "scripts" / "issue_rules.py"
+            if path.is_file():
+                try:
+                    import importlib.util
+                    spec = importlib.util.spec_from_file_location("mach_ticket_issue_rules", path)
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    found = module
+                except Exception:  # noqa: BLE001
+                    found = None
+                break
+        _ISSUE_RULES.append(found)
+    return _ISSUE_RULES[0]
 
 
 def scan_record(decisions: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -615,6 +701,11 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
     ], "abandoned" if abandoning else "closed")
     replans = (plan["replan_refs"], plan["replan_bundle_excludes"]) if plan["would"]["bundle_replans"] else None
     members = write_archive(cell, target, plan["uncommitted"], default_branch(project)[1] if bundled else None, plan["merged_as"], log, replans)
+    # The archive is written and checked: a team that keeps its evidence elsewhere gets it now (records.publish_command, M13).
+    # The outcome is recorded; a failure never stops cleanup.
+    published = publish(project, cell.ticket_id, target)
+    if published is not None:  # optional: present only when a publish command is set
+        record["records_publish"] = published
 
     kept = f"The archive is at {archive}; the run record is not written yet. Fix the cause and run cleanup again."
     root = locked_cell_path(project, cell.ticket_id)  # asked again, immediately before deleting
@@ -662,7 +753,7 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
                     f"git fetch {cell.ticket_id}/branch.bundle {cell.branch}:{cell.branch}") if bundled else None,
         "removed": removed, "branch": cell.branch, "branch_deleted": branch_deleted, "branch_note": note,
         "replans_bundle": f"{cell.ticket_id}/replans.bundle" if replans else None, "replan_refs_deleted": replans_deleted, "replan_note": replan_note,
-        "record": record, "run_log": relative(project, target.parent / RUN_LOG),
+        "record": record, "run_log": relative(project, target.parent / RUN_LOG), "published": published,
         "observe_due": observe["due"], "finished_since_last_observe_pass": observe["finished_since_last_pass"],
         "next": f"Set the ticket {cell.ticket_id} to {state}, using the ticket skill."
                 + (f" Then an observe pass is due ({observe['finished_since_last_pass']} tickets have finished since the last one): run the observe skill with --auto." if observe["due"] else ""),

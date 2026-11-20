@@ -5,6 +5,7 @@ Adapted from the prd-slice validator. Standard library only; reads files, writes
 """
 
 import argparse
+import importlib.util
 import itertools
 import json
 import re
@@ -29,6 +30,11 @@ REQUIRED_SUBSECTIONS = {
     "Scope": ("In scope", "Out of scope"),
     "Acceptance criteria": ("Decision matrix", "Scenarios"),
 }
+# Sections a spec has only when they apply, each with the required section it follows (M13). Effects on shipped
+# behaviour is required whenever the caller supplies the shipped rules (check_effects).
+OPTIONAL_SECTIONS = {"Effects on shipped behaviour": "Acceptance criteria", "Principles": "Acceptance criteria"}
+SECTION_ORDER = tuple(name for required in REQUIRED_SECTIONS
+                      for name in (required, *[optional for optional, after in OPTIONAL_SECTIONS.items() if after == required]))
 SUMMARY_FIELDS = ("Actor", "Trigger", "Outcome")
 DEPENDENCY_FIELDS = ("External dependencies", "Required permissions")
 MAX_COMBINATIONS = 4096
@@ -123,6 +129,13 @@ EARS_HINTS = {
     "The": "Ubiquitous form: 'The <system> SHALL <response>.'",
 }
 STEP_ORDER = {"Given": 0, "When": 1, "Then": 2}
+
+# Product principles (M13): one row per principle, its revision, its statement quoted exactly, and the answer.
+PRINCIPLE_ID_RE = re.compile(r"^PP-\d{2,}$")
+PRINCIPLE_ROW_RE = re.compile(r"^[-*+]\s+\*\*(PP-\d{2,})\*\*\s+\(revision (\d{1,6})\):\s+\"(.*)\"\s+\*\*(Applies|Does not apply|Exception):\*\*\s*(.*)$")
+ANSWERS = {"Applies": "applies", "Does not apply": "does_not_apply", "Exception": "exception"}
+UPHELD_ID_RE = re.compile(r"^(?:FR|INV|AC)-\d{2,}$")
+PRINCIPLE_STATUSES = ("active", "retired")
 
 
 class Finding(NamedTuple):
@@ -243,8 +256,20 @@ def register_id(registry: Dict[str, int], identifier: str, line: int, report: Re
         registry[identifier] = line
 
 
+def vague_words(text: str) -> List[str]:
+    return sorted({match.group(1).lower() for match in VAGUE_RE.finditer(strip_quotes(text))})
+
+
+def implementation_words(text: str) -> Set[str]:
+    bare = strip_quotes(text)
+    found = {match.group(1).lower() for match in IMPLEMENTATION_RE.finditer(bare)}
+    found.update(match.group(0) for match in ERROR_CODE_RE.finditer(bare))
+    found.update(f"status {match.group(1)}" for match in STATUS_CODE_RE.finditer(bare))
+    return found
+
+
 def check_vague(label: str, text: str, line: int, report: Report) -> None:
-    found = sorted({match.group(1).lower() for match in VAGUE_RE.finditer(strip_quotes(text))})
+    found = vague_words(text)
     if found:
         report.warning(
             line, "vague-term",
@@ -253,10 +278,7 @@ def check_vague(label: str, text: str, line: int, report: Report) -> None:
 
 
 def check_implementation(label: str, text: str, line: int, report: Report) -> None:
-    bare = strip_quotes(text)
-    found = {match.group(1).lower() for match in IMPLEMENTATION_RE.finditer(bare)}
-    found.update(match.group(0) for match in ERROR_CODE_RE.finditer(bare))
-    found.update(f"status {match.group(1)}" for match in STATUS_CODE_RE.finditer(bare))
+    found = implementation_words(text)
     if found:
         report.warning(
             line, "implementation-detail",
@@ -300,7 +322,7 @@ def check_title(file_name: str, sections: List[Section], report: Report) -> Tupl
 
 
 def check_structure(sections: List[Section], report: Report) -> Dict[str, Section]:
-    canonical = {name.lower(): name for name in REQUIRED_SECTIONS}
+    canonical = {name.lower(): name for name in SECTION_ORDER}
     found: Dict[str, Section] = {}
     for section in (s for s in sections if s.level == 2):
         name = canonical.get(section.title.lower())
@@ -313,11 +335,12 @@ def check_structure(sections: List[Section], report: Report) -> Dict[str, Sectio
     for name in REQUIRED_SECTIONS:
         if name not in found:
             report.error(0, "missing-section", f"Missing required section '## {name}'.")
-    expected = [name for name in REQUIRED_SECTIONS if name in found]
+    expected = [name for name in SECTION_ORDER if name in found]
     actual = sorted(expected, key=lambda name: found[name].line)
     for want, got in zip(expected, actual):
         if want != got:
-            report.error(found[got].line, "section-order", "Sections must appear in this order: " + ", ".join(REQUIRED_SECTIONS) + ".")
+            report.error(found[got].line, "section-order", "Sections must appear in this order: " + ", ".join(REQUIRED_SECTIONS) + "."
+                         + "".join(f" '{optional}', when present, follows '{after}'." for optional, after in OPTIONAL_SECTIONS.items()))
             break
     for parent, names in REQUIRED_SUBSECTIONS.items():
         if parent not in found:
@@ -436,29 +459,40 @@ def check_invariants(section: Section, requirements: Dict[str, int], report: Rep
         identifier, statement = match.groups()
         register_id(requirements, identifier, number, report)
         found.append({"id": identifier, "text": statement})
-        bare = strip_quotes(statement)
-        soft = SOFT_KEYWORD_RE.search(bare)
-        if soft:
-            report.error(
-                number, "inv-keyword",
-                f"{identifier} uses '{soft.group(1)}'. Invariants are absolute: use MUST, MUST NOT, SHALL, SHALL NOT, or REQUIRED.",
-            )
-        elif not ABSOLUTE_KEYWORD_RE.search(bare):
-            report.error(
-                number, "inv-keyword",
-                f"{identifier} has no uppercase RFC 2119 keyword. Use MUST, MUST NOT, SHALL, SHALL NOT, or REQUIRED.",
-            )
-        lowered = lowercase_normative(bare)
-        if lowered:
-            report.warning(
-                number, "rfc2119-case",
-                f"{identifier} uses lowercase '{', '.join(sorted(lowered))}', which has no RFC 2119 force. Use uppercase or rephrase.",
-            )
+        check_absolute(identifier, statement, number, report, "Invariants are absolute")
         check_vague(identifier, statement, number, report)
         check_implementation(identifier, statement, number, report)
     if not found:
         report.error(section.line, "empty-section", "Invariants needs at least one '- **INV-01:** ...' line.")
     return found
+
+
+def check_absolute(identifier: str, statement: str, line: int, report: Report, lead: str) -> None:
+    """An absolute RFC 2119 statement: an invariant, and a product principle (M13), are held to the same keywords."""
+    bare = strip_quotes(statement)
+    soft = SOFT_KEYWORD_RE.search(bare)
+    if soft:
+        report.error(line, "inv-keyword", f"{identifier} uses '{soft.group(1)}'. {lead}: use MUST, MUST NOT, SHALL, SHALL NOT, or REQUIRED.")
+    elif not ABSOLUTE_KEYWORD_RE.search(bare):
+        report.error(line, "inv-keyword", f"{identifier} has no uppercase RFC 2119 keyword. Use MUST, MUST NOT, SHALL, SHALL NOT, or REQUIRED.")
+    lowered = lowercase_normative(bare)
+    if lowered:
+        report.warning(line, "rfc2119-case",
+                       f"{identifier} uses lowercase '{', '.join(sorted(lowered))}', which has no RFC 2119 force. Use uppercase or rephrase.")
+
+
+def statement_findings(identifier: str, statement: str) -> List[Finding]:
+    """The checks a product principle's statement is held to (M13), the invariants' own: an absolute RFC 2119 keyword,
+    no lowercase must or shall, no vague wording, and no technology. A technical rule is an ADR, so technology is an
+    error here, not the warning it is in a spec."""
+    report = Report()
+    check_absolute(identifier, statement, 0, report, "A principle is absolute")
+    check_vague(identifier, statement, 0, report)
+    words = implementation_words(statement)
+    if words:
+        report.error(0, "implementation-detail", f"{identifier} names technology ({', '.join(sorted(words))}). A principle says what must hold for "
+                                                 "the people using the product; a technical rule is an architecture decision (ADR).")
+    return report.findings
 
 
 def classify_ears(statement: str) -> Optional[str]:
@@ -1012,9 +1046,156 @@ def check_open_questions(section: Section, ready: bool, report: Report) -> List[
     return found
 
 
+def principles_shape(given: Any) -> List[Dict[str, Any]]:
+    """The product principles a spec is checked against, from a principles file's JSON: the Product Studio draft
+    (product/principles.json), the published folder form, or a cell's copy. Each has a `principles` list of
+    {id, statement, status, revision, ...}. Raises ValueError when it is not that shape."""
+    items = given.get("principles") if isinstance(given, dict) else given
+    if not isinstance(items, list):
+        raise ValueError("expected a JSON object with a 'principles' list")
+    clean, seen = [], set()
+    for item in items:
+        if (not isinstance(item, dict) or not isinstance(item.get("id"), str) or not PRINCIPLE_ID_RE.fullmatch(item["id"]) or item["id"] in seen
+                or not isinstance(item.get("statement"), str) or not item["statement"].strip() or item.get("status") not in PRINCIPLE_STATUSES
+                or type(item.get("revision")) is not int or item["revision"] < 1):
+            raise ValueError("each principle needs a unique PP-NN id, a statement, a status (active or retired) and a revision")
+        seen.add(item["id"])
+        clean.append({"id": item["id"], "statement": item["statement"], "status": item["status"], "revision": item["revision"]})
+    return clean
+
+
+def load_principles(path: Path) -> List[Dict[str, Any]]:
+    """Read a principles file for --principles. Raises OSError or ValueError when it cannot be used."""
+    return principles_shape(json.loads(path.read_text(encoding="utf-8")))
+
+
+def check_principles(
+    section: Optional[Section], principles: Optional[Sequence[Dict[str, Any]]], requirements: Dict[str, int], scenario_ids: Set[str], report: Report,
+) -> Optional[List[Dict[str, Any]]]:
+    """The spec's answer to each product principle (M13). Every row is checked on its own: `applies` names IDs this spec
+    defines, `does not apply` and `exception` give a reason. When the principles are given, every active one is answered,
+    its statement quoted exactly and its current revision named. A project with no principles needs no section."""
+    active = [item for item in principles or [] if item["status"] == "active"]
+    known = {item["id"]: item for item in principles or []}
+    if section is None:
+        if active:
+            report.error(0, "principle-unanswered", "Missing section '## Principles'. The project has product principles ("
+                         + ", ".join(item["id"] for item in active) + "), and the spec answers each one. See references/spec-structure.md.")
+        return None
+    rows: List[Dict[str, Any]] = []
+    lines: Dict[str, int] = {}
+    nothing = False
+    for number, line in content_lines(section):
+        match = PRINCIPLE_ROW_RE.match(line)
+        if match is None:
+            if BULLET_RE.match(line) and is_none(BULLET_RE.match(line).group(1)):
+                nothing = True
+                continue
+            report.error(number, "principle-format", "Each principle is one line: '- **PP-01** (revision 1): \"<its statement>\" **Applies:** INV-01, AC-02.', "
+                         "with **Does not apply:** or **Exception:** and a reason in place of **Applies:** when that is the answer.")
+            continue
+        identifier, revision, statement, answer, value = match.group(1), int(match.group(2)), match.group(3), ANSWERS[match.group(4)], match.group(5).strip()
+        register_id(lines, identifier, number, report)
+        row: Dict[str, Any] = {"id": identifier, "revision": revision, "statement": statement, "answer": answer, "upheld_by": [], "reason": None}
+        if answer == "applies":
+            named = [item.strip() for item in value.rstrip(".").split(",") if item.strip()]
+            if not named:
+                report.error(number, "principle-applies", f"{identifier}: say which invariant, requirement or scenario in this slice upholds it, such as 'INV-01, AC-02'.")
+            for item in named:
+                if not UPHELD_ID_RE.match(item):
+                    report.error(number, "principle-applies", f"{identifier}: '{item}' is not an INV-NN, FR-NN or AC-NN ID.")
+                elif item not in requirements and item not in scenario_ids:
+                    report.error(number, "principle-applies", f"{identifier} names {item}, which this spec does not define.")
+                else:
+                    row["upheld_by"].append(item)
+        else:
+            if not value.rstrip(".").strip() or is_none(value):
+                kind = "why it does not apply, in one sentence" if answer == "does_not_apply" else "the product manager's reason, in their words"
+                report.error(number, "principle-reason", f"{identifier}: give {kind}.")
+            row["reason"] = value or None
+        rows.append(row)
+        if principles is None:
+            continue
+        current = known.get(identifier)
+        if current is None:
+            report.error(number, "principle-unknown", f"{identifier} is not one of the project's product principles.")
+        elif current["status"] == "retired":
+            report.warning(number, "principle-retired", f"{identifier} is retired; take its row out.")
+        else:
+            if statement != current["statement"]:
+                report.error(number, "principle-quote", f"{identifier}'s statement is not quoted exactly. It reads: \"{current['statement']}\"")
+            if revision != current["revision"]:
+                report.error(number, "principle-revision", f"{identifier} was answered under revision {revision}; it is now revision {current['revision']}. "
+                             "Check the answer still holds, then name the current revision and quote its statement.")
+    if rows and nothing:
+        report.error(section.line, "principle-format", "'## Principles' lists principles, so it cannot also say '- None.'.")
+    if not rows and not nothing:
+        report.error(section.line, "empty-section", "'## Principles' needs a row for each principle, or '- None.' when the project has none.")
+    for item in active:
+        if item["id"] not in lines:
+            report.error(section.line, "principle-unanswered", f"{item['id']} is not answered. Add its row: does it apply, not apply, or is this slice an exception?")
+    return rows
+
+
+_EFFECTS: List[Any] = []
+
+
+def effects_parser() -> Any:
+    """The one parser of '## Effects on shipped behaviour' (effects.py beside this file), loaded once by path."""
+    if not _EFFECTS:
+        spec = importlib.util.spec_from_file_location("mach_effects_for_validator", Path(__file__).resolve().parent / "effects.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _EFFECTS.append(module)
+    return _EFFECTS[0]
+
+
+def shipped_shape(given: Any) -> List[Any]:
+    """The shipped rules a spec's effects are checked against: `run.py current --json`'s output or its `rules` list
+    (dicts with a "rule"), or a list of rule strings. Raises ValueError when it is not that shape."""
+    items = given.get("rules") if isinstance(given, dict) else given
+    if not isinstance(items, list) or not all(isinstance(item, str) or (isinstance(item, dict) and isinstance(item.get("rule"), str)) for item in items):
+        raise ValueError("expected a JSON list of shipped rules, or an object with a 'rules' list, as `run.py current --json` prints it")
+    return items
+
+
+def load_shipped(path: Path) -> List[Any]:
+    """Read a shipped-rules file for --shipped. Raises OSError or ValueError when it cannot be used."""
+    return shipped_shape(json.loads(path.read_text(encoding="utf-8")))
+
+
+def check_effects(text: str, shipped: Optional[Sequence[Any]], slice_id: Optional[str], own_ids: Set[str], report: Report) -> Optional[List[Dict[str, Any]]]:
+    """The spec's effects on shipped behaviour (M13 part B), read by effects.py and nothing else. Every problem the
+    parser finds is an error. When the shipped rules are supplied (even an empty list), the section is required, and
+    each row must name a rule that shipped and is still in force; with an empty list only 'None.' is valid. Without
+    them, a spec with no section stays valid and a present section is checked on its own."""
+    E = effects_parser()
+    parsed = E.parse(text)
+    problems = [item for item in parsed["problems"] if item["code"] != "effects-duplicate"]  # check_structure reports a duplicate section
+    if shipped is not None and not parsed["present"]:
+        count = len(shipped)
+        report.error(0, "effects-missing", "Missing section '## Effects on shipped behaviour'. Write 'None.' if this slice changes no shipped behaviour, "
+                     "otherwise one table row per shipped rule it touches; silence is never read as no effects. "
+                     + (f"{count} shipped rule(s) were read." if count else "No rule has shipped yet, so the section is 'None.'.")
+                     + " See references/spec-structure.md.")
+    if parsed["present"]:
+        # Without the shipped list every named rule is taken as shipped, so only this spec's own side is checked.
+        against = shipped if shipped is not None else [row["shipped_rule"] for row in parsed["rows"]]
+        problems += E.check(parsed, against, slice_id=slice_id, own_ids=own_ids)
+    for item in sorted(problems, key=lambda item: (item["line"], item["code"])):
+        report.error(item["line"], item["code"], item["message"])
+    if not parsed["present"]:
+        return None
+    return [{key: row[key] for key in ("shipped_rule", "slice_id", "rule_id", "effect", "in_slice", "note")} for row in parsed["rows"]]
+
+
 def analyze(
     text: str, file_name: str, other_specs: Optional[Union[Mapping[str, str], Sequence[str]]] = None, ready: bool = False,
+    principles: Optional[Sequence[Dict[str, Any]]] = None, shipped: Optional[Sequence[Any]] = None,
 ) -> Tuple[List[Finding], Dict[str, Any]]:
+    """Check a spec. `principles` is the project's product principles (principles_shape's form), or None when they are not
+    known here: then a Principles section is checked on its own and no answer is required. `shipped` is the shipped rules
+    (shipped_shape's form), or None when they are not known here: then '## Effects on shipped behaviour' is not required."""
     report = Report()
     if isinstance(other_specs, abc.Mapping):
         others: Mapping[str, str] = other_specs
@@ -1081,6 +1262,15 @@ def analyze(
             scenarios = check_scenarios(scenario_section, refs, report)
             model["scenarios"] = scenarios
         check_traceability(requirements, refs, report)
+    rows = check_principles(found.get("Principles"), list(principles) if principles is not None else None, requirements,
+                            {str(scenario["id"]) for scenario in scenarios if scenario.get("id")}, report)
+    if rows is not None:
+        model["principles"] = rows  # only when the spec has the section, so a spec without one exports exactly as before
+    matrix_ids = {str(rule.get("id")) for rule in (model.get("decision_matrix") or {}).get("rules") or [] if rule.get("id")}
+    effects = check_effects(text, list(shipped) if shipped is not None else None, slice_id,
+                            set(requirements) | matrix_ids | {str(scenario["id"]) for scenario in scenarios if scenario.get("id")}, report)
+    if effects is not None:
+        model["effects"] = effects  # only when the spec has the section; [] for 'None.'
     if "Dependencies and permissions" in found:
         patterns = {str(entry["id"]): entry["pattern"] for entry in functional}
         covered_by_scenarios = {identifier for scenario in scenarios for identifier in scenario["covers"]}
@@ -1140,14 +1330,38 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--registry", action="append", type=Path, default=[], metavar="DIR",
         help="another specs/slices folder sharing this ID space (repeatable), checked for duplicate and reserved IDs",
     )
+    parser.add_argument(
+        "--principles", type=Path, metavar="FILE",
+        help="the project's product principles (a principles.json); every active one must then be answered in '## Principles'",
+    )
+    parser.add_argument(
+        "--shipped", type=Path, metavar="FILE",
+        help="the shipped rules (the 'rules' list of `run.py current --json`, or its whole output); '## Effects on shipped behaviour' "
+             "is then required and each row must name a rule that shipped and is still in force",
+    )
     args = parser.parse_args(argv)
     try:
         text = args.spec.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError) as exc:
         print(f"{args.spec}: cannot read file: {exc}", file=sys.stderr)
         return 2
+    principles = None
+    if args.principles is not None:
+        try:
+            principles = load_principles(args.principles)
+        except (OSError, UnicodeDecodeError, ValueError, RecursionError) as exc:
+            print(f"{args.principles}: cannot read the principles: {exc}", file=sys.stderr)
+            return 2
 
-    findings, model = analyze(text, args.spec.name, sibling_specs(args.spec, args.registry), ready=args.ready)
+    shipped = None
+    if args.shipped is not None:
+        try:
+            shipped = load_shipped(args.shipped)
+        except (OSError, UnicodeDecodeError, ValueError, RecursionError) as exc:
+            print(f"{args.shipped}: cannot read the shipped rules: {exc}", file=sys.stderr)
+            return 2
+
+    findings, model = analyze(text, args.spec.name, sibling_specs(args.spec, args.registry), ready=args.ready, principles=principles, shipped=shipped)
     errors = sum(1 for f in findings if f.severity == "error")
     stream = sys.stderr if args.export else sys.stdout
     for finding in findings:

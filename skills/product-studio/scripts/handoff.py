@@ -109,6 +109,8 @@ class Handoff:
                            if isinstance(key, str) and self.rules.SLICE_ID_RE.fullmatch(key) and isinstance(value, dict)} if isinstance(data.get("slices"), dict) else {}
         clean["seen"] = data.get("seen") if isinstance(data.get("seen"), dict) else {}
         clean["order"] = clean_order(data.get("order"), self.rules)
+        principles = data.get("principles") if isinstance(data.get("principles"), dict) else {}
+        clean["principles"] = principles if not principles.get("published") or not self.rules.principle_problems(principles.get("published")) else {}
         return clean
 
     def save(self, data: Dict[str, Any]) -> None:
@@ -131,7 +133,8 @@ class Handoff:
         if data.get("repository") not in (None, repository):
             data.update(repository=repository, form=None, project=None, epics={}, seen={},
                         slices={key: {**value, "number": None, "id": None, "run": None, "shipped": []}
-                                for key, value in data["slices"].items() if value.get("saved") == "folder"})
+                                for key, value in data["slices"].items() if value.get("saved") == "folder"},
+                        principles=data["principles"] if data["principles"].get("saved") == "folder" else {})
         data["repository"] = repository
         return data
 
@@ -205,8 +208,9 @@ class Handoff:
     # ---- marking ready on GitHub ----
 
     def prepare(self, data: Dict[str, Any], channel: Channel, slice_id: str, title: str, epic: Dict[str, Any], project: Dict[str, Any],
-                dependencies: Sequence[str], why: str, spec: str) -> Dict[str, Any]:
-        """Every read and every decision before the first write. Returns the plan of the run, or refuses."""
+                dependencies: Sequence[str], why: str, spec: str, jira: Optional[str] = None) -> Dict[str, Any]:
+        """Every read and every decision before the first write. Returns the plan of the run, or refuses. A changed
+        Jira key (M13) is a change like a changed spec: a new revision."""
         data = self.for_repository(data, str(channel.repository))
         snapshot = self.snapshot(str(channel.repository))
         self.remember(data, snapshot)
@@ -220,7 +224,7 @@ class Handoff:
         run = entry.get("run") or {}
         if own:
             marker = own["marker"]
-            same = (marker["spec_sha256"], marker["why_sha256"]) == (spec_sha, why_sha)
+            same = (marker["spec_sha256"], marker["why_sha256"], marker.get("jira")) == (spec_sha, why_sha, jira)
             if marker["revision"] > entry["base_revision"] and not same and marker["revision"] != run.get("revision"):
                 raise HandoffError(f"Someone else saved a newer version of {slice_id} on GitHub (version {marker['revision']}). "
                                    f"Choose yours or theirs before marking it ready.", {"kind": "reconcile", "target": slice_id})
@@ -235,7 +239,8 @@ class Handoff:
             revision = marker["revision"] if own and same else max(entry["base_revision"], marker["revision"]) + 1
         else:
             follows = max(entry["shipped"]) if entry["shipped"] else None
-            revision = run.get("revision") if run.get("spec_sha256") == spec_sha and run.get("why_sha256") == why_sha and run.get("revision") else entry["base_revision"] + 1
+            revision = (run.get("revision") if run.get("spec_sha256") == spec_sha and run.get("why_sha256") == why_sha and run.get("jira") == jira
+                        and run.get("revision") else entry["base_revision"] + 1)
         depends = []
         for dependency in dependencies:
             number = self.published_number(data, snapshot, dependency)
@@ -245,11 +250,11 @@ class Handoff:
             depends.append(number)
         epic_issue = self.find_epic(data, snapshot, epic)
         project_issue = self.find_project(data, snapshot, project)
-        body = self.rules.slice_issue_body(slice_id, revision, epic_issue or 999999999, depends, why, spec, follows)
+        body = self.rules.slice_issue_body(slice_id, revision, epic_issue or 999999999, depends, why, spec, follows, jira)
         if len(body) > self.rules.ISSUE_BODY_LIMIT:
             raise HandoffError(too_large(slice_id, len(body), self.rules.ISSUE_BODY_LIMIT))
-        same_run = run.get("revision") == revision and run.get("spec_sha256") == spec_sha and run.get("why_sha256") == why_sha
-        entry["run"] = {"revision": revision, "spec_sha256": spec_sha, "why_sha256": why_sha, "login": channel.login,
+        same_run = run.get("revision") == revision and run.get("spec_sha256") == spec_sha and run.get("why_sha256") == why_sha and run.get("jira") == jira
+        entry["run"] = {"revision": revision, "spec_sha256": spec_sha, "why_sha256": why_sha, "jira": jira, "login": channel.login,
                         "depends": depends, "follows": follows, "title": title, "epic_id": epic["epic_id"],
                         "steps": dict(run.get("steps") or {}) if same_run else {}, "started_at": run.get("started_at") if same_run else utc_now()}
         if own:
@@ -338,15 +343,9 @@ class Handoff:
 
         if step("project"):
             number = targets["project"] or (data.get("project") or {}).get("number")
-            body = self.rules.project_issue_body(project["project_id"], project.get("vision") or "", project.get("outcomes") or [])
-            title = self.rules.issue_title(project.get("name"))
-            number, failure = self.ensure(repository, number, title, body, ["mach:project"], "mach:project", f"project-{project['project_id']}")
+            failure = self.write_project(data, repository, number, project, self.principles_kept(data, project_body(snapshot, number)))
             if failure:
                 stop(failure)
-            data["project"] = {**(data.get("project") or {}), "number": number}
-            if not data["project"].get("pin_tried"):
-                # Pinned once. A repository holds only a few pinned issues, so not pinning stops nothing.
-                data["project"].update(pin_tried=True, pinned=issues.pin(self.project, repository, number) is None)
             finished("project")
 
         epic_number = targets["epic"] or (data["epics"].get(epic["epic_id"]) or {}).get("number")
@@ -373,7 +372,7 @@ class Handoff:
         epic_number = data["epics"][epic["epic_id"]]["number"]
 
         if step("slice"):
-            body = self.rules.slice_issue_body(slice_id, run["revision"], epic_number, run["depends"], why, spec, run.get("follows"))
+            body = self.rules.slice_issue_body(slice_id, run["revision"], epic_number, run["depends"], why, spec, run.get("follows"), run.get("jira"))
             title = self.rules.issue_title(run["title"])
             names = ["mach:slice"]
             number, failure = self.ensure(repository, entry.get("number"), title, body, names, "mach:slice", f"slice-{slice_id}")
@@ -387,11 +386,12 @@ class Handoff:
             found, failure = issues.comments(self.project, repository, number)
             if failure:
                 stop(failure)
-            wanted = {"slice_id": slice_id, "revision": run["revision"], "by": run["login"], "spec_sha256": run["spec_sha256"], "why_sha256": run["why_sha256"]}
+            wanted = {"slice_id": slice_id, "revision": run["revision"], "by": run["login"], "spec_sha256": run["spec_sha256"], "why_sha256": run["why_sha256"],
+                      **({"jira": run["jira"]} if run.get("jira") else {})}
             mine = [c["body"] for c in found or [] if c.get("login") == run["login"]]
             if wanted not in self.rules.approvals(mine):
                 failure = issues.comment(self.project, repository, number,
-                                         self.outgoing_file("approval", self.rules.approval_comment(slice_id, run["revision"], run["login"], run["spec_sha256"], run["why_sha256"])))
+                                         self.outgoing_file("approval", self.rules.approval_comment(slice_id, run["revision"], run["login"], run["spec_sha256"], run["why_sha256"], run.get("jira"))))
                 if failure:
                     stop(failure)
             finished("approval")
@@ -413,7 +413,7 @@ class Handoff:
             finished("ready")
 
         entry.update(saved="github", revision=run["revision"], base_revision=run["revision"], spec_sha256=run["spec_sha256"],
-                     why_sha256=run["why_sha256"], approved_by=run["login"], ready_at=utc_now(), run=None)
+                     why_sha256=run["why_sha256"], jira=run.get("jira"), approved_by=run["login"], ready_at=utc_now(), run=None)
         # What was just written is what the issue now says, without waiting for the next refresh.
         seen_rows = data.setdefault("seen", {}).setdefault("slices", {}).setdefault(slice_id, [])
         row = next((item for item in seen_rows if item.get("issue") == number), None)
@@ -426,6 +426,180 @@ class Handoff:
         self.save(data)
         return {"issue": number, "url": self.rules.issue_url(repository, number), "revision": entry["revision"],
                 "follows": run.get("follows"), "epic_issue": epic_number, "project_issue": data["project"]["number"]}
+
+    def write_project(self, data: Dict[str, Any], repository: str, number: Optional[int], project: Dict[str, Any],
+                      principles: Optional[Dict[str, Any]]) -> Optional[Dict[str, str]]:
+        """Create the project's issue, or bring its title and body up to date, with the principles section given. Pinned once."""
+        body = self.rules.project_issue_body(project["project_id"], project.get("vision") or "", project.get("outcomes") or [], principles)
+        title = self.rules.issue_title(project.get("name"))
+        number, failure = self.ensure(repository, number, title, body, ["mach:project"], "mach:project", f"project-{project['project_id']}")
+        if failure:
+            return failure
+        data["project"] = {**(data.get("project") or {}), "number": number}
+        if not data["project"].get("pin_tried"):
+            # Pinned once. A repository holds only a few pinned issues, so not pinning stops nothing.
+            data["project"].update(pin_tried=True, pinned=issues.pin(self.project, repository, number) is None)
+        return None
+
+    def principles_kept(self, data: Dict[str, Any], body: Any) -> Optional[Dict[str, Any]]:
+        """The principles section a rewrite of the project's issue keeps (M13): the one on GitHub when it is intact and not
+        older than what this workspace published, else this workspace's own published principles, else none. Marking a
+        slice ready never changes the principles; only `principle publish` does."""
+        theirs = self.rules.parse_principles_section(body)
+        record = data.get("principles") or {}
+        mine = {"revision": record["revision"], "principles": record["published"]} if record.get("saved") == "github" and record.get("published") else None
+        if theirs and theirs["intact"] and (mine is None or theirs["revision"] >= mine["revision"]):
+            return {"revision": theirs["revision"], "principles": theirs["principles"]}
+        return mine
+
+    # ---- product principles (M13) ----
+
+    def principles_folder(self) -> Path:
+        return self.draft / "product" / "ready" / "PRINCIPLES"
+
+    def publish_principles(self, project: Dict[str, Any], items: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Save the principles: on the project's GitHub issue, in its fixed section, with an approval comment carrying their
+        SHA-256 and the product manager's login; or, where gh cannot be used, as product/ready/PRINCIPLES/principles.json in
+        the workspace. Each step on GitHub is recorded before it is tried and looks before it writes."""
+        sha = self.rules.principles_sha256(items)
+        with self.exclusive():
+            data = self.load()
+            channel = self.channel()  # GitHub or the folder, decided before anything is written
+            record = data["principles"]
+            if channel.kind == "folder":
+                if record.get("saved") == "github" or record.get("run"):
+                    raise HandoffError(f"The principles are already saved on GitHub, and GitHub cannot be used from here: {channel.why} "
+                                       "Nothing was saved. Publish them on a computer signed in to GitHub.")
+                revision = record["revision"] if record.get("sha256") == sha and record.get("saved") == "folder" else int(record.get("base_revision") or 0) + 1
+                self.write_principles_folder(revision, sha, items)
+                record.update(saved="folder", revision=revision, base_revision=revision, sha256=sha, published=items, approved_by=None,
+                              published_at=utc_now(), issue=None, run=None)
+                self.save(data)
+                return {"saved_to": "folder", "revision": revision, "sha256": sha, "folder": str(self.principles_folder()), "why_folder": channel.why}
+            repository = str(channel.repository)
+            data = self.for_repository(data, repository)
+            record = data["principles"]
+            snapshot = self.snapshot(repository)
+            self.remember(data, snapshot)
+            number = self.find_project(data, snapshot, project)
+            theirs = self.rules.parse_principles_section(project_body(snapshot, number))
+            run = record.get("run") or {}
+            base = int(record.get("base_revision") or 0)
+            if theirs and theirs["intact"] and theirs["sha256"] == sha:
+                revision = theirs["revision"]
+            elif theirs and theirs["intact"] and theirs["revision"] > base and theirs["revision"] != run.get("revision"):
+                raise HandoffError(f"Someone else published version {theirs['revision']} of the principles on GitHub. Choose yours or theirs "
+                                   "before publishing (reconcile principles --take mine|theirs). Nothing was saved.", {"kind": "reconcile", "target": "principles"})
+            elif run.get("sha256") == sha and run.get("revision"):
+                revision = run["revision"]
+            else:
+                revision = max(base, theirs["revision"] if theirs else 0) + 1
+            body = self.rules.project_issue_body(project["project_id"], project.get("vision") or "", project.get("outcomes") or [],
+                                                 {"revision": revision, "principles": items})
+            if len(body) > self.rules.ISSUE_BODY_LIMIT:
+                raise HandoffError(f"The principles are too large to save: with the project's vision and outcomes they are {len(body):,} characters, and "
+                                   f"GitHub takes at most {self.rules.ISSUE_BODY_LIMIT:,} in one issue. Nothing was saved.")
+            same = run.get("revision") == revision and run.get("sha256") == sha
+            record["run"] = {"revision": revision, "sha256": sha, "login": channel.login, "steps": dict(run.get("steps") or {}) if same else {},
+                             "started_at": run.get("started_at") if same else utc_now()}
+            steps = record["run"]["steps"]
+            self.save(data)
+
+            def step(name: str) -> bool:
+                if steps.get(name) == "done":
+                    return False
+                steps[name] = "trying"
+                self.save(data)
+                return True
+
+            def stop(failure: Optional[Dict[str, str]]) -> None:
+                self.save(data)
+                raise HandoffError(f"Publishing the principles to GitHub stopped part way. {explain(failure)} "
+                                   "Publish them again to finish; nothing will be made twice.")
+
+            if step("labels"):
+                have, failure = issues.labels(self.project, repository)
+                if failure:
+                    stop(failure)
+                if "mach:project" not in (have or []):
+                    label = self.rules.PRODUCT_LABELS["mach:project"]
+                    failure = issues.create_label(self.project, repository, "mach:project", label["color"], label["description"])
+                    if failure:
+                        stop(failure)
+                steps["labels"] = "done"
+            if step("project"):
+                failure = self.write_project(data, repository, number or (data.get("project") or {}).get("number"), project,
+                                             {"revision": revision, "principles": items})
+                if failure:
+                    stop(failure)
+                steps["project"] = "done"
+            number = data["project"]["number"]
+            if step("approval"):
+                found, failure = issues.comments(self.project, repository, number)
+                if failure:
+                    stop(failure)
+                mine = [c["body"] for c in found or [] if c.get("login") == channel.login]
+                if {"revision": revision, "by": channel.login, "sha256": sha} not in self.rules.principles_approvals(mine):
+                    failure = issues.comment(self.project, repository, number,
+                                             self.outgoing_file("principles-approval", self.rules.principles_approval_comment(revision, str(channel.login), sha)))
+                    if failure:
+                        stop(failure)
+                steps["approval"] = "done"
+            record.update(saved="github", revision=revision, base_revision=revision, sha256=sha, published=items, approved_by=channel.login,
+                          published_at=utc_now(), issue=number, run=None)
+            data["seen"]["principles"] = {"issue": number, "revision": revision, "sha256": sha, "intact": True, "approved": True,
+                                          "approved_by": channel.login, "principles": items, "read_at": utc_now()}
+            self.save(data)
+            return {"saved_to": "github", "revision": revision, "sha256": sha, "issue": number, "url": self.rules.issue_url(repository, number),
+                    "approved_by": channel.login}
+
+    def write_principles_folder(self, revision: int, sha: str, items: List[Dict[str, Any]]) -> None:
+        """product/ready/PRINCIPLES/principles.json, written to a temporary folder first and then renamed."""
+        target = self.principles_folder()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=".PRINCIPLES.", dir=str(target.parent)))
+        try:
+            record = {"schema_version": 1, "revision": revision, "sha256": sha, "principles": json.loads(self.rules.principles_canonical(items))}
+            (staging / "principles.json").write_text(json.dumps(record, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+            if target.exists():
+                shutil.rmtree(target)
+            os.replace(str(staging), str(target))
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+
+    def take_principles(self, revision: int, sha: str, items: List[Dict[str, Any]], approved_by: Optional[str]) -> None:
+        """This workspace now holds the principles GitHub holds (taken at refresh, or the product manager chose theirs)."""
+        with self.exclusive():
+            data = self.load()
+            data["principles"].update(saved="github", revision=revision, base_revision=revision, sha256=sha, published=items,
+                                      approved_by=approved_by, published_at=None, run=None)
+            self.save(data)
+
+    def keep_mine(self, revision: int) -> None:
+        """The product manager keeps their principles: their next publish replaces the version GitHub holds."""
+        with self.exclusive():
+            data = self.load()
+            data["principles"]["base_revision"] = max(int(data["principles"].get("base_revision") or 0), revision)
+            self.save(data)
+
+    def read_principles(self, data: Dict[str, Any], repository: str, snapshot: Dict[str, Any]) -> None:
+        """For refresh: the principles on the project's issue, whether they are intact, and whether they carry an approval
+        for exactly that revision and SHA-256 by the account it names. A failure to read keeps what was known."""
+        linked = (data.get("project") or {}).get("number")
+        numbers = [item["number"] for item in snapshot["projects"]]
+        number = linked if linked in numbers else (sorted(item["number"] for item in snapshot["projects"] if item["state"] == "open") or [None])[0]
+        body = project_body(snapshot, number)
+        parsed = self.rules.parse_principles_section(body)
+        if parsed is None:
+            data["seen"]["principles"] = {"issue": number, "revision": None, "read_at": utc_now()}
+            return
+        found, failure = issues.comments(self.project, repository, number)
+        if failure:
+            return
+        check = self.rules.principles_take_check(body, found or [])
+        data["seen"]["principles"] = {"issue": number, "revision": parsed["revision"], "sha256": parsed["sha256"], "intact": parsed["intact"],
+                                      "approved": check["problem"] is None, "approved_by": check["approved_by"], "principles": check["principles"],
+                                      "read_at": utc_now()}
 
     def ensure(self, repository: str, number: Optional[int], title: str, body: str, names: Sequence[str], required: str,
                name: str) -> Tuple[Optional[int], Optional[Dict[str, str]]]:
@@ -525,14 +699,14 @@ class Handoff:
         return self.draft / "product" / "ready" / slice_id
 
     def write_folder(self, data: Dict[str, Any], slice_id: str, title: str, epic: Dict[str, Any], dependencies: Sequence[str],
-                     why: str, spec: str) -> Dict[str, Any]:
+                     why: str, spec: str, jira: Optional[str] = None) -> Dict[str, Any]:
         entry = self.entry(data, slice_id)
         spec_sha, why_sha = self.rules.text_sha256_of(spec), self.rules.text_sha256_of(why)
-        same = (entry.get("spec_sha256"), entry.get("why_sha256")) == (spec_sha, why_sha) and entry.get("saved") == "folder"
+        same = (entry.get("spec_sha256"), entry.get("why_sha256"), entry.get("jira")) == (spec_sha, why_sha, jira) and entry.get("saved") == "folder"
         revision = entry.get("revision") if same else int(entry.get("base_revision") or 0) + 1
         record = {"schema_version": 1, "slice_id": slice_id, "title": title, "revision": revision,
                   "epic": {"epic_id": epic["epic_id"], "title": epic.get("title")}, "dependencies": list(dependencies),
-                  "spec_sha256": spec_sha, "why_sha256": why_sha}
+                  "spec_sha256": spec_sha, "why_sha256": why_sha, **({"jira": jira} if jira else {})}  # M13: the Jira key, only when set
         target = self.folder(slice_id)
         target.parent.mkdir(parents=True, exist_ok=True)
         staging = Path(tempfile.mkdtemp(prefix=f".{slice_id}.", dir=str(target.parent)))
@@ -545,7 +719,7 @@ class Handoff:
             os.replace(str(staging), str(target))
         finally:
             shutil.rmtree(staging, ignore_errors=True)
-        entry.update(saved="folder", revision=revision, base_revision=revision, spec_sha256=spec_sha, why_sha256=why_sha, ready_at=utc_now(), run=None)
+        entry.update(saved="folder", revision=revision, base_revision=revision, spec_sha256=spec_sha, why_sha256=why_sha, jira=jira, ready_at=utc_now(), run=None)
         self.save(data)
         return {"folder": str(target), "revision": revision}
 
@@ -623,6 +797,7 @@ class Handoff:
                                     project=[{"number": p["number"], "project_id": p["id"]} for p in snapshot["projects"]],
                                     epics=[{"number": e["number"], "epic_id": e["id"], "title": self.rules.list_title(e.get("title"))} for e in snapshot["epics"]])
                 self.read_order(data, repository, snapshot, local)
+                self.read_principles(data, repository, snapshot)
                 self.save(data)
         except HandoffError as exc:
             return self.failed(repository, str(exc), local)
@@ -643,7 +818,8 @@ class Handoff:
         marker = item["marker"]
         latest = [a for a in self.rules.approvals([c["body"] for c in found or []]) if a["slice_id"] == marker["slice_id"] and a["revision"] == marker["revision"]]
         approved = latest[-1] if latest else None
-        matches = bool(marker["intact"] and approved and (approved["spec_sha256"], approved["why_sha256"]) == (marker["spec_sha256"], marker["why_sha256"]))
+        matches = bool(marker["intact"] and approved and (approved["spec_sha256"], approved["why_sha256"], approved.get("jira"))
+                       == (marker["spec_sha256"], marker["why_sha256"], marker.get("jira")))  # M13: the Jira key is part of what was approved
         state_label = next((name for name in ("mach:question", "mach:shipped", "mach:building", "mach:ready") if name in item["labels"]), None)
         return {"issue": item["number"], "state": item["state"], "state_label": state_label, "revision": marker["revision"],
                 "title": self.rules.list_title(item.get("title")), "epic_issue": marker["epic"],
@@ -680,7 +856,8 @@ class Handoff:
                 "project_url": self.rules.issue_url(repo, project_number) if repo and project_number else None,
                 "epics": {key: value["number"] for key, value in data["epics"].items()},
                 "epic_urls": {key: self.rules.issue_url(repo, value["number"]) for key, value in data["epics"].items() if repo},
-                "slices": slice_rows(data, local, self.rules), "order": order_rows(data, local, self.rules)}
+                "slices": slice_rows(data, local, self.rules), "order": order_rows(data, local, self.rules),
+                "principles": principles_view(data, self.rules)}
 
     def record_acceptance(self, epic_id: str, release_id: str, commit: str, decision: str, readiness_sha256: str) -> Dict[str, Any]:
         """Product's decision on one release of an epic, as a comment from a fixed template on the epic's issue. Posted once."""
@@ -869,7 +1046,7 @@ class Handoff:
         self.remember(data, read["snapshot"])
         entry = self.entry(data, slice_id)
         entry.update(number=read["number"], id=None, base_revision=marker["revision"], revision=marker["revision"], spec_sha256=marker["spec_sha256"],
-                     why_sha256=marker["why_sha256"], saved=saved, approved_by=check["approved_by"], run=None, taken_at=utc_now(),
+                     why_sha256=marker["why_sha256"], jira=marker.get("jira"), saved=saved, approved_by=check["approved_by"], run=None, taken_at=utc_now(),
                      shipped=sorted(set(entry.get("shipped") or []) | ({marker["follows"]} if marker.get("follows") else set())))
         data["epics"][epic_id] = {"number": read["epic"]["number"]}
         item = {"number": read["number"], "state": read["state"], "labels": read["labels"], "title": read["title"], "marker": {**marker, "intact": True}}
@@ -883,6 +1060,31 @@ class Handoff:
             before = [other for other in there[:there.index(slice_id)] if other in record["slices"]] if slice_id in there else []
             record["slices"].insert(record["slices"].index(before[-1]) + 1 if before else 0 if slice_id in there else len(record["slices"]), slice_id)
         self.save(data)
+
+
+def project_body(snapshot: Dict[str, Any], number: Optional[int]) -> Optional[str]:
+    """The project issue's body as last read, or None."""
+    return next((item.get("body") for item in snapshot.get("projects") or [] if item.get("number") == number), None) if number else None
+
+
+def principles_view(data: Dict[str, Any], rules: Any) -> Dict[str, Any]:
+    """Where the principles are saved and what GitHub held at the last refresh, from the record alone (no network)."""
+    record = data.get("principles") or {}
+    seen = (data.get("seen") or {}).get("principles") or {}
+    repository = data.get("repository")
+    issue = record.get("issue") or seen.get("issue")
+    on_github = seen.get("revision") is not None
+    run = record.get("run") or {}
+    newer = bool(on_github and seen.get("approved") and seen["revision"] > int(record.get("base_revision") or 0)
+                 and seen.get("sha256") != record.get("sha256") and seen["revision"] != run.get("revision"))
+    changed = bool(on_github and not newer and (not seen.get("intact") or (record.get("saved") == "github" and seen.get("sha256") != record.get("sha256")
+                                                                         and seen["revision"] >= int(record.get("revision") or 0))))
+    return {"saved": record.get("saved") if not run else None, "unfinished": bool(run), "revision": record.get("revision"), "sha256": record.get("sha256"),
+            "approved_by": record.get("approved_by"), "published_at": record.get("published_at"), "issue": issue,
+            "url": rules.issue_url(repository, issue) if repository and issue else None,
+            "github": {"revision": seen.get("revision"), "approved": seen.get("approved"), "approved_by": seen.get("approved_by"), "read_at": seen.get("read_at")}
+            if seen else None,
+            "newer_elsewhere": newer, "changed_on_github": changed}
 
 
 def too_large(slice_id: str, length: int, limit: int) -> str:

@@ -32,10 +32,15 @@ SHAPES = {
     "slice": ("schema_version", "slice_id", "project_id", "epic_id", "revision", "title", "status", "dependencies", "open_questions", "spec_path", "spec_sha256"),
 }
 # Fields an artifact may carry or leave out. A slice without them is byte-for-byte what it was before.
-OPTIONAL = {"slice": ("origin",)}
+OPTIONAL = {"slice": ("origin", "source", "tracking"), "epic": ("tracking",)}
+# The Jira issue a slice or epic belongs to (M13 E): {"jira": KEY}, the same form as issue_rules.JIRA_KEY_RE, which stays authoritative.
+JIRA_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,31}-[1-9][0-9]{0,8}$")
 # Where a slice came from (M8): identifiers only, never an issue's text, link or author.
 ORIGIN_KINDS = ("github_issue",)
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
+# The PRD a slice was made from (M13 D): identifiers and numbers only, never the document's text.
+PRD_RE = re.compile(r"^PRD-[0-9]{2,}$")
+MAP_SLICE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9-]{0,31}$")
 ENUMS = {
     "project": {"status": ("draft", "active", "archived")},
     "epic": {"status": ("open", "deferred")},  # an epic is a container for slices: in the project, or set aside
@@ -89,6 +94,17 @@ def _is_origin(value: Any) -> bool:
             and type(value.get("number")) is int and value["number"] >= 1)
 
 
+def _is_source(value: Any) -> bool:
+    if not (isinstance(value, dict) and set(value) == {"kind", "prd_id", "sha256", "lines", "map_slice"} and value.get("kind") == "prd"):
+        return False
+    lines = value.get("lines")
+    return (isinstance(value.get("prd_id"), str) and bool(PRD_RE.fullmatch(value["prd_id"]))
+            and isinstance(value.get("sha256"), str) and bool(HEX_RE.fullmatch(value["sha256"]))
+            and isinstance(value.get("map_slice"), str) and bool(MAP_SLICE_RE.fullmatch(value["map_slice"]))
+            and isinstance(lines, list) and 1 <= len(lines) <= 200
+            and all(isinstance(r, list) and len(r) == 2 and all(type(n) is int for n in r) and 1 <= r[0] <= r[1] for r in lines))
+
+
 def _shape(kind: str, data: Dict[str, Any], location: str, errors: List[str]) -> None:
     required = set(SHAPES[kind])
     for key in sorted(required - set(data)):
@@ -127,6 +143,46 @@ def _shape(kind: str, data: Dict[str, Any], location: str, errors: List[str]) ->
             _error(errors, location, "spec_sha256 must be lowercase 64-character SHA-256 or null")
         if "origin" in data and not _is_origin(data["origin"]):
             _error(errors, location, "origin must be {kind: github_issue, repository: OWNER/REPO, number: a positive integer}")
+        if "source" in data and not _is_source(data["source"]):
+            _error(errors, location, "source must be {kind: prd, prd_id: PRD-NN, sha256, lines: [[first, last], ...], map_slice}")
+    if "tracking" in data and not (isinstance(data["tracking"], dict) and set(data["tracking"]) == {"jira"}
+                                    and isinstance(data["tracking"]["jira"], str) and JIRA_RE.fullmatch(data["tracking"]["jira"])):
+        _error(errors, location, "tracking must be {jira: a Jira issue key such as ABC-123}")
+
+
+PRINCIPLE_RE = re.compile(r"^PP-[0-9]{2,}$")
+PRINCIPLE_FIELDS = ("id", "title", "statement", "reason", "status", "revision")
+PRINCIPLE_STATUSES = ("active", "retired")
+
+
+def _principles(data: Optional[Dict[str, Any]], project_id: Any, errors: List[str]) -> None:
+    """product/principles.json (M13): the project's product principles, PP-NN, each active or retired."""
+    location = "product/principles.json"
+    if data is None:
+        return
+    if set(data) != {"schema_version", "project_id", "principles"} or data.get("schema_version") != 1:
+        _error(errors, location, "must hold exactly schema_version 1, project_id and principles")
+        return
+    if data.get("project_id") != project_id:
+        _error(errors, location, "project_id does not match project.json")
+    items = data.get("principles")
+    if not isinstance(items, list):
+        _error(errors, location, "principles must be a list")
+        return
+    seen = set()
+    for item in items:
+        ident = item.get("id") if isinstance(item, dict) else None
+        if not isinstance(item, dict) or set(item) != set(PRINCIPLE_FIELDS) or not isinstance(ident, str) or not PRINCIPLE_RE.fullmatch(ident):
+            _error(errors, location, "each principle needs exactly: " + ", ".join(PRINCIPLE_FIELDS))
+            continue
+        if ident in seen:
+            _error(errors, location, "duplicate principle {}".format(ident))
+        seen.add(ident)
+        if item["status"] not in PRINCIPLE_STATUSES or type(item["revision"]) is not int or item["revision"] < 1:
+            _error(errors, location, "{} needs status active or retired and a positive revision".format(ident))
+        for key in ("title", "statement", "reason"):
+            if not isinstance(item[key], str) or not item[key].strip():
+                _error(errors, location, "{} {} must be nonempty text".format(ident, key))
 
 
 def _safe_spec(root: Path, value: str, slice_id: str) -> Tuple[Optional[Path], Optional[str]]:
@@ -261,6 +317,9 @@ def validate_workspace(root: Path) -> Dict[str, Any]:
     cycle = _cycle_nodes(graph)
     if cycle:
         _error(errors, "product/slices", "dependency cycle: {}".format(" -> ".join(cycle)))
+    principles_path = root / "product" / "principles.json"
+    if principles_path.exists() or principles_path.is_symlink():
+        _principles(_read_json(principles_path, errors, root), project_id, errors)
     return {
         "valid": not errors,
         "validation_scope": "structural_only",

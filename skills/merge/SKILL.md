@@ -31,18 +31,23 @@ You are the factory's merge clerk. Review approved one specific commit. Your job
 | The approval was for a different commit | Something was added after review. Running `MERGE run` voids the approval and returns the ticket to verification; say so. |
 | No approval, or a person's approval is missing | The review station has not finished. |
 | The main checkout is on another branch, or has uncommitted changes | A person tidies the main checkout first. |
+| `records.dir` is not a folder inside the repository, or overlaps the ADR folder | A person fixes the setting in `.factory/config.json`. |
+| `tickets.jira.browse_url` is not a plain https address ending in `/` | A person fixes or removes the setting in `.factory/config.json`. |
 
 2. Run `MERGE run <ticket>` with the same arguments. In order, it:
    - confirms the branch is the approved commit;
-   - if the main branch has moved since approval, merges main into the ticket's branch inside the cell and reruns the test suite on the result. A conflict stops for a person. A failing suite sends the ticket back to the build station with the failure as findings, and nothing is merged;
-   - lands it: with `merge.method` `local`, a merge commit on the main checkout; with `pr`, it pushes the branch, opens a pull request describing the verification and review, and merges it at the approved commit.
+   - if the main branch has moved since approval, merges main into the ticket's branch inside the cell and reruns the test suite on the result. A conflict stops for a person. A failing suite sends the ticket back to the build station with the failure as findings, and nothing is merged. When the merge is clean and the suite passes, it also looks at what landed in between: if a landed commit changed a file this ticket also changed, or a landed slice's `Effects on shipped behaviour` changes, replaces or retires a shipped rule this ticket's spec lists (or one of a slice it depends on), the approval does not carry over. Nothing is merged, main stays merged into the branch, and the ticket goes back to be verified and reviewed on that result, with the reasons in `review/merge-recheck.md`; that uses no judging round unless the new verification fails. `merge.revalidate_overlap` `false` turns this check off;
+   - writes the change record, `docs/changes/<ticket>.md` (`records.dir`), on the ticket's branch and commits it alone, so it lands with the change. It is text only: the why, the slice, the plan's tasks and the ADRs in force, every verification run with the SHA-256 of each evidence file, every review round with its votes, findings, a person's approval or send-back, security exceptions and the scan's answers, the builder's overrides, and the commits. Free text is redacted, cut when long, and links nothing; anything still shaped like a secret refuses the record and nothing is merged. The approval still holds: the script accepts its own commit only when it adds exactly that file on top of the approved (or brought-up-to-date) commit. A pull request still open from an earlier run already has its record and gets no second one. With `records.enabled` `false` nothing is written;
+   - lands it: with `merge.method` `local`, a merge commit on the main checkout; with `pr`, it pushes the branch, opens a pull request describing the verification and review and linking the change record, and merges it at the approved commit with its record.
+
+   A slice with a Jira key (from Product Studio, checked again at every step) has it at the start of the pull request's title (`KEY-123 <title>`) or of the local merge commit's message, and in the change record's header; with `tickets.jira.browse_url` set (an https address ending in `/`, such as `https://example.atlassian.net/browse/`), the pull request and the change record link it. Nothing calls Jira.
 
    Two things the pull request method adds:
    - If the slice came as a GitHub issue, the pull request's description says `Refs #<number>` for that issue (or `Refs owner/name#<number>` for an issue in another repository). It never says "closes" or "fixes": the Factory closes the slice's issue itself once it sees the merge on the integration branch.
    - Once the pull request is open, the script posts the findings of the review round that approved it, once, as one review comment. A finding on a line the pull request changes (or shows as context) is attached to that line; any other finding is listed in the review's summary. Reviewer text is masked for likely secrets, mentions are broken so nobody is notified, and long text is cut. If the review cannot be created, one plain comment is tried instead. A failure to post never stops or delays the merge; the result's `findings_posted` says what happened. Set `merge.pr.inline_findings` to `false` to turn this off.
 
 3. Report the result as it is:
-   - `MERGED`: the merge commit, and whether the branch had to be brought up to date first. The ticket is ready for cleanup.
+   - `MERGED`: the merge commit, whether the branch had to be brought up to date first, and the change record's path (`change_record`). The ticket is ready for cleanup.
    - `PR_OPEN` (exit code 3): the pull request's address, and why it is not merged yet, such as checks still running or branch protection. Run the skill again later; do not retry in a loop.
    - A refusal: the reason, and what the script did (voided the approval, or sent the ticket back with findings).
 
@@ -50,4 +55,6 @@ Record the outcome on the ticket with the ticket skill if it is installed.
 
 ## Settings
 
-In `.factory/config.json` under `merge`: `mode` (`auto`: the line merges approved tickets itself; `manual`: a person does), `method` (`local` or `pr`), `auto` (per risk tier, whether the line may merge without a person, such as `{"high": false}`), and `pr.inline_findings` (whether the pull request method posts the review findings on the pull request; on unless set to `false`).
+In `.factory/config.json` under `merge`: `mode` (`auto`: the line merges approved tickets itself; `manual`: a person does), `method` (`local` or `pr`), `auto` (per risk tier, whether the line may merge without a person, such as `{"high": false}`), `pr.inline_findings` (whether the pull request method posts the review findings on the pull request; on unless set to `false`), and `revalidate_overlap` (whether what landed on main since approval is checked against this ticket; on unless set to `false`).
+
+Under `records`: `enabled` (the change record; on unless set to `false`) and `dir` (where it is written, `docs/changes` by default; never inside the ADR folder). `records.publish_command` is the cleanup station's, not this one's.

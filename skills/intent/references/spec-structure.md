@@ -24,7 +24,40 @@ These H2 sections are required, each exactly once, in this order [missing-sectio
 9. `## Accepted defaults`
 10. `## Open questions`
 
+Two more sections sit between `## Acceptance criteria` and `## Dependencies and permissions`, in this order: `## Effects on shipped behaviour`, required whenever the spec is checked against the shipped rules, which `cell.py validate`, `cell.py finalize` and Product Studio always do (below), and `## Principles`, present only when the project has product principles (below).
+
 Any other H2 section is a warning, because downstream agents may ignore it [extra-section].
+
+## Principles
+
+A product principle is one sentence, `PP-NN`, that must hold in every slice; the product manager keeps them in Product Studio. When the project has any, the spec answers every active one, one line each, in this form:
+
+- `- **PP-01** (revision 2): "A published version MUST NOT be edited in place." **Applies:** INV-02, AC-03.`
+- `- **PP-02** (revision 1): "<statement>" **Does not apply:** This slice only reads versions.`
+- `- **PP-03** (revision 1): "<statement>" **Exception:** <the product manager's reason, in their words>.`
+
+The validator is given the principles as a file (`--principles`, which `cell.py` and Product Studio pass for you) and refuses a spec that leaves an active principle unanswered [principle-unanswered], quotes its statement other than exactly [principle-quote], names a revision that is not its current one [principle-revision], or answers a principle that does not exist [principle-unknown]. A row for a retired principle is a warning [principle-retired]. Without the principles file, each row is still checked on its own. `Applies` names at least one INV-NN, FR-NN or AC-NN that this spec defines [principle-applies]; `Does not apply` and `Exception` need a reason [principle-reason]; a line in any other form is an error [principle-format]. A project with no principles has no section, and nothing else changes. An exception is the product manager's decision: never recommend one.
+
+## Effects on shipped behaviour
+
+What this slice does to behaviour that has already shipped: the rules (invariants, requirements and decision rules) of the slice specs on the integration branch. The section holds either the single line `None.` or one table:
+
+```
+| Shipped rule | Effect | In this slice | Note |
+|---|---|---|---|
+| SLICE-003/FR-02 | kept | AC-04 | A returned item is not overdue. |
+| SLICE-003/R3 | replaced | FR-05 | |
+| SLICE-002/INV-01 | retired | | The product manager's reason, in their words. |
+```
+
+- `Shipped rule` is `SLICE-NNN/` followed by an `INV-NN`, `FR-NN` or `RN` of a shipped slice, never this slice's own [effects-rule] [effects-own-slice].
+- `Effect` is `kept`, `changed`, `replaced` or `retired` [effects-unknown-effect].
+- `kept`: the rule still holds, and `In this slice` names the scenario (`AC-NN`) that proves it with this slice's new data [effects-kept-scenario].
+- `changed` and `replaced`: `In this slice` names the invariant, requirement or decision rule of this slice that takes its place [effects-replacement].
+- `retired`: `In this slice` is empty and `Note` holds the product manager's reason [effects-retired-note].
+- The ID in `In this slice` is of the right kind [effects-wrong-id] and defined in this spec [effects-not-in-this-slice]. Each shipped rule is named once [effects-duplicate-rule].
+
+`cell.py` and Product Studio read the shipped rules from the integration branch (as `run.py current --json` lists them) and give them to the validator (`--shipped`). Then the section is required [effects-missing], and each row must name a rule that shipped [effects-not-shipped] and is still in force [effects-not-in-force]; with no rule shipped yet, `None.` is the only valid content. Write `None.` when the slice changes no shipped behaviour: silence is never read as no effects. Any other text in the section, a misspelt heading (`behavior`), an empty section or a malformed table is an error (the codes start with `effects-`). Without the shipped rules a spec with no section stays valid, and a present section is checked on its own. The rows reach `spec.json` as `effects`.
 
 ## Section content
 

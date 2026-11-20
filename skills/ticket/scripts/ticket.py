@@ -13,8 +13,11 @@
     ticket.py slice-check N               read only: whether slice issue N counts, with its why and spec (M11)
     ticket.py slice-status N --moment M --ref SLICE-NNN@rN... --nonce HEX [--question-file F]
                                           a status label, comment or close on a slice's own issue (M11)
+    ticket.py epic-view N --repository R --epic-id EPIC-NNN --commit C --view-file F
+                                          create or replace the one comment holding an epic's current view (M13)
     ticket.py epic-check N [--release R --commit C]
                                           read only: an epic's slices in order and its acceptance comments (M11)
+    ticket.py principles-check [N]        read only: the product principles on the project's issue, and whether they count (M13)
 
 Providers: local (Markdown files in .factory/tickets/, the default), github (gh), gitea-cli (gt),
 jira, fossil. Local and GitHub are fully handled here. For the others this script runs the
@@ -1173,6 +1176,70 @@ def cmd_epic_check(ctx: Context, args: argparse.Namespace) -> int:
     return 0
 
 
+PROJECT_LIST_LIMIT = "20"
+
+
+def cmd_principles_check(ctx: Context, args: argparse.Namespace) -> int:
+    """The product principles published on the project's issue (M13), and whether they count: the section is intact, and
+    an unedited approval for exactly that revision and SHA-256 was written by the account it names, a person with the
+    triage role or above. The principles are printed only when they count, verbatim (they are checked by their SHA-256).
+    Without N, the project's issue is the one open issue carrying mach:project and a project marker. Reads only."""
+    number = None
+    if args.number is not None:
+        number = int(args.number) if str(args.number).isdigit() else 0
+        if not issue_rules.is_issue_number(number):
+            raise TicketError(f"'{args.number}' is not an issue number.")
+    repository, failure = here(ctx)
+    report: Dict[str, Any] = {"repository": repository, "number": number, "decision": None, "failure": failure}
+
+    def done(decision: Dict[str, Any]) -> int:
+        report["decision"] = decision
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return 0
+
+    def unconfirmed(failure: Optional[Dict[str, str]]) -> int:
+        report["failure"] = failure
+        report["transient"] = (failure or {}).get("kind") == "network"
+        return done({"state": "not_accepted", "reason": f"Not accepted: GitHub could not be read for it ({(failure or {}).get('kind', 'other')}).",
+                     "revision": None, "sha256": None, "approved_by": None, "principles": None})
+
+    if repository is None:
+        return unconfirmed(failure)
+    if number is None:
+        out, failure = gh_read(ctx, "issue", "list", "--repo", repository, "--label", "mach:project", "--state", "open",
+                               "--limit", PROJECT_LIST_LIMIT, "--json", "number,body")
+        if out is None:
+            return unconfirmed(failure)
+        try:
+            listed = json.loads(out)
+        except ValueError:
+            listed = None
+        projects = [item["number"] for item in listed or [] if isinstance(item, dict) and issue_rules.is_issue_number(item.get("number"))
+                    and (issue_rules.product_marker(item.get("body")) or ("",))[0] == "project"] if isinstance(listed, list) else []
+        if len(projects) != 1:
+            return done({"state": "none" if not projects else "not_accepted", "reason": issue_rules.PRINCIPLES_NOT_ACCEPTED["no_project" if not projects else "several"],
+                         "revision": None, "sha256": None, "approved_by": None, "principles": None})
+        number = report["number"] = projects[0]
+    issue, failure = read_issue(ctx, repository, number)
+    if issue is None:
+        return unconfirmed(failure)
+    if "mach:project" not in issue["labels"] or (issue_rules.product_marker(issue.get("body")) or ("",))[0] != "project":
+        return done({"state": "not_accepted", "reason": f"Not accepted: issue #{number} is not a project issue written by MACH Product Studio.",
+                     "revision": None, "sha256": None, "approved_by": None, "principles": None})
+    comments: List[Dict[str, Any]] = []
+    roles: Dict[str, Any] = {}
+    if issue_rules.parse_principles_section(issue.get("body")) is not None:
+        comments, failure = read_comments(ctx, repository, number)
+        if comments is None:
+            return unconfirmed(failure)
+        for login in issue_rules.principles_approvers(issue.get("body"), comments)[:3]:
+            answer, failed = read_permission(ctx, repository, login)
+            roles[login] = answer
+            if answer is None:
+                report["transient"] = (failed or {}).get("kind") == "network"
+    return done(issue_rules.principles_acceptance(issue.get("body"), comments, roles))
+
+
 def cmd_slice_status(ctx: Context, args: argparse.Namespace) -> int:
     """One status write on a slice's own issue: labels, a comment from a fixed template with its hidden marker, and,
     when it ships, closing the issue. A comment whose outcome was lost is found again by its marker, never posted twice.
@@ -1260,6 +1327,86 @@ def cmd_slice_status(ctx: Context, args: argparse.Namespace) -> int:
             gh_call(ctx.project, "issue", "close", str(number), "--repo", repository)
             result["closed"] = True
         return answer("already_done" if already else "done")
+    except GhFailed as failed:
+        return answer("pending", failed.kind)
+    except ValueError:
+        return answer("pending", "other")
+
+
+# M13 part C: the one comment on an epic's issue that holds how the epic works today.
+EPIC_VIEW_COMMENTS_JQ = ".[] | {comment_id: .id, login: .user.login, body: .body}"
+EPIC_VIEW_COMMENT_PATH = "repos/{repository}/issues/comments/{comment_id}"
+EPIC_VIEW_FILE_LIMIT = 200000
+
+
+def cmd_epic_view(ctx: Context, args: argparse.Namespace) -> int:
+    """Create or replace the Factory's one comment on an epic's issue holding the epic's current view (issue_rules'
+    template around the view the run skill compiled). Its own comment is found by the template's marker and the account
+    gh is signed in as, and edited in place; it is created only when there is none; no other comment is touched. The
+    epic's issue must be one Product Studio wrote. tickets.github.status_comments false writes nothing."""
+    number = int(args.number) if str(args.number).isdigit() else 0
+    if not issue_rules.is_issue_number(number):
+        raise TicketError(f"'{args.number}' is not an issue number.")
+    if not issue_rules.EPIC_ID_RE.fullmatch(args.epic_id or "") or not issue_rules.COMMIT_RE.fullmatch(args.commit or ""):
+        raise TicketError("Name the epic as EPIC-NNN (--epic-id) and the commit the view describes in full (--commit).")
+    if not issue_rules.is_repository(args.repository):
+        raise TicketError("Name the epic's repository as OWNER/REPO (--repository).")
+    try:
+        view = Path(args.view_file).read_text(encoding="utf-8")[:EPIC_VIEW_FILE_LIMIT]
+    except (OSError, UnicodeDecodeError):
+        raise TicketError("The view file could not be read.")
+    body = issue_rules.epic_view_comment(args.epic_id, args.commit, view)
+    result: Dict[str, Any] = {"issue": number, "epic_id": args.epic_id, "commit": args.commit, "comment": "off", "status": "pending", "kind": None}
+
+    def answer(status: str, kind: Optional[str] = None) -> int:
+        result.update(status=status, kind=kind)
+        print(json.dumps(result, indent=2))
+        return {"done": 0, "already_done": EXIT_ALREADY_DONE}.get(status, EXIT_PENDING)
+
+    github = ctx.tickets.get("github") if isinstance(ctx.tickets.get("github"), dict) else {}
+    if github.get("status_comments") is False:
+        return answer("done")
+    remote = origin_repository(ctx.project)
+    if remote is not None and remote.lower() != args.repository.lower():
+        raise TicketError(f"{args.repository} is not this project's origin repository ({remote}). The view is written only there.")
+    repository, failure = here(ctx)
+    if repository is None:
+        return answer("pending", (failure or {}).get("kind") or "other")
+    if repository != args.repository:
+        raise TicketError(f"{args.repository} is not this project's origin repository ({repository}). The view is written only there.")
+    result["repository"] = repository
+    try:
+        if not issue_is_here(ctx.project, repository, number):
+            return answer("pending", "moved")
+        epic = read_epic(ctx, repository, number)
+        if epic["problem"]:
+            return answer("pending", "network" if epic.get("transient") else "refused")
+        if epic["epic_id"] != args.epic_id:
+            return answer("pending", "refused")  # the issue is another epic's: nothing is written
+        me = json.loads(gh_call(ctx.project, "api", *GH_API_HEADERS, "user", "--jq", "{login}") or "null")
+        login = me.get("login") if isinstance(me, dict) else None
+        if not (isinstance(login, str) and issue_rules.LOGIN_RE.fullmatch(login)):
+            return answer("pending", "other")
+        out = gh_call(ctx.project, "api", "--paginate", *GH_API_HEADERS, COMMENTS_PATH.format(repository=repository, number=number), "--jq", EPIC_VIEW_COMMENTS_JQ)
+        mine = [item for item in json_lines(out) if isinstance(item, dict) and item.get("login") == login and type(item.get("comment_id")) is int
+                and (issue_rules.epic_view_marker(item.get("body")) or {}).get("epic_id") == args.epic_id]
+        written = issue_rules.epic_view_marker(body)
+        if mine and issue_rules.epic_view_marker(mine[0].get("body")) == written:
+            result.update(comment="already_present", comment_id=mine[0]["comment_id"])
+            return answer("already_done")
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json" if mine else ".md", delete=False) as handle:
+            handle.write(json.dumps({"body": body}) if mine else body)
+        try:
+            if mine:
+                gh_call(ctx.project, "api", "--method", "PATCH", *GH_API_HEADERS,
+                        EPIC_VIEW_COMMENT_PATH.format(repository=repository, comment_id=mine[0]["comment_id"]), "--input", handle.name)
+                result.update(comment="replaced", comment_id=mine[0]["comment_id"])
+            else:
+                gh_call(ctx.project, "issue", "comment", str(number), "--repo", repository, "--body-file", handle.name)
+                result["comment"] = "posted"
+        finally:
+            os.unlink(handle.name)
+        return answer("done")
     except GhFailed as failed:
         return answer("pending", failed.kind)
     except ValueError:
@@ -1405,6 +1552,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--release")
     p.add_argument("--commit")
     p.set_defaults(func=cmd_epic_check)
+    p = sub.add_parser("principles-check", help="read only: the product principles on the project's issue, and whether they count")
+    p.add_argument("number", nargs="?", help="the project's issue number (default: the one open issue labelled mach:project)")
+    p.set_defaults(func=cmd_principles_check)
     p = sub.add_parser("slice-status", help="a status label, comment or close on a slice's own issue (called by intake)")
     p.add_argument("number")
     p.add_argument("--repository", required=True, help="OWNER/REPO: must be the origin remote's repository")
@@ -1413,6 +1563,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--nonce", help="the intake ledger's marker nonce; required")
     p.add_argument("--question-file", help="for the question moment: the contract engineer's question")
     p.set_defaults(func=cmd_slice_status)
+    p = sub.add_parser("epic-view", help="create or replace the one comment on an epic's issue holding how it works today (called by intake)")
+    p.add_argument("number")
+    p.add_argument("--repository", required=True, help="OWNER/REPO: must be the origin remote's repository")
+    p.add_argument("--epic-id", required=True)
+    p.add_argument("--commit", required=True, help="the integration branch's commit the view describes")
+    p.add_argument("--view-file", required=True, help="the epic's view as the run skill compiled it, in Markdown")
+    p.set_defaults(func=cmd_epic_view)
     return parser
 
 

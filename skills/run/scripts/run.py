@@ -11,6 +11,8 @@ and not by whoever is driving it.
     run.py status [--headless]            the next step for every open ticket and cell, and who is working on one now
     run.py explain <ticket> [--json]     why a ticket failed, was sent back or is waiting; reads only (explain.py)
     run.py decide [<ticket>...] [--json] each ticket waiting on a person, with the options it really has; reads only (decide.py)
+    run.py current [--epic E] [--all] [--json] [--at COMMIT]
+                                         how each epic works today, compiled from the shipped slice specs; reads only (current.py)
     run.py doctor [--fix] [--json]       check the machine and the project; works before .factory exists (doctor.py)
     run.py schedule <ticket>... [--running <ticket>...] [--limit n] [--sequential] [--by-person] [--dry-run] [--holder H]
                                          which tickets may start now and why the others wait; reads only (schedule.py)
@@ -63,7 +65,9 @@ or a stop ("action": "stop") with the reason and what it is waiting for: a perso
 person's approval, a merge, or a person to take over an escalated ticket; or an engineer's decision
 about an architecture decision record (ADR): a plan that cannot follow one (adr-decision), a High-risk
 ticket's own proposal waiting to be accepted (adr-acceptance), an ADR on main that cannot be read (adr-fix), or a
-required topic (adr.required_topics) with no accepted ADR on main, so nothing is planned yet (adr-baseline).
+required topic (adr.required_topics) with no accepted ADR on main, so nothing is planned yet (adr-baseline);
+or a ticket's branch that the build station could not bring up to date with main because the merge conflicts
+(main-conflict, from cell.json's main_conflict, until a person commits the merge or main moves on).
 ADRs accepted or changed after a ticket was planned are flagged in the digest and the status rows, never acted on.
 
 `next`, `status` and `explain` also carry a "digest": where the ticket stands, what a person must decide,
@@ -165,6 +169,26 @@ def adrs() -> Any:
         spec.loader.exec_module(module)
         _ADR.append(module)
     return _ADR[0]
+
+
+_RECORDS: List[Any] = []
+
+
+def record_commit(work: Path, cell: Dict[str, Any], decided: Dict[str, Any], head: str) -> bool:
+    """Whether the branch's tip is the merge station's change record commit (M13) on top of the approved or revalidated
+    commit, by the merge station's own rule (change_record.holds). False when that helper cannot be loaded."""
+    if not _RECORDS:
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("mach_change_record", sibling("merge") / "scripts" / "change_record.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except Exception:  # noqa: BLE001  without the helper the tip is treated as changed, which sends it to the merge station
+            module = None
+        _RECORDS.append(module)
+    if _RECORDS[0] is None:
+        return False
+    return _RECORDS[0].holds(git, work, cell.get("change_record"), head, [decided.get("head"), (cell.get("revalidated") or {}).get("head")])
 
 
 def git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
@@ -330,6 +354,22 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
         return step(ticket_id, stage, "plan", "The spec is ready; contracts and the plan are not written yet.", model=project.model("contracts"),
                     prompt=f"Use the MACH intent skill to finish stage 2 (contracts and plan) for this ticket: {skill('intent')} {ticket_id}{flag}")
 
+    conflict = cell.get("main_conflict")
+    if stage in ("planned", "built") and isinstance(conflict, dict):
+        # The build station could not bring the branch up to date with main (M13): it changed nothing and recorded the conflict.
+        main_now = git(project.root, "rev-parse", "HEAD").stdout.strip()
+        files = [str(name) for name in conflict.get("files") or [] if isinstance(name, str)][:10]
+        if head == conflict.get("branch_commit") and main_now == conflict.get("main_commit"):
+            return step(ticket_id, stage, "stop", f"Bringing the branch up to date with {conflict.get('main') or 'main'} conflicts in {', '.join(files) or 'some files'}. "
+                        f"A person must merge {conflict.get('main') or 'main'} into {cell.get('branch')} in {conflict.get('folder')} and resolve it; "
+                        "then the build carries on.", needs="main-conflict", files=files, folder=conflict.get("folder"))
+        branch_commit = str(conflict.get("branch_commit") or "")
+        if (stage == "built" and conflict.get("during") == "revise" and head != branch_commit and branch_commit
+                and git(work, "merge-base", "--is-ancestor", branch_commit, "HEAD").returncode == 0):
+            findings = conflict.get("findings")
+            return step(ticket_id, stage, "revise", "A person brought the branch up to date with main; the revision starts from their commit.",
+                        agent_type=agent_type("builder"), findings=findings,
+                        prompt=f"Revise MACH ticket {ticket_id}. A person resolved the conflict with main in the cell. Findings: {findings}")
     if stage == "planned" and cell.get("risk") == "High":
         waiting = adrs().pending_acceptance(cell)
         if waiting:
@@ -369,7 +409,7 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
     if stage in ("awaiting-human", "approved") and not project.merged(cell.get("branch")):
         decided = load_json(root / "review" / "decision.json", {}) or {}
         lapsed = exceptions_lapsed(decided)
-        if lapsed and (decided.get("head") == head or (cell.get("revalidated") or {}).get("head") == head):
+        if lapsed and (decided.get("head") == head or (cell.get("revalidated") or {}).get("head") == head or record_commit(work, cell, decided, head)):
             return step(ticket_id, stage, "stop", f"The security exception for {', '.join(lapsed)} has expired, so the security veto stands again and the ticket "
                         "is not approved or merged over it. A person records a new exception or abandons the ticket.", needs="security-exception-expired",
                         exceptions=lapsed)
@@ -389,7 +429,8 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
         merging = project.section("merge")
         tiers = merging.get("auto") if isinstance(merging.get("auto"), dict) else {}
         revalidated = (cell.get("revalidated") or {}).get("head")
-        if decided.get("head") not in (head, None) and revalidated != head and not project.merged(cell.get("branch")):
+        if decided.get("head") not in (head, None) and revalidated != head and not record_commit(work, cell, decided, head) \
+                and not project.merged(cell.get("branch")):
             return step(ticket_id, stage, "merge", "The branch changed after it was approved; the merge station will void the approval and return it to verification.",
                         model=project.model("utility"), prompt=f"Use the MACH merge skill: {skill('merge')} {ticket_id}")
         if not project.merged(cell.get("branch")) and merging.get("mode") == "auto" and tiers.get(risk.lower(), True) is not False:
@@ -485,6 +526,7 @@ NEEDS_TEXT = {
     "adr-fix": "Fix an architecture decision record the factory cannot read, by pull request.",
     "adr-baseline": "Write down the project's basic technical decisions as accepted ADRs (adr baseline drafts them); no ticket is planned until then.",
     "security-exception-expired": "A person's exception to a security blocker has expired: record a new one, or abandon the ticket.",
+    "main-conflict": "Bringing the ticket's branch up to date with the main branch conflicts: merge it in the cell and resolve it, then the build carries on.",
 }
 
 
@@ -784,6 +826,27 @@ def cmd_explain(project: Project, args: argparse.Namespace) -> int:
         report["resolved_from"] = args.resolved_from
     print(json.dumps(report, indent=2, ensure_ascii=False) if args.json else explain.human(report))
     return code
+
+
+def cmd_current(project: Project, args: argparse.Namespace) -> int:
+    """How each epic works today, compiled from the slice specs at the integration branch (current.py). Reads only."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import current
+    _, line = factory(project)
+    source = line.integration()
+    try:
+        if args.at:
+            commit = current.resolve_commit(project.root, args.at)
+            on_branch = current.contains(project.root, commit, source.get("commit"))
+        elif source.get("commit"):
+            commit, on_branch = source["commit"], True
+        else:
+            raise RunError(" ".join(source.get("problems") or ["No integration branch was found."]) + " Name a commit with --at.")
+        result = current.report(project.root, commit, branch=source.get("branch"), epic=args.epic, everything=args.all, on_branch=on_branch)
+    except current.CurrentError as exc:
+        raise RunError(str(exc))
+    print(json.dumps(result, indent=2, ensure_ascii=False) if args.json else current.human(result))
+    return 0
 
 
 def cmd_decide(project: Project, args: argparse.Namespace) -> int:
@@ -1346,6 +1409,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("ticket_id")
     p.add_argument("--json", action="store_true", help="the facts as JSON instead of a short list")
     p.set_defaults(func=cmd_explain)
+    p = sub.add_parser("current", help="how each epic works today, compiled from the shipped slice specs; reads only")
+    p.add_argument("--epic", metavar="E", help="one epic: its EPIC-ID or its issue number")
+    p.add_argument("--all", action="store_true", help="every epic in full (default: one line per epic)")
+    p.add_argument("--at", metavar="COMMIT", help="describe this commit instead of the integration branch's head")
+    p.add_argument("--json", action="store_true", help="the same data as JSON, with every shipped rule under rules")
+    p.set_defaults(func=cmd_current)
     p = sub.add_parser("decide", help="each ticket waiting on a person, with the options it really has; reads only")
     p.add_argument("ticket_ids", nargs="*", metavar="ticket", help="only these tickets (default: every open ticket)")
     p.add_argument("--json", action="store_true", help="the options as JSON, for the run skill's walkthrough")
@@ -1528,7 +1597,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 0  # a hook fired somewhere MACH is not: stay silent
         if args.command == "doctor":
             return cmd_doctor(root, args)  # before the .factory check: the doctor is how a project without one is set right
-        if args.command != "where" and not (root / ".factory").is_dir():
+        if args.command not in ("where", "current") and not (root / ".factory").is_dir():  # current reads Git objects only
             raise RunError(f"{root} is not a MACH project (it has no .factory folder). Run this from the project's folder, or pass --project.")
         project = Project(root)
         args.resolved_from = resolve_args(project, args)

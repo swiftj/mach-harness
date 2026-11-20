@@ -38,11 +38,17 @@ def make_project(parent: Path, name: str) -> Path:
 TIME_RE = re.compile(rb"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
 
 
+COMMIT_RE = re.compile(rb"\b[0-9a-f]{40}\b")
+
+
 def workspace(project: Path):
     """Every file Product Studio keeps, by path, with its bytes; the moments it records (when a
     slice was marked ready) are the only bytes that may differ between two runs."""
     home = project / ".factory" / "studio"
-    return {p.relative_to(home).as_posix(): TIME_RE.sub(b"<TIME>", p.read_bytes()) for p in sorted(home.rglob("*")) if p.is_file()}
+    found = {p.relative_to(home).as_posix(): TIME_RE.sub(b"<TIME>", p.read_bytes()) for p in sorted(home.rglob("*")) if p.is_file()}
+    if "shipped.json" in found:  # it names the repository's own integration commit, which two repositories never share
+        found["shipped.json"] = COMMIT_RE.sub(b"<COMMIT>", found["shipped.json"])
+    return found
 
 
 @unittest.skipIf(GO is None, "go is not installed")

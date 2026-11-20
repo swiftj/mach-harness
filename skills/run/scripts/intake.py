@@ -84,10 +84,12 @@ MAX_TEXT_BYTES = 256 * 1024  # a ready folder's file larger than this is refused
 RISK_FLOOR = "Medium"  # product-sourced work is never reviewed below this tier
 STATUS_MAX_ATTEMPTS = 20  # a status write GitHub could not be reached for is given up after this many tries
 STATUS_GIVE_UP_KINDS = ("auth", "refused", "not_found", "moved", "no_github", "no_gh")  # failures a retry cannot fix
+EPIC_VIEW_MOMENT = "epic-view"  # M13: the outbox write that replaces the epic's current-view comment
 LOCK_STALE_SECONDS = 15 * 60  # a lock older than this, or held by a process that is gone, is taken over
 ENGINEER = "engineer"  # the only caller that may dispatch without an authorization
 IGNORE_LINE = ".factory/intake/"
 READY_DIR = "product/ready"
+PRINCIPLES_FOLDER = "PRINCIPLES"  # product/ready/PRINCIPLES/: the published product principles (M13), never a slice
 SLICE_ID_RE = re.compile(r"^SLICE-[0-9]{3,}$")
 FOLDER_KEYS = {"schema_version", "slice_id", "title", "revision", "epic", "dependencies", "spec_sha256", "why_sha256"}
 # The header MACH writes under a spec's title when it commits the spec on the ticket's branch (decision 2).
@@ -535,11 +537,15 @@ class Factory:
                 found["not_accepted"].append({"issue": issue, "slice_id": marker["slice_id"], "revision": marker["revision"],
                                               "reason": "Not accepted: its spec does not pass the intent station's gates: " + "; ".join(problems[:5])})
                 continue
+            if marker.get("jira") is not None and not self.rules.is_jira_key(marker.get("jira")):  # M13: issue text is data; checked again here
+                found["not_accepted"].append({"issue": issue, "slice_id": marker["slice_id"], "revision": marker["revision"],
+                                              "reason": self.rules.SLICE_NOT_ACCEPTED["bad_jira"]})
+                continue
             order = epic.get("order") or []
             found["rows"].append({
                 "source": "github", "repository": found["repository"], "issue": issue, "slice_id": marker["slice_id"], "revision": marker["revision"],
                 "title": checked.get("title"), "epic": {"epic_id": epic.get("epic_id"), "issue": marker["epic"], "title": epic.get("title")},
-                "depends": [{"issue": dep} for dep in marker.get("depends") or []], "follows": marker.get("follows"),
+                "depends": [{"issue": dep} for dep in marker.get("depends") or []], "follows": marker.get("follows"), "jira": marker.get("jira"),
                 "order": order.index(issue) if issue in order else None, "ready_at": decision.get("ready_at"), "approved_by": decision.get("approved_by"),
                 "why": why, "spec": spec, "why_sha256": text_sha(why), "spec_sha256": text_sha(spec), "digest": digest_of(why, spec),
                 "key": self.source_key("github", found["repository"], issue, marker["slice_id"], marker["revision"])})
@@ -562,7 +568,9 @@ class Factory:
         except (ValueError, UnicodeDecodeError, RecursionError):
             return None, f"Not accepted: {where} could not be read as text and JSON."
         epic = record.get("epic") if isinstance(record, dict) else None
-        if (not isinstance(record, dict) or set(record) != FOLDER_KEYS or record.get("schema_version") != 1 or not SLICE_ID_RE.fullmatch(str(record.get("slice_id")))
+        if isinstance(record, dict) and "jira" in record and not self.rules.is_jira_key(record["jira"]):  # M13: optional, in Jira's form
+            return None, f"Not accepted: the Jira key in {where}/slice.json is not in Jira's form (such as ABC-123)."
+        if (not isinstance(record, dict) or set(record) - {"jira"} != FOLDER_KEYS or record.get("schema_version") != 1 or not SLICE_ID_RE.fullmatch(str(record.get("slice_id")))
                 or type(record.get("revision")) is not int or record["revision"] < 1 or not isinstance(record.get("title"), str)
                 or not isinstance(epic, dict) or set(epic) != {"epic_id", "title"} or not self.rules.EPIC_ID_RE.fullmatch(str(epic.get("epic_id")))
                 or not isinstance(record.get("dependencies"), list) or not all(isinstance(dep, str) and SLICE_ID_RE.fullmatch(dep) for dep in record["dependencies"])):
@@ -574,7 +582,7 @@ class Factory:
             return None, "Not accepted: its spec does not pass the intent station's gates: " + "; ".join(problems[:5])
         return {"source": source, "repository": None, "issue": None, "slice_id": record["slice_id"], "revision": record["revision"],
                 "title": self.rules.issue_title(record["title"]), "epic": {"epic_id": epic["epic_id"], "issue": None, "title": self.rules.issue_title(epic.get("title"))},
-                "depends": [{"slice_id": dep} for dep in record["dependencies"]], "follows": None, "order": None, "ready_at": None, "approved_by": None,
+                "depends": [{"slice_id": dep} for dep in record["dependencies"]], "follows": None, "jira": record.get("jira"), "order": None, "ready_at": None, "approved_by": None,
                 "why": why, "spec": spec, "why_sha256": record["why_sha256"], "spec_sha256": record["spec_sha256"], "digest": digest_of(why, spec),
                 "key": self.source_key(source, None, None, record["slice_id"], record["revision"])}, None
 
@@ -594,6 +602,8 @@ class Factory:
             folders.setdefault("/".join(parts[:3]), {})[parts[3]] = data if data is not None else b""
         for where in sorted(folders):
             name = where.split("/")[-1]
+            if name == PRINCIPLES_FOLDER:
+                continue  # the product principles (M13), read by the intent station; not a slice
             row, reason = self.read_folder(folders[where], where, "folder")
             if row is not None and row["slice_id"] != name:
                 row, reason = None, f"Not accepted: {where} holds {row['slice_id']}."
@@ -884,7 +894,7 @@ class Factory:
     def definition(self, row: Dict[str, Any]) -> Dict[str, Any]:
         return {"source": row["source"], "repository": row["repository"], "issue": row["issue"], "title": row.get("title"), "epic": dict(row["epic"]),
                 "revision": row["revision"], "digest": row["digest"], "spec_sha256": row["spec_sha256"], "why_sha256": row["why_sha256"],
-                "depends": list(row["depends"]), "follows": row.get("follows"), "order": row.get("order"), "ready_at": row.get("ready_at") or now(),
+                "depends": list(row["depends"]), "follows": row.get("follows"), "jira": row.get("jira"), "order": row.get("order"), "ready_at": row.get("ready_at") or now(),
                 "approved_by": row.get("approved_by"), "intake_key": row["key"], "stored": self.store(row), "available": True, "unavailable_reason": None}
 
     def new_entry(self, row: Dict[str, Any], history: List[Dict[str, Any]], earlier_runs: int = 0, ticket_id: Optional[str] = None) -> Dict[str, Any]:
@@ -1097,15 +1107,18 @@ class Factory:
                 write.update(state="gave_up", kind=write.get("kind") or "network", gave_up_at=now())
                 self.save(ledger)
                 continue
-            argv = ["slice-status", str(write["issue"]), "--repository", str(write["repository"]), "--moment", str(write["moment"]), "--nonce", self.nonce(ledger)]
-            for ref in write.get("refs") or []:
-                argv += ["--ref", str(ref)]
-            with tempfile.TemporaryDirectory(prefix="mach-question-") as folder:
-                if write.get("question") is not None:
-                    path = Path(folder) / "question.md"
-                    path.write_text(str(write["question"]), encoding="utf-8")
-                    argv += ["--question-file", str(path)]
-                done = self.ticket(*argv)
+            if write.get("moment") == EPIC_VIEW_MOMENT:
+                done = self.send_epic_view(write)
+            else:
+                argv = ["slice-status", str(write["issue"]), "--repository", str(write["repository"]), "--moment", str(write["moment"]), "--nonce", self.nonce(ledger)]
+                for ref in write.get("refs") or []:
+                    argv += ["--ref", str(ref)]
+                with tempfile.TemporaryDirectory(prefix="mach-question-") as folder:
+                    if write.get("question") is not None:
+                        path = Path(folder) / "question.md"
+                        path.write_text(str(write["question"]), encoding="utf-8")
+                        argv += ["--question-file", str(path)]
+                    done = self.ticket(*argv)
             try:
                 answer = json.loads(done.stdout) if done.stdout.strip() else {}
             except ValueError:
@@ -1129,6 +1142,61 @@ class Factory:
                 counts[str(write.get("state"))] = counts.get(str(write.get("state")), 0) + 1
         if counts:
             report["issue_status"] = {state: counts[state] for state in sorted(counts)}
+
+    # ---- M13 part C: the epic's current view, one comment on the epic's issue ----
+
+    def current(self) -> Any:
+        """The run skill's compiler of how an epic works today (current.py beside this file), loaded by path once."""
+        if getattr(self, "_current", None) is None:
+            import importlib.util
+            found = importlib.util.spec_from_file_location("mach_current_for_intake", Path(__file__).resolve().parent / "current.py")
+            module = importlib.util.module_from_spec(found)
+            found.loader.exec_module(module)
+            self._current = module
+        return self._current
+
+    def queue_epic_views(self, ledger: Dict[str, Any], entry: Dict[str, Any], refs: List[str]) -> None:
+        """When a slice from an issue ships: one write of its epic's current view on the epic's issue, and one for every
+        other epic with an issue whose rules this slice changed, replaced or retired. Recorded before tried, like every
+        status write. Nothing when status comments are off, or for a slice from a ready folder or with no epic issue."""
+        github = (self.config.get("tickets") or {}).get("github") if isinstance(self.config.get("tickets"), dict) else None
+        if (isinstance(github, dict) and github.get("status_comments") is False) or entry.get("source") != "github" or not entry.get("repository"):
+            return
+        epic = entry.get("epic") or {}
+        targets = {epic["epic_id"]: int(epic["issue"])} if epic.get("epic_id") and epic.get("issue") else {}
+        try:  # the other epics this slice acted on, from the specs at the commit it landed on
+            current = self.current()
+            commit = (entry.get("integrated") or {}).get("commit") or self.integration().get("commit")
+            view = current.compile_view(current.read_specs(self.root, commit)[0])
+            touched = {rule["epic_id"] for rule in view["rules"] for by in rule["superseded_by"] if by["slice_id"] == entry.get("slice_id")}
+            targets.update({item["epic_id"]: int(item["issue"]) for item in view["epics"]
+                            if item["epic_id"] in touched and item.get("issue") and item["epic_id"] not in targets})
+        except Exception:  # a view that cannot be compiled never holds up the line; its own epic's write is still queued
+            pass
+        for epic_id, issue in sorted(targets.items()):
+            key = sha("\n".join([EPIC_VIEW_MOMENT, str(entry["repository"]), str(issue), *sorted(refs)]).encode("utf-8"))[:16]
+            if key not in ledger["status"]:
+                ledger["status"][key] = {"moment": EPIC_VIEW_MOMENT, "repository": entry["repository"], "issue": issue, "epic_id": epic_id, "refs": list(refs),
+                                         "slice_id": entry.get("slice_id"), "state": "pending", "queued_at": now(), "attempts": 0, "last_attempt_at": None,
+                                         "kind": None, "done_at": None}
+
+    def send_epic_view(self, write: Dict[str, Any]) -> subprocess.CompletedProcess:
+        """One write of an epic's current view, compiled now at the integration branch's head so it shows the latest, through
+        the ticket station's epic-view. A view that cannot be compiled is a pending write, retried on the next pass."""
+        commit = self.integration().get("commit")
+        try:
+            current = self.current()
+            epics = current.report(self.root, commit, epic=str(write["epic_id"]), branch=None)["epics"] if commit else []
+            text = current.epic_markdown(epics[0], commit, self.rules.epic_view_limit()) if epics else None
+        except Exception:
+            text = None
+        if text is None:
+            return subprocess.CompletedProcess([], 4, json.dumps({"status": "pending", "kind": "no_view"}), "")
+        with tempfile.TemporaryDirectory(prefix="mach-epic-view-") as folder:
+            path = Path(folder) / "view.md"
+            path.write_text(text, encoding="utf-8")
+            return self.ticket("epic-view", str(write["issue"]), "--repository", str(write["repository"]), "--epic-id", str(write["epic_id"]),
+                               "--commit", commit, "--view-file", str(path))
 
     def status_summary(self) -> Dict[str, Any]:
         """Status updates to slices' issues waiting to reach GitHub, and any given up. Nothing when there are none."""
@@ -1319,6 +1387,7 @@ class Factory:
                 self.emit(ledger, "slice.integrated", **about, commit=row.get("integrated_commit"))
                 if not entry.get("product_pending"):
                     self.queue_status(ledger, entry, "shipped", refs)
+                    self.queue_epic_views(ledger, entry, refs)  # M13: the epic's current view, and any other epic it changed
                 changed = True
             if row["state"] == "ready" and before != "ready":
                 self.emit(ledger, "dependency.resolved", **about, depends_on=[dep.get("slice_id") or dep.get("name") for dep in row["depends_on"]])
@@ -1466,6 +1535,11 @@ class Factory:
                  "source_commit": (self.ledger().get("source") or {}).get("commit")}
         if entry.get("issue") and entry.get("repository"):
             found["issue"] = {"repository": entry["repository"], "number": entry["issue"]}
+        # M13 (merge check): the slices this one depends on, as slice IDs, for the merge station's look at what landed.
+        slices = self.ledger().get("slices") or {}
+        found["depends_on"] = sorted({dep.get("slice_id") or self.resolve_dep(dep, slices)[1] for dep in entry.get("depends") or []} - {None})
+        # M13 (Jira): the slice's Jira key, checked against Jira's form again before it reaches the cell.
+        found["jira"] = entry.get("jira") if self.rules.is_jira_key(entry.get("jira")) else None
         return found
 
     def write_cell_spec(self, entry: Dict[str, Any], ticket_id: str) -> Dict[str, Any]:

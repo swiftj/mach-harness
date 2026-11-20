@@ -82,6 +82,10 @@
 - **Then** after 60 seconds the system displays "We couldn't send the invitation. Try again in a few minutes."
 - **And** the Members page shows 4 of 5 seats in use
 
+## Effects on shipped behaviour
+
+None.
+
 ## Dependencies and permissions
 
 - **External dependencies:** Email delivery service, which sends the invitation email (failure: FR-06)

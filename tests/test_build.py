@@ -264,7 +264,7 @@ class StartTest(Base):
         self.commit_main()
         self.audit_report()
         refusal = self.refused("start", "LOCAL-001")
-        self.assertIn("cannot be brought up to date automatically", refusal)
+        self.assertIn("bringing the branch up to date conflicts in", refusal)
         self.assertIn("README.md", refusal)
         self.assertEqual(git(self.work, "status", "--porcelain").stdout, "", "a failed merge is undone")
 

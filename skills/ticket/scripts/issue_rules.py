@@ -71,7 +71,10 @@ def redact(text: str) -> str:
 
 DEFAULT_REQUEST_LABEL = "mach:request"
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$")
-LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
+# A GitHub account name. The one place the rule lives: Product Studio and every marker below use it.
+# An Enterprise Managed User's name ends in an underscore and the enterprise's short code (handle_shortcode).
+LOGIN_PATTERN = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:_[A-Za-z0-9-]{1,39})?"
+LOGIN_RE = re.compile("^" + LOGIN_PATTERN + "$")
 GHOST = "ghost"
 WRITE_PERMISSIONS = ("admin", "write")
 DECISION_MAX_AGE_HOURS = 24
@@ -422,11 +425,21 @@ PROJECT_ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 SLICE_MARKER_RE = re.compile(
     r"\A<!-- mach:slice id=(SLICE-[0-9]{3,}) revision=([0-9]{1,6}) epic=#([0-9]{1,9}) depends=(none|#[0-9]{1,9}(?:,#[0-9]{1,9})*)\n"
-    r"     spec-sha256=([0-9a-f]{64}) why-sha256=([0-9a-f]{64}) -->\n")
+    r"     spec-sha256=([0-9a-f]{64}) why-sha256=([0-9a-f]{64})(?: jira=(\S+))? -->\n")
 FOLLOWS_RE = re.compile(r"\AChanges #([0-9]{1,9}), which has shipped\.\n")
 PRODUCT_MARKER_RE = re.compile(r"\A<!-- mach:(project|epic) id=([A-Za-z0-9-]{1,64}) -->\n")
-APPROVAL_RE = re.compile(r"<!-- mach:approval id=(SLICE-[0-9]{3,}) revision=([0-9]{1,6}) by=([A-Za-z0-9-]{1,39}) "
-                         r"spec-sha256=([0-9a-f]{64}) why-sha256=([0-9a-f]{64}) -->")
+APPROVAL_RE = re.compile(r"<!-- mach:approval id=(SLICE-[0-9]{3,}) revision=([0-9]{1,6}) by=(" + LOGIN_PATTERN + r") "
+                         r"spec-sha256=([0-9a-f]{64}) why-sha256=([0-9a-f]{64})(?: jira=([A-Z][A-Z0-9_]{1,31}-[1-9][0-9]{0,8}))? -->")
+# M13 part E: a Jira issue key, in Jira's form. Identifiers only: MACH never calls Jira and holds no Jira credentials.
+JIRA_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,31}-[1-9][0-9]{0,8}$")
+JIRA_KEY_LIMIT = 42  # the longest key the form allows
+JIRA_LINE = "Jira: {}\n"
+
+
+def is_jira_key(value: Any) -> bool:
+    """True for a Jira issue key such as ABC-123: a project key of 2 to 32 capitals, digits or underscores starting
+    with a letter, a hyphen, and an issue number with no leading zero."""
+    return isinstance(value, str) and len(value) <= JIRA_KEY_LIMIT and bool(JIRA_KEY_RE.fullmatch(value))
 WHY_HEADING = "## Why\n"
 SPEC_HEADING = "\n## Specification\n"
 
@@ -442,24 +455,30 @@ def text_sha256_of(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def slice_marker(slice_id: str, revision: int, epic: int, depends: Sequence[int], spec_sha256: str, why_sha256: str) -> str:
+def slice_marker(slice_id: str, revision: int, epic: int, depends: Sequence[int], spec_sha256: str, why_sha256: str,
+                 jira: Optional[str] = None) -> str:
     if not SLICE_ID_RE.fullmatch(slice_id) or type(revision) is not int or not 1 <= revision < 10 ** 6 or not is_issue_number(epic):
         raise ValueError("a slice marker names a slice ID, a revision and its epic's issue")
     if any(not is_issue_number(n) for n in depends) or not HEX64_RE.fullmatch(spec_sha256) or not HEX64_RE.fullmatch(why_sha256):
         raise ValueError("a slice marker carries issue numbers and SHA-256 digests only")
+    if jira is not None and not is_jira_key(jira):
+        raise ValueError("a Jira key is in Jira's form, such as ABC-123")
     listed = ",".join(f"#{n}" for n in depends) or "none"
     return (f"<!-- mach:slice id={slice_id} revision={revision} epic=#{epic} depends={listed}\n"
-            f"     spec-sha256={spec_sha256} why-sha256={why_sha256} -->\n")
+            f"     spec-sha256={spec_sha256} why-sha256={why_sha256}{f' jira={jira}' if jira else ''} -->\n")
 
 
 def slice_issue_body(slice_id: str, revision: int, epic: int, depends: Sequence[int], why: str, spec: str,
-                     follows: Optional[int] = None) -> str:
-    """A slice's issue body: the marker, then the why and the spec exactly as approved."""
-    head = slice_marker(slice_id, revision, epic, depends, text_sha256_of(spec), text_sha256_of(why))
+                     follows: Optional[int] = None, jira: Optional[str] = None) -> str:
+    """A slice's issue body: the marker, then the why and the spec exactly as approved. A slice with a Jira key
+    (M13) carries it in the marker and in one line, `Jira: KEY-123`, before the why; one without is unchanged."""
+    head = slice_marker(slice_id, revision, epic, depends, text_sha256_of(spec), text_sha256_of(why), jira)
     if follows is not None:
         if not is_issue_number(follows):
             raise ValueError("not an issue number")
         head += f"Changes #{follows}, which has shipped.\n"
+    if jira:
+        head += JIRA_LINE.format(jira)
     return head + WHY_HEADING + why + SPEC_HEADING + spec
 
 
@@ -475,14 +494,19 @@ def parse_slice_body(body: Any) -> Optional[Dict[str, Any]]:
         if not found:
             continue
         depends = [] if found.group(4) == "none" else [int(part[1:]) for part in found.group(4).split(",")]
+        key = found.group(7)
         marker = {"slice_id": found.group(1), "revision": int(found.group(2)), "epic": int(found.group(3)), "depends": depends,
-                  "spec_sha256": found.group(5), "why_sha256": found.group(6), "follows": None}
+                  "spec_sha256": found.group(5), "why_sha256": found.group(6), "follows": None,
+                  "jira": key if is_jira_key(key) else None, "jira_invalid": key is not None and not is_jira_key(key)}
         rest = text[found.end():]
         follows = FOLLOWS_RE.match(rest)
         if follows:
             marker["follows"] = int(follows.group(1))
             rest = rest[follows.end():]
         split = None
+        if marker["jira"]:  # the visible line must say the key the marker carries; otherwise the body was changed
+            line = JIRA_LINE.format(marker["jira"])
+            rest = rest[len(line):] if rest.startswith(line) else "(changed)"
         if rest.startswith(WHY_HEADING):
             rest = rest[len(WHY_HEADING):]
             at = rest.find(SPEC_HEADING)
@@ -498,15 +522,19 @@ def parse_slice_body(body: Any) -> Optional[Dict[str, Any]]:
     return result
 
 
-def approval_comment(slice_id: str, revision: int, login: str, spec_sha256: str, why_sha256: str) -> str:
-    """The comment that records a product manager's approval of one revision of a slice."""
+def approval_comment(slice_id: str, revision: int, login: str, spec_sha256: str, why_sha256: str, jira: Optional[str] = None) -> str:
+    """The comment that records a product manager's approval of one revision of a slice. A Jira key (M13) is one of
+    the approved fields: a body whose key is not the approved one is not accepted."""
     if not LOGIN_RE.fullmatch(login or "") or not SLICE_ID_RE.fullmatch(slice_id) or type(revision) is not int:
         raise ValueError("an approval names a slice, a revision and a GitHub account")
     if not HEX64_RE.fullmatch(spec_sha256) or not HEX64_RE.fullmatch(why_sha256):
         raise ValueError("an approval carries SHA-256 digests")
+    if jira is not None and not is_jira_key(jira):
+        raise ValueError("a Jira key is in Jira's form, such as ABC-123")
     return (f"Approved in MACH Product Studio by {login}: {slice_id}, revision {revision}.\n\n"
-            f"- Specification SHA-256: `{spec_sha256}`\n- Why SHA-256: `{why_sha256}`\n\n"
-            f"<!-- mach:approval id={slice_id} revision={revision} by={login} spec-sha256={spec_sha256} why-sha256={why_sha256} -->")
+            f"- Specification SHA-256: `{spec_sha256}`\n- Why SHA-256: `{why_sha256}`\n" + (f"- Jira: `{jira}`\n" if jira else "") + "\n"
+            f"<!-- mach:approval id={slice_id} revision={revision} by={login} spec-sha256={spec_sha256} why-sha256={why_sha256}"
+            f"{f' jira={jira}' if jira else ''} -->")
 
 
 def approvals(bodies: Iterable[Any]) -> List[Dict[str, Any]]:
@@ -515,7 +543,7 @@ def approvals(bodies: Iterable[Any]) -> List[Dict[str, Any]]:
     for body in bodies:
         for match in APPROVAL_RE.finditer(body if isinstance(body, str) else ""):
             found.append({"slice_id": match.group(1), "revision": int(match.group(2)), "by": match.group(3),
-                          "spec_sha256": match.group(4), "why_sha256": match.group(5)})
+                          "spec_sha256": match.group(4), "why_sha256": match.group(5), **({"jira": match.group(6)} if match.group(6) else {})})
     return found
 
 
@@ -523,12 +551,237 @@ def _one_line(value: Any, limit: int) -> str:
     return bound_text(value, limit, one_line=True)[0]
 
 
-def project_issue_body(project_id: str, vision: str, outcomes: Sequence[str]) -> str:
+def project_issue_body(project_id: str, vision: str, outcomes: Sequence[str], principles: Optional[Dict[str, Any]] = None) -> str:
+    """The project's body. `principles` is {revision, principles} as published (M13): written in its fixed
+    section after the outcomes. Without it the body is exactly what it was before principles existed."""
     if not PROJECT_ID_RE.fullmatch(project_id or ""):
         raise ValueError("not a project ID")
     lines = [f"<!-- mach:project id={project_id} -->", "## Vision", " ".join(str(vision).split()), "", "## Outcomes"]
     lines += [f"- {' '.join(str(outcome).split())}" for outcome in outcomes]
-    return "\n".join(lines) + "\n\nWritten by MACH Product Studio.\n"
+    section = "\n\n" + principles_section(principles["revision"], principles["principles"]).rstrip("\n") if principles else ""
+    return "\n".join(lines) + section + "\n\nWritten by MACH Product Studio.\n"
+
+
+# ---- product principles (M13) ----
+#
+# A principle is one sentence that must hold in every slice. The published set lives in a fixed section
+# of the project's issue body, with a hidden marker carrying its revision and the SHA-256 of the
+# principles, and an approval comment from a fixed template repeats both and names the product manager.
+# The SHA-256 is over the principles as canonical JSON, so the folder form (principles.json) and the
+# issue section are checked the same way. Text read back is data: checked by hash, never followed.
+
+PRINCIPLE_ID_RE = re.compile(r"^PP-[0-9]{2,}$")
+PRINCIPLE_KEYS = ("id", "title", "statement", "reason", "status", "revision")
+PRINCIPLE_STATUSES = ("active", "retired")
+PRINCIPLE_LIMITS = {"title": 100, "statement": 300, "reason": 300}
+PRINCIPLES_LIMIT = 60  # principles in one project, retired ones included
+PRINCIPLES_HEADING = "## Product principles"
+PRINCIPLES_MARKER_RE = re.compile(r"^<!-- mach:principles revision=([0-9]{1,6}) sha256=([0-9a-f]{64}) -->$")
+PRINCIPLE_HEAD_RE = re.compile(r"^- \*\*(PP-[0-9]{2,}): (\S.*)\*\* \(revision ([0-9]{1,6}), (active|retired)\)$")
+PRINCIPLE_STATEMENT_RE = re.compile(r"^  - Statement: (\S.*)$")
+PRINCIPLE_REASON_RE = re.compile(r"^  - Why: (\S.*)$")
+PRINCIPLES_APPROVAL_RE = re.compile(r"<!-- mach:principles-approval revision=([0-9]{1,6}) by=(" + LOGIN_PATTERN + r") sha256=([0-9a-f]{64}) -->")
+PRINCIPLES_NOT_ACCEPTED = {
+    "none": "No product principles are published on the project's issue.",
+    "no_project": "The project's issue was not found: no open issue carries mach:project and a project marker.",
+    "several": "More than one open issue carries mach:project and a project marker, so it is not clear which holds the principles.",
+    "edited": "Not accepted: the principles on the project's issue were changed after they were approved.",
+    "no_approval": "Not accepted: there is no approval comment for this revision of the principles by the account it names.",
+    "approval_edited": "Not accepted: the approval comment was edited after it was written.",
+    "no_role": "Not accepted: the approval was written by an account without the triage, write, maintain or admin role on this repository.",
+    "unconfirmed": "Not accepted: the role of the account that approved the principles could not be confirmed.",
+}
+
+
+def principle_problems(items: Any) -> List[str]:
+    """Why a list of principles is not in the shape Product Studio writes, or [] when it is."""
+    if not isinstance(items, list):
+        return ["the principles are not a list"]
+    problems: List[str] = []
+    if len(items) > PRINCIPLES_LIMIT:
+        problems.append(f"there are more than {PRINCIPLES_LIMIT} principles")
+    seen = set()
+    for at, item in enumerate(items, start=1):
+        if not isinstance(item, dict) or set(item) != set(PRINCIPLE_KEYS):
+            problems.append(f"principle {at} does not have exactly the fields {', '.join(PRINCIPLE_KEYS)}")
+            continue
+        ident = item["id"]
+        if not isinstance(ident, str) or not PRINCIPLE_ID_RE.fullmatch(ident) or ident in seen:
+            problems.append(f"principle {at} has no usable ID, or one used twice")
+            continue
+        seen.add(ident)
+        if item["status"] not in PRINCIPLE_STATUSES or type(item["revision"]) is not int or not 1 <= item["revision"] < 10 ** 6:
+            problems.append(f"{ident} needs a status (active or retired) and a revision of 1 or more")
+        for key, limit in PRINCIPLE_LIMITS.items():
+            value = item[key]
+            if not isinstance(value, str) or not value.strip() or value != " ".join(value.split()) or len(value) > limit:
+                problems.append(f"{ident}'s {key} must be one line of text, at most {limit} characters")
+        if isinstance(item["statement"], str) and any(mark in item["statement"] for mark in ('"', "“", "”", "<<<", ">>>", "<!--")):
+            problems.append(f"{ident}'s statement must not contain double quotation marks or markers")
+        if isinstance(item["title"], str) and any(mark in item["title"] for mark in ("**", "<<<", ">>>", "<!--")):
+            problems.append(f"{ident}'s title must not contain ** or markers")
+    return problems
+
+
+def principles_canonical(items: Sequence[Dict[str, Any]]) -> str:
+    """The principles as one canonical JSON text, sorted by ID: what their SHA-256 is taken over."""
+    ordered = sorted(({key: item[key] for key in PRINCIPLE_KEYS} for item in items), key=lambda item: (len(item["id"]), item["id"]))
+    return json.dumps(ordered, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def principles_sha256(items: Sequence[Dict[str, Any]]) -> str:
+    return text_sha256_of(principles_canonical(items))
+
+
+def principles_section(revision: int, items: Sequence[Dict[str, Any]]) -> str:
+    """The fixed section of the project's body that holds the published principles."""
+    problems = principle_problems(list(items))
+    if problems or type(revision) is not int or not 1 <= revision < 10 ** 6:
+        raise ValueError("principles to publish must be in Product Studio's shape: " + "; ".join(problems[:3] or ["a revision of 1 or more"]))
+    ordered = json.loads(principles_canonical(items))
+    lines = [PRINCIPLES_HEADING, "", f"<!-- mach:principles revision={revision} sha256={principles_sha256(items)} -->", ""]
+    for item in ordered:
+        lines += [f"- **{item['id']}: {item['title']}** (revision {item['revision']}, {item['status']})",
+                  f"  - Statement: {item['statement']}", f"  - Why: {item['reason']}", ""]
+    return "\n".join(lines)
+
+
+def parse_principles_section(body: Any) -> Optional[Dict[str, Any]]:
+    """The principles section of a project body: {revision, sha256, principles, intact}. `intact` is True only when the
+    section is exactly what Product Studio writes for those principles and their SHA-256 matches the marker. None when
+    the body has no principles section."""
+    if not isinstance(body, str):
+        return None
+    lines = body.replace("\r\n", "\n").split("\n")
+    for at in range(2, len(lines)):
+        found = PRINCIPLES_MARKER_RE.fullmatch(lines[at])
+        if not found or lines[at - 2] != PRINCIPLES_HEADING or lines[at - 1] != "":
+            continue
+        revision, digest = int(found.group(1)), found.group(2)
+        items: List[Dict[str, Any]] = []
+        index = at + 2 if at + 1 < len(lines) and lines[at + 1] == "" else len(lines)
+        while index + 2 < len(lines):
+            head = PRINCIPLE_HEAD_RE.fullmatch(lines[index])
+            statement = PRINCIPLE_STATEMENT_RE.fullmatch(lines[index + 1])
+            reason = PRINCIPLE_REASON_RE.fullmatch(lines[index + 2])
+            if not (head and statement and reason):
+                break
+            items.append({"id": head.group(1), "title": head.group(2), "statement": statement.group(1), "reason": reason.group(1),
+                          "status": head.group(4), "revision": int(head.group(3))})
+            index += 4 if index + 3 < len(lines) and lines[index + 3] == "" else 3
+        text = "\n".join(lines[at - 2:index]).rstrip("\n")
+        intact = False
+        if revision >= 1 and items and not principle_problems(items) and principles_sha256(items) == digest:
+            intact = principles_section(revision, items).rstrip("\n") == text
+        return {"revision": revision, "sha256": digest, "principles": items if intact else None, "intact": intact}
+    return None
+
+
+def principles_approval_comment(revision: int, login: str, sha256: str) -> str:
+    """The comment that records a product manager's approval of one revision of the principles."""
+    if not LOGIN_RE.fullmatch(login or "") or type(revision) is not int or not 1 <= revision < 10 ** 6 or not HEX64_RE.fullmatch(sha256 or ""):
+        raise ValueError("an approval of the principles names a revision, a GitHub account and the SHA-256")
+    return (f"Product principles approved in MACH Product Studio by {login}: revision {revision}.\n\n"
+            f"- Principles SHA-256: `{sha256}`\n\n"
+            f"<!-- mach:principles-approval revision={revision} by={login} sha256={sha256} -->")
+
+
+def principles_approvals(bodies: Iterable[Any]) -> List[Dict[str, Any]]:
+    """Every approval marker for the principles found in an issue's comments, in order."""
+    found = []
+    for body in bodies:
+        for match in PRINCIPLES_APPROVAL_RE.finditer(body if isinstance(body, str) else ""):
+            found.append({"revision": int(match.group(1)), "by": match.group(2), "sha256": match.group(3)})
+    return found
+
+
+def principles_take_check(body: Any, comments: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """For Product Studio: whether the principles on a project's issue can be taken into a workspace. The section must be
+    intact and the account its approval names must have left that approval for exactly this revision and SHA-256.
+    Whether the comment was edited is not checked here (the Factory checks it); the SHA-256 already binds the text."""
+    parsed = parse_principles_section(body)
+    result: Dict[str, Any] = {"problem": None, "revision": None, "sha256": None, "approved_by": None, "principles": None}
+    if parsed is None:
+        result["problem"] = "none"
+        return result
+    result.update(revision=parsed["revision"], sha256=parsed["sha256"])
+    if not parsed["intact"]:
+        result["problem"] = "edited"
+        return result
+    approved = [found for item in comments if isinstance(item, dict) for found in principles_approvals([item.get("body")])
+                if found["by"] == item.get("login") and (found["revision"], found["sha256"]) == (parsed["revision"], parsed["sha256"])]
+    if not approved:
+        result["problem"] = "no_approval"
+        return result
+    result.update(approved_by=approved[-1]["by"], principles=parsed["principles"])
+    return result
+
+
+def principles_approvers(body: Any, comments: Sequence[Dict[str, Any]]) -> List[str]:
+    """For the Factory: the accounts whose role must be asked, in order: each wrote, as a person and unedited, an approval
+    naming themselves for exactly the revision and SHA-256 the project's issue holds."""
+    parsed = parse_principles_section(body)
+    if not parsed or not parsed["intact"]:
+        return []
+    found: List[str] = []
+    for item in comments:
+        if item.get("app") or item.get("type") != "User" or not unedited(item) or item.get("login") in found:
+            continue
+        if any(a["by"] == item.get("login") and (a["revision"], a["sha256"]) == (parsed["revision"], parsed["sha256"]) for a in principles_approvals([item.get("body")])):
+            found.append(str(item.get("login")))
+    return found
+
+
+def principles_acceptance(body: Any, comments: Sequence[Dict[str, Any]], roles: Dict[str, Any]) -> Dict[str, Any]:
+    """Whether the principles on a project's issue count for the Factory. `comments` from issue_comments; `roles` maps each
+    login from principles_approvers to its collaborator permission answer, or None when it could not be read. They count
+    only when the section is intact and an unedited approval for exactly this revision and SHA-256 was written by the
+    account it names, a person with the triage role or above. The principles are returned only when they count."""
+    result: Dict[str, Any] = {"state": "not_accepted", "reason": None, "revision": None, "sha256": None, "approved_by": None, "principles": None}
+    parsed = parse_principles_section(body)
+    if parsed is None:
+        result.update(state="none", reason=PRINCIPLES_NOT_ACCEPTED["none"])
+        return result
+    result.update(revision=parsed["revision"], sha256=parsed["sha256"])
+    if not parsed["intact"]:
+        result["reason"] = PRINCIPLES_NOT_ACCEPTED["edited"]
+        return result
+    named = [item for item in comments if any(a["by"] == item.get("login") and (a["revision"], a["sha256"]) == (parsed["revision"], parsed["sha256"])
+                                              for a in principles_approvals([item.get("body")]))
+             and not item.get("app") and item.get("type") == "User"]
+    if not named:
+        result["reason"] = PRINCIPLES_NOT_ACCEPTED["no_approval"]
+        return result
+    if not any(unedited(item) for item in named):
+        result["reason"] = PRINCIPLES_NOT_ACCEPTED["approval_edited"]
+        return result
+    problem = "unconfirmed"
+    for login in principles_approvers(body, comments):
+        answer = roles.get(login)
+        if role_counts(answer):
+            result.update(state="accepted", approved_by=login, principles=parsed["principles"])
+            return result
+        if isinstance(answer, dict):
+            problem = "no_role"
+    result["reason"] = PRINCIPLES_NOT_ACCEPTED[problem]
+    return result
+
+
+def principles_folder_check(record: Any) -> Dict[str, Any]:
+    """The folder form, product/ready/PRINCIPLES/principles.json: {schema_version, revision, sha256, principles}, counted only
+    when its SHA-256 is that of its principles."""
+    result: Dict[str, Any] = {"state": "not_accepted", "reason": None, "revision": None, "sha256": None, "principles": None}
+    if (not isinstance(record, dict) or set(record) != {"schema_version", "revision", "sha256", "principles"} or record.get("schema_version") != 1
+            or type(record.get("revision")) is not int or record["revision"] < 1 or not HEX64_RE.fullmatch(str(record.get("sha256")))
+            or principle_problems(record.get("principles"))):
+        result["reason"] = "Not accepted: product/ready/PRINCIPLES/principles.json is not in the form Product Studio writes."
+        return result
+    result.update(revision=record["revision"], sha256=record["sha256"])
+    if principles_sha256(record["principles"]) != record["sha256"]:
+        result["reason"] = "Not accepted: the principles in product/ready/PRINCIPLES are not the ones that were approved (their SHA-256 does not match)."
+        return result
+    result.update(state="accepted", principles=record["principles"])
+    return result
 
 
 def epic_issue_body(epic_id: str, criteria: Sequence[str], tasks: Optional[Sequence[Tuple[int, str, bool]]] = None) -> str:
@@ -595,6 +848,8 @@ SLICE_NOT_ACCEPTED = {
     "no_role": "Not accepted: mach:ready was added by an account without the triage, write, maintain or admin role on this repository.",
     "no_approval": "Not accepted: there is no approval comment for this revision by the account that marked it ready.",
     "approval_edited": "Not accepted: the approval comment was edited after it was written.",
+    "bad_jira": "Not accepted: the Jira key in its body is not in Jira's form (such as ABC-123). The product manager marks it ready again in Product Studio.",
+    "jira_changed": "Not accepted: its Jira key is not the one that was approved. The product manager marks it ready again in Product Studio.",
 }
 
 
@@ -644,7 +899,9 @@ def slice_acceptance(issue: Dict[str, Any], events: Sequence[Dict[str, Any]], co
     parsed = parse_slice_body(issue.get("body"))
     if parsed is None:
         return refuse(SLICE_NOT_ACCEPTED["no_marker"])
-    result["marker"] = {key: parsed[key] for key in ("slice_id", "revision", "epic", "depends", "spec_sha256", "why_sha256", "follows")}
+    result["marker"] = {key: parsed[key] for key in ("slice_id", "revision", "epic", "depends", "spec_sha256", "why_sha256", "follows", "jira")}
+    if parsed["jira_invalid"]:
+        return refuse(SLICE_NOT_ACCEPTED["bad_jira"])
     if not parsed["intact"]:
         return refuse(SLICE_NOT_ACCEPTED["edited"])
     event = deciding_event(events, READY_LABEL)
@@ -658,13 +915,16 @@ def slice_acceptance(issue: Dict[str, Any], events: Sequence[Dict[str, Any]], co
     if not role_counts(permission):
         return refuse(SLICE_NOT_ACCEPTED["no_role"])
     login, account = event["login"], event["id"]
-    matching = [item for item in comments
-                if item.get("login") == login and item.get("id") == account and not item.get("app") and item.get("type") == "User"
+
+    def approving(item: Dict[str, Any], same_key: bool) -> bool:
+        return (item.get("login") == login and item.get("id") == account and not item.get("app") and item.get("type") == "User"
                 and any(found["slice_id"] == parsed["slice_id"] and found["revision"] == parsed["revision"] and found["by"] == login
                         and found["spec_sha256"] == parsed["spec_sha256"] and found["why_sha256"] == parsed["why_sha256"]
-                        for found in approvals([item.get("body")]))]
+                        and (not same_key or found.get("jira") == parsed["jira"]) for found in approvals([item.get("body")])))
+
+    matching = [item for item in comments if approving(item, True)]
     if not matching:
-        return refuse(SLICE_NOT_ACCEPTED["no_approval"])
+        return refuse(SLICE_NOT_ACCEPTED["jira_changed" if any(approving(item, False) for item in comments) else "no_approval"])
     if not any(unedited(item) for item in matching):
         return refuse(SLICE_NOT_ACCEPTED["approval_edited"])
     result.update(state="accepted", approved_by=login, why=parsed["why"], spec=parsed["spec"])
@@ -676,7 +936,7 @@ def slice_acceptance(issue: Dict[str, Any], events: Sequence[Dict[str, Any]], co
 RELEASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 ACCEPTANCE_RE = re.compile(r"<!-- mach:acceptance epic=(EPIC-[0-9]{3,}) release=([A-Za-z0-9][A-Za-z0-9._-]{0,79}) commit=([0-9a-f]{40}) "
-                           r"decision=(accepted|rejected) by=([A-Za-z0-9-]{1,39}) readiness-sha256=([0-9a-f]{64}) -->")
+                           r"decision=(accepted|rejected) by=(" + LOGIN_PATTERN + r") readiness-sha256=([0-9a-f]{64}) -->")
 DECISIONS = ("accepted", "rejected")
 
 
@@ -790,7 +1050,7 @@ def slice_take_check(issue: Dict[str, Any], comments: Sequence[Dict[str, Any]]) 
     if parsed is None:
         result["problem"] = "not_ours"
         return result
-    result["marker"] = {key: parsed[key] for key in ("slice_id", "revision", "epic", "depends", "spec_sha256", "why_sha256", "follows")}
+    result["marker"] = {key: parsed[key] for key in ("slice_id", "revision", "epic", "depends", "spec_sha256", "why_sha256", "follows", "jira")}
     if str(issue.get("state") or "").lower() == "closed" or "mach:shipped" in labels:
         result["problem"] = "shipped"
         return result
@@ -799,7 +1059,7 @@ def slice_take_check(issue: Dict[str, Any], comments: Sequence[Dict[str, Any]]) 
         return result
     approved = [found for item in comments if isinstance(item, dict) for found in approvals([item.get("body")])
                 if found["by"] == item.get("login") and found["slice_id"] == parsed["slice_id"] and found["revision"] == parsed["revision"]
-                and (found["spec_sha256"], found["why_sha256"]) == (parsed["spec_sha256"], parsed["why_sha256"])]
+                and (found["spec_sha256"], found["why_sha256"], found.get("jira")) == (parsed["spec_sha256"], parsed["why_sha256"], parsed["jira"])]
     if not approved:
         result["problem"] = "no_approval"
         return result
@@ -822,3 +1082,58 @@ def epic_criteria(body: Any) -> List[str]:
         if text:
             found.append(text)
     return found
+
+
+# ---- the epic's current view (M13 part C) ----
+#
+# One comment on an epic's issue, written by the Factory each time a slice of that epic ships: a hidden marker naming the
+# epic, the commit described and the SHA-256 of the text under it, a heading, one fixed sentence, then the view the run
+# skill's compiler made (spec text already made inert there). The Factory finds its own comment by this marker and
+# the account it runs as, and edits it in place; it never touches another comment. Nothing reads it as a decision.
+
+EPIC_VIEW_MARKER_RE = re.compile(r"\A<!-- mach:epic-view v1 epic=(EPIC-[0-9]{3,}) commit=([0-9a-f]{40}) sha256=([0-9a-f]{64}) -->\n")
+EPIC_VIEW_HEADING = "## How this epic works today"
+EPIC_VIEW_LEAD = ("Compiled by the MACH Factory from the slices of this epic that have shipped. The slices are the authority; "
+                  "this comment is replaced each time a slice of this epic ships.")
+EPIC_VIEW_CUT = "_This view was cut to fit in one comment. Run `/mach current {epic}` for all of it._"
+EPIC_VIEW_ROOM = 1024  # what the heading, the sentence, the marker and the note take, with room to spare
+
+
+def epic_view_limit() -> int:
+    """How long the compiled view may be for the whole comment to fit GitHub's limit: what the caller asks the compiler for."""
+    return ISSUE_BODY_LIMIT - EPIC_VIEW_ROOM
+
+
+def epic_view_comment(epic_id: str, commit: str, view: Any, limit: int = ISSUE_BODY_LIMIT) -> str:
+    """The Factory's comment holding an epic's current view, at most `limit` characters. The view is cleaned again and
+    made unable to open a hidden comment, mention anyone or link an issue; one too long is cut at a line with a plain note."""
+    if not EPIC_ID_RE.fullmatch(str(epic_id)) or not COMMIT_RE.fullmatch(str(commit)):
+        raise ValueError("an epic view names an EPIC-ID and a full commit")
+    text = clean_text(view if isinstance(view, str) else "").replace("<", "&lt;")
+    text = MENTION_RE.sub("@" + BREAK, REFERENCE_RE.sub(lambda m: m.group(1) + BREAK, text)).strip("\n")
+    head = f"{EPIC_VIEW_HEADING}\n\n{EPIC_VIEW_LEAD}\n\n"
+    marker_length = len(f"<!-- mach:epic-view v1 epic={epic_id} commit={commit} sha256={'0' * 64} -->\n")
+    note = "\n\n" + EPIC_VIEW_CUT.format(epic=epic_id)
+    room = limit - marker_length - len(head) - 1
+    if len(text) > room:
+        kept, used = [], 0
+        for line in text.split("\n"):
+            if used + len(line) + 1 + len(note) > room:
+                break
+            kept.append(line)
+            used += len(line) + 1
+        text = "\n".join(kept).rstrip("\n") + note
+    body = head + text + "\n"
+    return f"<!-- mach:epic-view v1 epic={epic_id} commit={commit} sha256={hashlib.sha256(body.encode('utf-8')).hexdigest()} -->\n{body}"
+
+
+def epic_view_marker(body: Any) -> Optional[Dict[str, Any]]:
+    """The marker of a comment holding an epic's current view: {epic_id, commit, sha256, intact}, or None."""
+    if not isinstance(body, str):
+        return None
+    body = body.replace("\r\n", "\n")
+    found = EPIC_VIEW_MARKER_RE.match(body)
+    if not found:
+        return None
+    intact = hashlib.sha256(body[found.end():].encode("utf-8")).hexdigest() == found.group(3)
+    return {"epic_id": found.group(1), "commit": found.group(2), "sha256": found.group(3), "intact": intact}

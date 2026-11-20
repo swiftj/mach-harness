@@ -1,7 +1,7 @@
 ---
 name: ticket
 description: Reads and updates tickets for the MACH factory across any tracker (local Markdown files, GitHub, Gitea, Jira, Fossil), and turns production telemetry (Sentry, PostHog, Datadog, failed CI runs, error logs) into self-healing tickets. Use to view, list, create, comment on, relabel or change the state of a ticket, or to ingest a crash report, alert or failing build log as a new ticket.
-argument-hint: "[view|list|create|update|comment|ingest-telemetry|request-check|slice-list|slice-check|epic-check|slice-status] [ticket ID, issue number or payload file] [flags]"
+argument-hint: "[view|list|create|update|comment|ingest-telemetry|request-check|slice-list|slice-check|epic-check|principles-check|slice-status] [ticket ID, issue number or payload file] [flags]"
 compatibility: "python3 >= 3.8"
 ---
 
@@ -34,6 +34,7 @@ The tracker comes from `.factory/config.json` (`tickets.provider`, `local` by de
 | Comment | `TICKET comment <id> --body "<text>"` |
 | Ingest telemetry | `TICKET ingest-telemetry <source> <payload-file>` |
 | Slice issues marked ready (read only, called by intake) | `TICKET slice-list`, `TICKET slice-check <n>`, `TICKET epic-check <n> [--release <id> --commit <sha>]` |
+| The product principles on the project's issue (read only, called by the intent station) | `TICKET principles-check [<n>]` |
 | Status on a slice's issue (called by intake) | `TICKET slice-status <n> --repository OWNER/REPO --moment <building\|question\|shipped\|blocked\|changed> --ref SLICE-NNN@rN... --nonce <hex> [--question-file <f>]` |
 
 `update` takes `--state`, `--label`, `--remove-label` and `--comment` together in one call. For long text, pass `-` as the body or comment and send the text on standard input.
@@ -69,6 +70,7 @@ These are how the run skill's intake reads slices Product Studio marked ready an
 - `slice-list` reads only: the open issues labelled `mach:ready` that also carry `mach:slice`, with when each last changed.
 - `slice-check <n>` reads only: whether the slice issue counts (`decision.state` `accepted` or `not_accepted` with a reason in plain words). It counts only when it is open with `mach:slice` and `mach:ready`; the last time `mach:ready` was added it was by a person whose role is triage, write, maintain or admin; that same account wrote an unedited approval comment for exactly this revision and these hashes; the body is intact against its marker; and its epic's issue is one Product Studio wrote. The why and spec are printed only when it is accepted.
 - `epic-check <n>` reads only: an epic's slices in the product manager's order (its sub-issues, else its task list) and, with `--release` and `--commit`, product's acceptance comments for that release, each marked with why it does not count, if it does not.
+- `principles-check [<n>]` reads only: the product principles on the project's issue (`<n>`, or the one open issue carrying `mach:project` and a project marker) and whether they count (`decision.state` `accepted`, `none` or `not_accepted` with a reason in plain words). They count only when the section is exactly as Product Studio wrote it for that SHA-256, and an unedited approval comment for exactly that revision and SHA-256 was written by the account it names, a person whose role is triage, write, maintain or admin. The principles are printed only when they count.
 - `slice-status <n>` writes one status on the slice's own issue: `building` adds `mach:building` and takes off `mach:ready` and `mach:question`; `question` adds `mach:question` and posts the contract engineer's question (from `--question-file`, redacted, bounded, unable to mention or link anyone); `shipped` adds `mach:shipped`, takes off the others and closes the issue; `blocked` and `changed` post a comment only. Comments come from the shared templates in `issue_rules.py` and end in a hidden marker keyed with the ledger's nonce; the issue's comments are read first and a comment carrying the same key counts as already done. A missing MACH label is created, never with `--force`. `tickets.github.status_comments: false` stops comments; labels and closing still happen. An issue that moved to another repository is never written to.
 
 `slice-status` prints JSON with `status`: `done` (exit 0), `already_done` (exit 3) or `pending` (exit 4, with a `kind` such as `network`, `auth`, `refused`, `not_found`, `moved`, `no_gh`); it never relays `gh`'s own words. A refusal (another repository, no nonce, a reference that is not an identifier) exits 2. Intake records the outcome in its ledger and retries `pending` on its next pass.

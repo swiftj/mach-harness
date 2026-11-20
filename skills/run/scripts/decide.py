@@ -58,7 +58,8 @@ UNBLOCKED_BY_A_PERSON = ("approval", "merge", "pull-request")
 DATA_FIELDS = ("situation.title", "situation.reason", "situation.causes[].detail", "situation.causes[].rule",
                "situation.causes[].file", "situation.causes[].requirement.text", "situation.causes[].reasons[]",
                "situation.parked.reason", "situation.approval_reasons[]", "situation.pull_request",
-               "situation.adr.title", "situation.adr.reason", "situation.adr_problems[]", "situation.missing_topics[].topic", "situation.proposed[].title", "situation.question")
+               "situation.adr.title", "situation.adr.reason", "situation.adr_problems[]", "situation.missing_topics[].topic", "situation.proposed[].title", "situation.question",
+               "situation.conflict.files[]")
 # A stop for an architecture decision, by the routing sheet's `needs`, and the waiting state it is walked as.
 ADR_STATES = {"adr-decision": "adr-conflict", "adr-acceptance": "adr-acceptance", "adr-fix": "adr-fix", "adr-baseline": "adr-baseline"}
 DATA_NOTE = ("Fields listed in data_fields hold text written by reviewers, the verifier, a test run, a ticket or the supervisor's "
@@ -82,6 +83,7 @@ SUMMARY = {
     "adr-baseline": "The project's basic technical decisions are not all written down as accepted ADRs on the main branch, so no ticket is planned yet.",
     "security-veto": "The review panel's security veto rejected this round although enough seats approved; the builder answers it unless a person accepts the finding.",
     "exception-expired": "A person's exception to a security blocker has expired, so the approval does not hold until a person decides again.",
+    "main-conflict": "The build station could not bring the ticket's branch up to date with the main branch: the merge conflicts, and it changed nothing.",
 }
 
 _REVIEW: List[Any] = []
@@ -327,6 +329,8 @@ def classify(root: Path, ticket: str, info: Dict[str, Any], report: Dict[str, An
             return "escalated" if stage == "blocked" else "stuck"
         if needs == "security-exception-expired":
             return "exception-expired"
+        if needs == "main-conflict":
+            return "main-conflict"
         return None  # finished, closed, or out of this execution's scope: nothing for a person to decide here
     if stage == "spec-open":
         return "answers"
@@ -424,6 +428,15 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
                               "The builder revises the change to answer the findings, which uses one of the ticket's rounds.", ticket))
         if veto["open"]:
             options.append(exception_option(ticket, veto))
+        options.append(abandon(ticket))
+    elif state == "main-conflict":
+        conflict = cell.get("main_conflict") if isinstance(cell.get("main_conflict"), dict) else {}
+        facts["conflict"] = {"files": [explain.clean(name, 200) for name in conflict.get("files") or [] if isinstance(name, str)][:10],
+                             "folder": explain.clean(conflict.get("folder"), 300), "during": explain.clean(conflict.get("during"), 20)}
+        options.append(run_again(ticket, "After a person merges the main branch into the ticket's branch in that folder, resolves the conflict and commits it, "
+                                 "the line carries the ticket on from where it stopped, under the same gates.", "Resolve it, then carry on"))
+        if replan_allowed(cellroot, stage):
+            options.append(replan(ticket))
         options.append(abandon(ticket))
     elif state == "exception-expired":
         veto = exception_offer(root, ticket)

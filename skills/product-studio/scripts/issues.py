@@ -49,7 +49,7 @@ def signed_in(project: Path) -> Tuple[Optional[str], Failure]:
     if failure:
         return None, failure
     login = found.get("login") if isinstance(found, dict) else None
-    if not isinstance(login, str) or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})", login):
+    if not collab.is_login(login):
         return None, _failure("GitHub did not say which account is signed in.")
     return login, None
 

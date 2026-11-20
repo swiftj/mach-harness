@@ -46,6 +46,7 @@ Every reviewer starts with a fresh context: the diff, the cell's artifacts and t
 - Refusals change nothing.
 - The evidence shows the scenarios actually happening, not just tests passing.
 - Nothing was built that the spec does not ask for.
+- The change keeps every product principle the spec says applies; a blocker may cite one by its ID, such as `PP-02`. An exception in the spec is the product manager's decision with their reason, and is not the panel's to reopen.
 
 ## Secrets and new dependencies
 

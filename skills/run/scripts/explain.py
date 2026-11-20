@@ -335,6 +335,9 @@ def no_cell(root: Path, ticket_id: str, next_info: Dict[str, Any]) -> Tuple[Dict
     if record:
         facts = {"outcome": clean(record.get("outcome"), 40),
                  **{key: record.get(key) for key in ("rounds", "verification_failures") if isinstance(record.get(key), int) and not isinstance(record.get(key), bool)}}
+        written = record.get("change_record") if isinstance(record.get("change_record"), dict) else {}
+        if isinstance(written.get("path"), str):  # M13: where the merge station's change record landed
+            facts["change_record"] = clean(written["path"], 200)
     if archive.is_file():
         return {"headline_code": "archived", "archive": str(archive.relative_to(root)), "run_record": facts or None}, 0
     if record:

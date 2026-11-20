@@ -69,6 +69,8 @@ def key():
             return "api %s sub_issues" % method
         if "/events" in p:
             return "api events"
+        if "/issues/comments/" in p:
+            return "api %s comment" % method
         if "/comments" in p:
             return "api comments"
         if p.endswith("/permission"):
@@ -164,7 +166,8 @@ elif args[:2] == ["issue", "edit"]:
 elif args[:2] == ["issue", "comment"]:
     at = tick()
     me = state["me"]
-    find(args[2])["comments"].append({"login": me, "id": account(me)["id"], "body": body_from(), "created_at": at, "updated_at": at})
+    state["next_cid"] = state.get("next_cid", 70000) + 1
+    find(args[2])["comments"].append({"login": me, "id": account(me)["id"], "cid": state["next_cid"], "body": body_from(), "created_at": at, "updated_at": at})
     find(args[2])["updatedAt"] = at
 elif args[:2] == ["issue", "close"]:
     find(args[2])["state"] = "CLOSED"
@@ -195,7 +198,15 @@ elif args[0] == "api":
     elif k == "api comments":
         for c in find(parts[4])["comments"]:
             print(json.dumps({"login": c["login"], "id": c.get("id", account(c["login"])["id"]), "type": c.get("type", "User"), "app": c.get("app", False),
-                              "created_at": c.get("created_at"), "updated_at": c.get("updated_at"), "body": c["body"]}))
+                              "created_at": c.get("created_at"), "updated_at": c.get("updated_at"), "body": c["body"], "comment_id": c.get("cid")}))
+    elif k == "api PATCH comment":
+        cid = int(parts[-1])
+        c = next((c for i in issues.values() for c in i["comments"] if c.get("cid") == cid), None)
+        if c is None or c["login"] != state["me"]:
+            print("gh: Not Found (HTTP 404)", file=sys.stderr)
+            done(1)
+        c["body"] = json.load(open(value("--input"), encoding="utf-8"))["body"]
+        c["updated_at"] = tick()
     elif k == "api permission":
         login = parts[-2]
         if login not in accounts and not state.get("everyone_writes", True):
@@ -241,7 +252,11 @@ def spec_for(slice_id, deferred=None, extra=""):
     lines = [line for line in FIXTURE.splitlines() if "(Deferred to" not in line]
     at = lines.index("### Out of scope") + 2
     lines[at:at] = [f"- Inviting many teammates at once (Deferred to {deferred})" if deferred else "- None."]
-    return "\n".join(lines).replace("SLICE-001", slice_id) + "\n" + extra
+    text = "\n".join(lines).replace("SLICE-001", slice_id) + "\n"
+    heading = "## Effects on shipped behaviour"
+    if heading in extra:  # a spec has one effects section: the extra one takes the place of the fixture's "None."
+        return text.replace(heading + "\n\nNone.\n", extra.strip() + "\n")
+    return text + extra
 
 
 def intent_for(slice_id):

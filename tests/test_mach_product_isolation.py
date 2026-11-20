@@ -153,8 +153,8 @@ class NothingIsWiredInTest(unittest.TestCase):
     def test_studio_uses_only_the_git_and_gh_commands_it_is_meant_to(self):
         """Product Studio may read, fetch, build a contribution in its own temporary worktree and
         push that one branch. It may never rewrite history or move the product manager's checkout."""
-        sources = {name: (PRODUCT_SCRIPTS / name).read_text() for name in ("studio.py", "collab.py", "requests_in.py")}
-        for name in ("studio.py", "requests_in.py"):
+        sources = {name: (PRODUCT_SCRIPTS / name).read_text() for name in ("studio.py", "collab.py", "requests_in.py", "prd.py")}
+        for name in ("studio.py", "requests_in.py", "prd.py"):
             imported = set()
             for node in ast.walk(ast.parse(sources[name])):
                 if isinstance(node, ast.Import):
@@ -195,6 +195,24 @@ class NothingIsWiredInTest(unittest.TestCase):
             for word in ("reopen", "lock", "transfer"):
                 self.assertNotIn(word, re.sub(r"(?i)\bblock\w*|\bclock\w*|\blocal\w*", "", sources[name]), (name, word))
         self.assertFalse(re.findall(r"git\([^\n]*\"push\"", "\n".join(sources.values())))  # nothing is ever pushed
+        # M13 D: the PRD on-ramp reaches neither Git nor GitHub at all, so a PRD's text has no way there.
+        self.assertFalse(re.findall(r"\b(?:git|git_bytes|gh|gh_json|gh_write)\(", sources["prd.py"]))
+        for word in ("collab", "issues.", "handoff", "requests_in", "import subprocess", "urllib", "socket"):
+            self.assertNotIn(word, sources["prd.py"], word)
+
+    def test_studio_reaches_the_run_skill_only_for_the_compiler_and_it_only_reads_git(self):
+        """M13 C: `epic current` loads the run skill's current.py and nothing else of the run skill. current.py, and the
+        intake function it borrows to name the integration branch, only read Git: no fetch, no push, no write."""
+        source = (PRODUCT_SCRIPTS / "studio.py").read_text()
+        self.assertEqual(re.findall(r'/ "scripts" / "([a-z_]+\.py)"', source), ["current.py"])
+        for name in ("intake.py", "supervisor.py", "executor.py", "policy.py", "Factory("):
+            self.assertNotIn(name, source)
+        current = (ROOT / "skills" / "run" / "scripts" / "current.py").read_text()
+        self.assertEqual(set(re.findall(r'_git\(root, "([a-z-]+)"', current)), {"rev-parse", "merge-base", "ls-tree", "cat-file"})
+        self.assertEqual(re.findall(r"subprocess\.run\(\[\"git\", \*args\]", current), ['subprocess.run(["git", *args]'] * 2)
+        intake_source = (ROOT / "skills" / "run" / "scripts" / "intake.py").read_text()
+        borrowed = intake_source[intake_source.index("    def integration(self)"):intake_source.index("    def git_bytes(")]
+        self.assertEqual(set(re.findall(r"git\(self\.root, \"([a-z-]+)\"", borrowed)), {"symbolic-ref", "show-ref", "rev-parse", "merge-base", "diff", "rev-list"})
 
     def test_the_hand_off_uses_only_the_gh_calls_it_is_meant_to(self):
         """M11: issues.py holds every GitHub call that saves a slice as an issue; handoff.py decides and
@@ -237,6 +255,37 @@ class NothingIsWiredInTest(unittest.TestCase):
         # studio.py reads issues only to settle a slice someone else changed; it writes through handoff.py.
         studio_source = (PRODUCT_SCRIPTS / "studio.py").read_text()
         self.assertEqual(set(re.findall(r"\bissues\.([a-z_]+)\(", studio_source)), {"view", "comments"})
+        # M13: publishing the principles added no GitHub call. handoff.py uses exactly these of issues.py's calls.
+        self.assertEqual(set(re.findall(r"\bissues\.([a-z_]+)\(", handoff_source)),
+                         {"add_labels", "add_sub_issue", "comment", "comments", "create", "create_label", "database_id", "label_names", "labels",
+                          "list_issues", "pin", "place_sub_issue", "remove_ready", "rewrite", "signed_in", "sub_issue_numbers", "sub_issues",
+                          "unavailable", "view"})
+        publish = handoff_source[handoff_source.index("    def publish_principles("):handoff_source.index("    def write_principles_folder(")]
+        self.assertEqual(set(re.findall(r"\bissues\.([a-z_]+)\(", publish)), {"labels", "create_label", "comments", "comment"})
+        self.assertIn("principles_approval_comment(", publish)  # the only comment it writes is the fixed approval template
+        # M13 E: linking a slice or an epic to Jira reaches neither GitHub nor Jira; the key travels only in the fixed templates.
+        for name in ("cmd_slice_link", "cmd_epic_link", "jira_key", "with_tracking", "effective_jira", "link_slice", "link_epic"):
+            body = studio_source[studio_source.index(f"def {name}("):]
+            body = body[:body.index("\ndef ", 1)]
+            for word in ("issues.", "collab.", "handoff()", "requests()", "gh(", "git(", "http", "urllib", "socket"):
+                self.assertNotIn(word, body, (name, word))
+        # M13 E: the Jira export and the keys back read the workspace and the last refresh; they reach neither Git, GitHub nor a network,
+        # and they write only through Studio's own write and link helpers.
+        export = (PRODUCT_SCRIPTS / "jira_export.py").read_text()
+        self.assertFalse(re.findall(r"\b(?:git|git_bytes|gh|gh_json|gh_write|_gh_json|_gh_write)\(", export))
+        for word in ("collab", "issues.", "requests()", "import subprocess", "urllib", "socket", "import http", "import os", "shutil"):
+            self.assertNotIn(word, export, word)
+        self.assertEqual(set(re.findall(r"\bhandoff\.([a-z_]+)\(", export)), {"order_rows", "slice_view", "epic_number"})
+        self.assertEqual(set(re.findall(r"\.(write_text|write_bytes|unlink|rename|rmdir)\(", export)), set())
+
+    def test_the_principles_check_only_reads(self):
+        """M13: ticket.py principles-check reads the project's issue, its comments and the approver's role; it writes nothing."""
+        source = (ROOT / "skills" / "ticket" / "scripts" / "ticket.py").read_text()
+        body = source[source.index("def cmd_principles_check("):source.index("def cmd_slice_status(")]
+        self.assertEqual(sorted(set(re.findall(r"gh_read\(ctx, (\"[^\"]+\", \"[^\"]+\")", body))), ['"issue", "list"'])
+        self.assertEqual(set(re.findall(r"\b(read_[a-z]+)\(", body)), {"read_issue", "read_comments", "read_permission"})
+        for word in ("gh_call(", "--method", "\"edit\"", "\"comment\"", "\"close\"", "\"create\"", "write_text", "--add-label"):
+            self.assertNotIn(word, body, word)
 
     def test_studio_imports_only_the_rules_from_the_ticket_skill(self):
         """Product Studio shares the ticket skill's issue rules and nothing else from it."""
@@ -270,10 +319,10 @@ class NothingIsWiredInTest(unittest.TestCase):
                 self.assertNotIn(node.id, ("subprocess", "os", "socket"))
 
     def test_report_never_authorizes(self):
-        for name in ("product.py", "studio.py", "collab.py", "requests_in.py", "issues.py", "handoff.py"):
+        for name in ("product.py", "studio.py", "collab.py", "requests_in.py", "issues.py", "handoff.py", "prd.py", "jira_export.py"):
             source = (PRODUCT_SCRIPTS / name).read_text()
             self.assertNotIn('"factory_authorized": True', source)
-        for name in ("product.py", "studio.py"):
+        for name in ("product.py", "studio.py", "prd.py", "jira_export.py"):
             self.assertIn('"factory_authorized": False', (PRODUCT_SCRIPTS / name).read_text())
 
 

@@ -90,6 +90,14 @@
      "history"
     ],
     "properties": {
+     "jira": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "pattern": "^[A-Z][A-Z0-9_]{1,31}-[1-9][0-9]{0,8}$",
+      "description": "M13: the Jira issue key the revision was approved with, checked against Jira's form at intake; null when it has none."
+     },
      "digest": {
       "type": "string",
       "description": "SHA-256 over the why and the spec: the identity of this slice revision."
@@ -348,8 +356,14 @@
        "question",
        "shipped",
        "blocked",
-       "changed"
+       "changed",
+       "epic-view"
       ]
+     },
+     "epic_id": {
+      "type": "string",
+      "pattern": "^EPIC-[0-9]{3,}$",
+      "description": "For the epic-view moment (M13): the epic whose current-view comment is replaced; issue is then the epic's issue and slice_id the slice that shipped."
      },
      "state": {
       "enum": [

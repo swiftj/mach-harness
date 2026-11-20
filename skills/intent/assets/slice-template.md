@@ -66,6 +66,26 @@ or data schemas.
 - **When** <the single action>
 - **Then** <observable result>
 
+## Effects on shipped behaviour
+
+<!-- What this slice does to shipped rules (cell.py shipped, or the shipped rules in slice resume). Write "None." alone
+     when it changes none: silence is never read as no effects. Otherwise one row per shipped rule found:
+     kept names the scenario (AC-NN) proving it still holds with this slice's data; changed and replaced name the
+     INV-NN, FR-NN or RN that takes its place; retired leaves "In this slice" empty and gives the product manager's
+     reason in Note. See references/spec-structure.md. -->
+| Shipped rule | Effect | In this slice | Note |
+|---|---|---|---|
+| SLICE-NNN/FR-NN | kept | AC-NN | <Why it still holds> |
+
+## Principles
+
+<!-- Only when the project has product principles; otherwise delete this section. One row per active principle:
+     its ID, its revision, its statement quoted exactly, then one answer. Applies names the invariants, requirements or
+     scenarios in this slice that uphold it. Does not apply gives one sentence saying why. Exception carries the
+     product manager's reason in their words; never recommend one. See references/spec-structure.md. -->
+- **PP-01** (revision 1): "<The principle's statement, exactly>" **Applies:** INV-01, AC-01.
+- **PP-02** (revision 1): "<The principle's statement, exactly>" **Does not apply:** <One sentence saying why>.
+
 ## Dependencies and permissions
 
 <!-- Name things as the business knows them. Each dependency ends with the requirement that covers it failing;
