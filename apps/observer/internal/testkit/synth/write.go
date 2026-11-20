@@ -146,6 +146,7 @@ func (g *gen) write() error {
 	if err := g.put(g.path(".factory", "config.json"), append(cfg, '\n')); err != nil {
 		return err
 	}
+	w.m15Intake()
 	if err := g.writeIntake(); err != nil {
 		return err
 	}
@@ -156,6 +157,9 @@ func (g *gen) write() error {
 		if err := g.writeCell(c); err != nil {
 			return err
 		}
+	}
+	if err := g.writeM15(); err != nil {
+		return err
 	}
 	if w.an != nil {
 		if err := g.writeRuns(); err != nil {
@@ -264,7 +268,7 @@ func (g *gen) writeIntake() error {
 func (g *gen) writeLedger() error {
 	w := g.w
 	slices := map[string]any{}
-	for _, s := range w.slices {
+	for i, s := range w.slices {
 		state := "waiting"
 		if s.cell != nil && s.cell.created > 0 && g.in(s.cell.created) {
 			state = "dispatched"
@@ -272,7 +276,11 @@ func (g *gen) writeLedger() error {
 				state = "integrated"
 			}
 		}
-		slices[s.id] = map[string]any{"ticket_id": s.ticket, "epic": map[string]any{"epic_id": s.epic.id, "issue": nil, "title": "Synthetic epic " + s.epic.id[len("EPIC-"):]}, "revision": s.rev, "state": state}
+		entry := map[string]any{"ticket_id": s.ticket, "epic": map[string]any{"epic_id": s.epic.id, "issue": nil, "title": "Synthetic epic " + s.epic.id[len("EPIC-"):]}, "revision": s.rev, "state": state}
+		if k := jiraOf(i); k != "" && w.m15On() {
+			entry["jira"] = k // M13 part E: the slice's Jira key (M15 test data)
+		}
+		slices[s.id] = entry
 	}
 	execs := map[string]any{}
 	for _, x := range w.execs {
@@ -433,11 +441,21 @@ func (g *gen) appendRun(c *cell) error {
 	for _, r := range c.life {
 		closed = math.Max(closed, r.t)
 	}
-	line, _ := json.Marshal(map[string]any{"record_version": 2, "ticket_id": c.ticket, "closed_at": isoS(w.ms(closed) + 1000), "outcome": "merged",
+	record := map[string]any{"record_version": 2, "ticket_id": c.ticket, "closed_at": isoS(w.ms(closed) + 1000), "outcome": "merged",
 		"rounds": c.round, "first_pass": verifyFails+rejections == 0, "verify_failures": verifyFails, "review_rejections": rejections, "escalated": false,
 		"human_approval": false, "sent_back_by_person": 0, "deviations": []any{}, "blockers": []any{}, "risk": c.risk, "app_type": "cli", "tests_seen_failing_first": 2,
 		"tests_passing_on_first_run": 2, "integration": map[string]any{"method": "local", "merge_commit": c.head},
-		"product": map[string]any{"slice_id": c.slice.id, "epic_id": c.slice.epic.id, "source": "folder", "revision": c.slice.rev}})
+		"product": map[string]any{"slice_id": c.slice.id, "epic_id": c.slice.epic.id, "source": "folder", "revision": c.slice.rev}}
+	if w.m15On() {
+		// M13: the change record the merge station wrote, and the slice's Jira key when it has one (M15 test data).
+		record["change_record"] = map[string]any{"path": "docs/changes/" + c.ticket + ".md", "sha256": digest("change record " + c.ticket), "commit": c.head}
+		for i, s := range w.slices {
+			if s == c.slice && jiraOf(i) != "" {
+				record["jira"] = jiraOf(i)
+			}
+		}
+	}
+	line, _ := json.Marshal(record)
 	path := g.path(".factory", "archive", "runs.jsonl")
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
 	if err != nil {

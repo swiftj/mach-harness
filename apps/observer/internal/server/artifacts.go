@@ -141,8 +141,11 @@ func (s *Server) evidence(w http.ResponseWriter, r *http.Request) {
 			return http.StatusNotFound, fail(KindNotFound, "No such cell has been seen.")
 		}
 		checks := []map[string]any{}
+		mocks := mockRuns(mine)
+		used := map[*artifact.MockCheck]bool{}
 		if c != nil {
 			for _, k := range c.Checks {
+				mock := mocks.find(k.TargetID, k.Round)
 				files := []map[string]any{}
 				for _, ev := range k.Evidence {
 					entry, catalogued := runFile(byPath, earlier, k, ev.File, ev.SHA256)
@@ -153,15 +156,128 @@ func (s *Server) evidence(w http.ResponseWriter, r *http.Request) {
 							f["integrity"] = "mismatch" // the file differs from what this check recorded
 						}
 					}
+					if mock != nil {
+						f["role"] = mockRole(mock, ev.File, ev.SHA256)
+					}
 					files = append(files, f)
 				}
-				checks = append(checks, map[string]any{"target_id": k.TargetID, "target_kind": k.TargetKind, "result": k.Result, "round": k.Round,
-					"visit_id": k.VisitID, "at": project.TV(k.At), "evidence": files})
+				check := map[string]any{"target_id": k.TargetID, "target_kind": k.TargetKind, "result": k.Result, "round": k.Round,
+					"visit_id": k.VisitID, "at": project.TV(k.At), "evidence": files, "basis": "lifecycle"}
+				if mock != nil {
+					used[mock] = true
+					check["mock"] = mockView(mock)
+				}
+				checks = append(checks, check)
+			}
+		}
+		// A design mock's side-by-side record (M14 part C) is a check verify.py writes into results.json
+		// only (compare records no lifecycle line): listed from the catalogue, with its approved mock and
+		// its capture, each marked, in its own run.
+		for _, run := range mocks {
+			for i := range run.checks {
+				m := &run.checks[i]
+				if used[m] {
+					continue
+				}
+				files := []map[string]any{}
+				for _, rel := range append([]string{m.MockFile}, m.Captures...) {
+					p := m.Folder + "/" + rel
+					f := map[string]any{"file": p, "sha256": nil, "artifact_id": nil, "integrity": "missing", "role": artifact.RoleCapture}
+					if rel == m.MockFile {
+						f["sha256"], f["role"] = m.MockSHA256, artifact.RoleApprovedMock
+					}
+					if e, ok := byPath[p]; ok {
+						f["artifact_id"], f["integrity"], f["content_access"] = e.ID, e.Integrity, e.ContentAccess
+						if f["sha256"] == nil && e.RecordedSHA256 != "" {
+							f["sha256"] = e.RecordedSHA256
+						}
+					}
+					files = append(files, f)
+				}
+				var result any
+				if m.Result != "" {
+					result = m.Result
+				}
+				checks = append(checks, map[string]any{"target_id": m.ID, "target_kind": "design mock", "result": result, "round": m.Round,
+					"visit_id": run.visit, "at": nil, "evidence": files, "basis": "results.json", "mock": mockView(m)})
 			}
 		}
 		return http.StatusOK, ok(map[string]any{"ticket_id": t, "artifacts": mine, "checks": checks, "settings": set, "cursor": s.cursor(st.Pos),
 			"note": "verified evidence is a file results.json names with a matching hash; prose is written by an agent and is never proof"})
 	})
+}
+
+// mockRun is one verification run's design mock records (a results.json entry), and the visit the
+// catalogue linked that run to.
+type mockRun struct {
+	folder string
+	visit  any
+	checks []artifact.MockCheck
+}
+
+type mockRunList []*mockRun
+
+// mockRuns gathers the design mock records of each verification run the catalogue holds.
+func mockRuns(entries []artifact.Entry) mockRunList {
+	var out mockRunList
+	for _, e := range entries {
+		if e.Kind != "verification-results" || len(e.Mocks()) == 0 {
+			continue
+		}
+		var visit any
+		if e.Visit != nil {
+			visit = e.Visit.VisitID
+		}
+		out = append(out, &mockRun{folder: path.Dir(e.Path), visit: visit, checks: e.Mocks()})
+	}
+	return out
+}
+
+// find is the mock record of a lifecycle check, by id and round (a future verify.py that records a
+// lifecycle line for each compare); nil when none.
+func (l mockRunList) find(id string, round *int64) *artifact.MockCheck {
+	for _, r := range l {
+		for i := range r.checks {
+			m := &r.checks[i]
+			if m.ID == id && (round == nil || m.Round == nil || *m.Round == *round) {
+				return m
+			}
+		}
+	}
+	return nil
+}
+
+// mockRole marks a file a design mock's check cites: the approved mock (the copy results.json names
+// with its hash) or the capture of the built screen.
+func mockRole(m *artifact.MockCheck, file, sha string) string {
+	if (file == m.MockFile || strings.HasSuffix(file, "/"+m.MockFile)) && (sha == "" || sha == m.MockSHA256) {
+		return artifact.RoleApprovedMock
+	}
+	return artifact.RoleCapture
+}
+
+// mockView is what a design mock's check says beside its two pictures: the recorded result, whether
+// it binds, the scenario it is for, and the verifier's words (free text, labelled). Nothing is
+// compared or computed here.
+func mockView(m *artifact.MockCheck) map[string]any {
+	var compared, forID, note any
+	if m.Compared != "" {
+		compared = m.Compared
+	}
+	if m.For != "" {
+		forID = m.For
+	}
+	if m.Note != "" {
+		note = m.Note
+	}
+	diffs := []string{}
+	diffs = append(diffs, m.Differences...)
+	view := map[string]any{"compared": compared, "binding": m.Binding, "for": forID, "note": note, "differences": diffs, "free_text": note != nil || len(diffs) > 0,
+		"free_text_note": nil}
+	if view["free_text"] == true {
+		view["free_text_note"] = redact.FreeTextNote
+	}
+	return view
 }
 
 // earlierRuns lists the cell's earlier verification folders the catalog holds
@@ -373,7 +489,12 @@ func freeTextPolicy() map[string]any {
 		"artifact_header":   redact.FreeTextHeader + ": " + redact.FreeTextValue,
 		"event_fields":      redact.FreeTextFields,
 		"projection_fields": redact.ProjectionFields, // M6.6: where the projection serves copies of them
-		"render":            "text only; never markup",
+		// M15: the verifier's words on a design mock's side-by-side record, read from results.json.
+		"catalog_fields": []map[string]any{
+			{"route": "/api/v1/cells/{ticket}/evidence", "path": "checks[].mock.note", "from": "results.json mock_records.<id>.note", "max": redact.MaxText},
+			{"route": "/api/v1/cells/{ticket}/evidence", "path": "checks[].mock.differences[]", "from": "results.json mock_records.<id>.differences[]", "max": redact.MaxText},
+		},
+		"render": "text only; never markup",
 	}
 }
 

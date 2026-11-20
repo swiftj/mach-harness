@@ -32,7 +32,7 @@
                   "schema_revision": {
                                        "type": "integer",
                                        "minimum": 0,
-                                       "description": "Additive revisions within version 3. Consumers ignore fields and kinds they do not know. Revision 1: execution.usage gains cost_complete and cost_incomplete_reasons. Revision 2: history.gap gains class and history_lost (and the reasons unexpected-shape and evicted); origin gains runtime_state on execution-stream events. Revision 3: execution.started gains source_commit, provenance (the snapshot the supervisor took at start, or null) and provenance_reason. Revision 4 (M11) is not additive, as MACH has no users yet: ids.wave_id is replaced by ids.epic_id, ids.issue is added, wave.discovered is removed, and slice.materialized gains epic_title. Revision 5 (M12) is additive: the cell-lifecycle kind review.exception_recorded, a person's exception to a security blocker. Revision 6 (M12) is additive: the cell-lifecycle kind review.scan_recorded, what the security scan flagged in a review round and how it was answered, as counts."
+                                       "description": "Additive revisions within version 3. Consumers ignore fields and kinds they do not know. Revision 1: execution.usage gains cost_complete and cost_incomplete_reasons. Revision 2: history.gap gains class and history_lost (and the reasons unexpected-shape and evicted); origin gains runtime_state on execution-stream events. Revision 3: execution.started gains source_commit, provenance (the snapshot the supervisor took at start, or null) and provenance_reason. Revision 4 (M11) is not additive, as MACH has no users yet: ids.wave_id is replaced by ids.epic_id, ids.issue is added, wave.discovered is removed, and slice.materialized gains epic_title. Revision 5 (M12) is additive: the cell-lifecycle kind review.exception_recorded, a person's exception to a security blocker. Revision 6 (M12) is additive: the cell-lifecycle kind review.scan_recorded, what the security scan flagged in a review round and how it was answered, as counts. Revision 7 (M15) is additive: human.required and execution.completed gain needs (a stop code of the routing sheet, only when known), intake.refused gains waiting (mocks), review.round_started gains repeat, verify.check_recorded's target_kind gains design mock, slice.materialized and run.recorded gain jira, merge.completed and run.recorded gain change_record, and inferred gains the rules fixed-phrase, decided-before and cell-file."
                                      },
                   "id": {
                           "type": "string",
@@ -301,7 +301,7 @@
                              },
                   "inferred": {
                                 "type": "object",
-                                "additionalProperties": {"enum": ["time-window", "single-candidate", "label", "path", "stderr-line", "held-sentence"]},
+                                "additionalProperties": {"enum": ["time-window", "single-candidate", "label", "path", "stderr-line", "held-sentence", "fixed-phrase", "decided-before", "cell-file"]},
                                 "description": "Fields the observer filled by inference, with the rule. cause is never inferred."
                               },
                   "provenance": {
@@ -999,7 +999,10 @@
                                       "type": "object",
                                       "additionalProperties": false,
                                       "required": ["problems"],
-                                      "properties": {"problems": {"type": "array", "items": {"type": "string", "maxLength": 400}}}
+                                      "properties": {
+                                                      "problems": {"type": "array", "items": {"type": "string", "maxLength": 400}},
+                                                      "waiting": {"enum": ["mocks", null], "description": "Revision 7 (M15). mocks when the slice issue waits for its design mocks to be committed (intake's fixed sentence; inferred: fixed-phrase)."}
+                                                    }
                                     },
              "data_slice_materialized": {
                                           "type": "object",
@@ -1011,7 +1014,8 @@
                                                           "dependencies": {"type": "array", "items": {"type": "string"}},
                                                           "reissued": {"type": ["boolean", "null"]},
                                                           "title": {"type": ["string", "null"], "description": "M6.6. The slice's title as the intake ledger records it for this revision; null when not recorded. Product prose: a free-text field (display_policy.free_text)."},
-                                                          "epic_title": {"type": ["string", "null"], "description": "Revision 4 (M11). The name of the slice's epic as the intake ledger records it for this revision; null when not recorded. Product prose: a free-text field (display_policy.free_text)."}
+                                                          "epic_title": {"type": ["string", "null"], "description": "Revision 4 (M11). The name of the slice's epic as the intake ledger records it for this revision; null when not recorded. Product prose: a free-text field (display_policy.free_text)."},
+                                                          "jira": {"$ref": "#/$defs/jira_key", "description": "Revision 7 (M15). The slice's Jira key as the intake ledger records it for this revision, checked again; null when none."}
                                                         }
                                         },
              "data_slice_integrated": {
@@ -1073,7 +1077,10 @@
                                       "type": "object",
                                       "additionalProperties": false,
                                       "required": ["reason"],
-                                      "properties": {"reason": {"type": "string", "maxLength": 600}}
+                                      "properties": {
+                                                      "reason": {"type": "string", "maxLength": 600},
+                                                      "needs": {"$ref": "#/$defs/stop_code", "description": "Revision 7 (M15). The stop the ticket waits at, read from intake's fixed phrase 'waiting for <needs>' in the reason (inferred: fixed-phrase); null when the reason names no known code."}
+                                                    }
                                     },
              "data_factory_activated": {
                                          "type": "object",
@@ -1343,6 +1350,7 @@
                                                                              ]
                                                                    },
                                                            "waiting_for": {"type": ["string", "null"]},
+                                                           "needs": {"$ref": "#/$defs/stop_code", "description": "Revision 7 (M15). waiting_for when it is one of the routing sheet's stop codes; null otherwise."},
                                                            "how": {"type": ["string", "null"], "description": "exited | timed-out | interrupted | could-not-start; since M7 killed (a signal exit, negative exit_code)"},
                                                            "seen_to_end": {"type": "boolean"},
                                                            "cost_usd": {"type": ["number", "null"]},
@@ -1514,8 +1522,8 @@
                                       "properties": {
                                                       "gate": {
                                                                 "type": "string",
-                                                                "pattern": "^[a-z][a-z-]*(?:\\.[a-z][a-z-]*)?$",
-                                                                "description": "The station's own gate name, e.g. build.start, build.red, build.finish, verify.verdict, review.tally, merge.land, round-limit."
+                                                                "pattern": "^[a-z][a-z-]*(?:\\.[a-z][a-z_-]*)?$",
+                                                                "description": "The station's own gate name, e.g. build.start, build.red, build.finish, verify.verdict, review.tally, merge.land, round-limit. Revision 7 (M15) allows an underscore after the dot: merge.landed_overlap, the merge-time recheck (M13)."
                                                               },
                                                       "verdict": {"enum": ["passed", "refused", "overridden"]},
                                                       "reason_code": {"type": ["string", "null"], "maxLength": 60},
@@ -1549,7 +1557,7 @@
                                              "required": ["target_id", "target_kind", "result", "evidence", "rerecorded"],
                                              "properties": {
                                                              "target_id": {"type": "string", "maxLength": 40},
-                                                             "target_kind": {"enum": ["scenario", "matrix rule", "holdout"]},
+                                                             "target_kind": {"enum": ["scenario", "matrix rule", "holdout", "design mock"], "description": "Revision 7 (M15) adds design mock (MOCK-N, M14 part C)."},
                                                              "result": {"enum": ["pass", "fail"]},
                                                              "evidence": {
                                                                            "type": "array",
@@ -1609,7 +1617,8 @@
                                                                                 }
                                                                      },
                                                             "delta": {"type": "boolean"},
-                                                            "restarted": {"type": "boolean"}
+                                                            "restarted": {"type": "boolean"},
+                                                            "repeat": {"type": "integer", "minimum": 0, "description": "Revision 7 (M15). How many times this judging round was decided before this start, as this lifecycle log records it: 0 for the round itself, k for its k-th repeat (review/round-N.k, opened after the merge station voided its approval). A repeat uses no judging round."}
                                                           }
                                           },
              "data_review_verdict_submitted": {
@@ -1696,7 +1705,8 @@
                                                        "approved_commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"},
                                                        "landed_commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"},
                                                        "revalidated": {"type": "boolean"},
-                                                       "pull_request": {"type": ["integer", "null"]}
+                                                       "pull_request": {"type": ["integer", "null"]},
+                                                       "change_record": {"$ref": "#/$defs/change_record", "description": "Revision 7 (M15). The change record merge.py wrote before landing, read from the cell's cell.json (inferred: cell-file)."}
                                                      }
                                      },
              "data_cleanup_completed": {
@@ -1758,9 +1768,30 @@
                                                     "risk": {"enum": ["High", "Medium", "Low", null]},
                                                     "app_type": {"type": ["string", "null"]},
                                                     "merge_method": {"enum": ["local", "pr", "squash-or-rebase", "manual", null]},
-                                                    "merge_commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"}
+                                                    "merge_commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"},
+                                                    "jira": {"$ref": "#/$defs/jira_key", "description": "Revision 7 (M15). The slice's Jira key the run record keeps (M13 part E), checked again; null when none."},
+                                                    "change_record": {"$ref": "#/$defs/change_record", "description": "Revision 7 (M15). The change record the merge station wrote (M13)."}
                                                   }
                                   },
+             "stop_code": {
+                            "enum": ["answers", "policy-owner", "human-approval", "merge", "person-to-take-over", "repository-hardening", "person", "worker-in-cell", "dispatch", "product-answer", "adr-decision", "adr-acceptance", "adr-fix", "adr-baseline", "security-exception-expired", "main-conflict", null],
+                            "description": "Revision 7 (M15). A stop code of run.py's routing sheet (needs), as of M14. A code MACH adds later is null: the recorded words are then the only account."
+                          },
+             "jira_key": {"type": ["string", "null"], "pattern": "^[A-Z][A-Z0-9_]{1,31}-[1-9][0-9]{0,8}$", "maxLength": 42, "description": "A Jira issue key: an identifier, never free text, never a link."},
+             "change_record": {
+                                "oneOf": [
+                                           {"type": "null"},
+                                           {
+                                             "type": "object",
+                                             "additionalProperties": false,
+                                             "required": ["path", "sha256"],
+                                             "properties": {
+                                                             "path": {"type": "string", "maxLength": 200, "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+){0,8}\\.md$", "description": "Repository-relative; shown as text, never as a link."},
+                                                             "sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+                                                           }
+                                           }
+                                         ]
+                              },
              "data_session_initialized": {
                                            "type": "object",
                                            "additionalProperties": false,

@@ -14,7 +14,7 @@ import { ticketOfRef } from "../atlas/derive";
 import { duration } from "../shell/time";
 import { useStageNotice } from "../shell/SourceBadge";
 import { Board } from "./Board";
-import { feedOf, LINE_STATIONS, lineModel, rowOfCell, stationStats, STATE_WORDS, type LineRow } from "./model";
+import { feedOf, LINE_STATIONS, lineModel, needVerb, rowOfCell, stationStats, STATE_WORDS, type LineRow } from "./model";
 import { StateShape, STATE_TONE } from "./Marks";
 import { Feed, StationPanel, TicketPanel } from "./Panels";
 import { TicketRecord } from "./Record";
@@ -59,7 +59,7 @@ function NeedsYou({ needs, now, onPick }: { needs: readonly LineRow[]; now: numb
             <StateShape state={row.state} size={14} />
             <span className="min-w-0 flex-1">
               <span className="block text-body-sm font-semibold text-ink">
-                {row.state === "stopped" ? "Unblock" : row.beforeMerge ? "Approve or send back" : "Decide on"} <span className="font-mono text-[13px]">{row.ticketId}</span>
+                {needVerb(row)} <span className="font-mono text-[13px]">{row.ticketId}</span>
               </span>
               <span className="block text-body-sm text-ink-muted">{row.why}</span>
             </span>

@@ -12,7 +12,7 @@
  *
  * Words for people live here too (`*_WORDS`, `reasonWords`), so the tests pin them.
  */
-import type { ArtifactEntry, ArtifactRefusal, CellEvidence, CellEvidenceCheck } from "../live/observer";
+import type { ArtifactEntry, ArtifactRefusal, CellEvidence, CellEvidenceCheck, MockFacts, MockRole } from "../live/observer";
 import type { ArtifactState, CellState, VerificationCheck, VerificationState } from "../sim";
 
 export type FileClass = "image" | "video" | "text" | "none";
@@ -55,11 +55,13 @@ export interface EvidenceFile {
   readonly recordedSha256: string | null;
   /** Simulation only: what the app draws or writes in its place. */
   readonly sim: SimulatedContent | null;
+  /** M15: for a design mock's check, whether this file is the approved mock or the capture of the built screen; null otherwise. */
+  readonly role: MockRole | null;
 }
 
 /** The simulation's own sample content, made by the app (never a capture). */
 export type SimulatedContent =
-  | { readonly kind: "image"; readonly checkId: string; readonly result: string | null; readonly round: number | null }
+  | { readonly kind: "image"; readonly checkId: string; readonly result: string | null; readonly round: number | null; readonly role?: MockRole | null }
   | { readonly kind: "video" }
   | { readonly kind: "text"; readonly text: string };
 
@@ -76,6 +78,8 @@ export interface EvidenceCheck {
   readonly atMs: number | null;
   readonly files: readonly EvidenceFile[];
   readonly runKey: string;
+  /** M15: a design mock's recorded result, binding flag and the verifier's words; null for every other check. */
+  readonly mock: MockFacts | null;
 }
 
 export interface EvidenceRun {
@@ -112,7 +116,22 @@ export const NO_SELECTION: EvidenceSelection = { check: null, file: null };
 export const MEDIA_SETTING = "floor.evidence_media";
 export const MEDIA_SETTING_FILE = ".factory/config.json";
 
-export const KIND_WORDS: Readonly<Record<string, string>> = { scenario: "Scenario", "matrix rule": "Matrix rule", holdout: "Holdout" };
+export const KIND_WORDS: Readonly<Record<string, string>> = { scenario: "Scenario", "matrix rule": "Matrix rule", holdout: "Holdout", "design mock": "Design mock" };
+
+/** M15: the two sides of a design mock's check, in words (never colour alone). */
+export const ROLE_WORDS: Readonly<Record<MockRole, string>> = { "approved-mock": "Approved mock", capture: "Captured screen" };
+
+/** M15: a design mock's recorded result in words, as verify.py compare records it. Nothing is compared here. */
+export function mockResultWords(mock: MockFacts): string {
+  const result = mock.compared === "matches" ? "Matches the approved mock" : mock.compared === "differs" ? "Differs from the approved mock" : mock.compared === "cannot compare" ? "Could not be compared" : "Result not recorded";
+  const binding = mock.binding === true ? "Binding: a difference fails this check." : mock.binding === false ? "Not binding: a difference is a finding for the review panel's product seat." : "Whether it binds is not recorded.";
+  return `${result}. ${binding}`;
+}
+
+/** M15: a design mock's check split into its approved mock and its captures, in the order the check names them. */
+export function mockSides(check: Pick<EvidenceCheck, "files">): { readonly approved: EvidenceFile | null; readonly captures: readonly EvidenceFile[] } {
+  return { approved: check.files.find((f) => f.role === "approved-mock") ?? null, captures: check.files.filter((f) => f.role === "capture") };
+}
 export function kindWords(kind: string | null): string {
   return kind ? (KIND_WORDS[kind] ?? kind) : "Kind not recorded";
 }
@@ -325,9 +344,10 @@ export function buildLiveModel(reply: CellEvidence, options: { readonly sessionM
         sha256: entry?.sha256 ?? null,
         recordedSha256: ev.sha256 ?? entry?.recordedSha256 ?? null,
         sim: null,
+        role: ev.role ?? null,
       };
     });
-    checks.push({ key: `${runKey}/${k.targetId}`, id: k.targetId, kind: k.targetKind, result: k.result, round: k.round, visitId: k.visitId, atMs, files, runKey });
+    checks.push({ key: `${runKey}/${k.targetId}`, id: k.targetId, kind: k.targetKind, result: k.result, round: k.round, visitId: k.visitId, atMs, files, runKey, mock: k.mock ?? null });
   }
   const runs = groupRuns(checks);
   return { ticket: reply.ticketId, source: "live", runs, mediaEnabled, readFrom: readFromOf(checks.flatMap((c) => c.files)), note: reply.note };
@@ -387,8 +407,10 @@ export function buildSimModel(cell: CellState): EvidenceModel {
         const path = simPath(cell.ticketId, ref);
         const art = simArtifact(cell, path, v.round, c.at);
         const cls = classOf(null, path);
+        // M15: the simulation's design mock names its approved picture first, then the capture.
+        const role: MockRole | null = c.mock ? (i === 0 ? "approved-mock" : "capture") : null;
         const sim: SimulatedContent | null =
-          cls === "image" ? { kind: "image", checkId: c.targetId, result: c.result, round: v.round } : cls === "video" ? { kind: "video" } : cls === "text" ? { kind: "text", text: simulatedText({ ticket: cell.ticketId, checkId: c.targetId, kind: c.targetKind, result: c.result, round: v.round, note: c.note ?? art?.summary ?? null, path }) } : null;
+          cls === "image" ? { kind: "image", checkId: c.targetId, result: c.result, round: v.round, ...(role ? { role } : {}) } : cls === "video" ? { kind: "video" } : cls === "text" ? { kind: "text", text: simulatedText({ ticket: cell.ticketId, checkId: c.targetId, kind: c.targetKind, result: c.result, round: v.round, note: c.note ?? art?.summary ?? null, path }) } : null;
         return {
           key: art?.id ?? `n${i}`,
           artifactId: null,
@@ -410,9 +432,11 @@ export function buildSimModel(cell: CellState): EvidenceModel {
           sha256: null,
           recordedSha256: null,
           sim,
+          role,
         };
       });
-      checks.push({ key: `${runKey}/${c.targetId}`, id: c.targetId, kind: c.targetKind, result: c.result, round: v.round, visitId, atMs: c.at, files, runKey });
+      const mock: MockFacts | null = c.mock ? { compared: c.mock.compared, binding: c.mock.binding, forScenario: c.mock.forScenario, note: c.note, differences: c.mock.differences, freeText: false } : null;
+      checks.push({ key: `${runKey}/${c.targetId}`, id: c.targetId, kind: c.targetKind, result: c.result, round: v.round, visitId, atMs: c.at, files, runKey, mock });
     }
   }
   return { ticket: cell.ticketId, source: "simulation", runs: groupRuns(checks), mediaEnabled: true, readFrom: checks.length ? "simulation" : null, note: null };

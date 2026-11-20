@@ -19,6 +19,11 @@ import {
   MAX_ROUNDS,
   MODELS,
   capacityWaitOf,
+  cellStopOf,
+  mockWaitsOf,
+  recheckCount,
+  type CellStop,
+  type MockWait,
   costCompletenessOf,
   isKnown,
   holdOf,
@@ -94,7 +99,9 @@ export type HeldReason =
   | { readonly kind: "capacity"; readonly words: string }
   | { readonly kind: "dependency"; readonly words: string }
   | { readonly kind: "supervisor"; readonly words: string; readonly freeText: string }
-  | { readonly kind: "next"; readonly words: string };
+  | { readonly kind: "next"; readonly words: string }
+  /** M15: sent back by the merge-time recheck; it moves on by itself, to Verify. */
+  | { readonly kind: "recheck"; readonly words: string };
 
 export interface StationTime {
   readonly column: number;
@@ -140,6 +147,16 @@ export interface LineRow {
   readonly needs: string;
   /** The `/mach` command to copy. */
   readonly command: string;
+  /** A second command, shown below the first (M15: explain, beside a policy concern's accept command). */
+  readonly alsoCommand?: string | null;
+  /** M15: the wait M13 or M14 added that put it here, when one did (one code for every view). */
+  readonly stop?: CellStop["kind"] | "waiting-mocks" | null;
+  /** M15: the slice's Jira key, when recorded (an identifier, shown as text, never a link). */
+  readonly jira?: string | null;
+  /** M15: the change record's repository-relative path, when recorded (shown as text, never a link). */
+  readonly changeRecord?: string | null;
+  /** M15: the merge-time recheck sent it back this many times (each a repeat review round, no judging round used). */
+  readonly rechecks?: number;
   readonly times: readonly StationTime[];
   /** Judging rounds started (verification or review), of MAX_ROUNDS. */
   readonly roundsUsed: number;
@@ -319,6 +336,45 @@ function epicOf(slice: SliceState | undefined): Pick<LineRow, "epicId" | "epicTi
   return { epicId: slice?.epicId ?? null, epicTitle: slice?.epicTitle?.trim() ? slice.epicTitle : null, issue: slice?.issue ?? null };
 }
 
+/**
+ * The review round a review visit sat: the k-th review visit of a judging round sat the k-th entry for
+ * it, so a repeat (round-N.k, M13) is its own visit with its own findings and decision.
+ */
+export function reviewOfVisit(cell: Pick<CellState, "visits" | "reviews">, v: StationVisit): CellState["reviews"][number] | null {
+  const nth = cell.visits.filter((x) => x.station === "review" && x.round === v.round && x.enteredAt < v.enteredAt).length;
+  return cell.reviews.filter((r) => r.round === v.round)[nth] ?? cell.reviews.find((r) => r.round === v.round) ?? null;
+}
+
+/** "round 1", or "round 1, repeat 1 (no judging round used)" for a repeat review round. */
+export function visitRoundWords(cell: Pick<CellState, "visits" | "reviews"> | null, v: StationVisit): string {
+  const repeat = cell && v.station === "review" ? (reviewOfVisit(cell, v)?.repeat ?? 0) : 0;
+  return repeat > 0 ? `round ${v.round}, repeat ${repeat} (no judging round used)` : `round ${v.round}`;
+}
+
+/** The verb a "Needs you" item starts with: what the person must do (style guide 8.8). */
+export function needVerb(row: Pick<LineRow, "state" | "beforeMerge" | "stop">): string {
+  if (row.state === "stopped") return "Unblock";
+  if (row.beforeMerge) return "Approve or send back";
+  switch (row.stop) {
+    case "main-conflict":
+      return "Resolve the conflict with main on";
+    case "policy-owner":
+      return "Ask the policy's owner about";
+    case "waiting-mocks":
+      return "Commit the design mocks for";
+    default:
+      return "Decide on";
+  }
+}
+
+/** The accept command for a policy concern, as the run skill routes it (M14 part A). The POL id and the owner's words are the person's to fill in. */
+export const policyAcceptCommand = (ticketId: string): string => `/mach policy accept ${ticketId} <POL-id> "<the owner's words>"`;
+
+/** What M13 and M14 put on a row besides its state: the Jira key, the change record, the rechecks. */
+function m15Facts(cell: CellState, slice: SliceState | undefined): Pick<LineRow, "jira" | "changeRecord" | "rechecks"> {
+  return { jira: cell.jira ?? slice?.jira ?? null, changeRecord: cell.changeRecord?.path ?? null, rechecks: recheckCount(cell) };
+}
+
 /** One cell as a row of the Line. */
 export function rowOfCell(scene: Scene, cell: CellState, now: number): LineRow {
   const slice = scene.slices[cell.sliceId];
@@ -337,6 +393,7 @@ export function rowOfCell(scene: Scene, cell: CellState, now: number): LineRow {
     openedAt: cell.openedAt,
     sentBack: sentBackOf(cell),
     personWords: null as string | null,
+    ...m15Facts(cell, slice),
   };
   const landed = cell.merged !== null || cell.stage === "merged" || cell.runRecord?.outcome === "merged";
 
@@ -382,6 +439,62 @@ export function rowOfCell(scene: Scene, cell: CellState, now: number): LineRow {
   }
 
   const open = openVisit(cell);
+  // M15: the waits M13 and M14 added, each with its own reason (never the generic "a person is needed").
+  const stop = open ? null : cellStopOf(scene, cell);
+  if (stop?.kind === "main-conflict") {
+    return {
+      ...base,
+      stop: stop.kind,
+      personWords: stop.basis === "supervisor" ? (attention?.reason ?? null) : null,
+      state: "person",
+      column: BUILD,
+      beforeMerge: false,
+      passed: passedColumns(cell, BUILD),
+      detail: "conflict with main",
+      since: stop.since,
+      held: null,
+      why: "Bringing its branch up to date with the main branch conflicts. The build station changed nothing and waits for a person to resolve it.",
+      needs: "Merge the main branch into the ticket's branch in its cell and resolve the conflict; the build then carries on. Or plan it again, or abandon it.",
+      command: command("decide", cell.ticketId),
+      alsoCommand: command("explain", cell.ticketId),
+    };
+  }
+  if (stop?.kind === "policy-owner") {
+    return {
+      ...base,
+      stop: stop.kind,
+      personWords: stop.basis === "supervisor" ? (attention?.reason ?? null) : null,
+      state: "person",
+      column: GROOM,
+      beforeMerge: false,
+      passed: [],
+      detail: "policy owner",
+      since: stop.since,
+      held: null,
+      why: "The spec is held only by a policy concern: a statement of a policy pack it cannot meet. Only the policy's owner settles it.",
+      needs: "The policy's owner accepts the concern in their own words, or the spec changes so the policy is met.",
+      command: policyAcceptCommand(cell.ticketId),
+      alsoCommand: command("explain", cell.ticketId),
+    };
+  }
+  if (stop?.kind === "merge-recheck") {
+    const held: HeldReason = { kind: "recheck", words: "Work that landed on the main branch after approval touches the same ground, so the approval did not carry over. It is verified and reviewed again on the merged result; this uses no judging round." };
+    return {
+      ...base,
+      stop: stop.kind,
+      sentBack: { from: MERGE, to: VERIFY, times: stop.times },
+      state: "held",
+      column: VERIFY,
+      beforeMerge: false,
+      passed: passedColumns(cell, VERIFY),
+      detail: "verify again",
+      since: stop.since,
+      held,
+      why: held.words,
+      needs: "Nothing. It moves on by itself.",
+      command: command("explain", cell.ticketId),
+    };
+  }
   const waitingApproval = cell.stage === "awaiting-human" || open?.station === "human-approval";
   if (waitingApproval || cell.stage === "spec-open" || attention) {
     if (waitingApproval) {
@@ -508,6 +621,40 @@ export function rowOfSlice(scene: Scene, slice: SliceState): LineRow {
   };
 }
 
+/**
+ * M15: a slice issue intake holds until its approved design mocks are committed (M14 part C). It has no
+ * cell and no ticket yet; its row is named by its slice, before Plan, and waits for a person.
+ */
+export function rowOfMockWait(wait: MockWait): LineRow {
+  return {
+    ticketId: wait.sliceId,
+    sliceId: wait.sliceId,
+    title: null,
+    epicId: null,
+    epicTitle: null,
+    issue: wait.issue,
+    risk: null,
+    state: "person",
+    column: PLAN,
+    beforeMerge: false,
+    passed: [],
+    detail: "waits for mocks",
+    since: wait.since,
+    sentBack: null,
+    held: null,
+    why: "Intake holds this slice: its approved design mocks are not on the main branch yet, so it is not taken in. Intake's words:",
+    personWords: wait.reason,
+    needs: `Commit the approved pictures Product Studio wrote to product/ready/${wait.sliceId}/mocks/ on the main branch; the next intake takes the slice in.`,
+    command: "/mach product status",
+    alsoCommand: "/mach pull --dry-run",
+    stop: "waiting-mocks",
+    times: [],
+    roundsUsed: 0,
+    cost: null,
+    openedAt: wait.since,
+  };
+}
+
 export interface LineModel {
   /** Rows in the order they entered the line; landed ones after the rest, the newest few only. */
   readonly rows: readonly LineRow[];
@@ -531,6 +678,7 @@ export function lineModel(scene: Scene, now: number): LineModel {
     if (!slice.ticketId || withCell.has(slice.ticketId) || slice.scheduler === "integrated" || slice.scheduler === "dispatched") continue;
     rows.push(rowOfSlice(scene, slice));
   }
+  for (const wait of mockWaitsOf(scene)) rows.push(rowOfMockWait(wait));
   const byOpen = (a: LineRow, b: LineRow) => a.openedAt - b.openedAt || (a.ticketId < b.ticketId ? -1 : a.ticketId > b.ticketId ? 1 : 0);
   const active = rows.filter((r) => r.state !== "landed").sort(byOpen);
   const landed = rows.filter((r) => r.state === "landed").sort((a, b) => (b.since ?? 0) - (a.since ?? 0));
@@ -574,7 +722,8 @@ export function stationStats(scene: Scene, rows: readonly LineRow[]): StationSta
         if (v.leftAt !== null && !v.unclosed && !v.interrupted) lengths.push(v.durationMs ?? v.leftAt - v.enteredAt);
         if (JUDGING.has(column) && v.leftAt !== null && v.outcome !== null && !v.unclosed) {
           of += 1;
-          if (v.outcome === "failed" || v.outcome === "rejected") back += 1;
+          // M15: the merge-time recheck sends work back too (to Verify), though it is no rejection.
+          if (v.outcome === "failed" || v.outcome === "rejected" || v.outcomeWord === "landed-overlap") back += 1;
         }
       }
       for (const a of Object.values(cell.agents)) {

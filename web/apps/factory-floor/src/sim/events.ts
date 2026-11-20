@@ -101,7 +101,15 @@ export interface FactoryLimits {
 
 export type ReviewOutcome = "APPROVED" | "AWAITING_HUMAN" | "REJECTED" | "ESCALATE";
 export type VerificationStatus = "PASS" | "FAIL_WITH_EVIDENCE" | "INCOMPLETE_EVIDENCE";
-export type TargetKind = "scenario" | "matrix rule" | "holdout";
+export type TargetKind = "scenario" | "matrix rule" | "holdout" | "design mock";
+
+/** M15: what verify.py compare records for a design mock (M14 part C), as the simulation writes it. */
+export interface SimMockRecord {
+  readonly compared: "matches" | "differs" | "cannot compare";
+  readonly binding: boolean;
+  readonly forScenario: string | null;
+  readonly differences: readonly string[];
+}
 export type StationOutcome = "done" | "passed" | "failed" | "approved" | "rejected" | "awaiting-human" | "merged" | "archived" | "stopped";
 export type TestContext = "baseline" | "red" | "green" | "done" | "finish" | "verify" | "revalidate";
 
@@ -236,7 +244,7 @@ export interface EventDataMap {
     targets: Array<{ id: string; kind: TargetKind; title: string }>;
     required_evidence: string[];
   };
-  "evidence.captured": { round: number; target_id: string; target_kind: TargetKind; result: "pass" | "fail"; evidence: string[]; note: string };
+  "evidence.captured": { round: number; target_id: string; target_kind: TargetKind; result: "pass" | "fail"; evidence: string[]; note: string; /** M15: a design mock's side-by-side record (the simulation's sample). */ mock?: SimMockRecord };
   "verification.verdict": { round: number; status: VerificationStatus; checks_passed: number; checks_failed: number; head: string; findings: string | null };
   // ---- simulation: review ----
   "review.started": {

@@ -6,7 +6,7 @@
  */
 import type { ProductDefinitions } from "../model";
 import type { ReviewSeat, TaskKind } from "../vocabulary";
-import type { TargetKind } from "../events";
+import type { SimMockRecord, TargetKind } from "../events";
 
 export const PROJECT = { id: "tally-web", name: "Tally", integrationBranch: "main" } as const;
 
@@ -132,6 +132,8 @@ export interface TargetSpec {
   /** Results by verification round; a round not listed passes. */
   fail?: { round: number; note: string };
   note: string;
+  /** M15: a design mock (kind `design mock`): `evidence` is the approved picture's copy, `capture` the built screen beside it. */
+  mock?: SimMockRecord & { capture: string };
 }
 
 export interface FindingSpec {
@@ -191,6 +193,14 @@ export const CONTENT: Readonly<Record<string, CellContent>> = {
         note: "INV-3004 due today is Open; INV-3005 due yesterday is Overdue.",
       },
       { id: "R5", kind: "matrix rule", title: "Void: cancelled after sending", evidence: "r5-void.png", note: "INV-3006 (voided) appears under Void and in no other status." },
+      {
+        id: "MOCK-1",
+        kind: "design mock",
+        title: "The approved picture of the invoice list",
+        evidence: "mocks/invoice-list-approved.png",
+        note: "Captured the invoice list at 1280 wide and set it beside the approved picture.",
+        mock: { compared: "differs", binding: false, forScenario: "AC-01", capture: "ac-01-overdue-filter.png", differences: ["The Overdue chip is outlined; in the approved picture it is filled."] },
+      },
     ],
     recording: "invoice-filters-flow.webm",
     reviewReads: {

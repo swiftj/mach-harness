@@ -603,7 +603,7 @@ function reduceEvent(scene: Scene, event: AnySimEvent, definitions: ProductDefin
         ...cell,
         verifications: replaceLast(cell.verifications, (v) => v.round === d.round, (v) => ({
           ...v,
-          checks: v.checks.map((c) => (c.targetId === d.target_id ? { ...c, result: d.result, evidence: d.evidence, note: d.note, at: t } : c)),
+          checks: v.checks.map((c) => (c.targetId === d.target_id ? { ...c, result: d.result, evidence: d.evidence, note: d.note, at: t, ...(d.mock ? { mock: d.mock } : {}) } : c)),
         })),
       }));
       return { ...s, counters: bump(s.counters, d.result === "pass" ? { checksPassed: 1 } : { checksFailed: 1 }) };

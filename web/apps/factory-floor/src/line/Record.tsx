@@ -11,7 +11,7 @@ import { FreeText } from "../shell/inspector/FreeText";
 import { visitStateWords } from "../shell/inspector/outcomes";
 import { planWords } from "../shell/inspector/words";
 import { duration } from "../shell/time";
-import { columnOf, LINE_STATIONS, type LineRow } from "./model";
+import { columnOf, LINE_STATIONS, reviewOfVisit, visitRoundWords, type LineRow } from "./model";
 import { StatePill } from "./Marks";
 import { costWords, modelWords } from "./words";
 import { EpicLine } from "./Epic";
@@ -50,7 +50,7 @@ function LookAt({ cell, v, onEvidence }: { cell: CellState; v: StationVisit; onE
       );
     }
     case "review": {
-      const round = cell.reviews.find((r) => r.round === v.round);
+      const round = reviewOfVisit(cell, v);
       if (!round) return <span className="text-ink-muted">no round recorded</span>;
       const blockers = round.findings.filter((f) => f.severity === "blocker");
       const rules = [...new Set(blockers.map((f) => f.rule).filter((r): r is string => Boolean(r)))];
@@ -79,6 +79,7 @@ function LookAt({ cell, v, onEvidence }: { cell: CellState; v: StationVisit; onE
     case "plan":
       return cell.plan ? <span className="text-ink">{planWords(cell.plan)}</span> : <span className="text-ink-muted">plan facts not recorded</span>;
     case "merge":
+      if (v.outcomeWord === "landed-overlap") return <span className="text-ink">sent back to be verified and reviewed again: work that landed on main touches the same ground (no judging round used)</span>;
       return cell.merged ? (
         <span className="text-ink">
           merged as <span className="font-mono text-[12.5px]">{cell.merged.commit.slice(0, 10)}</span>
@@ -127,6 +128,10 @@ export function TicketRecord({ row, now, onClose }: { row: LineRow | null; now: 
                 {row.risk ? `${row.risk} risk` : "Risk not recorded"}. Rounds used: {row.roundsUsed} of {MAX_ROUNDS}. Cost: {costWords(row.cost)}.
               </span>
             </p>
+            <p className="mt-1 text-body-sm text-ink-muted" data-record-ids="">
+              Jira: {row.jira ? <span className="font-mono text-[13px] text-ink">{row.jira}</span> : "not recorded"}. Change record:{" "}
+              {row.changeRecord ? <span className="break-all font-mono text-[13px] text-ink">{row.changeRecord}</span> : "not recorded"}.
+            </p>
             {visits.length === 0 ? (
               <p className="mt-4 text-body-sm text-ink-muted">No station visit is recorded for this ticket yet.</p>
             ) : (
@@ -150,7 +155,7 @@ export function TicketRecord({ row, now, onClose }: { row: LineRow | null; now: 
                           <Cell>
                             <span className="font-semibold text-ink">{v.station === "human-approval" ? "A person's approval" : v.station === "audit" ? "Readiness check" : LINE_STATIONS[column]!.name}</span>
                             {again ? <span className="ml-1.5 rounded-xs border border-factory-fail px-1 text-caption font-semibold text-factory-fail">again</span> : null}
-                            <span className="block text-caption text-ink-subtle">round {v.round}</span>
+                            <span className="block text-caption text-ink-subtle">{visitRoundWords(cell, v)}</span>
                           </Cell>
                           <Cell>{cell ? (visitModels(cell, v) ?? <span className="text-ink-muted">not recorded</span>) : null}</Cell>
                           <Cell className="whitespace-nowrap tabular">{visitTime(v, now)}</Cell>
@@ -166,6 +171,7 @@ export function TicketRecord({ row, now, onClose }: { row: LineRow | null; now: 
             <h4 className="mb-1 mt-5 text-label text-ink-muted">What it needs from you</h4>
             <p className="text-body-sm text-ink">{row.needs}</p>
             <CommandLine className="mt-2" command={row.command} purpose={`for ${row.ticketId}`} />
+            {row.alsoCommand ? <CommandLine className="mt-1.5" command={row.alsoCommand} purpose={`also for ${row.ticketId}`} /> : null}
           </div>
         </DialogContent>
       ) : null}

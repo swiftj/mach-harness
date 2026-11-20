@@ -499,6 +499,20 @@ type ReviewRound struct {
 	Blockers     *int64            `json:"blockers"`
 	SecurityVeto bool              `json:"security_veto"`
 	Decided      *Stamp            `json:"decided"`
+	// SecuritySeat: the standing decision was counted in R3 (its panel had a security seat), so a
+	// repeat's decision takes its place there as it does in R1 (M15).
+	SecuritySeat bool `json:"security_seat,omitempty"`
+}
+
+// hasVerdict reports whether the cell already holds a verify.verdict evaluation of a round (a
+// re-verification in the same round after the merge station voided an approval, M13).
+func hasVerdict(c *Cell, round int64) bool {
+	for _, g := range c.Gates {
+		if g.Gate == "verify.verdict" && g.Round != nil && *g.Round == round {
+			return true
+		}
+	}
+	return false
 }
 
 // Seat is a panel seat.
