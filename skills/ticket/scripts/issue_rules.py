@@ -1386,3 +1386,121 @@ def epic_view_marker(body: Any) -> Optional[Dict[str, Any]]:
         return None
     intact = hashlib.sha256(body[found.end():].encode("utf-8")).hexdigest() == found.group(3)
     return {"epic_id": found.group(1), "commit": found.group(2), "sha256": found.group(3), "intact": intact}
+
+
+# ---- Shape: an idea as an issue (M16 part A) ----
+# One issue per idea Product Studio shapes. Its body is a hidden marker, one fixed sentence and the brief exactly as the
+# product manager wrote it; a verdict is a comment from a fixed template carrying the brief's SHA-256 and the login.
+# `mach:idea` and the state labels are MACH's own. The Factory reads none of this: no `mach:slice`, no `mach:ready`.
+
+SHAPE_IDEA_LABEL = "mach:idea"
+SHAPE_STATE_LABELS: Dict[str, str] = {"new": "mach:idea-new", "exploring": "mach:idea-exploring", "brief": "mach:idea-brief",
+                                      "go": "mach:idea-go", "not-now": "mach:idea-not-now", "no": "mach:idea-no", "shaped": "mach:idea-shaped"}
+SHAPE_LABELS: Dict[str, Dict[str, str]] = {
+    "mach:idea": {"color": "BFD4F2", "description": "MACH: an idea being shaped in Product Studio; the body is its brief"},
+    "mach:idea-new": {"color": "EDEDED", "description": "MACH: a new idea"},
+    "mach:idea-exploring": {"color": "C2E0C6", "description": "MACH: the idea is being explored"},
+    "mach:idea-brief": {"color": "FEF2C0", "description": "MACH: the brief is written; no verdict for it yet"},
+    "mach:idea-go": {"color": "0E8A16", "description": "MACH: verdict Go for this brief"},
+    "mach:idea-not-now": {"color": "FBCA04", "description": "MACH: verdict Not now for this brief"},
+    "mach:idea-no": {"color": "B60205", "description": "MACH: verdict No, kept with its reason"},
+    "mach:idea-shaped": {"color": "5319E7", "description": "MACH: shaped into epics and slices"},
+}
+SHAPE_IDEA_ID_RE = re.compile(r"^IDEA-[0-9]{3,}$")
+SHAPE_FAULT_RE = re.compile(r"^AUTO-[0-9]{8}T[0-9]{6}Z(?:-[0-9]{1,4})?$")
+SHAPE_VERDICTS = ("go", "not-now", "no")
+SHAPE_VERDICT_WORDS = {"go": "Go", "not-now": "Not now", "no": "No"}
+SHAPE_REASON_LIMIT = 500
+SHAPE_LEAD = ("Shaped in MACH Product Studio. The brief below is the product manager's; a verdict, when there is one, "
+              "is a comment from Product Studio.\n\n")
+SHAPE_NO_BRIEF = "_No brief has been written yet._\n"
+SHAPE_MARKER_RE = re.compile(r"\A<!-- mach:shape idea=(IDEA-[0-9]{3,}) revision=([0-9]{1,6}) brief-sha256=(none|[0-9a-f]{64})"
+                             r"(?: from=(?:(request|idea):#([0-9]{1,9})|fault:(AUTO-[0-9]{8}T[0-9]{6}Z(?:-[0-9]{1,4})?)))? -->\n")
+SHAPE_VERDICT_RE = re.compile(r"<!-- mach:idea-verdict id=(IDEA-[0-9]{3,}) revision=([0-9]{1,6}) decision=(go|not-now|no) by=(" + LOGIN_PATTERN
+                              + r") brief-sha256=(none|[0-9a-f]{64}) -->")
+
+
+def shape_source_marker(source: Any) -> str:
+    """The ` from=...` part of an idea's marker: identifiers only; nothing for an idea the product manager typed."""
+    kind = source.get("kind") if isinstance(source, dict) else None
+    if kind in ("request", "idea") and is_issue_number(source.get("number")):
+        return f" from={kind}:#{source['number']}"
+    if kind == "fault" and SHAPE_FAULT_RE.fullmatch(str(source.get("ticket") or "")):
+        return f" from=fault:{source['ticket']}"
+    if kind in (None, "typed"):
+        return ""
+    raise ValueError("an idea's source is identifiers only")
+
+
+def shape_issue_body(idea_id: str, revision: int, brief: Optional[str], source: Any = None) -> str:
+    """The idea's issue body: the marker, the fixed sentence, then the brief exactly as written (or the fixed line saying there is none)."""
+    if not SHAPE_IDEA_ID_RE.fullmatch(idea_id or "") or type(revision) is not int or not 0 <= revision < 10 ** 6:
+        raise ValueError("an idea's marker names its ID and its brief's revision")
+    if brief is not None and (not isinstance(brief, str) or not brief.strip() or "<!-- mach:" in brief):
+        raise ValueError("a brief is text with no MACH marker in it")
+    digest = text_sha256_of(brief) if brief is not None else "none"
+    head = f"<!-- mach:shape idea={idea_id} revision={revision} brief-sha256={digest}{shape_source_marker(source)} -->\n"
+    return head + SHAPE_LEAD + (brief if brief is not None else SHAPE_NO_BRIEF)
+
+
+def parse_shape_body(body: Any) -> Optional[Dict[str, Any]]:
+    """The marker of an idea's issue body, and the brief when its SHA-256 matches (`intact`). None for any other body.
+    Never raises. GitHub may drop a final newline; the brief is still the one written."""
+    if not isinstance(body, str) or len(body) > ISSUE_BODY_LIMIT:
+        return None
+    text = body.replace("\r\n", "\n")
+    found = SHAPE_MARKER_RE.match(text)
+    if not found:
+        return None
+    source = ({"kind": found.group(4), "number": int(found.group(5))} if found.group(4)
+              else {"kind": "fault", "ticket": found.group(6)} if found.group(6) else {"kind": "typed"})
+    digest = None if found.group(3) == "none" else found.group(3)
+    rest = text[found.end():]
+    brief, intact = None, False
+    if rest.startswith(SHAPE_LEAD):
+        rest = rest[len(SHAPE_LEAD):]
+        if digest is None:
+            intact = rest in (SHAPE_NO_BRIEF, SHAPE_NO_BRIEF.rstrip("\n"))
+        else:
+            for candidate in (rest, rest + "\n"):
+                if text_sha256_of(candidate) == digest:
+                    brief, intact = candidate, True
+                    break
+    return {"idea_id": found.group(1), "revision": int(found.group(2)), "brief_sha256": digest, "source": source, "brief": brief, "intact": intact}
+
+
+def shape_verdict_comment(idea_id: str, revision: int, decision: str, login: str, brief_sha256: Optional[str], reason: str) -> str:
+    """The comment that records one person's verdict on one revision of an idea's brief. Their reason is quoted cleaned,
+    redacted and bounded, with mentions and issue references broken, and can hold no marker."""
+    if not SHAPE_IDEA_ID_RE.fullmatch(idea_id or "") or type(revision) is not int or not 0 <= revision < 10 ** 6:
+        raise ValueError("a verdict names an idea and its brief's revision")
+    if decision not in SHAPE_VERDICTS or not LOGIN_RE.fullmatch(login or "") or not (brief_sha256 is None or HEX64_RE.fullmatch(brief_sha256)):
+        raise ValueError("a verdict is go, not-now or no, by a GitHub account, on a brief named by its SHA-256")
+    said = " ".join(quiet(reason, SHAPE_REASON_LIMIT).split()).replace("<!--", "‹!--").replace("-->", "--›")
+    if not said:
+        raise ValueError("a verdict carries the person's reason")
+    digest = brief_sha256 or "none"
+    return (f"Verdict recorded in MACH Product Studio by {login}: {idea_id}, brief revision {revision}: {SHAPE_VERDICT_WORDS[decision]}.\n\n"
+            f"Their reason: {said}\n\n- Brief SHA-256: `{digest}`\n\n"
+            f"<!-- mach:idea-verdict id={idea_id} revision={revision} decision={decision} by={login} brief-sha256={digest} -->")
+
+
+def shape_verdicts(bodies: Iterable[Any]) -> List[Dict[str, Any]]:
+    """Every verdict marker in an issue's comments, in order."""
+    found = []
+    for body in bodies:
+        for match in SHAPE_VERDICT_RE.finditer(body if isinstance(body, str) else ""):
+            found.append({"idea_id": match.group(1), "revision": int(match.group(2)), "decision": match.group(3), "by": match.group(4),
+                          "brief_sha256": None if match.group(5) == "none" else match.group(5)})
+    return found
+
+
+def shape_state_label(stage: str, decision: Optional[str], verdict_current: bool) -> str:
+    """The one state label an idea's issue carries: shaped, else the verdict while it holds for the brief, else where it stands."""
+    if stage == "shaped":
+        return SHAPE_STATE_LABELS["shaped"]
+    if decision in SHAPE_VERDICTS and verdict_current:
+        return SHAPE_STATE_LABELS[decision]
+    if stage in ("brief", "decided"):
+        return SHAPE_STATE_LABELS["brief"]
+    return SHAPE_STATE_LABELS["exploring" if stage == "exploring" else "new"]

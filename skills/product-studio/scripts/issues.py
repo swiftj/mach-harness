@@ -11,6 +11,7 @@ Writes, and nothing else:
 - replace the title and body of an issue that carries a MACH product label;
 - comment the approval from its fixed template;
 - add MACH's product labels, and remove only mach:ready;
+- on an idea's issue (M16), set one of MACH's idea state labels and remove only the other idea state labels;
 - create a missing MACH label (never overwriting one);
 - add a slice as a sub-issue of its epic, and place it in the product manager's order.
 
@@ -146,6 +147,17 @@ def remove_ready(project: Path, repository: str, number: int) -> Failure:
     return collab._gh_write(project, "issue", "edit", str(int(number)), "--repo", repository, "--remove-label", READY)
 
 
+def set_idea_state(project: Path, repository: str, number: int, add: str, remove: Sequence[str]) -> Failure:
+    """M16: put one of MACH's idea state labels on an idea's issue and take its other idea state labels off. Refuses any
+    other label, so nothing but MACH's own idea states is ever removed from an issue."""
+    if add not in IDEA_STATES or any(name not in IDEA_STATES or name == add for name in remove):
+        return _failure("Only MACH's idea state labels are set here.")
+    args = ["issue", "edit", str(int(number)), "--repo", repository, "--add-label", add]
+    for name in remove:
+        args += ["--remove-label", name]
+    return collab._gh_write(project, *args)
+
+
 def comment(project: Path, repository: str, number: int, body_file: Path) -> Failure:
     return collab._gh_write(project, "issue", "comment", str(int(number)), "--repo", repository, "--body-file", str(body_file))
 
@@ -186,6 +198,8 @@ def sub_issue_numbers(project: Path, repository: str, number: int) -> Tuple[Opti
 
 
 READY = "mach:ready"
+# M16: the idea state labels (issue_rules.SHAPE_STATE_LABELS; tests hold the two the same). Product Studio owns them all.
+IDEA_STATES = ("mach:idea-new", "mach:idea-exploring", "mach:idea-brief", "mach:idea-go", "mach:idea-not-now", "mach:idea-no", "mach:idea-shaped")
 ISSUE_PATH = "repos/{repository}/issues/{number}"
 SUB_ISSUES_PATH = "repos/{repository}/issues/{number}/sub_issues"
 PRIORITY_PATH = "repos/{repository}/issues/{number}/sub_issues/priority"

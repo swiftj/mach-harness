@@ -25,7 +25,7 @@ class LoginRuleTest(unittest.TestCase):
             self.assertFalse(collab.is_login(login), login)
 
     def test_product_studio_keeps_no_copy_of_the_rule(self):
-        for name in ("collab.py", "issues.py", "handoff.py", "studio.py", "requests_in.py"):
+        for name in ("collab.py", "issues.py", "handoff.py", "studio.py", "requests_in.py", "shape.py"):
             text = (ROOT / "skills/product-studio/scripts" / name).read_text()
             self.assertNotIn("{0,38})\", login", text, name)
             self.assertNotIn("[A-Za-z0-9-]{0,38})\"", text, name)
