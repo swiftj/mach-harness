@@ -11,6 +11,8 @@ and not by whoever is driving it.
     run.py status [--headless]            the next step for every open ticket and cell, and who is working on one now
     run.py explain <ticket> [--json]     why a ticket failed, was sent back or is waiting; reads only (explain.py)
     run.py decide [<ticket>...] [--json] each ticket waiting on a person, with the options it really has; reads only (decide.py)
+    run.py current [--epic E] [--all] [--json] [--at COMMIT]
+                                         how each epic works today, compiled from the shipped slice specs; reads only (current.py)
     run.py doctor [--fix] [--json]       check the machine and the project; works before .factory exists (doctor.py)
     run.py schedule <ticket>... [--running <ticket>...] [--limit n] [--sequential] [--by-person] [--dry-run] [--holder H]
                                          which tickets may start now and why the others wait; reads only (schedule.py)
@@ -786,6 +788,27 @@ def cmd_explain(project: Project, args: argparse.Namespace) -> int:
     return code
 
 
+def cmd_current(project: Project, args: argparse.Namespace) -> int:
+    """How each epic works today, compiled from the slice specs at the integration branch (current.py). Reads only."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import current
+    _, line = factory(project)
+    source = line.integration()
+    try:
+        if args.at:
+            commit = current.resolve_commit(project.root, args.at)
+            on_branch = current.contains(project.root, commit, source.get("commit"))
+        elif source.get("commit"):
+            commit, on_branch = source["commit"], True
+        else:
+            raise RunError(" ".join(source.get("problems") or ["No integration branch was found."]) + " Name a commit with --at.")
+        result = current.report(project.root, commit, branch=source.get("branch"), epic=args.epic, everything=args.all, on_branch=on_branch)
+    except current.CurrentError as exc:
+        raise RunError(str(exc))
+    print(json.dumps(result, indent=2, ensure_ascii=False) if args.json else current.human(result))
+    return 0
+
+
 def cmd_decide(project: Project, args: argparse.Namespace) -> int:
     """Each ticket waiting on a person, with the options its stations really accept (decide.py). Reads only: writes,
     claims, records and starts nothing. It is a person's walkthrough, so it never runs inside a supervised execution."""
@@ -1346,6 +1369,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("ticket_id")
     p.add_argument("--json", action="store_true", help="the facts as JSON instead of a short list")
     p.set_defaults(func=cmd_explain)
+    p = sub.add_parser("current", help="how each epic works today, compiled from the shipped slice specs; reads only")
+    p.add_argument("--epic", metavar="E", help="one epic: its EPIC-ID or its issue number")
+    p.add_argument("--all", action="store_true", help="every epic in full (default: one line per epic)")
+    p.add_argument("--at", metavar="COMMIT", help="describe this commit instead of the integration branch's head")
+    p.add_argument("--json", action="store_true", help="the same data as JSON, with every shipped rule under rules")
+    p.set_defaults(func=cmd_current)
     p = sub.add_parser("decide", help="each ticket waiting on a person, with the options it really has; reads only")
     p.add_argument("ticket_ids", nargs="*", metavar="ticket", help="only these tickets (default: every open ticket)")
     p.add_argument("--json", action="store_true", help="the options as JSON, for the run skill's walkthrough")
@@ -1528,7 +1557,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 0  # a hook fired somewhere MACH is not: stay silent
         if args.command == "doctor":
             return cmd_doctor(root, args)  # before the .factory check: the doctor is how a project without one is set right
-        if args.command != "where" and not (root / ".factory").is_dir():
+        if args.command not in ("where", "current") and not (root / ".factory").is_dir():  # current reads Git objects only
             raise RunError(f"{root} is not a MACH project (it has no .factory folder). Run this from the project's folder, or pass --project.")
         project = Project(root)
         args.resolved_from = resolve_args(project, args)
