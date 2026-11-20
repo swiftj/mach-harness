@@ -62,7 +62,7 @@ var (
 )
 
 func init() {
-	for _, k := range event.Kinds[21:32] {
+	for _, k := range event.Kinds[21:33] {
 		lifecycleKinds[k] = true
 	}
 }
@@ -490,6 +490,25 @@ func (l *Lifecycle) data(ev *event.Event, typ, station string, in map[string]any
 		// synthetic history's "approve" is APPROVED. Anything else is not kept (null), and reads
 		// as an approval.
 		d["decision"] = humanDecision(get("decision"))
+		ev.Ref(event.RefActor("person"))
+	case "review.exception_recorded":
+		// A person's exception to a security blocker (M12): which findings, by seat and place, and what the round
+		// became. Who decided and why stay in the cell's decision.json; the lifecycle line never carries them.
+		findings := []any{}
+		for _, item := range arr(get("findings")) {
+			f := obj(item)
+			seat, okS := enum(f["seat"], seats...).(string)
+			index, okI := redact.Int(f["index"])
+			if !okS || !okI || index < 1 || len(findings) >= 16 {
+				continue
+			}
+			findings = append(findings, map[string]any{"seat": seat, "index": index, "impact": enum(f["impact"], "critical", "high", "medium", "low")})
+		}
+		d["findings"] = findings
+		d["expires_given"] = boolOr(get("expires_given"), false)
+		d["renewal"] = boolOr(get("renewal"), false)
+		d["outcome"] = enum(get("outcome"), "APPROVED", "AWAITING_HUMAN", "REJECTED", "ESCALATE")
+		get("round")
 		ev.Ref(event.RefActor("person"))
 	case "merge.completed":
 		require(ev, d, "method", enum(get("method"), "local", "pr"), "local")

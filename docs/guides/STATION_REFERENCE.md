@@ -88,6 +88,14 @@ Reviewers do not vote. Each submits findings, and any finding marked `blocker` m
 
 When a reviewer's blocker is outvoted on a medium-risk change, the outcome says so.
 
+A blocker from the security seat, and a security blocker of high or critical impact from any seat, is never outvoted: it rejects the round whatever the count. If you have read such a finding and accept it for this commit, you can say so before the builder starts again:
+
+```
+/mach except LOCAL-001 1/security/1 "<why, in your words>"
+```
+
+The reference is the round, the seat and the finding's place in that seat's findings, as `/mach explain` lists them. The script refuses unless the veto alone rejected the round (enough seats approved), no revision has started, the branch is still the commit reviewed, and the ticket is not a `factory-tuning` one; it never accepts an ordinary blocker. Add `--expires 2026-12-31` in your request to limit it in time. Once every blocker that vetoed has an exception, the round is decided by the count: approved, or waiting for a person's approval where one is needed anyway. The exception is not that approval. It is never recorded unattended, and `review.security_exception_by` can name the only people who may grant one.
+
 A ticket that is sent back and revised gets a narrower second review: reviewers see what changed since the last round and check that the earlier blockers are fixed. A blocker on code that did not change and was not blocked before is refused; it can only be a note. Reviewers also report a recurring defect once, as a class listing every place, so one revision can clear it.
 
 ## Merging an approved ticket
@@ -98,7 +106,7 @@ A ticket that is sent back and revised gets a narrower second review: reviewers 
 
 Review approves one exact commit, and the merge station lands that commit or refuses:
 
-- **Approval is bound to the commit.** If anything was added to the branch after review, the approval is void and the ticket goes back to verification.
+- **Approval is bound to the commit.** If anything was added to the branch after review, the approval is void and the ticket goes back to verification. An approval that rests on a person's security exception is bound the same way, and an exception past its expiry stops the merge until a person records a new one or abandons the ticket.
 - **It is re-tested against today's main.** If main has moved since approval, the branch is brought up to date inside the cell and the test suite runs again before anything lands, so two tickets that each passed alone cannot break main together. A failing suite sends the ticket back to the build station; a conflict stops for a person.
 - **Locally or through a pull request.** With `merge.method` set to `local` it makes a merge commit on your main checkout. With `pr` it pushes the branch, opens a pull request summarising the verification and review, and merges it at the approved commit, so your CI, review bots and team see a normal pull request.
 

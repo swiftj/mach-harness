@@ -24,6 +24,10 @@ Settings, in .factory/config.json under "merge":
             with the pull request method, post the approving round's findings on the pull request
             once, as one review of type comment (default true; only an explicit false turns it off)
 
+An approval that rests on a person's security exception (review.py except) is bound to the commit like any
+approval, and once an exception's expiry has passed nothing is merged: the ticket waits for a person. The pull
+request body lists each exception with who accepted it and why.
+
 A pull request for a slice that came as a GitHub issue says "Refs #<n>" (never a closing keyword:
 the Factory closes the slice's issue once it sees the merge on the integration branch). Posting findings never blocks or delays the merge.
 
@@ -204,6 +208,11 @@ def survey(cell: Cell, by_person: bool) -> Dict[str, Any]:
         refusals.append("There is no approval on record for this ticket (review/decision.json).")
     elif cell.decision.get("human_approval_required") and not cell.decision.get("human_approval"):
         refusals.append("The review requires a person's approval and none is recorded.")
+    lapsed = expired_exceptions(cell.decision)
+    if lapsed and stage in ("approved", "pr-open") and cell.decision.get("outcome") == "APPROVED":
+        plan["exception_expired"] = [f"{item.get('round')}/{item.get('seat')}/{item.get('index')}" for item in lapsed]
+        refusals.append(f"The security exception for {', '.join(plan['exception_expired'])} expired on {lapsed[0].get('expires')}, so the security veto stands "
+                        "again and nothing is merged. A person decides: record a new exception (except) or abandon the ticket.")
     revalidated = cell.info.get("revalidated") or {}
     if stage in ("approved", "pr-open") and not plan["approval_valid"] and revalidated.get("head") != head:
         plan["approval_void"] = True
@@ -231,6 +240,27 @@ def survey(cell: Cell, by_person: bool) -> Dict[str, Any]:
     plan["allowed"] = not refusals
     plan["refusals"] = refusals
     return plan
+
+
+def expired_exceptions(decision: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The security exceptions on the approving round whose expiry has passed (review.py's rule: one holds through its
+    expiry day, UTC; one with no expiry holds for the commit reviewed). Only the latest for each finding counts."""
+    latest: Dict[Tuple[Any, Any, Any], Dict[str, Any]] = {}
+    for item in decision.get("exceptions") or []:
+        if isinstance(item, dict):
+            latest[(item.get("round"), item.get("seat"), item.get("index"))] = item
+    today = datetime.now(timezone.utc).date()
+    lapsed = []
+    for item in latest.values():
+        if not item.get("expires"):
+            continue
+        try:
+            ended = datetime.strptime(str(item["expires"]), "%Y-%m-%d").date() < today
+        except ValueError:
+            ended = True  # an expiry that cannot be read is not trusted to be in the future
+        if ended:
+            lapsed.append(item)
+    return lapsed
 
 
 def void_approval(cell: Cell) -> None:
@@ -390,6 +420,7 @@ def pr_body(cell: Cell) -> str:
         + f". Blockers: {inert(cell.decision.get('blockers', 0))}.",
         f"Approved by a person: {inert(human.get('by') if isinstance(human, dict) else human)}." if human else "No person's approval was required for this ticket.",
         "",
+        *exceptions_section(cell),
         "## Build",
         f"{inert(cell.build.get('diff', ''), 400)}. Tests seen failing before their code was written: {inert(cell.build.get('tests_seen_failing_first', 0))}. "
         f"Gate overrides recorded: {len(cell.build.get('deviations') or [])}.",
@@ -402,6 +433,27 @@ def pr_body(cell: Cell) -> str:
     if refs:
         lines += ["", refs]
     return "\n".join(lines)
+
+
+def exceptions_section(cell: Cell) -> List[str]:
+    """Each security exception the approval rests on: the finding, who accepted it, their reason (redacted, bounded,
+    linking nothing) and its expiry. Nothing when the approval needed none."""
+    items = [item for item in cell.decision.get("exceptions") or [] if isinstance(item, dict)]
+    if not items:
+        return []
+    rules = issue_rules()
+    lines = ["## Security exceptions",
+             "The review panel's security veto was excepted by a person for the approved commit. The finding stands: it was accepted, not fixed."]
+    for item in items[:20]:
+        reason = item.get("reason") if isinstance(item.get("reason"), str) else ""
+        reason = rules.redact(reason) if rules is not None else reason
+        impact = item.get("impact") if item.get("impact") in IMPACTS else "unstated"
+        seat = inert(item.get("seat"), 40)
+        lines.append(f"- {inert(item.get('round'), 10)}/{seat}/{inert(item.get('index'), 10)} ({seat} seat, {impact} impact): "
+                     f"**{inert(item.get('title'), TITLE_LIMIT)}**, breaks {inert(item.get('rule'), RULE_LIMIT)}. Accepted by {inert(item.get('by'), 80)}"
+                     + (f", until {inert(item.get('expires'), 10)}" if item.get("expires") else "") + f": \"{inert(reason, DETAIL_LIMIT)}\""
+                     + (" (renews an expired one)" if item.get("renews") is not None else ""))
+    return lines + [""]
 
 
 def gh(cell: Cell, *args: str, stdin: Optional[str] = None, timeout: Optional[int] = None) -> subprocess.CompletedProcess:
@@ -683,7 +735,8 @@ def cmd_run(cell: Cell, args: argparse.Namespace) -> int:
         void_approval(cell)
         raise MergeError(plan["refusals"][-1] if len(plan["refusals"]) == 1 else "\n- " + "\n- ".join(plan["refusals"]), code="approval-void")
     if plan["refusals"]:
-        raise MergeError(plan["refusals"][0] if len(plan["refusals"]) == 1 else "\n- " + "\n- ".join(plan["refusals"]), code="merge-refused")
+        raise MergeError(plan["refusals"][0] if len(plan["refusals"]) == 1 else "\n- " + "\n- ".join(plan["refusals"]),
+                         code="exception-expired" if plan.get("exception_expired") else "merge-refused")
     telemetry(cell.root, "gate.evaluated", "merge", lambda: {"gate": "merge.run", "outcome": "pass", "reason_code": None, "overridden_by_reason": False,
                                                              "by_person": bool(args.by_person)})
     telemetry(cell.root, "station.entered", "merge", lambda: {"stage": plan["stage"], "method": cell.method, "behind_main": bool(plan["behind_main"])})

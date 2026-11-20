@@ -79,6 +79,25 @@ def number(identifier: str) -> int:
     return int(match.group(1)) if match else 0
 
 
+def review_exceptions(decision: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The security exceptions in force on the approving review decision (review.py except): the latest for each finding."""
+    latest: Dict[str, Dict[str, Any]] = {}
+    for item in decision.get("exceptions") or [] if isinstance(decision.get("exceptions"), list) else []:
+        if isinstance(item, dict):
+            latest[f"{item.get('round')}/{item.get('seat')}/{item.get('index')}"] = item
+    return list(latest.values())
+
+
+def lapsed(item: Dict[str, Any]) -> bool:
+    """Whether a review exception's expiry (the last day it holds, UTC) has passed. None never lapses; an unreadable one has."""
+    if not item.get("expires"):
+        return False
+    try:
+        return datetime.strptime(str(item["expires"]), "%Y-%m-%d").date() < datetime.now(timezone.utc).date()
+    except ValueError:
+        return True
+
+
 def write_atomic(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")
@@ -472,11 +491,30 @@ class Release:
                 stood = [b for b in record.get("blockers") or [] if isinstance(b, dict) and b.get("round") == final_round]
                 if decision.get("outcome") == "APPROVED" and decision.get("blockers") and not stood:
                     stood = [{"round": final_round, "reviewer": None, "rule": None, "title": f"{decision.get('blockers')} blocker(s) outvoted; details not in the run record", "file": None}]
+                excepted = review_exceptions(decision)
                 for index, blocker in enumerate(stood, start=1):
                     blocker_id = f"blocker.{slice_id}.r{final_round}.{index}"
-                    open_blockers.append({"check": blocker_id, "slice_id": slice_id, "ticket_id": ticket_id, "security": blocker.get("reviewer") == "security", **blocker})
-                    check(blocker_id, "security" if blocker.get("reviewer") == "security" else "review", "fail",
-                          f"Outvoted, still open: {blocker.get('title')} ({blocker.get('reviewer')}; breaks {blocker.get('rule')}).")
+                    security = blocker.get("reviewer") == "security" or blocker.get("class") == "security"
+                    given = next((item for item in excepted if item.get("seat") == blocker.get("reviewer") and item.get("title") == blocker.get("title")
+                                  and item.get("rule") == blocker.get("rule") and item.get("file") == blocker.get("file")), None)
+                    entry = {"check": blocker_id, "slice_id": slice_id, "ticket_id": ticket_id, "security": security, **blocker}
+                    what = f"{blocker.get('title')} ({blocker.get('reviewer')}; breaks {blocker.get('rule')})"
+                    if given is None:
+                        open_blockers.append(entry)
+                        check(blocker_id, "security" if security else "review", "fail", f"Outvoted, still open: {what}.")
+                        continue
+                    # A person's exception from review: listed with who and why, and counted as an exception (a gap a person accepted),
+                    # never as a pass. It lapses at its expiry like the review approval it allowed.
+                    exception = {"source": "review", "finding": f"{given.get('round')}/{given.get('seat')}/{given.get('index')}", "by": given.get("by"),
+                                 "reason": given.get("reason"), "recorded_at": given.get("recorded_at"), "commit": given.get("head"), "expires": given.get("expires")}
+                    if lapsed(given):
+                        open_blockers.append({**entry, "exception_expired": exception})
+                        check(blocker_id, "security" if security else "review", "fail",
+                              f"Still open: {what}. A person excepted it in review until {given.get('expires')}, and that has passed.")
+                    else:
+                        open_blockers.append({**entry, "excepted": exception})
+                        check(blocker_id, "security" if security else "review", "fail",
+                              f"Excepted in review by a person, still open: {what}.", exception=exception)
             if match is not None and match.get("approved_by"):
                 approvals.append({"kind": "product.slice_approval", "subject": f"{slice_id} revision {match.get('revision')}", "by": match.get("approved_by"),
                                   "at": match.get("ready_at"), "source": f"the approval comment on issue #{match.get('issue')}" if match.get("issue") else "the ready folder"})

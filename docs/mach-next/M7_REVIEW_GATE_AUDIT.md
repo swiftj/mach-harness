@@ -119,6 +119,8 @@ hand is the path the messages point to.
 
 ## 6. Decisions for the product owner
 
+(after 0.14.0: the product owner said yes and G4 is built as `review.py except`; see `M12_SECURITY_EXCEPTION.md`. The text below is kept as written.)
+
 **A recorded security exception (G4): not built.** Until it exists, a high or critical security blocker can only
 be cleared by a fix and a new review round (or the ticket is escalated or abandoned); no command, setting or
 human approval clears it. The smallest design, if wanted:

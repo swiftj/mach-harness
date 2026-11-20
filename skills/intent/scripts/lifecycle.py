@@ -51,7 +51,7 @@ LOCK_WAIT = 0.2  # seconds; never longer, so a station is not slowed by its own 
 STATIONS = ("groom", "plan", "audit", "build", "verify", "review", "human-approval", "merge", "cleanup")
 TYPES = ("station.entered", "station.exited", "gate.evaluated", "build.task_completed", "verify.check_recorded",
          "review.round_started", "review.verdict_submitted", "review.decided", "human.approval_recorded",
-         "merge.completed", "cleanup.completed")
+         "merge.completed", "cleanup.completed", "review.exception_recorded")
 JUDGED = ("build", "verify", "review", "human-approval")  # stations whose work belongs to a judging round
 TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*$")
 EXECUTION_ID_RE = re.compile(r"^x[0-9a-f]{12}$")

@@ -241,6 +241,14 @@ class InstructionsTest(unittest.TestCase):
         self.assertIn("VERIFY record <ticket> --from <records_file>", commands)
         self.assertIn("REVIEW submit <ticket> --reviewer <your seat>", commands)
 
+    def test_no_unattended_instruction_prescribes_a_security_exception(self):
+        """M12: a person's exception to a security blocker is never among the commands an unattended run is told to use.
+        review.py refuses it inside a supervised execution as well; this holds that nothing tells a worker to try."""
+        found = [(name, where, command) for name, where, command, expanded in self.commands()
+                 if re.search(r"(^|\s)(REVIEW|\S*review\.py)\s+except\b", expanded) or re.search(r"\bREVIEW\s+except\b", command)]
+        self.assertEqual(found, [])
+        self.assertNotRegex((ROOT / "workflows/belt.js").read_text(encoding="utf-8"), r"review\.py[^\n]*\bexcept\b|\bexcept <ticket>")
+
     def test_each_unattended_instruction_file_says_one_plain_command_per_call(self):
         for name in CARRIES_THE_RULE:
             text = (ROOT / name).read_text(encoding="utf-8")

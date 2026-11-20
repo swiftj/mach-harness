@@ -308,15 +308,31 @@ def run_record(cell: Cell, outcome: str, reason: Optional[str], archive: str, pl
     summaries = [load_dict(path / "summary.json") for _, path in numbered(list(evidence.glob("previous-*")))] + [load_dict(evidence / "summary.json")]
     failed = [summary for summary in summaries if summary.get("status") == "FAIL_WITH_EVIDENCE"]
 
-    decisions, blockers, notes = [], [], []
+    decisions, blockers, notes, exceptions = [], [], [], []
     for number, folder in numbered(list((cell.root / "review").glob("round-*"))):
-        decisions.append(load_dict(folder / "decision.json"))
+        decision = load_dict(folder / "decision.json")
+        decisions.append(decision)
+        label = folder.name[len("round-"):]
+        # A person's exceptions to a security blocker (review.py except): identifiers and codes for observe to count.
+        # Who decided and why stay in the archived decision.json, never in the run log.
+        recorded = [item for item in decision.get("exceptions") or [] if isinstance(item, dict)] if isinstance(decision.get("exceptions"), list) else []
+        excepted = {f"{item.get('round')}/{item.get('seat')}/{item.get('index')}" for item in recorded}
+        for item in recorded:
+            exceptions.append({"round": number, "seat": text_or_none(item.get("seat")), "index": item.get("index") if isinstance(item.get("index"), int) else None,
+                               "title": str(item.get("title") or ""), "rule": text_or_none(item.get("rule")), "file": text_or_none(item.get("file")),
+                               "class": text_or_none(item.get("class")), "impact": text_or_none(item.get("impact")), "head": text_or_none(item.get("head")),
+                               "expires": text_or_none(item.get("expires")), "renewal": item.get("renews") is not None,
+                               "recorded_at": text_or_none(item.get("recorded_at"))})
         for path in sorted((folder / "votes").glob("*.json")):
             vote = load_dict(path)
-            for finding in vote.get("findings") if isinstance(vote.get("findings"), list) else []:
+            for index, finding in enumerate(vote.get("findings") if isinstance(vote.get("findings"), list) else [], start=1):
                 if isinstance(finding, dict) and finding.get("severity") == "blocker":
-                    blockers.append({"round": number, "reviewer": str(vote.get("reviewer") or path.stem), "rule": text_or_none(finding.get("rule")),
-                                     "title": str(finding.get("title") or ""), "file": text_or_none(finding.get("file"))})
+                    entry = {"round": number, "reviewer": str(vote.get("reviewer") or path.stem), "rule": text_or_none(finding.get("rule")),
+                             "title": str(finding.get("title") or ""), "file": text_or_none(finding.get("file"))}
+                    entry.update({key: finding[key] for key in ("class", "impact") if isinstance(finding.get(key), str)})
+                    if f"{label}/{path.stem}/{index}" in excepted:
+                        entry["excepted"] = True
+                    blockers.append(entry)
                 elif isinstance(finding, dict) and finding.get("severity") == "note":
                     notes.append({"round": number, "reviewer": str(vote.get("reviewer") or path.stem),
                                   "title": str(finding.get("title") or ""), "file": text_or_none(finding.get("file"))})
@@ -326,7 +342,7 @@ def run_record(cell: Cell, outcome: str, reason: Optional[str], archive: str, pl
     approved = next((text_or_none(decision.get("head")) for decision in reversed(decisions) if decision.get("head")), None) \
         or text_or_none(load_dict(cell.root / "review" / "decision.json").get("head"))
     product = info.get("product") if isinstance(info.get("product"), dict) else None
-    return {
+    record = {
         "record_version": RECORD_VERSION,
         "integration": integration_record(cell, plan, approved) if plan else None,
         "product": product_record(product) if product else None,
@@ -349,6 +365,9 @@ def run_record(cell: Cell, outcome: str, reason: Optional[str], archive: str, pl
         "tests_passing_on_first_run": len(first_run) if isinstance(first_run, list) else 0,
         "created_at": text_or_none(info.get("created_at")), "closed_at": now(), "archive": archive,
     }
+    if exceptions:  # optional: present only for a ticket that had one, so every other record keeps its shape (record_version stays 2)
+        record["security_exceptions"] = exceptions
+    return record
 
 
 def observe_due(project: Path) -> Dict[str, Any]:

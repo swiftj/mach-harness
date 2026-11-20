@@ -25,10 +25,11 @@ import (
 // origin.runtime_state on events read from an execution stream. Revision 3 (M6.5) added
 // execution.started's source_commit, provenance and provenance_reason. Revision 4 (M11) is not
 // additive, since MACH has no users yet: ids.wave_id is replaced by ids.epic_id, ids.issue is added,
-// wave.discovered is gone, and slice.materialized gains epic_title.
+// wave.discovered is gone, and slice.materialized gains epic_title. Revision 5 (M12) adds one
+// cell-lifecycle kind, review.exception_recorded: a person's exception to a security blocker.
 const (
 	Version  = 3
-	Revision = 4
+	Revision = 5
 )
 
 // Gap classes (history.gap data.class, revision 2): what a gap means for the history a reader
@@ -594,7 +595,7 @@ var Kinds = []string{
 	"factory.paused", "factory.resumed", "revision.discovered", "scheduling.decided", "work.claimed", "execution.started",
 	"station.observed", "recovery.started", "execution.completed", "execution.failed",
 	"station.entered", "station.exited", "gate.evaluated", "build.task_completed", "verify.check_recorded", "review.round_started",
-	"review.verdict_submitted", "review.decided", "human.approval_recorded", "merge.completed", "cleanup.completed",
+	"review.verdict_submitted", "review.decided", "human.approval_recorded", "review.exception_recorded", "merge.completed", "cleanup.completed",
 	"execution.process_started", "execution.process_ended", "run.recorded",
 	"session.initialized", "workflow.started", "workflow.phases_declared", "workflow.finished", "agent.queued", "agent.started",
 	"agent.progressed", "agent.finished", "tool.called", "tool.returned", "tool.refused", "execution.usage",

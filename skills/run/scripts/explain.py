@@ -8,7 +8,8 @@ Sources, all inside .factory/worktrees/<ticket>/ (written by the stations, never
     cell.json                       stage and risk
     build.json, build-report.json   the revision loop, and every gate override with its reason
     evidence/summary.json           the verification verdict: failed checks (AC-NN, RN, H-...), suite, contracts, unproven items
-    review/decision.json            the latest review decision; rejected_by marks a send-back by the merge station or by a person
+    review/decision.json            the latest review decision; rejected_by marks a send-back by the merge station or by a person;
+                                    exceptions[] a person's exceptions to security blockers (who, why, expiry)
     review/round-N/votes/*.json     each seat's findings: blocker, rule cited, file, line, class and impact
     review/merge-findings.md        what the merge station sent back
     lifecycle.jsonl                 refused gates (build, an incomplete verification, a merge conflict) and timings
@@ -24,6 +25,7 @@ Standard library only.
 import json
 import re
 import unicodedata
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -185,6 +187,52 @@ def verification_causes(cellroot: Path, summary: Dict[str, Any], index: Dict[str
     return found
 
 
+def exception_ref(item: Dict[str, Any]) -> str:
+    return f"{item.get('round')}/{item.get('seat')}/{item.get('index')}"
+
+
+def current_exceptions(decision: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """The security exception in force for each finding: the latest recorded for it (review.py's rule)."""
+    found: Dict[str, Dict[str, Any]] = {}
+    for item in decision.get("exceptions") or [] if isinstance(decision.get("exceptions"), list) else []:
+        if isinstance(item, dict):
+            found[exception_ref(item)] = item
+    return found
+
+
+def exception_expired(item: Dict[str, Any], on: Optional[date] = None) -> bool:
+    """Through its expiry day (UTC) and no longer; one with no expiry holds for the commit reviewed. An unreadable expiry has passed."""
+    value = item.get("expires")
+    if not value:
+        return False
+    try:
+        return date.fromisoformat(str(value)) < (on or datetime.now(timezone.utc).date())
+    except ValueError:
+        return True
+
+
+def lapsed_exceptions(decision: Dict[str, Any], on: Optional[date] = None) -> List[Dict[str, Any]]:
+    """The approving round's security exceptions that have expired: the veto stands again until a person decides."""
+    if decision.get("outcome") not in ("APPROVED", "AWAITING_HUMAN"):
+        return []
+    return [item for item in current_exceptions(decision).values() if exception_expired(item, on)]
+
+
+def exception_facts(decision: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Every security exception recorded on the latest decision, who and why, as data."""
+    current = {id(item) for item in current_exceptions(decision).values()}
+    found = []
+    for item in decision.get("exceptions") or [] if isinstance(decision.get("exceptions"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        found.append({"ref": clean(exception_ref(item), 40), "seat": clean(item.get("seat"), 40), "title": clean(item.get("title"), 200),
+                      "rule": clean(item.get("rule")), "impact": item.get("impact") if item.get("impact") in IMPACTS else None,
+                      "by": clean(item.get("by"), 80), "reason": clean(item.get("reason")), "recorded_at": clean(item.get("recorded_at"), 40),
+                      "expires": clean(item.get("expires"), 10), "expired": exception_expired(item), "in_force": id(item) in current,
+                      "head": clean(item.get("head"), 64), "source_file": "review/decision.json"})
+    return found[:20]
+
+
 def round_folder(cellroot: Path, decision: Dict[str, Any]) -> Path:
     """The decided round's folder: from the decision's findings path when it lies inside this cell's review folder."""
     review = cellroot / "review"
@@ -204,15 +252,18 @@ def round_folder(cellroot: Path, decision: Dict[str, Any]) -> Path:
 def review_blockers(cellroot: Path, decision: Dict[str, Any], index: Dict[str, str], seat_veto_on: bool) -> List[Dict[str, Any]]:
     folder = round_folder(cellroot, decision)
     outvoted = decision.get("outcome") in ("APPROVED", "AWAITING_HUMAN")
+    excepted = current_exceptions(decision)
+    label = folder.name[len("round-"):] if folder.name.startswith("round-") else None
     found = []
     for path in sorted((folder / "votes").glob("*.json")) if (folder / "votes").is_dir() else []:
         vote = load_json(path, {})
         if not isinstance(vote, dict):
             continue
         seat = clean(vote.get("reviewer") or path.stem, 40)
-        for finding in vote.get("findings") or []:
+        for number, finding in enumerate(vote.get("findings") or [], start=1):
             if not isinstance(finding, dict) or finding.get("severity") != "blocker":
                 continue
+            ref = f"{label}/{path.stem}/{number}" if label else None
             rule = clean(finding.get("rule"))
             cited = SPEC_ID_RE.findall(str(finding.get("rule") or ""))
             impact = finding.get("impact") if finding.get("impact") in IMPACTS else None
@@ -223,7 +274,8 @@ def review_blockers(cellroot: Path, decision: Dict[str, Any], index: Dict[str, s
                                detail=f"{title}. {detail}" if title and detail else (title or detail), req=cited[0] if cited else None,
                                source_file=str(path.relative_to(cellroot)), seat=seat, rule=rule, cites=sorted(set(cited)),
                                **{"class": "security" if security else None}, impact=impact, veto=bool(veto) and not outvoted, outvoted=outvoted,
-                               round=decision.get("round") if isinstance(decision.get("round"), int) else None))
+                               round=decision.get("round") if isinstance(decision.get("round"), int) else None,
+                               ref=ref, excepted=ref in excepted if ref else False))
     return found
 
 
@@ -359,6 +411,9 @@ def explain(root: Path, ticket_id: str, next_info: Dict[str, Any], config: Optio
 
     if decision.get("outcome") in ("APPROVED", "AWAITING_HUMAN") and not decision.get("rejected_by"):
         base["outvoted_blockers"] = review_blockers(cellroot, decision, index, seat_veto_on)
+    exceptions = exception_facts(decision)
+    if exceptions:
+        base["security_exceptions"] = exceptions
     if not causes and nxt.get("stop") and nxt.get("needs") not in (None, "nothing"):
         headline = "waiting_for_person"
         reasons = decision.get("human_approval_reasons") if stage == "awaiting-human" and isinstance(decision.get("human_approval_reasons"), list) else []
@@ -406,7 +461,12 @@ def human(report: Dict[str, Any]) -> str:
         rule = f' cites "{item["rule"]}";' if item.get("rule") else ""
         lines.append(f"    {where};{rule} " + (f'"{item["detail"]}"' if item.get("detail") else ""))
     for item in report.get("outvoted_blockers") or []:
-        lines.append(f"- outvoted blocker from the {item.get('seat')} seat: {item.get('file') or '-'}" + (f' cites "{item["rule"]}"' if item.get("rule") else ""))
+        kind = "excepted security blocker" if item.get("excepted") else "outvoted blocker"
+        lines.append(f"- {kind} from the {item.get('seat')} seat: {item.get('file') or '-'}" + (f' cites "{item["rule"]}"' if item.get("rule") else ""))
+    for item in report.get("security_exceptions") or []:
+        state = "expired" if item.get("expired") else "in force" if item.get("in_force") else "renewed"
+        lines.append(f"- [security exception] {item['ref']} accepted by {item.get('by')}" + (f" until {item['expires']}" if item.get("expires") else "")
+                     + f" ({state}): \"{item.get('reason') or ''}\"")
     if report.get("overrides"):
         lines.append(f"Gate overrides recorded by the builder: {len(report['overrides'])} (see build-report.json).")
     facts = report.get("adrs") or {}

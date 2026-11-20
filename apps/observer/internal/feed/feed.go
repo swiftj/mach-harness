@@ -23,8 +23,8 @@ const SchemaVersion = 3
 // execution.usage.cost_complete and cost_incomplete_reasons; 2: history.gap class and history_lost,
 // origin.runtime_state; 3: execution.started source_commit, provenance and provenance_reason; 4,
 // not additive (M11): ids.epic_id and ids.issue for ids.wave_id, no wave.discovered,
-// slice.materialized epic_title).
-const SchemaRevision = 4
+// slice.materialized epic_title; 5 (M12): the cell-lifecycle kind review.exception_recorded).
+const SchemaRevision = 5
 
 // Errors a Log read returns.
 var (

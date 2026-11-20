@@ -377,7 +377,7 @@ class MessageTest(Base):
         self.set_address("--label", "Shop team")
         waits = [needs for needs in run.NEEDS_TEXT if needs not in notify.QUIET_NEEDS]
         self.assertEqual(sorted(waits), ["adr-acceptance", "adr-baseline", "adr-decision", "adr-fix", "answers", "dispatch", "human-approval", "merge", "person", "person-to-take-over",
-                                         "product-answer", "repository-hardening"])
+                                         "product-answer", "repository-hardening", "security-exception-expired"])
         for install, command in ((True, "/mach decide"), (False, "/mach:run decide")):
             with mock.patch.object(run, "PROJECT_INSTALL", install):
                 sender = run.notifier(run.Project(self.project))
@@ -386,9 +386,9 @@ class MessageTest(Base):
                 self.receiver.requests.clear()
                 self.assertTrue(sender.wait(ticket, f"stage-{install}", needs)["sent"])
                 self.assertEqual(self.receiver.texts(), [f"MACH · Shop team: {ticket} is waiting for a person.\n{run.NEEDS_TEXT[needs]}\nIn Claude Code: {command}"])
-        self.assertEqual(self.receiver.texts(), ["MACH · Shop team: LOCAL-011 is waiting for a person.\n"
-                                                 "Write down the project's basic technical decisions as accepted ADRs (adr baseline drafts them); "
-                                                 "no ticket is planned until then.\nIn Claude Code: /mach:run decide"])
+        self.assertEqual(self.receiver.texts(), ["MACH · Shop team: LOCAL-012 is waiting for a person.\n"
+                                                 "A person's exception to a security blocker has expired: record a new one, or abandon the ticket."
+                                                 "\nIn Claude Code: /mach:run decide"])
 
     def test_the_exact_text_for_each_parked_reason_code(self):
         self.set_address()

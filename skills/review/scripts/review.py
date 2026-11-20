@@ -11,6 +11,8 @@ which model, what a valid finding looks like, each reviewer's vote, and the outc
     review.py tally <ticket>                                   count the votes and decide
     review.py approve-human <ticket> --by NAME                 record a person's sign-off
     review.py send-back <ticket> --by NAME --reason TEXT       record a person sending it back to the build station
+    review.py except <ticket> --finding R/SEAT/N --by NAME --reason TEXT [--expires YYYY-MM-DD]
+                                                               record a person's exception to a vetoing security blocker
     review.py status <ticket>
 
 A reviewer never states a vote. A submission with at least one blocker is a REJECT; one with
@@ -20,6 +22,15 @@ A finding may also carry "class": "security" and an "impact" (critical, high, me
 seat's findings are security-class without saying so. A security-class blocker of high or critical impact,
 from any seat, rejects the round whatever the count, at every risk tier, and in a later round it may be
 raised on any file. A blocker from the security seat rejects the round as before (review.security_veto).
+
+A recorded exception (M12) is the one way past such a blocker other than a fix: a person, on their explicit word in
+conversation, accepts one vetoing finding for exactly the commit reviewed, with their reason (`except`). It applies
+only to a round the veto alone rejected (the count of approvals met the tier's threshold), before a revision has
+started and while the branch is still the reviewed commit; never to a factory-tuning ticket; never inside a supervised
+Factory execution. When every vetoing blocker of the round has one, the round takes the outcome the count alone gives:
+APPROVED, or AWAITING_HUMAN where a person's approval is required anyway. An exception is not that approval. It holds
+only while the branch is that commit (the merge station voids it as it voids any approval) and before its expiry.
+`review.security_exception_by`, a list of names, limits who may grant one; it guards against accident, not forgery.
 
     High risk    3 reviewers, 3 approvals, and a person must approve
     Medium risk  3 reviewers, 2 approvals
@@ -38,11 +49,13 @@ Standard library only.
 """
 
 import argparse
+import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -64,6 +77,12 @@ IMPACTS = ("critical", "high", "medium", "low")
 VETO_IMPACTS = ("critical", "high")
 MAX_LOOPS = 3
 TUNING_LABEL = "factory-tuning"
+EXCEPTION_REF_RE = re.compile(r"^(\d{1,3}(?:\.\d{1,3})?)/([a-z]+)/(\d{1,3})$")
+EXCEPTION_REASON_LIMIT = 2000
+EXECUTION_ENV = "MACH_EXECUTION_ID"  # set by the Factory's executor for supervised work; the same name adr.py and lifecycle.py read
+UNATTENDED = ("Inside a supervised Factory execution nobody is here to decide: an exception to a security blocker is a person's act, "
+              "on their explicit word in conversation.")
+RECORDED_BY = "an agent, on the person's instruction in conversation"
 # What a ticket that tunes the factory's own rules may change without a person: the rule files, and its own spec and tests.
 TUNING_FILES_RE = re.compile(
     r"^(REVIEW|CLAUDE|AGENTS)\.md$|(^|/)SKILL\.md$|(^|/)skills/[^/]+/references/[^/]+$|^specs/slices/[^/]+\.md$"
@@ -214,6 +233,11 @@ class Cell:
             if isinstance(vote, dict):
                 found[seat["role"]] = vote
         return found
+
+
+def round_label(folder: Path) -> str:
+    """'1' for round-1, '1.1' for its repeat round-1.1: the round part of an exception's finding reference."""
+    return folder.name[len("round-"):]
 
 
 def round_folders(root: Path, number: int) -> List[Path]:
@@ -566,9 +590,14 @@ def cmd_tally(cell: Cell, args: argparse.Namespace) -> int:
     seat_veto = cell.section("review").get("security_veto") is not False and any(
         finding["severity"] == "blocker" for finding in (votes.get("security") or {}).get("findings", []))
     # A high or critical security blocker from any seat stands the same way, and no project setting switches that off.
-    # Until a recorded, person-authorised exception exists (not built), only a fix and a new round clear it.
+    # A fix and a new round clear it, or a person's recorded exception for this commit (except, below).
     security_blockers = sum(1 for vote in votes.values() for finding in vote["findings"] if is_security_veto(finding))
     vetoed = seat_veto or security_blockers > 0
+    # Which blockers vetoed, as the references a person's exception names. Recorded now, so a setting changed later
+    # cannot change what this round's veto was.
+    label = round_label(cell.folder)
+    vetoing = [f"{label}/{role}/{number}" for role, vote in votes.items() for number, finding in enumerate(vote["findings"], start=1)
+               if is_security_veto(finding) or (seat_veto and role == "security" and finding["severity"] == "blocker")]
     if approvals >= needed and not vetoed:
         outcome = "AWAITING_HUMAN" if cell.packet["human_approval_required"] else "APPROVED"
     else:
@@ -578,7 +607,8 @@ def cmd_tally(cell: Cell, args: argparse.Namespace) -> int:
     decision = {
         "ticket_id": cell.ticket_id, "round": cell.packet["round"], "risk": cell.packet["risk"], "outcome": outcome,
         "approvals": approvals, "approvals_needed": needed, "votes": {role: vote["vote"] for role, vote in votes.items()},
-        "blockers": blockers, "security_veto": bool(vetoed and approvals >= needed), "security_blockers": security_blockers, "human_approval_required": cell.packet["human_approval_required"],
+        "blockers": blockers, "security_veto": bool(vetoed and approvals >= needed), "security_blockers": security_blockers, "vetoing": vetoing,
+        "human_approval_required": cell.packet["human_approval_required"],
         "human_approval_reasons": cell.packet.get("human_approval_reasons", []), "human_approval": None,
         "head": cell.packet["head"], "findings": str(findings_path), "decided_at": now(),
     }
@@ -606,12 +636,254 @@ def cmd_tally(cell: Cell, args: argparse.Namespace) -> int:
     return 0 if outcome in ("APPROVED", "AWAITING_HUMAN") else 1
 
 
+def today() -> date:
+    return datetime.now(timezone.utc).date()
+
+
+def exception_ref(item: Dict[str, Any]) -> str:
+    return f"{item.get('round')}/{item.get('seat')}/{item.get('index')}"
+
+
+def current_exceptions(decision: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """The exception in force for each finding: the latest recorded for it (a renewal follows the one it renews)."""
+    found: Dict[str, Dict[str, Any]] = {}
+    for item in decision.get("exceptions") or []:
+        if isinstance(item, dict):
+            found[exception_ref(item)] = item
+    return found
+
+
+def is_expired(item: Dict[str, Any], on: Optional[date] = None) -> bool:
+    """An exception with an expiry holds through that day (UTC) and no longer. One without an expiry never expires;
+    it is still bound to the commit reviewed."""
+    value = item.get("expires")
+    if not value:
+        return False
+    try:
+        return date.fromisoformat(str(value)) < (on or today())
+    except ValueError:
+        return True  # an expiry that cannot be read is not trusted to be in the future
+
+
+def expired_exceptions(decision: Dict[str, Any], on: Optional[date] = None) -> List[Dict[str, Any]]:
+    return [item for item in current_exceptions(decision).values() if is_expired(item, on)]
+
+
+def recount_vetoing(cell: Cell, label: str, votes: Dict[str, Dict[str, Any]]) -> List[str]:
+    """For a round decided before the tally recorded which blockers vetoed: the same rule, with today's setting."""
+    seat_veto = cell.section("review").get("security_veto") is not False
+    return [f"{label}/{role}/{number}" for role, vote in votes.items() for number, finding in enumerate(vote.get("findings") or [], start=1)
+            if isinstance(finding, dict) and (is_security_veto(finding) or (seat_veto and role == "security" and finding.get("severity") == "blocker"))]
+
+
+def exception_state(cell: Cell) -> Dict[str, Any]:
+    """Whether a person's exception can be recorded on this cell now, and for which findings. Reads only; a ReviewError
+    says why not, in plain words. Shared by `except` and by the run skill's walkthrough (decide.py), so the options a
+    person is shown are exactly what this script accepts."""
+    decision = load_json(cell.folder / "decision.json")
+    label = round_label(cell.folder)
+    if not isinstance(decision, dict):
+        raise ReviewError(f"Round {label} has not been decided yet. An exception is recorded only after the tally, for a round the security veto rejected.",
+                          code="not-decided")
+    if cell.packet.get("tuning"):
+        raise ReviewError("This is a factory-tuning ticket: its panel decides unanimously and no person signs it off, so a security blocker on it is never "
+                          "excepted. It is fixed, or the ticket is abandoned.", code="tuning")
+    top = load_json(cell.root / "review" / "decision.json", {}) or {}
+    sender = decision.get("rejected_by") or top.get("rejected_by")
+    if sender or top.get("outcome") != decision.get("outcome") or top.get("head") != decision.get("head"):
+        raise ReviewError(f"Round {label}'s panel decision is not the latest decision on this ticket" + (f": the {sender} sent the build back" if sender else "")
+                          + ". There is no security veto standing to except.", code="not-latest")
+    outcome, stage, head = decision.get("outcome"), cell.info.get("stage"), cell.head()
+    votes = cell.votes()
+    if outcome in ("REJECTED", "ESCALATE"):
+        if not decision.get("security_veto"):
+            raise ReviewError(f"Round {label} failed on the count: {decision.get('approvals')} approvals of the {decision.get('approvals_needed')} needed. "
+                              "An exception clears only a security veto; with too few approvals it would change nothing. The build station answers the findings.",
+                              code="count-failed")
+        build = load_json(cell.root / "build.json", {}) or {}
+        loop = build.get("loop") if type(build.get("loop")) is int else 0
+        number = decision.get("round") if type(decision.get("round")) is int else cell.packet.get("round")
+        if loop >= (number or 1) or stage != {"REJECTED": "built", "ESCALATE": "blocked"}[outcome]:
+            raise ReviewError(f"A revision has started since round {label} was rejected (the cell is '{stage}'): the builder is answering the findings. "
+                              "An exception is recorded before a revision starts, never after.", code="revision-started")
+        if head != decision.get("head"):
+            raise ReviewError(f"The branch is no longer the commit the panel reviewed ({str(decision.get('head'))[:12]}). An exception is bound to that commit.",
+                              code="code-changed")
+        vetoing = decision.get("vetoing") if isinstance(decision.get("vetoing"), list) else recount_vetoing(cell, label, votes)
+        done = current_exceptions(decision)
+        return {"mode": "new", "decision": decision, "label": label, "votes": votes, "vetoing": vetoing,
+                "open": [ref for ref in vetoing if ref not in done]}
+    if outcome in ("APPROVED", "AWAITING_HUMAN") and decision.get("exceptions"):
+        revalidated = (cell.info.get("revalidated") or {}).get("head")
+        if stage not in ("approved", "awaiting-human") or head not in (decision.get("head"), revalidated):
+            raise ReviewError(f"The branch is no longer the commit the panel reviewed ({str(decision.get('head'))[:12]}). An exception is bound to that commit.",
+                              code="code-changed")
+        expired = [ref for ref, item in current_exceptions(decision).items() if is_expired(item)]
+        if not expired:
+            raise ReviewError(f"Every exception on round {label} is still in force. A finding gets a new exception only once its last one has expired.",
+                              code="in-force")
+        return {"mode": "renew", "decision": decision, "label": label, "votes": votes, "vetoing": list(current_exceptions(decision)), "open": expired}
+    raise ReviewError(f"Round {label} was not rejected by a security veto (its outcome is {outcome}). Only a vetoing security blocker is ever excepted.",
+                      code="not-vetoed")
+
+
+def exception_owners(cell: Cell) -> List[str]:
+    """review.security_exception_by: who may grant one. Missing or empty: any person. A guard against accident, not forgery."""
+    review_settings = cell.section("review")
+    if "security_exception_by" not in review_settings:
+        return []
+    names = review_settings.get("security_exception_by")
+    if not isinstance(names, list) or not all(isinstance(name, str) and name.strip() for name in names):
+        raise ReviewError("review.security_exception_by in .factory/config.json must be a list of names (or an empty list for any person). "
+                          "Fix the setting; no exception is recorded until it can be read.", code="owners-unreadable")
+    return [" ".join(name.split()) for name in names]
+
+
+_ISSUE_RULES: List[Any] = []
+
+
+def issue_rules() -> Any:
+    """The ticket station's shared redaction rules, loaded from the sibling skill folder whichever way MACH is installed."""
+    if not _ISSUE_RULES:
+        found = None
+        skills = Path(__file__).resolve().parent.parent.parent
+        for name in ("mach-ticket", "ticket"):
+            path = skills / name / "scripts" / "issue_rules.py"
+            if path.is_file():
+                try:
+                    spec = importlib.util.spec_from_file_location("mach_ticket_issue_rules_for_review", path)
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    found = module
+                except Exception:  # noqa: BLE001
+                    found = None
+                break
+        _ISSUE_RULES.append(found)
+    return _ISSUE_RULES[0]
+
+
+def cmd_except(cell: Cell, args: argparse.Namespace) -> int:
+    """A person's exception to one or more vetoing security blockers of the round just decided, for exactly the commit
+    reviewed, with their reason in their words. Only on their explicit word; refused inside a supervised execution. It
+    never edits a vote or a finding, and it is not a person's approval."""
+    if os.environ.get(EXECUTION_ENV):
+        raise ReviewError(UNATTENDED, code="unattended")
+    state = exception_state(cell)
+    decision, label, votes = state["decision"], state["label"], state["votes"]
+    name = " ".join((args.by or "").split())
+    if len(name) < 2:
+        raise ReviewError("--by must name the person who decided.", code="by-missing")
+    owners = exception_owners(cell)
+    if owners and name.casefold() not in {owner.casefold() for owner in owners}:
+        raise ReviewError(f"Only the people review.security_exception_by names may grant a security exception in this project, and '{name}' is not one of them.",
+                          code="not-an-owner")
+    reason = " ".join((args.reason or "").split())
+    if len(reason) < 10:
+        raise ReviewError("--reason must say, in the person's own words, why this finding is accepted for this commit.", code="reason-missing")
+    rules = issue_rules()
+    if rules is None:
+        raise ReviewError("The ticket station's redaction rules could not be loaded, so the reason cannot be stored safely. Nothing was recorded.", code="rules-missing")
+    reason = rules.redact(reason)
+    if len(reason) > EXCEPTION_REASON_LIMIT:
+        reason = reason[:EXCEPTION_REASON_LIMIT - 1].rstrip() + "…"
+    expires = None
+    if args.expires:
+        try:
+            expires = date.fromisoformat(args.expires.strip())
+        except ValueError:
+            raise ReviewError(f"--expires must be a date written YYYY-MM-DD; '{args.expires}' is not one.", code="expires-unreadable")
+        if expires < today():
+            raise ReviewError(f"--expires {expires.isoformat()} is in the past. Give today's date or a later one, or leave it out.", code="expires-past")
+    seats = {seat["role"] for seat in cell.packet.get("panel") or []}
+    chosen: List[Dict[str, Any]] = []
+    current = current_exceptions(decision)
+    for given in dict.fromkeys(args.finding):
+        found = EXCEPTION_REF_RE.match(given.strip())
+        if not found:
+            raise ReviewError(f"'{given}' is not a finding reference. Write it <round>/<seat>/<n>, such as {label}/security/1: the round, the seat, and the "
+                              "finding's place in that seat's findings.", code="ref-unreadable")
+        round_given, seat, index = found.group(1), found.group(2), int(found.group(3))
+        ref = f"{round_given}/{seat}/{index}"
+        if round_given != label:
+            raise ReviewError(f"{ref} names round {round_given}; only round {label}, the one just decided, can be excepted.", code="wrong-round")
+        if seat not in seats:
+            raise ReviewError(f"{ref}: '{seat}' is not a seat on this round's panel. Seats: {', '.join(sorted(seats))}.", code="not-a-seat")
+        findings = (votes.get(seat) or {}).get("findings") or []
+        if not 1 <= index <= len(findings):
+            raise ReviewError(f"{ref}: the {seat} seat has no finding {index} in round {label} (it recorded {len(findings)}).", code="no-such-finding")
+        finding = findings[index - 1]
+        if finding.get("severity") != "blocker":
+            raise ReviewError(f"{ref} is a note, not a blocker: it never held the round back, so there is nothing to except.", code="not-a-blocker")
+        if ref not in state["vetoing"]:
+            raise ReviewError(f"{ref} is an ordinary blocker, not a security veto: an ordinary blocker is outvoted or fixed, never excepted.", code="not-vetoing")
+        if state["mode"] == "new" and ref in current:
+            raise ReviewError(f"An exception for {ref} is already recorded on round {label}.", code="already-recorded")
+        if state["mode"] == "renew" and ref not in state["open"]:
+            raise ReviewError(f"The exception for {ref} is still in force; a finding gets a new exception only once its last one has expired.", code="in-force")
+        chosen.append({"ref": ref, "seat": seat, "index": index, "finding": finding})
+    stamp = now()
+    entries = decision.setdefault("exceptions", [])
+    for item in chosen:
+        finding = item["finding"]
+        entry = {"round": label, "seat": item["seat"], "index": item["index"], "title": finding.get("title"), "rule": finding.get("rule"),
+                 "file": finding.get("file"), "line": finding.get("line"), "class": finding.get("class"), "impact": finding.get("impact"),
+                 "vetoed_as": "security-class" if is_security_veto(finding) else "security-seat",
+                 "head": decision.get("head"), "by": name, "reason": reason, "expires": expires.isoformat() if expires else None,
+                 "recorded_at": stamp, "recorded_by": RECORDED_BY}
+        if state["mode"] == "renew":
+            entry["renews"] = next(number for number, old in enumerate(entries) if exception_ref(old) == item["ref"] and old is current[item["ref"]])
+        entries.append(entry)
+    remaining = [ref for ref in state["vetoing"] if ref not in current_exceptions(decision)]
+    before_stage, before = cell.info.get("stage"), decision.get("outcome")
+    if state["mode"] == "new" and not remaining:
+        decision["outcome_before_exception"] = before
+        decision["outcome"] = "AWAITING_HUMAN" if decision.get("human_approval_required") else "APPROVED"
+    outcome = decision["outcome"]
+    write_json(cell.folder / "decision.json", decision)
+    write_json(cell.root / "review" / "decision.json", decision)
+    if outcome != before:
+        cell.info.update({"stage": {"APPROVED": "approved", "AWAITING_HUMAN": "awaiting-human"}[outcome], "review": outcome})
+        cell.save_info()
+    number = decision.get("round") if type(decision.get("round")) is int else cell.packet.get("round")
+    telemetry(cell.root, "station.entered", "review", lambda: {"stage": before_stage, "round": number})
+    telemetry(cell.root, "review.exception_recorded", "review", lambda: {
+        "round": number, "findings": [{"seat": item["seat"], "index": item["index"], "impact": item["finding"].get("impact")} for item in chosen],
+        "expires_given": expires is not None, "renewal": state["mode"] == "renew", "outcome": outcome})
+    telemetry(cell.root, "station.exited", "review", lambda: {"outcome": "excepted" if outcome != before else "exception-recorded", "stage": cell.info.get("stage"),
+                                                             "round": number})
+    if outcome == "AWAITING_HUMAN" and before != outcome:
+        telemetry(cell.root, "station.entered", "human-approval", lambda: {"stage": "awaiting-human", "round": number})
+    holds = f"It holds only while the branch is commit {str(decision.get('head'))[:12]}" + (f" and until the end of {expires.isoformat()} (UTC)." if expires else ".")
+    if remaining:
+        next_step = (f"Recorded. The round still stands rejected: {', '.join(remaining)} also vetoed it. Record an exception for each of them only if the person "
+                     f"accepts them too; otherwise the build station answers the findings: build revise {cell.ticket_id} --findings {decision.get('findings')}")
+    elif state["mode"] == "renew":
+        next_step = f"Recorded again. {holds} The ticket goes on to its next step."
+    elif outcome == "AWAITING_HUMAN":
+        next_step = ("The security veto is excepted, so the count decides: the panel approved, and a person must still approve before merge because "
+                     + (" and ".join(decision.get("human_approval_reasons") or []) or "the project requires it")
+                     + ". An exception is not that approval: record it with approve-human. " + holds)
+    else:
+        next_step = f"The security veto is excepted, so the count decides: approved. The branch {cell.info.get('branch')} may be merged. {holds}"
+    if before == "ESCALATE" and not remaining:
+        next_step += " The round no longer stands escalated: if the ticket was labelled 'blocked-requires-sme', take that label off."
+    print(json.dumps({"status": "RECORDED", "ticket_id": cell.ticket_id, "round": label, "excepted": [item["ref"] for item in chosen], "by": name,
+                      "expires": expires.isoformat() if expires else None, "renewal": state["mode"] == "renew", "outcome": outcome,
+                      "stage": cell.info.get("stage"), "remaining": remaining, "next": next_step}, indent=2, ensure_ascii=False))
+    return 0
+
+
 def cmd_approve_human(cell: Cell, args: argparse.Namespace) -> int:
     decision = load_json(cell.folder / "decision.json")
     if not isinstance(decision, dict) or decision.get("outcome") != "AWAITING_HUMAN" or cell.info.get("stage") != "awaiting-human":
         raise ReviewError("This ticket is not waiting for a person's approval. A person signs off only after the panel has approved.", code="not-awaiting-human")
     if decision.get("head") != cell.head():
         raise ReviewError("The cell's code changed after the panel voted. Review it again.", code="code-changed")
+    lapsed = expired_exceptions(decision)
+    if lapsed:
+        raise ReviewError(f"The security exception for {', '.join(exception_ref(item) for item in lapsed)} expired on {lapsed[0].get('expires')}, so the "
+                          "security veto stands again. A person records a new exception (except) or the ticket is abandoned; it is not approved over it.",
+                          code="exception-expired")
     name = " ".join(args.by.split())
     if len(name) < 2:
         raise ReviewError("--by must name the person who approved.")
@@ -702,6 +974,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--by", required=True, help="the name of the person who sent it back")
     p.add_argument("--reason", required=True, help="what has to change, in the person's own words")
     p.set_defaults(func=cmd_send_back)
+    p = sub.add_parser("except", help="record a person's exception to a vetoing security blocker, for the commit reviewed (a person's act, never unattended)")
+    p.add_argument("ticket_id")
+    p.add_argument("--finding", required=True, action="append", help="<round>/<seat>/<n>: the round, the seat, the finding's place in that seat's findings; repeat for several")
+    p.add_argument("--by", required=True, help="the name of the person who decided")
+    p.add_argument("--reason", required=True, help="why the finding is accepted for this commit, in the person's own words")
+    p.add_argument("--expires", help="YYYY-MM-DD: the last day (UTC) it holds; without it, it holds for the commit reviewed")
+    p.set_defaults(func=cmd_except)
     return parser
 
 

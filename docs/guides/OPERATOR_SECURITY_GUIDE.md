@@ -96,7 +96,8 @@ Open items from the review: none of the three below remain. (corrected: a deeply
 
 ## 7. Security gates
 
-- **Review security rule:** a security blocker of high or critical impact from any seat rejects the round at every tier. `security_veto: false` does not disable it. No exception record exists.
+- **Review security rule:** a security blocker of high or critical impact from any seat rejects the round at every tier. `security_veto: false` does not disable it.
+- **Security exception (after 0.14.0):** a person may accept a vetoing security blocker for exactly the commit reviewed, with their reason: `/mach except <ticket> <round>/<seat>/<n> "<why>"` (`review.py except`). It is valid only in a round the veto alone rejected, before a revision starts, never for a `factory-tuning` ticket, and never inside a supervised execution (`MACH_EXECUTION_ID` set: the script refuses it; no unattended instruction or workflow names it). It is not an approval: a High-risk change or a Silver repository still needs `approve-human`. The merge station voids it with the approval when the branch moves, and refuses to merge once its expiry has passed. `review.security_exception_by` names who may grant one; it stops an accident (the wrong name typed, a colleague not meant to decide), not a person with write access to `.factory/config.json` who sets out to forge one. Each exception is in the round's `decision.json`, the pull request body, the run record (codes only), `explain` and the release snapshot.
 - **Supervisor preflight:** refuses unattended work while tracked settings remove the security seat or the High-risk person, checked every pass.
 - **Release check:** `release qualify` needs scanner reports for the exact commit, each carrying the scanner's version, exit code, a non-zero scanned count and the scan time. A missing report, one lacking those facts, one with an error and one that scanned nothing are `not_run`, which makes the outcome `incomplete`. The outcome line names every check not assessed. Open review blockers are listed. The format requirement was added after the last live run and has unit tests only.
 - **A supervised execution is held to its own ticket:** `run.py` refuses another ticket inside an execution, the belt starts no observe pass or tuning ticket, and a due observe pass is raised to a person. This narrows the work an execution is authorised to do; it does not narrow what its tools can do (section 2).
@@ -139,5 +140,5 @@ The observer redacts before indexing. A review of 318 replies, the event stream,
 - No address yet for reporting a vulnerability.
 - Fixes from the third live run (the belt hand-off, Product Studio workspace repair, the scanner-report format, the installer's release-candidate handling) have unit tests only and were not re-observed live.
 - No dependency, secret or static scan of generated code in the line.
-- No exception record for security blockers. A non-security seat's unmarked blocker can still be outvoted at Medium.
+- A non-security seat's unmarked blocker can still be outvoted at Medium. (After 0.14.0, a person's exception to a security blocker is recorded; see section 7.)
 - Windows and Intel Mac are not built or tested.

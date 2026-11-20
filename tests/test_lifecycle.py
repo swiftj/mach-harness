@@ -201,7 +201,8 @@ class WholeBeltTest(Base):
             archived = tar.extractfile(f"{TICKET}/{lifecycle.FILE}").read()
         self.assertTrue(archived.startswith(live), "the archive keeps the whole live history unchanged")
         records = self.assert_valid_and_safe(archived)
-        self.assertEqual(set(r["type"] for r in records), set(lifecycle.TYPES), "every record type is emitted by a real flow")
+        # A person's security exception (M12) is a branch this flow does not take; tests/test_security_exception.py emits it from review.py.
+        self.assertEqual(set(r["type"] for r in records), set(lifecycle.TYPES) - {"review.exception_recorded"}, "every record type is emitted by a real flow")
         self.assertEqual([r["seq"] for r in records], list(range(1, len(records) + 1)), "one writer at a time: seq is 1..n in file order")
         self.assertEqual({r["ticket_id"] for r in records}, {TICKET})
 

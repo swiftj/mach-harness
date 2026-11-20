@@ -310,6 +310,8 @@ These are the cases, and what each choice runs if you would rather type it yours
 |---|---|
 | The spec has open questions | Finish the interview: `/mach <ticket>` continues it |
 | Waiting for a person's approval (a high-risk change, or a Silver repository) | Read the findings it shows, then `/mach approve <ticket>`. It records your approval and carries the ticket on to the merge and cleanup. To have something changed first: `/mach send-back <ticket> "<why>"`. Your reason goes to the builder as the finding to answer, and it uses one of the ticket's three rounds |
+| The review's security veto rejected a round that enough seats approved | The builder fixes it as usual. If you have read the finding and accept it for this commit, say so: `/mach except <ticket> <round>/<seat>/<n> "<why>"`, before the builder starts again. Only a blocker that vetoed can be excepted, never an ordinary one. It is not an approval: a high-risk change still needs yours. It holds only for the commit reviewed, and until the date you give with it |
+| A security exception has expired | Record a new one the same way, or abandon the ticket. Nothing merges past an expired exception |
 | Approved, waiting for a person to merge | `/mach merge <ticket>` |
 | Blocked: escalated after three rounds | `/mach explain <ticket>`, then fix it yourself or abandon it: `/mach abandon <ticket> "<why>"` |
 | The repository is Bronze | `/mach audit` lists what to fix |
@@ -383,6 +385,7 @@ A cost appears only where one was recorded, which today means work the superviso
 | `/mach new "<idea>"` | Start the interview for a new idea |
 | `/mach approve <ticket>` | Record your approval of a change that needs a person, then carry the ticket on |
 | `/mach send-back <ticket> "<why>"` | Send a change the panel approved back to the builder, with your reason |
+| `/mach except <ticket> <round>/<seat>/<n> "<why>"` | Accept a security blocker that vetoed a round, for the commit reviewed, with your reason; never offered unprompted, never unattended |
 | `/mach merge <ticket>` | Merge an approved ticket yourself |
 | `/mach replan <ticket> "<why>"` | Start a ticket's plan over, before any review round; the old plan is kept |
 | `/mach abandon <ticket> "<why>"` | Drop a ticket; its work is archived first |
@@ -423,6 +426,7 @@ Settings are in `.factory/config.json`. The ones people change most:
 | `merge.method` | `local` | `local` makes a merge commit; `pr` opens a pull request that refers to the request's issue, and merges the approved commit |
 | `merge.auto.<tier>` | `true` | Set a risk tier to `false` to keep its merges for a person |
 | `review.<tier>` | see file | Reviewers, approvals needed, and whether a person must approve |
+| `review.security_exception_by` | `[]` | Names of the people who may except a security blocker; empty means any person. It guards against accident, not forgery |
 | `factory.max_parallel` | `3` | How many tickets may run at once |
 | `factory.max_parallel_high` | `1` | How many High-risk tickets may run at once |
 | `factory.claim_minutes` | `90` | How long a worker's claim on a ticket holds without news of it, before another worker may take the ticket |

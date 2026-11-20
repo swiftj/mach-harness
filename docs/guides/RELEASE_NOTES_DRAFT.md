@@ -87,7 +87,7 @@ Based on a hand-built upgrade from v0.12.0 state (`M7_DISTRIBUTION.md`), a real 
 12. **Nothing was tested on a second machine, with two GitHub accounts, with signed commits or with Enterprise single sign-on.** Rules were enforced by real GitHub.com on one personal account; an approved review under enforced rules and a signed commit were not shown.
 13. **Nothing designates one runner across machines.** Two engineers' machines can both enable.
 14. **No dependency, secret or static scan of generated code in the line.** The audit only checks that a secret scanner is configured. Release qualification reads scanner reports someone else produces; the real runs had no dependency manifest for osv-scanner to read.
-15. **No exception record for a security blocker.** An unmarked blocker from a non-security seat can still be outvoted at Medium. Low-risk tickets have no security seat.
+15. **No exception record for a security blocker.** An unmarked blocker from a non-security seat can still be outvoted at Medium. Low-risk tickets have no security seat. (After 0.14.0: the first sentence no longer holds. A person's exception to a vetoing security blocker is recorded with `/mach except`, for the commit reviewed only; see `docs/mach-next/M12_SECURITY_EXCEPTION.md`. The rest of this item still stands.)
 16. **No real, person-driven run of the Product Studio journey** with a real interview on a second computer and a real enterprise remote. One real interview ran through the app's interface for about USD 0.23; the later runs wrote specs by hand.
 17. **The `pr` merge method was never run against GitHub**, and `merge.mode: auto` was never run live. A reboot or network loss during an execution was not tested live.
 18. **Cross-slice defects can reach a merge unnoticed.** In the real run a returned item would have broken the overdue report; a reviewer predicted it as a non-blocking note, no test caught it, and only a textual conflict brought a person to the merge.
@@ -104,7 +104,7 @@ Fixed during M7 and seen working again in a later live run: a plan whose impleme
 - Portfolio management across projects.
 - Multi-runner coordination across machines.
 - An operating-system sandbox for unattended executions.
-- A recorded exception for a security blocker (designed, not built; it needs the product owner's decision).
+- A recorded exception for a security blocker (designed, not built; it needs the product owner's decision). (After 0.14.0: the product owner said yes and it is built; no longer deferred. See `docs/mach-next/M12_SECURITY_EXCEPTION.md`.)
 - Windows and Intel Mac builds.
 - Apple notarisation.
 - A rollback procedure.
