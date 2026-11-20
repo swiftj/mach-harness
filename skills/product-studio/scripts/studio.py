@@ -36,6 +36,7 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import handoff  # noqa: E402
 import issues  # noqa: E402
+import jira_export  # noqa: E402
 import prd  # noqa: E402
 import product  # noqa: E402
 import requests_in  # noqa: E402
@@ -868,13 +869,30 @@ def effective_jira(slice_data: Dict[str, Any], epic: Dict[str, Any]) -> Optional
     return None
 
 
+def link_slice(studio: Studio, slice_id: str, key: Optional[str]) -> Dict[str, Any]:
+    """Store (or remove) a slice's Jira key. A ready slice is refused: it is reopened first, like any change.
+    The one path `slice link` and `jira keys` share."""
+    data = require_editable(studio, slice_id)
+    with_tracking(data, key)
+    studio.commit_or_restore([("slice", data)], "Linking the slice to Jira")
+    return data
+
+
+def link_epic(studio: Studio, epic_id: str, key: Optional[str]) -> List[str]:
+    """Store (or remove) an epic's Jira key; returns the slices already marked ready without a key of their own,
+    which carry the new one only once each is reopened and marked ready again. Shared by `epic link` and `jira keys`."""
+    data = studio.load("epic", epic_id)
+    with_tracking(data, key)
+    studio.commit_or_restore([("epic", data)], "Linking the epic to Jira")
+    return sorted(slice_id for slice_id, item in studio.all("slice").items()
+                  if item.get("epic_id") == epic_id and item.get("status") == APPROVED and not (item.get("tracking") or {}).get("jira"))
+
+
 def cmd_slice_link(studio: Studio, args: argparse.Namespace) -> int:
     """Record (or remove) the Jira issue a slice belongs to. A ready slice is reopened first, like any change."""
     studio.prepare()
     key = jira_key(args.jira, args.no_jira)
-    data = require_editable(studio, args.slice_id)
-    with_tracking(data, key)
-    studio.commit_or_restore([("slice", data)], "Linking the slice to Jira")
+    data = link_slice(studio, args.slice_id, key)
     epic = studio.all("epic").get(data.get("epic_id")) or {}
     return emit({"slice": studio.load("slice", args.slice_id), "jira": effective_jira(data, epic), "factory_authorized": False,
                  "note": ("Linked to " + key if key else "No Jira key of its own") + ". It is handed over with the key when you mark it ready."})
@@ -884,11 +902,7 @@ def cmd_epic_link(studio: Studio, args: argparse.Namespace) -> int:
     """Record (or remove) the Jira issue an epic belongs to. Its slices without a key of their own carry it from the next time each is marked ready."""
     studio.prepare()
     key = jira_key(args.jira, args.no_jira)
-    data = studio.load("epic", args.epic_id)
-    with_tracking(data, key)
-    studio.commit_or_restore([("epic", data)], "Linking the epic to Jira")
-    ready = sorted(slice_id for slice_id, item in studio.all("slice").items()
-                   if item.get("epic_id") == args.epic_id and item.get("status") == APPROVED and not (item.get("tracking") or {}).get("jira"))
+    ready = link_epic(studio, args.epic_id, key)
     note = ("Linked to " + key if key else "No Jira key") + ". Slices of this epic without a key of their own carry it when they are marked ready."
     if ready:
         note += f" Already marked ready with the old key: {', '.join(ready)}; reopen and mark each ready again to carry the new one."
@@ -1894,7 +1908,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MACH Product Studio operations (drafts only; never starts Factory work)")
     parser.add_argument("--project", type=Path, help="project root (default: nearest folder with .factory/ or .git)")
     parser.add_argument("--app", action="store_true", help="word refusals and reports for the local web app: no terminal commands, plus a hint")
-    sub = parser.add_subparsers(dest="command", required=True, metavar="{where,status,validate,refresh,reconcile,project,epic,slice,principle,prd,request,acceptance}")
+    sub = parser.add_subparsers(dest="command", required=True, metavar="{where,status,validate,refresh,reconcile,project,epic,slice,principle,prd,request,acceptance,jira}")
 
     sub.add_parser("where", help="print the workspace and the files the interview needs").set_defaults(func=cmd_where)
     sub.add_parser("status", help="every artifact with its state, and what to do next").set_defaults(func=cmd_status)
@@ -2048,6 +2062,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--readiness", help="the readiness snapshot engineering shared (needed for either decision)")
     p.set_defaults(func=cmd_acceptance_record)
     prd.add_commands(sub, sys.modules[__name__])  # M13 D: the PRD on-ramp (prd.py)
+    jira_export.add_commands(sub, sys.modules[__name__])  # M13 E: the Jira export and the keys back (jira_export.py)
     return parser
 
 

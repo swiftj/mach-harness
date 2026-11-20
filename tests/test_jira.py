@@ -314,7 +314,7 @@ class NoNetworkTest(unittest.TestCase):
     """Nothing that carries the key can reach Jira: no network library is imported, and no command names Jira."""
 
     FILES = ["skills/ticket/scripts/issue_rules.py", "skills/product-studio/scripts/studio.py", "skills/product-studio/scripts/handoff.py",
-             "skills/product-studio/scripts/product.py", "skills/run/scripts/intake.py", "skills/merge/scripts/merge.py",
+             "skills/product-studio/scripts/product.py", "skills/product-studio/scripts/jira_export.py", "skills/run/scripts/intake.py", "skills/merge/scripts/merge.py",
              "skills/merge/scripts/change_record.py", "skills/cleanup/scripts/cleanup.py"]
 
     def test_no_network_library_and_no_command_names_jira(self):
