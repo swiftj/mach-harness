@@ -1,0 +1,1205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sketch: Shape · Product Studio</title>
+<!--
+  M16 design sketch: the Shape workspace of Product Studio.
+  Spec: docs/mach-next/M16_SHAPE_SKETCH.md. Look: docs/mach-next/STYLE_GUIDE.md (Product Studio flavour).
+  One static file: no framework, no build, no request leaves the page. Sample data throughout.
+
+  Organisation (lift structure from here, not code):
+    1. Tokens          the style guide's section 11.2 custom properties (interface roles only)
+    2. Base            section 11.5 base stylesheet, plus .sr-only
+    3. Components      button, pill, badge, id, panel, field, banner, dialog, toast, menu
+    4. Shell           sketch banner, top bar, page frame, stepper
+    5. Screens         one block per step: ideas, explore, brief, case, route, look back
+    6. Markup          glyph sprite, shell, six <section class="screen">, dialogs
+    7. Script          hash router, dialogs (focus trap), More menu, theme, the screens' few acts
+-->
+<style>
+/* ==== 1. Tokens: STYLE_GUIDE.md 11.2, interface roles. The optional graph and factory-drawing
+   modules are left out because no screen here draws them. BEGIN TOKENS ==== */
+:root {
+  color-scheme: light;
+  --mach-canvas: #FAF9F5; --mach-surface: #FFFFFF; --mach-surface-raised: #FFFFFF;
+  --mach-surface-sunken: #F3F1EA; --mach-surface-nav: #F3F1EA; --mach-surface-inverse: #141413;
+  --mach-overlay: rgba(20, 20, 19, 0.42);
+  --mach-ink: #141413; --mach-ink-muted: #5C5A54; --mach-ink-subtle: #6B6962;
+  --mach-ink-inverse: #FAF9F5; --mach-ink-on-accent: #FFFFFF;
+  --mach-line: #E3E0D5; --mach-line-strong: #D1CDBF; --mach-line-control: #8C887C;
+  --mach-accent: #D97757; --mach-accent-fill: #B5512F; --mach-accent-fill-hover: #9F4628;
+  --mach-accent-ink: #A9482A; --mach-accent-soft: #F6E7DF;
+  --mach-focus: #2F6AA3;
+  --mach-info-ink: #3A6496; --mach-info-soft: #E8EFF7; --mach-info-line: #B7CCE3; --mach-info-fill: #6A9BCC;
+  --mach-success-ink: #4E5E39; --mach-success-soft: #EEF1E6; --mach-success-line: #C5CFB4; --mach-success-fill: #788C5D;
+  --mach-warning-ink: #7D5A12; --mach-warning-soft: #F8EED7; --mach-warning-line: #E3CD98; --mach-warning-fill: #C99A3A;
+  --mach-danger-ink: #A12F3A; --mach-danger-soft: #F9E6E6; --mach-danger-line: #E8B9BC; --mach-danger-fill: #B2343F;
+  --mach-danger-fill-hover: #962A34;
+  --mach-neutral-ink: #5C5A54; --mach-neutral-soft: #ECE9DF; --mach-neutral-line: #D1CDBF; --mach-neutral-fill: #8C887C;
+  --mach-shadow-1: 0 1px 2px rgba(20, 20, 19, 0.06);
+  --mach-shadow-2: 0 2px 8px rgba(20, 20, 19, 0.08), 0 1px 2px rgba(20, 20, 19, 0.06);
+  --mach-shadow-3: 0 12px 32px rgba(20, 20, 19, 0.14), 0 2px 6px rgba(20, 20, 19, 0.08);
+  --mach-font-sans: 'Source Sans 3 Variable', 'Segoe UI', system-ui, sans-serif;
+  --mach-font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
+  --mach-text-display: 2.5rem; --mach-text-display--line: 2.875rem;
+  --mach-text-title-1: 1.875rem; --mach-text-title-1--line: 2.375rem;
+  --mach-text-title-2: 1.4375rem; --mach-text-title-2--line: 1.875rem;
+  --mach-text-title-3: 1.125rem; --mach-text-title-3--line: 1.625rem;
+  --mach-text-body-lg: 1.0625rem; --mach-text-body-lg--line: 1.75rem;
+  --mach-text-body: 1rem; --mach-text-body--line: 1.5rem;
+  --mach-text-body-sm: 0.875rem; --mach-text-body-sm--line: 1.25rem;
+  --mach-text-caption: 0.8125rem; --mach-text-caption--line: 1.125rem;
+  --mach-text-mono: 0.8125rem; --mach-text-mono--line: 1.25rem;
+  --mach-radius-xs: 3px; --mach-radius-sm: 5px; --mach-radius-md: 8px; --mach-radius-lg: 12px; --mach-radius-full: 999px;
+  --mach-duration-fast: 120ms; --mach-duration-base: 180ms; --mach-duration-slow: 260ms;
+  --mach-ease-standard: cubic-bezier(0.2, 0, 0, 1); --mach-ease-enter: cubic-bezier(0, 0, 0, 1); --mach-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --mach-top-bar: 56px; --mach-reading-measure: 68ch; --mach-content-max: 1200px;
+  --mach-control-sm: 28px; --mach-control-md: 36px; --mach-control-lg: 44px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --mach-canvas: #141413; --mach-surface: #1C1C1A; --mach-surface-raised: #242422;
+    --mach-surface-sunken: #0F0F0E; --mach-surface-nav: #181817; --mach-surface-inverse: #FAF9F5;
+    --mach-overlay: rgba(0, 0, 0, 0.6);
+    --mach-ink: #F0EEE6; --mach-ink-muted: #B5B2A7; --mach-ink-subtle: #9A978C;
+    --mach-ink-inverse: #141413; --mach-ink-on-accent: #141413;
+    --mach-line: #2E2D2A; --mach-line-strong: #3D3C38; --mach-line-control: #75736A;
+    --mach-accent: #D97757; --mach-accent-fill: #D97757; --mach-accent-fill-hover: #E48B6C;
+    --mach-accent-ink: #E8957A; --mach-accent-soft: #3A2620;
+    --mach-focus: #8DB4DD;
+    --mach-info-ink: #8DB4DD; --mach-info-soft: #1E2A36; --mach-info-line: #34506C; --mach-info-fill: #6A9BCC;
+    --mach-success-ink: #A7B98A; --mach-success-soft: #232A1B; --mach-success-line: #47573A; --mach-success-fill: #788C5D;
+    --mach-warning-ink: #D9B061; --mach-warning-soft: #2F2716; --mach-warning-line: #5E4C25; --mach-warning-fill: #C99A3A;
+    --mach-danger-ink: #EC8F96; --mach-danger-soft: #3A1D20; --mach-danger-line: #6E3036; --mach-danger-fill: #E06C75;
+    --mach-danger-fill-hover: #E8848C;
+    --mach-neutral-ink: #B5B2A7; --mach-neutral-soft: #242422; --mach-neutral-line: #3D3C38; --mach-neutral-fill: #8C887C;
+    --mach-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --mach-shadow-2: 0 4px 12px rgba(0, 0, 0, 0.45);
+    --mach-shadow-3: 0 16px 40px rgba(0, 0, 0, 0.6);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --mach-canvas: #141413; --mach-surface: #1C1C1A; --mach-surface-raised: #242422;
+  --mach-surface-sunken: #0F0F0E; --mach-surface-nav: #181817; --mach-surface-inverse: #FAF9F5;
+  --mach-overlay: rgba(0, 0, 0, 0.6);
+  --mach-ink: #F0EEE6; --mach-ink-muted: #B5B2A7; --mach-ink-subtle: #9A978C;
+  --mach-ink-inverse: #141413; --mach-ink-on-accent: #141413;
+  --mach-line: #2E2D2A; --mach-line-strong: #3D3C38; --mach-line-control: #75736A;
+  --mach-accent: #D97757; --mach-accent-fill: #D97757; --mach-accent-fill-hover: #E48B6C;
+  --mach-accent-ink: #E8957A; --mach-accent-soft: #3A2620;
+  --mach-focus: #8DB4DD;
+  --mach-info-ink: #8DB4DD; --mach-info-soft: #1E2A36; --mach-info-line: #34506C; --mach-info-fill: #6A9BCC;
+  --mach-success-ink: #A7B98A; --mach-success-soft: #232A1B; --mach-success-line: #47573A; --mach-success-fill: #788C5D;
+  --mach-warning-ink: #D9B061; --mach-warning-soft: #2F2716; --mach-warning-line: #5E4C25; --mach-warning-fill: #C99A3A;
+  --mach-danger-ink: #EC8F96; --mach-danger-soft: #3A1D20; --mach-danger-line: #6E3036; --mach-danger-fill: #E06C75;
+  --mach-danger-fill-hover: #E8848C;
+  --mach-neutral-ink: #B5B2A7; --mach-neutral-soft: #242422; --mach-neutral-line: #3D3C38; --mach-neutral-fill: #8C887C;
+  --mach-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --mach-shadow-2: 0 4px 12px rgba(0, 0, 0, 0.45);
+  --mach-shadow-3: 0 16px 40px rgba(0, 0, 0, 0.6);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --mach-duration-fast: 0ms; --mach-duration-base: 0ms; --mach-duration-slow: 0ms; }
+}
+/* ==== END TOKENS. No colour literal appears below this line. ==== */
+
+/* ==== 2. Base (STYLE_GUIDE.md 11.5) ==== */
+html {
+  background: var(--mach-canvas); color: var(--mach-ink); font-family: var(--mach-font-sans);
+  font-size: 100%; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+  font-feature-settings: "kern", "liga";
+}
+body { margin: 0; min-height: 100vh; background: var(--mach-canvas); color: var(--mach-ink);
+  font-size: var(--mach-text-body); line-height: var(--mach-text-body--line); overflow-x: hidden; }
+*, ::before, ::after { box-sizing: border-box; outline-color: var(--mach-focus); }
+:focus-visible { outline: 2px solid var(--mach-focus); outline-offset: 2px; }
+::selection { background: var(--mach-accent-soft); color: var(--mach-ink); }
+.tabular { font-variant-numeric: tabular-nums; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+h1, h2, h3, h4 { margin: 0; text-wrap: balance; color: var(--mach-ink); }
+p, ul, ol, dl, dd, figure { margin: 0; }
+ul, ol { padding: 0; list-style: none; }
+[hidden] { display: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+@keyframes mach-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes mach-pop-in { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }
+
+/* Type steps (section 3.3) as classes */
+.t-display { font-size: var(--mach-text-display); line-height: var(--mach-text-display--line); font-weight: 700; letter-spacing: -0.02em; }
+.t-title-1 { font-size: var(--mach-text-title-1); line-height: var(--mach-text-title-1--line); font-weight: 700; letter-spacing: -0.015em; }
+.t-title-2 { font-size: var(--mach-text-title-2); line-height: var(--mach-text-title-2--line); font-weight: 650; letter-spacing: -0.01em; }
+.t-title-3 { font-size: var(--mach-text-title-3); line-height: var(--mach-text-title-3--line); font-weight: 600; }
+.t-body-lg { font-size: var(--mach-text-body-lg); line-height: var(--mach-text-body-lg--line); }
+.t-body-sm { font-size: var(--mach-text-body-sm); line-height: var(--mach-text-body-sm--line); }
+.t-label { font-size: var(--mach-text-body-sm); line-height: var(--mach-text-body-sm--line); font-weight: 600; }
+.t-caption { font-size: var(--mach-text-caption); line-height: var(--mach-text-caption--line); letter-spacing: 0.005em; }
+.muted { color: var(--mach-ink-muted); }
+.subtle { color: var(--mach-ink-subtle); }
+.reading { max-width: var(--mach-reading-measure); }
+.undecided { color: var(--mach-ink-subtle); font-style: italic; }
+
+/* ==== 3. Components ==== */
+/* Identifier (7.1 ArtifactId) */
+.id { font-family: var(--mach-font-mono); font-size: var(--mach-text-mono); line-height: var(--mach-text-mono--line);
+  font-weight: 450; color: var(--mach-ink-muted); background: var(--mach-surface-sunken); padding: 1px 6px;
+  border-radius: var(--mach-radius-xs); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.id.plain { background: none; padding: 0; }
+
+/* Button (7.2) */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: var(--mach-control-md);
+  padding: 0 14px; border-radius: var(--mach-radius-sm); border: 1px solid transparent; font: inherit;
+  font-size: var(--mach-text-body-sm); font-weight: 600; white-space: nowrap; cursor: pointer; text-decoration: none;
+  transition: background-color var(--mach-duration-fast) var(--mach-ease-standard), border-color var(--mach-duration-fast) var(--mach-ease-standard), color var(--mach-duration-fast) var(--mach-ease-standard); }
+.btn svg { width: 16px; height: 16px; flex: none; }
+.btn-primary { background: var(--mach-accent-fill); color: var(--mach-ink-on-accent); box-shadow: var(--mach-shadow-1); }
+.btn-primary:hover { background: var(--mach-accent-fill-hover); }
+.btn-secondary { background: var(--mach-surface); color: var(--mach-ink); border-color: var(--mach-line-control); }
+.btn-secondary:hover { background: var(--mach-surface-sunken); }
+.btn-ghost { background: none; color: var(--mach-ink-muted); }
+.btn-ghost:hover { background: var(--mach-surface-sunken); color: var(--mach-ink); }
+.btn-link { height: auto; padding: 0; background: none; color: var(--mach-accent-ink); text-decoration: underline;
+  text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.btn-link:hover { text-decoration-thickness: 2px; }
+.btn-sm { height: var(--mach-control-sm); padding: 0 10px; }
+.btn-lg { height: var(--mach-control-lg); padding: 0 20px; font-size: var(--mach-text-body); }
+.btn-icon { width: var(--mach-control-sm); height: var(--mach-control-sm); padding: 0; }
+a { color: var(--mach-accent-ink); text-underline-offset: 3px; }
+
+/* Glyphs (6.4) and status pills (7.6) */
+.g { width: 14px; height: 14px; flex: none; }
+.pill { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 8px; border-radius: var(--mach-radius-full);
+  border: 1px solid; font-size: var(--mach-text-caption); line-height: 1; font-weight: 600; white-space: nowrap; }
+.pill.sm { height: 20px; padding: 0 8px 0 6px; }
+.badge { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border-radius: var(--mach-radius-xs);
+  border: 1px solid transparent; font-size: var(--mach-text-caption); font-weight: 600; white-space: nowrap; }
+.tone-neutral { background: var(--mach-neutral-soft); border-color: var(--mach-neutral-line); color: var(--mach-neutral-ink); }
+.tone-info { background: var(--mach-info-soft); border-color: var(--mach-info-line); color: var(--mach-info-ink); }
+.tone-success { background: var(--mach-success-soft); border-color: var(--mach-success-line); color: var(--mach-success-ink); }
+.tone-warning { background: var(--mach-warning-soft); border-color: var(--mach-warning-line); color: var(--mach-warning-ink); }
+.tone-danger { background: var(--mach-danger-soft); border-color: var(--mach-danger-line); color: var(--mach-danger-ink); }
+.tone-accent { background: var(--mach-accent-soft); border-color: var(--mach-accent); color: var(--mach-accent-ink); }
+.badge.outline { background: transparent; }
+
+/* Panel (7.10), fact list, quote (7.1) */
+.panel { background: var(--mach-surface); border: 1px solid var(--mach-line); border-radius: var(--mach-radius-md); padding: 16px; }
+.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; }
+.facts dt { color: var(--mach-ink-muted); }
+.quote { border-left: 2px solid var(--mach-line-strong); padding-left: 16px; }
+.quote blockquote { margin: 0; font-style: italic; font-size: var(--mach-text-body-lg); line-height: var(--mach-text-body-lg--line); }
+.quote figcaption { margin-top: 4px; font-size: var(--mach-text-body-sm); color: var(--mach-ink-muted); }
+.quote figcaption b { color: var(--mach-ink); font-weight: 600; }
+
+/* Field (7.3) */
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label, .field .label { font-size: var(--mach-text-body-sm); font-weight: 600; }
+.field .hint { font-size: var(--mach-text-body-sm); color: var(--mach-ink-muted); margin-top: -2px; }
+.field .error { display: flex; gap: 6px; align-items: center; font-size: var(--mach-text-body-sm); color: var(--mach-danger-ink); }
+textarea, input[type="text"] { width: 100%; font: inherit; color: var(--mach-ink); background: var(--mach-surface);
+  border: 1px solid var(--mach-line-control); border-radius: var(--mach-radius-sm); padding: 8px 12px; }
+textarea { min-height: 80px; resize: vertical; }
+textarea.editorial { font-size: var(--mach-text-body-lg); line-height: var(--mach-text-body-lg--line); }
+textarea:hover, input[type="text"]:hover { border-color: var(--mach-ink-subtle); }
+textarea:focus-visible, input[type="text"]:focus-visible { outline-offset: 0; border-color: var(--mach-focus); }
+textarea[aria-invalid="true"] { border-color: var(--mach-danger-ink); }
+textarea[readonly] { background: var(--mach-surface-sunken); }
+
+/* Banner (7.7) */
+.banner { display: flex; gap: 12px; align-items: flex-start; border: 1px solid; border-radius: var(--mach-radius-md); padding: 12px 16px; }
+.banner .g { width: 18px; height: 18px; margin-top: 2px; }
+.banner .body { color: var(--mach-ink); font-size: var(--mach-text-body-sm); }
+
+/* Dialog (7.8): fixed overlay, panel at 12vh, focus trapped by script */
+.overlay { position: fixed; inset: 0; background: var(--mach-overlay); z-index: 50; animation: mach-fade-in var(--mach-duration-base) var(--mach-ease-enter) both; }
+.dialog { position: fixed; z-index: 51; left: 50%; top: 12vh; transform: translateX(-50%); width: min(512px, calc(100vw - 2rem));
+  max-height: 76vh; display: flex; flex-direction: column; background: var(--mach-surface-raised); border: 1px solid var(--mach-line);
+  border-radius: var(--mach-radius-lg); box-shadow: var(--mach-shadow-3); }
+.dialog.lg { width: min(672px, calc(100vw - 2rem)); }
+.dialog > .inner { animation: mach-pop-in var(--mach-duration-base) var(--mach-ease-enter) both; display: flex; flex-direction: column; min-height: 0; }
+.dialog header { display: flex; gap: 12px; align-items: flex-start; padding: 20px 24px 0; }
+.dialog header > div { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.dialog header p { color: var(--mach-ink-muted); }
+.dialog .dbody { padding: 16px 24px 0; overflow-y: auto; }
+.dialog footer { display: flex; justify-content: flex-end; gap: 8px; padding: 20px 24px; flex-wrap: wrap; }
+.well { background: var(--mach-surface-sunken); border-radius: var(--mach-radius-md); padding: 12px 16px; }
+.well li + li { margin-top: 6px; }
+
+/* Toast (7.18) */
+.toasts { position: fixed; right: 16px; bottom: 16px; z-index: 60; display: flex; flex-direction: column; gap: 8px; max-width: calc(100vw - 32px); }
+.toast { width: 360px; max-width: 100%; display: flex; gap: 12px; background: var(--mach-surface-raised); border: 1px solid var(--mach-line-strong);
+  border-radius: var(--mach-radius-md); padding: 12px 16px; box-shadow: var(--mach-shadow-3); animation: mach-pop-in var(--mach-duration-base) var(--mach-ease-enter) both; }
+.toast .g { width: 18px; height: 18px; color: var(--mach-success-ink); margin-top: 2px; }
+.toast div { flex: 1; }
+
+/* ==== 4. Shell ==== */
+/* The sketch stamp: dashed warning, as the guide's "sample data" pattern (8.4) */
+.sketch-banner { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; justify-content: space-between;
+  padding: 6px 24px; background: var(--mach-warning-soft); color: var(--mach-warning-ink); border-bottom: 1px dashed var(--mach-warning-line);
+  font-size: var(--mach-text-body-sm); }
+.sketch-banner strong { font-weight: 600; }
+.sketch-banner .btn-link { color: var(--mach-warning-ink); font-size: var(--mach-text-body-sm); font-weight: 600; }
+.skip { position: fixed; left: 12px; top: -100px; z-index: 70; background: var(--mach-surface-raised); padding: 8px 12px;
+  border-radius: var(--mach-radius-sm); box-shadow: var(--mach-shadow-2); font-weight: 600; font-size: var(--mach-text-body-sm); }
+.skip:focus { top: 12px; }
+
+.topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; min-height: var(--mach-top-bar); padding: 8px 24px;
+  background: var(--mach-canvas); border-bottom: 1px solid var(--mach-line); }
+.where { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; flex: 1 1 320px; }
+.brand { display: flex; align-items: center; gap: 8px; font-size: var(--mach-text-body-sm); font-weight: 600; white-space: nowrap; }
+.crumbs ol { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; min-width: 0; font-size: var(--mach-text-body-sm); color: var(--mach-ink-muted);
+  padding-left: 12px; border-left: 1px solid var(--mach-line-strong); }
+.crumbs { min-width: 0; }
+.crumbs li { white-space: nowrap; }
+.crumbs li + li::before { content: "/"; margin-right: 8px; color: var(--mach-ink-subtle); }
+.crumbs a { text-decoration: none; }
+.crumbs a:hover { text-decoration: underline; }
+.crumbs [aria-current] { color: var(--mach-ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.crumbs li:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.status { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.saved { display: inline-flex; align-items: center; gap: 6px; font-size: var(--mach-text-body-sm); color: var(--mach-ink-muted); }
+.saved .g { width: 16px; height: 16px; }
+
+/* "More" navigation menu (7.13) */
+.menu-wrap { position: relative; }
+.menu-btn svg { transition: transform var(--mach-duration-fast) var(--mach-ease-standard); }
+.menu-btn[aria-expanded="true"] svg { transform: rotate(180deg); }
+.menu-btn.current { color: var(--mach-accent-ink); }
+.menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 50; width: 288px; max-width: calc(100vw - 32px); padding: 8px;
+  background: var(--mach-surface-raised); border: 1px solid var(--mach-line-strong); border-radius: var(--mach-radius-lg);
+  box-shadow: var(--mach-shadow-2); animation: mach-pop-in var(--mach-duration-base) var(--mach-ease-enter) both; }
+.menu li + li { margin-top: 2px; }
+.menu a { position: relative; display: block; padding: 8px 12px; border-radius: var(--mach-radius-sm); text-decoration: none; color: var(--mach-ink); font-size: var(--mach-text-body-sm); }
+.menu a span { display: block; color: var(--mach-ink-muted); font-size: var(--mach-text-caption); }
+.menu a:hover { background: var(--mach-surface-sunken); }
+.menu a[aria-current="page"] { background: var(--mach-accent-soft); color: var(--mach-accent-ink); font-weight: 600; }
+.menu a[aria-current="page"]::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--mach-accent); }
+.menu .foot { margin-top: 8px; padding: 8px 4px 4px; border-top: 1px solid var(--mach-line); }
+/* Theme switch (7.13): fieldset of real radios */
+.theme { display: flex; border: 1px solid var(--mach-line); border-radius: var(--mach-radius-sm); padding: 2px; margin: 0; background: var(--mach-surface); }
+.theme label { flex: 1; text-align: center; padding: 4px 0; border-radius: var(--mach-radius-xs); font-size: var(--mach-text-caption); color: var(--mach-ink-muted); cursor: pointer; }
+.theme input { position: absolute; opacity: 0; pointer-events: none; }
+.theme label:has(input:checked) { background: var(--mach-surface-sunken); color: var(--mach-ink); font-weight: 600; }
+.theme label:has(input:focus-visible) { outline: 2px solid var(--mach-focus); }
+
+/* Page frame (ScreenFrame: width, one h1, a lead) */
+main { display: block; }
+main:focus { outline: none; }
+.page { max-width: var(--mach-content-max); margin: 0 auto; padding: 32px 40px 64px; display: flex; flex-direction: column; gap: 32px; }
+.page-head { display: flex; flex-direction: column; gap: 8px; max-width: var(--mach-reading-measure); }
+@media (max-width: 700px) {
+  .page { padding: 24px 16px 48px; }
+  .topbar, .sketch-banner { padding-left: 16px; padding-right: 16px; }
+  .t-display { font-size: var(--mach-text-title-1); line-height: var(--mach-text-title-1--line); }
+}
+
+/* Stepper (7.10): the page's navigation. Numbered circles, 1px connectors. The one bold element:
+   it reads as the chain the proposal adds to the front of MACH's record. */
+.stepper ol { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0; counter-reset: step; }
+.stepper li { position: relative; }
+.stepper li + li::before { content: ""; position: absolute; top: 22px; left: -50%; width: calc(100% - 32px); margin-left: 16px;
+  border-top: 1px solid var(--mach-line-strong); }
+.stepper li.done + li::before, .stepper li.done::before { border-top-color: var(--mach-ink-subtle); }
+.step { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px; text-align: center; text-decoration: none;
+  color: var(--mach-ink-subtle); border-radius: var(--mach-radius-sm); }
+.step:hover { background: var(--mach-surface-sunken); }
+.step .n { position: relative; z-index: 1; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+  border: 1px solid var(--mach-line-strong); background: var(--mach-canvas); font-size: var(--mach-text-caption); font-weight: 600; font-variant-numeric: tabular-nums; }
+.step .name { font-size: var(--mach-text-body-sm); color: var(--mach-ink-muted); }
+.step .what { font-size: var(--mach-text-caption); color: var(--mach-ink-subtle); }
+.done .step .n { background: var(--mach-surface-sunken); color: var(--mach-ink-muted); }
+.step[aria-current="step"] .n { border-color: var(--mach-accent); background: var(--mach-accent-soft); color: var(--mach-accent-ink); }
+.step[aria-current="step"] .name { color: var(--mach-ink); font-weight: 600; }
+@media (max-width: 760px) {
+  .stepper ol { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 4px; }
+  .stepper li + li::before { display: none; }
+  .step .what { display: none; }
+}
+.screen { display: flex; flex-direction: column; gap: 24px; }
+.screen-head { display: flex; flex-direction: column; gap: 6px; max-width: var(--mach-reading-measure); }
+.screen-head h2:focus { outline: none; }
+.screen-foot { display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: space-between; align-items: center;
+  border-top: 1px solid var(--mach-line); padding-top: 16px; }
+.two-col { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+@media (max-width: 900px) { .two-col { grid-template-columns: minmax(0, 1fr); } }
+
+/* ==== 5. Screens ==== */
+/* 1. Ideas: five columns, scrolling sideways inside its own region */
+.board { overflow-x: auto; padding-bottom: 8px; border-radius: var(--mach-radius-md); }
+.board-cols { display: grid; grid-template-columns: repeat(5, minmax(232px, 1fr)); gap: 12px; min-width: 1220px; }
+.col { background: var(--mach-surface-sunken); border-radius: var(--mach-radius-md); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.col h3 { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.col h3 .count { font-size: var(--mach-text-caption); color: var(--mach-ink-muted); font-weight: 400; }
+.card { background: var(--mach-surface); border: 1px solid var(--mach-line); border-radius: var(--mach-radius-md); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.card .title { font-weight: 600; }
+.card .meta { font-size: var(--mach-text-caption); color: var(--mach-ink-muted); }
+.card.example { border: 2px solid var(--mach-accent); }
+.card.kept { border-style: dashed; border-color: var(--mach-line-control); }
+.card .quote blockquote { font-size: var(--mach-text-body-sm); line-height: var(--mach-text-body-sm--line); }
+.card .quote figcaption { font-size: var(--mach-text-caption); }
+.card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; justify-content: space-between; }
+
+/* 2. Explore: the conversation and what was looked up */
+.talk { display: flex; flex-direction: column; gap: 20px; }
+.turn { display: grid; grid-template-columns: 9rem minmax(0, 1fr); gap: 4px 16px; }
+.turn .who { font-size: var(--mach-text-caption); color: var(--mach-ink-subtle); padding-top: 2px; }
+.turn.q .said { font-weight: 600; }
+.turn.a .said { color: var(--mach-ink); }
+@media (max-width: 560px) { .turn { grid-template-columns: minmax(0, 1fr); } }
+.ask { border-top: 1px solid var(--mach-line); padding-top: 20px; display: flex; flex-direction: column; gap: 16px; }
+.ask .row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; }
+.looked { display: flex; flex-direction: column; gap: 20px; background: var(--mach-surface); border-left: 1px solid var(--mach-line); padding: 4px 0 4px 24px; }
+@media (max-width: 900px) { .looked { border-left: 0; border-top: 1px solid var(--mach-line); padding: 20px 0 0; } }
+.looked h3 { margin-bottom: 4px; }
+.looked > div > p { margin-bottom: 10px; }
+.found li { padding: 10px 0; border-top: 1px solid var(--mach-line); display: flex; flex-direction: column; gap: 4px; }
+.found li:last-child { border-bottom: 1px solid var(--mach-line); }
+.found .from { font-size: var(--mach-text-caption); color: var(--mach-ink-muted); }
+
+/* 3. The brief: one document, a check beside it */
+.doc { display: flex; flex-direction: column; gap: 28px; background: var(--mach-surface); border: 1px solid var(--mach-line);
+  border-radius: var(--mach-radius-md); padding: 32px; }
+@media (max-width: 560px) { .doc { padding: 20px 16px; } }
+.doc section { display: flex; flex-direction: column; gap: 8px; }
+.doc .lines li { display: grid; grid-template-columns: 3.5rem minmax(0, 1fr); gap: 4px 12px; padding: 8px 0; border-top: 1px solid var(--mach-line); }
+.doc .lines li > div { display: flex; flex-direction: column; gap: 4px; }
+.doc .bullets { list-style: disc; padding-left: 20px; }
+.doc .bullets li + li { margin-top: 4px; }
+.know { font-size: var(--mach-text-body-sm); color: var(--mach-ink-muted); }
+.know b { color: var(--mach-ink); font-weight: 600; }
+.finding-inline { display: flex; gap: 6px; align-items: flex-start; font-size: var(--mach-text-body-sm); color: var(--mach-danger-ink); }
+.finding-inline .g { margin-top: 3px; }
+.touches { display: flex; flex-wrap: wrap; gap: 6px 8px; }
+.check { display: flex; flex-direction: column; gap: 16px; position: sticky; top: 16px; }
+.counts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.counts div { background: var(--mach-surface-sunken); border-radius: var(--mach-radius-sm); padding: 8px 10px; }
+.counts dt { font-size: var(--mach-text-caption); color: var(--mach-ink-muted); }
+.counts dd { font-size: var(--mach-text-title-3); line-height: var(--mach-text-title-3--line); font-weight: 600; font-variant-numeric: tabular-nums; }
+.diag { background: var(--mach-danger-soft); border: 1px solid var(--mach-danger-line); border-radius: var(--mach-radius-md); padding: 10px 12px; }
+.diag li { display: flex; gap: 8px; color: var(--mach-ink); font-size: var(--mach-text-body-sm); }
+.diag li .g { color: var(--mach-danger-ink); margin-top: 3px; }
+.passes li { display: flex; gap: 8px; font-size: var(--mach-text-body-sm); }
+.passes li + li { margin-top: 6px; }
+.passes .g { color: var(--mach-success-ink); margin-top: 3px; }
+
+/* 4. The case */
+.case-words { font-size: var(--mach-text-body-lg); line-height: var(--mach-text-body-lg--line); max-width: var(--mach-reading-measure); }
+.hard li { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 14px 0; border-top: 1px solid var(--mach-line); }
+.hard li:last-child { border-bottom: 1px solid var(--mach-line); }
+.hard .q { font-weight: 600; }
+.hard .why { font-size: var(--mach-text-caption); color: var(--mach-ink-subtle); }
+.verdict { border: 1px solid var(--mach-line); border-radius: var(--mach-radius-md); padding: 20px 24px; background: var(--mach-surface); display: flex; flex-direction: column; gap: 16px; }
+.choices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; border: 0; padding: 0; margin: 0; }
+@media (max-width: 640px) { .choices { grid-template-columns: minmax(0, 1fr); } }
+.choices legend { font-size: var(--mach-text-body-sm); font-weight: 600; margin-bottom: 8px; padding: 0; }
+.choice { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px 12px 40px; position: relative; cursor: pointer;
+  border: 1px solid var(--mach-line-control); border-radius: var(--mach-radius-md); background: var(--mach-surface); }
+.choice:hover { background: var(--mach-surface-sunken); }
+.choice input { position: absolute; left: 14px; top: 15px; width: 16px; height: 16px; margin: 0; accent-color: var(--mach-ink); }
+.choice strong { font-weight: 600; }
+.choice span { font-size: var(--mach-text-body-sm); color: var(--mach-ink-muted); }
+/* A chosen verdict is shown by a heavier outline in ink, never by colour: no choice is favoured. */
+.choice:has(input:checked) { border: 2px solid var(--mach-ink); padding: 11px 13px 11px 39px; }
+.choice:has(input:checked) input { left: 13px; top: 14px; }
+.recorded { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* 5. Size and route */
+.counted { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 760px) { .counted { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.counted div { background: var(--mach-surface-sunken); border-radius: var(--mach-radius-sm); padding: 10px 12px; display: flex; flex-direction: column-reverse; gap: 2px; }
+.counted dt { font-size: var(--mach-text-caption); color: var(--mach-ink-muted); }
+.counted dd { font-size: var(--mach-text-title-2); line-height: var(--mach-text-title-2--line); font-weight: 600; font-variant-numeric: tabular-nums; }
+.routes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 960px) { .routes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .routes { grid-template-columns: minmax(0, 1fr); } }
+.route { border: 1px dashed var(--mach-line-strong); border-radius: var(--mach-radius-md); padding: 14px; display: flex; flex-direction: column; gap: 6px; color: var(--mach-ink-muted); }
+.route h3 { color: var(--mach-ink-muted); }
+.route .why-not { font-size: var(--mach-text-body-sm); }
+.route.chosen { border: 2px solid var(--mach-accent); background: var(--mach-surface); color: var(--mach-ink); }
+.route.chosen h3 { color: var(--mach-ink); }
+.slicemap li { display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: 12px; padding: 14px 0; border-top: 1px solid var(--mach-line); }
+.slicemap li:last-child { border-bottom: 1px solid var(--mach-line); }
+.slicemap .order { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1px dashed var(--mach-line-control);
+  font-size: var(--mach-text-caption); font-weight: 600; color: var(--mach-ink-muted); }
+.slicemap .head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.slicemap .rel { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: var(--mach-text-caption); color: var(--mach-ink-muted); }
+.coverage { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; padding: 16px; border: 1px solid var(--mach-line); border-radius: var(--mach-radius-md); background: var(--mach-surface); }
+.coverage ul { display: flex; flex-wrap: wrap; gap: 8px 16px; flex: 1 1 auto; }
+.coverage li { display: flex; align-items: center; gap: 6px; font-size: var(--mach-text-body-sm); }
+.second { border-top: 1px solid var(--mach-line-strong); padding-top: 32px; margin-top: 8px; }
+.today-rule { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.proposal { display: flex; flex-direction: column; gap: 16px; border-top: 1px solid var(--mach-line); padding-top: 16px; margin-top: 16px; }
+
+/* 6. Look back */
+.outcome { display: flex; flex-direction: column; gap: 10px; padding: 16px 0; border-top: 1px solid var(--mach-line); }
+.record { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--mach-line); border-radius: var(--mach-radius-sm); padding: 2px; margin: 0; background: var(--mach-surface-sunken); gap: 2px; }
+.record label { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 10px; border-radius: var(--mach-radius-xs);
+  font-size: var(--mach-text-body-sm); color: var(--mach-ink-muted); cursor: pointer; }
+.record input { position: absolute; opacity: 0; pointer-events: none; }
+.record label:has(input:checked) { background: var(--mach-surface); color: var(--mach-ink); font-weight: 600; box-shadow: var(--mach-shadow-1); }
+.record label:has(input:focus-visible) { outline: 2px solid var(--mach-focus); outline-offset: 1px; }
+.record .g { display: none; }
+.record label:has(input:checked) .g { display: inline; }
+/* The whole chain for one outcome: one horizontal line, nodes joined by a rule */
+.chain-wrap { overflow-x: auto; padding: 4px 2px 12px; }
+.chain { display: flex; min-width: 980px; }
+.chain li { flex: 1 1 0; position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding-right: 12px; }
+.chain li::before { content: ""; position: absolute; left: 0; right: 0; top: 11px; border-top: 2px solid var(--mach-ink-subtle); }
+.chain li:last-child::before { right: auto; width: 12px; }
+.chain .dot { position: relative; z-index: 1; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--mach-canvas); color: var(--mach-success-ink); }
+.chain .dot .g { width: 16px; height: 16px; }
+.chain .kind { font-size: var(--mach-text-caption); color: var(--mach-ink-subtle); }
+.chain .val { font-size: var(--mach-text-body-sm); }
+.about ol { list-style: decimal; padding-left: 20px; }
+.about ol li + li { margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<!-- ==== 6. Markup ==== -->
+<!-- Glyph sprite: the state shapes of STYLE_GUIDE.md 6.4, 16x16. Inner marks use the surface colour. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="g-open" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="2.6 2.1"/></symbol>
+  <symbol id="g-half" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 2a6 6 0 0 0 0 12z" fill="currentColor"/></symbol>
+  <symbol id="g-ready" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="8" cy="8" r="2.4" fill="currentColor"/></symbol>
+  <symbol id="g-approved" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M5 8.2l2 2 4-4.4" fill="none" stroke="var(--mach-surface)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="g-submitted" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M5 8h6M8.6 5.6 11 8l-2.4 2.4" fill="none" stroke="var(--mach-surface)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="g-building" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 8V2a6 6 0 1 0 6 6z" fill="currentColor"/></symbol>
+  <symbol id="g-question" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M6.2 6.3a1.9 1.9 0 1 1 2.7 1.7c-.6.3-.9.7-.9 1.4" fill="none" stroke="var(--mach-surface)" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="11.6" r="0.9" fill="var(--mach-surface)"/></symbol>
+  <symbol id="g-accepted" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.6" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="4.2" fill="currentColor"/></symbol>
+  <symbol id="g-blocked" viewBox="0 0 16 16"><polygon points="5.1,1 10.9,1 15,5.1 15,10.9 10.9,15 5.1,15 1,10.9 1,5.1" fill="currentColor"/><path d="M4.8 8h6.4" stroke="var(--mach-surface)" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="g-superseded" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3.8 12.2 12.2 3.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-x" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 16 16"><path d="M3 8h10M9 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-back" viewBox="0 0 16 16"><path d="M13 8H3M7 4 3 8l4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<!-- The sketch's own stamp: always visible, never mistaken for the real app. -->
+<div class="sketch-banner" role="note" aria-label="About this page">
+  <p><strong>Sketch: sample data, nothing here is built.</strong> A proposal for M16 to react to.</p>
+  <button type="button" class="btn btn-link" id="about-open" aria-haspopup="dialog" aria-controls="about-dialog">About this sketch</button>
+</div>
+
+<!-- Studio top bar (4.3): where you are on the left, saved state and More on the right -->
+<header class="topbar">
+  <div class="where">
+    <span class="brand">
+      <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
+        <rect x="1" y="1" width="8" height="8" rx="1.5" fill="var(--mach-ink)"/>
+        <rect x="11" y="1" width="8" height="8" rx="1.5" fill="none" stroke="var(--mach-ink)" stroke-width="1.5"/>
+        <rect x="1" y="11" width="8" height="8" rx="1.5" fill="none" stroke="var(--mach-ink)" stroke-width="1.5"/>
+        <rect x="11" y="11" width="8" height="8" rx="1.5" fill="var(--mach-accent)"/>
+      </svg>
+      Product Studio
+    </span>
+    <nav class="crumbs" aria-label="Where you are">
+      <ol>
+        <li><a href="#ideas">Branch Library</a></li>
+        <li><a href="#ideas">Shape</a></li>
+        <li aria-current="page" id="crumb-step">Ideas</li>
+      </ol>
+    </nav>
+  </div>
+  <div class="status">
+    <span class="badge tone-warning outline">Sample data</span>
+    <span class="saved"><svg class="g" aria-hidden="true"><use href="#g-approved"/></svg>Everything is saved</span>
+    <div class="menu-wrap">
+      <button type="button" class="btn btn-ghost btn-sm menu-btn current" id="more-btn" aria-expanded="false" aria-controls="more-menu">
+        More <svg aria-hidden="true"><use href="#i-chevron"/></svg>
+      </button>
+      <div class="menu" id="more-menu" hidden>
+        <nav aria-label="More">
+          <ul>
+            <li><a href="#ideas" data-off>Project home<span>Epics, slices and what to do next</span></a></li>
+            <li><a href="#ideas" aria-current="page">Shape <span>Ideas, briefs and the case, before any epic</span></a></li>
+            <li><a href="#ideas" data-off>Vision and outcomes<span>The project's vision, outcomes and epics</span></a></li>
+            <li><a href="#ideas" data-off>Start from a PRD<span>A PRD's map, and the slices it covers</span></a></li>
+            <li><a href="#ideas" data-off>Policy packs<span>Your organisation's policies and concerns to settle</span></a></li>
+            <li><a href="#ideas" data-off>Roadmap<span>Epics and slices as a map, with what depends on what</span></a></li>
+            <li><a href="#ideas" data-off>Decisions<span>Versions to choose, open questions, requests</span></a></li>
+          </ul>
+        </nav>
+        <div class="foot">
+          <fieldset class="theme">
+            <legend class="sr-only">Theme</legend>
+            <label><input type="radio" name="theme" value="light">Light</label>
+            <label><input type="radio" name="theme" value="dark">Dark</label>
+            <label><input type="radio" name="theme" value="system" checked>System</label>
+          </fieldset>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main id="main" tabindex="-1">
+<div class="page">
+  <div class="page-head">
+    <h1 class="t-display" id="page-title">Shape</h1>
+    <p class="t-body-lg muted">Where an idea is explored, argued for, sized and turned into epics. You decide at every step; scripts check. Nothing here reaches the builders.</p>
+  </div>
+
+  <!-- Stepper: the page's navigation. Each step is a link to its screen's hash. -->
+  <nav class="stepper" aria-label="Shape steps">
+    <ol>
+      <li><a class="step" href="#ideas" data-step="ideas"><span class="n">1</span><span class="name">Ideas</span><span class="what">8 on the board</span></a></li>
+      <li><a class="step" href="#explore" data-step="explore"><span class="n">2</span><span class="name">Explore</span><span class="what">Question 4</span></a></li>
+      <li><a class="step" href="#brief" data-step="brief"><span class="n">3</span><span class="name">The brief</span><span class="what">1 problem to fix</span></a></li>
+      <li><a class="step" href="#case" data-step="case"><span class="n">4</span><span class="name">The case</span><span class="what">No verdict yet</span></a></li>
+      <li><a class="step" href="#route" data-step="route"><span class="n">5</span><span class="name">Size and route</span><span class="what">An epic</span></a></li>
+      <li><a class="step" href="#lookback" data-step="lookback"><span class="n">6</span><span class="name">Look back</span><span class="what">After acceptance</span></a></li>
+    </ol>
+  </nav>
+
+  <!-- ======================= Step 1: Ideas ======================= -->
+  <section class="screen" id="ideas" aria-labelledby="ideas-h">
+    <div class="screen-head">
+      <h2 class="t-title-1" id="ideas-h" tabindex="-1">Ideas</h2>
+      <p class="muted">Everything that might become work, wherever it came from. Saying no loses nothing: the decision is kept with its reason and the idea stays findable.</p>
+    </div>
+    <div class="board" role="region" aria-label="Ideas board, scrolls sideways when narrow" tabindex="0">
+      <div class="board-cols">
+        <!-- New -->
+        <div class="col">
+          <h3 class="t-label">New <span class="count tabular">2</span></h3>
+          <article class="card">
+            <p class="title">Email a reminder two days before a loan is due</p>
+            <p class="meta">From request issue <span class="id plain" translate="no">#57</span> · <time datetime="2026-11-18">2 days ago</time></p>
+            <div class="card-foot"><span class="pill sm tone-neutral"><svg class="g" aria-hidden="true"><use href="#g-open"/></svg>New</span></div>
+          </article>
+          <article class="card">
+            <p class="title">Overdue fine shown twice at self-checkout</p>
+            <p class="meta">A fault from production, seen 14 times this week · <time datetime="2026-11-19">yesterday</time></p>
+            <div class="card-foot"><span class="pill sm tone-neutral"><svg class="g" aria-hidden="true"><use href="#g-open"/></svg>New</span></div>
+          </article>
+        </div>
+        <!-- Exploring -->
+        <div class="col">
+          <h3 class="t-label">Exploring <span class="count tabular">1</span></h3>
+          <article class="card example">
+            <p class="title"><a href="#explore">Let members renew a loan themselves</a></p>
+            <p class="meta">Filed as an idea by a librarian · <time datetime="2026-11-12">8 days ago</time></p>
+            <p class="t-caption muted">Touches shipped rules about overdue items and holds.</p>
+            <div class="card-foot">
+              <span class="pill sm tone-info"><svg class="g" aria-hidden="true"><use href="#g-half"/></svg>Exploring</span>
+              <span class="t-caption" style="color:var(--mach-accent-ink)">The example in this sketch</span>
+            </div>
+          </article>
+        </div>
+        <!-- Brief written -->
+        <div class="col">
+          <h3 class="t-label">Brief written <span class="count tabular">1</span></h3>
+          <article class="card">
+            <p class="title">Reserve a study room online</p>
+            <p class="meta">Typed by the product manager · <time datetime="2026-10-30">3 weeks ago</time></p>
+            <div class="card-foot"><span class="pill sm tone-accent"><svg class="g" aria-hidden="true"><use href="#g-ready"/></svg>Ready for your verdict</span></div>
+          </article>
+        </div>
+        <!-- Decided -->
+        <div class="col">
+          <h3 class="t-label">Decided <span class="count tabular">3</span></h3>
+          <article class="card">
+            <p class="title">Members pay fines online</p>
+            <p class="meta">From request issue <span class="id plain" translate="no">#41</span> · decided <time datetime="2026-10-21">1 month ago</time></p>
+            <span class="pill sm tone-success"><svg class="g" aria-hidden="true"><use href="#g-approved"/></svg>Go</span>
+            <figure class="quote"><blockquote>Members ask for it at every desk, and the payment provider is already approved.</blockquote><figcaption><b>Product manager</b> recorded the verdict</figcaption></figure>
+          </article>
+          <article class="card">
+            <p class="title">Reading challenges for children</p>
+            <p class="meta">Filed as an idea by a branch manager · decided <time datetime="2026-11-03">2 weeks ago</time></p>
+            <span class="pill sm tone-warning"><svg class="g" aria-hidden="true"><use href="#g-superseded"/></svg>Not now</span>
+            <figure class="quote"><blockquote>Worth doing after the summer. The branches have nobody to run it before then.</blockquote><figcaption><b>Product manager</b> recorded the verdict</figcaption></figure>
+          </article>
+          <article class="card kept">
+            <p class="title">Let members pass a loan on to another member</p>
+            <p class="meta">Typed by the product manager · decided <time datetime="2026-09-15">2 months ago</time></p>
+            <span class="pill sm tone-neutral"><svg class="g" aria-hidden="true"><use href="#g-blocked"/></svg>No</span>
+            <figure class="quote"><blockquote>An item is lent to one member. The insurer and two branches said no, and we keep that.</blockquote><figcaption><b>Product manager</b> recorded the verdict</figcaption></figure>
+            <p class="t-caption subtle">Kept with its reason. It stays findable.</p>
+          </article>
+        </div>
+        <!-- Shaped into work -->
+        <div class="col">
+          <h3 class="t-label">Shaped into work <span class="count tabular">1</span></h3>
+          <article class="card">
+            <p class="title">Show members what they have on loan</p>
+            <p class="meta">Filed as an idea by a librarian · shaped <time datetime="2026-08-20">3 months ago</time></p>
+            <p class="t-caption muted"><span class="id" translate="no">EPIC-002</span> with 3 slices</p>
+            <span class="pill sm tone-success"><svg class="g" aria-hidden="true"><use href="#g-accepted"/></svg>Shipped</span>
+          </article>
+        </div>
+      </div>
+    </div>
+    <div class="screen-foot">
+      <p class="t-body-sm muted">8 ideas. Ideas filed with <span class="id" translate="no">/mach-idea</span>, request issues and faults from production arrive here by themselves.</p>
+      <a class="btn btn-secondary" href="#explore">Continue exploring “Let members renew a loan themselves” <svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
+    </div>
+  </section>
+
+  <!-- ======================= Step 2: Explore ======================= -->
+  <section class="screen" id="explore" aria-labelledby="explore-h" hidden>
+    <div class="screen-head">
+      <h2 class="t-title-1" id="explore-h" tabindex="-1">Explore: Let members renew a loan themselves</h2>
+      <p class="muted">Open questions, one at a time, answered in your own words. Facts are looked up, never asked: they are on the right.</p>
+    </div>
+    <div class="two-col">
+      <div class="talk">
+        <ol class="talk" aria-label="The conversation so far">
+          <li class="turn q"><span class="who">MACH asked</span><p class="said">Who asks for this today, and how do they ask?</p></li>
+          <li class="turn a"><span class="who">You answered</span><p class="said">Members, mostly by phone. Central takes about forty renewal calls a week, and the desk staff renew the loan by hand.</p></li>
+          <li class="turn q"><span class="who">MACH asked</span><p class="said">What happens today when a member wants more time and cannot have it?</p></li>
+          <li class="turn a"><span class="who">You answered</span><p class="said">The librarian explains why: the item is overdue, or someone else is waiting for it. Members usually accept it once someone tells them.</p></li>
+          <li class="turn q"><span class="who">MACH asked</span><p class="said">If this worked, what would you see that you do not see now?</p></li>
+          <li class="turn a" id="last-answer"><span class="who">You answered</span><p class="said">Far fewer renewal calls, and members not caught out by a renewal that was refused.</p></li>
+        </ol>
+        <div class="ask">
+          <p class="t-body-sm muted">Question 4 · <b style="color:var(--mach-ink)">Who it affects</b></p>
+          <p class="t-title-2" id="q4">Who would not want this, and why?</p>
+          <div class="field">
+            <label for="answer">Your answer</label>
+            <span class="hint" id="answer-hint">In your own words. MACH records it in the brief and asks the next question.</span>
+            <textarea id="answer" class="editorial" rows="3" aria-describedby="answer-hint"></textarea>
+          </div>
+          <div class="row">
+            <span><button type="button" class="btn btn-ghost btn-sm" data-toast="Recorded as an open question|It goes into the brief under Open questions.">I don't know</button></span>
+            <button type="button" class="btn btn-secondary" id="send-answer">Send answer</button>
+          </div>
+        </div>
+      </div>
+      <aside class="looked" aria-labelledby="looked-h">
+        <div>
+          <h3 class="t-title-3" id="looked-h">What MACH looked up</h3>
+          <p class="t-body-sm muted">Found in the shipped specs, other ideas, your principles and policy packs. None of this is asked of you.</p>
+        </div>
+        <div>
+          <h4 class="t-label">What exists today</h4>
+          <p class="t-caption subtle">From “How Lending works today”: the shipped rules this idea would touch.</p>
+          <ul class="found">
+            <li><span class="id" translate="no">SLICE-004/FR-02</span><span>An overdue item must not be renewed.</span><span class="from">From <span class="id plain" translate="no">SLICE-004</span> Renew a loan at the desk</span></li>
+            <li><span class="id" translate="no">SLICE-004/FR-03</span><span>A loan must not be renewed while another member holds the item.</span><span class="from">From <span class="id plain" translate="no">SLICE-004</span> Renew a loan at the desk</span></li>
+            <li><span class="id" translate="no">SLICE-007/INV-01</span><span>A loan may be renewed at most twice.</span><span class="from">From <span class="id plain" translate="no">SLICE-007</span> Loan limits</span></li>
+          </ul>
+        </div>
+        <div>
+          <h4 class="t-label">What is already wanted</h4>
+          <p class="t-caption subtle">Ideas and requests that look like this one.</p>
+          <ul class="found">
+            <li><span>Email a reminder two days before a loan is due</span><span class="from">Idea, New · from request issue <span class="id plain" translate="no">#57</span></span></li>
+            <li><span>Show members what they have on loan</span><span class="from">Idea, Shaped into work · <span class="id plain" translate="no">EPIC-002</span></span></li>
+          </ul>
+        </div>
+        <div>
+          <h4 class="t-label">What stands in the way</h4>
+          <p class="t-caption subtle">Flagged now, so it is settled here and not at the spec.</p>
+          <ul class="found">
+            <li><span class="pill sm tone-warning" style="align-self:flex-start"><svg class="g" aria-hidden="true"><use href="#g-half"/></svg>Principle</span><span><span class="id" translate="no">PRN-02</span> A member is never charged without being told first, in words.</span><span class="from">A renewal refused today is explained by a person. Here, the screen must do it.</span></li>
+            <li><span class="pill sm tone-warning" style="align-self:flex-start"><svg class="g" aria-hidden="true"><use href="#g-half"/></svg>Policy pack</span><span><span class="id" translate="no">LEND-03</span> A member's own action on a loan leaves a record staff can see.</span><span class="from">Lending policy · owned by the head of lending services</span></li>
+          </ul>
+        </div>
+      </aside>
+    </div>
+    <div class="screen-foot">
+      <a class="btn btn-ghost" href="#ideas"><svg aria-hidden="true"><use href="#i-back"/></svg> Ideas</a>
+      <a class="btn btn-secondary" href="#brief">Read the brief so far <svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
+    </div>
+  </section>
+
+  <!-- ======================= Step 3: The brief ======================= -->
+  <section class="screen" id="brief" aria-labelledby="brief-h" hidden>
+    <div class="screen-head">
+      <h2 class="t-title-1" id="brief-h" tabindex="-1">The brief</h2>
+      <p class="muted">One page, written by the conversation and owned by you. It never reaches the builders as instructions; the slice specs do.</p>
+    </div>
+    <div class="two-col">
+      <article class="doc" aria-labelledby="doc-title">
+        <div>
+          <p class="t-caption subtle"><span class="id plain" translate="no">IDEA-019</span> · revision 3 · edited <time datetime="2026-11-20">today</time></p>
+          <h3 class="t-title-1" id="doc-title">Let members renew a loan themselves</h3>
+        </div>
+        <section aria-labelledby="b-problem">
+          <h4 class="t-title-3" id="b-problem">Problem</h4>
+          <p class="t-body-lg reading">A member who wants more time with a book has to call or come in. The desk spends hours a week on renewals that need no judgement, and members find out a renewal was refused only when a fine arrives.</p>
+        </section>
+        <section aria-labelledby="b-who">
+          <h4 class="t-title-3" id="b-who">Who has it</h4>
+          <p class="reading">Members with items on loan, most of all those who cannot reach a branch in opening hours. Desk staff at Central, who take most of the calls.</p>
+        </section>
+        <section aria-labelledby="b-out">
+          <h4 class="t-title-3" id="b-out">Outcomes</h4>
+          <ul class="lines">
+            <li><span class="id" translate="no">O-1</span><div><p>Members renew without calling the library.</p><p class="know"><b>How we would know:</b> renewal calls at Central fall from about 40 a week to under 15 within two months of release.</p></div></li>
+            <li><span class="id" translate="no">O-2</span><div><p>Members are not surprised by a renewal that was refused.</p><p class="know"><b>How we would know:</b> <span class="undecided">not written yet</span></p>
+              <p class="finding-inline" id="o2-finding"><svg class="g" aria-hidden="true"><use href="#g-blocked"/></svg>O-2 has no way to know it happened. Say what you would see or count.</p></div></li>
+          </ul>
+        </section>
+        <section aria-labelledby="b-not">
+          <h4 class="t-title-3" id="b-not">Not doing</h4>
+          <ul class="bullets"><li>Changing how many times a loan can be renewed.</li><li>Paying fines online (its own idea, decided Go).</li><li>Renewing by phone without a person.</li></ul>
+        </section>
+        <section aria-labelledby="b-ass">
+          <h4 class="t-title-3" id="b-ass">Assumptions</h4>
+          <ul class="lines">
+            <li><span class="id" translate="no">A-1</span><div><p>Most renewal calls are for items nobody is waiting for.</p><span class="pill sm tone-warning" style="align-self:flex-start"><svg class="g" aria-hidden="true"><use href="#g-half"/></svg>Assumed, not confirmed</span></div></li>
+            <li><span class="id" translate="no">A-2</span><div><p>Members who renew already sign in to the catalogue.</p><span class="pill sm tone-success" style="align-self:flex-start"><svg class="g" aria-hidden="true"><use href="#g-approved"/></svg>Confirmed by the head of lending services</span></div></li>
+            <li><span class="id" translate="no">A-3</span><div><p>Two renewals is still the right limit when members do it themselves.</p><span class="pill sm tone-warning" style="align-self:flex-start"><svg class="g" aria-hidden="true"><use href="#g-half"/></svg>Assumed, not confirmed</span></div></li>
+          </ul>
+        </section>
+        <section aria-labelledby="b-q">
+          <h4 class="t-title-3" id="b-q">Open questions</h4>
+          <ul class="bullets"><li>What does a member see when a renewal is refused because someone else is waiting? Who can answer: the head of lending services.</li></ul>
+        </section>
+        <section aria-labelledby="b-risk">
+          <h4 class="t-title-3" id="b-risk">Risks</h4>
+          <ul class="bullets"><li>A branch loses sight of items it wanted back for a display.</li><li>Members renew on the last day and still return late, so fines do not fall.</li></ul>
+        </section>
+        <section aria-labelledby="b-touch">
+          <h4 class="t-title-3" id="b-touch">What it touches</h4>
+          <p class="t-body-sm muted">Capabilities</p>
+          <div class="touches"><span class="badge tone-neutral">Lending <span class="id plain" translate="no">EPIC-001</span></span><span class="badge tone-neutral">Member account <span class="id plain" translate="no">EPIC-002</span></span></div>
+          <p class="t-body-sm muted">Shipped rules</p>
+          <div class="touches"><span class="id" translate="no">SLICE-004/FR-02</span><span class="id" translate="no">SLICE-004/FR-03</span><span class="id" translate="no">SLICE-007/INV-01</span></div>
+        </section>
+      </article>
+      <aside class="check panel" aria-labelledby="check-h">
+        <h3 class="t-title-3" id="check-h">Check</h3>
+        <span class="pill tone-danger" style="align-self:flex-start"><svg class="g" aria-hidden="true"><use href="#g-blocked"/></svg>1 problem to fix</span>
+        <dl class="counts">
+          <div><dt>Outcomes</dt><dd>2</dd></div><div><dt>Assumptions</dt><dd>3</dd></div>
+          <div><dt>Open questions</dt><dd>1</dd></div><div><dt>Rules touched</dt><dd>3</dd></div>
+        </dl>
+        <ul class="diag" aria-label="Problems to fix">
+          <li><svg class="g" aria-hidden="true"><use href="#g-blocked"/></svg><span>O-2 has no way to know it happened. Write what you would see or count if members were no longer surprised. <a href="#o2-finding">Go to O-2</a></span></li>
+        </ul>
+        <div>
+          <p class="t-label" style="margin-bottom:6px">Passes</p>
+          <ul class="passes">
+            <li><svg class="g" aria-hidden="true"><use href="#g-approved"/></svg>Every assumption is listed with an ID.</li>
+            <li><svg class="g" aria-hidden="true"><use href="#g-approved"/></svg>No assumption is stated as a fact in the prose.</li>
+            <li><svg class="g" aria-hidden="true"><use href="#g-approved"/></svg>Nothing reads as a technology choice.</li>
+            <li><svg class="g" aria-hidden="true"><use href="#g-approved"/></svg>Every shipped rule it names exists.</li>
+          </ul>
+        </div>
+        <p class="t-caption subtle">A script checks the brief's structure. It never scores the idea.</p>
+      </aside>
+    </div>
+    <div class="screen-foot">
+      <a class="btn btn-ghost" href="#explore"><svg aria-hidden="true"><use href="#i-back"/></svg> Explore</a>
+      <a class="btn btn-secondary" href="#case">Make the case <svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
+    </div>
+  </section>
+
+  <!-- ======================= Step 4: The case ======================= -->
+  <section class="screen" id="case" aria-labelledby="case-h" hidden>
+    <div class="screen-head">
+      <h2 class="t-title-1" id="case-h" tabindex="-1">The case</h2>
+      <p class="muted">Before any epic exists: the case as a member would hear it, the hardest questions MACH could find, and your verdict.</p>
+    </div>
+    <section class="panel" aria-labelledby="words-h" style="padding:20px 24px">
+      <h3 class="t-title-3" id="words-h" style="margin-bottom:8px">As a member would hear it</h3>
+      <p class="case-words">You can now renew a loan from your account, at any hour, without calling us. If you cannot renew, the page tells you why straight away: the item is overdue, or someone else is waiting for it. Every renewal still follows the same rules the desk follows. Staff can see every renewal you make.</p>
+    </section>
+    <section aria-labelledby="hard-h">
+      <h3 class="t-title-2" id="hard-h" style="margin-bottom:12px">The hard questions</h3>
+      <ol class="hard">
+        <li><span class="why">MACH asked</span><p class="q">Who would not want this?</p><p>Desk staff at the small branches, who use renewal calls to check on older members. Phone renewals stay; this is an extra way, not a replacement.</p><span class="t-caption muted">Your answer</span></li>
+        <li><span class="why">MACH asked, because A-1 is not confirmed</span><p class="q">What does it cost if most calls turn out to be about held items (A-1 is wrong)?</p><p>Calls fall less than we hope, and O-1 is not met. We would still have the clearer refusals of O-2.</p><span class="t-caption muted">Your answer</span></li>
+        <li><span class="why">MACH asked</span><p class="q">What is the smallest version worth shipping?</p><p>Renew one item from the loans list, with the reason shown when it is refused.</p><span class="t-caption muted">Your answer</span></li>
+        <li><span class="why">MACH asked</span><p class="q">What would make you stop?</p>
+          <span class="pill sm tone-warning" style="justify-self:start"><svg class="g" aria-hidden="true"><use href="#g-half"/></svg>Not answered yet</span>
+          <span><a class="btn btn-secondary btn-sm" href="#explore">Answer it</a></span></li>
+      </ol>
+    </section>
+    <form class="verdict" id="verdict-form" novalidate aria-labelledby="verdict-h">
+      <h3 class="t-title-2" id="verdict-h">Your verdict</h3>
+      <fieldset class="choices" aria-describedby="verdict-note">
+        <legend>Choose one</legend>
+        <label class="choice"><input type="radio" name="verdict" value="Go"><strong>Go</strong><span>Shape it into work.</span></label>
+        <label class="choice"><input type="radio" name="verdict" value="Not now"><strong>Not now</strong><span>Keep it, and come back to it later.</span></label>
+        <label class="choice"><input type="radio" name="verdict" value="No"><strong>No</strong><span>Keep it with your reason. It stays findable.</span></label>
+      </fieldset>
+      <div class="field">
+        <label for="verdict-reason">Your reason</label>
+        <span class="hint" id="reason-hint">In your own words. It is kept with the verdict.</span>
+        <textarea id="verdict-reason" class="editorial" rows="3" aria-describedby="reason-hint verdict-error"></textarea>
+        <p class="error" id="verdict-error" hidden><svg class="g" aria-hidden="true"><use href="#g-blocked"/></svg><span></span></p>
+      </div>
+      <p class="t-body-sm muted reading" id="verdict-note">MACH never recommends a verdict. Yours is recorded with your GitHub login and the brief exactly as it stands (revision 3).</p>
+      <div class="recorded"><button type="submit" class="btn btn-primary" id="verdict-btn">Record the verdict</button><span class="t-body-sm muted" id="verdict-status" role="status"></span></div>
+    </form>
+    <div class="screen-foot">
+      <a class="btn btn-ghost" href="#brief"><svg aria-hidden="true"><use href="#i-back"/></svg> The brief</a>
+      <a class="btn btn-secondary" href="#route">Size and route <svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
+    </div>
+  </section>
+
+  <!-- ======================= Step 5: Size and route ======================= -->
+  <section class="screen" id="route" aria-labelledby="route-h" hidden>
+    <div class="screen-head">
+      <h2 class="t-title-1" id="route-h" tabindex="-1">Size and route</h2>
+      <p class="muted">A script, not a model, counts what the brief touches and names a route. You decide what is created.</p>
+    </div>
+    <section class="panel" aria-labelledby="counted-h">
+      <h3 class="t-title-3" id="counted-h" style="margin-bottom:12px">What MACH counted</h3>
+      <dl class="counted">
+        <div><dt>Capabilities touched</dt><dd>2</dd></div>
+        <div><dt>Shipped rules touched</dt><dd>3</dd></div>
+        <div><dt>High-risk areas</dt><dd>None</dd></div>
+        <div><dt>Principle or policy concerns</dt><dd>1</dd></div>
+      </dl>
+      <p class="t-caption subtle" style="margin-top:10px">High risk means sign-in, billing, stored data or an existing contract. The concern counted is <span class="id plain" translate="no">LEND-03</span>; <span class="id plain" translate="no">PRN-02</span> is settled by <span class="id plain" translate="no">O-2</span>.</p>
+    </section>
+    <ol class="routes" aria-label="Routes">
+      <li class="route"><h3 class="t-title-3">A small change</h3><p class="t-body-sm">One capability, no shipped rule changed, nothing high risk. A light spec.</p><p class="why-not"><b>Not this:</b> it changes how 3 shipped rules are reached.</p></li>
+      <li class="route"><h3 class="t-title-3">One slice</h3><p class="t-body-sm">One outcome, a few rules. The slice interview, seeded from the brief.</p><p class="why-not"><b>Not this:</b> two outcomes over 3 rules need more than one slice.</p></li>
+      <li class="route chosen" aria-current="true">
+        <span class="pill sm tone-accent" style="align-self:flex-start"><svg class="g" aria-hidden="true"><use href="#g-ready"/></svg>This is where the rule puts it</span>
+        <h3 class="t-title-3">An epic</h3>
+        <p class="t-body-sm">Both outcomes sit inside lending and need several slices between them, so they make one epic.</p>
+      </li>
+      <li class="route"><h3 class="t-title-3">Several epics</h3><p class="t-body-sm">Outcomes in different capabilities. Epics first, then slices in each.</p><p class="why-not"><b>Not this:</b> both outcomes belong to lending.</p></li>
+    </ol>
+    <section aria-labelledby="map-h" style="display:flex;flex-direction:column;gap:12px">
+      <h3 class="t-title-2" id="map-h">The proposed map: <span class="id" translate="no">EPIC-004</span> Renew loans yourself</h3>
+      <p class="t-body-sm muted reading">Thin slices in build order. Each says which outcome it carries. The map is a proposal until you make the drafts.</p>
+      <ol class="slicemap">
+        <li><span class="order tabular" aria-hidden="true">1</span><div><div class="head"><b>Renew a loan from my loans</b><span class="id" translate="no">SLICE-012</span><span class="pill sm tone-neutral"><svg class="g" aria-hidden="true"><use href="#g-open"/></svg>Proposed</span></div>
+          <p class="t-body-sm">A signed-in member renews one item that is not overdue and that nobody is waiting for.</p>
+          <p class="rel"><span>Carries <span class="id plain" translate="no">O-1</span></span><span>Depends on nothing</span></p></div></li>
+        <li><span class="order tabular" aria-hidden="true">2</span><div><div class="head"><b>Say why a renewal is refused</b><span class="id" translate="no">SLICE-013</span><span class="pill sm tone-neutral"><svg class="g" aria-hidden="true"><use href="#g-open"/></svg>Proposed</span></div>
+          <p class="t-body-sm">When a renewal is refused, the member is told why, in words, before anything else happens.</p>
+          <p class="rel"><span>Carries <span class="id plain" translate="no">O-2</span></span><span>Depends on <span class="id plain" translate="no">SLICE-012</span></span></p></div></li>
+        <li><span class="order tabular" aria-hidden="true">3</span><div><div class="head"><b>Renew everything I can at once</b><span class="id" translate="no">SLICE-014</span><span class="pill sm tone-neutral"><svg class="g" aria-hidden="true"><use href="#g-open"/></svg>Proposed</span></div>
+          <p class="t-body-sm">One act renews every loan that may be renewed, and lists the ones that may not.</p>
+          <p class="rel"><span>Carries <span class="id plain" translate="no">O-1</span></span><span>Depends on <span class="id plain" translate="no">SLICE-012</span></span></p></div></li>
+        <li><span class="order tabular" aria-hidden="true">4</span><div><div class="head"><b>Show staff the renewals members made</b><span class="id" translate="no">SLICE-015</span><span class="pill sm tone-neutral"><svg class="g" aria-hidden="true"><use href="#g-open"/></svg>Proposed</span></div>
+          <p class="t-body-sm">Desk staff see each renewal a member made themselves, as the lending policy asks.</p>
+          <p class="rel"><span>Carries <span class="id plain" translate="no">O-1</span></span><span>Depends on <span class="id plain" translate="no">SLICE-012</span></span><span>Keeps <span class="id plain" translate="no">LEND-03</span></span></p></div></li>
+      </ol>
+      <div class="coverage" aria-label="Coverage of the brief's outcomes">
+        <ul>
+          <li><svg class="g" style="color:var(--mach-success-ink)" aria-hidden="true"><use href="#g-approved"/></svg><span><span class="id" translate="no">O-1</span> carried by 3 slices</span></li>
+          <li><svg class="g" style="color:var(--mach-success-ink)" aria-hidden="true"><use href="#g-approved"/></svg><span><span class="id" translate="no">O-2</span> carried by 1 slice</span></li>
+          <li class="t-body-sm muted">Nothing is created until you say so.</li>
+        </ul>
+        <button type="button" class="btn btn-primary" id="drafts-open" aria-haspopup="dialog" aria-controls="drafts-dialog">Make the drafts</button>
+      </div>
+      <p class="t-body-sm muted" id="drafts-status" role="status"></p>
+    </section>
+
+    <!-- The second way in: start from a shipped rule, skip the brief -->
+    <section class="second" aria-labelledby="second-h">
+      <div class="screen-head" style="margin-bottom:16px">
+        <h3 class="t-title-2" id="second-h">A second way in: change what exists</h3>
+        <p class="t-body-sm muted">Skips the brief. Pick a rule on “How Lending works today” and choose Change this. The proposal is sized the same way.</p>
+      </div>
+      <div class="panel">
+        <p class="t-caption subtle" style="margin-bottom:6px">How Lending works today · <span class="id plain" translate="no">EPIC-001</span></p>
+        <div class="today-rule">
+          <p><span class="id" translate="no">SLICE-007/INV-01</span> A loan may be renewed at most twice.</p>
+          <button type="button" class="btn btn-secondary btn-sm" id="change-btn" aria-expanded="false" aria-controls="change-proposal">Change this</button>
+        </div>
+        <form class="proposal" id="change-proposal" hidden aria-labelledby="proposal-h">
+          <h4 class="t-title-3" id="proposal-h">Proposal: change <span class="id" translate="no">SLICE-007/INV-01</span></h4>
+          <div class="field"><label for="ch-why">Why</label><textarea id="ch-why" class="editorial" rows="2">Members with long reading lists for a course ask for a third renewal, and the desk grants it by hand most weeks.</textarea></div>
+          <div class="field"><label for="ch-what">What changes</label><textarea id="ch-what" class="editorial" rows="2">A loan may be renewed three times when nobody is waiting for the item.</textarea></div>
+          <div class="field"><span class="label" id="ch-rules-l">Shipped rules affected</span><span class="hint">Filled in from what the rule is connected to.</span>
+            <ul class="touches" aria-labelledby="ch-rules-l"><li><span class="id" translate="no">SLICE-007/INV-01</span></li><li><span class="id" translate="no">SLICE-004/FR-03</span></li></ul></div>
+          <p class="t-body-sm"><span class="pill sm tone-accent"><svg class="g" aria-hidden="true"><use href="#g-ready"/></svg>One slice</span> <span class="muted">is where the rule puts it: one capability, 2 rules, nothing high risk.</span></p>
+          <div><button type="button" class="btn btn-secondary" data-toast="Saved the proposal|It is a draft. Nothing has changed in the shipped rules.">Save the proposal</button></div>
+        </form>
+      </div>
+    </section>
+    <div class="screen-foot">
+      <a class="btn btn-ghost" href="#case"><svg aria-hidden="true"><use href="#i-back"/></svg> The case</a>
+      <a class="btn btn-secondary" href="#lookback">Look back, after the epic is accepted <svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
+    </div>
+  </section>
+
+  <!-- ======================= Step 6: Look back ======================= -->
+  <section class="screen" id="lookback" aria-labelledby="lookback-h" hidden>
+    <div class="screen-head">
+      <h2 class="t-title-1" id="lookback-h" tabindex="-1">Look back</h2>
+      <p class="muted">Later in the story: <span class="id" translate="no">EPIC-004</span> Renew loans yourself was accepted on 14 Jan 2027. Each outcome and assumption from the brief comes back for you to record.</p>
+    </div>
+    <section aria-labelledby="lb-out-h">
+      <h3 class="t-title-2" id="lb-out-h">Outcomes</h3>
+      <div class="outcome">
+        <p><span class="id" translate="no">O-1</span> Members renew without calling the library.</p>
+        <p class="know"><b>How we would know:</b> renewal calls at Central fall from about 40 a week to under 15 within two months of release.</p>
+        <fieldset class="record"><legend class="sr-only">Record O-1</legend>
+          <label><input type="radio" name="o1" checked><svg class="g" aria-hidden="true"><use href="#g-approved"/></svg>Met</label>
+          <label><input type="radio" name="o1"><svg class="g" aria-hidden="true"><use href="#g-blocked"/></svg>Not met</label>
+          <label><input type="radio" name="o1"><svg class="g" aria-hidden="true"><use href="#g-half"/></svg>Too early to say</label></fieldset>
+        <figure class="quote"><blockquote>Calls at Central were down to 11 a week by the start of March.</blockquote><figcaption><b>Product manager</b> noted on 9 Mar 2027</figcaption></figure>
+      </div>
+      <div class="outcome">
+        <p><span class="id" translate="no">O-2</span> Members are not surprised by a renewal that was refused.</p>
+        <p class="know"><b>How we would know:</b> complaints about unexpected fines after a refused renewal fall to none in a quarter.</p>
+        <fieldset class="record"><legend class="sr-only">Record O-2</legend>
+          <label><input type="radio" name="o2"><svg class="g" aria-hidden="true"><use href="#g-approved"/></svg>Met</label>
+          <label><input type="radio" name="o2"><svg class="g" aria-hidden="true"><use href="#g-blocked"/></svg>Not met</label>
+          <label><input type="radio" name="o2" checked><svg class="g" aria-hidden="true"><use href="#g-half"/></svg>Too early to say</label></fieldset>
+        <figure class="quote"><blockquote>One quarter has not passed yet. Two complaints so far, both from before the release.</blockquote><figcaption><b>Product manager</b> noted on 9 Mar 2027</figcaption></figure>
+      </div>
+    </section>
+    <section aria-labelledby="lb-ass-h">
+      <h3 class="t-title-2" id="lb-ass-h">Assumptions</h3>
+      <div class="outcome"><p><span class="id" translate="no">A-1</span> Most renewal calls are for items nobody is waiting for.</p>
+        <fieldset class="record"><legend class="sr-only">Record A-1</legend>
+          <label><input type="radio" name="a1"><svg class="g" aria-hidden="true"><use href="#g-approved"/></svg>Confirmed</label>
+          <label><input type="radio" name="a1" checked><svg class="g" aria-hidden="true"><use href="#g-blocked"/></svg>Wrong</label>
+          <label><input type="radio" name="a1"><svg class="g" aria-hidden="true"><use href="#g-half"/></svg>Still unknown</label></fieldset>
+        <figure class="quote"><blockquote>About half the calls were about held items. O-1 was met anyway.</blockquote><figcaption><b>Product manager</b> noted on 9 Mar 2027</figcaption></figure></div>
+      <div class="outcome"><p><span class="id" translate="no">A-2</span> Members who renew already sign in to the catalogue.</p>
+        <fieldset class="record"><legend class="sr-only">Record A-2</legend>
+          <label><input type="radio" name="a2" checked><svg class="g" aria-hidden="true"><use href="#g-approved"/></svg>Confirmed</label>
+          <label><input type="radio" name="a2"><svg class="g" aria-hidden="true"><use href="#g-blocked"/></svg>Wrong</label>
+          <label><input type="radio" name="a2"><svg class="g" aria-hidden="true"><use href="#g-half"/></svg>Still unknown</label></fieldset></div>
+      <div class="outcome"><p><span class="id" translate="no">A-3</span> Two renewals is still the right limit when members do it themselves.</p>
+        <fieldset class="record"><legend class="sr-only">Record A-3</legend>
+          <label><input type="radio" name="a3"><svg class="g" aria-hidden="true"><use href="#g-approved"/></svg>Confirmed</label>
+          <label><input type="radio" name="a3"><svg class="g" aria-hidden="true"><use href="#g-blocked"/></svg>Wrong</label>
+          <label><input type="radio" name="a3" checked><svg class="g" aria-hidden="true"><use href="#g-half"/></svg>Still unknown</label></fieldset></div>
+    </section>
+    <section aria-labelledby="chain-h" style="display:flex;flex-direction:column;gap:12px">
+      <h3 class="t-title-2" id="chain-h">The whole chain for <span class="id" translate="no">O-1</span></h3>
+      <p class="t-body-sm muted reading">From why it was wanted to what happened, each link recorded by the station that owns it.</p>
+      <div class="chain-wrap" role="region" aria-label="The chain for O-1, scrolls sideways when narrow" tabindex="0">
+        <ol class="chain">
+          <li><span class="dot"><svg class="g" aria-hidden="true"><use href="#g-approved"/></svg></span><span class="kind">Outcome</span><span class="val"><span class="id" translate="no">O-1</span> in the brief</span></li>
+          <li><span class="dot"><svg class="g" aria-hidden="true"><use href="#g-approved"/></svg></span><span class="kind">Requirement</span><span class="val"><span class="id" translate="no">SLICE-012</span> <span class="id" translate="no">FR-03</span></span></li>
+          <li><span class="dot"><svg class="g" aria-hidden="true"><use href="#g-approved"/></svg></span><span class="kind">Scenario</span><span class="val"><span class="id" translate="no">AC-02</span></span></li>
+          <li><span class="dot"><svg class="g" aria-hidden="true"><use href="#g-approved"/></svg></span><span class="kind">Test</span><span class="val">Seen failing, then passing</span></li>
+          <li><span class="dot"><svg class="g" aria-hidden="true"><use href="#g-approved"/></svg></span><span class="kind">Evidence</span><span class="val">Recorded by the verifier</span></li>
+          <li><span class="dot"><svg class="g" aria-hidden="true"><use href="#g-approved"/></svg></span><span class="kind">Accepted</span><span class="val"><span class="id" translate="no">EPIC-004</span>, 14 Jan 2027</span></li>
+          <li><span class="dot"><svg class="g" aria-hidden="true"><use href="#g-accepted"/></svg></span><span class="kind">Outcome</span><span class="val"><b>Met</b>, 9 Mar 2027</span></li>
+        </ol>
+      </div>
+    </section>
+    <div class="screen-foot">
+      <a class="btn btn-ghost" href="#route"><svg aria-hidden="true"><use href="#i-back"/></svg> Size and route</a>
+      <a class="btn btn-secondary" href="#ideas">Back to the ideas</a>
+    </div>
+  </section>
+</div>
+</main>
+
+<!-- ==== Dialogs (7.8). One overlay; each dialog is hidden until opened by script. ==== -->
+<div class="overlay" id="overlay" hidden></div>
+
+<div class="dialog lg about" id="about-dialog" role="dialog" aria-modal="true" aria-labelledby="about-title" aria-describedby="about-desc" hidden>
+  <div class="inner">
+    <header><div><h2 class="t-title-2" id="about-title">About this sketch</h2>
+      <p id="about-desc">A clickable picture of the M16 proposal in docs/mach-next/M16_SHAPE_SKETCH.md. The data is invented, nothing is saved, and no part of Shape is built.</p></div>
+      <button type="button" class="btn btn-ghost btn-icon" data-close aria-label="Close"><svg aria-hidden="true"><use href="#i-x"/></svg></button></header>
+    <div class="dbody">
+      <h3 class="t-title-3" style="margin-bottom:8px">Open questions for the product owner</h3>
+      <ol>
+        <li>Is the verdict one person's, or does it need a second (for example an engineering lead for the “several epics” route)?</li>
+        <li>Should a brief be required before an epic can be created, or stay optional as the PRD on-ramp is?</li>
+        <li>Where do briefs live: a GitHub issue each, as the rest of the product does, or the repository?</li>
+        <li>Is the light path for small changes wanted at all, given every other slice gets the full interview?</li>
+      </ol>
+    </div>
+    <footer><button type="button" class="btn btn-secondary" data-close>Close</button></footer>
+  </div>
+</div>
+
+<div class="dialog" id="verdict-dialog" role="dialog" aria-modal="true" aria-labelledby="verdict-dtitle" aria-describedby="verdict-ddesc" hidden>
+  <div class="inner">
+    <header><div><h2 class="t-title-2" id="verdict-dtitle">Record the verdict?</h2>
+      <p id="verdict-ddesc">The verdict is saved with your GitHub login and brief revision 3. It does not create an epic or a slice; that happens at Size and route, when you say so.</p></div>
+      <button type="button" class="btn btn-ghost btn-icon" data-close aria-label="Close"><svg aria-hidden="true"><use href="#i-x"/></svg></button></header>
+    <div class="dbody"><div class="well"><p class="t-label">Your reason</p><p id="verdict-dreason" class="t-body-sm"></p></div></div>
+    <footer><button type="button" class="btn btn-secondary" data-close>Not now</button><button type="button" class="btn btn-primary" id="verdict-confirm">Record the verdict</button></footer>
+  </div>
+</div>
+
+<div class="dialog" id="drafts-dialog" role="dialog" aria-modal="true" aria-labelledby="drafts-title" aria-describedby="drafts-desc" hidden>
+  <div class="inner">
+    <header><div><h2 class="t-title-2" id="drafts-title">Make the drafts for EPIC-004?</h2>
+      <p id="drafts-desc">These are drafts in your workspace, each seeded from the brief. Nothing is marked ready and nothing goes to the builders.</p></div>
+      <button type="button" class="btn btn-ghost btn-icon" data-close aria-label="Close"><svg aria-hidden="true"><use href="#i-x"/></svg></button></header>
+    <div class="dbody"><ul class="well t-body-sm" aria-label="What will be created">
+      <li>1 epic: <span class="id" translate="no">EPIC-004</span> Renew loans yourself, carrying <span class="id plain" translate="no">O-1</span> and <span class="id plain" translate="no">O-2</span></li>
+      <li>4 draft slices: <span class="id" translate="no">SLICE-012</span> <span class="id" translate="no">SLICE-013</span> <span class="id" translate="no">SLICE-014</span> <span class="id" translate="no">SLICE-015</span>, in that build order</li>
+      <li>Each slice's why, from the brief's problem and the outcome it carries</li>
+      <li>The idea moves to Shaped into work</li>
+    </ul></div>
+    <footer><button type="button" class="btn btn-secondary" data-close>Not now</button><button type="button" class="btn btn-primary" id="drafts-confirm">Make the drafts</button></footer>
+  </div>
+</div>
+
+<div class="toasts" id="toasts" role="region" aria-label="Notifications" aria-live="polite"></div>
+
+<!-- ==== 7. Script: plain JavaScript, no dependencies ==== -->
+<script>
+(function () {
+  "use strict";
+  var STEPS = ["ideas", "explore", "brief", "case", "route", "lookback"];
+  var NAMES = { ideas: "Ideas", explore: "Explore", brief: "The brief", "case": "The case", route: "Size and route", lookback: "Look back" };
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+
+  /* --- Hash router: one screen visible; the step and breadcrumb follow the hash --- */
+  var current = null;
+  function show(id, moveFocus) {
+    var target = STEPS.indexOf(id) >= 0 ? id : null;
+    if (!target) {
+      // A hash inside a screen (such as #o2-finding) shows that screen and leaves focus to the browser;
+      // a hash outside every screen (the skip link's #main) keeps the current one.
+      var el = id && document.getElementById(id);
+      var host = el && el.closest(".screen");
+      target = host ? host.id : (el && current) || "ideas";
+      moveFocus = false;
+      if (!host && el && current) return;
+    }
+    current = target;
+    var at = STEPS.indexOf(target);
+    STEPS.forEach(function (s, i) {
+      document.getElementById(s).hidden = s !== target;
+      var link = $('.step[data-step="' + s + '"]');
+      if (s === target) link.setAttribute("aria-current", "step"); else link.removeAttribute("aria-current");
+      link.parentNode.classList.toggle("done", i < at);
+    });
+    $("#crumb-step").textContent = NAMES[target];
+    document.title = "Sketch: " + NAMES[target] + " · Shape · Product Studio";
+    if (moveFocus) { var h = $("#" + target + "-h"); h.focus({ preventScroll: true }); h.scrollIntoView({ block: "start" }); }
+    else if (id && id !== target) { var el2 = document.getElementById(id); if (el2) el2.scrollIntoView({ block: "center" }); }
+  }
+  window.addEventListener("hashchange", function () { show(location.hash.slice(1), true); });
+  show(location.hash.slice(1), false);
+
+  // Arrow keys move between steps in the stepper (the links themselves stay in the tab order).
+  $(".stepper").addEventListener("keydown", function (e) {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    var links = $$(".step"), i = links.indexOf(document.activeElement);
+    if (i < 0) return;
+    e.preventDefault();
+    links[(i + (e.key === "ArrowRight" ? 1 : links.length - 1)) % links.length].focus();
+  });
+
+  /* --- Dialogs: open, trap focus, Escape closes, focus returns to the opener --- */
+  var openDialog = null, opener = null;
+  var FOCUSABLE = 'a[href], button:not([disabled]), textarea, input:not([type="hidden"]), [tabindex]:not([tabindex="-1"])';
+  function open(id, from) {
+    opener = from || document.activeElement;
+    openDialog = document.getElementById(id);
+    $("#overlay").hidden = false;
+    openDialog.hidden = false;
+    var first = $(FOCUSABLE, openDialog.querySelector(".dbody") || openDialog) || $(FOCUSABLE, openDialog);
+    (first || openDialog).focus();
+  }
+  function close() {
+    if (!openDialog) return;
+    openDialog.hidden = true; $("#overlay").hidden = true; openDialog = null;
+    if (opener && document.contains(opener)) opener.focus(); else $("#page-title").focus();
+  }
+  document.addEventListener("keydown", function (e) {
+    if (!openDialog) return;
+    if (e.key === "Escape") { e.preventDefault(); close(); return; }
+    if (e.key !== "Tab") return;
+    var f = $$(FOCUSABLE, openDialog).filter(function (n) { return n.offsetParent !== null; });
+    if (!f.length) return;
+    var first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+  $$("[data-close]").forEach(function (b) { b.addEventListener("click", close); });
+  $("#overlay").addEventListener("click", close);
+  $("#about-open").addEventListener("click", function (e) { open("about-dialog", e.currentTarget); });
+
+  /* --- Toasts: confirm a finished act in its own past tense --- */
+  function toast(title, desc) {
+    var t = document.createElement("div"); t.className = "toast";
+    t.innerHTML = '<svg class="g" aria-hidden="true"><use href="#g-approved"/></svg><div><p class="t-label"></p><p class="t-body-sm muted"></p></div>' +
+      '<button type="button" class="btn btn-ghost btn-icon" aria-label="Dismiss"><svg aria-hidden="true"><use href="#i-x"/></svg></button>';
+    t.querySelector(".t-label").textContent = title;
+    t.querySelector(".t-body-sm").textContent = desc || "";
+    t.querySelector("button").addEventListener("click", function () { t.remove(); });
+    $("#toasts").appendChild(t);
+    setTimeout(function () { t.remove(); }, 5000);
+  }
+  $$("[data-toast]").forEach(function (b) {
+    b.addEventListener("click", function () { var p = b.getAttribute("data-toast").split("|"); toast(p[0], p[1]); });
+  });
+
+  /* --- "More" menu: a popover; Escape or a click outside closes it --- */
+  var moreBtn = $("#more-btn"), menu = $("#more-menu");
+  function setMenu(on) { menu.hidden = !on; moreBtn.setAttribute("aria-expanded", String(on)); }
+  moreBtn.addEventListener("click", function () { setMenu(menu.hidden); if (!menu.hidden) $("a", menu).focus(); });
+  menu.addEventListener("keydown", function (e) { if (e.key === "Escape") { setMenu(false); moreBtn.focus(); } });
+  document.addEventListener("click", function (e) { if (!menu.hidden && !e.target.closest(".menu-wrap")) setMenu(false); });
+  $$("a[data-off]", menu).forEach(function (a) {
+    a.addEventListener("click", function (e) { e.preventDefault(); setMenu(false); moreBtn.focus(); toast("Not part of this sketch", "Only Shape is drawn here."); });
+  });
+  $$('a[aria-current="page"]', menu).forEach(function (a) { a.addEventListener("click", function () { setMenu(false); }); });
+
+  /* --- Theme: Light, Dark or System, remembered under mach.theme when storage allows --- */
+  function applyTheme(v) { if (v === "system") document.documentElement.removeAttribute("data-theme"); else document.documentElement.setAttribute("data-theme", v); }
+  var saved = null;
+  try { saved = localStorage.getItem("mach.theme"); } catch (e) { saved = null; }
+  if (saved === "light" || saved === "dark" || saved === "system") { applyTheme(saved); $('input[name="theme"][value="' + saved + '"]').checked = true; }
+  $$('input[name="theme"]').forEach(function (r) {
+    r.addEventListener("change", function () { applyTheme(r.value); try { localStorage.setItem("mach.theme", r.value); } catch (e) { /* lasts for the visit */ } });
+  });
+
+  /* --- Explore: an answer joins the conversation (nothing is saved) --- */
+  $("#send-answer").addEventListener("click", function () {
+    var box = $("#answer"), text = box.value.trim();
+    if (!text) { box.focus(); return; }
+    var li = document.createElement("li"); li.className = "turn a";
+    li.innerHTML = '<span class="who">You answered</span><p class="said"></p>';
+    li.querySelector(".said").textContent = text;
+    $("#last-answer").parentNode.appendChild(li);
+    box.value = "";
+    toast("Sent your answer", "In the real workspace it goes into the brief and the next question follows.");
+  });
+
+  /* --- The case: a verdict needs a choice and a reason; then a confirm dialog --- */
+  var form = $("#verdict-form"), err = $("#verdict-error"), reason = $("#verdict-reason");
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var chosen = $('input[name="verdict"]:checked', form), why = reason.value.trim(), msg = "";
+    if (!chosen) msg = "Choose Go, Not now or No.";
+    else if (!why) msg = "Write your reason. A verdict is kept with the reason in your own words.";
+    err.hidden = !msg; $("span", err).textContent = msg;
+    reason.setAttribute("aria-invalid", String(!!chosen && !why));
+    if (msg) { (chosen ? reason : $('input[name="verdict"]', form)).focus(); return; }
+    $("#verdict-dtitle").textContent = "Record “" + chosen.value + "” for Let members renew a loan themselves?";
+    $("#verdict-dreason").textContent = why;
+    $("#verdict-confirm").textContent = "Record “" + chosen.value + "”";
+    open("verdict-dialog", $("#verdict-btn"));
+  });
+  $("#verdict-confirm").addEventListener("click", function () {
+    var v = $('input[name="verdict"]:checked', form).value;
+    close();
+    $("#verdict-status").textContent = "Recorded: " + v + ", by you, just now (sample).";
+    toast("Recorded the verdict", v + " is saved with brief revision 3. Nothing else changed.");
+  });
+
+  /* --- Size and route: make the drafts (confirmed), and the second way in --- */
+  $("#drafts-open").addEventListener("click", function (e) { open("drafts-dialog", e.currentTarget); });
+  $("#drafts-confirm").addEventListener("click", function () {
+    close();
+    $("#drafts-status").textContent = "Made EPIC-004 and 4 draft slices (sample). None is ready to build.";
+    toast("Made the drafts", "EPIC-004 and 4 draft slices. Nothing went to the builders.");
+  });
+  $("#change-btn").addEventListener("click", function (e) {
+    var b = e.currentTarget, on = b.getAttribute("aria-expanded") !== "true";
+    b.setAttribute("aria-expanded", String(on));
+    $("#change-proposal").hidden = !on;
+    if (on) $("#ch-why").focus();
+  });
+})();
+</script>
+</body>
+</html>

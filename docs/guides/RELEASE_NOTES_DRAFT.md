@@ -1,6 +1,31 @@
-# MACH release notes: 0.15.0
+# MACH release notes: 0.16.0
 
-Status: a full release. MACH is not claimed to be ready for regulated or enterprise production use. This document opens with what changed in 0.15.0, then what changed in 0.14.0, each with how far it was tested. Everything from "Supported platforms" on was written for 0.13.0 from its test runs (the M7 documents in `docs/mach-next/`); where a later release replaced something it describes, the tables say so, and the 0.13.0 test record was not repeated.
+Status: a full release. MACH is not claimed to be ready for regulated or enterprise production use. This document opens with what changed in 0.16.0, then 0.15.0 and 0.14.0, each with how far it was tested. Everything from "Supported platforms" on was written for 0.13.0 from its test runs (the M7 documents in `docs/mach-next/`); where a later release replaced something it describes, the tables say so, and the 0.13.0 test record was not repeated.
+
+## What changed in 0.16.0
+
+Three milestones in one release. Everything below passed the automated suites (1,754 Python tests, the Go tests for both programs, the web typecheck, lint and unit tests, and the app-versus-terminal conformance suite). **None of it has been run against real GitHub, a real Jira, a real PRD or a real model, and nobody has looked at the new screens.** Read each "how far tested" with that in mind.
+
+| Change | What it is | How far it was tested |
+|---|---|---|
+| Enterprise Managed User logins | A GitHub login ending in `_shortcode` is accepted everywhere: sign-in, marking a slice ready, the approval and acceptance comments, intake. The rule now lives in one place. `/mach doctor` asks only about github.com's sign-in. | Automated tests with a stand-in. Not tried with a real managed account. |
+| Product principles | Rules that hold across every slice, published on the project's issue with the product manager's approval. Every spec answers every principle; reviewers may cite them. | Automated tests only. |
+| Effects on shipped behaviour | Every spec says what it does to rules that have shipped: kept, changed, replaced or retired. The build station works on today's main branch; the merge station checks what landed in between and has the change verified and reviewed again when it touches the same ground. | Automated tests only. |
+| How an epic works today | `/mach current` and Product Studio compile the rules in force from shipped slices, by script. The Factory keeps one comment on the epic's issue up to date. | Automated tests only. |
+| Starting from a PRD | Optional. Import a document, settle a proposed map of epics and slices with every section accounted for, then confirm drafted answers instead of answering each from nothing. | Automated tests only. The instructions have not been tried with a real document and model. |
+| Jira | A Jira key on a slice or epic is carried to the pull request title and merge commit. `jira export` writes a CSV to upload; `jira keys` brings the new keys back. MACH never calls Jira. | Automated tests only. **Not imported into a real Jira.** The description format on import is not confirmed by Atlassian's documentation. |
+| The change record | Each change lands with `docs/changes/<ticket>.md`: the why, the plan, every check with the hash of its evidence, every reviewer's findings, who approved, every exception. | Automated tests only. |
+| Policy packs | Organisation policies as files in the repository, each with an owner. A spec answers each pack that applies; a flagged concern holds the slice until its owner accepts it or the spec changes. | Automated tests only. |
+| Design mocks | Up to four pictures per slice, bound to the approval by hash, delivered as committed files. The verifier records a side-by-side result for each. | Automated tests only. |
+| `/mach-idea` | A short interview for someone who is not an engineer; files the idea in a fixed template with no label. | Automated tests only. Not tried as a conversation or on claude.ai. |
+| Factory evals | Finished tickets kept as cases and, on a person's command with a budget, replayed in throwaway copies to compare the Factory before and after a change to its rules or models. | Automated tests with a stand-in for Claude. **No real model run has been made.** |
+| Self-reporting | MACH records its own internal errors on the machine; `/mach report` shows the exact issue text and files it on MACH's repository only on the person's yes. | Automated tests only. Nothing was filed on real GitHub. |
+| Verification and review | The verifier re-proves up to two neighbouring shipped scenarios. A reviewer's note is important or a nit, with nits capped per seat; a person may rate a finding. | Automated tests only. |
+| Control bands and scan intake | `/mach bands` watches the Factory's own measures for drift. `ingest-scan` turns a security scanner's findings (SARIF or CSV) into tickets, held at Medium risk or above. | Automated tests only. Claude Security's export format is not verified. |
+| Product Studio app | Screens for principles, policy packs, effects, how an epic works today, the PRD on-ramp, Jira and design mocks; requests in the idea template shown in five parts. | Automated tests and the conformance suite. **Not looked at.** |
+| Factory Floor | The new waiting states, the approved mock beside the captured screen, the Jira key and the change record on a ticket. Two Analytics figures that miscounted the new records are fixed. | Automated tests. **Not looked at.** |
+
+**Still the main thing not proven:** no ticket has yet been built from start to merge through the hand-off that 0.14.0 introduced, and 0.16.0 adds a great deal to that path.
 
 ## What changed in 0.15.0
 
