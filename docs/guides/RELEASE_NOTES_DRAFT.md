@@ -1,6 +1,22 @@
-# MACH release notes: 0.14.0
+# MACH release notes: 0.15.0
 
-Status: a full release. MACH is not claimed to be ready for regulated or enterprise production use. The first part of this document is what changed in 0.14.0 and how far each change was tested. Everything from "Supported platforms" on was written for 0.13.0 from its test runs (the M7 documents in `docs/mach-next/`); where 0.14.0 replaced something it describes, the rows below say so, and the 0.13.0 test record was not repeated for this release.
+Status: a full release. MACH is not claimed to be ready for regulated or enterprise production use. This document opens with what changed in 0.15.0, then what changed in 0.14.0, each with how far it was tested. Everything from "Supported platforms" on was written for 0.13.0 from its test runs (the M7 documents in `docs/mach-next/`); where a later release replaced something it describes, the tables say so, and the 0.13.0 test record was not repeated.
+
+## What changed in 0.15.0
+
+| Change | What it is | How far it was tested |
+|---|---|---|
+| A recorded exception for a security blocker | `/mach except <ticket> <round>/<seat>/<n> "<why>"`: a person accepts a vetoing security blocker for exactly the commit reviewed, with an optional expiry. A reviewer whose only blockers are all excepted then counts as approving, so it works at every risk tier; a High-risk change still needs a person's approval as well. Refused in any unattended run and for `factory-tuning` tickets. Recorded in the decision, the pull request, the run record and the lifecycle log; a release that includes one is at best "qualified with exceptions". `review.security_exception_by` may list who can grant one. | Automated tests only. No live run. |
+| Secrets never enter a branch | The build station scans what it is about to commit and refuses anything shaped like a credential. The builder's override needs a reason, which the reviewers see. | Automated tests only. Shapes not found include Azure, Twilio, SendGrid, npm, PyPI, Datadog and Discord tokens, short or low-entropy passwords, and split or encoded values. |
+| Review answers for secrets and dependencies | The review packet lists every secret candidate and every dependency the change adds or bumps. The security reviewer must answer each, on the contracts tier when anything is flagged; a flagged Low-risk change gets three reviewers. A candidate called real must be a high or critical security blocker. `security.scan.enabled: false` switches it off, and unattended work is then refused. | Automated tests only. Dependencies are **not** checked against a vulnerability database: a model's knowledge ends at its training date. A team that wants that runs its own scanner through Claude Code hooks or CI. How well the model judges a dependency was not measured. |
+| Diagrams in ADRs and plans | A Mermaid diagram may be drawn where the structure or the sequence is the decision; a script checks its kind, size and that it carries nothing but the picture. Slice specs carry none. | Automated tests. How GitHub draws one MACH wrote was not looked at. |
+| Factory Floor fixes | Small text on the Line now passes contrast; the analytics colours are tokens; the sample factory's feed no longer lists events later than its clock. | Automated tests. Not looked at on screen. |
+| Product Studio | A note where an issue link is first offered, saying a private repository's issue opens only in a signed-in browser; `Y` confirms the interview's summary; a slice is introduced as a slice of intent. | End-to-end suites with stand-ins. Not heard with a screen reader. |
+| Installer | The newest release is found from the release page when GitHub's API does not answer (shipped on `main` before 0.14.0's tag). | Automated tests, and one real install of 0.14.0 on one Mac. |
+
+**Still the main thing not proven:** no ticket has yet been built from start to merge through the hand-off that 0.14.0 introduced.
+
+Notarisation of the macOS programs, and Windows and Intel Mac builds, are not planned.
 
 ## What changed in 0.14.0
 
@@ -86,8 +102,8 @@ Based on a hand-built upgrade from v0.12.0 state (`M7_DISTRIBUTION.md`), a real 
 11. **Fixes from the third live run were not re-observed live.** They have unit tests only: the belt's hand-off validation, Product Studio's workspace repair, the scanner-report format and the outcome line, sending an acceptance alone, the Factory Floor's wording for killed and abandoned runs, and the installer's candidate-version and POSIX-shell fixes.
 12. **Nothing was tested on a second machine, with two GitHub accounts, with signed commits or with Enterprise single sign-on.** Rules were enforced by real GitHub.com on one personal account; an approved review under enforced rules and a signed commit were not shown.
 13. **Nothing designates one runner across machines.** Two engineers' machines can both enable.
-14. **No dependency, secret or static scan of generated code in the line.** The audit only checks that a secret scanner is configured. Release qualification reads scanner reports someone else produces; the real runs had no dependency manifest for osv-scanner to read. (After 0.14.0: the build station refuses a commit whose added lines look like a credential, unless the builder records why it is not one, and review lists every secret candidate and every added or changed dependency for the security seat to answer on the contracts tier's model; a flagged Low-risk change gets the three-seat panel. Nothing is checked against a vulnerability database, and no static analysis is run; see `docs/mach-next/M12_SECURITY_SCAN.md`.)
-15. **No exception record for a security blocker.** An unmarked blocker from a non-security seat can still be outvoted at Medium. Low-risk tickets have no security seat. (After 0.14.0: the first sentence no longer holds. A person's exception to a vetoing security blocker is recorded with `/mach except`, for the commit reviewed only; see `docs/mach-next/M12_SECURITY_EXCEPTION.md`. The rest of this item still stands, except that a Low-risk change the security scan flags is now reviewed with a security seat; see `docs/mach-next/M12_SECURITY_SCAN.md`. An exception also clears a reject vote that rested only on the excepted findings, so it now works at High and Low risk too.)
+14. **No dependency, secret or static scan of generated code in the line.** The audit only checks that a secret scanner is configured. Release qualification reads scanner reports someone else produces; the real runs had no dependency manifest for osv-scanner to read. (Since 0.15.0: the build station refuses a commit whose added lines look like a credential, unless the builder records why it is not one, and review lists every secret candidate and every added or changed dependency for the security seat to answer on the contracts tier's model; a flagged Low-risk change gets the three-seat panel. Nothing is checked against a vulnerability database, and no static analysis is run; see `docs/mach-next/M12_SECURITY_SCAN.md`.)
+15. **No exception record for a security blocker.** An unmarked blocker from a non-security seat can still be outvoted at Medium. Low-risk tickets have no security seat. (Since 0.15.0: the first sentence no longer holds. A person's exception to a vetoing security blocker is recorded with `/mach except`, for the commit reviewed only; see `docs/mach-next/M12_SECURITY_EXCEPTION.md`. The rest of this item still stands, except that a Low-risk change the security scan flags is now reviewed with a security seat; see `docs/mach-next/M12_SECURITY_SCAN.md`. An exception also clears a reject vote that rested only on the excepted findings, so it now works at High and Low risk too.)
 16. **No real, person-driven run of the Product Studio journey** with a real interview on a second computer and a real enterprise remote. One real interview ran through the app's interface for about USD 0.23; the later runs wrote specs by hand.
 17. **The `pr` merge method was never run against GitHub**, and `merge.mode: auto` was never run live. A reboot or network loss during an execution was not tested live.
 18. **Cross-slice defects can reach a merge unnoticed.** In the real run a returned item would have broken the overdue report; a reviewer predicted it as a non-blocking note, no test caught it, and only a textual conflict brought a person to the merge.
@@ -104,7 +120,7 @@ Fixed during M7 and seen working again in a later live run: a plan whose impleme
 - Portfolio management across projects.
 - Multi-runner coordination across machines.
 - An operating-system sandbox for unattended executions.
-- A recorded exception for a security blocker (designed, not built; it needs the product owner's decision). (After 0.14.0: the product owner said yes and it is built; no longer deferred. See `docs/mach-next/M12_SECURITY_EXCEPTION.md`.)
+- A recorded exception for a security blocker (designed, not built; it needs the product owner's decision). (Since 0.15.0: the product owner said yes and it is built; no longer deferred. See `docs/mach-next/M12_SECURITY_EXCEPTION.md`.)
 - Windows and Intel Mac builds.
 - Apple notarisation.
 - A rollback procedure.
@@ -145,6 +161,6 @@ Suitable for publication as they stand:
 - The macOS programs are not notarised.
 - Personal names in free text are shown in the Factory Floor, labelled and not removed.
 - MACH relies on the repository host's rules (branch protection, reviews, signed commits, single sign-on). It does not replace them. They were tested on GitHub.com with one personal account, not against a real organisation.
-- Generated code is reviewed by agents. MACH does not scan it for vulnerable dependencies or secrets. Do not read a passing review as a security guarantee.
+- Generated code is reviewed by agents. Since 0.15.0 the build station refuses a commit that looks like it holds a credential, and review answers for every secret candidate and new dependency; neither checks a dependency against a vulnerability database, and the secret shapes it knows are a limited list. Do not read a passing review as a security guarantee.
 - The scans run on one snapshot found no confirmed High or Critical finding and no real secret. One Moderate advisory in lint tooling, not shipped, awaits a decision.
 - Report a vulnerability through the repository's own channel for private reports. **There is no private vulnerability-reporting address yet. The product owner must supply one before publication.** Until then, do not publish this section as it stands.
