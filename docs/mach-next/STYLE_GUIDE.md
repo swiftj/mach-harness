@@ -250,7 +250,7 @@ Used by Factory Floor's drawn views (the isometric plant, the Line board, analyt
 | `factory-hatch` | `#B5AF9E` | `#3E3C37` | Section hatching on cut or shaded faces; the Line's dotted belt |
 | `factory-shadow` | `rgba(58, 52, 40, 0.13)` | `rgba(0, 0, 0, 0.62)` | Flat contact shadows (warm in light, black in dark) |
 | `factory-ink` | `#3A3833` | `#DAD6CA` | Symbols, structure lines, labels on plates |
-| `factory-ink-soft` | `#7A766B` | `#A19E93` | Secondary strokes, idle symbols |
+| `factory-ink-soft` | `#7A766B` | `#A19E93` | Secondary strokes, idle symbols. Never text: 4.42:1 on a plate top in light; small secondary words use `ink-muted` |
 | `factory-route` | `#858175` | `#8C897F` | An idle route or track; ordinary time bars |
 | `factory-lamp` | `#FFF0D6` | `#4A3A27` | The work lamp's pool of light (the only variable light) |
 | `factory-select` | `#B5512F` | `#E48B6C` | Selection brackets |
@@ -271,23 +271,23 @@ The human ink is the terracotta family on purpose: a person's act is the family'
 
 **Tonal ladder** (at a glance, the eye must find work first, then structure, then ground): ground `#0B0B0A`/`#EFEBE2` → region plate top `#211F1D`/`#FDFCF9` → bay floor `#2A2925`/`#F6F3EC` → machine top `#3D3C37`/`#FFFFFF` → work (live, lamp, state tints), which are the only warm or saturated areas. Values given dark/light.
 
-**Analytics chart roles.** The analytics workspace defines chart variables on its root, all mapped to the roles above, plus one new ramp:
+**Analytics chart roles.** The analytics workspace defines chart variables on its root, all mapped to tokens; its bars and its one ramp are tokens of their own (`analytics-*`, light and dark in `tokens.ts`):
 
-| Variable | Maps to (light) | Dark override |
+| Variable | Maps to | Dark |
 |----------|-----------------|---------------|
 | `--an-ink` / `--an-muted` / `--an-subtle` | `ink` / `ink-muted` / `ink-subtle` | |
 | `--an-grid` / `--an-axis` | `line` / `line-strong` | |
-| `--an-bar` | `factory-ink-soft` | `#8f8b80` |
-| `--an-bar-quiet` | `factory-plate-shade` | `#3a3934` |
+| `--an-bar` | `analytics-bar` (light `#7A766B`, as `factory-ink-soft`) | `#8F8B80` |
+| `--an-bar-quiet` | `analytics-bar-quiet` (light `#D5CFC0`, as `factory-plate-shade`) | `#3A3934` |
 | `--an-bar-alt` | `color-mix(in srgb, var(--an-bar) 72%, var(--mach-canvas))` | |
 | `--an-select` | `accent` | |
 | `--an-live`, `--an-pass`, `--an-fail`, `--an-wait`, `--an-human`, `--an-halt`, `--an-stale`, `--an-hatch` (and `-soft` where they exist) | the matching `factory-*` roles | |
 | `--an-hatch-ink` | `color-mix(in srgb, var(--mach-ink-subtle) 50%, transparent)` | |
 | `--an-sheet` | `surface` | |
 | `--an-outline` | `color-mix(in srgb, var(--mach-ink-subtle) 80%, var(--mach-canvas))` (3.5:1 or more on canvas and surface) | |
-| `--an-seq-1` … `--an-seq-4` | `#5a86b6`, `#3f6c9e`, `#2b5a8c`, `#1d4370` (one hue, light to dark) | `#3f6c9e`, `#5a86b6`, `#8fb7df`, `#b8d3ee` |
+| `--an-seq-1` … `--an-seq-4` | `analytics-seq-1` … `analytics-seq-4`: `#5A86B6`, `#3F6C9E`, `#2B5A8C`, `#1D4370` (one hue, light to dark) | `#3F6C9E`, `#5A86B6`, `#8FB7DF`, `#B8D3EE` |
 
-The sequential ramp is the only colour set in the system that is not a token; it is used for ordered categories (token kinds), each step 3:1 or more on canvas and surface.
+The sequential ramp is used for ordered categories (token kinds); each step is 3:1 or more on canvas and surface, registered with the token script. No stylesheet in an app holds a hex colour (`test/no-hex-css.test.mjs` in the Factory Floor).
 
 ### 2.6 Elevation colours
 

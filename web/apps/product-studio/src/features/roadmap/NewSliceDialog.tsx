@@ -60,7 +60,7 @@ function NewSliceBody({ onOpenChange, epics, epicId }: NewSliceDialogProps) {
         onEscapeKeyDown={(e) => act.pending && e.preventDefault()}
         onPointerDownOutside={(e) => act.pending && e.preventDefault()}
         title="Start a slice"
-        description="A slice is one complete outcome for one kind of user, thin enough to build and check in one go. The interview works out the rest with you."
+        description="A slice of intent is one complete outcome for one kind of user, thin enough to build and check in one go. The interview works out the rest with you."
         footer={
           <>
             <DialogClose asChild>

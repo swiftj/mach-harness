@@ -40,7 +40,7 @@
         "kind": "add_epic",
         "target": null,
         "title": "Add the first epic",
-        "reason": "An epic is a larger capability that several slices deliver.",
+        "reason": "An epic is a larger capability that several slices of intent deliver.",
         "related": []
       }
     ]

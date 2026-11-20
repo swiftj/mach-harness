@@ -1,7 +1,7 @@
 /*
  * Factory Analytics: chart roles and the workspace's layout. Colours are the design system's tokens
- * and the factory grammar's (one family with the Atlas); the only new values are a
- * single-hue blue ramp for token kinds, stepped per theme and kept monotonic in lightness.
+ * and the factory grammar's (one family with the Atlas). Its bars and its single-hue blue ramp for
+ * token kinds are tokens of their own (`analytics-*` in @mach/ui's tokens.ts), stepped per theme there.
  */
 .an-root {
   --an-ink: var(--mach-ink);
@@ -9,8 +9,8 @@
   --an-subtle: var(--mach-ink-subtle);
   --an-grid: var(--mach-line);
   --an-axis: var(--mach-line-strong);
-  --an-bar: var(--mach-factory-ink-soft);
-  --an-bar-quiet: var(--mach-factory-plate-shade);
+  --an-bar: var(--mach-analytics-bar);
+  --an-bar-quiet: var(--mach-analytics-bar-quiet);
   --an-select: var(--mach-accent);
   --an-live: var(--mach-factory-live);
   --an-live-soft: var(--mach-factory-live-soft);
@@ -30,33 +30,14 @@
   --an-sheet: var(--mach-surface);
   /* An outline a box needs to be seen by (WCAG 1.4.11): 3.5:1 or more on canvas and surface, both themes. */
   --an-outline: color-mix(in srgb, var(--mach-ink-subtle) 80%, var(--mach-canvas));
-  /* Token kinds: one hue, light to dark. */
-  --an-seq-1: #5a86b6;
-  --an-seq-2: #3f6c9e;
-  --an-seq-3: #2b5a8c;
-  --an-seq-4: #1d4370;
+  /* Token kinds: one hue, light to dark in light theme, dark to light in dark (each 3:1 or more on
+     canvas and surface; the token script and test/analytics-a11y.test.mjs check them numerically). */
+  --an-seq-1: var(--mach-analytics-seq-1);
+  --an-seq-2: var(--mach-analytics-seq-2);
+  --an-seq-3: var(--mach-analytics-seq-3);
+  --an-seq-4: var(--mach-analytics-seq-4);
   background: var(--mach-canvas);
   color: var(--mach-ink);
-}
-:root[data-theme="dark"] .an-root {
-  --an-bar: #8f8b80;
-  --an-bar-quiet: #3a3934;
-  --an-seq-1: #3f6c9e;
-  --an-seq-2: #5a86b6;
-  --an-seq-3: #8fb7df;
-  --an-seq-4: #b8d3ee;
-}
-/* Dark by the system's preference, before or without a chosen theme: the same steps (each 3:1 or more
-   on the dark canvas and surface; test/analytics-a11y.test.mjs checks them numerically). */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .an-root {
-    --an-bar: #8f8b80;
-    --an-bar-quiet: #3a3934;
-    --an-seq-1: #3f6c9e;
-    --an-seq-2: #5a86b6;
-    --an-seq-3: #8fb7df;
-    --an-seq-4: #b8d3ee;
-  }
 }
 
 .an-mono {

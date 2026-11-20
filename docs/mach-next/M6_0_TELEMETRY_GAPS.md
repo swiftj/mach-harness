@@ -1,5 +1,7 @@
 # MACH Next — M6.0 telemetry gaps: what the Living Factory could not show truthfully today
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Owner: Telemetry analyst (M6.0). Read-only analysis of `feature/mach-next-m6-living-factory` at baseline `fb86441` (MACH 0.12.0). No code was changed. Everything below was read from the code. Where a statement is an inference, or is taken from a design document rather than code, it says so.
 
 The question answered: *which M4 telemetry gaps would stop the final Factory Floor from showing real execution accurately?* The prototype is driven by a fixture. The real product will be driven by what MACH writes to disk. This document compares the two.

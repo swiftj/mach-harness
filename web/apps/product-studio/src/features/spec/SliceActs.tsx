@@ -2,7 +2,7 @@ import { useState } from "react";
 import { CircleCheck, Pause, RotateCcw } from "lucide-react";
 import { Banner, Button, Dialog, DialogClose, DialogContent, DialogTrigger, ErrorState, Field, Text, Textarea, describeError, toast, CheckCounts, CheckPill, DiagnosticList, diagnostics, plural as count } from "@mach/ui";
 import type { MachApiError, SliceReady, SliceShow } from "@mach/ui/api";
-import { IssueLink } from "../../shared/IssueLink";
+import { IssueLink, SignInNote } from "../../shared/IssueLink";
 import { client as studioClient } from "../../api/client";
 import { toApiError } from "../../api/session";
 import { useStatus } from "../../api/store";
@@ -140,6 +140,7 @@ export function SavedPlace({ result }: { result: SliceReady }) {
           <span className="font-mono text-body-sm">{result.approved_by}</span>
           {result.follows ? `; it changes #${result.follows}, which has shipped` : ""}.
         </p>
+        <SignInNote />
       </div>
     );
   }

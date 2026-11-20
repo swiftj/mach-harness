@@ -78,6 +78,11 @@ def security_review_problems(config: Dict[str, Any]) -> List[str]:
     high = review.get("high") if isinstance(review.get("high"), dict) else {}
     if high.get("human_approval") is False:
         problems.append(f"review.high.human_approval is false: High-risk tickets would merge without a person's approval. Unattended execution is refused while that is so; {BY_HAND}.")
+    security = config.get("security") if isinstance(config.get("security"), dict) else {}
+    scan = security.get("scan") if isinstance(security.get("scan"), dict) else {}
+    if scan.get("enabled") is False:
+        problems.append("security.scan.enabled is false: no commit would be checked for a secret and no new dependency shown to the security seat. "
+                        f"Unattended execution is refused while that is so; {BY_HAND}.")
     return problems
 
 

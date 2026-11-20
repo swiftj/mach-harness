@@ -1,5 +1,7 @@
 # MACH Next — M6.1 assessment: from a simulated Factory Floor to production observability
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Status: final assessment for M6.1 (live observability) and M6.2, on `feature/mach-next-m6-1-live-observability` at `cac989e` (the merged M6.0 prototype), revised after the stream proof (`M6_1_STREAM_COMPATIBILITY.md`) and the lead's decisions (contract section 16). Read-only: no code was changed. Companion documents: `M6_1_EVENT_CONTRACT.md` (the v3 event contract and migration) and `M6_1_SHARED_CONTRACTS.md` (Execution Timeline, Evidence Theater, Factory Analytics).
 
 Every statement below was read from the code unless it says otherwise. Assumptions are marked **[A*n*]**. Statements about Claude's execution stream come from the proof (Claude Code 2.1.322, six real runs including a whole belt execution).

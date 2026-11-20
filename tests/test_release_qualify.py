@@ -73,7 +73,7 @@ class Base(IntakeBase):
     def head(self):
         return git(self.eng, "rev-parse", "HEAD").strip()
 
-    def finish(self, ticket_id="LOCAL-001", verdict="PASS", outcome="APPROVED", blockers=(), contract=None):
+    def finish(self, ticket_id="LOCAL-001", verdict="PASS", outcome="APPROVED", blockers=(), contract=None, exceptions=None):
         """The ticket goes through the line: merged into main, then archived as the cleanup station would.
         With `contract` (path, text), the slice's plan names that contract and its build writes it."""
         if contract:
@@ -90,6 +90,8 @@ class Base(IntakeBase):
         summary = {"status": verdict, "head": landed, "checks": {f"AC-0{n}": {"kind": "scenario", "result": "pass", "note": None, "evidence": [f"ac-{n}.log"]} for n in (1, 2, 3)},
                    "evidence_files": [{"file": name, "sha256": hashlib.sha256(data).hexdigest()} for name, data in evidence.items()]}
         decision = {"outcome": outcome, "head": landed, "round": 1, "risk": "Medium", "blockers": len(blockers), "human_approval_required": False, "human_approval": None}
+        if exceptions is not None:
+            decision["exceptions"] = [{**item, "head": landed} for item in exceptions]
         archive = self.eng / ".factory/archive"
         archive.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory() as folder:
@@ -268,6 +270,45 @@ class ExceptionTest(Base):
         (self.eng / "ok.txt").write_text("changed\n")
         git(self.eng, "commit", "-q", "-am", "move on")
         self.assertIn("names one commit", self.refused_release("qualify", "SLICE-001", "--release", "r1"))
+
+
+class ReviewExceptionTest(Base):
+    """M12: a security blocker a person excepted in review is listed as excepted, with who and why, never dropped."""
+
+    BLOCKER = {"reviewer": "product", "rule": "REVIEW.md: no secrets in logs", "title": "token logged", "file": "a.py", "class": "security", "impact": "high"}
+
+    def exception(self, **changes):
+        item = {"round": "1", "seat": "product", "index": 1, "title": "token logged", "rule": "REVIEW.md: no secrets in logs", "file": "a.py",
+                "class": "security", "impact": "high", "by": "Dana Smith", "reason": "Accepted for the internal pilot; fixed in the next slice.",
+                "expires": None, "recorded_at": "2026-11-20T10:00:00+00:00"}
+        item.update(changes)
+        return item
+
+    def qualify(self, **finish):
+        commit = self.built(blockers=[self.BLOCKER], **finish)
+        self.configure(integration_command=f"{sys.executable} check.py")
+        self.scan(commit)
+        return self.readiness(self.release("qualify", "SLICE-001", "--release", "r1")["release_id"])
+
+    def test_an_excepted_blocker_makes_the_release_qualified_with_exceptions(self):
+        data = self.qualify(exceptions=[self.exception()])
+        self.assertEqual(data["outcome"], "qualified_with_exceptions")
+        check = self.checks(data)["blocker.SLICE-001.r1.1"]
+        self.assertEqual((check["status"], check["kind"]), ("fail", "security"), "excepted, never a pass")
+        self.assertEqual((check["exception"]["source"], check["exception"]["by"], check["exception"]["finding"]), ("review", "Dana Smith", "1/product/1"))
+        [listed] = data["security"]["open_review_blockers"]
+        self.assertEqual((listed["excepted"]["by"], listed["excepted"]["reason"]), ("Dana Smith", "Accepted for the internal pilot; fixed in the next slice."))
+
+    def test_an_expired_review_exception_blocks(self):
+        data = self.qualify(exceptions=[self.exception(expires="2026-01-01")])
+        self.assertEqual(data["outcome"], "blocked")
+        self.assertIn("blocker.SLICE-001.r1.1", data["unresolved_blockers"])
+        self.assertEqual(data["security"]["open_review_blockers"][0]["exception_expired"]["expires"], "2026-01-01")
+
+    def test_without_an_exception_it_still_blocks(self):
+        data = self.qualify()
+        self.assertEqual(data["outcome"], "blocked")
+        self.assertTrue(data["security"]["open_review_blockers"][0]["security"], "a security-class blocker from any seat is a security blocker")
 
 
 class AcceptanceTest(Base):

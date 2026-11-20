@@ -1,5 +1,7 @@
 # M6.5 Factory Analytics: performance
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Measured on 2026-11-14 with `web/apps/factory-floor/scripts/analytics-measure.mjs` (how to run it, what each
 step does and the budgets' origin: `M6_5_TESTING.md`). Three runs on the realistic large project, each
 against the M6.3 observer (`b37c036`) on an identical copy of the same project. Every figure below is the

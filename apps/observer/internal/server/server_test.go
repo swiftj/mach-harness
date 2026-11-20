@@ -328,7 +328,7 @@ func TestEveryEndpointShape(t *testing.T) {
 	}
 	sess := h.get(t, "/api/v1/session")
 	if sess["capabilities"].(map[string]any)["stream_observations"].(map[string]any)["ok"] != true ||
-		len(sess["versions"].(map[string]any)["event"].(map[string]any)["kinds"].([]any)) != 53 {
+		len(sess["versions"].(map[string]any)["event"].(map[string]any)["kinds"].([]any)) != 55 {
 		t.Fatalf("session %v", sess)
 	}
 	m := h.get(t, "/api/v1/analytics/metrics?ids=Q2,K5&group_by=risk")["metrics"].([]any)

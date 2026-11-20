@@ -1,5 +1,7 @@
 # M6.5 Factory Analytics: the product owner's acceptance captures
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Made on 2026-11-14 between 10:24 and 10:58 UTC by agent `capture65`. Nothing in the product was changed to make
 them. Files are git-ignored: screenshots in `web/apps/factory-floor/screenshots/analytics/final/`, recordings in
 `web/apps/factory-floor/recordings/analytics/final/`.

@@ -88,6 +88,16 @@ Reviewers do not vote. Each submits findings, and any finding marked `blocker` m
 
 When a reviewer's blocker is outvoted on a medium-risk change, the outcome says so.
 
+A blocker from the security seat, and a security blocker of high or critical impact from any seat, is never outvoted: it rejects the round whatever the count. If you have read such a finding and accept it for this commit, you can say so before the builder starts again:
+
+```
+/mach except LOCAL-001 1/security/1 "<why, in your words>"
+```
+
+The reference is the round, the seat and the finding's place in that seat's findings, as `/mach explain` lists them. Name every blocker that vetoed and that you accept in one request. The round is then counted again: a seat whose only blockers you excepted counts as approving (its vote is kept as cast), and a seat with any other blocker still rejects. The script refuses, saying which seat and finding still block, unless that count meets the tier's threshold with no vetoing blocker left; it also refuses once a revision has started, when the branch is no longer the commit reviewed, and for a `factory-tuning` ticket, and it never accepts an ordinary blocker. This works at every tier: on a high-risk change where the security seat's only blocker is excepted, the round moves to waiting for your approval. Add `--expires 2026-12-31` in your request to limit it in time. The round is then approved, or waits for a person's approval where one is needed anyway. The exception is not that approval. It is never recorded unattended, and `review.security_exception_by` can name the only people who may grant one.
+
+**Secrets and new dependencies.** The build station refuses to commit lines that look like a credential (a private key, a cloud or service token, an API key, a password in a URL, or a long random string assigned to a name like `secret` or `token`) and says where. A real credential is read at run time from the environment or a secret store. If what it found is not a secret, the builder records why with `--not-a-secret`, and the reviewers see the place and the reason. At review, the packet lists every secret candidate and every dependency the change adds or changes. If there is a candidate or a new runtime dependency, the security reviewer runs on the strongest model and a low-risk change gets three reviewers instead of one. The security reviewer answers each item: a secret is real (and the round is rejected) or not, and a dependency is acceptable or a concern (needed? a typosquat? pinned? unmaintained?). Dependencies are not checked against a vulnerability database. The decision, the findings, `/mach explain` and the pull request show what was flagged and the answers. `security.scan.enabled: false` in `.factory/config.json` turns this off; the review then says so, and the unattended Factory refuses to run.
+
 A ticket that is sent back and revised gets a narrower second review: reviewers see what changed since the last round and check that the earlier blockers are fixed. A blocker on code that did not change and was not blocked before is refused; it can only be a note. Reviewers also report a recurring defect once, as a class listing every place, so one revision can clear it.
 
 ## Merging an approved ticket
@@ -98,7 +108,7 @@ A ticket that is sent back and revised gets a narrower second review: reviewers 
 
 Review approves one exact commit, and the merge station lands that commit or refuses:
 
-- **Approval is bound to the commit.** If anything was added to the branch after review, the approval is void and the ticket goes back to verification.
+- **Approval is bound to the commit.** If anything was added to the branch after review, the approval is void and the ticket goes back to verification. An approval that rests on a person's security exception is bound the same way, and an exception past its expiry stops the merge until a person records a new one or abandons the ticket.
 - **It is re-tested against today's main.** If main has moved since approval, the branch is brought up to date inside the cell and the test suite runs again before anything lands, so two tickets that each passed alone cannot break main together. A failing suite sends the ticket back to the build station; a conflict stops for a person.
 - **Locally or through a pull request.** With `merge.method` set to `local` it makes a merge commit on your main checkout. With `pr` it pushes the branch, opens a pull request summarising the verification and review, and merges it at the approved commit, so your CI, review bots and team see a normal pull request.
 

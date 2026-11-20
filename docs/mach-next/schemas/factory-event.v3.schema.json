@@ -32,7 +32,7 @@
                   "schema_revision": {
                                        "type": "integer",
                                        "minimum": 0,
-                                       "description": "Additive revisions within version 3. Consumers ignore fields and kinds they do not know. Revision 1: execution.usage gains cost_complete and cost_incomplete_reasons. Revision 2: history.gap gains class and history_lost (and the reasons unexpected-shape and evicted); origin gains runtime_state on execution-stream events. Revision 3: execution.started gains source_commit, provenance (the snapshot the supervisor took at start, or null) and provenance_reason. Revision 4 (M11) is not additive, as MACH has no users yet: ids.wave_id is replaced by ids.epic_id, ids.issue is added, wave.discovered is removed, and slice.materialized gains epic_title."
+                                       "description": "Additive revisions within version 3. Consumers ignore fields and kinds they do not know. Revision 1: execution.usage gains cost_complete and cost_incomplete_reasons. Revision 2: history.gap gains class and history_lost (and the reasons unexpected-shape and evicted); origin gains runtime_state on execution-stream events. Revision 3: execution.started gains source_commit, provenance (the snapshot the supervisor took at start, or null) and provenance_reason. Revision 4 (M11) is not additive, as MACH has no users yet: ids.wave_id is replaced by ids.epic_id, ids.issue is added, wave.discovered is removed, and slice.materialized gains epic_title. Revision 5 (M12) is additive: the cell-lifecycle kind review.exception_recorded, a person's exception to a security blocker. Revision 6 (M12) is additive: the cell-lifecycle kind review.scan_recorded, what the security scan flagged in a review round and how it was answered, as counts."
                                      },
                   "id": {
                           "type": "string",
@@ -72,6 +72,8 @@
                                       "review.verdict_submitted",
                                       "review.decided",
                                       "human.approval_recorded",
+                                      "review.exception_recorded",
+                                      "review.scan_recorded",
                                       "merge.completed",
                                       "cleanup.completed",
                                       "execution.process_started",
@@ -669,6 +671,40 @@
                "then": {
                          "properties": {
                                          "data": {"$ref": "#/$defs/data_human_approval_recorded"},
+                                         "origin": {"properties": {"stream": {"enum": ["cell-lifecycle", "observer"]}}},
+                                         "ids": {
+                                                  "properties": {
+                                                                  "ticket_id": {"not": {"type": "null"}},
+                                                                  "cell_instance": {"not": {"type": "null"}},
+                                                                  "visit_id": {"not": {"type": "null"}},
+                                                                  "station": {"not": {"type": "null"}}
+                                                                }
+                                                }
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "review.exception_recorded"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_review_exception_recorded"},
+                                         "origin": {"properties": {"stream": {"enum": ["cell-lifecycle", "observer"]}}},
+                                         "ids": {
+                                                  "properties": {
+                                                                  "ticket_id": {"not": {"type": "null"}},
+                                                                  "cell_instance": {"not": {"type": "null"}},
+                                                                  "visit_id": {"not": {"type": "null"}},
+                                                                  "station": {"not": {"type": "null"}}
+                                                                }
+                                                }
+                                       }
+                       }
+             },
+             {
+               "if": {"properties": {"type": {"const": "review.scan_recorded"}}, "required": ["type"]},
+               "then": {
+                         "properties": {
+                                         "data": {"$ref": "#/$defs/data_review_scan_recorded"},
                                          "origin": {"properties": {"stream": {"enum": ["cell-lifecycle", "observer"]}}},
                                          "ids": {
                                                   "properties": {
@@ -1621,6 +1657,35 @@
                                                "required": ["by_role", "note_given"],
                                                "properties": {"by_role": {"enum": ["person"]}, "note_given": {"type": "boolean"}, "decision": {"enum": ["APPROVED", "SENT_BACK", null]}}
                                              },
+             "data_review_exception_recorded": {
+                                                 "type": "object",
+                                                 "additionalProperties": false,
+                                                 "required": ["findings", "expires_given", "renewal", "outcome"],
+                                                 "description": "Revision 5 (M12): a person's exception to a vetoing security blocker. Codes only: who decided and why stay in the cell's decision.json.",
+                                                 "properties": {
+                                                                 "findings": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["seat", "index", "impact"],
+                                                                                                         "properties": {"seat": {"enum": ["architecture", "security", "product", "general"]},
+                                                                                                                        "index": {"type": "integer", "minimum": 1},
+                                                                                                                        "impact": {"enum": ["critical", "high", "medium", "low", null]}}}},
+                                                                 "expires_given": {"type": "boolean"},
+                                                                 "renewal": {"type": "boolean"},
+                                                                 "outcome": {"enum": ["APPROVED", "AWAITING_HUMAN", "REJECTED", "ESCALATE", null]}
+                                                               }
+                                               },
+             "data_review_scan_recorded": {
+                                            "type": "object",
+                                            "additionalProperties": false,
+                                            "required": ["enabled", "flagged", "panel_raised"],
+                                            "description": "Revision 6 (M12): what the security scan flagged in one review round and how the security seat answered it. Counts and booleans only: never a file name, a package name or a secret.",
+                                            "properties": {
+                                                            "enabled": {"type": "boolean"}, "flagged": {"type": "boolean"}, "panel_raised": {"type": "boolean"},
+                                                            "secret_candidates": {"type": ["integer", "null"], "minimum": 0}, "real": {"type": ["integer", "null"], "minimum": 0},
+                                                            "not_a_secret": {"type": ["integer", "null"], "minimum": 0}, "overridden_by_builder": {"type": ["integer", "null"], "minimum": 0},
+                                                            "dependencies": {"type": ["integer", "null"], "minimum": 0}, "dependencies_added": {"type": ["integer", "null"], "minimum": 0},
+                                                            "acceptable": {"type": ["integer", "null"], "minimum": 0}, "concerns": {"type": ["integer", "null"], "minimum": 0},
+                                                            "lockfile_only": {"type": ["integer", "null"], "minimum": 0}
+                                                          }
+                                          },
              "data_merge_completed": {
                                        "type": "object",
                                        "additionalProperties": false,

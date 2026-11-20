@@ -131,6 +131,15 @@ export const roleNames = [
   // whole plant as last seen while the connection is stale. Additive; nothing above changes meaning.
   "factory-halt",
   "factory-stale",
+  // Factory Analytics (M6.5): the bar and quiet bar of its charts, and a single-hue blue ramp for token
+  // kinds, stepped per theme and kept monotonic in lightness (light darkens along the kinds, dark
+  // lightens). In light theme the bars equal factory-ink-soft and factory-plate-shade.
+  "analytics-bar",
+  "analytics-bar-quiet",
+  "analytics-seq-1",
+  "analytics-seq-2",
+  "analytics-seq-3",
+  "analytics-seq-4",
 ] as const;
 
 export type Role = (typeof roleNames)[number];
@@ -220,6 +229,12 @@ const light: Theme = {
   "factory-lamp": "#FFF0D6",
   "factory-halt": "#74488A",
   "factory-stale": "#56636F",
+  "analytics-bar": "#7A766B",
+  "analytics-bar-quiet": "#D5CFC0",
+  "analytics-seq-1": "#5A86B6",
+  "analytics-seq-2": "#3F6C9E",
+  "analytics-seq-3": "#2B5A8C",
+  "analytics-seq-4": "#1D4370",
 };
 
 const dark: Theme = {
@@ -305,6 +320,12 @@ const dark: Theme = {
   "factory-lamp": "#4A3A27",
   "factory-halt": "#C6A6DA",
   "factory-stale": "#97A4B0",
+  "analytics-bar": "#8F8B80",
+  "analytics-bar-quiet": "#3A3934",
+  "analytics-seq-1": "#3F6C9E",
+  "analytics-seq-2": "#5A86B6",
+  "analytics-seq-3": "#8FB7DF",
+  "analytics-seq-4": "#B8D3EE",
 };
 
 export const themes: Record<ThemeName, Theme> = { light, dark };
@@ -349,7 +370,7 @@ export const contrastPairs: ReadonlyArray<{ fg: Role; bg: Role; min: 3 | 4.5; us
   { fg: "ink-muted", bg: "factory-floor", min: 4.5, use: "Factory label on a cell floor" },
   { fg: "factory-ink", bg: "factory-plate-top", min: 4.5, use: "Station and glyph ink on a plate" },
   { fg: "factory-ink", bg: "factory-floor", min: 4.5, use: "Station and glyph ink on a cell floor" },
-  { fg: "factory-ink-soft", bg: "factory-plate-top", min: 3, use: "Secondary glyph strokes" },
+  { fg: "factory-ink-soft", bg: "factory-plate-top", min: 3, use: "Secondary glyph strokes (never text: use ink-muted)" },
   { fg: "factory-route", bg: "factory-ground", min: 3, use: "Workflow route on the ground" },
   { fg: "factory-route", bg: "factory-floor", min: 3, use: "Workflow route on a cell floor" },
   { fg: "factory-live", bg: "factory-ground", min: 3, use: "Live work on the ground" },
@@ -385,6 +406,20 @@ export const contrastPairs: ReadonlyArray<{ fg: Role; bg: Role; min: 3 | 4.5; us
   { fg: "factory-stale", bg: "factory-floor", min: 3, use: "Stale (as last seen) mark" },
   { fg: "factory-stale", bg: "factory-plate-top", min: 3, use: "Stale mark on a plate" },
   { fg: "factory-stale", bg: "factory-ground", min: 3, use: "Stale stamp on the ground" },
+  // The Line (M6.6 follow-up): small secondary words (station subtitles, the words under a ticket's
+  // marker, a row's epic) are text, so they are ink-muted at 4.5:1, never factory-ink-soft (a stroke role).
+  { fg: "ink-muted", bg: "surface", min: 4.5, use: "Line: secondary words in a selected row" },
+  // Factory Analytics (M6.5): bars and the token-kind ramp carry meaning, 3:1 on both chart grounds.
+  { fg: "analytics-bar", bg: "canvas", min: 3, use: "Analytics bar" },
+  { fg: "analytics-bar", bg: "surface", min: 3, use: "Analytics bar on a panel" },
+  { fg: "analytics-seq-1", bg: "canvas", min: 3, use: "Analytics token kind, step 1" },
+  { fg: "analytics-seq-1", bg: "surface", min: 3, use: "Analytics token kind, step 1, on a panel" },
+  { fg: "analytics-seq-2", bg: "canvas", min: 3, use: "Analytics token kind, step 2" },
+  { fg: "analytics-seq-2", bg: "surface", min: 3, use: "Analytics token kind, step 2, on a panel" },
+  { fg: "analytics-seq-3", bg: "canvas", min: 3, use: "Analytics token kind, step 3" },
+  { fg: "analytics-seq-3", bg: "surface", min: 3, use: "Analytics token kind, step 3, on a panel" },
+  { fg: "analytics-seq-4", bg: "canvas", min: 3, use: "Analytics token kind, step 4" },
+  { fg: "analytics-seq-4", bg: "surface", min: 3, use: "Analytics token kind, step 4, on a panel" },
 ];
 
 /**

@@ -80,17 +80,20 @@ var Allow = map[string]*Shape{
 	"execution.completed": obj("stage", "next", "waiting_for", "how", "seen_to_end", "cost_usd", "exit_code", "refused_tools", leafList),
 	"execution.failed":    obj("stage", "next", "how", "claude_error", "exit_code", "attempt", "not_progressing"),
 
-	"station.entered":          obj("station", "stage", "action", "resumed", "unclosed_visit", "head", "counts", anyKeys(scalar)),
-	"station.exited":           obj("station", "outcome", "stage", "duration_ms", "closed_by", "head", "counts", anyKeys(scalar), "app_type", "risk"), // revision 2: app_type, risk (plan exit)
-	"gate.evaluated":           obj("gate", "verdict", "reason_code", "subject", "status", "audit_tier", "counts", anyKeys(scalar)),
-	"build.task_completed":     obj("task_id", "kind", "step", "first_run", "suite", "commit"),
-	"verify.check_recorded":    obj("target_id", "target_kind", "result", "evidence", list(obj("file", "sha256", "bytes")), "rerecorded"),
-	"review.round_started":     obj("risk", "max_rounds", "tuning", "approvals_needed", "human_approval_required", "panel", list(obj("seat", "model")), "delta", "restarted"),
-	"review.verdict_submitted": obj("seat", "vote", "blockers", "notes", "rules", leafList, "model"),
-	"review.decided":           obj("outcome", "approvals", "approvals_needed", "votes", anyKeys(scalar), "blockers", "security_veto", "human_approval_required"),
-	"human.approval_recorded":  obj("by_role", "note_given", "decision"), // decision: Enums (M9)
-	"merge.completed":          obj("method", "merge_commit", "approved_commit", "landed_commit", "revalidated", "pull_request"),
-	"cleanup.completed":        obj("outcome", "archive", "bundle", "uncommitted_saved"),
+	"station.entered":           obj("station", "stage", "action", "resumed", "unclosed_visit", "head", "counts", anyKeys(scalar)),
+	"station.exited":            obj("station", "outcome", "stage", "duration_ms", "closed_by", "head", "counts", anyKeys(scalar), "app_type", "risk"), // revision 2: app_type, risk (plan exit)
+	"gate.evaluated":            obj("gate", "verdict", "reason_code", "subject", "status", "audit_tier", "counts", anyKeys(scalar)),
+	"build.task_completed":      obj("task_id", "kind", "step", "first_run", "suite", "commit"),
+	"verify.check_recorded":     obj("target_id", "target_kind", "result", "evidence", list(obj("file", "sha256", "bytes")), "rerecorded"),
+	"review.round_started":      obj("risk", "max_rounds", "tuning", "approvals_needed", "human_approval_required", "panel", list(obj("seat", "model")), "delta", "restarted"),
+	"review.verdict_submitted":  obj("seat", "vote", "blockers", "notes", "rules", leafList, "model"),
+	"review.decided":            obj("outcome", "approvals", "approvals_needed", "votes", anyKeys(scalar), "blockers", "security_veto", "human_approval_required"),
+	"human.approval_recorded":   obj("by_role", "note_given", "decision"),                                                     // decision: Enums (M9)
+	"review.exception_recorded": obj("findings", list(obj("seat", "index", "impact")), "expires_given", "renewal", "outcome"), // M12: codes only
+	"review.scan_recorded": obj("enabled", "flagged", "panel_raised", "secret_candidates", "real", "not_a_secret", "overridden_by_builder",
+		"dependencies", "dependencies_added", "acceptable", "concerns", "lockfile_only"), // M12: counts only
+	"merge.completed":   obj("method", "merge_commit", "approved_commit", "landed_commit", "revalidated", "pull_request"),
+	"cleanup.completed": obj("outcome", "archive", "bundle", "uncommitted_saved"),
 
 	"execution.process_started": obj(),
 	"execution.process_ended":   obj("ended", "exit_code", "seconds"),
@@ -140,7 +143,7 @@ var RequiredIDs = map[string][]string{
 
 func init() {
 	for _, k := range []string{"station.entered", "station.exited", "gate.evaluated", "build.task_completed", "verify.check_recorded",
-		"review.round_started", "review.decided", "human.approval_recorded", "merge.completed", "cleanup.completed"} {
+		"review.round_started", "review.decided", "human.approval_recorded", "review.exception_recorded", "review.scan_recorded", "merge.completed", "cleanup.completed"} {
 		RequiredIDs[k] = []string{"ticket_id", "cell_instance", "visit_id", "station"}
 	}
 	RequiredIDs["review.verdict_submitted"] = []string{"ticket_id", "cell_instance", "visit_id", "station", "seat"}

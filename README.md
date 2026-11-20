@@ -147,7 +147,7 @@ Open Claude Code in the project folder and type:
 With nothing after it, it shows where things stand and suggests the next step. Say "open the app" to work in your browser instead; the app and the conversation share the same drafts.
 
 1. **Describe the project.** A name, a vision, and the outcomes you want for people.
-2. **Add an epic**, a larger capability that several slices deliver. An epic needs no approval; each slice is approved on its own when you mark it ready.
+2. **Add an epic**, a larger capability that several slices of intent deliver. An epic needs no approval; each slice is approved on its own when you mark it ready.
 3. **Start a slice.** Claude interviews you one question at a time. Each question is a yes-or-no proposal with a recommended answer:
 
    | You say | What happens |
@@ -182,6 +182,12 @@ Everything you write is a private draft on your computer until you mark a slice 
 ```
 
 The audit runs your build, tests and linter and gives a tier. **Gold** allows full autonomy. **Silver** builds, with a person approving each change. **Bronze**, which includes any failing build or test suite, blocks autonomous work until the repository is hardened.
+
+### Secrets and new dependencies
+
+The build station will not commit anything that looks like a credential: a private key, a cloud or service token, an API key, a password in a URL, or a long random string assigned to a name like `secret` or `token`. It says which file and line. Keep real credentials in the environment or a secret store; in tests, build fake ones at run time. If what it found is not a secret, the builder says why, and the reviewers see it. At review, every secret candidate and every dependency the change adds or changes is listed for the security reviewer, who runs on the strongest model and must answer each one: is the secret real, is the dependency needed, pinned, maintained, and not a look-alike of a well-known package. A low-risk change with something flagged gets three reviewers instead of one.
+
+This is not a vulnerability database. A model's knowledge ends at its training date, so a version found vulnerable since then is not caught here, and nothing does static analysis. If your team wants database-backed scanning, run your own scanner through Claude Code hooks or in CI; release qualification reads its reports from `.factory/release/scans/`. `security.scan.enabled: false` turns the check off; the review then says so, and the unattended Factory will not run.
 
 ### Architecture decisions
 
@@ -310,6 +316,8 @@ These are the cases, and what each choice runs if you would rather type it yours
 |---|---|
 | The spec has open questions | Finish the interview: `/mach <ticket>` continues it |
 | Waiting for a person's approval (a high-risk change, or a Silver repository) | Read the findings it shows, then `/mach approve <ticket>`. It records your approval and carries the ticket on to the merge and cleanup. To have something changed first: `/mach send-back <ticket> "<why>"`. Your reason goes to the builder as the finding to answer, and it uses one of the ticket's three rounds |
+| The review's security veto rejected a round | The builder fixes it as usual. If you have read the finding and accept it for this commit, say so: `/mach except <ticket> <round>/<seat>/<n> "<why>"`, before the builder starts again, naming every vetoing blocker you accept. A reviewer whose only blockers you excepted then counts as approving, so this works at any risk tier; a reviewer with any other blocker still rejects, and the script refuses if the round would still fail. Only a blocker that vetoed can be excepted, never an ordinary one. It is not an approval: a high-risk change still needs yours. It holds only for the commit reviewed, and until the date you give with it |
+| A security exception has expired | Record a new one the same way, or abandon the ticket. Nothing merges past an expired exception |
 | Approved, waiting for a person to merge | `/mach merge <ticket>` |
 | Blocked: escalated after three rounds | `/mach explain <ticket>`, then fix it yourself or abandon it: `/mach abandon <ticket> "<why>"` |
 | The repository is Bronze | `/mach audit` lists what to fix |
@@ -383,6 +391,7 @@ A cost appears only where one was recorded, which today means work the superviso
 | `/mach new "<idea>"` | Start the interview for a new idea |
 | `/mach approve <ticket>` | Record your approval of a change that needs a person, then carry the ticket on |
 | `/mach send-back <ticket> "<why>"` | Send a change the panel approved back to the builder, with your reason |
+| `/mach except <ticket> <round>/<seat>/<n> "<why>"` | Accept a security blocker that vetoed a round, for the commit reviewed, with your reason; never offered unprompted, never unattended |
 | `/mach merge <ticket>` | Merge an approved ticket yourself |
 | `/mach replan <ticket> "<why>"` | Start a ticket's plan over, before any review round; the old plan is kept |
 | `/mach abandon <ticket> "<why>"` | Drop a ticket; its work is archived first |
@@ -423,6 +432,8 @@ Settings are in `.factory/config.json`. The ones people change most:
 | `merge.method` | `local` | `local` makes a merge commit; `pr` opens a pull request that refers to the request's issue, and merges the approved commit |
 | `merge.auto.<tier>` | `true` | Set a risk tier to `false` to keep its merges for a person |
 | `review.<tier>` | see file | Reviewers, approvals needed, and whether a person must approve |
+| `security.scan.enabled` | `true` | The secrets gate at build and the secrets and dependency list at review. Off: the review says so, and unattended work is refused |
+| `review.security_exception_by` | `[]` | Names of the people who may except a security blocker; empty means any person. It guards against accident, not forgery |
 | `factory.max_parallel` | `3` | How many tickets may run at once |
 | `factory.max_parallel_high` | `1` | How many High-risk tickets may run at once |
 | `factory.claim_minutes` | `90` | How long a worker's claim on a ticket holds without news of it, before another worker may take the ticket |

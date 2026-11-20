@@ -366,6 +366,13 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
 
     if stage == "verified":
         return step(ticket_id, stage, "review", "Verified; ready for the review panel.", risk=cell.get("risk"))
+    if stage in ("awaiting-human", "approved") and not project.merged(cell.get("branch")):
+        decided = load_json(root / "review" / "decision.json", {}) or {}
+        lapsed = exceptions_lapsed(decided)
+        if lapsed and (decided.get("head") == head or (cell.get("revalidated") or {}).get("head") == head):
+            return step(ticket_id, stage, "stop", f"The security exception for {', '.join(lapsed)} has expired, so the security veto stands again and the ticket "
+                        "is not approved or merged over it. A person records a new exception or abandons the ticket.", needs="security-exception-expired",
+                        exceptions=lapsed)
     if stage == "awaiting-human":
         decided = load_json(root / "review" / "decision.json", {}) or {}
         why = " and ".join(decided.get("human_approval_reasons") or [])
@@ -395,6 +402,13 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
     if stage == "blocked":
         return step(ticket_id, stage, "stop", "The ticket failed its third round and was escalated.", needs="person-to-take-over")
     return step(ticket_id, stage, "stop", f"The cell is in an unknown stage ('{stage}').", needs="person-to-take-over")
+
+
+def exceptions_lapsed(decision: Dict[str, Any]) -> List[str]:
+    """The approving round's security exceptions that have expired, by finding reference (explain.py holds the rule)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import explain
+    return [explain.exception_ref(item) for item in explain.lapsed_exceptions(decision if isinstance(decision, dict) else {})]
 
 
 NUMBERED_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*-0*(\d+)$")
@@ -470,6 +484,7 @@ NEEDS_TEXT = {
     "adr-acceptance": "Accept the architecture decision this High-risk ticket proposes, or not: the build waits for it.",
     "adr-fix": "Fix an architecture decision record the factory cannot read, by pull request.",
     "adr-baseline": "Write down the project's basic technical decisions as accepted ADRs (adr baseline drafts them); no ticket is planned until then.",
+    "security-exception-expired": "A person's exception to a security blocker has expired: record a new one, or abandon the ticket.",
 }
 
 

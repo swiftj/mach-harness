@@ -1,5 +1,7 @@
 # MACH Next — M6.0 working contract: the Living Factory prototype
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 The shared agreement for everyone building M6.0. Read it before writing anything.
 
 M6.0 is a **visual-experience prototype**, shown for review before the real Factory Floor is built. It is a simulation. It reads no Factory state and changes nothing about how the Factory runs.

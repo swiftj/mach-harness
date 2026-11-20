@@ -23,6 +23,11 @@ Architecture decisions (adr.py, the intent station's shared helper): `start` lis
 under and refuses a High-risk ticket whose own proposed ADR no person has accepted; no step may change a file in the ADR
 folder, and no override allows it; the build report lists the ADRs in force and every exception.
 
+Secrets (scan.py, the intent station's shared helper): before each commit this station makes, the added lines of what is
+about to be committed are scanned for credentials by their well-known shapes. A candidate refuses the step; red, green and
+done accept --not-a-secret "<why>", recorded with the places it covered (file, line, kind; never the value) for the
+reviewers. security.scan.enabled: false in .factory/config.json switches the gate off, and the build report says so.
+
 Standard library only. It runs the project's test and lint commands inside the cell.
 """
 
@@ -56,7 +61,7 @@ HARDENING_LABEL = "repo-hardening"
 # Lifecycle log: the gate each recorded override passes.
 OVERRIDDEN_GATE = {"test-amended": "frozen-tests", "files-outside-plan": "scope", "test-passed-first-run": "red-before-green",
                    "red-not-attributed": "red-attribution", "test-written-early": "red-before-green", "no-baseline": "baseline",
-                   "impl-already-done": "changed-no-files"}
+                   "impl-already-done": "changed-no-files", "not-a-secret": "secrets"}
 UI_FILE_RE = re.compile(r"\.(tsx|jsx|vue|svelte|html|astro)$")
 INLINE_STYLE_RE = re.compile(r"style\s*=\s*(\"|'|\{\{)")
 HEX_COLOR_RE = re.compile(r"(?<![\w&])#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b")
@@ -103,6 +108,24 @@ try:
     import adr  # noqa: E402
 except Exception:  # noqa: BLE001
     adr = None
+
+
+# The secrets and dependency scan: a shared helper with the intent station too. Its rule is a gate, so a build without it refuses.
+try:
+    import scan  # noqa: E402
+except Exception:  # noqa: BLE001
+    scan = None
+
+SECRET_REMEDY = ("Never commit a credential. Read it at run time from the environment or a secret store; in a test, build a fake one at run time "
+                 "(for example by joining two strings) so that no file holds it. If what was found is not a secret at all, rerun with "
+                 "--not-a-secret \"<why>\"; the reason and the places (never the value) go to the reviewers. Never use it for a real credential.")
+
+
+def scan_enabled(config: Dict[str, Any]) -> bool:
+    """security.scan.enabled in .factory/config.json; anything but an explicit false is on."""
+    section = config.get("security") if isinstance(config.get("security"), dict) else {}
+    settings = section.get("scan") if isinstance(section.get("scan"), dict) else {}
+    return settings.get("enabled") is not False
 
 
 def adr_module() -> Any:
@@ -573,6 +596,50 @@ def check_scope(cell: Cell, task: Dict[str, Any], files: Sequence[str], args: ar
                 code="scope"
             )
         cell.deviation(task["id"], "files-outside-plan", f"{', '.join(extra)}: {args.allow_extra}")
+    check_secrets(cell, task, files, args)
+
+
+def pending_diff(cell: Cell, files: Sequence[str]) -> str:
+    """What is about to be committed, as a diff against HEAD: tracked files from git, new files as wholly added."""
+    parts = []
+    tracked = set(git(cell.work, "ls-files", "--", *files).stdout.splitlines()) if files else set()
+    for name in files:
+        path = cell.work / name
+        if name in tracked:
+            parts.append(git(cell.work, "diff", "--unified=0", "--no-color", "--no-ext-diff", "HEAD", "--", name).stdout)
+        elif path.is_file() and not path.is_symlink():
+            try:
+                data = path.read_bytes()[:4_000_000]
+            except OSError:
+                continue
+            if b"\0" in data:
+                continue
+            lines = data.decode("utf-8", errors="replace").splitlines()
+            parts.append(f"diff --git a/{name} b/{name}\nnew file mode 100644\n--- /dev/null\n+++ b/{name}\n@@ -0,0 +1,{len(lines)} @@\n"
+                         + "".join(f"+{line}\n" for line in lines))
+    return "".join(parts)
+
+
+def check_secrets(cell: Cell, task: Dict[str, Any], files: Sequence[str], args: argparse.Namespace) -> None:
+    """No secret enters the branch: the added lines of what is about to be committed are scanned, and a candidate refuses
+    the step unless the builder records why it is not a secret (--not-a-secret). The value is never printed or stored."""
+    if not files or not scan_enabled(cell.config):
+        return
+    if scan is None:
+        raise BuildError("The intent station's scan.py is not installed beside this skill, so the secrets gate cannot run.", code="scan-helper-missing")
+    found = scan.secrets(pending_diff(cell, files))
+    candidates = found["candidates"]
+    if not candidates:
+        return
+    places = "; ".join(f"{item['file']}:{item['line']} ({item['kind']})" for item in candidates[:10]) + (f"; and {found['total'] - 10} more" if found["total"] > 10 else "")
+    reason = getattr(args, "not_a_secret", None)
+    if not reason:
+        raise BuildError(f"{task['id']}: what is about to be committed looks like it holds a secret: {places}. Nothing was committed. " + SECRET_REMEDY,
+                         code="secret-candidate")
+    if scan.secrets_in_text(reason):
+        raise BuildError("--not-a-secret: the reason itself looks like it holds a secret. Say why in words; never quote the value.", code="secret-in-reason")
+    cell.deviation(task["id"], "not-a-secret", f"{places}: {reason}")
+    cell.state["deviations"][-1]["candidates"] = [{key: item[key] for key in ("file", "line", "kind")} for item in candidates]
 
 
 def take(cell: Cell, task_id: str, step: str) -> Dict[str, Any]:
@@ -1125,6 +1192,9 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
         "test_files": cell.state.get("test_files", []), "styling_findings": styling,
         "timing": timing(cell, tests),
         "adrs": adrs_report(cell),
+        "secret_scan": {"enabled": scan_enabled(cell.config),
+                        "not_a_secret": [{"task": d.get("task"), "reason": d.get("detail"), "candidates": d.get("candidates") or []}
+                                         for d in cell.state.get("deviations") or [] if d.get("type") == "not-a-secret"]},
     }
     (cell.root / "build-report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     cell.info["stage"] = "built"
@@ -1222,6 +1292,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("task")
         p.add_argument("--allow-extra", metavar="WHY", help="accept changes to files the plan did not give this task; recorded for review")
         p.add_argument("--amend-test", metavar="WHY", help="accept a change to an already committed test; recorded for review")
+        p.add_argument("--not-a-secret", metavar="WHY", help="accept what the secrets gate found because it is not a secret (never for a real credential); "
+                       "recorded for review with the places, never the value")
         if name == "red":
             p.add_argument("--covered", metavar="WHY", help="accept a test that passes on its first run because earlier work satisfies it; recorded for review")
             p.add_argument("--unrelated-failure", metavar="WHY", help="accept a red whose output does not name the new test; recorded for review")
@@ -1253,7 +1325,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    for name in ("allow_extra", "amend_test", "covered", "no_baseline", "written_early", "unrelated_failure", "already_done"):
+    for name in ("allow_extra", "amend_test", "covered", "no_baseline", "written_early", "unrelated_failure", "already_done", "not_a_secret"):
         if not hasattr(args, name):
             setattr(args, name, None)
     project = None

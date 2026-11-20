@@ -1,5 +1,7 @@
 # M7 Phase 1: Product Manager acceptance (up to the Factory handoff)
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 **Read this first.** PM A, PM B and the engineer were simulated on **one Mac**. Each has its own clone, `HOME`
 folder and Git identity. They are not separate MacBooks. All three used **one GitHub account** (the one `gh`
 is logged in to). GitHub therefore refused every "approve" or "request changes" review, because a person

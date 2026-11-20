@@ -1,5 +1,7 @@
 # MACH Next — M1 Design: Product Studio domain and `/mach:product-studio`
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Status: **accepted and built** (terminal Product Studio). One deviation from this text: `slice check` records the validator's bookkeeping (open questions, spec location, ready or not) without raising the slice's revision, so an interview does not inflate it.
 Based on MACH 0.11.1 and the M0 foundation on `feature/mach-next-product-studio-supervisor`.
 

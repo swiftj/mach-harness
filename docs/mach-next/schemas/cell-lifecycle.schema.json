@@ -21,7 +21,8 @@
     "ticket_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9_-]+)*$"},
     "type": {
       "enum": ["station.entered", "station.exited", "gate.evaluated", "build.task_completed", "verify.check_recorded", "review.round_started",
-               "review.verdict_submitted", "review.decided", "human.approval_recorded", "merge.completed", "cleanup.completed"]
+               "review.verdict_submitted", "review.decided", "human.approval_recorded", "merge.completed", "cleanup.completed",
+               "review.exception_recorded", "review.scan_recorded"]
     },
     "station": {"$ref": "#/$defs/station"},
     "visit": {
@@ -71,6 +72,20 @@
        "decision": {"enum": ["APPROVED", "AWAITING_HUMAN", "REJECTED", "ESCALATE"]}, "security_veto": {"type": "boolean"}}}}}},
     {"if": {"properties": {"type": {"const": "human.approval_recorded"}}},
      "then": {"properties": {"station": {"const": "human-approval"}, "data": {"required": ["round", "decision"]}}}},
+    {"if": {"properties": {"type": {"const": "review.exception_recorded"}}},
+     "then": {"properties": {"station": {"const": "review"}, "data": {"required": ["round", "findings", "expires_given", "renewal", "outcome"], "properties": {
+       "findings": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["seat", "index"], "properties": {
+         "seat": {"enum": ["architecture", "security", "product", "general"]}, "index": {"type": "integer", "minimum": 1},
+         "impact": {"enum": ["critical", "high", "medium", "low", null]}}}},
+       "expires_given": {"type": "boolean"}, "renewal": {"type": "boolean"},
+       "outcome": {"enum": ["APPROVED", "AWAITING_HUMAN", "REJECTED", "ESCALATE"]}}}}}},
+    {"if": {"properties": {"type": {"const": "review.scan_recorded"}}},
+     "then": {"properties": {"station": {"const": "review"}, "data": {"required": ["round", "enabled", "flagged", "panel_raised"], "properties": {
+       "enabled": {"type": "boolean"}, "flagged": {"type": "boolean"}, "panel_raised": {"type": "boolean"},
+       "secret_candidates": {"type": "integer", "minimum": 0}, "real": {"type": "integer", "minimum": 0}, "not_a_secret": {"type": "integer", "minimum": 0},
+       "overridden_by_builder": {"type": "integer", "minimum": 0}, "dependencies": {"type": "integer", "minimum": 0},
+       "dependencies_added": {"type": "integer", "minimum": 0}, "acceptable": {"type": "integer", "minimum": 0},
+       "concerns": {"type": "integer", "minimum": 0}, "lockfile_only": {"type": "integer", "minimum": 0}}}}}},
     {"if": {"properties": {"type": {"const": "merge.completed"}}},
      "then": {"properties": {"station": {"const": "merge"}, "data": {"required": ["method", "approved_commit", "landed_commit", "merge_commit", "pull_request"], "properties": {
        "method": {"enum": ["local", "pr"]}, "pull_request": {"type": ["integer", "null"]}}}}}},

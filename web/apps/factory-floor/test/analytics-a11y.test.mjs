@@ -19,7 +19,7 @@ test("contrast arithmetic matches WCAG's reference values", () => {
   assert.equal(Math.round(A.contrast("#767676", "#FFFFFF") * 100) / 100, 4.54);
 });
 
-// The grounds charts are drawn on, from the design tokens, and the ramp from the stylesheet.
+// The grounds charts are drawn on, and the token-kind ramp, both from the design tokens.
 const tokens = readFileSync(new URL("../../../packages/ui/src/styles/tokens.css", import.meta.url), "utf8");
 const hexOf = (block, name) => (block.match(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})`)) ?? [])[1];
 const blockAt = (text, sel) => text.slice(text.indexOf(sel), text.indexOf("}", text.indexOf(sel)));
@@ -27,15 +27,36 @@ const GROUNDS = {
   light: [hexOf(tokens, "mach-canvas"), hexOf(tokens, "mach-surface")],
   dark: [hexOf(blockAt(tokens, ':root[data-theme="dark"]'), "mach-canvas"), hexOf(blockAt(tokens, ':root[data-theme="dark"]'), "mach-surface")],
 };
-const ramp = (block) => [1, 2, 3, 4].map((i) => hexOf(block, `an-seq-${i}`));
-const RAMP = { light: ramp(blockAt(css, ".an-root {")), dark: ramp(blockAt(css, ':root[data-theme="dark"] .an-root')) };
+// The ramp is the `analytics-seq-*` tokens; the stylesheet only refers to them.
+const ramp = (block) => [1, 2, 3, 4].map((i) => hexOf(block, `mach-analytics-seq-${i}`));
+const RAMP = { light: ramp(blockAt(tokens, ":root {")), dark: ramp(blockAt(tokens, ':root[data-theme="dark"]')) };
 
-test("the grounds and the ramp are read from the tokens and the stylesheet", () => {
+test("the grounds and the ramp are read from the tokens", () => {
   for (const t of ["light", "dark"]) {
     assert.equal(GROUNDS[t].filter(Boolean).length, 2, `${t} grounds`);
     assert.equal(RAMP[t].filter(Boolean).length, 4, `${t} ramp`);
   }
   assert.notDeepEqual(GROUNDS.light, GROUNDS.dark);
+});
+
+test("the stylesheet's ramp and bars are the analytics tokens, with no colour of its own", () => {
+  const root = blockAt(css, ".an-root {");
+  for (const i of [1, 2, 3, 4]) assert.ok(root.includes(`--an-seq-${i}: var(--mach-analytics-seq-${i});`), `--an-seq-${i}`);
+  assert.ok(root.includes("--an-bar: var(--mach-analytics-bar);"));
+  assert.ok(root.includes("--an-bar-quiet: var(--mach-analytics-bar-quiet);"));
+  assert.ok(!css.includes(':root[data-theme="dark"] .an-root'), "no theme override of its own: the tokens carry both themes");
+});
+
+test("the colours render as before they moved into the tokens (both themes, values unchanged)", () => {
+  const val = (block, name) => hexOf(block, name)?.toLowerCase();
+  const light = blockAt(tokens, ":root {");
+  const dark = blockAt(tokens, ':root[data-theme="dark"]');
+  assert.deepEqual(RAMP.light.map((h) => h.toLowerCase()), ["#5a86b6", "#3f6c9e", "#2b5a8c", "#1d4370"]);
+  assert.deepEqual(RAMP.dark.map((h) => h.toLowerCase()), ["#3f6c9e", "#5a86b6", "#8fb7df", "#b8d3ee"]);
+  assert.equal(val(light, "mach-analytics-bar"), val(light, "mach-factory-ink-soft"), "the light bar was factory-ink-soft");
+  assert.equal(val(light, "mach-analytics-bar-quiet"), val(light, "mach-factory-plate-shade"), "the light quiet bar was factory-plate-shade");
+  assert.equal(val(dark, "mach-analytics-bar"), "#8f8b80");
+  assert.equal(val(dark, "mach-analytics-bar-quiet"), "#3a3934");
 });
 
 test("every token-kind step reaches 3:1 against both grounds in its theme (WCAG 1.4.11)", () => {
@@ -53,10 +74,10 @@ test("the ramp stays monotonic in lightness: light theme darkens along the kinds
 });
 
 test("a dark system preference without a chosen theme gets the dark ramp too", () => {
-  const sys = blockAt(css, '@media (prefers-color-scheme: dark)');
-  assert.ok(sys.length > 0, "the stylesheet has a prefers-color-scheme: dark block");
-  const after = css.slice(css.indexOf("@media (prefers-color-scheme: dark)"));
-  assert.deepEqual(ramp(blockAt(after, ":root:not([data-theme=\"light\"]) .an-root")), RAMP.dark);
+  const sys = blockAt(tokens, '@media (prefers-color-scheme: dark)');
+  assert.ok(sys.length > 0, "the tokens have a prefers-color-scheme: dark block");
+  const after = tokens.slice(tokens.indexOf("@media (prefers-color-scheme: dark)"));
+  assert.deepEqual(ramp(blockAt(after, ":root:not([data-theme=\"light\"])")), RAMP.dark);
 });
 
 test("spoken: durations, shares, magnitudes and missing values read as words", () => {

@@ -1,5 +1,7 @@
 # M7 Factory acceptance, third live run: confirming the N1, N2 and N3 fixes
 
+> **Historical note (November 2026).** This document was written before M11. Delivery waves, epic approval, the product pull request, the Execution Timeline, the Execution Blueprint and playback have been removed since. Where it describes them, [`M11_DESIGN.md`](M11_DESIGN.md) and the root `CLAUDE.md` say what replaced them. It is kept as the record of what was designed and tested at the time.
+
 Status: run complete, Factory disabled, nothing left running. One short live run, 2026-11-15 03:32–04:00 UTC, on
 the throwaway "Team Lending Desk" project that the first two runs left (`M7_FACTORY_ACCEPTANCE.md`,
 `M7_FACTORY_ACCEPTANCE_2.md`). Each check was run once against the real Factory.

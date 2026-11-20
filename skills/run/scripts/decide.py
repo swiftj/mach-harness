@@ -7,7 +7,9 @@ time; the model only presents them and routes the choice. It adds no power: an o
 of the station that carries it out exists and accepts it in that state.
 
 It reads only. It writes no file, makes no claim, records nothing in the lifecycle log, starts no station and runs
-no command of its own (run.py's `next_step`, passed in, runs its usual read-only git queries). It never reads the
+no command of its own (run.py's `next_step`, passed in, runs its usual read-only git queries, and the review station's
+read-only `exception_state`, loaded to offer a security exception only where `review.py except` accepts one, asks Git
+for the branch's commit). It never reads the
 machine-local Factory settings. It never runs unattended: run.py refuses it inside a supervised execution.
 
 Entry point, wired in by run.py:
@@ -78,7 +80,54 @@ SUMMARY = {
     "adr-acceptance": "This High-risk ticket's plan proposes a new architecture decision (ADR); the build waits until an engineer accepts it.",
     "adr-fix": "An architecture decision record (ADR) on the main branch cannot be read, so no ticket is planned until it is fixed.",
     "adr-baseline": "The project's basic technical decisions are not all written down as accepted ADRs on the main branch, so no ticket is planned yet.",
+    "security-veto": "The review panel's security veto rejected this round although enough seats approved; the builder answers it unless a person accepts the finding.",
+    "exception-expired": "A person's exception to a security blocker has expired, so the approval does not hold until a person decides again.",
 }
+
+_REVIEW: List[Any] = []
+
+
+def review_station() -> Any:
+    """The review station's review.py, whichever way MACH is installed, for its read-only exception_state; None if absent."""
+    if not _REVIEW:
+        import importlib.util
+        skills = Path(__file__).resolve().parent.parent.parent
+        script = next((folder / "scripts" / "review.py" for folder in (skills / "mach-review", skills / "review") if (folder / "scripts" / "review.py").is_file()), None)
+        found = None
+        if script is not None:
+            try:
+                spec = importlib.util.spec_from_file_location("mach_review_for_decide", script)
+                found = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(found)
+            except Exception:  # noqa: BLE001 - without it, no exception is offered
+                found = None
+        _REVIEW.append(found)
+    return _REVIEW[0]
+
+
+def exception_offer(root: Path, ticket: str) -> Optional[Dict[str, Any]]:
+    """What review.py except would accept on this cell now (its own exception_state), or None. It reads the cell's files and
+    asks Git for the branch's commit; it writes nothing. Who may grant one, and why, are the person's to give."""
+    station = review_station()
+    if station is None:
+        return None
+    try:
+        state = station.exception_state(station.Cell(root, ticket))
+    except Exception:  # noqa: BLE001 - a refusal means it is not offered
+        return None
+    return state if state.get("open") else None
+
+
+def exception_option(ticket: str, state: Dict[str, Any]) -> Dict[str, Any]:
+    refs = [ref for ref in state["open"] if re.fullmatch(r"\d{1,3}(?:\.\d{1,3})?/[a-z]+/\d{1,3}", ref)]
+    if state.get("mode") == "renew":
+        does = f"The review station records the person's new exception to {', '.join(refs)} for the approved commit, with their reason, in place of the expired one."
+    else:
+        does = (f"The review station records the person's exception to {', '.join(refs)} for the reviewed commit, with their reason. A reject vote that "
+                "rested only on those findings counts as an approval, and the round takes the outcome that recount gives; a person's approval is "
+                "still needed wherever the tier asks for one.")
+    return option("exception", "Record a security exception", does, f'except {ticket} {" ".join(refs)} "<why>"', needs_reason=True)
+
 
 def adr_helper() -> Any:
     try:
@@ -253,7 +302,7 @@ def situation(state: str, info: Dict[str, Any], report: Dict[str, Any], cell: Di
 
 
 def classify(root: Path, ticket: str, info: Dict[str, Any], report: Dict[str, Any], config: Dict[str, Any],
-             parked: Dict[str, Dict[str, Any]], now: datetime) -> Optional[str]:
+             parked: Dict[str, Dict[str, Any]], now: datetime, named: bool = False) -> Optional[str]:
     """Which waiting state the ticket is in, read from the stations' own files; None when it is not waiting on a person."""
     cellroot = root / ".factory" / "worktrees" / ticket
     cell = load_json(cellroot / "cell.json")
@@ -276,11 +325,15 @@ def classify(root: Path, ticket: str, info: Dict[str, Any], report: Dict[str, An
             return "bronze"
         if needs == "person-to-take-over":
             return "escalated" if stage == "blocked" else "stuck"
+        if needs == "security-exception-expired":
+            return "exception-expired"
         return None  # finished, closed, or out of this execution's scope: nothing for a person to decide here
     if stage == "spec-open":
         return "answers"
     if stage == "pr-open":
         return "pull-request"
+    if named and stage == "built" and info.get("action") == "revise" and exception_offer(root, ticket):
+        return "security-veto"  # only for a ticket a person named: the line revises it otherwise, and nothing offers an exception unprompted
     if stage == "approved" and report.get("headline_code") == "merge_refused":
         return "merge-stopped"
     if stage in REPLAN_STAGES and (stage == "building" or info.get("action") == "build"):
@@ -357,6 +410,26 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
     elif state in ("escalated", "stuck"):
         if report.get("findings_file"):
             show_first.append(relative(root, cellroot / report["findings_file"]))
+        veto = exception_offer(root, ticket) if state == "escalated" else None
+        if veto and veto.get("mode") == "new":
+            facts["vetoing"] = list(veto["open"])
+            options.append(exception_option(ticket, veto))
+        options.append(abandon(ticket))
+    elif state == "security-veto":
+        veto = exception_offer(root, ticket) or {"open": [], "mode": "new"}
+        facts["vetoing"] = list(veto["open"])
+        if report.get("findings_file"):
+            show_first.append(relative(root, cellroot / report["findings_file"]))
+        options.append(option("revise", "Let the builder fix it",
+                              "The builder revises the change to answer the findings, which uses one of the ticket's rounds.", ticket))
+        if veto["open"]:
+            options.append(exception_option(ticket, veto))
+        options.append(abandon(ticket))
+    elif state == "exception-expired":
+        veto = exception_offer(root, ticket)
+        facts["expired"] = [explain.clean(ref, 40) for ref in info.get("exceptions") or []][:10]
+        if veto and veto.get("mode") == "renew":
+            options.append(exception_option(ticket, veto))
         options.append(abandon(ticket))
     elif state == "bronze":
         options.append(option("audit", "Audit the repository again",
@@ -476,7 +549,7 @@ def main(ticket_ids: Sequence[str], root: Path, *, config: Dict[str, Any], next_
     for ticket in named or open_tickets(root):
         info = next_step(ticket)
         report = facts(ticket, info)
-        state = classify(root, ticket, info, report, config, parked, moment)
+        state = classify(root, ticket, info, report, config, parked, moment, named=bool(named))
         if state is None:
             if named:
                 answers.append(not_waiting(ticket, info))

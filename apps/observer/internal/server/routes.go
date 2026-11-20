@@ -21,7 +21,7 @@ var Kinds = []string{
 	"work.scheduled", "revision.superseded", "human.required", "factory.activated", "factory.disabled", "factory.paused", "factory.resumed",
 	"revision.discovered", "scheduling.decided", "work.claimed", "execution.started", "station.observed", "recovery.started", "execution.completed",
 	"execution.failed", "station.entered", "station.exited", "gate.evaluated", "build.task_completed", "verify.check_recorded", "review.round_started",
-	"review.verdict_submitted", "review.decided", "human.approval_recorded", "merge.completed", "cleanup.completed", "execution.process_started",
+	"review.verdict_submitted", "review.decided", "human.approval_recorded", "review.exception_recorded", "review.scan_recorded", "merge.completed", "cleanup.completed", "execution.process_started",
 	"execution.process_ended", "run.recorded", "session.initialized", "workflow.started", "workflow.phases_declared", "workflow.finished",
 	"agent.queued", "agent.started", "agent.progressed", "agent.finished", "tool.called", "tool.returned", "tool.refused", "execution.usage",
 	"review.finding", "artifact.recorded", "history.began", "verify.targets_listed", "capacity.wait_changed", "history.gap",

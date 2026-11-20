@@ -63,8 +63,8 @@ function StationHeading({ column, stat, selected, onPick }: { column: number; st
       )}
     >
       <span className="text-label text-factory-ink">{station.name}</span>
-      <span className="w-full truncate text-caption text-factory-ink-soft">{models ?? station.worker}</span>
-      <span className="w-full truncate text-caption text-factory-ink-soft">{stat?.typicalMs != null ? `typical ${duration(stat.typicalMs)}` : "time not recorded yet"}</span>
+      <span className="w-full truncate text-caption text-ink-muted">{models ?? station.worker}</span>
+      <span className="w-full truncate text-caption text-ink-muted">{stat?.typicalMs != null ? `typical ${duration(stat.typicalMs)}` : "time not recorded yet"}</span>
     </button>
   );
 }
@@ -87,7 +87,7 @@ function Lane({ row, now }: { row: LineRow; now: number }) {
       {row.sentBack ? <SentBack from={row.sentBack.from} to={row.sentBack.to} times={row.sentBack.times} /> : null}
       <span className="absolute top-[21px] flex -translate-x-1/2 flex-col items-center" style={{ left: `${at}%` }} data-marker={row.state}>
         <Marker state={row.state} label={markerLabel(row)} />
-        {under ? <span className="mt-0.5 whitespace-nowrap text-[12px] text-factory-ink-soft">{under}</span> : null}
+        {under ? <span className="mt-0.5 whitespace-nowrap text-[12px] text-ink-muted">{under}</span> : null}
       </span>
     </div>
   );
@@ -150,7 +150,7 @@ export function Board({ rows, stats, now, landedHidden, selectedTicket, selected
         </div>
         <div className="relative flex flex-col justify-end pb-2 pr-2">
           <span className="text-label text-factory-ink">Tickets</span>
-          <FreeTextLabel what="Titles and epic names" className="text-[12px] leading-tight text-factory-ink-soft" />
+          <FreeTextLabel what="Titles and epic names" className="text-[12px] leading-tight text-ink-muted" />
         </div>
         {LINE_STATIONS.map((s, i) => (
           <StationHeading key={s.key} column={i} stat={stats[i]} selected={selectedColumn === i} onPick={onStation} />
@@ -161,7 +161,7 @@ export function Board({ rows, stats, now, landedHidden, selectedTicket, selected
               <span />
               <div className="col-span-7 px-4 py-6">
                 <p className="text-label text-factory-ink">{empty.title}</p>
-                <p className="mt-1 max-w-[70ch] text-body-sm text-factory-ink-soft">{empty.body}</p>
+                <p className="mt-1 max-w-[70ch] text-body-sm text-ink-muted">{empty.body}</p>
               </div>
             </li>
           ) : null}
@@ -200,9 +200,9 @@ export function Board({ rows, stats, now, landedHidden, selectedTicket, selected
                       <FreeText field="sliceTitle" text={row.title} labelled expandable={false} />
                     </span>
                   ) : (
-                    <span className="mt-0.5 text-caption text-factory-ink-soft">title not recorded</span>
+                    <span className="mt-0.5 text-caption text-ink-muted">title not recorded</span>
                   )}
-                  <EpicLine row={row} labelled className="mt-0.5 line-clamp-1 text-caption text-factory-ink-soft" />
+                  <EpicLine row={row} labelled className="mt-0.5 line-clamp-1 text-caption text-ink-muted" />
                 </div>
                 <div className={cn("col-span-7 min-w-0", selected ? "bg-surface/60" : "group-hover:bg-surface/40")}>
                   <Lane row={row} now={now} />
@@ -212,7 +212,7 @@ export function Board({ rows, stats, now, landedHidden, selectedTicket, selected
           })}
         </ol>
         {landedHidden > 0 ? (
-          <p className="relative col-span-full pl-2 pt-2 text-caption text-factory-ink-soft" data-landed-hidden={landedHidden}>
+          <p className="relative col-span-full pl-2 pt-2 text-caption text-ink-muted" data-landed-hidden={landedHidden}>
             And {landedHidden} more landed earlier; Analytics lists every finished ticket.
           </p>
         ) : null}
