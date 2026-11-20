@@ -77,7 +77,7 @@ test("empty live Floor: the Line has no rows, nothing needs a person, and the fe
     assert.equal(st.typicalMs, null, "no typical time is made up");
     assert.equal(st.atWork, 0);
   }
-  assert.deepEqual(feedOf(historyIndexOf(s.log).moments), []);
+  assert.deepEqual(feedOf(historyIndexOf(s.log).moments, s.now), []);
   off();
   store.dispose();
 });

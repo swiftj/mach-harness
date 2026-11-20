@@ -104,6 +104,8 @@
   --color-factory-human-soft: var(--mach-factory-human-soft);
   --color-factory-select: var(--mach-factory-select);
   --color-factory-lamp: var(--mach-factory-lamp);
+  --color-factory-halt: var(--mach-factory-halt);
+  --color-factory-stale: var(--mach-factory-stale);
 
   --font-sans: var(--mach-font-sans);
   --font-mono: var(--mach-font-mono);

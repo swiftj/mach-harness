@@ -597,9 +597,21 @@ export function stationStats(scene: Scene, rows: readonly LineRow[]): StationSta
 
 // ---------------------------------------------------------------- what just happened
 
-/** The newest significant moments, newest first. */
-export function feedOf(moments: readonly Moment[], limit = 12): readonly Moment[] {
-  return moments.slice(-limit).reverse();
+/**
+ * The newest significant moments at or before `now`, newest first. The simulation's index holds every
+ * moment of its whole scenario, so a moment later than the clock is filtered out here (live, the log
+ * holds only what has arrived and the clock never trails it, but the same rule holds). Nothing is
+ * invented or moved: recorded moments are only filtered and ordered by their own time.
+ */
+export function feedOf(moments: readonly Moment[], now: number, limit = 12): readonly Moment[] {
+  const past = moments.filter((m) => m.t <= now);
+  // Ascending by t by contract; ordering by t (stable) keeps the feed right if a list ever is not.
+  return past
+    .map((m, i) => ({ m, i }))
+    .sort((a, b) => a.m.t - b.m.t || a.i - b.i)
+    .slice(-limit)
+    .reverse()
+    .map(({ m }) => m);
 }
 
 /** "1 in 6 sent back", "none sent back", or null when nothing was decided here. */

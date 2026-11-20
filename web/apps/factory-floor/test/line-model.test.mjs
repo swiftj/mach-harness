@@ -161,7 +161,29 @@ test("only the newest few landed tickets keep a row", () => {
 
 test("the feed is the newest moments first", () => {
   const moments = [{ id: "a", t: 1 }, { id: "b", t: 2 }, { id: "c", t: 3 }];
-  assert.deepEqual(L.feedOf(moments, 2).map((m) => m.id), ["c", "b"]);
+  assert.deepEqual(L.feedOf(moments, 3, 2).map((m) => m.id), ["c", "b"]);
+});
+
+test("the feed lists only moments at or before the clock, never later ones", () => {
+  const moments = [{ id: "a", t: 1 }, { id: "b", t: 2 }, { id: "c", t: 3 }, { id: "d", t: 9 }];
+  assert.deepEqual(L.feedOf(moments, 2).map((m) => m.id), ["b", "a"], "a moment exactly at the clock is listed; later ones are not");
+  assert.deepEqual(L.feedOf(moments, 0), [], "before the first moment the feed is empty");
+  assert.deepEqual(L.feedOf(moments, 100).map((m) => m.id), ["d", "c", "b", "a"]);
+  // Out of order in the list: ordered by its own time, nothing added.
+  assert.deepEqual(L.feedOf([moments[2], moments[0], moments[3], moments[1]], 3).map((m) => m.id), ["c", "b", "a"]);
+});
+
+test("Simulation: the feed never shows a moment later than the clock (the whole scenario's moments are indexed up front)", async () => {
+  const { fixtureIndexOf } = await import("../src/shell/history.ts");
+  const all = fixtureIndexOf(SCENARIO).moments;
+  assert.ok(all.some((m) => m.t > 25 * 60_000), "the index holds moments later than 25:00, as the defect needed");
+  for (const t of [0, 60_000, 25 * 60_000, 40 * 60_000, SCENARIO.duration]) {
+    const feed = L.feedOf(all, t);
+    assert.ok(feed.every((m) => m.t <= t), `at ${t}: nothing later than the clock`);
+    for (let i = 1; i < feed.length; i++) assert.ok(feed[i - 1].t >= feed[i].t, "newest first");
+    const expected = all.filter((m) => m.t <= t).slice(-12).reverse();
+    assert.deepEqual(feed.map((m) => m.id), expected.map((m) => m.id), `at ${t}: the newest recorded moments, unchanged`);
+  }
 });
 
 test("M11: a row carries its epic and its issue number where recorded, and nothing where not", () => {
