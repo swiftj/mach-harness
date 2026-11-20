@@ -1,0 +1,9 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "Someone else published version 2 of the principles on GitHub. Choose yours or theirs before publishing (reconcile principles --take mine|theirs). Nothing was saved.",
+  "hint": {
+    "kind": "reconcile",
+    "target": "principles"
+  }
+}

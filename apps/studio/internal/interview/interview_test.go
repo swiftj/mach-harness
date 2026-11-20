@@ -334,7 +334,10 @@ func TestTheAllowListIsOnlyTheInterviewersOperationsOnItsOwnSlice(t *testing.T) 
 			t.Errorf("a Write or relative Edit rule: %s", rule)
 		}
 	}
-	for _, op := range []string{"slice ready", "slice move", "slice take", "slice approve", "wave", "send", "feedback", "acceptance", "reconcile", "project", "slice new"} {
+	// M15: every act M13 and M14 added that the engine does only on the product manager's word,
+	// with its reads, is denied again, so a turn can reach none of them through any spelling.
+	for _, op := range []string{"slice ready", "slice move", "slice take", "slice approve", "wave", "send", "feedback", "acceptance", "reconcile", "project", "slice new",
+		"principle", "policy", "epic link", "slice link", "epic current", "jira", "prd", "slice mock"} {
 		found := false
 		for _, rule := range deny {
 			if strings.HasSuffix(rule, " "+op+" *)") {

@@ -13,6 +13,7 @@ import { WithdrawnNote } from "../../shared/WithdrawnNote";
 import { IssueLink } from "../../shared/IssueLink";
 import { AnswerQuestionButton, BuildersQuestion } from "../../shared/BuildersQuestion";
 import { SliceTimes } from "../../shared/SliceTimes";
+import { SliceSections } from "../../shared/SliceSections";
 
 type View = "spec" | "why" | "source";
 
@@ -67,6 +68,7 @@ function SpecWorkspace({ sliceId }: { sliceId: string }) {
   return (
     <Page className="flex flex-col gap-8">
       <SpecHeader show={data} onChanged={show.reload} refreshing={show.loading} refreshError={show.error ? describeError(show.error).message : null} />
+      <SliceSections sliceId={data.slice.slice_id} fromPrd={data.slice.source?.kind === "prd"} />
       <div className="grid grid-cols-[minmax(0,1fr)_17.5rem] items-start gap-10">
         <Tabs value={view} onValueChange={(value) => setView(value as View)} className="min-w-0">
           <TabsList aria-label="How to read this slice">

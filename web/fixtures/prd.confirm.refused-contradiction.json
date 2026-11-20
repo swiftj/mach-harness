@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "Answer 3 is not a drafted answer (the PRD contradicts itself), so it can never be accepted as a group: it is asked in the interview. Nothing was recorded.",
+  "hint": null
+}

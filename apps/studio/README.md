@@ -139,6 +139,35 @@ delivery waves. These operations may reach GitHub:
 | `slice.move` | `{slice_id}` and exactly one of `before`, `after` (slice IDs), `first`, `last` (`true`) | `slice move <SLICE> --before=<SLICE>\|--after=<SLICE>\|--first\|--last` | the product manager's order within the epic; GitHub's order is put in place where the epic's slices are there |
 | `slice.take` | exactly one of `{issue}` (a whole number) or `{slice_id}` | `slice take <n\|SLICE>` | opens a slice another product manager saved on GitHub as a draft here |
 
+### What M13 and M14 added (M15)
+
+`docs/mach-next/M15_STUDIO_FOUNDATION.md` is the full reference: each operation's arguments, the
+engine command, and the limits. In short:
+
+| Operations | Engine commands |
+|------------|-----------------|
+| `principle.list`, `principle.add`, `principle.set`, `principle.retire`, `principle.publish`, `reconcile.principles` | `principle list\|add\|set\|retire\|publish`, `reconcile principles --take=` |
+| `policy.list`, `policy.accept` | `policy list`, `policy accept <SLICE> <POL-x-NN> --by= --reason=` |
+| `epic.current` | `epic current <EPIC\|n> --json` (reads only) |
+| `epic.link`, `slice.link` | `epic link\|slice link <ID> --jira=KEY-1\|--no-jira` |
+| `jira.export`, `jira.keys` | `jira export [--epic=] [--state=] [--flavour=]` (never `--out`), `jira keys <staged csv> [--dry-run]` |
+| `prd.import`, `prd.list`, `prd.show`, `prd.map`, `prd.settle`, `prd.status`, `prd.apply`, `prd.draft`, `prd.confirm` | `prd ...`; a document, a map or drafted answers are staged files |
+| `slice.mock.add`, `slice.mock.remove`, `slice.mock.list` | `slice mock add <SLICE> <staged picture> [--for=] [--binding] [--note=]`, `remove`, `list` |
+
+**Files from the person** travel inside the operation's JSON body as `{"name", "content_base64"}`,
+so they pass every check a request passes (session, Host, Origin, CSRF, `application/json`); the
+host never parses a multipart body. The host checks only the name's extension and the size (a PRD
+512 KiB, a picture 5 MiB, a Jira CSV 8 MiB; a map or drafted answers 1 MiB of JSON), never the
+content. Each file is written, created exclusively and without following links, to a fresh random
+folder under `.factory/studio/uploads/` for the one engine call, under the project lock, and that
+folder is removed afterwards whatever the engine answered; anything left by a host that stopped is
+removed at the next start. The engine is given only that path; no path ever comes from the request.
+
+**Downloads**: `jira.export`'s answer gains `downloads: [{name, url, bytes}]`, added by the host.
+`GET /api/downloads/<token>/<name>` serves exactly the files that export wrote (`mach-jira.csv`,
+`README.txt`), as their bytes when the export finished, as an attachment; the token is random, and
+a new export replaces the set. A failure is the envelope, as on every route.
+
 `acceptance record` stays a terminal command; it is not on the allowlist, and neither is any name of
 the removed `slice approve`, waves, `send` or `feedback`. No operation's argument vector can start
 with one (`internal/engine/ops_test.go`).
@@ -192,7 +221,8 @@ claude -p --output-format stream-json --verbose --include-partial-messages
   interpreter, and the script through the plugin link and its real path, quoted and unquoted;
   `Edit(//…)` for that slice's spec and why only. Denied again: `slice ready`,
   reconcile, renumber, reopen, `slice move`, `slice take`, project, slice new and epic add/set, and
-  names the app never offers (`slice approve`, `wave`, `send`, `feedback`, `acceptance`).
+  names the app never offers (`slice approve`, `wave`, `send`, `feedback`, `acceptance`), and since
+  M15 `principle`, `policy`, `epic link`, `slice link`, `epic current`, `jira`, `prd` and `slice mock`.
 - The environment is `HOME USER LOGNAME PATH LANG LC_ALL TMPDIR SHELL TERM` and
   `GIT_TERMINAL_PROMPT=0`; nothing else of the host's, so no API key or token passes.
 - The working folder is the project's real path. Stderr and the raw stream are never logged or sent.

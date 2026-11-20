@@ -48,8 +48,9 @@ type Options struct {
 
 // Server is the HTTP handler for one project.
 type Server struct {
-	opts Options
-	api  *http.ServeMux
+	opts      Options
+	api       *http.ServeMux
+	downloads downloads
 }
 
 // New wires the routes.
@@ -67,6 +68,7 @@ func New(opts Options) *Server {
 		s.api.HandleFunc("GET /api/drafts/"+kind+"/{slice}", s.getDraft(kind))
 		s.api.HandleFunc("PUT /api/drafts/"+kind+"/{slice}", s.putDraft(kind))
 	}
+	s.api.HandleFunc("GET /api/downloads/{token}/{name}", s.download)
 	s.api.HandleFunc("POST /api/interview", s.interviewStart)
 	s.api.HandleFunc("GET /api/interview", s.interviewCurrent)
 	s.api.HandleFunc("GET /api/interview/history", s.interviewHistory)
@@ -239,15 +241,25 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) operation(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("op")
-	if _, ok := engine.Lookup(name); !ok {
+	op, ok := engine.Lookup(name)
+	if !ok {
 		writeEnvelope(w, http.StatusNotFound, engine.Fail(engine.KindInvalid, "There is no operation called "+strconv.Quote(truncate(name, 64))+"."))
 		return
 	}
-	body, ok := readBody(w, r, engine.MaxBodyBytes)
+	body, ok := readBody(w, r, op.BodyLimit())
 	if !ok {
 		return
 	}
 	env := s.opts.Engine.Do(r.Context(), name, body)
+	if env.OK && op.Download {
+		data, err := s.downloads.record(s.opts.Engine.Project(), env.Data)
+		if err != nil {
+			s.opts.Logger.Printf("engine %s: the written files are not offered for download", name)
+			env = engine.Fail(engine.KindInternal, "The files were written, but the host could not offer them for download.")
+		} else {
+			env.Data = data
+		}
+	}
 	s.logFailure(name, env)
 	writeEnvelope(w, statusFor(env), env)
 }

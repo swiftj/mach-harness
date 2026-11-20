@@ -1,0 +1,43 @@
+{
+  "exit_code": 1,
+  "data": {
+    "slice_id": "SLICE-001",
+    "spec": "/project/.factory/studio/draft/specs/slices/SLICE-001-invite-teammate.md",
+    "errors": [
+      "SLICE-001-invite-teammate.md:95: POL-privacy-02's concern is open: it waits for Data protection officer (@acme/privacy) to accept it (policy accept), or for the spec to change so the statement is met. A spec with an open concern is not ready. [policy-concern-open]"
+    ],
+    "warnings": [],
+    "diagnostics": [
+      {
+        "severity": "error",
+        "rule": "policy-concern-open",
+        "line": 95,
+        "section": "Policies",
+        "message": "POL-privacy-02's concern is open: it waits for Data protection officer (@acme/privacy) to accept it (policy accept), or for the spec to change so the statement is met. A spec with an open concern is not ready."
+      }
+    ],
+    "open_questions": [],
+    "intent_problems": [],
+    "counts": {
+      "invariants": 4,
+      "functional_requirements": 9,
+      "matrix_rules": 5,
+      "scenarios": 3
+    },
+    "title": "Invite a teammate by email",
+    "shipped": {
+      "commit": "8737d19d10c9862888f2392cd8f19e22a67dc202",
+      "branch": "main",
+      "rules": 0,
+      "notes": [
+        "There are no slice specs under specs/slices/ on 'main', so no rule has shipped yet."
+      ]
+    },
+    "risk": "High",
+    "prd_problems": [],
+    "ready": false,
+    "status": "interviewing"
+  },
+  "refused": null,
+  "hint": null
+}

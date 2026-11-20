@@ -1,0 +1,16 @@
+{
+  "exit_code": 0,
+  "data": {
+    "epic_id": "EPIC-009",
+    "branch": "main",
+    "commit": "e91f18f1778277b63e0926669f46c7aa9ae75a58",
+    "note": "This shows what is merged on this machine's copy of the integration branch (main at e91f18f17782), which may be behind GitHub. The slices are the authority.",
+    "epic": null,
+    "notes": [
+      "No shipped slice spec at this commit names the epic 'EPIC-009'."
+    ],
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

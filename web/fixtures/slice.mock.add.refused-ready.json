@@ -1,0 +1,9 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "SLICE-001 is approved. To change an approved slice, reopen it first.",
+  "hint": {
+    "kind": "reopen_slice",
+    "target": "SLICE-001"
+  }
+}

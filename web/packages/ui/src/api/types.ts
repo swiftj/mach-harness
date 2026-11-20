@@ -47,6 +47,8 @@ export interface Epic {
   title: string;
   status: EpicStatus;
   acceptance_criteria: string[];
+  /** The Jira issue the epic belongs to (M13 E), set with `epic.link`. Absent when there is none. */
+  tracking?: Tracking;
 }
 
 export interface WorkOrder {
@@ -61,6 +63,14 @@ export interface WorkOrder {
   open_questions: string[];
   spec_path: string | null;
   spec_sha256: string | null;
+  /** The slice's own Jira key (M13 E); without it the slice is handed over with its epic's. */
+  tracking?: Tracking;
+  /** Design mocks bound to the slice (M14 C), in SHA-256 order. Absent when there are none. */
+  mocks?: DesignMock[];
+  /** The PRD the slice was made from (M13 D): identifiers and line numbers only. */
+  source?: PrdSource;
+  /** The request the slice was started from (M8): identifiers only, never issue text. */
+  origin?: { kind: "github_issue" | (string & {}); repository: string; number: number };
 }
 
 /* ── Operation results ──────────────────────────────────────────────────── */
@@ -163,6 +173,10 @@ export interface StatusSliceRow {
   /** Whether the spec and why may be edited now. */
   editable: boolean;
   github: SliceGithub;
+  /** M13 A: present when the project has principles and the slice has a spec. */
+  principles?: SlicePrinciplesFlag;
+  /** M13 B: present only when a row of the spec's effects now names a rule no longer in force. */
+  shipped_moved?: ShippedMoved;
 }
 
 /** An approval the engine withdrew, and why, in the PM's words (status.approvals_withdrawn). */
@@ -198,6 +212,10 @@ export interface Status {
   suggested_next: string[];
   /** What to do next, in order, structured. */
   next_actions: NextAction[];
+  /** M13 A: the principles block. Present once the project exists. Its `next` is the sentence the app shows (no next_actions kind). */
+  principles?: PrinciplesBlock;
+  /** M13 D: one summary row per imported PRD; absent when none was imported. */
+  prds?: PrdSummary[];
 }
 
 /**
@@ -289,6 +307,8 @@ export interface RefreshGithub {
   epic_urls: Record<string, string>;
   slices: RefreshGithubSlice[];
   order: OrderRow[];
+  /** M13 A: where the principles are published, as this refresh read them. */
+  principles?: PrinciplesPublished;
 }
 
 export interface Refresh {
@@ -298,6 +318,10 @@ export interface Refresh {
   problem: string | null;
   github: RefreshGithub;
   factory_authorized: false;
+  /** M13 B: slices whose effects now name a rule no longer in force, by slice. Absent when none. */
+  shipped_moved?: Record<string, ShippedMoved>;
+  /** M13 A: another product manager's newer principles, taken because nothing here was unpublished. */
+  principles_taken?: { revision: number; approved_by?: string | null; [key: string]: unknown };
 }
 
 export interface SpecCounts {
@@ -328,10 +352,15 @@ export interface SliceCheck {
   diagnostics?: CheckDiagnostic[];
   open_questions: string[];
   intent_problems: string[];
+  /** M13 D: for a slice made from a PRD, drafted answers not settled and a why that does not name the PRD. Empty otherwise. */
+  prd_problems?: string[];
+  /** M13 B: the shipped rules the spec was checked against. Absent without a spec. */
+  shipped?: ShippedChecked;
   /** Absent when there is no spec yet. */
   counts?: SpecCounts;
-  title: string | null;
-  risk: RiskTier | null;
+  /** Absent, with `risk`, when the slice has no spec yet (the engine leaves both out). */
+  title?: string | null;
+  risk?: RiskTier | null;
   ready: boolean;
   /** Present on `slice check`; absent on the copy inside `slice resume`. */
   status?: SliceStatus;
@@ -363,6 +392,16 @@ export interface SliceResume extends SlicePaths {
   ids: SliceIds;
   /** The builders' question, fenced as data for the interviewer; absent when there is none. */
   builders_question?: { issue: number; url: string | null; fenced: string; sha256: string; note: string };
+  /** M13 A: the active principles; absent when the project has none. */
+  principles?: { active: Array<Pick<Principle, "id" | "title" | "statement" | "reason" | "revision">>; note: string };
+  /** M14 A: the policy packs, fenced; absent when the project has none. */
+  policies?: PoliciesForInterview;
+  /** M13 B: the shipped rules in force, fenced as data for the interview. */
+  shipped_rules?: ShippedRulesFenced;
+  /** M13 D: for a slice made from a PRD, its cited lines fenced, and its drafted answers. */
+  prd?: PrdForSlice;
+  /** M8 and M14 D: the request the slice was started from, fenced, with the questions its author left. */
+  request?: RequestForSlice;
 }
 
 export interface SlicePause {
@@ -394,6 +433,8 @@ export interface SliceReadyOnGithub extends SliceReadyCommon {
   project_issue: number;
   /** The GitHub account the approval was recorded for. */
   approved_by: string;
+  /** M14 C: the slice's design mocks wait in the workspace for the product manager to commit them; absent without mocks. */
+  mocks?: MocksToCommit | null;
 }
 
 /** `slice ready` when GitHub could not be used here: the slice was written to the ready folder. */
@@ -547,6 +588,12 @@ export interface SpecModel {
   assumptions: string[];
   accepted_defaults: Array<{ default: string; requirements: string[] }>;
   open_questions: Array<{ question: string; follow_up: string | null }>;
+  /** M13 B: the spec's effects on shipped behaviour; `[]` for "None."; absent without the section. */
+  effects?: EffectRow[];
+  /** M13 A: how the spec answers each principle; absent without the section. */
+  principles?: PrincipleAnswer[];
+  /** M14 A: how the spec answers each policy pack, with any concern; absent without the section. */
+  policies?: PolicyAnswer[];
 }
 
 export interface SpecFinding {
@@ -562,7 +609,7 @@ export interface WhySection {
   heading: string;
   text: string;
   /** The bold `- **Name:** value` lines of the section. */
-  fields: Record<string, string>;
+  fields: Record<string, string | undefined>;
 }
 
 /** Also called WhyDocument. */
@@ -632,6 +679,43 @@ export interface Operations {
   "slice.move": { args: { slice_id: string; before?: string; after?: string; first?: true; last?: true }; result: SliceMove };
   "slice.take": { args: { issue: number } | { slice_id: string }; result: SliceTake };
   reconcile: { args: { slice_id: string; take: "mine" | "theirs" }; result: Reconcile };
+
+  /* Requests from GitHub issues (M8), promoted from features/inbox/requests/api.ts in M15. */
+  "request.list": { args: Record<string, never>; result: { requests: RequestsBlock; note: string; factory_authorized?: false } };
+  "request.show": { args: { number: number }; result: { request: RequestShown; note: string; factory_authorized?: false } };
+  "request.pick": { args: { number: number; epic: string; title: string; also?: boolean }; result: RequestPickResult };
+  "request.link": { args: { number: number; slice_id: string }; result: { linked: true; request: number; note: string } };
+  "request.met": { args: { number: number }; result: { met: true; request: number; approved_slices: string[]; closed: boolean; note: string } };
+
+  /* M15: what M13 and M14 added. Argument shapes are the host's (apps/studio/internal/engine/ops_product.go). */
+  "principle.list": { args: Record<string, never>; result: PrincipleList };
+  "principle.add": { args: { title: string; statement: string; reason: string }; result: PrincipleChanged };
+  "principle.set": { args: { principle_id: string; title?: string; statement?: string; reason?: string }; result: PrincipleChanged };
+  "principle.retire": { args: { principle_id: string }; result: PrincipleChanged };
+  "principle.publish": { args: Record<string, never>; result: PrinciplesPublishResult };
+  "reconcile.principles": { args: { take: "mine" | "theirs" }; result: ReconcilePrinciples };
+  "policy.list": { args: Record<string, never>; result: PolicyList };
+  "policy.accept": { args: { slice_id: string; policy_id: string; by: string; reason: string }; result: PolicyAccept };
+  "epic.current": { args: { epic_id: string } | { issue: number }; result: EpicCurrent };
+  "epic.link": { args: { epic_id: string; jira: string } | { epic_id: string; remove: true }; result: EpicLink };
+  "slice.link": { args: { slice_id: string; jira: string } | { slice_id: string; remove: true }; result: SliceLink };
+  "jira.export": { args: { epic?: string; state?: "ready" | "all"; flavour?: "cloud" | "data-center" }; result: JiraExport };
+  "jira.keys": { args: { file: UploadFile; dry_run?: boolean }; result: JiraKeys };
+  "prd.import": { args: { file: UploadFile }; result: PrdImport };
+  "prd.list": { args: Record<string, never>; result: { prds: PrdSummary[]; factory_authorized: false } };
+  "prd.show": { args: { prd_id: string; lines?: string }; result: PrdShow };
+  "prd.map": { args: { prd_id: string; map: PrdMapInput }; result: PrdStatus & { recorded: true; settlements_dropped: number[] } };
+  "prd.settle": {
+    args: { prd_id: string; section: number; as: "slice"; slice: string; reason?: string } | { prd_id: string; section: number; as: "out-of-scope" | "later"; reason?: string };
+    result: PrdStatus & { settled: { section: number } & PrdSettlement };
+  };
+  "prd.status": { args: { prd_id: string }; result: PrdStatus };
+  "prd.apply": { args: { prd_id: string }; result: PrdApply };
+  "prd.draft": { args: { slice_id: string; answers: PrdAnswersInput }; result: PrdAnswersResult & { recorded: true; cleared_earlier_confirmations: boolean } };
+  "prd.confirm": { args: { slice_id: string; accept?: "all" | number[]; discuss?: number[] }; result: PrdAnswersResult & { confirmed: true } };
+  "slice.mock.add": { args: { slice_id: string; file: UploadFile; for?: string; binding?: boolean; note?: string }; result: MockAdd };
+  "slice.mock.remove": { args: { slice_id: string; mock: string }; result: MockRemove };
+  "slice.mock.list": { args: { slice_id: string }; result: MockList };
 }
 
 export type OperationName = keyof Operations;
@@ -642,10 +726,688 @@ export type OperationResult<K extends OperationName> = Operations[K]["result"];
  * Operations that change nothing in the workspace. Every other operation, and every draft write,
  * may change what `status` reports, so the client announces it (MachClient.onChange).
  */
-export const readOnlyOperations: ReadonlySet<OperationName> = new Set<OperationName>(["where", "status", "validate", "slice.show"]);
+export const readOnlyOperations: ReadonlySet<OperationName> = new Set<OperationName>([
+  "where",
+  "status",
+  "validate",
+  "slice.show",
+  "request.list",
+  "request.show",
+  "principle.list",
+  "policy.list",
+  "epic.current",
+  "prd.list",
+  "prd.show",
+  "prd.status",
+  "slice.mock.list",
+]);
 
-/** Operations that record a person's decision. The UI confirms each in a dialog before calling it. */
-export const personalActs: ReadonlySet<OperationName> = new Set<OperationName>(["slice.ready", "slice.reopen", "reconcile", "slice.renumber", "epic.renumber", "slice.take"]);
+/**
+ * Operations that record a person's decision. The UI confirms each in a dialog before calling it,
+ * as "Mark ready to build" is confirmed. The engine does each only "on the product manager's word"
+ * (or, for policy.accept, on the policy owner's), and the guided interview can run none of them.
+ */
+export const personalActs: ReadonlySet<OperationName> = new Set<OperationName>([
+  "slice.ready",
+  "slice.reopen",
+  "reconcile",
+  "slice.renumber",
+  "epic.renumber",
+  "slice.take",
+  "request.pick",
+  "request.link",
+  "request.met",
+  "principle.add",
+  "principle.set",
+  "principle.retire",
+  "principle.publish",
+  "reconcile.principles",
+  "policy.accept",
+  "epic.link",
+  "slice.link",
+  "jira.export",
+  "jira.keys",
+  "prd.settle",
+  "prd.apply",
+  "prd.confirm",
+  "slice.mock.add",
+  "slice.mock.remove",
+]);
+
+/* ── M15: types for what M13 and M14 added (web/fixtures/product_memory.py holds real samples) ── */
+
+/** A file the person chose, sent inside the JSON body. Build it with `uploadFile()` from @mach/ui/api. */
+export interface UploadFile {
+  /** The file's own name; the host keeps only a plain base name and its extension. */
+  name: string;
+  content_base64: string;
+}
+
+/** The host's limits, which it enforces before the engine sees anything (ops_product.go). */
+export const uploadLimits = {
+  prd: { maxBytes: 512 * 1024, extensions: [".md", ".markdown", ".txt", ".text"] },
+  mock: { maxBytes: 5 * 1024 * 1024, extensions: [".png", ".jpg", ".jpeg"] },
+  jiraKeys: { maxBytes: 8 * 1024 * 1024, extensions: [".csv"] },
+  /** A PRD map or a set of drafted answers, as JSON. */
+  json: { maxBytes: 1024 * 1024 },
+} as const;
+
+export interface Tracking {
+  /** A Jira key such as ABC-123. */
+  jira: string;
+}
+
+/* Principles (M13 A) */
+
+export interface Principle {
+  /** PP-01. */
+  id: string;
+  title: string;
+  /** One sentence with MUST, MUST NOT, SHALL, SHALL NOT or REQUIRED. Shown lowered for reading. */
+  statement: string;
+  reason: string;
+  status: "active" | "retired";
+  /** Counts changes to the statement; every spec quotes it with its revision. */
+  revision: number;
+}
+
+/** Where the principles are published and what GitHub held at the last read. */
+export interface PrinciplesPublished {
+  saved: "github" | "folder" | null;
+  unfinished: boolean;
+  /** The published version (of the set). */
+  revision: number | null;
+  sha256: string | null;
+  approved_by: string | null;
+  published_at: string | null;
+  issue: number | null;
+  url: string | null;
+  github: { revision: number | null; approved: boolean | null; approved_by: string | null; read_at: string | null } | null;
+  /** Someone else published a newer version: choose with reconcile.principles. */
+  newer_elsewhere: boolean;
+  changed_on_github: boolean;
+}
+
+/** `status.principles`, and the same fields in `principle.list`. */
+export interface PrinciplesBlock {
+  active: string[];
+  retired: string[];
+  unpublished_changes: boolean;
+  published: PrinciplesPublished;
+  /** Slices answered under an older revision of a principle, or leaving an active one unanswered. */
+  slices_answered_under_older: string[];
+  /** The one sentence to show about what to do next, or null. */
+  next: string | null;
+}
+
+export interface PrincipleList extends PrinciplesBlock {
+  principles: Principle[];
+  note: string;
+  factory_authorized: false;
+}
+
+/** Per slice in status: how its spec answers the principles now. */
+export interface SlicePrinciplesFlag {
+  answered_under_older: boolean;
+  older: string[];
+  unanswered: string[];
+  retired: string[];
+  note: string | null;
+}
+
+export interface PrincipleChanged {
+  principle: Principle;
+  /** The statement check's warnings, in the engine's words. Absent for retire. */
+  warnings?: string[];
+  published: false;
+  factory_authorized: false;
+  note: string;
+}
+
+export type PrinciplesPublishResult =
+  | { published: true; saved_to: "github"; revision: number; sha256: string; issue: number; url: string; approved_by: string; active: number; factory_authorized: false; note: string }
+  | { published: true; saved_to: "folder"; revision: number; sha256: string; folder: string; files: string[]; ways_on: string[]; active: number; factory_authorized: false; note: string };
+
+export interface ReconcilePrinciples {
+  reconciled: "principles";
+  took: "mine" | "theirs";
+  github_version: number;
+  note: string;
+  factory_authorized: false;
+}
+
+/** A spec's `## Principles` row, as the validator exports it. */
+export interface PrincipleAnswer {
+  id: string;
+  revision: number;
+  statement: string;
+  answer: "applies" | "does_not_apply" | "exception";
+  /** The INV, FR and AC IDs that uphold it, for "applies". */
+  upheld_by: string[];
+  /** The product manager's reason, for "does not apply" and "exception". */
+  reason: string | null;
+}
+
+/* Policy packs (M14 A) */
+
+export interface PolicyPack {
+  /** POL-privacy. */
+  id: string;
+  pack: string;
+  file: string;
+  title: string | null;
+  /** The pack's owner, a role or team with an optional GitHub handle: the one who may accept a concern. */
+  owner: string | null;
+  owner_handle: string | null;
+  status: "active" | "retired" | (string & {});
+  applies_to: string[];
+  digest: string;
+  /** The first 12 characters of the digest, as specs quote it. */
+  short: string;
+  binding: boolean;
+  problems: string[];
+  /** How many statements it holds. */
+  statements: number;
+}
+
+export interface PolicyList {
+  reads_only: true;
+  dir: string;
+  commit: string | null;
+  packs: PolicyPack[];
+  /** Packs that cannot be read: every spec check fails until an engineer fixes them. */
+  problems: Array<{ pack?: string; file?: string; problem?: string; [key: string]: unknown }>;
+  /** Slices answered under an older version of a pack, by slice. */
+  slices_answered_under_older: Record<string, { changes: unknown[]; note: string }>;
+  factory_authorized: false;
+  note: string;
+}
+
+export interface PoliciesForInterview {
+  dir: string;
+  commit: string | null;
+  count: number;
+  packs: Array<{ id: string; title: string | null; owner: string | null; applies_to: string[]; short: string }>;
+  /** The packs' text, fenced as data. Show as plain text, never as markup. */
+  text: string;
+  problems: unknown[];
+  note: string;
+}
+
+/** A spec's `## Policies` row: Followed, or Concerns with each concern and its resolution. */
+export interface PolicyAnswer {
+  pack: string;
+  sha256: string;
+  answer: "followed" | "concerns";
+  concerns?: PolicyConcern[];
+}
+
+export interface PolicyConcern {
+  /** POL-privacy-02. */
+  statement_id: string;
+  statement: string;
+  why: string;
+  owner: string;
+  /** "open" until the owner accepts it (policy.accept) or the spec changes so the statement is met. */
+  resolution: "open" | "accepted" | "spec_changed";
+  /** For an acceptance: who, when (YYYY-MM-DD) and their words, quoted. */
+  by?: string;
+  on?: string;
+  words?: string;
+}
+
+export interface PolicyAccept {
+  accepted: string;
+  slice_id: string;
+  by: string;
+  /** Concerns still open in the spec. */
+  open_left: string[];
+  factory_authorized: false;
+  note: string;
+}
+
+/* Effects on shipped behaviour (M13 B) and how an epic works today (M13 C) */
+
+export interface EffectRow {
+  /** SLICE-003/FR-02. */
+  shipped_rule: string;
+  slice_id: string;
+  rule_id: string;
+  effect: "kept" | "changed" | "replaced" | "retired";
+  /** This slice's scenario (kept) or rule (changed, replaced); null when retired. */
+  in_slice: string | null;
+  note: string | null;
+}
+
+export interface ShippedChecked {
+  commit: string | null;
+  branch: string | null;
+  /** How many shipped rules the spec was checked against. */
+  rules: number;
+  /** Why none could be read, in plain words, when that is so. */
+  notes: string[];
+}
+
+export interface ShippedRulesFenced {
+  commit: string | null;
+  branch: string | null;
+  count: number;
+  /** The rules in force, fenced as data: show as plain text. */
+  fenced: string;
+  sha256: string;
+  notes: string[];
+  note: string;
+  cut?: boolean;
+}
+
+export interface ShippedMoved {
+  /** The commit the spec was checked at, and the one it is compared with now. */
+  checked_at: string;
+  now: string;
+  problems: Array<{ line: number | null; code: "effects-not-in-force" | "effects-not-shipped" | (string & {}); message: string }>;
+  note: string;
+}
+
+export interface ShippedRule {
+  /** SLICE-001/FR-01. */
+  rule: string;
+  slice_id: string;
+  id: string;
+  kind: "invariant" | "requirement" | "decision rule" | "scenario" | (string & {});
+  text: string;
+  epic_id: string | null;
+  confirmed_by?: Array<{ slice_id: string; scenario: string; note: string | null }>;
+  takes_the_place_of?: Array<{ effect: EffectRow["effect"]; rule: string; epic_id: string | null; note: string | null }>;
+  lineage?: unknown[];
+  /** For a rule no longer in force: what replaced or retired it, and what holds now. */
+  superseded_by?: Array<{ effect: EffectRow["effect"]; by: string | null; slice_id: string; epic_id: string | null; note: string | null }>;
+  now?: Array<{ rule: string; slice_id: string; epic_id: string | null; text: string }>;
+}
+
+export interface EpicView {
+  epic_id: string;
+  title: string | null;
+  issue: number | null;
+  slices: Array<{ slice_id: string; title: string | null; issue: number | null; path: string; effects: "declared" | "none" | "missing" | (string & {}); notes: string[] }>;
+  in_force: ShippedRule[];
+  /** Shipped before slices declared their effects, so not reconciled: shown, with that said. */
+  not_yet_reconciled: ShippedRule[];
+  no_longer_in_force: ShippedRule[];
+  not_applied: unknown[];
+  conflicts: unknown[];
+}
+
+/** `epic current`: the epic as merged on this machine's copy of the integration branch. Changes nothing. */
+export interface EpicCurrent {
+  epic_id: string | null;
+  branch: string;
+  commit: string;
+  /** Says the view may be behind GitHub and that the slices are the authority. Always show it. */
+  note: string;
+  /** Null when no shipped slice names the epic. */
+  epic: EpicView | null;
+  notes: string[];
+  factory_authorized: false;
+}
+
+/* The Jira key, export and keys back (M13 E) */
+
+export interface EpicLink {
+  epic: Epic;
+  /** Slices already marked ready that carry the new key only once each is reopened and marked ready again. */
+  already_ready: string[];
+  factory_authorized: false;
+  note: string;
+}
+
+export interface SliceLink {
+  slice: WorkOrder;
+  /** The key the slice is handed over with: its own, else its epic's; null when none. */
+  jira: string | null;
+  factory_authorized: false;
+  note: string;
+}
+
+/** One file the host offers after an export: `url` is `/api/downloads/<token>/<name>`, valid until the next export. */
+export interface DownloadOffer {
+  name: "mach-jira.csv" | "README.txt" | (string & {});
+  url: string;
+  bytes: number;
+}
+
+export interface JiraExport {
+  /** Where the engine wrote, on this computer. The app offers `downloads` instead of showing these. */
+  folder: string;
+  file: string;
+  readme: string;
+  flavour: "cloud" | "data-center";
+  state: "ready" | "all";
+  epic: string | null;
+  counts: { epics: number; stories: number };
+  /** The MACH IDs in the file. */
+  exported: string[];
+  left_out: Array<{ id: string; reason: string; jira?: string }>;
+  cut: string[];
+  factory_authorized: false;
+  note: string;
+  /** Added by the host, never by the engine. */
+  downloads: DownloadOffer[];
+}
+
+export interface JiraKeys {
+  dry_run: boolean;
+  rows_read: number;
+  linked: Array<{ id: string; jira: string }>;
+  already_linked: Array<{ id: string; jira: string }>;
+  needs_reopening: Array<{ id: string; jira: string; reason: string }>;
+  /** Rows that name no MACH item, or several, or one this workspace does not have. */
+  unmatched: Array<{ row?: number; rows?: number[]; id?: string; reason: string }>;
+  refused: Array<{ row?: number; rows?: number[]; id?: string; reason: string }>;
+  epics_with_ready_slices: Record<string, string[]>;
+  factory_authorized: false;
+  note: string;
+}
+
+/* The PRD on-ramp (M13 D) */
+
+export interface PrdSource {
+  kind: "prd";
+  prd_id: string;
+  sha256: string;
+  lines: Array<[number, number]>;
+  map_slice: string;
+}
+
+export interface PrdSummary {
+  prd_id: string;
+  /** The document's file name as imported. */
+  name: string;
+  format: "markdown" | "text";
+  sha256: string;
+  line_count: number;
+  sections: number;
+  /** False when the copy in the workspace no longer matches what was imported. */
+  document_matches: boolean;
+  mapped: boolean;
+  slices_mapped?: number;
+  not_covered?: number[];
+  applied?: string[];
+}
+
+export interface PrdSection {
+  n: number;
+  title: string;
+  level: number;
+  start: number;
+  end: number;
+  /** A heading with nothing under it: needs no coverage. */
+  heading_only: boolean;
+}
+
+export interface PrdImport {
+  imported: boolean;
+  already_imported?: true;
+  prd: PrdSummary;
+  sections?: PrdSection[];
+  factory_authorized: false;
+  note: string;
+}
+
+export interface PrdShow {
+  prd: PrdSummary;
+  sections: PrdSection[];
+  /** The numbered text, fenced as data, bounded and redacted. Show as plain text. */
+  fenced: string;
+  sha256: string;
+  lines: string;
+  truncated: boolean;
+  note: string;
+  factory_authorized: false;
+}
+
+export interface PrdSettlement {
+  as: "slice" | "out-of-scope" | "later";
+  slice?: string;
+  at: string;
+  reason?: string;
+}
+
+export interface PrdCoverageRow {
+  n: number;
+  title: string;
+  lines: string;
+  cited_by: string[];
+  state: "covered" | "not_covered" | "settled" | "heading_only";
+  settled?: PrdSettlement;
+}
+
+export interface PrdMapSlice {
+  key: string;
+  title: string;
+  scope: string;
+  /** A new epic's key before apply, its EPIC ID after. */
+  epic: string;
+  depends_on: string[];
+  cites: string;
+  lines: string;
+  slice_id: string | null;
+  status?: SliceStatus;
+  answers?: { pending: number[]; accepted: number[]; discuss: number[] } | null;
+}
+
+export interface PrdStatus {
+  prd: PrdSummary;
+  factory_authorized: false;
+  /** Null before a map is recorded; then `sections` lists the sections. */
+  map: { revision: number; epics: Array<{ key: string; title: string; criteria: string[] }>; slices: PrdMapSlice[]; applied: boolean } | null;
+  sections?: Array<{ n: number; title: string; lines: string }>;
+  coverage?: PrdCoverageRow[];
+  /** Sections no slice cites and the product manager has not settled. */
+  not_covered?: number[];
+  can_apply?: boolean;
+  note: string;
+}
+
+export interface PrdApply extends PrdStatus {
+  applied: true;
+  made: { epics: string[]; slices: string[] };
+  kept: { epics: string[]; slices: string[] };
+  missing: string[];
+}
+
+/** The map `prd.map` records, as the planning model proposes it (skills/product-studio/references/prd-onramp.md). */
+export interface PrdMapInput {
+  epics: Array<{ key: string; title: string; criteria: string[] }>;
+  slices: Array<{ key: string; title: string; scope: string; epic: string; depends_on: string[]; cites: string[] }>;
+}
+
+/** Answers drafted from a slice's cited lines, as `prd.draft` records them. */
+export interface PrdAnswersInput {
+  answers: Array<{ question: string; answer?: string; kind?: "drafted" | "not_settled" | "contradiction"; cites?: string[] }>;
+}
+
+export interface PrdAnswer {
+  n: number;
+  kind: "drafted" | "not_settled" | "contradiction";
+  kind_words: string;
+  question: string;
+  answer: string | null;
+  cites: string;
+  state: "pending" | "accepted" | "discuss";
+}
+
+export interface PrdAnswersResult {
+  slice_id: string;
+  answers: PrdAnswer[];
+  pending: number[];
+  accepted: number[];
+  discuss: number[];
+  factory_authorized: false;
+  note: string;
+}
+
+/** `slice resume`'s `prd` field for a slice made from a PRD. */
+export interface PrdForSlice {
+  prd_id: string;
+  sha256: string;
+  map_slice: string;
+  lines: string;
+  document_matches: boolean;
+  fenced?: string;
+  truncated?: boolean;
+  scope?: string;
+  answers?: { input_file: string; recorded: PrdAnswer[]; pending: number[]; accepted: number[]; discuss: number[] };
+  /** The exact header line the why must carry. */
+  why_line?: string;
+  note: string;
+  kept_here?: boolean;
+}
+
+/* Design mocks (M14 C) */
+
+export interface DesignMock {
+  sha256: string;
+  format: "png" | "jpeg";
+  width: number;
+  height: number;
+  bytes: number;
+  /** The scenario it shows (AC-NN), or null for the slice as a whole. */
+  for: string | null;
+  /** The built screen must match it for that scenario. */
+  binding: boolean;
+  note: string | null;
+}
+
+export interface MockAdd {
+  slice: WorkOrder;
+  mock: DesignMock;
+  factory_authorized: false;
+  note: string;
+}
+
+export interface MockRemove {
+  slice: WorkOrder;
+  removed: DesignMock;
+  factory_authorized: false;
+  note: string;
+}
+
+export interface MockList {
+  slice_id: string;
+  /** `problem` is null when the picture is in the workspace unchanged and its scenario is still in the spec. */
+  mocks: Array<DesignMock & { file: string; problem: string | null }>;
+  /** At most this many per slice. */
+  limit: number;
+  factory_authorized: false;
+}
+
+/** After `slice.ready` on GitHub: the pictures wait in the workspace for the product manager to commit them. */
+export interface MocksToCommit {
+  folder: string;
+  /** Where in the repository the pictures go. */
+  commit_as: string;
+  files: string[];
+  /** The builders hold the slice until the pictures are there. */
+  factory_waits: boolean;
+  note: string;
+}
+
+/* Requests (M8), with the idea template (M14 D) */
+
+export type RequestState = "accepted" | "not_accepted" | `handled_by_${string}`;
+
+export interface RequestItem {
+  number: number;
+  /** Built by the engine from the repository and number; never taken from issue text. */
+  url: string | null;
+  /** A bounded, redacted one-line title written by someone outside the workspace: data only. */
+  title: string | null;
+  truncated: boolean;
+  state: RequestState;
+  not_accepted_reason: string | null;
+  labelled_by: string | null;
+  picked_up_by: string[];
+  picked_up_here: boolean;
+  slices: string[];
+  changed_since_pickup: boolean;
+  pending_writes: number;
+  text_is_data?: string;
+  /** M14 D: filed in MACH's idea template, so `request.show` gives its five parts apart. */
+  idea_template?: boolean;
+}
+
+export interface RequestsBlock {
+  /** Null when the project has no GitHub remote: the app then shows nothing about requests. */
+  repository: string | null;
+  refreshed: boolean;
+  refreshed_at?: string | null;
+  problem: string | null;
+  truncated: boolean;
+  truncated_note?: string | null;
+  items: RequestItem[];
+  updates_waiting?: number;
+  updates_waiting_note?: string | null;
+  could_not_update?: { number: number; update: string; why: string; reason: string | null }[];
+  could_not_update_note?: string | null;
+}
+
+/** One part of an idea filed in the template, fenced as data. */
+export interface IdeaPart {
+  part: "problem" | "outcome" | "affected" | "constraints" | "open_questions" | (string & {});
+  /** The template's own heading ("Problem", "Proposed outcome", ...). */
+  heading: string;
+  fenced: string;
+  sha256: string;
+}
+
+export interface IdeaParts {
+  parts: IdeaPart[];
+  /** How many open questions the author wrote. */
+  open_questions: number;
+  note: string;
+}
+
+/** `request.show`: no plain title or body; the text only fenced, and none for a request that does not count. */
+export type RequestShown = Omit<RequestItem, "title"> & {
+  fenced?: string;
+  sha256?: string;
+  text_shown: boolean;
+  text_note?: string;
+  /** M14 D: present only for a request filed in the idea template. */
+  idea?: IdeaParts;
+};
+
+/** The open questions the author of an idea left, fenced, to ask first in the interview. */
+export interface QuestionsToAskFirst {
+  count: number;
+  fenced: string;
+  sha256: string;
+  note: string;
+}
+
+/** The request a slice was started from, as `request.pick` and `slice resume` carry it. */
+export interface RequestForSlice {
+  number: number;
+  repository: string;
+  url: string | null;
+  kept_here: boolean;
+  fenced?: string;
+  sha256?: string;
+  changed_since_pickup: boolean;
+  note: string;
+  /** M14 D: present only for a request filed in the idea template. */
+  questions_to_ask_first?: QuestionsToAskFirst;
+}
+
+export interface RequestPickResult {
+  slice: WorkOrder;
+  picked: true;
+  request?: RequestForSlice;
+  github_updates?: { made?: number; waiting?: number; note: string | null } | null;
+  used_cached_request?: string | null;
+  note: string;
+  factory_authorized?: false;
+}
 
 /* ── Host endpoints (contract section 4) ────────────────────────────────── */
 

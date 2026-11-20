@@ -1,0 +1,59 @@
+{
+  "exit_code": 0,
+  "data": {
+    "recorded": true,
+    "slice_id": "SLICE-001",
+    "answers": [
+      {
+        "n": 1,
+        "kind": "drafted",
+        "kind_words": "drafted from the PRD",
+        "question": "Is this slice for a workspace admin inviting one teammate by email?",
+        "answer": "Yes.",
+        "cites": "7-7",
+        "state": "pending"
+      },
+      {
+        "n": 2,
+        "kind": "drafted",
+        "kind_words": "drafted from the PRD",
+        "question": "Should an invitation expire after 7 days?",
+        "answer": "Yes, after 7 days.",
+        "cites": "8-8",
+        "state": "pending"
+      },
+      {
+        "n": 3,
+        "kind": "contradiction",
+        "kind_words": "the PRD contradicts itself",
+        "question": "How long does an invitation last?",
+        "answer": null,
+        "cites": "8-8, 14-14",
+        "state": "discuss"
+      },
+      {
+        "n": 4,
+        "kind": "not_settled",
+        "kind_words": "not settled by the PRD",
+        "question": "What message does a non-admin see?",
+        "answer": null,
+        "cites": "",
+        "state": "discuss"
+      }
+    ],
+    "pending": [
+      1,
+      2
+    ],
+    "accepted": [],
+    "discuss": [
+      3,
+      4
+    ],
+    "cleared_earlier_confirmations": false,
+    "factory_authorized": false,
+    "note": "2 drafted answers wait for the product manager. 2 points are asked in the interview whatever happens: the PRD does not settle them or contradicts itself. Nothing counts as settled until the product manager accepts it or answers it."
+  },
+  "refused": null,
+  "hint": null
+}

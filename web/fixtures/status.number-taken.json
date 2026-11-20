@@ -19,7 +19,7 @@
         "artifact": "SLICE-004",
         "kind": "slice",
         "reason": "You reopened it to change it.",
-        "at": "2026-11-18T16:56:06Z"
+        "at": "2026-11-20T20:13:02Z"
       }
     ],
     "epics": [
@@ -222,6 +222,31 @@
         }
       }
     ],
+    "principles": {
+      "active": [],
+      "retired": [],
+      "unpublished_changes": false,
+      "published": {
+        "saved": null,
+        "unfinished": false,
+        "revision": null,
+        "sha256": null,
+        "approved_by": null,
+        "published_at": null,
+        "issue": 1,
+        "url": "https://github.com/acme/team-space/issues/1",
+        "github": {
+          "revision": null,
+          "approved": null,
+          "approved_by": null,
+          "read_at": "2026-11-20T20:13:20Z"
+        },
+        "newer_elsewhere": false,
+        "changed_on_github": false
+      },
+      "slices_answered_under_older": [],
+      "next": null
+    },
     "saved": {
       "everything_saved": true,
       "note": "Everything is saved.",
@@ -275,7 +300,7 @@
           "SLICE-003",
           "SLICE-004"
         ],
-        "github_read_at": "2026-11-18T16:56:07Z",
+        "github_read_at": "2026-11-20T20:13:20Z",
         "matches_github": true,
         "unfinished": false,
         "taken_from_github": false,
@@ -286,10 +311,10 @@
     "github": {
       "repository": "acme/team-space",
       "form": "sub_issues",
-      "last_read": "2026-11-18T16:56:07Z"
+      "last_read": "2026-11-20T20:13:19Z"
     },
     "current_slice": "SLICE-005",
-    "last_refreshed": "2026-11-18T16:56:07Z",
+    "last_refreshed": "2026-11-20T20:13:20Z",
     "structurally_valid": true,
     "structural_errors": [],
     "factory_authorized": false,

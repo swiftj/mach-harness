@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "SLICE-001-invite-teammate.md:95: POL-privacy-02's concern is open: it waits for Data protection officer (@acme/privacy) to accept it (policy accept), or for the spec to change so the statement is met. A spec with an open concern is not ready. [policy-concern-open]",
+  "hint": null
+}

@@ -1,0 +1,28 @@
+{
+  "exit_code": 0,
+  "data": {
+    "principles": [],
+    "active": [],
+    "retired": [],
+    "unpublished_changes": false,
+    "published": {
+      "saved": null,
+      "unfinished": false,
+      "revision": null,
+      "sha256": null,
+      "approved_by": null,
+      "published_at": null,
+      "issue": null,
+      "url": null,
+      "github": null,
+      "newer_elsewhere": false,
+      "changed_on_github": false
+    },
+    "slices_answered_under_older": [],
+    "next": null,
+    "note": "A principle is one sentence that must hold in every slice. Each slice's spec answers every active one; a principle added or changed binds slices marked ready afterwards.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

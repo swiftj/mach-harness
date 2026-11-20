@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "PP-02 cannot be saved:\n  PP-02 has no uppercase RFC 2119 keyword. Use MUST, MUST NOT, SHALL, SHALL NOT, or REQUIRED. [inv-keyword]",
+  "hint": null
+}

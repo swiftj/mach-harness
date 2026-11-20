@@ -6,9 +6,17 @@ import { feature as spec } from "./spec";
 import { feature as interview } from "./interview";
 import { feature as inbox } from "./inbox";
 import { feature as activity } from "./activity";
+// M15: the screens for what M13 and M14 added (docs/mach-next/M15_STUDIO_FOUNDATION.md).
+import { feature as principles } from "./principles";
+import { feature as policies } from "./policies";
+import { feature as effects } from "./effects";
+import { feature as epicToday } from "./epic-today";
+import { feature as prd } from "./prd";
+import { feature as jira } from "./jira";
+import { feature as mocks } from "./mocks";
 
 /** Every feature of the app. Add a folder under features/ and list it here; nothing else needs to change. */
-export const features: Feature[] = [home, vision, roadmap, spec, interview, inbox, activity];
+export const features: Feature[] = [home, vision, roadmap, spec, interview, inbox, activity, principles, policies, effects, epicToday, prd, jira, mocks];
 
 export const routes = features.flatMap((feature) => feature.routes);
 

@@ -23,6 +23,20 @@ type Operation struct {
 	Network bool
 	// ReadOnly: the engine changes nothing on disk. Every call is still serialised (see Engine).
 	ReadOnly bool
+	// MaxBody is the largest JSON body the operation accepts; zero means MaxBodyBytes. Only the
+	// operations that carry a file (FileArgs) need more.
+	MaxBody int64
+	// Download: the engine writes files the person must then get (jira export). The server records
+	// exactly those files after a successful call and serves only them (server/downloads.go).
+	Download bool
+}
+
+// BodyLimit is the largest request body this operation accepts.
+func (op Operation) BodyLimit() int64 {
+	if op.MaxBody > 0 {
+		return op.MaxBody
+	}
+	return MaxBodyBytes
 }
 
 // ---- argument structs, named after the engine's own options in snake case ----

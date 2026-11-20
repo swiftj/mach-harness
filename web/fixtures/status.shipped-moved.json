@@ -1,0 +1,189 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Teams work together.",
+      "outcomes": [
+        "Teams can work together"
+      ],
+      "issue": null,
+      "url": null
+    },
+    "approvals_withdrawn": [],
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "Team membership",
+        "status": "open",
+        "revision": 1,
+        "acceptance_criteria": [
+          "Only invited people can join"
+        ],
+        "issue": null,
+        "url": null,
+        "counts": {
+          "total": 2,
+          "by_progress": {
+            "interviewing": 1,
+            "ready_for_approval": 1
+          },
+          "ready_or_further": 0,
+          "ready_or_further_means": "marked ready to build, being built, or shipped"
+        }
+      }
+    ],
+    "slices": [
+      {
+        "shipped_moved": {
+          "checked_at": "e91f18f1778277b63e0926669f46c7aa9ae75a58",
+          "now": "df8e1104616c3a9c425ba974712ae6e7a4c7709a",
+          "problems": [
+            {
+              "line": 87,
+              "code": "effects-not-in-force",
+              "message": "SLICE-002/FR-01 is no longer in force: retired by SLICE-020. Name the rule in force instead."
+            }
+          ],
+          "note": "The shipped rules have moved since this spec was checked: a row now names a rule that is no longer in force. The spec must be settled again before it is planned."
+        },
+        "slice_id": "SLICE-004",
+        "title": "Invite a teammate",
+        "epic_id": "EPIC-001",
+        "status": "ready_for_approval",
+        "revision": 1,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-004-invite-teammate.md",
+        "has_intent": true,
+        "resume_note": null,
+        "dependencies": [],
+        "editable": true,
+        "github": {
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": null,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": null,
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "ready_for_approval"
+        }
+      },
+      {
+        "slice_id": "SLICE-005",
+        "title": "Invite by link",
+        "epic_id": "EPIC-001",
+        "status": "interviewing",
+        "revision": 1,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-005-invite-teammate.md",
+        "has_intent": true,
+        "resume_note": null,
+        "dependencies": [],
+        "editable": true,
+        "github": {
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": null,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": null,
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "interviewing"
+        }
+      }
+    ],
+    "saved": {
+      "everything_saved": true,
+      "note": "Everything is saved.",
+      "not_saved": []
+    },
+    "order": [
+      {
+        "epic_id": "EPIC-001",
+        "issue": null,
+        "slices": [
+          {
+            "slice_id": "SLICE-004",
+            "title": "Invite a teammate",
+            "in_workspace": true,
+            "issue": null,
+            "state_label": null
+          },
+          {
+            "slice_id": "SLICE-005",
+            "title": "Invite by link",
+            "in_workspace": true,
+            "issue": null,
+            "state_label": null
+          }
+        ],
+        "on_github": false,
+        "github_order": null,
+        "github_read_at": null,
+        "matches_github": null,
+        "unfinished": false,
+        "taken_from_github": false,
+        "could_not_read": false,
+        "note": null
+      }
+    ],
+    "github": {
+      "repository": null,
+      "form": null,
+      "last_read": null
+    },
+    "current_slice": "SLICE-005",
+    "last_refreshed": null,
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "SLICE-004 is ready for your approval: mark it ready for the builders (slice ready SLICE-004).",
+      "Continue the interview for SLICE-005: Invite by link (slice resume SLICE-005)."
+    ],
+    "next_actions": [
+      {
+        "kind": "mark_ready",
+        "target": "SLICE-004",
+        "title": "Mark SLICE-004 ready",
+        "reason": "Invite a teammate is ready for your approval. Marking it ready hands it to the builders.",
+        "related": []
+      },
+      {
+        "kind": "continue_interview",
+        "target": "SLICE-005",
+        "title": "Continue the interview for SLICE-005",
+        "reason": "Invite by link is still being defined.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

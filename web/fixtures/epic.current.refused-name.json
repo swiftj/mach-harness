@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "'membership' is not an epic. Name it as EPIC-NNN or by its issue number.",
+  "hint": null
+}

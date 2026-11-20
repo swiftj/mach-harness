@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT / "skills" / "ticket" / "scripts"))
 import issue_rules  # noqa: E402
@@ -73,6 +74,9 @@ def main():
     someone_elses()
     someone_elses_refused()
     without_gh()
+    # M15: what M13 and M14 added to the engine, for the screens built on them.
+    import product_memory  # noqa: E402  (beside this file)
+    product_memory.generate(Scenario, OUT)
     print("wrote", len(list(OUT.glob("*.json"))), "fixtures to", OUT)
 
 

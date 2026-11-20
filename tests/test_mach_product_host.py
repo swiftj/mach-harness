@@ -4,6 +4,7 @@ cross-client conformance check that it leaves byte-identical artifacts to studio
 Skipped cleanly when Go is not installed.
 """
 
+import base64
 import http.client
 import json
 import re
@@ -191,6 +192,132 @@ class HostConformanceTest(unittest.TestCase):
             self.assertEqual(host_files[name], direct_files[name], f"{name} differs between the host and the terminal")
         self.assertIn("draft/product/slices/SLICE-001.json", host_files)
         # Nothing outside the workspace changed in either project.
+        for project in (self.via_host, self.direct):
+            self.assertEqual(git(project, "status", "--porcelain").stdout, "")
+
+    def test_the_m15_operations_write_the_same_bytes_as_the_terminal(self):
+        """Every operation M15 put on the host's list, through the host as the app sends it (files as base64
+        in the JSON body) and through studio.py as the terminal skill runs it: the same bytes in Product
+        Studio's workspace, the export served exactly as written, and nothing staged left behind."""
+        from mock_pictures import jpeg, png
+        from test_mach_product_prd import ANSWERS, MAP, PRD_TEXT
+
+        files = Path(self.tmp.name) / "files"
+        files.mkdir()
+        (files / "team-space.md").write_text(PRD_TEXT, encoding="utf-8")
+        (files / "invite.png").write_bytes(png())
+        (files / "whole.jpg").write_bytes(jpeg())
+        (files / "map.json").write_text(json.dumps(MAP))
+        (files / "answers.json").write_text(json.dumps(ANSWERS))
+        keys_csv = "Issue key,Summary,Labels,Labels\r\nABC-7,Invite a teammate,mach,SLICE-001\r\nABC-8,Unrelated,other,\r\n"
+        (files / "keys.csv").write_text(keys_csv)
+        b64 = lambda name: base64.b64encode((files / name).read_bytes()).decode("ascii")
+        upload = lambda name: {"name": name, "content_base64": b64(name)}
+
+        def host_ok(operation, args):
+            return self.api("POST", f"/api/ops/{operation}", args)
+
+        def host_refused(operation, args):
+            status, _, raw = self.request("POST", f"/api/ops/{operation}", args)
+            envelope = json.loads(raw)
+            self.assertFalse(envelope["ok"], f"{operation} was not refused")
+            return envelope["error"]["kind"]
+
+        # Through the host.
+        self.login()
+        host_ok("project.init", {"id": "team-space", "name": "Team Space", "vision": "Teams work together.", "outcome": ["Teams can work together"]})
+        host_ok("epic.add", {"title": "Team membership", "criterion": ["Only invited people can join"]})
+        host_ok("slice.new", {"epic": "EPIC-001", "title": "Invite a teammate"})
+        self.api("PUT", "/api/drafts/spec/SLICE-001", {"markdown": FIXTURE.read_text(), "name": "invite-teammate"})
+        self.api("PUT", "/api/drafts/intent/SLICE-001", {"markdown": INTENT_TEXT})
+        host_ok("principle.add", {"title": "Versions stay", "statement": "A published version MUST NOT be edited in place.", "reason": "Readers rely on what they saw."})
+        host_ok("principle.set", {"principle_id": "PP-01", "statement": "A published version MUST NOT be changed in place."})
+        host_ok("principle.add", {"title": "Name the sender", "statement": "An invitation MUST name the person who sent it.", "reason": "People trust a name."})
+        host_ok("principle.retire", {"principle_id": "PP-02"})
+        listed = host_ok("principle.list", {})
+        self.assertEqual(listed["active"], ["PP-01"])
+        self.assertEqual(host_ok("principle.publish", {})["saved_to"], "folder")
+        self.assertEqual(host_refused("reconcile.principles", {"take": "theirs"}), "refused")
+        host_ok("epic.link", {"epic_id": "EPIC-001", "jira": "ABC-1"})
+        host_ok("slice.link", {"slice_id": "SLICE-001", "jira": "ABC-2"})
+        host_ok("slice.link", {"slice_id": "SLICE-001", "remove": True})
+        added = host_ok("slice.mock.add", {"slice_id": "SLICE-001", "file": upload("invite.png"), "for": "AC-01", "binding": True, "note": "The invite form"})
+        whole = host_ok("slice.mock.add", {"slice_id": "SLICE-001", "file": upload("whole.jpg")})["mock"]["sha256"]
+        self.assertEqual(len(host_ok("slice.mock.list", {"slice_id": "SLICE-001"})["mocks"]), 2)
+        host_ok("slice.mock.remove", {"slice_id": "SLICE-001", "mock": whole[:12]})
+        self.assertTrue(added["mock"]["binding"])
+        self.assertEqual(host_ok("prd.import", {"file": upload("team-space.md")})["prd"]["prd_id"], "PRD-01")
+        host_ok("prd.list", {})
+        self.assertIn("PRD-DATA", host_ok("prd.show", {"prd_id": "PRD-01", "lines": "1-9"})["fenced"])
+        host_ok("prd.map", {"prd_id": "PRD-01", "map": MAP})
+        waiting = host_ok("prd.status", {"prd_id": "PRD-01"})["not_covered"]
+        self.assertTrue(waiting, "the PRD has sections no slice cites")
+        for section in waiting:
+            host_ok("prd.settle", {"prd_id": "PRD-01", "section": section, "as": "later", "reason": "Not this quarter."})
+        made = host_ok("prd.apply", {"prd_id": "PRD-01"})["made"]["slices"]
+        host_ok("prd.draft", {"slice_id": made[0], "answers": ANSWERS})
+        host_ok("prd.confirm", {"slice_id": made[0], "accept": "all"})
+        host_ok("policy.list", {})
+        current_ok = json.loads(self.request("POST", "/api/ops/epic.current", {"epic_id": "EPIC-001"})[2])["ok"]
+        exported = host_ok("jira.export", {"state": "all"})
+        self.assertEqual([d["name"] for d in exported["downloads"]], ["mach-jira.csv", "README.txt"])
+        for item in exported["downloads"]:
+            status, headers, body = self.request("GET", item["url"])
+            self.assertEqual(status, 200)
+            self.assertEqual(body, (Path(exported["folder"]) / item["name"]).read_bytes())
+            self.assertIn(("Content-Disposition", f'attachment; filename="{item["name"]}"'), headers)
+        keyed = host_ok("jira.keys", {"file": upload("keys.csv")})
+        self.assertEqual([row["id"] for row in keyed["linked"]], ["SLICE-001"])
+        self.assertEqual(len(keyed["unmatched"]), 1)
+        self.assertFalse((self.via_host / ".factory/studio/uploads").exists() and any((self.via_host / ".factory/studio/uploads").iterdir()))
+
+        # Directly, as the terminal skill does.
+        self.studio("status")
+        self.studio("project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
+        self.studio("epic", "add", "--title", "Team membership", "--criterion", "Only invited people can join")
+        self.studio("slice", "new", "--epic", "EPIC-001", "--title", "Invite a teammate")
+        draft = self.direct / ".factory/studio/draft"
+        (draft / "specs/slices" / SPEC).write_text(FIXTURE.read_text())
+        self.studio("slice", "check", "SLICE-001", expect=1)
+        (draft / "product/intents/SLICE-001.md").write_text(INTENT_TEXT)
+        self.studio("slice", "check", "SLICE-001")
+        self.studio("principle", "add", "--title", "Versions stay", "--statement", "A published version MUST NOT be edited in place.", "--reason", "Readers rely on what they saw.")
+        self.studio("principle", "set", "PP-01", "--statement", "A published version MUST NOT be changed in place.")
+        self.studio("principle", "add", "--title", "Name the sender", "--statement", "An invitation MUST name the person who sent it.", "--reason", "People trust a name.")
+        self.studio("principle", "retire", "PP-02")
+        self.studio("principle", "list")
+        self.studio("principle", "publish")
+        self.studio("reconcile", "principles", "--take", "theirs", expect=1)
+        self.studio("epic", "link", "EPIC-001", "--jira", "ABC-1")
+        self.studio("slice", "link", "SLICE-001", "--jira", "ABC-2")
+        self.studio("slice", "link", "SLICE-001", "--no-jira")
+        self.studio("slice", "mock", "add", "SLICE-001", str(files / "invite.png"), "--for", "AC-01", "--binding", "--note", "The invite form")
+        self.studio("slice", "mock", "add", "SLICE-001", str(files / "whole.jpg"))
+        self.studio("slice", "mock", "list", "SLICE-001")
+        self.studio("slice", "mock", "remove", "SLICE-001", whole[:12])
+        self.studio("prd", "import", str(files / "team-space.md"))
+        self.studio("prd", "list")
+        self.studio("prd", "show", "PRD-01", "--lines", "1-9")
+        self.studio("prd", "map", "PRD-01", "--from", str(files / "map.json"))
+        self.studio("prd", "status", "PRD-01")
+        for section in waiting:
+            self.studio("prd", "settle", "PRD-01", "--section", str(section), "--as", "later", "--reason", "Not this quarter.")
+        self.studio("prd", "apply", "PRD-01")
+        self.studio("prd", "draft", made[0], "--from", str(files / "answers.json"))
+        self.studio("prd", "confirm", made[0], "--accept", "all")
+        self.studio("policy", "list")
+        done = subprocess.run([sys.executable, str(STUDIO), "--project", str(self.direct), "epic", "current", "EPIC-001", "--json"], capture_output=True, text=True)
+        self.assertEqual(done.returncode == 0, current_ok)
+        self.studio("jira", "export", "--state", "all")
+        self.studio("jira", "keys", str(files / "keys.csv"))
+
+        host_files, direct_files = workspace(self.via_host), workspace(self.direct)
+        self.assertEqual(sorted(host_files), sorted(direct_files))
+        for name in host_files:
+            self.assertEqual(host_files[name], direct_files[name], f"{name} differs between the host and the terminal")
+        for expected in ("draft/product/principles.json", "draft/product/prds/PRD-01/document.md", "jira/cloud-all/mach-jira.csv"):
+            self.assertIn(expected, host_files)
+        self.assertTrue(any(name.startswith("draft/product/mocks/SLICE-001/") for name in host_files))
         for project in (self.via_host, self.direct):
             self.assertEqual(git(project, "status", "--porcelain").stdout, "")
 

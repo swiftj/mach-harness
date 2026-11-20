@@ -1,0 +1,121 @@
+{
+  "exit_code": 0,
+  "data": {
+    "prd": {
+      "prd_id": "PRD-01",
+      "name": "team-space.md",
+      "format": "markdown",
+      "sha256": "583db8b59444029ca677edf8770e7166b67e64dadd0c177a3863a820c11d667f",
+      "line_count": 22,
+      "sections": 5,
+      "document_matches": true,
+      "mapped": true,
+      "slices_mapped": 2,
+      "not_covered": [
+        4,
+        5
+      ],
+      "applied": []
+    },
+    "factory_authorized": false,
+    "map": {
+      "revision": 1,
+      "epics": [
+        {
+          "criteria": [
+            "Only invited people join"
+          ],
+          "key": "E1",
+          "title": "Workspace members"
+        }
+      ],
+      "slices": [
+        {
+          "key": "M1",
+          "title": "Invite a teammate",
+          "scope": "An admin invites one teammate by email.",
+          "epic": "E1",
+          "depends_on": [],
+          "cites": "5-9",
+          "lines": "1-9",
+          "slice_id": null
+        },
+        {
+          "key": "M2",
+          "title": "Remove a member",
+          "scope": "An admin removes one member.",
+          "epic": "E1",
+          "depends_on": [
+            "M1"
+          ],
+          "cites": "11-14",
+          "lines": "11-14",
+          "slice_id": null
+        }
+      ],
+      "applied": false
+    },
+    "coverage": [
+      {
+        "n": 1,
+        "title": "Team Space PRD",
+        "lines": "1-4",
+        "cited_by": [],
+        "state": "settled",
+        "settled": {
+          "as": "slice",
+          "at": "2026-11-20T20:16:29Z",
+          "reason": "The opening belongs to inviting.",
+          "slice": "M1"
+        }
+      },
+      {
+        "n": 2,
+        "title": "Inviting",
+        "lines": "5-10",
+        "cited_by": [
+          "M1"
+        ],
+        "state": "covered"
+      },
+      {
+        "n": 3,
+        "title": "Removing",
+        "lines": "11-15",
+        "cited_by": [
+          "M2"
+        ],
+        "state": "covered"
+      },
+      {
+        "n": 4,
+        "title": "Billing",
+        "lines": "16-19",
+        "cited_by": [],
+        "state": "not_covered"
+      },
+      {
+        "n": 5,
+        "title": "Later ideas",
+        "lines": "20-22",
+        "cited_by": [],
+        "state": "not_covered"
+      }
+    ],
+    "not_covered": [
+      4,
+      5
+    ],
+    "can_apply": false,
+    "note": "2 sections of PRD-01 no slice cites: 4, 5. Ask the product manager about each: a slice, out of scope, or later (prd settle).",
+    "settled": {
+      "section": 1,
+      "at": "2026-11-20T20:16:29Z",
+      "as": "slice",
+      "slice": "M1",
+      "reason": "The opening belongs to inviting."
+    }
+  },
+  "refused": null,
+  "hint": null
+}

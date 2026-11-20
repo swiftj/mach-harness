@@ -1,0 +1,36 @@
+{
+  "exit_code": 0,
+  "data": {
+    "slice_id": "SLICE-001",
+    "mocks": [
+      {
+        "binding": true,
+        "bytes": 69,
+        "for": "AC-01",
+        "format": "png",
+        "height": 3,
+        "note": "The invite form",
+        "sha256": "d3a67710b6bcc7b5cb13cfa10d2fd256d372a44903e1c4056f00fabba1a073c0",
+        "width": 4,
+        "file": "d3a67710b6bcc7b5cb13cfa10d2fd256d372a44903e1c4056f00fabba1a073c0.png",
+        "problem": null
+      },
+      {
+        "binding": false,
+        "bytes": 57,
+        "for": null,
+        "format": "jpeg",
+        "height": 2,
+        "note": null,
+        "sha256": "f310d4fb631d0f24f5c7262dc4660dda4bf39d6fa53493c6f3e4b6b407e4d402",
+        "width": 5,
+        "file": "f310d4fb631d0f24f5c7262dc4660dda4bf39d6fa53493c6f3e4b6b407e4d402.jpg",
+        "problem": null
+      }
+    ],
+    "limit": 4,
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

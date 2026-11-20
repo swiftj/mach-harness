@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "notes.png cannot be a design mock: it is not a whole PNG or JPEG picture (judged by its content, whatever its name). A design mock is a PNG or JPEG picture of at most 5 MB and 10000 pixels a side.",
+  "hint": null
+}

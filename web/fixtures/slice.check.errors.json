@@ -9,7 +9,7 @@
       "SLICE-007-invite-teammate.md:46: INV-02 is referenced but not defined in Invariants or Functional requirements. [trace-undefined]",
       "SLICE-007-invite-teammate.md:47: INV-01 is referenced but not defined in Invariants or Functional requirements. [trace-undefined]",
       "SLICE-007-invite-teammate.md:62: INV-03 is referenced but not defined in Invariants or Functional requirements. [trace-undefined]",
-      "SLICE-007-invite-teammate.md:87: INV-03 is not defined in Invariants or Functional requirements. [defaults-format]"
+      "SLICE-007-invite-teammate.md:91: INV-03 is not defined in Invariants or Functional requirements. [defaults-format]"
     ],
     "warnings": [],
     "diagnostics": [
@@ -51,7 +51,7 @@
       {
         "severity": "error",
         "rule": "defaults-format",
-        "line": 87,
+        "line": 91,
         "section": "Accepted defaults",
         "message": "INV-03 is not defined in Invariants or Functional requirements."
       }
@@ -68,7 +68,16 @@
       "scenarios": 3
     },
     "title": "Invite a teammate by email",
+    "shipped": {
+      "commit": "c762675e1542fcc7def52ce20b87d68e43a0497f",
+      "branch": "main",
+      "rules": 0,
+      "notes": [
+        "There are no slice specs under specs/slices/ on 'main', so no rule has shipped yet."
+      ]
+    },
     "risk": "High",
+    "prd_problems": [],
     "ready": false,
     "status": "interviewing"
   },
