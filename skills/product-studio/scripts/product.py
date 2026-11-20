@@ -32,10 +32,13 @@ SHAPES = {
     "slice": ("schema_version", "slice_id", "project_id", "epic_id", "revision", "title", "status", "dependencies", "open_questions", "spec_path", "spec_sha256"),
 }
 # Fields an artifact may carry or leave out. A slice without them is byte-for-byte what it was before.
-OPTIONAL = {"slice": ("origin",)}
+OPTIONAL = {"slice": ("origin", "source")}
 # Where a slice came from (M8): identifiers only, never an issue's text, link or author.
 ORIGIN_KINDS = ("github_issue",)
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
+# The PRD a slice was made from (M13 D): identifiers and numbers only, never the document's text.
+PRD_RE = re.compile(r"^PRD-[0-9]{2,}$")
+MAP_SLICE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9-]{0,31}$")
 ENUMS = {
     "project": {"status": ("draft", "active", "archived")},
     "epic": {"status": ("open", "deferred")},  # an epic is a container for slices: in the project, or set aside
@@ -89,6 +92,17 @@ def _is_origin(value: Any) -> bool:
             and type(value.get("number")) is int and value["number"] >= 1)
 
 
+def _is_source(value: Any) -> bool:
+    if not (isinstance(value, dict) and set(value) == {"kind", "prd_id", "sha256", "lines", "map_slice"} and value.get("kind") == "prd"):
+        return False
+    lines = value.get("lines")
+    return (isinstance(value.get("prd_id"), str) and bool(PRD_RE.fullmatch(value["prd_id"]))
+            and isinstance(value.get("sha256"), str) and bool(HEX_RE.fullmatch(value["sha256"]))
+            and isinstance(value.get("map_slice"), str) and bool(MAP_SLICE_RE.fullmatch(value["map_slice"]))
+            and isinstance(lines, list) and 1 <= len(lines) <= 200
+            and all(isinstance(r, list) and len(r) == 2 and all(type(n) is int for n in r) and 1 <= r[0] <= r[1] for r in lines))
+
+
 def _shape(kind: str, data: Dict[str, Any], location: str, errors: List[str]) -> None:
     required = set(SHAPES[kind])
     for key in sorted(required - set(data)):
@@ -127,6 +141,8 @@ def _shape(kind: str, data: Dict[str, Any], location: str, errors: List[str]) ->
             _error(errors, location, "spec_sha256 must be lowercase 64-character SHA-256 or null")
         if "origin" in data and not _is_origin(data["origin"]):
             _error(errors, location, "origin must be {kind: github_issue, repository: OWNER/REPO, number: a positive integer}")
+        if "source" in data and not _is_source(data["source"]):
+            _error(errors, location, "source must be {kind: prd, prd_id: PRD-NN, sha256, lines: [[first, last], ...], map_slice}")
 
 
 PRINCIPLE_RE = re.compile(r"^PP-[0-9]{2,}$")

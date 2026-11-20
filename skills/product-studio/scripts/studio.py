@@ -36,6 +36,7 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import handoff  # noqa: E402
 import issues  # noqa: E402
+import prd  # noqa: E402
 import product  # noqa: E402
 import requests_in  # noqa: E402
 
@@ -408,7 +409,8 @@ class Studio:
             result["intent_problems"] = [say(p, "The slice's why is not written yet.") if p.startswith(str(self.intent_path(slice_id)))
                                          else p for p in result["intent_problems"]]
         result["risk"] = intent.get("risk")
-        result["ready"] = not (result["errors"] or result["open_questions"] or result["intent_problems"])
+        result["prd_problems"] = prd.slice_problems(sys.modules[__name__], self, slice_id, work)  # M13 D: a slice made from a PRD
+        result["ready"] = not (result["errors"] or result["open_questions"] or result["intent_problems"] or result["prd_problems"])
         return result
 
     @staticmethod
@@ -549,6 +551,7 @@ def describe(studio: Studio) -> Dict[str, Any]:
         "current_slice": session.get("current_slice"),
         "last_refreshed": session.get("refreshed_at"),
         **github_updates_waiting(studio),
+        **prd.status_field(sys.modules[__name__], studio),  # M13 D: imported PRDs; nothing when there are none
         "structurally_valid": structural["valid"] if structural else None,
         "structural_errors": structural["errors"] if structural else [],
         "factory_authorized": False,
@@ -711,12 +714,17 @@ def cmd_project_set(studio: Studio, args: argparse.Namespace) -> int:
     return emit({"project": studio.load("project")})
 
 
-def cmd_epic_add(studio: Studio, args: argparse.Namespace) -> int:
+def add_epic(studio: Studio, title: str, criteria: Sequence[str]) -> Dict[str, Any]:
+    """The steps of `epic add`, shared with `prd apply`."""
     studio.prepare()
     data = {"schema_version": 1, "epic_id": studio.next_id("epic"), "project_id": studio.project_id(), "revision": 1,
-            "title": args.title.strip(), "status": "open", "acceptance_criteria": clean_list(args.criterion, "acceptance criterion")}
+            "title": title.strip(), "status": "open", "acceptance_criteria": clean_list(criteria, "acceptance criterion")}
     studio.commit_or_restore([("epic", data)], "Adding the epic")
-    return emit({"epic": data})
+    return data
+
+
+def cmd_epic_add(studio: Studio, args: argparse.Namespace) -> int:
+    return emit({"epic": add_epic(studio, args.title, args.criterion)})
 
 
 def cmd_epic_set(studio: Studio, args: argparse.Namespace) -> int:
@@ -753,8 +761,8 @@ def reserved_ids(studio: Studio) -> Dict[str, Any]:
 
 
 def start_slice(studio: Studio, epic_id: str, title: str, depends_on: Sequence[str], given_id: Optional[str],
-                origin: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """The steps of `slice new`, shared with `request pick`, which also records where the slice came from."""
+                origin: Optional[Dict[str, Any]] = None, source: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The steps of `slice new`, shared with `request pick` and `prd apply`, which also record where the slice came from."""
     studio.prepare()
     studio.load("epic", epic_id)
     if given_id:
@@ -775,6 +783,8 @@ def start_slice(studio: Studio, epic_id: str, title: str, depends_on: Sequence[s
             "open_questions": [], "spec_path": None, "spec_sha256": None}
     if origin is not None:
         data["origin"] = origin
+    if source is not None:  # M13 D: the PRD it was made from, identifiers and numbers only
+        data["source"] = source
     studio.commit_or_restore([("slice", data)], "Starting the slice")
     session = studio.session()
     session["current_slice"] = slice_id
@@ -840,6 +850,7 @@ def cmd_slice_resume(studio: Studio, args: argparse.Namespace) -> int:
         **request_field(studio, slice_id, data),
         **question_field(studio, slice_id, data),
         **principles_field(studio),
+        **prd.resume_field(sys.modules[__name__], studio, slice_id, data),  # M13 D: the PRD's cited lines, fenced
     })
 
 
@@ -964,7 +975,7 @@ def approval_problems(studio: Studio, data: Dict[str, Any], slice_id: str) -> Tu
     """The gates a slice passes before it is approved: the spec passes the validator with no open
     questions, the why is complete, and its epic and its dependencies exist."""
     result = studio.check_slice(slice_id, ready=True)
-    problems = list(result["errors"]) + list(result["intent_problems"])
+    problems = list(result["errors"]) + list(result["intent_problems"]) + list(result["prd_problems"])
     problems += [f"open question: {question}" for question in result["open_questions"]]
     epic = studio.all("epic").get(data.get("epic_id"))
     if not epic:
@@ -1715,7 +1726,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MACH Product Studio operations (drafts only; never starts Factory work)")
     parser.add_argument("--project", type=Path, help="project root (default: nearest folder with .factory/ or .git)")
     parser.add_argument("--app", action="store_true", help="word refusals and reports for the local web app: no terminal commands, plus a hint")
-    sub = parser.add_subparsers(dest="command", required=True, metavar="{where,status,validate,refresh,reconcile,project,epic,slice,principle,request,acceptance}")
+    sub = parser.add_subparsers(dest="command", required=True, metavar="{where,status,validate,refresh,reconcile,project,epic,slice,principle,prd,request,acceptance}")
 
     sub.add_parser("where", help="print the workspace and the files the interview needs").set_defaults(func=cmd_where)
     sub.add_parser("status", help="every artifact with its state, and what to do next").set_defaults(func=cmd_status)
@@ -1852,6 +1863,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--decision", required=True, choices=("accepted", "rejected"))
     p.add_argument("--readiness", help="the readiness snapshot engineering shared (needed for either decision)")
     p.set_defaults(func=cmd_acceptance_record)
+    prd.add_commands(sub, sys.modules[__name__])  # M13 D: the PRD on-ramp (prd.py)
     return parser
 
 

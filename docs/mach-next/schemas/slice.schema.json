@@ -27,6 +27,20 @@
         "repository": {"type": "string", "pattern": "^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$"},
         "number": {"type": "integer", "minimum": 1}
       }
+    },
+    "source": {
+      "description": "Optional (M13 D): the PRD a slice was made from by prd apply. Identifiers and numbers only; never the document's text.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "prd_id", "sha256", "lines", "map_slice"],
+      "properties": {
+        "kind": {"const": "prd"},
+        "prd_id": {"type": "string", "pattern": "^PRD-[0-9]{2,}$"},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "lines": {"type": "array", "minItems": 1, "maxItems": 200,
+                  "items": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "integer", "minimum": 1}}},
+        "map_slice": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9-]{0,31}$"}
+      }
     }
   }
 }

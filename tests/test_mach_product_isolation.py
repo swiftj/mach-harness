@@ -153,8 +153,8 @@ class NothingIsWiredInTest(unittest.TestCase):
     def test_studio_uses_only_the_git_and_gh_commands_it_is_meant_to(self):
         """Product Studio may read, fetch, build a contribution in its own temporary worktree and
         push that one branch. It may never rewrite history or move the product manager's checkout."""
-        sources = {name: (PRODUCT_SCRIPTS / name).read_text() for name in ("studio.py", "collab.py", "requests_in.py")}
-        for name in ("studio.py", "requests_in.py"):
+        sources = {name: (PRODUCT_SCRIPTS / name).read_text() for name in ("studio.py", "collab.py", "requests_in.py", "prd.py")}
+        for name in ("studio.py", "requests_in.py", "prd.py"):
             imported = set()
             for node in ast.walk(ast.parse(sources[name])):
                 if isinstance(node, ast.Import):
@@ -195,6 +195,10 @@ class NothingIsWiredInTest(unittest.TestCase):
             for word in ("reopen", "lock", "transfer"):
                 self.assertNotIn(word, re.sub(r"(?i)\bblock\w*|\bclock\w*|\blocal\w*", "", sources[name]), (name, word))
         self.assertFalse(re.findall(r"git\([^\n]*\"push\"", "\n".join(sources.values())))  # nothing is ever pushed
+        # M13 D: the PRD on-ramp reaches neither Git nor GitHub at all, so a PRD's text has no way there.
+        self.assertFalse(re.findall(r"\b(?:git|git_bytes|gh|gh_json|gh_write)\(", sources["prd.py"]))
+        for word in ("collab", "issues.", "handoff", "requests_in", "import subprocess", "urllib", "socket"):
+            self.assertNotIn(word, sources["prd.py"], word)
 
     def test_the_hand_off_uses_only_the_gh_calls_it_is_meant_to(self):
         """M11: issues.py holds every GitHub call that saves a slice as an issue; handoff.py decides and
@@ -287,10 +291,10 @@ class NothingIsWiredInTest(unittest.TestCase):
                 self.assertNotIn(node.id, ("subprocess", "os", "socket"))
 
     def test_report_never_authorizes(self):
-        for name in ("product.py", "studio.py", "collab.py", "requests_in.py", "issues.py", "handoff.py"):
+        for name in ("product.py", "studio.py", "collab.py", "requests_in.py", "issues.py", "handoff.py", "prd.py"):
             source = (PRODUCT_SCRIPTS / name).read_text()
             self.assertNotIn('"factory_authorized": True', source)
-        for name in ("product.py", "studio.py"):
+        for name in ("product.py", "studio.py", "prd.py"):
             self.assertIn('"factory_authorized": False', (PRODUCT_SCRIPTS / name).read_text())
 
 
