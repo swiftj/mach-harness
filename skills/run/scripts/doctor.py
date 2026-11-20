@@ -39,6 +39,9 @@ STATUSES = ("ok", "warn", "fail", "not_checked")
 GIT_TIMEOUT = 10
 CLAUDE_TIMEOUT = 10
 GH_TIMEOUT = 15
+# MACH reads and writes GitHub Issues on github.com only, so only that host's sign-in is asked about. Without the
+# host, `gh auth status` fails when any other configured host has a bad token, though this one is fine.
+GH_HOST = "github.com"
 # Words in `gh auth status` output that mean the network, not the sign-in, failed. The output is
 # only searched for these; it is never printed, stored or returned.
 NETWORK_WORDS = ("error connecting", "could not resolve", "dial tcp", "timeout", "timed out", "no such host",
@@ -173,7 +176,7 @@ def check_tracker(project: Path, config: Any, gh_state: Optional[Dict[str, Any]]
                       f"Install '{program}' or change tickets.provider in .factory/config.json.")]
     if provider != "github" or program != "gh":
         return [check("tracker", title, "ok", f"The {provider} tracker (from {source}); '{program}' is on PATH. Sign-in was not checked.")]
-    code, out, err = run([path, "auth", "status"], project, GH_TIMEOUT)
+    code, out, err = run([path, "auth", "status", "--hostname", GH_HOST], project, GH_TIMEOUT)
     if gh_state is not None:
         gh_state["auth"] = (code, (out + "\n" + err).lower())
     if code is None:
@@ -352,7 +355,7 @@ def check_requests(project: Path, config: Any, gh_state: Dict[str, Any]) -> List
                              "Install the GitHub CLI and run 'gh auth login' to use GitHub Issues as requests."))
     else:
         if "auth" not in gh_state:
-            code, out, err = run([path, "auth", "status"], project, GH_TIMEOUT)
+            code, out, err = run([path, "auth", "status", "--hostname", GH_HOST], project, GH_TIMEOUT)
             gh_state["auth"] = (code, (out + "\n" + err).lower())
         code, lowered = gh_state["auth"]
         if code is None:

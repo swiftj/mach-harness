@@ -312,6 +312,7 @@ exit 1''')
             self.assertEqual(checks[key]["status"], "ok", checks[key])
         self.assertIn("acme/widgets", checks["requests.labels"]["detail"])
         self.assertEqual(sum(1 for c in self.gh_calls() if c.startswith("auth status")), 1)
+        self.assertIn("auth status --hostname github.com", self.gh_calls())
 
     def test_requests_reuse_the_tracker_sign_in(self):
         self.github_project({"tickets": {"provider": "github"}})
