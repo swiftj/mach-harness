@@ -34,6 +34,10 @@
     "auto": { "low": true, "medium": true, "high": true },
     "pr": { "inline_findings": true }
   },
+  "records": {
+    "enabled": true,
+    "dir": "docs/changes"
+  },
   "observe": {
     "every": 5
   },

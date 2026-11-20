@@ -76,6 +76,13 @@ class Base(RunBase):
     def main_log(self):
         return git(self.project, "log", "--format=%s", "main").stdout.splitlines()
 
+    def record_commit(self, on):
+        """The change record commit the station added (M13), checked to sit directly on `on` and to add only the record."""
+        record = self.cell_json()["change_record"]
+        self.assertEqual(git(self.work, "rev-list", "--parents", "-n", "1", record["commit"]).stdout.split(), [record["commit"], on])
+        self.assertEqual(git(self.work, "diff-tree", "--no-commit-id", "--name-status", "-r", on, record["commit"]).stdout.splitlines(), [f"A\t{record['path']}"])
+        return record["commit"]
+
 
 class PolicyTest(Base):
     def test_manual_mode_leaves_the_merge_to_a_person(self):
@@ -92,7 +99,9 @@ class PolicyTest(Base):
         head = self.approved(mode="auto")
         self.assertEqual((self.next()["action"], self.next()["prompt"]), ("merge", "Use the MACH merge skill: /mach:merge LOCAL-001"))
         done = self.m_ok("run", "LOCAL-001")
-        self.assertEqual((done["status"], done["approved_commit"], done["landed_commit"], done["revalidated"]), ("MERGED", head, head, None))
+        self.assertEqual((done["status"], done["approved_commit"], done["landed_commit"], done["revalidated"]), ("MERGED", head, self.record_commit(head), None))
+        self.assertEqual(done["change_record"]["path"], "docs/changes/LOCAL-001.md")
+        self.assertTrue((self.project / "docs/changes/LOCAL-001.md").is_file(), "the record lands with the change")
         self.assertEqual(self.main_log()[0], "Merge LOCAL-001: Invite a teammate by email")
         self.assertEqual(git(self.project, "merge-base", "--is-ancestor", head, "main").returncode, 0)
         self.assertEqual(self.cell_json()["stage"], "merged")
@@ -171,7 +180,7 @@ class RevalidationTest(Base):
         done = self.m_ok("run", "LOCAL-001")
         self.assertEqual(done["status"], "MERGED")
         self.assertNotEqual(done["landed_commit"], head)
-        self.assertEqual(done["revalidated"]["head"], done["landed_commit"])
+        self.assertEqual(self.record_commit(done["revalidated"]["head"]), done["landed_commit"], "the record sits on the revalidated commit")
         self.assertTrue((self.project / "app/invite.py").is_file() and (self.project / "app/later.py").is_file())
 
     def test_main_moved_and_the_suite_now_fails_goes_back_to_build(self):
@@ -229,14 +238,16 @@ class PullRequestTest(PullRequestBase):
         head = self.approved(mode="auto", method="pr")
         done = self.m_ok("run", "LOCAL-001")
         self.assertEqual((done["status"], done["pull_request"], done["merge_commit"]), ("MERGED", "https://github.com/acme/app/pull/12", "f" * 40))
-        self.assertEqual(git(self.project, "ls-remote", str(self.origin), "refs/heads/feature/LOCAL-001").stdout.split()[0], head)
+        tip = self.record_commit(head)
+        self.assertEqual(git(self.project, "ls-remote", str(self.origin), "refs/heads/feature/LOCAL-001").stdout.split()[0], tip)
         created = next(call for call in self.calls() if call[:2] == ["pr", "create"])
         self.assertEqual(created[created.index("--title") + 1], "LOCAL-001: Invite a teammate by email")
         body = created[created.index("--body") + 1]
         for expected in ("**Risk tier:** Medium", "PASS: 8 of 8 checks passed", "architecture APPROVE", "No person's approval was required", f"Approved commit: `{head}`"):
             self.assertIn(expected, body)
         merged = next(call for call in self.calls() if call[:2] == ["pr", "merge"])
-        self.assertEqual(merged[merged.index("--match-head-commit") + 1], head, "the platform merges only the approved commit")
+        self.assertEqual(merged[merged.index("--match-head-commit") + 1], tip, "the platform merges only the approved commit and its record")
+        self.assertIn(f"Change record: `docs/changes/LOCAL-001.md`", body, "origin has no GitHub name here, so the path is given without a link")
         self.assertEqual(self.cell_json()["stage"], "merged")
         self.assertEqual(self.main_log(), ["work"], "with a pull request, nothing is merged into the local checkout")
 
@@ -356,7 +367,9 @@ class FindingsTest(PullRequestBase):
         [post] = self.posts()
         self.assertEqual(post["args"], ["api", "--method", "POST", "repos/acme/app/pulls/12/reviews", "--input", "-"])
         review = json.loads(post["stdin"])
-        self.assertEqual((review["event"], review["commit_id"]), ("COMMENT", head))
+        tip = self.record_commit(head)
+        self.assertEqual((review["event"], review["commit_id"]), ("COMMENT", tip))
+        self.assertIn(f"This pull request is at `{tip[:12]}`: the approved commit with its change record added.", review["body"])
         [inline] = review["comments"]
         self.assertEqual((inline["path"], inline["line"], inline["side"]), ("app/invite.py", 1, "RIGHT"))
         self.assertIn("**architecture** · note: **On a changed line**", inline["body"])
@@ -366,7 +379,7 @@ class FindingsTest(PullRequestBase):
         self.assertNotIn("../etc/passwd", review["body"])
         record = self.cell_json()["pull_request_findings"]
         self.assertEqual((record["how"], record["round"], record["head"], record["inline"], record["summary"], record["pull_request"]),
-                         ("review", 1, head, 1, 4, "https://github.com/acme/app/pull/12"))
+                         ("review", 1, tip, 1, 4, "https://github.com/acme/app/pull/12"))
         self.assertLess(self.calls().index(["api", "--method", "POST", "repos/acme/app/pulls/12/reviews", "--input", "-"]),
                         next(i for i, call in enumerate(self.calls()) if call[:2] == ["pr", "merge"]), "posted after opening, before merging")
 

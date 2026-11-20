@@ -167,6 +167,26 @@ def adrs() -> Any:
     return _ADR[0]
 
 
+_RECORDS: List[Any] = []
+
+
+def record_commit(work: Path, cell: Dict[str, Any], decided: Dict[str, Any], head: str) -> bool:
+    """Whether the branch's tip is the merge station's change record commit (M13) on top of the approved or revalidated
+    commit, by the merge station's own rule (change_record.holds). False when that helper cannot be loaded."""
+    if not _RECORDS:
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("mach_change_record", sibling("merge") / "scripts" / "change_record.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except Exception:  # noqa: BLE001  without the helper the tip is treated as changed, which sends it to the merge station
+            module = None
+        _RECORDS.append(module)
+    if _RECORDS[0] is None:
+        return False
+    return _RECORDS[0].holds(git, work, cell.get("change_record"), head, [decided.get("head"), (cell.get("revalidated") or {}).get("head")])
+
+
 def git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True)
 
@@ -369,7 +389,7 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
     if stage in ("awaiting-human", "approved") and not project.merged(cell.get("branch")):
         decided = load_json(root / "review" / "decision.json", {}) or {}
         lapsed = exceptions_lapsed(decided)
-        if lapsed and (decided.get("head") == head or (cell.get("revalidated") or {}).get("head") == head):
+        if lapsed and (decided.get("head") == head or (cell.get("revalidated") or {}).get("head") == head or record_commit(work, cell, decided, head)):
             return step(ticket_id, stage, "stop", f"The security exception for {', '.join(lapsed)} has expired, so the security veto stands again and the ticket "
                         "is not approved or merged over it. A person records a new exception or abandons the ticket.", needs="security-exception-expired",
                         exceptions=lapsed)
@@ -389,7 +409,8 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
         merging = project.section("merge")
         tiers = merging.get("auto") if isinstance(merging.get("auto"), dict) else {}
         revalidated = (cell.get("revalidated") or {}).get("head")
-        if decided.get("head") not in (head, None) and revalidated != head and not project.merged(cell.get("branch")):
+        if decided.get("head") not in (head, None) and revalidated != head and not record_commit(work, cell, decided, head) \
+                and not project.merged(cell.get("branch")):
             return step(ticket_id, stage, "merge", "The branch changed after it was approved; the merge station will void the approval and return it to verification.",
                         model=project.model("utility"), prompt=f"Use the MACH merge skill: {skill('merge')} {ticket_id}")
         if not project.merged(cell.get("branch")) and merging.get("mode") == "auto" and tiers.get(risk.lower(), True) is not False:

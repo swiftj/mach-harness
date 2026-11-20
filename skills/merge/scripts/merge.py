@@ -28,6 +28,13 @@ An approval that rests on a person's security exception (review.py except), incl
 bound to the commit like any approval, and once an exception's expiry has passed nothing is merged: the ticket waits for a person. The pull
 request body lists each exception with who accepted it and why.
 
+The change record (M13, change_record.py): as its last act before landing, the station writes <records.dir>/<ticket>.md
+(default docs/changes/) on the ticket's branch and commits it alone, so it lands in the same merge commit or pull request
+as the change. The approval stays bound to the reviewed commit: the station accepts its own record commit only when it
+adds or changes exactly that one file on top of the approved (or revalidated) commit; any other commit voids the
+approval. Settings under "records": enabled (default true; false writes nothing and the pull request says nothing of
+it) and dir. The pull request body links to the record.
+
 A pull request for a slice that came as a GitHub issue says "Refs #<n>" (never a closing keyword:
 the Factory closes the slice's issue once it sees the merge on the integration branch). Posting findings never blocks or delays the merge.
 
@@ -70,6 +77,16 @@ try:
     import lifecycle  # noqa: E402
 except Exception:  # noqa: BLE001
     lifecycle = None
+
+# M12's secret shapes (the intent station's scan.py), used to check the change record before it is committed.
+try:
+    import scan  # noqa: E402
+except Exception:  # noqa: BLE001
+    scan = None
+
+# M13: the change record, written on the ticket's branch as the station's last act before landing.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import change_record  # noqa: E402
 
 
 def telemetry(*args: Any, **kwargs: Any) -> None:
@@ -137,6 +154,7 @@ class Cell:
         self.auto = {tier: auto.get(tier.lower(), True) is not False for tier in TIERS}
         pr = merge.get("pr") if isinstance(merge.get("pr"), dict) else {}
         self.inline_findings = pr.get("inline_findings") is not False
+        self.records = change_record.settings(config)
 
     def head(self) -> str:
         return git(self.work, "rev-parse", "HEAD").stdout.strip()
@@ -214,7 +232,10 @@ def survey(cell: Cell, by_person: bool) -> Dict[str, Any]:
         refusals.append(f"The security exception for {', '.join(plan['exception_expired'])} expired on {lapsed[0].get('expires')}, so the security veto stands "
                         "again and nothing is merged. A person decides: record a new exception (except) or abandon the ticket.")
     revalidated = cell.info.get("revalidated") or {}
-    if stage in ("approved", "pr-open") and not plan["approval_valid"] and revalidated.get("head") != head:
+    # The station's own record commit (M13) keeps the approval: it adds exactly the record file on top of the approved
+    # or revalidated commit, checked in Git. Any other commit on top voids it.
+    plan["record_commit"] = record_holds(cell, head)
+    if stage in ("approved", "pr-open") and not plan["approval_valid"] and revalidated.get("head") != head and not plan["record_commit"]:
         plan["approval_void"] = True
         refusals.append(f"The approval was for commit {str(cell.decision.get('head'))[:10]}, but the branch is now at {head[:10]}: something was added after review. "
                         "The approval no longer holds; the ticket must be verified and reviewed again.")
@@ -229,17 +250,85 @@ def survey(cell: Cell, by_person: bool) -> Dict[str, Any]:
         refusals.append(f"The main checkout has uncommitted changes ({', '.join(stray[:5])}). Commit or remove them before merging into it.")
     if dirty(cell.work):
         refusals.append("The cell has uncommitted changes. Everything in an approved cell is committed; look at what changed.")
+    if cell.records["problem"]:
+        refusals.append(cell.records["problem"])
     if cell.method == "pr":
         if not git(cell.project, "remote", "get-url", "origin").stdout.strip():
             refusals.append("merge.method is 'pr' but the repository has no 'origin' remote.")
         if shutil.which("gh") is None:
             refusals.append("merge.method is 'pr' but the gh tool is not installed.")
+    record = cell.info.get("change_record") if isinstance(cell.info.get("change_record"), dict) else None
     plan["would"] = ([] if not plan["behind_main"] else [f"bring {cell.branch} up to date with {main} and rerun the test suite"]) + (
+        [] if not cell.records["enabled"] or record_on_branch(cell, record)
+        else [f"add the change record (in {cell.records['dir']}/) to {cell.branch} as a commit of its own"]) + (
         [f"merge {cell.branch} into {main} with a merge commit"] if cell.method == "local"
         else [f"push {cell.branch}", f"open a pull request into {main}", "merge the pull request at the approved commit" if cell.mode == "auto" or by_person else "leave the pull request for a person to merge"])
     plan["allowed"] = not refusals
     plan["refusals"] = refusals
     return plan
+
+
+def record_holds(cell: Cell, head: str) -> bool:
+    """Whether the branch's tip is this station's change record commit on top of the approved or revalidated commit."""
+    return change_record.holds(git, cell.work, cell.info.get("change_record"), head,
+                               [cell.decision.get("head"), (cell.info.get("revalidated") or {}).get("head")])
+
+
+def record_on_branch(cell: Cell, record: Optional[Dict[str, Any]]) -> bool:
+    """Whether a record commit this station made is already in the branch's history (a pull request still open)."""
+    commit = record.get("commit") if isinstance(record, dict) else None
+    return isinstance(commit, str) and bool(re.fullmatch(r"[0-9a-f]{40,64}", commit)) and \
+        git(cell.work, "merge-base", "--is-ancestor", commit, "HEAD").returncode == 0
+
+
+def write_record(cell: Cell, revalidated: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The station's last act before landing (M13): write the change record on the ticket's branch and commit it alone.
+
+    Written once per landing, covering every round. When a commit of it is already in the branch's history (a pull
+    request still open from an earlier run), it is not written again. Refuses, committing nothing, when the text cannot
+    be redacted or checked for secrets, or would still carry one."""
+    earlier = cell.info.get("change_record") if isinstance(cell.info.get("change_record"), dict) else None
+    if record_on_branch(cell, earlier):
+        return {**earlier, "written": False, "reason": "Already on the branch from an earlier run of this station."}
+    base = cell.head()
+
+    def taken(path: str) -> bool:
+        return git(cell.work, "cat-file", "-e", f"{base}:{path}").returncode == 0
+
+    known = cell.info.get("revalidated") if isinstance(cell.info.get("revalidated"), dict) else {}
+    reval = revalidated or (known if known.get("head") == base else {})
+    try:
+        path = change_record.path_for(cell.records["dir"], cell.ticket_id, taken, earlier.get("path") if earlier else None)
+        text = change_record.render(cell.root, cell.info, cell.ticket_id, {
+            "approved": cell.decision.get("head"), "revalidated": reval.get("head"), "onto": reval.get("onto"), "base": base}, issue_rules())
+        text = change_record.mask(text, path, scan)
+    except change_record.RecordError as exc:
+        raise MergeError(str(exc), code="record-refused")
+    target = cell.work / path
+    inside = cell.work.resolve()
+    climb = [target, *[folder for folder in target.parents if folder != cell.work and cell.work in folder.parents]]
+    if any(part.is_symlink() for part in climb) or inside not in target.resolve().parents:
+        raise MergeError(f"{path} does not lie plainly inside the cell's checkout (a symbolic link is in the way); no change record was written.",
+                         code="record-refused")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+    entry: Dict[str, Any] = {"version": change_record.VERSION, "path": path, "sha256": change_record.digest(text), "parent": base, "at": now()}
+    if git(cell.work, "add", "--", path).returncode != 0:
+        raise MergeError(f"git could not stage the change record {path}; nothing was merged.", code="record-failed")
+    if git(cell.work, "diff", "--cached", "--quiet", "--", path).returncode == 0:
+        entry["commit"] = None  # the same text is already on the branch: nothing to add
+    else:
+        done = git(cell.work, "commit", "-q", "-m", f"Change record for {cell.ticket_id}", "--", path)
+        if done.returncode != 0:
+            raise MergeError("git could not commit the change record: " + ((done.stderr.strip() or done.stdout.strip()).splitlines() or ["commit failed"])[-1],
+                             code="record-failed")
+        entry["commit"] = cell.head()
+    cell.info["change_record"] = entry
+    cell.save_info()
+    if entry["commit"] and not change_record.holds(git, cell.work, entry, entry["commit"], [base]):
+        raise MergeError(f"The change record commit {entry['commit'][:12]} changed more than {path}, so the approval no longer covers the branch. "
+                         "Nothing was merged; the next run of this station voids the approval.", code="record-failed")
+    return {**entry, "written": True}
 
 
 def expired_exceptions(decision: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -428,12 +517,27 @@ def pr_body(cell: Cell) -> str:
         "",
         f"Approved commit: `{inert(cell.decision.get('head'), 64)}`. Evidence ({len(evidence)} files) and the reviewers' findings are kept with the ticket's cell and archived on cleanup.",
         "",
+        *record_section(cell),
         "Opened by the MACH merge station.",
     ]
     refs = refs_line(cell)
     if refs:
         lines += ["", refs]
     return "\n".join(lines)
+
+
+def record_section(cell: Cell) -> List[str]:
+    """Where the change record is (M13): a link pinned to the commit that added it when the repository is on GitHub, else its
+    path. Nothing when records are off or none was written."""
+    record = cell.info.get("change_record") if isinstance(cell.info.get("change_record"), dict) else None
+    path = record.get("path") if record else None
+    if not cell.records["enabled"] or not isinstance(path, str) or not change_record.PATH_RE.match(path):
+        return []
+    commit = record.get("commit") if isinstance(record.get("commit"), str) and re.fullmatch(r"[0-9a-f]{40,64}", record.get("commit")) else None
+    repository = origin_repository(cell.project)
+    where = f"[`{path}`](https://github.com/{repository}/blob/{commit}/{path})" if repository and commit else f"`{path}`"
+    return [f"Change record: {where}, added to this branch by the merge station. It lists every verification check and review round, "
+            "with the SHA-256 of each evidence file kept in the local archive.", ""]
 
 
 def exceptions_section(cell: Cell) -> List[str]:
@@ -636,7 +740,11 @@ def findings_review(cell: Cell, rules: Any, number: int, found: List[Tuple[str, 
             listed.append(item)
     approved = cell.decision.get("head")
     approved = approved if isinstance(approved, str) and re.fullmatch(r"[0-9a-f]{40,64}", approved) else head
-    moved = "" if approved == head else f" This pull request is at `{head[:12]}`: the approved commit brought up to date with the main branch, with the tests rerun."
+    record = cell.info.get("change_record") if isinstance(cell.info.get("change_record"), dict) else {}
+    on_record = record.get("commit") == head
+    updated = (record.get("parent") if on_record else head) != approved
+    how = (["brought up to date with the main branch, with the tests rerun"] if updated else []) + (["with its change record added"] if on_record else [])
+    moved = "" if approved == head else f" This pull request is at `{head[:12]}`: the approved commit {', and '.join(how) or 'as it was approved'}."
     intro = [f"The MACH review panel approved commit `{approved[:12]}` in round {number}.{moved} Its findings follow, as the reviewers wrote them, "
              "with likely secrets masked and mentions broken. They are information for whoever reads this pull request; the merge does not wait on them."]
     if inline:
@@ -784,9 +892,12 @@ def cmd_run(cell: Cell, args: argparse.Namespace) -> int:
 def land(cell: Cell, args: argparse.Namespace, plan: Dict[str, Any]) -> int:
     main = plan["into"]
     revalidated = revalidate(cell, main)
+    record = write_record(cell, revalidated) if cell.records["enabled"] else None
     head = cell.head()
     result: Dict[str, Any] = {"ticket_id": cell.ticket_id, "branch": cell.branch, "into": main, "method": cell.method,
-                              "approved_commit": cell.decision.get("head"), "landed_commit": head, "revalidated": revalidated}
+                              "approved_commit": cell.decision.get("head"), "landed_commit": head, "revalidated": revalidated,
+                              "change_record": {key: record.get(key) for key in ("path", "sha256", "commit", "written")} if record
+                              else {"written": False, "reason": "records.enabled is false in .factory/config.json."}}
     if cell.method == "local":
         title = cell.info.get("title") or cell.info.get("slice_id") or "change"
         merged = git(cell.project, "merge", "--no-ff", "-m", f"Merge {cell.ticket_id}: {title}", cell.branch)
@@ -817,7 +928,7 @@ def land(cell: Cell, args: argparse.Namespace, plan: Dict[str, Any]) -> int:
 
 
 def cmd_status(cell: Cell, args: argparse.Namespace) -> int:
-    print(json.dumps({**{key: cell.info.get(key) for key in ("ticket_id", "stage", "branch", "risk", "pull_request", "pull_request_findings", "revalidated", "merged")},
+    print(json.dumps({**{key: cell.info.get(key) for key in ("ticket_id", "stage", "branch", "risk", "pull_request", "pull_request_findings", "revalidated", "change_record", "merged")},
                       "mode": cell.mode, "method": cell.method, "approved_commit": cell.decision.get("head"), "branch_commit": cell.head()}, indent=2))
     return 0
 
