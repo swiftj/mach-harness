@@ -87,3 +87,8 @@ It reads `findings-<your seat>.json` from the packet's `review_dir`, where you w
 ## Report back
 
 Reply in a few lines: your seat, the vote the script recorded, each blocker in one line, and the number of notes. Do not recommend an outcome for the ticket: the tally decides.
+
+## A second look after other work landed
+
+When the packet has `recheck_after_landing`, the change was approved once, and other work then landed on the main branch that touches the same files or the same shipped rules. Review the whole change as it now stands with that work merged in. Read the file named in `details`, and look first at the files and slices it lists. It is context, not a finding to answer.
+

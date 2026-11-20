@@ -252,7 +252,11 @@ def spec_for(slice_id, deferred=None, extra=""):
     lines = [line for line in FIXTURE.splitlines() if "(Deferred to" not in line]
     at = lines.index("### Out of scope") + 2
     lines[at:at] = [f"- Inviting many teammates at once (Deferred to {deferred})" if deferred else "- None."]
-    return "\n".join(lines).replace("SLICE-001", slice_id) + "\n" + extra
+    text = "\n".join(lines).replace("SLICE-001", slice_id) + "\n"
+    heading = "## Effects on shipped behaviour"
+    if heading in extra:  # a spec has one effects section: the extra one takes the place of the fixture's "None."
+        return text.replace(heading + "\n\nNone.\n", extra.strip() + "\n")
+    return text + extra
 
 
 def intent_for(slice_id):

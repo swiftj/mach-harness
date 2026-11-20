@@ -393,7 +393,18 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     # After the first round, reviewers judge the fix, not the whole ticket again.
     earlier = load_json(cell.root / "review" / f"round-{cell.loop}" / "packet.json", {}) or {}
     delta = None
-    if cell.loop > 0 and earlier.get("head") and earlier["head"] != head:
+    # A re-review after the merge station found that what landed on main touches the same ground (M13): the whole ticket
+    # is judged on the merged result, never a delta (a delta from the earlier round would show main's work as this ticket's),
+    # and the reviewers are told why they are looking again.
+    voided = (load_json(cell.root / "review" / "decision.json", {}) or {}).get("void")
+    recheck = None
+    if isinstance(voided, dict) and voided.get("main_commit") and voided.get("branch_commit") \
+            and git(cell.work, "merge-base", "--is-ancestor", str(voided["branch_commit"]), head).returncode == 0:
+        recheck = {"why": str(voided.get("reason") or ""), "details": voided.get("findings_path"),
+                   "landed_files": [f for f in voided.get("landed_files") or [] if isinstance(f, str)],
+                   "landed_slices": [f for f in voided.get("landed_slices") or [] if isinstance(f, str)],
+                   "note": "Context, not findings to answer: check this change still holds with what landed."}
+    if recheck is None and cell.loop > 0 and earlier.get("head") and earlier["head"] != head:
         since = delta_start(cell, earlier["head"], head)
         (cell.folder / "delta.patch").write_text(git(cell.work, "diff", f"{since}..{head}").stdout, encoding="utf-8")
         blocked = sorted({finding.get("file") for vote in (load_json(path, {}) or {} for path in (cell.root / "review" / f"round-{cell.loop}" / "votes").glob("*.json"))
@@ -410,7 +421,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         "risk": risk, "approvals_needed": rules["approvals"], "human_approval_required": human, "human_approval_reasons": reasons,
         "head": head, "baseline": baseline, "branch": cell.info.get("branch"), "started_at": now(),
         "repeat_of": str(round_folders(cell.root, cell.loop + 1)[-2]) if cell.folder.name != f"round-{cell.loop + 1}" else None,
-        "panel": rules["panel"], "delta": delta,
+        "panel": rules["panel"], "delta": delta, **({"recheck_after_landing": recheck} if recheck else {}),
         "paths": {
             "workdir": str(cell.work), "diff": str(cell.folder / "diff.patch"), "review_rules": str(review_rules) if review_rules else None,
             "intent": str(cell.root / "intent.md"), "spec": str(cell.root / "spec.json"), "plan": str(cell.root / "plan.md"),

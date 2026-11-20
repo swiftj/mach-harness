@@ -81,7 +81,7 @@ class TriggerTest(Base):
     def test_a_landed_slice_changing_a_rule_this_spec_lists_voids_the_approval(self):
         approved = self.approved(mode="auto")
         spec = self.cellroot / "spec.md"
-        spec.write_text(spec.read_text() + with_effects(["| SLICE-003/FR-02 | kept | AC-01 | Still holds. |"]))
+        spec.write_text(spec.read_text().replace("## Effects on shipped behaviour\n\nNone.\n", "") + with_effects(["| SLICE-003/FR-02 | kept | AC-01 | Still holds. |"]))
         self.land_on_main({"specs/slices/SLICE-004-late-returns.md": landed_spec("SLICE-004", ["| SLICE-003/FR-02 | replaced | FR-01 | |"]),
                            "app/returns.py": "RETURNS = True\n"})
         refusal = self.m_refused("run", "LOCAL-001")
@@ -104,7 +104,7 @@ class NoTriggerTest(Base):
     def test_unrelated_files_and_slices_land_and_the_ticket_merges(self):
         approved = self.approved(mode="auto")
         spec = self.cellroot / "spec.md"
-        spec.write_text(spec.read_text() + with_effects(["| SLICE-003/FR-02 | kept | AC-01 | Still holds. |"]))
+        spec.write_text(spec.read_text().replace("## Effects on shipped behaviour\n\nNone.\n", "") + with_effects(["| SLICE-003/FR-02 | kept | AC-01 | Still holds. |"]))
         self.set_cell(product={"slice_id": "SLICE-001", "revision": 1, "depends_on": ["SLICE-003"]})
         self.land_on_main({"app/later.py": "VALUE = 1\n",
                            "specs/slices/SLICE-004-other.md": landed_spec("SLICE-004", ["| SLICE-003/FR-02 | kept | AC-01 | Not touched. |",
@@ -175,6 +175,10 @@ class NoRoundTest(test_review.Base):
         started = self.r_ok("start", test_review.TICKET)
         self.assertEqual((started["round"], Path(started["packet"]).parent.name), (1, "round-1.1"), "the same judging round, repeated")
         self.round = self.cellroot / "review" / "round-1.1"
+        packet = json.loads((self.round / "packet.json").read_text())
+        self.assertIsNone(packet["delta"], "the whole change is judged on the merged result")
+        self.assertTrue(packet["recheck_after_landing"]["details"].endswith("merge-recheck.md"))
+        self.assertTrue(packet["recheck_after_landing"]["landed_files"] or packet["recheck_after_landing"]["landed_slices"])
         self.cast()
         self.assertEqual(self.tally()[1]["outcome"], "APPROVED")
         self.assertEqual(json.loads((self.cellroot / "build-report.json").read_text()).get("review_loop", 0), 0)

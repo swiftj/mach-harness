@@ -290,7 +290,7 @@ class BoundariesTest(unittest.TestCase):
 
     def test_studio_epic_current_reads_only_the_compiler(self):
         source = (ROOT / "skills" / "product-studio" / "scripts" / "studio.py").read_text()
-        body = source[source.index("def cmd_epic_current("):source.index("def slice_paths(")]
+        body = source[source.index("def cmd_epic_current("):source.index("# ---- M13 part E")]
         self.assertEqual(sorted(set(re.findall(r"\bcompiler\.([a-z_]+)\(", body))), ["human", "integration", "report"])
         for word in ("gh", "issues.", "handoff", "collab", "write", "fetch", "push", "ticket"):
             self.assertNotRegex(body, rf"\b{re.escape(word)}", word)
