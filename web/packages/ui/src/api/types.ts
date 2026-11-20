@@ -142,7 +142,12 @@ export interface EpicCounts {
 export interface SavedReport {
   everything_saved: boolean;
   note: string;
-  not_saved: Array<{ kind: "unfinished" | "changed_since_ready" | "refresh_failed" | "request_updates" | (string & {}); target: string | null; text: string }>;
+  /** M15: unpublished product principles are listed too (principles_unpublished, or principles_unfinished when publishing stopped part way). */
+  not_saved: Array<{
+    kind: "unfinished" | "changed_since_ready" | "refresh_failed" | "request_updates" | "principles_unpublished" | "principles_unfinished" | (string & {});
+    target: string | null;
+    text: string;
+  }>;
 }
 
 export interface StatusEpicRow {
@@ -155,6 +160,8 @@ export interface StatusEpicRow {
   issue: number | null;
   url: string | null;
   counts: EpicCounts;
+  /** M15: the epic's own Jira key; absent when it has none. */
+  tracking?: Tracking;
 }
 
 export interface StatusSliceRow {
@@ -177,6 +184,10 @@ export interface StatusSliceRow {
   principles?: SlicePrinciplesFlag;
   /** M13 B: present only when a row of the spec's effects now names a rule no longer in force. */
   shipped_moved?: ShippedMoved;
+  /** M15: one line saying a policy pack this slice's spec answered has changed since; absent otherwise. */
+  policies_changed?: string;
+  /** M15: the slice's own Jira key; absent when it has none (its epic's key is on the epic's row). */
+  tracking?: Tracking;
 }
 
 /** An approval the engine withdrew, and why, in the PM's words (status.approvals_withdrawn). */
@@ -642,6 +653,8 @@ export interface SliceShow {
   check: SliceCheck;
   resume_note: string | null;
   github: SliceGithub;
+  /** M15: the same field as slice.resume's, for a slice made from a PRD; read only. */
+  prd?: PrdForSlice;
   factory_authorized: false;
 }
 
@@ -866,7 +879,20 @@ export interface PrincipleChanged {
 
 export type PrinciplesPublishResult =
   | { published: true; saved_to: "github"; revision: number; sha256: string; issue: number; url: string; approved_by: string; active: number; factory_authorized: false; note: string }
-  | { published: true; saved_to: "folder"; revision: number; sha256: string; folder: string; files: string[]; ways_on: string[]; active: number; factory_authorized: false; note: string };
+  | {
+      published: true;
+      saved_to: "folder";
+      revision: number;
+      sha256: string;
+      folder: string;
+      /** Why the folder was used rather than GitHub, in the engine's words. */
+      why_folder: string;
+      files: string[];
+      ways_on: string[];
+      active: number;
+      factory_authorized: false;
+      note: string;
+    };
 
 export interface ReconcilePrinciples {
   reconciled: "principles";
@@ -906,8 +932,8 @@ export interface PolicyPack {
   short: string;
   binding: boolean;
   problems: string[];
-  /** How many statements it holds. */
-  statements: number;
+  /** M15: its statements, each text bounded by the engine. */
+  statements: Array<{ id: string; text: string }>;
 }
 
 export interface PolicyList {
@@ -915,8 +941,8 @@ export interface PolicyList {
   dir: string;
   commit: string | null;
   packs: PolicyPack[];
-  /** Packs that cannot be read: every spec check fails until an engineer fixes them. */
-  problems: Array<{ pack?: string; file?: string; problem?: string; [key: string]: unknown }>;
+  /** Packs that cannot be read, as plain sentences ("policies/x/policy.md: ..."): every spec check fails until an engineer fixes them. */
+  problems: string[];
   /** Slices answered under an older version of a pack, by slice. */
   slices_answered_under_older: Record<string, { changes: unknown[]; note: string }>;
   factory_authorized: false;
@@ -954,7 +980,12 @@ export interface PolicyConcern {
   by?: string;
   on?: string;
   words?: string;
+  /** M15: how the name given for an acceptance was checked, as the engine wrote it. */
+  owner_check?: OwnerCheck | null;
 }
+
+/** How the name given for an acceptance was checked against the pack's owner (M15). */
+export type OwnerCheck = "checked against the pack's owner" | "checked against the project's list" | "not checked against the owner" | (string & {});
 
 export interface PolicyAccept {
   accepted: string;
@@ -962,6 +993,9 @@ export interface PolicyAccept {
   by: string;
   /** Concerns still open in the spec. */
   open_left: string[];
+  /** M15: how the name was checked, and the engine's note on what that check means. */
+  owner_check: OwnerCheck;
+  owner_check_note: string;
   factory_authorized: false;
   note: string;
 }
@@ -969,6 +1003,8 @@ export interface PolicyAccept {
 /* Effects on shipped behaviour (M13 B) and how an epic works today (M13 C) */
 
 export interface EffectRow {
+  /** M15: the row's line in the spec. Absent where a row is not read from a spec (a shipped rule's lineage). */
+  line?: number;
   /** SLICE-003/FR-02. */
   shipped_rule: string;
   slice_id: string;
@@ -1033,8 +1069,10 @@ export interface EpicView {
   /** Shipped before slices declared their effects, so not reconciled: shown, with that said. */
   not_yet_reconciled: ShippedRule[];
   no_longer_in_force: ShippedRule[];
-  not_applied: unknown[];
-  conflicts: unknown[];
+  /** Slices whose effects have problems, so none of them was applied, with each problem. */
+  not_applied: Array<{ slice_id: string; problems: Array<{ line: number; code: string; message: string }> }>;
+  /** Two shipped slices that change the same rule, in plain sentences. */
+  conflicts: string[];
 }
 
 /** `epic current`: the epic as merged on this machine's copy of the integration branch. Changes nothing. */

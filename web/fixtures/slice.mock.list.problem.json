@@ -1,0 +1,60 @@
+{
+  "exit_code": 0,
+  "data": {
+    "slice_id": "SLICE-001",
+    "mocks": [
+      {
+        "binding": false,
+        "bytes": 71,
+        "for": null,
+        "format": "png",
+        "height": 3,
+        "note": "After sending",
+        "sha256": "259592ce529dfe9b979027928ffea81d7da24a8d52ea8e5fc78b7a958284659b",
+        "width": 4,
+        "file": "259592ce529dfe9b979027928ffea81d7da24a8d52ea8e5fc78b7a958284659b.png",
+        "problem": "its SHA-256 is not the approved one"
+      },
+      {
+        "binding": true,
+        "bytes": 71,
+        "for": "AC-01",
+        "format": "png",
+        "height": 3,
+        "note": "The invite form",
+        "sha256": "5888aa05585f21d2bd0f06f0f16416e42e8789ec20a17a6cdca75be548fea3db",
+        "width": 4,
+        "file": "5888aa05585f21d2bd0f06f0f16416e42e8789ec20a17a6cdca75be548fea3db.png",
+        "problem": null
+      },
+      {
+        "binding": false,
+        "bytes": 71,
+        "for": null,
+        "format": "png",
+        "height": 3,
+        "note": "When the address is wrong",
+        "sha256": "776af12407f930a053a79baa67534c3c26c42826755cfea674e575ee31a13dd4",
+        "width": 4,
+        "file": "776af12407f930a053a79baa67534c3c26c42826755cfea674e575ee31a13dd4.png",
+        "problem": null
+      },
+      {
+        "binding": false,
+        "bytes": 57,
+        "for": null,
+        "format": "jpeg",
+        "height": 2,
+        "note": null,
+        "sha256": "f310d4fb631d0f24f5c7262dc4660dda4bf39d6fa53493c6f3e4b6b407e4d402",
+        "width": 5,
+        "file": "f310d4fb631d0f24f5c7262dc4660dda4bf39d6fa53493c6f3e4b6b407e4d402.jpg",
+        "problem": null
+      }
+    ],
+    "limit": 4,
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

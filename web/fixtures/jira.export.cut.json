@@ -1,0 +1,33 @@
+{
+  "exit_code": 0,
+  "data": {
+    "folder": "/project/.factory/studio/jira/cloud-all",
+    "file": "/project/.factory/studio/jira/cloud-all/mach-jira.csv",
+    "readme": "/project/.factory/studio/jira/cloud-all/README.txt",
+    "flavour": "cloud",
+    "state": "all",
+    "epic": null,
+    "counts": {
+      "epics": 0,
+      "stories": 2
+    },
+    "exported": [
+      "SLICE-001",
+      "SLICE-002"
+    ],
+    "left_out": [
+      {
+        "id": "EPIC-001",
+        "reason": "it is already in Jira as TEAM-5; its slices below name it in their description",
+        "jira": "TEAM-5"
+      }
+    ],
+    "cut": [
+      "SLICE-002"
+    ],
+    "factory_authorized": false,
+    "note": "Wrote 0 epic(s) and 2 story(ies) for Jira Cloud. Nothing was sent anywhere: download both files and hand them to the person who imports them. README.txt says which screen to use and how to hand the keys back."
+  },
+  "refused": null,
+  "hint": null
+}

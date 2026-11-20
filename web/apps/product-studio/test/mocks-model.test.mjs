@@ -12,10 +12,12 @@ import {
   dimensionWords,
   fingerprint,
   kindWords,
+  mockAlt,
   mockPurpose,
   purposeOptions,
 } from "../src/features/mocks/model.ts";
-import { forgetReadyAnswer, readyAnswer, rememberReadyAnswer } from "../src/features/mocks/delivery.ts";
+import { forgetReadyAnswer, readyAnswer, rememberReadyAnswer } from "../src/shared/mocksDelivery.ts";
+import { mockPictureUrl } from "../src/api/mockPicture.ts";
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`../../../fixtures/${name}.json`, import.meta.url), "utf8"));
 const list = fixture("slice.mock.list").data;
@@ -58,11 +60,35 @@ test("binding is sent only with a scenario; an empty note is left out", () => {
 test("adding: available below the engine's limit, full at it, locked when the slice cannot change", () => {
   assert.equal(addAvailability(fixture("slice.mock.list.empty").data.mocks.length, list.limit, true), "available");
   assert.equal(addAvailability(list.mocks.length, list.limit, true), "available");
-  assert.equal(addAvailability(4, list.limit, true), "full");
+  const four = fixture("slice.show.four-mocks").data;
+  assert.equal(addAvailability(four.slice.mocks.length, list.limit, four.editable), "full", "a work order with four pictures, the engine's limit");
   assert.equal(addAvailability(1, list.limit, false), "locked");
 });
 
 const github = (progress, saved = "github") => ({ saved, progress });
+
+test("each picture's alternative text says what it is for, from the slice's own record", () => {
+  const four = fixture("slice.show.four-mocks").data.slice.mocks;
+  assert.deepEqual(
+    four.map((m) => mockAlt(m, scenarios)),
+    [
+      "Design mock for the whole slice. After sending",
+      "Binding design mock for scenario AC-01: Admin invites a colleague. The invite form",
+      "Design mock for the whole slice. When the address is wrong",
+      "Design mock for the whole slice",
+    ],
+  );
+});
+
+test("a picture changed in the workspace carries the engine's problem, and only the host's own address is asked for", () => {
+  const changed = fixture("slice.mock.list.problem").data;
+  assert.deepEqual(changed.mocks.map((m) => m.problem), ["its SHA-256 is not the approved one", null, null, null]);
+  const sha = changed.mocks[1].sha256;
+  assert.equal(mockPictureUrl("SLICE-001", sha), `/api/slices/SLICE-001/mocks/${sha}`);
+  assert.equal(mockPictureUrl("SLICE-001", sha.slice(0, 12)), null);
+  assert.equal(mockPictureUrl("SLICE-001", sha.toUpperCase()), null);
+  assert.equal(mockPictureUrl("../SLICE-001", sha), null);
+});
 
 test("a draft never waits for its pictures", () => {
   assert.deepEqual(deliveryState({ status: "draft", github: github("draft", null), mockCount: 2, toCommit: ready.mocks }), { kind: "none" });

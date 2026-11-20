@@ -4,7 +4,7 @@ import type { MachApiError } from "@mach/ui/api";
 import { client } from "../../api/client";
 import { toApiError } from "../../api/session";
 import { reloadStatus } from "../../api/store";
-import { acceptArgs, acceptFormErrors, checkWords, type AcceptResult, type ConcernRow } from "./model";
+import { acceptArgs, acceptFormErrors, checkWords, type ConcernRow } from "./model";
 
 /**
  * Record a policy owner's acceptance of one open concern (`policy.accept`). It is the owner's
@@ -37,14 +37,14 @@ export function AcceptConcernDialog({ sliceId, concern, onDone }: { sliceId: str
     setError(null);
     client.op("policy.accept", acceptArgs(sliceId, concern.statementId, by, reason)).then(
       (answer) => {
-        const result = answer as AcceptResult;
+        const result = answer;
         setBusy(false);
         setOpen(false);
         reset();
         toast({
           tone: "success",
           title: `Recorded the owner's acceptance of ${result.accepted}`,
-          description: [result.owner_check !== undefined ? checkWords(result.owner_check) : null, result.owner_check_note, result.note].filter(Boolean).join(" "),
+          description: [checkWords(result.owner_check), result.owner_check_note, result.note].filter(Boolean).join(" "),
         });
         void reloadStatus();
         onDone();

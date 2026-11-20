@@ -26,8 +26,9 @@
         "issue": null,
         "url": null,
         "counts": {
-          "total": 2,
+          "total": 3,
           "by_progress": {
+            "draft": 1,
             "interviewing": 1,
             "ready_for_approval": 1
           },
@@ -39,8 +40,8 @@
     "slices": [
       {
         "shipped_moved": {
-          "checked_at": "e91f18f1778277b63e0926669f46c7aa9ae75a58",
-          "now": "df8e1104616c3a9c425ba974712ae6e7a4c7709a",
+          "checked_at": "2ede7286fc780d46d4111da93ace96634be3d3d4",
+          "now": "7919fcf21e893e1c0661ced1dca5046483b63d66",
           "problems": [
             {
               "line": 87,
@@ -116,6 +117,40 @@
           },
           "progress": "interviewing"
         }
+      },
+      {
+        "slice_id": "SLICE-006",
+        "title": "Invite again",
+        "epic_id": "EPIC-001",
+        "status": "draft",
+        "revision": 1,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-006-invite-teammate.md",
+        "has_intent": true,
+        "resume_note": null,
+        "dependencies": [],
+        "editable": true,
+        "github": {
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": null,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": null,
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "draft"
+        }
       }
     ],
     "saved": {
@@ -141,6 +176,13 @@
             "in_workspace": true,
             "issue": null,
             "state_label": null
+          },
+          {
+            "slice_id": "SLICE-006",
+            "title": "Invite again",
+            "in_workspace": true,
+            "issue": null,
+            "state_label": null
           }
         ],
         "on_github": false,
@@ -158,14 +200,15 @@
       "form": null,
       "last_read": null
     },
-    "current_slice": "SLICE-005",
+    "current_slice": "SLICE-006",
     "last_refreshed": null,
     "structurally_valid": true,
     "structural_errors": [],
     "factory_authorized": false,
     "suggested_next": [
       "SLICE-004 is ready for your approval: mark it ready for the builders (slice ready SLICE-004).",
-      "Continue the interview for SLICE-005: Invite by link (slice resume SLICE-005)."
+      "Continue the interview for SLICE-005: Invite by link (slice resume SLICE-005).",
+      "Continue the interview for SLICE-006: Invite again (slice resume SLICE-006)."
     ],
     "next_actions": [
       {
@@ -180,6 +223,13 @@
         "target": "SLICE-005",
         "title": "Continue the interview for SLICE-005",
         "reason": "Invite by link is still being defined.",
+        "related": []
+      },
+      {
+        "kind": "continue_interview",
+        "target": "SLICE-006",
+        "title": "Continue the interview for SLICE-006",
+        "reason": "Invite again is still being defined.",
         "related": []
       }
     ]

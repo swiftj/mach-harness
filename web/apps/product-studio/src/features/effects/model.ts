@@ -6,9 +6,7 @@
  * Pure: imported by the screen and by test/effects-model.test.mjs.
  */
 import type { EffectRow, ShippedChecked, ShippedMoved, SliceShow } from "@mach/ui/api";
-
-/** The spec's heading for the section, as the engine names it in `diagnostics[].section`. */
-export const EFFECTS_HEADING = "Effects on shipped behaviour";
+import { specSectionOf } from "@mach/ui/sections";
 
 export interface EffectProblem {
   /** The engine's words, as written. */
@@ -22,7 +20,7 @@ export interface EffectProblem {
 
 export interface EffectLine {
   row: EffectRow;
-  /** The row's line in the spec, when it could be found by its shipped rule. */
+  /** The row's line in the spec, as the engine gave it. */
   line: number | null;
   problems: EffectProblem[];
 }
@@ -45,17 +43,12 @@ export interface EffectsView {
   moved: ShippedMoved | null;
 }
 
-/** True for a check finding about the effects section, by the engine's section or its rule code. */
-function aboutEffects(section: string | null | undefined, rule: string | null | undefined): boolean {
-  return section === EFFECTS_HEADING || (typeof rule === "string" && rule.startsWith("effects-"));
-}
-
 /** The engine's check findings about the effects section, in its words. */
 export function effectProblems(check: SliceShow["check"] | null | undefined): EffectProblem[] {
   if (!check) return [];
   if (check.diagnostics) {
     return check.diagnostics
-      .filter((d) => aboutEffects(d.section, d.rule))
+      .filter((d) => specSectionOf(d) === "effects")
       .map((d) => ({ message: d.message, line: d.line, rule: d.rule, source: "check" as const, severity: d.severity === "warning" ? ("warning" as const) : ("error" as const) }));
   }
   // An engine without diagnostics: its error lines end with the rule code in brackets.
@@ -63,28 +56,6 @@ export function effectProblems(check: SliceShow["check"] | null | undefined): Ef
     ...check.errors.filter((e) => /\[effects-[a-z-]+\]\s*$/.test(e)).map((message) => ({ message, line: null, rule: null, source: "check" as const, severity: "error" as const })),
     ...check.warnings.filter((e) => /\[effects-[a-z-]+\]\s*$/.test(e)).map((message) => ({ message, line: null, rule: null, source: "check" as const, severity: "warning" as const })),
   ];
-}
-
-/**
- * The line of each table row in the spec's effects section, by the shipped rule its first cell
- * names. Lines count from 1, as the engine counts them. A rule named twice keeps its first line.
- */
-export function effectRowLines(markdown: string | null | undefined): Map<string, number> {
-  const lines = new Map<string, number>();
-  if (!markdown) return lines;
-  const text = markdown.split("\n");
-  let inside = false;
-  for (let index = 0; index < text.length; index += 1) {
-    const line = text[index] ?? "";
-    if (/^#{1,6}\s/.test(line)) {
-      inside = /^##\s+Effects on shipped behaviour\s*$/.test(line);
-      continue;
-    }
-    if (!inside || !line.trim().startsWith("|")) continue;
-    const first = line.trim().replace(/^\|/, "").split("|")[0]?.trim() ?? "";
-    if (/^SLICE-\d{3,}\/[A-Z]+-?\d+$/.test(first) && !lines.has(first)) lines.set(first, index + 1);
-  }
-  return lines;
 }
 
 /** Everything the Effects tab shows for one slice. `moved` is this slice's `status.slices[].shipped_moved`. */
@@ -98,10 +69,9 @@ export function effectsView(show: SliceShow, moved: ShippedMoved | null | undefi
   ];
   const effects = model?.effects;
   const state: EffectsState = !spec ? "no-spec" : effects === undefined || effects === null ? "no-section" : effects.length === 0 ? "none" : "rows";
-  const lines = effectRowLines(spec?.markdown);
   const placed = new Set<EffectProblem>();
   const rows: EffectLine[] = (effects ?? []).map((row) => {
-    const line = lines.get(row.shipped_rule) ?? null;
+    const line = row.line ?? null;
     const mine = line === null ? [] : problems.filter((p) => p.line === line);
     mine.forEach((p) => placed.add(p));
     return { row, line, problems: mine };

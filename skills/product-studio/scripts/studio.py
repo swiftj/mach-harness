@@ -73,6 +73,22 @@ def state(status: Any) -> str:
     return say(str(status), STATE_WORDS.get(str(status), "in an unknown state"))
 
 
+# The validator is shared with the Factory, so its findings name the terminal's commands and files. In the app those
+# words become the page or button that does the same (M15). AppWordingTest holds every finding the M13 and M14 checks write.
+APP_FINDING_WORDS = (
+    (" to accept it (policy accept), or", " to accept it on the slice's Principles and policies page, or"),
+    (" See references/spec-structure.md.", ""),
+    ("--by names the owner who accepted it, as", "Name who accepted it as"),
+    ("--reason is the owner's own words,", "The reason is the owner's own words,"),
+)
+
+
+def app_finding(message: str) -> str:
+    for terminal, app in APP_FINDING_WORDS:
+        message = message.replace(terminal, app)
+    return message
+
+
 def hint(kind: str, target: Optional[str] = None) -> Dict[str, Any]:
     return {"kind": kind, "target": target}
 
@@ -329,8 +345,10 @@ class Studio:
         """The intent skill's validator, with every folder that shares the slice ID space, the project's product principles,
         and the shipped rules, so '## Effects on shipped behaviour' is always required (M13)."""
         others = self.validate_slice.sibling_specs(spec, self.cell.registries(self.project, own=spec.parent))
-        return self.validate_slice.analyze(spec.read_text(encoding="utf-8-sig"), spec.name, others, ready=ready, principles=self.principles_for_check(),
-                                           shipped=self.shipped()["rules"], policies=policies_helper().for_validator(self.policy_listing()))
+        findings, model = self.validate_slice.analyze(spec.read_text(encoding="utf-8-sig"), spec.name, others, ready=ready,
+                                                      principles=self.principles_for_check(), shipped=self.shipped()["rules"],
+                                                      policies=policies_helper().for_validator(self.policy_listing()))
+        return [finding._replace(message=app_finding(finding.message)) for finding in findings] if APP else findings, model
 
     # ---- policy packs (M14 part A) ----
 
@@ -566,11 +584,14 @@ def principles_status(studio: Studio, ledger: Dict[str, Any], slice_rows: Sequen
     unpublished = studio.unpublished(ledger)
     stale = [row["slice_id"] for row in slice_rows if (row.get("principles") or {}).get("note")]
     if view["newer_elsewhere"]:
-        nxt = ("Someone else published a newer version of the principles on GitHub: choose yours or theirs (reconcile principles --take mine|theirs).")
+        nxt = say("Someone else published a newer version of the principles on GitHub: choose yours or theirs (reconcile principles --take mine|theirs).",
+                  "Someone else published a newer version of the principles on GitHub: choose yours or theirs.")
     elif view["unfinished"]:
-        nxt = "Publishing the principles to GitHub stopped part way: publish them again to finish (principle publish)."
+        nxt = say("Publishing the principles to GitHub stopped part way: publish them again to finish (principle publish).",
+                  "Publishing the principles to GitHub stopped part way: publish them again to finish.")
     elif unpublished:
-        nxt = "The principles have changes that are not published: publish them so the builders get them (principle publish)."
+        nxt = say("The principles have changes that are not published: publish them so the builders get them (principle publish).",
+                  "The principles have changes that are not published: publish them so the builders get them.")
     elif stale:
         nxt = f"Slices answered under older principles: {', '.join(stale)}. Check their answers."
     else:
@@ -603,6 +624,7 @@ def describe(studio: Studio) -> Dict[str, Any]:
             **({"principles": flags} if flags is not None else {}),
             **({"shipped_moved": moved} if moved else {}),
             **({"policies_changed": older_packs} if older_packs else {}),
+            **tracking_field(data),
             "slice_id": slice_id, "title": data.get("title"), "epic_id": data.get("epic_id"), "status": data.get("status"),
             "revision": data.get("revision"), "open_questions": len(data.get("open_questions") or []),
             "spec": studio.relative(spec) if spec else None, "has_intent": studio.intent_path(slice_id).is_file(),
@@ -624,7 +646,7 @@ def describe(studio: Studio) -> Dict[str, Any]:
         "epics": [{"epic_id": key, "title": data.get("title"), "status": data.get("status"), "revision": data.get("revision"),
                    "acceptance_criteria": list(data.get("acceptance_criteria") or []),
                    "issue": (ledger["epics"].get(key) or {}).get("number"), "url": url((ledger["epics"].get(key) or {}).get("number")),
-                   "counts": handoff.epic_counts([row for row in slice_rows if row["epic_id"] == key])}
+                   "counts": handoff.epic_counts([row for row in slice_rows if row["epic_id"] == key]), **tracking_field(data)}
                   for key, data in epics.items()],
         "slices": slice_rows,
         **({"principles": principles_status(studio, ledger, slice_rows)} if current or (ledger.get("principles") or {}).get("saved") else {}),
@@ -668,6 +690,13 @@ def saved_state(studio: Studio, ledger: Dict[str, Any], slices: Dict[str, Dict[s
             if now_text != (entry.get("spec_sha256"), entry.get("why_sha256")):
                 waiting.append({"kind": "changed_since_ready", "target": slice_id,
                                 "text": f"{slice_id} changed since you marked it ready. The builders still have the version you approved; mark it ready again to give them this one."})
+    if studio.unpublished(ledger):
+        if (ledger.get("principles") or {}).get("run"):
+            waiting.append({"kind": "principles_unfinished", "target": None,
+                            "text": "Publishing the product principles stopped part way. Publish them again to finish."})
+        else:
+            waiting.append({"kind": "principles_unpublished", "target": None,
+                            "text": "The product principles have changes that are not published. Publish them so the builders get them."})
     problem = (ledger.get("seen") or {}).get("problem")
     if problem:
         waiting.append({"kind": "refresh_failed", "target": None, "text": f"The last check of GitHub did not finish: {problem}"})
@@ -852,8 +881,9 @@ def cmd_epic_current(studio: Studio, args: argparse.Namespace) -> int:
         found = compiler.report(studio.project, source["commit"], branch=source["branch"], epic=wanted.upper() if not wanted.isdigit() else wanted)
     except compiler.CurrentError as exc:
         raise StudioError(str(exc))
-    note = (f"This shows what is merged on this machine's copy of the integration branch ({source['branch']} at {source['commit'][:12]}), "
-            "which may be behind GitHub. The slices are the authority.")
+    note = say(f"This shows what is merged on this machine's copy of the integration branch ({source['branch']} at {source['commit'][:12]}), "
+               "which may be behind GitHub. The slices are the authority.",
+               "This shows the work merged on this computer, which may be behind GitHub. The slices are the authority.")
     view = found["epics"][0] if found["epics"] else None
     if not args.json:
         print(note + "\n" + compiler.human(found))
@@ -872,6 +902,13 @@ def jira_key(value: Optional[str], drop: bool) -> Optional[str]:
     if not ticket_rules().is_jira_key(key):
         raise StudioError(f"'{key[:60]}' is not a Jira issue key. Write it as Jira does: the project key in capitals, a hyphen and the number, such as ABC-123.")
     return key
+
+
+def tracking_field(data: Dict[str, Any]) -> Dict[str, Any]:
+    """For status rows (M15): {"tracking": {"jira": KEY}} with the item's own Jira key, or nothing when it has none."""
+    found = data.get("tracking")
+    key = found.get("jira") if isinstance(found, dict) else None
+    return {"tracking": {"jira": key}} if isinstance(key, str) and key else {}
 
 
 def with_tracking(data: Dict[str, Any], key: Optional[str]) -> None:
@@ -1091,7 +1128,8 @@ def cmd_policy_list(studio: Studio, args: argparse.Namespace) -> int:
         if changed:
             flags[slice_id] = {"changes": changed, "note": P.drift_text(changed)}
     return emit({"reads_only": True, "dir": found["dir"], "commit": found["commit"],
-                 "packs": [{**P.public(record), "statements": len(record["statements"])} for record in found["packs"]],
+                 "packs": [{**P.public(record), "statements": [{"id": item["id"], "text": P.adr.bounded(item["text"], P.STATEMENT_LIMIT)}
+                                                                for item in P.public(record)["statements"]]} for record in found["packs"]],
                  "problems": found["problems"], "slices_answered_under_older": flags, "factory_authorized": False,
                  "note": "Packs are the organisation's policies, changed by an engineer's pull request. A pack changed later binds slices marked ready "
                          "afterwards; slices already answered are flagged, never reopened."})
@@ -1115,7 +1153,7 @@ def cmd_policy_accept(studio: Studio, args: argparse.Namespace) -> int:
     try:
         text, check = P.accept(spec.read_text(encoding="utf-8-sig"), args.policy_id, args.by, args.reason, allowed=P.accept_by(config))
     except ValueError as exc:
-        raise StudioError(str(exc))
+        raise StudioError(say(str(exc), app_finding(str(exc))))
     write(spec, text)
     return emit({"accepted": args.policy_id, "slice_id": args.slice_id, "by": " ".join(args.by.split()),
                  "owner_check": check, "owner_check_note": P.ACCEPT_GUARD,
@@ -1227,6 +1265,7 @@ def cmd_slice_show(studio: Studio, args: argparse.Namespace) -> int:
         "resume_note": (studio.session()["notes"].get(slice_id) or {}).get("note"),
         "github": handoff.slice_view(studio.handoff().load(), slice_id, data, ticket_rules()),
         **request_field(studio, slice_id, data),
+        **prd.resume_field(sys.modules[__name__], studio, slice_id, data),  # M15: the same field as slice resume, read only
         "factory_authorized": False,
     })
 
@@ -1631,7 +1670,8 @@ def cmd_principle_add(studio: Studio, args: argparse.Namespace) -> int:
     checked(studio, items + [item], ident)
     studio.save_principles(items + [item], f"Adding {ident}")
     return emit({"principle": item, "warnings": warnings, "published": False, "factory_authorized": False,
-                 "note": f"{ident} is saved here. Publish the principles to give them to the builders (principle publish)."})
+                 "note": say(f"{ident} is saved here. Publish the principles to give them to the builders (principle publish).",
+                             f"{ident} is saved here. Publish the principles to give them to the builders.")})
 
 
 def cmd_principle_set(studio: Studio, args: argparse.Namespace) -> int:
@@ -1654,7 +1694,8 @@ def cmd_principle_set(studio: Studio, args: argparse.Namespace) -> int:
     checked(studio, items, item["id"])
     studio.save_principles(items, f"Changing {item['id']}")
     return emit({"principle": item, "warnings": warnings, "published": False, "factory_authorized": False,
-                 "note": f"{item['id']} is changed here. Publish the principles to give the change to the builders (principle publish)."})
+                 "note": say(f"{item['id']} is changed here. Publish the principles to give the change to the builders (principle publish).",
+                             f"{item['id']} is changed here. Publish the principles to give the change to the builders.")})
 
 
 def cmd_principle_retire(studio: Studio, args: argparse.Namespace) -> int:
@@ -1666,7 +1707,8 @@ def cmd_principle_retire(studio: Studio, args: argparse.Namespace) -> int:
     item["status"] = "retired"
     studio.save_principles(items, f"Retiring {item['id']}")
     return emit({"principle": item, "published": False, "factory_authorized": False,
-                 "note": f"{item['id']} is retired here; slices no longer answer it. Publish the principles to tell the builders (principle publish)."})
+                 "note": say(f"{item['id']} is retired here; slices no longer answer it. Publish the principles to tell the builders (principle publish).",
+                             f"{item['id']} is retired here; slices no longer answer it. Publish the principles to tell the builders.")})
 
 
 def cmd_principle_list(studio: Studio, args: argparse.Namespace) -> int:
@@ -1682,7 +1724,7 @@ def cmd_principle_publish(studio: Studio, args: argparse.Namespace) -> int:
     project = studio.load("project")
     items = studio.principles()
     if not items:
-        raise StudioError("There are no principles to publish. Add one first (principle add).")
+        raise StudioError(say("There are no principles to publish. Add one first (principle add).", "There are no principles to publish. Add one first."))
     for item in items:
         if item["status"] == "active":
             principle_findings(studio, item["id"], item["statement"])
@@ -1691,7 +1733,8 @@ def cmd_principle_publish(studio: Studio, args: argparse.Namespace) -> int:
     if saved["saved_to"] == "folder":
         folder = Path(saved["folder"])
         return emit({"published": True, **saved, "files": [str(folder / "principles.json")], "active": active, "factory_authorized": False,
-                     "ways_on": [f"Commit the folder {folder.relative_to(studio.draft)} to the repository; the builders read it from the main branch.",
+                     "ways_on": [say(f"Commit the folder {folder.relative_to(studio.draft)} to the repository; the builders read it from the main branch.",
+                                     "Add this folder to the project's repository; the builders read it from there."),
                                  "Slices marked ready from now on answer these principles."],
                      "note": "Published to the folder. Nothing was sent to GitHub and no work has started."})
     return emit({"published": True, **saved, "active": active, "factory_authorized": False,

@@ -6,6 +6,8 @@ import { IssueLink, SignInNote } from "../../shared/IssueLink";
 import { client as studioClient } from "../../api/client";
 import { toApiError } from "../../api/session";
 import { useStatus } from "../../api/store";
+import { MocksToCommitPanel } from "../../shared/MocksToCommit";
+import { forgetReadyAnswer, rememberReadyAnswer } from "../../shared/mocksDelivery";
 
 function Failure({ error, what }: { error: MachApiError; what: string }) {
   // A refusal is the engine's own words, shown as written; the title names what did not happen.
@@ -37,6 +39,7 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
     studioClient.op("slice.ready", { slice_id: id }).then(
       (result) => {
         setBusy(false);
+        rememberReadyAnswer(result);
         setSaved(result);
       },
       (cause: unknown) => {
@@ -79,8 +82,9 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
             </DialogClose>
           }
         >
-          <div className="pb-1">
+          <div className="flex flex-col gap-4 pb-1">
             <SavedPlace result={saved} />
+            {saved.saved_to === "github" && saved.mocks ? <MocksToCommitPanel sliceId={id} toCommit={saved.mocks} files={saved.mocks.files} level={3} /> : null}
           </div>
         </DialogContent>
       ) : (
@@ -174,6 +178,7 @@ export function ReopenDialog({ show, onDone }: { show: SliceShow; onDone: () => 
       (result) => {
         setBusy(false);
         setOpen(false);
+        forgetReadyAnswer(id);
         toast({ tone: "info", title: `Reopened ${id}`, description: result.note });
         onDone();
       },

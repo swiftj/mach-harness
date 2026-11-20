@@ -143,10 +143,10 @@ function Pack({ row }: { row: PackRow }) {
             {row.version || "not recorded"}
           </span>
         </Fact>
-        <Fact term="Statements">{plural(row.statementCount, "statement")}</Fact>
+        <Fact term="Statements">{plural(row.statements.length, "statement")}</Fact>
       </dl>
 
-      {row.statements?.length ? (
+      {row.statements.length ? (
         <ol aria-label={`Statements of ${row.title ?? row.id}`} className="flex max-w-reading flex-col divide-y divide-line rounded-md border border-line bg-surface">
           {row.statements.map((statement) => (
             <li key={statement.id} className="flex flex-col gap-1 px-4 py-3">
@@ -155,14 +155,6 @@ function Pack({ row }: { row: PackRow }) {
             </li>
           ))}
         </ol>
-      ) : row.statementCount ? (
-        <Text size="body-sm" tone="muted" className="max-w-reading">
-          The statements themselves are not listed here yet. Each slice&apos;s Principles and policies page quotes any statement it cannot meet; the full text is in{" "}
-          <span className="font-mono text-mono text-ink" translate="no">
-            {row.file}
-          </span>
-          .
-        </Text>
       ) : null}
     </section>
   );

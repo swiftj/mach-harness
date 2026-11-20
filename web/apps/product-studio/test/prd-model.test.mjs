@@ -19,6 +19,8 @@ import {
   settleArgs,
 } from "../src/features/prd/model.ts";
 import noMap from "../../../fixtures/prd.status.no-map.json" with { type: "json" };
+import showPrdDrafted from "../../../fixtures/slice.show.prd-drafted.json" with { type: "json" };
+import resumePrdDrafted from "../../../fixtures/slice.resume.prd-drafted.json" with { type: "json" };
 import uncovered from "../../../fixtures/prd.status.uncovered.json" with { type: "json" };
 import oneLeft from "../../../fixtures/prd.status.one-left.json" with { type: "json" };
 import applied from "../../../fixtures/prd.status.applied.json" with { type: "json" };
@@ -136,6 +138,22 @@ test("drafted answers: only drafted ones waiting can be accepted; the rest are a
   assert.deepEqual(after.accepted.map((a) => a.n), [1]);
   assert.deepEqual(after.discuss.map((a) => a.n), [2]);
   assert.deepEqual(after.waiting, []);
+});
+
+test("the slice's own page reads the four drafted answers from slice.show, the same as slice.resume", () => {
+  const shown = showPrdDrafted.data;
+  const resumed = resumePrdDrafted.data;
+  assert.deepEqual(shown.prd, resumed.prd);
+  const groups = answerGroups(shown.prd.answers.recorded);
+  assert.deepEqual(groups.waiting.map((a) => [a.n, a.kind]), [
+    [1, "drafted"],
+    [2, "drafted"],
+  ]);
+  assert.deepEqual(groups.alwaysAsked.map((a) => [a.n, a.kind]), [
+    [3, "contradiction"],
+    [4, "not_settled"],
+  ]);
+  assert.doesNotMatch(shown.prd.note, /\(prd (draft|confirm)\)/, "the app's wording names no command");
 });
 
 test("confirming lists the numbers it accepts and discusses, never a contradiction", () => {

@@ -13,7 +13,6 @@ import {
   isHostDownload,
   keysSummary,
   label,
-  learnFromSliceLink,
   ledgerFacts,
   namesFrom,
   readmeEssentials,
@@ -25,71 +24,51 @@ import {
 const fixture = (name) => JSON.parse(readFileSync(new URL(`../../../fixtures/${name}.json`, import.meta.url), "utf8")).data;
 const refusal = (name) => JSON.parse(readFileSync(new URL(`../../../fixtures/${name}.json`, import.meta.url), "utf8")).refused;
 
-const status = fixture("status.jira-mocks");
+const status = fixture("status.jira-mocks"); // EPIC-001 with TEAM-2; SLICE-001 with TEAM-12 of its own; SLICE-002 with none
 const rich = fixture("status.rich");
-const keyed = fixture("slice.show.mocks-and-jira").slice; // SLICE-001 with TEAM-12 of its own
-const plainOrder = { ...keyed, slice_id: "SLICE-002", tracking: undefined };
 
-/* ── States of the key ledger ─────────────────────────────────────────── */
+/* ── States of the key ledger (status reports each key, as tracking) ──── */
 
 test("empty workspace: no epics, nothing to show", () => {
-  const ledger = buildLedger(fixture("status.empty"), {}, {});
+  const ledger = buildLedger(fixture("status.empty"));
   assert.deepEqual(ledger, []);
   assert.equal(ledgerFacts(ledger).epics, 0);
 });
 
 test("an epic with no slices yet is listed with none", () => {
-  const ledger = buildLedger(fixture("status.project-and-epic"), {}, {});
+  const ledger = buildLedger(fixture("status.project-and-epic"));
   assert.equal(ledger.length, 1);
   assert.deepEqual(ledger[0].slices, []);
 });
 
-test("while work orders are read, slice keys are unknown and the page says it is reading", () => {
-  const ledger = buildLedger(status, {}, {});
-  assert.deepEqual(ledger[0].slices.map((s) => s.key.kind), ["unknown", "unknown"]);
-  assert.equal(ledgerFacts(ledger).reading, true);
-});
-
-test("no keys at all: every slice read, none has a key, the epic's key not read", () => {
-  const ledger = buildLedger(status, { "SLICE-001": { ...keyed, tracking: undefined }, "SLICE-002": plainOrder }, {});
+test("no keys at all: neither the epic nor any slice has one", () => {
+  const ledger = buildLedger(rich);
   const facts = ledgerFacts(ledger);
-  assert.equal(facts.reading, false);
   assert.equal(facts.sliceKeys, 0);
   assert.equal(facts.epicKeys, 0);
-  assert.equal(facts.epicsUnknown, 1);
-  assert.deepEqual(ledger[0].slices.map((s) => s.key), [
-    { kind: "inherits-unknown", from: "EPIC-001" },
-    { kind: "inherits-unknown", from: "EPIC-001" },
-  ]);
+  assert.deepEqual(ledger[0].key, { kind: "none" });
+  assert.ok(ledger[0].slices.every((s) => s.key.kind === "none" && s.ownKey === null));
 });
 
-test("some keys: a slice's own key, and the other inherits the epic's once the epic's key is known", () => {
-  const ledger = buildLedger(status, { "SLICE-001": keyed, "SLICE-002": plainOrder }, { "EPIC-001": "TEAM-1" });
-  assert.deepEqual(ledger[0].key, { kind: "own", key: "TEAM-1" });
+test("some keys: a slice's own key, and the other inherits the epic's", () => {
+  const ledger = buildLedger(status);
+  assert.deepEqual(ledger[0].key, { kind: "own", key: "TEAM-2" });
   assert.deepEqual(ledger[0].slices[0].key, { kind: "own", key: "TEAM-12" });
   assert.equal(ledger[0].slices[0].ownKey, "TEAM-12");
-  assert.deepEqual(ledger[0].slices[1].key, { kind: "inherited", key: "TEAM-1", from: "EPIC-001" });
+  assert.deepEqual(ledger[0].slices[1].key, { kind: "inherited", key: "TEAM-2", from: "EPIC-001" });
   assert.equal(ledger[0].slices[1].ownKey, null);
-  assert.deepEqual(ledgerFacts(ledger), { epics: 1, slices: 2, sliceKeys: 1, epicKeys: 1, epicsUnknown: 0, reading: false });
+  assert.deepEqual(ledgerFacts(ledger), { epics: 1, slices: 2, sliceKeys: 1, epicKeys: 1 });
 });
 
-test("an epic the engine said has no key: its keyless slices have none", () => {
-  const ledger = buildLedger(status, { "SLICE-001": keyed, "SLICE-002": plainOrder }, { "EPIC-001": null });
-  assert.deepEqual(ledger[0].key, { kind: "none" });
-  assert.deepEqual(ledger[0].slices[1].key, { kind: "none" });
-});
-
-test("a status row that carries the epic's key is used, should status ever report it", () => {
-  assert.deepEqual(epicKey({ ...status.epics[0], tracking: { jira: "TEAM-7" } }, {}), { kind: "own", key: "TEAM-7" });
-  assert.deepEqual(epicKey(status.epics[0], {}), { kind: "unknown" });
-});
-
-test("a slice's own key wins over its epic's", () => {
-  assert.deepEqual(sliceKey(keyed, { kind: "own", key: "TEAM-1" }, "EPIC-001"), { kind: "own", key: "TEAM-12" });
+test("the epic's key and each slice's own key come from status, read as given", () => {
+  assert.deepEqual(epicKey(status.epics[0]), { kind: "own", key: "TEAM-2" });
+  assert.deepEqual(epicKey(rich.epics[0]), { kind: "none" });
+  assert.deepEqual(sliceKey(status.slices[0], { kind: "own", key: "TEAM-2" }, "EPIC-001"), { kind: "own", key: "TEAM-12" }, "a slice's own key wins");
+  assert.deepEqual(sliceKey(status.slices[1], { kind: "none" }, "EPIC-001"), { kind: "none" });
 });
 
 test("slices in the product manager's order, each under its epic, with the engine's editable word", () => {
-  const ledger = buildLedger(rich, {}, {});
+  const ledger = buildLedger(rich);
   assert.deepEqual(
     ledger.map((e) => [e.id, e.slices.map((s) => s.id)]),
     [
@@ -98,32 +77,29 @@ test("slices in the product manager's order, each under its epic, with the engin
     ],
   );
   const reordered = { ...rich, order: [{ ...rich.order[0], slices: [...rich.order[0].slices].reverse() }, rich.order[1]] };
-  assert.equal(buildLedger(reordered, {}, {})[0].slices[0].id, "SLICE-007");
+  assert.equal(buildLedger(reordered)[0].slices[0].id, "SLICE-007");
   assert.equal(ledger[0].slices[0].editable, false);
 });
 
 test("a slice the order does not name still appears, after the ordered ones", () => {
   const partial = { ...rich, order: [{ ...rich.order[0], slices: rich.order[0].slices.slice(1) }, rich.order[1]] };
-  assert.equal(buildLedger(partial, {}, {})[0].slices.at(-1).id, "SLICE-001");
+  assert.equal(buildLedger(partial)[0].slices.at(-1).id, "SLICE-001");
 });
 
 test("a slice in the order but not in this workspace is not offered", () => {
   const withRemote = { ...status, order: [{ ...status.order[0], slices: [...status.order[0].slices, { slice_id: "SLICE-099", title: null, in_workspace: false, issue: 99, state_label: null }] }] };
-  assert.deepEqual(buildLedger(withRemote, {}, {})[0].slices.map((s) => s.id), ["SLICE-001", "SLICE-002"]);
+  assert.deepEqual(buildLedger(withRemote)[0].slices.map((s) => s.id), ["SLICE-001", "SLICE-002"]);
 });
 
-/* ── What the engine's link answers teach about an epic's key ─────────── */
+/* ── The engine's link answers ────────────────────────────────────────── */
 
-test("epic.link names the epic's key", () => {
+test("epic.link names the epic's key, and the slices already marked ready that keep the old one", () => {
   assert.equal(fixture("epic.link").epic.tracking.jira, "TEAM-1");
-});
-
-test("slice.link: a slice with its own key says nothing about its epic", () => {
-  assert.equal(learnFromSliceLink(fixture("slice.link")), null);
-});
-
-test("slice.link with the key removed: the key it is handed over with is its epic's", () => {
-  assert.deepEqual(learnFromSliceLink(fixture("slice.link.remove")), { epic: "EPIC-001", key: "TEAM-1" });
+  assert.deepEqual(fixture("epic.link").already_ready, []);
+  const ready = fixture("epic.link.already-ready");
+  assert.equal(ready.epic.tracking.jira, "TEAM-5");
+  assert.deepEqual(ready.already_ready, ["SLICE-001"]);
+  assert.equal(fixture("epic.link.remove").epic.tracking, undefined);
 });
 
 test("a key not in Jira's form is the engine's refusal, shown as written", () => {
@@ -179,7 +155,7 @@ test("exported: counts in words, the items already in Jira, and the host's two d
 });
 
 test("a cut description is listed by name", () => {
-  const summary = exportSummary({ ...offered(fixture("jira.export.all")), cut: ["SLICE-002"] }, namesFrom(status));
+  const summary = exportSummary(offered(fixture("jira.export.cut")), namesFrom(status));
   assert.deepEqual(summary.cut, [{ id: "SLICE-002", name: "Remove a teammate" }]);
 });
 
@@ -242,15 +218,10 @@ test("applied: what was recorded", () => {
 });
 
 test("slices to reopen first, and epics with slices already marked ready, are named", () => {
-  const data = {
-    ...fixture("jira.keys.dry-run"),
-    linked: [],
-    needs_reopening: [{ id: "SLICE-001", jira: "TEAM-40", reason: "it is marked ready; reopen it first" }],
-    epics_with_ready_slices: { "EPIC-001": ["SLICE-001"] },
-  };
-  const summary = keysSummary(data, namesFrom(status));
-  assert.equal(wouldRecord(summary), false);
-  assert.deepEqual(summary.reopen.map((r) => [r.id, r.name, r.jira]), [["SLICE-001", "Invite a teammate", "TEAM-40"]]);
+  const summary = keysSummary(fixture("jira.keys.reopen"), namesFrom(status));
+  assert.deepEqual(summary.link.map((l) => [l.id, l.jira]), [["EPIC-001", "TEAM-5"]]);
+  assert.deepEqual(summary.reopen.map((r) => [r.id, r.name, r.jira]), [["SLICE-001", "Invite a teammate", "TEAM-6"]]);
+  assert.doesNotMatch(summary.reopen[0].reason, /jira keys|slice link|--jira/, "the app's wording names no command");
   assert.deepEqual(summary.epicsWithReady, [{ id: "EPIC-001", name: "Team membership", slices: [{ id: "SLICE-001", name: "Invite a teammate" }] }]);
 });
 

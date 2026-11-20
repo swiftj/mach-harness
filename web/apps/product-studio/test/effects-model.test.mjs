@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { effectProblems, effectRowLines, effectWords, effectsView, shortCommit } from "../src/features/effects/model.ts";
+import { effectProblems, effectWords, effectsView, shortCommit } from "../src/features/effects/model.ts";
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`../../../fixtures/${name}.json`, import.meta.url), "utf8")).data;
 const clone = (v) => JSON.parse(JSON.stringify(v));
@@ -11,7 +11,7 @@ const clone = (v) => JSON.parse(JSON.stringify(v));
 const shown = fixture("slice.show.effects");
 const moved = fixture("status.shipped-moved").slices.find((s) => s.slice_id === "SLICE-004").shipped_moved;
 
-test("rows: one per shipped rule, in the spec's order, each with its line in the spec", () => {
+test("rows: one per shipped rule, in the spec's order, each with the line the engine gave", () => {
   const view = effectsView(shown, null);
   assert.equal(view.state, "rows");
   assert.equal(view.rows.length, 1);
@@ -41,18 +41,13 @@ test("a problem whose line names no row stays with the whole section", () => {
 });
 
 test("None. is a real answer: state none, no rows", () => {
-  const none = clone(shown);
-  none.spec.model.effects = [];
-  const view = effectsView(none, null);
+  const view = effectsView(fixture("slice.show.policy-followed"), null);
   assert.equal(view.state, "none");
   assert.deepEqual(view.rows, []);
 });
 
 test("no section yet: the engine's effects-missing finding is shown in its words", () => {
-  const missing = clone(shown);
-  delete missing.spec.model.effects;
-  missing.check = fixture("slice.check.effects-missing");
-  const view = effectsView(missing, null);
+  const view = effectsView(fixture("slice.show.effects-missing"), null);
   assert.equal(view.state, "no-section");
   assert.equal(view.sectionProblems.length, 1);
   assert.equal(view.sectionProblems[0].rule, "effects-missing");
@@ -63,6 +58,14 @@ test("no specification: state no-spec", () => {
   const empty = clone(shown);
   empty.spec = null;
   assert.equal(effectsView(empty, null).state, "no-spec");
+});
+
+test("a section with problems: each finding beside the row on its line, the rest with the section", () => {
+  const view = effectsView(fixture("slice.show.effects-problems"), null);
+  assert.equal(view.state, "rows");
+  assert.deepEqual(view.rows.map((r) => [r.row.shipped_rule, r.line]), [["SLICE-001/FR-09", 87]]);
+  assert.deepEqual(view.rows[0].problems.map((p) => p.rule), ["effects-not-shipped"]);
+  assert.deepEqual(view.sectionProblems.map((p) => p.rule), ["effects-kept-scenario"]);
 });
 
 test("only findings about the section are taken, by the engine's section or rule code", () => {
@@ -77,13 +80,6 @@ test("only findings about the section are taken, by the engine's section or rule
 test("an engine without diagnostics: error lines ending in an effects code are taken", () => {
   const check = { errors: ["x.md: Missing section. [effects-missing]", "x.md: Other. [trace-undefined]"], warnings: [] };
   assert.deepEqual(effectProblems(check).map((p) => p.message), ["x.md: Missing section. [effects-missing]"]);
-});
-
-test("row lines: only table rows under the effects heading, by their first cell", () => {
-  const md = ["# SLICE-009: T", "", "## Invariants", "| SLICE-001/INV-01 | x |", "## Effects on shipped behaviour", "", "| Shipped rule | Effect | In this slice | Note |", "|---|---|---|---|", "| SLICE-001/FR-02 | replaced | FR-01 | n |", "| SLICE-001/R2 | retired | | why |", "## Principles", "| SLICE-001/FR-03 | kept | AC-01 | |"].join("\n");
-  const lines = effectRowLines(md);
-  assert.deepEqual([...lines.entries()], [["SLICE-001/FR-02", 9], ["SLICE-001/R2", 10]]);
-  assert.equal(effectRowLines(null).size, 0);
 });
 
 test("every effect has a word, a meaning, and the commit is shown as 10 characters", () => {

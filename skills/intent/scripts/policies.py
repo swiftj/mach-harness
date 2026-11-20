@@ -75,6 +75,7 @@ ACCEPT_GUARD = ("This guards against accident, not forgery: MACH cannot verify w
 STATUSES = ("active", "retired")
 SHORT = 12
 TEXT_LIMIT = 6000
+STATEMENT_LIMIT = 400  # characters of one statement's text, wherever it is shown
 WORDS_LIMIT = 1000
 EXECUTION_ENV = adr.EXECUTION_ENV
 UNATTENDED = ("Inside a supervised Factory execution nobody is here to decide: recording a policy owner's acceptance of a concern is a "
@@ -628,7 +629,7 @@ def for_interview(found: Dict[str, Any]) -> Dict[str, Any]:
     for record in active:
         body.append(f"{record['id']} (sha256 {record['digest'][:SHORT]}): {adr.bounded(record.get('title'), 200)}. Owner: {record.get('owner')}. "
                     f"Applies to: {', '.join(record.get('applies_to') or [])}.")
-        body += [f"  {item['id']}: {adr.bounded(item['text'], 400)}" for item in record["statements"]]
+        body += [f"  {item['id']}: {adr.bounded(item['text'], STATEMENT_LIMIT)}" for item in record["statements"]]
     text = adr.bounded("\n".join(body), TEXT_LIMIT * 2)
     return {"dir": found.get("dir"), "commit": found.get("commit"), "count": len(active),
             "packs": [{key: public(record)[key] for key in ("id", "title", "owner", "applies_to", "short")} for record in active],

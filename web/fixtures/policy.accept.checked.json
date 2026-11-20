@@ -1,0 +1,15 @@
+{
+  "exit_code": 0,
+  "data": {
+    "accepted": "POL-privacy-02",
+    "slice_id": "SLICE-004",
+    "by": "dana-dpo",
+    "owner_check": "checked against the pack's owner",
+    "owner_check_note": "This guards against accident, not forgery: MACH cannot verify who someone is, and it does not ask GitHub; the name is recorded as given.",
+    "open_left": [],
+    "factory_authorized": false,
+    "note": "The spec now records the owner's decision in their words. The slice can be marked ready once no concern and no question is open."
+  },
+  "refused": null,
+  "hint": null
+}

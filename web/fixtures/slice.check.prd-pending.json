@@ -14,7 +14,7 @@
     ],
     "risk": null,
     "prd_problems": [
-      "2 answers drafted from PRD-01 are neither accepted nor set aside to discuss: 1, 2. Ask the product manager (prd confirm)."
+      "2 answers drafted from PRD-01 are neither accepted nor set aside to discuss: 1, 2. Accept them or name the ones to discuss on the slice's From the PRD page."
     ],
     "ready": false,
     "status": "interviewing"

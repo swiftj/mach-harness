@@ -1,6 +1,6 @@
 {
   "exit_code": 1,
   "data": null,
-  "refused": "Nothing was made: 3 sections of PRD-01 no slice cites and the product manager has not settled (1, 4, 5). Settle each first (prd settle).",
+  "refused": "Nothing was made: 3 sections of PRD-01 no slice cites and you have not settled (1, 4, 5). Settle each first.",
   "hint": null
 }

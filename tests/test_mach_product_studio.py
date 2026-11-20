@@ -591,6 +591,63 @@ class AppWordingTest(Base):
                     continue
                 self.assertIsNone(self.BANNED.search(words), f"{name}:{node.lineno}: {words}")
 
+    # A terminal command, option, script or quoted command in text a person reads.
+    COMMAND = re.compile(r"\((principle|policy|prd|jira|reconcile|slice|epic) [a-z]|\b(principle (add|set|retire|publish|list)|policy (accept|list)"
+                         r"|reconcile principles|prd (import|list|show|map|settle|status|apply|draft|confirm)|jira (export|keys)"
+                         r"|(slice|epic) (link|mock|current))\b|--[a-z]|\b(studio|run|cell)\.py\b|`[a-z]+ [a-z]+")
+    # The M13 and M14 commands (principle, policy, prd, jira, slice link, epic link, slice mock, epic current): whole modules, and
+    # studio.py's and handoff.py's functions behind them.
+    NEW_COMMANDS = {
+        "prd.py": None, "mocks.py": None, "jira_export.py": None,
+        "handoff.py": {"publish_principles"},
+        "studio.py": {"principle_flags", "principles_status", "saved_state", "cmd_epic_current", "jira_key", "effective_jira", "link_slice", "link_epic",
+                      "cmd_slice_link", "cmd_epic_link", "principles_field", "policies_field", "policies_changed", "cmd_policy_list", "cmd_policy_accept",
+                      "approval_problems", "principle_findings", "one_line", "checked", "find_principle", "cmd_principle_add", "cmd_principle_set",
+                      "cmd_principle_retire", "cmd_principle_list", "cmd_principle_publish", "reconcile_principles"},
+    }
+    # Text that is never shown in the app as a sentence of its own: README.txt is a file for whoever imports into Jira, written the
+    # same in both modes so the host and the terminal leave identical files.
+    NOT_SHOWN = {("jira_export.py", "readme")}
+
+    def test_the_new_commands_name_no_terminal_command_in_the_app(self):
+        """Every string a person can read from the M13 and M14 commands either names no command, or is the terminal's half of
+        say() (or of an error's app= wording), so the app names the page or button instead (M15)."""
+        for name, functions in self.NEW_COMMANDS.items():
+            tree = ast.parse((SCRIPTS / name).read_text())
+            parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+
+            def terminal_only(node):
+                while node in parents:
+                    parent = parents[node]
+                    if isinstance(parent, ast.Call):
+                        called = getattr(parent.func, "id", None) or getattr(parent.func, "attr", "")
+                        if called == "say" and parent.args and node is parent.args[0]:
+                            return True
+                        if called in ("add_argument", "add_parser", "git", "gh") or (node in parent.args and any(k.arg == "app" for k in parent.keywords)):
+                            return True
+                    if isinstance(parent, ast.Expr) and isinstance(node, ast.Constant):
+                        return True  # a docstring
+                    node = parent
+                return False
+
+            for function in [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
+                if (functions is not None and function.name not in functions) or (name, function.name) in self.NOT_SHOWN:
+                    continue
+                for node in ast.walk(function):
+                    if isinstance(node, ast.Constant) and isinstance(node.value, str) and self.COMMAND.search(node.value) and not terminal_only(node):
+                        self.fail(f"{name}:{node.lineno} ({function.name}) names a command in the app's wording: {node.value[:120]!r}")
+
+    def test_findings_and_refusals_from_the_shared_checks_are_worded_for_the_app(self):
+        """The validator and policies.py are shared with the Factory; Studio rewords their command and file names for the app."""
+        self.assertEqual(studio.app_finding("POL-privacy-02's concern is open: it waits for the owner to accept it (policy accept), or for the spec to change."),
+                         "POL-privacy-02's concern is open: it waits for the owner to accept it on the slice's Principles and policies page, or for the spec to change.")
+        self.assertEqual(studio.app_finding("Missing section. See references/spec-structure.md."), "Missing section.")
+        for terminal, app in studio.APP_FINDING_WORDS:
+            self.assertIsNone(self.COMMAND.search(app), app)
+        sources = " ".join((ROOT / "skills" / "intent" / "scripts" / name).read_text() for name in ("validate_slice.py", "effects.py", "policies.py"))
+        for terminal, _ in studio.APP_FINDING_WORDS:
+            self.assertIn(terminal.strip().split(" (")[0][:20], sources, f"the shared checks no longer write {terminal!r}; drop it from the table")
+
 
 class HintKindsTest(unittest.TestCase):
     def test_every_hint_kind_is_in_the_vocabulary(self):

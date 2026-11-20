@@ -1187,7 +1187,7 @@ def check_effects(text: str, shipped: Optional[Sequence[Any]], slice_id: Optiona
         report.error(item["line"], item["code"], item["message"])
     if not parsed["present"]:
         return None
-    return [{key: row[key] for key in ("shipped_rule", "slice_id", "rule_id", "effect", "in_slice", "note")} for row in parsed["rows"]]
+    return [{key: row[key] for key in ("line", "shipped_rule", "slice_id", "rule_id", "effect", "in_slice", "note")} for row in parsed["rows"]]
 
 
 # ---- policy packs (M14 part A): the one parser and check live in policies.py, loaded by path like effects.py ----

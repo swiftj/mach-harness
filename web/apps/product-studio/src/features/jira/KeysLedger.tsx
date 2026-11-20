@@ -33,11 +33,7 @@ export function KeyTag({ fact }: { fact: KeyFact }) {
       </span>
     );
   }
-  if (fact.kind === "inherits-unknown") {
-    return <span className="text-body-sm text-ink-muted">No key of its own; takes its epic&apos;s, if it has one</span>;
-  }
-  if (fact.kind === "none") return <span className="text-body-sm text-ink-subtle">No key</span>;
-  return <span className="text-body-sm text-ink-subtle">Reading…</span>;
+  return <span className="text-body-sm text-ink-subtle">No key</span>;
 }
 
 type Act = { mode: "set" | "remove"; target: KeyTarget };
@@ -63,16 +59,11 @@ export function KeysLedger({ ledger }: { ledger: LedgerEpic[] }) {
               </h3>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-body-sm text-ink-muted">Epic key</span>
-                {epic.key.kind === "unknown" ? (
-                  <span className="text-body-sm text-ink-subtle">Not known here yet</span>
-                ) : (
-                  <KeyTag fact={epic.key} />
-                )}
+                <KeyTag fact={epic.key} />
               </div>
             </div>
             <KeyActs
               target={{ kind: "epic", id: epic.id, title: epic.title, ownKey: epic.key.kind === "own" ? epic.key.key : null }}
-              known={epic.key.kind !== "unknown"}
               onAct={setAct}
             />
           </div>
@@ -137,14 +128,13 @@ function SliceRow({ slice, place, onAct }: { slice: LedgerSlice; place: number; 
           <SliceGithubPills github={slice.github} size="sm" />
         </div>
       </div>
-      <KeyActs target={{ kind: "slice", id: slice.id, title: slice.title, ownKey: slice.ownKey, editable: slice.editable }} known={slice.key.kind !== "unknown"} onAct={onAct} />
+      <KeyActs target={{ kind: "slice", id: slice.id, title: slice.title, ownKey: slice.ownKey, editable: slice.editable }} onAct={onAct} />
     </li>
   );
 }
 
 /** Set (or change) and remove, for one item. Remove is offered only for an item's own key. */
-function KeyActs({ target, known, onAct }: { target: KeyTarget; known: boolean; onAct: (act: Act) => void }) {
-  if (target.kind === "slice" && !known) return <span />;
+function KeyActs({ target, onAct }: { target: KeyTarget; onAct: (act: Act) => void }) {
   const has = target.ownKey !== null;
   return (
     <div className="flex flex-wrap items-center justify-end gap-1">

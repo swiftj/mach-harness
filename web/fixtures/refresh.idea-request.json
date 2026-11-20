@@ -6,7 +6,7 @@
     "requests": {
       "repository": "acme/team-space",
       "refreshed": true,
-      "refreshed_at": "2026-11-20T20:17:09Z",
+      "refreshed_at": "2026-11-20T22:05:53Z",
       "problem": null,
       "truncated": false,
       "truncated_note": null,
@@ -53,7 +53,7 @@
       "repository": "acme/team-space",
       "refreshed": true,
       "problem": null,
-      "refreshed_at": "2026-11-20T20:17:11Z",
+      "refreshed_at": "2026-11-20T22:05:53Z",
       "form": null,
       "project_issue": null,
       "project_url": null,
@@ -74,7 +74,7 @@
           "revision": null,
           "approved": null,
           "approved_by": null,
-          "read_at": "2026-11-20T20:17:11Z"
+          "read_at": "2026-11-20T22:05:53Z"
         },
         "newer_elsewhere": false,
         "changed_on_github": false

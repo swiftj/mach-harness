@@ -32,14 +32,14 @@
       "revision": 1,
       "sha256": "736d4e3e0e0bc531b0b0678a532c504b059eac9aed71bac8a585ac360fcfa61d",
       "approved_by": "ada-pm",
-      "published_at": "2026-11-20T20:15:28Z",
+      "published_at": "2026-11-20T22:05:40Z",
       "issue": 1,
       "url": "https://github.com/acme/team-space/issues/1",
       "github": {
         "revision": 2,
         "approved": true,
         "approved_by": "ben-pm",
-        "read_at": "2026-11-20T20:15:48Z"
+        "read_at": "2026-11-20T22:05:42Z"
       },
       "newer_elsewhere": true,
       "changed_on_github": false
@@ -47,7 +47,7 @@
     "slices_answered_under_older": [
       "SLICE-001"
     ],
-    "next": "Someone else published a newer version of the principles on GitHub: choose yours or theirs (reconcile principles --take mine|theirs).",
+    "next": "Someone else published a newer version of the principles on GitHub: choose yours or theirs.",
     "note": "A principle is one sentence that must hold in every slice. Each slice's spec answers every active one; a principle added or changed binds slices marked ready afterwards.",
     "factory_authorized": false
   },

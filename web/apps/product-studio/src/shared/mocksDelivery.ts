@@ -5,11 +5,8 @@ import type { MocksToCommit, SliceReady } from "@mach/ui/api";
  * The engine's answer about a slice's pictures after "Mark ready to build" (`slice.ready` `mocks`),
  * kept in this window's memory only (never in browser storage) so the Design mocks tab can show the
  * engine's own folder and note. No read operation returns it again: Studio does not check whether
- * the pictures were committed (M14_DESIGN_MOCKS.md, "Not built").
- *
- * Named for promotion: whatever runs `slice.ready` (features/spec/SliceActs.tsx today) should call
- * `rememberReadyAnswer(result)`. Until it does, the tab shows the waiting state from the slice's
- * own record, without the folder.
+ * the pictures were committed (M14_DESIGN_MOCKS.md, "Not built"). The ready dialog
+ * (features/spec/SliceActs.tsx) remembers it and the reopen dialog forgets it.
  */
 const answers = new Map<string, MocksToCommit>();
 const listeners = new Set<() => void>();

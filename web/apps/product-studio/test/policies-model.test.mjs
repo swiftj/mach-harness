@@ -1,6 +1,5 @@
 // Unit tests for the policy screens' model (src/features/policies/model.ts), against the engine's
-// own fixtures (web/fixtures, the same files the fixture transport answers with) and, for the cases
-// no fixture holds yet, a fixture copied and changed in the test. Run: pnpm --filter @mach/product-studio test
+// own fixtures (web/fixtures, the same files the fixture transport answers with). Run: pnpm --filter @mach/product-studio test
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -25,11 +24,10 @@ import {
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`../../../fixtures/${name}.json`, import.meta.url), "utf8"));
 const data = (name) => fixture(name).data;
-const copy = (value) => JSON.parse(JSON.stringify(value));
 
 /* The packs screen */
 
-test("policy.list: one active pack, its owner, what it applies to, its version and statement count", () => {
+test("policy.list: one active pack, its owner, what it applies to, its version and its statements", () => {
   const list = data("policy.list");
   const row = packRow(list.packs[0]);
   assert.equal(row.id, "POL-privacy");
@@ -37,18 +35,11 @@ test("policy.list: one active pack, its owner, what it applies to, its version a
   assert.equal(row.owner, "Data protection officer (@acme/privacy)");
   assert.deepEqual(row.appliesTo, ["Every slice"]);
   assert.equal(row.version, "b7b600b3e580");
-  assert.equal(row.statementCount, 2);
-  assert.equal(row.statements, null, "the engine gives a count today, so no statement text is invented");
+  assert.deepEqual(row.statements.map((s) => s.id), ["POL-privacy-01", "POL-privacy-02"]);
+  assert.equal(row.statements[0].text, "An invitation email MUST name the workspace that sent it.");
   assert.deepEqual(packState(row), { word: "Active", shape: "approved", tone: "success" });
   assert.deepEqual(otherProblems(list), []);
   assert.deepEqual(slicesAnsweredUnderOlder(list), []);
-});
-
-test("statements are listed when the engine gives their text", () => {
-  const pack = { ...data("policy.list").packs[0], statements: [{ id: "POL-privacy-01", text: "An invitation email MUST name the workspace that sent it." }] };
-  const row = packRow(pack);
-  assert.equal(row.statementCount, 1);
-  assert.equal(row.statements[0].id, "POL-privacy-01");
 });
 
 test("applies-to items read in plain words; an unknown form is shown as written", () => {
@@ -60,25 +51,17 @@ test("applies-to items read in plain words; an unknown form is shown as written"
 });
 
 test("empty: no packs and no problems", () => {
-  const list = { ...copy(data("policy.list")), packs: [] };
+  const list = data("policy.list.empty");
   assert.deepEqual(list.packs.map(packRow), []);
   assert.deepEqual(otherProblems(list), []);
 });
 
-test("a malformed pack carries the engine's reason, shown on the pack and not repeated above", () => {
-  const list = copy(data("policy.list"));
-  list.packs[0].problems = ["the header has no 'owner' field"];
-  list.packs[0].binding = false;
-  list.problems = ["policies/privacy/policy.md: the header has no 'owner' field", "policies/billing: the folder has no policy.md"];
+test("a malformed pack carries the engine's reason, shown on the pack; a folder without policy.md is listed above", () => {
+  const list = data("policy.list.problems");
   const row = packRow(list.packs[0]);
-  assert.deepEqual(row.problems, ["the header has no 'owner' field"]);
+  assert.deepEqual(row.problems, ["the header says id 'POL-branding', but a pack in the folder 'brand' is POL-brand"]);
   assert.deepEqual(packState(row), { word: "Cannot be read", shape: "blocked", tone: "danger" });
-  assert.deepEqual(otherProblems(list), ["policies/billing: the folder has no policy.md"]);
-});
-
-test("a problem sent as an object (as the shared type describes it) still reads as a sentence", () => {
-  const list = { ...copy(data("policy.list")), problems: [{ file: "policies/x", problem: "unreadable" }, {}] };
-  assert.deepEqual(otherProblems(list), ["policies/x: unreadable", "A policy pack cannot be read."]);
+  assert.deepEqual(otherProblems(list), ["policies/security: the folder has no policy.md"]);
 });
 
 test("a retired pack reads as retired", () => {
@@ -87,19 +70,15 @@ test("a retired pack reads as retired", () => {
 });
 
 test("slices answered under an older version: sorted, titled from status, the engine's sentence kept", () => {
-  const list = copy(data("policy.list"));
-  const note = "Policy packs changed after this spec answered them (POL-privacy changed). They bind slices marked ready from now on.";
-  list.slices_answered_under_older = {
-    "SLICE-002": { changes: [{ id: "POL-security", change: "retired" }], note: "Other." },
-    "SLICE-001": { changes: [{ id: "POL-privacy", change: "changed", answered: "aaaaaaaaaaaa", now: "b7b600b3e580" }], note },
-  };
-  const status = data("status.principles");
+  const list = data("policy.list.older");
+  const status = data("status.policies-changed");
   const older = slicesAnsweredUnderOlder(list, status.slices);
-  assert.deepEqual(older.map((o) => o.sliceId), ["SLICE-001", "SLICE-002"]);
+  assert.deepEqual(older.map((o) => o.sliceId), ["SLICE-001", "SLICE-002", "SLICE-003", "SLICE-004"]);
   assert.equal(older[0].title, "Invite a teammate");
-  assert.equal(older[0].note, note);
+  assert.match(older[0].note, /^Policy packs changed after this spec answered them \(POL-privacy changed\)/);
   assert.deepEqual(older[0].packs, ["POL-privacy"]);
-  assert.equal(older[1].title, null);
+  assert.equal(slicesAnsweredUnderOlder(list)[0].title, null, "without status the slice has no title");
+  assert.equal(status.slices[0].policies_changed, older[0].note, "status carries the same sentence per slice");
 });
 
 /* One slice: an open concern */
@@ -137,23 +116,25 @@ test("accepted concern: by whom, when, their words; no open concern left", () =>
   const rows = policyRows(data("slice.show.concern-accepted").spec.model.policies);
   const [concern] = rows[0].concerns;
   assert.equal(concern.resolution, "accepted");
-  assert.deepEqual(concern.accepted, { name: "Data protection officer", on: "2026-11-20", words: "Accepted for the pilot only.", check: null });
-  assert.equal(checkWords(concern.accepted.check), "How the name was checked is not recorded.");
+  assert.equal(concern.accepted.name, "Data protection officer");
+  assert.equal(concern.accepted.words, "Accepted for the pilot only.");
+  assert.equal(concern.accepted.check, "not checked against the owner");
+  assert.equal(checkWords(concern.accepted.check), "Not checked against the owner.");
+  assert.equal(checkWords(null), "How the name was checked is not recorded.");
   assert.deepEqual(openConcerns(rows), []);
   assert.equal(rows[0].title, null, "without policy.list the pack's ID stands in for its title");
 });
 
 test("an acceptance written since M15 carries the check in brackets: the name and the check are told apart", () => {
-  const concern = { ...data("slice.show.concern-accepted").spec.model.policies[0].concerns[0], by: "dana (checked against the pack's owner)" };
-  assert.deepEqual(acceptance(concern), { name: "dana", on: "2026-11-20", words: "Accepted for the pilot only.", check: "checked against the pack's owner" });
+  const concern = { ...data("slice.show.concern-accepted").spec.model.policies[0].concerns[0], by: "dana (checked against the pack's owner)", owner_check: undefined };
+  assert.deepEqual(acceptance(concern), { name: "dana", on: concern.on, words: "Accepted for the pilot only.", check: "checked against the pack's owner" });
   const withField = { ...concern, by: "lee (checked against the project's list)", owner_check: "checked against the project's list" };
   assert.equal(acceptance(withField).name, "lee");
   assert.equal(checkWords(acceptance(withField).check), "Checked against the project's list.");
 });
 
 test("a concern met by changing the spec", () => {
-  const show = copy(data("slice.show.open-concern"));
-  show.spec.model.policies[0].concerns[0].resolution = "spec_changed";
+  const show = data("slice.show.concern-spec-changed");
   const rows = policyRows(show.spec.model.policies);
   assert.equal(rows[0].concerns[0].resolution, "spec_changed");
   assert.equal(concernState("spec_changed").word, "Met by changing the spec");
@@ -161,7 +142,7 @@ test("a concern met by changing the spec", () => {
 });
 
 test("a followed pack lists no concern", () => {
-  const rows = policyRows([{ pack: "POL-security", sha256: "1a2b3c4d5e6f", answer: "followed" }]);
+  const rows = policyRows(data("slice.show.policy-followed").spec.model.policies);
   assert.deepEqual(rows[0].concerns, []);
   assert.equal(rows[0].answer, "followed");
 });
@@ -185,13 +166,11 @@ test("principles: titles from principle.list, older revision and retired flags f
 });
 
 test("principles: does not apply and an exception keep the product manager's reason", () => {
-  const rows = principleRows([
-    { id: "PP-03", revision: 1, statement: "A x MUST y.", answer: "does_not_apply", upheld_by: [], reason: "This slice sends no invitation text." },
-    { id: "PP-04", revision: 2, statement: "A z MUST w.", answer: "exception", upheld_by: [], reason: "The pilot needs it." },
-  ]);
-  assert.equal(rows[0].reason, "This slice sends no invitation text.");
+  const rows = principleRows(data("slice.show.principle-exceptions").spec.model.principles);
+  assert.deepEqual(rows.map((r) => r.answer), ["does_not_apply", "exception"]);
+  assert.equal(rows[0].reason, "Renaming changes no published version.");
   assert.equal(principleAnswerWords("does_not_apply").word, "Does not apply");
-  assert.equal(rows[1].reason, "The pilot needs it.");
+  assert.equal(rows[1].reason, "The pilot sends from a shared address for one month.");
   assert.equal(principleAnswerWords("exception").word, "An exception");
   assert.equal(rows[0].title, null);
 });
@@ -222,7 +201,17 @@ test("the engine's acceptance and its refusal, as the fixture transport answers 
   const ok = fixture("policy.accept");
   assert.equal(ok.data.accepted, "POL-privacy-02");
   assert.deepEqual(ok.data.open_left, []);
+  assert.equal(ok.data.owner_check, "not checked against the owner");
+  assert.match(ok.data.owner_check_note, /guards against accident, not forgery/);
   const refused = fixture("policy.accept.refused");
   assert.equal(refused.data, null);
   assert.equal(refused.refused, "POL-privacy-01 has no open concern in this spec. Open concerns: POL-privacy-02.");
+});
+
+test("an owner named by login: the name is checked, or the acceptance is refused in the engine's words", () => {
+  const checked = data("policy.accept.checked");
+  assert.equal(checkWords(checked.owner_check), "Checked against the pack's owner.");
+  const refused = fixture("policy.accept.refused-owner");
+  assert.equal(refused.data, null);
+  assert.match(refused.refused, /is not one of the people who may accept this concern: the pack's owner names @dana-dpo/);
 });

@@ -1,0 +1,271 @@
+{
+  "exit_code": 0,
+  "data": {
+    "epic_id": "EPIC-001",
+    "branch": "main",
+    "commit": "c1dad634e9df889d0d1883df16b7424adea08923",
+    "note": "This shows the work merged on this computer, which may be behind GitHub. The slices are the authority.",
+    "epic": {
+      "epic_id": "EPIC-001",
+      "title": "Team membership",
+      "issue": null,
+      "slices": [
+        {
+          "slice_id": "SLICE-001",
+          "title": "Invite by email",
+          "issue": null,
+          "path": "specs/slices/SLICE-001-invite.md",
+          "effects": "missing",
+          "notes": []
+        },
+        {
+          "slice_id": "SLICE-002",
+          "title": "Resend an invitation",
+          "issue": null,
+          "path": "specs/slices/SLICE-002-resend.md",
+          "effects": "none",
+          "notes": []
+        },
+        {
+          "slice_id": "SLICE-003",
+          "title": "Invite with approval",
+          "issue": null,
+          "path": "specs/slices/SLICE-003-approval.md",
+          "effects": "declared",
+          "notes": []
+        },
+        {
+          "slice_id": "SLICE-020",
+          "title": "Stop resending",
+          "issue": null,
+          "path": "specs/slices/SLICE-020-no-resend.md",
+          "effects": "declared",
+          "notes": []
+        },
+        {
+          "slice_id": "SLICE-021",
+          "title": "Expire sooner",
+          "issue": null,
+          "path": "specs/slices/SLICE-021-expire-sooner.md",
+          "effects": "declared",
+          "notes": []
+        },
+        {
+          "slice_id": "SLICE-022",
+          "title": "Send reminders",
+          "issue": null,
+          "path": "specs/slices/SLICE-022-reminders.md",
+          "effects": "problems",
+          "notes": []
+        }
+      ],
+      "in_force": [
+        {
+          "rule": "SLICE-001/FR-01",
+          "slice_id": "SLICE-001",
+          "id": "FR-01",
+          "kind": "requirement",
+          "text": "The system SHALL send the invitation by email.",
+          "epic_id": "EPIC-001",
+          "confirmed_by": [
+            {
+              "slice_id": "SLICE-003",
+              "scenario": "AC-02",
+              "note": "An approved invitation is still sent by email."
+            }
+          ],
+          "takes_the_place_of": [],
+          "lineage": []
+        },
+        {
+          "rule": "SLICE-003/FR-01",
+          "slice_id": "SLICE-003",
+          "id": "FR-01",
+          "kind": "requirement",
+          "text": "The system SHALL expire an invitation after 7 days.",
+          "epic_id": "EPIC-001",
+          "confirmed_by": [],
+          "takes_the_place_of": [
+            {
+              "effect": "replaced",
+              "rule": "SLICE-001/FR-02",
+              "epic_id": "EPIC-001",
+              "note": null
+            }
+          ],
+          "lineage": []
+        },
+        {
+          "rule": "SLICE-003/FR-02",
+          "slice_id": "SLICE-003",
+          "id": "FR-02",
+          "kind": "requirement",
+          "text": "The system SHALL ask an owner to approve an invitation.",
+          "epic_id": "EPIC-001",
+          "confirmed_by": [],
+          "takes_the_place_of": [],
+          "lineage": []
+        },
+        {
+          "rule": "SLICE-020/FR-01",
+          "slice_id": "SLICE-020",
+          "id": "FR-01",
+          "kind": "requirement",
+          "text": "The system SHALL show a new link instead of resending.",
+          "epic_id": "EPIC-001",
+          "confirmed_by": [],
+          "takes_the_place_of": [],
+          "lineage": []
+        },
+        {
+          "rule": "SLICE-021/FR-01",
+          "slice_id": "SLICE-021",
+          "id": "FR-01",
+          "kind": "requirement",
+          "text": "The system SHALL expire an invitation after 3 days.",
+          "epic_id": "EPIC-001",
+          "confirmed_by": [],
+          "takes_the_place_of": [
+            {
+              "effect": "replaced",
+              "rule": "SLICE-001/FR-02",
+              "epic_id": "EPIC-001",
+              "note": null
+            }
+          ],
+          "lineage": []
+        },
+        {
+          "rule": "SLICE-022/FR-01",
+          "slice_id": "SLICE-022",
+          "id": "FR-01",
+          "kind": "requirement",
+          "text": "The system SHALL remind the invitee once.",
+          "epic_id": "EPIC-001",
+          "confirmed_by": [],
+          "takes_the_place_of": [],
+          "lineage": []
+        }
+      ],
+      "not_yet_reconciled": [
+        {
+          "rule": "SLICE-001/INV-01",
+          "slice_id": "SLICE-001",
+          "id": "INV-01",
+          "kind": "invariant",
+          "text": "An invitation MUST name one email address.",
+          "epic_id": "EPIC-001",
+          "confirmed_by": [],
+          "takes_the_place_of": [],
+          "lineage": []
+        },
+        {
+          "rule": "SLICE-001/R1",
+          "slice_id": "SLICE-001",
+          "id": "R1",
+          "kind": "decision rule",
+          "text": "Signed in Yes: Sent",
+          "epic_id": "EPIC-001",
+          "confirmed_by": [],
+          "takes_the_place_of": [],
+          "lineage": []
+        }
+      ],
+      "no_longer_in_force": [
+        {
+          "rule": "SLICE-001/FR-02",
+          "slice_id": "SLICE-001",
+          "id": "FR-02",
+          "kind": "requirement",
+          "text": "The system SHALL expire an invitation after 14 days.",
+          "epic_id": "EPIC-001",
+          "superseded_by": [
+            {
+              "effect": "replaced",
+              "by": "SLICE-003/FR-01",
+              "slice_id": "SLICE-003",
+              "epic_id": "EPIC-001",
+              "note": null
+            },
+            {
+              "effect": "replaced",
+              "by": "SLICE-021/FR-01",
+              "slice_id": "SLICE-021",
+              "epic_id": "EPIC-001",
+              "note": null
+            }
+          ],
+          "now": [
+            {
+              "rule": "SLICE-003/FR-01",
+              "slice_id": "SLICE-003",
+              "epic_id": "EPIC-001",
+              "text": "The system SHALL expire an invitation after 7 days."
+            },
+            {
+              "rule": "SLICE-021/FR-01",
+              "slice_id": "SLICE-021",
+              "epic_id": "EPIC-001",
+              "text": "The system SHALL expire an invitation after 3 days."
+            }
+          ]
+        },
+        {
+          "rule": "SLICE-001/R2",
+          "slice_id": "SLICE-001",
+          "id": "R2",
+          "kind": "decision rule",
+          "text": "Signed in No: Refused",
+          "epic_id": "EPIC-001",
+          "superseded_by": [
+            {
+              "effect": "retired",
+              "by": null,
+              "slice_id": "SLICE-003",
+              "epic_id": "EPIC-001",
+              "note": "Signed-out people are sent to sign in first."
+            }
+          ],
+          "now": []
+        },
+        {
+          "rule": "SLICE-002/FR-01",
+          "slice_id": "SLICE-002",
+          "id": "FR-01",
+          "kind": "requirement",
+          "text": "The system SHALL resend a pending invitation once.",
+          "epic_id": "EPIC-001",
+          "superseded_by": [
+            {
+              "effect": "retired",
+              "by": null,
+              "slice_id": "SLICE-020",
+              "epic_id": "EPIC-001",
+              "note": "Admins share a new link instead."
+            }
+          ],
+          "now": []
+        }
+      ],
+      "not_applied": [
+        {
+          "slice_id": "SLICE-022",
+          "problems": [
+            {
+              "line": 45,
+              "code": "effects-not-shipped",
+              "message": "SLICE-001 has no FR-09 in its shipped spec."
+            }
+          ]
+        }
+      ],
+      "conflicts": [
+        "SLICE-021 says SLICE-001/FR-02 is replaced, but SLICE-003 already replaced or retired it."
+      ]
+    },
+    "notes": [],
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

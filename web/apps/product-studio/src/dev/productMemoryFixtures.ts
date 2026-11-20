@@ -18,6 +18,22 @@
  *   a slice waiting for its mocks to be committed ... slice.ready.with-mocks
  *   a row in a Jira keys file that names nothing ... jira.keys, jira.keys.dry-run
  *   a request filed in the idea template ........... request.show.idea, request.pick.idea, slice.resume.idea-request
+ *
+ * Added in the M15 clean-up (each reachable by a parameter in memoryTransport.ts):
+ *   principles published, to the folder, stopped part way, changed on GitHub, never published ... principle.list.*,
+ *     principle.publish.folder, principle.publish.refused-stopped, principle.publish.refused-offline, reconcile.principles.mine,
+ *     status.principles-published, status.principles-unfinished
+ *   no packs, a malformed pack and a folder without policy.md, slices under an older pack ... policy.list.empty,
+ *     policy.list.problems, policy.list.older, status.policies-changed
+ *   a followed pack, a concern met by changing the spec, principle rows that do not apply and an exception ...
+ *     slice.show.policy-followed, slice.show.concern-spec-changed, slice.show.principle-exceptions
+ *   an acceptance checked against, or refused by, an owner named by login ... policy.accept.checked, policy.accept.refused-owner
+ *   no effects section, a section with problems ... slice.show.effects-missing, slice.show.effects-problems
+ *   not applied and a conflict, rules that cannot be read ... epic.current.problems, epic.current.unreadable
+ *   four drafted PRD answers waiting ... slice.show.prd-drafted, slice.resume.prd-drafted
+ *   slices already ready under a new epic key, keys back to reopen, a cut description ... epic.link.already-ready,
+ *     epic.link.remove, jira.keys.reopen, jira.export.cut
+ *   four mocks, one changed in the workspace ... slice.show.four-mocks, slice.mock.list.problem
  */
 import type {
   EngineRun,
@@ -53,18 +69,28 @@ import type {
 import epicCurrentAfterRetire from "../../../../fixtures/epic.current.after-retire.json";
 import epicCurrent from "../../../../fixtures/epic.current.json";
 import epicCurrentNothingShipped from "../../../../fixtures/epic.current.nothing-shipped.json";
+import epicCurrentProblems from "../../../../fixtures/epic.current.problems.json";
 import epicCurrentRefusedName from "../../../../fixtures/epic.current.refused-name.json";
+import epicCurrentUnreadable from "../../../../fixtures/epic.current.unreadable.json";
 import epicLinkAlreadyReady from "../../../../fixtures/epic.link.already-ready.json";
 import epicLink from "../../../../fixtures/epic.link.json";
+import epicLinkRemove from "../../../../fixtures/epic.link.remove.json";
 import jiraExportAll from "../../../../fixtures/jira.export.all.json";
+import jiraExportCut from "../../../../fixtures/jira.export.cut.json";
 import jiraExport from "../../../../fixtures/jira.export.json";
 import jiraExportRefusedEpic from "../../../../fixtures/jira.export.refused-epic.json";
 import jiraKeysDryRun from "../../../../fixtures/jira.keys.dry-run.json";
 import jiraKeys from "../../../../fixtures/jira.keys.json";
 import jiraKeysRefusedNotCsv from "../../../../fixtures/jira.keys.refused-not-csv.json";
+import jiraKeysReopen from "../../../../fixtures/jira.keys.reopen.json";
+import policyAcceptChecked from "../../../../fixtures/policy.accept.checked.json";
 import policyAccept from "../../../../fixtures/policy.accept.json";
+import policyAcceptRefusedOwner from "../../../../fixtures/policy.accept.refused-owner.json";
 import policyAcceptRefused from "../../../../fixtures/policy.accept.refused.json";
+import policyListEmpty from "../../../../fixtures/policy.list.empty.json";
 import policyList from "../../../../fixtures/policy.list.json";
+import policyListOlder from "../../../../fixtures/policy.list.older.json";
+import policyListProblems from "../../../../fixtures/policy.list.problems.json";
 import prdApply from "../../../../fixtures/prd.apply.json";
 import prdApplyRefusedUnsettled from "../../../../fixtures/prd.apply.refused-unsettled.json";
 import prdConfirm from "../../../../fixtures/prd.confirm.json";
@@ -87,14 +113,23 @@ import prdStatusOneLeft from "../../../../fixtures/prd.status.one-left.json";
 import prdStatusUncovered from "../../../../fixtures/prd.status.uncovered.json";
 import principleAdd from "../../../../fixtures/principle.add.json";
 import principleAddRefusedWording from "../../../../fixtures/principle.add.refused-wording.json";
+import principleListChangedOnGithub from "../../../../fixtures/principle.list.changed-on-github.json";
 import principleListEmpty from "../../../../fixtures/principle.list.empty.json";
+import principleListFolder from "../../../../fixtures/principle.list.folder.json";
+import principleListNeverPublished from "../../../../fixtures/principle.list.never-published.json";
 import principleListNewerElsewhere from "../../../../fixtures/principle.list.newer-elsewhere.json";
+import principleListPublished from "../../../../fixtures/principle.list.published.json";
+import principleListUnfinished from "../../../../fixtures/principle.list.unfinished.json";
 import principleListUnpublished from "../../../../fixtures/principle.list.unpublished.json";
+import principlePublishFolder from "../../../../fixtures/principle.publish.folder.json";
 import principlePublish from "../../../../fixtures/principle.publish.json";
 import principlePublishRefusedNewerElsewhere from "../../../../fixtures/principle.publish.refused-newer-elsewhere.json";
+import principlePublishRefusedOffline from "../../../../fixtures/principle.publish.refused-offline.json";
+import principlePublishRefusedStopped from "../../../../fixtures/principle.publish.refused-stopped.json";
 import principleRetire from "../../../../fixtures/principle.retire.json";
 import principleSet from "../../../../fixtures/principle.set.json";
 import reconcilePrinciples from "../../../../fixtures/reconcile.principles.json";
+import reconcilePrinciplesMine from "../../../../fixtures/reconcile.principles.mine.json";
 import refreshIdeaRequest from "../../../../fixtures/refresh.idea-request.json";
 import refreshPrinciplesNewerElsewhere from "../../../../fixtures/refresh.principles-newer-elsewhere.json";
 import refreshShippedMoved from "../../../../fixtures/refresh.shipped-moved.json";
@@ -116,19 +151,31 @@ import sliceMockAddRefusedReady from "../../../../fixtures/slice.mock.add.refuse
 import sliceMockAddWhole from "../../../../fixtures/slice.mock.add.whole.json";
 import sliceMockListEmpty from "../../../../fixtures/slice.mock.list.empty.json";
 import sliceMockList from "../../../../fixtures/slice.mock.list.json";
+import sliceMockListProblem from "../../../../fixtures/slice.mock.list.problem.json";
 import sliceMockRemove from "../../../../fixtures/slice.mock.remove.json";
 import sliceReadyRefusedOpenConcern from "../../../../fixtures/slice.ready.refused-open-concern.json";
 import sliceReadyWithMocks from "../../../../fixtures/slice.ready.with-mocks.json";
 import sliceResumeFromPrd from "../../../../fixtures/slice.resume.from-prd.json";
 import sliceResumeIdeaRequest from "../../../../fixtures/slice.resume.idea-request.json";
+import sliceResumePrdDrafted from "../../../../fixtures/slice.resume.prd-drafted.json";
 import sliceResumePrinciplesPolicies from "../../../../fixtures/slice.resume.principles-policies.json";
 import sliceResumeShippedRules from "../../../../fixtures/slice.resume.shipped-rules.json";
 import sliceShowConcernAccepted from "../../../../fixtures/slice.show.concern-accepted.json";
+import sliceShowConcernSpecChanged from "../../../../fixtures/slice.show.concern-spec-changed.json";
+import sliceShowEffectsMissing from "../../../../fixtures/slice.show.effects-missing.json";
+import sliceShowEffectsProblems from "../../../../fixtures/slice.show.effects-problems.json";
 import sliceShowEffects from "../../../../fixtures/slice.show.effects.json";
+import sliceShowFourMocks from "../../../../fixtures/slice.show.four-mocks.json";
 import sliceShowMocksAndJira from "../../../../fixtures/slice.show.mocks-and-jira.json";
 import sliceShowOpenConcern from "../../../../fixtures/slice.show.open-concern.json";
+import sliceShowPolicyFollowed from "../../../../fixtures/slice.show.policy-followed.json";
+import sliceShowPrdDrafted from "../../../../fixtures/slice.show.prd-drafted.json";
+import sliceShowPrincipleExceptions from "../../../../fixtures/slice.show.principle-exceptions.json";
 import statusJiraMocks from "../../../../fixtures/status.jira-mocks.json";
+import statusPoliciesChanged from "../../../../fixtures/status.policies-changed.json";
 import statusPrds from "../../../../fixtures/status.prds.json";
+import statusPrinciplesPublished from "../../../../fixtures/status.principles-published.json";
+import statusPrinciplesUnfinished from "../../../../fixtures/status.principles-unfinished.json";
 import statusPrinciples from "../../../../fixtures/status.principles.json";
 import statusShippedMoved from "../../../../fixtures/status.shipped-moved.json";
 
@@ -147,19 +194,29 @@ export const memoryRuns = {
   "epic.current": run<EpicCurrent>(epicCurrent),
   "epic.current.after-retire": run<EpicCurrent>(epicCurrentAfterRetire),
   "epic.current.nothing-shipped": run<EpicCurrent>(epicCurrentNothingShipped),
+  "epic.current.problems": run<EpicCurrent>(epicCurrentProblems),
   "epic.current.refused-name": refusal(epicCurrentRefusedName),
+  "epic.current.unreadable": run<EpicCurrent>(epicCurrentUnreadable),
   "epic.link": run<EpicLink>(epicLink),
   "epic.link.already-ready": run<EpicLink>(epicLinkAlreadyReady),
+  "epic.link.remove": run<EpicLink>(epicLinkRemove),
   // The host adds `downloads` to the engine's answer; the fixture transport adds it the same way.
   "jira.export": run<Omit<JiraExport, "downloads">>(jiraExport),
   "jira.export.all": run<Omit<JiraExport, "downloads">>(jiraExportAll),
+  "jira.export.cut": run<Omit<JiraExport, "downloads">>(jiraExportCut),
   "jira.export.refused-epic": refusal(jiraExportRefusedEpic),
   "jira.keys": run<JiraKeys>(jiraKeys),
   "jira.keys.dry-run": run<JiraKeys>(jiraKeysDryRun),
   "jira.keys.refused-not-csv": refusal(jiraKeysRefusedNotCsv),
+  "jira.keys.reopen": run<JiraKeys>(jiraKeysReopen),
   "policy.accept": run<PolicyAccept>(policyAccept),
+  "policy.accept.checked": run<PolicyAccept>(policyAcceptChecked),
   "policy.accept.refused": refusal(policyAcceptRefused),
+  "policy.accept.refused-owner": refusal(policyAcceptRefusedOwner),
   "policy.list": run<PolicyList>(policyList),
+  "policy.list.empty": run<PolicyList>(policyListEmpty),
+  "policy.list.older": run<PolicyList>(policyListOlder),
+  "policy.list.problems": run<PolicyList>(policyListProblems),
   "prd.apply": run<PrdApply>(prdApply),
   "prd.apply.refused-unsettled": refusal(prdApplyRefusedUnsettled),
   "prd.confirm": run<R<"prd.confirm">>(prdConfirm),
@@ -182,14 +239,23 @@ export const memoryRuns = {
   "prd.status.uncovered": run<PrdStatus>(prdStatusUncovered),
   "principle.add": run<PrincipleChanged>(principleAdd),
   "principle.add.refused-wording": refusal(principleAddRefusedWording),
+  "principle.list.changed-on-github": run<PrincipleList>(principleListChangedOnGithub),
   "principle.list.empty": run<PrincipleList>(principleListEmpty),
+  "principle.list.folder": run<PrincipleList>(principleListFolder),
+  "principle.list.never-published": run<PrincipleList>(principleListNeverPublished),
   "principle.list.newer-elsewhere": run<PrincipleList>(principleListNewerElsewhere),
+  "principle.list.published": run<PrincipleList>(principleListPublished),
+  "principle.list.unfinished": run<PrincipleList>(principleListUnfinished),
   "principle.list.unpublished": run<PrincipleList>(principleListUnpublished),
   "principle.publish": run<PrinciplesPublishResult>(principlePublish),
+  "principle.publish.folder": run<PrinciplesPublishResult>(principlePublishFolder),
   "principle.publish.refused-newer-elsewhere": refusal(principlePublishRefusedNewerElsewhere),
+  "principle.publish.refused-offline": refusal(principlePublishRefusedOffline),
+  "principle.publish.refused-stopped": refusal(principlePublishRefusedStopped),
   "principle.retire": run<PrincipleChanged>(principleRetire),
   "principle.set": run<PrincipleChanged>(principleSet),
   "reconcile.principles": run<ReconcilePrinciples>(reconcilePrinciples),
+  "reconcile.principles.mine": run<ReconcilePrinciples>(reconcilePrinciplesMine),
   "refresh.idea-request": run<Refresh>(refreshIdeaRequest),
   "refresh.principles-newer-elsewhere": run<Refresh>(refreshPrinciplesNewerElsewhere),
   "refresh.shipped-moved": run<Refresh>(refreshShippedMoved),
@@ -211,20 +277,32 @@ export const memoryRuns = {
   "slice.mock.add.whole": run<MockAdd>(sliceMockAddWhole),
   "slice.mock.list": run<MockList>(sliceMockList),
   "slice.mock.list.empty": run<MockList>(sliceMockListEmpty),
+  "slice.mock.list.problem": run<MockList>(sliceMockListProblem),
   "slice.mock.remove": run<MockRemove>(sliceMockRemove),
   "slice.ready.refused-open-concern": refusal(sliceReadyRefusedOpenConcern),
   "slice.ready.with-mocks": run<SliceReadyOnGithub>(sliceReadyWithMocks),
   "slice.resume.from-prd": run<SliceResume>(sliceResumeFromPrd),
   "slice.resume.idea-request": run<SliceResume>(sliceResumeIdeaRequest),
+  "slice.resume.prd-drafted": run<SliceResume>(sliceResumePrdDrafted),
   "slice.resume.principles-policies": run<SliceResume>(sliceResumePrinciplesPolicies),
   "slice.resume.shipped-rules": run<SliceResume>(sliceResumeShippedRules),
   "slice.show.concern-accepted": run<SliceShow>(sliceShowConcernAccepted),
+  "slice.show.concern-spec-changed": run<SliceShow>(sliceShowConcernSpecChanged),
   "slice.show.effects": run<SliceShow>(sliceShowEffects),
+  "slice.show.effects-missing": run<SliceShow>(sliceShowEffectsMissing),
+  "slice.show.effects-problems": run<SliceShow>(sliceShowEffectsProblems),
+  "slice.show.four-mocks": run<SliceShow>(sliceShowFourMocks),
   "slice.show.mocks-and-jira": run<SliceShow>(sliceShowMocksAndJira),
   "slice.show.open-concern": run<SliceShow>(sliceShowOpenConcern),
+  "slice.show.policy-followed": run<SliceShow>(sliceShowPolicyFollowed),
+  "slice.show.prd-drafted": run<SliceShow>(sliceShowPrdDrafted),
+  "slice.show.principle-exceptions": run<SliceShow>(sliceShowPrincipleExceptions),
   "status.jira-mocks": run<Status>(statusJiraMocks),
+  "status.policies-changed": run<Status>(statusPoliciesChanged),
   "status.prds": run<Status>(statusPrds),
   "status.principles": run<Status>(statusPrinciples),
+  "status.principles-published": run<Status>(statusPrinciplesPublished),
+  "status.principles-unfinished": run<Status>(statusPrinciplesUnfinished),
   "status.shipped-moved": run<Status>(statusShippedMoved),
 } as const;
 

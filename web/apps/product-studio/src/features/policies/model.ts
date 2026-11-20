@@ -6,7 +6,7 @@
  * Pure, so the unit tests run it against the fixtures (test/policies-model.test.mjs).
  */
 import type {
-  PolicyAccept,
+  OwnerCheck,
   PolicyAnswer,
   PolicyConcern,
   PolicyList,
@@ -18,19 +18,7 @@ import type {
   SpecModel,
   StatusSliceRow,
 } from "@mach/ui/api";
-
-/* ── Fields the engine sends that the shared types do not name yet (listed for promotion) ── */
-
-/** `policy.list` keeps a pack's statement count today; with its statements' text the screen lists them. */
-export type ListedStatements = number | Array<{ id: string; text: string }>;
-/** M15: how the name given for an acceptance was checked, as the engine wrote it. */
-export type OwnerCheck = "checked against the pack's owner" | "checked against the project's list" | "not checked against the owner" | (string & {});
-/** M15: `spec.json` carries `owner_check` beside `by` for an acceptance. */
-export type ConcernWithCheck = PolicyConcern & { owner_check?: OwnerCheck | null };
-/** M15: `policy.accept` answers with how the name was checked and the engine's note on what that check means. */
-export type AcceptResult = PolicyAccept & { owner_check?: OwnerCheck | null; owner_check_note?: string | null };
-/** M15: Product Studio's `status` flags, per slice, packs changed after its spec answered them. */
-export type SliceRowWithPolicies = StatusSliceRow & { policies_changed?: string | null };
+import { specSectionOf } from "@mach/ui/sections";
 
 /* ── The packs ─────────────────────────────────────────────────────────────── */
 
@@ -46,9 +34,8 @@ export interface PackRow {
   file: string;
   /** The engine's reasons this pack cannot be read; empty when it can. */
   problems: string[];
-  /** Each statement with its text, when the engine lists them; null when it gives only a count. */
-  statements: Array<{ id: string; text: string }> | null;
-  statementCount: number;
+  /** Each statement with its text, as the engine lists it. */
+  statements: Array<{ id: string; text: string }>;
 }
 
 /** One `applies-to` item in plain words. The engine decides what matches; this only reads the item out. */
@@ -63,8 +50,6 @@ export function appliesToWords(item: string): string {
 }
 
 export function packRow(pack: PolicyPack): PackRow {
-  const listed = (pack as PolicyPack & { statements: ListedStatements }).statements;
-  const statements = Array.isArray(listed) ? listed.filter((s) => s && typeof s.id === "string" && typeof s.text === "string") : null;
   return {
     id: pack.id,
     title: pack.title,
@@ -74,8 +59,7 @@ export function packRow(pack: PolicyPack): PackRow {
     version: pack.short || (pack.digest ?? "").slice(0, 12),
     file: pack.file,
     problems: pack.problems ?? [],
-    statements,
-    statementCount: statements ? statements.length : typeof listed === "number" ? listed : 0,
+    statements: pack.statements,
   };
 }
 
@@ -86,25 +70,13 @@ export function packState(row: PackRow): { word: string; shape: "blocked" | "sup
   return { word: "Active", shape: "approved", tone: "success" };
 }
 
-/** A problem as the engine sent it: a sentence (what it sends today) or an object with one. */
-function problemText(problem: unknown): string {
-  if (typeof problem === "string") return problem;
-  if (problem && typeof problem === "object") {
-    const p = problem as { problem?: unknown; file?: unknown; pack?: unknown };
-    const where = typeof p.file === "string" ? p.file : typeof p.pack === "string" ? p.pack : "";
-    const what = typeof p.problem === "string" ? p.problem : "";
-    return [where, what].filter(Boolean).join(": ") || "A policy pack cannot be read.";
-  }
-  return "A policy pack cannot be read.";
-}
-
 /**
  * Problems not already shown on a pack: a folder without a policy.md, or an unusable folder setting.
  * The engine repeats each pack's own problem here, prefixed with its file; those are shown on the pack.
  */
 export function otherProblems(list: PolicyList): string[] {
   const files = list.packs.map((pack) => `${pack.file}:`);
-  return (list.problems as unknown[]).map(problemText).filter((text) => !files.some((prefix) => text.startsWith(prefix)));
+  return list.problems.filter((text) => !files.some((prefix) => text.startsWith(prefix)));
 }
 
 export interface OlderSlice {
@@ -179,7 +151,7 @@ export interface Acceptance {
 const CHECK_TAIL = /\s\((checked against the pack's owner|checked against the project's list|not checked against the owner)\)$/;
 
 /** The name given, without the bracketed check the resolution line carries after it, and the check. */
-export function acceptance(concern: ConcernWithCheck): Acceptance | null {
+export function acceptance(concern: PolicyConcern): Acceptance | null {
   if (concern.resolution !== "accepted") return null;
   const by = (concern.by ?? "").trim();
   const tail = CHECK_TAIL.exec(by);
@@ -225,7 +197,7 @@ export function policyRows(answers: PolicyAnswer[] | undefined, packs: PolicyPac
       owner: known?.owner ?? null,
       version: a.sha256,
       answer: a.answer,
-      concerns: (a.concerns ?? []).map((c: ConcernWithCheck) => ({
+      concerns: (a.concerns ?? []).map((c) => ({
         statementId: c.statement_id,
         statement: c.statement,
         why: c.why,
@@ -250,7 +222,7 @@ export function openConcerns(rows: PolicyRow[]): Array<ConcernRow & { pack: stri
 /** The check's findings about the principles and policies sections, in the engine's words. */
 export function answerFindings(check: SliceCheck | null | undefined): Array<{ severity: "error" | "warning"; message: string; line: number | null; rule: string | null }> {
   return (check?.diagnostics ?? [])
-    .filter((d) => d.section === "Policies" || d.section === "Principles" || /^(policy|principle)-/.test(d.rule ?? ""))
+    .filter((d) => specSectionOf(d) === "policies" || specSectionOf(d) === "principles")
     .map((d) => ({ severity: d.severity === "warning" ? ("warning" as const) : ("error" as const), message: d.message, line: d.line, rule: d.rule }));
 }
 

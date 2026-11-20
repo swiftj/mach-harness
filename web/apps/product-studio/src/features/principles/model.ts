@@ -131,9 +131,7 @@ export function publishOutcome(result: PrinciplesPublishResult): PublishOutcome 
   if (result.saved_to === "github") {
     return { where: "github", revision: result.revision, issue: result.issue, url: result.url, approvedBy: result.approved_by, note: result.note };
   }
-  // `why_folder` is in the engine's answer but not yet in the typed result (reported for the shell).
-  const why = (result as { why_folder?: unknown }).why_folder;
-  return { where: "folder", revision: result.revision, folder: result.folder, whyFolder: typeof why === "string" && why ? why : null, waysOn: result.ways_on, note: result.note };
+  return { where: "folder", revision: result.revision, folder: result.folder, whyFolder: result.why_folder || null, waysOn: result.ways_on, note: result.note };
 }
 
 /** "1 in force, 1 retired"; "2 in force". */

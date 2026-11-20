@@ -3,8 +3,6 @@ import { Link } from "react-router";
 import { ArtifactId, ConfirmDialog, Field, Input, Text, toast } from "@mach/ui";
 import type { EpicLink, SliceLink } from "@mach/ui/api";
 import { useEngineAct } from "../../api/act";
-import { learnEpicKey } from "./data";
-import { learnFromSliceLink } from "./model";
 
 /** What a key act is about: an epic or a slice, its title, and its own key when it has one. */
 export interface KeyTarget {
@@ -61,14 +59,11 @@ export function SetKeyDialog({
     if (target.kind === "epic") {
       const answer = await act.run("epic.link", { epic_id: target.id, jira });
       if (!answer) return false;
-      learnEpicKey(target.id, answer.epic.tracking?.jira ?? null);
       onEpicLinked(answer);
       toast({ tone: "success", title: `Set the Jira key of ${target.id}`, description: answer.note });
     } else {
       const answer: SliceLink | null = await act.run("slice.link", { slice_id: target.id, jira });
       if (!answer) return false;
-      const epic = learnFromSliceLink(answer);
-      if (epic) learnEpicKey(epic.epic, epic.key);
       toast({ tone: "success", title: `Set the Jira key of ${target.id}`, description: answer.note });
     }
     setTried(false);
@@ -117,13 +112,10 @@ export function RemoveKeyDialog({ target, open, onOpenChange }: { target: KeyTar
     if (target.kind === "epic") {
       const answer = await act.run("epic.link", { epic_id: target.id, remove: true });
       if (!answer) return false;
-      learnEpicKey(target.id, answer.epic.tracking?.jira ?? null);
       toast({ tone: "info", title: `Removed the Jira key of ${target.id}`, description: answer.note });
     } else {
       const answer = await act.run("slice.link", { slice_id: target.id, remove: true });
       if (!answer) return false;
-      const epic = learnFromSliceLink(answer);
-      if (epic) learnEpicKey(epic.epic, epic.key);
       toast({ tone: "info", title: `Removed the Jira key of ${target.id}`, description: answer.note });
     }
     return true;

@@ -19,6 +19,16 @@ export function mockPurpose(mock: Pick<DesignMock, "for">, scenarios: readonly S
   return found ? `${found.id}: ${found.title}` : mock.for;
 }
 
+/**
+ * The picture's alternative text: what it is for, from the slice's own record (its scenario's
+ * title, whether it is binding, the product manager's note), never from the picture itself.
+ */
+export function mockAlt(mock: Pick<DesignMock, "for" | "binding" | "note">, scenarios: readonly ScenarioName[]): string {
+  const purpose = mockPurpose(mock, scenarios);
+  const what = `${mock.binding ? "Binding design mock" : "Design mock"} for ${mock.for ? `scenario ${purpose}` : "the whole slice"}`;
+  return mock.note ? `${what}. ${mock.note}` : what;
+}
+
 /** The first characters of a SHA-256, enough to tell pictures apart: 12, as the facts line shows it. */
 export function fingerprint(sha256: string): string {
   return sha256.slice(0, 12);

@@ -33,11 +33,17 @@
           },
           "ready_or_further": 1,
           "ready_or_further_means": "marked ready to build, being built, or shipped"
+        },
+        "tracking": {
+          "jira": "TEAM-2"
         }
       }
     ],
     "slices": [
       {
+        "tracking": {
+          "jira": "TEAM-12"
+        },
         "slice_id": "SLICE-001",
         "title": "Invite a teammate",
         "epic_id": "EPIC-001",
@@ -63,7 +69,7 @@
           "question_note": null,
           "shipped_issues": [],
           "times": {
-            "marked_ready": "2026-11-20T20:16:56Z",
+            "marked_ready": "2026-11-20T22:05:50Z",
             "building": null,
             "question": null,
             "shipped": null

@@ -4,7 +4,7 @@
     "slice_id": "SLICE-005",
     "spec": "/project/.factory/studio/draft/specs/slices/SLICE-005-invite-teammate.md",
     "errors": [
-      "SLICE-005-invite-teammate.md: Missing section '## Effects on shipped behaviour'. Write 'None.' if this slice changes no shipped behaviour, otherwise one table row per shipped rule it touches; silence is never read as no effects. 8 shipped rule(s) were read. See references/spec-structure.md. [effects-missing]"
+      "SLICE-005-invite-teammate.md: Missing section '## Effects on shipped behaviour'. Write 'None.' if this slice changes no shipped behaviour, otherwise one table row per shipped rule it touches; silence is never read as no effects. 8 shipped rule(s) were read. [effects-missing]"
     ],
     "warnings": [],
     "diagnostics": [
@@ -13,7 +13,7 @@
         "rule": "effects-missing",
         "line": null,
         "section": null,
-        "message": "Missing section '## Effects on shipped behaviour'. Write 'None.' if this slice changes no shipped behaviour, otherwise one table row per shipped rule it touches; silence is never read as no effects. 8 shipped rule(s) were read. See references/spec-structure.md."
+        "message": "Missing section '## Effects on shipped behaviour'. Write 'None.' if this slice changes no shipped behaviour, otherwise one table row per shipped rule it touches; silence is never read as no effects. 8 shipped rule(s) were read."
       }
     ],
     "open_questions": [],
@@ -26,7 +26,7 @@
     },
     "title": "Invite a teammate by email",
     "shipped": {
-      "commit": "e91f18f1778277b63e0926669f46c7aa9ae75a58",
+      "commit": "2ede7286fc780d46d4111da93ace96634be3d3d4",
       "branch": "main",
       "rules": 8,
       "notes": []

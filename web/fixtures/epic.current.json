@@ -3,8 +3,8 @@
   "data": {
     "epic_id": "EPIC-001",
     "branch": "main",
-    "commit": "e91f18f1778277b63e0926669f46c7aa9ae75a58",
-    "note": "This shows what is merged on this machine's copy of the integration branch (main at e91f18f17782), which may be behind GitHub. The slices are the authority.",
+    "commit": "2ede7286fc780d46d4111da93ace96634be3d3d4",
+    "note": "This shows the work merged on this computer, which may be behind GitHub. The slices are the authority.",
     "epic": {
       "epic_id": "EPIC-001",
       "title": "Team membership",

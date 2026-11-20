@@ -3,7 +3,7 @@
   "data": {
     "reads_only": true,
     "dir": "policies",
-    "commit": "8737d19d10c9862888f2392cd8f19e22a67dc202",
+    "commit": "d80feb6fab2c7450f2317db8ce170db53c93d493",
     "packs": [
       {
         "id": "POL-privacy",
@@ -20,7 +20,16 @@
         "binding": true,
         "problems": [],
         "short": "b7b600b3e580",
-        "statements": 2
+        "statements": [
+          {
+            "id": "POL-privacy-01",
+            "text": "An invitation email MUST name the workspace that sent it."
+          },
+          {
+            "id": "POL-privacy-02",
+            "text": "Personal data MUST NOT be sent to a service outside the EU region."
+          }
+        ]
       }
     ],
     "problems": [],

@@ -36,11 +36,12 @@ BUSY = "Another Product Studio command is saving to GitHub; try again."
 
 
 class HandoffError(Exception):
-    """A refusal studio.py prints; `hint` is the app action that resolves it."""
+    """A refusal studio.py prints; `hint` is the app action that resolves it, `app` its wording for the app when it differs."""
 
-    def __init__(self, message: str, hint: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, hint: Optional[Dict[str, Any]] = None, app: Optional[str] = None):
         super().__init__(message)
         self.hint = hint
+        self.app = app
 
 
 def utc_now() -> str:
@@ -495,7 +496,9 @@ class Handoff:
                 revision = theirs["revision"]
             elif theirs and theirs["intact"] and theirs["revision"] > base and theirs["revision"] != run.get("revision"):
                 raise HandoffError(f"Someone else published version {theirs['revision']} of the principles on GitHub. Choose yours or theirs "
-                                   "before publishing (reconcile principles --take mine|theirs). Nothing was saved.", {"kind": "reconcile", "target": "principles"})
+                                   "before publishing (reconcile principles --take mine|theirs). Nothing was saved.", {"kind": "reconcile", "target": "principles"},
+                                   app=f"Someone else published version {theirs['revision']} of the principles on GitHub. Choose yours or theirs "
+                                       "on the Product principles page before publishing. Nothing was saved.")
             elif run.get("sha256") == sha and run.get("revision"):
                 revision = run["revision"]
             else:
