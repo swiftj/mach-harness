@@ -89,7 +89,8 @@ class InstallTest(Base):
         self.assertTrue((self.project / ".factory/tickets").is_dir())
         self.assertTrue(os.access(self.project / ".factory/bin/mach", os.X_OK))
         config = json.loads(files[".factory/config.json"])
-        self.assertEqual(config["observe"], {"every": 5})
+        self.assertEqual(config["observe"]["every"], 5)
+        self.assertEqual(config["observe"]["bands"]["window"], 30, "control bands are on by default, over the last 30 finished tickets (M15)")
         self.assertEqual((config["merge"]["mode"], config["merge"]["method"]), ("auto", "local"))
         self.assertEqual(config["adr"], {"dir": "docs/adr", "landing": "pull-request", "required_topics": ["language", "framework", "storage", "testing", "deployment", "coding-standards"]},
                          "architecture decisions are read from docs/adr, and these six topics need one before planning, unless the project says otherwise")

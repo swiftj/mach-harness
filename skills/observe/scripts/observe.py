@@ -17,6 +17,13 @@ number more than five. With too few tickets it refuses any proposal at all.
 
 'status' prints the latest metrics summary and the reports filed so far.
 
+'bands' (M15) watches each scorecard measure with a control band: a rolling baseline over the finished
+tickets before the most recent ones (mean and standard deviation), and four Western Electric rules
+applied to the most recent tickets, so a slow drift is caught as well as a spike. Its tiers come from
+observe.bands in .factory/config.json: tier 1 records, tier 2 says so in one fixed line, tier 3 also
+makes an observe pass due. 'bands dismiss <measure> --reason R' records a person's dismissal of the
+current breach. Bands never start an agent, file a ticket, or change a rule or a threshold.
+
 This script measures and files. It never edits REVIEW.md, CLAUDE.md, AGENTS.md or any skill:
 a proposed change becomes a ticket and goes through the factory like any other work.
 
@@ -26,7 +33,9 @@ Standard library only. It reads files and writes only under .factory/observation
 import argparse
 import hashlib
 import json
+import os
 import re
+import statistics
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -349,6 +358,8 @@ def cmd_collect(project: Path, args: argparse.Namespace) -> int:
         "by_app_type": breakdown(records, "app_type"),
         "open_cells": open_cells(project),
         "audit": audit_summary(project),
+        # M15: the control bands over every finished ticket on record. A breach is evidence a proposal may cite.
+        "bands": bands_summary(project),
     }
     path = project / METRICS
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -601,6 +612,316 @@ def cmd_status(project: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- control bands (M15)
+#
+# Detection is a script and nothing else: the same runs.jsonl always gives the same answer. Each
+# scorecard measure becomes one value per finished ticket, in the order the tickets closed. The band
+# is the mean and sample standard deviation of up to `window` values just before the most recent
+# `recent` ones; the rules are checked at each of those recent tickets. The rules are the four zone
+# rules of the Western Electric Company, as the NIST/SEMATECH e-Handbook of Statistical Methods
+# lists them (section 6.3.2): one point beyond 3 sigma; 2 of the last 3 beyond 2 sigma on one side;
+# 4 of the last 5 beyond 1 sigma on one side; 8 in a row on one side of the centre line. The
+# handbook's trend rules (6 rising, 14 alternating) are not used.
+
+BANDS_LOG = OBSERVATIONS + "/bands-log.jsonl"
+BANDS_DISMISSED = OBSERVATIONS + "/bands-dismissed.json"
+LAST_PASS = OBSERVATIONS + "/last-pass.json"
+CONFIG = ".factory/config.json"
+# Which way is better for each measure: a signal in the better direction is only recorded (tier 1).
+BAND_DIRECTION = {"average_rounds": "lower", "first_pass_rate": "higher", "escalation_rate": "lower",
+                  "abandonment_rate": "lower", "tests_failing_first_share": "higher", "deviations_per_ticket": "lower"}
+BAND_DEFAULTS: Dict[str, Any] = {
+    "enabled": True, "window": 30, "min_sample": 20, "recent": 8, "measures": list(BAND_DIRECTION),
+    "rules": {"1": 2, "2": 2, "3": 3, "4": 3},
+    "tiers": {"1": ["record"], "2": ["record", "say"], "3": ["record", "say", "observe-pass"]},
+}
+TIER_ACTIONS = ("record", "say", "observe-pass")
+# (span of tickets, how many of them must be beyond, sigmas from the mean; 0 means the centre line)
+WE_RULES = {1: (1, 1, 3), 2: (3, 2, 2), 3: (5, 4, 1), 4: (8, 8, 0)}
+WE_TEXT = {1: "one ticket beyond 3 standard deviations from the baseline mean",
+           2: "2 of the last 3 tickets beyond 2 standard deviations, on the same side",
+           3: "4 of the last 5 tickets beyond 1 standard deviation, on the same side",
+           4: "8 tickets in a row on the same side of the baseline mean"}
+SAY_LINE = "A Factory measure is outside its control band: {measures}. /mach bands shows the tickets behind it."
+NOT_ENOUGH = "not enough finished tickets yet"
+MIN_DISMISS_REASON = 10
+MAX_DISMISS_REASON = 500
+
+
+def band_settings(project: Path) -> Tuple[Dict[str, Any], List[str]]:
+    """observe.bands from the tracked settings over the defaults, and every problem with what was given."""
+    config = load_json(project / CONFIG) or {}
+    given = (config.get("observe") or {}).get("bands") if isinstance(config.get("observe"), dict) else None
+    settings = json.loads(json.dumps(BAND_DEFAULTS))
+    problems: List[str] = []
+    if given is None:
+        return settings, problems
+    if not isinstance(given, dict):
+        return settings, ["observe.bands must be an object."]
+    for key, value in given.items():
+        if key not in settings:
+            problems.append(f"observe.bands.{key} is not a setting.")
+        else:
+            settings[key] = value
+    if not isinstance(settings["enabled"], bool):
+        problems.append("observe.bands.enabled must be true or false.")
+    for key, low, high in (("window", 5, 500), ("min_sample", 5, 500), ("recent", 1, 50)):
+        value = settings[key]
+        if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
+            problems.append(f"observe.bands.{key} must be a whole number from {low} to {high}.")
+    if not problems and settings["min_sample"] > settings["window"]:
+        problems.append("observe.bands.min_sample cannot be more than observe.bands.window.")
+    measures = settings["measures"]
+    if not isinstance(measures, list) or not measures or any(m not in BAND_DIRECTION for m in measures):
+        problems.append("observe.bands.measures must list scorecard measures: " + ", ".join(BAND_DIRECTION) + ".")
+    rules = settings["rules"]
+    if not isinstance(rules, dict) or any(k not in ("1", "2", "3", "4") or v not in (1, 2, 3) or isinstance(v, bool) for k, v in rules.items()):
+        problems.append("observe.bands.rules maps a rule (\"1\" to \"4\") to the tier it raises (1, 2 or 3).")
+    tiers = settings["tiers"]
+    if (not isinstance(tiers, dict) or set(tiers) != {"1", "2", "3"}
+            or any(not isinstance(v, list) or any(a not in TIER_ACTIONS for a in v) for v in tiers.values())):
+        problems.append("observe.bands.tiers names tiers \"1\", \"2\" and \"3\", each with actions from: " + ", ".join(TIER_ACTIONS) + ".")
+    return (settings if not problems else json.loads(json.dumps(BAND_DEFAULTS))), problems
+
+
+def band_series(records: List[Dict[str, Any]]) -> Dict[str, List[Tuple[str, float]]]:
+    """Each measure as one value per ticket it counts, in closing order: the scorecard's own definitions, per ticket."""
+    series: Dict[str, List[Tuple[str, float]]] = {name: [] for name in BAND_DIRECTION}
+    for record in records:
+        ticket = record["ticket_id"]
+        if record.get("outcome") == "merged":
+            rounds = number(record.get("rounds"))
+            if rounds is not None:
+                series["average_rounds"].append((ticket, float(rounds)))
+            series["first_pass_rate"].append((ticket, 1.0 if record.get("first_pass") is True else 0.0))
+        series["escalation_rate"].append((ticket, 1.0 if record.get("escalated") is True else 0.0))
+        series["abandonment_rate"].append((ticket, 1.0 if record.get("outcome") == "abandoned" else 0.0))
+        failing = number(record.get("tests_seen_failing_first")) or 0
+        passing = number(record.get("tests_passing_on_first_run")) or 0
+        if failing + passing:
+            series["tests_failing_first_share"].append((ticket, failing / (failing + passing)))
+        series["deviations_per_ticket"].append((ticket, float(len(items(record.get("deviations"))))))
+    return series
+
+
+def rule_signals(values: List[float], point: int, mean: float, sd: float) -> List[Tuple[int, int, List[int]]]:
+    """(rule, side, positions) for every rule the ticket at `point` completes. The ticket itself must be one of
+    those beyond the line. With no spread in the baseline, any value off the mean is beyond every line."""
+    found = []
+    for rule, (span, need, sigmas) in WE_RULES.items():
+        if point - span + 1 < 0:
+            continue
+        for side in (1, -1):
+            beyond = (lambda x: (x - mean) * side > sigmas * sd) if sigmas else (lambda x: (x - mean) * side > 0)
+            if not beyond(values[point]):
+                continue
+            hits = [i for i in range(point - span + 1, point + 1) if beyond(values[i])]
+            if len(hits) >= need:
+                found.append((rule, side, hits))
+    return found
+
+
+def band_at(series: List[Tuple[str, float]], end: int, settings: Dict[str, Any], direction: str) -> Optional[Dict[str, Any]]:
+    """The band and its signals when the first `end` values were all there was, or None below the minimum sample."""
+    if end < settings["min_sample"] + 1:
+        return None
+    recent = min(settings["recent"], end - settings["min_sample"])
+    start = end - recent
+    baseline = series[max(0, start - settings["window"]):start]
+    base = [value for _, value in baseline]
+    mean = statistics.fmean(base)
+    sd = statistics.stdev(base) if len(base) > 1 else 0.0
+    values = [value for _, value in series[:end]]
+    signals = []
+    for point in range(start, end):
+        for rule, side, hits in rule_signals(values, point, mean, sd):
+            worse = (side > 0) == (direction == "lower")
+            tier = settings["rules"].get(str(rule)) if worse else 1
+            if tier is None:
+                continue  # the settings do not apply this rule
+            signals.append({"rule": rule, "rule_text": WE_TEXT[rule], "ticket": series[point][0], "side": "above" if side > 0 else "below",
+                            "direction": "worse" if worse else "better", "tier": tier, "tickets": [series[i][0] for i in hits]})
+    adverse = [s for s in signals if s["direction"] == "worse"]
+    return {"mean": mean, "sd": sd, "baseline": baseline, "recent": series[start:end], "signals": signals,
+            "tier": max((s["tier"] for s in adverse), default=0)}
+
+
+def band_episode(series: List[Tuple[str, float]], settings: Dict[str, Any], direction: str, tier: int) -> Tuple[str, str]:
+    """When the current breach began (the ticket that first put the measure outside its band, in this run of breaches)
+    and the ticket at which it last reached its present tier."""
+    end = len(series)
+    since = tier_since = series[end - 1][0]
+    rising = True
+    while end >= 1:
+        state = band_at(series, end, settings, direction)
+        if state is None or not state["tier"]:
+            break
+        since = series[end - 1][0]
+        if rising and state["tier"] >= tier:
+            tier_since = series[end - 1][0]
+        else:
+            rising = False
+        end -= 1
+    return since, tier_since
+
+
+def run_positions(project: Path) -> Dict[str, int]:
+    """Each ticket's place among the non-empty lines of runs.jsonl, the count last-pass.json's runs_total is taken from."""
+    try:
+        lines = (project / RUNS).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return {}
+    positions, count = {}, 0
+    for line in lines:
+        if not line.strip():
+            continue
+        count += 1
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict) and isinstance(record.get("ticket_id"), str):
+            positions[record["ticket_id"].strip()] = count
+    return positions
+
+
+def dismissals(project: Path) -> List[Dict[str, Any]]:
+    data = load_json(project / BANDS_DISMISSED) or {}
+    return [entry for entry in items(data.get("dismissed")) if isinstance(entry, dict)]
+
+
+def bands_summary(project: Path) -> Dict[str, Any]:
+    """Every watched measure's band, its signals and any breach, with what the tiers say to do. Reads only."""
+    settings, problems = band_settings(project)
+    if problems:
+        return {"enabled": None, "problems": problems, "measures": {}, "tier": 0, "say": None, "observe_pass_due": [],
+                "note": "The control band settings in .factory/config.json are not valid, so no band was computed."}
+    if not settings["enabled"]:
+        return {"enabled": False, "measures": {}, "tier": 0, "say": None, "observe_pass_due": [], "note": "Control bands are switched off (observe.bands.enabled)."}
+    runs, _ = read_runs(project)
+    records = [record for _, record in select(runs, len(runs))]
+    series = band_series(records)
+    positions = run_positions(project)
+    seen = (load_json(project / LAST_PASS) or {}).get("runs_total")
+    seen = seen if isinstance(seen, int) and not isinstance(seen, bool) else 0
+    dismissed = dismissals(project)
+    measures: Dict[str, Any] = {}
+    say, due = [], []
+    for name in settings["measures"]:
+        values, direction = series[name], BAND_DIRECTION[name]
+        state = band_at(values, len(values), settings, direction)
+        entry: Dict[str, Any] = {"direction": f"{direction} is better", "sample": {"tickets_with_a_value": len(values)}}
+        if state is None:
+            entry.update(state=NOT_ENOUGH, note=f"A band needs {settings['min_sample']} finished tickets with a value for this measure "
+                                               f"and one more to check; there are {len(values)}.")
+            measures[name] = entry
+            continue
+        sd = state["sd"]
+        entry["sample"].update(baseline=len(state["baseline"]), recent=len(state["recent"]),
+                               baseline_tickets=[t for t, _ in state["baseline"]], recent_tickets=[t for t, _ in state["recent"]])
+        entry["band"] = {"mean": round(state["mean"], 4), "standard_deviation": round(sd, 4),
+                         **{f"{side}_{k}_sigma": round(state["mean"] + sign * k * sd, 4) for k in (1, 2, 3) for side, sign in (("lower", -1), ("upper", 1))}}
+        entry["recent_values"] = [{"ticket": t, "value": round(v, 4)} for t, v in state["recent"]]
+        entry["signals"] = state["signals"]
+        entry["state"] = "inside"
+        if state["tier"]:
+            since, tier_since = band_episode(values, settings, direction, state["tier"])
+            actions = settings["tiers"][str(state["tier"])]
+            breach = {"since": since, "tier": state["tier"], "tier_since": tier_since, "actions": actions, "dismissed": None}
+            match = next((d for d in reversed(dismissed) if d.get("measure") == name and d.get("since") == since), None)
+            if match:
+                breach["dismissed"] = {key: match.get(key) for key in ("reason", "by", "at")}
+                entry["state"] = "outside, dismissed"
+            else:
+                entry["state"] = "outside"
+                if "say" in actions:
+                    say.append(name)
+                if "observe-pass" in actions and positions.get(tier_since, 0) > seen:
+                    due.append({"measure": name, "tier": state["tier"], "since": since, "tier_since": tier_since,
+                                "rules": sorted({s["rule"] for s in state["signals"] if s["direction"] == "worse"})})
+            entry["breach"] = breach
+        measures[name] = entry
+    open_tiers = [m["breach"]["tier"] for m in measures.values() if m.get("breach") and not m["breach"]["dismissed"]]
+    return {"enabled": True, "settings": {key: settings[key] for key in ("window", "min_sample", "recent", "rules", "tiers")},
+            "method": "Western Electric zone rules (NIST/SEMATECH e-Handbook of Statistical Methods, section 6.3.2) over a baseline of the "
+                      "tickets just before the most recent ones: mean and sample standard deviation.",
+            "measures": measures, "tier": max(open_tiers, default=0),
+            "say": SAY_LINE.format(measures=", ".join(say)) if say else None, "observe_pass_due": due}
+
+
+def record_bands(project: Path, summary: Dict[str, Any]) -> int:
+    """Tier 1: each signal and each breach is written once to bands-log.jsonl. Returns how many lines were added."""
+    path = project / BANDS_LOG
+    known = set()
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                known.add(json.loads(line).get("key"))
+            except (ValueError, AttributeError):
+                continue
+    added = []
+    for name, entry in summary.get("measures", {}).items():
+        for signal in entry.get("signals") or []:
+            key = f"signal:{name}:{signal['rule']}:{signal['side']}:{signal['ticket']}"
+            if key not in known and "record" in summary["settings"]["tiers"][str(signal["tier"])]:
+                added.append({"key": key, "measure": name, **{k: signal[k] for k in ("rule", "ticket", "side", "direction", "tier", "tickets")}})
+                known.add(key)
+        breach = entry.get("breach")
+        if breach:
+            key = f"breach:{name}:{breach['since']}:{breach['tier']}"
+            if key not in known:
+                added.append({"key": key, "measure": name, "since": breach["since"], "tier": breach["tier"], "tier_since": breach["tier_since"]})
+                known.add(key)
+    if added:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as handle:
+            for line in added:
+                handle.write(json.dumps({**line, "recorded_at": now()}, ensure_ascii=False) + "\n")
+    return len(added)
+
+
+def cmd_bands(project: Path, args: argparse.Namespace) -> int:
+    if args.action == "dismiss":
+        return cmd_bands_dismiss(project, args)
+    summary = bands_summary(project)
+    if summary.get("enabled"):
+        summary["recorded"] = record_bands(project, summary)
+    summary["next"] = ("Nothing to do." if not summary.get("say") else
+                       "A person decides whether a breach matters. To set one aside: bands dismiss <measure> --reason \"<why>\". "
+                       "It is raised again only after the measure returns inside its band and leaves it again.")
+    print(json.dumps(summary, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_bands_dismiss(project: Path, args: argparse.Namespace) -> int:
+    if os.environ.get("MACH_EXECUTION_ID"):
+        raise ObserveError("A breach is dismissed only on a person's word, never inside a supervised Factory execution.")
+    reason = " ".join((args.reason or "").split())
+    if len(reason) < MIN_DISMISS_REASON:
+        raise ObserveError(f"--reason needs the person's reason, in at least {MIN_DISMISS_REASON} characters.", 2)
+    if not args.measure:
+        raise ObserveError("Name the measure to dismiss: bands dismiss <measure> --reason \"<why>\".", 2)
+    summary = bands_summary(project)
+    entry = summary.get("measures", {}).get(args.measure)
+    breach = (entry or {}).get("breach")
+    if not breach:
+        raise ObserveError(f"'{args.measure}' has no breach to dismiss" + ("" if entry else " (it is not a watched measure)") + ".")
+    if breach["dismissed"]:
+        print(json.dumps({"status": "ALREADY_DISMISSED", "measure": args.measure, "since": breach["since"], "dismissed": breach["dismissed"]}, indent=2))
+        return 0
+    path = project / BANDS_DISMISSED
+    data = load_json(path) or {}
+    record = {"measure": args.measure, "since": breach["since"], "tier": breach["tier"], "reason": reason[:MAX_DISMISS_REASON],
+              "by": " ".join((args.by or "a person").split())[:80], "at": now()}
+    data["dismissed"] = [*dismissals(project), record]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(json.dumps({"status": "DISMISSED", **record,
+                      "note": "This breach is no longer said or counted toward an observe pass. It is raised again only after the measure "
+                              "returns inside its band and leaves it again. The band itself is unchanged."}, indent=2, ensure_ascii=False))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MACH observe station: measure finished tickets and file observation reports.")
     parser.add_argument("--project", type=Path, help="project root (default: nearest folder with .factory/ or .git)")
@@ -619,6 +940,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_file_ticket)
     p = sub.add_parser("status", help="print the latest metrics summary and the filed reports")
     p.set_defaults(func=cmd_status)
+    p = sub.add_parser("bands", help="each scorecard measure against its control band; records signals, changes nothing else")
+    p.add_argument("action", nargs="?", choices=("dismiss",), help="dismiss: a person sets aside the current breach of one measure")
+    p.add_argument("measure", nargs="?", help="with dismiss: the measure, such as first_pass_rate")
+    p.add_argument("--reason", help="with dismiss: the person's reason, in their words")
+    p.add_argument("--by", help="with dismiss: the role of the person who decided, such as engineering-lead")
+    p.set_defaults(func=cmd_bands)
     return parser
 
 

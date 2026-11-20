@@ -61,6 +61,8 @@ and not by whoever is driving it.
     run.py notify banner on|off [--label WORDS]
                                          a macOS Notification Center banner on this Mac, beside or instead of the webhook
     run.py notify test | off             one test message on each channel that is on; remove the stored address (the banner stays)
+    run.py bands [dismiss <measure> --reason R]
+                                         each Factory measure against its control band (M15, observe.py bands); a person may dismiss a breach
     run.py eval collect|add|status|run|compare|show
                                          factory evals (M14, skills/observe/scripts/evals.py): past tickets replayed in throwaway
                                          clones; a run only on a person's command, with a budget and a confirmation code
@@ -314,7 +316,7 @@ class Project:
 
     def observe_status(self) -> Dict[str, Any]:
         """Whether an observe pass is due, as the cleanup station decides it: the one source for cleanup, the status command and the supervisor."""
-        return cleanup_station().observe_due(self.root)
+        return bands_due(self.root, cleanup_station().observe_due(self.root))  # M15: a tier-3 control band breach also makes one due
 
     def observe_due(self) -> bool:
         """Whether enough tickets have finished since the last observe pass for another one."""
@@ -1057,10 +1059,12 @@ def cmd_status(project: Project, args: argparse.Namespace) -> int:
         rows.append(row)
     tuning = [row["ticket_id"] for row in rows if row["action"] != "stop" and "claim" not in row and "factory-tuning" in project.ticket_labels(row["ticket_id"])]
     due = project.observe_due()
+    bands_line = project.observe_status().get("bands")  # M15: one fixed line when a measure is outside its control band
     if scope is not None:
         # The observe pass and any tuning ticket it files are separate work: the supervisor, which alone dispatches, reports them.
-        tuning, due = [], False
-    print(json.dumps({"digest": status_digest(project, rows), "audit": project.audit(), "observe_due": due, "factory_tuning_ready": tuning, "scoped_to": scope, "tickets": rows,
+        tuning, due, bands_line = [], False, None
+    print(json.dumps({"digest": status_digest(project, rows), "audit": project.audit(), "observe_due": due, "control_bands": bands_line,
+                      "factory_tuning_ready": tuning, "scoped_to": scope, "tickets": rows,
                       "ready_to_run": [row["ticket_id"] for row in rows if row["action"] != "stop" and "claim" not in row],
                       "being_worked_on": [row["ticket_id"] for row in rows if "claim" in row],
                       "waiting_on_a_person": [row["ticket_id"] for row in rows if row["action"] == "stop"]}, indent=2, ensure_ascii=False))
@@ -1279,6 +1283,47 @@ def eval_parser(sub: Any) -> None:
 
 
 # ---- end of M14 Factory evals ----
+
+
+# ---- M15 control bands (skills/observe/scripts/observe.py bands): read only here; a tier-3 breach makes an observe pass due ----
+_BANDS: List[Any] = []
+
+
+def bands_station() -> Any:
+    if not _BANDS:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("mach_observe_bands", sibling("observe") / "scripts" / "observe.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _BANDS.append(module)
+    return _BANDS[0]
+
+
+def bands_due(root: Path, status: Dict[str, Any]) -> Dict[str, Any]:
+    """The cleanup station's answer, plus the control bands' fixed line, and a pass due now when a tier-3 breach says so."""
+    summary = bands_station().bands_summary(root)
+    status = dict(status, bands=summary.get("say"))
+    if summary.get("observe_pass_due") and not status.get("due"):
+        status.update(due=True, because="control-band", bands_due=summary["observe_pass_due"])
+    return status
+
+
+def cmd_bands(project: Project, args: argparse.Namespace) -> int:
+    """/mach bands: each measure against its band (records signals only); dismiss is a person's word, refused unattended by observe.py."""
+    argv = ["--project", str(project.root), "bands"] + (["dismiss", args.measure or "", "--reason", args.reason or ""] if args.action == "dismiss" else [])
+    return bands_station().main(argv + (["--by", args.by] if args.action == "dismiss" and args.by else []))
+
+
+def bands_parser(sub: Any) -> None:
+    p = sub.add_parser("bands", help="each Factory measure against its control band; dismiss: a person sets one breach aside")
+    p.add_argument("action", nargs="?", choices=("dismiss",))
+    p.add_argument("measure", nargs="?")
+    p.add_argument("--reason")
+    p.add_argument("--by")
+    p.set_defaults(func=cmd_bands)
+
+
+# ---- end of M15 control bands ----
 
 
 def cmd_requests(project: Project, args: argparse.Namespace) -> int:
@@ -1714,6 +1759,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reason", required=True)
     p.set_defaults(func=cmd_release)
     eval_parser(sub)  # M14 Factory evals
+    bands_parser(sub)  # M15 control bands
 
     fac = sub.add_parser("factory", help="the Factory on this machine: status, enable, pause, resume, disable").add_subparsers(dest="action", required=True)
     fac.add_parser("status", help="what is in force here; changes nothing").set_defaults(func=cmd_factory)
