@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import handoff  # noqa: E402
 import issues  # noqa: E402
 import jira_export  # noqa: E402
+import mocks  # noqa: E402
 import prd  # noqa: E402
 import product  # noqa: E402
 import requests_in  # noqa: E402
@@ -1202,6 +1203,7 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
     dependencies = list(data.get("dependencies") or [])
     rules = ticket_rules()
     jira = effective_jira(data, epic)  # M13: the slice's Jira key, else its epic's
+    mock_list, mock_files = mocks.for_ready(sys.modules[__name__], studio, slice_id, data)  # M14 C: each picture checked again; ([], {}) without mocks
     hand = studio.handoff()
     with hand.exclusive():
         ledger = hand.load()
@@ -1215,15 +1217,16 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
             if waiting:
                 raise StudioError(f"{slice_id} depends on {', '.join(waiting)}, which {'is' if len(waiting) == 1 else 'are'} not ready yet. Mark {waiting[0]} ready first.",
                                   hint("mark_ready", waiting[0]))
-            length = len(rules.slice_issue_body(slice_id, 999999, 999999999, [999999999] * len(dependencies), why, spec, jira=jira))
+            length = len(rules.slice_issue_body(slice_id, 999999, 999999999, [999999999] * len(dependencies), why, spec, jira=jira, mocks=mock_list))
             if length > rules.ISSUE_BODY_LIMIT:
                 raise StudioError(handoff.too_large(slice_id, length, rules.ISSUE_BODY_LIMIT))
             if data.get("status") != APPROVED:
                 approve_locally(studio, data, slice_id)
-            saved = hand.write_folder(ledger, slice_id, data.get("title") or slice_id, epic, dependencies, why, spec, jira)
+            saved = hand.write_folder(ledger, slice_id, data.get("title") or slice_id, epic, dependencies, why, spec, jira, mock_list, mock_files)
             folder = Path(saved["folder"])
             return emit({"ready": True, "saved_to": "folder", "slice": studio.load("slice", slice_id), "folder": str(folder),
-                         "files": [str(folder / name) for name in ("spec.md", "why.md", "slice.json")], "revision": saved["revision"],
+                         "files": [str(folder / name) for name in ("spec.md", "why.md", "slice.json", *sorted("mocks/" + name for name in mock_files))],
+                         "revision": saved["revision"],
                          "why_folder": channel.why, "risk": result.get("risk"), "counts": result.get("counts"), "warnings": result["warnings"],
                          "ways_on": [say(f"Commit the folder {folder.relative_to(studio.draft)} to the repository; the builders take it from the main branch.",
                                          "Add this folder to the project's repository; the builders take it from there."),
@@ -1231,18 +1234,20 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
                                          "Or hand the folder to the engineer, who brings it in with MACH.")],
                          "factory_authorized": False,
                          "note": "Approved and written to the folder. Nothing was sent to GitHub and no work has started."})
-        plan = hand.prepare(ledger, channel, slice_id, data.get("title") or slice_id, epic, project, dependencies, why, spec, jira)
+        plan = hand.prepare(ledger, channel, slice_id, data.get("title") or slice_id, epic, project, dependencies, why, spec, jira, mock_list)
         if data.get("status") != APPROVED:
             approve_locally(studio, data, slice_id)
         saved = hand.run(plan, channel, slice_id, project, epic, why, spec)
+    delivery = mocks.deliver(sys.modules[__name__], studio, slice_id, mock_list, mock_files)  # M14 C: the pictures, for the product manager to commit
     request = None
     if isinstance(data.get("origin"), dict):
         request = studio.requests().queue_ready(data["origin"], slice_id, saved["issue"])
     return emit({"ready": True, "saved_to": "github", "slice": studio.load("slice", slice_id), "issue": saved["issue"], "url": saved["url"],
                  "revision": saved["revision"], "follows": saved["follows"], "epic_issue": saved["epic_issue"], "project_issue": saved["project_issue"],
                  "approved_by": channel.login, "risk": result.get("risk"), "counts": result.get("counts"), "warnings": result["warnings"],
-                 "request_updates": request, "factory_authorized": False,
-                 "note": f"Saved to GitHub as #{saved['issue']} and marked ready. The builders take it from there; nothing has started yet."})
+                 "request_updates": request, "factory_authorized": False, **({"mocks": delivery} if delivery else {}),
+                 "note": f"Saved to GitHub as #{saved['issue']} and marked ready. The builders take it from there; nothing has started yet."
+                         + (" " + delivery["note"] if delivery else "")})
 
 
 def cmd_slice_reopen(studio: Studio, args: argparse.Namespace) -> int:
@@ -1407,6 +1412,8 @@ def cmd_slice_take(studio: Studio, args: argparse.Namespace) -> int:
         slice_id = marker.get("slice_id") or target
         if check["problem"]:
             raise StudioError(TAKE_REFUSALS[check["problem"]].format(number=number, slice_id=slice_id))
+        if marker.get("mocks_sha256"):
+            raise StudioError(mocks.TAKE_REFUSAL.format(number=number))  # M14 C: the pictures are not in the issue
         ledger = hand.load()
         local = studio.all("slice")
         if slice_id in local:
@@ -1959,7 +1966,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_renumber, kind="epic")
 
     slice_ = sub.add_parser("slice", help="slice work orders, their interview, and marking them ready").add_subparsers(
-        dest="action", required=True, metavar="{new,set,link,resume,pause,check,show,ready,reopen,renumber,move,take}")
+        dest="action", required=True, metavar="{new,set,link,mock,resume,pause,check,show,ready,reopen,renumber,move,take}")
     p = slice_.add_parser("new")
     p.add_argument("--epic", required=True)
     p.add_argument("--title", required=True)
@@ -2012,6 +2019,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = slice_.add_parser("take", help="open another product manager's slice from GitHub here as a draft (only on the product manager's word)")
     p.add_argument("target", metavar="ISSUE-OR-SLICE-ID", help="the slice's issue number, such as 41, or its slice ID")
     p.set_defaults(func=cmd_slice_take)
+    mocks.add_commands(slice_, sys.modules[__name__])  # M14 C: slice mock add|remove|list (mocks.py)
 
     principle = sub.add_parser("principle", help="product principles: one sentence each that must hold in every slice").add_subparsers(
         dest="action", required=True, metavar="{add,set,retire,list,publish}")

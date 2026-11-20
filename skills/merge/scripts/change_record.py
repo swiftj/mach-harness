@@ -315,11 +315,27 @@ def verification_section(t: Text, root: Path) -> List[str]:
         failures = [item for item in summary.get("failures") or [] if isinstance(item, str)]
         if failures:
             lines += ["", "Failures recorded by the verifier:", ""] + [f"- {t.one(item, NOTE_LIMIT)}" for item in failures[:MAX_ITEMS]]
+        lines += mock_lines(t, summary.get("mocks"))  # M14 C: nothing for a slice without design mocks
         others = sorted(name for name in hashes if name not in cited)
         if others:
             lines += ["", "Other evidence files from this run:", ""]
             lines += capped([f"- {evidence_line(t, prefix, name, hashes[name])}" for name in others[:MAX_FILES]], len(others), MAX_FILES, "files")
         lines.append("")
+    return lines
+
+
+def mock_lines(t: Text, mocks: Any) -> List[str]:
+    """M14 C: each approved design mock by its SHA-256, the scenario it is for, and how the built screen compared."""
+    if not isinstance(mocks, dict) or not mocks:
+        return []
+    lines = ["", "Design mocks compared with the built screen:", ""]
+    for key in sorted(mocks, key=natural)[:MAX_ITEMS]:
+        mock = mocks[key] if isinstance(mocks[key], dict) else {}
+        result = mock.get("result") if mock.get("result") in ("matches", "differs", "cannot compare") else "not recorded"
+        entry = (f"- {t.one(key, 20)}: SHA-256 {sha(mock.get('sha256')) if SHA256_RE.match(str(mock.get('sha256'))) else '(not recorded)'}, "
+                 f"for {t.one(mock.get('for') or 'the whole slice', 20)}{', binding' if mock.get('binding') is True else ''}: {result}.")
+        differences = [item for item in mock.get("differences") or [] if isinstance(item, str)]
+        lines.append(entry + (" " + "; ".join(t.one(item, NOTE_LIMIT) for item in differences[:MAX_ITEMS]) if differences else ""))
     return lines
 
 

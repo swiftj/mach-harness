@@ -84,6 +84,16 @@ Each entry is checked exactly as a single record is; if any entry is refused, no
 
 Simulate outside services, including the failure a scenario describes. Control time rather than waiting for it. If a check passes too easily, such as a refusal that would also "pass" if the feature did nothing, strengthen it until it could fail.
 
+**Design mocks (M14 C).** For a `web`, `desktop` or `mobile` slice whose product manager approved pictures, `start` also prints `compare_with_mocks`: each mock (`MOCK-N`), the scenario it is for, whether it is binding, and its copy in `evidence/mocks/`. For each one, capture the built screen in this run as that scenario reaches it (a PNG or JPEG in `evidence_dir`), open the mock and your capture, compare them yourself, and record the result:
+
+```bash
+VERIFY compare <ticket> MOCK-1 --result matches --capture ac-02-screen.png --note '<what you captured and how it compares>'
+VERIFY compare <ticket> MOCK-2 --result differs --capture ac-03-screen.png --difference '<one difference, in plain words>' --note '...'
+VERIFY compare <ticket> MOCK-3 --result cannot-compare --note '<why the screen cannot be compared here>'
+```
+
+Judge what a person would see: layout, wording, which controls are present and their order, colours that carry meaning. Rendering noise (anti-aliasing, a font's exact pixels, a timestamp) is not a difference. A `differs` on a binding mock fails the check; any other `differs`, and every `cannot compare`, goes to the review panel's product seat. The mock in `evidence/mocks/` is never your evidence and is never written over. The scenarios stay the authority: a mock never adds a requirement.
+
 ### 4. Finish
 
 Run `VERIFY finish <ticket>` and report its verdict as it is:

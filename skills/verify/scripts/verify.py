@@ -62,6 +62,11 @@ REQUIRED_EVIDENCE: Dict[str, List[Dict[str, Any]]] = {
     "library": [{"kind": "transcript of calling the library as a consumer", "match": ["*.log", "*.txt", "*.json"]}],
 }
 TOOLS = ("playwright", "cypress", "vhs", "asciinema", "ffmpeg", "curl", "grpcurl", "k6", "protoc", "buf", "xcrun", "adb", "cliclick", "xdotool", "screencapture", "node", "npx")
+# M14 C: the product manager's approved pictures, in the cell's mocks/ (written by intake). For these app types each needs a
+# side-by-side record against a capture of the built screen from this run. A copy goes to evidence/mocks/, which is never evidence.
+MOCK_APP_TYPES = ("web", "desktop", "mobile")
+MOCK_RESULTS = {"matches": "matches", "differs": "differs", "cannot-compare": "cannot compare"}
+MOCKS_DIR = "mocks"
 
 
 # Files that running a build or test suite leaves behind. They are never part of a change, so the
@@ -350,6 +355,9 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         "review_loop": cell.build.get("review_loop", 0), "started_at": now(), "started_epoch": started,
         "suite": suite, "contracts": contracts, "records": {},
     }
+    mocks = prepare_mocks(cell, app_type)  # M14 C: {} for a slice without mocks, and then nothing below changes
+    if mocks:
+        cell.results.update(mocks=mocks, mock_records={})
     cell.save()
     telemetry(cell.root, "gate.evaluated", "verify", lambda: {"gate": "verify.start", "outcome": "pass", "reason_code": None, "overridden_by_reason": False})
     telemetry(cell.root, "station.entered", "verify", lambda: {
@@ -362,6 +370,10 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         "tools_available": tools,
         "builder_notes": {"deviations": cell.build.get("deviations", []), "tests_passing_on_first_run": cell.build.get("tests_passing_on_first_run", [])},
         "prove": targets,
+        **({"compare_with_mocks": [{"id": key, **value, "file": f"evidence/{value['file']}",
+                                    "compare": "Capture the built screen for this mock's scenario in this run, look at the two side by side, then record "
+                                               f"'verify.py compare {cell.ticket_id} {key} --result matches|differs|cannot-compare --capture <picture> --note ...', "
+                                               "with each difference in plain words (--difference) when it differs."} for key, value in mocks.items()]} if mocks else {}),
         "records_file": str(cell.root / RECORDS_FILE),
         "next": "Prove each item yourself: write a driver into evidence_dir, run it with 'capture', and record each item with 'record' "
                 "(or all at once with 'record --from' and the records_file).",
@@ -403,6 +415,9 @@ def checked_record(cell: Cell, known: Dict[str, Dict[str, Any]], target: Any, re
             raise VerifyError("The builder's own test run is not evidence for a check. Exercise the behavior yourself and capture that.", code="builder-evidence")
         if relative in AUTO_FILES:
             raise VerifyError(f"'{relative}' is written by this script and cannot stand as your evidence.", code="station-file-as-evidence")
+        if cell.results.get("mocks") and relative.split("/")[0] == MOCKS_DIR:  # M14 C
+            raise VerifyError(f"'{relative}' is the product manager's approved design mock, not evidence of this build. Capture the built screen yourself.",
+                              code="mock-as-evidence")
         files.append({"file": relative, "sha256": sha(path), "bytes": path.stat().st_size})
     return {"id": target, "kind": known[target]["kind"], "result": result, "note": note, "evidence": files}
 
@@ -473,7 +488,8 @@ def cmd_capture(cell: Cell, args: argparse.Namespace) -> int:
         raise VerifyError(f"'{args.driver}' is not a Python script in the evidence folder. Write the driver there with your file tools first.", code="no-driver")
     out = evidence_path(cell, args.out, "The output file")
     relative = out.relative_to(cell.evidence.resolve()).as_posix()
-    if relative in AUTO_FILES or relative.split("/")[0].startswith("previous-") or out == driver or out.suffix == ".py":
+    if (relative in AUTO_FILES or relative.split("/")[0].startswith("previous-") or out == driver or out.suffix == ".py"
+            or (cell.results.get("mocks") and relative.split("/")[0] == MOCKS_DIR)):  # M14 C: the approved mocks are never overwritten
         raise VerifyError(f"'{relative}' cannot be written by capture: it is the driver, a script, an earlier run's evidence, or a file this station writes itself.",
                           code="reserved-file")
     stdin = None
@@ -509,6 +525,100 @@ def cmd_capture(cell: Cell, args: argparse.Namespace) -> int:
     return 0
 
 
+# ---- M14 part C: design mocks, compared side by side with the built screen ----
+
+def is_picture(path: Path) -> bool:
+    """A PNG or a JPEG by its first bytes, whatever its name."""
+    with path.open("rb") as handle:
+        head = handle.read(8)
+    return head == b"\x89PNG\r\n\x1a\n" or head[:3] == b"\xff\xd8\xff"
+
+
+def prepare_mocks(cell: Cell, app_type: Any) -> Dict[str, Dict[str, Any]]:
+    """The mocks to compare, each copied into evidence/mocks/ after its hash is checked against the manifest intake wrote.
+    {} when the cell has no mocks, or its app type has no screen to compare (web, desktop and mobile do)."""
+    folder = cell.root / MOCKS_DIR
+    manifest = load_json(folder / "manifest.json") if folder.is_dir() and not folder.is_symlink() else None
+    items = manifest.get("mocks") if isinstance(manifest, dict) else None
+    if not isinstance(items, list) or not items or app_type not in MOCK_APP_TYPES:
+        return {}
+    found: Dict[str, Dict[str, Any]] = {}
+    (cell.evidence / MOCKS_DIR).mkdir(exist_ok=True)
+    for number, item in enumerate(items, start=1):
+        name = item.get("file") if isinstance(item, dict) else None
+        source = folder / str(name)
+        if (not isinstance(name, str) or not re.fullmatch(r"[0-9a-f]{64}\.(png|jpg)", name) or source.is_symlink() or not source.is_file()
+                or sha(source) != item.get("sha256") or name.split(".")[0] != item.get("sha256")):
+            raise VerifyError(f"The design mock {str(name)[:80]} in the cell is missing or is not the approved picture. Nothing was verified; a person needs to look at it.",
+                              code="mock-changed")
+        shutil.copyfile(str(source), str(cell.evidence / MOCKS_DIR / name))
+        found[f"MOCK-{number}"] = {"sha256": item["sha256"], "file": f"{MOCKS_DIR}/{name}", "for": item.get("for"), "binding": item.get("binding") is True,
+                                   "note": item.get("note")}
+    return found
+
+
+def cmd_compare(cell: Cell, args: argparse.Namespace) -> int:
+    """Record one mock's side-by-side result: matches, differs (each difference in plain words) or cannot compare (with the reason)."""
+    cell.require_started()
+    mocks = cell.results.get("mocks") or {}
+    if args.mock not in mocks:
+        raise VerifyError(f"{args.mock} is not a design mock this verification compares. Expected one of: {', '.join(mocks) or 'none'}.", code="unknown-mock")
+    result = MOCK_RESULTS[args.result]
+    note = " ".join((args.note or "").split())
+    differences = [" ".join(text.split()) for text in args.difference or [] if text.strip()]
+    if len(note) < 20:
+        raise VerifyError("The note must say, in a sentence, what you captured and how it compares; for cannot-compare, why it cannot be compared.")
+    if result == "differs" and (not differences or any(len(text) < 10 for text in differences)):
+        raise VerifyError("A mock that differs needs each difference in plain words: --difference \"the button is grey, the mock's is blue\" (repeatable).")
+    if result != "differs" and differences:
+        raise VerifyError("--difference is only for a mock that differs.")
+    if result != "cannot compare" and not args.capture:
+        raise VerifyError("Name the capture of the built screen from this run (--capture), relative to the evidence folder.")
+    captures = checked_record(cell, {args.mock: {"kind": "design mock"}}, args.mock, "pass", args.capture or [], note)["evidence"] if args.capture else []
+    if result != "cannot compare" and not any(is_picture(cell.evidence / entry["file"]) for entry in captures):
+        raise VerifyError("The capture must include a picture of the built screen (a PNG or JPEG, judged by its content).", code="capture-not-a-picture")
+    mock = mocks[args.mock]
+    copy = cell.evidence / mock["file"]
+    if not copy.is_file() or sha(copy) != mock["sha256"]:
+        raise VerifyError(f"The design mock evidence/{mock['file']} changed or disappeared. Start verification again.", code="mock-changed")
+    cell.results.setdefault("mock_records", {})[args.mock] = {"result": result, "note": note, "differences": differences,
+                                                               "capture": [entry["file"] for entry in captures], "at": now()}
+    # Also a check like any other, citing the mock and the capture, so the two are catalogued side by side as this run's evidence.
+    # Only a binding mock that differs is a failed check; anything else is for the product seat to judge (summary.json mock_findings).
+    cell.results["records"][args.mock] = {
+        "kind": "design mock", "result": "fail" if result == "differs" and mock["binding"] else "pass", "at": now(),
+        "note": f"{result}: {note}" + (" Differences: " + "; ".join(differences) if differences else ""),
+        "evidence": [{"file": mock["file"], "sha256": mock["sha256"], "bytes": copy.stat().st_size}, *captures]}
+    cell.save()
+    remaining = [key for key in mocks if key not in cell.results["mock_records"]]
+    print(json.dumps({"status": "COMPARED", "id": args.mock, "result": result, "binding": mocks[args.mock]["binding"],
+                      "remaining_mocks": remaining or "none"}, indent=2))
+    return 0
+
+
+def mock_verdict(cell: Cell) -> Any:
+    """(incomplete, summary fields). Each mock's check is in the records (a binding mock that differs is a failed check, and its
+    files are hash-checked with the rest); any other difference, or a mock that could not be compared, is a finding for the review
+    panel's product seat. Both empty for a slice without mocks."""
+    mocks = cell.results.get("mocks") or {}
+    if not mocks:
+        return [], {}
+    records = cell.results.get("mock_records") or {}
+    incomplete, findings, shown = [], [], {}
+    for key, mock in mocks.items():
+        record = records.get(key)
+        what = f"{key} (the design mock for {mock['for'] or 'the whole slice'}{', binding' if mock['binding'] else ''})"
+        if record is None or key not in cell.results["records"]:
+            incomplete.append(f"No side-by-side record for {what}. Compare the built screen with it: verify.py compare {cell.ticket_id} {key} ...")
+            continue
+        if record["result"] == "differs" and not mock["binding"]:
+            findings.append(f"{what} differs: " + "; ".join(record["differences"]))
+        elif record["result"] == "cannot compare":
+            findings.append(f"{what} could not be compared: {record['note']}")
+        shown[key] = {**mock, "result": record["result"], "differences": record["differences"], "note": record["note"], "capture": record["capture"]}
+    return incomplete, {"mocks": shown, "mock_findings": findings}
+
+
 def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
     cell.require_started()
     records = cell.results["records"]
@@ -521,7 +631,9 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
     if missing:
         incomplete.append(f"Not proven yet: {', '.join(missing)}.")
     files = cell.evidence_files()
-    captured = [name for name in files if name not in AUTO_FILES]
+    captured = [name for name in files if name not in AUTO_FILES and not (cell.results.get("mocks") and name.split("/")[0] == MOCKS_DIR)]
+    mock_incomplete, mock_summary = mock_verdict(cell)  # M14 C: both empty for a slice without mocks
+    incomplete += mock_incomplete
     for item in cell.required_evidence():
         if not any(fnmatch.fnmatch(Path(name).name.lower(), pattern.lower()) for name in captured for pattern in item["match"]):
             incomplete.append(f"No {item['kind']} was captured (expected a file like {', '.join(item['match'])}).")
@@ -558,7 +670,7 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
         "evidence_kinds": {item["kind"]: [name for name in captured if any(fnmatch.fnmatch(Path(name).name.lower(), p.lower()) for p in item["match"])]
                            for item in cell.required_evidence()},
         "tools_available": cell.results.get("tools_available", []),
-        "failures": failures, "timestamp": now(),
+        "failures": failures, "timestamp": now(), **mock_summary,
     }
     if failures:
         findings = [f"# Verification findings for {cell.ticket_id} (review loop {cell.results['review_loop']})", "",
@@ -594,6 +706,7 @@ def cmd_status(cell: Cell, args: argparse.Namespace) -> int:
         "proven": [t["id"] for t in targets if records.get(t["id"], {}).get("result") == "pass"],
         "failed": [t["id"] for t in targets if records.get(t["id"], {}).get("result") == "fail"],
         "remaining": [t["id"] for t in targets if t["id"] not in records],
+        **({"mocks_remaining": [key for key in cell.results["mocks"] if key not in (cell.results.get("mock_records") or {})]} if cell.results.get("mocks") else {}),
     }, indent=2))
     return 0
 
@@ -624,6 +737,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=int, default=CAPTURE_TIMEOUT, help="seconds before the driver is stopped")
     p.add_argument("args", nargs="*", help="after --: arguments passed to the driver")
     p.set_defaults(func=cmd_capture)
+    p = sub.add_parser("compare", help="M14 C: record a design mock side by side with a capture of the built screen from this run")
+    p.add_argument("ticket_id")
+    p.add_argument("mock", help="the mock's ID from start, such as MOCK-1")
+    p.add_argument("--result", required=True, choices=tuple(MOCK_RESULTS))
+    p.add_argument("--capture", action="append", help="the capture of the built screen, relative to the evidence folder (repeatable)")
+    p.add_argument("--difference", action="append", help="for differs: one difference, in plain words (repeatable)")
+    p.add_argument("--note", help="what you captured and how it compares; for cannot-compare, why not")
+    p.set_defaults(func=cmd_compare)
     return parser
 
 

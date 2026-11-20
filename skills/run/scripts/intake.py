@@ -109,9 +109,9 @@ def text_sha(text: str) -> str:
     return sha(text.encode("utf-8"))
 
 
-def digest_of(why: str, spec: str) -> str:
-    """One identity for a slice revision: its why and its spec together."""
-    return sha(why.encode("utf-8") + b"\0" + spec.encode("utf-8"))
+def digest_of(why: str, spec: str, mocks_sha256: Optional[str] = None) -> str:
+    """One identity for a slice revision: its why and its spec together, and its design mocks' digest when it has mocks (M14 C)."""
+    return sha(why.encode("utf-8") + b"\0" + spec.encode("utf-8") + (b"\0mocks=" + mocks_sha256.encode("ascii") if mocks_sha256 else b""))
 
 
 def now() -> str:
@@ -446,7 +446,28 @@ class Factory:
             folder.mkdir(parents=True, exist_ok=True)
             write_atomic(folder / "why.md", row["why"])
             write_atomic(folder / "spec.md", row["spec"])
+        for name, data in (row.get("mock_files") or {}).items():  # M14 C: the verified pictures, beside the text they were approved with
+            (folder / "mocks").mkdir(exist_ok=True)
+            if not (folder / "mocks" / name).is_file():
+                (folder / "mocks" / name).write_bytes(data)
         return str(folder.relative_to(self.root))
+
+    def stored_mocks(self, entry: Dict[str, Any]) -> Dict[str, bytes]:
+        """M14 C: the received pictures of a revision with design mocks, each checked again by its hash and content. {} without mocks."""
+        items = entry.get("mocks")
+        if not items:
+            return {}
+        folder = self.root / str(entry.get("stored") or "") / "mocks"
+        found: Dict[str, bytes] = {}
+        for item in items if not self.rules.mock_problems(items) else [None]:
+            name = self.rules.mock_file_name(item) if item else ""
+            path = folder / name
+            data = path.read_bytes() if item and path.is_file() and not path.is_symlink() and path.resolve().is_relative_to(self.received.resolve()) else None
+            if data is None or self.rules.check_mock_file(item, data):
+                raise IntakeError(f"The received design mocks of {entry.get('slice_id')} revision {entry.get('revision')} are missing or no longer match "
+                                  "what was approved. Nothing was started.")
+            found[name] = data
+        return found
 
     def stored(self, entry: Dict[str, Any]) -> Tuple[str, str]:
         folder = self.root / str(entry.get("stored") or "")
@@ -541,13 +562,19 @@ class Factory:
                 found["not_accepted"].append({"issue": issue, "slice_id": marker["slice_id"], "revision": marker["revision"],
                                               "reason": self.rules.SLICE_NOT_ACCEPTED["bad_jira"]})
                 continue
+            mocks = marker.get("mocks") if marker.get("mocks_sha256") else None  # M14 C: issue text is data; the list is checked again here
+            if mocks is not None and (not isinstance(mocks, list) or self.rules.mock_problems(mocks) or self.rules.mocks_sha256(mocks) != marker["mocks_sha256"]):
+                found["not_accepted"].append({"issue": issue, "slice_id": marker["slice_id"], "revision": marker["revision"],
+                                              "reason": self.rules.SLICE_NOT_ACCEPTED["edited"]})
+                continue
             order = epic.get("order") or []
             found["rows"].append({
                 "source": "github", "repository": found["repository"], "issue": issue, "slice_id": marker["slice_id"], "revision": marker["revision"],
                 "title": checked.get("title"), "epic": {"epic_id": epic.get("epic_id"), "issue": marker["epic"], "title": epic.get("title")},
                 "depends": [{"issue": dep} for dep in marker.get("depends") or []], "follows": marker.get("follows"), "jira": marker.get("jira"),
                 "order": order.index(issue) if issue in order else None, "ready_at": decision.get("ready_at"), "approved_by": decision.get("approved_by"),
-                "why": why, "spec": spec, "why_sha256": text_sha(why), "spec_sha256": text_sha(spec), "digest": digest_of(why, spec),
+                "why": why, "spec": spec, "why_sha256": text_sha(why), "spec_sha256": text_sha(spec),
+                "digest": digest_of(why, spec, marker["mocks_sha256"] if mocks else None), **({"mocks": mocks, "mocks_sha256": marker["mocks_sha256"]} if mocks else {}),
                 "key": self.source_key("github", found["repository"], issue, marker["slice_id"], marker["revision"])})
         return found
 
@@ -556,10 +583,11 @@ class Factory:
             return f"github:{repository}#{issue}@r{revision}"
         return f"{source}:{slice_id}@r{revision}"
 
-    def read_folder(self, files: Dict[str, bytes], where: str, source: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-        """One ready folder's three files, verified by their hashes and the intent gates. (row, None) or (None, reason)."""
+    def read_folder(self, files: Dict[str, bytes], where: str, source: str, mock_files: Optional[Dict[str, bytes]] = None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """One ready folder's three files, verified by their hashes and the intent gates. (row, None) or (None, reason).
+        M14 C: a slice with design mocks also holds mocks/<sha256>.<ext>, exactly the pictures its slice.json lists."""
         if set(files) != {"slice.json", "spec.md", "why.md"}:
-            return None, f"Not accepted: {where} must hold exactly slice.json, spec.md and why.md."
+            return None, f"Not accepted: {where} must hold exactly slice.json, spec.md and why.md" + (", and its design mocks in mocks/." if mock_files else ".")
         if any(len(data) > MAX_TEXT_BYTES for data in files.values()):
             return None, f"Not accepted: a file in {where} is too large to be a slice."
         try:
@@ -570,7 +598,11 @@ class Factory:
         epic = record.get("epic") if isinstance(record, dict) else None
         if isinstance(record, dict) and "jira" in record and not self.rules.is_jira_key(record["jira"]):  # M13: optional, in Jira's form
             return None, f"Not accepted: the Jira key in {where}/slice.json is not in Jira's form (such as ABC-123)."
-        if (not isinstance(record, dict) or set(record) - {"jira"} != FOLDER_KEYS or record.get("schema_version") != 1 or not SLICE_ID_RE.fullmatch(str(record.get("slice_id")))
+        mocks = record.get("mocks") if isinstance(record, dict) else None
+        mock_reason = self.folder_mocks(mocks, mock_files or {}, where) if isinstance(record, dict) and ("mocks" in record or mock_files) else None
+        if mock_reason:
+            return None, mock_reason
+        if (not isinstance(record, dict) or set(record) - {"jira", "mocks"} != FOLDER_KEYS or record.get("schema_version") != 1 or not SLICE_ID_RE.fullmatch(str(record.get("slice_id")))
                 or type(record.get("revision")) is not int or record["revision"] < 1 or not isinstance(record.get("title"), str)
                 or not isinstance(epic, dict) or set(epic) != {"epic_id", "title"} or not self.rules.EPIC_ID_RE.fullmatch(str(epic.get("epic_id")))
                 or not isinstance(record.get("dependencies"), list) or not all(isinstance(dep, str) and SLICE_ID_RE.fullmatch(dep) for dep in record["dependencies"])):
@@ -583,18 +615,39 @@ class Factory:
         return {"source": source, "repository": None, "issue": None, "slice_id": record["slice_id"], "revision": record["revision"],
                 "title": self.rules.issue_title(record["title"]), "epic": {"epic_id": epic["epic_id"], "issue": None, "title": self.rules.issue_title(epic.get("title"))},
                 "depends": [{"slice_id": dep} for dep in record["dependencies"]], "follows": None, "jira": record.get("jira"), "order": None, "ready_at": None, "approved_by": None,
-                "why": why, "spec": spec, "why_sha256": record["why_sha256"], "spec_sha256": record["spec_sha256"], "digest": digest_of(why, spec),
+                "why": why, "spec": spec, "why_sha256": record["why_sha256"], "spec_sha256": record["spec_sha256"],
+                "digest": digest_of(why, spec, self.rules.mocks_sha256(mocks) if mocks else None),
+                **({"mocks": mocks, "mocks_sha256": self.rules.mocks_sha256(mocks), "mock_files": dict(mock_files or {})} if mocks else {}),
                 "key": self.source_key(source, None, None, record["slice_id"], record["revision"])}, None
+
+    def folder_mocks(self, mocks: Any, mock_files: Dict[str, bytes], where: str) -> Optional[str]:
+        """M14 C: the reason a folder's design mocks are not accepted, or None. The folder holds exactly the listed pictures, each
+        checked by its SHA-256 and by its content."""
+        if mocks is None or self.rules.mock_problems(mocks):
+            return (f"Not accepted: {where}/slice.json lists design mocks that are not in the form Product Studio writes." if mocks is not None
+                    else f"Not accepted: {where}/mocks/ holds pictures that its slice.json does not list.")
+        names = {self.rules.mock_file_name(item): item for item in mocks}
+        if set(mock_files) != set(names):
+            return f"Not accepted: {where}/mocks/ must hold exactly the design mocks its slice.json lists ({', '.join(sorted(names))})."
+        for name, item in sorted(names.items()):
+            problem = self.rules.check_mock_file(item, mock_files[name])
+            if problem:
+                return f"Not accepted: the design mock {where}/mocks/{name} is not the approved picture: {problem}."
+        return None
 
     def from_folders(self, commit: Optional[str]) -> Dict[str, Any]:
         """Ready folders committed on the integration branch, read from Git objects at `commit`."""
-        found: Dict[str, Any] = {"rows": [], "not_accepted": [], "present": []}
+        found: Dict[str, Any] = {"rows": [], "not_accepted": [], "present": [], "mock_files": {}}
         if not commit:
             return found
         listing = self.git(self.root, "ls-tree", "-r", "--name-only", commit, "--", READY_DIR).stdout.splitlines()
         folders: Dict[str, Dict[str, bytes]] = {}
         for path in listing:
             parts = path.split("/")
+            if len(parts) == 5 and parts[3] == "mocks":  # M14 C: a slice's design mocks; for a slice saved as an issue, the folder holds only these
+                data = self.git_bytes("show", f"{commit}:{path}")
+                found["mock_files"].setdefault("/".join(parts[:3]), {})[parts[4]] = data if data is not None else b""
+                continue
             if len(parts) != 4:
                 folders.setdefault("/".join(parts[:3]), {})["(unexpected)"] = b""
                 continue
@@ -604,7 +657,7 @@ class Factory:
             name = where.split("/")[-1]
             if name == PRINCIPLES_FOLDER:
                 continue  # the product principles (M13), read by the intent station; not a slice
-            row, reason = self.read_folder(folders[where], where, "folder")
+            row, reason = self.read_folder(folders[where], where, "folder", found["mock_files"].get(where))
             if row is not None and row["slice_id"] != name:
                 row, reason = None, f"Not accepted: {where} holds {row['slice_id']}."
             found["present"].append(name)
@@ -628,7 +681,8 @@ class Factory:
                                   "previous_intake": (ledger.get("source") or {}).get("commit")}
         if github["problem"]:
             result["notes"].append(github["problem"])
-        result["not_accepted"] = github["not_accepted"] + folders["not_accepted"]
+        github["rows"], waiting = self.with_mocks(github["rows"], folders["mock_files"])  # M14 C: held until its pictures are on the branch
+        result["not_accepted"] = github["not_accepted"] + waiting + folders["not_accepted"]
         seen: Dict[str, Dict[str, Any]] = {}
         for row in github["rows"] + folders["rows"]:
             if row["slice_id"] in seen:
@@ -658,6 +712,31 @@ class Factory:
             if reason:
                 result["withdrawn"].append({"slice_id": slice_id, "issue": entry.get("issue"), "reason": reason})
         return result
+
+    def with_mocks(self, rows: List[Dict[str, Any]], mock_files: Dict[str, Dict[str, bytes]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """M14 C: a slice issue names its design mocks by SHA-256 only; the pictures come from product/ready/SLICE-NNN/mocks/ on the
+        integration branch. Until every picture the approval names is there and is that picture, the slice waits: listed with the
+        reason, never taken in, never built."""
+        kept, waiting = [], []
+        for row in rows:
+            if not row.get("mocks"):
+                kept.append(row)
+                continue
+            where = f"{READY_DIR}/{row['slice_id']}"
+            files = mock_files.get(where) or {}
+            problems = []
+            for item in row["mocks"]:
+                name = self.rules.mock_file_name(item)
+                problem = "it is not there" if name not in files else self.rules.check_mock_file(item, files[name])
+                if problem:
+                    problems.append(f"{where}/mocks/{name}: {problem}")
+            if problems:
+                waiting.append({"issue": row["issue"], "slice_id": row["slice_id"], "revision": row["revision"], "waiting": "mocks",
+                                "reason": f"Waiting for its design mocks: the approved pictures must be committed to the integration branch at {where}/mocks/. "
+                                          + "; ".join(problems[:4]) + "."})
+                continue
+            kept.append({**row, "mock_files": {self.rules.mock_file_name(item): files[self.rules.mock_file_name(item)] for item in row["mocks"]}})
+        return kept, waiting
 
     def classify(self, ledger: Dict[str, Any], row: Dict[str, Any], source: Dict[str, Any]) -> Dict[str, Any]:
         """Where one ready slice revision stands against the ledger: new, known, changed, or a new life after shipping."""
@@ -792,13 +871,20 @@ class Factory:
         if folder.is_symlink() or not folder.is_dir():
             raise IntakeError(f"{folder} is not a folder.")
         files: Dict[str, bytes] = {}
+        mock_files: Dict[str, bytes] = {}
         for path in sorted(folder.iterdir()):
+            if path.name == "mocks" and path.is_dir() and not path.is_symlink():  # M14 C: the design mocks, plain files only, each bounded
+                for picture in sorted(path.iterdir()):
+                    if picture.is_symlink() or not picture.is_file() or picture.stat().st_size > self.rules.MOCK_MAX_BYTES:
+                        raise IntakeError(f"{path} must hold only the slice's design mocks, as plain files of at most {self.rules.MOCK_MAX_BYTES // (1024 * 1024)} MB.")
+                    mock_files[picture.name] = picture.read_bytes()
+                continue
             if path.is_symlink() or not path.is_file():
                 raise IntakeError(f"{folder} must hold exactly slice.json, spec.md and why.md, as plain files.")
             if path.stat().st_size > MAX_TEXT_BYTES:
                 raise IntakeError(f"{path.name} in {folder} is too large to be a slice.")
             files[path.name] = path.read_bytes()
-        row, reason = self.read_folder(files, str(folder), "import")
+        row, reason = self.read_folder(files, str(folder), "import", mock_files)
         if row is None:
             raise IntakeError(str(reason).replace("Not accepted: ", "It was not imported: ", 1))
         with self.lock("import"):
@@ -895,7 +981,8 @@ class Factory:
         return {"source": row["source"], "repository": row["repository"], "issue": row["issue"], "title": row.get("title"), "epic": dict(row["epic"]),
                 "revision": row["revision"], "digest": row["digest"], "spec_sha256": row["spec_sha256"], "why_sha256": row["why_sha256"],
                 "depends": list(row["depends"]), "follows": row.get("follows"), "jira": row.get("jira"), "order": row.get("order"), "ready_at": row.get("ready_at") or now(),
-                "approved_by": row.get("approved_by"), "intake_key": row["key"], "stored": self.store(row), "available": True, "unavailable_reason": None}
+                "approved_by": row.get("approved_by"), "intake_key": row["key"], "stored": self.store(row), "available": True, "unavailable_reason": None,
+                **({"mocks": list(row["mocks"]), "mocks_sha256": row["mocks_sha256"]} if row.get("mocks") else {})}  # M14 C: only a slice with mocks
 
     def new_entry(self, row: Dict[str, Any], history: List[Dict[str, Any]], earlier_runs: int = 0, ticket_id: Optional[str] = None) -> Dict[str, Any]:
         ticket = ticket_id or (str(row["issue"]) if row["source"] == "github" else None)
@@ -921,6 +1008,7 @@ class Factory:
         if state in ("queued", "unticketed") and entry.get("source") == row["source"] and entry.get("issue") == row["issue"]:
             self.emit(ledger, "revision.superseded", **self.about(entry), from_revision=entry.get("revision"), to_revision=row["revision"],
                       effect="The waiting ticket now carries the new revision.")
+            entry.pop("mocks", None), entry.pop("mocks_sha256", None)  # M14 C: the new revision's mocks, or none
             entry.update(self.definition(row))
             self.save(ledger)
             self.materialize(ledger, entry, report, updated=True)
@@ -992,6 +1080,7 @@ class Factory:
     def apply_answer(self, ledger: Dict[str, Any], entry: Dict[str, Any], row: Dict[str, Any], report: Dict[str, Any]) -> None:
         self.emit(ledger, "revision.superseded", **self.about(entry), from_revision=entry.get("revision"), to_revision=row["revision"],
                   effect="The product manager answered the builders' question with a new revision; the cell takes it and plans again.")
+        entry.pop("mocks", None), entry.pop("mocks_sha256", None)  # M14 C: the new revision's mocks, or none
         entry.update(self.definition(row))
         entry.pop("product_pending", None)
         self.save(ledger)
@@ -1540,6 +1629,9 @@ class Factory:
         found["depends_on"] = sorted({dep.get("slice_id") or self.resolve_dep(dep, slices)[1] for dep in entry.get("depends") or []} - {None})
         # M13 (Jira): the slice's Jira key, checked against Jira's form again before it reaches the cell.
         found["jira"] = entry.get("jira") if self.rules.is_jira_key(entry.get("jira")) else None
+        if entry.get("mocks") and not self.rules.mock_problems(entry["mocks"]):  # M14 C: hashes and facts only; the pictures are in the cell's mocks/
+            found["mocks"] = [dict(item) for item in entry["mocks"]]
+            found["mocks_sha256"] = self.rules.mocks_sha256(entry["mocks"])
         return found
 
     def write_cell_spec(self, entry: Dict[str, Any], ticket_id: str) -> Dict[str, Any]:
@@ -1568,8 +1660,30 @@ class Factory:
         cell_file = self.root / ".factory" / "worktrees" / ticket_id / "cell.json"
         cell = json.loads(cell_file.read_text(encoding="utf-8"))
         cell["product"] = self.provenance(entry)
+        self.write_cell_mocks(entry, cell_file.parent)
         write_atomic(cell_file, json.dumps(cell, indent=2) + "\n")
         return cell
+
+    def write_cell_mocks(self, entry: Dict[str, Any], cell_dir: Path) -> None:
+        """M14 C: the approved pictures in the cell's mocks/, with a manifest the verify station reads; replaced whole on each
+        revision, and absent for a slice without mocks."""
+        pictures = self.stored_mocks(entry)  # checked again by hash and content
+        target = cell_dir / "mocks"
+        if target.is_symlink():
+            raise IntakeError(f"In the cell for {entry.get('slice_id')}, mocks/ is a symbolic link. Nothing was started.")
+        for old in sorted(target.iterdir()) if target.is_dir() else []:
+            if old.is_file() or old.is_symlink():
+                old.unlink()
+        if not pictures:
+            if target.is_dir():
+                target.rmdir()
+            return
+        target.mkdir(exist_ok=True)
+        for name, data in pictures.items():
+            (target / name).write_bytes(data)
+        manifest = {"schema_version": 1, "slice_id": entry["slice_id"], "revision": entry.get("revision"), "mocks_sha256": self.rules.mocks_sha256(entry["mocks"]),
+                    "mocks": [{**item, "file": self.rules.mock_file_name(item)} for item in entry["mocks"]]}
+        write_atomic(target / "manifest.json", canonical(manifest))
 
     def open_cell(self, ledger: Dict[str, Any], entry: Dict[str, Any], by: str = ENGINEER,
                   authorization: str = "an engineer's explicit command") -> Dict[str, Any]:
@@ -1584,6 +1698,7 @@ class Factory:
                 self.save(ledger)
             return {"slice_id": slice_id, "ticket_id": ticket_id, "stage": existing.get("stage"), "already_dispatched": True}
         self.stored(entry)  # the received text still matches what was approved, before anything is opened
+        self.stored_mocks(entry)  # M14 C: and so do the received pictures
         title = " ".join(f"{slice_id}: {entry.get('title')}".split())
         opened = self.script("intent", "cell.py", "open", ticket_id, "--title", title)
         if opened.returncode != 0:

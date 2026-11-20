@@ -361,7 +361,7 @@ When the input is `pull`, with any of `--limit <n>`, `--sequential`, `--dry-run`
    - **Taken in**: `taken_in.created` (a slice from GitHub is its own issue, so its ticket is the issue number), and any `taken_in.updated` or `taken_in.applied`.
    - **Starting now**: each item under `start_now`. `carried on` was already in the line; `dispatched` was just taken off the ready list. One with `until` set to `build` has no plan yet: it goes as far as the build station and is then scheduled again.
    - **Waiting**: each item under `waits`, with its `why` word for word and `then` (it starts later in this run, it is left to the worker already on it, or a later pull dispatches it).
-   - **Not accepted**: each item under `not_accepted` with its reason word for word. It is never built; fixing it is the product manager's job.
+   - **Not accepted**: each item under `not_accepted` with its reason word for word. It is never built; fixing it is the product manager's job. An item with `waiting: mocks` is a slice whose approved design mocks are not yet committed at `product/ready/SLICE-NNN/mocks/` on the main branch: say so plainly; it is taken in on the next pull once they are there and match.
    - **Waiting for a person**: each item under `for_a_person`, with its `why` word for word, whatever it is waiting for. These are not started.
    - If `dispatch.problem` is set, say that nothing was dispatched and why.
 3. With `--dry-run`, stop here.
