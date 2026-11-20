@@ -1,0 +1,32 @@
+{
+  "exit_code": 0,
+  "data": {
+    "dry_run": false,
+    "rows_read": 2,
+    "linked": [
+      {
+        "id": "EPIC-001",
+        "jira": "TEAM-5"
+      }
+    ],
+    "already_linked": [],
+    "needs_reopening": [
+      {
+        "id": "SLICE-001",
+        "jira": "TEAM-6",
+        "reason": "SLICE-001 is marked ready; reopen it, then read the keys file again or give it TEAM-6 on the Jira page"
+      }
+    ],
+    "unmatched": [],
+    "refused": [],
+    "epics_with_ready_slices": {
+      "EPIC-001": [
+        "SLICE-001"
+      ]
+    },
+    "factory_authorized": false,
+    "note": "Linked 1 item(s); 0 already had that key; 1 need reopening first; 0 row(s) not matched; 0 refused. Nothing was sent to Jira or GitHub. Slices already marked ready carry an epic's new key only once each is reopened and marked ready again: EPIC-001: SLICE-001."
+  },
+  "refused": null,
+  "hint": null
+}

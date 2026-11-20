@@ -1,0 +1,18 @@
+{
+  "exit_code": 0,
+  "data": {
+    "principle": {
+      "id": "PP-02",
+      "reason": "People trust a name.",
+      "revision": 1,
+      "statement": "An invitation MUST name the person who sent it.",
+      "status": "retired",
+      "title": "Senders are named"
+    },
+    "published": false,
+    "factory_authorized": false,
+    "note": "PP-02 is retired here; slices no longer answer it. Publish the principles to tell the builders."
+  },
+  "refused": null,
+  "hint": null
+}

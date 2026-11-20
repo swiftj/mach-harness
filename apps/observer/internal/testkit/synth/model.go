@@ -42,6 +42,12 @@ type Options struct {
 	// "realistic" (realistic.go: real-time durations, a working week, provenance configurations;
 	// the history is as long as the work, and Hours is not used).
 	Profile string
+	// M15 adds the states of M13 and M14 the Factory Floor shows (m15.go): a ticket stopped on a
+	// conflict with main, one held by a policy concern, one sent back by the merge-time recheck with a
+	// repeat review round and a design mock compared, a slice waiting for its mocks, Jira keys and change
+	// records. Off by default, so every recorded history stays byte for byte as it was (compat_test.go).
+	// Not with Analytics, whose expected figures it would change.
+	M15 bool
 }
 
 // DefaultEnd is the fixed end of a default history, so the default output is repeatable.

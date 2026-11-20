@@ -17,6 +17,11 @@ const ALLOWLIST = [
   "where", "status", "validate", "refresh", "project.init", "project.set", "epic.add", "epic.set", "epic.renumber",
   "slice.new", "slice.set", "slice.resume", "slice.pause", "slice.check", "slice.show", "slice.ready", "slice.reopen", "slice.renumber", "slice.move", "slice.take",
   "reconcile", "request.list", "request.show", "request.pick", "request.link", "request.met",
+  // M15 (docs/mach-next/M15_STUDIO_FOUNDATION.md): what M13 and M14 added to the engine.
+  "principle.list", "principle.add", "principle.set", "principle.retire", "principle.publish", "reconcile.principles",
+  "policy.list", "policy.accept", "epic.current", "epic.link", "slice.link", "jira.export", "jira.keys",
+  "prd.import", "prd.list", "prd.show", "prd.map", "prd.settle", "prd.status", "prd.apply", "prd.draft", "prd.confirm",
+  "slice.mock.add", "slice.mock.remove", "slice.mock.list",
 ];
 // Commands the engine keeps only for another team's tests (docs/mach-next/M11_STUDIO_ISSUES.md). The host never reaches them.
 const LEFTOVERS = [

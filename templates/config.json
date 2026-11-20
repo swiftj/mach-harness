@@ -16,6 +16,7 @@
   },
   "review": {
     "max_loops": 3,
+    "nit_cap": 5,
     "security_exception_by": [],
     "high": { "approvals": 3, "reviewers": 3, "human_approval": true },
     "medium": { "approvals": 2, "reviewers": 3, "human_approval": false },
@@ -23,6 +24,9 @@
   },
   "security": {
     "scan": { "enabled": true }
+  },
+  "verify": {
+    "neighbours": 2
   },
   "audit": {
     "gold": 90,
@@ -43,12 +47,29 @@
     "dir": "docs/changes"
   },
   "observe": {
-    "every": 5
+    "every": 5,
+    "bands": {
+      "enabled": true,
+      "window": 30,
+      "min_sample": 20,
+      "recent": 8,
+      "measures": ["average_rounds", "first_pass_rate", "escalation_rate", "abandonment_rate", "tests_failing_first_share", "deviations_per_ticket"],
+      "rules": { "1": 2, "2": 2, "3": 3, "4": 3 },
+      "tiers": { "1": ["record"], "2": ["record", "say"], "3": ["record", "say", "observe-pass"] }
+    }
+  },
+  "report": {
+    "enabled": true,
+    "repository": "swiftj/mach-harness"
   },
   "adr": {
     "dir": "docs/adr",
     "landing": "pull-request",
     "required_topics": ["language", "framework", "storage", "testing", "deployment", "coding-standards"]
+  },
+  "policies": {
+    "dir": "policies",
+    "accept_by": []
   },
   "factory": {
     "max_parallel": 3,

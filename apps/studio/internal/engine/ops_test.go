@@ -12,13 +12,44 @@ import (
 // The contract's section 3, plus slice.show. Nothing else may be reachable.
 func TestAllowlistIsExactlyTheContract(t *testing.T) {
 	want := []string{
-		"epic.add", "epic.renumber", "epic.set", "project.init", "project.set",
-		"reconcile", "refresh", "request.link", "request.list", "request.met", "request.pick", "request.show",
-		"slice.check", "slice.move", "slice.new", "slice.pause", "slice.ready",
+		"epic.add", "epic.current", "epic.link", "epic.renumber", "epic.set", "jira.export", "jira.keys",
+		"policy.accept", "policy.list",
+		"prd.apply", "prd.confirm", "prd.draft", "prd.import", "prd.list", "prd.map", "prd.settle", "prd.show", "prd.status",
+		"principle.add", "principle.list", "principle.publish", "principle.retire", "principle.set",
+		"project.init", "project.set",
+		"reconcile", "reconcile.principles", "refresh", "request.link", "request.list", "request.met", "request.pick", "request.show",
+		"slice.check", "slice.link", "slice.mock.add", "slice.mock.list", "slice.mock.remove", "slice.move", "slice.new", "slice.pause", "slice.ready",
 		"slice.renumber", "slice.reopen", "slice.resume", "slice.set", "slice.show", "slice.take", "status", "validate", "where",
 	}
 	if got := engine.Names(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("allowlist\n got %v\nwant %v", got, want)
+	}
+	// M15: reads that change nothing on disk.
+	for _, name := range []string{"epic.current", "policy.list", "prd.list", "prd.show", "prd.status", "slice.mock.list"} {
+		if op, _ := engine.Lookup(name); !op.ReadOnly || op.Network {
+			t.Errorf("%s should be read-only and local", name)
+		}
+	}
+	// Publishing the principles writes the project's GitHub issue; choosing a version of them reads GitHub's.
+	for _, name := range []string{"principle.publish", "reconcile.principles"} {
+		if op, _ := engine.Lookup(name); !op.Network || op.ReadOnly {
+			t.Errorf("%s reaches GitHub and changes the workspace", name)
+		}
+	}
+	// Only the export offers files back; only the operations that carry a file take a larger body.
+	for _, name := range engine.Names() {
+		op, _ := engine.Lookup(name)
+		if op.Download != (name == "jira.export") {
+			t.Errorf("%s: Download is %v", name, op.Download)
+		}
+		_, file := op.New().(engine.FileArgs)
+		carries := map[string]bool{"jira.keys": true, "prd.import": true, "prd.map": true, "prd.draft": true, "slice.mock.add": true}[name]
+		if file != carries || (op.BodyLimit() > engine.MaxBodyBytes) != carries {
+			t.Errorf("%s: carries a file %v, body limit %d", name, file, op.BodyLimit())
+		}
+		if op.BodyLimit() > 12<<20 {
+			t.Errorf("%s: body limit %d is more than any file it carries needs", name, op.BodyLimit())
+		}
 	}
 	for _, name := range []string{"request.list", "request.show", "slice.show", "where"} {
 		if op, _ := engine.Lookup(name); !op.ReadOnly {
@@ -91,8 +122,21 @@ func argv(t *testing.T, name, body string) ([]string, error) {
 	if err := engine.Decode([]byte(body), args); err != nil {
 		return nil, err
 	}
+	// An operation that carries a file: the engine stages it first (security.StageUpload); here the
+	// staged copy is a fixed path, so the vector can be compared.
+	if files, ok := args.(engine.FileArgs); ok {
+		name, _, err := files.Staged()
+		if err != nil {
+			return nil, err
+		}
+		files.SetPath("/staged/" + name)
+	}
 	return args.Argv()
 }
+
+// studioCommands are the first words of the engine's own commands the host may run.
+var studioCommands = map[string]bool{"where": true, "status": true, "validate": true, "refresh": true, "project": true, "epic": true, "slice": true,
+	"reconcile": true, "request": true, "principle": true, "policy": true, "jira": true, "prd": true}
 
 // Every operation's JSON arguments become one fixed vector, options always in --name=value form.
 func TestEveryOperationsArgumentVector(t *testing.T) {
@@ -145,6 +189,47 @@ func TestEveryOperationsArgumentVector(t *testing.T) {
 			[]string{"request", "pick", "42", "--epic=EPIC-001", "--title=Export a report"}},
 		{"request.link", `{"number":42,"slice_id":"SLICE-003"}`, []string{"request", "link", "42", "SLICE-003"}},
 		{"request.met", `{"number":42}`, []string{"request", "met", "42"}},
+		// M15: the M13 and M14 operations.
+		{"principle.list", `{}`, []string{"principle", "list"}},
+		{"principle.add", `{"title":"Versions stay","statement":"A published version MUST NOT be edited in place.","reason":"Readers rely on it."}`,
+			[]string{"principle", "add", "--title=Versions stay", "--statement=A published version MUST NOT be edited in place.", "--reason=Readers rely on it."}},
+		{"principle.set", `{"principle_id":"PP-01","statement":"--title=x MUST hold."}`, []string{"principle", "set", "PP-01", "--statement=--title=x MUST hold."}},
+		{"principle.set", `{"principle_id":"PP-02","title":"T","reason":"R"}`, []string{"principle", "set", "PP-02", "--title=T", "--reason=R"}},
+		{"principle.retire", `{"principle_id":"PP-03"}`, []string{"principle", "retire", "PP-03"}},
+		{"principle.publish", `{}`, []string{"principle", "publish"}},
+		{"reconcile.principles", `{"take":"theirs"}`, []string{"reconcile", "principles", "--take=theirs"}},
+		{"policy.list", ``, []string{"policy", "list"}},
+		{"policy.accept", `{"slice_id":"SLICE-002","policy_id":"POL-privacy-02","by":"Data protection officer","reason":"The provider signed the EU clauses."}`,
+			[]string{"policy", "accept", "SLICE-002", "POL-privacy-02", "--by=Data protection officer", "--reason=The provider signed the EU clauses."}},
+		{"epic.current", `{"epic_id":"EPIC-001"}`, []string{"epic", "current", "EPIC-001", "--json"}},
+		{"epic.current", `{"issue":12}`, []string{"epic", "current", "12", "--json"}},
+		{"epic.link", `{"epic_id":"EPIC-001","jira":"ABC-1"}`, []string{"epic", "link", "EPIC-001", "--jira=ABC-1"}},
+		{"epic.link", `{"epic_id":"EPIC-001","remove":true}`, []string{"epic", "link", "EPIC-001", "--no-jira"}},
+		{"slice.link", `{"slice_id":"SLICE-001","jira":"TEAM_2-123"}`, []string{"slice", "link", "SLICE-001", "--jira=TEAM_2-123"}},
+		{"slice.link", `{"slice_id":"SLICE-001","remove":true}`, []string{"slice", "link", "SLICE-001", "--no-jira"}},
+		{"jira.export", `{}`, []string{"jira", "export"}},
+		{"jira.export", `{"epic":"EPIC-002","state":"all","flavour":"data-center"}`, []string{"jira", "export", "--epic=EPIC-002", "--state=all", "--flavour=data-center"}},
+		{"jira.keys", `{"file":{"name":"Jira export (1).csv","content_base64":"SXNzdWUga2V5"}}`, []string{"jira", "keys", "/staged/Jira export -1-.csv"}},
+		{"jira.keys", `{"file":{"name":"keys.csv","content_base64":"SXNzdWUga2V5"},"dry_run":true}`, []string{"jira", "keys", "/staged/keys.csv", "--dry-run"}},
+		{"prd.import", `{"file":{"name":"Team PRD.md","content_base64":"IyBQUkQK"}}`, []string{"prd", "import", "/staged/Team PRD.md"}},
+		{"prd.list", `{}`, []string{"prd", "list"}},
+		{"prd.show", `{"prd_id":"PRD-01"}`, []string{"prd", "show", "PRD-01"}},
+		{"prd.show", `{"prd_id":"PRD-01","lines":"40-80"}`, []string{"prd", "show", "PRD-01", "--lines=40-80"}},
+		{"prd.map", `{"prd_id":"PRD-01","map":{"epics":[],"slices":[]}}`, []string{"prd", "map", "PRD-01", "--from=/staged/map.json"}},
+		{"prd.settle", `{"prd_id":"PRD-01","section":3,"as":"slice","slice":"M2"}`, []string{"prd", "settle", "PRD-01", "--section=3", "--as=slice:M2"}},
+		{"prd.settle", `{"prd_id":"PRD-01","section":4,"as":"out-of-scope","reason":"Billing is next year."}`,
+			[]string{"prd", "settle", "PRD-01", "--section=4", "--as=out-of-scope", "--reason=Billing is next year."}},
+		{"prd.status", `{"prd_id":"PRD-02"}`, []string{"prd", "status", "PRD-02"}},
+		{"prd.apply", `{"prd_id":"PRD-02"}`, []string{"prd", "apply", "PRD-02"}},
+		{"prd.draft", `{"slice_id":"SLICE-004","answers":[{"question":"q"}]}`, []string{"prd", "draft", "SLICE-004", "--from=/staged/answers.json"}},
+		{"prd.confirm", `{"slice_id":"SLICE-004","accept":"all","discuss":[2,4]}`, []string{"prd", "confirm", "SLICE-004", "--accept=all", "--discuss=2,4"}},
+		{"prd.confirm", `{"slice_id":"SLICE-004","accept":[1,3]}`, []string{"prd", "confirm", "SLICE-004", "--accept=1,3"}},
+		{"prd.confirm", `{"slice_id":"SLICE-004","discuss":[5]}`, []string{"prd", "confirm", "SLICE-004", "--discuss=5"}},
+		{"slice.mock.add", `{"slice_id":"SLICE-001","file":{"name":"invite.PNG","content_base64":"iVBORw=="},"for":"AC-02","binding":true,"note":"The invite form"}`,
+			[]string{"slice", "mock", "add", "SLICE-001", "/staged/invite.png", "--for=AC-02", "--binding", "--note=The invite form"}},
+		{"slice.mock.add", `{"slice_id":"SLICE-001","file":{"name":"whole.jpg","content_base64":"/9j/"}}`, []string{"slice", "mock", "add", "SLICE-001", "/staged/whole.jpg"}},
+		{"slice.mock.remove", `{"slice_id":"SLICE-001","mock":"0123abcd"}`, []string{"slice", "mock", "remove", "SLICE-001", "0123abcd"}},
+		{"slice.mock.list", `{"slice_id":"SLICE-001"}`, []string{"slice", "mock", "list", "SLICE-001"}},
 	}
 	covered := map[string]bool{}
 	for _, c := range cases {
@@ -157,6 +242,17 @@ func TestEveryOperationsArgumentVector(t *testing.T) {
 			t.Errorf("%s %s\n got %q\nwant %q", c.op, c.body, got, c.want)
 		}
 		covered[c.op] = true
+		// Every vector starts with one of Product Studio's own commands, and none writes where the
+		// request says (M15: `jira export` never takes --out; the engine writes into its own folder
+		// and the host offers those files) or names another project.
+		if !studioCommands[got[0]] {
+			t.Errorf("%s %s starts with %q", c.op, c.body, got[0])
+		}
+		for _, word := range got {
+			if strings.HasPrefix(word, "--out=") || word == "--out" || strings.HasPrefix(word, "--project") || strings.HasPrefix(word, "--app") {
+				t.Errorf("%s %s carries %q", c.op, c.body, word)
+			}
+		}
 	}
 	for _, name := range engine.Names() {
 		if !covered[name] {

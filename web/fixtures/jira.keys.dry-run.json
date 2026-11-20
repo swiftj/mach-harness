@@ -1,0 +1,40 @@
+{
+  "exit_code": 0,
+  "data": {
+    "dry_run": true,
+    "rows_read": 4,
+    "linked": [
+      {
+        "id": "SLICE-002",
+        "jira": "TEAM-30"
+      }
+    ],
+    "already_linked": [],
+    "needs_reopening": [],
+    "unmatched": [
+      {
+        "row": 3,
+        "reason": "it names no MACH ID (no MACH ID column value and no SLICE- or EPIC- label)"
+      }
+    ],
+    "refused": [
+      {
+        "row": 5,
+        "id": "EPIC-001",
+        "reason": "its key is not in Jira's form (such as ABC-123)"
+      },
+      {
+        "id": "SLICE-001",
+        "rows": [
+          4
+        ],
+        "reason": "it is already linked to TEAM-12; to change it, change its Jira key on the Jira page"
+      }
+    ],
+    "epics_with_ready_slices": {},
+    "factory_authorized": false,
+    "note": "Would link 1 item(s); 0 already had that key; 0 need reopening first; 1 row(s) not matched; 2 refused. Nothing was sent to Jira or GitHub."
+  },
+  "refused": null,
+  "hint": null
+}

@@ -15,7 +15,16 @@
       "scenarios": 3
     },
     "title": "Invite a teammate by email",
+    "shipped": {
+      "commit": "1b1e8fc9de81081d1242a58a6be0091d19d59645",
+      "branch": "main",
+      "rules": 0,
+      "notes": [
+        "There are no slice specs under specs/slices/ on 'main', so no rule has shipped yet."
+      ]
+    },
     "risk": "High",
+    "prd_problems": [],
     "ready": true,
     "status": "ready_for_approval"
   },

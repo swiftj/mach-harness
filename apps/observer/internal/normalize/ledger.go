@@ -144,11 +144,15 @@ func (l *Ledger) Line(line []byte, r Read) []*event.Event {
 		// The intake log records no title; the intake ledger does, for the slice's current revision
 		// (M6.6 D6). Product prose: scrubbed like every free-text field (redact.FreeTextFields).
 		// The epic's name likewise (M11): the ledger records it with the slice.
-		d["title"], d["epic_title"] = nil, nil
+		d["title"], d["epic_title"], d["jira"] = nil, nil, nil
 		if l.Identity != nil && ids.Revision != nil {
 			if t, rev, ok := l.Identity.SliceTitle(ids.SliceID); ok && rev == *ids.Revision {
 				d["title"] = textOrNil(t.Title, l.Root, SliceTitleMax)
 				d["epic_title"] = textOrNil(t.Epic, l.Root, SliceTitleMax)
+				// Revision 7 (M13 part E): the slice's Jira key as the ledger records it, checked again. An identifier.
+				if k, ok := JiraKey(t.Jira); ok {
+					d["jira"] = k
+				}
 			}
 		}
 	}
@@ -226,6 +230,13 @@ func (l *Ledger) data(ev *event.Event, typ string, in map[string]any) (map[strin
 		require(ev, d, "digest", nullStr(redact.Digest(get("digest"))), "")
 	case "intake.refused":
 		d["problems"] = textList(get("problems"), root, 32, 280)
+		// Revision 7 (M14 part C): a slice issue held until its design mocks are committed, read from
+		// intake's fixed sentence (the not_accepted item's `waiting: mocks` is not in the log itself).
+		d["waiting"] = nil
+		if WaitingOf(in["problems"]) != "" {
+			d["waiting"] = "mocks"
+			ev.Infer("data.waiting", "fixed-phrase")
+		}
 	case "slice.materialized":
 		require(ev, d, "digest", nullStr(redact.Digest(get("digest"))), "")
 		require(ev, d, "adopted", boolOrNil(get("adopted")), false)
@@ -250,6 +261,13 @@ func (l *Ledger) data(ev *event.Event, typ string, in map[string]any) (map[strin
 		require(ev, d, "effect", textOrNil(get("effect"), root, 280), "")
 	case "human.required":
 		require(ev, d, "reason", textOrNil(get("reason"), root, 280), "")
+		// Revision 7: the stop the ticket waits at, when intake's fixed phrase ("waiting for <needs>")
+		// names a code run.py gives; null otherwise (the reason's words stay the only account).
+		d["needs"] = nil
+		if code := NeedsFromReason(in["reason"]); code != "" {
+			d["needs"] = code
+			ev.Infer("data.needs", "fixed-phrase")
+		}
 	case "factory.activated":
 		require(ev, d, "autonomy", enum(get("autonomy"), "observe", "supervised"), "observe")
 		get("by")
@@ -337,6 +355,8 @@ func (l *Ledger) data(ev *event.Event, typ string, in map[string]any) (map[strin
 		d["stage"] = stage(get("stage"))
 		d["next"] = action(get("next"))
 		d["waiting_for"] = textOrNil(get("waiting_for"), root, 200)
+		code := StopCode(in["waiting_for"])
+		d["needs"] = nullStr(code, code != "") // revision 7: waiting_for when it is a known stop code
 		d["how"] = tokOrNil(get("how"))
 		d["seen_to_end"] = boolOr(get("seen_to_end"), false)
 		d["cost_usd"] = numOrNil(get("cost_usd"))

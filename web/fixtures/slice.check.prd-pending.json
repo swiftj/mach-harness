@@ -1,0 +1,24 @@
+{
+  "exit_code": 1,
+  "data": {
+    "slice_id": "SLICE-001",
+    "spec": null,
+    "errors": [
+      "No spec yet."
+    ],
+    "warnings": [],
+    "diagnostics": [],
+    "open_questions": [],
+    "intent_problems": [
+      "The slice's why is not written yet."
+    ],
+    "risk": null,
+    "prd_problems": [
+      "2 answers drafted from PRD-01 are neither accepted nor set aside to discuss: 1, 2. Accept them or name the ones to discuss on the slice's From the PRD page."
+    ],
+    "ready": false,
+    "status": "interviewing"
+  },
+  "refused": null,
+  "hint": null
+}

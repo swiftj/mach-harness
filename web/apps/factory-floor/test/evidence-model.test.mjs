@@ -383,7 +383,8 @@ test("simulation: the scenario's checks with content the app makes itself, label
     const r = M.contentRequest(m, { check: c.key, file: f.key });
     assert.equal(r.kind, "simulated", f.name);
     if (f.cls === "video") assert.equal(r.content.kind, "video");
-    if (f.cls === "image") assert.deepEqual(r.content, { kind: "image", checkId: c.id, result: c.result, round: c.round });
+    // M15: a design mock's sample pictures also say which side they are (the approved mock or the capture).
+    if (f.cls === "image") assert.deepEqual(r.content, { kind: "image", checkId: c.id, result: c.result, round: c.round, ...(f.role ? { role: f.role } : {}) });
   }
   assert.match(M.SIM_RECORDING_WORDS, /^There is no recording in a simulation\./);
   assert.match(M.SIM_CONTENT_NOTE, /not a capture/);

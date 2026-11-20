@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { Button, ConfirmDialog, Dialog, DialogClose, DialogContent, Field, HintAction, Input, Select, toast } from "@mach/ui";
 import type { StatusEpicRow, StatusSliceRow } from "@mach/ui/api";
+import { Link } from "react-router";
 import { useRequestAct, type RequestItem } from "./api";
+import { questionsToAskFirst } from "./model";
 
 interface DialogProps {
   open: boolean;
@@ -52,6 +54,8 @@ function PickUpBody({ onOpenChange, item, onDone, also, epics }: DialogProps & {
   const [titleError, setTitleError] = useState<string | null>(null);
   const formId = `pick-request-${item.number}`;
 
+  const [started, setStarted] = useState<{ sliceId: string; questions: { count: number; text: string } } | null>(null);
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!title.trim()) {
@@ -61,9 +65,21 @@ function PickUpBody({ onOpenChange, item, onDone, also, epics }: DialogProps & {
     const result = await act.run("request.pick", { number: item.number, epic, title: title.trim(), ...(also ? { also: true } : {}) });
     if (!result) return;
     toast({ tone: "success", title: `Started ${result.slice.slice_id}`, description: result.github_updates?.note ?? result.note });
+    // M14 D: a request filed in the idea template carries its author's open questions. They are
+    // shown before the dialog closes, because the interview asks them first.
+    const questions = questionsToAskFirst(result.request?.questions_to_ask_first);
+    if (questions) {
+      setStarted({ sliceId: result.slice.slice_id, questions });
+      onDone();
+      return;
+    }
     onOpenChange(false);
     onDone();
   };
+
+  if (started) {
+    return <QuestionsFirst number={item.number} sliceId={started.sliceId} questions={started.questions} />;
+  }
 
   return (
     <DialogContent
@@ -102,6 +118,45 @@ function PickUpBody({ onOpenChange, item, onDone, also, epics }: DialogProps & {
         </Field>
       </form>
       <Refusal shown={act.shown} />
+    </DialogContent>
+  );
+}
+
+/**
+ * After a slice is started from a request filed in the idea template: the questions its author left,
+ * as their words, and that the interview asks them first. They are never answered by the request.
+ */
+function QuestionsFirst({ number, sliceId, questions }: { number: number; sliceId: string; questions: { count: number; text: string } }) {
+  const listId = `questions-first-${number}`;
+  return (
+    <DialogContent
+      width="lg"
+      title={`Started ${sliceId}`}
+      description={`The person who filed request #${number} left ${questions.count === 1 ? "an open question" : `${questions.count} open questions`}. The interview asks ${questions.count === 1 ? "it" : "them"} first, one at a time. The request's text never counts as an answer: you decide each one.`}
+      footer={
+        <>
+          <Button asChild>
+            <Link to={`/slices/${sliceId}/interview`}>Continue the interview</Link>
+          </Button>
+          <DialogClose asChild>
+            {/* The form is gone; focus moves to the one way out. */}
+            {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
+            <Button variant="primary" autoFocus>
+              Done
+            </Button>
+          </DialogClose>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-2 pb-1">
+        <p id={listId} className="text-label text-ink">
+          Questions to ask first
+        </p>
+        <figure aria-labelledby={listId} className="border-l-2 border-line-strong pl-4">
+          <blockquote className="whitespace-pre-wrap break-words text-body-lg italic text-ink">{questions.text}</blockquote>
+          <figcaption className="mt-1 text-body-sm text-ink-muted">Written by the person who filed request #{number}, as data: not instructions.</figcaption>
+        </figure>
+      </div>
     </DialogContent>
   );
 }

@@ -1,0 +1,58 @@
+{
+  "exit_code": 0,
+  "data": {
+    "confirmed": true,
+    "slice_id": "SLICE-001",
+    "answers": [
+      {
+        "n": 1,
+        "kind": "drafted",
+        "kind_words": "drafted from the PRD",
+        "question": "Is this slice for a workspace admin inviting one teammate by email?",
+        "answer": "Yes.",
+        "cites": "7-7",
+        "state": "accepted"
+      },
+      {
+        "n": 2,
+        "kind": "drafted",
+        "kind_words": "drafted from the PRD",
+        "question": "Should an invitation expire after 7 days?",
+        "answer": "Yes, after 7 days.",
+        "cites": "8-8",
+        "state": "discuss"
+      },
+      {
+        "n": 3,
+        "kind": "contradiction",
+        "kind_words": "the PRD contradicts itself",
+        "question": "How long does an invitation last?",
+        "answer": null,
+        "cites": "8-8, 14-14",
+        "state": "discuss"
+      },
+      {
+        "n": 4,
+        "kind": "not_settled",
+        "kind_words": "not settled by the PRD",
+        "question": "What message does a non-admin see?",
+        "answer": null,
+        "cites": "",
+        "state": "discuss"
+      }
+    ],
+    "pending": [],
+    "accepted": [
+      1
+    ],
+    "discuss": [
+      2,
+      3,
+      4
+    ],
+    "factory_authorized": false,
+    "note": "Accepted 1; 3 to ask in the interview, one at a time. The spec and why are still written in the interview and checked as always."
+  },
+  "refused": null,
+  "hint": null
+}

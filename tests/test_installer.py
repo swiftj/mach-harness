@@ -73,6 +73,7 @@ class InstallTest(Base):
                          ".claude/skills/mach-cleanup/scripts/cleanup.py", ".claude/skills/mach-observe/scripts/observe.py",
                          ".claude/skills/mach/scripts/run.py", ".claude/workflows/mach-belt.js",
                          ".claude/skills/mach-merge/SKILL.md", ".claude/skills/mach-merge/scripts/merge.py",
+                         ".claude/skills/mach-idea/SKILL.md", ".claude/skills/mach-idea/scripts/idea.py",
                          ".claude/agents/mach-contract-engineer.md", ".factory/bin/mach", ".factory/mach.mk", ".factory/config.json",
                          "REVIEW.md", "AGENTS.md", "Makefile", "CLAUDE.md", ".gitignore", ".factory/.mach-manifest.json"):
             self.assertIn(expected, files)
@@ -88,7 +89,8 @@ class InstallTest(Base):
         self.assertTrue((self.project / ".factory/tickets").is_dir())
         self.assertTrue(os.access(self.project / ".factory/bin/mach", os.X_OK))
         config = json.loads(files[".factory/config.json"])
-        self.assertEqual(config["observe"], {"every": 5})
+        self.assertEqual(config["observe"]["every"], 5)
+        self.assertEqual(config["observe"]["bands"]["window"], 30, "control bands are on by default, over the last 30 finished tickets (M15)")
         self.assertEqual((config["merge"]["mode"], config["merge"]["method"]), ("auto", "local"))
         self.assertEqual(config["adr"], {"dir": "docs/adr", "landing": "pull-request", "required_topics": ["language", "framework", "storage", "testing", "deployment", "coding-standards"]},
                          "architecture decisions are read from docs/adr, and these six topics need one before planning, unless the project says otherwise")
@@ -104,6 +106,18 @@ class InstallTest(Base):
         text = (self.project / SKILL).read_text()
         for reference in set(re.findall(r"`((?:references|assets|scripts)/[\w./-]+)`", text)):
             self.assertTrue((self.project / ".claude/skills/mach-intent" / reference).is_file(), reference)
+
+    def test_installed_idea_skill_finds_the_shared_rules(self):
+        self.mach("install")
+        skill = self.project / ".claude/skills/mach-idea"
+        self.assertIn(b"\nname: mach-idea\n", (skill / "SKILL.md").read_bytes())
+        body = self.project / "idea.md"
+        body.write_text("<!-- mach:idea v1 -->\n\n## Problem\n\nA.\n\n## Proposed outcome\n\nB.\n\n## Affected users and systems\n\nC.\n\n"
+                        "## Constraints\n\nD.\n\n## Open questions\n\nNone.\n")
+        done = subprocess.run([sys.executable, str(skill / "scripts/idea.py"), "--project", str(self.project), "check", "--title", "An idea",
+                               "--body-file", str(body)], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)  # the installed issue rules, scan and collab are found under their mach- names
+        self.assertFalse(json.loads(done.stdout)["can_file"])
 
     def test_installed_product_studio_finds_the_intent_skill(self):
         self.mach("install")

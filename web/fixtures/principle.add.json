@@ -1,0 +1,19 @@
+{
+  "exit_code": 0,
+  "data": {
+    "principle": {
+      "id": "PP-01",
+      "title": "Versions stay as published",
+      "statement": "A published version MUST NOT be edited in place.",
+      "reason": "Readers rely on what they saw.",
+      "status": "active",
+      "revision": 1
+    },
+    "warnings": [],
+    "published": false,
+    "factory_authorized": false,
+    "note": "PP-01 is saved here. Publish the principles to give them to the builders."
+  },
+  "refused": null,
+  "hint": null
+}

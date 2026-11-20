@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "Only Markdown (.md, .markdown) or plain text (.txt, .text) can be imported, not '.pdf'.",
+  "hint": null
+}

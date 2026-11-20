@@ -24,6 +24,19 @@ A ticket is rejected without review, and returned to the build station, unless i
 
 Every reviewer starts with a fresh context: the diff, the cell's artifacts and this file, and nothing from the builder's session. Each submits findings marked `blocker` or `note`; a seat with any blocker is a reject. A blocker must name the rule or requirement it breaks and the file that shows it. Any seat may mark a blocker as a security defect with its impact; a blocker from the security seat, or a security blocker of high or critical impact from any seat, is never outvoted, and the high or critical kind may be raised in any round, on any file. A fix and a new round clear it, or a person's recorded exception: on their explicit word, for exactly the commit reviewed, with their reason (`/mach except`). An exception also clears the reject vote of a seat whose every blocker it excepts, at any tier; it is accepted only when the round then meets its threshold with no vetoing blocker left unexcepted, and an ordinary blocker is never excepted. An exception is not an approval, it is never recorded unattended, a `factory-tuning` ticket never gets one, and `review.security_exception_by` in `.factory/config.json` can name the only people who may grant one. Reviewers report every security defect they find as usual: whether one is accepted is a person's decision after the round, never a reason to soften a finding.
 
+### What Important means here
+
+A note is `important` when a reader should act on it or know it before this change merges: a weak test for a requirement, a risk the spec did not foresee, a builder deviation accepted with reservations, a likely defect the reviewer could not prove. Anything smaller is a `nit`: wording, naming, a tidier shape, a test that could be clearer. A note without a weight counts as important. A security finding is never a nit.
+
+Each seat keeps at most 5 nits a round (`review.nit_cap` in `.factory/config.json`); the review station keeps the first ones a seat lists and counts the rest, so a seat lists its nits most useful first. Nits never block, and neither the cap nor a note's weight changes any vote, threshold, veto or round. A person may rate a finding useful or not useful (`review.py rate`); the ratings are kept beside the round so the observe station can learn which findings are worth a reader's time.
+
+### Do not report
+
+- Anything in generated files (lock files, build output, generated clients, snapshots) unless the change edited them by hand.
+- Anything the project's CI or tooling already enforces: formatting, import order, lint rules, type checks. If it matters, CI fails.
+- Style preferences no rule here or in `CLAUDE.md` asks for.
+- Problems that predate this ticket and that it did not make worse, beyond one note.
+
 ### 1. Architecture
 
 - The change follows the project's layering; no logic leaks across a boundary.
@@ -47,6 +60,7 @@ Every reviewer starts with a fresh context: the diff, the cell's artifacts and t
 - The evidence shows the scenarios actually happening, not just tests passing.
 - Nothing was built that the spec does not ask for.
 - The change keeps every product principle the spec says applies; a blocker may cite one by its ID, such as `PP-02`. An exception in the spec is the product manager's decision with their reason, and is not the panel's to reopen.
+- The change follows every statement of each policy pack the spec lists; a blocker may cite one by its ID, such as `POL-privacy-03`. A concern the pack's owner accepted is their decision, and is not the panel's to reopen.
 
 ## Secrets and new dependencies
 

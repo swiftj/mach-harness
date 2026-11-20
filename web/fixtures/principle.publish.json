@@ -1,0 +1,17 @@
+{
+  "exit_code": 0,
+  "data": {
+    "published": true,
+    "saved_to": "github",
+    "revision": 1,
+    "sha256": "736d4e3e0e0bc531b0b0678a532c504b059eac9aed71bac8a585ac360fcfa61d",
+    "issue": 1,
+    "url": "https://github.com/acme/team-space/issues/1",
+    "approved_by": "ada-pm",
+    "active": 2,
+    "factory_authorized": false,
+    "note": "Published on the project's issue (#1) as version 1. Slices marked ready from now on answer these principles."
+  },
+  "refused": null,
+  "hint": null
+}

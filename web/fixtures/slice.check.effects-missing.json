@@ -1,0 +1,41 @@
+{
+  "exit_code": 1,
+  "data": {
+    "slice_id": "SLICE-005",
+    "spec": "/project/.factory/studio/draft/specs/slices/SLICE-005-invite-teammate.md",
+    "errors": [
+      "SLICE-005-invite-teammate.md: Missing section '## Effects on shipped behaviour'. Write 'None.' if this slice changes no shipped behaviour, otherwise one table row per shipped rule it touches; silence is never read as no effects. 8 shipped rule(s) were read. [effects-missing]"
+    ],
+    "warnings": [],
+    "diagnostics": [
+      {
+        "severity": "error",
+        "rule": "effects-missing",
+        "line": null,
+        "section": null,
+        "message": "Missing section '## Effects on shipped behaviour'. Write 'None.' if this slice changes no shipped behaviour, otherwise one table row per shipped rule it touches; silence is never read as no effects. 8 shipped rule(s) were read."
+      }
+    ],
+    "open_questions": [],
+    "intent_problems": [],
+    "counts": {
+      "invariants": 4,
+      "functional_requirements": 9,
+      "matrix_rules": 5,
+      "scenarios": 3
+    },
+    "title": "Invite a teammate by email",
+    "shipped": {
+      "commit": "2ede7286fc780d46d4111da93ace96634be3d3d4",
+      "branch": "main",
+      "rules": 8,
+      "notes": []
+    },
+    "risk": "High",
+    "prd_problems": [],
+    "ready": false,
+    "status": "interviewing"
+  },
+  "refused": null,
+  "hint": null
+}

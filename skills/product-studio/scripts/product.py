@@ -32,7 +32,10 @@ SHAPES = {
     "slice": ("schema_version", "slice_id", "project_id", "epic_id", "revision", "title", "status", "dependencies", "open_questions", "spec_path", "spec_sha256"),
 }
 # Fields an artifact may carry or leave out. A slice without them is byte-for-byte what it was before.
-OPTIONAL = {"slice": ("origin", "source", "tracking"), "epic": ("tracking",)}
+OPTIONAL = {"slice": ("origin", "source", "tracking", "mocks"), "epic": ("tracking",)}
+# A slice's design mocks (M14 C): up to four pictures by SHA-256, the same form as issue_rules.mock_problems, which stays authoritative.
+MOCK_KEYS = {"sha256", "format", "width", "height", "bytes", "for", "binding", "note"}
+SCENARIO_RE = re.compile(r"^AC-[0-9]{2,}$")
 # The Jira issue a slice or epic belongs to (M13 E): {"jira": KEY}, the same form as issue_rules.JIRA_KEY_RE, which stays authoritative.
 JIRA_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,31}-[1-9][0-9]{0,8}$")
 # Where a slice came from (M8): identifiers only, never an issue's text, link or author.
@@ -105,6 +108,20 @@ def _is_source(value: Any) -> bool:
             and all(isinstance(r, list) and len(r) == 2 and all(type(n) is int for n in r) and 1 <= r[0] <= r[1] for r in lines))
 
 
+def _is_mocks(value: Any) -> bool:
+    if not isinstance(value, list) or not 1 <= len(value) <= 4:
+        return False
+    for item in value:
+        if not (isinstance(item, dict) and set(item) == MOCK_KEYS and isinstance(item["sha256"], str) and HEX_RE.fullmatch(item["sha256"])
+                and item["format"] in ("png", "jpeg") and all(type(item[key]) is int and item[key] >= 1 for key in ("width", "height", "bytes"))
+                and (item["for"] is None or (isinstance(item["for"], str) and SCENARIO_RE.fullmatch(item["for"])))
+                and type(item["binding"]) is bool and not (item["binding"] and item["for"] is None)
+                and (item["note"] is None or (isinstance(item["note"], str) and 0 < len(item["note"]) <= 200))):
+            return False
+    names = [item["sha256"] for item in value]
+    return names == sorted(set(names))
+
+
 def _shape(kind: str, data: Dict[str, Any], location: str, errors: List[str]) -> None:
     required = set(SHAPES[kind])
     for key in sorted(required - set(data)):
@@ -145,6 +162,8 @@ def _shape(kind: str, data: Dict[str, Any], location: str, errors: List[str]) ->
             _error(errors, location, "origin must be {kind: github_issue, repository: OWNER/REPO, number: a positive integer}")
         if "source" in data and not _is_source(data["source"]):
             _error(errors, location, "source must be {kind: prd, prd_id: PRD-NN, sha256, lines: [[first, last], ...], map_slice}")
+        if "mocks" in data and not _is_mocks(data["mocks"]):
+            _error(errors, location, "mocks must be 1 to 4 pictures in SHA-256 order, each {sha256, format: png or jpeg, width, height, bytes, for, binding, note}")
     if "tracking" in data and not (isinstance(data["tracking"], dict) and set(data["tracking"]) == {"jira"}
                                     and isinstance(data["tracking"]["jira"], str) and JIRA_RE.fullmatch(data["tracking"]["jira"])):
         _error(errors, location, "tracking must be {jira: a Jira issue key such as ABC-123}")
@@ -370,4 +389,6 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 
 if __name__ == "__main__":
+    import contextlib as _c, os as _o, runpy as _r  # MACH records an internal error for /mach report (skills/intent/scripts/faults.py)
+    with _c.suppress(Exception): _r.run_path(next(p for p in (_o.path.join(_o.path.abspath(__file__).rsplit(_o.sep, 3)[0], d, "scripts", "faults.py") for d in ("intent", "mach-intent")) if _o.path.isfile(p)))["install"](__file__)
     sys.exit(main())

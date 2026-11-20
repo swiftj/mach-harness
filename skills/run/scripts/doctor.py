@@ -7,6 +7,9 @@ are missing, and only when .factory/ already exists. It never writes a settings 
 or installs anything, starts no MACH station or agent, and never reads the machine-local Factory
 folder (.factory/local/). Its only network access is `gh` (`auth status`, and `label list` and two `api`
 reads when origin is on github.com), whose output is never shown: only exit codes and parsed fields are used. Standard library only.
+
+MACH's own internal errors are recorded under .factory/local/, so this script never lists them itself: run.py's doctor
+command reads them and hands main() the check and its one-line offer (extra_checks, notes), which are shown as given.
 """
 from __future__ import annotations
 
@@ -468,25 +471,36 @@ def render(result: Dict[str, Any]) -> str:
         lines += ["", "Created:"] + [f"  {folder}/" for folder in result["created"]]
     if todo:
         lines += ["", "What to do:"] + [f"  - {c['title']}: {c['fix']}" for c in todo]
+    lines += result.get("notes") or []
     lines += ["", "The Factory supervisor is not checked here; for it, run /mach factory status."]
     s = result["summary"]
     lines.append(f"{s['ok']} ok, {s['warn']} warnings, {s['fail']} failed, {s['not_checked']} not checked.")
     return "\n".join(lines)
 
 
-def main(argv: Optional[Sequence[str]] = None, project: Optional[Path] = None) -> int:
+def main(argv: Optional[Sequence[str]] = None, project: Optional[Path] = None, extra_checks: Sequence[Dict[str, str]] = (),
+         notes: Sequence[str] = ()) -> int:
     parser = argparse.ArgumentParser(prog="doctor", description="Check that this workstation and project are ready for MACH. Read-only unless --fix.")
     parser.add_argument("--fix", action="store_true", help="create the installer's standard folders that are missing; nothing else")
     parser.add_argument("--json", action="store_true", help="print the result as JSON")
     args = parser.parse_args(argv)
     root = Path(project).resolve() if project is not None else find_project(Path.cwd())
     result = diagnose(root, fix=args.fix)
+    if extra_checks or notes:  # handed in by run.py (the internal-error check); this script reads nothing for them
+        result["checks"] += list(extra_checks)
+        result["summary"] = {status: sum(1 for c in result["checks"] if c["status"] == status) for status in STATUSES}
+        result["notes"] = ["", *notes] if notes else []
     if args.json:
-        print(json.dumps({"checks": result["checks"], "summary": result["summary"], "created": result["created"]}, indent=2))
+        shown = {"checks": result["checks"], "summary": result["summary"], "created": result["created"]}
+        if notes:
+            shown["notes"] = list(notes)
+        print(json.dumps(shown, indent=2))
     else:
         print(render(result))
     return 1 if result["summary"]["fail"] else 0
 
 
 if __name__ == "__main__":
+    import contextlib as _c, os as _o, runpy as _r  # MACH records an internal error for /mach report (skills/intent/scripts/faults.py)
+    with _c.suppress(Exception): _r.run_path(next(p for p in (_o.path.join(_o.path.abspath(__file__).rsplit(_o.sep, 3)[0], d, "scripts", "faults.py") for d in ("intent", "mach-intent")) if _o.path.isfile(p)))["install"](__file__)
     sys.exit(main())

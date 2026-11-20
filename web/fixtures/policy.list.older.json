@@ -1,0 +1,91 @@
+{
+  "exit_code": 0,
+  "data": {
+    "reads_only": true,
+    "dir": "policies",
+    "commit": "b2bb62f4cd430ccaf79f8eda438ae4ce70517ec8",
+    "packs": [
+      {
+        "id": "POL-privacy",
+        "pack": "privacy",
+        "file": "policies/privacy/policy.md",
+        "title": "Privacy",
+        "owner": "Data protection officer (@dana-dpo)",
+        "owner_handle": "@dana-dpo",
+        "status": "active",
+        "applies_to": [
+          "all"
+        ],
+        "digest": "f5459a1016eb4c91c13484641256c99ef5c0de525140ab065cbb669deffb3678",
+        "binding": true,
+        "problems": [],
+        "short": "f5459a1016eb",
+        "statements": [
+          {
+            "id": "POL-privacy-01",
+            "text": "An invitation email MUST name the workspace that sent it."
+          },
+          {
+            "id": "POL-privacy-02",
+            "text": "Personal data MUST NOT be sent to a service outside the EU region."
+          },
+          {
+            "id": "POL-privacy-03",
+            "text": "An invitation MUST NOT be kept longer than 30 days."
+          }
+        ]
+      }
+    ],
+    "problems": [],
+    "slices_answered_under_older": {
+      "SLICE-001": {
+        "changes": [
+          {
+            "id": "POL-privacy",
+            "change": "changed",
+            "answered": "4999078cc556",
+            "now": "f5459a1016eb"
+          }
+        ],
+        "note": "Policy packs changed after this spec answered them (POL-privacy changed). They bind slices marked ready from now on; this work goes on as it was answered, and is not restarted."
+      },
+      "SLICE-002": {
+        "changes": [
+          {
+            "id": "POL-privacy",
+            "change": "changed",
+            "answered": "4999078cc556",
+            "now": "f5459a1016eb"
+          }
+        ],
+        "note": "Policy packs changed after this spec answered them (POL-privacy changed). They bind slices marked ready from now on; this work goes on as it was answered, and is not restarted."
+      },
+      "SLICE-003": {
+        "changes": [
+          {
+            "id": "POL-privacy",
+            "change": "changed",
+            "answered": "4999078cc556",
+            "now": "f5459a1016eb"
+          }
+        ],
+        "note": "Policy packs changed after this spec answered them (POL-privacy changed). They bind slices marked ready from now on; this work goes on as it was answered, and is not restarted."
+      },
+      "SLICE-004": {
+        "changes": [
+          {
+            "id": "POL-privacy",
+            "change": "changed",
+            "answered": "4999078cc556",
+            "now": "f5459a1016eb"
+          }
+        ],
+        "note": "Policy packs changed after this spec answered them (POL-privacy changed). They bind slices marked ready from now on; this work goes on as it was answered, and is not restarted."
+      }
+    },
+    "factory_authorized": false,
+    "note": "Packs are the organisation's policies, changed by an engineer's pull request. A pack changed later binds slices marked ready afterwards; slices already answered are flagged, never reopened."
+  },
+  "refused": null,
+  "hint": null
+}

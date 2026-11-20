@@ -89,6 +89,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// A file staged for one engine call is removed after it; one left by a host that stopped in the
+	// middle of a call is removed here.
+	if err := security.ClearUploads(project); err != nil {
+		return fmt.Errorf("could not clear Product Studio's staged uploads: %w", err)
+	}
 
 	listener, err := server.Listen(*port)
 	if err != nil {

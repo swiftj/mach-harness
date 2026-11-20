@@ -1,0 +1,16 @@
+{
+  "exit_code": 0,
+  "data": {
+    "epic_id": "EPIC-009",
+    "branch": "main",
+    "commit": "2ede7286fc780d46d4111da93ace96634be3d3d4",
+    "note": "This shows the work merged on this computer, which may be behind GitHub. The slices are the authority.",
+    "epic": null,
+    "notes": [
+      "No shipped slice spec at this commit names the epic 'EPIC-009'."
+    ],
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

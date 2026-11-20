@@ -138,17 +138,28 @@ type ByRole = "engineer" | "supervisor" | "person";
 type Counts = Readonly<Record<string, number | boolean>>;
 type Stage = CellStage | "spec-open";
 
+/** Revision 7: the routing sheet's stop codes (run.py `needs`, as of M14). A later code arrives as null. */
+export type StopCode =
+  | "answers" | "policy-owner" | "human-approval" | "merge" | "person-to-take-over" | "repository-hardening" | "person" | "worker-in-cell"
+  | "dispatch" | "product-answer" | "adr-decision" | "adr-acceptance" | "adr-fix" | "adr-baseline" | "security-exception-expired" | "main-conflict";
+
+/** Revision 7 (M13): a change record's repository-relative path (shown as text, never a link) and its SHA-256. */
+export interface ChangeRecordRef {
+  readonly path: string;
+  readonly sha256: string | null;
+}
+
 /** `data` by kind, for the fields the client reads. The schema's `$defs` is exact. */
 export interface V3DataMap {
   "intake.validated": { digest: string };
-  "intake.refused": { problems: string[] };
-  "slice.materialized": { digest: string; adopted: boolean; dependencies: string[]; reissued?: boolean | null; /** M6.6: the intake ledger's title for this revision (free text), null when not recorded. */ title?: string | null; /** M11: its epic's name, likewise. */ epic_title?: string | null };
+  "intake.refused": { problems: string[]; /** Revision 7 (M14 C): "mocks" when the slice waits for its design mocks. */ waiting?: "mocks" | null };
+  "slice.materialized": { digest: string; adopted: boolean; dependencies: string[]; reissued?: boolean | null; /** M6.6: the intake ledger's title for this revision (free text), null when not recorded. */ title?: string | null; /** M11: its epic's name, likewise. */ epic_title?: string | null; /** Revision 7 (M13 E): the slice's Jira key, an identifier (never a link). */ jira?: string | null };
   "slice.integrated": { commit: string };
   "dependency.resolved": { depends_on: string[] };
   "dependency.blocked": { reasons: string[] };
   "work.scheduled": { stage: Stage | null; risk: Risk | null; branch: string; by_role: ByRole; authorization: string | null };
   "revision.superseded": { from_revision: number | null; effect: string };
-  "human.required": { reason: string };
+  "human.required": { reason: string; /** Revision 7: the routing sheet's stop code, when MACH's record names a known one. */ needs?: StopCode | null };
   "factory.activated": { autonomy: "observe" | "supervised"; by_role: ByRole; limits: Readonly<Record<string, number>>; allow_merge: boolean; persistent: boolean; backlog: string | null; excluded_slices: string[] };
   "factory.disabled": { by_role: ByRole; stopped: boolean };
   "factory.paused": { by_role: ByRole; reason: string | null };
@@ -159,19 +170,19 @@ export interface V3DataMap {
   "execution.started": { until: string | null; workflow: string; limits: Readonly<Record<string, number>> };
   "station.observed": { from_stage: Stage | null; stage: Stage };
   "recovery.started": { kind: "ended-while-unwatched" | "still-running" | "claim-never-started" | "outcome-unknown" | "took-over-from-dead-supervisor" };
-  "execution.completed": { stage: Stage | null; next: StepAction | null; waiting_for: string | null; how: string | null; seen_to_end: boolean; cost_usd: number | null; refused_tools: string[]; exit_code?: number | null };
+  "execution.completed": { stage: Stage | null; next: StepAction | null; waiting_for: string | null; /** Revision 7: waiting_for as a known stop code. */ needs?: StopCode | null; how: string | null; seen_to_end: boolean; cost_usd: number | null; refused_tools: string[]; exit_code?: number | null };
   "execution.failed": { stage: Stage | null; next: StepAction | null; how: string | null; claude_error: string | null; exit_code: number | null; attempt: number; not_progressing?: "workflow-stuck" | "same-refusal" | null };
   "station.entered": { station: StationId; stage: Stage | null; action: StepAction | null; resumed: boolean; unclosed_visit: string | null; head: string | null; counts: Counts };
   /** Revision 2: on the plan's exit, `app_type` and `risk` (the plan's own facts); `counts.contracts` and `counts.tasks`. */
   "station.exited": { station: StationId; outcome: string; stage: Stage | null; duration_ms: number | null; closed_by: "cleanup" | null; head: string | null; counts: Counts; app_type?: string | null; risk?: Risk | null };
   "gate.evaluated": { gate: string; verdict: "passed" | "refused" | "overridden"; reason_code: string | null; subject: string | null; status: "PASS" | "FAIL_WITH_EVIDENCE" | "INCOMPLETE_EVIDENCE" | null; audit_tier: string | null; counts: Counts };
   "build.task_completed": { task_id: string; kind: "test" | "impl" | "contract" | "refactor" | "docs"; step: "red" | "green" | "done"; first_run: "pass" | "fail" | "not-run" | null; suite: "unknown" | "red" | "green" | null; commit: string | null };
-  "verify.check_recorded": { target_id: string; target_kind: "scenario" | "matrix rule" | "holdout"; result: "pass" | "fail"; evidence: Array<{ file: string; sha256: string | null; bytes?: number | null }>; rerecorded: boolean };
-  "review.round_started": { risk: Risk; max_rounds: number; tuning: boolean; approvals_needed: number; human_approval_required: boolean; panel: Array<{ seat: ReviewSeat; model: string | null }>; delta: boolean; restarted: boolean };
+  "verify.check_recorded": { target_id: string; target_kind: "scenario" | "matrix rule" | "holdout" | "design mock"; result: "pass" | "fail"; evidence: Array<{ file: string; sha256: string | null; bytes?: number | null }>; rerecorded: boolean };
+  "review.round_started": { risk: Risk; max_rounds: number; tuning: boolean; approvals_needed: number; human_approval_required: boolean; panel: Array<{ seat: ReviewSeat; model: string | null }>; delta: boolean; restarted: boolean; /** Revision 7: k for the k-th repeat of a judging round (round-N.k, after a voided approval); 0 otherwise. */ repeat?: number };
   "review.verdict_submitted": { seat: ReviewSeat; vote: "APPROVE" | "REJECT"; blockers: number; notes: number; rules: string[]; model: string | null };
   "review.decided": { outcome: "APPROVED" | "AWAITING_HUMAN" | "REJECTED" | "ESCALATE"; approvals: number; approvals_needed: number; votes: Readonly<Record<string, "APPROVE" | "REJECT">>; blockers: number; security_veto: boolean; human_approval_required: boolean };
   "human.approval_recorded": { by_role: "person"; note_given: boolean; decision?: "APPROVED" | "SENT_BACK" | null };
-  "merge.completed": { method: "local" | "pr"; merge_commit: string | null; approved_commit: string | null; landed_commit: string | null; revalidated: boolean; pull_request: number | null };
+  "merge.completed": { method: "local" | "pr"; merge_commit: string | null; approved_commit: string | null; landed_commit: string | null; revalidated: boolean; pull_request: number | null; /** Revision 7 (M13): the change record merge.py wrote, from cell.json. */ change_record?: ChangeRecordRef | null };
   "cleanup.completed": { outcome: "merged" | "abandoned"; archive: string | null; bundle: boolean; uncommitted_saved: boolean };
   "execution.process_started": Record<string, never>;
   "execution.process_ended": { ended: "exited" | "timed-out" | "interrupted" | "could-not-start"; exit_code: number | null; seconds: number | null };
@@ -192,6 +203,9 @@ export interface V3DataMap {
     app_type: string | null;
     merge_method: "local" | "pr" | null;
     merge_commit: string | null;
+    /** Revision 7 (M13). */
+    jira?: string | null;
+    change_record?: ChangeRecordRef | null;
   };
   "session.initialized": { claude_code_version: string | null; model: string | null; permission_mode: string | null; tools: string[]; agents: string[] };
   "workflow.started": { workflow: string; tickets: string[]; until: string | null };

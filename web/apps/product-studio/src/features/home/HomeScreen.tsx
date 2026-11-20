@@ -358,6 +358,9 @@ function EpicBlock({ epic, status, onAddSlice }: { epic: StatusEpicRow; status: 
           Ready or further means {counts.ready_or_further_means}.
         </Text>
       ) : null}
+      <Link to={`/epics/${epic.epic_id}/today`} className="self-start rounded-xs text-body-sm font-semibold text-accent-ink underline-offset-2 hover:underline">
+        How {epic.title} works today
+      </Link>
       {order?.slices.length ? (
         <OrderedSlices order={order} status={status} />
       ) : slices.length ? (

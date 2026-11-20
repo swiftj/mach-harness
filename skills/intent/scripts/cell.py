@@ -30,6 +30,8 @@ import validate_slice  # noqa: E402
 import adr  # noqa: E402  (architecture decisions: the shared helper beside this script)
 import diagrams  # noqa: E402  (Mermaid diagrams in a plan and in a proposed ADR)
 import shipped  # noqa: E402  (M13: the shipped rules a spec's effects are checked against, from the current-behaviour view)
+import policies  # noqa: E402  (M14: the organisation's policy packs a spec answers in '## Policies')
+import scan  # noqa: E402  (M15: the risk floor a security-scan ticket's labels set)
 
 try:  # M6.1 station telemetry: observational only; if it cannot be loaded nothing is recorded
     import lifecycle  # noqa: E402
@@ -347,13 +349,14 @@ def resolve_spec(project: Path, cell: Dict[str, Any], given: Optional[str]) -> P
 
 
 def analyze_spec(project: Path, spec: Path, ready: bool, cell_root: Optional[Path] = None,
-                 rules: Optional[List[Any]] = None) -> Tuple[List[Any], Dict[str, Any]]:
+                 rules: Optional[List[Any]] = None, packs: Optional[Dict[str, Any]] = None) -> Tuple[List[Any], Dict[str, Any]]:
     """Validate a spec. When the cell holds the project's published product principles (cell.py principles), every
     active one must be answered in the spec's '## Principles' section. With the shipped rules (M13), the spec's
     '## Effects on shipped behaviour' is required and checked against them."""
     text = spec.read_text(encoding="utf-8-sig")
     others = validate_slice.sibling_specs(spec, registries(project, own=spec.parent))
-    return validate_slice.analyze(text, spec.name, others, ready=ready, principles=cell_principles(cell_root) if cell_root else None, shipped=rules)
+    return validate_slice.analyze(text, spec.name, others, ready=ready, principles=cell_principles(cell_root) if cell_root else None, shipped=rules,
+                                  policies=packs)
 
 
 def shipped_rules(project: Path) -> Dict[str, Any]:
@@ -484,6 +487,188 @@ def cmd_principles(project: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+# ---- policy packs (M14 part A) ----
+
+def policy_input(project: Path, cell: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The packs a spec is checked against: the main checkout's committed packs for a ticket groomed here. None for a slice
+    from Product Studio, which was checked against the packs when the product manager marked it ready; a pack changed since
+    binds slices marked ready afterwards (its rows are still checked on their own, so an open concern still holds it)."""
+    if cell.get("product"):
+        return None
+    return policies.for_validator(policies.listing(project, load_config(project)))
+
+
+def record_policies(project: Path, root: Path, cell: Dict[str, Any], text: str, packs: Optional[Dict[str, Any]]) -> None:
+    """cell.json `policies`: the commit the packs were read at and each pack the spec answers, with a copy of its text kept in
+    the cell (policies/) when the spec answered the version on the main checkout, for the plan, the builder and the reviewers."""
+    rows = policies.parse_section(text)["rows"]
+    if not rows:
+        cell.pop("policies", None)
+        return
+    found = policies.listing(project, load_config(project))
+    current = policies.by_id(record for record in found["packs"] if not record["problems"])
+    kept = []
+    for row in rows:
+        record = current.get(row["pack"])
+        entry = {"id": row["pack"], "sha256": row["short"], "answer": row["answer"], "copy": None, "matches_main": False}
+        if record and record["digest"][:policies.SHORT] == row["short"]:
+            (root / "policies").mkdir(exist_ok=True)
+            (root / "policies" / f"{row['pack']}.md").write_text(record["text"], encoding="utf-8")
+            entry.update({"copy": f"policies/{row['pack']}.md", "matches_main": True, "digest": record["digest"], "title": record["title"],
+                          "owner": record["owner"], "applies_to": record["applies_to"]})
+        kept.append(entry)
+    cell["policies"] = {"commit": found["commit"], "dir": found["dir"], "checked_against_packs": packs is not None, "packs": kept, "checked_at": now()}
+
+
+def cmd_policies(project: Path, args: argparse.Namespace) -> int:
+    """For the interview and the contract engineer: the active policy packs, bounded and fenced as data. Reads only."""
+    found = policies.listing(project, load_config(project))
+    print(json.dumps(policies.for_validator(found) if args.json else policies.for_interview(found), indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_policy_accept(project: Path, args: argparse.Namespace) -> int:
+    """A policy owner accepts one open concern in this ticket's spec, with their reason in their words. Only on a person's
+    explicit word; refused inside a supervised execution, and for a slice from Product Studio (the product manager records
+    it there, in a new revision). Never recommended by rule."""
+    if policies.unattended():
+        raise CellError(policies.UNATTENDED)
+    cell = read_cell(project, args.ticket_id)
+    root = cell_dir(project, args.ticket_id)
+    if cell.get("product"):
+        raise CellError(f"{args.ticket_id} came from Product Studio: the owner's acceptance is recorded there (policy accept), in a new revision of the slice.")
+    if cell.get("stage") not in STAGES[:2]:
+        raise CellError(f"An owner's acceptance is recorded while the spec is written (interview or spec-open); {args.ticket_id} is '{cell.get('stage')}'.")
+    spec = resolve_spec(project, cell, None)
+    try:
+        text, check = policies.accept(spec.read_text(encoding="utf-8-sig"), args.policy, args.by, args.reason,
+                                      allowed=policies.accept_by(load_config(project)))
+    except ValueError as exc:
+        raise CellError(str(exc))
+    spec.write_text(text, encoding="utf-8")
+    cell.setdefault("policy_acceptances", []).append({"statement": args.policy, "by": " ".join(args.by.split()), "owner_check": check,
+                                                      "reason": " ".join(args.reason.split())[:policies.WORDS_LIMIT],
+                                                      "at": now(), "recorded_by": "an agent, on the person's instruction in conversation"})
+    if isinstance(cell.get("policy_concerns_open"), int):
+        # The hold for the owner (M15): it lifts with the last open concern; the spec is finalized again before anything else moves.
+        left = len(policies.open_concerns(text))
+        if left:
+            cell["policy_concerns_open"] = left
+        else:
+            cell.pop("policy_concerns_open")
+    write_cell(project, cell)
+    telemetry(root, "gate.evaluated", "groom", lambda: {"gate": "groom.policy", "outcome": "override", "reason_code": "policy-accepted",
+                                                        "overridden_by_reason": True, "item": args.policy})
+    print(json.dumps({"status": "ACCEPTED", "ticket_id": args.ticket_id, "statement": args.policy, "by": " ".join(args.by.split()),
+                      "owner_check": check, "owner_check_note": policies.ACCEPT_GUARD,
+                      "open_left": [item["statement_id"] for item in policies.open_concerns(text)],
+                      "next": "The spec records the owner's decision. Finalize it again (cell.py finalize) once no concern and no question is open."}, indent=2))
+    return 0
+
+
+def policies_changed(project: Path, cell: Dict[str, Any], cache: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """M14 timing: packs changed, retired, or newly applying since this spec answered them. Informational only.
+    `cache` (a dict the caller keeps for one command) reads the packs once for many cells."""
+    copy = cell_dir(project, cell["ticket_id"]) / "spec.md"
+    if not isinstance(cell.get("policies"), dict) or not copy.is_file():
+        return None
+    cache = cache if cache is not None else {}
+    if "policies" not in cache:
+        cache["policies"] = policies.listing(project, load_config(project))
+    return policies.drift_text(policies.drift(copy.read_text(encoding="utf-8-sig"), cache["policies"]))
+
+
+# ---- answered under older rules (M15): one fixed line each, flagged and never acted on ----
+
+def newest_principles_read(project: Path) -> Optional[Dict[str, Any]]:
+    """The newest copy of the project's published principles that any cell here read from GitHub (cell.json `principles`):
+    the copy last fetched on this machine. Reads local files only; never asks GitHub."""
+    newest = None
+    worktrees = project / ".factory" / "worktrees"
+    for path in sorted(worktrees.glob("*/cell.json")) if worktrees.is_dir() else []:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        record = data.get("principles") if isinstance(data, dict) else None
+        if (isinstance(record, dict) and record.get("source") == "github" and isinstance(record.get("sha256"), str)
+                and isinstance(record.get("read_at"), str) and (newest is None or record["read_at"] > newest["read_at"])):
+            newest = dict(record, ticket_id=path.parent.name)
+    return newest
+
+
+def principles_changed(project: Path, cell: Dict[str, Any], cache: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """When the product principles this spec answered have changed since. From the folder form: the principles committed on the
+    main checkout now (one local Git read). From GitHub: the newest copy any cell on this machine fetched, and when; GitHub is
+    never asked here. None when nothing changed, nothing was read, or nothing newer is known."""
+    answered = cell.get("principles")
+    if not isinstance(answered, dict) or answered.get("source") not in ("folder", "github") or not isinstance(answered.get("sha256"), str):
+        return None
+    cache = cache if cache is not None else {}
+    revision = answered.get("revision")
+    if answered["source"] == "folder":
+        if "principles_folder" not in cache:
+            shown = git(["show", f"HEAD:{FOLDER_PRINCIPLES}"], project) if git(["rev-parse", "--verify", "-q", "HEAD"], project).returncode == 0 else None
+            try:
+                record = json.loads(shown.stdout) if shown is not None and shown.returncode == 0 else None
+            except ValueError:
+                record = None
+            cache["principles_folder"] = record if isinstance(record, dict) else None
+        now_record = cache["principles_folder"]
+        if now_record is None:
+            return (f"The product principles this spec answered (revision {revision}) are no longer committed on the main checkout "
+                    f"({FOLDER_PRINCIPLES}). This work goes on as it was answered; it is flagged, not restarted.")
+        if now_record.get("sha256") == answered["sha256"]:
+            return None
+        return (f"The product principles changed after this spec answered them (revision {revision} answered; revision "
+                f"{now_record.get('revision')} is committed on the main checkout now). They bind slices marked ready from now on; this work "
+                "goes on as it was answered, and is not restarted.")
+    if "principles_newest" not in cache:
+        cache["principles_newest"] = newest_principles_read(project)
+    newest = cache["principles_newest"]
+    if not newest or newest["sha256"] == answered["sha256"] or newest["read_at"] <= str(answered.get("read_at") or ""):
+        return None
+    return (f"The product principles changed after this spec answered them (revision {revision} answered; revision {newest.get('revision')} "
+            f"was read from GitHub on {newest['read_at'][:10]} for {newest['ticket_id']}, the newest copy on this machine). They bind slices "
+            "marked ready from now on; this work goes on as it was answered, and is not restarted.")
+
+
+def shipped_changed(project: Path, cell: Dict[str, Any], cache: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """shipped_moved as one fixed line, with the shipped rules read once per command through `cache`."""
+    checked = cell.get("shipped") if isinstance(cell.get("shipped"), dict) else None
+    copy = cell_dir(project, cell["ticket_id"]) / "spec.md"
+    if not checked or not copy.is_file():
+        return None
+    text = copy.read_text(encoding="utf-8-sig")
+    if not shipped.current_module().effects_module().parse(text)["rows"]:
+        return None  # nothing named, so nothing can have moved under it: no Git read
+    cache = cache if cache is not None else {}
+    if "shipped" not in cache:
+        cache["shipped"] = shipped_rules(project)
+    flag = shipped.moved(text, cell.get("slice_id"), None, checked.get("commit"), cache["shipped"])
+    if not flag:
+        return None
+    return (f"A shipped rule this spec names is no longer in force on the main branch ({len(flag['problems'])} row"
+            f"{'s' if len(flag['problems']) != 1 else ''}; checked at {str(flag.get('checked_at') or 'an unknown commit')[:12]}, now "
+            f"{str(flag.get('now'))[:12]}). This work goes on as it was answered; it is flagged, not restarted.")
+
+
+def rules_changed(project: Path, cell: Dict[str, Any], cache: Optional[Dict[str, Any]] = None) -> List[str]:
+    """What this cell was answered under that has changed since: principles, policy packs, shipped rules; at most one fixed
+    line each, in that order. Advice only: nothing is restarted, blocked or routed differently, as with ADR timing. A check
+    that fails says so in its line rather than stopping the caller."""
+    cache = cache if cache is not None else {}
+    lines = []
+    for label, check in (("product principles", principles_changed), ("policy packs", policies_changed), ("shipped rules", shipped_changed)):
+        try:
+            line = check(project, cell, cache)
+        except Exception as exc:  # noqa: BLE001 - a flag is advice; a failure to check it is said, never hidden
+            line = f"Whether the {label} changed since this spec answered them could not be checked ({exc.__class__.__name__})."
+        if line:
+            lines.append(line)
+    return lines
+
+
 def print_findings(spec: Path, findings: Sequence[Any]) -> int:
     for finding in findings:
         location = f"{spec}:{finding.line}" if finding.line else str(spec)
@@ -495,7 +680,7 @@ def cmd_validate(project: Path, args: argparse.Namespace) -> int:
     cell = read_cell(project, args.ticket_id)
     spec = resolve_spec(project, cell, args.spec)
     found = shipped_rules(project)
-    findings, _ = analyze_spec(project, spec, args.ready, cell_dir(project, args.ticket_id), found["rules"])
+    findings, _ = analyze_spec(project, spec, args.ready, cell_dir(project, args.ticket_id), found["rules"], policy_input(project, cell))
     errors = print_findings(spec, findings)
     print(shipped_line(found))
     status = "FAILED" if errors else ("READY" if args.ready else "PASSED")
@@ -596,15 +781,34 @@ def set_aside_plan(root: Path, cell: Dict[str, Any], reason: str) -> Optional[Di
 SPEC_CHANGED = "The spec changed after the plan was written."
 
 
+def hold_risk_floor(project: Path, cell: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """M15: a security-scan ticket's labels set the lowest tier it may have (scan.risk_floor). A tier below it is raised in
+    the cell and recorded as `risk_floor`, the record monitoring.py writes for its own floor; review reads the cell's tier.
+    A record this rule wrote earlier is dropped once grooming itself reaches the floor. Returns the record when it raised."""
+    floor = scan.risk_floor(ticket_labels(project, cell["ticket_id"]))
+    if floor is None:
+        return None
+    why = scan.SCAN_FLOOR_WHY[floor]
+    if RISK_TIERS.index(cell["risk"]) > RISK_TIERS.index(floor):
+        cell["risk_floor"] = {"from": cell["risk"], "to": floor, "why": why}
+        cell["risk"] = floor
+        return cell["risk_floor"]
+    if isinstance(cell.get("risk_floor"), dict) and cell["risk_floor"].get("why") in scan.SCAN_FLOOR_WHY.values():
+        cell.pop("risk_floor")
+    return None
+
+
 def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     cell = read_cell(project, args.ticket_id)
     root = cell_dir(project, args.ticket_id)
     stage_before, spec_before = cell.get("stage"), cell.get("spec_sha256")
     spec = resolve_spec(project, cell, args.spec)
     found = shipped_rules(project)
-    findings, model = analyze_spec(project, spec, ready=True, cell_root=root, rules=found["rules"])
-    hard = [f for f in findings if f.severity == "error" and f.rule != "open-questions"]
-    open_items = [f for f in findings if f.rule == "open-questions"]
+    packs = policy_input(project, cell)
+    findings, model = analyze_spec(project, spec, ready=True, cell_root=root, rules=found["rules"], packs=packs)
+    # An open policy concern (M14) holds the spec back like an open question: saved at spec-open, never ready, until the owner accepts it.
+    hard = [f for f in findings if f.severity == "error" and f.rule not in ("open-questions", "policy-concern-open")]
+    open_items = [f for f in findings if f.rule in ("open-questions", "policy-concern-open")]
     print_findings(spec, findings)
     print(shipped_line(found))
     intent_problems, intent = check_intent(root / "intent.md")
@@ -622,9 +826,11 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     cell["slice_id"] = model.get("slice_id")
     cell["title"] = cell.get("title") or model.get("title") or ""
     cell["risk"] = intent["risk"]
+    floored = hold_risk_floor(project, cell)
     cell["spec_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
     # What the spec's effects were checked against (M13): the integration branch's commit, for the timing flag in status.
     cell["shipped"] = {"commit": found["commit"], "branch": found.get("branch"), "rules": len(found["rules"]), "checked_at": now()}
+    record_policies(project, root, cell, text, packs)
     spec_json = root / "spec.json"
     counts = {
         "invariants": len(model.get("invariants") or []),
@@ -634,6 +840,10 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
         "scenarios": len(model.get("scenarios") or []),
         "open_questions": len(model.get("open_questions") or []),
     }
+    concerns = sum(1 for f in open_items if f.rule == "policy-concern-open")
+    cell.pop("policy_concerns_open", None)
+    if concerns and concerns == len(open_items):
+        cell["policy_concerns_open"] = concerns  # nothing else is open: the routing sheet says the ticket waits for the owner
     if open_items:
         cell["stage"] = "spec-open"
         if spec_json.exists():
@@ -644,7 +854,9 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
         telemetry(root, "station.exited", "groom", lambda: {"outcome": "spec-open", "stage": "spec-open", "slice_id": cell["slice_id"]})
         report(commit(project, cell, [cell["spec_path"]], f"spec({cell['slice_id']}): save draft with open questions [{cell['ticket_id']}]", args.no_commit))
         print(json.dumps({"status": "SAVED_NOT_READY", "slice_id": cell["slice_id"], **counts}, indent=2))
-        print("SAVED: the spec is valid but open questions remain, so it is not ready for contracts or building.")
+        print("SAVED: the spec is valid but open questions remain, so it is not ready for contracts or building."
+              + (" An open policy concern waits for its owner: only they accept it (policy accept), or the spec changes so the statement is met."
+                 if any(f.rule == "policy-concern-open" for f in open_items) else ""))
         return 0 if args.allow_open else 1
 
     if spec_before and spec_before != cell["spec_sha256"]:
@@ -661,7 +873,8 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
         # The branch as it stands at spec-ready: where a re-plan returns it to (cell.py replan).
         cell["spec_commit"] = git(["rev-parse", "HEAD"], workdir(project, cell)).stdout.strip() or None
         write_cell(project, cell)
-    print(json.dumps({"status": "READY", "slice_id": cell["slice_id"], "risk": cell["risk"], **counts, **({"replanned": replanned} if replanned else {})}, indent=2))
+    print(json.dumps({"status": "READY", "slice_id": cell["slice_id"], "risk": cell["risk"], **counts, **({"replanned": replanned} if replanned else {}),
+                      **({"risk_floor": floored} if floored else {})}, indent=2))
     print(f"READY: wrote {root / 'spec.md'} and {spec_json}." + (" The spec changed after its plan was written, so the old plan is kept on record and "
                                                                 "the contract engineer writes a new one: go to stage 2." if replanned else ""))
     return 0
@@ -892,7 +1105,11 @@ def plan_adrs(project: Path, root: Path, cell: Dict[str, Any], header: Dict[str,
     if touching:
         problems.append(f"the plan's tasks change ADR files ({', '.join(touching[:3])}): an ADR is never built. A ticket proposes one while it is "
                         "planned (cell.py adr-draft); only people change an existing ADR")
-    excepted = {item.get("adr") for item in adr.exceptions(cell)}
+    packs_folder = policies.folder_of(load_config(project))[0]  # M14: a policy pack is the organisation's, changed by people
+    touching = [name for name in files if adr.in_folder(name, packs_folder)]
+    if touching:
+        problems.append(f"the plan's tasks change policy pack files ({', '.join(touching[:3])}): a pack is changed only by people, by pull request")
+    excepted ={item.get("adr") for item in adr.exceptions(cell)}
     for record in view["adrs"]:
         if not record["binding"] or record["id"] in named or record["id"] in excepted:
             continue
@@ -1285,6 +1502,12 @@ def cmd_status(project: Path, args: argparse.Namespace) -> int:
         flag = shipped_moved(project, cell)
         if flag:
             info["shipped_moved"] = flag
+        changed = policies_changed(project, cell)
+        if changed:
+            info["policies_changed"] = changed  # M14: flagged, never restarted
+        older = principles_changed(project, cell)
+        if older:
+            info["principles_changed"] = older  # M15: the same, for the product principles
         print(json.dumps(info, indent=2))
         return 0
     worktrees = project / ".factory" / "worktrees"
@@ -1434,6 +1657,17 @@ def build_parser() -> argparse.ArgumentParser:
                        "lookup of '## Effects on shipped behaviour'; reads only")
     p.set_defaults(func=cmd_shipped)
 
+    p = sub.add_parser("policies", help="the active policy packs on the main checkout, bounded and fenced as data, for the interview and the plan; reads only")
+    p.add_argument("--json", action="store_true", help="the packs as the validator takes them (validate_slice.py --policies)")
+    p.set_defaults(func=cmd_policies)
+
+    p = sub.add_parser("policy-accept", help="a policy owner accepts one open concern in this ticket's spec; only on a person's explicit word")
+    p.add_argument("ticket_id")
+    p.add_argument("--policy", required=True, help="the statement's ID, such as POL-privacy-03")
+    p.add_argument("--by", required=True, help="the owner who accepted it, as they gave their name or role")
+    p.add_argument("--reason", required=True, help="the owner's reason, in their own words")
+    p.set_defaults(func=cmd_policy_accept)
+
     p = sub.add_parser("finalize", help="gate stage 1: validate with --ready, check intent.md, write spec.md and spec.json")
     p.add_argument("ticket_id")
     p.add_argument("--spec")
@@ -1523,7 +1757,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except CellError as exc:
         print(f"error: {exc}", file=sys.stderr)
         station, gate = {"finalize": ("groom", "groom.finalize"), "check-plan": ("plan", "plan.check"), "replan": ("plan", "plan.replan"),
-                         "adr-conflict": ("plan", "plan.adr"), "adr-exception": ("plan", "plan.adr"), "adr-accept": ("plan", "plan.adr")}.get(args.command, (None, None))
+                         "adr-conflict": ("plan", "plan.adr"), "adr-exception": ("plan", "plan.adr"), "adr-accept": ("plan", "plan.adr"),
+                         "policy-accept": ("groom", "groom.policy")}.get(args.command, (None, None))
         if station:
             telemetry(project / ".factory" / "worktrees" / args.ticket_id, "gate.evaluated", station, lambda: {
                 "gate": gate, "outcome": "refuse", "reason_code": "refused", "overridden_by_reason": False})
@@ -1531,4 +1766,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 
 if __name__ == "__main__":
+    import contextlib as _c, os as _o, runpy as _r  # MACH records an internal error for /mach report (skills/intent/scripts/faults.py)
+    with _c.suppress(Exception): _r.run_path(next(p for p in (_o.path.join(_o.path.abspath(__file__).rsplit(_o.sep, 3)[0], d, "scripts", "faults.py") for d in ("intent", "mach-intent")) if _o.path.isfile(p)))["install"](__file__)
     sys.exit(main())

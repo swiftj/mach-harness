@@ -1,0 +1,88 @@
+{
+  "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Sample Scanner",
+          "version": "1.4.0",
+          "rules": [
+            {
+              "id": "SQLI001",
+              "name": "SqlInjection",
+              "shortDescription": { "text": "SQL query built from user input" },
+              "defaultConfiguration": { "level": "error" },
+              "properties": { "security-severity": "8.8", "precision": "high" }
+            },
+            {
+              "id": "XSS002",
+              "name": "ReflectedXss",
+              "shortDescription": { "text": "Reflected cross-site scripting" },
+              "defaultConfiguration": { "level": "warning" }
+            },
+            {
+              "id": "LOG003",
+              "name": "VerboseLogging",
+              "shortDescription": { "text": "Request body written to the log" },
+              "defaultConfiguration": { "level": "note" }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "SQLI001",
+          "ruleIndex": 0,
+          "message": { "text": "The query in find_orders is built by string concatenation from the 'customer' parameter." },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": { "uri": "src/orders/search.py", "uriBaseId": "%SRCROOT%" },
+                "region": { "startLine": 42, "snippet": { "text": "cursor.execute(\"SELECT * FROM orders WHERE customer = '\" + customer + \"'\")" } }
+              }
+            }
+          ],
+          "partialFingerprints": { "primaryLocationLineHash/v1": "5a1e2f3b4c5d6e7f:1" }
+        },
+        {
+          "ruleId": "XSS002",
+          "message": { "text": "The 'next' query parameter is echoed into the page without escaping." },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": { "uri": "file:///work/app/src/auth/login_view.py" },
+                "region": { "startLine": 17 }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "LOG003",
+          "level": "note",
+          "message": { "text": "The full request body is logged at debug level." },
+          "locations": [
+            { "physicalLocation": { "artifactLocation": { "uri": "src/api/middleware.py" }, "region": { "startLine": 8 } } }
+          ]
+        },
+        {
+          "ruleId": "XSS002",
+          "kind": "pass",
+          "level": "none",
+          "message": { "text": "Checked and escaped." },
+          "locations": [
+            { "physicalLocation": { "artifactLocation": { "uri": "src/web/profile.py" }, "region": { "startLine": 3 } } }
+          ]
+        },
+        {
+          "ruleId": "XSS002",
+          "message": { "text": "Escaped by the template engine; accepted by the security lead." },
+          "locations": [
+            { "physicalLocation": { "artifactLocation": { "uri": "src/web/search.py" }, "region": { "startLine": 30 } } }
+          ],
+          "suppressions": [ { "kind": "external", "status": "accepted", "justification": "Escaped by the template engine." } ]
+        }
+      ]
+    }
+  ]
+}

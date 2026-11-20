@@ -28,6 +28,7 @@ type Identity struct {
 type SliceTitles struct {
 	Title    string
 	Epic     string
+	Jira     string // M13: the slice's Jira key as the ledger records it (checked when read)
 	revision int64
 }
 
@@ -153,9 +154,10 @@ func (id *Identity) ReadLedger(data []byte) {
 		epic := obj(rec["epic"])
 		title, _ := rec["title"].(string)
 		epicTitle, _ := epic["title"].(string)
-		if ok && len(title) <= 4*SliceTitleMax && len(epicTitle) <= 4*SliceTitleMax && (title != "" || epicTitle != "") {
+		jira, _ := JiraKey(rec["jira"])
+		if ok && len(title) <= 4*SliceTitleMax && len(epicTitle) <= 4*SliceTitleMax && (title != "" || epicTitle != "" || jira != "") {
 			if r, okR := redact.Int(rec["revision"]); okR {
-				id.titles[s] = SliceTitles{Title: title, Epic: epicTitle, revision: r}
+				id.titles[s] = SliceTitles{Title: title, Epic: epicTitle, Jira: jira, revision: r}
 			}
 		}
 		t, okT := Ticket(rec["ticket_id"])

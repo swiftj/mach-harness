@@ -242,8 +242,9 @@ def output_folder(host: Any, studio: Any, given: Optional[str], name: str) -> Pa
     inside_project = folder == project or project in folder.parents
     inside_home = folder == home or home in folder.parents
     if inside_project and not inside_home:
-        raise host.StudioError(f"{folder} is inside the repository, where it could be committed. Leave out --out to write into "
-                               f"Product Studio's own folder ({studio.home / 'jira'}), or name a folder outside the repository.")
+        raise host.StudioError(host.say(f"{folder} is inside the repository, where it could be committed. Leave out --out to write into "
+                                        f"Product Studio's own folder ({studio.home / 'jira'}), or name a folder outside the repository.",
+                                        "That folder is inside the project, where it could be committed. Export to Product Studio's own folder instead."))
     return folder
 
 
@@ -313,7 +314,8 @@ def plan_export(host: Any, studio: Any, epic_filter: Optional[str], state: str) 
                 left_out.append({"id": slice_id, "reason": "it was superseded"})
                 continue
             if state == "ready" and progress not in MARKED_READY:
-                left_out.append({"id": slice_id, "reason": "it is not marked ready yet (export with --state all to include drafts)"})
+                left_out.append({"id": slice_id, "reason": host.say("it is not marked ready yet (export with --state all to include drafts)",
+                                                                    "it is not marked ready yet (choose to include drafts to export it)")})
                 continue
             key = own_key(rules, work)
             if key:
@@ -505,9 +507,12 @@ def cmd_export(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str, An
     host.write(folder / "README.txt", readme(flavour, header, counts, plan["left_out"], csv_name))
     exported = [unneutral(row[header.index(COLUMNS[flavour]["mach"])]) for row in rows]
     note = (f"Wrote {counts['epics']} epic(s) and {counts['stories']} story(ies) for Jira {'Cloud' if flavour == 'cloud' else 'Data Center'}. "
-            "Nothing was sent anywhere: hand the folder to the person who imports it. README.txt says which screen to use and how to hand the keys back.")
+            + host.say("Nothing was sent anywhere: hand the folder to the person who imports it. README.txt says which screen to use and how to hand the keys back.",
+                       "Nothing was sent anywhere: download both files and hand them to the person who imports them. README.txt says which screen to use "
+                       "and how to hand the keys back."))
     if not rows:
-        note = "Nothing to export: " + ("no slice is marked ready yet (export with --state all to include drafts)." if state == "ready" else "the workspace has no epics.")
+        note = "Nothing to export: " + (host.say("no slice is marked ready yet (export with --state all to include drafts).",
+                                                 "no slice is marked ready yet. Choose to include drafts to export them.") if state == "ready" else "the workspace has no epics.")
     return {"folder": str(folder), "file": str(folder / csv_name), "readme": str(folder / "README.txt"), "flavour": flavour, "state": state,
             "epic": args.epic.strip().upper() if args.epic else None, "counts": counts, "exported": exported, "left_out": plan["left_out"],
             "cut": cut_ids, "factory_authorized": False, "note": note}
@@ -615,10 +620,12 @@ def cmd_keys(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str, Any]
             already.append({"id": mach_id, "jira": key})
             continue
         if current is not None:
-            refused.append({"id": mach_id, "rows": where, "reason": f"it is already linked to {current}; to change it, use {kind} link {mach_id} --jira {key}"})
+            refused.append({"id": mach_id, "rows": where, "reason": host.say(f"it is already linked to {current}; to change it, use {kind} link {mach_id} --jira {key}",
+                                                                              f"it is already linked to {current}; to change it, change its Jira key on the Jira page")})
             continue
         if kind == "slice" and host.edit_refusal(mach_id, data) is not None:
-            reopen.append({"id": mach_id, "jira": key, "reason": f"{mach_id} is marked ready; reopen it, then run jira keys again (or slice link {mach_id} --jira {key})"})
+            reopen.append({"id": mach_id, "jira": key, "reason": host.say(f"{mach_id} is marked ready; reopen it, then run jira keys again (or slice link {mach_id} --jira {key})",
+                                                                           f"{mach_id} is marked ready; reopen it, then read the keys file again or give it {key} on the Jira page")})
             continue
         if not args.dry_run:
             if kind == "slice":

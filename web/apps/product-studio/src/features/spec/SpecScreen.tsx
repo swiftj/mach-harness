@@ -13,6 +13,7 @@ import { WithdrawnNote } from "../../shared/WithdrawnNote";
 import { IssueLink } from "../../shared/IssueLink";
 import { AnswerQuestionButton, BuildersQuestion } from "../../shared/BuildersQuestion";
 import { SliceTimes } from "../../shared/SliceTimes";
+import { SliceSections } from "../../shared/SliceSections";
 
 type View = "spec" | "why" | "source";
 
@@ -67,6 +68,7 @@ function SpecWorkspace({ sliceId }: { sliceId: string }) {
   return (
     <Page className="flex flex-col gap-8">
       <SpecHeader show={data} onChanged={show.reload} refreshing={show.loading} refreshError={show.error ? describeError(show.error).message : null} />
+      <SliceSections sliceId={data.slice.slice_id} fromPrd={data.slice.source?.kind === "prd"} />
       <div className="grid grid-cols-[minmax(0,1fr)_17.5rem] items-start gap-10">
         <Tabs value={view} onValueChange={(value) => setView(value as View)} className="min-w-0">
           <TabsList aria-label="How to read this slice">
@@ -211,6 +213,7 @@ function SpecBody({ show }: { show: SliceShow }) {
   return (
     <div className="flex flex-col gap-10">
       {aboutWhole}
+      <ElsewhereFindings sliceId={show.slice.slice_id} at={at} />
       <SummarySection model={model} diagnostics={at("summary")} />
       <OpenQuestionsSection model={model} fallback={show.check.open_questions} diagnostics={at("open-questions")} />
       <RulesSection model={model} diagnostics={at("rules")} />
@@ -224,6 +227,35 @@ function SpecBody({ show }: { show: SliceShow }) {
 }
 
 const asideSections: SectionId[] = ["summary", "open-questions", "rules", "requirements", "decision-table", "scenarios", "dependencies", "assumptions", "why"];
+
+/** Sections shown on a slice's own pages: their findings are listed here with the way to that page. */
+const elsewhere: Array<{ id: SectionId; page: string; label: string }> = [
+  { id: "effects", page: "effects", label: "Open Effects on shipped behaviour" },
+  { id: "principles", page: "policies", label: "Open Principles and policies" },
+  { id: "policies", page: "policies", label: "Open Principles and policies" },
+];
+
+function ElsewhereFindings({ sliceId, at }: { sliceId: string; at: (section: SectionId) => Diagnostic[] }) {
+  const found = elsewhere.filter((e) => at(e.id).length);
+  if (!found.length) return null;
+  return (
+    <>
+      {found.map((e) => (
+        <section key={e.id} id={`section-${e.id}`} aria-labelledby={`section-${e.id}-title`} className="flex scroll-mt-6 flex-col gap-2">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <Heading level={2} size="title-3" id={`section-${e.id}-title`}>
+              {sectionTitles[e.id]}
+            </Heading>
+            <Button asChild variant="ghost" size="sm">
+              <Link to={`/slices/${sliceId}/${e.page}`}>{e.label}</Link>
+            </Button>
+          </div>
+          <DiagnosticList items={at(e.id)} />
+        </section>
+      ))}
+    </>
+  );
+}
 
 function CheckAside({ show, onGoTo }: { show: SliceShow; onGoTo: (section: SectionId) => void }) {
   const check = show.check;
@@ -255,7 +287,7 @@ function CheckAside({ show, onGoTo }: { show: SliceShow; onGoTo: (section: Secti
       <nav aria-label="Sections of this slice" className="flex flex-col gap-1">
         <p className="px-2 pb-1 text-label text-ink-muted">On this page</p>
         <ul className="flex flex-col">
-          {asideSections.map((section) => {
+          {[...asideSections, ...elsewhere.map((e) => e.id).filter((id) => bySection.has(id))].map((section) => {
             const found = bySection.get(section) ?? [];
             const open = section === "open-questions" ? check.open_questions.length : 0;
             const issue = found.length || open;

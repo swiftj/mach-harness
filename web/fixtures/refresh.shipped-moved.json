@@ -1,0 +1,104 @@
+{
+  "exit_code": 0,
+  "data": {
+    "refreshed": true,
+    "problem": null,
+    "requests": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "refreshed_at": "2026-11-20T22:05:45Z",
+      "problem": null,
+      "truncated": false,
+      "truncated_note": null,
+      "items": [],
+      "updates_waiting": 0,
+      "updates_waiting_note": null,
+      "could_not_update": [],
+      "could_not_update_note": null
+    },
+    "github": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "problem": null,
+      "refreshed_at": "2026-11-20T22:05:45Z",
+      "form": null,
+      "project_issue": null,
+      "project_url": null,
+      "epics": {},
+      "epic_urls": {},
+      "slices": [],
+      "order": [
+        {
+          "epic_id": "EPIC-001",
+          "issue": null,
+          "slices": [
+            {
+              "slice_id": "SLICE-004",
+              "title": "Invite a teammate",
+              "in_workspace": true,
+              "issue": null,
+              "state_label": null
+            },
+            {
+              "slice_id": "SLICE-005",
+              "title": "Invite by link",
+              "in_workspace": true,
+              "issue": null,
+              "state_label": null
+            },
+            {
+              "slice_id": "SLICE-006",
+              "title": "Invite again",
+              "in_workspace": true,
+              "issue": null,
+              "state_label": null
+            }
+          ],
+          "on_github": false,
+          "github_order": null,
+          "github_read_at": null,
+          "matches_github": null,
+          "unfinished": false,
+          "taken_from_github": false,
+          "could_not_read": false,
+          "note": null
+        }
+      ],
+      "principles": {
+        "saved": null,
+        "unfinished": false,
+        "revision": null,
+        "sha256": null,
+        "approved_by": null,
+        "published_at": null,
+        "issue": null,
+        "url": null,
+        "github": {
+          "revision": null,
+          "approved": null,
+          "approved_by": null,
+          "read_at": "2026-11-20T22:05:45Z"
+        },
+        "newer_elsewhere": false,
+        "changed_on_github": false
+      }
+    },
+    "shipped_moved": {
+      "SLICE-004": {
+        "checked_at": "2ede7286fc780d46d4111da93ace96634be3d3d4",
+        "now": "7919fcf21e893e1c0661ced1dca5046483b63d66",
+        "problems": [
+          {
+            "line": 87,
+            "code": "effects-not-in-force",
+            "message": "SLICE-002/FR-01 is no longer in force: retired by SLICE-020. Name the rule in force instead."
+          }
+        ],
+        "note": "The shipped rules have moved since this spec was checked: a row now names a rule that is no longer in force. The spec must be settled again before it is planned."
+      }
+    },
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

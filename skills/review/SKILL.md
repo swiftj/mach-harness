@@ -78,3 +78,7 @@ Run `REVIEW send-back <ticket> --by '<name>' --reason '<their words: what has to
 
 - `REJECTED`: the cell is back at the build station. The script wrote their reason to `person-findings.md` in the round's folder, with a pointer to the panel's own findings. Return it to the build station as its `next` says (`build revise <ticket> --findings <that file>`), and record it on the ticket as for a rejection.
 - `ESCALATE`: it was the last round. Do as its `next` says: label the ticket `blocked-requires-sme`, set its state to blocked, and tell the person.
+
+## Recording a person's rating of a finding
+
+Notes carry a weight, `important` or `nit` (a note without one is important); `submit` keeps each seat's first `review.nit_cap` nits (default 5) and records how many it dropped (`nits_dropped`). When a person, in this conversation, says a finding was useful or was noise, run `REVIEW rate <ticket> --finding <round>/<seat>/<n> --useful` (or `--not-useful`) `--by '<name or role>'`. Only on their explicit word; never on your own judgment, and never inside a supervised Factory execution (the script refuses). It writes the round's `ratings.json` beside the votes, changes no vote or outcome, and reaches the run record at cleanup for the observe station.

@@ -14,6 +14,9 @@ and not by whoever is driving it.
     run.py current [--epic E] [--all] [--json] [--at COMMIT]
                                          how each epic works today, compiled from the shipped slice specs; reads only (current.py)
     run.py doctor [--fix] [--json]       check the machine and the project; works before .factory exists (doctor.py)
+    run.py report [<fault-id>] ["<what went wrong>"] [--print] [--new]
+                                         MACH's own internal error as an issue text for MACH's repository: shown, never sent (selfreport.py)
+    run.py report --confirm <code>       file exactly the text that was shown, only on the person's yes
     run.py schedule <ticket>... [--running <ticket>...] [--limit n] [--sequential] [--by-person] [--dry-run] [--holder H]
                                          which tickets may start now and why the others wait; reads only (schedule.py)
     run.py review-start <ticket>         start the review round; prints one ready prompt per reviewer seat
@@ -40,6 +43,8 @@ and not by whoever is driving it.
                                          record the engineer's answer to one open point of a proposed draft; commits nothing
     run.py adr accept ADR-NNNN... --by NAME
                                          a person sets proposed ADRs in the working tree to accepted; commits nothing
+    run.py policy list                   the organisation's policy packs (M14): ID, owner, status, applies-to, statements, problems;
+                                         reads only (policies.py). An owner's acceptance goes through cell.py policy-accept
     run.py release status                release-readiness snapshots so far, and what a new one would evaluate
     run.py release qualify --epic E | <SLICE>...
                                          evaluate an epic or named slices at one commit; write .factory/release/<id>/readiness.json
@@ -56,6 +61,15 @@ and not by whoever is driving it.
     run.py notify banner on|off [--label WORDS]
                                          a macOS Notification Center banner on this Mac, beside or instead of the webhook
     run.py notify test | off             one test message on each channel that is on; remove the stored address (the banner stays)
+    run.py bands [dismiss <measure> --reason R]
+                                         each Factory measure against its control band (M15, observe.py bands); a person may dismiss a breach
+    run.py eval collect|add|status|run|compare|show
+                                         factory evals (M14, skills/observe/scripts/evals.py): past tickets replayed in throwaway
+                                         clones; a run only on a person's command, with a budget and a confirmation code
+
+MACH's own internal errors (an uncaught exception that is not one of its refusals) are recorded on this machine by
+faults.py, beside the intent station's scripts. While any is unreported, `next`, `status` and `doctor` add one line
+saying so (never inside a supervised execution, never when report.enabled is false). Only `report` reads them to send.
 
 `next <ticket> --headless` that stops for a person sends one message on each channel on for this machine (notify.py),
 once per wait, and never inside a supervised execution. No other command here sends or reads the address.
@@ -171,6 +185,59 @@ def adrs() -> Any:
     return _ADR[0]
 
 
+_CELL: List[Any] = []
+
+
+def intent_cell() -> Any:
+    """The intent station's cell.py, loaded once, for its read-only timing checks (rules_changed)."""
+    if not _CELL:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("mach_cell", sibling("intent") / "scripts" / "cell.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _CELL.append(module)
+    return _CELL[0]
+
+
+_FAULTS: List[Any] = []
+
+
+def faults() -> Any:
+    """The shared internal-error records (the intent station's faults.py), loaded once; None when it cannot be loaded."""
+    if not _FAULTS:
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("mach_faults", sibling("intent") / "scripts" / "faults.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except Exception:  # noqa: BLE001  without the helper there is nothing to offer
+            module = None
+        _FAULTS.append(module)
+    return _FAULTS[0]
+
+
+def report_on(config: Dict[str, Any]) -> bool:
+    section = config.get("report")
+    return not (isinstance(section, dict) and section.get("enabled") is False)
+
+
+def unreported_faults(root: Path, config: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+    """The unreported internal errors, or None where nothing is offered: inside a supervised execution, report.enabled false,
+    or the helper missing. Reads only."""
+    if os.environ.get(EXECUTION_ENV) or not report_on(config) or faults() is None:
+        return None
+    try:
+        return faults().unreported(str(root))
+    except Exception:  # noqa: BLE001  the offer is advice; it never changes an answer
+        return None
+
+
+def fault_offer(project: "Project") -> Optional[str]:
+    """The one line `next`, `status` and `doctor` add while unreported internal errors exist."""
+    found = unreported_faults(project.root, project.config)
+    return faults().offer(len(found), f"{skill('run')} report") if found else None
+
+
 _RECORDS: List[Any] = []
 
 
@@ -263,7 +330,7 @@ class Project:
 
     def observe_status(self) -> Dict[str, Any]:
         """Whether an observe pass is due, as the cleanup station decides it: the one source for cleanup, the status command and the supervisor."""
-        return cleanup_station().observe_due(self.root)
+        return bands_due(self.root, cleanup_station().observe_due(self.root))  # M15: a tier-3 control band breach also makes one due
 
     def observe_due(self) -> bool:
         """Whether enough tickets have finished since the last observe pass for another one."""
@@ -330,6 +397,11 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
     if stage == "interview":
         return step(ticket_id, stage, "groom", "Grooming has started but the spec is not written.", model=project.model("planning"), prompt=groom_prompt, interactive=not headless)
     if stage == "spec-open":
+        waiting = cell.get("policy_concerns_open")
+        if isinstance(waiting, int) and waiting > 0:
+            # Only a flagged policy concern holds the spec (M14): its owner accepts it, or the spec changes to meet the statement.
+            return step(ticket_id, stage, "stop", f"The spec has {waiting} policy concern{'s' if waiting != 1 else ''} waiting for the policy's owner.",
+                        needs="policy-owner", prompt=f"The owner accepts it ({skill('run')} policy accept {ticket_id} <POL-id>), or the interview changes the spec: {skill('intent')} {ticket_id}")
         if headless:
             return step(ticket_id, stage, "stop", "The spec has open questions that only a person can answer.", needs="answers",
                         prompt=f"A person continues the interview with: {skill('intent')} {ticket_id}")
@@ -513,6 +585,7 @@ def resolve_args(project: Project, args: argparse.Namespace) -> Optional[str]:
 
 NEEDS_TEXT = {
     "answers": "Answer the spec's open questions in the grooming interview.",
+    "policy-owner": "A policy's owner accepts the flagged concern, or the spec changes so the policy is met.",
     "human-approval": "Approve the change, or not, after reading the review findings.",
     "merge": "Merge the approved branch; the project's settings keep merging for a person.",
     "person-to-take-over": "Take over the escalated ticket: it used all its judging rounds.",
@@ -617,7 +690,22 @@ def digest(project: Project, info: Dict[str, Any]) -> Dict[str, Any]:
     note = adr_note(project, ticket_id) if isinstance(ticket_id, str) and TICKET_ID_RE.match(ticket_id) else None
     if note:
         shown["adrs"] = note
+    older = rules_changed(project, ticket_id) if isinstance(ticket_id, str) and TICKET_ID_RE.match(ticket_id) else []
+    if older:
+        shown["rules_changed"] = older
     return shown
+
+
+def rules_changed(project: Project, ticket_id: str, cache: Optional[Dict[str, Any]] = None) -> List[str]:
+    """Product principles, policy packs and shipped rules that changed after this ticket's spec answered them (M15): one fixed
+    line each, from cell.py's rules_changed. Flagged, never acted on, as ADR timing is. Local reads only: no GitHub call."""
+    cell = load_json(project.cell_dir(ticket_id) / "cell.json")
+    if not isinstance(cell, dict) or cell.get("ticket_id") != ticket_id:
+        return []
+    try:
+        return intent_cell().rules_changed(project.root, cell, cache)
+    except Exception as exc:  # a flag is advice: it never stops the routing sheet, and a failure to check it is said
+        return [f"Whether the rules this ticket's spec answered changed since could not be checked ({exc.__class__.__name__})."]
 
 
 def adr_flags(project: Project, ticket_id: str) -> List[Dict[str, Any]]:
@@ -654,6 +742,13 @@ def status_digest(project: Project, rows: List[Dict[str, Any]]) -> Dict[str, Any
     if flagged:
         shown["adrs"] = (f"Architecture decisions changed after {', '.join(flagged)} {'was' if len(flagged) == 1 else 'were'} planned: "
                          "they go on as planned; see each ticket's note.")
+    older = [row["ticket_id"] for row in rows if row.get("rules_changed")]
+    if older:
+        shown["rules_changed"] = (f"Principles, policy packs or shipped rules changed after {', '.join(older)} {'was' if len(older) == 1 else 'were'} "
+                                  "answered: they go on as answered; see each ticket's lines.")
+    offer = fault_offer(project)
+    if offer:
+        shown["faults"] = offer
     return shown
 
 
@@ -713,6 +808,9 @@ def cmd_next(project: Project, args: argparse.Namespace) -> int:
     if made:
         found["holder"] = holder
     shown = {"digest": digest(project, found), **found}  # the digest first; every field the belt reads is unchanged
+    offer = fault_offer(project)
+    if offer:
+        shown["digest"]["faults"] = offer
     if getattr(args, "resolved_from", None):
         shown["resolved_from"] = args.resolved_from
     print(json.dumps(shown, indent=2, ensure_ascii=False))
@@ -886,7 +984,40 @@ def cmd_doctor(root: Path, args: argparse.Namespace) -> int:
         if exc.name != "doctor":
             raise
         raise RunError(f"The doctor is not installed next to this script ({Path(__file__).resolve().parent / 'doctor.py'}).")
-    return doctor.main([*(["--fix"] if args.fix else []), *(["--json"] if args.json else [])], project=root)
+    extra, notes = [], []
+    config = load_json(root / ".factory" / "config.json", {}) if (root / ".factory").is_dir() else None
+    found = unreported_faults(root, config) if isinstance(config, dict) else None
+    if found is not None:
+        # The doctor never opens .factory/local/: this script reads the fault records and hands the doctor the check.
+        listed = "; ".join(faults().summary(item) for item in found[:10]) + ("; and more" if len(found) > 10 else "")
+        extra = [doctor.check("faults", "Internal errors", "warn" if found else "ok",
+                              f"Unreported on this machine: {listed}." if found else "No unreported internal error is recorded on this machine.")]
+        notes = [faults().offer(len(found), f"{skill('run')} report")] if found else []
+    handed = {"extra_checks": extra, "notes": notes} if extra or notes else {}
+    return doctor.main([*(["--fix"] if args.fix else []), *(["--json"] if args.json else [])], project=root, **handed)
+
+
+def cmd_report(project: Project, args: argparse.Namespace) -> int:
+    """MACH's own internal error, or a person's words, as an issue text for MACH's repository (selfreport.py). It is shown
+    first; it is filed only with --confirm and the code the preview printed, on the person's yes."""
+    if os.environ.get(EXECUTION_ENV):
+        raise RunError("A report to MACH's repository is a person's decision; it is never made inside a supervised Factory execution.")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import selfreport
+    if faults() is None:
+        raise RunError("The internal-error helper (faults.py, beside the intent station's scripts) is not installed, so there is nothing to report from.")
+
+    def findings() -> List[Tuple[str, str]]:
+        import doctor
+        return [(item["id"], item["status"]) for item in doctor.diagnose(project.root)["checks"]]
+
+    try:
+        result = selfreport.run(str(project.root), project.config, faults(), args.target, print_only=args.print_only, confirm=args.confirm,
+                                new=args.new, command_name=f"{skill('run')} report", doctor=findings)
+    except selfreport.ReportError as exc:
+        raise RunError(str(exc))
+    print(result if isinstance(result, str) else json.dumps(result, indent=2, ensure_ascii=False))
+    return 0
 
 
 def cmd_schedule(project: Project, args: argparse.Namespace) -> int:
@@ -949,6 +1080,7 @@ def cmd_status(project: Project, args: argparse.Namespace) -> int:
     rows = []
     C = claims()
     limit = C.minutes(project.config)
+    read_once: Dict[str, Any] = {}  # the packs, the shipped rules and the principles, read once for every ticket
     for ticket_id in ids:
         info = next_step(project, ticket_id, args.headless)
         row = {key: info[key] for key in ("ticket_id", "stage", "action", "needs", "reason")}
@@ -958,13 +1090,18 @@ def cmd_status(project: Project, args: argparse.Namespace) -> int:
         note = adr_note(project, ticket_id)
         if note:
             row["adrs"] = note  # decided after it was planned: flagged, never restarted or blocked
+        older = rules_changed(project, ticket_id, read_once)
+        if older:
+            row["rules_changed"] = older  # M15: the same for principles, policy packs and shipped rules
         rows.append(row)
     tuning = [row["ticket_id"] for row in rows if row["action"] != "stop" and "claim" not in row and "factory-tuning" in project.ticket_labels(row["ticket_id"])]
     due = project.observe_due()
+    bands_line = project.observe_status().get("bands")  # M15: one fixed line when a measure is outside its control band
     if scope is not None:
         # The observe pass and any tuning ticket it files are separate work: the supervisor, which alone dispatches, reports them.
-        tuning, due = [], False
-    print(json.dumps({"digest": status_digest(project, rows), "audit": project.audit(), "observe_due": due, "factory_tuning_ready": tuning, "scoped_to": scope, "tickets": rows,
+        tuning, due, bands_line = [], False, None
+    print(json.dumps({"digest": status_digest(project, rows), "audit": project.audit(), "observe_due": due, "control_bands": bands_line,
+                      "factory_tuning_ready": tuning, "scoped_to": scope, "tickets": rows,
                       "ready_to_run": [row["ticket_id"] for row in rows if row["action"] != "stop" and "claim" not in row],
                       "being_worked_on": [row["ticket_id"] for row in rows if "claim" in row],
                       "waiting_on_a_person": [row["ticket_id"] for row in rows if row["action"] == "stop"]}, indent=2, ensure_ascii=False))
@@ -1107,6 +1244,125 @@ def cmd_release(project: Project, args: argparse.Namespace) -> int:
     return 0
 
 
+# ---- M14 Factory evals (skills/observe/scripts/evals.py): past tickets replayed in throwaway clones, on a person's command ----
+
+
+def cmd_eval(project: Project, args: argparse.Namespace) -> int:
+    """Factory evals. collect, add and run are a person's commands and refused inside a supervised execution (evals.py checks).
+    A run goes through the executor's boundary with its own narrow settings; no machine-local authorization is read."""
+    import importlib.util
+    here = Path(__file__).resolve()
+    sys.path.insert(0, str(here.parent))
+    import executor
+    import policy
+    import provenance
+    spec = importlib.util.spec_from_file_location("mach_evals", sibling("observe") / "scripts" / "evals.py")
+    E = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(E)
+    evals = E.Evals(project.root, project.config, sibling=sibling, run_script=here, executor=executor, policy=policy, provenance=provenance)
+    try:
+        if args.action == "collect":
+            result = evals.collect(args.ticket or [])
+        elif args.action == "add":
+            result = evals.add(from_ticket=args.from_ticket, spec=Path(args.spec) if args.spec else None, base=args.base, intent=Path(args.intent) if args.intent else None,
+                               title=args.title, reason=args.reason, case_id=args.case, must_pass=args.must_pass)
+        elif args.action == "status":
+            result = evals.status(args.ticket)
+        elif args.action == "run" and args.confirm:
+            result = evals.run(code=args.confirm, accept_risk=args.accept_execution_risk, keep=args.keep)
+        elif args.action == "run":
+            if not args.plan:
+                raise RunError("An eval run starts with its plan: eval run --plan --budget <USD>. It shows what would run and gives a code; nothing is spent.")
+            result = evals.plan(budget=args.budget, chosen=args.cases or [], limit=args.limit, ticket=args.ticket, max_minutes=args.max_minutes)
+        elif args.action == "compare":
+            result = evals.compare(args.before, args.after)
+        else:
+            result = evals.show(args.name)
+    except E.EvalError as exc:
+        raise RunError(str(exc))
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0
+
+
+def eval_parser(sub: Any) -> None:
+    ev = sub.add_parser("eval", help="factory evals: past tickets replayed when the Factory's rules, skills or models change").add_subparsers(dest="action", required=True)
+    p = ev.add_parser("collect", help="cases from merged tickets' archives, redacted, without evidence media")
+    p.add_argument("--ticket", action="append", metavar="T", help="only this ticket (repeatable)")
+    p = ev.add_parser("add", help="an escaped defect (--from-ticket), a case by hand (--spec, --base), or mark a case (--case)")
+    p.add_argument("--from-ticket", metavar="T")
+    p.add_argument("--spec", metavar="FILE", help="a slice spec, SLICE-NNN-name.md")
+    p.add_argument("--base", metavar="COMMIT", help="with --spec: the commit the work starts from")
+    p.add_argument("--intent", metavar="FILE", help="with --spec: its intent.md")
+    p.add_argument("--title")
+    p.add_argument("--reason", help="the person's words: why this case is kept (for an escaped defect, the defect)")
+    p.add_argument("--case", metavar="C", help="an existing case, with --must-pass or --no-must-pass")
+    p.add_argument("--must-pass", dest="must_pass", action="store_true", default=None)
+    p.add_argument("--no-must-pass", dest="must_pass", action="store_false")
+    p = ev.add_parser("status", help="cases, the last run, and what changed in the configuration since; starts nothing")
+    p.add_argument("--ticket", metavar="T", help="the configuration on this ticket's branch (a factory-tuning change)")
+    p = ev.add_parser("run", help="--plan shows what would run and its ceiling and spends nothing; --confirm runs it, on a person's yes")
+    p.add_argument("--plan", action="store_true")
+    p.add_argument("--budget", type=float, metavar="USD", help="with --plan: the most the whole run may spend, in US dollars")
+    p.add_argument("--cases", nargs="+", metavar="C")
+    p.add_argument("--limit", type=int)
+    p.add_argument("--ticket", metavar="T", help="with --plan: evaluate the configuration on this ticket's branch")
+    p.add_argument("--max-minutes", type=int, help="with --plan: stop one case after this many minutes (5 to 720, default 120)")
+    p.add_argument("--confirm", metavar="CODE", help="the code the plan printed, after the person has said yes")
+    p.add_argument("--accept-execution-risk", action="store_true", help="with --confirm: the person has read the execution risk and accepts it")
+    p.add_argument("--keep", action="store_true", help="with --confirm: keep each throwaway clone for inspection")
+    p = ev.add_parser("compare", help="two runs, deterministically: pass rate, changed outcomes, cost and time")
+    p.add_argument("before")
+    p.add_argument("after")
+    p = ev.add_parser("show", help="one case, run or comparison")
+    p.add_argument("name")
+    for parser in ev.choices.values():
+        parser.set_defaults(func=cmd_eval)
+
+
+# ---- end of M14 Factory evals ----
+
+
+# ---- M15 control bands (skills/observe/scripts/observe.py bands): read only here; a tier-3 breach makes an observe pass due ----
+_BANDS: List[Any] = []
+
+
+def bands_station() -> Any:
+    if not _BANDS:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("mach_observe_bands", sibling("observe") / "scripts" / "observe.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _BANDS.append(module)
+    return _BANDS[0]
+
+
+def bands_due(root: Path, status: Dict[str, Any]) -> Dict[str, Any]:
+    """The cleanup station's answer, plus the control bands' fixed line, and a pass due now when a tier-3 breach says so."""
+    summary = bands_station().bands_summary(root)
+    status = dict(status, bands=summary.get("say"))
+    if summary.get("observe_pass_due") and not status.get("due"):
+        status.update(due=True, because="control-band", bands_due=summary["observe_pass_due"])
+    return status
+
+
+def cmd_bands(project: Project, args: argparse.Namespace) -> int:
+    """/mach bands: each measure against its band (records signals only); dismiss is a person's word, refused unattended by observe.py."""
+    argv = ["--project", str(project.root), "bands"] + (["dismiss", args.measure or "", "--reason", args.reason or ""] if args.action == "dismiss" else [])
+    return bands_station().main(argv + (["--by", args.by] if args.action == "dismiss" and args.by else []))
+
+
+def bands_parser(sub: Any) -> None:
+    p = sub.add_parser("bands", help="each Factory measure against its control band; dismiss: a person sets one breach aside")
+    p.add_argument("action", nargs="?", choices=("dismiss",))
+    p.add_argument("measure", nargs="?")
+    p.add_argument("--reason")
+    p.add_argument("--by")
+    p.set_defaults(func=cmd_bands)
+
+
+# ---- end of M15 control bands ----
+
+
 def cmd_requests(project: Project, args: argparse.Namespace) -> int:
     """Monitoring requests (M8 D7), on an engineer's explicit command: take issues in and report. Starts no agent."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -1183,6 +1439,21 @@ def cmd_adr(project: Project, args: argparse.Namespace) -> int:
                       **({"baseline_topic": args.baseline, "evidence_files": evidence, "open_points": len(args.open_point or [])} if args.baseline else {}),
                       "next": "It is in the main checkout's working tree as proposed and binds nothing yet. Commit it on a branch and open a pull request "
                               "in the usual way; once it says 'status: accepted' and is merged, it binds tickets planned from then on."}, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_policy(project: Project, args: argparse.Namespace) -> int:
+    """Policy packs (M14, the intent station's policies.py): `list` reads the main checkout's committed packs and changes nothing."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("mach_policies", sibling("intent") / "scripts" / "policies.py")
+    P = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(P)
+    found = P.listing(project.root, project.config)
+    print(json.dumps({"reads_only": True, **P.for_validator(found),
+                      "read_from": f"commit {found['commit'][:12]}" if found["commit"] else "the working tree (no commits yet)",
+                      "every_pack": [P.public(record) for record in found["packs"]],
+                      "note": P.DATA_NOTE + " Packs change only by pull request. A pack changed later binds slices marked ready afterwards."},
+                     indent=2, ensure_ascii=False))
     return 0
 
 
@@ -1420,6 +1691,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="the options as JSON, for the run skill's walkthrough")
     p.set_defaults(func=cmd_decide)
 
+    p = sub.add_parser("report", help="MACH's own internal error as an issue text for MACH's repository: shown first, filed only with --confirm")
+    p.add_argument("target", nargs="*", metavar="fault-or-words", help="a fault's id (from status or doctor), and/or the person's own words")
+    p.add_argument("--print", action="store_true", dest="print_only", help="only print the text, to file by hand")
+    p.add_argument("--new", action="store_true", help="a new issue even when an open one has the same fingerprint")
+    p.add_argument("--confirm", metavar="CODE", help="file exactly the text the preview showed; only on the person's yes")
+    p.set_defaults(func=cmd_report)
     p = sub.add_parser("doctor", help="check the machine and the project; --fix only creates missing MACH folders")
     p.add_argument("--fix", action="store_true", help="create missing MACH folders; never edits settings or enables anything")
     p.add_argument("--json", action="store_true")
@@ -1467,6 +1744,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", help="change nothing; print the same schedule")
     p.add_argument("--json", action="store_true", help="the report as JSON, for the run skill")
     p.set_defaults(func=cmd_pull)
+    policy_parser = sub.add_parser("policy", help="the organisation's policy packs: list them; reads only").add_subparsers(dest="action", required=True)
+    policy_parser.add_parser("list", help="every policy pack: ID, owner, status, applies-to, statements and problems; reads only").set_defaults(func=cmd_policy)
     adr_parser = sub.add_parser("adr",help="architecture decisions: list them, or write a new one as proposed").add_subparsers(dest="action", required=True)
     adr_parser.add_parser("list", help="every ADR: ID, title, status, applies-to and problems; reads only").set_defaults(func=cmd_adr)
     p = adr_parser.add_parser("new", help="write a new ADR as proposed in the main checkout's working tree; commits nothing")
@@ -1516,6 +1795,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--by", required=True, help="the role of the person who decided, such as release-manager")
     p.add_argument("--reason", required=True)
     p.set_defaults(func=cmd_release)
+    eval_parser(sub)  # M14 Factory evals
+    bands_parser(sub)  # M15 control bands
 
     fac = sub.add_parser("factory", help="the Factory on this machine: status, enable, pause, resume, disable").add_subparsers(dest="action", required=True)
     fac.add_parser("status", help="what is in force here; changes nothing").set_defaults(func=cmd_factory)
@@ -1608,4 +1889,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 
 if __name__ == "__main__":
+    import contextlib as _c, os as _o, runpy as _r  # MACH records an internal error for /mach report (skills/intent/scripts/faults.py)
+    with _c.suppress(Exception): _r.run_path(next(p for p in (_o.path.join(_o.path.abspath(__file__).rsplit(_o.sep, 3)[0], d, "scripts", "faults.py") for d in ("intent", "mach-intent")) if _o.path.isfile(p)))["install"](__file__)
     sys.exit(main())

@@ -372,6 +372,24 @@ export function verify(lane: Lane, t: number, c: CellContent, suite: Suite): { e
   c.targets.forEach((target, i) => {
     const fails = target.fail?.round === round;
     const files = [`evidence/${target.evidence}`];
+    if (target.mock) {
+      // M15: a design mock is compared, not driven: the approved picture's copy beside this run's capture (verify.py compare).
+      const mock = target.mock;
+      files.push(`evidence/${mock.capture}`);
+      verifier.tool("Bash", `verify.py compare ${lane.ticket} ${target.id} --result ${mock.compared.replace(" ", "-")} --capture ${mock.capture}`, 600, { summary: "COMPARED", gap: 0 }, (end, call) => {
+        verifier.scriptArtifact(end - 300, { kind: "evidence", path: files[0] ?? "", label: target.evidence, summary: "The approved design mock (the simulation's sample)", sha: sha40(`${lane.ticket}-${target.evidence}`) }, call, "verify.py start");
+        lane.ev(end - 200, "evidence.captured", {
+          round,
+          target_id: target.id,
+          target_kind: target.kind,
+          result: mock.binding && mock.compared === "differs" ? "fail" : "pass",
+          evidence: files.map((f) => `${lane.ticket}:${f}`),
+          note: target.note,
+          mock: { compared: mock.compared, binding: mock.binding, forScenario: mock.forScenario, differences: mock.differences },
+        }, call.started);
+      });
+      return;
+    }
     verifier.tool("Bash", `pnpm exec playwright test evidence/driver.spec.ts -g "${target.id}"`, (target.kind === "scenario" ? 24 : 15) * S + i * 700, { summary: fails ? "1 failed" : "1 passed", ok: true }, (end, call) => {
       verifier.scriptArtifact(end - 300, { kind: "evidence", path: files[0] ?? "", label: target.evidence, summary: fails ? target.fail?.note ?? "" : target.note, sha: sha40(`${lane.ticket}-${target.evidence}-${round}`) }, call, "playwright");
       if (i === 0) {

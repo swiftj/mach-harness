@@ -313,7 +313,7 @@ def run_record(cell: Cell, outcome: str, reason: Optional[str], archive: str, pl
     summaries = [load_dict(path / "summary.json") for _, path in numbered(list(evidence.glob("previous-*")))] + [load_dict(evidence / "summary.json")]
     failed = [summary for summary in summaries if summary.get("status") == "FAIL_WITH_EVIDENCE"]
 
-    decisions, blockers, notes, exceptions = [], [], [], []
+    decisions, blockers, notes, exceptions, ratings, nits_dropped = [], [], [], [], [], 0
     for number, folder in numbered(list((cell.root / "review").glob("round-*"))):
         decision = load_dict(folder / "decision.json")
         decisions.append(decision)
@@ -340,7 +340,12 @@ def run_record(cell: Cell, outcome: str, reason: Optional[str], archive: str, pl
                     blockers.append(entry)
                 elif isinstance(finding, dict) and finding.get("severity") == "note":
                     notes.append({"round": number, "reviewer": str(vote.get("reviewer") or path.stem),
-                                  "title": str(finding.get("title") or ""), "file": text_or_none(finding.get("file"))})
+                                  "title": str(finding.get("title") or ""), "file": text_or_none(finding.get("file")),
+                                  **({"weight": finding["weight"]} if finding.get("weight") in ("important", "nit") else {})})  # M15
+            nits_dropped += vote["nits_dropped"] if type(vote.get("nits_dropped")) is int else 0
+        # M15: people's ratings of findings (review.py rate), identifiers and codes only, never who rated: for the observe station later.
+        ratings += [{"round": number, **{key: text_or_none(item.get(key)) for key in ("finding", "rating", "seat", "severity", "weight", "rule")}}
+                    for item in (load_dict(folder / "ratings.json").get("ratings") or []) if isinstance(item, dict)]
 
     first_run = build.get("tests_passing_on_first_run")
     seen_failing = build.get("tests_seen_failing_first")
@@ -372,6 +377,10 @@ def run_record(cell: Cell, outcome: str, reason: Optional[str], archive: str, pl
     }
     if exceptions:  # optional: present only for a ticket that had one, so every other record keeps its shape (record_version stays 2)
         record["security_exceptions"] = exceptions
+    if ratings:  # M15, optional the same way: present only when a person rated a finding
+        record["finding_ratings"] = ratings
+    if nits_dropped:  # M15, optional: nits the review station did not keep (review.nit_cap)
+        record["nits_dropped"] = nits_dropped
     scanned = scan_record(decisions)
     if scanned:  # optional, the same way: present only when the scan flagged something or was switched off
         record["security_scan"] = scanned
@@ -866,4 +875,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 
 if __name__ == "__main__":
+    import contextlib as _c, os as _o, runpy as _r  # MACH records an internal error for /mach report (skills/intent/scripts/faults.py)
+    with _c.suppress(Exception): _r.run_path(next(p for p in (_o.path.join(_o.path.abspath(__file__).rsplit(_o.sep, 3)[0], d, "scripts", "faults.py") for d in ("intent", "mach-intent")) if _o.path.isfile(p)))["install"](__file__)
     sys.exit(main())

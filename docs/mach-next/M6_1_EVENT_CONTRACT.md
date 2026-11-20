@@ -68,7 +68,7 @@ Every event the observer serves has exactly these fields. `null` means *not appl
 | Field | Type | Meaning |
 |---|---|---|
 | `schema_version` | `3` | |
-| `schema_revision` | integer | Additive revision within 3 (started at 0). Revision 1 adds `execution.usage.cost_complete` and `cost_incomplete_reasons`. Revision 2 (M6.2 fixes) adds `history.gap.class` and `history_lost` (and the reasons `unexpected-shape`, `evicted`), `origin.runtime_state` on stream events, and `station.exited.app_type` and `risk` on the plan's exit. Revision 3 (M6.5) adds `execution.started.source_commit`, `provenance` and `provenance_reason` (section 10.1.1). The observer serves revision 3 and reports it in `GET /api/v1/session` (`versions.event.revision`). |
+| `schema_revision` | integer | Additive revision within 3 (started at 0). Revision 1 adds `execution.usage.cost_complete` and `cost_incomplete_reasons`. Revision 2 (M6.2 fixes) adds `history.gap.class` and `history_lost` (and the reasons `unexpected-shape`, `evicted`), `origin.runtime_state` on stream events, and `station.exited.app_type` and `risk` on the plan's exit. Revision 3 (M6.5) adds `execution.started.source_commit`, `provenance` and `provenance_reason` (section 10.1.1). Revisions 4 to 6 (M11, M12) are described in the schema. Revision 7 (M15) adds the fields of section 10.7. The observer serves revision 7 and reports it in `GET /api/v1/session` (`versions.event.revision`). |
 | `id` | string | Deterministic event id (section 5.1). |
 | `type` | string | The kind (section 11). Kept as `type`, as in v2 and M6.0. |
 | `pos` | integer | Delivery position in this index epoch. The cursor. |
@@ -417,6 +417,26 @@ Snapshots restate every agent, so the normaliser **diffs** each snapshot against
 | `capacity.wait_changed` | a v2 `scheduling.decided` whose `held[]` has a `ticket_id` with the supervisor's fixed sentence `all <n> place(s) are in use` (`supervisor.py schedule`) → `waiting`; the next `scheduling.decided` that no longer holds it for that reason → `released` | `inferred: {"data.state": "held-sentence"}`; scope `execution` (places for executions). A slice waiting for a free cell is filtered out of v2 and stays `unknown`; silence is never read as waiting (D16) |
 | `agent.finished`, `tool.returned` with `status: unknown` | an execution that ended with them open | section 8 |
 | `history.began`, `history.gap` | sections 6.5 and 8 | |
+
+### 10.7 Revision 7 (M15): the waits and records of M13 and M14
+
+Additive; no kind is added or removed. Revisions 4 to 6 are described in the schema (`schema_revision`). Every new field is a code or an identifier taken from what MACH recorded, checked again by the observer, and `null` when it is not one the observer knows: a value a later MACH adds degrades to the account the Floor gave before. Built and tested: `docs/mach-next/M15_FACTORY_FLOOR.md`.
+
+| Kind | Field | From | Rule |
+|---|---|---|---|
+| `human.required` | `needs` | the reason intake writes (`intake.py record`: `waiting for <needs>` among the reasons it joins with `; `) | a code of run.py's routing sheet (`StopCodes` in `redact/allow.go`, as of M14: `answers`, `policy-owner`, `human-approval`, `merge`, `person-to-take-over`, `repository-hardening`, `person`, `worker-in-cell`, `dispatch`, `product-answer`, `adr-decision`, `adr-acceptance`, `adr-fix`, `adr-baseline`, `security-exception-expired`, `main-conflict`); `inferred: {"data.needs": "fixed-phrase"}`; any other words give `null`. The reason itself is kept as before |
+| `execution.completed` | `needs` | `waiting_for` (executor.py writes run.py's code there) | the same list; `waiting_for` is kept as before |
+| `intake.refused` | `waiting` | intake's fixed sentence `Waiting for its design mocks: ...` (M14 part C; the `not_accepted` item's `waiting: mocks` is not in the log itself) | `mocks` or `null`; `inferred: {"data.waiting": "fixed-phrase"}` |
+| `review.round_started` | `repeat` | the decisions of that judging round this lifecycle log recorded before the start | 0 for the round itself, k for its k-th repeat (`review/round-N.k`, opened after the merge station voided the approval, M13); `inferred: {"data.repeat": "decided-before"}` when not 0. A repeat uses no judging round; `restarted` keeps its meaning |
+| `verify.check_recorded` | `target_kind` | the record's `kind`, else the id | gains `design mock` (`MOCK-N`). verify.py `compare` writes no lifecycle line today: a mock's check reaches the Floor through the evidence route (below) |
+| `gate.evaluated` | `gate` | the station's gate name | the pattern allows `_` after the dot, for `merge.landed_overlap` (M13's check at the merge); before revision 7 the name was replaced by the station's |
+| `slice.materialized` | `jira` | the intake ledger's `slices.<id>.jira` for this revision (M13 part E) | Jira's form `[A-Z][A-Z0-9_]{1,31}-[1-9][0-9]{0,8}`, at most 42 characters; an identifier, never a link |
+| `run.recorded` | `jira`, `change_record` | the run record's `jira` and `change_record` (M13) | the key as above; the record's repository-relative path (`<dir>/<name>.md`, not under `.factory`, `.git` or `.claude`) and SHA-256, the path shown as text, never as a link |
+| `merge.completed` | `change_record` | the cell's `cell.json` `change_record`, read when the line is normalised | the same rule; `inferred: {"data.change_record": "cell-file"}`; `null` when the cell's files cannot be read |
+
+The evidence route (`GET /api/v1/cells/{ticket}/evidence`) lists a design mock's check from `results.json` (`mocks`, `mock_records`, `records`): `target_kind: "design mock"`, `basis: "results.json"` (a check from the lifecycle log says `basis: "lifecycle"`), each file with `role` (`approved-mock` for the copy `results.json`'s `mocks` names by path and hash, `capture` for the others), and `mock`: `compared` (`matches`, `differs`, `cannot compare`, or `null`), `binding`, `for` (the scenario), and the verifier's `note` and `differences`, which are free text (scrubbed, at most 280 characters each, labelled with `free_text_note`, and listed in `display_policy.free_text.catalog_fields`). The catalogue's evidence entries carry the same `role`, `compared` and `binding` on their `targets[]`. A voided decision whose reason is M13's sentence has `voided.reason_code: "landed-overlap"`.
+
+The observer reads neither `.factory/evals/` (M14 part D) nor `.factory/local/faults/` (M14 part E).
 
 ---
 

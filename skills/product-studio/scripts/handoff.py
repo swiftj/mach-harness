@@ -36,11 +36,12 @@ BUSY = "Another Product Studio command is saving to GitHub; try again."
 
 
 class HandoffError(Exception):
-    """A refusal studio.py prints; `hint` is the app action that resolves it."""
+    """A refusal studio.py prints; `hint` is the app action that resolves it, `app` its wording for the app when it differs."""
 
-    def __init__(self, message: str, hint: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, hint: Optional[Dict[str, Any]] = None, app: Optional[str] = None):
         super().__init__(message)
         self.hint = hint
+        self.app = app
 
 
 def utc_now() -> str:
@@ -208,14 +209,15 @@ class Handoff:
     # ---- marking ready on GitHub ----
 
     def prepare(self, data: Dict[str, Any], channel: Channel, slice_id: str, title: str, epic: Dict[str, Any], project: Dict[str, Any],
-                dependencies: Sequence[str], why: str, spec: str, jira: Optional[str] = None) -> Dict[str, Any]:
+                dependencies: Sequence[str], why: str, spec: str, jira: Optional[str] = None, mocks: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """Every read and every decision before the first write. Returns the plan of the run, or refuses. A changed
-        Jira key (M13) is a change like a changed spec: a new revision."""
+        Jira key (M13) or a changed set of design mocks (M14 C) is a change like a changed spec: a new revision."""
         data = self.for_repository(data, str(channel.repository))
         snapshot = self.snapshot(str(channel.repository))
         self.remember(data, snapshot)
         self.save(data)
         spec_sha, why_sha = self.rules.text_sha256_of(spec), self.rules.text_sha256_of(why)
+        mocks_sha = self.rules.mocks_sha256(mocks) if mocks else None  # M14 C: the digest the marker and the approval carry
         entry = self.entry(data, slice_id)
         own, others = self.own_issue(data, slice_id, snapshot, spec_sha, why_sha)
         if others and not own:
@@ -224,7 +226,7 @@ class Handoff:
         run = entry.get("run") or {}
         if own:
             marker = own["marker"]
-            same = (marker["spec_sha256"], marker["why_sha256"], marker.get("jira")) == (spec_sha, why_sha, jira)
+            same = (marker["spec_sha256"], marker["why_sha256"], marker.get("jira"), marker.get("mocks_sha256")) == (spec_sha, why_sha, jira, mocks_sha)
             if marker["revision"] > entry["base_revision"] and not same and marker["revision"] != run.get("revision"):
                 raise HandoffError(f"Someone else saved a newer version of {slice_id} on GitHub (version {marker['revision']}). "
                                    f"Choose yours or theirs before marking it ready.", {"kind": "reconcile", "target": slice_id})
@@ -240,7 +242,7 @@ class Handoff:
         else:
             follows = max(entry["shipped"]) if entry["shipped"] else None
             revision = (run.get("revision") if run.get("spec_sha256") == spec_sha and run.get("why_sha256") == why_sha and run.get("jira") == jira
-                        and run.get("revision") else entry["base_revision"] + 1)
+                        and run.get("mocks_sha256") == mocks_sha and run.get("revision") else entry["base_revision"] + 1)
         depends = []
         for dependency in dependencies:
             number = self.published_number(data, snapshot, dependency)
@@ -250,11 +252,13 @@ class Handoff:
             depends.append(number)
         epic_issue = self.find_epic(data, snapshot, epic)
         project_issue = self.find_project(data, snapshot, project)
-        body = self.rules.slice_issue_body(slice_id, revision, epic_issue or 999999999, depends, why, spec, follows, jira)
+        body = self.rules.slice_issue_body(slice_id, revision, epic_issue or 999999999, depends, why, spec, follows, jira, mocks)
         if len(body) > self.rules.ISSUE_BODY_LIMIT:
             raise HandoffError(too_large(slice_id, len(body), self.rules.ISSUE_BODY_LIMIT))
-        same_run = run.get("revision") == revision and run.get("spec_sha256") == spec_sha and run.get("why_sha256") == why_sha and run.get("jira") == jira
+        same_run = (run.get("revision") == revision and run.get("spec_sha256") == spec_sha and run.get("why_sha256") == why_sha and run.get("jira") == jira
+                    and run.get("mocks_sha256") == mocks_sha)
         entry["run"] = {"revision": revision, "spec_sha256": spec_sha, "why_sha256": why_sha, "jira": jira, "login": channel.login,
+                        **({"mocks": list(mocks), "mocks_sha256": mocks_sha} if mocks else {}),
                         "depends": depends, "follows": follows, "title": title, "epic_id": epic["epic_id"],
                         "steps": dict(run.get("steps") or {}) if same_run else {}, "started_at": run.get("started_at") if same_run else utc_now()}
         if own:
@@ -372,7 +376,7 @@ class Handoff:
         epic_number = data["epics"][epic["epic_id"]]["number"]
 
         if step("slice"):
-            body = self.rules.slice_issue_body(slice_id, run["revision"], epic_number, run["depends"], why, spec, run.get("follows"), run.get("jira"))
+            body = self.rules.slice_issue_body(slice_id, run["revision"], epic_number, run["depends"], why, spec, run.get("follows"), run.get("jira"), run.get("mocks"))
             title = self.rules.issue_title(run["title"])
             names = ["mach:slice"]
             number, failure = self.ensure(repository, entry.get("number"), title, body, names, "mach:slice", f"slice-{slice_id}")
@@ -387,11 +391,12 @@ class Handoff:
             if failure:
                 stop(failure)
             wanted = {"slice_id": slice_id, "revision": run["revision"], "by": run["login"], "spec_sha256": run["spec_sha256"], "why_sha256": run["why_sha256"],
-                      **({"jira": run["jira"]} if run.get("jira") else {})}
+                      **({"jira": run["jira"]} if run.get("jira") else {}), **({"mocks_sha256": run["mocks_sha256"]} if run.get("mocks_sha256") else {})}
             mine = [c["body"] for c in found or [] if c.get("login") == run["login"]]
             if wanted not in self.rules.approvals(mine):
                 failure = issues.comment(self.project, repository, number,
-                                         self.outgoing_file("approval", self.rules.approval_comment(slice_id, run["revision"], run["login"], run["spec_sha256"], run["why_sha256"], run.get("jira"))))
+                                         self.outgoing_file("approval", self.rules.approval_comment(slice_id, run["revision"], run["login"], run["spec_sha256"], run["why_sha256"],
+                                                                                                    run.get("jira"), run.get("mocks_sha256"))))
                 if failure:
                     stop(failure)
             finished("approval")
@@ -414,6 +419,8 @@ class Handoff:
 
         entry.update(saved="github", revision=run["revision"], base_revision=run["revision"], spec_sha256=run["spec_sha256"],
                      why_sha256=run["why_sha256"], jira=run.get("jira"), approved_by=run["login"], ready_at=utc_now(), run=None)
+        if run.get("mocks_sha256") or entry.get("mocks_sha256"):
+            entry["mocks_sha256"] = run.get("mocks_sha256")  # M14 C: kept only once a slice has had mocks
         # What was just written is what the issue now says, without waiting for the next refresh.
         seen_rows = data.setdefault("seen", {}).setdefault("slices", {}).setdefault(slice_id, [])
         row = next((item for item in seen_rows if item.get("issue") == number), None)
@@ -489,7 +496,9 @@ class Handoff:
                 revision = theirs["revision"]
             elif theirs and theirs["intact"] and theirs["revision"] > base and theirs["revision"] != run.get("revision"):
                 raise HandoffError(f"Someone else published version {theirs['revision']} of the principles on GitHub. Choose yours or theirs "
-                                   "before publishing (reconcile principles --take mine|theirs). Nothing was saved.", {"kind": "reconcile", "target": "principles"})
+                                   "before publishing (reconcile principles --take mine|theirs). Nothing was saved.", {"kind": "reconcile", "target": "principles"},
+                                   app=f"Someone else published version {theirs['revision']} of the principles on GitHub. Choose yours or theirs "
+                                       "on the Product principles page before publishing. Nothing was saved.")
             elif run.get("sha256") == sha and run.get("revision"):
                 revision = run["revision"]
             else:
@@ -699,14 +708,18 @@ class Handoff:
         return self.draft / "product" / "ready" / slice_id
 
     def write_folder(self, data: Dict[str, Any], slice_id: str, title: str, epic: Dict[str, Any], dependencies: Sequence[str],
-                     why: str, spec: str, jira: Optional[str] = None) -> Dict[str, Any]:
+                     why: str, spec: str, jira: Optional[str] = None, mocks: Optional[List[Dict[str, Any]]] = None,
+                     mock_files: Optional[Dict[str, bytes]] = None) -> Dict[str, Any]:
         entry = self.entry(data, slice_id)
         spec_sha, why_sha = self.rules.text_sha256_of(spec), self.rules.text_sha256_of(why)
-        same = (entry.get("spec_sha256"), entry.get("why_sha256"), entry.get("jira")) == (spec_sha, why_sha, jira) and entry.get("saved") == "folder"
+        mocks_sha = self.rules.mocks_sha256(mocks) if mocks else None  # M14 C: changed pictures are a new revision
+        same = ((entry.get("spec_sha256"), entry.get("why_sha256"), entry.get("jira"), entry.get("mocks_sha256")) == (spec_sha, why_sha, jira, mocks_sha)
+                and entry.get("saved") == "folder")
         revision = entry.get("revision") if same else int(entry.get("base_revision") or 0) + 1
         record = {"schema_version": 1, "slice_id": slice_id, "title": title, "revision": revision,
                   "epic": {"epic_id": epic["epic_id"], "title": epic.get("title")}, "dependencies": list(dependencies),
-                  "spec_sha256": spec_sha, "why_sha256": why_sha, **({"jira": jira} if jira else {})}  # M13: the Jira key, only when set
+                  "spec_sha256": spec_sha, "why_sha256": why_sha, **({"jira": jira} if jira else {}),  # M13: the Jira key, only when set
+                  **({"mocks": list(mocks)} if mocks else {})}  # M14 C: the design mocks, only when there are some; their files are in mocks/
         target = self.folder(slice_id)
         target.parent.mkdir(parents=True, exist_ok=True)
         staging = Path(tempfile.mkdtemp(prefix=f".{slice_id}.", dir=str(target.parent)))
@@ -714,12 +727,17 @@ class Handoff:
             (staging / "spec.md").write_text(spec, encoding="utf-8")
             (staging / "why.md").write_text(why, encoding="utf-8")
             (staging / "slice.json").write_text(json.dumps(record, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+            for name, picture in (mock_files or {}).items() if mocks else ():
+                (staging / "mocks").mkdir(exist_ok=True)
+                (staging / "mocks" / name).write_bytes(picture)
             if target.exists():
                 shutil.rmtree(target)
             os.replace(str(staging), str(target))
         finally:
             shutil.rmtree(staging, ignore_errors=True)
         entry.update(saved="folder", revision=revision, base_revision=revision, spec_sha256=spec_sha, why_sha256=why_sha, jira=jira, ready_at=utc_now(), run=None)
+        if mocks_sha or entry.get("mocks_sha256"):
+            entry["mocks_sha256"] = mocks_sha
         self.save(data)
         return {"folder": str(target), "revision": revision}
 
@@ -818,8 +836,8 @@ class Handoff:
         marker = item["marker"]
         latest = [a for a in self.rules.approvals([c["body"] for c in found or []]) if a["slice_id"] == marker["slice_id"] and a["revision"] == marker["revision"]]
         approved = latest[-1] if latest else None
-        matches = bool(marker["intact"] and approved and (approved["spec_sha256"], approved["why_sha256"], approved.get("jira"))
-                       == (marker["spec_sha256"], marker["why_sha256"], marker.get("jira")))  # M13: the Jira key is part of what was approved
+        matches = bool(marker["intact"] and approved and (approved["spec_sha256"], approved["why_sha256"], approved.get("jira"), approved.get("mocks_sha256"))
+                       == (marker["spec_sha256"], marker["why_sha256"], marker.get("jira"), marker.get("mocks_sha256")))  # M13, M14 C: the key and the mocks too
         state_label = next((name for name in ("mach:question", "mach:shipped", "mach:building", "mach:ready") if name in item["labels"]), None)
         return {"issue": item["number"], "state": item["state"], "state_label": state_label, "revision": marker["revision"],
                 "title": self.rules.list_title(item.get("title")), "epic_issue": marker["epic"],

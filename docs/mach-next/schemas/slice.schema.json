@@ -24,6 +24,27 @@
       "required": ["jira"],
       "properties": {"jira": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,31}-[1-9][0-9]{0,8}$"}}
     },
+    "mocks": {
+      "description": "Optional (M14 C): the slice's design mocks, approved pictures by SHA-256, in SHA-256 order. The pictures are files beside the work order (product/mocks/SLICE-NNN/ in the workspace), never in this record.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sha256", "format", "width", "height", "bytes", "for", "binding", "note"],
+        "properties": {
+          "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "format": {"enum": ["png", "jpeg"]},
+          "width": {"type": "integer", "minimum": 1, "maximum": 10000},
+          "height": {"type": "integer", "minimum": 1, "maximum": 10000},
+          "bytes": {"type": "integer", "minimum": 1, "maximum": 5242880},
+          "for": {"type": ["string", "null"], "pattern": "^AC-[0-9]{2,}$", "description": "The scenario it shows; null for the slice as a whole."},
+          "binding": {"type": "boolean", "description": "True only with a scenario: the built screen must match it, or verification fails."},
+          "note": {"type": ["string", "null"], "maxLength": 200}
+        }
+      }
+    },
     "origin": {
       "description": "Optional (M8): the request a slice came from. Identifiers only; never the issue's text, link or author.",
       "type": "object",

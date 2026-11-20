@@ -14,6 +14,8 @@ Sources, all inside .factory/worktrees/<ticket>/ (written by the stations, never
     review/merge-findings.md        what the merge station sent back
     lifecycle.jsonl                 refused gates (build, an incomplete verification, a merge conflict) and timings
     spec.json                       the title or text of each cited requirement, scenario or rule
+    spec.md                         the spec's open policy concerns (pack, statement, owner, why), and cell.json's
+                                    policy_acceptances (who accepted one, and how the name was checked)
 
 Reviewer, verifier and merge text is untrusted data. It appears only in the fields named `detail`, `rule`
 and `file`, with control and format characters removed and cut to 400 characters. It is never interpreted.
@@ -107,6 +109,50 @@ def adr_facts(root: Path, cellroot: Path, cell: Dict[str, Any], config: Dict[str
             facts["changed_since_plan_note"] = "They apply to tickets planned from now on; this ticket goes on under the ADRs it was planned with."
     except Exception as exc:  # explain reads and reports; a failure to check is said, never hidden
         facts["not_checked"] = f"Architecture decisions could not be checked ({exc.__class__.__name__})."
+    return facts or None
+
+
+_POLICIES: List[Any] = []
+
+
+def policies_helper() -> Any:
+    """The intent station's policies.py, the shared policy-pack helper, whichever way MACH is installed."""
+    if not _POLICIES:
+        import importlib.util
+        skills = Path(__file__).resolve().parent.parent.parent
+        script = next((folder / "scripts" / "policies.py" for folder in (skills / "mach-intent", skills / "intent") if (folder / "scripts" / "policies.py").is_file()), None)
+        if script is None:
+            raise RuntimeError("The intent station's policies.py is not installed beside this skill.")
+        spec = importlib.util.spec_from_file_location("mach_policies_for_explain", script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _POLICIES.append(module)
+    return _POLICIES[0]
+
+
+def policy_facts(cellroot: Path, cell: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The spec's open policy concerns (M15), read from the cell's own copy of the spec: which pack, which statement, who
+    the owner is and why the slice cannot meet it; and each owner's acceptance recorded in cell.json, with how the name
+    was checked. Spec and acceptance text is data, bounded."""
+    facts: Dict[str, Any] = {}
+    try:
+        text = (cellroot / "spec.md").read_text(encoding="utf-8-sig")
+    except OSError:
+        text = ""
+    try:
+        concerns = policies_helper().open_concerns(text) if text else []
+    except Exception as exc:  # explain reads and reports; a failure to check is said, never hidden
+        concerns = []
+        facts["not_checked"] = f"The spec's policy concerns could not be read ({exc.__class__.__name__})."
+    if concerns:
+        facts["open_concerns"] = [{"pack": clean(item.get("pack"), 60), "statement_id": clean(item.get("statement_id"), 60),
+                                   "statement": clean(item.get("statement")), "owner": clean(item.get("owner"), 200), "why": clean(item.get("why")),
+                                   "source_file": "spec.md"} for item in concerns][:10]
+    accepted = [{"statement_id": clean(item.get("statement"), 60), "by": clean(item.get("by"), 120), "owner_check": clean(item.get("owner_check"), 60),
+                 "reason": clean(item.get("reason")), "at": clean(item.get("at"), 40), "source_file": "cell.json"}
+                for item in cell.get("policy_acceptances") or [] if isinstance(item, dict)]
+    if accepted:
+        facts["acceptances"] = accepted[:10]
     return facts or None
 
 
@@ -463,6 +509,9 @@ def explain(root: Path, ticket_id: str, next_info: Dict[str, Any], config: Optio
         facts = dict(facts or {}, baseline_missing=[clean(topic, 40) for topic in next_info.get("missing_topics") or []][:20])
     if facts:
         base["adrs"] = facts
+    held = policy_facts(cellroot, cell)
+    if held:
+        base["policies"] = held
     return base, 0
 
 
@@ -529,6 +578,17 @@ def human(report: Dict[str, Any]) -> str:
         lines.append(f"- [adr] required topics with no accepted ADR on the main branch: {', '.join(facts['baseline_missing'])}; no ticket is planned until each has one")
     if facts.get("not_checked"):
         lines.append(f"- [adr] {facts['not_checked']}")
+    held = report.get("policies") or {}
+    for item in held.get("open_concerns") or []:
+        lines.append(f"- [policy] {item['statement_id']} of {item['pack']} waits for its owner, {item.get('owner') or 'not named'}: "
+                     f"\"{item.get('statement') or ''}\" cannot be met: \"{item.get('why') or ''}\"")
+    for item in held.get("acceptances") or []:
+        lines.append(f"- [policy] {item['statement_id']} accepted by {item.get('by')} ({item.get('owner_check') or 'how the name was checked is not recorded'}): "
+                     f"\"{item.get('reason') or ''}\"")
+    if held.get("not_checked"):
+        lines.append(f"- [policy] {held['not_checked']}")
+    for line in digest.get("rules_changed") or []:
+        lines.append(f"- [older rules] {line}")
     if report.get("headline_code") not in ("unknown_ticket", "archived", "finished"):
         lines.append(f"Rounds: {report['rounds_used']} of {report['max_rounds']} used, {report['rounds_left']} left.")
     nxt = report.get("next") or {}

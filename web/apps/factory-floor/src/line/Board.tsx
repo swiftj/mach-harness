@@ -40,6 +40,8 @@ export function underWords(row: LineRow, now: number): string | null {
     case "held":
       return row.detail ?? (since ? `held ${since}` : null);
     case "person":
+      // M15: a wait M13 or M14 added says which (the marker keeps its state word).
+      if (row.stop && row.detail) return since ? `${row.detail}, ${since}` : row.detail;
       return since ? `waiting ${since}` : "waiting";
     case "stopped":
       return `${row.roundsUsed} round${row.roundsUsed === 1 ? "" : "s"} used`;

@@ -900,8 +900,20 @@ def approving_findings(cell: Cell) -> Tuple[Optional[int], List[Tuple[str, Dict[
         if not SEAT_RE.match(seat) or not isinstance(vote, dict) or not isinstance(vote.get("findings"), list):
             continue
         found += [(seat, finding) for finding in vote["findings"] if isinstance(finding, dict)]
-    found.sort(key=lambda pair: 0 if pair[1].get("severity") == "blocker" else 1)
+    # Blockers first, then important notes (a note without a weight is important), then the nits the review station kept (M15).
+    found.sort(key=lambda pair: 0 if pair[1].get("severity") == "blocker" else 2 if pair[1].get("weight") == "nit" else 1)
     return number, found
+
+
+def nits_dropped(cell: Cell, number: Optional[int]) -> int:
+    """M15: how many nits the approving round's seats listed beyond review.nit_cap; they were never kept, so never posted."""
+    folder = cell.root / "review" / f"round-{number}" / "votes"
+    total = 0
+    for path in sorted(folder.glob("*.json")) if type(number) is int and folder.is_dir() else []:
+        vote = load_json(path, {})
+        if isinstance(vote, dict) and type(vote.get("nits_dropped")) is int and vote["nits_dropped"] > 0:
+            total += vote["nits_dropped"]
+    return total
 
 
 def finding_text(rules: Any, seat: str, finding: Dict[str, Any]) -> Dict[str, Any]:
@@ -913,6 +925,8 @@ def finding_text(rules: Any, seat: str, finding: Dict[str, Any]) -> Dict[str, An
 
     severity = finding.get("severity") if finding.get("severity") in ("blocker", "note") else "note"
     label = f"**{seat}** · {severity}"
+    if severity == "note" and finding.get("weight") in ("important", "nit"):  # M15: shown only when the reviewer gave one
+        label += f" · {finding['weight']}"
     if finding.get("class") == "security":
         impact = finding.get("impact") if finding.get("impact") in IMPACTS else "unstated"
         label += f" · security, {impact} impact"
@@ -968,6 +982,9 @@ def findings_review(cell: Cell, rules: Any, number: int, found: List[Tuple[str, 
         intro += ["", "Findings not on a line of this diff:", *[summary_text(item) for item in listed]]
     if hidden:
         intro += ["", f"{hidden} more finding{'s are' if hidden != 1 else ' is'} not shown here; every finding is kept with the ticket's cell."]
+    dropped = nits_dropped(cell, number)
+    if dropped:
+        intro += ["", f"{dropped} more nit{'s' if dropped != 1 else ''} the reviewers listed {'were' if dropped != 1 else 'was'} not kept: the review station keeps a few per reviewer."]
     return {"body": "\n".join(intro), "inline": inline, "listed": listed, "hidden": hidden,
             "payload": {"commit_id": head, "event": "COMMENT", "body": "\n".join(intro),
                         "comments": [{"path": item["path"], "line": item["line"], "side": "RIGHT", "body": comment_text(item)} for item in inline]}}
@@ -1179,4 +1196,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 
 if __name__ == "__main__":
+    import contextlib as _c, os as _o, runpy as _r  # MACH records an internal error for /mach report (skills/intent/scripts/faults.py)
+    with _c.suppress(Exception): _r.run_path(next(p for p in (_o.path.join(_o.path.abspath(__file__).rsplit(_o.sep, 3)[0], d, "scripts", "faults.py") for d in ("intent", "mach-intent")) if _o.path.isfile(p)))["install"](__file__)
     sys.exit(main())

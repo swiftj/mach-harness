@@ -98,9 +98,21 @@
       "pattern": "^[A-Z][A-Z0-9_]{1,31}-[1-9][0-9]{0,8}$",
       "description": "M13: the Jira issue key the revision was approved with, checked against Jira's form at intake; null when it has none."
      },
+     "mocks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "items": {"type": "object"},
+      "description": "M14 C: present only for a revision with design mocks: each approved picture's SHA-256, format, size, scenario, binding and note (the work order's form). The pictures are kept by hash in received/, never here."
+     },
+     "mocks_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "M14 C: present only with mocks: the digest of the list, as the marker and the approval carry it. It is part of the revision's digest."
+     },
      "digest": {
       "type": "string",
-      "description": "SHA-256 over the why and the spec: the identity of this slice revision."
+      "description": "SHA-256 over the why and the spec (and, M14 C, the design mocks' digest when there are some): the identity of this slice revision."
      },
      "pending_ticket": {
       "type": "boolean",

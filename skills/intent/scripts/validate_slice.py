@@ -32,7 +32,8 @@ REQUIRED_SUBSECTIONS = {
 }
 # Sections a spec has only when they apply, each with the required section it follows (M13). Effects on shipped
 # behaviour is required whenever the caller supplies the shipped rules (check_effects).
-OPTIONAL_SECTIONS = {"Effects on shipped behaviour": "Acceptance criteria", "Principles": "Acceptance criteria"}
+# Policies (M14) holds the answer to each policy pack that applies, checked by policies.py beside this file.
+OPTIONAL_SECTIONS = {"Effects on shipped behaviour": "Acceptance criteria", "Principles": "Acceptance criteria", "Policies": "Acceptance criteria"}
 SECTION_ORDER = tuple(name for required in REQUIRED_SECTIONS
                       for name in (required, *[optional for optional, after in OPTIONAL_SECTIONS.items() if after == required]))
 SUMMARY_FIELDS = ("Actor", "Trigger", "Outcome")
@@ -1186,12 +1187,35 @@ def check_effects(text: str, shipped: Optional[Sequence[Any]], slice_id: Optiona
         report.error(item["line"], item["code"], item["message"])
     if not parsed["present"]:
         return None
-    return [{key: row[key] for key in ("shipped_rule", "slice_id", "rule_id", "effect", "in_slice", "note")} for row in parsed["rows"]]
+    return [{key: row[key] for key in ("line", "shipped_rule", "slice_id", "rule_id", "effect", "in_slice", "note")} for row in parsed["rows"]]
+
+
+# ---- policy packs (M14 part A): the one parser and check live in policies.py, loaded by path like effects.py ----
+_POLICIES: List[Any] = []
+
+
+def policies_module() -> Any:
+    if not _POLICIES:
+        spec = importlib.util.spec_from_file_location("mach_policies_for_validator", Path(__file__).resolve().parent / "policies.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _POLICIES.append(module)
+    return _POLICIES[0]
+
+
+def check_policies(text: str, policies: Optional[Dict[str, Any]], ready: bool, report: Report) -> Optional[List[Dict[str, Any]]]:
+    """The spec's answer to each policy pack (M14). Rows are always checked on their own; with the packs (policies.for_validator's
+    form) every active pack that applies is answered, quoted and owned exactly. An open concern is an error once the spec is ready."""
+    P = policies_module()
+    parsed = P.parse_section(text)
+    for severity, line, rule, message in P.check_section(parsed, policies, P.spec_words(text), ready):
+        (report.error if severity == "error" else report.warning)(line, rule, message)
+    return P.export(parsed) if parsed["present"] else None
 
 
 def analyze(
     text: str, file_name: str, other_specs: Optional[Union[Mapping[str, str], Sequence[str]]] = None, ready: bool = False,
-    principles: Optional[Sequence[Dict[str, Any]]] = None, shipped: Optional[Sequence[Any]] = None,
+    principles: Optional[Sequence[Dict[str, Any]]] = None, shipped: Optional[Sequence[Any]] = None, policies: Optional[Dict[str, Any]] = None,
 ) -> Tuple[List[Finding], Dict[str, Any]]:
     """Check a spec. `principles` is the project's product principles (principles_shape's form), or None when they are not
     known here: then a Principles section is checked on its own and no answer is required. `shipped` is the shipped rules
@@ -1271,6 +1295,9 @@ def analyze(
                             set(requirements) | matrix_ids | {str(scenario["id"]) for scenario in scenarios if scenario.get("id")}, report)
     if effects is not None:
         model["effects"] = effects  # only when the spec has the section; [] for 'None.'
+    packs = check_policies(text, policies, ready, report)
+    if packs is not None:
+        model["policies"] = packs  # M14: only when the spec has the section, so other specs export exactly as before
     if "Dependencies and permissions" in found:
         patterns = {str(entry["id"]): entry["pattern"] for entry in functional}
         covered_by_scenarios = {identifier for scenario in scenarios for identifier in scenario["covers"]}
@@ -1339,6 +1366,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="the shipped rules (the 'rules' list of `run.py current --json`, or its whole output); '## Effects on shipped behaviour' "
              "is then required and each row must name a rule that shipped and is still in force",
     )
+    parser.add_argument(
+        "--policies", type=Path, metavar="FILE",
+        help="the project's policy packs ('cell.py policies --json' or 'run.py policy list' output); every active pack that applies "
+             "must then be answered in '## Policies'",
+    )
     args = parser.parse_args(argv)
     try:
         text = args.spec.read_text(encoding="utf-8-sig")
@@ -1361,7 +1393,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"{args.shipped}: cannot read the shipped rules: {exc}", file=sys.stderr)
             return 2
 
-    findings, model = analyze(text, args.spec.name, sibling_specs(args.spec, args.registry), ready=args.ready, principles=principles, shipped=shipped)
+    packs = None
+    if args.policies is not None:
+        try:
+            packs = policies_module().load(args.policies)
+        except (OSError, UnicodeDecodeError, ValueError, RecursionError) as exc:
+            print(f"{args.policies}: cannot read the policy packs: {exc}", file=sys.stderr)
+            return 2
+
+    findings, model = analyze(text, args.spec.name, sibling_specs(args.spec, args.registry), ready=args.ready, principles=principles, shipped=shipped,
+                              policies=packs)
     errors = sum(1 for f in findings if f.severity == "error")
     stream = sys.stderr if args.export else sys.stdout
     for finding in findings:
@@ -1375,4 +1416,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 
 if __name__ == "__main__":
+    import contextlib as _c, os as _o, runpy as _r  # MACH records an internal error for /mach report (skills/intent/scripts/faults.py)
+    with _c.suppress(Exception): _r.run_path(next(p for p in (_o.path.join(_o.path.abspath(__file__).rsplit(_o.sep, 3)[0], d, "scripts", "faults.py") for d in ("intent", "mach-intent")) if _o.path.isfile(p)))["install"](__file__)
     sys.exit(main())

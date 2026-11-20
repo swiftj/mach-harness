@@ -1,0 +1,42 @@
+{
+  "exit_code": 0,
+  "data": {
+    "reads_only": true,
+    "dir": "policies",
+    "commit": "d80feb6fab2c7450f2317db8ce170db53c93d493",
+    "packs": [
+      {
+        "id": "POL-privacy",
+        "pack": "privacy",
+        "file": "policies/privacy/policy.md",
+        "title": "Privacy",
+        "owner": "Data protection officer (@acme/privacy)",
+        "owner_handle": "@acme/privacy",
+        "status": "active",
+        "applies_to": [
+          "all"
+        ],
+        "digest": "b7b600b3e580d4ec5920ccba7c0f9399ef099991a2b00c2a1758ad355bbcfd81",
+        "binding": true,
+        "problems": [],
+        "short": "b7b600b3e580",
+        "statements": [
+          {
+            "id": "POL-privacy-01",
+            "text": "An invitation email MUST name the workspace that sent it."
+          },
+          {
+            "id": "POL-privacy-02",
+            "text": "Personal data MUST NOT be sent to a service outside the EU region."
+          }
+        ]
+      }
+    ],
+    "problems": [],
+    "slices_answered_under_older": {},
+    "factory_authorized": false,
+    "note": "Packs are the organisation's policies, changed by an engineer's pull request. A pack changed later binds slices marked ready afterwards; slices already answered are flagged, never reopened."
+  },
+  "refused": null,
+  "hint": null
+}

@@ -1,19 +1,9 @@
 import type { SliceCheck, SliceShow, SpecModel, WhyDocument } from "../api/types";
 import { cn } from "../lib/cn";
 import { StateGlyph } from "../lifecycle/glyph";
+import { specSectionOf, type SpecSectionId } from "./sections";
 
-/** The parts of a specification a diagnostic can be placed next to. */
-export type SpecSectionId =
-  | "summary"
-  | "rules"
-  | "requirements"
-  | "decision-table"
-  | "scenarios"
-  | "dependencies"
-  | "assumptions"
-  | "open-questions"
-  | "why"
-  | "source";
+export { specSectionOf, type SpecSectionId };
 
 export interface Diagnostic {
   severity: "error" | "warning" | "open-question" | "why";
@@ -37,21 +27,6 @@ export function whyDocument(show: SliceShow): WhyDocument | null {
   return why && typeof why === "object" ? why : null;
 }
 
-/** The spec's own section headings (as the engine reports them) to the parts the screens show. */
-const sectionByHeading: Record<string, SpecSectionId> = {
-  Summary: "summary",
-  Scope: "summary",
-  Preconditions: "summary",
-  Invariants: "rules",
-  "Functional requirements": "requirements",
-  // The decision matrix and the scenarios share this heading; the table comes first.
-  "Acceptance criteria": "decision-table",
-  "Dependencies and permissions": "dependencies",
-  Assumptions: "assumptions",
-  "Accepted defaults": "assumptions",
-  "Open questions": "open-questions",
-};
-
 /**
  * The engine's check findings, each placed by the section the engine names (`diagnostics[].section`).
  * A finding with no section is about the whole specification. Problems with the why are placed
@@ -69,7 +44,7 @@ export function diagnostics(check: SliceCheck): Diagnostic[] {
     message: d.message,
     line: d.line,
     rule: d.rule,
-    section: d.section ? (sectionByHeading[d.section] ?? null) : null,
+    section: specSectionOf(d),
   }));
   check.intent_problems.forEach((p) => out.push({ severity: "why", message: p, line: null, rule: null, section: "why" }));
   return out;

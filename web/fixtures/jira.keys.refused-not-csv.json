@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "The file is not UTF-8 text. Export it from Jira again as CSV.",
+  "hint": null
+}

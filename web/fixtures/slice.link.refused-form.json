@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "'team 12' is not a Jira issue key. Write it as Jira does: the project key in capitals, a hyphen and the number, such as ABC-123.",
+  "hint": null
+}

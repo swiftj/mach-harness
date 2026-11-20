@@ -18,6 +18,7 @@
 import { MachApiError } from "@mach/ui/api";
 import type { RequestItem, RequestOpName, RequestsBlock, RequestShown } from "../features/inbox/requests/api";
 import { devParam } from "./devState";
+import { memoryRuns } from "./productMemoryFixtures";
 
 const REPOSITORY = "team-space/app";
 const DATA_NOTE =
@@ -63,7 +64,17 @@ function show(found: RequestItem): RequestShown {
   if (found.state === "not_accepted") {
     return { ...rest, text_shown: false, text_note: "This request is not accepted, so its text is not shown here. It can be read on GitHub." };
   }
+  if (found.idea_template) {
+    const real = memoryRuns["request.show.idea"].data?.request;
+    if (real) return { ...rest, text_shown: true, fenced: renumber(real.fenced ?? ""), ...(real.idea ? { idea: renumber(real.idea) } : {}) };
+  }
   return { ...rest, text_shown: true, fenced: fenceLikeTheEngine(found.number, title ?? "", BODIES.get(found.number) ?? "") };
+}
+
+/** The idea request's number here. The engine's own output names issue #43; it is renumbered as a whole. */
+const IDEA = 48;
+function renumber<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value).replaceAll("issue=#43", `issue=#${IDEA}`)) as T;
 }
 
 /** About 20,000 characters that try every way of becoming markup, a link, a script or a fence. */
@@ -128,6 +139,9 @@ function scenario(): RequestsBlock {
       state: HANDLED as RequestItem["state"],
       labelled_by: "riley-lead",
     }),
+    // M14 D: a request filed in the idea template. Its parts are the engine's real output
+    // (web/fixtures/request.show.idea.json, issue #43 there), renumbered to this list.
+    item(IDEA, { title: "Admins add colleagues themselves", body: "Filed in the idea template.", idea_template: true }),
   ];
   switch (devParam("requests")) {
     case "none":
@@ -182,8 +196,10 @@ export async function requestFixtureOp(name: RequestOpName, args: Record<string,
       target.picked_up_here = true;
       target.picked_up_by = [...new Set([...target.picked_up_by, "pat-pm"])];
       target.slices = [...target.slices, sliceId];
+      const real = memoryRuns["request.pick.idea"].data;
       return {
-        slice: { slice_id: sliceId, title: String(args.title ?? "") },
+        slice: { ...(real?.slice ?? {}), slice_id: sliceId, title: String(args.title ?? "") },
+        ...(target.idea_template && real?.request ? { request: renumber({ ...real.request, number: IDEA }) } : {}),
         picked: true,
         github_updates: { note: null },
         used_cached_request: null,

@@ -1,0 +1,21 @@
+{
+  "exit_code": 0,
+  "data": {
+    "imported": false,
+    "already_imported": true,
+    "prd": {
+      "prd_id": "PRD-01",
+      "name": "team-space.md",
+      "format": "markdown",
+      "sha256": "583db8b59444029ca677edf8770e7166b67e64dadd0c177a3863a820c11d667f",
+      "line_count": 22,
+      "sections": 5,
+      "document_matches": true,
+      "mapped": false
+    },
+    "factory_authorized": false,
+    "note": "This document was already imported as PRD-01. Nothing was changed."
+  },
+  "refused": null,
+  "hint": null
+}

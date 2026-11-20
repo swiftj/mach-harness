@@ -59,7 +59,7 @@ DATA_FIELDS = ("situation.title", "situation.reason", "situation.causes[].detail
                "situation.causes[].file", "situation.causes[].requirement.text", "situation.causes[].reasons[]",
                "situation.parked.reason", "situation.approval_reasons[]", "situation.pull_request",
                "situation.adr.title", "situation.adr.reason", "situation.adr_problems[]", "situation.missing_topics[].topic", "situation.proposed[].title", "situation.question",
-               "situation.conflict.files[]")
+               "situation.conflict.files[]", "situation.concerns[].statement", "situation.concerns[].why", "situation.concerns[].owner")
 # A stop for an architecture decision, by the routing sheet's `needs`, and the waiting state it is walked as.
 ADR_STATES = {"adr-decision": "adr-conflict", "adr-acceptance": "adr-acceptance", "adr-fix": "adr-fix", "adr-baseline": "adr-baseline"}
 DATA_NOTE = ("Fields listed in data_fields hold text written by reviewers, the verifier, a test run, a ticket or the supervisor's "
@@ -70,6 +70,7 @@ SUMMARY = {
     "pull-request": "A pull request is open for this ticket and has not landed yet.",
     "merge-stopped": "The merge station stopped before landing this approved ticket.",
     "answers": "The spec has open questions that only the product owner can answer.",
+    "policy-owner": "The spec flags a policy statement this slice cannot meet; it waits for the policy's owner, or for the spec to change so it is met.",
     "product-answer": "The contract engineer found a defect in the slice's spec; the question waits for the product manager on the slice's issue.",
     "build-gate": "The build stopped at a gate.",
     "escalated": "The ticket failed its last judging round and was escalated: the line will not run it again.",
@@ -321,6 +322,8 @@ def classify(root: Path, ticket: str, info: Dict[str, Any], report: Dict[str, An
             return "merge"
         if needs == "answers":
             return "answers"
+        if needs == "policy-owner":
+            return "policy-owner"
         if needs == "product-answer":
             return "product-answer"
         if needs == "repository-hardening":
@@ -398,6 +401,27 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
                               "The intent skill continues the interview in this conversation, one question at a time.", f"{intent_skill} {ticket}"))
         options.append(abandon(ticket))
         rule = "Only the product owner's answers settle open questions; nothing else moves this ticket."
+    elif state == "policy-owner":
+        concerns = explain.policy_facts(cellroot, cell) or {}
+        facts["concerns"] = (concerns.get("open_concerns") or [])[:MAX_CAUSES]
+        if (cellroot / "spec.md").is_file():
+            show_first.append(relative(root, cellroot / "spec.md"))
+        named = [item["statement_id"] for item in facts["concerns"] if isinstance(item.get("statement_id"), str)
+                 and re.fullmatch(r"POL-[a-z][a-z0-9-]*-\d{2,}", item["statement_id"])]
+        if cell.get("product"):
+            facts["note"] = ("This slice came from Product Studio: its product manager records the owner's acceptance there, or changes the spec, "
+                             "in a new revision of the slice.")
+            options.append(option("wait", "Wait for the product manager",
+                                  "Nothing changes here; the next intake gives the cell the slice's new revision.", None))
+        else:
+            options.append(option("accept", "Record the owner's acceptance",
+                                  "The intent station records the policy owner's acceptance of the concern in their words, under the name given, "
+                                  "checked against the pack's owner where the pack names GitHub logins; the spec is then finalized again.",
+                                  f'policy accept {ticket} {named[0] if len(named) == 1 else "<POL-id>"} "<their words>"', needs_reason=True))
+            options.append(option("interview", "Change the spec",
+                                  "The intent skill continues the interview so the spec meets the statement; the concern is then marked "
+                                  "'spec changed' and the spec is finalized again.", f"{intent_skill} {ticket}"))
+        options.append(abandon(ticket))
     elif state == "product-answer":
         question = cell.get("spec_question") if isinstance(cell.get("spec_question"), dict) else {}
         facts["question"] = explain.clean(question.get("text"))

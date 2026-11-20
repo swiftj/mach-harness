@@ -57,14 +57,14 @@ var provenanceShape = obj("schema", "config_id",
 // key for key. A kind not here is not served.
 var Allow = map[string]*Shape{
 	"intake.validated":    obj("digest"),
-	"intake.refused":      obj("problems", leafList),
-	"slice.materialized":  obj("digest", "adopted", "dependencies", leafList, "reissued", "title", "epic_title"),
+	"intake.refused":      obj("problems", leafList, "waiting"),                                                          // revision 7: waiting
+	"slice.materialized":  obj("digest", "adopted", "dependencies", leafList, "reissued", "title", "epic_title", "jira"), // revision 7: jira
 	"slice.integrated":    obj("commit"),
 	"dependency.resolved": obj("depends_on", leafList),
 	"dependency.blocked":  obj("reasons", leafList),
 	"work.scheduled":      obj("stage", "risk", "branch", "by_role", "authorization"),
 	"revision.superseded": obj("from_revision", "effect"),
-	"human.required":      obj("reason"),
+	"human.required":      obj("reason", "needs"), // revision 7: needs
 	"factory.activated": obj("autonomy", "by_role", "limits", anyKeys(scalar), "allow_merge", "persistent", "backlog",
 		"excluded_slices", leafList),
 	"factory.disabled":    obj("by_role", "stopped"),
@@ -77,7 +77,7 @@ var Allow = map[string]*Shape{
 		"provenance", provenanceShape),
 	"station.observed":    obj("from_stage", "stage"),
 	"recovery.started":    obj("kind"),
-	"execution.completed": obj("stage", "next", "waiting_for", "how", "seen_to_end", "cost_usd", "exit_code", "refused_tools", leafList),
+	"execution.completed": obj("stage", "next", "waiting_for", "needs", "how", "seen_to_end", "cost_usd", "exit_code", "refused_tools", leafList),
 	"execution.failed":    obj("stage", "next", "how", "claude_error", "exit_code", "attempt", "not_progressing"),
 
 	"station.entered":           obj("station", "stage", "action", "resumed", "unclosed_visit", "head", "counts", anyKeys(scalar)),
@@ -85,21 +85,21 @@ var Allow = map[string]*Shape{
 	"gate.evaluated":            obj("gate", "verdict", "reason_code", "subject", "status", "audit_tier", "counts", anyKeys(scalar)),
 	"build.task_completed":      obj("task_id", "kind", "step", "first_run", "suite", "commit"),
 	"verify.check_recorded":     obj("target_id", "target_kind", "result", "evidence", list(obj("file", "sha256", "bytes")), "rerecorded"),
-	"review.round_started":      obj("risk", "max_rounds", "tuning", "approvals_needed", "human_approval_required", "panel", list(obj("seat", "model")), "delta", "restarted"),
+	"review.round_started":      obj("risk", "max_rounds", "tuning", "approvals_needed", "human_approval_required", "panel", list(obj("seat", "model")), "delta", "restarted", "repeat"),
 	"review.verdict_submitted":  obj("seat", "vote", "blockers", "notes", "rules", leafList, "model"),
 	"review.decided":            obj("outcome", "approvals", "approvals_needed", "votes", anyKeys(scalar), "blockers", "security_veto", "human_approval_required"),
 	"human.approval_recorded":   obj("by_role", "note_given", "decision"),                                                     // decision: Enums (M9)
 	"review.exception_recorded": obj("findings", list(obj("seat", "index", "impact")), "expires_given", "renewal", "outcome"), // M12: codes only
 	"review.scan_recorded": obj("enabled", "flagged", "panel_raised", "secret_candidates", "real", "not_a_secret", "overridden_by_builder",
 		"dependencies", "dependencies_added", "acceptable", "concerns", "lockfile_only"), // M12: counts only
-	"merge.completed":   obj("method", "merge_commit", "approved_commit", "landed_commit", "revalidated", "pull_request"),
+	"merge.completed":   obj("method", "merge_commit", "approved_commit", "landed_commit", "revalidated", "pull_request", "change_record", obj("path", "sha256")),
 	"cleanup.completed": obj("outcome", "archive", "bundle", "uncommitted_saved"),
 
 	"execution.process_started": obj(),
 	"execution.process_ended":   obj("ended", "exit_code", "seconds"),
 	"run.recorded": obj("record_version", "outcome", "rounds", "first_pass", "verify_failures", "review_rejections", "escalated",
 		"human_approval", "deviations", "blockers", "tests_seen_failing_first", "tests_passing_on_first_run", "risk", "app_type",
-		"merge_method", "merge_commit"),
+		"merge_method", "merge_commit", "jira", "change_record", obj("path", "sha256")), // revision 7: jira, change_record
 
 	"session.initialized":      obj("claude_code_version", "model", "permission_mode", "tools", leafList, "agents", leafList),
 	"workflow.started":         obj("workflow", "tickets", leafList, "until"),
@@ -241,6 +241,19 @@ func Enforce(ev *event.Event, c *Counters) bool {
 // other value becomes null and is counted as withheld.
 var Enums = map[string]map[string][]string{
 	"human.approval_recorded": {"decision": {"APPROVED", "SENT_BACK"}},
+	// Revision 7: the routing sheet's stop codes, and intake's one waiting state.
+	"human.required":      {"needs": StopCodes},
+	"execution.completed": {"needs": StopCodes},
+	"intake.refused":      {"waiting": {"mocks"}},
+}
+
+// StopCodes are the codes run.py's routing sheet gives a ticket that waits for a person (`needs`,
+// run.py NEEDS_TEXT), as of M14. Revision 7 passes one on only when it is in this list; a stop MACH
+// adds later is null on the wire, and its recorded words are shown as before (a generic wait).
+var StopCodes = []string{
+	"answers", "policy-owner", "human-approval", "merge", "person-to-take-over", "repository-hardening", "person",
+	"worker-in-cell", "dispatch", "product-answer", "adr-decision", "adr-acceptance", "adr-fix", "adr-baseline",
+	"security-exception-expired", "main-conflict",
 }
 
 func pruneEnums(typ string, data map[string]any) int {

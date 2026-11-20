@@ -1,0 +1,35 @@
+{
+  "exit_code": 0,
+  "data": {
+    "folder": "/project/.factory/studio/jira/data-center-all",
+    "file": "/project/.factory/studio/jira/data-center-all/mach-jira.csv",
+    "readme": "/project/.factory/studio/jira/data-center-all/README.txt",
+    "flavour": "data-center",
+    "state": "all",
+    "epic": null,
+    "counts": {
+      "epics": 0,
+      "stories": 1
+    },
+    "exported": [
+      "SLICE-002"
+    ],
+    "left_out": [
+      {
+        "id": "SLICE-001",
+        "reason": "it is already in Jira as TEAM-12",
+        "jira": "TEAM-12"
+      },
+      {
+        "id": "EPIC-001",
+        "reason": "it is already in Jira as TEAM-2; its slices below name it in their description",
+        "jira": "TEAM-2"
+      }
+    ],
+    "cut": [],
+    "factory_authorized": false,
+    "note": "Wrote 0 epic(s) and 1 story(ies) for Jira Data Center. Nothing was sent anywhere: download both files and hand them to the person who imports them. README.txt says which screen to use and how to hand the keys back."
+  },
+  "refused": null,
+  "hint": null
+}

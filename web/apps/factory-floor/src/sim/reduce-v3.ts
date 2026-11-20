@@ -420,7 +420,14 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
     case "revision.discovered":
       return { ...s, factory: { ...s.factory, productCommit: e.data.commit } };
     case "intake.refused":
-      return { ...s, supervisor: { ...s.supervisor, attention: put(s.supervisor.attention, e.ids.slice_id ?? "intake", { reason: e.data.problems.join(" "), at: t, seq }) } };
+      // M15: a slice issue intake holds until its design mocks are committed says so (revision 7 `waiting`).
+      return {
+        ...s,
+        supervisor: {
+          ...s.supervisor,
+          attention: put(s.supervisor.attention, e.ids.slice_id ?? "intake", { reason: e.data.problems.join(" "), at: t, seq, needs: e.data.waiting === "mocks" ? "waiting-mocks" : null, issue: e.ids.issue ?? null, revision: e.ids.revision ?? null }),
+        },
+      };
     case "slice.materialized": {
       const id = e.ids.slice_id ?? "";
       const def = definitions.slices[id];
@@ -428,6 +435,8 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       const prior = s.slices[id];
       // M7 N7: reissued to another ticket: the earlier ticket waits on nobody.
       if (prior && prior.ticketId && ticket && prior.ticketId !== ticket && s.supervisor.attention[prior.ticketId]) s = { ...s, supervisor: { ...s.supervisor, attention: without_(s.supervisor.attention, prior.ticketId) } };
+      // M15: taken in after all: the slice no longer waits for its design mocks.
+      if (s.supervisor.attention[id]?.needs === "waiting-mocks") s = { ...s, supervisor: { ...s.supervisor, attention: without_(s.supervisor.attention, id) } };
       const knownCell = ticket ? s.cells[ticket] : undefined;
       const cellRisk = knownCell && isKnownField(knownCell.meta, "risk") ? knownCell.risk : null;
       // M6.6: the observer carries the intake ledger's title for this revision (free text, contained where shown).
@@ -442,6 +451,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
         epicId,
         epicTitle: (epicId ? definitions.epics[epicId]?.title : undefined) ?? recordedEpic,
         issue: e.ids.issue ?? def?.issue ?? null,
+        jira: typeof e.data.jira === "string" ? e.data.jira : (prior?.jira ?? null),
         revision: e.ids.revision,
         risk: def?.risk ?? (cellRisk ?? prior?.risk ?? "Medium"),
         ticketId: ticket ?? "",
@@ -500,7 +510,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       // M7: parked at once after an execution that was not progressing: the code, for the page's words.
       const code = s.executions[e.ids.execution_id ?? ""]?.notProgressing ?? null;
       if (ticket && closedTicket(s, ticket)) return s; // M7 N7: asked about an abandoned or reissued ticket: nobody waits on it
-      return { ...s, supervisor: { ...s.supervisor, attention: put(s.supervisor.attention, key, { reason: e.data.reason, at: t, seq, code }) } };
+      return { ...s, supervisor: { ...s.supervisor, attention: put(s.supervisor.attention, key, { reason: e.data.reason, at: t, seq, code, needs: e.data.needs ?? null }) } };
     }
     case "scheduling.decided": {
       const d = e.data;
@@ -572,7 +582,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
         state: failed ? "failed" : "completed",
         endedAt: at,
         workflowRunning: false,
-        outcome: { stage: stageOf(d.stage), next: d.next ?? "stop", waitingFor: e.type === "execution.completed" ? e.data.waiting_for : null, costUsd: cost ?? 0 },
+        outcome: { stage: stageOf(d.stage), next: d.next ?? "stop", waitingFor: e.type === "execution.completed" ? e.data.waiting_for : null, costUsd: cost ?? 0, needs: e.type === "execution.completed" ? (e.data.needs ?? null) : null },
         how: d.how ?? x.how,
         exitCode: d.exit_code ?? x.exitCode,
         notProgressing: e.type === "execution.failed" ? (e.data.not_progressing ?? null) : x.notProgressing,
@@ -720,7 +730,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       s = ensureCell(s, e, definitions);
       const d = e.data;
       s = setGate(s, ticket ?? "", "merge-revalidation", null, d.revalidated ? "passed" : "skipped", d.revalidated ? "Main had moved: merged into the branch and the suite passed again." : "Main had not moved; no revalidation was needed.", at, seq, metaOf(e));
-      s = withCell(s, ticket, (cell) => ({ ...cell, merged: { commit: d.merge_commit ?? d.landed_commit ?? "", at, revalidated: d.revalidated }, meta: touch(cell.meta, e) }));
+      s = withCell(s, ticket, (cell) => ({ ...cell, merged: { commit: d.merge_commit ?? d.landed_commit ?? "", at, revalidated: d.revalidated }, changeRecord: d.change_record ?? cell.changeRecord ?? null, meta: touch(cell.meta, e) }));
       return { ...s, counters: bump(s.counters, { merged: 1 }) };
     }
     case "cleanup.completed":
@@ -748,7 +758,13 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       s = ensureCell(s, e, definitions);
       // M7 N7: an abandoned ticket waits on nobody.
       if (ticket && e.data.outcome === "abandoned" && s.supervisor.attention[ticket]) s = { ...s, supervisor: { ...s.supervisor, attention: without_(s.supervisor.attention, ticket) } };
-      return withCell(s, ticket, (cell) => ({ ...cell, runRecord: { outcome: e.data.outcome, rounds: e.data.rounds, firstPass: e.data.first_pass, at }, meta: touch(cell.meta, e) }));
+      return withCell(s, ticket, (cell) => ({
+        ...cell,
+        runRecord: { outcome: e.data.outcome, rounds: e.data.rounds, firstPass: e.data.first_pass, at },
+        jira: e.data.jira ?? cell.jira ?? null,
+        changeRecord: e.data.change_record ?? cell.changeRecord ?? null,
+        meta: touch(cell.meta, e),
+      }));
 
     // ------------------------------------------------ the execution stream (observed)
     case "session.initialized":
@@ -1212,7 +1228,7 @@ function gateEvaluated(input: Scene, e: E<"gate.evaluated">, at: number): Scene 
   // The observer names the evaluation with its own gate ref (`gate:<cell>/<gate>[#<round>]`, contract
   // 5.2); kept so that ref resolves to this evaluation (and to the gate state it set), never parsed.
   const ownRef = e.entities.find((x) => x.startsWith("gate:")) ?? `gate:${ticket}/${d.gate}${round ? `#${round}` : ""}`;
-  s = withCell(s, ticket, (c) => ({ ...c, gateLog: [...c.gateLog, { gate: d.gate, verdict: d.verdict, reasonCode: d.reason_code, subject: d.subject, round, at, eventId: e.id, late: e.late === true, gateId: matched, ref: ownRef }] }));
+  s = withCell(s, ticket, (c) => ({ ...c, gateLog: [...c.gateLog, { gate: d.gate, verdict: d.verdict, reasonCode: d.reason_code, subject: d.subject, round, at, eventId: e.id, late: e.late === true, gateId: matched, ref: ownRef, counts: d.counts ?? {} }] }));
   const meta = metaOf(e);
   switch (d.gate) {
     case "audit.readiness":
@@ -1271,12 +1287,17 @@ function reviewStarted(input: Scene, e: E<"review.round_started">, at: number): 
     late: e.late === true,
     decidedEventId: null,
     decidedLate: false,
+    repeat: d.repeat ?? 0,
   };
-  const restarted = cell.reviews.some((r) => r.round === round);
-  s = withCell(s, ticket, (c) => ({ ...c, reviews: restarted ? c.reviews.map((r) => (r.round === round ? state : r)) : [...c.reviews, state], risk: d.risk, meta: { ...c.meta, unknown: without(c.meta.unknown, "risk") } }));
+  // M15: a repeat of a decided judging round (round-N.k after a voided approval) is its own entry; the
+  // voided decision stays as it was. A restart without a decision replaces the round's entry, as before.
+  const repeat = (d.repeat ?? 0) > 0;
+  const restarted = !repeat && cell.reviews.some((r) => r.round === round && (r.repeat ?? 0) === 0);
+  s = withCell(s, ticket, (c) => ({ ...c, reviews: restarted ? c.reviews.map((r) => (r.round === round && (r.repeat ?? 0) === 0 ? state : r)) : [...c.reviews, state], risk: d.risk, meta: { ...c.meta, unknown: without(c.meta.unknown, "risk") } }));
   s = withSliceRisk(s, cell.sliceId || e.ids.slice_id, d.risk, e);
   s = setGate(s, ticket ?? "", "review", round, "open", `${d.panel.length} seat(s), ${d.approvals_needed} approval(s) needed`, at, e.pos, metaOf(e));
-  return restarted ? s : { ...s, counters: bump(s.counters, { reviewRounds: 1 }) };
+  // A repeat uses no judging round: it is not counted as another review round.
+  return restarted || repeat ? s : { ...s, counters: bump(s.counters, { reviewRounds: 1 }) };
 }
 
 function reviewDecided(input: Scene, e: E<"review.decided">, at: number): Scene {

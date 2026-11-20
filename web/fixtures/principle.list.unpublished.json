@@ -1,0 +1,56 @@
+{
+  "exit_code": 0,
+  "data": {
+    "principles": [
+      {
+        "id": "PP-01",
+        "reason": "Readers rely on what they saw.",
+        "revision": 2,
+        "statement": "A published version MUST NOT be changed in place.",
+        "status": "active",
+        "title": "Versions stay as published"
+      },
+      {
+        "id": "PP-02",
+        "reason": "People trust a name.",
+        "revision": 1,
+        "statement": "An invitation MUST name the person who sent it.",
+        "status": "retired",
+        "title": "Senders are named"
+      }
+    ],
+    "active": [
+      "PP-01"
+    ],
+    "retired": [
+      "PP-02"
+    ],
+    "unpublished_changes": true,
+    "published": {
+      "saved": "github",
+      "unfinished": false,
+      "revision": 1,
+      "sha256": "736d4e3e0e0bc531b0b0678a532c504b059eac9aed71bac8a585ac360fcfa61d",
+      "approved_by": "ada-pm",
+      "published_at": "2026-11-20T22:05:40Z",
+      "issue": 1,
+      "url": "https://github.com/acme/team-space/issues/1",
+      "github": {
+        "revision": 1,
+        "approved": true,
+        "approved_by": "ada-pm",
+        "read_at": "2026-11-20T22:05:40Z"
+      },
+      "newer_elsewhere": false,
+      "changed_on_github": false
+    },
+    "slices_answered_under_older": [
+      "SLICE-001"
+    ],
+    "next": "The principles have changes that are not published: publish them so the builders get them.",
+    "note": "A principle is one sentence that must hold in every slice. Each slice's spec answers every active one; a principle added or changed binds slices marked ready afterwards.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}
