@@ -63,7 +63,9 @@ or a stop ("action": "stop") with the reason and what it is waiting for: a perso
 person's approval, a merge, or a person to take over an escalated ticket; or an engineer's decision
 about an architecture decision record (ADR): a plan that cannot follow one (adr-decision), a High-risk
 ticket's own proposal waiting to be accepted (adr-acceptance), an ADR on main that cannot be read (adr-fix), or a
-required topic (adr.required_topics) with no accepted ADR on main, so nothing is planned yet (adr-baseline).
+required topic (adr.required_topics) with no accepted ADR on main, so nothing is planned yet (adr-baseline);
+or a ticket's branch that the build station could not bring up to date with main because the merge conflicts
+(main-conflict, from cell.json's main_conflict, until a person commits the merge or main moves on).
 ADRs accepted or changed after a ticket was planned are flagged in the digest and the status rows, never acted on.
 
 `next`, `status` and `explain` also carry a "digest": where the ticket stands, what a person must decide,
@@ -330,6 +332,22 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
         return step(ticket_id, stage, "plan", "The spec is ready; contracts and the plan are not written yet.", model=project.model("contracts"),
                     prompt=f"Use the MACH intent skill to finish stage 2 (contracts and plan) for this ticket: {skill('intent')} {ticket_id}{flag}")
 
+    conflict = cell.get("main_conflict")
+    if stage in ("planned", "built") and isinstance(conflict, dict):
+        # The build station could not bring the branch up to date with main (M13): it changed nothing and recorded the conflict.
+        main_now = git(project.root, "rev-parse", "HEAD").stdout.strip()
+        files = [str(name) for name in conflict.get("files") or [] if isinstance(name, str)][:10]
+        if head == conflict.get("branch_commit") and main_now == conflict.get("main_commit"):
+            return step(ticket_id, stage, "stop", f"Bringing the branch up to date with {conflict.get('main') or 'main'} conflicts in {', '.join(files) or 'some files'}. "
+                        f"A person must merge {conflict.get('main') or 'main'} into {cell.get('branch')} in {conflict.get('folder')} and resolve it; "
+                        "then the build carries on.", needs="main-conflict", files=files, folder=conflict.get("folder"))
+        branch_commit = str(conflict.get("branch_commit") or "")
+        if (stage == "built" and conflict.get("during") == "revise" and head != branch_commit and branch_commit
+                and git(work, "merge-base", "--is-ancestor", branch_commit, "HEAD").returncode == 0):
+            findings = conflict.get("findings")
+            return step(ticket_id, stage, "revise", "A person brought the branch up to date with main; the revision starts from their commit.",
+                        agent_type=agent_type("builder"), findings=findings,
+                        prompt=f"Revise MACH ticket {ticket_id}. A person resolved the conflict with main in the cell. Findings: {findings}")
     if stage == "planned" and cell.get("risk") == "High":
         waiting = adrs().pending_acceptance(cell)
         if waiting:
@@ -485,6 +503,7 @@ NEEDS_TEXT = {
     "adr-fix": "Fix an architecture decision record the factory cannot read, by pull request.",
     "adr-baseline": "Write down the project's basic technical decisions as accepted ADRs (adr baseline drafts them); no ticket is planned until then.",
     "security-exception-expired": "A person's exception to a security blocker has expired: record a new one, or abandon the ticket.",
+    "main-conflict": "Bringing the ticket's branch up to date with the main branch conflicts: merge it in the cell and resolve it, then the build carries on.",
 }
 
 

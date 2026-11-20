@@ -376,7 +376,7 @@ class MessageTest(Base):
     def test_the_exact_text_for_each_kind_of_wait_in_both_install_forms(self):
         self.set_address("--label", "Shop team")
         waits = [needs for needs in run.NEEDS_TEXT if needs not in notify.QUIET_NEEDS]
-        self.assertEqual(sorted(waits), ["adr-acceptance", "adr-baseline", "adr-decision", "adr-fix", "answers", "dispatch", "human-approval", "merge", "person", "person-to-take-over",
+        self.assertEqual(sorted(waits), ["adr-acceptance", "adr-baseline", "adr-decision", "adr-fix", "answers", "dispatch", "human-approval", "main-conflict", "merge", "person", "person-to-take-over",
                                          "product-answer", "repository-hardening", "security-exception-expired"])
         for install, command in ((True, "/mach decide"), (False, "/mach:run decide")):
             with mock.patch.object(run, "PROJECT_INSTALL", install):
@@ -386,9 +386,9 @@ class MessageTest(Base):
                 self.receiver.requests.clear()
                 self.assertTrue(sender.wait(ticket, f"stage-{install}", needs)["sent"])
                 self.assertEqual(self.receiver.texts(), [f"MACH · Shop team: {ticket} is waiting for a person.\n{run.NEEDS_TEXT[needs]}\nIn Claude Code: {command}"])
-        self.assertEqual(self.receiver.texts(), ["MACH · Shop team: LOCAL-012 is waiting for a person.\n"
-                                                 "A person's exception to a security blocker has expired: record a new one, or abandon the ticket."
-                                                 "\nIn Claude Code: /mach:run decide"])
+        self.assertEqual(self.receiver.texts(), ["MACH · Shop team: LOCAL-013 is waiting for a person.\n"
+                                                 "Bringing the ticket's branch up to date with the main branch conflicts: merge it in the cell and resolve it, "
+                                                 "then the build carries on.\nIn Claude Code: /mach:run decide"])
 
     def test_the_exact_text_for_each_parked_reason_code(self):
         self.set_address()
