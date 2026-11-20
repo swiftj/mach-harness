@@ -35,7 +35,8 @@
     "mode": "auto",
     "method": "local",
     "auto": { "low": true, "medium": true, "high": true },
-    "pr": { "inline_findings": true }
+    "pr": { "inline_findings": true },
+    "revalidate_overlap": true
   },
   "records": {
     "enabled": true,

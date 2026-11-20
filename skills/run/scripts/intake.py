@@ -1469,6 +1469,9 @@ class Factory:
                  "source_commit": (self.ledger().get("source") or {}).get("commit")}
         if entry.get("issue") and entry.get("repository"):
             found["issue"] = {"repository": entry["repository"], "number": entry["issue"]}
+        # M13 (merge check): the slices this one depends on, as slice IDs, for the merge station's look at what landed.
+        slices = self.ledger().get("slices") or {}
+        found["depends_on"] = sorted({dep.get("slice_id") or self.resolve_dep(dep, slices)[1] for dep in entry.get("depends") or []} - {None})
         return found
 
     def write_cell_spec(self, entry: Dict[str, Any], ticket_id: str) -> Dict[str, Any]:
