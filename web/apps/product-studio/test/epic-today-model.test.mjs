@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { earlierText, epicPage, sliceEffectsWords, sliceTitle } from "../src/features/epic-today/model.ts";
+import { connectionWords, earlierText, epicPage, sliceEffectsWords, sliceTitle } from "../src/features/epic-today/model.ts";
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`../../../fixtures/${name}.json`, import.meta.url), "utf8")).data;
 const current = fixture("epic.current");
@@ -66,6 +66,22 @@ test("nothing shipped: the engine returns no epic and says why", () => {
   assert.equal(none.epic, null);
   assert.match(none.notes[0], /No shipped slice spec/);
   assert.match(none.note, /may be behind GitHub/);
+});
+
+test("a rule's folded connections say what and how many are behind them (M16 layout)", () => {
+  const replaced = epic.in_force.find((r) => r.rule === "SLICE-003/FR-01");
+  assert.equal(connectionWords(replaced), "Connections: 1 earlier rule");
+  assert.equal(connectionWords({ takes_the_place_of: [], confirmed_by: [], superseded_by: [] }), null);
+  assert.equal(connectionWords({}), null);
+  assert.equal(
+    connectionWords({ takes_the_place_of: [{}, {}], confirmed_by: [{}], superseded_by: [{}, {}] }),
+    "Connections: 2 earlier rules, 1 confirmation, 2 later changes",
+  );
+  // Every rule with a connection the engine listed gets a label; none is hidden without one.
+  for (const rule of [...epic.in_force, ...epic.not_yet_reconciled, ...epic.no_longer_in_force]) {
+    const listed = (rule.takes_the_place_of?.length ?? 0) + (rule.confirmed_by?.length ?? 0) + (rule.superseded_by?.length ?? 0);
+    assert.equal(connectionWords(rule) !== null, listed > 0, rule.rule);
+  }
 });
 
 test("each slice's title and effects state has words", () => {

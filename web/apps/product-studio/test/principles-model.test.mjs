@@ -8,7 +8,11 @@ import {
   addArgs,
   countWords,
   emptyFields,
+  inForceSummary,
   isPrinciplesReconcileHint,
+  publishLabel,
+  retiredSummary,
+  toCheckSummary,
   oneLine,
   publishOffered,
   publishOutcome,
@@ -164,4 +168,25 @@ test("reconcile answers carry the engine's note: take theirs, keep mine", () => 
 test("counts in words", () => {
   assert.equal(countWords(1, 1), "1 in force, 1 retired");
   assert.equal(countWords(2, 0), "2 in force");
+});
+
+test("the parts' summaries say each part's state in words, from the engine's lists (M16 layout)", () => {
+  const list = data("principle.list.unpublished");
+  const { active, retired } = splitPrinciples(list.principles);
+  assert.equal(inForceSummary(active.length), "1 principle every slice must keep.");
+  assert.equal(inForceSummary(3), "3 principles every slice must keep.");
+  assert.equal(inForceSummary(0), "None in force. Add one to give every slice a rule to keep.");
+  assert.equal(retiredSummary(retired.map((p) => p.id)), "PP-02: slices no longer answer it.");
+  assert.equal(retiredSummary(["PP-02", "PP-04"]), "PP-02, PP-04: slices no longer answer them.");
+  const rows = slicesToCheck(list, data("status.principles").slices);
+  assert.equal(toCheckSummary(rows), "SLICE-001 answers an older version of a principle, or leaves one in force unanswered.");
+  assert.match(toCheckSummary([{ id: "SLICE-001" }, { id: "SLICE-002" }]), /^2 slices answer/);
+});
+
+test("the publish act keeps its name in every state that offers it", () => {
+  assert.equal(publishLabel("unpublished"), "Publish the changes");
+  assert.equal(publishLabel("unfinished"), "Finish publishing");
+  assert.equal(publishLabel("never-published"), "Publish the principles");
+  assert.equal(publishLabel("changed-on-github"), "Publish the principles");
+  assert.equal(publishLabel("newer-elsewhere"), "Publish the principles");
 });
