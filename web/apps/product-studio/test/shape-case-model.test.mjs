@@ -1,0 +1,271 @@
+// Unit tests for the case and verdict screen (src/features/shape/case/), against the real engine runs the fixture
+// transport answers with (web/fixtures/case.*, verdict.*, idea.show.*, idea.publish.*). The model maps what the engine
+// reported; it never chooses, ranks or recommends a verdict, and the screen pre-selects none of the three.
+// Run: pnpm --filter @mach/product-studio test
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
+import * as model from "../src/features/shape/case/model.ts";
+
+const {
+  caseCheckState,
+  decisionWord,
+  oneLine,
+  publishAct,
+  publishOutcome,
+  publishState,
+  questionCounts,
+  questionViews,
+  reasonLimit,
+  recordedWithSentence,
+  renumberOffered,
+  verdictArgs,
+  verdictChoices,
+  verdictConsequence,
+  verdictFor,
+  verdictFormProblem,
+  verdictState,
+  whatIsSaved,
+} = model;
+
+const run = (name) => JSON.parse(readFileSync(new URL(`../../../fixtures/${name}.json`, import.meta.url), "utf8"));
+const data = (name) => run(name).data;
+const caseFolder = new URL("../src/features/shape/case/", import.meta.url);
+const source = (file) => readFileSync(new URL(file, caseFolder), "utf8");
+const allSources = () =>
+  readdirSync(caseFolder)
+    .filter((f) => /\.tsx?$/.test(f))
+    .map((f) => source(f))
+    .join("\n");
+
+test("the three verdicts are in one fixed order, with words of the same weight", () => {
+  assert.deepEqual(
+    verdictChoices.map((c) => c.decision),
+    ["go", "not-now", "no"],
+  );
+  assert.deepEqual(
+    verdictChoices.map((c) => c.word),
+    ["Go", "Not now", "No"],
+  );
+  for (const choice of verdictChoices) {
+    assert.deepEqual(Object.keys(choice).sort(), ["decision", "meaning", "word"], "no choice carries an extra mark (default, recommended, primary)");
+    assert.ok(choice.meaning.length > 20 && choice.meaning.length < 70, choice.meaning);
+    assert.doesNotMatch(choice.meaning, /recommend|suggest|best|should|default/i);
+  }
+  assert.equal(decisionWord("not-now"), "Not now");
+});
+
+test("no verdict choice is pre-selected or marked as recommended on the screen", () => {
+  const form = source("VerdictSection.tsx");
+  assert.match(form, /useState<VerdictDecision \| null>\(null\)/, "the decision starts as nothing chosen");
+  assert.doesNotMatch(form, /defaultChecked|autoFocus|aria-checked="true"/);
+  // Every choice comes from one map with one set of classes: none can be larger, coloured or primary.
+  assert.equal((form.match(/verdictChoices\.map/g) ?? []).length, 1);
+  assert.doesNotMatch(form, /choice\.decision === "go"|decision === "go"/);
+  const choiceBlock = form.slice(form.indexOf("verdictChoices.map"), form.indexOf("})}", form.indexOf("verdictChoices.map")));
+  // `accent-ink` is the native radio's own colour (the ink), the same for all three; no accent colour or tone.
+  assert.doesNotMatch(choiceBlock, /accent-(?!ink\b)|bg-accent|primary|Recommend|danger|success|warning/);
+  assert.match(choiceBlock, /has-\[:checked\]:border-ink/, "the chosen one is shown by a heavier ink outline");
+  assert.match(choiceBlock, /Chosen/, "and by a word");
+  // The button that opens the confirmation is not the primary button, so no accent sits beside the choices.
+  assert.match(form, /<Button type="submit">Record the verdict<\/Button>/);
+  // Nothing in the screen's own words recommends or ranks a verdict.
+  for (const text of allSources().match(/"[^"\n]*"|`[^`\n]*`/g) ?? []) {
+    if (/recommend/i.test(text)) assert.match(text, /never recommends/, text);
+    assert.doesNotMatch(text, /we suggest|best choice|recommended/i, text);
+  }
+});
+
+test("the model has no function that takes the brief, the case or a check and returns a decision", () => {
+  const exported = Object.keys(model).sort();
+  assert.deepEqual(exported, [
+    "caseCheckState",
+    "decisionWord",
+    "oneLine",
+    "publishAct",
+    "publishOutcome",
+    "publishState",
+    "questionCounts",
+    "questionViews",
+    "reasonLimit",
+    "recordedWithSentence",
+    "renumberOffered",
+    "verdictArgs",
+    "verdictChoices",
+    "verdictConsequence",
+    "verdictFor",
+    "verdictFormProblem",
+    "verdictState",
+    "whatIsSaved",
+  ]);
+  const shown = data("case.show");
+  for (const value of [caseCheckState(shown), questionCounts(shown.model), questionViews(shown.model)]) {
+    assert.doesNotMatch(JSON.stringify(value), /"(go|not-now|no)"/);
+  }
+});
+
+test("a case with two answers and one question left unanswered on purpose", () => {
+  const shown = data("case.show");
+  assert.equal(shown.model.customer, "You can now renew a loan from your account, at any hour, without calling us. If you cannot renew, the page tells you why.");
+  const qs = questionViews(shown.model);
+  assert.deepEqual(
+    qs.map((q) => [q.id, q.state]),
+    [
+      ["Q-1", "answered"],
+      ["Q-2", "answered"],
+      ["Q-3", "left"],
+    ],
+  );
+  assert.equal(qs[0].answer, "Desk staff at the small branches, who use renewal calls to check on older members.");
+  assert.equal(qs[2].answer, null);
+  assert.equal(qs[2].leftBecause, "the product manager wants the first month's numbers first.");
+  assert.equal(questionCounts(shown.model), "2 answered · 1 left unanswered on purpose");
+  assert.deepEqual(caseCheckState(shown), { word: "Passes its check", tone: "success", glyph: "check" });
+  // case.check gives the same model and result without the text.
+  assert.deepEqual(data("case.check").model, shown.model);
+  assert.equal("text" in data("case.check"), false);
+});
+
+test("every question answered; one left with no reason; one with no answer; a case that does not pass", () => {
+  const base = data("case.show").model;
+  const all = { ...base, questions: base.questions.map((q) => ({ ...q, state: "answered", answer: q.answer })), answered: 3, not_answered: 0 };
+  assert.ok(questionViews(all).every((q) => q.state === "answered"));
+  assert.equal(questionCounts(all), "3 answered");
+  const bare = { ...base, questions: [{ id: "Q-1", question: "Who would not want this?", state: "not_answered", answer: null, line: 9 }] };
+  assert.deepEqual(questionViews(bare)[0], { id: "Q-1", question: "Who would not want this?", state: "left", answer: null, leftBecause: null });
+  const open = { ...base, questions: [{ id: "Q-1", question: "Who would not want this?", state: null, answer: null, line: 9 }], answered: 0, not_answered: 0, open: 1 };
+  assert.equal(questionViews(open)[0].state, "open");
+  assert.equal(questionCounts(open), "0 answered · 1 with no answer yet");
+  assert.deepEqual(caseCheckState({ passes: false, errors: ["case-unanswered"], warnings: [] }), { word: "Does not pass its check", tone: "danger", glyph: "alert" });
+});
+
+test("no case yet: the engine's refusal is the words shown", () => {
+  const refused = run("case.show.refused-none");
+  assert.equal(refused.data, null);
+  assert.equal(refused.refused, "IDEA-003 has no case yet.");
+  assert.equal(data("idea.show.go").idea.has_case, false, "the board says so first, so no call is made");
+});
+
+test("no verdict yet: the form starts empty and says MACH never recommends one", () => {
+  const show = data("idea.show.brief-written");
+  assert.deepEqual(verdictState(show.verdict), { kind: "none" });
+  assert.equal(recordedWithSentence(show.brief.revision, show.brief.changed_since_check), "MACH never recommends a verdict. Yours is recorded with your GitHub name and the brief's revision 1.");
+  assert.match(recordedWithSentence(0, false), /there is none yet/);
+  assert.match(recordedWithSentence(1, true), /changed since revision 1, so MACH checks it first/);
+  assert.match(show.verdict_note, /never recommends a verdict/);
+});
+
+test("the act needs a choice and a reason in the product manager's own words, sent on one line", () => {
+  assert.deepEqual(verdictFormProblem(null, "Members ask for it."), { field: "choice", message: "Choose Go, Not now or No." });
+  assert.equal(verdictFormProblem("no", "   \n ").field, "reason");
+  assert.equal(verdictFormProblem("no", "x".repeat(reasonLimit + 1)).field, "reason");
+  assert.equal(verdictFormProblem("not-now", "After the summer."), null);
+  assert.equal(oneLine("Members ask\nat every desk.  "), "Members ask at every desk.");
+  assert.deepEqual(verdictArgs("IDEA-003", "go", " Members ask\r\nfor it. "), { idea_id: "IDEA-003", decision: "go", reason: "Members ask for it." });
+});
+
+test("each of the three verdicts as recorded: who, when, the reason, the brief it was for, and what follows", () => {
+  const go = data("verdict.record.go").verdict;
+  assert.equal(verdictState(go).kind, "holds");
+  assert.equal(go.by, "ada-pm");
+  assert.equal(verdictFor(go), "For the brief's revision 1");
+  assert.equal(verdictConsequence("go").wayOn, "route");
+
+  const notNow = data("verdict.record.not-now").verdict;
+  const no = data("verdict.record.no").verdict;
+  for (const v of [notNow, no]) {
+    assert.equal(verdictState(v).kind, "holds");
+    assert.equal(verdictConsequence(v.decision).wayOn, null);
+    assert.match(verdictConsequence(v.decision).sentence, /kept with your reason, and the idea stays on the board/);
+  }
+  const fault = data("idea.show.fault").verdict;
+  assert.equal(fault.decision, "no");
+  assert.equal(verdictFor(fault), "Given before any brief was written");
+  assert.equal(verdictFor(data("idea.show.not-now").verdict), "Given before any brief was written");
+});
+
+test("a stale verdict no longer holds and carries the engine's sentence", () => {
+  const show = data("idea.show.stale-verdict");
+  const state = verdictState(show.verdict);
+  assert.equal(state.kind, "stale");
+  assert.match(state.verdict.stale_note, /no longer holds/);
+  assert.match(whatIsSaved(show).verdict, /no longer holds/);
+});
+
+test("a verdict recorded with nobody signed in says why, in the engine's words", () => {
+  const recorded = data("verdict.record.no-login");
+  assert.equal(recorded.recorded_without_github, true);
+  assert.equal(recorded.verdict.by, null);
+  assert.equal(recorded.why_no_login, "You are not signed in to GitHub on this computer.");
+});
+
+test("the refusals are the engine's words: Go without a passing brief, GitHub unreachable, a different account", () => {
+  assert.match(run("verdict.record.refused-go-without-brief").refused, /^Go needs a brief that passes its check/);
+  assert.match(run("verdict.record.refused-offline").refused, /GitHub could not be reached/);
+  assert.match(run("idea.publish.refused-no-login").refused, /this computer is signed in as ada-pm/);
+});
+
+test("where the idea is saved: not yet, on GitHub, in the folder, stopped part way, number taken", () => {
+  const notYet = publishState(data("idea.show.brief-written").idea.github);
+  assert.deepEqual(notYet, { kind: "not-published" });
+  assert.deepEqual(publishAct(notYet, "record_verdict"), { label: "Save to GitHub", again: false });
+
+  const onGithub = publishState(data("idea.show.on-github").idea.github);
+  assert.equal(onGithub.kind, "github");
+  assert.equal(onGithub.issue, 1);
+  assert.equal(onGithub.url, "https://github.com/acme/team-space/issues/1");
+  assert.equal(publishAct(onGithub, "size"), null, "nothing to save when the issue shows what is here");
+  assert.ok(publishAct({ ...onGithub, upToDate: false }, "publish"));
+  assert.ok(publishAct({ ...onGithub, changedOnGithub: true }, "size"));
+
+  const github = data("idea.show.on-github").idea.github;
+  assert.deepEqual(publishState({ ...github, saved: null, unfinished: true }), { kind: "stopped" });
+  assert.equal(publishAct({ kind: "stopped" }, "publish").label, "Save again to finish");
+  assert.deepEqual(publishState({ ...github, saved: "folder" }), { kind: "folder" });
+  const taken = publishState({ ...github, saved: null, number_taken: true, other_issues: [3] });
+  assert.deepEqual(taken, { kind: "number-taken", others: [3] });
+  assert.equal(renumberOffered(taken, "publish"), true);
+  assert.equal(renumberOffered(notYet, "renumber"), true);
+  assert.equal(renumberOffered(notYet, "publish"), false);
+  assert.match(run("idea.publish.refused-stopped").refused, /stopped part way/);
+  assert.match(run("idea.publish.refused-number-taken").refused, /Give yours the next free number/);
+  assert.deepEqual(data("idea.renumber").renumbered, { from: "IDEA-003", to: "IDEA-004" });
+});
+
+test("what a publish did, from its answer: an issue, or the folder and why", () => {
+  assert.deepEqual(publishOutcome(data("idea.publish")), {
+    where: "github",
+    issue: 1,
+    url: "https://github.com/acme/team-space/issues/1",
+    by: "ada-pm",
+    verdictPosted: true,
+    revision: 1,
+    note: "Saved as issue #1. The brief is its body and the verdict a comment on it. Nothing reaches the builders: the brief is for people.",
+  });
+  const folder = publishOutcome(data("idea.publish.folder"));
+  assert.equal(folder.where, "folder");
+  assert.equal(folder.whyFolder, "You are not signed in to GitHub on this computer.");
+  assert.match(folder.folder, /product\/ready\/IDEAS\/IDEA-001$/);
+  assert.equal(publishOutcome(data("idea.publish.finished")).issue, 2);
+});
+
+test("the confirmation says what is saved where, and never the case", () => {
+  const go = whatIsSaved(data("idea.show.go"));
+  assert.equal(go.brief, "The brief, revision 1, as the issue's body.");
+  assert.equal(go.verdict, "Your verdict, Go, with your reason, as a comment signed with your GitHub name.");
+  assert.equal(go.caseNote, "The case is never published. It stays in your workspace.");
+  assert.match(whatIsSaved(data("idea.show.brief-written")).verdict, /none is recorded yet/);
+  assert.match(whatIsSaved(data("idea.show.not-now")).brief, /there is none yet/);
+  const publish = source("PublishSection.tsx");
+  assert.match(publish, /An issue is as visible as its repository/);
+  assert.match(publish, /folder in your workspace/);
+});
+
+test("the screen's words name MACH, never a script, a terminal command or an option", () => {
+  for (const text of allSources().match(/"[^"\n]*"|`[^`\n]*`/g) ?? []) {
+    if (/^["`](\.|@|lucide|react)/.test(text)) continue;
+    assert.doesNotMatch(text, /\bscript\b|\/mach|studio\.py|--[a-z]/i, text);
+  }
+  // The product manager's text is shown as text: nothing is rendered as markup.
+  assert.doesNotMatch(allSources(), /dangerouslySetInnerHTML|RichText|inline\(/);
+});
