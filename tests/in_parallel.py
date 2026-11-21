@@ -82,11 +82,16 @@ def main() -> int:
         print("no test class matches", file=sys.stderr)
         return 1
 
+    return run(names, args.jobs, args.slowest)
+
+
+def run(names: List[str], jobs: int, slowest: int = 0) -> int:
+    """Run these classes, `jobs` at a time; print each failure in full, then a summary. 0 when all pass."""
     started = time.monotonic()
     failed: List[str] = []
     times: List[Tuple[float, str]] = []
     tests = skipped = 0
-    with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
+    with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
         for future in as_completed([pool.submit(run_one, name) for name in names]):
             name, code, ran, skips, seconds, output = future.result()
             tests += ran
@@ -99,8 +104,8 @@ def main() -> int:
                 print(".", end="", flush=True)
 
     print(f"\n{'-' * 70}\nRan {tests} tests in {len(names)} classes in {time.monotonic() - started:.1f}s, "
-          f"{max(1, args.jobs)} at a time")
-    for seconds, name in sorted(times, reverse=True)[: args.slowest]:
+          f"{max(1, jobs)} at a time")
+    for seconds, name in sorted(times, reverse=True)[: slowest]:
         print(f"  {seconds:7.1f}s  {name}")
     if failed:
         print(f"\nFAILED ({len(failed)} classes): " + ", ".join(sorted(failed)))

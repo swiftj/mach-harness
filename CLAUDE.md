@@ -20,6 +20,8 @@ When a change alters what MACH does, update the matching section of `docs/BLUEPR
 
 - All Python tests: `make test`. One area: `python3 tests/in_parallel.py <name>`.
   Slowest classes: `python3 tests/in_parallel.py --slowest 20`.
+- While working: `make test-changed` runs only the classes this branch's changes can affect
+  (`python3 tests/affected.py --list --why` says which and why). The whole suite runs before a merge.
 - Manifests: `make validate`. Both: `make check`.
 - Go: `go test ./...` in `apps/studio` and in `apps/observer`.
 - Web, from `web/`: `pnpm typecheck`, `pnpm lint`, `pnpm build`;
