@@ -161,8 +161,8 @@ class NothingIsWiredInTest(unittest.TestCase):
         """Product Studio may read, fetch, build a contribution in its own temporary worktree and
         push that one branch. It may never rewrite history or move the product manager's checkout."""
         sources = {name: (PRODUCT_SCRIPTS / name).read_text() for name in ("studio.py", "collab.py", "requests_in.py", "prd.py", "shape.py", "validate_brief.py",
-                                                                            "shape_route.py")}
-        for name in ("studio.py", "requests_in.py", "prd.py", "shape.py", "validate_brief.py", "shape_route.py"):
+                                                                            "shape_route.py", "design.py")}
+        for name in ("studio.py", "requests_in.py", "prd.py", "shape.py", "validate_brief.py", "shape_route.py", "design.py"):
             imported = set()
             for node in ast.walk(ast.parse(sources[name])):
                 if isinstance(node, ast.Import):
@@ -204,9 +204,11 @@ class NothingIsWiredInTest(unittest.TestCase):
                 self.assertNotIn(word, re.sub(r"(?i)\bblock\w*|\bclock\w*|\blocal\w*", "", sources[name]), (name, word))
         self.assertFalse(re.findall(r"git\([^\n]*\"push\"", "\n".join(sources.values())))  # nothing is ever pushed
         # M13 D: the PRD on-ramp reaches neither Git nor GitHub at all, so a PRD's text has no way there.
-        self.assertFalse(re.findall(r"\b(?:git|git_bytes|gh|gh_json|gh_write)\(", sources["prd.py"]))
-        for word in ("collab", "issues.", "handoff", "requests_in", "import subprocess", "urllib", "socket"):
-            self.assertNotIn(word, sources["prd.py"], word)
+        # M17 B: a brought-in design likewise; it shares the PRD import and never names what reaches GitHub.
+        for name in ("prd.py", "design.py"):
+            self.assertFalse(re.findall(r"\b(?:git|git_bytes|gh|gh_json|gh_write)\(", sources[name]), name)
+            for word in ("collab", "issues.", "handoff", "requests_in", "import subprocess", "urllib", "socket"):
+                self.assertNotIn(word, sources[name], (name, word))
         # M16: the brief's validator is pure; it reads no file, runs nothing and reaches neither Git nor GitHub.
         validator = sources["validate_brief.py"]
         self.assertFalse(re.findall(r"\b(?:git|git_bytes|gh|gh_json|gh_write)\(", validator))
@@ -373,10 +375,10 @@ class NothingIsWiredInTest(unittest.TestCase):
 
     def test_report_never_authorizes(self):
         for name in ("product.py", "studio.py", "collab.py", "requests_in.py", "issues.py", "handoff.py", "prd.py", "jira_export.py", "shape.py", "validate_brief.py",
-                     "shape_route.py", "needs.py"):
+                     "shape_route.py", "needs.py", "design.py"):
             source = (PRODUCT_SCRIPTS / name).read_text()
             self.assertNotIn('"factory_authorized": True', source)
-        for name in ("product.py", "studio.py", "prd.py", "jira_export.py", "shape.py", "shape_route.py", "needs.py"):
+        for name in ("product.py", "studio.py", "prd.py", "jira_export.py", "shape.py", "shape_route.py", "needs.py", "design.py"):
             self.assertIn('"factory_authorized": False', (PRODUCT_SCRIPTS / name).read_text())
 
 
