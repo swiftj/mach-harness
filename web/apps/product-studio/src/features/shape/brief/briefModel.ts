@@ -188,15 +188,21 @@ export function verdictState(verdict: IdeaVerdict | null | undefined): { kind: "
 const decisionWords: Record<string, string> = { go: "Go", "not-now": "Not now", no: "No" };
 export const decisionWord = (decision: string): string => decisionWords[decision] ?? decision;
 
-/** What "Check again" did, from the engine's answer: whether the text was a new revision, and where the check stands. */
-export function checkAgainWords(result: Pick<BriefCheck, "revision" | "new_revision" | "passes" | "errors" | "warnings">): { title: string; body: string } {
-  const title = result.new_revision ? `Checked again: the text had changed, so this is revision ${result.revision}` : `Checked again: nothing changed since revision ${result.revision}`;
-  const body = !result.passes
+/**
+ * What "Check again" did, from the engine's answer: its own sentence on the revision (the note's first sentence) as the
+ * title, then where the check stands and the rest of the engine's note.
+ */
+export function checkAgainWords(result: Pick<BriefCheck, "passes" | "errors" | "warnings" | "note">): { title: string; body: string } {
+  const note = result.note.trim();
+  const end = note.indexOf(". ");
+  const title = end < 0 ? note : note.slice(0, end + 1);
+  const rest = end < 0 ? "" : note.slice(end + 2).trim();
+  const state = !result.passes
     ? `It does not pass yet: ${count(result.errors.length, "problem")} to fix.`
     : result.warnings.length
       ? `It passes its check, with ${count(result.warnings.length, "warning")}.`
       : "It passes its check.";
-  return { title, body };
+  return { title, body: rest ? `${state} ${rest}` : state };
 }
 
 /** An assumption's state as a word and a shape. A state the grammar does not know is shown as missing. */

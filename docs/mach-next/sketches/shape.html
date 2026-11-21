@@ -413,8 +413,8 @@ main:focus { outline: none; }
 .counted div { background: var(--mach-surface-sunken); border-radius: var(--mach-radius-sm); padding: 10px 12px; display: flex; flex-direction: column-reverse; gap: 2px; }
 .counted dt { font-size: var(--mach-text-caption); color: var(--mach-ink-muted); }
 .counted dd { font-size: var(--mach-text-title-2); line-height: var(--mach-text-title-2--line); font-weight: 600; font-variant-numeric: tabular-nums; }
-.routes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-@media (max-width: 960px) { .routes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.routes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 960px) { .routes { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 520px) { .routes { grid-template-columns: minmax(0, 1fr); } }
 .route { border: 1px dashed var(--mach-line-strong); border-radius: var(--mach-radius-md); padding: 14px; display: flex; flex-direction: column; gap: 6px; color: var(--mach-ink-muted); }
 .route h3 { color: var(--mach-ink-muted); }
@@ -763,7 +763,7 @@ main:focus { outline: none; }
         <section aria-labelledby="b-touch">
           <h4 class="t-title-3" id="b-touch">What it touches</h4>
           <p class="t-body-sm muted">Capabilities</p>
-          <div class="touches"><span class="badge tone-neutral">Lending <span class="id plain" translate="no">EPIC-001</span></span><span class="badge tone-neutral">Member account <span class="id plain" translate="no">EPIC-002</span></span></div>
+          <div class="touches"><span class="badge tone-neutral">Lending <span class="id plain" translate="no">EPIC-001</span></span></div>
           <p class="t-body-sm muted">Shipped rules</p>
           <div class="touches"><span class="id" translate="no">SLICE-004/FR-02</span><span class="id" translate="no">SLICE-004/FR-03</span><span class="id" translate="no">SLICE-007/INV-01</span></div>
         </section>
@@ -849,7 +849,7 @@ main:focus { outline: none; }
     <section class="panel" aria-labelledby="counted-h">
       <h3 class="t-title-3" id="counted-h" style="margin-bottom:12px">What MACH counted</h3>
       <dl class="counted">
-        <div><dt>Capabilities touched</dt><dd>2</dd></div>
+        <div><dt>Capabilities touched</dt><dd>1</dd></div>
         <div><dt>Shipped rules touched</dt><dd>3</dd></div>
         <div><dt>High-risk areas</dt><dd>None</dd></div>
         <div><dt>Principle or policy concerns</dt><dd>1</dd></div>
@@ -857,8 +857,7 @@ main:focus { outline: none; }
       <p class="t-caption subtle" style="margin-top:10px">High risk means sign-in, billing, stored data or an existing contract. The concern counted is <span class="id plain" translate="no">LEND-03</span>; <span class="id plain" translate="no">PRN-02</span> is settled by <span class="id plain" translate="no">O-2</span>.</p>
     </section>
     <ol class="routes" aria-label="Routes">
-      <li class="route"><h3 class="t-title-3">A small change</h3><p class="t-body-sm">One capability, no shipped rule changed, nothing high risk. A light spec.</p><p class="why-not"><b>Not this:</b> it changes how 3 shipped rules are reached.</p></li>
-      <li class="route"><h3 class="t-title-3">One slice</h3><p class="t-body-sm">One outcome, a few rules. The slice interview, seeded from the brief.</p><p class="why-not"><b>Not this:</b> two outcomes over 3 rules need more than one slice.</p></li>
+      <li class="route"><h3 class="t-title-3">One slice</h3><p class="t-body-sm">One outcome, a few rules. The slice interview, seeded from the brief.</p><p class="why-not"><b>Not this:</b> the brief has two outcomes, and one slice carries one.</p></li>
       <li class="route chosen" aria-current="true">
         <span class="pill sm tone-accent" style="align-self:flex-start"><svg class="g" aria-hidden="true"><use href="#g-ready"/></svg>This is where the rule puts it</span>
         <h3 class="t-title-3">An epic</h3>

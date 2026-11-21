@@ -1,7 +1,7 @@
 import { RefreshCw } from "lucide-react";
 import { Link } from "react-router";
 import { Banner, Button, formatWhen, plural, SkeletonText, Text, type Status } from "@mach/ui";
-import type { RequestList } from "./api";
+import type { RequestList } from "../../../shared/useRequestList";
 import { RequestCard } from "./RequestCard";
 
 /**

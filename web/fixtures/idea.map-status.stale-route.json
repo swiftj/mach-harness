@@ -1,0 +1,57 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-001",
+    "stage": "decided",
+    "route": {
+      "at": "2026-11-21T01:38:01Z",
+      "brief_sha256": "614b144a592c18e0686965816dcb89be8f8eb12fb8e661e9d8388599846ad907",
+      "counted": {
+        "capabilities": 1,
+        "high_risk_areas": 0,
+        "high_risk_not_determined": [],
+        "outcomes": 1,
+        "policy_concerns": 0,
+        "principle_concerns": 0,
+        "shipped_rules": 2,
+        "shipped_rules_looked_up": 0
+      },
+      "details": {
+        "concerns": {
+          "policies": [],
+          "principles": []
+        },
+        "high_risk": {
+          "areas": [],
+          "count": 0,
+          "not_determined": []
+        },
+        "touches": {
+          "capabilities": [
+            "Lending"
+          ],
+          "outcomes": [
+            "O-1"
+          ],
+          "shipped_rules": [
+            "SLICE-001/FR-01",
+            "SLICE-001/INV-02"
+          ]
+        }
+      },
+      "revision": 1,
+      "route": "one-slice",
+      "why": "The brief has one outcome and 2 shipped rules, at most three, so the route is one slice.",
+      "words": "one slice",
+      "holds": false,
+      "stale": true,
+      "stale_note": "The brief or the verdict changed after this route was found, so it no longer holds. Record the verdict on the brief as it is now, then size it again."
+    },
+    "factory_authorized": false,
+    "map": null,
+    "can_apply": false,
+    "note": "IDEA-001 has no map yet. Ask Claude Code to propose one."
+  },
+  "refused": null,
+  "hint": null
+}

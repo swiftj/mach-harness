@@ -123,45 +123,10 @@ export function fencedLines(fenced: string | null | undefined): Map<number, stri
   return out;
 }
 
-/** "5-9", "12", "8-8, 14-14" as ranges; anything unreadable is left out. */
-export function parseRanges(text: string | null | undefined): Array<[number, number]> {
-  if (!text) return [];
-  const out: Array<[number, number]> = [];
-  for (const part of text.split(",")) {
-    const match = /^\s*(\d+)(?:\s*-\s*(\d+))?\s*$/.exec(part);
-    if (!match) continue;
-    const a = Number(match[1]);
-    const b = match[2] ? Number(match[2]) : a;
-    out.push(a <= b ? [a, b] : [b, a]);
-  }
-  return out;
-}
 
-/** A range in words for reading: "line 8", "lines 5 to 9". */
-export function rangeWords([a, b]: [number, number]): string {
-  return a === b ? `line ${a}` : `lines ${a} to ${b}`;
-}
-
-export interface Quotation {
-  range: [number, number];
-  lines: Array<{ n: number; text: string }>;
-  /** Lines of the range the page did not read (past what the engine showed). */
-  unread: number;
-}
-
-/** The cited lines, one quotation per range, from the lines the page read. */
-export function quote(lines: Map<number, string> | null, cites: string | null | undefined): Quotation[] {
-  return parseRanges(cites).map((range) => {
-    const found: Array<{ n: number; text: string }> = [];
-    let unread = 0;
-    for (let n = range[0]; n <= range[1]; n++) {
-      const text = lines?.get(n);
-      if (text === undefined) unread++;
-      else found.push({ n, text });
-    }
-    return { range, lines: found, unread };
-  });
-}
+/** Line ranges and quotations are shared with Shape's map (shared/lineRanges.ts). */
+export { parseRanges, quote, rangeWords } from "../../shared/lineRanges.ts";
+export type { Quotation } from "../../shared/lineRanges.ts";
 
 /* ── Drafted answers ──────────────────────────────────────────────────── */
 

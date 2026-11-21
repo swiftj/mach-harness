@@ -5,7 +5,7 @@
  * a look back is the product manager's judgement, every choice has equal weight and none is ever chosen for them.
  */
 import type { GlyphShape } from "@mach/ui";
-import type { AssumptionResult, IdeaChain, IdeaGithubView, IdeaLookbackRecord, IdeaRow, IdeaVerdict, LookbackEntry, OutcomeResult } from "@mach/ui/api";
+import type { IdeaAct, AssumptionResult, IdeaChain, IdeaGithubView, IdeaLookbackRecord, IdeaRow, IdeaVerdict, LookbackEntry, OutcomeResult } from "@mach/ui/api";
 
 /** The engine's own limit on a note (`shape_route.NOTE_CHARS`). */
 export const NOTE_LIMIT = 500;
@@ -96,17 +96,17 @@ export const recordedCount = (lookback: IdeaLookbackRecord | null | undefined): 
 
 /**
  * The engine allows a look back once the idea is shaped and a slice made from it has shipped. The app reads that from
- * the engine's next step (`look_back`) or from a look back already recorded (once everything is recorded the next step
- * is `none`); it never works it out from the slices. The engine still refuses in its own words if it disagrees.
+ * `idea.show`'s `acts.look_back`, and says why not in the engine's own sentence (the one it would refuse with); it never
+ * works it out from the slices or the next step.
  */
-export function lookbackGate(row: Pick<IdeaRow, "stage" | "next" | "verdict">, lookback: IdeaLookbackRecord | null | undefined): Gate {
+export function lookbackGate(row: Pick<IdeaRow, "stage" | "next" | "verdict">, act: IdeaAct | null | undefined): Gate {
   if (row.stage !== "shaped") {
     const decision = row.verdict?.decision;
     if (row.stage === "decided" && row.verdict && (decision === "no" || decision === "not-now")) return { kind: "decided-against", decision, verdict: row.verdict };
     return { kind: "not-shaped", sentence: row.next.sentence };
   }
-  if (row.next.kind === "look_back" || recordedCount(lookback) > 0) return { kind: "open", sentence: row.next.sentence };
-  return { kind: "waiting", sentence: row.next.sentence };
+  if (act?.allowed) return { kind: "open", sentence: row.next.sentence };
+  return { kind: "waiting", sentence: act?.why ?? row.next.sentence };
 }
 
 export const decisionWord = (decision: string): string => (decision === "no" ? "No" : decision === "not-now" ? "Not now" : decision === "go" ? "Go" : decision);

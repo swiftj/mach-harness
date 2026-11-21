@@ -88,7 +88,10 @@ function EpicBody({ current, epicId }: { current: EpicCurrent; epicId: string })
           className="max-w-reading"
           icon={<PackageOpen />}
           title="Nothing in this epic has shipped yet"
-          description={current.notes.length ? current.notes.join(" ") : "Once a slice of this epic is merged on the main branch, its rules are listed here."}
+          description={[
+            `No slice of ${epicId} has been merged on the main branch, so it has no rules in force yet: a new epic starts here. Once one of its slices is merged, its rules are listed on this page.`,
+            ...current.notes,
+          ].join(" ")}
         />
         <SourceNote current={current} />
       </div>

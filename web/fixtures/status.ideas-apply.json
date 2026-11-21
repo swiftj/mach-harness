@@ -71,7 +71,7 @@
           "source": {
             "kind": "typed"
           },
-          "created": "2026-11-21T00:34:52Z",
+          "created": "2026-11-21T01:38:05Z",
           "revision": 1,
           "has_brief": true,
           "brief_checked": true,
@@ -80,10 +80,11 @@
           "verdict": {
             "decision": "go",
             "by": "ada-pm",
-            "at": "2026-11-21T00:34:53Z",
+            "at": "2026-11-21T01:38:05Z",
             "revision": 1,
             "holds": true,
-            "stale": false
+            "stale": false,
+            "reason": "Members ask for it at every desk."
           },
           "route": "several-epics",
           "made": null,

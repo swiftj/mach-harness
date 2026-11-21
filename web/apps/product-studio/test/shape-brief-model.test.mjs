@@ -78,9 +78,9 @@ test("a brief that passes, and one that passes with warnings only", () => {
   const passes = data("brief.show.passes");
   assert.deepEqual(checkState(passes), { kind: "passes", word: "Passes its check", tone: "success", glyph: "ready", detail: "Nothing to fix. The next step is the case." });
   assert.equal(placeFindings(passes).all.length, 0);
-  // Warnings only: the engine passes it; the screen says so and counts the warnings, never calling them problems.
-  const finding = data("brief.show.finding");
-  const warningsOnly = { ...finding, passes: true, findings: finding.findings.filter((f) => f.severity === "warning") };
+  // Warnings only (a real brief): the engine passes it; the screen says so and counts the warnings, never calling them problems.
+  const warningsOnly = data("brief.show.warnings");
+  assert.equal(warningsOnly.passes, true);
   const state = checkState(warningsOnly);
   assert.equal(state.kind, "warnings");
   assert.equal(state.word, "Passes, 2 warnings");
@@ -110,15 +110,16 @@ test("a stale verdict is said in the engine's words; a holding one by its decisi
 });
 
 test("Check again says what happened, from the engine's answer", () => {
+  // The title is the engine's own sentence on the revision (brief.check's note).
   const changed = checkAgainWords(data("brief.check.stale-verdict"));
-  assert.equal(changed.title, "Checked again: the text had changed, so this is revision 2");
-  assert.equal(changed.body, "It passes its check.");
+  assert.equal(changed.title, "This is revision 2: the brief's text changed since revision 1 was checked.");
+  assert.equal(changed.body, "It passes its check. MACH checks the brief's structure; it never scores the idea.");
   const finding = checkAgainWords(data("brief.check.finding"));
-  assert.equal(finding.body, "It does not pass yet: 1 problem to fix.");
-  const same = checkAgainWords({ ...data("brief.check.passes"), new_revision: false });
-  assert.equal(same.title, "Checked again: nothing changed since revision 1");
-  const warned = checkAgainWords({ ...data("brief.check.finding"), passes: true, errors: [] });
-  assert.equal(warned.body, "It passes its check, with 2 warnings.");
+  assert.match(finding.body, /^It does not pass yet: 1 problem to fix\./);
+  const same = checkAgainWords(data("brief.check.unchanged"));
+  assert.equal(same.title, "Nothing changed since revision 1 was checked.");
+  const warned = checkAgainWords(data("brief.check.warnings"));
+  assert.match(warned.body, /^It passes its check, with 2 warnings\./);
 });
 
 test("assumptions show their state as a word and a shape", () => {
@@ -150,10 +151,11 @@ test("the product manager's words are split for reading, never interpreted as ma
 test("shipped rules are grouped by the epic the lookups recorded, for How this epic works today", () => {
   const model = data("brief.show.finding").model;
   const lookups = data("idea.show.exploring").lookups;
-  // The real lookups recorded no epic for these rules: one group, no link.
-  assert.deepEqual(rulesByEpic(model, lookups), [{ epicId: null, name: null, rules: ["SLICE-001/FR-01", "SLICE-001/INV-02"] }]);
-  const withEpic = { ...lookups, items: { ...lookups.items, shipped_rules: [{ rule: "SLICE-001/FR-01", in_force: true, epic_id: "EPIC-001" }] } };
-  assert.deepEqual(rulesByEpic(model, withEpic), [
+  // The real lookups carry each rule's epic (the shipped specs name it in their header line): one group, linked.
+  assert.deepEqual(rulesByEpic(model, lookups), [{ epicId: "EPIC-001", name: "Lending", rules: ["SLICE-001/FR-01", "SLICE-001/INV-02"] }]);
+  // A rule the lookups do not place in an epic stays in a group with no link.
+  const partly = { ...lookups, items: { ...lookups.items, shipped_rules: lookups.items.shipped_rules.slice(0, 1) } };
+  assert.deepEqual(rulesByEpic(model, partly), [
     { epicId: "EPIC-001", name: "Lending", rules: ["SLICE-001/FR-01"] },
     { epicId: null, name: null, rules: ["SLICE-001/INV-02"] },
   ]);

@@ -35,7 +35,7 @@ import { useRefresh, useStatus } from "../../api/store";
 import { describePath, titleFor } from "../../api/describe";
 import { nextActions, routeFor } from "../../api/nextActions";
 import { destinations } from "../registry";
-import { useRequestList } from "../inbox/requests/api";
+import { useRequestList } from "../../shared/useRequestList";
 import { NewSliceDialog } from "../roadmap/NewSliceDialog";
 import { IssueLink, IssueNumber } from "../../shared/IssueLink";
 import { RenumberDialog } from "../../shared/RenumberDialog";

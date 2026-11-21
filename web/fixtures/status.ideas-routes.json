@@ -71,7 +71,7 @@
           "source": {
             "kind": "typed"
           },
-          "created": "2026-11-21T00:34:50Z",
+          "created": "2026-11-21T01:38:00Z",
           "revision": 1,
           "has_brief": true,
           "brief_checked": false,
@@ -80,10 +80,11 @@
           "verdict": {
             "decision": "go",
             "by": "ada-pm",
-            "at": "2026-11-21T00:34:50Z",
+            "at": "2026-11-21T01:38:00Z",
             "revision": 1,
             "holds": false,
-            "stale": true
+            "stale": true,
+            "reason": "Members ask for it at every desk."
           },
           "route": "one-slice",
           "made": null,
@@ -114,7 +115,7 @@
           "source": {
             "kind": "typed"
           },
-          "created": "2026-11-21T00:34:50Z",
+          "created": "2026-11-21T01:38:01Z",
           "revision": 1,
           "has_brief": true,
           "brief_checked": true,
@@ -123,10 +124,11 @@
           "verdict": {
             "decision": "go",
             "by": "ada-pm",
-            "at": "2026-11-21T00:34:51Z",
+            "at": "2026-11-21T01:38:01Z",
             "revision": 1,
             "holds": true,
-            "stale": false
+            "stale": false,
+            "reason": "Members ask for it at every desk."
           },
           "route": "epic",
           "made": null,
@@ -157,7 +159,7 @@
           "source": {
             "kind": "typed"
           },
-          "created": "2026-11-21T00:34:51Z",
+          "created": "2026-11-21T01:38:02Z",
           "revision": 1,
           "has_brief": true,
           "brief_checked": true,
@@ -166,10 +168,11 @@
           "verdict": {
             "decision": "go",
             "by": "ada-pm",
-            "at": "2026-11-21T00:34:51Z",
+            "at": "2026-11-21T01:38:02Z",
             "revision": 1,
             "holds": true,
-            "stale": false
+            "stale": false,
+            "reason": "Members ask for it at every desk."
           },
           "route": "several-epics",
           "made": null,
@@ -200,7 +203,7 @@
           "source": {
             "kind": "typed"
           },
-          "created": "2026-11-21T00:34:51Z",
+          "created": "2026-11-21T01:38:03Z",
           "revision": 0,
           "has_brief": false,
           "brief_checked": false,

@@ -1,13 +1,12 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { CircleCheck, CircleDashed, FolderOpen, Hash, TriangleAlert, Upload } from "lucide-react";
-import { Banner, Button, Heading, StatusPill, Text, toast } from "@mach/ui";
+import { ConfirmDialog, Banner, Button, Heading, StatusPill, Text, toast } from "@mach/ui";
 import { failureText, type IdeaRow, type IdeaShow } from "@mach/ui/api";
 import { useEngineAct } from "../../../api/act";
 import { useStatus } from "../../../api/store";
 import { IssueLink, SignInNote } from "../../../shared/IssueLink";
 import { ideaPath } from "../shell/steps";
-import { ActDialog } from "./ActDialog";
 import { publishAct, publishOutcome, publishState, renumberOffered, whatIsSaved, type PublishOutcome, type PublishState } from "./model";
 
 const publishHeading = () => document.getElementById("publish-h");
@@ -94,7 +93,8 @@ export function PublishSection({ row, show, onChanged }: { row: IdeaRow; show: I
         </Banner>
       ) : null}
 
-      <ActDialog
+      <ConfirmDialog
+        width="lg"
         open={asking}
         onOpenChange={setAsking}
         title={offered?.again ? `Save ${row.idea_id} again?` : `Save ${row.idea_id} to GitHub?`}
@@ -104,28 +104,31 @@ export function PublishSection({ row, show, onChanged }: { row: IdeaRow; show: I
         error={publish.error ? failureText(publish.error, `${row.idea_id} was not saved`) : null}
         focusAfter={publishHeading}
       >
-        <div className="flex flex-col gap-2 rounded-md bg-surface-sunken px-4 py-3">
-          <p className="text-label text-ink">What is saved</p>
-          <ul className="flex list-disc flex-col gap-1 pl-5 text-body-sm text-ink">
-            <li>{saved.brief}</li>
-            <li>{saved.verdict}</li>
-          </ul>
-          <Text size="body-sm" tone="muted">
-            {saved.caseNote}
-          </Text>
+        <div className="flex flex-col gap-4 pb-1">
+          <div className="flex flex-col gap-2 rounded-md bg-surface-sunken px-4 py-3">
+            <p className="text-label text-ink">What is saved</p>
+            <ul className="flex list-disc flex-col gap-1 pl-5 text-body-sm text-ink">
+              <li>{saved.brief}</li>
+              <li>{saved.verdict}</li>
+            </ul>
+            <Text size="body-sm" tone="muted">
+              {saved.caseNote}
+            </Text>
+          </div>
+          <Banner tone="warning" title="An issue is as visible as its repository">
+            Anyone who can see the repository can read the brief and the verdict. If the brief holds commercially sensitive detail and the repository is public, save it only to a private repository or keep it in the folder form.
+          </Banner>
+          <div className="flex flex-col gap-1.5">
+            <p className="text-label text-ink">If GitHub cannot be used from this computer</p>
+            <Text size="body-sm" tone="muted">
+              When the GitHub tool is not installed, you are not signed in, or the project has no GitHub repository, MACH saves the brief and the verdict to a folder in your workspace instead, for you to commit. If GitHub is only out of reach for now, nothing is saved and you can save again later. An idea already on GitHub is never moved to the folder.
+            </Text>
+          </div>
         </div>
-        <Banner tone="warning" title="An issue is as visible as its repository">
-          Anyone who can see the repository can read the brief and the verdict. If the brief holds commercially sensitive detail and the repository is public, save it only to a private repository or keep it in the folder form.
-        </Banner>
-        <div className="flex flex-col gap-1.5">
-          <p className="text-label text-ink">If GitHub cannot be used from this computer</p>
-          <Text size="body-sm" tone="muted">
-            When the GitHub tool is not installed, you are not signed in, or the project has no GitHub repository, MACH saves the brief and the verdict to a folder in your workspace instead, for you to commit. If GitHub is only out of reach for now, nothing is saved and you can save again later. An idea already on GitHub is never moved to the folder.
-          </Text>
-        </div>
-      </ActDialog>
+      </ConfirmDialog>
 
-      <ActDialog
+      <ConfirmDialog
+        width="lg"
         open={renumbering}
         onOpenChange={setRenumbering}
         title={`Give ${row.idea_id} a new number?`}

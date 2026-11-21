@@ -24,6 +24,7 @@ func TestShapeOpsTheHostRejects(t *testing.T) {
 		{"idea.add", `{"title":"T","from_fault":"--from-request=5"}`, "fault ticket"},
 		{"idea.add", `{"title":"T","idea_id":"IDEA-007"}`, "Unknown field"},
 		{"idea.list", `{"stage":"new"}`, "Unknown field"},
+		{"idea.faults", `{"path":"inbox"}`, "Unknown field"},
 		{"idea.show", `{}`, "idea_id is required"},
 		{"idea.show", `{"idea_id":"IDEA-1"}`, "IDEA-001"},
 		{"idea.show", `{"idea_id":"idea-001"}`, "IDEA-001"},

@@ -25,6 +25,7 @@ import {
   quote,
   routeName,
   routeState,
+  REASON_NEEDED,
   settleArgs,
   sizeGate,
 } from "../src/features/shape/route/model.ts";
@@ -36,23 +37,29 @@ const data = (name) => run(name).data;
 /* ── The gate ─────────────────────────────────────────────────────────── */
 
 test("sizing is offered only while a Go holds for the brief as it is now", () => {
-  assert.deepEqual(sizeGate(data("idea.show.go").verdict), { kind: "go" });
-  assert.deepEqual(sizeGate(data("idea.show.brief-written").verdict), { kind: "no-go", decision: null });
-  assert.deepEqual(sizeGate(data("idea.show.not-now").verdict), { kind: "no-go", decision: "not-now" });
-  assert.deepEqual(sizeGate(data("idea.show.fault").verdict), { kind: "no-go", decision: "no" });
-  const stale = sizeGate(data("idea.show.stale-route").verdict);
+  const gate = (name) => sizeGate(data(name).verdict, data(name).acts.size);
+  assert.deepEqual(gate("idea.show.go"), { kind: "go" });
+  assert.equal(gate("idea.show.brief-written").kind, "no-go");
+  assert.equal(gate("idea.show.brief-written").decision, null);
+  assert.equal(gate("idea.show.not-now").decision, "not-now");
+  assert.equal(gate("idea.show.fault").decision, "no");
+  const stale = gate("idea.show.stale-route");
   assert.equal(stale.kind, "stale");
   assert.match(stale.note, /The brief changed after this verdict was recorded/);
+  // Without the engine's answer nothing is offered: a holding Go alone does not open sizing.
+  assert.equal(sizeGate(data("idea.show.go").verdict, null).kind, "no-go");
 });
 
 test("what is needed is said in the engine's words: its refusal, and its note on a verdict that no longer holds", () => {
   const refusal = run("idea.size.refused-no-go").refused;
-  assert.deepEqual(gateWords("IDEA-004", sizeGate(data("idea.show.fault").verdict)), [refusal]);
-  const stale = gateWords("IDEA-001", sizeGate(data("idea.show.stale-route").verdict));
-  assert.equal(stale.length, 2);
-  assert.equal(stale[1], data("idea.show.stale-route").verdict.stale_note);
-  assert.ok(run("idea.map.refused-stale").refused.startsWith(stale[0]), "the same sentence the engine refuses with");
-  assert.deepEqual(gateWords("IDEA-006", { kind: "go" }), []);
+  const fault = data("idea.show.fault");
+  assert.deepEqual(gateWords(sizeGate(fault.verdict, fault.acts.size)), [refusal]);
+  const staleShow = data("idea.show.stale-route");
+  const stale = gateWords(sizeGate(staleShow.verdict, staleShow.acts.size));
+  assert.equal(stale.length, 1);
+  assert.ok(stale[0].includes(staleShow.verdict.stale_note), "the engine's sentence carries its note on the verdict");
+  assert.ok(run("idea.map.refused-stale").refused.includes("no longer holds"));
+  assert.deepEqual(gateWords({ kind: "go" }), []);
 });
 
 /* ── The route ────────────────────────────────────────────────────────── */
@@ -159,7 +166,13 @@ test("settling sends exactly what the host accepts, and says what is still neede
   assert.deepEqual(settleArgs("IDEA-001", "O-2", { choice: "slice", slice: "S2", reason: "  The catalogue\n says why. " }), {
     args: { idea_id: "IDEA-001", outcome: "O-2", as: "slice", slice: "S2", reason: "The catalogue says why." },
   });
-  assert.deepEqual(settleArgs("IDEA-001", "O-2", { choice: "later", slice: "S2", reason: "" }), { args: { idea_id: "IDEA-001", outcome: "O-2", as: "later" } });
+  // Out of scope and later need the product manager's reason; the engine refuses them without one.
+  assert.deepEqual(settleArgs("IDEA-001", "O-2", { choice: "later", slice: "S2", reason: "  " }), { missing: REASON_NEEDED });
+  assert.deepEqual(settleArgs("IDEA-001", "O-2", { choice: "out-of-scope", slice: "", reason: "" }), { missing: REASON_NEEDED });
+  assert.deepEqual(settleArgs("IDEA-001", "O-2", { choice: "later", slice: "S2", reason: "After the summer." }), {
+    args: { idea_id: "IDEA-001", outcome: "O-2", as: "later", reason: "After the summer." },
+  });
+  assert.deepEqual(settleArgs("IDEA-001", "O-2", { choice: "slice", slice: "S2", reason: "" }), { args: { idea_id: "IDEA-001", outcome: "O-2", as: "slice", slice: "S2" } });
 });
 
 /* ── Making the drafts ────────────────────────────────────────────────── */
@@ -266,4 +279,23 @@ test("the screens say MACH does things, never a script, and offer no way to choo
     assert.doesNotMatch(strings, /choose (the|a) route|pick (the|a) route/i, file);
     assert.doesNotMatch(strings, /\bSubmit\b|\bOK\b/, file);
   }
+});
+
+test("in fixture mode idea.show and idea.map-status answer for the same idea, so a route never reads stale without its note", () => {
+  const pairs = readdirSync(folder).filter((f) => f.startsWith("idea.map-status.")).map((f) => f.slice("idea.map-status.".length, -".json".length));
+  for (const name of pairs) {
+    const show = run(`idea.show.${name}`);
+    if (!show.data) continue;
+    const status = data(`idea.map-status.${name}`);
+    assert.equal(status.idea_id, show.data.idea.idea_id, name);
+    const state = routeState(show.data.route, status.route);
+    if (state.kind === "stale") assert.ok(state.note, `${name}: a stale route carries the engine's note`);
+  }
+  const blockers = data("idea.map-status.blockers");
+  assert.equal(blockers.blockers.length, 2);
+  assert.equal(blockers.can_apply, false);
+  const sized = data("idea.show.sized");
+  assert.equal(routeState(sized.route, data("idea.map-status.sized").route).kind, "holds");
+  assert.equal(data("idea.map-status.sized").map, null);
+  assert.deepEqual(sized.route.details.touches.shipped_rules, ["SLICE-002/FR-01", "SLICE-001/FR-01"]);
 });

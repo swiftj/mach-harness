@@ -19,20 +19,10 @@ import type {
 
 /* ---------- Someone else's text ---------- */
 
-/**
- * The text inside any of the engine's fences (`<<<REQUEST-DATA ...>>>`, `<<<FAULT-DATA ...>>>`,
- * `<<<SHAPE-LOOKUPS-DATA ...>>>`): the opening and closing marker lines removed, nothing else changed. Anything that
- * does not look like one fence gives null, so nothing unfenced is ever shown.
- */
-export function unfence(fenced: string | null | undefined): string | null {
-  if (typeof fenced !== "string") return null;
-  const lines = fenced.split("\n");
-  if (lines.length < 2) return null;
-  const open = (lines[0] ?? "").match(/^<<<([A-Z]+(?:-[A-Z]+)*-DATA) /);
-  const close = lines[lines.length - 1] ?? "";
-  if (!open || !close.startsWith(`<<<END-${open[1]} `)) return null;
-  return lines.slice(1, -1).join("\n");
-}
+import { unfence } from "../../../shared/unfence.ts";
+
+/** The engine's fences are opened by the one shared helper (shared/unfence.ts). */
+export { unfence };
 
 export interface SourcePart {
   part: string;
@@ -210,10 +200,9 @@ export function openQuestion(text: string): OpenQuestion | null {
  * or `/mach-product-studio continue`): the same skill, with `explore`, as the host's own opening is. Null when the host
  * did not report a command in that form.
  */
-export function exploreCommand(continueCommand: string | null | undefined, ideaId: string): string | null {
-  if (!continueCommand) return null;
-  const skill = continueCommand.trim().match(/^(\/\S+)\s+continue$/);
-  return skill ? `${skill[1]} explore ${ideaId}` : null;
+export function exploreCommand(exploreCommandPrefix: string | null | undefined, ideaId: string): string | null {
+  const prefix = exploreCommandPrefix?.trim();
+  return prefix ? `${prefix} ${ideaId}` : null;
 }
 
 /* ---------- Where the idea stands on this page ---------- */

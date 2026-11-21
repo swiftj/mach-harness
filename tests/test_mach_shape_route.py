@@ -534,7 +534,7 @@ class AppAndInstructionsTest(RouteBase):
         partial["slices"][1]["outcomes"] = ["O-1"]
         self.record_map(partial)
         steps.append(self.ok(self.a, "--app", "status")["ideas"]["ideas"][0]["next"])
-        self.ok(self.a, "idea", "settle", "IDEA-001", "--outcome", "O-2", "--as", "later")
+        self.ok(self.a, "idea", "settle", "IDEA-001", "--outcome", "O-2", "--as", "later", "--reason", "After the summer.")
         steps.append(self.ok(self.a, "--app", "status")["ideas"]["ideas"][0]["next"])
         sized = self.ok(self.a, "--app", "idea", "size", "IDEA-001")
         self.assertEqual([step["kind"] for step in steps], ["map", "settle", "apply"])

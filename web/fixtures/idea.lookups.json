@@ -3,8 +3,8 @@
   "data": {
     "idea_id": "IDEA-002",
     "lookups": {
-      "recorded_at": "2026-11-21T00:34:43Z",
-      "shipped_commit": "633f27c467c367224e615ee94db2aa889e4cf387",
+      "recorded_at": "2026-11-21T01:37:47Z",
+      "shipped_commit": "f694c7fcacbd53b4c2b604079786bba5a77bad1d",
       "counts": {
         "shipped_rules": 2,
         "similar": 2,
@@ -32,13 +32,13 @@
       "items": {
         "shipped_rules": [
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "An invitation is sent by email today; a renewal would reach members the same way.",
             "rule": "SLICE-001/FR-01"
           },
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "One address, one membership: a renewal is for the member signed in.",
             "rule": "SLICE-001/INV-02"
@@ -64,7 +64,8 @@
         "policies": [
           {
             "id": "POL-privacy-02",
-            "note": "A renewal notice must not leave the EU region."
+            "note": "A renewal notice must not leave the EU region.",
+            "owner": "Data protection officer (@acme/privacy)"
           }
         ]
       }

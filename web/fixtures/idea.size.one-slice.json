@@ -38,7 +38,7 @@
       "policies": []
     },
     "rule": "One outcome and at most three shipped rules is one slice; otherwise outcomes inside one capability is an epic, and outcomes in different capabilities is several epics. High-risk areas and concerns are counted, never part of the rule.",
-    "note": "A script counted and named the route; nothing was created. A map of slices is proposed next.",
+    "note": "MACH counted and named the route; nothing was created. A map of slices is proposed next.",
     "factory_authorized": false
   },
   "refused": null,

@@ -59,6 +59,11 @@ type ideaListArgs struct{ NoArgs }
 
 func (ideaListArgs) Argv() ([]string, error) { return []string{"idea", "list"}, nil }
 
+// The open fault tickets on this computer an idea may start from (M16 clean-up): read only.
+type ideaFaultsArgs struct{ NoArgs }
+
+func (ideaFaultsArgs) Argv() ([]string, error) { return []string{"idea", "faults"}, nil }
+
 // IdeaAddArgs: a title in the product manager's words and at most one source, by its identifier
 // only. The title is the engine's one positional value, so it always follows "--": a title that
 // starts with a hyphen is still a title.
@@ -343,6 +348,7 @@ func ideaOp(words ...string) func() Args {
 func init() {
 	register(Operation{Name: "idea.add", New: func() Args { return &IdeaAddArgs{} }})
 	register(Operation{Name: "idea.list", New: func() Args { return &ideaListArgs{} }, ReadOnly: true})
+	register(Operation{Name: "idea.faults", New: func() Args { return &ideaFaultsArgs{} }, ReadOnly: true})
 	register(Operation{Name: "idea.show", New: ideaOp("idea", "show"), ReadOnly: true})
 	register(Operation{Name: "idea.stage", New: func() Args { return &IdeaStageArgs{} }})
 	register(Operation{Name: "idea.lookups", New: func() Args { return &IdeaLookupsArgs{} }, MaxBody: shapeInputBody})

@@ -14,6 +14,7 @@ import type {
   IdeaAdded,
   IdeaChain,
   IdeaChanged,
+  IdeaFaults,
   IdeaLookupsResult,
   IdeaPublished,
   IdeaRenumbered,
@@ -38,40 +39,66 @@ import briefCheckChangeStarter from "../../../../fixtures/brief.check.change-sta
 import briefCheckFinding from "../../../../fixtures/brief.check.finding.json";
 import briefCheckPasses from "../../../../fixtures/brief.check.passes.json";
 import briefCheckStaleVerdict from "../../../../fixtures/brief.check.stale-verdict.json";
+import briefCheckUnchanged from "../../../../fixtures/brief.check.unchanged.json";
+import briefCheckWarnings from "../../../../fixtures/brief.check.warnings.json";
 import briefShowChangeStarter from "../../../../fixtures/brief.show.change-starter.json";
 import briefShowFinding from "../../../../fixtures/brief.show.finding.json";
 import briefShowPasses from "../../../../fixtures/brief.show.passes.json";
 import briefShowRefusedNone from "../../../../fixtures/brief.show.refused-none.json";
 import briefShowStaleVerdict from "../../../../fixtures/brief.show.stale-verdict.json";
+import briefShowWarnings from "../../../../fixtures/brief.show.warnings.json";
+import caseCheckAllAnswered from "../../../../fixtures/case.check.all-answered.json";
 import caseCheck from "../../../../fixtures/case.check.json";
+import caseCheckUnanswered from "../../../../fixtures/case.check.unanswered.json";
+import caseShowAllAnswered from "../../../../fixtures/case.show.all-answered.json";
 import caseShow from "../../../../fixtures/case.show.json";
 import caseShowRefusedNone from "../../../../fixtures/case.show.refused-none.json";
-import ideaAdd from "../../../../fixtures/idea.add.json";
+import caseShowUnanswered from "../../../../fixtures/case.show.unanswered.json";
 import ideaAddFromFault from "../../../../fixtures/idea.add.from-fault.json";
 import ideaAddFromIssue from "../../../../fixtures/idea.add.from-issue.json";
 import ideaAddFromRequest from "../../../../fixtures/idea.add.from-request.json";
+import ideaAdd from "../../../../fixtures/idea.add.json";
 import ideaAddRefusedNotTemplate from "../../../../fixtures/idea.add.refused-not-template.json";
 import ideaAddRefusedTwice from "../../../../fixtures/idea.add.refused-twice.json";
-import ideaApply from "../../../../fixtures/idea.apply.json";
 import ideaApplyAgain from "../../../../fixtures/idea.apply.again.json";
+import ideaApply from "../../../../fixtures/idea.apply.json";
 import ideaApplyRefusedUnsettled from "../../../../fixtures/idea.apply.refused-unsettled.json";
 import ideaChain from "../../../../fixtures/idea.chain.json";
 import ideaChainLookedBack from "../../../../fixtures/idea.chain.looked-back.json";
 import ideaChange from "../../../../fixtures/idea.change.json";
 import ideaChangeRefusedReplaced from "../../../../fixtures/idea.change.refused-replaced.json";
+import ideaFaultsEmpty from "../../../../fixtures/idea.faults.empty.json";
+import ideaFaults from "../../../../fixtures/idea.faults.json";
 import ideaListBoard from "../../../../fixtures/idea.list.board.json";
 import ideaListChanged from "../../../../fixtures/idea.list.changed.json";
 import ideaListEmpty from "../../../../fixtures/idea.list.empty.json";
+import ideaListLongReason from "../../../../fixtures/idea.list.long-reason.json";
+import ideaListUnreadable from "../../../../fixtures/idea.list.unreadable.json";
 import ideaLookups from "../../../../fixtures/idea.lookups.json";
 import ideaMapStatusApplied from "../../../../fixtures/idea.map-status.applied.json";
+import ideaMapStatusBlockers from "../../../../fixtures/idea.map-status.blockers.json";
+import ideaMapStatusBriefWritten from "../../../../fixtures/idea.map-status.brief-written.json";
+import ideaMapStatusChange from "../../../../fixtures/idea.map-status.change.json";
+import ideaMapStatusExploring from "../../../../fixtures/idea.map-status.exploring.json";
+import ideaMapStatusFault from "../../../../fixtures/idea.map-status.fault.json";
+import ideaMapStatusGo from "../../../../fixtures/idea.map-status.go.json";
+import ideaMapStatusLookBack from "../../../../fixtures/idea.map-status.look-back.json";
+import ideaMapStatusLookedBack from "../../../../fixtures/idea.map-status.looked-back.json";
+import ideaMapStatusMapped from "../../../../fixtures/idea.map-status.mapped.json";
+import ideaMapStatusNotNow from "../../../../fixtures/idea.map-status.not-now.json";
+import ideaMapStatusRequest from "../../../../fixtures/idea.map-status.request.json";
 import ideaMapStatusSettled from "../../../../fixtures/idea.map-status.settled.json";
+import ideaMapStatusShapedOneSlice from "../../../../fixtures/idea.map-status.shaped-one-slice.json";
+import ideaMapStatusShaped from "../../../../fixtures/idea.map-status.shaped.json";
+import ideaMapStatusSized from "../../../../fixtures/idea.map-status.sized.json";
+import ideaMapStatusStaleRoute from "../../../../fixtures/idea.map-status.stale-route.json";
 import ideaMapStatusUncovered from "../../../../fixtures/idea.map-status.uncovered.json";
 import ideaMapRefusedStale from "../../../../fixtures/idea.map.refused-stale.json";
 import ideaMapUncovered from "../../../../fixtures/idea.map.uncovered.json";
-import ideaPublish from "../../../../fixtures/idea.publish.json";
 import ideaPublishAgain from "../../../../fixtures/idea.publish.again.json";
 import ideaPublishFinished from "../../../../fixtures/idea.publish.finished.json";
 import ideaPublishFolder from "../../../../fixtures/idea.publish.folder.json";
+import ideaPublish from "../../../../fixtures/idea.publish.json";
 import ideaPublishRefusedNoLogin from "../../../../fixtures/idea.publish.refused-no-login.json";
 import ideaPublishRefusedNumberTaken from "../../../../fixtures/idea.publish.refused-number-taken.json";
 import ideaPublishRefusedStopped from "../../../../fixtures/idea.publish.refused-stopped.json";
@@ -80,51 +107,66 @@ import ideaRenumber from "../../../../fixtures/idea.renumber.json";
 import ideaSettle from "../../../../fixtures/idea.settle.json";
 import ideaSettleOutOfScope from "../../../../fixtures/idea.settle.out-of-scope.json";
 import ideaSettleRefusedCarried from "../../../../fixtures/idea.settle.refused-carried.json";
+import ideaShowApplied from "../../../../fixtures/idea.show.applied.json";
+import ideaShowBlockers from "../../../../fixtures/idea.show.blockers.json";
 import ideaShowBriefWritten from "../../../../fixtures/idea.show.brief-written.json";
 import ideaShowChange from "../../../../fixtures/idea.show.change.json";
+import ideaShowChanged from "../../../../fixtures/idea.show.changed.json";
 import ideaShowExploring from "../../../../fixtures/idea.show.exploring.json";
 import ideaShowFault from "../../../../fixtures/idea.show.fault.json";
+import ideaShowFolder from "../../../../fixtures/idea.show.folder.json";
 import ideaShowGo from "../../../../fixtures/idea.show.go.json";
+import ideaShowLongReason from "../../../../fixtures/idea.show.long-reason.json";
 import ideaShowLookBack from "../../../../fixtures/idea.show.look-back.json";
 import ideaShowLookedBack from "../../../../fixtures/idea.show.looked-back.json";
 import ideaShowMapped from "../../../../fixtures/idea.show.mapped.json";
 import ideaShowNotNow from "../../../../fixtures/idea.show.not-now.json";
+import ideaShowNumberTaken from "../../../../fixtures/idea.show.number-taken.json";
 import ideaShowOnGithub from "../../../../fixtures/idea.show.on-github.json";
+import ideaShowRefusedUnreadable from "../../../../fixtures/idea.show.refused-unreadable.json";
 import ideaShowRequest from "../../../../fixtures/idea.show.request.json";
-import ideaShowShaped from "../../../../fixtures/idea.show.shaped.json";
+import ideaShowSettled from "../../../../fixtures/idea.show.settled.json";
 import ideaShowShapedOneSlice from "../../../../fixtures/idea.show.shaped-one-slice.json";
+import ideaShowShaped from "../../../../fixtures/idea.show.shaped.json";
+import ideaShowSized from "../../../../fixtures/idea.show.sized.json";
 import ideaShowStaleRoute from "../../../../fixtures/idea.show.stale-route.json";
 import ideaShowStaleVerdict from "../../../../fixtures/idea.show.stale-verdict.json";
+import ideaShowUncovered from "../../../../fixtures/idea.show.uncovered.json";
+import ideaShowUnfinished from "../../../../fixtures/idea.show.unfinished.json";
 import ideaSizeEpic from "../../../../fixtures/idea.size.epic.json";
 import ideaSizeOneSlice from "../../../../fixtures/idea.size.one-slice.json";
 import ideaSizeRefusedNoGo from "../../../../fixtures/idea.size.refused-no-go.json";
 import ideaSizeSeveralEpics from "../../../../fixtures/idea.size.several-epics.json";
 import ideaStage from "../../../../fixtures/idea.stage.json";
-import lookbackRecord from "../../../../fixtures/lookback.record.json";
 import lookbackRecordAgain from "../../../../fixtures/lookback.record.again.json";
 import lookbackRecordAssumption from "../../../../fixtures/lookback.record.assumption.json";
 import lookbackRecordFolder from "../../../../fixtures/lookback.record.folder.json";
+import lookbackRecord from "../../../../fixtures/lookback.record.json";
 import lookbackRecordRefusedNotShipped from "../../../../fixtures/lookback.record.refused-not-shipped.json";
 import lookbackRecordRefusedSecret from "../../../../fixtures/lookback.record.refused-secret.json";
 import lookbackRecordTooEarly from "../../../../fixtures/lookback.record.too-early.json";
-import refreshIdeas from "../../../../fixtures/refresh.ideas.json";
 import refreshIdeasChanged from "../../../../fixtures/refresh.ideas-changed.json";
 import refreshIdeasNoneSaved from "../../../../fixtures/refresh.ideas-none-saved.json";
+import refreshIdeas from "../../../../fixtures/refresh.ideas.json";
 import sliceResumeFromIdea from "../../../../fixtures/slice.resume.from-idea.json";
 import sliceShowFromIdea from "../../../../fixtures/slice.show.from-idea.json";
-import statusIdeas from "../../../../fixtures/status.ideas.json";
 import statusIdeasApply from "../../../../fixtures/status.ideas-apply.json";
 import statusIdeasChanged from "../../../../fixtures/status.ideas-changed.json";
 import statusIdeasFolder from "../../../../fixtures/status.ideas-folder.json";
+import statusIdeasLongReason from "../../../../fixtures/status.ideas-long-reason.json";
 import statusIdeasLookBack from "../../../../fixtures/status.ideas-look-back.json";
+import statusIdeasNumberTaken from "../../../../fixtures/status.ideas-number-taken.json";
 import statusIdeasRoutes from "../../../../fixtures/status.ideas-routes.json";
 import statusIdeasSettle from "../../../../fixtures/status.ideas-settle.json";
 import statusIdeasShaped from "../../../../fixtures/status.ideas-shaped.json";
 import statusIdeasStaleVerdict from "../../../../fixtures/status.ideas-stale-verdict.json";
 import statusIdeasUnfinished from "../../../../fixtures/status.ideas-unfinished.json";
+import statusIdeasUnreadable from "../../../../fixtures/status.ideas-unreadable.json";
+import statusIdeas from "../../../../fixtures/status.ideas.json";
 import verdictRecordGo from "../../../../fixtures/verdict.record.go.json";
-import verdictRecordNo from "../../../../fixtures/verdict.record.no.json";
+import verdictRecordLongReason from "../../../../fixtures/verdict.record.long-reason.json";
 import verdictRecordNoLogin from "../../../../fixtures/verdict.record.no-login.json";
+import verdictRecordNo from "../../../../fixtures/verdict.record.no.json";
 import verdictRecordNotNow from "../../../../fixtures/verdict.record.not-now.json";
 import verdictRecordRefusedGoWithoutBrief from "../../../../fixtures/verdict.record.refused-go-without-brief.json";
 import verdictRecordRefusedOffline from "../../../../fixtures/verdict.record.refused-offline.json";
@@ -145,40 +187,66 @@ export const shapeRuns = {
   "brief.check.finding": run<BriefCheck>(briefCheckFinding),
   "brief.check.passes": run<BriefCheck>(briefCheckPasses),
   "brief.check.stale-verdict": run<BriefCheck>(briefCheckStaleVerdict),
+  "brief.check.unchanged": run<BriefCheck>(briefCheckUnchanged),
+  "brief.check.warnings": run<BriefCheck>(briefCheckWarnings),
   "brief.show.change-starter": run<BriefShow>(briefShowChangeStarter),
   "brief.show.finding": run<BriefShow>(briefShowFinding),
   "brief.show.passes": run<BriefShow>(briefShowPasses),
   "brief.show.refused-none": refusal(briefShowRefusedNone),
   "brief.show.stale-verdict": run<BriefShow>(briefShowStaleVerdict),
+  "brief.show.warnings": run<BriefShow>(briefShowWarnings),
+  "case.check.all-answered": run<CaseCheck>(caseCheckAllAnswered),
   "case.check": run<CaseCheck>(caseCheck),
+  "case.check.unanswered": run<CaseCheck>(caseCheckUnanswered),
+  "case.show.all-answered": run<CaseShow>(caseShowAllAnswered),
   "case.show": run<CaseShow>(caseShow),
   "case.show.refused-none": refusal(caseShowRefusedNone),
-  "idea.add": run<IdeaAdded>(ideaAdd),
+  "case.show.unanswered": run<CaseShow>(caseShowUnanswered),
   "idea.add.from-fault": run<IdeaAdded>(ideaAddFromFault),
   "idea.add.from-issue": run<IdeaAdded>(ideaAddFromIssue),
   "idea.add.from-request": run<IdeaAdded>(ideaAddFromRequest),
+  "idea.add": run<IdeaAdded>(ideaAdd),
   "idea.add.refused-not-template": refusal(ideaAddRefusedNotTemplate),
   "idea.add.refused-twice": refusal(ideaAddRefusedTwice),
-  "idea.apply": run<ShapeApplied>(ideaApply),
   "idea.apply.again": run<ShapeApplied>(ideaApplyAgain),
+  "idea.apply": run<ShapeApplied>(ideaApply),
   "idea.apply.refused-unsettled": refusal(ideaApplyRefusedUnsettled),
   "idea.chain": run<IdeaChain>(ideaChain),
   "idea.chain.looked-back": run<IdeaChain>(ideaChainLookedBack),
   "idea.change": run<IdeaChanged>(ideaChange),
   "idea.change.refused-replaced": refusal(ideaChangeRefusedReplaced),
+  "idea.faults.empty": run<IdeaFaults>(ideaFaultsEmpty),
+  "idea.faults": run<IdeaFaults>(ideaFaults),
   "idea.list.board": run<R<"idea.list">>(ideaListBoard),
   "idea.list.changed": run<R<"idea.list">>(ideaListChanged),
   "idea.list.empty": run<R<"idea.list">>(ideaListEmpty),
+  "idea.list.long-reason": run<R<"idea.list">>(ideaListLongReason),
+  "idea.list.unreadable": run<R<"idea.list">>(ideaListUnreadable),
   "idea.lookups": run<IdeaLookupsResult>(ideaLookups),
   "idea.map-status.applied": run<ShapeMapStatus>(ideaMapStatusApplied),
+  "idea.map-status.blockers": run<ShapeMapStatus>(ideaMapStatusBlockers),
+  "idea.map-status.brief-written": run<ShapeMapStatus>(ideaMapStatusBriefWritten),
+  "idea.map-status.change": run<ShapeMapStatus>(ideaMapStatusChange),
+  "idea.map-status.exploring": run<ShapeMapStatus>(ideaMapStatusExploring),
+  "idea.map-status.fault": run<ShapeMapStatus>(ideaMapStatusFault),
+  "idea.map-status.go": run<ShapeMapStatus>(ideaMapStatusGo),
+  "idea.map-status.look-back": run<ShapeMapStatus>(ideaMapStatusLookBack),
+  "idea.map-status.looked-back": run<ShapeMapStatus>(ideaMapStatusLookedBack),
+  "idea.map-status.mapped": run<ShapeMapStatus>(ideaMapStatusMapped),
+  "idea.map-status.not-now": run<ShapeMapStatus>(ideaMapStatusNotNow),
+  "idea.map-status.request": run<ShapeMapStatus>(ideaMapStatusRequest),
   "idea.map-status.settled": run<ShapeMapStatus>(ideaMapStatusSettled),
+  "idea.map-status.shaped-one-slice": run<ShapeMapStatus>(ideaMapStatusShapedOneSlice),
+  "idea.map-status.shaped": run<ShapeMapStatus>(ideaMapStatusShaped),
+  "idea.map-status.sized": run<ShapeMapStatus>(ideaMapStatusSized),
+  "idea.map-status.stale-route": run<ShapeMapStatus>(ideaMapStatusStaleRoute),
   "idea.map-status.uncovered": run<ShapeMapStatus>(ideaMapStatusUncovered),
   "idea.map.refused-stale": refusal(ideaMapRefusedStale),
   "idea.map.uncovered": run<ShapeMapRecorded>(ideaMapUncovered),
-  "idea.publish": run<Extract<IdeaPublished, { saved_to: "github" }>>(ideaPublish),
   "idea.publish.again": run<Extract<IdeaPublished, { saved_to: "github" }>>(ideaPublishAgain),
   "idea.publish.finished": run<Extract<IdeaPublished, { saved_to: "github" }>>(ideaPublishFinished),
   "idea.publish.folder": run<Extract<IdeaPublished, { saved_to: "folder" }>>(ideaPublishFolder),
+  "idea.publish": run<Extract<IdeaPublished, { saved_to: "github" }>>(ideaPublish),
   "idea.publish.refused-no-login": refusal(ideaPublishRefusedNoLogin),
   "idea.publish.refused-number-taken": refusal(ideaPublishRefusedNumberTaken),
   "idea.publish.refused-stopped": refusal(ideaPublishRefusedStopped),
@@ -187,51 +255,66 @@ export const shapeRuns = {
   "idea.settle": run<ShapeSettled>(ideaSettle),
   "idea.settle.out-of-scope": run<ShapeSettled>(ideaSettleOutOfScope),
   "idea.settle.refused-carried": refusal(ideaSettleRefusedCarried),
+  "idea.show.applied": run<IdeaShow>(ideaShowApplied),
+  "idea.show.blockers": run<IdeaShow>(ideaShowBlockers),
   "idea.show.brief-written": run<IdeaShow>(ideaShowBriefWritten),
   "idea.show.change": run<IdeaShow>(ideaShowChange),
+  "idea.show.changed": run<IdeaShow>(ideaShowChanged),
   "idea.show.exploring": run<IdeaShow>(ideaShowExploring),
   "idea.show.fault": run<IdeaShow>(ideaShowFault),
+  "idea.show.folder": run<IdeaShow>(ideaShowFolder),
   "idea.show.go": run<IdeaShow>(ideaShowGo),
+  "idea.show.long-reason": run<IdeaShow>(ideaShowLongReason),
   "idea.show.look-back": run<IdeaShow>(ideaShowLookBack),
   "idea.show.looked-back": run<IdeaShow>(ideaShowLookedBack),
   "idea.show.mapped": run<IdeaShow>(ideaShowMapped),
   "idea.show.not-now": run<IdeaShow>(ideaShowNotNow),
+  "idea.show.number-taken": run<IdeaShow>(ideaShowNumberTaken),
   "idea.show.on-github": run<IdeaShow>(ideaShowOnGithub),
+  "idea.show.refused-unreadable": refusal(ideaShowRefusedUnreadable),
   "idea.show.request": run<IdeaShow>(ideaShowRequest),
-  "idea.show.shaped": run<IdeaShow>(ideaShowShaped),
+  "idea.show.settled": run<IdeaShow>(ideaShowSettled),
   "idea.show.shaped-one-slice": run<IdeaShow>(ideaShowShapedOneSlice),
+  "idea.show.shaped": run<IdeaShow>(ideaShowShaped),
+  "idea.show.sized": run<IdeaShow>(ideaShowSized),
   "idea.show.stale-route": run<IdeaShow>(ideaShowStaleRoute),
   "idea.show.stale-verdict": run<IdeaShow>(ideaShowStaleVerdict),
+  "idea.show.uncovered": run<IdeaShow>(ideaShowUncovered),
+  "idea.show.unfinished": run<IdeaShow>(ideaShowUnfinished),
   "idea.size.epic": run<IdeaSized>(ideaSizeEpic),
   "idea.size.one-slice": run<IdeaSized>(ideaSizeOneSlice),
   "idea.size.refused-no-go": refusal(ideaSizeRefusedNoGo),
   "idea.size.several-epics": run<IdeaSized>(ideaSizeSeveralEpics),
   "idea.stage": run<IdeaStageResult>(ideaStage),
-  "lookback.record": run<LookbackRecorded>(lookbackRecord),
   "lookback.record.again": run<LookbackRecorded>(lookbackRecordAgain),
   "lookback.record.assumption": run<LookbackRecorded>(lookbackRecordAssumption),
   "lookback.record.folder": run<LookbackRecorded>(lookbackRecordFolder),
+  "lookback.record": run<LookbackRecorded>(lookbackRecord),
   "lookback.record.refused-not-shipped": refusal(lookbackRecordRefusedNotShipped),
   "lookback.record.refused-secret": refusal(lookbackRecordRefusedSecret),
   "lookback.record.too-early": run<LookbackRecorded>(lookbackRecordTooEarly),
-  "refresh.ideas": run<Refresh>(refreshIdeas),
   "refresh.ideas-changed": run<Refresh>(refreshIdeasChanged),
   "refresh.ideas-none-saved": run<Refresh>(refreshIdeasNoneSaved),
+  "refresh.ideas": run<Refresh>(refreshIdeas),
   "slice.resume.from-idea": run<SliceResume>(sliceResumeFromIdea),
   "slice.show.from-idea": run<SliceShow>(sliceShowFromIdea),
-  "status.ideas": run<Status>(statusIdeas),
   "status.ideas-apply": run<Status>(statusIdeasApply),
   "status.ideas-changed": run<Status>(statusIdeasChanged),
   "status.ideas-folder": run<Status>(statusIdeasFolder),
+  "status.ideas-long-reason": run<Status>(statusIdeasLongReason),
   "status.ideas-look-back": run<Status>(statusIdeasLookBack),
+  "status.ideas-number-taken": run<Status>(statusIdeasNumberTaken),
   "status.ideas-routes": run<Status>(statusIdeasRoutes),
   "status.ideas-settle": run<Status>(statusIdeasSettle),
   "status.ideas-shaped": run<Status>(statusIdeasShaped),
   "status.ideas-stale-verdict": run<Status>(statusIdeasStaleVerdict),
   "status.ideas-unfinished": run<Status>(statusIdeasUnfinished),
+  "status.ideas-unreadable": run<Status>(statusIdeasUnreadable),
+  "status.ideas": run<Status>(statusIdeas),
   "verdict.record.go": run<VerdictRecorded>(verdictRecordGo),
-  "verdict.record.no": run<VerdictRecorded>(verdictRecordNo),
+  "verdict.record.long-reason": run<VerdictRecorded>(verdictRecordLongReason),
   "verdict.record.no-login": run<VerdictRecorded>(verdictRecordNoLogin),
+  "verdict.record.no": run<VerdictRecorded>(verdictRecordNo),
   "verdict.record.not-now": run<VerdictRecorded>(verdictRecordNotNow),
   "verdict.record.refused-go-without-brief": refusal(verdictRecordRefusedGoWithoutBrief),
   "verdict.record.refused-offline": refusal(verdictRecordRefusedOffline),

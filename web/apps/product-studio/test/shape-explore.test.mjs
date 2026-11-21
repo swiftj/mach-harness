@@ -132,7 +132,7 @@ test("a rule's words come from its epic's current view, by exact rule ID", () =>
   assert.equal(ruleWords(run("epic.current.nothing-shipped"), "SLICE-001/FR-01"), null);
   assert.equal(ruleWords(null, "SLICE-001/FR-01"), null);
   assert.deepEqual(ruleEpics([{ rule: "a", epic_id: "EPIC-002" }, { rule: "b", epic_id: null }, { rule: "c", epic_id: "EPIC-002" }, { rule: "d", epic_id: "EPIC-001" }]), ["EPIC-002", "EPIC-001"]);
-  assert.deepEqual(ruleEpics(show("exploring").lookups.items.shipped_rules), [], "the fixtures' rules name no epic: no link is offered");
+  assert.deepEqual(ruleEpics(show("exploring").lookups.items.shipped_rules), ["EPIC-001"], "the looked-up rules carry their epic: its page is offered");
 });
 
 test("a policy statement's text and its pack's owner, and a principle's statement, by exact ID", () => {
@@ -162,11 +162,11 @@ test("an open question is read for display; anything else is shown as written", 
   assert.equal(openQuestion("❓ **Q1** - **A**: one?\n❓ **Q2** - **B**: two?"), null, "two questions at once is not one question");
 });
 
-test("the terminal command is the same skill with explore, as the host opens it", () => {
-  assert.equal(exploreCommand("/mach:product-studio continue", "IDEA-002"), "/mach:product-studio explore IDEA-002");
-  assert.equal(exploreCommand("/mach-product-studio continue", "IDEA-002"), "/mach-product-studio explore IDEA-002");
+test("the terminal command is the host's own explore command, with the idea's ID", () => {
+  assert.equal(exploreCommand("/mach:product-studio explore", "IDEA-002"), "/mach:product-studio explore IDEA-002");
+  assert.equal(exploreCommand("/mach-product-studio explore", "IDEA-002"), "/mach-product-studio explore IDEA-002");
   assert.equal(exploreCommand(null, "IDEA-002"), null);
-  assert.equal(exploreCommand("something else", "IDEA-002"), null);
+  assert.equal(exploreCommand("  ", "IDEA-002"), null);
 });
 
 test("each idea on the real board: New offers Start exploring, Shaped offers no conversation, the rest the conversation", () => {
@@ -203,8 +203,10 @@ test("the screen's files: tokens only, no inline style, no markup injection, the
     assert.doesNotMatch(source, /font-serif/, file);
   }
   const hook = readFileSync(new URL("useIdeaConversation.ts", dir), "utf8");
-  assert.match(hook, /from "\.\.\/\.\.\/interview\/model"/, "the conversation is the interview's model, not a second one");
+  assert.match(hook, /from "\.\.\/\.\.\/\.\.\/shared\/useConversation"/, "the conversation is the one conversation hook, not a second one");
   assert.match(hook, /client\.ideaConversation/);
+  const shared = readFileSync(new URL("../../../shared/useConversation.ts", dir), "utf8");
+  assert.match(shared, /from "\.\.\/features\/interview\/model"/, "over the interview's own model");
   const conversation = readFileSync(new URL("Conversation.tsx", dir), "utf8");
   assert.match(conversation, /"idea\.stage", \{ idea_id: row\.idea_id, stage: "exploring" \}/, "Start exploring is its own act");
   assert.doesNotMatch(conversation, /verdict\.record|idea\.size|idea\.publish/, "this screen offers no other act");

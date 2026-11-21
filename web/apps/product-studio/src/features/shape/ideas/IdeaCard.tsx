@@ -65,7 +65,7 @@ export function IdeaCard({ row }: { row: IdeaRow }) {
               </StatusPill>
             ) : null}
           </div>
-          {showsReason(row) ? <VerdictReason ideaId={row.idea_id} /> : null}
+          {showsReason(row) ? <VerdictReason reason={row.verdict.reason} /> : null}
           {row.verdict.decision === "no" && row.stage === "decided" ? <p className="text-caption text-ink-subtle">Kept with its reason. It stays on the board.</p> : null}
         </div>
       ) : null}

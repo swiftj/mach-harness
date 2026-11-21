@@ -63,10 +63,10 @@
     "github": {
       "repository": "acme/team-space",
       "form": null,
-      "last_read": "2026-11-21T00:35:06Z"
+      "last_read": "2026-11-21T01:38:34Z"
     },
     "current_slice": null,
-    "last_refreshed": "2026-11-21T00:35:06Z",
+    "last_refreshed": "2026-11-21T01:38:34Z",
     "ideas": {
       "ideas": [
         {
@@ -77,7 +77,7 @@
           "source": {
             "kind": "typed"
           },
-          "created": "2026-11-21T00:35:04Z",
+          "created": "2026-11-21T01:38:31Z",
           "revision": 1,
           "has_brief": true,
           "brief_checked": true,
@@ -86,10 +86,11 @@
           "verdict": {
             "decision": "go",
             "by": "ada-pm",
-            "at": "2026-11-21T00:35:05Z",
+            "at": "2026-11-21T01:38:31Z",
             "revision": 1,
             "holds": true,
-            "stale": false
+            "stale": false,
+            "reason": "Members ask for it at every desk."
           },
           "route": null,
           "made": null,
@@ -105,7 +106,7 @@
             "verdict_on_github": true,
             "number_taken": false,
             "other_issues": [],
-            "last_read": "2026-11-21T00:35:07Z"
+            "last_read": "2026-11-21T01:38:35Z"
           },
           "next": {
             "kind": "size",
@@ -120,7 +121,7 @@
           "source": {
             "kind": "typed"
           },
-          "created": "2026-11-21T00:35:07Z",
+          "created": "2026-11-21T01:38:36Z",
           "revision": 1,
           "has_brief": true,
           "brief_checked": true,
@@ -129,10 +130,11 @@
           "verdict": {
             "decision": "go",
             "by": "ada-pm",
-            "at": "2026-11-21T00:35:07Z",
+            "at": "2026-11-21T01:38:37Z",
             "revision": 1,
             "holds": true,
-            "stale": false
+            "stale": false,
+            "reason": "Members ask for it at every desk."
           },
           "route": null,
           "made": null,
@@ -148,7 +150,7 @@
             "verdict_on_github": null,
             "number_taken": false,
             "other_issues": [],
-            "last_read": "2026-11-21T00:35:07Z"
+            "last_read": "2026-11-21T01:38:35Z"
           },
           "next": {
             "kind": "publish",

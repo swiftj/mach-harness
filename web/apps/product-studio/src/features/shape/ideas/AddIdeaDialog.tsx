@@ -2,14 +2,15 @@ import { useState, type FormEvent } from "react";
 import { Banner, Button, Dialog, DialogClose, DialogContent, Field, HintAction, Input, Select, toast } from "@mach/ui";
 import type { IdeaAdded, RequestItem } from "@mach/ui/api";
 import { useEngineAct } from "../../../api/act";
-import { useRequestList } from "../../inbox/requests/api";
-import { addIdeaArgs, issueOption, oneLine, startOptions, titleLimit, titleProblem, type StartFrom } from "./model";
+import { useOperation } from "../../../api/useOperation";
+import { useRequestList } from "../../../shared/useRequestList";
+import { addIdeaArgs, faultOption, faultOptions, issueOption, oneLine, startOptions, titleLimit, titleProblem, type StartFrom } from "./model";
 
 type Kind = StartFrom["kind"];
 
 /**
- * Adding an idea, on the product manager's word: a title, and optionally the request or idea issue it starts from,
- * chosen only from what the engine lists (`request.list`). The engine checks it; its refusal is shown as written.
+ * Adding an idea, on the product manager's word: a title, and optionally the request, idea issue or fault from production
+ * it starts from, chosen only from what the engine lists (`request.list`, `idea.faults`). The engine checks it; its refusal is shown as written.
  * Adding sends nothing anywhere and starts nothing.
  */
 export function AddIdeaDialog({ open, onOpenChange, onAdded }: { open: boolean; onOpenChange: (open: boolean) => void; onAdded: (result: IdeaAdded) => void }) {
@@ -30,14 +31,18 @@ export function AddIdeaDialog({ open, onOpenChange, onAdded }: { open: boolean; 
 function AddIdeaBody({ onClose, onAdded }: { onClose: () => void; onAdded: (result: IdeaAdded) => void }) {
   const act = useEngineAct();
   const requests = useRequestList();
+  const faultList = useOperation("idea.faults", {});
   const [title, setTitle] = useState("");
   const [kind, setKind] = useState<Kind>("nothing");
+  // The chosen issue's number, or the chosen fault's ticket.
   const [number, setNumber] = useState<string>("");
   const [asked, setAsked] = useState<{ title: string | null; issue: string | null }>({ title: null, issue: null });
 
   const { requests: requestItems, ideaIssues } = startOptions(requests.data?.items);
   const choices: RequestItem[] = kind === "request" ? requestItems : kind === "idea" ? ideaIssues : [];
-  const textIsData = choices.find((item) => item.text_is_data)?.text_is_data ?? null;
+  const faults = faultOptions(faultList.data?.faults);
+  const textIsData = kind === "fault" ? (faultList.data?.note ?? null) : (choices.find((item) => item.text_is_data)?.text_is_data ?? null);
+  const faultWhy = faultList.loading && !faultList.data ? "Reading the faults on this computer." : faultList.error ? "The faults on this computer could not be read just now." : null;
 
   const listWhy = requests.loading && !requests.data ? "Reading the requests MACH knows about." : requests.error ? "The requests could not be read just now." : null;
   const kindOptions = [
@@ -54,23 +59,30 @@ function AddIdeaBody({ onClose, onAdded }: { onClose: () => void; onAdded: (resu
       description: listWhy ?? (ideaIssues.length ? `${ideaIssues.length === 1 ? "1 issue" : `${ideaIssues.length} issues`} known here` : "No issue in the idea template is known here yet."),
       disabled: ideaIssues.length === 0,
     },
+    {
+      value: "fault",
+      label: "A fault from production",
+      description: faultWhy ?? (faults.length ? `${faults.length === 1 ? "1 open fault" : `${faults.length} open faults`} on this computer` : "No open fault on this computer that an idea has not started from."),
+      disabled: faults.length === 0,
+    },
   ];
 
   const choose = (value: string) => {
     setNumber(value);
     setAsked((a) => ({ ...a, issue: null }));
     // Start the title from the issue's own title when nothing is typed yet; it stays editable.
-    const item = choices.find((c) => String(c.number) === value);
-    if (item?.title && title.trim() === "") setTitle(oneLine(item.title).slice(0, titleLimit));
+    const named = kind === "fault" ? faults.find((f) => f.ticket === value)?.summary : choices.find((c) => String(c.number) === value)?.title;
+    if (named && title.trim() === "") setTitle(oneLine(named).slice(0, titleLimit));
   };
 
   const add = async (event: FormEvent) => {
     event.preventDefault();
     const titleAsk = titleProblem(title);
-    const issueAsk = kind !== "nothing" && !number ? (kind === "request" ? "Choose the request it starts from." : "Choose the issue it starts from.") : null;
+    const issueAsk =
+      kind !== "nothing" && !number ? (kind === "request" ? "Choose the request it starts from." : kind === "fault" ? "Choose the fault it starts from." : "Choose the issue it starts from.") : null;
     setAsked({ title: titleAsk, issue: issueAsk });
     if (titleAsk || issueAsk) return;
-    const from: StartFrom = kind === "nothing" ? { kind } : { kind, number: Number(number) };
+    const from: StartFrom = kind === "nothing" ? { kind } : kind === "fault" ? { kind, ticket: number } : { kind, number: Number(number) };
     const result = await act.run("idea.add", addIdeaArgs(title, from));
     if (!result) return;
     toast({ tone: "success", title: `Added ${result.idea.idea_id}`, description: result.note });
@@ -114,7 +126,7 @@ function AddIdeaBody({ onClose, onAdded }: { onClose: () => void; onAdded: (resu
             autoComplete="off"
           />
         </Field>
-        <Field label="Start from" optional hint="An idea can start from an issue MACH already knows about. Only those are offered here.">
+        <Field label="Start from" optional hint="An idea can start from an issue or a fault MACH already knows about. Only those are offered here.">
           <Select
             value={kind}
             onValueChange={(value) => {
@@ -126,12 +138,16 @@ function AddIdeaBody({ onClose, onAdded }: { onClose: () => void; onAdded: (resu
           />
         </Field>
         {kind !== "nothing" ? (
-          <Field label={kind === "request" ? "The request" : "The issue"} hint={textIsData ?? undefined} error={asked.issue ?? undefined}>
+          <Field label={kind === "request" ? "The request" : kind === "fault" ? "The fault" : "The issue"} hint={textIsData ?? undefined} error={asked.issue ?? undefined}>
             <Select
               value={number}
               onValueChange={choose}
-              placeholder={kind === "request" ? "Choose a request…" : "Choose an issue…"}
-              options={choices.map((item) => ({ value: String(item.number), label: issueOption(item) }))}
+              placeholder={kind === "request" ? "Choose a request…" : kind === "fault" ? "Choose a fault…" : "Choose an issue…"}
+              options={
+                kind === "fault"
+                  ? faults.map((fault) => ({ value: fault.ticket, label: faultOption(fault) }))
+                  : choices.map((item) => ({ value: String(item.number), label: issueOption(item) }))
+              }
             />
           </Field>
         ) : null}

@@ -2,6 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "types": ["vite/client"],
+    "allowImportingTsExtensions": true,
     "tsBuildInfoFile": "./node_modules/.cache/tsconfig.tsbuildinfo"
   },
   "include": ["src", "vite-env.d.ts"]
