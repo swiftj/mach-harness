@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useParams } from "react-router";
+import { Link, useParams } from "react-router";
 import { CircleAlert, GitCommitHorizontal, PackageOpen } from "lucide-react";
 import { ArtifactId, Badge, Banner, Button, DiagnosticList, EmptyState, ErrorState, Heading, Skeleton, SkeletonText, StateGlyph, Text, cn, describeError, plain, plural } from "@mach/ui";
 import type { EpicCurrent, EpicView, ShippedRule } from "@mach/ui/api";
@@ -265,9 +265,20 @@ function RuleItem({ rule, epic, epicId, group }: { rule: ShippedRule; epic: Epic
       </span>
       <div className="flex min-w-0 flex-col gap-1.5">
         <p className={cn("break-words text-body", gone ? "text-ink-muted" : "text-ink")}>{plain(rule.text)}</p>
-        <p className="text-caption text-ink-subtle">
-          <Source epic={epic} sliceId={rule.slice_id} />
-          {group.id === "not-reconciled" ? <span> · not yet reconciled</span> : null}
+        <p className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-caption text-ink-subtle">
+          <span>
+            <Source epic={epic} sliceId={rule.slice_id} />
+            {group.id === "not-reconciled" ? <span> · not yet reconciled</span> : null}
+          </span>
+          {gone ? null : (
+            <Link
+              to={`/shape/change?rule=${encodeURIComponent(rule.rule)}&epic=${encodeURIComponent(epicId)}`}
+              aria-label={`Change this: ${rule.rule}`}
+              className="font-semibold text-accent-ink underline-offset-2 hover:underline"
+            >
+              Change this
+            </Link>
+          )}
         </p>
         {history.length || confirmed.length || superseded.length ? (
           <ul className="mt-1 flex flex-col gap-1.5 border-l-2 border-line-strong pl-3">
