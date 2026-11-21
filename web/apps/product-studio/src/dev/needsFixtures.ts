@@ -26,6 +26,15 @@ import type {
 
 import designImport from "../../../../fixtures/design.import.json";
 import designImportAgain from "../../../../fixtures/design.import.again.json";
+import designImportRefusedBinary from "../../../../fixtures/design.import.refused-binary.json";
+import designListChangedCopy from "../../../../fixtures/design.list.changed-copy.json";
+import designListChangedSincePublished from "../../../../fixtures/design.list.changed-since-published.json";
+import designPublishRefusedChangedCopy from "../../../../fixtures/design.publish.refused-changed-copy.json";
+import designPublishRefusedTopicsChanged from "../../../../fixtures/design.publish.refused-topics-changed.json";
+import designSettleAskEngineer from "../../../../fixtures/design.settle.ask-engineer.json";
+import designSettleStands from "../../../../fixtures/design.settle.stands.json";
+import designShowChangedSincePublished from "../../../../fixtures/design.show.changed-since-published.json";
+import designShowRefusedChangedCopy from "../../../../fixtures/design.show.refused-changed-copy.json";
 import designListEmpty from "../../../../fixtures/design.list.empty.json";
 import designListImported from "../../../../fixtures/design.list.imported.json";
 import designListMapped from "../../../../fixtures/design.list.mapped.json";
@@ -87,6 +96,15 @@ type R<K extends keyof Operations> = Operations[K]["result"];
 export const needsRuns = {
   "design.import": run<DesignImport>(designImport),
   "design.import.again": run<DesignImport>(designImportAgain),
+  "design.import.refused-binary": refusal(designImportRefusedBinary),
+  "design.list.changed-copy": run<R<"design.list">>(designListChangedCopy),
+  "design.list.changed-since-published": run<R<"design.list">>(designListChangedSincePublished),
+  "design.publish.refused-changed-copy": refusal(designPublishRefusedChangedCopy),
+  "design.publish.refused-topics-changed": refusal(designPublishRefusedTopicsChanged),
+  "design.settle.ask-engineer": run<DesignSettled>(designSettleAskEngineer),
+  "design.settle.stands": run<DesignSettled>(designSettleStands),
+  "design.show.changed-since-published": run<DesignShow>(designShowChangedSincePublished),
+  "design.show.refused-changed-copy": refusal(designShowRefusedChangedCopy),
   "design.list.empty": run<R<"design.list">>(designListEmpty),
   "design.list.imported": run<R<"design.list">>(designListImported),
   "design.list.mapped": run<R<"design.list">>(designListMapped),

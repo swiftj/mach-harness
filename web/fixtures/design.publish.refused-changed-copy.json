@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "The copy of DES-01 in the workspace no longer matches what was imported, so nothing was done. Import the document again; it becomes a new design.",
+  "hint": null
+}

@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "The file holds binary data, not text, so it was not imported.",
+  "hint": null
+}

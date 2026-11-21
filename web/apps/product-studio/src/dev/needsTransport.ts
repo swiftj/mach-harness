@@ -14,11 +14,14 @@
  *   ?need-none=refused-has-need       need.none
  *   ?publish-needs=again | refused-none | refused-newer-elsewhere   need.publish (default: to GitHub and the folder)
  *   ?reconcile-needs=refused-nothing-newer                            reconcile.needs (default: theirs taken)
- *   ?designs=empty | imported | mapped | published   design.list (default: mapped, one conflict waiting)
- *   ?design=unmapped | mapped | settled | published | lines   design.show (default: follows ?designs)
- *   ?import-design=again              design.import (default: brought in as DES-01)
- *   ?settle-design=refused-no-conflict                                design.settle
- *   ?publish-design=again | refused-unsettled | refused-no-map        design.publish
+ *   ?designs=empty | imported | mapped | published | changed-since-published | changed-copy
+ *                                     design.list (default: mapped, one conflict waiting)
+ *   ?design=unmapped | mapped | settled | published | changed-since-published | refused-changed-copy | lines
+ *                                     design.show (default: follows ?designs)
+ *   ?import-design=again | refused-binary                             design.import (default: brought in as DES-01)
+ *   ?settle-design=stands | ask-engineer | refused-no-conflict         design.settle (default: by the way sent)
+ *   ?publish-design=again | refused-unsettled | refused-no-map | refused-topics-changed | refused-changed-copy
+ *                                     design.publish
  *   ?refuse=<operation>               that operation answers with the engine's real refusal
  *
  * The needs conversation in fixture mode is the scripted one in features/needs/shell/dev/ (its parameters are in its
@@ -50,12 +53,19 @@ const refusals: Partial<Record<string, NeedsFixture>> = {
   "need.none": "need.none.refused-has-need",
   "need.publish": "need.publish.refused-newer-elsewhere",
   "reconcile.needs": "reconcile.needs.refused-nothing-newer",
+  "design.import": "design.import.refused-binary",
   "design.settle": "design.settle.refused-no-conflict",
   "design.publish": "design.publish.refused-unsettled",
 };
 
 /** design.show for the scenario design.list is in. */
-const shownFor: Record<string, string> = { imported: "unmapped", mapped: "mapped", published: "published" };
+const shownFor: Record<string, string> = {
+  imported: "unmapped",
+  mapped: "mapped",
+  published: "published",
+  "changed-since-published": "changed-since-published",
+  "changed-copy": "refused-changed-copy",
+};
 
 const conversationUnavailable: TransportResponse = {
   status: 503,
@@ -102,7 +112,8 @@ export function needsRoute(path: string, method: string, args: Record<string, un
       return answer(named("design.show", scenario, "design.show.mapped"));
     }
     case "design.settle":
-      return answer(named("design.settle", devParam("settle-design"), "design.settle"));
+      // By the way chosen: design-is-wrong is the default fixture; stands and ask-engineer have their own.
+      return answer(named("design.settle", devParam("settle-design") ?? (typeof args.as === "string" ? args.as : null), "design.settle"));
     case "design.publish":
       return answer(named("design.publish", devParam("publish-design"), "design.publish"));
   }
