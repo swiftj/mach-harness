@@ -19,7 +19,7 @@ const LEAD = "One sentence each that every slice must keep. Each slice says how 
 
 /** The slim context row (M16 layout): the counts, the page's one h1, its lead behind "About this page", and its acts. */
 function Header({ identity, actions }: { identity?: ReactNode; actions?: ReactNode }) {
-  return <ContextRow identity={identity} title={TITLE} about={LEAD} aboutLabel="About this page" actions={actions} />;
+  return <ContextRow identity={identity} title={TITLE} about={LEAD} actions={actions} />;
 }
 
 /**

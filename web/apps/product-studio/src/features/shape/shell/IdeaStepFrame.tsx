@@ -81,6 +81,7 @@ export function IdeaStepFrame({
           }
           title={stepName(step)}
           about={lead}
+          aboutLabel="About this step"
           trail={<ShapeStepper row={row} here={step} ideasOnBoard={board?.ideas.length ?? 0} />}
         />
       }

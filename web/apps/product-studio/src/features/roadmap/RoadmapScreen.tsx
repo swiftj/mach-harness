@@ -94,10 +94,8 @@ function Roadmap({ status }: { status: Status }) {
     <WorkScreen
       header={
         <ContextRow
-          identity={<span>{status.project!.name}</span>}
           title="Roadmap"
           about={`Everything in ${status.project!.name}, from the project to its slices of intent. Select an item to see where it stands and what you can do.`}
-          aboutLabel="About this page"
           actions={
             <Button variant="primary" onClick={() => setNewSlice({ epicId: epicFilter === "all" ? null : epicFilter })} disabled={!status.epics.length}>
               <Plus aria-hidden="true" />

@@ -266,9 +266,9 @@ export function jiraOpenPart(facts: LedgerFacts): JiraPart {
 
 const n = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
 
-/** The keys in one line: "1 epic · 2 slices · 1 slice with a key of its own". */
+/** The keys in one line: "1 epic, 2 slices, 1 slice with a key of its own". */
 export function keysPartSummary(facts: LedgerFacts): string {
-  return `${n(facts.epics, "epic")} · ${n(facts.slices, "slice")} · ${n(facts.sliceKeys, "slice")} with a key of its own`;
+  return `${n(facts.epics, "epic")}, ${n(facts.slices, "slice")}, ${n(facts.sliceKeys, "slice")} with a key of its own`;
 }
 
 /** The export in one line: not done on this visit, or what the file holds. */
@@ -282,7 +282,7 @@ export function keysBackSummary(state: { chosen: boolean; trial: KeysSummary | n
   const found = (s: KeysSummary, linked: string) =>
     [linked, s.reopen.length ? `${s.reopen.length} to reopen first` : null, s.unmatched.length ? `${s.unmatched.length} not matched` : null, s.refused.length ? `${s.refused.length} refused` : null]
       .filter(Boolean)
-      .join(" · ");
+      .join(", ");
   if (state.applied) return `Recorded: ${found(state.applied, `${n(state.applied.link.length, "key")} linked`)}`;
   if (state.trial) return `Tried, nothing changed yet: ${found(state.trial, `would link ${n(state.trial.link.length, "key")}`)}`;
   return state.chosen ? "A file is chosen: try it without changing anything" : "No file chosen yet";

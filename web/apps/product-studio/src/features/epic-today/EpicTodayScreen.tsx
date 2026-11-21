@@ -45,7 +45,6 @@ function EpicToday({ epicId }: { epicId: string }) {
       }
       title={label}
       about="Every rule in force for this epic, from its slices that have shipped."
-      aboutLabel="About this page"
     />
   );
   return (
@@ -319,7 +318,7 @@ function RuleItem({ rule, epic, epicId, group }: { rule: ShippedRule; epic: Epic
           )}
         </p>
         {connections ? (
-          <Fold label={connections}>
+          <Fold small label={connections}>
             <ul className="flex flex-col gap-1.5 border-l-2 border-line-strong pl-3">
               {history.map((h, index) => {
                 const earlier = earlierText(epic, h.rule);

@@ -250,7 +250,7 @@ test("the part open on arrival: the export until anything has a key, then the ke
 });
 
 test("each part's row says its state in words", () => {
-  assert.equal(keysPartSummary(ledgerFacts(buildLedger(status))), "1 epic · 2 slices · 1 slice with a key of its own");
+  assert.equal(keysPartSummary(ledgerFacts(buildLedger(status))), "1 epic, 2 slices, 1 slice with a key of its own");
   assert.equal(exportPartSummary(null), "One CSV file and a README for Jira's importer. Not exported on this visit.");
   assert.equal(exportPartSummary(exportSummary(offered(fixture("jira.export")), namesFrom(status))), "Exported: nothing to export");
   assert.equal(exportPartSummary(exportSummary(offered(fixture("jira.export.all")), namesFrom(status))), `Exported: the file holds ${fileContents(fixture("jira.export.all").counts.epics, fixture("jira.export.all").counts.stories)}`);
@@ -261,7 +261,7 @@ test("bringing the keys back: the row says what a try found and that nothing has
   assert.equal(keysBackSummary({ chosen: false, trial: null, applied: null }), "No file chosen yet");
   assert.equal(keysBackSummary({ chosen: true, trial: null, applied: null }), "A file is chosen: try it without changing anything");
   const trial = keysSummary(fixture("jira.keys.dry-run"), names);
-  assert.equal(keysBackSummary({ chosen: true, trial, applied: null }), "Tried, nothing changed yet: would link 1 key · 1 not matched · 2 refused");
+  assert.equal(keysBackSummary({ chosen: true, trial, applied: null }), "Tried, nothing changed yet: would link 1 key, 1 not matched, 2 refused");
   const applied = keysSummary(fixture("jira.keys"), names);
   assert.match(keysBackSummary({ chosen: true, trial: null, applied }), /^Recorded: \d+ keys? linked/);
   const reopen = keysSummary(fixture("jira.keys.reopen"), names);

@@ -3,7 +3,6 @@ import { Banner, Button, ErrorState, Field, Tabs, TabsContent, TabsList, TabsTri
 import { type MachApiError, type SliceCheck, type SliceShow, type WhyDocument } from "@mach/ui/api";
 import { client as studioClient } from "../../api/client";
 import { toApiError } from "../../api/session";
-import { checkDetail } from "./specModel";
 
 type Kind = "spec" | "intent";
 
@@ -117,7 +116,7 @@ function Editor({ kind, sliceId, original, editable, onSaved }: { kind: Kind; sl
               ))}
             </ul>
           ) : (
-            checkDetail(verdict.detail)
+            verdict.detail
           )}
         </Banner>
       ) : null}

@@ -21,7 +21,7 @@ import {
 } from "@mach/ui";
 import { Fold } from "../../../shared/layout/Fold";
 import { SectionNav } from "../../../shared/layout/SectionNav";
-import { OnePane, WorkPane, WorkPanes } from "../../../shared/layout/WorkScreen";
+import { ContextActs, OnePane, WorkPane, WorkPanes } from "../../../shared/layout/WorkScreen";
 import type { BriefCheck, BriefModel, BriefShow, IdeaRow } from "@mach/ui/api";
 import { IdeaStepFrame } from "../shell/IdeaStepFrame";
 import { ideaPath } from "../shell/steps";
@@ -132,7 +132,7 @@ function BriefPage({ row }: { row: IdeaRow }) {
     <WorkPanes>
       <WorkPane label="The brief">
         <div className="flex flex-col gap-5">
-          <WrittenElsewhere ideaId={ideaId} primary={!data.passes} />
+          <WrittenElsewhere ideaId={ideaId} passes={data.passes} />
           <Notices show={data} lastCheck={lastCheck} actError={act.shown} ideaId={ideaId} />
           <BriefDocument show={data} placed={placed} lookups={idea.data?.lookups ?? null} />
           <Fold boxed label="The text as written, with its line numbers">
@@ -152,7 +152,7 @@ function BriefPage({ row }: { row: IdeaRow }) {
       </WorkPane>
       <WorkPane side label="Check and sections">
         <div className="flex flex-col gap-8">
-          <CheckPanel show={data} placed={placed} ideaId={ideaId} onCheckAgain={checkAgain} checking={act.pending} />
+          <CheckPanel show={data} placed={placed} onCheckAgain={checkAgain} checking={act.pending} />
           <SectionNav
             label="Sections of the brief"
             title="In this brief"
@@ -175,20 +175,34 @@ function BriefPage({ row }: { row: IdeaRow }) {
   );
 }
 
-/** Where the brief is written, and the way back to it. */
-function WrittenElsewhere({ ideaId, primary }: { ideaId: string; primary: boolean }) {
+/**
+ * Where the brief is written, and the page's acts: "Make the case" once the brief passes its check, and the way back to
+ * the conversation (the primary act until it passes). The acts are put in the context row, so the act for the state is
+ * at the top of the window whatever the pane holds.
+ */
+function WrittenElsewhere({ ideaId, passes }: { ideaId: string; passes: boolean }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-md border border-line bg-surface-sunken px-4 py-3">
+    <>
+      <ContextActs>
+        <Button variant={passes ? "secondary" : "primary"} asChild>
+          <Link to={ideaPath(ideaId, "explore")}>
+            <MessagesSquare aria-hidden="true" />
+            Back to the conversation
+          </Link>
+        </Button>
+        {passes ? (
+          <Button variant="primary" asChild>
+            <Link to={ideaPath(ideaId, "case")}>
+              Make the case
+              <ArrowRight aria-hidden="true" />
+            </Link>
+          </Button>
+        ) : null}
+      </ContextActs>
       <Text size="body-sm" tone="muted" className="max-w-reading">
         The conversation on the Explore step writes this brief with you. It is read here, not edited: to change a word, say it in the conversation.
       </Text>
-      <Button variant={primary ? "primary" : "secondary"} size="sm" asChild>
-        <Link to={ideaPath(ideaId, "explore")}>
-          <MessagesSquare aria-hidden="true" />
-          Back to the conversation
-        </Link>
-      </Button>
-    </div>
+    </>
   );
 }
 
@@ -531,13 +545,11 @@ function AsideFindings({ title, items }: { title: string; items: PlacedFinding[]
 function CheckPanel({
   show,
   placed,
-  ideaId,
   onCheckAgain,
   checking,
 }: {
   show: BriefShow;
   placed: PlacedFindings;
-  ideaId: string;
   onCheckAgain: () => void;
   checking: boolean;
 }) {
@@ -586,14 +598,6 @@ function CheckPanel({
           </Text>
         ) : null}
         <div className="flex flex-col gap-2">
-          {show.passes ? (
-            <Button variant="primary" asChild>
-              <Link to={ideaPath(ideaId, "case")}>
-                Make the case
-                <ArrowRight aria-hidden="true" />
-              </Link>
-            </Button>
-          ) : null}
           <Button variant="secondary" onClick={onCheckAgain} disabled={checking} aria-busy={checking || undefined}>
             <RefreshCw aria-hidden="true" />
             {checking ? "Checking…" : "Check again"}

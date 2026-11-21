@@ -39,7 +39,7 @@ export function IdeaCard({ row }: { row: IdeaRow }) {
             {source.id ? (
               <>
                 {" "}
-                <ArtifactId plain className="text-caption">
+                <ArtifactId plain className="break-all text-caption">
                   {source.id}
                 </ArtifactId>
               </>

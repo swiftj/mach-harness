@@ -55,9 +55,9 @@
         "d3a67710b6bcc7b5cb13cfa10d2fd256d372a44903e1c4056f00fabba1a073c0.png"
       ],
       "factory_waits": true,
-      "note": "The builders hold SLICE-001 until its design mocks are in the project's repository. Add the pictures from this folder to the repository at product/ready/SLICE-001/mocks/, or hand them to an engineer to add."
+      "note": "The builders hold SLICE-001 until its design mocks are in the project's repository, at product/ready/SLICE-001/mocks/."
     },
-    "note": "Saved to GitHub as #3 and marked ready. The builders take it from there; nothing has started yet. The builders hold SLICE-001 until its design mocks are in the project's repository. Add the pictures from this folder to the repository at product/ready/SLICE-001/mocks/, or hand them to an engineer to add."
+    "note": "Saved to GitHub as #3 and marked ready. The builders hold SLICE-001 until its design mocks are in the project's repository, at product/ready/SLICE-001/mocks/."
   },
   "refused": null,
   "hint": null

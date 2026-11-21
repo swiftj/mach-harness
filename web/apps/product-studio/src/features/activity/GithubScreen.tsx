@@ -28,7 +28,6 @@ export function GithubScreen() {
       header={
         <ContextRow
           title="On GitHub"
-          aboutLabel="About this page"
           about="A slice of intent you mark ready is saved to the project on GitHub, under its epic, where the builders take it. Refreshing reads what is there now; it never changes your drafts."
           trail={
             // The page's one act sits on the title's line, with when GitHub was last read beside it.

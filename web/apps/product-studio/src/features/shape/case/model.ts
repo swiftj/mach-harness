@@ -75,12 +75,12 @@ export function questionViews(model: CaseModel): QuestionView[] {
 
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-/** The counts the engine gave, in words: "2 answered · 1 left unanswered on purpose". */
+/** The counts the engine gave, in words: "2 answered, 1 left unanswered on purpose". */
 export function questionCounts(model: Pick<CaseModel, "answered" | "not_answered" | "open">): string {
   const parts = [`${model.answered} answered`];
   if (model.not_answered > 0) parts.push(`${model.not_answered} left unanswered on purpose`);
   if (model.open > 0) parts.push(count(model.open, "with no answer yet", "with no answer yet"));
-  return parts.join(" · ");
+  return parts.join(", ");
 }
 
 /** The case check's result as a state: its word and look. The findings themselves are shown in the engine's words. */

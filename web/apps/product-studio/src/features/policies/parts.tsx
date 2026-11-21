@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { DiagnosticList, StateGlyph, StatusPill, type GlyphShape, type Tone } from "@mach/ui";
+import { DiagnosticList, Heading, StateGlyph, StatusPill, type GlyphShape, type Tone } from "@mach/ui";
 import type { answerFindings } from "./model";
 
 /** A state as word, shape and tone, so it reads in greyscale. */
@@ -26,9 +26,9 @@ export function Findings({ items }: { items: ReturnType<typeof answerFindings> }
   if (!items.length) return null;
   return (
     <section aria-labelledby="policy-findings" className="flex flex-col gap-2">
-      <h2 id="policy-findings" className="text-label text-ink">
+      <Heading level={2} size="title-3" id="policy-findings">
         What the check says about these answers
-      </h2>
+      </Heading>
       <DiagnosticList items={items.map((item) => ({ ...item, section: null }))} />
     </section>
   );

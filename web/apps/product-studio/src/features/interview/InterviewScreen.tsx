@@ -18,6 +18,7 @@ import {
   Text,
   Tooltip,
   describeError,
+  plural,
 } from "@mach/ui";
 import { ENGINE_ID as SLICE_ID, type SliceShow } from "@mach/ui/api";
 import { Composer } from "./Composer";
@@ -33,7 +34,7 @@ import { useStatus } from "../../api/store";
 import { MarkReadyDialog } from "../spec/SliceActs";
 import { BuildersQuestion } from "../../shared/BuildersQuestion";
 import { Fold } from "../../shared/layout/Fold";
-import { ContextRow, WorkPane, WorkScreen } from "../../shared/layout/WorkScreen";
+import { ContextRow, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
 
 const PAUSE_REQUEST = "I need to stop here. Please save where we are so I can continue later.";
 
@@ -117,23 +118,23 @@ function InterviewWorkspace({ sliceId }: { sliceId: string }) {
         />
       }
     >
-      <div data-work-area="" className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.15fr)_minmax(22rem,1fr)] max-[1023px]:block [@media(max-height:619px)]:block">
-        <WorkPane label="Interview" width="content">
-          <div className="mx-auto flex max-w-[44rem] flex-col gap-10 py-4">
+      <WorkPanes split="conversation">
+        <WorkPane label="Interview" width="column">
+          <div className="flex flex-col gap-10 py-4">
             {show.data ? <BuildersQuestion github={show.data.github} /> : null}
             <div ref={current} className="flex scroll-mt-6 flex-col gap-10">
               <Current iv={iv} busy={busy} sliceId={sliceId} show={show.data} onApproved={show.reload} />
             </div>
             <Settled decisions={model.decisions} />
             {iv.phase === "live" && model.timeline.length ? (
-              <Fold label="The whole conversation">
+              <Fold label={`The whole conversation: ${plural(model.timeline.filter((item) => item.type === "message").length, "message")}`}>
                 <Transcript model={model} onRetry={model.lastReply && !busy ? () => iv.reply(model.lastReply ?? "", "reply") : null} />
               </Fold>
             ) : null}
           </div>
         </WorkPane>
         <SliceSoFar sliceId={sliceId} show={show} epicTitle={epicTitle} />
-      </div>
+      </WorkPanes>
     </WorkScreen>
   );
 }

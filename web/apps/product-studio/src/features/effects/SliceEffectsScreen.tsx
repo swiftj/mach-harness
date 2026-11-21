@@ -7,7 +7,7 @@ import { useOperation } from "../../api/useOperation";
 import { useStatus } from "../../api/store";
 import { Fold } from "../../shared/layout/Fold";
 import { OnePane, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
-import { SliceContext } from "./SliceContext";
+import { SliceContextRow } from "../../shared/SliceContextRow";
 import { effectSummary, effectWords, effectsHeading, effectsView, shortCommit, type EffectLine, type EffectProblem, type EffectsView } from "./model";
 
 /**
@@ -35,7 +35,7 @@ function EffectsPage({ sliceId }: { sliceId: string }) {
   // interview is offered as the empty state's own primary act instead, so it is never offered twice.
   const offer = show.data && view && (view.state === "rows" || view.state === "none") ? <InterviewLink show={show.data} primary={false} /> : null;
   return (
-    <WorkScreen header={<SliceContext sliceId={sliceId} show={show.data} title="Effects on shipped behaviour" about={ABOUT} actions={offer} refreshing={show.loading && Boolean(show.data)} />}>
+    <WorkScreen header={<SliceContextRow sliceId={sliceId} show={show.data} title="Effects on shipped behaviour" about={ABOUT} actions={offer} refreshing={show.loading && Boolean(show.data)} />}>
       {show.data && view ? (
         <EffectsBody show={show.data} view={view} />
       ) : show.loading ? (
@@ -116,10 +116,9 @@ function EffectsBody({ show, view }: { show: SliceShow; view: EffectsView }) {
               {view.state === "none" ? <NoneAnswer /> : <EffectRows rows={view.rows} wording={wording} />}
             </section>
           )}
+          {/* What the check read is short reference: it sits under the rows in the same pane, never a second pane. */}
+          <CheckedAside show={show} shipped={view.shipped} />
         </div>
-      </WorkPane>
-      <WorkPane side label="What the check read">
-        <CheckedAside show={show} shipped={view.shipped} />
       </WorkPane>
     </WorkPanes>
   );
@@ -246,7 +245,7 @@ function InterviewLink({ show, primary }: { show: SliceShow; primary: boolean })
 function CheckedAside({ show, shipped }: { show: SliceShow; shipped: ShippedChecked | null }) {
   const commit = shipped ? shortCommit(shipped.commit) : null;
   return (
-    <div className="flex flex-col gap-8">
+    <div className="grid grid-cols-2 gap-x-10 gap-y-8 border-t border-line pt-6">
       <section aria-labelledby="effects-reads-title" className="flex flex-col gap-1.5">
         <Heading level={2} size="title-3" id="effects-reads-title">
           This page only reads

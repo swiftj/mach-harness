@@ -73,7 +73,8 @@ test("no verdict choice is pre-selected or marked as recommended on the screen",
   const radios = readFileSync(new URL("../../../packages/ui/src/components/radio-group.tsx", import.meta.url), "utf8");
   assert.match(radios, /has-\[:checked\]:border-ink/, "and is shown by a heavier ink outline");
   // The button that opens the confirmation is not the primary button, so no accent sits beside the choices.
-  assert.match(form, /<Button type="submit">Record the verdict<\/Button>/);
+  // No variant: the default (secondary) look. `data-part-act` only marks it as the part's act, to bring into view on arrival.
+  assert.match(form, /<Button type="submit" data-part-act="">\s*Record the verdict\s*<\/Button>/);
   // Nothing in the screen's own words recommends or ranks a verdict.
   for (const text of allSources().match(/"[^"\n]*"|`[^`\n]*`/g) ?? []) {
     if (/recommend/i.test(text)) assert.match(text, /never recommends/, text);
@@ -128,7 +129,7 @@ test("a case with two answers and one question left unanswered on purpose", () =
   assert.equal(qs[0].answer, "Desk staff at the small branches, who use renewal calls to check on older members.");
   assert.equal(qs[2].answer, null);
   assert.equal(qs[2].leftBecause, "the product manager wants the first month's numbers first.");
-  assert.equal(questionCounts(shown.model), "2 answered · 1 left unanswered on purpose");
+  assert.equal(questionCounts(shown.model), "2 answered, 1 left unanswered on purpose");
   assert.deepEqual(caseCheckState(shown), { word: "Passes its check", tone: "success", glyph: "check" });
   // case.check gives the same model and result without the text.
   assert.deepEqual(data("case.check").model, shown.model);
@@ -144,7 +145,7 @@ test("every question answered; one left with no reason; one with no answer; a ca
   // A question with no answer at all: the engine's check fails, and the screen says it has no answer yet.
   const open = data("case.show.unanswered");
   assert.equal(questionViews(open.model).at(-1).state, "open");
-  assert.equal(questionCounts(open.model), "2 answered · 1 with no answer yet");
+  assert.equal(questionCounts(open.model), "2 answered, 1 with no answer yet");
   assert.deepEqual(caseCheckState(data("case.check.unanswered")), { word: "Does not pass its check", tone: "danger", glyph: "alert" });
   // "Not answered." written alone: left on purpose, with no reason (the questions' view of one row).
   const base = data("case.show").model;
@@ -306,7 +307,7 @@ test("the verdict part opens on arrival whatever verdict is recorded; publishing
 
 test("the case part's row says what the case holds, from the engine's counts", () => {
   const shown = data("case.show");
-  assert.equal(caseSummary(shown.model), "Told as the customer would hear it, with 3 hard questions: 2 answered · 1 left unanswered on purpose");
+  assert.equal(caseSummary(shown.model), "Told as the customer would hear it, with 3 hard questions: 2 answered, 1 left unanswered on purpose");
   assert.equal(caseSummary(null), "No case yet. It is written in the conversation on the Explore step.");
   assert.match(caseSummary({ ...shown.model, questions: [] }), /No questions are written in the case\.$/);
 });

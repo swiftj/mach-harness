@@ -8,7 +8,7 @@ import { useSliceShow } from "../../api/useSliceShow";
 import { useReadyAnswer } from "../../shared/mocksDelivery";
 import { MocksToCommitPanel } from "../../shared/MocksToCommit";
 import { OnePane, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
-import { SliceContext } from "../effects/SliceContext";
+import { SliceContextRow } from "../../shared/SliceContextRow";
 import { AddMockDialog, PICTURE_RULE, RemoveMockDialog } from "./MockDialogs";
 import { MockFiles, MockRecord, type ListedMock } from "./MockRecord";
 import { addAvailability, deliveryState, type ScenarioName } from "./model";
@@ -52,7 +52,7 @@ export function SliceMocksScreen() {
   return (
     <WorkScreen
       header={
-        <SliceContext
+        <SliceContextRow
           sliceId={sliceId}
           show={show.data}
           title="Design mocks"
@@ -224,7 +224,7 @@ function MocksBody({ sliceId, mocks, limit, loading, error, retry, show, toCommi
       </WorkPane>
       <WorkPane side label="Committing the pictures, and their files">
         <div className="flex flex-col gap-8">
-          {delivery.kind === "waiting" ? <MocksToCommitPanel sliceId={sliceId} toCommit={delivery.toCommit} files={files} /> : null}
+          {delivery.kind === "waiting" ? <MocksToCommitPanel sliceId={sliceId} toCommit={delivery.toCommit} files={files} narrow /> : null}
           <WhatAMockIs asSection />
           <MockFiles mocks={mocks} scenarios={scenarios} />
         </div>

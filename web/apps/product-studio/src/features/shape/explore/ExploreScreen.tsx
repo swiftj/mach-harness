@@ -8,7 +8,7 @@ import { WorkPane, WorkPanes } from "../../../shared/layout/WorkScreen";
 import { IdeaStepFrame } from "../shell/IdeaStepFrame";
 import { ideaPath } from "../shell/steps";
 import { useIdeaBoard } from "../shell/useIdea";
-import { Conversation } from "./Conversation";
+import { Conversation, ConversationHeader } from "./Conversation";
 import { IdeaSource } from "./IdeaSource";
 import { LookedUp } from "./LookedUp";
 import { briefWayOn } from "./model";
@@ -56,7 +56,7 @@ function Explore({ row }: { row: IdeaRow }) {
 
   return (
     <WorkPanes>
-      <WorkPane label="The conversation">
+      <WorkPane label="The conversation" header={<ConversationHeader conv={conv} />}>
         <Conversation conv={conv} row={row} />
       </WorkPane>
       <WorkPane side label="Where this idea came from and what MACH looked up">

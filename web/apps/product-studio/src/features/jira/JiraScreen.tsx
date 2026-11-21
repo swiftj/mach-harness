@@ -62,7 +62,7 @@ export function JiraScreen() {
 }
 
 function JiraFrame({ children }: { children: ReactNode }) {
-  return <WorkScreen header={<ContextRow title="Jira" about={lead} aboutLabel="About this page" />}>{children}</WorkScreen>;
+  return <WorkScreen header={<ContextRow title="Jira" about={lead} />}>{children}</WorkScreen>;
 }
 
 interface KeysBackState {

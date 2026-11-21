@@ -22,7 +22,6 @@ export function PrdListScreen() {
       header={
         <ContextRow
           title="Start from a PRD"
-          aboutLabel="About this page"
           about="If you have an approved product requirements document, bring it in and turn it into epics and thin slices that you confirm one at a time. It is optional: without one, you work exactly as before."
         />
       }

@@ -23,7 +23,7 @@ export function checkVerdict(check: SliceCheck, status?: SliceStatus): CheckVerd
     return { tone: "neutral", glyph: "open", label: "No spec yet", detail: "The interviewer writes the spec once the questions are settled." };
   }
   if (problems > 0) {
-    return { tone: "danger", glyph: "blocked", label: `${plural(problems, "problem")} to fix`, detail: "The engine's check found problems in the draft." };
+    return { tone: "danger", glyph: "blocked", label: `${plural(problems, "problem")} to fix`, detail: "MACH's check found problems in the draft." };
   }
   if (check.open_questions.length > 0) {
     return {
@@ -34,12 +34,12 @@ export function checkVerdict(check: SliceCheck, status?: SliceStatus): CheckVerd
     };
   }
   if (check.ready && status === "approved_for_engineering") {
-    return { tone: "success", glyph: "approved", label: "Passes the check", detail: "The engine's check passed and you approved this slice." };
+    return { tone: "success", glyph: "approved", label: "Passes the check", detail: "MACH's check passed and you approved this slice." };
   }
   if (check.ready) {
-    return { tone: "accent", glyph: "ready", label: "Ready for your approval", detail: "The engine's check passes and nothing is open." };
+    return { tone: "accent", glyph: "ready", label: "Ready for your approval", detail: "MACH's check passes and nothing is open." };
   }
-  return { tone: "warning", glyph: "half", label: "Not ready yet", detail: "The engine's check did not mark this spec ready." };
+  return { tone: "warning", glyph: "half", label: "Not ready yet", detail: "MACH's check did not mark this spec ready." };
 }
 
 export function CheckPill({ check, status, size }: { check: SliceCheck; status?: SliceStatus; size?: "sm" | "md" }) {

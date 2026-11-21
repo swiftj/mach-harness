@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { ArtifactId, Badge, Heading, Text, cn, type Diagnostic, type SpecSectionId as SectionId, inline, plain, DiagnosticList, OpenQuestionList } from "@mach/ui";
 import { patternNames, sectionTitles } from "./specModel";
 import type { SpecModel as EngineSpecModel, WhyDocument } from "@mach/ui/api";
+import { ScrollRegion } from "../../shared/layout/WorkScreen";
 
 /** The model may be partial when the spec has structural errors: a missing field is shown as missing. */
 type SpecModel = Partial<EngineSpecModel>;
@@ -159,9 +160,7 @@ export function DecisionTableSection({ model, diagnostics }: { model: SpecModel;
   return (
     <SpecSection id="decision-table" hint="Every combination of conditions and what happens in it. “Any” means the condition does not matter for that row." diagnostics={diagnostics}>
       {matrix && matrix.rules.length ? (
-        // A scrollable region must be reachable by keyboard (WCAG 2.1.1; axe scrollable-region-focusable).
-        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-        <div className="overflow-x-auto rounded-md border border-line bg-surface" tabIndex={0} role="region" aria-label="Decision table, scrolls sideways when narrow">
+          <ScrollRegion framed label="Decision table, scrolls sideways when narrow" className="rounded-md bg-surface">
           <table className="w-full min-w-[44rem] border-collapse text-left text-body-sm">
             <thead>
               <tr className="border-b border-line bg-surface-sunken">
@@ -201,7 +200,7 @@ export function DecisionTableSection({ model, diagnostics }: { model: SpecModel;
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollRegion>
       ) : (
         <Missing>No decision table in the draft.</Missing>
       )}

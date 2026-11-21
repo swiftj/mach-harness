@@ -152,8 +152,9 @@ test("lifecycle: from nothing to a slice ready to build, through the UI only", a
   await step("06 answer, reach an approvable specification, see the engine check pass", async () => {
     await main().getByRole("button", { name: "Yes, accept" }).click();
     await main().getByText("ready for you to approve").waitFor({ timeout: 30000 });
-    const engineCheck = main().getByRole("region", { name: "Engine check" });
-    await engineCheck.getByText("Ready for your approval").waitFor({ timeout: 20000 });
+    const engineCheck = page.getByRole("complementary", { name: "The slice so far" });
+    await engineCheck.getByRole("heading", { name: "Check", exact: true }).waitFor();
+    await engineCheck.getByText("Ready for your approval").first().waitFor({ timeout: 20000 });
     // The engine's own verdict, read directly.
     const result = world.studio(world.pm, "slice", "check", "SLICE-001", "--ready");
     assert.equal(result.code, 0, result.stderr);
@@ -170,7 +171,7 @@ test("lifecycle: from nothing to a slice ready to build, through the UI only", a
   await step("07 mark the slice ready to build: one issue under its epic, and where it was saved", async () => {
     await main().getByRole("link", { name: "Open the full specification" }).click();
     await main().getByRole("heading", { level: 1, name: "Invite a teammate" }).waitFor();
-    await page.getByRole("complementary", { name: "Engine check" }).getByText("Ready for your approval").waitFor();
+    await page.getByRole("complementary", { name: "Check" }).getByText("Ready for your approval").waitFor();
     await shoot(page, FOLDER, "07a-specification");
     assert.equal(world.issues().length, 0, "nothing is on GitHub before the PM marks the slice ready");
     await main().getByRole("button", { name: "Mark ready to build" }).click();

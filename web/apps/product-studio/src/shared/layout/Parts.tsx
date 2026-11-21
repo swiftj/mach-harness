@@ -11,6 +11,9 @@ import { cn } from "@mach/ui";
  * When the parts are the steps of a path, each carries its place: `done`, `current` (the accent, the current place) or
  * `later`, as a number or a tick and in words for assistive technology, so the parts are the stepper too.
  *
+ * Each summary says the part's state in one line, in the same pattern everywhere: what is there and how many, then
+ * what is still to do ("2 in force, 1 retired", "1 outcome still to settle: O-2", "Nothing to record yet").
+ *
  *   const [open, setOpen] = useState("coverage");
  *   <Parts label="Sizing and the map" open={open} onOpenChange={setOpen}>
  *     <Part id="route" number={1} place="done" name="Size it" summary="Route: several epics">…</Part>
@@ -42,14 +45,35 @@ export function Parts({
   children: ReactNode;
 }) {
   const anchor = useRef<{ node: HTMLElement; top: number } | null>(null);
+  const list = useRef<HTMLOListElement>(null);
   useLayoutEffect(() => {
     const held = anchor.current;
     anchor.current = null;
-    if (!held || !held.node.isConnected) return;
-    const moved = held.node.getBoundingClientRect().top - held.top;
-    if (Math.abs(moved) < 1) return;
-    const scroller = held.node.closest<HTMLElement>("[data-pane], main");
-    if (scroller) scroller.scrollTop += moved;
+    if (held) {
+      // The person opened a part: the row they pressed stays where it was.
+      if (!held.node.isConnected) return;
+      const moved = held.node.getBoundingClientRect().top - held.top;
+      if (Math.abs(moved) < 1) return;
+      const scroller = held.node.closest<HTMLElement>("[data-pane], main");
+      if (scroller) scroller.scrollTop += moved;
+      return;
+    }
+    // On arrival, or when an act moved the journey on, the part that needs the person is brought into its pane's view:
+    // just enough for the whole part to show, or its row at the top of the pane when it is taller. Only the pane moves.
+    const item = list.current?.querySelector<HTMLElement>(':scope > li:has(> * > button[aria-expanded="true"])');
+    const pane = item?.closest<HTMLElement>("[data-pane]");
+    if (!item || !pane || getComputedStyle(pane).overflowY === "visible") return;
+    const box = pane.getBoundingClientRect();
+    const at = item.getBoundingClientRect();
+    const header = pane.querySelector<HTMLElement>(":scope > .sticky")?.offsetHeight ?? 0;
+    const toRow = at.top - box.top - header - 8;
+    if (at.bottom <= box.bottom && at.top >= box.top + header) return;
+    // The part's own act, when it marks one (`data-part-act`), must be in view too: the row goes to the top, and if
+    // the act is still below the pane's foot, the pane goes on until the act is in view.
+    const act = item.querySelector<HTMLElement>("[data-part-act]");
+    const actBelow = act ? act.getBoundingClientRect().bottom - box.bottom + 24 : 0;
+    const fitAll = Math.max(0, at.bottom - box.bottom + 24);
+    pane.scrollTop += Math.max(Math.min(toRow, fitAll), actBelow);
   }, [open]);
   const toggle = (id: string, from: HTMLElement) => {
     anchor.current = { node: from, top: from.getBoundingClientRect().top };
@@ -57,7 +81,7 @@ export function Parts({
   };
   return (
     <Ctx.Provider value={{ open, toggle, level: headingLevel }}>
-      <ol aria-label={label} className="flex flex-col border-y border-line">
+      <ol ref={list} aria-label={label} className="flex flex-col border-y border-line">
         {children}
       </ol>
     </Ctx.Provider>
@@ -75,10 +99,12 @@ export function Part({
   number,
   place,
   status,
+  attention,
   children,
 }: {
   id: string;
-  name: string;
+  /** The part's name. May hold an identifier set as one ("O-1 Members renew online"). */
+  name: ReactNode;
   /** One line: the part's state in plain words. Must carry anything blocking the next act. */
   summary: ReactNode;
   /** The part's number when the parts are the steps of a path. */
@@ -86,6 +112,11 @@ export function Part({
   place?: PartPlace;
   /** A status pill or mark beside the summary (word, shape and tone). */
   status?: ReactNode;
+  /**
+   * What must stay in view whether the part is open or closed: a problem that blocks the next act (a malformed pack's
+   * reasons). Shown under the row, never folded.
+   */
+  attention?: ReactNode;
   /** The part's body. A part with nothing to show yet has none, and is a row that cannot be opened. */
   children?: ReactNode;
 }) {
@@ -144,6 +175,7 @@ export function Part({
           </span>
         )}
       </Heading>
+      {attention ? <div className={cn("pb-3", marker ? "pl-10" : "pl-1")}>{attention}</div> : null}
       {children ? (
         <div id={bodyId} role="region" aria-labelledby={buttonId} hidden={!open} className={cn("pb-6 pt-1", marker ? "pl-10" : "pl-1")}>
           {children}

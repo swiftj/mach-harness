@@ -204,9 +204,9 @@ export function partPlace(part: PrdPart, step: number): "done" | "current" | "la
 
 const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-/** "Markdown · 5 sections · 22 lines": what was imported. */
+/** "Markdown, 5 sections, 22 lines": what was imported. */
 export function importSummary(prd: Pick<PrdStatus["prd"], "format" | "sections" | "line_count">): string {
-  return `${prd.format === "markdown" ? "Markdown" : "Plain text"} · ${count(prd.sections, "section")} · ${count(prd.line_count, "line")}`;
+  return `${prd.format === "markdown" ? "Markdown" : "Plain text"}, ${count(prd.sections, "section")}, ${count(prd.line_count, "line")}`;
 }
 
 /** The map in one line, from the engine's answer only. */

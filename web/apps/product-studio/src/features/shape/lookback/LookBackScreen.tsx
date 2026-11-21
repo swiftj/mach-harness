@@ -183,7 +183,11 @@ function Shaped({ show, chain, gate, onRecorded }: { show: IdeaShow; chain: Idea
       <Part
         key={item.id}
         id={item.id}
-        name={`${item.id} ${item.text ?? "Its words are not in the brief as it is now"}`}
+        name={
+          <>
+            <ArtifactId plain>{item.id}</ArtifactId> {item.text ?? "Its words are not in the brief as it is now"}
+          </>
+        }
         summary={item.kind === "outcome" && line ? chainSummary(line) : assumptionSummary(item)}
         status={<ResultPill item={item} />}
       >

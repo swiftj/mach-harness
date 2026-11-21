@@ -8,7 +8,7 @@ import { useOperation } from "../../api/useOperation";
 import { useStatus } from "../../api/store";
 import { Part, Parts } from "../../shared/layout/Parts";
 import { OnePane, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
-import { SliceContext } from "../effects/SliceContext";
+import { SliceContextRow } from "../../shared/SliceContextRow";
 import { AcceptConcernDialog } from "./AcceptConcernDialog";
 import {
   answerFindings,
@@ -49,7 +49,7 @@ const ABOUT = "How this slice keeps each product principle and follows each poli
 function PoliciesPage({ sliceId }: { sliceId: string }) {
   const show = useSliceShow(sliceId);
   return (
-    <WorkScreen header={<SliceContext sliceId={sliceId} show={show.data} title="Principles and policies" about={ABOUT} refreshing={show.loading && Boolean(show.data)} />}>
+    <WorkScreen header={<SliceContextRow sliceId={sliceId} show={show.data} title="Principles and policies" about={ABOUT} refreshing={show.loading && Boolean(show.data)} />}>
       {show.loading && !show.data ? (
         <OnePane label="Principles and policies">
           <div role="status" aria-busy="true" aria-label="Reading this slice" className="flex max-w-reading flex-col gap-3">

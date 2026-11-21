@@ -121,16 +121,19 @@ export function PublishedPanel({
         {p.saved === "github" || p.github ? (
           <>
             <dt className="text-ink-muted">GitHub last read</dt>
-            <dd className="flex flex-wrap items-center gap-x-3 gap-y-1 text-ink">
-              {readAt ? <RelativeTime iso={readAt} /> : <span>not recorded</span>}
-              <Button size="sm" variant="ghost" loading={checking} onClick={onCheckGithub}>
-                <RefreshCw aria-hidden="true" />
-                Check GitHub again
-              </Button>
-            </dd>
+            <dd className="text-ink">{readAt ? <RelativeTime iso={readAt} /> : <span>not recorded</span>}</dd>
           </>
         ) : null}
       </dl>
+      {/* Under the facts, not inside one: in the narrow pane a fact's column is too narrow for a button. */}
+      {p.saved === "github" || p.github ? (
+        <div>
+          <Button size="sm" variant="ghost" loading={checking} onClick={onCheckGithub}>
+            <RefreshCw aria-hidden="true" />
+            Check GitHub again
+          </Button>
+        </div>
+      ) : null}
     </section>
   );
 }

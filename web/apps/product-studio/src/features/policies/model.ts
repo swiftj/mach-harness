@@ -72,10 +72,10 @@ export function packState(row: PackRow): { word: string; shape: "blocked" | "sup
 
 /**
  * A pack's row on the packs page, in one line (M16 layout): its owner, what it applies to and how many statements it
- * has, or, for a pack that cannot be read, that its reasons are shown above the rows (they are never folded).
+ * has, or, for a pack that cannot be read, that its reasons are shown under its name (they are never folded).
  */
 export function packSummary(row: PackRow): string {
-  if (row.problems.length) return `${row.problems.length === 1 ? "1 reason" : `${row.problems.length} reasons`} it cannot be read, shown above`;
+  if (row.problems.length) return `${row.problems.length === 1 ? "1 reason" : `${row.problems.length} reasons`} it cannot be read, shown under its name`;
   const statements = `${row.statements.length} ${row.statements.length === 1 ? "statement" : "statements"}`;
   return `Owner: ${row.owner ?? "not recorded"}. ${row.appliesTo.join("; ")}. ${statements}.`;
 }

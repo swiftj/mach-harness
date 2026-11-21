@@ -42,10 +42,3 @@ export function viewOf(section: SpecSectionId): View {
   return section === "why" ? "why" : section === "source" ? "source" : "spec";
 }
 
-/**
- * The check's one-sentence verdict in a person's words: MACH checks the draft, never "the engine". The sentence comes
- * from @mach/ui's checkVerdict; only how it names the checker changes here.
- */
-export function checkDetail(detail: string): string {
-  return detail.replace(/\b[Tt]he engine's check\b/g, "MACH's check").replace(/\b[Tt]he engine\b/g, "MACH");
-}

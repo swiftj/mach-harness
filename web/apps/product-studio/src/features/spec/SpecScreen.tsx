@@ -1,21 +1,20 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { CircleAlert, MessagesSquare, SearchX } from "lucide-react";
-import { ArtifactId, Banner, Button, EmptyState, ErrorState, Heading, Page, Skeleton, SkeletonText, SliceGithubPills, SliceLifecycle, SliceStatusPill, Text, describeError, CheckCounts, CheckPill, checkVerdict, DiagnosticList, diagnostics as listDiagnostics, specModel, whyDocument, type Diagnostic, type SpecSectionId as SectionId, plural as count } from "@mach/ui";
+import { Banner, Button, EmptyState, ErrorState, Heading, Page, Skeleton, SkeletonText, Text, describeError, CheckCounts, CheckPill, checkVerdict, DiagnosticList, diagnostics as listDiagnostics, specModel, whyDocument, type Diagnostic, type SpecSectionId as SectionId, plural as count } from "@mach/ui";
 import { type SliceShow, ENGINE_ID as SLICE_ID } from "@mach/ui/api";
 import { MarkReadyDialog, PauseDialog, ReopenDialog } from "./SliceActs";
 import { SourceEditor } from "./SourceEditor";
 import { AssumptionsSection, DecisionTableSection, DependenciesSection, OpenQuestionsSection, RequirementsSection, RulesSection, ScenariosSection, SummarySection, WhySection } from "./SpecSections";
-import { checkDetail, sectionTitles, viewOf, type View } from "./specModel";
+import { sectionTitles, viewOf, type View } from "./specModel";
 import { useSliceShow } from "../../api/useSliceShow";
 import { useStatus } from "../../api/store";
 import { WithdrawnNote } from "../../shared/WithdrawnNote";
-import { IssueLink } from "../../shared/IssueLink";
 import { AnswerQuestionButton, BuildersQuestion } from "../../shared/BuildersQuestion";
 import { SliceTimes } from "../../shared/SliceTimes";
-import { SliceSections } from "../../shared/SliceSections";
 import { SectionNav } from "../../shared/layout/SectionNav";
-import { ContextRow, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
+import { WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
+import { SliceContextRow } from "../../shared/SliceContextRow";
 
 export function SpecScreen() {
   const { sliceId = "" } = useParams();
@@ -107,30 +106,14 @@ function SpecContext({ show, onChanged, refreshing }: { show: SliceShow; onChang
   const slice = show.slice;
   const approved = slice.status === "approved_for_engineering";
   const ready = show.check.ready;
-  const openCount = show.check.open_questions.length;
   const status = useStatus().data;
   // An approved slice is offered "mark ready again" only when the engine says so (a changed issue, an unfinished save).
   const again = status?.next_actions.some((a) => a.target === slice.slice_id && (a.kind === "mark_ready" || a.kind === "finish_ready")) ?? false;
   return (
-    <ContextRow
-      identity={
-        <>
-          <ArtifactId>{slice.slice_id}</ArtifactId>
-          <span>
-            in <ArtifactId plain>{slice.epic_id}</ArtifactId>
-          </span>
-          <SliceStatusPill status={slice.status} size="sm" />
-          <SliceGithubPills github={show.github} size="sm" />
-          {show.github.issue ? (
-            <span>
-              Issue <IssueLink number={show.github.issue} url={show.github.url} />
-            </span>
-          ) : null}
-          {refreshing ? <span className="text-caption text-ink-subtle">Updating…</span> : null}
-        </>
-      }
-      title={slice.title}
-      trail={<SliceLifecycle status={slice.status} openQuestions={openCount} className="max-w-full" />}
+    <SliceContextRow
+      sliceId={slice.slice_id}
+      show={show}
+      refreshing={refreshing}
       actions={
         <>
           {show.github.question ? <AnswerQuestionButton sliceId={slice.slice_id} approved={approved} /> : null}
@@ -154,7 +137,6 @@ function SpecContext({ show, onChanged, refreshing }: { show: SliceShow; onChang
           )}
         </>
       }
-      below={<SliceSections sliceId={slice.slice_id} fromPrd={slice.source?.kind === "prd"} />}
     />
   );
 }
@@ -283,7 +265,7 @@ function CheckAside({ show, onGoTo }: { show: SliceShow; onGoTo: (section: Secti
           <CheckPill check={check} status={show.slice.status} />
         </span>
         <Text size="body-sm" tone="muted">
-          {checkDetail(verdict.detail)}
+          {verdict.detail}
         </Text>
         <CheckCounts check={check} className="grid-cols-2" />
         {check.risk ? (
