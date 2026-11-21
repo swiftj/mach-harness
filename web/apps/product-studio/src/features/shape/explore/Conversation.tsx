@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Link } from "react-router";
 import { CircleAlert, Compass, MessagesSquare, Pause, Send, Square, WifiOff } from "lucide-react";
 import { Banner, Button, EmptyState, ErrorState, Field, Heading, HintAction, Kbd, LoadingState, RichText, Spinner, Text, Textarea, Tooltip, describeError, toast } from "@mach/ui";
@@ -27,16 +27,22 @@ export function conversationBusy(conv: ConversationController): boolean {
 export function Conversation({ conv, row }: { conv: ConversationController; row: IdeaRow }) {
   const busy = conversationBusy(conv);
   const mode = exploreMode(row);
+  const shaped = mode === "shaped" && conv.phase !== "live";
+  const transcript = conv.phase === "live" || conv.model.timeline.length > 0;
+  const sectionRef = useRef<HTMLElement>(null);
+  // A new turn, a new question, a reply sent or the conversation ending brings the pane back to its end.
+  useNewestInView(sectionRef, `${conv.phase} ${conv.model.turn} ${conv.model.turnRunning} ${conv.model.awaiting ?? ""} ${conv.model.ended ? "ended" : ""}`);
   return (
-    <section aria-labelledby="conversation-title" className="flex min-w-0 flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <Heading level={2} size="title-2" id="conversation-title">
+    <section ref={sectionRef} aria-labelledby="conversation-title" className="flex min-w-0 flex-col gap-6">
+      {/* The heading and the conversation's own acts stay at the top of its pane while the turns scroll under them. */}
+      <div className="sticky -top-6 z-10 -mt-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-line bg-canvas pb-3 pt-5 max-[1023px]:static [@media(max-height:619px)]:static">
+        <Heading level={2} size="title-3" id="conversation-title">
           The conversation
         </Heading>
         <ConversationActions conv={conv} busy={busy} />
       </div>
       {mode === "new" ? <StartExploring row={row} busy={busy} /> : null}
-      {mode === "shaped" && conv.phase !== "live" ? (
+      {shaped ? (
         <Banner
           tone="info"
           title="This idea is shaped into work"
@@ -48,12 +54,51 @@ export function Conversation({ conv, row }: { conv: ConversationController; row:
         >
           Its brief stays as it was when its slices were made, so there is no conversation to continue here. What was said and looked up is kept.
         </Banner>
-      ) : (
+      ) : null}
+      {transcript ? <ExploreTranscript model={conv.model} onRetry={conv.model.lastReply && !busy ? () => conv.reply(conv.model.lastReply ?? "", "reply") : null} /> : null}
+      {shaped ? null : (
         <Current conv={conv} busy={busy} row={row} />
       )}
-      {conv.phase === "live" || conv.model.timeline.length ? <ExploreTranscript model={conv.model} onRetry={conv.model.lastReply && !busy ? () => conv.reply(conv.model.lastReply ?? "", "reply") : null} /> : null}
     </section>
   );
+}
+
+/**
+ * The newest turn stays in view (M16 layout): the conversation reads oldest first and ends with what is asked now, and
+ * its pane is kept at its end while the conversation grows, unless the person has scrolled up to read; a new question
+ * brings it back to the end. Only the conversation's own pane scrolls, never the page: where the window is too small
+ * for panes, nothing is moved.
+ */
+function useNewestInView(ref: RefObject<HTMLElement | null>, turn: string) {
+  const pinned = useRef(true);
+  useEffect(() => {
+    const node = ref.current;
+    const pane = node?.closest<HTMLElement>("[data-pane]");
+    if (!node || !pane) return;
+    const toEnd = () => {
+      if (pinned.current && getComputedStyle(pane).overflowY !== "visible") pane.scrollTop = pane.scrollHeight;
+    };
+    // Only the person scrolling up lets go of the end; growth and the pane's own move to the end never do.
+    let last = pane.scrollTop;
+    const onScroll = () => {
+      const atEnd = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48;
+      pinned.current = atEnd || (pinned.current && pane.scrollTop >= last);
+      last = pane.scrollTop;
+    };
+    pane.addEventListener("scroll", onScroll, { passive: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(toEnd);
+    observer?.observe(node);
+    return () => {
+      pane.removeEventListener("scroll", onScroll);
+      observer?.disconnect();
+    };
+  }, [ref]);
+  useEffect(() => {
+    const pane = ref.current?.closest<HTMLElement>("[data-pane]");
+    if (!pane || getComputedStyle(pane).overflowY === "visible") return;
+    pinned.current = true;
+    pane.scrollTop = pane.scrollHeight;
+  }, [ref, turn]);
 }
 
 /** "Start exploring": the one stage set by hand, from New. The engine refuses it in its own words when it cannot. */
@@ -194,7 +239,6 @@ function Current({ conv, busy, row }: { conv: ConversationController; busy: bool
       : null;
   const announce = parsed ? `Question ${parsed.number}: ${parsed.title}.` : awaiting ? "MACH replied." : "";
   const streaming = Object.values(model.messages).find((m) => !m.final && m.text);
-  const last = model.timeline.at(-1);
 
   let body: ReactNode;
   if (model.ended) {
@@ -248,21 +292,7 @@ function Current({ conv, busy, row }: { conv: ConversationController; busy: bool
           Nothing you said is lost. The conversation catches up when the connection returns.
         </Banner>
       ) : null}
-      {last?.type === "notice" ? (
-        <Banner
-          tone={last.tone}
-          title={last.title}
-          actions={
-            last.retry && model.lastReply && !busy ? (
-              <Button size="sm" onClick={() => conv.reply(model.lastReply ?? "", "reply")}>
-                Send again
-              </Button>
-            ) : undefined
-          }
-        >
-          {last.text}
-        </Banner>
-      ) : null}
+      {/* A notice that ended the last turn is the transcript's last line, directly above: it is not repeated here. */}
       {conv.problem ? (
         <Banner
           tone="danger"

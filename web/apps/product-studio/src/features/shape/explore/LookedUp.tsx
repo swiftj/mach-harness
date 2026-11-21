@@ -6,6 +6,7 @@ import type { EpicCurrent, IdeaLookups, IdeaRow, LookupShippedRule } from "@mach
 import { client } from "../../../api/client";
 import { useOperation } from "../../../api/useOperation";
 import { ideaPath } from "../shell/steps";
+import { Fold } from "../../../shared/layout/Fold";
 import { lookupsView, policyFacts, principleStatement, ruleEpics, ruleWords, type LookupEntry, type LookupGroup } from "./model";
 
 /**
@@ -21,9 +22,9 @@ export function LookedUp({ lookups, board }: { lookups: IdeaLookups | null; boar
   const policies = useOperation("policy.list", inTheWay.some((e) => e.kind === "policy") ? {} : null);
 
   return (
-    <section aria-labelledby="looked-up-title" className="flex min-w-0 flex-col gap-6">
+    <section aria-labelledby="looked-up-title" className="flex min-w-0 flex-col gap-3">
       <div className="flex flex-col gap-1.5">
-        <Heading level={2} size="title-2" id="looked-up-title">
+        <Heading level={2} size="title-3" id="looked-up-title">
           What MACH looked up
         </Heading>
         <Text size="body-sm" tone="muted">
@@ -71,25 +72,36 @@ export function LookedUp({ lookups, board }: { lookups: IdeaLookups | null; boar
   );
 }
 
+/** One group, folded behind its name and how many it holds (M16 layout), so its state shows without opening it. */
 function Group({ group, children }: { group: LookupGroup; children: ReactNode }) {
-  const id = `lookups-${group.key}`;
+  const n = group.entries.length;
   return (
-    <section aria-labelledby={id} className="flex flex-col gap-2">
-      <div className="flex flex-col gap-0.5">
-        <Heading level={3} size="title-3" id={id}>
-          {group.title}
-        </Heading>
-        <Text size="caption" tone="subtle">
-          {group.about}
-        </Text>
-      </div>
-      {group.entries.length ? (
-        children
-      ) : (
-        <Text size="body-sm" tone="muted">
-          Nothing recorded here. That is not a finding: what is unknown is asked, or left as an open question.
-        </Text>
-      )}
+    <section aria-label={group.title}>
+      <Fold
+        boxed
+        label={
+          <span className="flex flex-wrap items-center gap-2 text-ink">
+            {group.title}
+            <Badge>
+              {n}
+              <span className="sr-only"> found</span>
+            </Badge>
+          </span>
+        }
+      >
+        <div className="flex flex-col gap-2">
+          <Text size="caption" tone="subtle">
+            {group.about}
+          </Text>
+          {n ? (
+            children
+          ) : (
+            <Text size="body-sm" tone="muted">
+              Nothing recorded here. That is not a finding: what is unknown is asked, or left as an open question.
+            </Text>
+          )}
+        </div>
+      </Fold>
     </section>
   );
 }
@@ -124,7 +136,7 @@ function useEpicViews(epics: string[]): Record<string, EpicCurrent> {
   return views;
 }
 
-const itemClass = "flex flex-col gap-1 border-t border-line py-2.5 last:border-b";
+const itemClass = "flex flex-col gap-1 border-t border-line py-2.5 last:pb-0";
 
 function RuleEntry({ rule, words }: { rule: LookupShippedRule; words: string | null }) {
   return (
