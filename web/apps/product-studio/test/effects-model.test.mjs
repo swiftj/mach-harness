@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { effectProblems, effectWords, effectsView, shortCommit } from "../src/features/effects/model.ts";
+import { effectProblems, effectSummary, effectWords, effectsHeading, effectsView, shortCommit } from "../src/features/effects/model.ts";
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`../../../fixtures/${name}.json`, import.meta.url), "utf8")).data;
 const clone = (v) => JSON.parse(JSON.stringify(v));
@@ -90,4 +90,15 @@ test("every effect has a word, a meaning, and the commit is shown as 10 characte
   assert.equal(effectWords.retired.inSlice, "");
   assert.equal(shortCommit("e91f18f1778277b63e0926669f46c7aa9ae75a58"), "e91f18f177");
   assert.equal(shortCommit(null), null);
+});
+
+test("M16 layout: each row says its state in one line, and the heading counts the rows", () => {
+  assert.equal(effectSummary({ effect: "kept", in_slice: "AC-01" }), "Proved by AC-01");
+  assert.equal(effectSummary({ effect: "changed", in_slice: "FR-02" }), "Now written as FR-02");
+  assert.equal(effectSummary({ effect: "replaced", in_slice: "FR-03" }), "Replaced by FR-03");
+  assert.equal(effectSummary({ effect: "retired", in_slice: null }), "Nothing takes its place");
+  const view = effectsView(shown, null);
+  assert.equal(effectsHeading(view), "1 shipped rule touched");
+  assert.equal(effectsHeading({ state: "none", rows: [] }), "No effect on shipped behaviour");
+  assert.equal(effectsHeading({ state: "rows", rows: [1, 2] }), "2 shipped rules touched");
 });

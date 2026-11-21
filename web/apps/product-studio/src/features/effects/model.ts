@@ -87,6 +87,22 @@ export const effectWords: Record<EffectRow["effect"], { word: string; means: str
   retired: { word: "Retired", means: "No longer in force, and nothing takes its place.", inSlice: "" },
 };
 
+/**
+ * One effect's state in a line, for its row (M16 layout: the row says the state, the detail folds):
+ * "Proved by AC-01", "Replaced by FR-03", "Nothing takes its place". From the spec's row alone.
+ */
+export function effectSummary(row: Pick<EffectRow, "effect" | "in_slice">): string {
+  const words = effectWords[row.effect];
+  if (!row.in_slice) return "Nothing takes its place";
+  return words?.inSlice ? `${words.inSlice} ${row.in_slice}` : row.in_slice;
+}
+
+/** The heading over the rows: "No effect on shipped behaviour" or "2 shipped rules touched". */
+export function effectsHeading(view: Pick<EffectsView, "state" | "rows">): string {
+  if (view.state === "none") return "No effect on shipped behaviour";
+  return `${view.rows.length} shipped ${view.rows.length === 1 ? "rule" : "rules"} touched`;
+}
+
 /** The commit as the family shows one: its first 10 characters. */
 export function shortCommit(commit: string | null | undefined): string | null {
   return commit ? commit.slice(0, 10) : null;
