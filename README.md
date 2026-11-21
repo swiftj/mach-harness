@@ -25,10 +25,10 @@ MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A
 
 ## What it looks like
 
-| | |
-|---|---|
-| [![Introducing MACH: watch on YouTube](docs/images/film-introduction.jpg)](https://youtu.be/M1HSnETFg5Q) | [![MACH: The Agentic Software Factory in Claude Code: watch on YouTube](docs/images/film-factory.jpg)](https://youtu.be/ejPnwHeqsI8) |
-| **[Introducing MACH](https://youtu.be/M1HSnETFg5Q)** (2 min). From product intent to merged code, for product managers and engineers. | **[The software factory in Claude Code](https://youtu.be/ejPnwHeqsI8)** (2 min). The factory itself: the floor, the line, and why MACH's rules, not the agents, decide what counts. |
+| | | |
+|---|---|---|
+| [![Introducing MACH: watch on YouTube](docs/images/film-introduction.jpg)](https://youtu.be/M1HSnETFg5Q) | [![MACH: The Agentic Software Factory in Claude Code: watch on YouTube](docs/images/film-factory.jpg)](https://youtu.be/ejPnwHeqsI8) | [![MACH: From Idea to Proof in Claude Code: watch on YouTube](docs/images/film-shape.jpg)](https://youtu.be/ehJI7cH6bJs) |
+| **[Introducing MACH](https://youtu.be/M1HSnETFg5Q)** (2 min). From product intent to merged code, for product managers and engineers. | **[The software factory in Claude Code](https://youtu.be/ejPnwHeqsI8)** (2 min). The factory itself: the floor, the line, and why MACH's rules, not the agents, decide what counts. | **[From idea to proof](https://youtu.be/ehJI7cH6bJs)** (3 min). One idea carried from the ideas board to a brief, your verdict, slices, shipped code, and back to you at look back. |
 
 MACH runs in Claude Code. Two local pages, served on your own machine, show the work: Product Studio for the product manager and the Factory Floor for whoever is watching the line.
 
