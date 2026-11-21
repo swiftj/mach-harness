@@ -729,6 +729,97 @@ def render(title: str, *, applies_to: Sequence[str] = (), context: str = "", opt
     return "\n".join(header) + "\n\n" + "\n".join(body)
 
 
+# ---------------------------------------------------------------- the architecture overview (M17)
+#
+# One Markdown map of the accepted and proposed ADRs, for people: `docs/architecture/overview.md` by default
+# (`adr.overview` in .factory/config.json moves it). The ADRs are the authority; no station reads the overview and no
+# plan is checked against it. `run.py adr overview` writes it in the main checkout's working tree with a marker naming
+# the ADRs (ID and digest) it was written from, so a later run can say whether it is behind.
+
+DEFAULT_OVERVIEW = "docs/architecture/overview.md"
+OVERVIEW_STATUSES = ("accepted", "proposed")
+OVERVIEW_MARKER_RE = re.compile(r"^<!-- mach:overview written-from:((?: ADR-\d{4}@[0-9a-f]{16})*) -->$", re.MULTILINE)
+OVERVIEW_AUTHORITY = ("The accepted architecture decisions (ADRs) in {folder} are the authority. This document is a map of them: "
+                      "where the two differ, the ADR is right.")
+PARTS_KINDS = ("flowchart", "graph")
+DATA_FLOW_KINDS = ("sequenceDiagram", "flowchart", "graph")
+
+
+def overview_of(config: Any) -> Tuple[str, Optional[str]]:
+    """Where the overview goes, relative to the repository root, and a problem when `adr.overview` cannot be used: like
+    `adr.dir`, a path inside the repository, outside .factory and the ADR folder, ending in .md."""
+    section = config.get("adr") if isinstance(config, dict) else None
+    value = section.get("overview") if isinstance(section, dict) else None
+    if value is None:
+        return DEFAULT_OVERVIEW, None
+    text = value.strip() if isinstance(value, str) else ""
+    parts = text.split("/") if text else []
+    folder, _ = folder_of(config)
+    if (not isinstance(value, str) or not text or text.startswith(("/", "~")) or "\\" in text or ":" in text
+            or any(part in ("", ".", "..") for part in parts) or parts[0] == ".factory" or not text.endswith(".md")
+            or in_folder(text, folder)):
+        return DEFAULT_OVERVIEW, (f"adr.overview in .factory/config.json ({str(value)[:80]!r}) is not a Markdown file inside the repository "
+                                  f"and outside the ADR folder, such as {DEFAULT_OVERVIEW}; nothing is written until it is fixed.")
+    return text, None
+
+
+def overview_records(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The ADRs an overview maps: every accepted and proposed one with an ID, in ID order."""
+    return sorted((record for record in records if record.get("id") and record.get("status") in OVERVIEW_STATUSES), key=lambda record: record["id"])
+
+
+def overview_marker(records: Sequence[Dict[str, Any]]) -> str:
+    return "<!-- mach:overview written-from:" + "".join(f" {record['id']}@{record['digest'][:16]}" for record in records) + " -->"
+
+
+def overview_behind(text: Optional[str], records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """Whether an existing overview is behind the ADRs: one accepted, superseded, changed or added since it was written
+    (judged from its marker). {"exists", "behind", "changes": [{"id", "change": added|changed|gone}], "problem"}."""
+    if text is None:
+        return {"exists": False, "behind": False, "changes": [], "problem": None}
+    found = OVERVIEW_MARKER_RE.findall(text)
+    if len(found) != 1:
+        return {"exists": True, "behind": True, "changes": [], "problem": "it has no single marker MACH wrote, so what it was written from is unknown"}
+    written = dict(item.split("@") for item in found[0].split())
+    now_ = {record["id"]: record["digest"][:16] for record in records}
+    changes = ([{"id": ident, "change": "added"} for ident in now_ if ident not in written]
+               + [{"id": ident, "change": "changed"} for ident in now_ if ident in written and written[ident] != now_[ident]]
+               + [{"id": ident, "change": "gone"} for ident in written if ident not in now_])
+    return {"exists": True, "behind": bool(changes), "changes": sorted(changes, key=lambda change: change["id"]), "problem": None}
+
+
+def _cell(text: Any, limit: int = 160) -> str:
+    return bounded(" ".join(str(text or "").split()), limit).replace("|", "\\|")
+
+
+def render_overview(*, folder: str, context: str, needs: Sequence[Dict[str, Any]], parts: str, data_flow: str,
+                    records: Sequence[Dict[str, Any]], topics: Sequence[str], note: str = "") -> str:
+    """The overview's text. The caller has checked both diagrams (diagrams.problems) and gives `needs` as the published
+    active needs (need_id, kind, revision, statement, and said_by/said_on for a given) and `records` as overview_records."""
+    lines = [overview_marker(records), "", "# Architecture overview", "", OVERVIEW_AUTHORITY.format(folder=folder), "",
+             "## Context", "", context.strip(), "", "## What the product needs", ""]
+    if needs:
+        for need in needs:
+            said = f" (said by {need['said_by']} on {need['said_on']})" if need.get("kind") == "given" else ""
+            lines.append(f"- **{need['need_id']}** ({need['kind']}, revision {need['revision']}): {' '.join(str(need['statement']).split())}{said}")
+    else:
+        lines.append("No technical needs are published on the main branch.")
+    lines += ["", "## The parts and how they connect", "", "```mermaid", parts.strip("\n"), "```", "",
+              "## How data moves", "", "```mermaid", data_flow.strip("\n"), "```", "",
+              "## Decisions by topic", "", "| Topic | ADR | Title | Status | Serves |", "|---|---|---|---|---|"]
+    rows = []
+    for record in records:
+        named = [item[len("topic:"):] for item in record.get("applies_to") or [] if item.startswith("topic:")]
+        for topic in named or [""]:
+            order = (topics.index(topic) if topic in topics else len(topics), topic or "~")
+            serves = ", ".join(f"{item['need_id']}@{item['revision']}" for item in record.get("serves") or []) or "-"
+            rows.append((order, record["id"], f"| {_cell(topic) or 'other'} | {record['id']} | {_cell(record.get('title'))} | {record['status']} | {serves} |"))
+    lines += [row for _, _, row in sorted(rows)]
+    if note.strip():
+        lines += ["", "## Notes", "", note.strip()]
+    return "\n".join(lines) + "\n"
+
+
 def set_status(text: str, status: str) -> str:
     """The same file with its header's status line replaced. Raises ADRError when there is no one status line."""
     fields, _, problems = front_matter(text)
