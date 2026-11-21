@@ -91,6 +91,52 @@ class ParseTest(unittest.TestCase):
         record = adr.parse("---\nstatus: accepted\napplies-to: [app:api, topic:database]\n---\n\n# Use Postgres\n", "docs/adr/0005-pg.md")
         self.assertEqual((record["applies_to"], record["binding"]), (["app:api", "topic:database"], True))
 
+    def test_serves_names_technical_needs_at_their_revision(self):
+        """M17: `serves` is optional; an ADR without it carries no key, so nothing changes for it."""
+        self.assertNotIn("serves", adr.parse(PYTHON_ADR, "docs/adr/0001-use-python.md"))
+        self.assertNotIn("serves", adr.public(adr.parse(PYTHON_ADR, "docs/adr/0001-use-python.md")))
+        for header in ("serves: TN-01@2, TN-04@1", "serves: [TN-01@2, TN-04@1]", "serves:\n  - TN-01@2\n  - TN-04@1"):
+            with self.subTest(header=header):
+                record = adr.parse(f"---\nstatus: accepted\n{header}\n---\n\n# Use Postgres\n", "docs/adr/0005-pg.md")
+                self.assertEqual((record["serves"], record["problems"], record["binding"]),
+                                 ([{"need_id": "TN-01", "revision": 2}, {"need_id": "TN-04", "revision": 1}], [], True))
+                self.assertEqual(adr.public(record)["serves"], record["serves"])
+
+    def test_a_malformed_serves_is_a_problem_with_its_reason(self):
+        cases = {"serves:": "'serves' is empty", "serves: TN-01": "is not a technical need at a revision", "serves: TN-1@2": "is not a technical need",
+                 "serves: TN-01@0": "is not a technical need", "serves: tn-01@2": "is not a technical need", "serves: ADR-0001@1": "is not a technical need",
+                 "serves: TN-01@1, TN-01@2": "names TN-01 twice"}
+        for header, expected in cases.items():
+            with self.subTest(header=header):
+                record = adr.parse(f"---\nstatus: accepted\n{header}\n---\n\n# Use Postgres\n", "docs/adr/0005-pg.md")
+                self.assertFalse(record["binding"])
+                self.assertTrue(any(expected in problem for problem in record["problems"]), record["problems"])
+
+    def test_render_writes_serves_in_the_header_and_parses_back(self):
+        text = adr.render("Keep data in PostgreSQL", applies_to=["topic:storage"], context="Why now here.", options=["PostgreSQL", "SQLite"],
+                          decision="PostgreSQL, for the reason given.", consequences=["Good."], serves=["TN-02@3", "TN-05@1"])
+        self.assertIn("applies-to:\n  - topic:storage\nserves: TN-02@3, TN-05@1\n---", text)
+        record = adr.parse(text, "docs/adr/0001-pg.md")
+        self.assertEqual((record["serves"], record["problems"]), ([{"need_id": "TN-02", "revision": 3}, {"need_id": "TN-05", "revision": 1}], []))
+        self.assertNotIn("serves:", adr.render("Keep data in PostgreSQL", context="Why now here.", decision="PostgreSQL, for the reason."))
+
+    def test_serves_flags(self):
+        def record(ident, status, serves):
+            return {"id": ident, "file": f"docs/adr/{ident[4:]}-x.md", "status": status, "serves": [{"need_id": n, "revision": r} for n, r in serves]}
+        needs = [{"need_id": "TN-01", "revision": 2, "status": "active"}, {"need_id": "TN-02", "revision": 1, "status": "retired"}]
+        records = [record("ADR-0001", "accepted", [("TN-01", 1)]), record("ADR-0002", "proposed", [("TN-02", 1)]),
+                   record("ADR-0003", "proposed", [("TN-09", 1)]), record("ADR-0004", "accepted", [("TN-01", 2)]),
+                   record("ADR-0005", "rejected", [("TN-01", 1)]), record("ADR-0006", "superseded", [("TN-09", 1)]),
+                   record("ADR-0007", "accepted", [("TN-01", 3)]), {"id": "ADR-0008", "status": "accepted"}]
+        flags = adr.serves_flags(records, needs)
+        self.assertEqual([(flag["id"], flag["need_id"], flag["change"], flag["published_revision"]) for flag in flags],
+                         [("ADR-0001", "TN-01", "older-revision", 2), ("ADR-0002", "TN-02", "retired", 1), ("ADR-0003", "TN-09", "missing", None),
+                          ("ADR-0007", "TN-01", "unknown-revision", 2)])
+        self.assertIn("ADR-0001 serves TN-01 at revision 1; the published need is at revision 2.", flags[0]["say"])
+        self.assertTrue(all("nothing is reopened or blocked" in flag["say"] for flag in flags))
+        self.assertEqual(adr.serves_flags(records, None), [], "an unreadable needs file judges nothing")
+        self.assertEqual([flag["change"] for flag in adr.serves_flags(records[:1], [])], ["missing"], "no needs published: every served need is missing")
+
     def test_the_folder_names_files_and_numbers(self):
         files = {"docs/adr/0001-a.md": adr_text("First decision"), "docs/adr/0001-b.md": adr_text("Second decision"),
                  "docs/adr/12-bad.md": adr_text("Badly named"), "docs/adr/README.md": "# About ADRs\n", "docs/adr/template.md": "x",
