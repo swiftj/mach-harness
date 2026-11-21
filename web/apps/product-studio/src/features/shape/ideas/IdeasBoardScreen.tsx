@@ -1,33 +1,172 @@
-import { Lightbulb } from "lucide-react";
-import { EmptyState } from "@mach/ui";
-import { NotBuiltYet, ScreenFrame } from "../../../shared/ScreenFrame";
+import { useState } from "react";
+import { CircleAlert, Lightbulb, Plus } from "lucide-react";
+import { Badge, Banner, Button, Disclosure, EmptyState, ErrorState, Heading, Skeleton, Text, describeError } from "@mach/ui";
+import type { IdeaRow } from "@mach/ui/api";
+import { ScreenFrame } from "../../../shared/ScreenFrame";
 import { useIdeaBoard } from "../shell/useIdea";
+import { AddIdeaDialog } from "./AddIdeaDialog";
+import { IdeaCard } from "./IdeaCard";
+import { boardColumns, ideaCount, stages, type BoardColumn } from "./model";
+
+const TITLE = "Shape";
+const LEAD = "Where an idea is explored, argued for, sized and turned into epics. You decide at every step; MACH checks. Nothing here reaches the builders.";
 
 /**
- * Shape's ideas board: every idea, wherever it came from, at one of its five places, with its next step; adding one.
- * A project with no ideas sees one quiet invitation and nothing else.
+ * Shape's ideas board: every idea, wherever it came from, at one of its five places, with the engine's next step for
+ * each; and adding one, on the product manager's word. A project with no ideas sees one quiet invitation.
  *
- * Owned by screen engineer 1 (docs/mach-next/M16_SHAPE_APP_FOUNDATION.md section 6). Data: the shared status's
- * `ideas` (useIdeaBoard), idea.list, idea.add, idea.stage, request.list for the requests an idea can start from.
- * Fixtures: ?fixture=status.ideas (the board), ?ideas=empty|changed, ?add=refused-twice|refused-not-template.
+ * Data: the shared status's `ideas` (useIdeaBoard), `idea.show` for a decided idea's reason, `request.list` for what
+ * an idea can start from, `idea.add`. The engine names every place, verdict and next step and keeps the order; the
+ * board shows them as reported and never ranks an idea. Fixtures: ?fixture=status.ideas (the board; any
+ * status.ideas-* works), no parameter for the empty board, ?add=refused-twice|refused-not-template, ?refuse=idea.add.
  */
 export function IdeasBoardScreen() {
-  const { board } = useIdeaBoard();
-  return (
-    <ScreenFrame
-      title="Shape"
-      width="wide"
-      lead="Where an idea is explored, argued for, sized and turned into epics. You decide at every step; scripts check. Nothing here reaches the builders."
-    >
-      {board ? (
-        <NotBuiltYet what="The ideas board: every idea at its place, New, Exploring, Brief written, Decided or Shaped into work, with the next step for each." />
-      ) : (
+  const { board, loading, error, reload } = useIdeaBoard();
+  const [adding, setAdding] = useState(false);
+
+  const addButton = (first: boolean) => (
+    <Button variant="primary" onClick={() => setAdding(true)}>
+      <Plus aria-hidden="true" />
+      {first ? "Add the first idea" : "Add an idea"}
+    </Button>
+  );
+  const dialog = <AddIdeaDialog open={adding} onOpenChange={setAdding} onAdded={reload} />;
+
+  if (loading) {
+    return (
+      <ScreenFrame title={TITLE} width="wide" lead={LEAD}>
+        <div role="status" aria-label="Reading your ideas" aria-busy="true" className="grid grid-cols-5 gap-3">
+          {stages.map((stage) => (
+            <div key={stage} className="flex flex-col gap-3 rounded-md bg-surface-sunken p-3">
+              <Skeleton className="h-5 w-24" />
+              <Skeleton className="h-28 w-full" />
+            </div>
+          ))}
+        </div>
+      </ScreenFrame>
+    );
+  }
+
+  if (!board && error) {
+    const shown = error.kind === "refused" ? { title: "Your ideas could not be read", message: error.message } : describeError(error);
+    return (
+      <ScreenFrame title={TITLE} width="wide" lead={LEAD}>
+        <ErrorState icon={<CircleAlert />} title={shown.title} message={shown.message} hint={error.hint} action={<Button onClick={reload}>Try again</Button>} />
+      </ScreenFrame>
+    );
+  }
+
+  if (!board || board.ideas.length === 0) {
+    return (
+      <ScreenFrame title={TITLE} width="wide" lead={LEAD}>
         <EmptyState
           icon={<Lightbulb />}
           title="No ideas yet"
-          description="Shape is optional. Add an idea here when you want to think it through before any epic: write a brief, make the case and decide."
+          description="Shape is optional. It is a place to think an idea through before any epic exists: explore it, write a short brief, make the case and record your verdict. Add one whenever you have something worth that thought."
+          action={addButton(true)}
         />
-      )}
+        {dialog}
+      </ScreenFrame>
+    );
+  }
+
+  const { columns, elsewhere } = boardColumns(board);
+  return (
+    <ScreenFrame title={TITLE} width="wide" lead={LEAD}>
+      {board.unreadable?.length ? (
+        <Banner tone="warning" title={board.unreadable.length === 1 ? "1 idea could not be read" : `${board.unreadable.length} ideas could not be read`}>
+          <span className="block">The rest of the board is shown as recorded. The files that could not be read are left as they are.</span>
+          <Disclosure summary="Which files">
+            <ul className="flex flex-col gap-0.5 font-mono text-mono">
+              {board.unreadable.map((file) => (
+                <li key={file} translate="no">
+                  {file}
+                </li>
+              ))}
+            </ul>
+          </Disclosure>
+        </Banner>
+      ) : null}
+
+      <section aria-labelledby="ideas-heading" className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="flex max-w-reading flex-col gap-1">
+            <Heading level={2} id="ideas-heading">
+              Ideas
+            </Heading>
+            <Text size="body-sm" tone="muted">
+              Everything that might become work, wherever it came from. Saying no loses nothing: the verdict is kept with its reason and the idea stays on the board.
+            </Text>
+          </div>
+          {addButton(false)}
+        </div>
+
+        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- the board scrolls sideways inside its own region, which must be reachable by keyboard */}
+        <div role="region" aria-label="Ideas board, scrolls sideways when narrow" tabIndex={0} className="overflow-x-auto rounded-md pb-2">
+          <div className="grid min-w-[72rem] grid-cols-5 gap-3">
+            {columns.map((column) => (
+              <StageColumn key={column.stage} column={column} />
+            ))}
+          </div>
+        </div>
+
+        {elsewhere.length ? <OtherPlaces rows={elsewhere} /> : null}
+
+        <p className="border-t border-line pt-3 text-body-sm text-ink-muted">
+          {ideaCount(board.ideas.length)}. Ideas appear here only when you add them.
+        </p>
+      </section>
+      {dialog}
     </ScreenFrame>
+  );
+}
+
+function StageColumn({ column }: { column: BoardColumn }) {
+  const headingId = `stage-${column.stage}`;
+  return (
+    <section aria-labelledby={headingId} className="flex min-w-0 flex-col gap-3 rounded-md bg-surface-sunken p-3">
+      <div className="flex flex-col gap-0.5 px-0.5">
+        <h3 id={headingId} className="flex items-center gap-2 text-label text-ink">
+          {column.words}
+          <Badge>
+            {column.rows.length}
+            <span className="sr-only">{column.rows.length === 1 ? " idea" : " ideas"}</span>
+          </Badge>
+        </h3>
+        <p className="text-caption text-ink-muted">{column.meaning}</p>
+      </div>
+      {column.rows.length ? (
+        <ul className="flex flex-col gap-2.5">
+          {column.rows.map((row) => (
+            <li key={row.idea_id}>
+              <IdeaCard row={row} />
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="rounded-md border border-dashed border-line-strong px-3 py-4 text-caption text-ink-subtle">No idea here now.</p>
+      )}
+    </section>
+  );
+}
+
+/** Ideas at a place this app does not know: shown, never dropped. */
+function OtherPlaces({ rows }: { rows: IdeaRow[] }) {
+  return (
+    <section aria-labelledby="ideas-elsewhere" className="flex flex-col gap-3">
+      <Heading level={3} size="title-3" id="ideas-elsewhere">
+        At another place
+      </Heading>
+      <ul className="grid grid-cols-3 gap-3">
+        {rows.map((row) => (
+          <li key={row.idea_id} className="flex flex-col gap-1">
+            <Text size="caption" tone="muted">
+              {row.stage_words}
+            </Text>
+            <IdeaCard row={row} />
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
