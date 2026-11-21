@@ -111,7 +111,7 @@ A technical need is what the product requires of whatever is built, said without
 - **Looking**: `STUDIO need list` shows each kind with its question, its needs or "nothing to say", the `unanswered` kinds, whether they are published, and `adrs_behind`: decisions written for an older revision of a need. Changes nothing.
 - **Publishing** (only on the PM's explicit word): `STUDIO need publish`. On GitHub it saves them in a fixed section of the project's issue with an approval comment, and in both cases it writes `product/ready/NEEDS/needs.json` in the workspace, which the PM adds to the repository's main branch (`ways_on`): the engineer's architecture baseline reads the needs only from there. Running it again finishes a publish that stopped part way and makes nothing twice. It is not a gate: slices are marked ready without it.
 - **Someone else published newer ones** (`needs.published.newer_elsewhere`): `refresh` takes them when the PM has no unpublished changes (`needs_taken`). Otherwise explain both in product terms and ask which stands, then `STUDIO reconcile needs --take mine|theirs`.
-- These commands are terminal only for now; the visual app does not show technical needs yet.
+- The visual app shows them too: **Technical needs** (`/needs`) lists the six kinds with their questions and needs, runs this same needs conversation beside them, and has the PM's buttons for adding, changing, retiring, "nothing to say", publishing and choosing a version. It shows the decisions written for an older revision of a need read only, and offers no act on a decision. In the terminal the commands above work as before.
 
 ## A design you already have
 
