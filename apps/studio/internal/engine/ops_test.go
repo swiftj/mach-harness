@@ -14,7 +14,7 @@ func TestAllowlistIsExactlyTheContract(t *testing.T) {
 	want := []string{
 		"brief.check", "brief.show", "case.check", "case.show",
 		"epic.add", "epic.current", "epic.link", "epic.renumber", "epic.set",
-		"idea.add", "idea.apply", "idea.chain", "idea.change", "idea.list", "idea.lookups", "idea.map", "idea.map-status", "idea.publish",
+		"idea.add", "idea.apply", "idea.chain", "idea.change", "idea.faults", "idea.list", "idea.lookups", "idea.map", "idea.map-status", "idea.publish",
 		"idea.renumber", "idea.settle", "idea.show", "idea.size", "idea.stage",
 		"jira.export", "jira.keys", "lookback.record",
 		"policy.accept", "policy.list",
@@ -58,7 +58,7 @@ func TestAllowlistIsExactlyTheContract(t *testing.T) {
 	}
 	// M16: Shape's reads; publishing an idea, recording a verdict (the signed-in login) and a look back
 	// (a comment on the idea's issue) reach GitHub; every other Shape act stays on this computer.
-	for _, name := range []string{"idea.list", "idea.show", "idea.map-status", "idea.chain", "brief.show", "case.show", "case.check"} {
+	for _, name := range []string{"idea.list", "idea.faults", "idea.show", "idea.map-status", "idea.chain", "brief.show", "case.show", "case.check"} {
 		if op, _ := engine.Lookup(name); !op.ReadOnly || op.Network {
 			t.Errorf("%s should be read-only and local", name)
 		}
@@ -260,6 +260,7 @@ func TestEveryOperationsArgumentVector(t *testing.T) {
 		{"idea.add", `{"title":"Renew it myself","from_issue":58}`, []string{"idea", "add", "--from-issue=58", "--", "Renew it myself"}},
 		{"idea.add", `{"title":"Fine shown twice","from_fault":"AUTO-20261120T101500Z"}`, []string{"idea", "add", "--from-fault=AUTO-20261120T101500Z", "--", "Fine shown twice"}},
 		{"idea.list", ``, []string{"idea", "list"}},
+		{"idea.faults", `{}`, []string{"idea", "faults"}},
 		{"idea.show", `{"idea_id":"IDEA-019"}`, []string{"idea", "show", "IDEA-019"}},
 		{"idea.stage", `{"idea_id":"IDEA-019","stage":"exploring"}`, []string{"idea", "stage", "IDEA-019", "exploring"}},
 		{"idea.lookups", `{"idea_id":"IDEA-019","lookups":{"shipped_rules":[{"rule":"SLICE-004/FR-02","note":"n"}]}}`,

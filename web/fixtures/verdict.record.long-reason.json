@@ -1,0 +1,23 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-002",
+    "verdict": {
+      "decision": "not-now",
+      "reason": "Not now. The branches have nobody to run reading challenges before the summer, the children's librarians are already covering two vacancies, and the schools asked us to wait until the new term so that teachers can join in. We should come back to it in September with the head of children's services, when the summer reading scheme has finished and we know how many volunteers stayed on. Nothing here says the idea is wrong; the timing is.",
+      "by": "ada-pm",
+      "at": "2026-11-21T01:38:48Z",
+      "brief_sha256": null,
+      "revision": 0,
+      "holds": true,
+      "stale": false
+    },
+    "replaced": null,
+    "stage": "decided",
+    "recorded_without_github": false,
+    "note": "Recorded. A person decides. MACH never recommends a verdict, and recording one creates no epic or slice and starts nothing. Save it to GitHub so others can read it.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

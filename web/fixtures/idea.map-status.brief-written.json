@@ -1,0 +1,14 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-003",
+    "stage": "brief",
+    "route": null,
+    "factory_authorized": false,
+    "map": null,
+    "can_apply": false,
+    "note": "IDEA-003 has no map yet. Ask Claude Code to propose one."
+  },
+  "refused": null,
+  "hint": null
+}

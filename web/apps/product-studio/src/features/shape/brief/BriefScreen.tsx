@@ -6,6 +6,7 @@ import {
   Badge,
   Banner,
   Button,
+  DiagnosticList,
   Disclosure,
   EmptyState,
   ErrorState,
@@ -221,7 +222,7 @@ function BriefDocument({ show, placed, lookups }: { show: BriefShow; placed: Pla
           <Text size="body-sm" weight="semibold">
             About the whole brief
           </Text>
-          <FindingList items={placed.whole} />
+          <DiagnosticList items={placed.whole} />
         </section>
       ) : null}
       {briefSections.map(({ id, heading, required }) => (
@@ -243,7 +244,7 @@ function DocSection({ id, heading, findings, children }: { id: BriefSection; hea
       <Heading level={3} size="title-3" id={`brief-section-${id}-title`}>
         {heading}
       </Heading>
-      {findings.length ? <FindingList items={findings} /> : null}
+      {findings.length ? <DiagnosticList items={findings} /> : null}
       {children}
     </section>
   );
@@ -309,7 +310,7 @@ function IdLine({ id, children, findings }: { id: string; children: ReactNode; f
       </span>
       <div className="flex min-w-0 flex-col gap-2">
         {children}
-        {findings.length ? <FindingList items={findings} compact /> : null}
+        {findings.length ? <DiagnosticList items={findings} compact /> : null}
       </div>
     </li>
   );
@@ -441,31 +442,6 @@ function Touches({ model, lookups }: { model: BriefModel; lookups: Parameters<ty
 
 /* ---------------------------------------------------------------- findings */
 
-function FindingList({ items, compact = false }: { items: PlacedFinding[]; compact?: boolean }) {
-  const hasError = items.some((f) => f.severity === "error");
-  return (
-    <ul
-      className={cn(
-        "flex flex-col gap-1.5",
-        !compact && "rounded-md border px-3 py-2.5",
-        !compact && (hasError ? "border-danger-line bg-danger-soft" : "border-warning-line bg-warning-soft"),
-      )}
-    >
-      {items.map((f, i) => (
-        <li key={i} className="flex items-start gap-2 text-body-sm text-ink">
-          <span className={cn("mt-0.5 shrink-0", f.severity === "error" ? "text-danger-ink" : "text-warning-ink")}>
-            <StateGlyph shape={f.severity === "error" ? "blocked" : "half"} />
-          </span>
-          <span className="min-w-0">
-            <span className="sr-only">{f.severity === "error" ? "Problem: " : "Warning: "}</span>
-            {f.message}
-            {f.line ? <span className="ml-1.5 text-caption tabular text-ink-subtle">line {f.line}</span> : null}
-          </span>
-        </li>
-      ))}
-    </ul>
-  );
-}
 
 /** Moves to the part of the brief a finding is placed beside, and gives it focus. */
 function goTo(anchor: string) {

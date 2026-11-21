@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Download, FileText } from "lucide-react";
-import { ArtifactId, Banner, Button, Checkbox, ConfirmDialog, Field, Select, Text, cn, toast } from "@mach/ui";
+import { ArtifactId, Banner, Button, Checkbox, ConfirmDialog, Field, RadioGroup, Select, Text, toast } from "@mach/ui";
 import { sizeWords, type JiraExport, type Status } from "@mach/ui/api";
 import { useEngineAct } from "../../api/act";
 import { defaultExportChoice, exportArgs, exportSummary, fileContents, flavours, flavourWhy, namesFrom, readmeEssentials, type ExportChoice, type Named, type ExportSummary, type Flavour } from "./model";
@@ -31,36 +31,14 @@ export function ExportPanel({ status }: { status: Status }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <fieldset className="flex flex-col gap-2">
-        <legend className="pb-1 text-label text-ink">Which Jira the file is for</legend>
-        <Text size="body-sm" tone="muted" className="max-w-reading">
-          {flavourWhy}
-        </Text>
-        <div className="grid gap-3 pt-1 sm:grid-cols-2">
-          {flavours.map((f) => (
-            <label
-              key={f.value}
-              className={cn(
-                "grid cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-0.5 rounded-md border px-4 py-3",
-                "border-line bg-surface hover:border-line-strong",
-                "has-[:checked]:border-accent has-[:checked]:bg-accent-soft",
-                "has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-focus",
-              )}
-            >
-              <input
-                type="radio"
-                name="jira-flavour"
-                value={f.value}
-                checked={choice.flavour === f.value}
-                onChange={() => set({ flavour: f.value as Flavour })}
-                className="row-span-2 mt-1 size-4 shrink-0 accent-accent-fill focus-visible:outline-none"
-              />
-              <span className="text-body font-semibold text-ink">{f.label}</span>
-              <span className="text-body-sm text-ink-muted">{f.detail}</span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
+      <RadioGroup
+        legend="Which Jira the file is for"
+        hint={flavourWhy}
+        tone="accent"
+        options={flavours.map((f) => ({ value: f.value as Flavour, label: f.label, description: f.detail }))}
+        value={choice.flavour}
+        onValueChange={(flavour) => set({ flavour })}
+      />
 
       <div className="grid items-start gap-6 sm:grid-cols-2">
         <Field label="What goes in" hint="Everything, or one epic and its slices.">

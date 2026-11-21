@@ -91,6 +91,17 @@ func ContinueCommandFor(script string) string {
 	return "/mach:product-studio continue"
 }
 
+// ExploreCommandOf is the Claude Code command that explores an idea, without the idea ID, for the
+// same install as a continue command: "/mach:product-studio explore" or "/mach-product-studio explore"
+// (M16 clean-up). Empty when the continue command is not one this host reports.
+func ExploreCommandOf(continueCommand string) string {
+	skill, found := strings.CutSuffix(continueCommand, " continue")
+	if !found || skill == "" || strings.ContainsAny(skill, " \t\n") {
+		return ""
+	}
+	return skill + " explore"
+}
+
 type limited struct {
 	buf *bytes.Buffer
 	max int

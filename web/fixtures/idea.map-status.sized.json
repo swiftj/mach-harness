@@ -1,0 +1,79 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-003",
+    "stage": "decided",
+    "route": {
+      "at": "2026-11-21T01:38:02Z",
+      "brief_sha256": "c916b98c27233a7bb01c7dbafa9f9c858e6dd30e6766ce7d5d80c538d7f7a611",
+      "counted": {
+        "capabilities": 2,
+        "high_risk_areas": 2,
+        "high_risk_not_determined": [],
+        "outcomes": 2,
+        "policy_concerns": 0,
+        "principle_concerns": 0,
+        "shipped_rules": 2,
+        "shipped_rules_looked_up": 0
+      },
+      "details": {
+        "concerns": {
+          "policies": [],
+          "principles": []
+        },
+        "high_risk": {
+          "areas": [
+            {
+              "area": "The finding is in code for billing or payments, which is High risk.",
+              "file_count": 1,
+              "files": [
+                "src/billing/invoice.py"
+              ],
+              "rules": [
+                "SLICE-002/FR-01"
+              ]
+            },
+            {
+              "area": "The finding is in code for sign-in or permissions, which is High risk.",
+              "file_count": 1,
+              "files": [
+                "src/auth/login.py"
+              ],
+              "rules": [
+                "SLICE-002/FR-01"
+              ]
+            }
+          ],
+          "count": 2,
+          "not_determined": []
+        },
+        "touches": {
+          "capabilities": [
+            "Lending",
+            "Member account"
+          ],
+          "outcomes": [
+            "O-1",
+            "O-2"
+          ],
+          "shipped_rules": [
+            "SLICE-002/FR-01",
+            "SLICE-001/FR-01"
+          ]
+        }
+      },
+      "revision": 1,
+      "route": "several-epics",
+      "why": "The brief's outcomes are in 2 different capabilities, so the route is several epics.",
+      "words": "several epics",
+      "holds": true,
+      "stale": false
+    },
+    "factory_authorized": false,
+    "map": null,
+    "can_apply": false,
+    "note": "IDEA-003 has no map yet. Ask Claude Code to propose one."
+  },
+  "refused": null,
+  "hint": null
+}

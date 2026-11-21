@@ -3,7 +3,7 @@ import { CircleAlert } from "lucide-react";
 import { Button, Dialog, DialogClose, DialogContent, Field, HintAction, Select, Textarea, toast } from "@mach/ui";
 import type { ShapeCoverageRow, ShapeMapSlice } from "@mach/ui/api";
 import { useEngineAct } from "../../../api/act";
-import { REASON_MAX, settleArgs, type SettleChoice, type SettleForm } from "./model";
+import { REASON_MAX, REASON_NEEDED, settleArgs, type SettleChoice, type SettleForm } from "./model";
 
 interface SettleOutcomeDialogProps {
   ideaId: string;
@@ -104,7 +104,16 @@ function SettleBody({ ideaId, outcome, outcomeText, slices, onOpenChange, onDone
               />
             </Field>
           ) : null}
-          <Field label="Why" optional hint="In your own words, on one line. Kept with the map.">
+          <Field
+            label="Why"
+            optional={form.choice === "slice" || form.choice === ""}
+            hint={
+              form.choice === "out-of-scope" || form.choice === "later"
+                ? "In your own words, on one line. Leaving an outcome out is your decision, so the map keeps why."
+                : "In your own words, on one line. Kept with the map."
+            }
+            error={missing === REASON_NEEDED ? missing : null}
+          >
             <Textarea rows={2} value={form.reason} onChange={(e) => update({ reason: e.target.value })} maxLength={REASON_MAX} />
           </Field>
         </form>

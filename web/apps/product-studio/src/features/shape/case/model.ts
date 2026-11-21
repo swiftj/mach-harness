@@ -39,8 +39,13 @@ export const oneLine = (text: string): string => text.replace(/\s*[\r\n]+\s*/g, 
 export const reasonLimit = 500;
 
 /** What is missing before the act can be confirmed, in words, or null. Only that a choice and a reason are given. */
-export function verdictFormProblem(decision: VerdictDecision | null, reason: string): { field: "choice" | "reason"; message: string } | null {
+/**
+ * What the form still needs before the confirmation opens. `goWhy` is the engine's own sentence when a Go cannot be
+ * recorded now (`idea.show`'s `acts.go`): said when Go is chosen, before the click, never by disabling or ranking it.
+ */
+export function verdictFormProblem(decision: VerdictDecision | null, reason: string, goWhy: string | null = null): { field: "choice" | "reason"; message: string } | null {
   if (!decision) return { field: "choice", message: "Choose Go, Not now or No." };
+  if (decision === "go" && goWhy) return { field: "choice", message: goWhy };
   const line = oneLine(reason);
   if (!line) return { field: "reason", message: "Write your reason. A verdict is kept with the reason in your own words." };
   if (line.length > reasonLimit) return { field: "reason", message: `Shorten your reason to ${reasonLimit} characters or fewer. It has ${line.length}.` };

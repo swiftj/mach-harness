@@ -29,34 +29,34 @@ const statusRow = (name, id = "IDEA-001") => data(name).ideas.ideas.find((row) =
 
 // ---- the gate: what the engine allows, never worked out from the slices ----
 
-test("shaped with nothing shipped: waiting, in the engine's words", () => {
-  const row = statusRow("status.ideas-shaped");
-  const gate = lookbackGate(row, null);
+test("shaped with nothing shipped: waiting, in the engine's own refusal sentence", () => {
+  const show = data("idea.show.shaped");
+  const gate = lookbackGate(show.idea, show.acts.look_back);
   assert.equal(gate.kind, "waiting");
-  assert.equal(gate.sentence, row.next.sentence);
-  assert.match(gate.sentence, /once one has shipped/);
+  assert.equal(gate.sentence, show.acts.look_back.why);
+  assert.match(gate.sentence, /once a slice made from it has shipped/);
+  assert.equal(statusRow("status.ideas-shaped").next.kind, "none");
 });
 
 test("a slice has shipped: the look back is open, nothing recorded yet", () => {
   const show = data("idea.show.look-back");
   assert.equal(show.lookback, null);
-  const gate = lookbackGate(show.idea, show.lookback);
-  assert.equal(gate.kind, "open");
-  assert.equal(lookbackGate(statusRow("status.ideas-look-back"), null).kind, "open");
+  assert.deepEqual(show.acts.look_back, { allowed: true, why: null });
+  assert.equal(lookbackGate(show.idea, show.acts.look_back).kind, "open");
 });
 
-test("partly recorded stays open; fully recorded (next step none) stays open for recording again", () => {
+test("partly recorded stays open, whatever the next step says", () => {
   const show = data("idea.show.looked-back");
   assert.equal(recordedCount(show.lookback), 3);
-  assert.equal(lookbackGate(show.idea, show.lookback).kind, "open");
+  assert.equal(lookbackGate(show.idea, show.acts.look_back).kind, "open");
   const allDone = { ...show.idea, next: { kind: "none", sentence: "Nothing waits." } };
-  assert.equal(lookbackGate(allDone, show.lookback).kind, "open");
+  assert.equal(lookbackGate(allDone, show.acts.look_back).kind, "open");
 });
 
 test("an idea decided Not now or No never became work: an honest empty state, with its verdict", () => {
   for (const [fixture, word] of [["idea.show.not-now", "not-now"], ["idea.show.fault", "no"]]) {
     const show = data(fixture);
-    const gate = lookbackGate(show.idea, show.lookback);
+    const gate = lookbackGate(show.idea, show.acts.look_back);
     assert.equal(gate.kind, "decided-against", fixture);
     assert.equal(gate.decision, word);
   }
@@ -65,7 +65,7 @@ test("an idea decided Not now or No never became work: an honest empty state, wi
 test("ideas still being shaped are not shaped yet, with their next step's sentence", () => {
   for (const fixture of ["idea.show.request", "idea.show.exploring", "idea.show.brief-written", "idea.show.go", "idea.show.mapped"]) {
     const show = data(fixture);
-    const gate = lookbackGate(show.idea, show.lookback);
+    const gate = lookbackGate(show.idea, show.acts.look_back);
     assert.equal(gate.kind, "not-shaped", fixture);
     assert.equal(gate.sentence, show.idea.next.sentence);
   }

@@ -26,7 +26,7 @@ export function TheMap({ ideaId, status, brief, made, onChanged }: { ideaId: str
       {(status.blockers ?? []).length && !map.applied ? (
         <Banner tone="warning" title="This map cannot be used as it is">
           <ul className="flex flex-col gap-1">
-            {status.blockers.map((b) => (
+            {(status.blockers ?? []).map((b) => (
               <li key={b}>{b}</li>
             ))}
           </ul>
@@ -361,14 +361,14 @@ function ApplySection({ ideaId, status, map, made, onDone }: { ideaId: string; s
   );
 }
 
-/** Links to an epic made from the idea. Epics have no page of their own; they are listed on Vision and outcomes. */
+/** Links to an epic made from the idea: its page is "How <epic> works today", which says plainly when nothing has shipped. */
 function EpicLink({ id }: { id: string }) {
   return (
     <li className="flex flex-wrap items-center gap-x-4 gap-y-1">
       <Layers aria-hidden="true" className="size-4 text-ink-subtle" />
       <ArtifactId>{id}</ArtifactId>
-      <Link to="/vision#epics" className="font-semibold text-accent-ink underline-offset-2 hover:underline">
-        Open {id} in the project's epics
+      <Link to={`/epics/${encodeURIComponent(id)}/today`} className="font-semibold text-accent-ink underline-offset-2 hover:underline">
+        How <span translate="no">{id}</span> works today
       </Link>
     </li>
   );

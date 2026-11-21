@@ -17,7 +17,7 @@
       "capabilities": 1
     },
     "verdict": null,
-    "note": "A script checks the brief's structure. It never scores the idea.",
+    "note": "This is revision 1: the first text of the brief MACH has checked. MACH checks the brief's structure; it never scores the idea.",
     "factory_authorized": false
   },
   "refused": null,

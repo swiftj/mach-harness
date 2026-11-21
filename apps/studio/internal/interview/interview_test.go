@@ -740,6 +740,13 @@ func TestCapability(t *testing.T) {
 	if interview.ContinueCommandFor("/p/.claude/skills/mach-product-studio/scripts/studio.py") != "/mach-product-studio continue" {
 		t.Fatal("project install command")
 	}
+	// M16 clean-up: the idea's own command, for the same install.
+	for given, want := range map[string]string{"/mach:product-studio continue": "/mach:product-studio explore",
+		"/mach-product-studio continue": "/mach-product-studio explore", "": "", "continue": "", "/x y continue": "", "/mach:product-studio": ""} {
+		if got := interview.ExploreCommandOf(given); got != want {
+			t.Errorf("ExploreCommandOf(%q) = %q, want %q", given, got, want)
+		}
+	}
 }
 
 func TestTheHistoryIsKeptPerSliceAcrossRestarts(t *testing.T) {

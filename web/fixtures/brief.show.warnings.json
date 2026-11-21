@@ -1,0 +1,97 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-001",
+    "revision": 1,
+    "changed_since_check": false,
+    "sha256": "7098390e0ba550b6a53703524253a9842c8dae7e093321b3230beada040badfe",
+    "text": "# Brief: Let members renew a loan themselves\n\n## Problem\n\nA member who wants more time with a book has to call or come in.\n\n## Who has it\n\nMembers with items on loan. Desk staff at Central.\n\n## Outcomes\n\n- **O-1:** Members renew without calling the library.\n  - How we would know: members are happier with renewals.\n- **O-2:** Members are not surprised by a renewal that was refused.\n  - How we would know: complaints about unexpected fines after a refused renewal fall to none in a quarter.\n\n## Not doing\n\nChanging how many times a loan can be renewed.\n\n## Assumptions\n\n- **A-1:** Most renewal calls are for items nobody is waiting for. (assumed, not confirmed)\n- **A-2:** Members who renew already sign in to the catalogue. (confirmed by the head of lending services on 2026-11-18)\n\n## Open questions\n\n- What does a member see when a renewal is refused because someone else is waiting? Who can answer: the head of lending services.\n\n## Risks\n\nA branch loses sight of items it wanted back for a display.\n\n## What it touches\n\n- Capabilities: Lending (EPIC-001), Member account\n- Shipped rules: SLICE-001/FR-01, SLICE-001/INV-02\n",
+    "model": {
+      "title": "Let members renew a loan themselves",
+      "problem": "A member who wants more time with a book has to call or come in.",
+      "who_has_it": "Members with items on loan. Desk staff at Central.",
+      "outcomes": [
+        {
+          "id": "O-1",
+          "text": "Members renew without calling the library.",
+          "how_we_would_know": "members are happier with renewals.",
+          "line": 13
+        },
+        {
+          "id": "O-2",
+          "text": "Members are not surprised by a renewal that was refused.",
+          "how_we_would_know": "complaints about unexpected fines after a refused renewal fall to none in a quarter.",
+          "line": 15
+        }
+      ],
+      "not_doing": "Changing how many times a loan can be renewed.",
+      "assumptions": [
+        {
+          "id": "A-1",
+          "text": "Most renewal calls are for items nobody is waiting for.",
+          "state": "assumed",
+          "confirmed_by": null,
+          "confirmed_on": null,
+          "line": 24
+        },
+        {
+          "id": "A-2",
+          "text": "Members who renew already sign in to the catalogue.",
+          "state": "confirmed",
+          "confirmed_by": "the head of lending services",
+          "confirmed_on": "2026-11-18",
+          "line": 25
+        }
+      ],
+      "open_questions": [
+        "What does a member see when a renewal is refused because someone else is waiting? Who can answer: the head of lending services."
+      ],
+      "risks": "A branch loses sight of items it wanted back for a display.",
+      "touches": {
+        "capabilities": [
+          {
+            "name": "Lending",
+            "epic_id": "EPIC-001"
+          },
+          {
+            "name": "Member account",
+            "epic_id": null
+          }
+        ],
+        "shipped_rules": [
+          "SLICE-001/FR-01",
+          "SLICE-001/INV-02"
+        ]
+      },
+      "sections": [
+        "Problem",
+        "Who has it",
+        "Outcomes",
+        "Not doing",
+        "Assumptions",
+        "Open questions",
+        "Risks",
+        "What it touches"
+      ]
+    },
+    "passes": true,
+    "findings": [
+      {
+        "severity": "warning",
+        "rule": "brief-how-vague",
+        "line": 14,
+        "message": "O-1's 'how we would know' names no measure or observable change. Say what you would count or see."
+      },
+      {
+        "severity": "warning",
+        "rule": "brief-open-question",
+        "line": 27,
+        "message": "An open question is still open: What does a member see when a renewal is refused because someone else is waiting? Who can answer: the head of lending se"
+      }
+    ],
+    "verdict": null,
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

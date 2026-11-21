@@ -594,7 +594,7 @@ class AppWordingTest(Base):
     # A terminal command, option, script or quoted command in text a person reads.
     COMMAND = re.compile(r"\((principle|policy|prd|jira|reconcile|slice|epic|idea|brief|case|verdict|lookback) [a-z]|\b(principle (add|set|retire|publish|list)|policy (accept|list)"
                          r"|reconcile principles|prd (import|list|show|map|settle|status|apply|draft|confirm)|jira (export|keys)"
-                         r"|(slice|epic) (link|mock|current)|idea (add|list|show|stage|lookups|publish|renumber|size|map|settle|map-status|apply|change|chain)"
+                         r"|(slice|epic) (link|mock|current)|idea (add|list|faults|show|stage|lookups|publish|renumber|size|map|settle|map-status|apply|change|chain)"
                          r"|brief (check|show)|case (show|check)|verdict record|lookback record)\b|--[a-z]|\b(studio|run|cell)\.py\b|`[a-z]+ [a-z]+")
     # The M13 and M14 commands (principle, policy, prd, jira, slice link, epic link, slice mock, epic current): whole modules, and
     # studio.py's and handoff.py's functions behind them.

@@ -5,7 +5,7 @@
  * rule: no stage, verdict, next step or ranking is worked out here, and every act can still be refused in the engine's
  * words.
  */
-import type { IdeaGithubView, IdeaRow, IdeaSourceIds, IdeaStage, RequestItem, StatusIdeas } from "@mach/ui/api";
+import type { FaultTicket, IdeaGithubView, IdeaRow, IdeaSourceIds, IdeaStage, RequestItem, StatusIdeas } from "@mach/ui/api";
 
 export const stages: readonly IdeaStage[] = ["new", "exploring", "brief", "decided", "shaped"];
 
@@ -161,9 +161,14 @@ export function savedShown(github: IdeaGithubView): SavedShown {
 export const ideaCount = (n: number): string => `${n} ${n === 1 ? "idea" : "ideas"}`;
 
 /** What `idea.add` is started from. */
-export type StartFrom = { kind: "nothing" } | { kind: "request"; number: number } | { kind: "idea"; number: number };
+export type StartFrom =
+  | { kind: "nothing" }
+  | { kind: "request"; number: number }
+  | { kind: "idea"; number: number }
+  /** A fault from production: an open self-healing ticket on this computer, by its ID (`idea.faults`). */
+  | { kind: "fault"; ticket: string };
 
-export type AddIdeaArgs = { title: string; from_request?: number; from_issue?: number };
+export type AddIdeaArgs = { title: string; from_request?: number; from_issue?: number; from_fault?: string };
 
 /** The engine's limit on a title (one line, at most 120 characters). */
 export const titleLimit = 120;
@@ -186,7 +191,21 @@ export function addIdeaArgs(title: string, from: StartFrom): AddIdeaArgs {
   const args: AddIdeaArgs = { title: oneLine(title).trim() };
   if (from.kind === "request") args.from_request = from.number;
   if (from.kind === "idea") args.from_issue = from.number;
+  if (from.kind === "fault") args.from_fault = from.ticket;
   return args;
+}
+
+/**
+ * The faults an idea can start from, out of what the engine listed (`idea.faults`): the open ones no idea has started
+ * from yet. A fault already started from is not offered again.
+ */
+export function faultOptions(faults: readonly FaultTicket[] | null | undefined): FaultTicket[] {
+  return (faults ?? []).filter((fault) => !fault.idea_id);
+}
+
+/** A fault's line in a choice: its ticket, then its summary as written (outside text, shown plain). */
+export function faultOption(fault: Pick<FaultTicket, "ticket" | "summary">): string {
+  return fault.summary ? `${fault.ticket}: ${fault.summary}` : `${fault.ticket} (no summary on this computer)`;
 }
 
 /**

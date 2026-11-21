@@ -11,7 +11,7 @@
           "kind": "request",
           "number": 57
         },
-        "created": "2026-11-21T00:34:42Z",
+        "created": "2026-11-21T01:37:47Z",
         "revision": 0,
         "has_brief": false,
         "brief_checked": false,
@@ -48,7 +48,7 @@
           "kind": "idea",
           "number": 58
         },
-        "created": "2026-11-21T00:34:42Z",
+        "created": "2026-11-21T01:37:47Z",
         "revision": 1,
         "has_brief": true,
         "brief_checked": true,
@@ -84,7 +84,7 @@
         "source": {
           "kind": "typed"
         },
-        "created": "2026-11-21T00:34:43Z",
+        "created": "2026-11-21T01:37:48Z",
         "revision": 1,
         "has_brief": true,
         "brief_checked": true,
@@ -121,7 +121,7 @@
           "kind": "fault",
           "ticket": "AUTO-20261120T101500Z"
         },
-        "created": "2026-11-21T00:34:44Z",
+        "created": "2026-11-21T01:37:49Z",
         "revision": 0,
         "has_brief": false,
         "brief_checked": false,
@@ -130,10 +130,11 @@
         "verdict": {
           "decision": "no",
           "by": "ada-pm",
-          "at": "2026-11-21T00:34:44Z",
+          "at": "2026-11-21T01:37:49Z",
           "revision": 0,
           "holds": true,
-          "stale": false
+          "stale": false,
+          "reason": "The fine is shown twice by the kiosk's own screen; it is the supplier's fault, not ours."
         },
         "route": null,
         "made": null,
@@ -164,7 +165,7 @@
         "source": {
           "kind": "typed"
         },
-        "created": "2026-11-21T00:34:44Z",
+        "created": "2026-11-21T01:37:49Z",
         "revision": 0,
         "has_brief": false,
         "brief_checked": false,
@@ -173,10 +174,11 @@
         "verdict": {
           "decision": "not-now",
           "by": "ada-pm",
-          "at": "2026-11-21T00:34:44Z",
+          "at": "2026-11-21T01:37:49Z",
           "revision": 0,
           "holds": true,
-          "stale": false
+          "stale": false,
+          "reason": "Worth doing after the summer. The branches have nobody to run it before then."
         },
         "route": null,
         "made": null,
@@ -207,7 +209,7 @@
         "source": {
           "kind": "typed"
         },
-        "created": "2026-11-21T00:34:44Z",
+        "created": "2026-11-21T01:37:49Z",
         "revision": 1,
         "has_brief": true,
         "brief_checked": true,
@@ -216,10 +218,11 @@
         "verdict": {
           "decision": "go",
           "by": "ada-pm",
-          "at": "2026-11-21T00:34:44Z",
+          "at": "2026-11-21T01:37:50Z",
           "revision": 1,
           "holds": true,
-          "stale": false
+          "stale": false,
+          "reason": "Members ask for it at every desk, and the payment provider is already approved."
         },
         "route": null,
         "made": null,
@@ -251,7 +254,7 @@
           "kind": "change",
           "rule": "SLICE-001/INV-02"
         },
-        "created": "2026-11-21T00:34:45Z",
+        "created": "2026-11-21T01:37:50Z",
         "revision": 1,
         "has_brief": true,
         "brief_checked": true,
@@ -287,7 +290,7 @@
         "source": {
           "kind": "typed"
         },
-        "created": "2026-11-21T00:34:45Z",
+        "created": "2026-11-21T01:37:51Z",
         "revision": 1,
         "has_brief": true,
         "brief_checked": true,
@@ -296,10 +299,11 @@
         "verdict": {
           "decision": "go",
           "by": "ada-pm",
-          "at": "2026-11-21T00:34:45Z",
+          "at": "2026-11-21T01:37:51Z",
           "revision": 1,
           "holds": true,
-          "stale": false
+          "stale": false,
+          "reason": "Members ask what they have out."
         },
         "route": "one-slice",
         "made": {

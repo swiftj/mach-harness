@@ -1,0 +1,88 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-008",
+    "stage": "shaped",
+    "route": {
+      "at": "2026-11-21T01:37:52Z",
+      "brief_sha256": "2e70eac97bba0e83ea05a05746339d3686a6bd5a020e486289d4ebd14b436f7c",
+      "counted": {
+        "capabilities": 1,
+        "high_risk_areas": 0,
+        "high_risk_not_determined": [],
+        "outcomes": 1,
+        "policy_concerns": 0,
+        "principle_concerns": 0,
+        "shipped_rules": 2,
+        "shipped_rules_looked_up": 0
+      },
+      "details": {
+        "concerns": {
+          "policies": [],
+          "principles": []
+        },
+        "high_risk": {
+          "areas": [],
+          "count": 0,
+          "not_determined": []
+        },
+        "touches": {
+          "capabilities": [
+            "Lending"
+          ],
+          "outcomes": [
+            "O-1"
+          ],
+          "shipped_rules": [
+            "SLICE-001/FR-01",
+            "SLICE-001/INV-02"
+          ]
+        }
+      },
+      "revision": 1,
+      "route": "one-slice",
+      "why": "The brief has one outcome and 2 shipped rules, at most three, so the route is one slice.",
+      "words": "one slice",
+      "holds": true,
+      "stale": false
+    },
+    "factory_authorized": false,
+    "map": {
+      "revision": 1,
+      "route": "one-slice",
+      "epics": [],
+      "slices": [
+        {
+          "key": "S1",
+          "title": "Show my loans",
+          "scope": "The member's loans, on one page",
+          "epic": "EPIC-001",
+          "depends_on": [],
+          "outcomes": [
+            "O-1"
+          ],
+          "cites": "9-10",
+          "slice_id": "SLICE-005",
+          "status": "draft"
+        }
+      ],
+      "applied": true,
+      "mapped_at": "2026-11-21T01:37:52Z"
+    },
+    "coverage": [
+      {
+        "outcome": "O-1",
+        "carried_by": [
+          "S1"
+        ],
+        "state": "covered"
+      }
+    ],
+    "not_covered": [],
+    "blockers": [],
+    "can_apply": true,
+    "note": "Every outcome of IDEA-008 is carried or settled."
+  },
+  "refused": null,
+  "hint": null
+}

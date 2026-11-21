@@ -62,11 +62,12 @@ test("no verdict choice is pre-selected or marked as recommended on the screen",
   // Every choice comes from one map with one set of classes: none can be larger, coloured or primary.
   assert.equal((form.match(/verdictChoices\.map/g) ?? []).length, 1);
   assert.doesNotMatch(form, /choice\.decision === "go"|decision === "go"/);
-  const choiceBlock = form.slice(form.indexOf("verdictChoices.map"), form.indexOf("})}", form.indexOf("verdictChoices.map")));
-  // `accent-ink` is the native radio's own colour (the ink), the same for all three; no accent colour or tone.
-  assert.doesNotMatch(choiceBlock, /accent-(?!ink\b)|bg-accent|primary|Recommend|danger|success|warning/);
-  assert.match(choiceBlock, /has-\[:checked\]:border-ink/, "the chosen one is shown by a heavier ink outline");
-  assert.match(choiceBlock, /Chosen/, "and by a word");
+  const choiceBlock = form.slice(form.indexOf("<RadioGroup"), form.indexOf("/>", form.indexOf("<RadioGroup")));
+  // The shared RadioGroup in its neutral tone: every choice alike, the native radio in ink; no accent colour or tone.
+  assert.doesNotMatch(choiceBlock, /tone=|accent|primary|Recommend|danger|success|warning/);
+  assert.match(choiceBlock, /chosenWord="Chosen"/, "the chosen one says so in a word");
+  const radios = readFileSync(new URL("../../../packages/ui/src/components/radio-group.tsx", import.meta.url), "utf8");
+  assert.match(radios, /has-\[:checked\]:border-ink/, "and is shown by a heavier ink outline");
   // The button that opens the confirmation is not the primary button, so no accent sits beside the choices.
   assert.match(form, /<Button type="submit">Record the verdict<\/Button>/);
   // Nothing in the screen's own words recommends or ranks a verdict.
@@ -127,16 +128,20 @@ test("a case with two answers and one question left unanswered on purpose", () =
 });
 
 test("every question answered; one left with no reason; one with no answer; a case that does not pass", () => {
-  const base = data("case.show").model;
-  const all = { ...base, questions: base.questions.map((q) => ({ ...q, state: "answered", answer: q.answer })), answered: 3, not_answered: 0 };
+  // Every question answered (a real case from the engine).
+  const all = data("case.show.all-answered").model;
   assert.ok(questionViews(all).every((q) => q.state === "answered"));
   assert.equal(questionCounts(all), "3 answered");
+  assert.equal(data("case.check.all-answered").passes, true);
+  // A question with no answer at all: the engine's check fails, and the screen says it has no answer yet.
+  const open = data("case.show.unanswered");
+  assert.equal(questionViews(open.model).at(-1).state, "open");
+  assert.equal(questionCounts(open.model), "2 answered · 1 with no answer yet");
+  assert.deepEqual(caseCheckState(data("case.check.unanswered")), { word: "Does not pass its check", tone: "danger", glyph: "alert" });
+  // "Not answered." written alone: left on purpose, with no reason (the questions' view of one row).
+  const base = data("case.show").model;
   const bare = { ...base, questions: [{ id: "Q-1", question: "Who would not want this?", state: "not_answered", answer: null, line: 9 }] };
   assert.deepEqual(questionViews(bare)[0], { id: "Q-1", question: "Who would not want this?", state: "left", answer: null, leftBecause: null });
-  const open = { ...base, questions: [{ id: "Q-1", question: "Who would not want this?", state: null, answer: null, line: 9 }], answered: 0, not_answered: 0, open: 1 };
-  assert.equal(questionViews(open)[0].state, "open");
-  assert.equal(questionCounts(open), "0 answered · 1 with no answer yet");
-  assert.deepEqual(caseCheckState({ passes: false, errors: ["case-unanswered"], warnings: [] }), { word: "Does not pass its check", tone: "danger", glyph: "alert" });
 });
 
 test("no case yet: the engine's refusal is the words shown", () => {
@@ -218,12 +223,18 @@ test("where the idea is saved: not yet, on GitHub, in the folder, stopped part w
   assert.ok(publishAct({ ...onGithub, upToDate: false }, "publish"));
   assert.ok(publishAct({ ...onGithub, changedOnGithub: true }, "size"));
 
-  const github = data("idea.show.on-github").idea.github;
-  assert.deepEqual(publishState({ ...github, saved: null, unfinished: true }), { kind: "stopped" });
-  assert.equal(publishAct({ kind: "stopped" }, "publish").label, "Save again to finish");
-  assert.deepEqual(publishState({ ...github, saved: "folder" }), { kind: "folder" });
-  const taken = publishState({ ...github, saved: null, number_taken: true, other_issues: [3] });
-  assert.deepEqual(taken, { kind: "number-taken", others: [3] });
+  // Each from the real engine: a save stopped part way, the folder form, a number another idea holds on GitHub.
+  const stopped = publishState(data("idea.show.unfinished").idea.github);
+  assert.deepEqual(stopped, { kind: "stopped" });
+  assert.equal(publishAct(stopped, "publish").label, "Save again to finish");
+  assert.deepEqual(publishState(data("idea.show.folder").idea.github), { kind: "folder" });
+  const taken = publishState(data("idea.show.number-taken").idea.github);
+  assert.equal(taken.kind, "number-taken");
+  assert.deepEqual(taken.others, data("idea.show.number-taken").idea.github.other_issues);
+  assert.equal(data("idea.show.number-taken").idea.next.kind, "renumber");
+  const changed = publishState(data("idea.show.changed").idea.github);
+  assert.equal(changed.changedAfterVerdict, true);
+  assert.ok(publishAct(changed, "publish"));
   assert.equal(renumberOffered(taken, "publish"), true);
   assert.equal(renumberOffered(notYet, "renumber"), true);
   assert.equal(renumberOffered(notYet, "publish"), false);

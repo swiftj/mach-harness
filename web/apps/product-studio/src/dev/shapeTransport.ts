@@ -5,21 +5,29 @@
  *
  *   ?fixture=status.ideas            the board on the project home and in Shape (any status.ideas-* name works:
  *                                     -stale-verdict, -routes, -settle, -apply, -shaped, -look-back, -changed,
- *                                     -unfinished, -folder). Without it, status has no ideas: Shape's quiet way in.
+ *                                     -unfinished, -folder, -number-taken, -long-reason, -unreadable). Without it,
+ *                                     status has no ideas: Shape's quiet way in.
  *   ?refresh=refresh.ideas | refresh.ideas-changed | refresh.ideas-none-saved
- *   ?ideas=empty | changed            idea.list (default: the board, every stage and source)
+ *   ?ideas=empty | changed | long-reason | unreadable   idea.list (default: the board, every stage and source)
+ *   ?faults=empty                     idea.faults (default: two open faults, one already started as IDEA-004)
  *   ?idea=<name>                      idea.show, by fixture suffix: request | exploring | brief-written | fault |
- *                                     not-now | go | change | shaped-one-slice | stale-verdict | stale-route | mapped |
- *                                     shaped | look-back | looked-back | on-github. Default: the board's own idea for
- *                                     IDEA-001 to IDEA-008, else exploring.
- *   ?brief=passes | finding | stale-verdict | change-starter | none   brief.show and brief.check (default by idea)
- *   ?case=none                        case.show and case.check refused: no case yet (default: IDEA-003's case)
- *   ?verdict=refused-go-without-brief | refused-offline | no-login     verdict.record (default: by the decision sent)
+ *                                     not-now | go | change | shaped-one-slice | stale-verdict | stale-route | sized |
+ *                                     uncovered | settled | applied | mapped | shaped | blockers | look-back |
+ *                                     looked-back | on-github | changed | unfinished | folder | number-taken |
+ *                                     long-reason | refused-unreadable. Default: the board's own idea for IDEA-001 to
+ *                                     IDEA-008, else exploring. idea.map-status answers for the same idea, so the
+ *                                     two always agree.
+ *   ?brief=passes | finding | warnings | stale-verdict | change-starter | none   brief.show and brief.check (default by idea)
+ *   ?case=none | all-answered | unanswered   case.show and case.check (default: IDEA-003's case, one question not
+ *                                     answered on purpose; none: refused, no case yet)
+ *   ?verdict=refused-go-without-brief | refused-offline | no-login | long-reason   verdict.record (default: by the decision sent)
  *   ?publish-idea=again | folder | finished | shaped | refused-stopped | refused-no-login | refused-number-taken
  *   ?size=one-slice | epic | several-epics | refused-no-go             idea.size (default: several-epics; epic has
  *                                     high-risk areas not determined)
  *   ?map=refused-stale                idea.map (default: an outcome no slice carries)
- *   ?map-status=uncovered | settled | applied                          idea.map-status (default: uncovered)
+ *   ?map-status=<name>                idea.map-status, by fixture suffix (uncovered | settled | applied | sized |
+ *                                     blockers | stale-route | mapped | ...); idea.show then answers for the same idea.
+ *                                     Default: the same scenario as idea.show.
  *   ?settle=refused-carried           idea.settle (default: by the `as` sent)
  *   ?apply=again | refused-unsettled  idea.apply
  *   ?chain=looked-back                idea.chain (default: missing values)
@@ -29,8 +37,8 @@
  *   ?show=from-idea, ?resume=from-idea   a slice made from an idea (slice.show, slice.resume)
  *   ?refuse=<operation>               that Shape operation answers with the engine's real refusal
  *
- * The Shape conversation does not run in fixture mode: GET /api/interview?idea_id= answers that there is none, and
- * starting one answers "unavailable", in words.
+ * The Shape conversation in fixture mode is the scripted one in features/shape/explore/dev/ (its own parameters are
+ * in its header); these routes answer only a client that reaches the host's routes directly.
  */
 import type { EngineRun, TransportResponse } from "@mach/ui/api";
 import { devParam } from "./devState";
@@ -104,8 +112,11 @@ export function shapeRoute(path: string, method: string, args: Record<string, un
   switch (op) {
     case "idea.list":
       return answer(named("idea.list", devParam("ideas"), "idea.list.board"));
+    case "idea.faults":
+      return answer(named("idea.faults", devParam("faults"), "idea.faults"));
     case "idea.show":
-      return answer(named("idea.show", devParam("idea") ?? boardIdeas[idea], "idea.show.exploring"));
+      // idea.show and idea.map-status answer for the same idea, captured in the same run, so they always agree.
+      return answer(named("idea.show", devParam("idea") ?? devParam("map-status") ?? boardIdeas[idea], "idea.show.exploring"));
     case "idea.add": {
       const given = devParam("add") ?? (args.from_request !== undefined ? "from-request" : args.from_issue !== undefined ? "from-issue" : args.from_fault !== undefined ? "from-fault" : null);
       return answer(named("idea.add", given, "idea.add"));
@@ -123,7 +134,7 @@ export function shapeRoute(path: string, method: string, args: Record<string, un
     case "idea.map":
       return answer(named("idea.map", devParam("map"), "idea.map.uncovered"));
     case "idea.map-status":
-      return answer(named("idea.map-status", devParam("map-status"), "idea.map-status.uncovered"));
+      return answer(named("idea.map-status", devParam("map-status") ?? devParam("idea") ?? boardIdeas[idea], "idea.map-status.exploring"));
     case "idea.settle":
       return answer(named("idea.settle", devParam("settle") ?? (args.as === "out-of-scope" ? "out-of-scope" : null), "idea.settle"));
     case "idea.apply":
@@ -139,10 +150,11 @@ export function shapeRoute(path: string, method: string, args: Record<string, un
       return answer(named(op, scenario, op === "brief.show" ? "brief.show.passes" : "brief.check.passes"));
     }
     case "case.show":
-    case "case.check":
-      return devParam("case") === "none" || (idea !== "" && idea !== "IDEA-003" && devParam("case") === null)
-        ? answer("case.show.refused-none")
-        : answer(op === "case.show" ? "case.show" : "case.check");
+    case "case.check": {
+      const scenario = devParam("case");
+      if (scenario === "none" || (idea !== "" && idea !== "IDEA-003" && scenario === null)) return answer("case.show.refused-none");
+      return answer(named(op, scenario, op === "case.show" ? "case.show" : "case.check"));
+    }
     case "verdict.record": {
       const decision = args.decision === "no" ? "no" : args.decision === "not-now" ? "not-now" : "go";
       return answer(named("verdict.record", devParam("verdict") ?? decision, "verdict.record.go"));

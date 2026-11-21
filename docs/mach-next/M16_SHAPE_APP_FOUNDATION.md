@@ -135,3 +135,56 @@ A screen engineer who needs something shared builds it in their own folder and n
 - The lookups give a shipped rule's ID, epic and note, not its words; Explore reads `epic.current` for them.
 - The engine's `status.next_actions` has no Shape kind; the home's "Next in Shape" reads each idea's `next`.
 - The e2e lifecycle and accessibility suites were not run (they take screenshots), and no screenshot was taken.
+
+## 9. The clean-up pass after the screens
+
+After the six screen engineers, one pass did what each reported it needed from outside its folder, as section 7 of `M15_STUDIO_FOUNDATION.md` did for M15.
+
+**Engine** (`skills/product-studio/`; app wording through `say()`, `AppWordingTest` covering `idea faults`):
+
+- The board: each row's `verdict` carries its `reason`, bounded to one line of at most 500 characters. The ideas board no longer reads `idea.show` per decided card.
+- `brief check` gives a `note` in the engine's words: "This is revision N: the brief's text changed since revision N-1 was checked", "This is revision 1: the first text of the brief MACH has checked", or "Nothing changed since revision N was checked". The brief screen's "Check again" banner uses it.
+- `idea show` gains `acts` (read only): `verdict`, `go`, `size` and `look_back`, each `{allowed, why}`, `why` being the very sentence the act would be refused with (shared functions `shaped_refusal`, `go_refusal`, `size_refusal`, `lookback_refusal`, so the two can never differ). The case screen says Go's need beside the three equal choices and refuses it in the form before the dialog, and says why a shaped idea's verdict stays; Size and route offers sizing only when `acts.size` allows it and says why not in the engine's words (no hard-coded sentence); Look back opens only when `acts.look_back` allows it (no inference from the next step). The Go refusal's "Nothing was recorded." is added only when the act is refused.
+- Lookups: each policy carries its pack's `owner`. A shipped rule's `epic_id` comes from the compiled current view, which knows an epic only from the spec's header line (the line the Factory writes at dispatch); the app's lookup items fill a missing epic or owner at show time, without changing the record. The fixtures' shipped specs now carry their header, so the "How this epic works today" links appear.
+- `idea size` keeps the details behind each count on the recorded route (`route.details`: `touches`, `high_risk` {areas with files, not_determined, count}, `concerns`): identifiers and the scan rule's reasons only, so the host and the terminal still write identical records. Size and route shows them after a reload.
+- `idea faults` (new, read only): the open self-healing fault tickets in `.factory/inbox/AUTO-*.json` (the same records `idea show` fences a fault's text from), newest first, at most 100, each `{ticket, summary (one line, at most 160 characters, redacted), occurrences, last_seen, idea_id}`, the idea already started from it named. Host operation `idea.faults`; offered in the board's "Add an idea" dialog as "A fault from production", without the ones already started from.
+- `idea settle` as out of scope or later needs the product manager's reason and is refused without one; as part of a slice it stays optional. The settle dialog requires it the same way, and `references/shape.md` says so.
+- User-facing notes say MACH does things ("MACH counted and named the route").
+
+**Host** (`apps/studio`): `idea.faults` (read only, local; twenty-one operations); `GET /api/session` adds `capabilities.explore_command` (`/mach:product-studio explore` or `/mach-product-studio explore`, from the same install as `continue_command`), which "Continue in Claude Code" on Explore uses instead of deriving it.
+
+**Types, shared pieces and shell** (`web/`):
+
+- `@mach/ui/api`: `IdeaShow.acts` (`IdeaActs`, `IdeaAct`), `IdeaFaults`, `FaultTicket`, `LookupPolicy.owner`, `RecordedRoute.details` (`RouteDetails`), `IdeaChain.brief` nullable, `ShapeMapStatus.route` nullable and its `coverage`, `not_covered` and `blockers` absent without a map, the board row's `reason`, `idea.settle`'s reason required for out of scope and later, `Session.capabilities.explore_command`.
+- Promoted, one implementation each, the copies deleted: `ConfirmDialog` takes `focusAfter` and `width` (the case screen's `ActDialog` and the look-back's own dialog are gone); `RadioGroup` in `@mach/ui` (the verdict, look-back and Jira choices; the verdict's and the look-back's equal weight kept as built); `DiagnosticList` colours itself by its strongest finding (the brief's own list is gone; warning-only lists elsewhere now read as warnings); `shared/QuotedLines.tsx` and `shared/lineRanges.ts` (the PRD on-ramp's and the map's quotations and range helpers); `shared/useRequestList.ts` (Inbox, home, board); `shared/unfence.ts` (Explore and requests); `shared/useConversation.ts`, the one conversation hook, with `useInterview` and `useIdeaConversation` as bindings to their clients (both screens' tests pass unchanged in behaviour). The pure shared helpers are imported with their `.ts` extension so the unit tests load them (`allowImportingTsExtensions` in the app's `tsconfig.json`).
+- Epics made from an idea link to "How <epic> works today" (`/epics/:epicId/today`); its empty state says plainly that no slice of the epic has been merged yet, so it has no rules in force.
+
+**Fixtures** (`web/fixtures/product_memory.py`, from the real engine; 135 Shape files, parameters in `src/dev/shapeTransport.ts`):
+
+| Case | Fixtures | Parameter |
+|---|---|---|
+| A scripted Shape conversation: state changes, lookups, streamed text, open questions without a recommended answer, `draft_changed` for lookups, the brief and the idea, a refused verdict, a turn ending in its spending limit, the end | `features/shape/explore/dev/scriptedConversation.ts`, loaded only under `vite --mode fixtures` | `?speed=fast`, `?conversation=conflict\|unavailable` |
+| The faults on this computer; none | `idea.faults`, `idea.faults.empty` | `?faults=empty` |
+| A brief with warnings only; checked again unchanged | `brief.check.warnings`, `brief.show.warnings`, `brief.check.unchanged` | `?brief=warnings` |
+| Lookups whose rules carry their epic, a policy with its owner | `idea.show.exploring`, `idea.lookups` (the board's specs now carry their header) | `?idea=exploring` |
+| Number taken on GitHub; a stopped save; the folder form; changed on GitHub | `idea.show.number-taken`, `status.ideas-number-taken`; `idea.show.unfinished`; `idea.show.folder`; `idea.show.changed` | `?idea=...`, `?fixture=status.ideas-number-taken` |
+| An unreadable idea file | `idea.list.unreadable`, `status.ideas-unreadable`, `idea.show.refused-unreadable` | `?ideas=unreadable`, `?idea=refused-unreadable` |
+| A decided idea with a long reason | `verdict.record.long-reason`, `idea.show.long-reason`, `idea.list.long-reason`, `status.ideas-long-reason` | `?ideas=long-reason`, `?idea=long-reason` |
+| Every question answered; a question with no answer | `case.show.all-answered`, `case.check.all-answered`; `case.show.unanswered`, `case.check.unanswered` | `?case=all-answered\|unanswered` |
+| A map with route blockers | `idea.map-status.blockers`, `idea.show.blockers` | `?idea=blockers` |
+| A Go, sized, no map yet | `idea.show.sized`, `idea.map-status.sized` | `?idea=sized` |
+| `idea.show` and `idea.map-status` in pairs, from the same run | `idea.map-status.<suffix>` for every board idea, `stale-route`, `mapped`, `shaped`, `look-back`, `looked-back`; `idea.show.uncovered`, `.settled`, `.applied` | `?idea=` or `?map-status=` picks both |
+
+The screens' unit tests that built these by altering a fixture now read the real ones (warnings only, every question answered, no answer, stopped, folder, number taken, the board's reason, the look-back gate, the route gate). A test holds that every paired fixture's route reads as stale only with the engine's note.
+
+**The sketch** (`docs/mach-next/sketches/shape.html`): three routes (the light path is deferred) and an idea touching one capability routed as one epic.
+
+**Tests:** `tests/test_mach_shape_cleanup.py` (11: the board's reason, the revision note, the acts and their sentences, owners and epics, the route's details, the faults listing, the settle reason); the host-versus-terminal test also runs `idea faults`; Go: the allowlist, the argument vector and an unknown field for `idea.faults`, `ExploreCommandOf`, and the session's `explore_command`; web: new model tests for faults, the long reason, the paired fixtures, the settle reason, the acts.
+
+**Left:**
+
+- The `origin` repository's visibility is not reported, so the publish dialogs still say "an issue is as visible as its repository". No call the engine makes returns it: `collab.request_repository` asks `gh repo view` for `nameWithOwner` only, and widening it was out of scope (no new or changed network call).
+- A shipped rule whose spec has no header line still has no epic: the compiled current view knows epics only from that line.
+- `idea add --from-fault` still accepts a fault ticket that is closed or already started from; only the board's dialog leaves those out.
+- The Shape conversation is not allowed `idea faults` (it adds no idea); nothing else of its boundary changed.
+- The e2e lifecycle and accessibility suites were not run (they take screenshots), and no screenshot was taken.

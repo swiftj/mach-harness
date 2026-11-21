@@ -6,6 +6,7 @@
  */
 import type {
   EpicView,
+  IdeaAct,
   IdeaSized,
   IdeaVerdict,
   RecordedRoute,
@@ -39,28 +40,27 @@ export function journeyStep(route: RouteState, status: Pick<ShapeMapStatus, "map
 
 export type Gate =
   | { kind: "go" }
-  /** No verdict, or one that is not Go. */
-  | { kind: "no-go"; decision: string | null }
+  /** No verdict, or one that is not Go, or a Go the engine would still not size on: `why` is its sentence. */
+  | { kind: "no-go"; decision: string | null; why: string | null }
   /** A Go (or another verdict) recorded on an earlier brief: the engine's sentence says why it no longer holds. */
-  | { kind: "stale"; decision: string; note: string | null };
-
-/** Whether a Go holds for the brief as it is now, as the engine reported the verdict. */
-export function sizeGate(verdict: IdeaVerdict | null | undefined): Gate {
-  if (!verdict) return { kind: "no-go", decision: null };
-  if (verdict.stale || !verdict.holds) return { kind: "stale", decision: verdict.decision, note: verdict.stale_note ?? null };
-  if (verdict.decision !== "go") return { kind: "no-go", decision: verdict.decision };
-  return { kind: "go" };
-}
+  | { kind: "stale"; decision: string; note: string | null; why: string | null };
 
 /**
- * What is needed before sizing, in the engine's words: the sentence its refusal uses, and, for a verdict that no
- * longer holds, the engine's own note on why.
+ * Whether the idea may be sized now: the engine's own answer (`idea.show`'s `acts.size`), with the verdict as it reported
+ * it to say what was recorded. Never worked out here: without the engine's answer, sizing is not offered.
  */
-export function gateWords(ideaId: string, gate: Gate): string[] {
-  const need = `${ideaId} needs a Go verdict on its brief as it is now before it can be sized.`;
+export function sizeGate(verdict: IdeaVerdict | null | undefined, act: IdeaAct | null | undefined): Gate {
+  if (act?.allowed) return { kind: "go" };
+  const why = act?.why ?? null;
+  if (!verdict) return { kind: "no-go", decision: null, why };
+  if (verdict.stale || !verdict.holds) return { kind: "stale", decision: verdict.decision, note: verdict.stale_note ?? null, why };
+  return { kind: "no-go", decision: verdict.decision, why };
+}
+
+/** What is needed before sizing, in the engine's words: the sentence it would refuse sizing with, said before the click. */
+export function gateWords(gate: Gate): string[] {
   if (gate.kind === "go") return [];
-  if (gate.kind === "stale") return gate.note ? [need, gate.note] : [need];
-  return [need];
+  return gate.why ? [gate.why] : [];
 }
 
 /* ── The route as it stands ───────────────────────────────────────────── */
@@ -202,9 +202,15 @@ export const REASON_MAX = 300;
 
 export type SettleArgs =
   | { idea_id: string; outcome: string; as: "slice"; slice: string; reason?: string }
-  | { idea_id: string; outcome: string; as: "out-of-scope" | "later"; reason?: string };
+  | { idea_id: string; outcome: string; as: "out-of-scope" | "later"; reason: string };
 
-/** What `idea.settle` is sent, or the one thing the form still needs, in words. The reason is kept to one line. */
+/** The words the form says when out of scope or later has no reason: leaving an outcome out is the PM's decision, with why. */
+export const REASON_NEEDED = "Say why it is left out, in your own words. Out of scope and later each need your reason.";
+
+/**
+ * What `idea.settle` is sent, or the one thing the form still needs, in words. The reason is kept to one line; out of
+ * scope and later need it (the engine refuses them without one), part of a slice does not.
+ */
 export function settleArgs(ideaId: string, outcome: string, form: SettleForm): { args: SettleArgs } | { missing: string } {
   const reason = form.reason.trim().replace(/\s+/g, " ");
   const extra = reason ? { reason } : {};
@@ -213,7 +219,8 @@ export function settleArgs(ideaId: string, outcome: string, form: SettleForm): {
     if (!form.slice) return { missing: "Choose the slice that carries this outcome." };
     return { args: { idea_id: ideaId, outcome, as: "slice", slice: form.slice, ...extra } };
   }
-  return { args: { idea_id: ideaId, outcome, as: form.choice, ...extra } };
+  if (!reason) return { missing: REASON_NEEDED };
+  return { args: { idea_id: ideaId, outcome, as: form.choice, reason } };
 }
 
 /* ── Making the drafts ────────────────────────────────────────────────── */
@@ -265,46 +272,10 @@ export function briefLines(text: string | null | undefined): Map<number, string>
   return out;
 }
 
-/** "5-9", "12", "8-8, 14-14" as ranges; anything unreadable is left out. */
-export function parseRanges(text: string | readonly string[] | null | undefined): Array<[number, number]> {
-  if (!text) return [];
-  const parts = typeof text === "string" ? text.split(",") : text.flatMap((t) => t.split(","));
-  const out: Array<[number, number]> = [];
-  for (const part of parts) {
-    const match = /^\s*(\d+)(?:\s*-\s*(\d+))?\s*$/.exec(part);
-    if (!match) continue;
-    const a = Number(match[1]);
-    const b = match[2] ? Number(match[2]) : a;
-    out.push(a <= b ? [a, b] : [b, a]);
-  }
-  return out;
-}
 
-/** A range in words for reading: "line 8", "lines 5 to 9". */
-export function rangeWords([a, b]: [number, number]): string {
-  return a === b ? `line ${a}` : `lines ${a} to ${b}`;
-}
-
-export interface Quotation {
-  range: [number, number];
-  lines: Array<{ n: number; text: string }>;
-  /** Lines of the range the page does not have (past the brief's end as read). */
-  unread: number;
-}
-
-/** The cited lines, one quotation per range, from the brief as read. */
-export function quote(lines: Map<number, string> | null, cites: string | readonly string[] | null | undefined): Quotation[] {
-  return parseRanges(cites).map((range) => {
-    const found: Array<{ n: number; text: string }> = [];
-    let unread = 0;
-    for (let n = range[0]; n <= range[1]; n++) {
-      const text = lines?.get(n);
-      if (text === undefined) unread++;
-      else found.push({ n, text });
-    }
-    return { range, lines: found, unread };
-  });
-}
+/** Line ranges and quotations are the PRD on-ramp's, shared (shared/lineRanges.ts). */
+export { parseRanges, quote, rangeWords } from "../../../shared/lineRanges.ts";
+export type { Quotation } from "../../../shared/lineRanges.ts";
 
 /** The brief's words for an outcome, from its model; null when the brief as read has no such outcome. */
 export function outcomeText(show: { model: { outcomes: Array<{ id: string; text: string }> } } | null | undefined, outcome: string): string | null {

@@ -227,7 +227,9 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 		problem = status.Error
 	}
 	available, reason := s.opts.Bridge.Available()
-	capabilities := map[string]any{"interview": available, "interview_reason": nil, "continue_command": s.opts.Bridge.ContinueCommand()}
+	continueCommand := s.opts.Bridge.ContinueCommand()
+	capabilities := map[string]any{"interview": available, "interview_reason": nil, "continue_command": continueCommand,
+		"explore_command": interview.ExploreCommandOf(continueCommand)}
 	if !available {
 		capabilities["interview_reason"] = reason
 	}

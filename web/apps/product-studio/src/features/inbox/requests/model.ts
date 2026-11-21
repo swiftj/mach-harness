@@ -36,17 +36,10 @@ export function requestActions(item: RequestFacts, approved: readonly string[]):
   };
 }
 
-/**
- * The text inside the engine's fence: the opening and closing marker lines removed, nothing else
- * changed. Anything that does not look like a fenced text gives null, so nothing unfenced is shown.
- */
-export function unfence(fenced: string | undefined | null): string | null {
-  if (typeof fenced !== "string") return null;
-  const lines = fenced.split("\n");
-  const [first, last] = [lines[0] ?? "", lines[lines.length - 1] ?? ""];
-  if (lines.length < 2 || !first.startsWith("<<<REQUEST-DATA ") || !last.startsWith("<<<END-REQUEST-DATA ")) return null;
-  return lines.slice(1, -1).join("\n");
-}
+import { unfence } from "../../../shared/unfence.ts";
+
+/** The engine's fences are opened by the one shared helper (shared/unfence.ts). */
+export { unfence };
 
 /** One part of a request filed in the idea template, ready to show: its heading and its text, or null when it could not be unfenced. */
 export interface IdeaSection {

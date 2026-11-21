@@ -206,6 +206,8 @@ function Entry({
     case "policy": {
       const { policy } = entry;
       const facts = policyFacts(policies, policy.id);
+      // The owner the lookups recorded (the pack's, by the engine); the policy list's where an older lookup has none.
+      const owner = policy.owner ?? facts?.owner ?? null;
       return (
         <li className={itemClass}>
           <span className="flex flex-wrap items-center gap-2">
@@ -213,10 +215,11 @@ function Entry({
             <ArtifactId>{policy.id}</ArtifactId>
           </span>
           {facts?.text ? <span className="text-body-sm text-ink">{facts.text}</span> : null}
-          {facts && (facts.title || facts.owner) ? (
+          {facts?.title || owner ? (
             <span className="text-caption text-ink-muted">
-              {facts.title ?? facts.pack}
-              {facts.owner ? ` · owned by ${facts.owner}` : ""}
+              {facts ? (facts.title ?? facts.pack) : null}
+              {facts && owner ? ", " : ""}
+              {owner ? `owned by ${owner}` : ""}
             </span>
           ) : null}
           {policy.note ? <Note text={policy.note} /> : null}

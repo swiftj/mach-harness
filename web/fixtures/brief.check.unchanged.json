@@ -1,0 +1,41 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-001",
+    "revision": 1,
+    "new_revision": false,
+    "stage": "brief",
+    "passes": true,
+    "errors": [],
+    "warnings": [
+      "O-1's 'how we would know' names no measure or observable change. Say what you would count or see.",
+      "An open question is still open: What does a member see when a renewal is refused because someone else is waiting? Who can answer: the head of lending se"
+    ],
+    "findings": [
+      {
+        "severity": "warning",
+        "rule": "brief-how-vague",
+        "line": 14,
+        "message": "O-1's 'how we would know' names no measure or observable change. Say what you would count or see."
+      },
+      {
+        "severity": "warning",
+        "rule": "brief-open-question",
+        "line": 27,
+        "message": "An open question is still open: What does a member see when a renewal is refused because someone else is waiting? Who can answer: the head of lending se"
+      }
+    ],
+    "counts": {
+      "outcomes": 2,
+      "assumptions": 2,
+      "open_questions": 1,
+      "shipped_rules": 2,
+      "capabilities": 2
+    },
+    "verdict": null,
+    "note": "Nothing changed since revision 1 was checked. MACH checks the brief's structure; it never scores the idea.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

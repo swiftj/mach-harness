@@ -6,6 +6,8 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import {
   addIdeaArgs,
+  faultOption,
+  faultOptions,
   boardColumns,
   ideaCount,
   issueOption,
@@ -91,8 +93,8 @@ test("each verdict has a word and its own shape; the reason is quoted only for a
   assert.equal(showsReason(rows["IDEA-004"]), true);
   assert.equal(showsReason(rows["IDEA-003"]), false);
   assert.equal(showsReason(rows["IDEA-008"]), false, "shaped: the card says what it was shaped into");
-  // Board rows carry no reason; idea.show does, in the product manager's words.
-  assert.equal(rows["IDEA-004"].verdict.reason, undefined);
+  // Board rows carry the reason, bounded to one line by the engine, so no card reads its idea.
+  assert.match(rows["IDEA-004"].verdict.reason, /supplier's fault/);
   assert.match(data("idea.show.fault").verdict.reason, /supplier's fault/);
   assert.match(data("idea.show.not-now").verdict.reason, /after the summer/);
   assert.match(data("idea.show.go").verdict.reason, /every desk/);
@@ -171,4 +173,23 @@ test("starting from an issue: only what the engine lists; idea issues are those 
 test("counts in words", () => {
   assert.equal(ideaCount(1), "1 idea");
   assert.equal(ideaCount(8), "8 ideas");
+});
+
+test("a fault from production is offered only from the engine's own list, and not twice", () => {
+  const listed = run("idea.faults").data.faults;
+  assert.equal(listed.length, 2);
+  const offered = faultOptions(listed);
+  assert.deepEqual(offered.map((f) => f.ticket), ["AUTO-20261120T094000Z"], "the fault IDEA-004 started from is not offered again");
+  assert.equal(faultOption(offered[0]), "AUTO-20261120T094000Z: Timeout when renewing from the catalogue");
+  assert.equal(faultOption({ ticket: "AUTO-20261120T094000Z", summary: null }), "AUTO-20261120T094000Z (no summary on this computer)");
+  assert.deepEqual(faultOptions(run("idea.faults.empty").data.faults), []);
+  assert.deepEqual(addIdeaArgs("Renewals time out", { kind: "fault", ticket: offered[0].ticket }), { title: "Renewals time out", from_fault: "AUTO-20261120T094000Z" });
+});
+
+test("a decided idea's long reason is on its board row, bounded to one line by the engine", () => {
+  const row = run("idea.list.long-reason").data.ideas.find((r) => r.idea_id === "IDEA-002");
+  assert.ok(row.verdict.reason.length > 220, "long enough for Show all");
+  assert.ok(row.verdict.reason.length <= 500);
+  assert.doesNotMatch(row.verdict.reason, /\n/);
+  assert.deepEqual(run("idea.list.unreadable").data.unreadable, ["IDEA-004"]);
 });

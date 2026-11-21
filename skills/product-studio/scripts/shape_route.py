@@ -183,14 +183,26 @@ def require_route(ideas: shape.Ideas, record: Dict[str, Any]) -> Dict[str, Any]:
 # ---- sizing ----
 
 
+def size_refusal(ideas: shape.Ideas, idea_id: str) -> Optional[ShapeError]:
+    """Why the idea cannot be sized now, or None: it needs a Go that holds for the brief as it is now, and is not yet shaped."""
+    try:
+        record = shape.require_go(ideas, idea_id)
+    except ShapeError as exc:
+        return exc
+    if record["stage"] == "shaped":
+        return ShapeError(f"{idea_id} is already shaped into work, so its route stays as it was.")
+    return None
+
+
 def cmd_idea_size(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str, Any]:
     """Count what the brief and the lookups touch and name the route by the fixed rule. Needs a Go that holds for the brief."""
     ideas = shape.Ideas(host, studio)
     idea_id = args.idea_id
     with ideas.held(idea_id):
-        record = shape.require_go(ideas, idea_id)
-        if record["stage"] == "shaped":
-            raise ShapeError(f"{idea_id} is already shaped into work, so its route stays as it was.")
+        refusal = size_refusal(ideas, idea_id)
+        if refusal:
+            raise refusal
+        record = ideas.load(idea_id)
         model = shape.brief_model(ideas, idea_id)
         lookups = ideas.lookups(idea_id) or {}
         outcomes = [item["id"] for item in model["outcomes"]]
@@ -203,16 +215,21 @@ def cmd_idea_size(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str,
         counted = {"outcomes": len(outcomes), "capabilities": capabilities, "shipped_rules": len(rules),
                    "shipped_rules_looked_up": len(lookups.get("shipped_rules") or []), "high_risk_areas": risk["count"],
                    "high_risk_not_determined": list(risk["not_determined"]), "principle_concerns": len(principles), "policy_concerns": len(policies)}
+        touches = {"outcomes": outcomes, "capabilities": [item["name"] for item in model["touches"]["capabilities"]], "shipped_rules": rules}
+        concerns = {"principles": principles, "policies": policies}
+        # The details behind each count, kept with the route so they can be shown again after a reload. Identifiers and the
+        # scan rule's own reasons only: the basis sentence differs between the terminal and the app, so it is not kept.
+        details = {"touches": touches, "concerns": concerns,
+                   "high_risk": {key: risk[key] for key in ("areas", "not_determined", "count")}}
         record["route"] = {"route": route, "counted": counted, "why": why, "at": host.now(None), "revision": record["revision"],
-                           "brief_sha256": model["sha256"]}
+                           "brief_sha256": model["sha256"], "details": details}
         ideas.save(record)
     return {"idea_id": idea_id, "route": route, "route_words": ROUTE_WORDS[route], "why": why, "counted": counted,
-            "touches": {"outcomes": outcomes, "capabilities": [item["name"] for item in model["touches"]["capabilities"]], "shipped_rules": rules},
-            "high_risk": risk, "concerns": {"principles": principles, "policies": policies},
+            "touches": touches, "high_risk": risk, "concerns": concerns,
             "rule": "One outcome and at most three shipped rules is one slice; otherwise outcomes inside one capability is an epic, "
                     "and outcomes in different capabilities is several epics. High-risk areas and concerns are counted, never part of the rule.",
-            "note": host.say(f"A script counted and named the route; nothing was created. Propose a map next (idea map {idea_id} --from <file>).",
-                             "A script counted and named the route; nothing was created. A map of slices is proposed next."),
+            "note": host.say(f"MACH counted and named the route; nothing was created. Propose a map next (idea map {idea_id} --from <file>).",
+                             "MACH counted and named the route; nothing was created. A map of slices is proposed next."),
             "factory_authorized": False}
 
 
@@ -412,8 +429,15 @@ def cmd_idea_settle(host: Any, studio: Any, args: argparse.Namespace) -> Dict[st
                 settled["as"] = how
             else:
                 raise ShapeError(f"'{how[:40]}' is not a way to settle an outcome. Use slice:<map slice>, out-of-scope or later.")
-            if args.reason is not None:
-                settled["reason"] = ideas.host.ticket_rules().bound_text(args.reason, prd.REASON_CHARS, one_line=True)[0]
+            reason = ideas.host.ticket_rules().bound_text(args.reason, prd.REASON_CHARS, one_line=True)[0] if args.reason is not None else ""
+            if not reason and settled["as"] != "slice":
+                # Leaving an outcome out is the product manager's decision, and the record says why (M16 clean-up).
+                words = "out of scope" if settled["as"] == "out-of-scope" else "for later"
+                raise ShapeError(host.say(f"Settling {ident} as {words} needs the product manager's reason, in their words: why it is left out "
+                                          f"(--reason \"...\"). Nothing was settled.",
+                                          f"Settling {ident} as {words} needs your reason, in your words: why it is left out. Nothing was settled."))
+            if reason:
+                settled["reason"] = reason
             data["settled"][ident] = settled
             save_map(ideas, data)
     report = map_report(ideas, record)
@@ -700,6 +724,24 @@ def lookback_waiting(record: Dict[str, Any], model: Optional[Dict[str, Any]]) ->
             + [a["id"] for a in model["assumptions"] if a["id"] not in (done.get("assumptions") or {})])
 
 
+def lookback_refusal(ideas: shape.Ideas, record: Dict[str, Any]) -> Optional[ShapeError]:
+    """Why a look-back cannot be recorded now, or None: the idea is shaped and a slice made from it has shipped."""
+    host, idea_id = ideas.host, record["idea_id"]
+    if record["stage"] != "shaped":
+        return ShapeError(f"{idea_id} is not shaped into work yet, so there is nothing to look back on.")
+    if not made_slices_shipped(ideas, record):
+        return ShapeError(host.say(f"Look back on {idea_id} once a slice made from it has shipped. None has, as the last check of GitHub saw it "
+                                   f"(refresh to check again). Its slices: {', '.join((record.get('made') or {}).get('slices') or []) or 'none'}.",
+                                   f"Look back on {idea_id} once a slice made from it has shipped. None has, as the last check of GitHub saw it."))
+    return None
+
+
+def acts_field(ideas: shape.Ideas, record: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """shape.acts_view's Part B acts for `idea show`: may the idea be sized now, may a look-back be recorded now."""
+    return {"size": shape.act_view(ideas.host, size_refusal(ideas, record["idea_id"])),
+            "look_back": shape.act_view(ideas.host, lookback_refusal(ideas, record))}
+
+
 def cmd_lookback_record(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str, Any]:
     """The product manager's look-back on one outcome or one assumption, in their words. Allowed once a slice made from the idea
     has shipped, as the last refresh saw it. Saved in the record and, where the idea is on GitHub, as one comment from a fixed template."""
@@ -724,13 +766,10 @@ def cmd_lookback_record(host: Any, studio: Any, args: argparse.Namespace) -> Dic
     by = channel.login if channel.kind == "github" else None
     with ideas.held(idea_id):
         record = ideas.load(idea_id)
-        if record["stage"] != "shaped":
-            raise ShapeError(f"{idea_id} is not shaped into work yet, so there is nothing to look back on.")
+        refusal = lookback_refusal(ideas, record)
+        if refusal:
+            raise refusal
         shipped = made_slices_shipped(ideas, record)
-        if not shipped:
-            raise ShapeError(host.say(f"Look back on {idea_id} once a slice made from it has shipped. None has, as the last check of GitHub saw it "
-                                      f"(refresh to check again). Its slices: {', '.join((record.get('made') or {}).get('slices') or []) or 'none'}.",
-                                      f"Look back on {idea_id} once a slice made from it has shipped. None has, as the last check of GitHub saw it."))
         model = shape.brief_model(ideas, idea_id)
         held = [item["id"] for item in (model or {}).get(kind) or []]
         if ident not in held:
@@ -887,6 +926,7 @@ def later_step(ideas: shape.Ideas, record: Dict[str, Any], github: Dict[str, Any
 
 
 shape.LATER = later_step
+shape.ACTS = acts_field
 
 
 # ---- registration ----
@@ -907,7 +947,7 @@ def add_commands(sub: Any, shape_commands: Dict[str, Any], host: Any) -> None:
                 raise ShapeError(f"Another Product Studio command is changing {getattr(args, 'idea_id', 'this idea')}; try again.")
         return run(call)
 
-    idea.metavar = "{add,list,show,stage,lookups,publish,renumber,size,map,settle,map-status,apply,change,chain}"
+    idea.metavar = "{add,list,faults,show,stage,lookups,publish,renumber,size,map,settle,map-status,apply,change,chain}"
     p = idea.add_parser("size", help="count what the brief and lookups touch and name the route by the fixed rule (needs a Go for the brief as it is)")
     p.add_argument("idea_id")
     p.set_defaults(func=guarded(cmd_idea_size))
@@ -919,7 +959,7 @@ def add_commands(sub: Any, shape_commands: Dict[str, Any], host: Any) -> None:
     p.add_argument("idea_id")
     p.add_argument("--outcome", required=True, help="the outcome, such as O-2")
     p.add_argument("--as", dest="how", required=True, help="slice:<map slice>, out-of-scope or later")
-    p.add_argument("--reason", help="the product manager's reason, in their words")
+    p.add_argument("--reason", help="the product manager's reason, in their words (required for out-of-scope and later)")
     p.set_defaults(func=guarded(cmd_idea_settle))
     p = idea.add_parser("map-status", help="the map, what carries each outcome, and what is unsettled; changes nothing")
     p.add_argument("idea_id")

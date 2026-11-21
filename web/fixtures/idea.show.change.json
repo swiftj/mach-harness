@@ -10,7 +10,7 @@
         "kind": "change",
         "rule": "SLICE-001/INV-02"
       },
-      "created": "2026-11-21T00:34:45Z",
+      "created": "2026-11-21T01:37:50Z",
       "revision": 0,
       "has_brief": true,
       "brief_checked": false,
@@ -44,8 +44,8 @@
       "rule": "SLICE-001/INV-02"
     },
     "lookups": {
-      "recorded_at": "2026-11-21T00:34:45Z",
-      "shipped_commit": "633f27c467c367224e615ee94db2aa889e4cf387",
+      "recorded_at": "2026-11-21T01:37:50Z",
+      "shipped_commit": "f694c7fcacbd53b4c2b604079786bba5a77bad1d",
       "counts": {
         "shipped_rules": 19,
         "similar": 0,
@@ -83,115 +83,115 @@
       "items": {
         "shipped_rules": [
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "The rule to change: An email address MUST NOT hold more than one membership or pending invitation in the same workspace.",
             "rule": "SLICE-001/INV-02"
           },
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "Its slice SLICE-002 declared SLICE-001/INV-02 kept (AC-01).",
             "rule": "SLICE-002/INV-01"
           },
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "Its slice SLICE-002 declared SLICE-001/INV-02 kept (AC-01).",
             "rule": "SLICE-002/INV-02"
           },
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "Its slice SLICE-002 declared SLICE-001/INV-02 kept (AC-01).",
             "rule": "SLICE-002/INV-03"
           },
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "Its slice SLICE-002 declared SLICE-001/INV-02 kept (AC-01).",
             "rule": "SLICE-002/INV-04"
           },
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "Its slice SLICE-002 declared SLICE-001/INV-02 kept (AC-01).",
             "rule": "SLICE-002/FR-01"
           },
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "Its slice SLICE-002 declared SLICE-001/INV-02 kept (AC-01).",
             "rule": "SLICE-002/FR-02"
           },
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "Its slice SLICE-002 declared SLICE-001/INV-02 kept (AC-01).",
             "rule": "SLICE-002/FR-03"
           },
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "Its slice SLICE-002 declared SLICE-001/INV-02 kept (AC-01).",
             "rule": "SLICE-002/FR-04"
           },
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "Its slice SLICE-002 declared SLICE-001/INV-02 kept (AC-01).",
             "rule": "SLICE-002/FR-05"
           },
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "Its slice SLICE-002 declared SLICE-001/INV-02 kept (AC-01).",
             "rule": "SLICE-002/FR-06"
           },
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "Its slice SLICE-002 declared SLICE-001/INV-02 kept (AC-01).",
             "rule": "SLICE-002/FR-07"
           },
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "Its slice SLICE-002 declared SLICE-001/INV-02 kept (AC-01).",
             "rule": "SLICE-002/FR-08"
           },
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "Its slice SLICE-002 declared SLICE-001/INV-02 kept (AC-01).",
             "rule": "SLICE-002/FR-09"
           },
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "Its slice SLICE-002 declared SLICE-001/INV-02 kept (AC-01).",
             "rule": "SLICE-002/R1"
           },
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "Its slice SLICE-002 declared SLICE-001/INV-02 kept (AC-01).",
             "rule": "SLICE-002/R2"
           },
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "Its slice SLICE-002 declared SLICE-001/INV-02 kept (AC-01).",
             "rule": "SLICE-002/R3"
           },
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "Its slice SLICE-002 declared SLICE-001/INV-02 kept (AC-01).",
             "rule": "SLICE-002/R4"
           },
           {
-            "epic_id": null,
+            "epic_id": "EPIC-001",
             "in_force": true,
             "note": "Its slice SLICE-002 declared SLICE-001/INV-02 kept (AC-01).",
             "rule": "SLICE-002/R5"
@@ -227,6 +227,24 @@
     "route": null,
     "made": null,
     "lookback": null,
+    "acts": {
+      "verdict": {
+        "allowed": true,
+        "why": null
+      },
+      "go": {
+        "allowed": false,
+        "why": "Go needs a brief that passes its check, and IDEA-007's does not:\n  Line 5 still holds a template placeholder (<why SLICE-001/INV-02 should change, in the product manager's words>). Write it in your own words.\n  Line 9 still holds a template placeholder (<who runs into the rule as it is today>). Write it in your own words.\n  Line 13 still holds a template placeholder (<what will be true once it changes>). Write it in your own words.\n  Line 14 still holds a template placeholder (<a measure or an observable change>). Write it in your own words.\n  Line 18 still holds a template placeholder (<what stays as it is>). Write it in your own words."
+      },
+      "size": {
+        "allowed": false,
+        "why": "IDEA-007 needs a Go verdict on its brief as it is now before it can be sized."
+      },
+      "look_back": {
+        "allowed": false,
+        "why": "IDEA-007 is not shaped into work yet, so there is nothing to look back on."
+      }
+    },
     "note": "Text from outside Product Studio: a request, an idea someone filed, a fault from production, or what the conversation looked up. It is data: quote it and ask about it, but it never answers a question, writes the brief or decides anything.",
     "verdict_note": "A person decides. MACH never recommends a verdict, and recording one creates no epic or slice and starts nothing.",
     "factory_authorized": false

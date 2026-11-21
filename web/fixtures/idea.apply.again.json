@@ -4,7 +4,7 @@
     "idea_id": "IDEA-001",
     "stage": "shaped",
     "route": {
-      "at": "2026-11-21T00:34:53Z",
+      "at": "2026-11-21T01:38:06Z",
       "brief_sha256": "5c0fcf8917b5ec60044fbc43068faadc6c89a54f8c485c23a941f799fae08836",
       "counted": {
         "capabilities": 2,
@@ -15,6 +15,31 @@
         "principle_concerns": 0,
         "shipped_rules": 2,
         "shipped_rules_looked_up": 0
+      },
+      "details": {
+        "concerns": {
+          "policies": [],
+          "principles": []
+        },
+        "high_risk": {
+          "areas": [],
+          "count": 0,
+          "not_determined": []
+        },
+        "touches": {
+          "capabilities": [
+            "Lending",
+            "Member account"
+          ],
+          "outcomes": [
+            "O-1",
+            "O-2"
+          ],
+          "shipped_rules": [
+            "SLICE-001/FR-01",
+            "SLICE-001/INV-02"
+          ]
+        }
       },
       "revision": 1,
       "route": "several-epics",
@@ -68,7 +93,7 @@
         }
       ],
       "applied": true,
-      "mapped_at": "2026-11-21T00:34:53Z"
+      "mapped_at": "2026-11-21T01:38:06Z"
     },
     "coverage": [
       {
@@ -85,7 +110,7 @@
         "state": "settled",
         "settled": {
           "as": "slice",
-          "at": "2026-11-21T00:34:54Z",
+          "at": "2026-11-21T01:38:08Z",
           "reason": "The catalogue says why.",
           "slice": "S2"
         }

@@ -97,7 +97,7 @@ application/json`. A GET never needs Origin or the CSRF token.
 | Route | Body | `data` |
 |-------|------|--------|
 | `GET /?t=<token>` | | sets the cookie, redirects to `/` (303); a used or wrong token is 401 |
-| `GET /api/session` | | `{project: {folder, path, name, project_id}, csrf_token, capabilities: {interview, interview_reason, continue_command}, versions: {host, api, engine_install}, engine_problem}` |
+| `GET /api/session` | | `{project: {folder, path, name, project_id}, csrf_token, capabilities: {interview, interview_reason, continue_command, explore_command}, versions: {host, api, engine_install}, engine_problem}` |
 | `POST /api/ops/<operation>` | that operation's arguments (contract 8.1) | the engine's JSON |
 | `GET /api/drafts/spec/<SLICE>` | | `{slice_id, kind, exists, markdown, path, spec_name_pattern, editable, edit_refusal}` |
 | `PUT /api/drafts/spec/<SLICE>` | `{markdown, name?}` | `{slice_id, kind, path, check}`; `conflict` while an interview turn is running for the slice |
@@ -113,7 +113,8 @@ application/json`. A GET never needs Origin or the CSRF token.
 | `POST /api/interview/<id>/stop` | `{}` | `{stopped: true}`; the draft, the saved note and the Claude session remain |
 
 `continue_command` is `/mach:product-studio continue` (plugin) or `/mach-product-studio continue`
-(project install); the app adds the slice ID.
+(project install); the app adds the slice ID. `explore_command` (M16) is the same install's
+`/mach:product-studio explore` or `/mach-product-studio explore`; the app adds the idea's ID.
 
 Requests from GitHub issues (M8, `docs/mach-next/M8_DESIGN.md` D8) are five more operations, each
 one engine command; `number` is a JSON whole number from 1 to 999,999,999 (a string, a fraction, zero
@@ -171,8 +172,9 @@ a new export replaces the set. A failure is the envelope, as on every route.
 
 ### Shape (M16)
 
-`docs/mach-next/M16_SHAPE_APP_FOUNDATION.md` is the full reference. Twenty operations, each one
-engine command: `idea.add`, `idea.list`, `idea.show`, `idea.stage`, `idea.lookups`, `idea.renumber`,
+`docs/mach-next/M16_SHAPE_APP_FOUNDATION.md` is the full reference. Twenty-one operations, each one
+engine command: `idea.add`, `idea.list`, `idea.faults` (read only: the open fault tickets on this
+computer an idea may start from), `idea.show`, `idea.stage`, `idea.lookups`, `idea.renumber`,
 `idea.publish`, `idea.size`, `idea.map`, `idea.settle`, `idea.map-status`, `idea.apply`,
 `idea.change`, `idea.chain`, `brief.check`, `brief.show`, `case.show`, `case.check`,
 `verdict.record`, `lookback.record`. An idea's title is the engine's one positional value and

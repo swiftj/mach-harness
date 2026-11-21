@@ -50,17 +50,34 @@ export function diagnostics(check: SliceCheck): Diagnostic[] {
   return out;
 }
 
-export function DiagnosticList({ items, compact = false }: { items: Diagnostic[]; compact?: boolean }) {
+/** A finding to list: the engine's words, its severity and, where it has one, its line. */
+export type DiagnosticItem = Pick<Diagnostic, "message" | "line"> & { severity: Diagnostic["severity"] | (string & {}) };
+
+const blocking = (severity: string) => severity === "error" || severity === "why";
+
+/**
+ * The engine's findings, each with its glyph, its words and its line. The list colours itself by its strongest finding:
+ * danger when any of them blocks, warning when every one is only worth a look. Each says which it is in words, too.
+ */
+export function DiagnosticList({ items, compact = false }: { items: DiagnosticItem[]; compact?: boolean }) {
+  const anyBlocking = items.some((d) => blocking(d.severity));
   return (
-    <ul className={cn("flex flex-col gap-1.5", !compact && "rounded-md border border-danger-line bg-danger-soft px-3 py-2.5")}>
+    <ul
+      className={cn(
+        "flex flex-col gap-1.5",
+        !compact && "rounded-md border px-3 py-2.5",
+        !compact && (anyBlocking ? "border-danger-line bg-danger-soft" : "border-warning-line bg-warning-soft"),
+      )}
+    >
       {items.map((d, index) => (
         <li key={index} className="flex items-start gap-2 text-body-sm text-ink">
-          <span className={cn("mt-0.5 shrink-0", d.severity === "error" || d.severity === "why" ? "text-danger-ink" : "text-warning-ink")}>
-            <StateGlyph shape={d.severity === "error" || d.severity === "why" ? "blocked" : "half"} />
+          <span className={cn("mt-0.5 shrink-0", blocking(d.severity) ? "text-danger-ink" : "text-warning-ink")}>
+            <StateGlyph shape={blocking(d.severity) ? "blocked" : "half"} />
           </span>
           <span className="min-w-0">
+            <span className="sr-only">{blocking(d.severity) ? "Problem: " : "Warning: "}</span>
             {d.message}
-            {d.line ? <span className="ml-1.5 text-caption text-ink-subtle">line {d.line}</span> : null}
+            {d.line ? <span className="ml-1.5 text-caption tabular text-ink-subtle">line {d.line}</span> : null}
           </span>
         </li>
       ))}

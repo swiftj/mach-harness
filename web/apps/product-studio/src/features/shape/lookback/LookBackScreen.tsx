@@ -44,7 +44,7 @@ function LookBack({ row }: { row: IdeaRow }) {
   if (!show.data || (shaped && !chain.data)) return <Loading />;
 
   const idea = show.data.idea;
-  const gate = lookbackGate(idea, show.data.lookback);
+  const gate = lookbackGate(idea, show.data.acts.look_back);
   if (gate.kind === "decided-against") return <DecidedAgainst ideaId={ideaId} gate={gate} reason={show.data.verdict?.reason ?? null} />;
   if (gate.kind === "not-shaped") return <NotShaped row={idea} />;
   return (

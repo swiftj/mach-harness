@@ -68,7 +68,7 @@ function RoutePage({ row }: { row: IdeaRow }) {
   }
 
   const data = show.data;
-  const gate = sizeGate(data.verdict ?? row.verdict);
+  const gate = sizeGate(data.verdict ?? row.verdict, data.acts.size);
   const route = routeState(data.route, status.data?.route, sized);
   const reload = () => {
     show.reload();
@@ -94,7 +94,7 @@ function RoutePage({ row }: { row: IdeaRow }) {
       ) : null}
       {route.kind !== "not-sized" ? (
         <>
-          <CountedSection route={route} sized={sized} />
+          <CountedSection route={route} detail={countedDetail(sized, data.route)} />
           <RoutesSection ideaId={ideaId} route={route} />
           <MapArea ideaId={ideaId} status={status} brief={brief.data} made={data.made} onChanged={reload} />
         </>
@@ -157,7 +157,7 @@ function SizeSection({ ideaId, gate, route, onSized }: { ideaId: string; gate: G
 
 /** Before a Go holds: what is needed, in the engine's words, and where it is done. No way to size is offered. */
 function NeedsGo({ ideaId, gate }: { ideaId: string; gate: Gate }) {
-  const said = gateWords(ideaId, gate);
+  const said = gateWords(gate);
   const now =
     gate.kind === "stale"
       ? `The verdict recorded was ${verdictWords(gate.decision)}, on an earlier version of the brief.`
@@ -184,7 +184,7 @@ function NeedsGo({ ideaId, gate }: { ideaId: string; gate: Gate }) {
 }
 
 /** What MACH counted: the engine's numbers, with "Not determined" said as such and never as zero. */
-function CountedSection({ route, sized }: { route: Exclude<RouteState, { kind: "not-sized" }>; sized: IdeaSized | null }) {
+function CountedSection({ route, detail }: { route: Exclude<RouteState, { kind: "not-sized" }>; detail: CountedDetailData | null }) {
   const counted = route.counted;
   return (
     <section aria-labelledby="counted-heading" className="flex max-w-reading flex-col gap-4">
@@ -214,13 +214,42 @@ function CountedSection({ route, sized }: { route: Exclude<RouteState, { kind: "
         High risk means sign-in or permissions, billing, a database schema or migration, or an existing contract. High-risk areas and concerns are counted and shown; they are
         not part of the rule that names the route.
       </Text>
-      {sized ? <CountedDetail sized={sized} /> : null}
+      {detail ? <CountedDetail detail={detail} /> : null}
     </section>
   );
 }
 
-/** What each count is made of, as the engine reported it when this page sized the idea. */
-function CountedDetail({ sized }: { sized: IdeaSized }) {
+/** What each count is made of: the engine's answer to a size made on this page, or the details it kept with the route. */
+interface CountedDetailData {
+  touches: IdeaSized["touches"];
+  areas: IdeaSized["high_risk"]["areas"];
+  count: number | null;
+  notDetermined: string | null;
+  basis: string | null;
+  concerns: IdeaSized["concerns"];
+  rule: string | null;
+}
+
+function countedDetail(sized: IdeaSized | null, recorded: IdeaShow["route"]): CountedDetailData | null {
+  if (sized) {
+    const risk = sized.high_risk;
+    return { touches: sized.touches, areas: risk.areas, count: risk.count, notDetermined: risk.not_determined_note ?? null, basis: risk.basis, concerns: sized.concerns, rule: sized.rule };
+  }
+  const kept = recorded?.details;
+  if (!kept) return null;
+  const missing = kept.high_risk.not_determined;
+  return {
+    touches: kept.touches,
+    areas: kept.high_risk.areas,
+    count: kept.high_risk.count,
+    notDetermined: missing.length ? `Not determined for ${missing.join(", ")}: nothing on this computer says which files ${missing.length === 1 ? "that" : "their"} slice changed.` : null,
+    basis: null,
+    concerns: kept.concerns,
+    rule: null,
+  };
+}
+
+function CountedDetail({ detail: sized }: { detail: CountedDetailData }) {
   const ids = (list: readonly string[]) =>
     list.length ? (
       <span className="flex flex-wrap gap-1.5">
@@ -251,29 +280,31 @@ function CountedDetail({ sized }: { sized: IdeaSized }) {
         <div className="flex flex-col gap-1">
           <dt className="font-semibold text-ink">High-risk areas</dt>
           <dd className="flex flex-col gap-1 text-ink">
-            {sized.high_risk.areas.length ? (
+            {sized.areas.length ? (
               <ul className="flex flex-col gap-1">
-                {sized.high_risk.areas.map((a) => (
+                {sized.areas.map((a) => (
                   <li key={a.area}>
                     {a.area} Reached by {a.rules.join(", ")}, in {a.file_count === 1 ? "1 file" : `${a.file_count} files`}.
                   </li>
                 ))}
               </ul>
-            ) : sized.high_risk.count === null ? null : (
+            ) : sized.count === null ? null : (
               <span>None found.</span>
             )}
-            {sized.high_risk.not_determined_note ? <span>{sized.high_risk.not_determined_note}</span> : null}
-            <span className="text-ink-muted">{sized.high_risk.basis}</span>
+            {sized.notDetermined ? <span>{sized.notDetermined}</span> : null}
+            {sized.basis ? <span className="text-ink-muted">{sized.basis}</span> : null}
           </dd>
         </div>
         <div className="flex flex-col gap-1">
           <dt className="font-semibold text-ink">Principle and policy concerns</dt>
           <dd>{ids([...sized.concerns.principles, ...sized.concerns.policies])}</dd>
         </div>
-        <div className="flex flex-col gap-1">
-          <dt className="font-semibold text-ink">The rule</dt>
-          <dd className="text-ink">{sized.rule}</dd>
-        </div>
+        {sized.rule ? (
+          <div className="flex flex-col gap-1">
+            <dt className="font-semibold text-ink">The rule</dt>
+            <dd className="text-ink">{sized.rule}</dd>
+          </div>
+        ) : null}
       </dl>
     </Disclosure>
   );

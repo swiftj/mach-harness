@@ -21,6 +21,7 @@ import type {
   IdeaBoard,
   IdeaChain,
   IdeaChanged,
+  IdeaFaults,
   IdeaLookupsInput,
   IdeaLookupsResult,
   IdeaPublished,
@@ -787,6 +788,7 @@ export interface Operations {
   /* M16: Shape. Argument shapes are the host's (apps/studio/internal/engine/ops_shape.go). */
   "idea.add": { args: { title: string; from_request?: number; from_issue?: number; from_fault?: string }; result: IdeaAdded };
   "idea.list": { args: Record<string, never>; result: IdeaBoard & { factory_authorized: false } };
+  "idea.faults": { args: Record<string, never>; result: IdeaFaults };
   "idea.show": { args: { idea_id: string }; result: IdeaShow };
   "idea.stage": { args: { idea_id: string; stage: "exploring" }; result: IdeaStageResult };
   "idea.lookups": { args: { idea_id: string; lookups: IdeaLookupsInput }; result: IdeaLookupsResult };
@@ -797,7 +799,7 @@ export interface Operations {
   "idea.settle": {
     args:
       | { idea_id: string; outcome: string; as: "slice"; slice: string; reason?: string }
-      | { idea_id: string; outcome: string; as: "out-of-scope" | "later"; reason?: string };
+      | { idea_id: string; outcome: string; as: "out-of-scope" | "later"; reason: string };
     result: ShapeSettled;
   };
   "idea.map-status": { args: { idea_id: string }; result: ShapeMapStatus };
@@ -840,6 +842,7 @@ export const readOnlyOperations: ReadonlySet<OperationName> = new Set<OperationN
   "prd.status",
   "slice.mock.list",
   "idea.list",
+  "idea.faults",
   "idea.show",
   "idea.map-status",
   "idea.chain",
@@ -1573,6 +1576,8 @@ export interface Session {
      * install); the app appends the slice ID. Null when the host does not say.
      */
     continue_command?: string | null;
+    /** M16: the same install's command that explores an idea, without the idea ID ("/mach:product-studio explore"). */
+    explore_command?: string | null;
   };
   versions: { host: string; api: string | number; engine_install: string | null };
   /** Set when the engine could not report status while building the session. */

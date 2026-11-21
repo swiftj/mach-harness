@@ -1,0 +1,153 @@
+{
+  "exit_code": 0,
+  "data": {
+    "ideas": [
+      {
+        "idea_id": "IDEA-001",
+        "title": "Let members renew a loan themselves",
+        "stage": "brief",
+        "stage_words": "Brief written",
+        "source": {
+          "kind": "typed"
+        },
+        "created": "2026-11-21T01:38:46Z",
+        "revision": 1,
+        "has_brief": true,
+        "brief_checked": true,
+        "brief_passes": true,
+        "has_case": true,
+        "verdict": null,
+        "route": null,
+        "made": null,
+        "github": {
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state": null,
+          "up_to_date": false,
+          "changed_on_github": false,
+          "changed_after_verdict": false,
+          "verdict_on_github": null,
+          "number_taken": false,
+          "other_issues": [],
+          "last_read": null
+        },
+        "next": {
+          "kind": "record_verdict",
+          "sentence": "Make the case for IDEA-001 and record your verdict: Go, Not now or No."
+        }
+      },
+      {
+        "idea_id": "IDEA-002",
+        "title": "Reading challenges for children",
+        "stage": "decided",
+        "stage_words": "Decided",
+        "source": {
+          "kind": "typed"
+        },
+        "created": "2026-11-21T01:38:48Z",
+        "revision": 0,
+        "has_brief": false,
+        "brief_checked": false,
+        "brief_passes": false,
+        "has_case": false,
+        "verdict": {
+          "decision": "not-now",
+          "by": "ada-pm",
+          "at": "2026-11-21T01:38:48Z",
+          "revision": 0,
+          "holds": true,
+          "stale": false,
+          "reason": "Not now. The branches have nobody to run reading challenges before the summer, the children's librarians are already covering two vacancies, and the schools asked us to wait until the new term so that teachers can join in. We should come back to it in September with the head of children's services, when the summer reading scheme has finished and we know how many volunteers stayed on. Nothing here says the idea is wrong; the timing is."
+        },
+        "route": null,
+        "made": null,
+        "github": {
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state": null,
+          "up_to_date": false,
+          "changed_on_github": false,
+          "changed_after_verdict": false,
+          "verdict_on_github": null,
+          "number_taken": false,
+          "other_issues": [],
+          "last_read": null
+        },
+        "next": {
+          "kind": "publish",
+          "sentence": "Save IDEA-002 as a GitHub issue so others can read the brief and the verdict."
+        }
+      },
+      {
+        "idea_id": "IDEA-003",
+        "title": "Renew loans from the catalogue",
+        "stage": "decided",
+        "stage_words": "Decided",
+        "source": {
+          "kind": "typed"
+        },
+        "created": "2026-11-21T01:38:49Z",
+        "revision": 1,
+        "has_brief": true,
+        "brief_checked": false,
+        "brief_passes": false,
+        "has_case": false,
+        "verdict": {
+          "decision": "go",
+          "by": "ada-pm",
+          "at": "2026-11-21T01:38:49Z",
+          "revision": 1,
+          "holds": false,
+          "stale": true,
+          "reason": "Members ask for it at every desk."
+        },
+        "route": "epic",
+        "made": null,
+        "github": {
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state": null,
+          "up_to_date": false,
+          "changed_on_github": false,
+          "changed_after_verdict": false,
+          "verdict_on_github": null,
+          "number_taken": false,
+          "other_issues": [],
+          "last_read": null
+        },
+        "next": {
+          "kind": "check_brief",
+          "sentence": "Check IDEA-003's brief."
+        }
+      }
+    ],
+    "by_stage": {
+      "new": [],
+      "exploring": [],
+      "brief": [
+        "IDEA-001"
+      ],
+      "decided": [
+        "IDEA-002",
+        "IDEA-003"
+      ],
+      "shaped": []
+    },
+    "counts": {
+      "new": 0,
+      "exploring": 0,
+      "brief": 1,
+      "decided": 2,
+      "shaped": 0
+    },
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

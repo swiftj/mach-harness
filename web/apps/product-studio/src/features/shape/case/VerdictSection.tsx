@@ -1,11 +1,10 @@
-import { useId, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Link } from "react-router";
-import { CircleAlert, Route, Scale, TriangleAlert } from "lucide-react";
-import { Banner, Button, Field, Heading, Quote, RelativeTime, StatusPill, Text, Textarea, cn, toast } from "@mach/ui";
+import { Route, Scale, TriangleAlert } from "lucide-react";
+import { Banner, Button, ConfirmDialog, Field, Heading, Quote, RadioGroup, RelativeTime, StatusPill, Text, Textarea, toast } from "@mach/ui";
 import { failureText, type IdeaRow, type IdeaShow, type VerdictDecision, type VerdictRecorded } from "@mach/ui/api";
 import { useEngineAct } from "../../../api/act";
 import { ideaPath } from "../shell/steps";
-import { ActDialog } from "./ActDialog";
 import {
   decisionWord,
   oneLine,
@@ -33,7 +32,8 @@ const verdictHeading = () => document.getElementById("verdict-h");
  */
 export function VerdictSection({ row, show, onRecorded }: { row: IdeaRow; show: IdeaShow; onRecorded: () => void }) {
   const state = verdictState(show.verdict);
-  const shaped = row.stage === "shaped";
+  // Whether any verdict may be recorded now, in the engine's own answer (refused once the idea is shaped into work).
+  const shaped = !show.acts.verdict.allowed;
   const [replacing, setReplacing] = useState(false);
   const [lastRecorded, setLastRecorded] = useState<VerdictRecorded | null>(null);
 
@@ -60,7 +60,7 @@ export function VerdictSection({ row, show, onRecorded }: { row: IdeaRow; show: 
 
       {shaped ? (
         <Text size="body-sm" tone="muted" className="max-w-reading">
-          This idea is shaped into work, so its verdict stays as it is.
+          {show.acts.verdict.why}
         </Text>
       ) : formOpen ? (
         <VerdictForm
@@ -164,13 +164,11 @@ function VerdictForm({
   const [problem, setProblem] = useState<ReturnType<typeof verdictFormProblem>>(null);
   const [confirming, setConfirming] = useState(false);
   const act = useEngineAct();
-  const name = useId();
-  const choicesError = useId();
   const reasonRef = useRef<HTMLTextAreaElement>(null);
   const firstChoiceRef = useRef<HTMLInputElement>(null);
 
   const ask = () => {
-    const found = verdictFormProblem(decision, reason);
+    const found = verdictFormProblem(decision, reason, show.acts.go.allowed ? null : show.acts.go.why);
     setProblem(found);
     if (found) {
       (found.field === "choice" ? firstChoiceRef.current : reasonRef.current)?.focus();
@@ -204,48 +202,20 @@ function VerdictForm({
         ask();
       }}
     >
-      <fieldset className="flex flex-col gap-2" aria-describedby={problem?.field === "choice" ? `${choicesError} verdict-recorded-with` : "verdict-recorded-with"}>
-        <legend className="pb-1 text-label text-ink">{replacing ? "Your verdict now" : "Choose your verdict"}</legend>
-        <div className="grid grid-cols-3 gap-3">
-          {verdictChoices.map((choice, index) => {
-            const chosen = decision === choice.decision;
-            return (
-              <label
-                key={choice.decision}
-                className={cn(
-                  "grid cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1 rounded-md border border-line-control bg-surface px-4 py-3 hover:bg-surface-sunken",
-                  "has-[:checked]:border-ink has-[:checked]:ring-1 has-[:checked]:ring-inset has-[:checked]:ring-ink",
-                  "has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-focus",
-                )}
-              >
-                <input
-                  ref={index === 0 ? firstChoiceRef : undefined}
-                  type="radio"
-                  name={name}
-                  value={choice.decision}
-                  checked={chosen}
-                  onChange={() => {
-                    setDecision(choice.decision);
-                    if (problem?.field === "choice") setProblem(null);
-                  }}
-                  className="row-span-2 mt-1 size-4 shrink-0 accent-ink focus-visible:outline-none"
-                />
-                <span className="flex items-baseline justify-between gap-2">
-                  <span className="text-body font-semibold text-ink">{choice.word}</span>
-                  {chosen ? <span className="text-caption font-semibold text-ink">Chosen</span> : null}
-                </span>
-                <span className="text-body-sm text-ink-muted">{choice.meaning}</span>
-              </label>
-            );
-          })}
-        </div>
-        {problem?.field === "choice" ? (
-          <p id={choicesError} className="flex items-start gap-1.5 text-body-sm text-danger-ink">
-            <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-            <span>{problem.message}</span>
-          </p>
-        ) : null}
-      </fieldset>
+      <RadioGroup
+        legend={replacing ? "Your verdict now" : "Choose your verdict"}
+        options={verdictChoices.map((choice) => ({ value: choice.decision, label: choice.word, description: choice.meaning }))}
+        value={decision}
+        onValueChange={(next) => {
+          setDecision(next);
+          if (problem?.field === "choice") setProblem(null);
+        }}
+        columns={3}
+        chosenWord="Chosen"
+        error={problem?.field === "choice" ? problem.message : undefined}
+        describedBy="verdict-recorded-with"
+        firstRef={firstChoiceRef}
+      />
 
       <Field
         label="Your reason"
@@ -265,8 +235,10 @@ function VerdictForm({
         />
       </Field>
 
-      <Text id="verdict-recorded-with" size="body-sm" tone="muted" className="max-w-reading">
+      <Text id="verdict-recorded-with" size="body-sm" tone="muted" className="max-w-reading whitespace-pre-line">
         {recordedWithSentence(show.brief.revision, show.brief.changed_since_check)}
+        {/* Said before the click, in the engine's own words; Go stays one of three equal choices. */}
+        {show.acts.go.allowed ? null : `\n${show.acts.go.why ?? ""}`}
       </Text>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -278,7 +250,8 @@ function VerdictForm({
         ) : null}
       </div>
 
-      <ActDialog
+      <ConfirmDialog
+        width="lg"
         open={confirming}
         onOpenChange={setConfirming}
         title={`Record “${word}” for ${row.idea_id}?`}
@@ -288,21 +261,23 @@ function VerdictForm({
         error={act.error ? failureText(act.error, "The verdict was not recorded") : null}
         focusAfter={focusAfter}
       >
-        <div className="flex flex-col gap-3 rounded-md bg-surface-sunken px-4 py-3">
-          <div className="flex flex-col gap-0.5">
-            <p className="text-label text-ink">Your decision</p>
-            <p className="text-body text-ink">{word}</p>
+        <div className="flex flex-col gap-4 pb-1">
+          <div className="flex flex-col gap-3 rounded-md bg-surface-sunken px-4 py-3">
+            <div className="flex flex-col gap-0.5">
+              <p className="text-label text-ink">Your decision</p>
+              <p className="text-body text-ink">{word}</p>
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <p className="text-label text-ink">Your reason, exactly as it will be kept</p>
+              <p className="whitespace-pre-wrap break-words text-body text-ink">{line}</p>
+            </div>
           </div>
-          <div className="flex flex-col gap-0.5">
-            <p className="text-label text-ink">Your reason, exactly as it will be kept</p>
-            <p className="whitespace-pre-wrap break-words text-body text-ink">{line}</p>
-          </div>
+          <Text size="body-sm" tone="muted">
+            {recordedWithSentence(show.brief.revision, show.brief.changed_since_check)}
+            {replacing ? " It replaces the verdict recorded before." : ""}
+          </Text>
         </div>
-        <Text size="body-sm" tone="muted">
-          {recordedWithSentence(show.brief.revision, show.brief.changed_since_check)}
-          {replacing ? " It replaces the verdict recorded before." : ""}
-        </Text>
-      </ActDialog>
+      </ConfirmDialog>
     </form>
   );
 }

@@ -8,7 +8,7 @@ import { exploreCommand } from "./model";
  * ContinueInClaudeCode does. This screen never imitates the conversation with a form.
  */
 export function ContinueInTerminal({ ideaId, capability }: { ideaId: string; capability: InterviewCapability }) {
-  const command = exploreCommand(capability.continueCommand, ideaId);
+  const command = exploreCommand(capability.exploreCommand, ideaId);
   return (
     <div className="flex max-w-reading flex-col gap-5">
       <div className="flex flex-col gap-2">

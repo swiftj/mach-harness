@@ -57,7 +57,7 @@ export interface IdeaVerdict {
   revision: number;
   holds: boolean;
   stale: boolean;
-  /** The person's reason, their words. Not on a board row. */
+  /** The person's reason, their words: bounded to one line of at most 500 characters on a board row. */
   reason?: string;
   /** The brief the verdict was recorded on; null for a Not now or No given before any brief. */
   brief_sha256?: string | null;
@@ -171,6 +171,8 @@ export interface LookupPrinciple {
 }
 export interface LookupPolicy {
   id: string;
+  /** The pack's owner as its policy.md names it; null when it names none. */
+  owner?: string | null;
   note?: string;
 }
 
@@ -210,6 +212,13 @@ export interface RouteCounted {
   policy_concerns: number;
 }
 
+/** The details behind each count, kept with the route (identifiers only), so they can be shown again after a reload. */
+export interface RouteDetails {
+  touches: { outcomes: string[]; capabilities: string[]; shipped_rules: string[] };
+  high_risk: { areas: HighRiskArea[]; not_determined: string[]; count: number | null };
+  concerns: { principles: string[]; policies: string[] };
+}
+
 /** The recorded route as `idea.show` gives it (the record's own field). */
 export interface RecordedRoute {
   route: ShapeRoute;
@@ -218,6 +227,8 @@ export interface RecordedRoute {
   at: string;
   revision: number;
   brief_sha256: string;
+  /** Absent on a route sized before the clean-up pass. */
+  details?: RouteDetails;
 }
 
 /** The route as it stands (`route_view`): whether it still holds for the brief and the verdict now. */
@@ -235,6 +246,24 @@ export interface ShapeFinding {
   rule: string;
   line: number;
   message: string;
+}
+
+/** Whether one of the product manager's acts may be done now and, when not, the engine's own sentence (the one it refuses with). */
+export interface IdeaAct {
+  allowed: boolean;
+  why: string | null;
+}
+
+/** `idea.show.acts`: read only, so a screen can say what an act needs before the click. Never a recommendation. */
+export interface IdeaActs {
+  /** Any verdict (refused once the idea is shaped). */
+  verdict: IdeaAct;
+  /** A Go: also needs a brief that passes its check. */
+  go: IdeaAct;
+  /** Sizing: a Go that holds for the brief as it is now, not yet shaped. */
+  size: IdeaAct;
+  /** A look-back: shaped, and a slice made from it has shipped. */
+  look_back: IdeaAct;
 }
 
 export interface IdeaShow {
@@ -256,8 +285,25 @@ export interface IdeaShow {
   route: RecordedRoute | null;
   made: IdeaMade | null;
   lookback: IdeaLookbackRecord | null;
+  acts: IdeaActs;
   note: string;
   verdict_note: string;
+  factory_authorized: false;
+}
+
+/** One open fault ticket on this computer an idea may start from (`idea.faults`). The summary is the ticket's title: data. */
+export interface FaultTicket {
+  ticket: string;
+  summary: string | null;
+  occurrences: number | null;
+  last_seen: string | null;
+  /** The idea already started from it, if any. */
+  idea_id: string | null;
+}
+
+export interface IdeaFaults {
+  faults: FaultTicket[];
+  note: string;
   factory_authorized: false;
 }
 
@@ -441,7 +487,8 @@ export interface ShapeCoverageRow {
 export interface ShapeMapStatus {
   idea_id: string;
   stage: IdeaStage;
-  route: RouteView;
+  /** Null when the idea has not been sized. */
+  route: RouteView | null;
   map: {
     revision: number;
     route: ShapeRoute;
@@ -450,10 +497,11 @@ export interface ShapeMapStatus {
     applied: boolean;
     mapped_at: string;
   } | null;
-  coverage: ShapeCoverageRow[];
-  not_covered: string[];
-  /** Why the map cannot be applied now (the brief or the route changed), in plain words. */
-  blockers: string[];
+  /** Absent when there is no map yet (then `map` is null). */
+  coverage?: ShapeCoverageRow[];
+  not_covered?: string[];
+  /** Why the map cannot be applied now (the brief or the route changed), in plain words. Absent when there is no map. */
+  blockers?: string[];
   can_apply: boolean;
   note: string;
   factory_authorized: false;
@@ -551,7 +599,8 @@ export interface IdeaChain {
     missing: string[];
   }>;
   epics: Array<{ epic_id: string; acceptance: null; missing: string }>;
-  brief: { revision: number; sha256: string | null };
+  /** Null when the brief is not in this workspace (then `missing` says so). */
+  brief: { revision: number; sha256: string | null } | null;
   last_read: string | null;
   missing: string[];
   note: string;

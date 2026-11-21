@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import { CircleDashed, CircleCheck, CircleDot, Minus, ShieldCheck } from "lucide-react";
-import { Stepper, StatusPill, cn, type Tone } from "@mach/ui";
+import { Stepper, StatusPill, type Tone } from "@mach/ui";
 import type { PrdCoverageRow } from "@mach/ui/api";
-import { JOURNEY, rangeWords, type Quotation } from "./model";
+import { QuotedLines } from "../../shared/QuotedLines";
+import { JOURNEY, type Quotation } from "./model";
 
 /** Where the product manager is on the PRD path. Step 4 means every step is done. */
 export function PrdJourney({ step }: { step: number }) {
@@ -34,32 +35,14 @@ export function DataNotice() {
  * block labelled as the document's words. The engine has already bounded and redacted them.
  */
 export function PrdQuote({ prdId, quotations, className }: { prdId: string; quotations: Quotation[]; className?: string }) {
-  if (!quotations.length) return null;
   return (
-    <div className={cn("flex flex-col gap-2", className)}>
-      {quotations.map((q) => (
-        <figure key={`${q.range[0]}-${q.range[1]}`} className="flex flex-col gap-1">
-          <figcaption className="text-caption text-ink-muted">
-            {prdId}, {rangeWords(q.range)}
-          </figcaption>
-          {q.lines.length ? (
-            // A long quotation scrolls inside its own region, which keyboard users can reach.
-            // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-            <pre className="max-h-64 overflow-auto rounded-sm border-l-2 border-line-strong bg-surface-sunken py-2 pl-3 pr-3 font-sans text-body-sm whitespace-pre-wrap text-ink" tabIndex={0} aria-label={`${prdId}, ${rangeWords(q.range)}, as written in the document`}>
-              {q.lines.map((line) => (
-                <span key={line.n} className="flex gap-3">
-                  <span className="w-7 shrink-0 text-right text-caption leading-6 text-ink-subtle tabular select-none" aria-hidden="true">
-                    {line.n}
-                  </span>
-                  <span className="min-w-0 break-words">{line.text || " "}</span>
-                </span>
-              ))}
-            </pre>
-          ) : null}
-          {q.unread ? <p className="text-caption text-ink-muted">{q.unread === 1 ? "1 line of this range was" : `${q.unread} lines of this range were`} past what this page read.</p> : null}
-        </figure>
-      ))}
-    </div>
+    <QuotedLines
+      of={prdId}
+      asWritten="as written in the document"
+      unreadNote={(n) => `${n === 1 ? "1 line of this range was" : `${n} lines of this range were`} past what this page read.`}
+      quotations={quotations}
+      className={className}
+    />
   );
 }
 

@@ -9,7 +9,7 @@ import { RenumberDialog } from "../../shared/RenumberDialog";
 import { AnswerQuestionButton, BuildersQuestion } from "../../shared/BuildersQuestion";
 import { NewerVersionCard } from "./NewerVersionCard";
 import { OpenQuestionsCard } from "./OpenQuestionsCard";
-import { useRequestList } from "./requests/api";
+import { useRequestList } from "../../shared/useRequestList";
 import { RequestsGroup } from "./requests/RequestsGroup";
 
 function Group({ id, title, hint, count, children }: { id: string; title: string; hint: string; count: number; children: ReactNode }) {

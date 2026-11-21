@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { describeError, isMachApiError, MachApiError, type ApiErrorHint, type Operations, type RequestsBlock } from "@mach/ui/api";
+import { useCallback, useState } from "react";
+import { describeError, type ApiErrorHint, type MachApiError, type Operations } from "@mach/ui/api";
 import { client } from "../../../api/client";
 import { asError, statusSettled } from "../../../api/store";
 
@@ -23,37 +23,6 @@ export async function requestOp<K extends RequestOpName>(name: K, args: RequestO
     return (await requestFixtureOp(name, args)) as RequestOperations[K]["result"];
   }
   return client.op(name, args, signal);
-}
-
-export interface RequestList {
-  data: RequestsBlock | null;
-  error: MachApiError | null;
-  loading: boolean;
-  reload: () => void;
-}
-
-/** The cached requests (`request.list`, which never calls GitHub). Re-read after every write: nothing is assumed. */
-export function useRequestList(): RequestList {
-  const [tick, setTick] = useState(0);
-  const [settled, setSettled] = useState<{ tick: number; data: RequestsBlock | null; error: MachApiError | null } | null>(null);
-  useEffect(() => {
-    const controller = new AbortController();
-    requestOp("request.list", {}, controller.signal)
-      .then((result) => {
-        if (!controller.signal.aborted) setSettled({ tick, data: result.requests, error: null });
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return;
-        setSettled({ tick, data: null, error: isMachApiError(error) ? error : new MachApiError("internal", String(error), "request.list") });
-      });
-    return () => controller.abort();
-  }, [tick]);
-  return {
-    data: settled?.data ?? null,
-    error: settled?.tick === tick ? settled.error : null,
-    loading: settled?.tick !== tick,
-    reload: useCallback(() => setTick((t) => t + 1), []),
-  };
 }
 
 export interface RequestAct {
