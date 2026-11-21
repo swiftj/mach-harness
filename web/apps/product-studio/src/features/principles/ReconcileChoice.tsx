@@ -52,33 +52,33 @@ export const ReconcileChoice = forwardRef<HTMLElement, { published: PrinciplesPu
   };
 
   return (
-    <section ref={ref} tabIndex={-1} aria-labelledby="principles-newer" className="flex flex-col gap-3 rounded-md border border-info-line bg-info-soft px-5 py-4 outline-offset-2">
-      <div className="flex items-start gap-3">
-        <GitBranch aria-hidden="true" className="mt-1 size-[18px] shrink-0 text-info-ink" />
-        <div className="flex min-w-0 flex-col gap-1">
+    <section ref={ref} tabIndex={-1} aria-labelledby="principles-newer" className="flex flex-col gap-3 rounded-md border border-info-line bg-info-soft px-4 py-4 outline-offset-2">
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <div className="flex items-start gap-2">
+          <GitBranch aria-hidden="true" className="mt-1 size-[18px] shrink-0 text-info-ink" />
           <Heading level={2} size="title-3" id="principles-newer">
             Someone else published a newer version
           </Heading>
-          <Text size="body-sm">
-            GitHub holds {version} of the principles
-            {theirs?.approved_by ? (
-              <>
-                , approved by{" "}
-                <span translate="no" className="font-mono">
-                  {theirs.approved_by}
-                </span>
-              </>
-            ) : null}
-            {published.revision !== null ? `, newer than version ${published.revision}, which you published` : ""}. You also have changes here that are not published. Choose which to go on from.
-          </Text>
-          {theirs?.read_at ? (
-            <Text size="caption" tone="muted">
-              GitHub was last read <RelativeTime iso={theirs.read_at} />.
-            </Text>
-          ) : null}
         </div>
+        <Text size="body-sm">
+          GitHub holds {version} of the principles
+          {theirs?.approved_by ? (
+            <>
+              , approved by{" "}
+              <span translate="no" className="whitespace-nowrap font-mono">
+                {theirs.approved_by}
+              </span>
+            </>
+          ) : null}
+          {published.revision !== null ? `, newer than version ${published.revision}, which you published` : ""}. You also have changes here that are not published. Choose which to go on from.
+        </Text>
+        {theirs?.read_at ? (
+          <Text size="caption" tone="muted">
+            GitHub was last read <RelativeTime iso={theirs.read_at} />.
+          </Text>
+        ) : null}
       </div>
-      <div className="flex flex-wrap gap-2 pl-7.5">
+      <div className="flex flex-wrap gap-2">
         <Button variant="primary" onClick={() => setTake("theirs")}>
           {words.theirs.button}
         </Button>

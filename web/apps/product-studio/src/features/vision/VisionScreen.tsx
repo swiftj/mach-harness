@@ -1,32 +1,47 @@
 import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
 import { useLocation } from "react-router";
 import { CircleAlert, Plus, X } from "lucide-react";
-import { ArtifactId, Banner, Button, EpicStatusPill, ErrorState, Field, Heading, Input, Page, Skeleton, SkeletonText, Text, Textarea, cn, describeError, toast, type Status, type StatusEpicRow, HintAction } from "@mach/ui";
+import { ArtifactId, Banner, Button, EpicStatusPill, ErrorState, Field, Heading, Input, Skeleton, SkeletonText, Text, Textarea, cn, describeError, plural, toast, type Status, type StatusEpicRow, HintAction } from "@mach/ui";
 import { useEngineAct } from "../../api/act";
 import { useStatus } from "../../api/store";
 import { IssueNumber } from "../../shared/IssueLink";
+import { Fold } from "../../shared/layout/Fold";
+import { SectionNav } from "../../shared/layout/SectionNav";
+import { ContextRow, OnePane, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
 import { EpicSheet, knownCriteria } from "./EpicSheet";
 import { NewSliceDialog } from "../roadmap/NewSliceDialog";
 
+const LEAD =
+  "What the product is for and what people will get from it. Changes are saved to your draft; the project's issue on GitHub follows the next time you mark a slice ready.";
+
+/**
+ * Vision and outcomes, laid out as a document (docs/mach-next/M16_LAYOUT.md): the project's name, vision and outcomes,
+ * then its epics, in the wide pane; the list of those sections and the writing guidance in the narrow pane beside them.
+ * The epic sheet and every act are unchanged.
+ */
 export function VisionScreen() {
   const status = useStatus();
   if (!status.data && !status.error) {
     return (
-      <Page>
-        <div role="status" aria-busy="true" aria-label="Reading the project" className="flex max-w-reading flex-col gap-5">
-          <Skeleton className="h-10 w-72" />
-          <SkeletonText lines={3} />
-          <Skeleton className="h-36 w-full" />
-        </div>
-      </Page>
+      <WorkScreen header={<ContextRow title="Vision" />}>
+        <OnePane label="Vision">
+          <div role="status" aria-busy="true" aria-label="Reading the project" className="flex max-w-reading flex-col gap-5">
+            <Skeleton className="h-10 w-72" />
+            <SkeletonText lines={3} />
+            <Skeleton className="h-36 w-full" />
+          </div>
+        </OnePane>
+      </WorkScreen>
     );
   }
   if (!status.data) {
     const { title, message } = describeError(status.error!);
     return (
-      <Page width="reading">
-        <ErrorState icon={<CircleAlert />} title={title} message={message} action={<Button onClick={() => void status.reload()}>Try again</Button>} />
-      </Page>
+      <WorkScreen header={<ContextRow title="Vision" />}>
+        <OnePane label="Vision" width="reading">
+          <ErrorState icon={<CircleAlert />} title={title} message={message} action={<Button onClick={() => void status.reload()}>Try again</Button>} />
+        </OnePane>
+      </WorkScreen>
     );
   }
   return <Vision status={status.data} />;
@@ -39,17 +54,61 @@ function Vision({ status }: { status: Status }) {
     if (focus) document.getElementById(focus)?.scrollIntoView({ block: "start" });
   }, [location.state]);
 
+  const project = status.project;
+  if (!project) {
+    return (
+      <WorkScreen header={<ContextRow title="Define the project" about="Start with what the product is for. You can refine every part of this later." aboutLabel="About this page" />}>
+        <WorkPanes>
+          <WorkPane label="The project">
+            <ProjectCreator />
+          </WorkPane>
+          <WorkPane side label="Writing guidance">
+            <Guidance items={projectGuidance} />
+          </WorkPane>
+        </WorkPanes>
+      </WorkScreen>
+    );
+  }
+
   return (
-    <Page>
-      <div className="flex flex-col gap-14">
-        {status.project ? (
-          <ProjectEditor key={JSON.stringify([status.project.name, status.project.vision, status.project.outcomes, status.project.revision])} status={status} />
-        ) : (
-          <ProjectCreator />
-        )}
-        {status.project ? <Epics status={status} /> : null}
-      </div>
-    </Page>
+    <WorkScreen
+      header={
+        <ContextRow
+          identity={
+            <>
+              <ArtifactId>{project.project_id}</ArtifactId>
+              <span>{project.name}</span>
+              {project.issue ? <IssueNumber number={project.issue} url={project.url} /> : null}
+            </>
+          }
+          title="Vision and outcomes"
+          about={LEAD}
+          aboutLabel="About this page"
+        />
+      }
+    >
+      <WorkPanes>
+        <WorkPane label="Vision, outcomes and epics">
+          <div className="flex max-w-[44rem] flex-col gap-12">
+            <ProjectEditor key={JSON.stringify([project.name, project.vision, project.outcomes, project.revision])} status={status} />
+            <Epics status={status} />
+          </div>
+        </WorkPane>
+        <WorkPane side label="Sections and writing guidance">
+          <div className="flex flex-col gap-8">
+            <SectionNav
+              label="Sections of the project"
+              items={[
+                { id: "vision-section-vision", label: "Name and vision" },
+                { id: "vision-section-outcomes", label: "Intended outcomes" },
+                { id: "epics", label: "Epics", note: <span className="shrink-0 text-caption tabular text-ink-subtle">{plural(status.epics.length, "epic")}</span> },
+              ]}
+            />
+            <Guidance items={projectGuidance} />
+          </div>
+        </WorkPane>
+      </WorkPanes>
+    </WorkScreen>
   );
 }
 
@@ -57,7 +116,7 @@ function Vision({ status }: { status: Status }) {
 
 function Guidance({ items }: { items: Array<{ title: string; body: string }> }) {
   return (
-    <aside className="flex flex-col gap-5 border-l border-line pl-6" aria-label="Writing guidance">
+    <aside className="flex flex-col gap-5" aria-label="Writing guidance">
       {items.map((item) => (
         <div key={item.title} className="flex flex-col gap-1">
           <Text size="body-sm" weight="semibold">
@@ -80,10 +139,10 @@ const projectGuidance = [
 
 /* ── Outcomes ────────────────────────────────────────────────────────── */
 
-function OutcomesEditor({ outcomes, onChange, error }: { outcomes: string[]; onChange: (next: string[]) => void; error?: string | null }) {
+function OutcomesEditor({ outcomes, onChange, error, sectionId }: { outcomes: string[]; onChange: (next: string[]) => void; error?: string | null; sectionId?: string }) {
   const id = useId();
   return (
-    <fieldset className="flex flex-col gap-2" aria-describedby={`${id}-hint${error ? ` ${id}-error` : ""}`}>
+    <fieldset id={sectionId} className="flex scroll-mt-6 flex-col gap-2" aria-describedby={`${id}-hint${error ? ` ${id}-error` : ""}`}>
       <legend className="text-label text-ink">Intended outcomes</legend>
       <p id={`${id}-hint`} className="-mt-0.5 text-body-sm text-ink-muted">
         What people will be able to do, or what will be true, because of the product.
@@ -158,46 +217,35 @@ function ProjectCreator() {
   };
 
   return (
-    <section aria-labelledby="create-title" className="grid grid-cols-[minmax(0,640px)_minmax(220px,300px)] gap-12">
-      <form onSubmit={submit} noValidate className="flex flex-col gap-6">
-        <div className="flex flex-col gap-2">
-          <Heading level={1} id="create-title">
-            Define the project
-          </Heading>
-          <Text editorial size="body-lg" tone="muted">
-            Start with what the product is for. You can refine every part of this later.
-          </Text>
-        </div>
-        <Field label="Name" error={errors.name}>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="For example, Team Space" />
-        </Field>
-        <Field label="Vision" hint="One sentence: what changes for people when this product exists." error={errors.vision}>
-          <Textarea editorial rows={3} value={vision} onChange={(e) => setVision(e.target.value)} placeholder="For example: Teams work together without friction." />
-        </Field>
-        <OutcomesEditor outcomes={outcomes} onChange={setOutcomes} error={errors.outcomes} />
-        <Field label="Project ID" hint="Used in file names and links. Proposed from the name; it cannot be changed later." error={errors.id}>
-          <Input
-            className="font-mono"
-            value={projectId}
-            onChange={(e) => {
-              setIdTouched(true);
-              setId(e.target.value);
-            }}
-          />
-        </Field>
-        {act.shown ? (
-          <Banner tone="danger" live="assertive" title={act.shown.title} actions={act.shown.hint ? <HintAction hint={act.shown.hint} /> : undefined}>
-            <span className="whitespace-pre-line">{act.shown.message}</span>
-          </Banner>
-        ) : null}
-        <div>
-          <Button variant="primary" size="lg" type="submit" loading={act.pending}>
-            Create the project
-          </Button>
-        </div>
-      </form>
-      <Guidance items={projectGuidance} />
-    </section>
+    <form onSubmit={submit} noValidate aria-label="Define the project" className="flex max-w-[40rem] flex-col gap-6">
+      <Field label="Name" error={errors.name}>
+        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="For example, Team Space" />
+      </Field>
+      <Field label="Vision" hint="One sentence: what changes for people when this product exists." error={errors.vision}>
+        <Textarea editorial rows={3} value={vision} onChange={(e) => setVision(e.target.value)} placeholder="For example: Teams work together without friction." />
+      </Field>
+      <OutcomesEditor outcomes={outcomes} onChange={setOutcomes} error={errors.outcomes} />
+      <Field label="Project ID" hint="Used in file names and links. Proposed from the name; it cannot be changed later." error={errors.id}>
+        <Input
+          className="font-mono"
+          value={projectId}
+          onChange={(e) => {
+            setIdTouched(true);
+            setId(e.target.value);
+          }}
+        />
+      </Field>
+      {act.shown ? (
+        <Banner tone="danger" live="assertive" title={act.shown.title} actions={act.shown.hint ? <HintAction hint={act.shown.hint} /> : undefined}>
+          <span className="whitespace-pre-line">{act.shown.message}</span>
+        </Banner>
+      ) : null}
+      <div>
+        <Button variant="primary" size="lg" type="submit" loading={act.pending}>
+          Create the project
+        </Button>
+      </div>
+    </form>
   );
 }
 
@@ -244,47 +292,31 @@ function ProjectEditor({ status }: { status: Status }) {
   };
 
   return (
-    <section aria-labelledby="project-title" className="grid grid-cols-[minmax(0,640px)_minmax(220px,300px)] gap-12">
-      <form onSubmit={save} noValidate className="flex flex-col gap-6">
-        <div className="flex flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-3">
-            <Heading level={1} id="project-title">
-              Vision
-            </Heading>
-            <ArtifactId>{project.project_id}</ArtifactId>
-            {project.issue ? <IssueNumber number={project.issue} url={project.url} /> : null}
-          </div>
-          <Text editorial size="body-lg" tone="muted">
-            What the product is for and what people will get from it. Changes are saved to your draft; the project&apos;s issue on GitHub follows
-            the next time you mark a slice ready.
-          </Text>
-        </div>
-        <Field label="Name" error={errors.name}>
-          <Input value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-        <Field label="Vision" hint="One sentence: what changes for people when this product exists." error={errors.vision}>
-          <Textarea editorial rows={3} value={vision} onChange={(e) => setVision(e.target.value)} />
-        </Field>
-        <OutcomesEditor outcomes={outcomes} onChange={setOutcomes} error={errors.outcomes} />
-        {act.shown ? (
-          <Banner tone="danger" live="assertive" title={act.shown.title} actions={act.shown.hint ? <HintAction hint={act.shown.hint} /> : undefined}>
-            <span className="whitespace-pre-line">{act.shown.message}</span>
-          </Banner>
-        ) : null}
-        <div className="flex items-center gap-3">
-          <Button variant="primary" type="submit" loading={act.pending} disabled={!dirty}>
-            Save changes
-          </Button>
-          <Button variant="ghost" onClick={discard} disabled={!dirty || act.pending}>
-            Discard changes
-          </Button>
-          <Text as="span" size="body-sm" tone="muted" aria-live="polite">
-            {dirty ? `Unsaved: ${[changed.name && "name", changed.vision && "vision", changed.outcomes && "outcomes"].filter(Boolean).join(", ")}` : `Revision ${project.revision}`}
-          </Text>
-        </div>
-      </form>
-      <Guidance items={projectGuidance} />
-    </section>
+    <form id="vision-section-vision" onSubmit={save} noValidate aria-label="The project" className="flex scroll-mt-6 flex-col gap-6">
+      <Field label="Name" error={errors.name}>
+        <Input value={name} onChange={(e) => setName(e.target.value)} />
+      </Field>
+      <Field label="Vision" hint="One sentence: what changes for people when this product exists." error={errors.vision}>
+        <Textarea editorial rows={3} value={vision} onChange={(e) => setVision(e.target.value)} />
+      </Field>
+      <OutcomesEditor sectionId="vision-section-outcomes" outcomes={outcomes} onChange={setOutcomes} error={errors.outcomes} />
+      {act.shown ? (
+        <Banner tone="danger" live="assertive" title={act.shown.title} actions={act.shown.hint ? <HintAction hint={act.shown.hint} /> : undefined}>
+          <span className="whitespace-pre-line">{act.shown.message}</span>
+        </Banner>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-3">
+        <Button variant="primary" type="submit" loading={act.pending} disabled={!dirty}>
+          Save changes
+        </Button>
+        <Button variant="ghost" onClick={discard} disabled={!dirty || act.pending}>
+          Discard changes
+        </Button>
+        <Text as="span" size="body-sm" tone="muted" aria-live="polite">
+          {dirty ? `Unsaved: ${[changed.name && "name", changed.vision && "vision", changed.outcomes && "outcomes"].filter(Boolean).join(", ")}` : `Revision ${project.revision}`}
+        </Text>
+      </div>
+    </form>
   );
 }
 
@@ -306,15 +338,17 @@ function Epics({ status }: { status: Status }) {
   };
 
   return (
-    <section id="epics" aria-labelledby="epics-title" className="flex scroll-mt-6 flex-col gap-5">
-      <div className="flex flex-col gap-3 border-b border-line pb-3">
+    <section id="epics" aria-labelledby="epics-title" className="flex scroll-mt-6 flex-col gap-4 border-t border-line-strong pt-6">
+      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="flex max-w-reading flex-col gap-1">
           <Heading level={2} id="epics-title">
             Epics
           </Heading>
-          <Text tone="muted">The larger capabilities that make up the product. Each holds the slices of intent that deliver it; you mark each slice ready to build on its own.</Text>
+          <Text size="body-sm" tone="muted">
+            The larger capabilities that make up the product. Each holds the slices of intent that deliver it; you mark each slice ready to build on its own.
+          </Text>
         </div>
-        <Button size="sm" variant="ghost" className="self-start" onClick={() => setSheet({ mode: "add" })}>
+        <Button size="sm" onClick={() => setSheet({ mode: "add" })}>
           <Plus aria-hidden="true" />
           Add an epic
         </Button>
@@ -340,18 +374,20 @@ function Epics({ status }: { status: Status }) {
                     <EpicStatusPill status={epic.status} size="sm" />
                     {epic.issue ? <IssueNumber number={epic.issue} url={epic.url} /> : null}
                   </div>
-                  {criteria ? (
-                    <ul className="flex flex-col gap-0.5 pl-0.5">
-                      {criteria.map((c) => (
-                        <li key={c} className="text-body-sm text-ink-muted">
-                          {c}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
                   <Text size="body-sm" tone="muted">
                     {slices.length ? `Slices: ${slices.map((s) => s.title).join(", ")}.` : "No slices yet."}
                   </Text>
+                  {criteria?.length ? (
+                    <Fold label={`Done when: ${plural(criteria.length, "criterion", "criteria")}`}>
+                      <ul className="flex flex-col gap-0.5 pl-6">
+                        {criteria.map((c) => (
+                          <li key={c} className="text-body-sm text-ink-muted">
+                            {c}
+                          </li>
+                        ))}
+                      </ul>
+                    </Fold>
+                  ) : null}
                 </div>
                 <div className="flex flex-wrap items-start justify-end gap-2">
                   <Button size="sm" onClick={() => setNewSlice(epic.epic_id)}>

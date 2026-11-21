@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
-import { CircleCheck, CircleDashed, GitBranch, PenLine, RefreshCw, TriangleAlert, Upload } from "lucide-react";
+import { CircleCheck, CircleDashed, GitBranch, PenLine, RefreshCw, TriangleAlert } from "lucide-react";
 import { Button, Heading, RelativeTime, StatusPill, Text } from "@mach/ui";
 import type { PrincipleList } from "@mach/ui/api";
 import { IssueLink } from "../../shared/IssueLink";
-import { countWords, publishOffered, stateLook, type PublishState } from "./model";
+import { countWords, stateLook, type PublishState } from "./model";
 
 const glyphs: Record<(typeof stateLook)[PublishState]["glyph"], ReactNode> = {
   dashed: <CircleDashed aria-hidden="true" />,
@@ -37,15 +37,15 @@ function explanation(state: PublishState, list: PrincipleList): string {
 }
 
 /**
- * Where the principles stand with the builders: the engine's flags as a word, a shape and a tone,
- * the facts of the last publish, and the one act that moves it on.
+ * Where the principles stand with the builders, for the narrow pane (M16 layout): the engine's flags
+ * as a word, a shape and a tone, what that means, and the facts of the last publish. The act that
+ * moves it on (publish) is in the page's context row, so it is in view whichever part is open.
  */
 export function PublishedPanel({
   state,
   list,
   active,
   retired,
-  onPublish,
   checking,
   onCheckGithub,
 }: {
@@ -53,7 +53,6 @@ export function PublishedPanel({
   list: PrincipleList;
   active: number;
   retired: number;
-  onPublish: () => void;
   checking: boolean;
   onCheckGithub: () => void;
 }) {
@@ -61,30 +60,20 @@ export function PublishedPanel({
   const p = list.published;
   const readAt = p.github?.read_at ?? null;
   return (
-    <section aria-labelledby="principles-builders" className="flex flex-col gap-4 rounded-md border border-line bg-surface px-6 py-5">
-      <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-4">
-        <div className="flex max-w-reading min-w-0 flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-3">
-            <Heading level={2} size="title-3" id="principles-builders">
-              With the builders
-            </Heading>
-            <StatusPill tone={look.tone} icon={glyphs[look.glyph]} className={state === "never-published" ? "border-dashed" : undefined}>
-              {look.word}
-            </StatusPill>
-          </div>
-          <Text tone="muted">{explanation(state, list)}</Text>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {publishOffered(state) ? (
-            <Button variant={state === "newer-elsewhere" ? "secondary" : "primary"} onClick={onPublish}>
-              <Upload aria-hidden="true" />
-              {state === "unfinished" ? "Finish publishing" : state === "unpublished" ? "Publish the changes" : "Publish the principles"}
-            </Button>
-          ) : null}
-        </div>
+    <section aria-labelledby="principles-builders" className="flex flex-col gap-4">
+      <div className="flex min-w-0 flex-col gap-2">
+        <Heading level={2} size="title-3" id="principles-builders">
+          With the builders
+        </Heading>
+        <StatusPill tone={look.tone} icon={glyphs[look.glyph]} className={state === "never-published" ? "self-start border-dashed" : "self-start"}>
+          {look.word}
+        </StatusPill>
+        <Text size="body-sm" tone="muted">
+          {explanation(state, list)}
+        </Text>
       </div>
 
-      <dl className="grid grid-cols-[minmax(0,11rem)_minmax(0,1fr)] gap-x-6 gap-y-1.5 border-t border-line pt-4 text-body-sm">
+      <dl className="grid grid-cols-[minmax(0,7.5rem)_minmax(0,1fr)] gap-x-4 gap-y-1.5 border-t border-line pt-4 text-body-sm">
         <dt className="text-ink-muted">Here</dt>
         <dd className="text-ink">{countWords(active, retired)}</dd>
         <dt className="text-ink-muted">Published version</dt>
