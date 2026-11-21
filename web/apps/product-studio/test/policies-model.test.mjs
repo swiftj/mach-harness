@@ -13,11 +13,15 @@ import {
   concernState,
   openConcerns,
   otherProblems,
+  packAnswerSummary,
   packRow,
   packState,
+  packSummary,
   policyRows,
   principleAnswerWords,
   principleRows,
+  principleSummary,
+  settledConcerns,
   sliceTabState,
   slicesAnsweredUnderOlder,
 } from "../src/features/policies/model.ts";
@@ -214,4 +218,37 @@ test("an owner named by login: the name is checked, or the acceptance is refused
   const refused = fixture("policy.accept.refused-owner");
   assert.equal(refused.data, null);
   assert.match(refused.refused, /is not one of the people who may accept this concern: the pack's owner names @dana-dpo/);
+});
+
+/* M16 layout: each row's one-line summary, from the engine's answers only */
+
+test("packs page rows: owner, reach and statements; a malformed pack points to its reasons above, which never fold", () => {
+  const [row] = data("policy.list").packs.map(packRow);
+  assert.equal(packSummary(row), "Owner: Data protection officer (@acme/privacy). Every slice. 2 statements.");
+  const malformed = data("policy.list.problems").packs.map(packRow).find((r) => r.problems.length);
+  assert.equal(packSummary(malformed), "1 reason it cannot be read, shown above");
+  assert.equal(packSummary({ ...row, owner: null, statements: [row.statements[0]] }), "Owner: not recorded. Every slice. 1 statement.");
+});
+
+test("slice page pack rows: followed, an open concern shown above, an accepted one and one met by changing the spec", () => {
+  const followed = policyRows(data("slice.show.policy-followed").spec.model.policies)[0];
+  assert.match(packAnswerSummary(followed), /^Followed\. Answered under version [0-9a-f]+\.$/);
+  assert.deepEqual(settledConcerns(followed), []);
+  const open = policyRows(data("slice.show.open-concern").spec.model.policies)[0];
+  assert.equal(packAnswerSummary(open), "1 concern: 1 waits for its owner (shown above). Answered under version b7b600b3e580.");
+  assert.deepEqual(settledConcerns(open), []);
+  const accepted = policyRows(data("slice.show.concern-accepted").spec.model.policies)[0];
+  assert.match(packAnswerSummary(accepted), /^1 concern: 1 accepted by its owner\. Answered under version /);
+  assert.equal(settledConcerns(accepted).length, 1);
+  const changed = policyRows(data("slice.show.concern-spec-changed").spec.model.policies)[0];
+  assert.match(packAnswerSummary(changed), /^1 concern: 1 met by changing the spec\. /);
+});
+
+test("principle rows: what upholds it, or whether a reason is recorded, never the reason itself in the summary", () => {
+  const rows = principleRows(data("slice.show.open-concern").spec.model.principles);
+  assert.equal(principleSummary(rows[0]), `Upheld by ${rows[0].upheldBy.join(", ")}`);
+  assert.equal(principleSummary({ ...rows[0], upheldBy: [] }), "What upholds it is not recorded");
+  assert.equal(principleSummary({ ...rows[0], answer: "does_not_apply", reason: "No email" }), "Why it does not apply is recorded");
+  assert.equal(principleSummary({ ...rows[0], answer: "does_not_apply", reason: null }), "Why it does not apply is not recorded");
+  assert.equal(principleSummary({ ...rows[0], answer: "exception", reason: "For the pilot" }), "Your exception, in your own words");
 });
