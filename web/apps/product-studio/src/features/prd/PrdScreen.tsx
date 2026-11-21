@@ -88,7 +88,7 @@ export function PrdScreen() {
 /** The slim context row: the PRD's ID, its file name as the page's h1, and what the page is for behind "About this page". */
 function PrdFrame({ prdId, title, children }: { prdId: string; title: string; children: ReactNode }) {
   return (
-    <WorkScreen header={<ContextRow identity={<ArtifactId plain>{prdId}</ArtifactId>} title={title} about={about} aboutLabel="About this page" />}>
+    <WorkScreen header={<ContextRow identity={<ArtifactId plain>{prdId}</ArtifactId>} title={title} about={about} />}>
       {children}
     </WorkScreen>
   );

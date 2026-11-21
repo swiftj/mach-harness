@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { checkDetail, viewOf } from "../src/features/spec/specModel.ts";
+import { viewOf } from "../src/features/spec/specModel.ts";
 import { docSections } from "../src/features/interview/model.ts";
 
 test("the section list chooses the view: the why and the source are views, every other section is the specification", () => {
@@ -15,11 +15,13 @@ test("the section list chooses the view: the why and the source are views, every
   }
 });
 
-test("the check's sentence names MACH, never the engine, and keeps the rest of its words", () => {
-  assert.equal(checkDetail("The engine's check found problems in the draft."), "MACH's check found problems in the draft.");
-  assert.equal(checkDetail("The engine's check passed and you approved this slice."), "MACH's check passed and you approved this slice.");
-  assert.equal(checkDetail("The spec is well formed, but it cannot be approved while questions are open."), "The spec is well formed, but it cannot be approved while questions are open.");
-  assert.equal(checkDetail("The interviewer writes the spec once the questions are settled."), "The interviewer writes the spec once the questions are settled.");
+test("the check's sentence names MACH, never the engine", () => {
+  // checkVerdict (in @mach/ui) writes the sentence; its detail strings are what a person reads.
+  const source = readFileSync(new URL("../../../packages/ui/src/spec/check.tsx", import.meta.url), "utf8");
+  const details = [...source.matchAll(/detail: "([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(details.includes("MACH's check found problems in the draft."));
+  assert.ok(details.length >= 5);
+  for (const detail of details) assert.doesNotMatch(detail, /engine/i, detail);
 });
 
 test("a slice has one row of page tabs: the specification screen no longer has its own tabs", () => {

@@ -125,7 +125,7 @@ function RecordedVerdict({ verdict, stale, ideaId }: { verdict: NonNullable<Idea
     return (
       <div className="flex flex-col gap-3">
         <Banner tone="warning" title="This verdict no longer holds">
-          {verdict.stale_note ?? "The brief changed after this verdict was recorded."} Ask yourself again, and record the verdict on the brief as it is now.
+          {verdict.stale_note ? `${verdict.stale_note} Ask yourself again.` : "The brief changed after this verdict was recorded. Ask yourself again, and record the verdict on the brief as it is now."}
         </Banner>
         {/* The old verdict is reference now: the act is a new verdict, so who gave the old one and why fold away. */}
         <Fold label={`The verdict recorded before: ${decisionWord(verdict.decision)}, with its reason`}>{details}</Fold>
@@ -253,7 +253,9 @@ function VerdictForm({
         </Text>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="submit">Record the verdict</Button>
+          <Button type="submit" data-part-act="">
+            Record the verdict
+          </Button>
           {onCancel ? (
             <Button variant="ghost" onClick={onCancel}>
               Keep the verdict as it is

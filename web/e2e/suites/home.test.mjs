@@ -464,8 +464,8 @@ test("the interview: the question takes the larger half, the slice builds up bes
     await ask.getByRole("textbox", { name: /Or answer in your own words/ }).waitFor();
     await ask.getByText("Question 1", { exact: true }).waitFor();
     // The slice as a readable document, with the engine's check.
-    await doc.getByRole("heading", { level: 2 }).waitFor();
-    await doc.getByRole("region", { name: "Engine check" }).waitFor();
+    await doc.getByRole("heading", { level: 2 }).filter({ hasNotText: /^Check$/ }).first().waitFor();
+    await doc.getByRole("heading", { name: "Check", exact: true }).waitFor();
 
     // Answering moves on; what was settled is listed under the question.
     await ask.getByRole("button", { name: "Yes, accept" }).click();
@@ -521,12 +521,16 @@ test("without GitHub, the slice is saved to a folder and the engine's two ways o
     await page.getByRole("main").getByRole("button", { name: "Mark ready to build" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Mark ready to build" }).click();
     const done = page.getByRole("dialog", { name: "SLICE-001 is ready to build" });
-    await done.getByText("Saved to a folder", { exact: true }).waitFor();
-    await done.getByText("You are not signed in to GitHub on this computer.", { exact: true }).waitFor();
+    // Saved, where, and the next step (the M16 dialog's three rows); why it went to a folder is the reference, folded.
+    await done.getByText("In a folder, not on GitHub", { exact: true }).waitFor();
     await done.getByText("/project/.factory/studio/draft/product/ready/SLICE-001", { exact: true }).waitFor();
     for (const way of ["Add this folder to the project's repository; the builders take it from there.", "Or hand the folder to the engineer, who brings it in with MACH."]) {
-      await done.getByRole("listitem").filter({ hasText: way }).waitFor();
+      await done.getByText(way, { exact: true }).waitFor();
     }
+    const why = done.getByRole("button", { name: "Why it went to a folder" });
+    assert.equal(await why.getAttribute("aria-expanded"), "false");
+    await why.click();
+    await done.getByText("You are not signed in to GitHub on this computer.", { exact: true }).waitFor();
     assert.equal(await done.getByRole("link").count(), 0, "no issue link for a folder");
     await clean(watched);
   } finally {

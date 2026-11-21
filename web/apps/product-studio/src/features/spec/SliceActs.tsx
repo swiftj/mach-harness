@@ -244,7 +244,7 @@ function PicturePaths({ mocks }: { mocks: MocksToCommit }) {
         Or hand the folder to an engineer to add.
       </Text>
       {names.length ? (
-        <Fold label={names.length === 1 ? "The picture\u2019s file name" : `The ${names.length} pictures\u2019 file names`}>
+        <Fold label={`File names: ${names.length}`}>
           <ul className="flex flex-col gap-1 text-body-sm">
             {names.map((name) => (
               <li key={name} translate="no" className="break-all font-mono">

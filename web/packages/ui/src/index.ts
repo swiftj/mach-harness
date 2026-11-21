@@ -8,6 +8,7 @@
  */
 export * from "./lib/cn";
 export * from "./lib/format";
+export * from "./lib/scroll-edges";
 export * from "./tokens/tokens";
 export * from "./theme/ThemeProvider";
 export * from "./motion/motion";

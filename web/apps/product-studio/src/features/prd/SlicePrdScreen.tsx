@@ -12,7 +12,6 @@ import {
   ErrorState,
   Heading,
   LoadingState,
-  SliceStatusPill,
   StatusPill,
   Text,
   describeError,
@@ -24,12 +23,12 @@ import { useEngineAct } from "../../api/act";
 import { interviewCapability } from "../../api/session";
 import { useSession } from "../../api/store";
 import { useSliceShow } from "../../api/useSliceShow";
-import { SliceSections } from "../../shared/SliceSections";
 import { Fold } from "../../shared/layout/Fold";
 import { SectionNav } from "../../shared/layout/SectionNav";
-import { ContextRow, OnePane, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
+import { OnePane, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
 import { answerGroups, answerSections, confirmArgs, confirmLabel, fencedLines, quote, quotedCount, rangeWords, type AnswerGroups } from "./model";
 import { DataNotice, PrdQuote, linesLabel } from "./parts";
+import { SliceContextRow } from "../../shared/SliceContextRow";
 
 const about = "The PRD's lines this slice rests on, and the answers drafted from them. Accept them, or set some aside to discuss in the interview.";
 
@@ -86,31 +85,11 @@ export function SlicePrdScreen() {
     );
   }
   return (
-    <WorkScreen header={<SliceContext sliceId={sliceId} slice={slice} />}>
+    <WorkScreen header={<SliceContextRow sliceId={sliceId} slice={slice} title="From the PRD" about={about} />}>
       <OnePane label="From the PRD" width="reading">
         {body}
       </OnePane>
     </WorkScreen>
-  );
-}
-
-/** The slim context row of a slice's page: its ID, title and state, the page's h1, the act for the state, and the slice's pages as tabs. */
-function SliceContext({ sliceId, slice, actions }: { sliceId: string; slice?: WorkOrder | null; actions?: ReactNode }) {
-  return (
-    <ContextRow
-      identity={
-        <>
-          <ArtifactId>{sliceId}</ArtifactId>
-          {slice?.title ? <span>{slice.title}</span> : null}
-          {slice ? <SliceStatusPill status={slice.status} size="sm" /> : null}
-        </>
-      }
-      title="From the PRD"
-      about={about}
-      aboutLabel="About this page"
-      actions={actions}
-      below={<SliceSections sliceId={sliceId} fromPrd={slice?.source?.kind === "prd"} />}
-    />
   );
 }
 
@@ -159,7 +138,7 @@ function FromPrd({ sliceId, slice, prd, problems, onConfirmed }: { sliceId: stri
   ) : null;
 
   return (
-    <WorkScreen header={<SliceContext sliceId={sliceId} slice={slice} actions={action} />}>
+    <WorkScreen header={<SliceContextRow sliceId={sliceId} slice={slice} title="From the PRD" about={about} actions={action} />}>
       <WorkPanes>
         <WorkPane label={`${sliceId}, from the PRD`}>
           <div className="flex max-w-[48rem] flex-col gap-10">

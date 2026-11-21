@@ -226,7 +226,7 @@ test("packs page rows: owner, reach and statements; a malformed pack points to i
   const [row] = data("policy.list").packs.map(packRow);
   assert.equal(packSummary(row), "Owner: Data protection officer (@acme/privacy). Every slice. 2 statements.");
   const malformed = data("policy.list.problems").packs.map(packRow).find((r) => r.problems.length);
-  assert.equal(packSummary(malformed), "1 reason it cannot be read, shown above");
+  assert.equal(packSummary(malformed), "1 reason it cannot be read, shown under its name");
   assert.equal(packSummary({ ...row, owner: null, statements: [row.statements[0]] }), "Owner: not recorded. Every slice. 1 statement.");
 });
 

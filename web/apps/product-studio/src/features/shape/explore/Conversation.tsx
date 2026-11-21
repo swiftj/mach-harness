@@ -19,6 +19,22 @@ export function conversationBusy(conv: ConversationController): boolean {
 }
 
 /**
+ * The conversation's heading and its own acts, given to its pane as the pane's header so they stay at the top while
+ * the turns scroll under them.
+ */
+export function ConversationHeader({ conv }: { conv: ConversationController }) {
+  const busy = conversationBusy(conv);
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+      <Heading level={2} size="title-3" id="conversation-title">
+        The conversation
+      </Heading>
+      <ConversationActions conv={conv} busy={busy} />
+    </div>
+  );
+}
+
+/**
  * The guided conversation about one idea: open questions, one at a time, answered in the product manager's own words.
  * It runs through the Shape conversation exactly as the slice interview runs (same phases, events and model). It can
  * write this idea's brief and case and record what it looked up; it cannot set the stage, so "Start exploring" is its
@@ -34,13 +50,6 @@ export function Conversation({ conv, row }: { conv: ConversationController; row:
   useNewestInView(sectionRef, `${conv.phase} ${conv.model.turn} ${conv.model.turnRunning} ${conv.model.awaiting ?? ""} ${conv.model.ended ? "ended" : ""}`);
   return (
     <section ref={sectionRef} aria-labelledby="conversation-title" className="flex min-w-0 flex-col gap-6">
-      {/* The heading and the conversation's own acts stay at the top of its pane while the turns scroll under them. */}
-      <div className="sticky -top-6 z-10 -mt-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-line bg-canvas pb-3 pt-5 max-[1023px]:static [@media(max-height:619px)]:static">
-        <Heading level={2} size="title-3" id="conversation-title">
-          The conversation
-        </Heading>
-        <ConversationActions conv={conv} busy={busy} />
-      </div>
       {mode === "new" ? <StartExploring row={row} busy={busy} /> : null}
       {shaped ? (
         <Banner

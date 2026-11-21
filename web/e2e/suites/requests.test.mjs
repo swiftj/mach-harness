@@ -30,6 +30,9 @@ async function open(scenario, extra) {
   await watched.page.goto(server.url(scenario, extra));
   await watched.page.getByRole("heading", { level: 1, name: "Decisions" }).waitFor();
   await settle(watched.page);
+  // The Decisions groups are parts, one open at a time (M16 layout): open the requests group if it is closed.
+  const part = watched.page.getByRole("button", { name: /^Requests/ });
+  if ((await part.count()) && (await part.getAttribute("aria-expanded")) === "false") await part.click();
   return watched;
 }
 
@@ -53,8 +56,13 @@ test("every state of D8 renders with its own buttons", async () => {
   const { page } = watched;
   try {
     const section = page.locator("section#requests");
-    assert.equal(await section.getByRole("heading", { level: 2 }).innerText(), "Requests (6)");
-    assert.equal(await section.getByRole("article").count(), 6);
+    // The group's row: its name and its count in words (M16 layout).
+    const row = page.getByRole("heading", { level: 2, name: /^Requests/ });
+    // The row's count is the engine's list (open requests, including one in the idea template, #48); each is a card.
+    const shown = await section.getByRole("article").count();
+    assert.match(await row.innerText(), new RegExp(`^Requests\\s+${shown} requests, \\d+ you can pick up`));
+    assert.equal(await row.getByRole("button").getAttribute("aria-expanded"), "true");
+    assert.equal(await section.getByRole("article").count(), 7, "six requests in their states, and #48 filed in the idea template (M15)");
     assert.match(await section.innerText(), /2 updates to GitHub are waiting and will be sent on the next refresh\./);
 
     // Accepted, not picked up.
@@ -93,7 +101,7 @@ test("every state of D8 renders with its own buttons", async () => {
     assert.match(await card(page, 46).innerText(), /Handled automatically by engineering/);
 
     // The group is listed among the kinds of decision.
-    assert.equal(await page.getByRole("navigation", { name: "Decisions by kind" }).getByRole("link", { name: /^Requests/ }).count(), 1);
+    assert.equal(await page.getByRole("list", { name: "Decisions by kind" }).getByRole("button", { name: /^Requests/ }).count(), 1);
     await clean(watched);
   } finally {
     await watched.context.close();

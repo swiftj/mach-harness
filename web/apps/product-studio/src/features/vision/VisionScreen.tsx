@@ -57,7 +57,7 @@ function Vision({ status }: { status: Status }) {
   const project = status.project;
   if (!project) {
     return (
-      <WorkScreen header={<ContextRow title="Define the project" about="Start with what the product is for. You can refine every part of this later." aboutLabel="About this page" />}>
+      <WorkScreen header={<ContextRow title="Define the project" about="Start with what the product is for. You can refine every part of this later." />}>
         <WorkPanes>
           <WorkPane label="The project">
             <ProjectCreator />
@@ -83,7 +83,6 @@ function Vision({ status }: { status: Status }) {
           }
           title="Vision and outcomes"
           about={LEAD}
-          aboutLabel="About this page"
         />
       }
     >

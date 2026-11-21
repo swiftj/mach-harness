@@ -243,7 +243,6 @@ export function InboxScreen() {
       header={
         <ContextRow
           title="Decisions"
-          aboutLabel="About decisions"
           about="Things only you can decide, most urgent first. Nothing here is decided for you, and every choice asks you to confirm it."
           trail={
             total > 0 ? (

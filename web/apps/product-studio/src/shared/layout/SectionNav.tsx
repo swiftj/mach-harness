@@ -18,12 +18,25 @@ export interface SectionNavItem {
   note?: ReactNode;
 }
 
-export function SectionNav({ label, items, onGo, title = "On this page" }: { label: string; items: SectionNavItem[]; onGo?: (id: string) => void; title?: string }) {
+export function SectionNav({
+  label,
+  items,
+  onGo,
+  title = "On this page",
+  columns = 1,
+}: {
+  label: string;
+  items: SectionNavItem[];
+  onGo?: (id: string) => void;
+  title?: string;
+  /** Two columns where the list sits above a document in the same pane, so the document keeps most of the height. */
+  columns?: 1 | 2;
+}) {
   const [current, choose] = useCurrentSection(items.map((i) => i.id));
   return (
     <nav aria-label={label} className="flex flex-col gap-1">
       <p className="px-2 pb-1 text-label text-ink-muted">{title}</p>
-      <ul className="flex flex-col">
+      <ul className={columns === 2 ? "grid grid-cols-2 gap-x-2" : "flex flex-col"}>
         {items.map((item) => {
           const here = item.id === current;
           return (

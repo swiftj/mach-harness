@@ -72,23 +72,12 @@ export function LookedUp({ lookups, board }: { lookups: IdeaLookups | null; boar
   );
 }
 
-/** One group, folded behind its name and how many it holds (M16 layout), so its state shows without opening it. */
+/** One group, folded behind its name and how many it holds (M16 layout), as a heading, so its state shows without opening it. */
 function Group({ group, children }: { group: LookupGroup; children: ReactNode }) {
   const n = group.entries.length;
   return (
-    <section aria-label={group.title}>
-      <Fold
-        boxed
-        label={
-          <span className="flex flex-wrap items-center gap-2 text-ink">
-            {group.title}
-            <Badge>
-              {n}
-              <span className="sr-only"> found</span>
-            </Badge>
-          </span>
-        }
-      >
+    <div>
+      <Fold boxed heading={3} label={`${group.title}: ${n}`}>
         <div className="flex flex-col gap-2">
           <Text size="caption" tone="subtle">
             {group.about}
@@ -102,7 +91,7 @@ function Group({ group, children }: { group: LookupGroup; children: ReactNode })
           )}
         </div>
       </Fold>
-    </section>
+    </div>
   );
 }
 

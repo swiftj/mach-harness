@@ -25,7 +25,7 @@ import type { SliceShow, SpecModel } from "@mach/ui/api";
 import { type SliceShowState } from "../../api/useSliceShow";
 import { matrixCell } from "../spec/SpecSections";
 import { SectionNav, type SectionNavItem } from "../../shared/layout/SectionNav";
-import { WorkPane } from "../../shared/layout/WorkScreen";
+import { ScrollRegion, WorkPane } from "../../shared/layout/WorkScreen";
 import { docSections } from "./model";
 
 /** Every identifier in the draft: requirements, rules, decision rules, examples. */
@@ -77,37 +77,35 @@ export function SliceSoFar({ sliceId, show, epicTitle }: { sliceId: string; show
           ),
       }))
     : [];
-  return (
-    <aside aria-label="The slice so far" className="flex min-h-0 flex-col border-l border-line bg-surface max-[1023px]:border-l-0 max-[1023px]:border-t [@media(max-height:619px)]:border-l-0">
-      {data ? (
-        <div className="flex shrink-0 flex-col gap-2 border-b border-line px-10 pb-3 pt-4">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <Heading level={2} size="title-3" id="doc-check">
-              Check
-            </Heading>
-            <SliceStatusPill status={data.slice.status} size="sm" />
-            <CheckPill check={data.check} status={data.slice.status} size="sm" />
-            <span className="flex items-center gap-1.5 text-caption text-ink-subtle" role="status">
-              {show.loading ? (
-                <>
-                  <Spinner size="sm" />
-                  Updating
-                </>
-              ) : null}
-            </span>
-          </div>
-          {sections.length ? (
-            // Two columns of sections, so the document below keeps most of the height.
-            <div className="-mx-2 [&_ul]:grid [&_ul]:grid-cols-2 [&_ul]:gap-x-2">
-              <SectionNav label="Sections of the slice so far" title="In the slice so far" items={sections} />
-            </div>
+  const head = data ? (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <Heading level={2} size="title-3" id="doc-check">
+          Check
+        </Heading>
+        <SliceStatusPill status={data.slice.status} size="sm" />
+        <CheckPill check={data.check} status={data.slice.status} size="sm" />
+        <span className="flex items-center gap-1.5 text-caption text-ink-subtle" role="status">
+          {show.loading ? (
+            <>
+              <Spinner size="sm" />
+              Updating
+            </>
           ) : null}
+        </span>
+      </div>
+      {sections.length ? (
+        // Two columns of sections, so the document below keeps most of the height.
+        <div className="-mx-2">
+          <SectionNav label="Sections of the slice so far" title="In the slice so far" items={sections} columns={2} />
         </div>
       ) : null}
-      <WorkPane label="The slice so far, as written" width="content">
-        <SliceDocument sliceId={sliceId} show={show} epicTitle={epicTitle} added={added} />
-      </WorkPane>
-    </aside>
+    </div>
+  ) : undefined;
+  return (
+    <WorkPane side as="aside" label="The slice so far" header={head}>
+      <SliceDocument sliceId={sliceId} show={show} epicTitle={epicTitle} added={added} />
+    </WorkPane>
   );
 }
 
@@ -206,9 +204,7 @@ function SliceDocument({ sliceId, show, epicTitle, added }: { sliceId: string; s
 
       {matrix && matrix.rules.length ? (
         <DocSection id="doc-cases" title="Every case">
-          {/* A scrollable region must be reachable by keyboard (axe scrollable-region-focusable). */}
-          {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
-          <div className="overflow-x-auto rounded-md border border-line" tabIndex={0} role="region" aria-label="Every case, scrolls sideways when narrow">
+          <ScrollRegion framed label="Every case, scrolls sideways when narrow" className="rounded-md">
             <table className="w-full border-collapse text-left text-body-sm">
               <thead>
                 <tr className="border-b border-line bg-surface-sunken">
@@ -241,7 +237,7 @@ function SliceDocument({ sliceId, show, epicTitle, added }: { sliceId: string; s
                 ))}
               </tbody>
             </table>
-          </div>
+          </ScrollRegion>
         </DocSection>
       ) : null}
 

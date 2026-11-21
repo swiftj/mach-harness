@@ -11,7 +11,6 @@ import { ideaPath } from "../shell/steps";
 import { changeArgs, connections, epicOfRule, findRule, parseRule, standingWords } from "./model";
 
 const TITLE = "Change what exists";
-const ABOUT_LABEL = "About this page";
 const LEAD = "Start from a rule that has shipped. Its connected rules are carried in, and the change goes the same way as any idea.";
 
 /**
@@ -30,7 +29,7 @@ export function ChangeScreen() {
 
 function NoRule({ given }: { given: string | null }) {
   return (
-    <WorkScreen header={<ContextRow title={TITLE} about={LEAD} aboutLabel={ABOUT_LABEL} />}>
+    <WorkScreen header={<ContextRow title={TITLE} about={LEAD} />}>
       <OnePane label="Pick a rule">
         <EmptyState
           className="max-w-reading"
@@ -70,7 +69,6 @@ function ChangeRule({ rule, sliceId, epicParam }: { rule: string; sliceId: strin
           }
           title={TITLE}
           about={LEAD}
-          aboutLabel={ABOUT_LABEL}
         />
       }
     >
@@ -89,18 +87,19 @@ function ChangeBody({ rule, epicId, current, readProblem }: { rule: string; epic
   const found = findRule(current?.epic, rule);
   const links = found ? connections(found.rule) : [];
   return (
+    // One pane (M16 layout, never a second pane just to fill space): the form is short, so the rule and its
+    // connections sit under it, side by side, rather than beside a nearly empty wide pane.
     <WorkPanes>
-      <WorkPane label="Start an idea from this rule" width="reading">
-        <StartSection rule={rule} />
-      </WorkPane>
-      <WorkPane side label="The rule and its connections">
+      <WorkPane label="Start an idea from this rule">
         <div className="flex flex-col gap-8">
+        <StartSection rule={rule} />
+        <div className="grid grid-cols-2 gap-x-10 gap-y-8 border-t border-line pt-6">
           <section aria-labelledby="rule-heading" className="flex flex-col gap-3">
             <Heading level={2} size="title-3" id="rule-heading">
               The rule
             </Heading>
             {found ? (
-              <div className="flex flex-col gap-2 rounded-md border border-line bg-canvas px-4 py-3.5">
+              <div className="flex flex-col gap-2 rounded-md border border-line bg-surface px-4 py-3.5">
                 <span className="flex flex-wrap items-center gap-2">
                   <ArtifactId>{rule}</ArtifactId>
                   <StatusPill
@@ -190,6 +189,7 @@ function ChangeBody({ rule, epicId, current, readProblem }: { rule: string; epic
             </section>
           ) : null}
         </div>
+      </div>
       </WorkPane>
     </WorkPanes>
   );

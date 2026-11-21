@@ -191,7 +191,9 @@ function RecordForm({
         />
       </Field>
       <div className="flex flex-wrap items-center gap-3">
-        <Button onClick={check}>Record the look back on {item.id}</Button>
+        <Button onClick={check} data-part-act="">
+          Record the look back on {item.id}
+        </Button>
         {onCancel ? (
           <Button variant="ghost" onClick={onCancel}>
             Keep it as it is

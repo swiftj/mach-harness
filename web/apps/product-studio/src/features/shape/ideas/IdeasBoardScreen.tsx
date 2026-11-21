@@ -3,7 +3,7 @@ import { CircleAlert, Lightbulb, Plus } from "lucide-react";
 import { Badge, Banner, Button, EmptyState, ErrorState, Heading, Skeleton, Text, describeError } from "@mach/ui";
 import type { IdeaRow } from "@mach/ui/api";
 import { Fold } from "../../../shared/layout/Fold";
-import { ContextRow, OnePane, WorkScreen } from "../../../shared/layout/WorkScreen";
+import { ContextRow, OnePane, WorkBoard, WorkScreen } from "../../../shared/layout/WorkScreen";
 import { useIdeaBoard } from "../shell/useIdea";
 import { AddIdeaDialog } from "./AddIdeaDialog";
 import { IdeaCard } from "./IdeaCard";
@@ -38,13 +38,13 @@ export function IdeasBoardScreen() {
     </Button>
   );
   const dialog = <AddIdeaDialog open={adding} onOpenChange={setAdding} onAdded={reload} />;
-  const header = (actions?: ReactNode, identity?: ReactNode) => <ContextRow identity={identity} title={TITLE} about={ABOUT} aboutLabel="About Shape" actions={actions} />;
+  const header = (actions?: ReactNode, identity?: ReactNode) => <ContextRow identity={identity} title={TITLE} about={ABOUT} actions={actions} />;
 
   if (loading) {
     return (
       <WorkScreen header={header()}>
         <BoardArea>
-          <div role="status" aria-label="Reading your ideas" aria-busy="true" className="grid min-w-[72rem] grid-cols-5 gap-3">
+          <div role="status" aria-label="Reading your ideas" aria-busy="true" className="grid min-w-[58rem] grid-cols-5 gap-3">
             {stages.map((stage) => (
               <div key={stage} className="flex flex-col gap-3 rounded-md bg-surface-sunken p-3">
                 <Skeleton className="h-5 w-24" />
@@ -92,7 +92,7 @@ export function IdeasBoardScreen() {
           board.unreadable?.length ? (
             <Banner tone="warning" title={board.unreadable.length === 1 ? "1 idea could not be read" : `${board.unreadable.length} ideas could not be read`}>
               <span className="block">The rest of the board is shown as recorded. The files that could not be read are left as they are.</span>
-              <Fold label="Which files" className="mt-2">
+              <Fold label={`Files that could not be read: ${board.unreadable.length}`} className="mt-2">
                 <ul className="flex flex-col gap-0.5 font-mono text-mono">
                   {board.unreadable.map((file) => (
                     <li key={file} translate="no">
@@ -108,7 +108,7 @@ export function IdeasBoardScreen() {
         <h2 id="ideas-heading" className="sr-only">
           Ideas
         </h2>
-        <div className="grid min-w-[72rem] grid-cols-5 gap-3">
+        <div className="grid min-w-[58rem] grid-cols-5 gap-3">
           {columns.map((column) => (
             <StageColumn key={column.stage} column={column} />
           ))}
@@ -120,26 +120,12 @@ export function IdeasBoardScreen() {
   );
 }
 
-/**
- * The board's area under the context row (M16 layout, style guide 8.9): the columns in one region that scrolls on its
- * own, sideways when the window is narrower than the five columns and down when a column holds more than fits, with
- * each column's heading kept in view at the top. In a window narrower than 1,024 or shorter than 620 the region grows
- * with its content and the page scrolls; it still scrolls sideways inside itself.
- */
+/** The board's area (style guide 8.9): the columns in one region that scrolls on its own, under the "more below" rule. */
 function BoardArea({ above, children }: { above?: ReactNode; children: ReactNode }) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 px-10 pb-4 pt-5 max-[1023px]:flex-none [@media(max-height:619px)]:flex-none">
-      {above}
-      <section
-        aria-label="Ideas board, scrolls sideways when narrow"
-        // The board scrolls inside its own region, which must be reachable by keyboard.
-        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-        tabIndex={0}
-        className="flex min-h-0 flex-1 flex-col gap-6 overflow-auto overscroll-contain rounded-md pb-2 max-[1023px]:flex-none [@media(max-height:619px)]:flex-none"
-      >
-        {children}
-      </section>
-    </div>
+    <WorkBoard label="Ideas board" above={above}>
+      {children}
+    </WorkBoard>
   );
 }
 

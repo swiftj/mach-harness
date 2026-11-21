@@ -30,7 +30,6 @@ export function PoliciesScreen() {
       header={
         <ContextRow
           title="Policy packs"
-          aboutLabel="About this page"
           about="The rules your organisation keeps for every product, each with an owner. Every slice says how it follows the packs that apply to it."
         />
       }
@@ -62,7 +61,6 @@ function Packs({ list, titles }: { list: PolicyList; titles: Parameters<typeof s
   const rows = list.packs.map(packRow);
   const problems = otherProblems(list);
   const older = slicesAnsweredUnderOlder(list, titles);
-  const malformed = rows.filter((row) => row.problems.length);
   // The first pack that can be read opens on arrival, so a pack's statements are in view; each row says its state.
   const [open, setOpen] = useState<string | null>(() => rows.find((row) => !row.problems.length)?.id ?? null);
 
@@ -83,10 +81,6 @@ function Packs({ list, titles }: { list: PolicyList; titles: Parameters<typeof s
           <p className="mt-1">An engineer fixes this in the repository.</p>
         </Banner>
       ) : null}
-
-      {malformed.map((row) => (
-        <PackProblems key={row.id} row={row} />
-      ))}
 
       {older.length ? (
         <section aria-labelledby="older-title" className="flex flex-col gap-3 rounded-md border border-warning-line bg-warning-soft px-5 py-4">
@@ -136,7 +130,7 @@ function Packs({ list, titles }: { list: PolicyList; titles: Parameters<typeof s
   );
 }
 
-/** A pack that cannot be read: its reasons, never folded, above the rows. */
+/** A pack that cannot be read: its reasons, under its own row and never folded, open or closed. */
 function PackProblems({ row }: { row: PackRow }) {
   return (
     <section aria-label={`Why ${row.title ?? row.id} cannot be read`} className="flex flex-col gap-2 rounded-md border border-danger-line bg-danger-soft px-4 py-3">
@@ -160,6 +154,7 @@ function Pack({ row }: { row: PackRow }) {
       id={row.id}
       name={row.title ?? row.id}
       summary={packSummary(row)}
+      attention={row.problems.length ? <PackProblems row={row} /> : undefined}
       status={
         <>
           <ArtifactId>{row.id}</ArtifactId>

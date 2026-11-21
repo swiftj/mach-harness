@@ -4,6 +4,7 @@ import { ArtifactId, RelativeTime, StateGlyph, cn, type GlyphShape } from "@mach
 import type { IdeaChain } from "@mach/ui/api";
 import { IssueLink } from "../../../shared/IssueLink";
 import { progressLook, resultLook, settledWords, type ChainLine as Line } from "./model";
+import { ScrollRegion } from "../../../shared/layout/WorkScreen";
 
 /**
  * One outcome's line, left to right: the outcome and how we would know, each slice that serves it, its requirements
@@ -18,14 +19,8 @@ export function ChainLine({ line, label }: { line: Line; label: string }) {
   const rows = slices.length || 1;
   return (
     <div className="flex flex-col gap-2">
-      <div
-        role="region"
-        aria-labelledby={captionId}
-        // Reachable by keyboard so the line can be scrolled sideways when the window is narrow.
-        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-        tabIndex={0}
-        className="overflow-x-auto rounded-md pb-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-      >
+      {/* Scrolls sideways inside itself when the window is narrow; a tab stop only then ("more below" rule). */}
+      <ScrollRegion label={`${label}, scrolls sideways`} className="rounded-md pb-1">
         <table className="w-full min-w-[52rem] table-fixed border-separate border-spacing-0 text-left">
           <caption id={captionId} className="sr-only">
             {label}, from the outcome to the look back, left to right
@@ -94,7 +89,7 @@ export function ChainLine({ line, label }: { line: Line; label: string }) {
             })}
           </tbody>
         </table>
-      </div>
+      </ScrollRegion>
       {missing.rest.length ? <MissingList sentences={missing.rest} /> : null}
     </div>
   );
