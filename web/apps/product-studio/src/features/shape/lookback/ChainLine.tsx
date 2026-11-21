@@ -26,17 +26,17 @@ export function ChainLine({ line, label }: { line: Line; label: string }) {
         tabIndex={0}
         className="overflow-x-auto rounded-md pb-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
       >
-        <table className="w-full min-w-[64rem] table-fixed border-separate border-spacing-0 text-left">
+        <table className="w-full min-w-[52rem] table-fixed border-separate border-spacing-0 text-left">
           <caption id={captionId} className="sr-only">
             {label}, from the outcome to the look back, left to right
           </caption>
           <colgroup>
+            <col className="w-[16%]" />
+            <col className="w-[15%]" />
             <col className="w-[19%]" />
-            <col className="w-[17%]" />
-            <col className="w-[18%]" />
-            <col className="w-[14%]" />
-            <col className="w-[16%]" />
-            <col className="w-[16%]" />
+            <col className="w-[13%]" />
+            <col className="w-[22%]" />
+            <col className="w-[15%]" />
           </colgroup>
           <thead>
             <tr>

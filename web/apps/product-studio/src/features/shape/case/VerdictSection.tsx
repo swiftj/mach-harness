@@ -1,9 +1,10 @@
 import { useRef, useState } from "react";
 import { Link } from "react-router";
-import { Route, Scale, TriangleAlert } from "lucide-react";
-import { Banner, Button, ConfirmDialog, Field, Heading, Quote, RadioGroup, RelativeTime, StatusPill, Text, Textarea, toast } from "@mach/ui";
+import { Route } from "lucide-react";
+import { Banner, Button, ConfirmDialog, Field, Quote, RadioGroup, RelativeTime, Text, Textarea, toast } from "@mach/ui";
 import { failureText, type IdeaRow, type IdeaShow, type VerdictDecision, type VerdictRecorded } from "@mach/ui/api";
 import { useEngineAct } from "../../../api/act";
+import { Fold } from "../../../shared/layout/Fold";
 import { ideaPath } from "../shell/steps";
 import {
   decisionWord,
@@ -18,11 +19,11 @@ import {
   verdictState,
 } from "./model";
 
-/** Where focus goes once the form that opened the confirmation has closed. */
-const verdictHeading = () => document.getElementById("verdict-h");
+/** Where focus goes once the form that opened the confirmation has closed: the verdict part's own row. */
+const verdictHeading = () => document.getElementById("verdict-part")?.closest("li")?.querySelector<HTMLElement>("button") ?? null;
 
 /**
- * Part 3: the verdict, the product manager's alone.
+ * The body of the verdict part: the verdict, the product manager's alone. The part's row is its heading.
  *
  * Deliberate departure from the style guide (7.2, 8.1: "a person's main act is the primary button"): the three
  * choices have exactly equal weight, in a fixed order, none pre-selected, none larger or coloured, none a primary
@@ -40,15 +41,13 @@ export function VerdictSection({ row, show, onRecorded }: { row: IdeaRow; show: 
   const formOpen = !shaped && (state.kind !== "holds" || replacing);
 
   return (
-    <section aria-labelledby="verdict-h" className="flex flex-col gap-5 rounded-md border border-line bg-surface px-6 py-5">
-      <div className="flex flex-col gap-1.5">
-        <Heading level={2} size="title-2" id="verdict-h" tabIndex={-1} className="focus-visible:outline-none">
-          Your verdict
-        </Heading>
+    <div id="verdict-part" className="flex flex-col gap-5">
+      {/* With no verdict yet, the engine's note is the part's own summary, in the row just above. */}
+      {state.kind !== "none" ? (
         <Text size="body-sm" tone="muted" className="max-w-reading">
           {show.verdict_note}
         </Text>
-      </div>
+      ) : null}
 
       {lastRecorded?.recorded_without_github ? (
         <Banner tone="warning" title="Recorded without a GitHub name">
@@ -80,24 +79,24 @@ export function VerdictSection({ row, show, onRecorded }: { row: IdeaRow; show: 
           <Button onClick={() => setReplacing(true)}>Record a different verdict</Button>
         </div>
       )}
-    </section>
+    </div>
   );
 }
 
 /** A verdict already recorded: who, when, their reason quoted, the brief it was for, and whether it still holds. */
 function RecordedVerdict({ verdict, stale, ideaId }: { verdict: NonNullable<IdeaShow["verdict"]>; stale: boolean; ideaId: string }) {
   const consequence = verdictConsequence(verdict.decision);
-  return (
+  // The decision and whether it holds are the part's pills, in its row just above; the body says who, when and why.
+  const details = (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <StatusPill icon={<Scale aria-hidden="true" />}>{decisionWord(verdict.decision)}</StatusPill>
-        {stale ? (
-          <StatusPill tone="warning" icon={<TriangleAlert aria-hidden="true" />} className="border-dashed">
-            No longer holds
-          </StatusPill>
-        ) : null}
-      </div>
       <dl className="grid max-w-reading grid-cols-[minmax(0,10rem)_minmax(0,1fr)] gap-x-6 gap-y-1.5 text-body-sm">
+        {stale ? (
+          // Folded away under a new verdict, the old decision is said again here; while it holds, it is the row's pill.
+          <>
+            <dt className="text-ink-muted">Decision</dt>
+            <dd className="text-ink">{decisionWord(verdict.decision)}</dd>
+          </>
+        ) : null}
         <dt className="text-ink-muted">Recorded by</dt>
         <dd className="text-ink">
           {verdict.by ? (
@@ -120,25 +119,34 @@ function RecordedVerdict({ verdict, stale, ideaId }: { verdict: NonNullable<Idea
           <span className="whitespace-pre-wrap">{verdict.reason}</span>
         </Quote>
       ) : null}
-      {stale ? (
+    </div>
+  );
+  if (stale)
+    return (
+      <div className="flex flex-col gap-3">
         <Banner tone="warning" title="This verdict no longer holds">
           {verdict.stale_note ?? "The brief changed after this verdict was recorded."} Ask yourself again, and record the verdict on the brief as it is now.
         </Banner>
-      ) : (
-        <div className="flex max-w-reading flex-col gap-3">
-          <Text size="body-sm">{consequence.sentence}</Text>
-          {consequence.wayOn === "route" ? (
-            <div>
-              <Button asChild>
-                <Link to={ideaPath(ideaId, "route")}>
-                  <Route aria-hidden="true" />
-                  Go to Size and route
-                </Link>
-              </Button>
-            </div>
-          ) : null}
-        </div>
-      )}
+        {/* The old verdict is reference now: the act is a new verdict, so who gave the old one and why fold away. */}
+        <Fold label={`The verdict recorded before: ${decisionWord(verdict.decision)}, with its reason`}>{details}</Fold>
+      </div>
+    );
+  return (
+    <div className="flex flex-col gap-4">
+      {details}
+      <div className="flex max-w-reading flex-col gap-3">
+        <Text size="body-sm">{consequence.sentence}</Text>
+        {consequence.wayOn === "route" ? (
+          <div>
+            <Button asChild>
+              <Link to={ideaPath(ideaId, "route")}>
+                <Route aria-hidden="true" />
+                Go to Size and route
+              </Link>
+            </Button>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -195,8 +203,9 @@ function VerdictForm({
   return (
     <form
       noValidate
-      aria-labelledby="verdict-h"
-      className="flex flex-col gap-5 border-t border-line pt-5"
+      aria-label="Your verdict"
+      // Replacing a verdict that holds: a rule sets the new verdict apart from the one recorded above it.
+      className={onCancel ? "flex flex-col gap-5 border-t border-line pt-5" : "flex flex-col gap-5"}
       onSubmit={(event) => {
         event.preventDefault();
         ask();
@@ -226,7 +235,7 @@ function VerdictForm({
         <Textarea
           ref={reasonRef}
           editorial
-          rows={3}
+          rows={2}
           value={reason}
           onChange={(event) => {
             setReason(event.target.value);
@@ -235,19 +244,22 @@ function VerdictForm({
         />
       </Field>
 
-      <Text id="verdict-recorded-with" size="body-sm" tone="muted" className="max-w-reading whitespace-pre-line">
-        {recordedWithSentence(show.brief.revision, show.brief.changed_since_check)}
-        {/* Said before the click, in the engine's own words; Go stays one of three equal choices. */}
-        {show.acts.go.allowed ? null : `\n${show.acts.go.why ?? ""}`}
-      </Text>
+      {/* The sentence, then the act beside it on one row: said before the click, and the act in view with the choices. */}
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+        <Text id="verdict-recorded-with" size="body-sm" tone="muted" className="min-w-0 max-w-reading flex-1 basis-80 whitespace-pre-line">
+          {recordedWithSentence(show.brief.revision, show.brief.changed_since_check)}
+          {/* Said before the click, in the engine's own words; Go stays one of three equal choices. */}
+          {show.acts.go.allowed ? null : `\n${show.acts.go.why ?? ""}`}
+        </Text>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button type="submit">Record the verdict</Button>
-        {onCancel ? (
-          <Button variant="ghost" onClick={onCancel}>
-            Keep the verdict as it is
-          </Button>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="submit">Record the verdict</Button>
+          {onCancel ? (
+            <Button variant="ghost" onClick={onCancel}>
+              Keep the verdict as it is
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <ConfirmDialog

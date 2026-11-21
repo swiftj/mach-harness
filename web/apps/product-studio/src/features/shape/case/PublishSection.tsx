@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { CircleCheck, CircleDashed, FolderOpen, Hash, TriangleAlert, Upload } from "lucide-react";
-import { ConfirmDialog, Banner, Button, Heading, StatusPill, Text, toast } from "@mach/ui";
+import { ConfirmDialog, Banner, Button, StatusPill, Text, toast } from "@mach/ui";
 import { failureText, type IdeaRow, type IdeaShow } from "@mach/ui/api";
 import { useEngineAct } from "../../../api/act";
 import { useStatus } from "../../../api/store";
@@ -9,7 +9,8 @@ import { IssueLink, SignInNote } from "../../../shared/IssueLink";
 import { ideaPath } from "../shell/steps";
 import { publishAct, publishOutcome, publishState, renumberOffered, whatIsSaved, type PublishOutcome, type PublishState } from "./model";
 
-const publishHeading = () => document.getElementById("publish-h");
+/** Where focus goes once a dialog closes: the publishing part's own row. */
+const publishHeading = () => document.getElementById("publish-part")?.closest("li")?.querySelector<HTMLElement>("button") ?? null;
 
 /**
  * Saving the idea for others to read: the brief as an issue's body and the verdict as a signed comment, or the folder
@@ -48,19 +49,11 @@ export function PublishSection({ row, show, onChanged }: { row: IdeaRow; show: I
   };
 
   return (
-    <section aria-labelledby="publish-h" className="flex flex-col gap-4 rounded-md border border-line bg-surface px-6 py-5">
+    <div id="publish-part" className="flex flex-col gap-4">
       <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-3">
-        <div className="flex max-w-reading min-w-0 flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-3">
-            <Heading level={2} size="title-3" id="publish-h" tabIndex={-1} className="focus-visible:outline-none">
-              Saved for others to read
-            </Heading>
-            <StatePill state={state} />
-          </div>
-          <Text size="body-sm" tone="muted">
-            {explanation(state)}
-          </Text>
-        </div>
+        <Text size="body-sm" tone="muted" className="max-w-reading min-w-0">
+          {explanation(state)}
+        </Text>
         <div className="flex flex-wrap items-center gap-2">
           {renumberOffered(state, row.next.kind) ? (
             <Button onClick={() => setRenumbering(true)}>
@@ -137,11 +130,12 @@ export function PublishSection({ row, show, onChanged }: { row: IdeaRow; show: I
         onConfirm={doRenumber}
         error={renumber.error ? failureText(renumber.error, `${row.idea_id} was not given a new number`) : null}
       />
-    </section>
+    </div>
   );
 }
 
-function StatePill({ state }: { state: PublishState }) {
+/** Where the idea is saved, as a pill: a word and a shape for each state. */
+export function StatePill({ state }: { state: PublishState }) {
   switch (state.kind) {
     case "not-published":
       return (

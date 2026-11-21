@@ -254,6 +254,33 @@ export function progressWords(items: readonly LookbackItem[]): string {
   return `${done} of ${can.length} recorded`;
 }
 
+/**
+ * One outcome's chain in a line, for the row of its part (M16 layout): which slices serve it and where each stands, as
+ * the chain reports it, or how it was settled. The full line, with every missing link and its reason, is the part's body.
+ */
+export function chainSummary(line: Pick<ChainLine, "outcome" | "slices">): string {
+  const gone = line.outcome.in_brief ? "" : "No longer in the brief. ";
+  if (!line.slices.length) return `${gone}${settledWords(line.outcome.settled) ?? "No slice serves it"}`;
+  const served = line.slices.map(({ slice }) => {
+    if (slice.missing.some((m) => /not in this workspace/.test(m))) return `${slice.slice_id} (not in this workspace)`;
+    const look = progressLook(slice.progress);
+    return `${slice.slice_id} (${look.known ? look.word.toLowerCase() : "where it stands is not known here"})`;
+  });
+  const listed = served.length > 1 ? `${served.slice(0, -1).join(", ")} and ${served[served.length - 1]}` : served[0];
+  return `${gone}Served by ${listed}`;
+}
+
+/**
+ * The item open on arrival: the first one that can still be recorded, while the engine allows recording. Waiting for
+ * something to ship, the first outcome, so its chain (where each slice stands) is in view. With everything recorded,
+ * none: each row already says its result.
+ */
+export function openOnArrival(items: readonly Pick<LookbackItem, "id" | "kind" | "recordable" | "entry">[], gate: Gate["kind"]): string | null {
+  if (gate === "open") return items.find((i) => i.recordable && i.entry === null)?.id ?? null;
+  if (gate === "waiting") return items.find((i) => i.kind === "outcome")?.id ?? null;
+  return null;
+}
+
 /** The confirm dialog's words for one act. */
 export function confirmWords(kind: ItemKind, item: string, result: string): { title: string; description: string } {
   const what = resultLook(result).word;
