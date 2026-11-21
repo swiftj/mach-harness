@@ -47,8 +47,10 @@ def workspace(project: Path):
     slice was marked ready) are the only bytes that may differ between two runs."""
     home = project / ".factory" / "studio"
     found = {p.relative_to(home).as_posix(): TIME_RE.sub(b"<TIME>", p.read_bytes()) for p in sorted(home.rglob("*")) if p.is_file()}
-    if "shipped.json" in found:  # it names the repository's own integration commit, which two repositories never share
-        found["shipped.json"] = COMMIT_RE.sub(b"<COMMIT>", found["shipped.json"])
+    # A file may name the repository's own commits (the shipped rules a spec was checked against, what an idea's
+    # lookups were read at), and two repositories made a moment apart never share one. A 40-character commit id is
+    # replaced; the 64-character content hashes that must match are left alone.
+    found = {name: COMMIT_RE.sub(b"<COMMIT>", data) for name, data in found.items()}
     return found
 
 
