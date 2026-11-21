@@ -39,7 +39,7 @@ export function KeyTag({ fact }: { fact: KeyFact }) {
 type Act = { mode: "set" | "remove"; target: KeyTarget };
 
 /**
- * Step 1: every epic and its slices in the product manager's order, each with its key and the acts
+ * The keys part: every epic and its slices in the product manager's order, each with its key and the acts
  * to set, change or remove it.
  */
 export function KeysLedger({ ledger }: { ledger: LedgerEpic[] }) {

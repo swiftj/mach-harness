@@ -250,3 +250,40 @@ export const wouldRecord = (summary: KeysSummary): boolean => summary.link.lengt
 
 /** "SLICE-001 Invite a teammate", or the ID alone. */
 export const label = (item: Named): string => (item.name ? `${item.id} ${item.name}` : item.id);
+
+/* ── The parts of the page (M16 layout) ───────────────────────────────── */
+
+/** The page's three parts, in the order a team does them. */
+export type JiraPart = "keys" | "export" | "back";
+
+/**
+ * The part open on arrival: the export while no epic or slice has a key of its own (the team has not been to Jira
+ * yet), otherwise the keys. Which part is open is only a matter of what is shown first; every part can be opened.
+ */
+export function jiraOpenPart(facts: LedgerFacts): JiraPart {
+  return facts.sliceKeys === 0 && facts.epicKeys === 0 ? "export" : "keys";
+}
+
+const n = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+
+/** The keys in one line: "1 epic · 2 slices · 1 slice with a key of its own". */
+export function keysPartSummary(facts: LedgerFacts): string {
+  return `${n(facts.epics, "epic")} · ${n(facts.slices, "slice")} · ${n(facts.sliceKeys, "slice")} with a key of its own`;
+}
+
+/** The export in one line: not done on this visit, or what the file holds. */
+export function exportPartSummary(summary: ExportSummary | null): string {
+  if (!summary) return "One CSV file and a README for Jira's importer. Not exported on this visit.";
+  return summary.empty ? "Exported: nothing to export" : `Exported: the file holds ${fileContents(summary.epics, summary.stories)}`;
+}
+
+/** Bringing the keys back in one line: no file yet, what a try found, or what was recorded. */
+export function keysBackSummary(state: { chosen: boolean; trial: KeysSummary | null; applied: KeysSummary | null }): string {
+  const found = (s: KeysSummary, linked: string) =>
+    [linked, s.reopen.length ? `${s.reopen.length} to reopen first` : null, s.unmatched.length ? `${s.unmatched.length} not matched` : null, s.refused.length ? `${s.refused.length} refused` : null]
+      .filter(Boolean)
+      .join(" · ");
+  if (state.applied) return `Recorded: ${found(state.applied, `${n(state.applied.link.length, "key")} linked`)}`;
+  if (state.trial) return `Tried, nothing changed yet: ${found(state.trial, `would link ${n(state.trial.link.length, "key")}`)}`;
+  return state.chosen ? "A file is chosen: try it without changing anything" : "No file chosen yet";
+}

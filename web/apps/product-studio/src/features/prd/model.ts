@@ -4,6 +4,7 @@
  * refuse any of them; this only says what to show and what each button would send.
  */
 import type { PrdAnswer, PrdCoverageRow, PrdMapSlice, PrdStatus } from "@mach/ui/api";
+import type { Quotation } from "../../shared/lineRanges.ts";
 
 /* ── Where the product manager is ──────────────────────────────────────── */
 
@@ -183,3 +184,98 @@ export function limitWords(limit: { maxBytes: number; extensions: readonly strin
 
 /** Lines in a section, for the imported list. */
 export const sectionLines = (s: { start: number; end: number }): number => s.end - s.start + 1;
+
+/* ── The parts of a PRD's page (M16 layout) ───────────────────────────── */
+
+/** The page's four parts, one per step of the path, in its order: the parts are the stepper. */
+export type PrdPart = "import" | "map" | "settle" | "apply";
+export const PRD_PARTS: readonly PrdPart[] = ["import", "map", "settle", "apply"];
+
+/** The part that needs the product manager at a step (`journeyStep`): the current step's, and the drafts once they are made. */
+export function partForStep(step: number): PrdPart {
+  return PRD_PARTS[Math.min(Math.max(step, 0), PRD_PARTS.length - 1)] as PrdPart;
+}
+
+/** Where a part is on the path: done before the current step, the current step, or not reached. */
+export function partPlace(part: PrdPart, step: number): "done" | "current" | "later" {
+  const index = PRD_PARTS.indexOf(part);
+  return index < step ? "done" : index === step ? "current" : "later";
+}
+
+const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** "Markdown · 5 sections · 22 lines": what was imported. */
+export function importSummary(prd: Pick<PrdStatus["prd"], "format" | "sections" | "line_count">): string {
+  return `${prd.format === "markdown" ? "Markdown" : "Plain text"} · ${count(prd.sections, "section")} · ${count(prd.line_count, "line")}`;
+}
+
+/** The map in one line, from the engine's answer only. */
+export function mapSummary(status: Pick<PrdStatus, "map">): string {
+  const map = status.map;
+  if (!map) return "No map yet: it is proposed in Claude Code";
+  const what = [map.epics.length ? count(map.epics.length, "new epic") : null, `${count(map.slices.length, "thin slice")} in build order`].filter(Boolean).join(" and ");
+  return map.applied ? `${what}, kept as it was when the drafts were made` : what;
+}
+
+/** Settling in one line: what is still open, by section number, or that nothing is. */
+export function settleSummary(coverage: PrdCoverageRow[] | undefined): string {
+  const progress = coverageProgress(coverage);
+  if (!(coverage ?? []).length) return "No sections to show";
+  if (progress.total === 0) return "Every section is cited by a slice on the map";
+  if (progress.left.length) return `${count(progress.left.length, "section")} still to settle: ${progress.left.map((r) => r.n).join(", ")}`;
+  return `Every section no slice cites is settled (${progress.settled} of ${progress.total})`;
+}
+
+/** What stops the drafts being made, in words, or null. Shown in the part's summary and beside its button. */
+export function applyBlocked(status: Pick<PrdStatus, "map" | "not_covered">): string | null {
+  const left = status.not_covered ?? [];
+  if (!left.length || status.map?.applied) return null;
+  return `Settle ${left.length === 1 ? `section ${left[0]}` : `sections ${left.join(", ")}`} first. Nothing can be made while any section is unsettled.`;
+}
+
+/** "1 epic and 2 draft slices": what making the drafts adds. */
+export function applyWhat(plan: ApplyPlan): string {
+  return [plan.epics.length ? count(plan.epics.length, "epic") : null, count(plan.slices.length, "draft slice")].filter(Boolean).join(" and ");
+}
+
+/** Making the drafts in one line: made (and what), blocked (and by what), or ready (and what it makes). */
+export function applySummary(status: Pick<PrdStatus, "map" | "not_covered" | "prd">, plan: ApplyPlan | null): string {
+  if (!status.map) return "After the map";
+  if (status.map.applied) {
+    const made = status.prd.applied ?? [];
+    return made.length ? `Made: ${made.join(", ")}` : "The drafts were made";
+  }
+  return applyBlocked(status) ?? (plan ? `Ready to make ${applyWhat(plan)}` : "Ready to make the drafts");
+}
+
+/** The document's sections by state, for the narrow pane. Before a map there is no coverage, so only the sections are counted. */
+export function coverageCounts(status: Pick<PrdStatus, "coverage" | "sections" | "prd">): Array<{ label: string; value: number }> {
+  const rows = status.coverage ?? [];
+  if (!rows.length) return [{ label: "Sections", value: status.sections?.length ?? status.prd.sections }];
+  const n = (state: PrdCoverageRow["state"]) => rows.filter((r) => r.state === state).length;
+  return [
+    { label: "Covered by a slice", value: n("covered") },
+    { label: "Settled by you", value: n("settled") },
+    { label: "Not covered", value: n("not_covered") },
+    { label: "Heading only", value: n("heading_only") },
+  ];
+}
+
+/** How many of the document's lines a set of quotations holds ("Rests on 3 lines of the PRD"). */
+export function quotedCount(quotations: readonly Quotation[]): number {
+  return quotations.reduce((sum, q) => sum + q.lines.length, 0);
+}
+
+/* ── A slice's drafted answers, as sections of its page (M16 layout) ───── */
+
+export type AnswerSection = "waiting" | "always" | "word";
+
+/** The groups of answers, for the page's section list, each with how many it holds. Empty groups are left out. */
+export function answerSections(groups: AnswerGroups): Array<{ id: AnswerSection; label: string; count: number }> {
+  const out: Array<{ id: AnswerSection; label: string; count: number }> = [];
+  if (groups.waiting.length) out.push({ id: "waiting", label: "Waiting for your word", count: groups.waiting.length });
+  if (groups.alwaysAsked.length) out.push({ id: "always", label: "Always asked in the interview", count: groups.alwaysAsked.length });
+  const word = groups.accepted.length + groups.discuss.length;
+  if (word) out.push({ id: "word", label: "Your word so far", count: word });
+  return out;
+}
