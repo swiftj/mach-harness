@@ -39,6 +39,8 @@ type StartRequest struct {
 	// IdeaID (M16): the Shape conversation for one idea instead of a slice's interview. Exactly one
 	// of SliceID and IdeaID is set; EpicID, Idea and BuildersQuestion are for a slice only.
 	IdeaID string
+	// Needs (M17): the needs conversation for the product as a whole; nothing else is set with it.
+	Needs  bool
 	EpicID string
 	Idea   string
 	// BuildersQuestion is the builders' question the engine reports on the slice (slice show). The
@@ -49,6 +51,9 @@ type StartRequest struct {
 
 // Subject is the slice or idea the request is for.
 func (r StartRequest) Subject() string {
+	if r.Needs {
+		return NeedsSubject
+	}
 	if r.IdeaID != "" {
 		return r.IdeaID
 	}
@@ -60,6 +65,7 @@ type Started struct {
 	InterviewID string `json:"interview_id"`
 	SliceID     string `json:"slice_id,omitempty"`
 	IdeaID      string `json:"idea_id,omitempty"`
+	Needs       bool   `json:"needs,omitempty"`
 	Resumed     bool   `json:"resumed"`
 }
 
@@ -77,6 +83,7 @@ type Current struct {
 	InterviewID     *string  `json:"interview_id"` // null when no interview is live in this host
 	SliceID         string   `json:"slice_id,omitempty"`
 	IdeaID          string   `json:"idea_id,omitempty"` // M16: the Shape conversation's idea
+	Needs           bool     `json:"needs,omitempty"`   // M17: the needs conversation
 	Live            bool     `json:"live"`
 	State           string   `json:"state"` // a state event's value, or "saved" when not live
 	TurnRunning     bool     `json:"turn_running"`
@@ -87,7 +94,9 @@ type Current struct {
 }
 
 func (c *Current) setSubject(subject string) {
-	if IsIdea(subject) {
+	if IsNeeds(subject) {
+		c.Needs = true
+	} else if IsIdea(subject) {
 		c.IdeaID = subject
 	} else {
 		c.SliceID = subject

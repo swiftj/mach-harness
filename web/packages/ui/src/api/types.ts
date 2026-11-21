@@ -41,6 +41,21 @@ import type {
   StatusIdeas,
   VerdictRecorded,
 } from "./shape";
+import type {
+  DesignImport,
+  DesignPublished,
+  DesignSettled,
+  DesignSettleAs,
+  DesignShow,
+  DesignSummary,
+  NeedChanged,
+  NeedKind,
+  NeedList,
+  NeedNothingToSay,
+  NeedsBlock,
+  NeedsPublishResult,
+  ReconcileNeeds,
+} from "./needs";
 
 /* ── Vocabulary ─────────────────────────────────────────────────────────── */
 
@@ -188,6 +203,9 @@ export interface SavedReport {
       /** M16: an idea whose save to GitHub stopped part way, or that changed since it was saved there. */
       | "idea_unfinished"
       | "idea_changed"
+      /** M17: technical needs not published, or a publish that stopped part way. */
+      | "needs_unpublished"
+      | "needs_unfinished"
       | (string & {});
     target: string | null;
     text: string;
@@ -273,6 +291,10 @@ export interface Status {
   prds?: PrdSummary[];
   /** M16: Shape's board, with each idea's next step. Absent when the workspace has no idea. */
   ideas?: StatusIdeas;
+  /** M17: the technical needs. Absent for a project that never opened them (no needs file, nothing published). */
+  needs?: NeedsBlock;
+  /** M17: the brought-in designs, one summary each. Absent when none was brought in. */
+  designs?: DesignSummary[];
 }
 
 /**
@@ -366,6 +388,8 @@ export interface RefreshGithub {
   order: OrderRow[];
   /** M13 A: where the principles are published, as this refresh read them. */
   principles?: PrinciplesPublished;
+  /** M17: where the technical needs are published, as this refresh read them (the same shape). */
+  needs?: PrinciplesPublished;
 }
 
 export interface Refresh {
@@ -381,6 +405,8 @@ export interface Refresh {
   principles_taken?: { revision: number; approved_by?: string | null; [key: string]: unknown };
   /** M16: the idea issues read back (read only); absent when Shape was never used here. */
   ideas?: RefreshIdeas;
+  /** M17: another product manager's newer technical needs, taken because nothing here was unpublished. */
+  needs_taken?: { revision: number; note: string };
 }
 
 export interface SpecCounts {
@@ -817,6 +843,26 @@ export interface Operations {
       | { idea_id: string; assumption: string; result: "confirmed" | "wrong" | "unknown"; note: string };
     result: LookbackRecorded;
   };
+
+  /* M17: technical needs and a design the team already has. Argument shapes are the host's (apps/studio/internal/engine/ops_needs.go).
+     `design map` is not an operation: the needs conversation records a design's map. */
+  "need.list": { args: Record<string, never>; result: NeedList };
+  "need.add": {
+    args:
+      | { kind: Exclude<NeedKind, "given">; statement: string; why: string }
+      | { kind: "given"; statement: string; why: string; said_by: string; said_on: string };
+    result: NeedChanged;
+  };
+  "need.set": { args: { need_id: string; statement?: string; why?: string; said_by?: string; said_on?: string }; result: NeedChanged };
+  "need.retire": { args: { need_id: string }; result: NeedChanged };
+  "need.none": { args: { kind: NeedKind }; result: NeedNothingToSay };
+  "need.publish": { args: Record<string, never>; result: NeedsPublishResult };
+  "reconcile.needs": { args: { take: "mine" | "theirs" }; result: ReconcileNeeds };
+  "design.list": { args: Record<string, never>; result: { designs: DesignSummary[]; factory_authorized: false } };
+  "design.import": { args: { file: UploadFile }; result: DesignImport };
+  "design.show": { args: { design_id: string; lines?: string }; result: DesignShow };
+  "design.settle": { args: { design_id: string; conflict: number; as: DesignSettleAs; reason: string; by?: string }; result: DesignSettled };
+  "design.publish": { args: { design_id: string }; result: DesignPublished };
 }
 
 export type OperationName = keyof Operations;
@@ -849,6 +895,9 @@ export const readOnlyOperations: ReadonlySet<OperationName> = new Set<OperationN
   "brief.show",
   "case.show",
   "case.check",
+  "need.list",
+  "design.list",
+  "design.show",
 ]);
 
 /**
@@ -889,6 +938,18 @@ export const personalActs: ReadonlySet<OperationName> = new Set<OperationName>([
   "idea.apply",
   "idea.change",
   "lookback.record",
+  // M17: the product manager's acts on the technical needs and a brought-in design (references/needs.md and design.md).
+  // need.add, need.set and need.none are also what the needs conversation records with the PM's words; on the page
+  // they are the PM's own buttons. Nothing here accepts an ADR.
+  "need.add",
+  "need.set",
+  "need.retire",
+  "need.none",
+  "need.publish",
+  "reconcile.needs",
+  "design.import",
+  "design.settle",
+  "design.publish",
 ]);
 
 /* ── M15: types for what M13 and M14 added (web/fixtures/product_memory.py holds real samples) ── */
@@ -909,6 +970,8 @@ export const uploadLimits = {
   json: { maxBytes: 1024 * 1024 },
   /** M16: an idea's lookups or its map, as JSON (the engine's own limit). */
   shapeJson: { maxBytes: 256 * 1024 },
+  /** M17: a design document; the PRD on-ramp's own limits (design.py shares prd.Imported). */
+  design: { maxBytes: 512 * 1024, extensions: [".md", ".markdown", ".txt", ".text"] },
 } as const;
 
 export interface Tracking {
@@ -1578,6 +1641,8 @@ export interface Session {
     continue_command?: string | null;
     /** M16: the same install's command that explores an idea, without the idea ID ("/mach:product-studio explore"). */
     explore_command?: string | null;
+    /** M17: the same install's command that talks through the technical needs ("/mach:product-studio needs"). */
+    needs_command?: string | null;
   };
   versions: { host: string; api: string | number; engine_install: string | null };
   /** Set when the engine could not report status while building the session. */
@@ -1645,8 +1710,16 @@ export interface InterviewEventMap {
   /** Sent with `message` when it parses as exactly one question. Key by message_id. */
   question: ParsedQuestion;
   activity: { kind: ActivityKind; text: string };
-  /** A slice's interview names `slice_id`; the Shape conversation (M16) names `idea_id`, with brief, case, lookups or idea. */
-  draft_changed: { slice_id?: string; idea_id?: string; what: Array<"spec" | "why" | "work_order" | "brief" | "case" | "lookups" | "idea" | (string & {})> };
+  /**
+   * A slice's interview names `slice_id`; the Shape conversation (M16) names `idea_id`, with brief, case, lookups or idea;
+   * the needs conversation (M17) says `needs: true`, with needs (product/needs.json) or design (a design's map).
+   */
+  draft_changed: {
+    slice_id?: string;
+    idea_id?: string;
+    needs?: true;
+    what: Array<"spec" | "why" | "work_order" | "brief" | "case" | "lookups" | "idea" | "needs" | "design" | (string & {})>;
+  };
   turn: { outcome: TurnOutcome; seconds: number; cost_usd: number | null; session_cost_usd: number | null; refused: number | string[] | null };
   /** The product manager's own reply, first in the turn it starts. */
   reply: { text: string };
@@ -1674,6 +1747,8 @@ export interface InterviewSummary {
   /** The slice's interview; absent for the Shape conversation (M16), which names `idea_id`. */
   slice_id?: string;
   idea_id?: string;
+  /** M17: the needs conversation (one per project). */
+  needs?: true;
   /** A process holds this slice's interview now. False when only a saved session exists. */
   live: boolean;
   state: InterviewHostState | "saved";
@@ -1690,6 +1765,8 @@ export interface InterviewHistory {
   slice_id?: string;
   /** M16: the Shape conversation's history. */
   idea_id?: string;
+  /** M17: the needs conversation's history. */
+  needs?: true;
   events: Array<{ at: string; interview_id: string; event: InterviewEventName; data: unknown }>;
   /** The oldest events were dropped to keep the history small. */
   truncated: boolean;
@@ -1701,6 +1778,8 @@ export interface StartResult {
   slice_id?: string;
   /** M16: the Shape conversation started for this idea. */
   idea_id?: string;
+  /** M17: the needs conversation started. */
+  needs?: true;
   resumed: boolean;
 }
 

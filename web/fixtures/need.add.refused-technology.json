@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "TN-03 cannot be saved:\n  TN-03 names technology (database). A technical need says what the product requires, without technology; if someone already decided the technology, record it as a given, with who said it. [implementation-detail]",
+  "hint": null
+}

@@ -176,9 +176,11 @@ func (c *Claude) ContinueCommand() string { return c.command }
 // ---- session state ----
 
 type record struct {
-	// One of the two: the slice's interview, or (M16) the Shape conversation for an idea.
+	// One of the three: the slice's interview, (M16) the Shape conversation for an idea, or (M17)
+	// the needs conversation for the product.
 	SliceID        string   `json:"slice_id,omitempty"`
 	IdeaID         string   `json:"idea_id,omitempty"`
+	Needs          bool     `json:"needs,omitempty"`
 	SessionID      string   `json:"session_id"`
 	Turns          int      `json:"turns"`
 	SessionCostUSD float64  `json:"session_cost_usd"`
@@ -191,6 +193,9 @@ type record struct {
 
 // subject is the slice or idea the record is for.
 func (r record) subject() string {
+	if r.Needs {
+		return NeedsSubject
+	}
 	if r.IdeaID != "" {
 		return r.IdeaID
 	}
@@ -199,9 +204,12 @@ func (r record) subject() string {
 
 func newRecord(subject string) *record {
 	r := &record{SessionID: newUUID(), Created: now()}
-	if IsIdea(subject) {
+	switch {
+	case IsNeeds(subject):
+		r.Needs = true
+	case IsIdea(subject):
 		r.IdeaID = subject
-	} else {
+	default:
 		r.SliceID = subject
 	}
 	return r
@@ -283,10 +291,21 @@ func (c *Claude) loadRecord(sliceID string) *record {
 		return nil
 	}
 	var r record
-	if json.Unmarshal(raw, &r) != nil || r.SessionID == "" || r.subject() != sliceID || (r.SliceID != "" && r.IdeaID != "") {
+	if json.Unmarshal(raw, &r) != nil || r.SessionID == "" || r.subject() != sliceID || subjects(r) != 1 {
 		return nil
 	}
 	return &r
+}
+
+// subjects counts the subjects a saved record names: exactly one is valid.
+func subjects(r record) int {
+	n := 0
+	for _, named := range []bool{r.SliceID != "", r.IdeaID != "", r.Needs} {
+		if named {
+			n++
+		}
+	}
+	return n
 }
 
 func (c *Claude) saveRecord(r record) error {
@@ -413,7 +432,8 @@ func (c *Claude) Start(ctx context.Context, req StartRequest) (Started, error) {
 
 	s.mu.Lock()
 	s.newTurnLocked()
-	s.emitLocked("state", map[string]any{"state": "starting", subjectKey(subject): subject, "resumed": resumed})
+	key, value := subjectField(subject)
+	s.emitLocked("state", map[string]any{"state": "starting", key: value, "resumed": resumed})
 	last := rec.LastMessage
 	digest := questionDigest(req.BuildersQuestion)
 	answering := digest != "" && digest != rec.SettledQuestion
@@ -429,7 +449,10 @@ func (c *Claude) Start(ctx context.Context, req StartRequest) (Started, error) {
 	if rec.Turns == 0 {
 		// Inside the interviewer the one-skill plugin is always named mach, whatever the install.
 		message = "/mach:product-studio continue " + subject
-		if IsIdea(subject) {
+		if IsNeeds(subject) {
+			// M17: the needs conversation for the product. Nothing the person typed is added here.
+			message = "/mach:product-studio needs. " + NeedsOpeningNote
+		} else if IsIdea(subject) {
 			// M16: the Shape conversation for one idea. Nothing the person typed is added here.
 			message = "/mach:product-studio explore " + subject + ". " + IdeaOpeningNote
 		} else if req.Idea != "" {
@@ -457,19 +480,26 @@ func (c *Claude) Start(ctx context.Context, req StartRequest) (Started, error) {
 	return started(s.id, subject, resumed), nil
 }
 
-// subjectKey is the field that names an interview's subject in its events and answers.
-func subjectKey(subject string) string {
-	if IsIdea(subject) {
-		return "idea_id"
+// subjectField is the field and value that name an interview's subject in its events and answers:
+// slice_id or idea_id with the ID, or (M17) needs: true.
+func subjectField(subject string) (string, any) {
+	switch {
+	case IsNeeds(subject):
+		return "needs", true
+	case IsIdea(subject):
+		return "idea_id", subject
 	}
-	return "slice_id"
+	return "slice_id", subject
 }
 
 func started(id, subject string, resumed bool) Started {
 	out := Started{InterviewID: id, Resumed: resumed}
-	if IsIdea(subject) {
+	switch {
+	case IsNeeds(subject):
+		out.Needs = true
+	case IsIdea(subject):
 		out.IdeaID = subject
-	} else {
+	default:
 		out.SliceID = subject
 	}
 	return out

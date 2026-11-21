@@ -115,7 +115,7 @@ func TestAnInterviewOverHTTP(t *testing.T) {
 	}
 	json.Unmarshal(env.Data, &session)
 	if session.Capabilities["interview"] != true || session.Capabilities["continue_command"] != "/mach:product-studio continue" ||
-		session.Capabilities["explore_command"] != "/mach:product-studio explore" {
+		session.Capabilities["explore_command"] != "/mach:product-studio explore" || session.Capabilities["needs_command"] != "/mach:product-studio needs" {
 		t.Fatalf("capabilities %v", session.Capabilities)
 	}
 	h.startSlice()

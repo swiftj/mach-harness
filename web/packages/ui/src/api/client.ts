@@ -1,7 +1,15 @@
 import { ENGINE_ID } from "./ids";
 import { createConnectionStore, type ConnectionStore } from "./connection";
 import { MachApiError, type HostErrorKind } from "./errors";
-import { createIdeaConversationClient, createInterviewClient, type EventSourceFactory, type IdeaConversationClient, type InterviewClient } from "./interview";
+import {
+  createIdeaConversationClient,
+  createInterviewClient,
+  createNeedsConversationClient,
+  type EventSourceFactory,
+  type IdeaConversationClient,
+  type InterviewClient,
+  type NeedsConversationClient,
+} from "./interview";
 import { readOnlyOperations, type DraftRead, type DraftWriteResult, type OperationArgs, type OperationName, type OperationResult, type Session } from "./types";
 
 /** The envelope every host response uses (contract section 4). */
@@ -58,6 +66,8 @@ export interface MachClient {
   interview: InterviewClient;
   /** M16: the Shape conversation for one idea, on the same routes by `idea_id`. */
   ideaConversation: IdeaConversationClient;
+  /** M17: the needs conversation for the product, on the same routes by `needs: true`. */
+  needsConversation: NeedsConversationClient;
   /**
    * Called after every successful request that may have changed the workspace (an operation not in
    * readOnlyOperations, a draft write). Apps reload their cached status here, so no screen shows
@@ -208,5 +218,6 @@ export function createClient(options: ClientOptions = {}): MachClient {
     },
     interview,
     ideaConversation: createIdeaConversationClient(interviewDeps, interview),
+    needsConversation: createNeedsConversationClient(interviewDeps, interview),
   };
 }

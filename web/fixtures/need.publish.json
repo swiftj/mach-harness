@@ -1,0 +1,28 @@
+{
+  "exit_code": 0,
+  "data": {
+    "published": true,
+    "saved_to": "github",
+    "revision": 1,
+    "sha256": "af78a93ddb5fe4f65133596724ddd9f4552ea53d2c628ee9ff195792672ffe0f",
+    "issue": 1,
+    "url": "https://github.com/acme/team-space/issues/1",
+    "approved_by": "ada-pm",
+    "folder": "/project/.factory/studio/draft/product/ready/NEEDS",
+    "files": [
+      "/project/.factory/studio/draft/product/ready/NEEDS/needs.json"
+    ],
+    "active": 3,
+    "unanswered": [
+      "connections",
+      "priority"
+    ],
+    "factory_authorized": false,
+    "ways_on": [
+      "Add this folder to the project's repository; the engineer's architecture baseline reads the needs from there."
+    ],
+    "note": "Published on the project's issue (#1) as version 1, and to the folder with the same version. No decision was taken and no work has started."
+  },
+  "refused": null,
+  "hint": null
+}

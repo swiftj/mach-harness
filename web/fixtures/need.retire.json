@@ -1,0 +1,18 @@
+{
+  "exit_code": 0,
+  "data": {
+    "need": {
+      "kind": "priority",
+      "need_id": "TN-05",
+      "revision": 1,
+      "statement": "When safety and speed of change conflict, safety wins.",
+      "status": "retired",
+      "why": "A mistake costs more than a delay."
+    },
+    "published": false,
+    "factory_authorized": false,
+    "note": "TN-05 is retired here. Publish the technical needs to give them to the engineer."
+  },
+  "refused": null,
+  "hint": null
+}

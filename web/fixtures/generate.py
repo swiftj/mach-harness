@@ -67,6 +67,14 @@ class Scenario(IssuesBase):
 
 
 def main():
+    import needs_memory  # noqa: E402  (beside this file)
+    if sys.argv[1:] == ["--only", "needs"]:
+        # M17: write only the technical needs and design fixtures, leaving the others as they are (a full run changes
+        # only times and paths in them).
+        before = set(OUT.glob("*.json"))
+        needs_memory.generate(Scenario, OUT)
+        print("wrote", len(set(OUT.glob("*.json")) - before), "new fixtures to", OUT)
+        return
     for name in OUT.glob("*.json"):
         name.unlink()
     on_github()
@@ -77,6 +85,8 @@ def main():
     # M15: what M13 and M14 added to the engine, for the screens built on them.
     import product_memory  # noqa: E402  (beside this file)
     product_memory.generate(Scenario, OUT)
+    # M17: technical needs and a design the team already has.
+    needs_memory.generate(Scenario, OUT)
     print("wrote", len(list(OUT.glob("*.json"))), "fixtures to", OUT)
 
 

@@ -1,0 +1,107 @@
+{
+  "exit_code": 0,
+  "data": {
+    "recorded": true,
+    "design": {
+      "design_id": "DES-01",
+      "name": "architecture.md",
+      "format": "markdown",
+      "sha256": "f2b9dbe5d56e4e573ebe1d492c6643a0a533138348aba180da50e37b5c7779a7",
+      "line_count": 22,
+      "sections": 5,
+      "document_matches": true,
+      "mapped": true,
+      "topics": {
+        "coding-standards": "silent",
+        "deployment": "silent",
+        "framework": "silent",
+        "language": "silent",
+        "storage": "decided",
+        "testing": "partly"
+      },
+      "other": 1,
+      "conflicts": 1,
+      "unsettled": [
+        1
+      ],
+      "published": false,
+      "unpublished_changes": false
+    },
+    "map": {
+      "revision": 1,
+      "topics": {
+        "language": {
+          "state": "silent"
+        },
+        "framework": {
+          "state": "silent"
+        },
+        "storage": {
+          "state": "decided",
+          "lines": [
+            [
+              7,
+              9
+            ]
+          ],
+          "summary": "One relational store for workspaces, members and invitations."
+        },
+        "testing": {
+          "state": "partly",
+          "lines": [
+            [
+              13,
+              13
+            ]
+          ],
+          "summary": "Unit tests beside the code.",
+          "missing": "No word on end-to-end tests."
+        },
+        "deployment": {
+          "state": "silent"
+        },
+        "coding-standards": {
+          "state": "silent"
+        }
+      },
+      "other": [
+        {
+          "lines": [
+            [
+              18,
+              18
+            ]
+          ],
+          "summary": "A separate search index, rebuilt hourly.",
+          "applies_to": [
+            "topic:search"
+          ]
+        }
+      ],
+      "conflicts": [
+        {
+          "n": 1,
+          "lines": [
+            [
+              22,
+              22
+            ]
+          ],
+          "against": "TN-01",
+          "note": "Kept forever, against keeping invitations at most a year."
+        }
+      ],
+      "unsettled": [
+        1
+      ],
+      "published": null,
+      "unpublished_changes": false
+    },
+    "settlements_kept": [],
+    "settlements_dropped": [],
+    "factory_authorized": false,
+    "note": "The map is recorded; it decides nothing. 1 conflict wait for your word: 1."
+  },
+  "refused": null,
+  "hint": null
+}

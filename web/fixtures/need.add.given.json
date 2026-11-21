@@ -1,0 +1,21 @@
+{
+  "exit_code": 0,
+  "data": {
+    "need": {
+      "need_id": "TN-03",
+      "kind": "given",
+      "statement": "It runs on the company's PostgreSQL cluster.",
+      "why": "The company already pays for it.",
+      "status": "active",
+      "revision": 1,
+      "said_by": "Jo Bloggs, CTO",
+      "said_on": "2026-11-02"
+    },
+    "warnings": [],
+    "published": false,
+    "factory_authorized": false,
+    "note": "TN-03 is saved here. Publish the technical needs to give them to the engineer."
+  },
+  "refused": null,
+  "hint": null
+}

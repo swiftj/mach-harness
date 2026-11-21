@@ -43,6 +43,7 @@ Everything you produce is a **draft in the PM's own workspace** until they appro
    - A feature idea, or a slice or epic ID: go to **Slices**.
    - Requests filed on GitHub ("what has been asked for", a request number): go to **Requests**.
    - A PRD or product document to start from: go to **Starting from a PRD**.
+   - "needs", or what the product requires of whatever is built (who uses it, what it keeps, what it must work with): go to **Technical needs**.
    - An architecture or design document the team already has: go to **A design you already have**.
    - An idea to explore, argue for and size before any epic ("shape an idea", "write a brief", "is this worth building"), or the ideas board: go to **Shaping an idea**.
    - Approving a slice or handing it to the builders: go to **Marking a slice ready**.

@@ -429,6 +429,104 @@ class HostConformanceTest(unittest.TestCase):
         for project in (self.via_host, self.direct):
             self.assertEqual(git(project, "status", "--porcelain").stdout, "")
 
+    def test_the_m17_needs_and_design_operations_write_the_same_bytes_as_the_terminal(self):
+        """Every technical needs and design operation M17 put on the host's list, through the host as the app sends it
+        (the design as an upload in the body) and through studio.py as the terminal skill runs it; the design's map is
+        recorded by studio.py in both, as the needs conversation records it (no button records a map). The same bytes
+        in Product Studio's workspace, the same refusals, nothing staged left behind. No GitHub here: the needs and the
+        design are published to the folder."""
+        from test_mach_product_design import DESIGN_TEXT, a_map
+
+        files = Path(self.tmp.name) / "needs-files"
+        files.mkdir()
+        (files / "architecture.md").write_text(DESIGN_TEXT, encoding="utf-8")
+        (files / "map.json").write_text(json.dumps(a_map()))
+        people = "About three hundred staff use it from two offices, busiest on Monday mornings."
+        data = "Invitations are kept at most one year."
+        given = "It runs on the company's PostgreSQL cluster."
+
+        def host_refused(operation, args):
+            status, _, raw = self.request("POST", f"/api/ops/{operation}", args)
+            envelope = json.loads(raw)
+            self.assertFalse(envelope["ok"], f"{operation} was not refused")
+            self.assertEqual((status, envelope["error"]["kind"]), (422, "refused"), envelope)
+            return envelope["error"]["message"]
+
+        def mapped(project):
+            done = subprocess.run([sys.executable, str(STUDIO), "--project", str(project), "design", "map", "DES-01", "--from", str(files / "map.json")],
+                                  capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+
+        # Through the host.
+        self.login()
+        self.op("project.init", id="team-space", name="Team Space", vision="Teams work together.", outcome=["Teams can work together"])
+        self.assertEqual(self.op("need.list")["unanswered"], ["people", "data", "connections", "never", "priority", "given"])
+        self.assertEqual(self.op("need.add", kind="people", statement=people, why="It sets the size.")["need"]["need_id"], "TN-01")
+        self.assertIn("names technology", host_refused("need.add", {"kind": "data", "statement": "Kept in a database.", "why": "W."}))
+        self.op("need.add", kind="data", statement=data, why="Privacy.")
+        self.assertEqual(self.op("need.add", kind="given", statement=given, why="Already paid for.", said_by="Jo Bloggs, CTO", said_on="2026-11-02")
+                         ["need"]["said_by"], "Jo Bloggs, CTO")
+        self.assertEqual(self.op("need.set", need_id="TN-01", statement="About five hundred staff use it.")["need"]["revision"], 2)
+        self.op("need.none", kind="never")
+        self.op("need.add", kind="priority", statement="When safety and speed conflict, safety wins.", why="Mistakes cost more.")
+        self.op("need.retire", need_id="TN-04")
+        self.assertIn("no newer version", host_refused("reconcile.needs", {"take": "theirs"}))
+        self.assertEqual(self.op("need.publish")["saved_to"], "folder")
+        upload = {"name": "architecture.md", "content_base64": base64.b64encode(DESIGN_TEXT.encode("utf-8")).decode("ascii")}
+        self.assertEqual(self.op("design.import", file=upload)["design"]["design_id"], "DES-01")
+        self.assertTrue(self.op("design.import", file=upload)["already_imported"])
+        self.op("design.list")
+        self.op("design.show", design_id="DES-01", lines="5-9")
+        self.assertIn("no map yet", host_refused("design.publish", {"design_id": "DES-01"}))
+        mapped(self.via_host)
+        self.assertIn("waits for your word", host_refused("design.publish", {"design_id": "DES-01"}))
+        self.op("design.settle", design_id="DES-01", conflict=1, **{"as": "design-is-wrong"}, reason="The privacy review came later.")
+        self.assertTrue(self.op("design.publish", design_id="DES-01")["changed"])
+        self.op("design.show", design_id="DES-01")
+        self.op("need.list")
+        self.assertFalse((self.via_host / ".factory/studio/uploads").exists() and any((self.via_host / ".factory/studio/uploads").iterdir()))
+
+        # Directly, as the terminal skill does.
+        self.studio("status")
+        self.studio("project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
+        self.studio("need", "list")
+        self.studio("need", "add", "--kind", "people", "--statement", people, "--why", "It sets the size.")
+        self.studio("need", "add", "--kind", "data", "--statement", "Kept in a database.", "--why", "W.", expect=1)
+        self.studio("need", "add", "--kind", "data", "--statement", data, "--why", "Privacy.")
+        self.studio("need", "add", "--kind", "given", "--statement", given, "--why", "Already paid for.", "--said-by", "Jo Bloggs, CTO", "--said-on", "2026-11-02")
+        self.studio("need", "set", "TN-01", "--statement", "About five hundred staff use it.")
+        self.studio("need", "none", "--kind", "never")
+        self.studio("need", "add", "--kind", "priority", "--statement", "When safety and speed conflict, safety wins.", "--why", "Mistakes cost more.")
+        self.studio("need", "retire", "TN-04")
+        self.studio("reconcile", "needs", "--take", "theirs", expect=1)
+        self.studio("need", "publish")
+        self.studio("design", "import", str(files / "architecture.md"))
+        self.studio("design", "import", str(files / "architecture.md"))
+        self.studio("design", "list")
+        self.studio("design", "show", "DES-01", "--lines", "5-9")
+        self.studio("design", "publish", "DES-01", expect=1)
+        mapped(self.direct)
+        self.studio("design", "publish", "DES-01", expect=1)
+        self.studio("design", "settle", "DES-01", "--conflict", "1", "--as", "design-is-wrong", "--reason", "The privacy review came later.")
+        self.studio("design", "publish", "DES-01")
+        self.studio("design", "show", "DES-01")
+        self.studio("need", "list")
+
+        host_files, direct_files = workspace(self.via_host), workspace(self.direct)
+        # The published design.json carries the moment each conflict was settled, so the hash recorded of it in the map
+        # differs between two runs as that moment does; design.json itself is compared with its moments masked.
+        published = re.compile(rb'("published": \{[^}]*"sha256": ")[0-9a-f]{64}')
+        for found in (host_files, direct_files):
+            found["draft/product/designs/DES-01/map.json"] = published.sub(rb"\1<SHA256>", found["draft/product/designs/DES-01/map.json"])
+        self.assertEqual(sorted(host_files), sorted(direct_files))
+        for name in host_files:
+            self.assertEqual(host_files[name], direct_files[name], f"{name} differs between the host and the terminal")
+        for expected in ("draft/product/needs.json", "draft/product/ready/NEEDS/needs.json", "draft/product/designs/DES-01/map.json",
+                         "draft/product/ready/DESIGN/DES-01/design.json", "draft/product/ready/DESIGN/DES-01/design.md"):
+            self.assertIn(expected, host_files)
+        for project in (self.via_host, self.direct):
+            self.assertEqual(git(project, "status", "--porcelain").stdout, "")
+
     def test_the_host_refuses_without_a_session_and_from_another_origin(self):
         status, _, raw = self.request("POST", "/api/ops/status", {})
         self.assertEqual((status, json.loads(raw)["error"]["kind"]), (401, "unauthorized"))
