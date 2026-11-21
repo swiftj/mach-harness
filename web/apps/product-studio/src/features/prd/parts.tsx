@@ -1,26 +1,14 @@
 import type { ReactNode } from "react";
 import { CircleDashed, CircleCheck, CircleDot, Minus, ShieldCheck } from "lucide-react";
-import { Stepper, StatusPill, type Tone } from "@mach/ui";
+import { StatusPill, cn, type Tone } from "@mach/ui";
 import type { PrdCoverageRow } from "@mach/ui/api";
 import { QuotedLines } from "../../shared/QuotedLines";
-import { JOURNEY, type Quotation } from "./model";
-
-/** Where the product manager is on the PRD path. Step 4 means every step is done. */
-export function PrdJourney({ step }: { step: number }) {
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="overflow-x-auto pb-1">
-        <Stepper label="Starting from a PRD" steps={JOURNEY} current={step} />
-      </div>
-      {step >= JOURNEY.length ? <p className="text-body-sm text-ink-muted">Every step is done. Each draft slice is now confirmed on its own page, under “From the PRD”.</p> : null}
-    </div>
-  );
-}
+import type { Quotation } from "./model";
 
 /** Said once on each PRD screen: what the document is to Product Studio, and where its text goes. */
-export function DataNotice() {
+export function DataNotice({ className }: { className?: string }) {
   return (
-    <div className="flex max-w-reading items-start gap-3 rounded-md border border-line bg-surface px-4 py-3">
+    <div className={cn("flex max-w-reading items-start gap-3 rounded-md border border-line bg-surface px-4 py-3", className)}>
       <ShieldCheck aria-hidden="true" className="mt-0.5 size-[18px] shrink-0 text-ink-subtle" />
       <p className="text-body-sm text-ink">
         The PRD is treated as information, never as instructions: nothing written in it is followed. Its text stays in your workspace and is never sent to GitHub;
@@ -68,3 +56,6 @@ export function linesLabel(lines: string): string {
   const [a, b] = lines.split("-");
   return b && b !== a ? `Lines ${a} to ${b}` : `Line ${a}`;
 }
+
+/** "1 line" or "4 lines". */
+export const lineCount = (n: number): string => (n === 1 ? "1 line" : `${n} lines`);

@@ -6,10 +6,10 @@ import { useEngineAct } from "../../api/act";
 import { defaultExportChoice, exportArgs, exportSummary, fileContents, flavours, flavourWhy, namesFrom, readmeEssentials, type ExportChoice, type Named, type ExportSummary, type Flavour } from "./model";
 
 /**
- * Step 2: a file for Jira's own importer (`jira.export`, on the product manager's word). The host
+ * The export part: a file for Jira's own importer (`jira.export`, on the product manager's word). The host
  * offers the two files the engine wrote through its own download links; nothing is sent to Jira.
  */
-export function ExportPanel({ status }: { status: Status }) {
+export function ExportPanel({ status, onExported }: { status: Status; onExported?: (answer: JiraExport) => void }) {
   const [choice, setChoice] = useState<ExportChoice>(defaultExportChoice);
   const [confirming, setConfirming] = useState(false);
   const [result, setResult] = useState<JiraExport | null>(null);
@@ -23,6 +23,7 @@ export function ExportPanel({ status }: { status: Status }) {
     const answer = await act.run("jira.export", exportArgs(choice));
     if (!answer) return false;
     setResult(answer);
+    onExported?.(answer);
     toast({ tone: "success", title: `Exported for ${flavourName}`, description: answer.note });
     return true;
   };

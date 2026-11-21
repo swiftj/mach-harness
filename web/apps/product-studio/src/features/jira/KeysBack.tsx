@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { CircleCheck, FileSearch, Upload } from "lucide-react";
 import { ArtifactId, Banner, Button, ConfirmDialog, ErrorState, Text, describeError, plural, toast } from "@mach/ui";
@@ -9,11 +9,11 @@ import { toApiError } from "../../api/session";
 import { keysSummary, namesFrom, wouldRecord, type KeysSummary, type Named } from "./model";
 
 /**
- * Step 3: the CSV exported from Jira after the import. Tried first without changing anything (the
+ * Bringing the keys back: the CSV exported from Jira after the import. Tried first without changing anything (the
  * dry run), then applied on an explicit confirmation (`jira.keys`). The page shows only what the
  * engine reported: rows by number, IDs, valid keys and the engine's reasons; never a refused key.
  */
-export function KeysBack({ status }: { status: Status }) {
+export function KeysBack({ status, onState }: { status: Status; onState?: (state: { chosen: boolean; trial: JiraKeys | null; applied: JiraKeys | null }) => void }) {
   const inputId = useId();
   const hintId = useId();
   const [file, setFile] = useState<UploadFile | null>(null);
@@ -26,6 +26,10 @@ export function KeysBack({ status }: { status: Status }) {
   const apply = useEngineAct();
   const names = namesFrom(status);
   const limit = uploadLimits.jiraKeys;
+  // The page's row for this part says where it stands, so it hears of each change.
+  useEffect(() => {
+    onState?.({ chosen: file !== null, trial, applied });
+  }, [file, trial, applied, onState]);
 
   const choose = async (chosen: File | undefined) => {
     setFile(null);
@@ -135,7 +139,7 @@ export function KeysBack({ status }: { status: Status }) {
         error={apply.shown}
       >
         {trialSummary ? (
-          <ul className="flex max-h-60 flex-col gap-1 overflow-y-auto pb-1 text-body-sm text-ink">
+          <ul className="flex flex-col gap-1 text-body-sm text-ink">
             {trialSummary.link.map((item) => (
               <li key={item.id} className="flex flex-wrap items-baseline gap-x-2">
                 <ArtifactId>{item.id}</ArtifactId>
