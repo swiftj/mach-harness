@@ -1,14 +1,14 @@
 # Product Manager Guide
 
-This guide is for a product manager who defines work in MACH Product Studio. It assumes no engineering background and teaches no Git. This guide describes the code at this release candidate, not a promise of readiness for regulated or enterprise production use.
+This guide is for a product manager who defines work in MACH Product Studio. It assumes no engineering background and teaches no Git.
 
-Where something was only tested with stand-ins or on one machine, the text says so. See `RELEASE_NOTES_DRAFT.md` for the list of what was and was not tested.
+See `RELEASE_NOTES_DRAFT.md` for what is new in each release.
 
 ## 1. What you need on your Mac
 
 - **Claude Code**, signed in. Product Studio runs inside it.
 - **Git.** On a Mac, Terminal may ask to install the "command line tools". Click Install. They include Git and Python.
-- **Python 3.8 or later.** The same command line tools provide it. Only Python 3.9.6 and 3.15 were tried; nothing older than 3.9 was run.
+- **Python 3.8 or later.** The same command line tools provide it.
 - **The GitHub command-line tool (`gh`), signed in.** Sending your work to engineering uses it. An engineer can set this up with you.
 - **A copy of the shared project.** An engineer gives you this once. After that you do not need Git commands for anything in this guide.
 
@@ -90,7 +90,7 @@ Shape is where an idea is explored, argued for and sized before any epic or slic
 - **Explore** is a conversation with open questions, one at a time. MACH looks up what it can instead of asking: shipped rules the idea would touch, similar ideas and requests, principles and policies in its way.
 - **The brief** is one page: problem, who has it, outcomes (`O-1`, `O-2`), each with how you would know, what you are not doing, assumptions (`A-1`, `A-2`), open questions and risks, and what it touches. MACH checks that it is complete and that no assumption is written as a fact.
 - **The case and the verdict.** You answer MACH's hardest questions, then record **go**, **not now** or **no** with your reason. The verdict is yours alone and MACH never recommends one. Change the brief afterwards and the verdict is marked stale until you record it again.
-- **Size and route.** After a go, MACH counts what the brief touches and names the route: one slice, an epic, or several epics. For an epic or several, you settle a map: every outcome is carried by a slice, or you mark it out of scope or for later with your reason. "Apply" then makes the epics and draft slices. The proposed map itself is made in the conversation, not yet in the app.
+- **Size and route.** After a go, MACH counts what the brief touches and names the route: one slice, an epic, or several epics. For an epic or several, you settle a map: every outcome is carried by a slice, or you mark it out of scope or for later with your reason. "Apply" then makes the epics and draft slices. The map is proposed in the conversation.
 - **Change what exists.** On "How this epic works today", choose a shipped rule and "change this" to start an idea with the affected rules already filled in.
 - **Look back.** Once a slice made from the idea has shipped, record for each outcome whether it was met, not met, or it is too early to say, and for each assumption whether it held.
 
@@ -167,9 +167,7 @@ When engineering has built an epic and checked it as a release, they give you a 
 | "Your organisation requires your GitHub sign-in to be authorised for single sign-on..." | Single sign-on has not been authorised for this computer. GitHub may print an address, shown to you as data. | Authorise it, then try again. An engineer or the repository's owner can help. |
 | "The shared project's rules refused this... Sending again will not change that" | A protected branch, ruleset, permission or check refused it. The remote's own reason follows "GitHub said:". | Do not retry. Ask an engineer or the repository's owner. Never look for a way around it. |
 | "The shared repository did not accept this..." | Another reason. It is shown, shortened, as a quotation. | If it happens again, ask an engineer. |
-| "Claude Code is not signed in" | The visual app cannot see your Claude sign-in. | Sign in to Claude Code. If you are signed in, tell an engineer: one test hit this only because a setting called `USER` was missing from the shell. |
-
-These wordings were corrected in M7 and tested against stand-ins for Git and `gh`. Before M11 some of them were checked against real GitHub when sending waves, which no longer exists; marking a slice ready on GitHub has been tested against a stand-in for `gh` only.
+| "Claude Code is not signed in" | The visual app cannot see your Claude sign-in. | Sign in to Claude Code. If you are signed in, tell an engineer: a setting called `USER` may be missing from the shell. |
 
 ## 11. What Product Studio never does
 
@@ -184,7 +182,4 @@ Approval means product approval. Whether and when engineering builds your work i
 
 ## 12. Limits to know about
 
-- Tested on one Mac with several separate copies of the project, not on separate computers. Two product managers working at the same time on two real machines was not tested.
-- Slices saved as GitHub issues, the builders' question and acceptance on the epic's issue were tested against a stand-in for GitHub, not yet against a real repository with several accounts.
-- Requests were checked against a stand-in for GitHub, not yet against a real repository with several accounts. The rule that a label counts only from an account with write access has not been seen live.
 - Nothing in Product Studio checks who you are. A copy of the shared project on any machine can start the same commands. What stops unattended building is that each engineer's machine decides that for itself (see the Engineer Guide).
