@@ -116,6 +116,8 @@ class StudioTest(IssuesBase):
         self.assertEqual(self.add()["need"], need())
         self.assertEqual(self.add_given()["need"], given())
         self.assertIn("names technology", self.refused(self.a, "need", "add", "--kind", "data", "--statement", "Orders are kept in a database.", "--why", "W."))
+        self.assertIn("names technology (postgres)", self.refused(self.a, "need", "add", "--kind", "data", "--statement", "Guests are kept on Postgres.", "--why", "W."))
+        self.assertIn("names technology (aws)", self.refused(self.a, "need", "add", "--kind", "people", "--statement", "Hosts reach it through AWS.", "--why", "W."))
         self.assertIn("says who decided it", self.refused(self.a, "need", "add", "--kind", "given", "--statement", GIVEN, "--why", "W."))
         self.assertIn("only a given", self.refused(self.a, "need", "add", "--kind", "data", "--statement", "Kept seven years.", "--why", "W.",
                                                    "--said-by", "Jo", "--said-on", "2026-11-20"))

@@ -96,6 +96,15 @@ IMPLEMENTATION_TERMS = (
     "api", "cache", "cron", "database", "db", "endpoint", "http", "https", "json", "kafka",
     "microservice", "payload", "redis", "schema", "sql", "status code", "ttl",
 )
+# Products and vendors a product manager is likely to name in a technical need (M17). Needs only: a spec or a principle
+# is held to IMPLEMENTATION_TERMS alone, as before. Unambiguous names only, so a plain word is never refused.
+PRODUCT_TERMS = (
+    "angular", "aws", "azure", "cassandra", "django", "docker", "dynamodb", "elasticsearch", "firebase", "gcp", "golang", "graphql",
+    "javascript", "kotlin", "kubernetes", "lambda", "laravel", "mariadb", "mongo", "mongodb", "mysql", "next.js", "nextjs", "node.js",
+    "nodejs", "oauth", "postgres", "postgresql", "rabbitmq", "s3", "saml", "snowflake", "sqlite", "supabase",
+    "terraform", "typescript", "vercel", "vue",
+)
+PRODUCT_RE = re.compile(r"(?<![\w-])(" + "|".join(re.escape(t) for t in PRODUCT_TERMS) + r")(?![\w-])", re.IGNORECASE)
 IMPLEMENTATION_RE = re.compile(
     r"(?<![\w-])(" + "|".join(re.escape(t) for t in IMPLEMENTATION_TERMS) + r")(?![\w-])",
     re.IGNORECASE,
@@ -507,8 +516,12 @@ def need_findings(identifier: str, statement: str) -> List[Finding]:
     what the product requires of whatever is built; choosing the technology is an engineer's decision, recorded as an ADR.
     A need of kind `given` is not checked: it records a technology someone outside the product already decided."""
     report = Report()
-    check_technology(identifier, statement, report, "A technical need says what the product requires, without technology; "
-                                                    "if someone already decided the technology, record it as a given, with who said it.")
+    advice = ("A technical need says what the product requires, without technology; "
+              "if someone already decided the technology, record it as a given, with who said it.")
+    check_technology(identifier, statement, report, advice)
+    products = sorted({match.group(1).lower() for match in PRODUCT_RE.finditer(strip_quotes(statement))})
+    if products and not report.findings:
+        report.error(0, "implementation-detail", f"{identifier} names technology ({', '.join(products)}). {advice}")
     return report.findings
 
 
