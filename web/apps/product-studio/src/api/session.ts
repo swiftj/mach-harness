@@ -12,6 +12,11 @@ export interface InterviewCapability {
    * appends the slice ID. Null when the host does not say.
    */
   continueCommand: string | null;
+  /**
+   * The command that explores an idea (`capabilities.explore_command`): "/mach:product-studio explore" or
+   * "/mach-product-studio explore". The app appends the idea's ID. Null when the host does not say.
+   */
+  exploreCommand: string | null;
 }
 
 export function interviewCapability(session: Session): InterviewCapability {
@@ -20,6 +25,7 @@ export function interviewCapability(session: Session): InterviewCapability {
     available: session.capabilities.interview === true,
     reason: text(session.capabilities.interview_reason),
     continueCommand: text(session.capabilities.continue_command),
+    exploreCommand: text(session.capabilities.explore_command),
   };
 }
 

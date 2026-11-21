@@ -1,8 +1,8 @@
 # MACH
 
-MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A product manager describes what is wanted; the factory turns each piece into a checked specification, builds it test-first in an isolated workspace, proves it works with captured evidence, has it reviewed by a panel of independent agents, and merges it. Every station hands the next one artifacts a script has checked, not a claim that the work is done.
+MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A product manager describes what is wanted; the factory turns each piece into a checked specification, builds it test-first in an isolated workspace, proves it works with captured evidence, has it reviewed by a panel of independent agents, and merges it. Every station hands the next one artifacts MACH has checked, not a claim that the work is done.
 
-> **Status: 0.16.0.** [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
+> **Status: 0.17.0.** [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) is the full blueprint.
 
 ![The Factory Floor: an isometric drawing of the factory with three tickets being built, each in its own cell](docs/images/factory-floor-isometric.jpg)
 
@@ -28,7 +28,7 @@ MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A
 | | |
 |---|---|
 | [![Introducing MACH: watch on YouTube](docs/images/film-introduction.jpg)](https://youtu.be/M1HSnETFg5Q) | [![MACH: The Agentic Software Factory in Claude Code: watch on YouTube](docs/images/film-factory.jpg)](https://youtu.be/ejPnwHeqsI8) |
-| **[Introducing MACH](https://youtu.be/M1HSnETFg5Q)** (2 min). From product intent to merged code, for product managers and engineers. | **[The software factory in Claude Code](https://youtu.be/ejPnwHeqsI8)** (2 min). The factory itself: the floor, the line, and why scripts decide what counts. |
+| **[Introducing MACH](https://youtu.be/M1HSnETFg5Q)** (2 min). From product intent to merged code, for product managers and engineers. | **[The software factory in Claude Code](https://youtu.be/ejPnwHeqsI8)** (2 min). The factory itself: the floor, the line, and why MACH's rules, not the agents, decide what counts. |
 
 MACH runs in Claude Code. Two local pages, served on your own machine, show the work: Product Studio for the product manager and the Factory Floor for whoever is watching the line.
 
@@ -86,7 +86,7 @@ This installs the newest release, after checking it, and prints one `MACH source
 If it says the newest release could not be found, GitHub's API did not answer from your network (it allows a limited number of unsigned requests an hour). Name the release yourself:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh | MACH_VERSION=0.16.0 bash
+curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh | MACH_VERSION=0.17.0 bash
 ```
 
 To install what is on the `main` branch ahead of the next release, use `MACH_REF=main` in place of `MACH_VERSION`; a branch install is not checksum-verified, and the installer says so.
@@ -172,6 +172,19 @@ Everything you write is a private draft on your computer until you mark a slice 
 4. The issue gets short comments with slice IDs and links as work moves: taken in, and a link to each slice's issue when it is marked ready.
 5. When a slice made from it is marked ready, say "request 42 is met" and the issue closes.
 
+### Shaping an idea before any epic
+
+Optional, and one of the ways to start. Say "shape an idea", or open Shape in the app.
+
+1. **Ideas.** One board for everything that might become work: something you typed, a request, an idea filed with `/mach-idea`, or a fault MACH recorded.
+2. **Explore.** A conversation, one open question at a time. MACH looks up the facts instead of asking you: the shipped rules the idea would touch, similar ideas and requests, and the principles and policies it would run into.
+3. **The brief.** One page that is yours: the problem, who has it, the outcomes with how you would know each was met, what you are not doing, and every assumption marked as assumed until someone confirms it. MACH checks it is complete.
+4. **The case.** You make the case as a customer would hear it, and MACH asks the hardest questions it can find. Then you record a verdict in your own words: go, not now, or no. MACH never recommends one, and a no stays findable with its reason.
+5. **Size and route.** After a go, MACH sizes the work from what the brief touches, by fixed rules: one slice, an epic, or several epics. For the last two it proposes a map; every outcome is carried by a slice or you say it is out of scope or for later. Nothing is created until you say so.
+6. **Look back.** When a slice made from the idea ships, each outcome comes back with its "how we would know" for you to record: met, not met, or too early to say.
+
+A slice made this way names the outcome it serves, so the record reads from the reason to the code and back. The brief never reaches the builders as instructions; the slice's spec stays the authority. You can also start from a rule that has shipped: on "How this epic works today", choose a rule and "change this".
+
 ## For engineers
 
 ### Before the first ticket
@@ -229,7 +242,7 @@ MACH creates a ticket and a cell and interviews you, the same way as in Product 
 /mach LOCAL-001
 ```
 
-This moves the ticket from wherever it is to the next point where a person is needed. A script reads what each station recorded and names the next step; a fresh agent does it; then the script is asked again. You can name a ticket by its number alone: `/mach 1`.
+This moves the ticket from wherever it is to the next point where a person is needed. MACH reads what each station recorded and names the next step; a fresh agent does it; then MACH is asked again. You can name a ticket by its number alone: `/mach 1`.
 
 An interrupted run loses nothing. Run the same command again and it resumes at the station it had reached.
 
@@ -264,7 +277,7 @@ Dispatch opens the cell and stops; `/mach <ticket>` then runs it. Nothing is dis
 
 MACH shows the schedule first, then runs the tickets with the belt workflow (`mach-belt`; `mach:belt` with the plugin). Each ticket is built, verified and reviewed in its own cell, and the run ends with what each one is waiting for.
 
-A script decides what may run together, and it only ever runs fewer than the limit, never more:
+MACH decides what may run together by fixed rules, and it only ever runs fewer than the limit, never more:
 
 - No more than `factory.max_parallel` tickets run at once, and no more than `factory.max_parallel_high` of them High risk.
 - A ticket waits for the tickets it depends on to be merged.
@@ -304,7 +317,7 @@ Full guide: [Engineer Guide](docs/guides/ENGINEER_GUIDE.md).
 
 ## When the factory needs you
 
-When a run stops for you, MACH walks you through it: one ticket at a time, what happened, then a prompt with the options that ticket really has. A script lists the options, so they are the same every time, and where a rule decides it, one is marked as recommended. You pick one, or skip it and nothing changes. To come back to it later:
+When a run stops for you, MACH walks you through it: one ticket at a time, what happened, then a prompt with the options that ticket really has. MACH lists the options by fixed rules, so they are the same every time, and where a rule decides it, one is marked as recommended. You pick one, or skip it and nothing changes. To come back to it later:
 
 ```
 /mach decide
@@ -316,7 +329,7 @@ These are the cases, and what each choice runs if you would rather type it yours
 |---|---|
 | The spec has open questions | Finish the interview: `/mach <ticket>` continues it |
 | Waiting for a person's approval (a high-risk change, or a Silver repository) | Read the findings it shows, then `/mach approve <ticket>`. It records your approval and carries the ticket on to the merge and cleanup. To have something changed first: `/mach send-back <ticket> "<why>"`. Your reason goes to the builder as the finding to answer, and it uses one of the ticket's three rounds |
-| The review's security veto rejected a round | The builder fixes it as usual. If you have read the finding and accept it for this commit, say so: `/mach except <ticket> <round>/<seat>/<n> "<why>"`, before the builder starts again, naming every vetoing blocker you accept. A reviewer whose only blockers you excepted then counts as approving, so this works at any risk tier; a reviewer with any other blocker still rejects, and the script refuses if the round would still fail. Only a blocker that vetoed can be excepted, never an ordinary one. It is not an approval: a high-risk change still needs yours. It holds only for the commit reviewed, and until the date you give with it |
+| The review's security veto rejected a round | The builder fixes it as usual. If you have read the finding and accept it for this commit, say so: `/mach except <ticket> <round>/<seat>/<n> "<why>"`, before the builder starts again, naming every vetoing blocker you accept. A reviewer whose only blockers you excepted then counts as approving, so this works at any risk tier; a reviewer with any other blocker still rejects, and MACH refuses if the round would still fail. Only a blocker that vetoed can be excepted, never an ordinary one. It is not an approval: a high-risk change still needs yours. It holds only for the commit reviewed, and until the date you give with it |
 | A security exception has expired | Record a new one the same way, or abandon the ticket. Nothing merges past an expired exception |
 | Approved, waiting for a person to merge | `/mach merge <ticket>` |
 | Blocked: escalated after three rounds | `/mach explain <ticket>`, then fix it yourself or abandon it: `/mach abandon <ticket> "<why>"` |
@@ -378,10 +391,10 @@ A cost appears only where one was recorded, which today means work the superviso
 
 | Command | What it does |
 |---|---|
-| `/mach-product-studio` | Project, epics, slices; mark a slice ready (a GitHub issue); requests from GitHub issues; `refresh`; "open the app" |
+| `/mach-product-studio` | Shape an idea before any epic (brief, case, verdict); project, epics, slices; mark a slice ready (a GitHub issue); requests from GitHub issues; `refresh`; "open the app" |
 | `/mach-idea` | For anyone: describe an idea in your own words and send it to the product team as a GitHub issue (or get the text to paste) |
 | `/mach <ticket>` | Move one ticket to the next point a person is needed |
-| `/mach <ticket> <ticket> ...` | Run several tickets, scheduled by script; `--dry-run`, `--limit <n>`, `--sequential` |
+| `/mach <ticket> <ticket> ...` | Run several tickets, scheduled by MACH's rules; `--dry-run`, `--limit <n>`, `--sequential` |
 | `/mach status` | Every open ticket and its next step |
 | `/mach studio` | Open Product Studio in your browser |
 | `/mach floor` | Open the Factory Floor in your browser: a read-only view of the factory |
@@ -456,10 +469,10 @@ A high-risk change always needs a person's approval in review unless you change 
 |---|---|
 | [Product Manager Guide](docs/guides/PRODUCT_MANAGER_GUIDE.md) | Product Studio from first project to recorded acceptance |
 | [Engineer Guide](docs/guides/ENGINEER_GUIDE.md) | Intake, the supervisor, human gates, recovery, release qualification |
-| [Station Reference](docs/guides/STATION_REFERENCE.md) | What each station does and what its script refuses |
+| [Station Reference](docs/guides/STATION_REFERENCE.md) | What each station does and what it refuses |
 | [Installing](docs/guides/INSTALLING.md) | The browser programs and what the installer verifies |
 | [Operator Security Guide](docs/guides/OPERATOR_SECURITY_GUIDE.md) | What an unattended run can reach, and the limits to know |
-| [`CLAUDE.md`](CLAUDE.md) | The full blueprint |
+| [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) | The full blueprint |
 
 ## Uninstall
 
@@ -503,7 +516,7 @@ To try the plugin from a clone without installing it: `claude --plugin-dir /path
 | `agents/contract-engineer.md` | Stage 2 of grooming, pinned to the `opus` tier. |
 | `agents/builder.md` | The build station, pinned to the `sonnet` tier. |
 | `agents/verifier.md` | The verify station, pinned to the `sonnet` tier, always a fresh context. |
-| `agents/reviewer.md` | One seat on the review panel; the review script sets its model per seat. |
+| `agents/reviewer.md` | One seat on the review panel; the review station sets its model per seat. |
 | `apps/studio/`, `apps/observer/` | The Product Studio host and the Factory Floor's read-only observer (Go), each with `build.sh` (embeds its web app) and `smoke.sh`. |
 | `bin/mach`, `install.sh` | The installer. |
 | `templates/` | What gets scaffolded into a project. |

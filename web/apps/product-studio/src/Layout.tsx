@@ -5,6 +5,7 @@ import { useSession, useStatus } from "./api/store";
 import { destinationFor, destinations } from "./features/registry";
 import { AppHint } from "./shared/AppHint";
 import { sliceSectionLabel } from "./shared/SliceSections";
+import { shapeBreadcrumb } from "./features/shape/shell/steps";
 
 /**
  * The frame of every screen. No rail: the project home is the default screen and leads everywhere;
@@ -67,7 +68,10 @@ function Breadcrumb({ projectName, path, status }: { projectName: string; path: 
   const slice = path.match(/^\/slices\/([^/]+)(\/[a-z]+)?$/);
   const epicPage = path.match(/^\/epics\/([^/]+)\/today$/);
   const prdPage = path.match(/^\/prds\/([^/]+)$/);
-  if (slice) {
+  const shape = shapeBreadcrumb(path, status);
+  if (shape) {
+    steps.push(...shape);
+  } else if (slice) {
     const row = status?.slices.find((s) => s.slice_id === slice[1]);
     const epic = row ? status?.epics.find((e) => e.epic_id === row.epic_id) : undefined;
     if (epic) steps.push(epic.title);

@@ -1,0 +1,198 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Teams work together.",
+      "outcomes": [
+        "Teams can work together"
+      ],
+      "issue": null,
+      "url": null
+    },
+    "approvals_withdrawn": [],
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "Team membership",
+        "status": "open",
+        "revision": 1,
+        "acceptance_criteria": [
+          "Only invited people can join"
+        ],
+        "issue": null,
+        "url": null,
+        "counts": {
+          "total": 0,
+          "by_progress": {},
+          "ready_or_further": 0,
+          "ready_or_further_means": "marked ready to build, being built, or shipped"
+        }
+      }
+    ],
+    "slices": [],
+    "saved": {
+      "everything_saved": false,
+      "note": "1 thing is not saved yet.",
+      "not_saved": [
+        {
+          "kind": "idea_unfinished",
+          "target": "IDEA-002",
+          "text": "Saving IDEA-002 to GitHub stopped part way. Save it again to finish."
+        }
+      ]
+    },
+    "order": [
+      {
+        "epic_id": "EPIC-001",
+        "issue": null,
+        "slices": [],
+        "on_github": false,
+        "github_order": null,
+        "github_read_at": null,
+        "matches_github": null,
+        "unfinished": false,
+        "taken_from_github": false,
+        "could_not_read": false,
+        "note": null
+      }
+    ],
+    "github": {
+      "repository": "acme/team-space",
+      "form": null,
+      "last_read": "2026-11-21T01:38:34Z"
+    },
+    "current_slice": null,
+    "last_refreshed": "2026-11-21T01:38:34Z",
+    "ideas": {
+      "ideas": [
+        {
+          "idea_id": "IDEA-001",
+          "title": "Let members renew a loan themselves",
+          "stage": "decided",
+          "stage_words": "Decided",
+          "source": {
+            "kind": "typed"
+          },
+          "created": "2026-11-21T01:38:31Z",
+          "revision": 1,
+          "has_brief": true,
+          "brief_checked": true,
+          "brief_passes": true,
+          "has_case": false,
+          "verdict": {
+            "decision": "go",
+            "by": "ada-pm",
+            "at": "2026-11-21T01:38:31Z",
+            "revision": 1,
+            "holds": true,
+            "stale": false,
+            "reason": "Members ask for it at every desk."
+          },
+          "route": null,
+          "made": null,
+          "github": {
+            "saved": "github",
+            "unfinished": false,
+            "issue": 1,
+            "url": "https://github.com/acme/team-space/issues/1",
+            "state": "open",
+            "up_to_date": true,
+            "changed_on_github": false,
+            "changed_after_verdict": false,
+            "verdict_on_github": true,
+            "number_taken": false,
+            "other_issues": [],
+            "last_read": "2026-11-21T01:38:35Z"
+          },
+          "next": {
+            "kind": "size",
+            "sentence": "IDEA-001 has a Go verdict: size it to find its route."
+          }
+        },
+        {
+          "idea_id": "IDEA-002",
+          "title": "Members pay fines online",
+          "stage": "decided",
+          "stage_words": "Decided",
+          "source": {
+            "kind": "typed"
+          },
+          "created": "2026-11-21T01:38:36Z",
+          "revision": 1,
+          "has_brief": true,
+          "brief_checked": true,
+          "brief_passes": true,
+          "has_case": false,
+          "verdict": {
+            "decision": "go",
+            "by": "ada-pm",
+            "at": "2026-11-21T01:38:37Z",
+            "revision": 1,
+            "holds": true,
+            "stale": false,
+            "reason": "Members ask for it at every desk."
+          },
+          "route": null,
+          "made": null,
+          "github": {
+            "saved": null,
+            "unfinished": true,
+            "issue": 2,
+            "url": "https://github.com/acme/team-space/issues/2",
+            "state": null,
+            "up_to_date": false,
+            "changed_on_github": false,
+            "changed_after_verdict": false,
+            "verdict_on_github": null,
+            "number_taken": false,
+            "other_issues": [],
+            "last_read": "2026-11-21T01:38:35Z"
+          },
+          "next": {
+            "kind": "publish",
+            "sentence": "Saving IDEA-002 to GitHub stopped part way. Save it again to finish."
+          }
+        }
+      ],
+      "by_stage": {
+        "new": [],
+        "exploring": [],
+        "brief": [],
+        "decided": [
+          "IDEA-001",
+          "IDEA-002"
+        ],
+        "shaped": []
+      },
+      "counts": {
+        "new": 0,
+        "exploring": 0,
+        "brief": 0,
+        "decided": 2,
+        "shaped": 0
+      },
+      "note": "Shape: ideas, briefs and the case, before any epic. A person decides; scripts check."
+    },
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Start a new slice (slice new --epic EPIC-NNN --title \"...\")."
+    ],
+    "next_actions": [
+      {
+        "kind": "start_slice",
+        "target": null,
+        "title": "Start a new slice",
+        "reason": "No slice of intent is being defined right now.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

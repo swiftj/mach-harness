@@ -1,0 +1,211 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-001",
+    "title": "Let members renew a loan themselves",
+    "stage": "shaped",
+    "route": {
+      "at": "2026-11-21T01:38:06Z",
+      "brief_sha256": "5c0fcf8917b5ec60044fbc43068faadc6c89a54f8c485c23a941f799fae08836",
+      "counted": {
+        "capabilities": 2,
+        "high_risk_areas": 0,
+        "high_risk_not_determined": [],
+        "outcomes": 2,
+        "policy_concerns": 0,
+        "principle_concerns": 0,
+        "shipped_rules": 2,
+        "shipped_rules_looked_up": 0
+      },
+      "details": {
+        "concerns": {
+          "policies": [],
+          "principles": []
+        },
+        "high_risk": {
+          "areas": [],
+          "count": 0,
+          "not_determined": []
+        },
+        "touches": {
+          "capabilities": [
+            "Lending",
+            "Member account"
+          ],
+          "outcomes": [
+            "O-1",
+            "O-2"
+          ],
+          "shipped_rules": [
+            "SLICE-001/FR-01",
+            "SLICE-001/INV-02"
+          ]
+        }
+      },
+      "revision": 1,
+      "route": "several-epics",
+      "why": "The brief's outcomes are in 2 different capabilities, so the route is several epics.",
+      "words": "several epics",
+      "holds": true,
+      "stale": false
+    },
+    "made": {
+      "epics": [
+        "EPIC-002"
+      ],
+      "slices": [
+        "SLICE-005",
+        "SLICE-006"
+      ]
+    },
+    "outcomes": [
+      {
+        "outcome": "O-1",
+        "text": "Members renew without calling the library.",
+        "how_we_would_know": "renewal calls at Central fall from about 40 a week to under 15 within two months.",
+        "in_brief": true,
+        "slices": [
+          "SLICE-005",
+          "SLICE-006"
+        ],
+        "settled": null,
+        "lookback": null,
+        "missing": [
+          "no look-back is recorded"
+        ]
+      },
+      {
+        "outcome": "O-2",
+        "text": "Members are not surprised by a renewal that was refused.",
+        "how_we_would_know": "complaints about unexpected fines after a refused renewal fall to none in a quarter.",
+        "in_brief": true,
+        "slices": [
+          "SLICE-006"
+        ],
+        "settled": {
+          "as": "slice",
+          "at": "2026-11-21T01:38:08Z",
+          "reason": "The catalogue says why.",
+          "slice": "S2"
+        },
+        "lookback": null,
+        "missing": [
+          "no look-back is recorded"
+        ]
+      }
+    ],
+    "assumptions": [
+      {
+        "assumption": "A-1",
+        "text": "Most renewal calls are for items nobody is waiting for.",
+        "state": "assumed",
+        "lookback": null,
+        "missing": [
+          "no look-back is recorded"
+        ]
+      },
+      {
+        "assumption": "A-2",
+        "text": "Members who renew already sign in to the catalogue.",
+        "state": "confirmed",
+        "lookback": null,
+        "missing": [
+          "no look-back is recorded"
+        ]
+      }
+    ],
+    "slices": [
+      {
+        "slice_id": "SLICE-005",
+        "missing": [],
+        "title": "Renew a loan from my loans",
+        "epic_id": "EPIC-002",
+        "outcomes": [
+          "O-1"
+        ],
+        "spec": {
+          "invariants": [
+            "INV-01",
+            "INV-02",
+            "INV-03",
+            "INV-04"
+          ],
+          "functional_requirements": [
+            "FR-01",
+            "FR-02",
+            "FR-03",
+            "FR-04",
+            "FR-05",
+            "FR-06",
+            "FR-07",
+            "FR-08",
+            "FR-09"
+          ],
+          "matrix_rules": [
+            "R1",
+            "R2",
+            "R3",
+            "R4",
+            "R5"
+          ],
+          "scenarios": [
+            "AC-01",
+            "AC-02",
+            "AC-03"
+          ]
+        },
+        "progress": "interviewing",
+        "issue": null,
+        "times": {
+          "marked_ready": null,
+          "building": null,
+          "question": null,
+          "shipped": null
+        }
+      },
+      {
+        "slice_id": "SLICE-006",
+        "missing": [
+          "no spec has been written yet"
+        ],
+        "title": "Renew from the catalogue",
+        "epic_id": "EPIC-001",
+        "outcomes": [
+          "O-1",
+          "O-2"
+        ],
+        "spec": null,
+        "progress": "draft",
+        "issue": null,
+        "times": {
+          "marked_ready": null,
+          "building": null,
+          "question": null,
+          "shipped": null
+        }
+      }
+    ],
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "acceptance": null,
+        "missing": "Product acceptance is recorded as a comment on the epic's GitHub issue; this computer keeps no copy of it, so it is not shown."
+      },
+      {
+        "epic_id": "EPIC-002",
+        "acceptance": null,
+        "missing": "Product acceptance is recorded as a comment on the epic's GitHub issue; this computer keeps no copy of it, so it is not shown."
+      }
+    ],
+    "brief": {
+      "revision": 1,
+      "sha256": "5c0fcf8917b5ec60044fbc43068faadc6c89a54f8c485c23a941f799fae08836"
+    },
+    "last_read": null,
+    "missing": [],
+    "note": "Read from this workspace and the last check of GitHub. Nothing was changed, and nothing missing was filled in.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

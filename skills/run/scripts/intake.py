@@ -90,10 +90,15 @@ ENGINEER = "engineer"  # the only caller that may dispatch without an authorizat
 IGNORE_LINE = ".factory/intake/"
 READY_DIR = "product/ready"
 PRINCIPLES_FOLDER = "PRINCIPLES"  # product/ready/PRINCIPLES/: the published product principles (M13), never a slice
+IDEAS_FOLDER = "IDEAS"  # product/ready/IDEAS/: Shape's ideas and briefs (M16), never read
 SLICE_ID_RE = re.compile(r"^SLICE-[0-9]{3,}$")
 FOLDER_KEYS = {"schema_version", "slice_id", "title", "revision", "epic", "dependencies", "spec_sha256", "why_sha256"}
 # The header MACH writes under a spec's title when it commits the spec on the ticket's branch (decision 2).
-HEADER_RE = re.compile(r"^> Epic: (.{1,200}) \((EPIC-[0-9]{3,})(?:, issue #([0-9]{1,9}))?\)\. Slice issue: (?:#([0-9]{1,9})|none)\.$")
+HEADER_RE = re.compile(r"^> Epic: (.{1,200}) \((EPIC-[0-9]{3,})(?:, issue #([0-9]{1,9}))?\)\. Slice issue: (?:#([0-9]{1,9})|none)\."
+                       r"(?: Serves: (IDEA-[0-9]{3,}) (O-[1-9][0-9]{0,3}(?:, O-[1-9][0-9]{0,3}){0,49})\.)?$")
+# M16 B: a slice Product Studio made from an idea names the idea and the outcomes it serves in its why's header, one line
+# that is approved with the why. Only these identifiers are read from it, and only to repeat them in the spec's header.
+SERVES_RE = re.compile(r"^- \*\*Serves:\*\* (IDEA-[0-9]{3,}) (O-[1-9][0-9]{0,3}(?:, O-[1-9][0-9]{0,3}){0,49})\s*$")
 LOCAL = "local"
 
 
@@ -140,9 +145,23 @@ def plain_name(text: Any) -> str:
     return cleaned.strip()[:120] or "Untitled epic"
 
 
-def spec_header(epic: Dict[str, Any], issue: Optional[int]) -> str:
+def spec_header(epic: Dict[str, Any], issue: Optional[int], serves: Optional[Tuple[str, str]] = None) -> str:
     where = f"{epic.get('epic_id')}, issue #{epic['issue']}" if epic.get("issue") else str(epic.get("epic_id"))
-    return f"> Epic: {plain_name(epic.get('title'))} ({where}). Slice issue: " + (f"#{issue}." if issue else "none.")
+    return (f"> Epic: {plain_name(epic.get('title'))} ({where}). Slice issue: " + (f"#{issue}." if issue else "none.")
+            + (f" Serves: {serves[0]} {serves[1]}." if serves else ""))
+
+
+def serves_of(why: str) -> Optional[Tuple[str, str]]:
+    """M16 B: the idea and outcomes the approved why says the slice serves, from its header (the lines before its first
+    section); None when it names none, or names them more than once."""
+    found = []
+    for line in why.split("\n"):
+        if line.startswith("## "):
+            break
+        match = SERVES_RE.match(line)
+        if match:
+            found.append((match.group(1), match.group(2)))
+    return found[0] if len(found) == 1 else None
 
 
 def with_header(spec: str, header: str) -> str:
@@ -644,6 +663,8 @@ class Factory:
         folders: Dict[str, Dict[str, bytes]] = {}
         for path in listing:
             parts = path.split("/")
+            if len(parts) > 3 and parts[2] == IDEAS_FOLDER:
+                continue  # M16: Shape's ideas and briefs, for people; never read by the Factory
             if len(parts) == 5 and parts[3] == "mocks":  # M14 C: a slice's design mocks; for a slice saved as an issue, the folder holds only these
                 data = self.git_bytes("show", f"{commit}:{path}")
                 found["mock_files"].setdefault("/".join(parts[:3]), {})[parts[4]] = data if data is not None else b""
@@ -1647,7 +1668,7 @@ class Factory:
             extra.unlink()
         if target.is_symlink():
             raise IntakeError(f"In the cell for {ticket_id}, {target.name} is a symbolic link. Nothing was started.")
-        text = with_header(spec, spec_header(entry.get("epic") or {}, entry.get("issue")))
+        text = with_header(spec, spec_header(entry.get("epic") or {}, entry.get("issue"), serves_of(why)))
         target.write_text(text, encoding="utf-8")
         if text_sha(without_header(target.read_text(encoding="utf-8"))[0]) != entry.get("spec_sha256"):
             raise IntakeError(f"In the cell for {ticket_id}, {target.name} is not the approved spec for {entry['slice_id']} revision {entry.get('revision')}. Nothing was started.")

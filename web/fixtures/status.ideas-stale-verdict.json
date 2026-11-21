@@ -1,0 +1,147 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Teams work together.",
+      "outcomes": [
+        "Teams can work together"
+      ],
+      "issue": null,
+      "url": null
+    },
+    "approvals_withdrawn": [],
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "Team membership",
+        "status": "open",
+        "revision": 1,
+        "acceptance_criteria": [
+          "Only invited people can join"
+        ],
+        "issue": null,
+        "url": null,
+        "counts": {
+          "total": 0,
+          "by_progress": {},
+          "ready_or_further": 0,
+          "ready_or_further_means": "marked ready to build, being built, or shipped"
+        }
+      }
+    ],
+    "slices": [],
+    "saved": {
+      "everything_saved": true,
+      "note": "Everything is saved.",
+      "not_saved": []
+    },
+    "order": [
+      {
+        "epic_id": "EPIC-001",
+        "issue": null,
+        "slices": [],
+        "on_github": false,
+        "github_order": null,
+        "github_read_at": null,
+        "matches_github": null,
+        "unfinished": false,
+        "taken_from_github": false,
+        "could_not_read": false,
+        "note": null
+      }
+    ],
+    "github": {
+      "repository": null,
+      "form": null,
+      "last_read": null
+    },
+    "current_slice": null,
+    "last_refreshed": null,
+    "ideas": {
+      "ideas": [
+        {
+          "idea_id": "IDEA-001",
+          "title": "Let members renew a loan themselves",
+          "stage": "brief",
+          "stage_words": "Brief written",
+          "source": {
+            "kind": "typed"
+          },
+          "created": "2026-11-21T01:37:56Z",
+          "revision": 2,
+          "has_brief": true,
+          "brief_checked": true,
+          "brief_passes": true,
+          "has_case": false,
+          "verdict": {
+            "decision": "go",
+            "by": "ada-pm",
+            "at": "2026-11-21T01:37:56Z",
+            "revision": 1,
+            "holds": false,
+            "stale": true,
+            "reason": "Members ask for it at every desk."
+          },
+          "route": null,
+          "made": null,
+          "github": {
+            "saved": null,
+            "unfinished": false,
+            "issue": null,
+            "url": null,
+            "state": null,
+            "up_to_date": false,
+            "changed_on_github": false,
+            "changed_after_verdict": false,
+            "verdict_on_github": null,
+            "number_taken": false,
+            "other_issues": [],
+            "last_read": null
+          },
+          "next": {
+            "kind": "record_verdict",
+            "sentence": "Make the case for IDEA-001 and record your verdict: Go, Not now or No."
+          }
+        }
+      ],
+      "by_stage": {
+        "new": [],
+        "exploring": [],
+        "brief": [
+          "IDEA-001"
+        ],
+        "decided": [],
+        "shaped": []
+      },
+      "counts": {
+        "new": 0,
+        "exploring": 0,
+        "brief": 1,
+        "decided": 0,
+        "shaped": 0
+      },
+      "note": "Shape: ideas, briefs and the case, before any epic. A person decides; scripts check."
+    },
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Start a new slice (slice new --epic EPIC-NNN --title \"...\")."
+    ],
+    "next_actions": [
+      {
+        "kind": "start_slice",
+        "target": null,
+        "title": "Start a new slice",
+        "reason": "No slice of intent is being defined right now.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

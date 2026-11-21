@@ -5,7 +5,6 @@ import {
   Button,
   EmptyState,
   ErrorState,
-  Heading,
   Page,
   Popover,
   PopoverContent,
@@ -21,6 +20,7 @@ import {
 } from "@mach/ui";
 import { GraphOutline, ProductGraph, graphStates, productGraphFromStatus, type GraphState, type MachEdge, type MachNode } from "@mach/ui/graph";
 import { useStatus } from "../../api/store";
+import { ContextRow, WorkScreen } from "../../shared/layout/WorkScreen";
 import { NewSliceDialog } from "./NewSliceDialog";
 import { NodeSheet } from "./NodeSheet";
 
@@ -89,135 +89,140 @@ function Roadmap({ status }: { status: Status }) {
       return next;
     });
 
+  // The graph already fills the window; it takes the slim context row (M16 layout) and keeps everything else.
   return (
-    <Page className="flex h-full flex-col gap-5 pb-6">
-      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
-        <div className="flex max-w-reading flex-col gap-1">
-          <Heading level={1}>Roadmap</Heading>
-          <Text tone="muted">Everything in {status.project!.name}, from the project to its slices of intent. Select an item to see where it stands and what you can do.</Text>
-        </div>
-        <Button variant="primary" onClick={() => setNewSlice({ epicId: epicFilter === "all" ? null : epicFilter })} disabled={!status.epics.length}>
-          <Plus aria-hidden="true" />
-          Start a slice
-        </Button>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-3 border-y border-line py-3" role="toolbar" aria-label="Roadmap filters and view">
-        <div className="flex items-center gap-2">
-          <span id="epic-filter" className="text-label text-ink-muted">
-            Epic
-          </span>
-          <Select
-            size="sm"
-            aria-label="Epic"
-            className="w-60"
-            value={epicFilter}
-            onValueChange={setEpicFilter}
-            options={[{ value: "all", label: "All epics" }, ...status.epics.map((e) => ({ value: e.epic_id, label: `${e.epic_id} ${e.title}` }))]}
-          />
-        </div>
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5" role="group" aria-label="Show slices that are">
-          <span className="mr-1 text-label text-ink-muted">State</span>
-          {stateOrder
-            .filter((s) => present.has(s) || states.has(s))
-            .map((state) => {
-              const d = graphStates[state];
-              const on = states.has(state);
-              return (
-                <button
-                  key={state}
-                  type="button"
-                  aria-pressed={on}
-                  onClick={() => toggle(state)}
-                  className={cn(
-                    "inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-caption font-semibold transition-colors duration-[var(--mach-duration-fast)]",
-                    on ? cn(toneClasses[d.tone].soft, toneClasses[d.tone].ink, toneClasses[d.tone].line) : "border-line-strong text-ink-muted hover:bg-surface-sunken hover:text-ink",
-                  )}
-                >
-                  <StateGlyph shape={d.glyph} size={12} />
-                  {d.label}
-                </button>
-              );
-            })}
-          {filtered ? (
-            <Button
+    <WorkScreen
+      header={
+        <ContextRow
+          title="Roadmap"
+          about={`Everything in ${status.project!.name}, from the project to its slices of intent. Select an item to see where it stands and what you can do.`}
+          actions={
+            <Button variant="primary" onClick={() => setNewSlice({ epicId: epicFilter === "all" ? null : epicFilter })} disabled={!status.epics.length}>
+              <Plus aria-hidden="true" />
+              Start a slice
+            </Button>
+          }
+        />
+      }
+    >
+      <div className="flex min-h-0 flex-1 flex-col gap-4 px-10 pb-6 pt-3">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-3 border-b border-line pb-3" role="toolbar" aria-label="Roadmap filters and view">
+          <div className="flex items-center gap-2">
+            <span id="epic-filter" className="text-label text-ink-muted">
+              Epic
+            </span>
+            <Select
               size="sm"
-              variant="link"
-              className="ml-1"
-              onClick={() => {
-                setStates(new Set());
-                setEpicFilter("all");
-              }}
-            >
-              Clear filters
-            </Button>
-          ) : null}
-        </div>
-        <div className="ml-auto flex items-center gap-1">
-          <Legend />
-          <div className="flex gap-1" role="group" aria-label="View">
-            <Button size="sm" variant={view === "graph" ? "secondary" : "ghost"} aria-pressed={view === "graph"} onClick={() => setView("graph")}>
-              <Network aria-hidden="true" />
-              Map
-            </Button>
-            <Button size="sm" variant={view === "list" ? "secondary" : "ghost"} aria-pressed={view === "list"} onClick={() => setView("list")}>
-              <List aria-hidden="true" />
-              List
-            </Button>
+              aria-label="Epic"
+              className="w-60"
+              value={epicFilter}
+              onValueChange={setEpicFilter}
+              options={[{ value: "all", label: "All epics" }, ...status.epics.map((e) => ({ value: e.epic_id, label: `${e.epic_id} ${e.title}` }))]}
+            />
+          </div>
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5" role="group" aria-label="Show slices that are">
+            <span className="mr-1 text-label text-ink-muted">State</span>
+            {stateOrder
+              .filter((s) => present.has(s) || states.has(s))
+              .map((state) => {
+                const d = graphStates[state];
+                const on = states.has(state);
+                return (
+                  <button
+                    key={state}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => toggle(state)}
+                    className={cn(
+                      "inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-caption font-semibold transition-colors duration-[var(--mach-duration-fast)]",
+                      on ? cn(toneClasses[d.tone].soft, toneClasses[d.tone].ink, toneClasses[d.tone].line) : "border-line-strong text-ink-muted hover:bg-surface-sunken hover:text-ink",
+                    )}
+                  >
+                    <StateGlyph shape={d.glyph} size={12} />
+                    {d.label}
+                  </button>
+                );
+              })}
+            {filtered ? (
+              <Button
+                size="sm"
+                variant="link"
+                className="ml-1"
+                onClick={() => {
+                  setStates(new Set());
+                  setEpicFilter("all");
+                }}
+              >
+                Clear filters
+              </Button>
+            ) : null}
+          </div>
+          <div className="ml-auto flex items-center gap-1">
+            <Legend />
+            <div className="flex gap-1" role="group" aria-label="View">
+              <Button size="sm" variant={view === "graph" ? "secondary" : "ghost"} aria-pressed={view === "graph"} onClick={() => setView("graph")}>
+                <Network aria-hidden="true" />
+                Map
+              </Button>
+              <Button size="sm" variant={view === "list" ? "secondary" : "ghost"} aria-pressed={view === "list"} onClick={() => setView("list")}>
+                <List aria-hidden="true" />
+                List
+              </Button>
+            </div>
           </div>
         </div>
-      </div>
 
-      {!status.epics.length ? (
-        <EmptyState
-          title="No epics yet"
-          description="Add the larger capabilities of the product first; their slices of intent then appear here."
-          action={
-            <Button variant="primary" asChild>
-              <Link to="/vision" state={{ focus: "epics" }}>
-                Add an epic
-              </Link>
-            </Button>
-          }
-        />
-      ) : shown.nodes.length <= 1 && filtered ? (
-        <EmptyState
-          title="Nothing matches these filters"
-          description="No slice is in the chosen states for this epic."
-          action={
-            <Button
-              onClick={() => {
-                setStates(new Set());
-                setEpicFilter("all");
-              }}
-            >
-              Clear filters
-            </Button>
-          }
-        />
-      ) : view === "graph" ? (
-        <div className="min-h-[420px] flex-1">
-          <ProductGraph
-            nodes={shown.nodes}
-            edges={shown.edges}
-            onSelect={setSelected}
-            selectedId={selected?.id}
-            ariaLabel={`Roadmap of ${status.project!.name}. Use Tab to move between items and Enter to open one.`}
+        {!status.epics.length ? (
+          <EmptyState
+            title="No epics yet"
+            description="Add the larger capabilities of the product first; their slices of intent then appear here."
+            action={
+              <Button variant="primary" asChild>
+                <Link to="/vision" state={{ focus: "epics" }}>
+                  Add an epic
+                </Link>
+              </Button>
+            }
           />
-        </div>
-      ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-line bg-surface p-3">
-          <GraphOutline nodes={shown.nodes} edges={shown.edges} onSelect={setSelected} selectedId={selected?.id} />
-        </div>
-      )}
+        ) : shown.nodes.length <= 1 && filtered ? (
+          <EmptyState
+            title="Nothing matches these filters"
+            description="No slice is in the chosen states for this epic."
+            action={
+              <Button
+                onClick={() => {
+                  setStates(new Set());
+                  setEpicFilter("all");
+                }}
+              >
+                Clear filters
+              </Button>
+            }
+          />
+        ) : view === "graph" ? (
+          <div className="min-h-[420px] flex-1">
+            <ProductGraph
+              nodes={shown.nodes}
+              edges={shown.edges}
+              onSelect={setSelected}
+              selectedId={selected?.id}
+              ariaLabel={`Roadmap of ${status.project!.name}. Use Tab to move between items and Enter to open one.`}
+            />
+          </div>
+        ) : (
+          <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-line bg-surface p-3">
+            <GraphOutline nodes={shown.nodes} edges={shown.edges} onSelect={setSelected} selectedId={selected?.id} />
+          </div>
+        )}
 
-      <Text as="p" size="caption" tone="subtle">
-        Approved means you approved the text and marked it ready. Ready to build, being built and shipped are where the builders have it, as read from GitHub at the last refresh.
-      </Text>
+        <Text as="p" size="caption" tone="subtle">
+          Approved means you approved the text and marked it ready. Ready to build, being built and shipped are where the builders have it, as read from GitHub at the last refresh.
+        </Text>
 
-      <NodeSheet node={selected} status={status} onClose={() => setSelected(null)} onSelect={setSelected} nodes={full.nodes} onNewSlice={(epicId) => setNewSlice({ epicId })} />
-      <NewSliceDialog open={newSlice !== null} onOpenChange={(open) => !open && setNewSlice(null)} epics={status.epics} epicId={newSlice?.epicId} />
-    </Page>
+        <NodeSheet node={selected} status={status} onClose={() => setSelected(null)} onSelect={setSelected} nodes={full.nodes} onNewSlice={(epicId) => setNewSlice({ epicId })} />
+        <NewSliceDialog open={newSlice !== null} onOpenChange={(open) => !open && setNewSlice(null)} epics={status.epics} epicId={newSlice?.epicId} />
+      </div>
+    </WorkScreen>
   );
 }
 

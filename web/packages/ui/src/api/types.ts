@@ -12,6 +12,36 @@
  * These types describe; they never decide. Product rules live only in the engine.
  */
 
+import type {
+  BriefCheck,
+  BriefShow,
+  CaseCheck,
+  CaseShow,
+  IdeaAdded,
+  IdeaBoard,
+  IdeaChain,
+  IdeaChanged,
+  IdeaFaults,
+  IdeaLookupsInput,
+  IdeaLookupsResult,
+  IdeaPublished,
+  IdeaRenumbered,
+  IdeaShow,
+  IdeaSized,
+  IdeaStageResult,
+  LookbackRecorded,
+  RefreshIdeas,
+  Serves,
+  ShapeApplied,
+  ShapeMapInput,
+  ShapeMapRecorded,
+  ShapeMapStatus,
+  ShapeSettled,
+  SliceFromIdea,
+  StatusIdeas,
+  VerdictRecorded,
+} from "./shape";
+
 /* ── Vocabulary ─────────────────────────────────────────────────────────── */
 
 export type ProjectStatus = "draft" | "active" | "archived";
@@ -49,6 +79,8 @@ export interface Epic {
   acceptance_criteria: string[];
   /** The Jira issue the epic belongs to (M13 E), set with `epic.link`. Absent when there is none. */
   tracking?: Tracking;
+  /** M16: the idea and outcomes an epic made by Shape's apply serves; identifiers only. */
+  serves?: Serves;
 }
 
 export interface WorkOrder {
@@ -71,6 +103,8 @@ export interface WorkOrder {
   source?: PrdSource;
   /** The request the slice was started from (M8): identifiers only, never issue text. */
   origin?: { kind: "github_issue" | (string & {}); repository: string; number: number };
+  /** M16: the idea and outcomes a slice made by Shape's apply serves; its why must name them (`idea.why_line`). */
+  serves?: Serves;
 }
 
 /* ── Operation results ──────────────────────────────────────────────────── */
@@ -144,7 +178,17 @@ export interface SavedReport {
   note: string;
   /** M15: unpublished product principles are listed too (principles_unpublished, or principles_unfinished when publishing stopped part way). */
   not_saved: Array<{
-    kind: "unfinished" | "changed_since_ready" | "refresh_failed" | "request_updates" | "principles_unpublished" | "principles_unfinished" | (string & {});
+    kind:
+      | "unfinished"
+      | "changed_since_ready"
+      | "refresh_failed"
+      | "request_updates"
+      | "principles_unpublished"
+      | "principles_unfinished"
+      /** M16: an idea whose save to GitHub stopped part way, or that changed since it was saved there. */
+      | "idea_unfinished"
+      | "idea_changed"
+      | (string & {});
     target: string | null;
     text: string;
   }>;
@@ -227,6 +271,8 @@ export interface Status {
   principles?: PrinciplesBlock;
   /** M13 D: one summary row per imported PRD; absent when none was imported. */
   prds?: PrdSummary[];
+  /** M16: Shape's board, with each idea's next step. Absent when the workspace has no idea. */
+  ideas?: StatusIdeas;
 }
 
 /**
@@ -333,6 +379,8 @@ export interface Refresh {
   shipped_moved?: Record<string, ShippedMoved>;
   /** M13 A: another product manager's newer principles, taken because nothing here was unpublished. */
   principles_taken?: { revision: number; approved_by?: string | null; [key: string]: unknown };
+  /** M16: the idea issues read back (read only); absent when Shape was never used here. */
+  ideas?: RefreshIdeas;
 }
 
 export interface SpecCounts {
@@ -365,6 +413,8 @@ export interface SliceCheck {
   intent_problems: string[];
   /** M13 D: for a slice made from a PRD, drafted answers not settled and a why that does not name the PRD. Empty otherwise. */
   prd_problems?: string[];
+  /** M16: for a slice made from an idea, a why that does not name the idea and outcomes it serves. Absent otherwise. */
+  serves_problems?: string[];
   /** M13 B: the shipped rules the spec was checked against. Absent without a spec. */
   shipped?: ShippedChecked;
   /** Absent when there is no spec yet. */
@@ -379,7 +429,8 @@ export interface SliceCheck {
 
 export interface SliceIds {
   next: string[];
-  reserved_without_spec: string[];
+  /** Plain IDs, or (seen on a slice made by Shape's apply) each with the feature and the slice that reserved it. */
+  reserved_without_spec: Array<string | { id: string; feature: string; reserved_by: string }>;
 }
 
 export interface SlicePaths {
@@ -413,6 +464,8 @@ export interface SliceResume extends SlicePaths {
   prd?: PrdForSlice;
   /** M8 and M14 D: the request the slice was started from, fenced, with the questions its author left. */
   request?: RequestForSlice;
+  /** M16: for a slice made from an idea, the outcomes it serves and the brief's earlier words, fenced. */
+  idea?: SliceFromIdea;
 }
 
 export interface SlicePause {
@@ -655,6 +708,8 @@ export interface SliceShow {
   github: SliceGithub;
   /** M15: the same field as slice.resume's, for a slice made from a PRD; read only. */
   prd?: PrdForSlice;
+  /** M16: the same field as slice.resume's, for a slice made from an idea; read only. */
+  idea?: SliceFromIdea;
   factory_authorized: false;
 }
 
@@ -729,6 +784,39 @@ export interface Operations {
   "slice.mock.add": { args: { slice_id: string; file: UploadFile; for?: string; binding?: boolean; note?: string }; result: MockAdd };
   "slice.mock.remove": { args: { slice_id: string; mock: string }; result: MockRemove };
   "slice.mock.list": { args: { slice_id: string }; result: MockList };
+
+  /* M16: Shape. Argument shapes are the host's (apps/studio/internal/engine/ops_shape.go). */
+  "idea.add": { args: { title: string; from_request?: number; from_issue?: number; from_fault?: string }; result: IdeaAdded };
+  "idea.list": { args: Record<string, never>; result: IdeaBoard & { factory_authorized: false } };
+  "idea.faults": { args: Record<string, never>; result: IdeaFaults };
+  "idea.show": { args: { idea_id: string }; result: IdeaShow };
+  "idea.stage": { args: { idea_id: string; stage: "exploring" }; result: IdeaStageResult };
+  "idea.lookups": { args: { idea_id: string; lookups: IdeaLookupsInput }; result: IdeaLookupsResult };
+  "idea.renumber": { args: { idea_id: string }; result: IdeaRenumbered };
+  "idea.publish": { args: { idea_id: string }; result: IdeaPublished };
+  "idea.size": { args: { idea_id: string }; result: IdeaSized };
+  "idea.map": { args: { idea_id: string; map: ShapeMapInput }; result: ShapeMapRecorded };
+  "idea.settle": {
+    args:
+      | { idea_id: string; outcome: string; as: "slice"; slice: string; reason?: string }
+      | { idea_id: string; outcome: string; as: "out-of-scope" | "later"; reason: string };
+    result: ShapeSettled;
+  };
+  "idea.map-status": { args: { idea_id: string }; result: ShapeMapStatus };
+  "idea.apply": { args: { idea_id: string }; result: ShapeApplied };
+  "idea.change": { args: { rule: string; title?: string }; result: IdeaChanged };
+  "idea.chain": { args: { idea_id: string }; result: IdeaChain };
+  "brief.check": { args: { idea_id: string }; result: BriefCheck };
+  "brief.show": { args: { idea_id: string }; result: BriefShow };
+  "case.show": { args: { idea_id: string }; result: CaseShow };
+  "case.check": { args: { idea_id: string }; result: CaseCheck };
+  "verdict.record": { args: { idea_id: string; decision: "go" | "not-now" | "no"; reason: string }; result: VerdictRecorded };
+  "lookback.record": {
+    args:
+      | { idea_id: string; outcome: string; result: "met" | "not-met" | "too-early"; note: string }
+      | { idea_id: string; assumption: string; result: "confirmed" | "wrong" | "unknown"; note: string };
+    result: LookbackRecorded;
+  };
 }
 
 export type OperationName = keyof Operations;
@@ -753,6 +841,14 @@ export const readOnlyOperations: ReadonlySet<OperationName> = new Set<OperationN
   "prd.show",
   "prd.status",
   "slice.mock.list",
+  "idea.list",
+  "idea.faults",
+  "idea.show",
+  "idea.map-status",
+  "idea.chain",
+  "brief.show",
+  "case.show",
+  "case.check",
 ]);
 
 /**
@@ -785,6 +881,14 @@ export const personalActs: ReadonlySet<OperationName> = new Set<OperationName>([
   "prd.confirm",
   "slice.mock.add",
   "slice.mock.remove",
+  // M16: Shape's acts on the product manager's word (references/shape.md rule 6).
+  "verdict.record",
+  "idea.publish",
+  "idea.renumber",
+  "idea.settle",
+  "idea.apply",
+  "idea.change",
+  "lookback.record",
 ]);
 
 /* ── M15: types for what M13 and M14 added (web/fixtures/product_memory.py holds real samples) ── */
@@ -803,6 +907,8 @@ export const uploadLimits = {
   jiraKeys: { maxBytes: 8 * 1024 * 1024, extensions: [".csv"] },
   /** A PRD map or a set of drafted answers, as JSON. */
   json: { maxBytes: 1024 * 1024 },
+  /** M16: an idea's lookups or its map, as JSON (the engine's own limit). */
+  shapeJson: { maxBytes: 256 * 1024 },
 } as const;
 
 export interface Tracking {
@@ -1470,6 +1576,8 @@ export interface Session {
      * install); the app appends the slice ID. Null when the host does not say.
      */
     continue_command?: string | null;
+    /** M16: the same install's command that explores an idea, without the idea ID ("/mach:product-studio explore"). */
+    explore_command?: string | null;
   };
   versions: { host: string; api: string | number; engine_install: string | null };
   /** Set when the engine could not report status while building the session. */
@@ -1537,7 +1645,8 @@ export interface InterviewEventMap {
   /** Sent with `message` when it parses as exactly one question. Key by message_id. */
   question: ParsedQuestion;
   activity: { kind: ActivityKind; text: string };
-  draft_changed: { slice_id: string; what: Array<"spec" | "why" | "work_order" | (string & {})> };
+  /** A slice's interview names `slice_id`; the Shape conversation (M16) names `idea_id`, with brief, case, lookups or idea. */
+  draft_changed: { slice_id?: string; idea_id?: string; what: Array<"spec" | "why" | "work_order" | "brief" | "case" | "lookups" | "idea" | (string & {})> };
   turn: { outcome: TurnOutcome; seconds: number; cost_usd: number | null; session_cost_usd: number | null; refused: number | string[] | null };
   /** The product manager's own reply, first in the turn it starts. */
   reply: { text: string };
@@ -1562,7 +1671,9 @@ export const interviewEventTypes: readonly InterviewEventName[] = interviewEvent
 /** GET /api/interview?slice_id=: what the host knows about a slice's interview. */
 export interface InterviewSummary {
   interview_id: string | null;
-  slice_id: string;
+  /** The slice's interview; absent for the Shape conversation (M16), which names `idea_id`. */
+  slice_id?: string;
+  idea_id?: string;
   /** A process holds this slice's interview now. False when only a saved session exists. */
   live: boolean;
   state: InterviewHostState | "saved";
@@ -1576,7 +1687,9 @@ export interface InterviewSummary {
 
 /** GET /api/interview/history?slice_id=: every saved event, oldest first, across interviews and restarts. */
 export interface InterviewHistory {
-  slice_id: string;
+  slice_id?: string;
+  /** M16: the Shape conversation's history. */
+  idea_id?: string;
   events: Array<{ at: string; interview_id: string; event: InterviewEventName; data: unknown }>;
   /** The oldest events were dropped to keep the history small. */
   truncated: boolean;
@@ -1585,7 +1698,9 @@ export interface InterviewHistory {
 /** POST /api/interview. */
 export interface StartResult {
   interview_id: string;
-  slice_id: string;
+  slice_id?: string;
+  /** M16: the Shape conversation started for this idea. */
+  idea_id?: string;
   resumed: boolean;
 }
 

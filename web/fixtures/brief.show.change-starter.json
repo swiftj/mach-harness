@@ -1,0 +1,91 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-007",
+    "revision": 1,
+    "changed_since_check": false,
+    "sha256": "8ca3a9244b1f2f3ab3e29b7c14d79caea84f2a2059b89283ffe2cda304d79c38",
+    "text": "# Brief: Let one address hold two memberships\n\n## Problem\n\n<why SLICE-001/INV-02 should change, in the product manager's words>\n\n## Who has it\n\n<who runs into the rule as it is today>\n\n## Outcomes\n\n- **O-1:** <what will be true once it changes>\n  - How we would know: <a measure or an observable change>\n\n## Not doing\n\n<what stays as it is>\n\n## Assumptions\n\nNone.\n\n## Open questions\n\nNone.\n\n## Risks\n\nNone.\n\n## What it touches\n\n- Capabilities: Team membership (EPIC-001)\n- Shipped rules: SLICE-001/INV-02\n",
+    "model": {
+      "title": "Let one address hold two memberships",
+      "problem": "<why SLICE-001/INV-02 should change, in the product manager's words>",
+      "who_has_it": "<who runs into the rule as it is today>",
+      "outcomes": [
+        {
+          "id": "O-1",
+          "text": "<what will be true once it changes>",
+          "how_we_would_know": "<a measure or an observable change>",
+          "line": 13
+        }
+      ],
+      "not_doing": "<what stays as it is>",
+      "assumptions": [],
+      "open_questions": [],
+      "risks": null,
+      "touches": {
+        "capabilities": [
+          {
+            "name": "Team membership",
+            "epic_id": "EPIC-001"
+          }
+        ],
+        "shipped_rules": [
+          "SLICE-001/INV-02"
+        ]
+      },
+      "sections": [
+        "Problem",
+        "Who has it",
+        "Outcomes",
+        "Not doing",
+        "Assumptions",
+        "Open questions",
+        "Risks",
+        "What it touches"
+      ]
+    },
+    "passes": false,
+    "findings": [
+      {
+        "severity": "error",
+        "rule": "brief-placeholder",
+        "line": 5,
+        "message": "Line 5 still holds a template placeholder (<why SLICE-001/INV-02 should change, in the product manager's words>). Write it in your own words."
+      },
+      {
+        "severity": "error",
+        "rule": "brief-placeholder",
+        "line": 9,
+        "message": "Line 9 still holds a template placeholder (<who runs into the rule as it is today>). Write it in your own words."
+      },
+      {
+        "severity": "error",
+        "rule": "brief-placeholder",
+        "line": 13,
+        "message": "Line 13 still holds a template placeholder (<what will be true once it changes>). Write it in your own words."
+      },
+      {
+        "severity": "error",
+        "rule": "brief-placeholder",
+        "line": 14,
+        "message": "Line 14 still holds a template placeholder (<a measure or an observable change>). Write it in your own words."
+      },
+      {
+        "severity": "error",
+        "rule": "brief-placeholder",
+        "line": 18,
+        "message": "Line 18 still holds a template placeholder (<what stays as it is>). Write it in your own words."
+      },
+      {
+        "severity": "warning",
+        "rule": "brief-how-vague",
+        "line": 14,
+        "message": "O-1's 'how we would know' names no measure or observable change. Say what you would count or see."
+      }
+    ],
+    "verdict": null,
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

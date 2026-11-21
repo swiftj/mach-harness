@@ -1,11 +1,11 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { ArrowLeft, CircleAlert, MessagesSquare, Pause, SearchX, Square, Users, WifiOff } from "lucide-react";
 import {
+  ArtifactId,
   Badge,
   Banner,
   Button,
-  Disclosure,
   EmptyState,
   ErrorState,
   Heading,
@@ -13,17 +13,19 @@ import {
   LoadingState,
   Page,
   RichText,
+  SliceLifecycle,
   Spinner,
   Text,
   Tooltip,
   describeError,
+  plural,
 } from "@mach/ui";
 import { ENGINE_ID as SLICE_ID, type SliceShow } from "@mach/ui/api";
 import { Composer } from "./Composer";
 import { ContinueInClaudeCode } from "./ContinueInClaudeCode";
 import { isBusy, type Decision } from "./model";
 import { QuestionCard } from "./QuestionCard";
-import { SliceDocument } from "./SliceDocument";
+import { SliceSoFar } from "./SliceDocument";
 import { SummaryCard } from "./SummaryCard";
 import { Transcript } from "./Transcript";
 import { useInterview, type InterviewController } from "./useInterview";
@@ -31,6 +33,8 @@ import { useSliceShow } from "../../api/useSliceShow";
 import { useStatus } from "../../api/store";
 import { MarkReadyDialog } from "../spec/SliceActs";
 import { BuildersQuestion } from "../../shared/BuildersQuestion";
+import { Fold } from "../../shared/layout/Fold";
+import { ContextRow, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
 
 const PAUSE_REQUEST = "I need to stop here. Please save where we are so I can continue later.";
 
@@ -80,39 +84,58 @@ function InterviewWorkspace({ sliceId }: { sliceId: string }) {
   const epicTitle = status.data?.epics.find((e) => e.epic_id === epicId)?.title ?? null;
   const busy = iv.phase === "live" && !model.ended && (model.turnRunning || isBusy(model.hostState));
 
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <header className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-2 border-b border-line px-10 py-3">
-        <div className="flex min-w-0 flex-1 items-center gap-4">
-          <Link to={`/slices/${sliceId}`} className="inline-flex shrink-0 items-center gap-1 rounded-xs text-body-sm text-accent-ink hover:underline">
-            <ArrowLeft aria-hidden="true" className="size-4" />
-            Specification
-          </Link>
-          <Heading level={1} size="title-3" className="truncate">
-            Interview: {title}
-          </Heading>
-        </div>
-        <InterviewActions iv={iv} busy={busy} />
-      </header>
+  // The newest turn stays in view: when the question, the reply or the working state changes, the conversation pane
+  // (never the page) scrolls back to it if the person had scrolled away.
+  const current = useRef<HTMLDivElement | null>(null);
+  const turnKey = `${iv.phase}:${model.awaiting ?? ""}:${busy ? "busy" : "idle"}:${model.ended ? "ended" : ""}`;
+  useLayoutEffect(() => {
+    const node = current.current;
+    const pane = node?.closest<HTMLElement>("[data-pane]");
+    if (!node || !pane || getComputedStyle(pane).overflowY === "visible") return;
+    const top = node.getBoundingClientRect().top - pane.getBoundingClientRect().top;
+    if (top < 0 || top > pane.clientHeight * 0.6) pane.scrollTop += top - 24;
+  }, [turnKey]);
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.15fr)_minmax(22rem,1fr)]">
-        <section aria-label="Interview" className="min-h-0 overflow-y-auto px-10 py-10">
-          <div className="mx-auto flex max-w-[44rem] flex-col gap-10">
+  // The window is the desk (M16 layout): the slim context row, then the conversation and the slice so far side by side,
+  // each scrolling on its own (8.10's columns).
+  return (
+    <WorkScreen
+      header={
+        <ContextRow
+          identity={
+            <>
+              <Link to={`/slices/${sliceId}`} className="inline-flex shrink-0 items-center gap-1 rounded-xs text-body-sm text-accent-ink hover:underline">
+                <ArrowLeft aria-hidden="true" className="size-4" />
+                Specification
+              </Link>
+              <ArtifactId>{sliceId}</ArtifactId>
+              {epicTitle ? <span>in {epicTitle}</span> : null}
+            </>
+          }
+          title={`Interview: ${title}`}
+          trail={show.data ? <SliceLifecycle status={show.data.slice.status} openQuestions={show.data.check.open_questions.length} className="max-w-full" /> : undefined}
+          actions={iv.phase === "live" && !model.ended ? <InterviewActions iv={iv} busy={busy} /> : undefined}
+        />
+      }
+    >
+      <WorkPanes split="conversation">
+        <WorkPane label="Interview" width="column">
+          <div className="flex flex-col gap-10 py-4">
             {show.data ? <BuildersQuestion github={show.data.github} /> : null}
-            <Current iv={iv} busy={busy} sliceId={sliceId} show={show.data} onApproved={show.reload} />
+            <div ref={current} className="flex scroll-mt-6 flex-col gap-10">
+              <Current iv={iv} busy={busy} sliceId={sliceId} show={show.data} onApproved={show.reload} />
+            </div>
             <Settled decisions={model.decisions} />
             {iv.phase === "live" && model.timeline.length ? (
-              <Disclosure summary="The whole conversation" className="bg-transparent">
+              <Fold label={`The whole conversation: ${plural(model.timeline.filter((item) => item.type === "message").length, "message")}`}>
                 <Transcript model={model} onRetry={model.lastReply && !busy ? () => iv.reply(model.lastReply ?? "", "reply") : null} />
-              </Disclosure>
+              </Fold>
             ) : null}
           </div>
-        </section>
-        <aside aria-label="The slice so far" className="min-h-0 overflow-y-auto border-l border-line bg-surface px-10 py-10">
-          <SliceDocument sliceId={sliceId} show={show} epicTitle={epicTitle} />
-        </aside>
-      </div>
-    </div>
+        </WorkPane>
+        <SliceSoFar sliceId={sliceId} show={show} epicTitle={epicTitle} />
+      </WorkPanes>
+    </WorkScreen>
   );
 }
 
@@ -404,9 +427,9 @@ function Settled({ decisions }: { decisions: Decision[] }) {
       </Heading>
       <ol>{recent.map(row)}</ol>
       {decisions.length > recent.length ? (
-        <Disclosure summary={`Show all ${decisions.length}`} className="bg-transparent">
+        <Fold label={`Show all ${decisions.length}`}>
           <ol>{decisions.map(row)}</ol>
-        </Disclosure>
+        </Fold>
       ) : null}
       <Text size="caption" tone="subtle">
         Kept in this browser; question numbers restart each session. The slice beside this is the record.
@@ -437,7 +460,7 @@ function StartPanel({
   if (!editable) {
     return (
       <Banner tone="info" title="This slice cannot be interviewed now" actions={<Button asChild><Link to={`/slices/${sliceId}`}>Open the specification</Link></Button>}>
-        {editRefusal ?? "The engine reports that this slice cannot be edited."}
+        {editRefusal ?? "MACH reports that this slice cannot be edited."}
       </Banner>
     );
   }

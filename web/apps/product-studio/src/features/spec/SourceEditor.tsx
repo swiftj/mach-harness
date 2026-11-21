@@ -19,8 +19,8 @@ export function SourceEditor({ show, why, onSaved }: { show: SliceShow; why: Why
   return (
     <div className="flex flex-col gap-4">
       <Text size="body-sm" tone="muted" className="max-w-reading">
-        The specification as the engine reads it. Change it here only if you are comfortable with its format; the interviewer can make the same
-        change for you. Saving runs the engine's check again.
+        The specification as MACH reads it. Change it here only if you are comfortable with its format; the interviewer can make the same
+        change for you. Saving runs MACH's check again.
       </Text>
       {!show.editable ? (
         <Banner tone="info" title="Read-only">
@@ -91,14 +91,14 @@ function Editor({ kind, sliceId, original, editable, onSaved }: { kind: Kind; sl
           value={text}
           onChange={(event) => setText(event.target.value)}
           readOnly={!editable}
-          rows={22}
+          rows={16}
           spellCheck={kind === "intent"}
           aria-describedby={hintId}
           className="font-mono text-mono leading-6"
         />
       </Field>
       <span id={hintId} className="sr-only">
-        {editable ? "Editable. Save to run the engine's check." : "Read-only."}
+        {editable ? "Editable. Save to run MACH's check." : "Read-only."}
       </span>
       {error ? (
         <ErrorState

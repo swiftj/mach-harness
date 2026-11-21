@@ -1,0 +1,31 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-001",
+    "verdict": {
+      "decision": "go",
+      "reason": "Still yes.",
+      "by": null,
+      "at": "2026-11-21T01:37:58Z",
+      "brief_sha256": "7575f7c52dfc25826637821f0ddd41b092a51800be6d29b84db96719aa1a27e4",
+      "revision": 2,
+      "holds": true,
+      "stale": false
+    },
+    "replaced": {
+      "at": "2026-11-21T01:37:56Z",
+      "brief_sha256": "614b144a592c18e0686965816dcb89be8f8eb12fb8e661e9d8388599846ad907",
+      "by": "ada-pm",
+      "decision": "go",
+      "reason": "Members ask for it at every desk.",
+      "revision": 1
+    },
+    "stage": "decided",
+    "recorded_without_github": true,
+    "why_no_login": "You are not signed in to GitHub on this computer.",
+    "note": "Recorded. A person decides. MACH never recommends a verdict, and recording one creates no epic or slice and starts nothing. Save it to GitHub so others can read it.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

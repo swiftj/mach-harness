@@ -74,6 +74,21 @@ export function earlierText(epic: EpicView, rule: string): string | null {
   return epic.no_longer_in_force.find((r) => r.rule === rule)?.text ?? null;
 }
 
+/**
+ * The label of a rule's folded connections (M16 layout), saying what and how much is behind it:
+ * "Connections: 1 earlier rule, 1 confirmation". Null when the engine listed none. Counts only the
+ * engine's own lists; it never decides what a connection means.
+ */
+export function connectionWords(rule: Pick<ShippedRule, "takes_the_place_of" | "confirmed_by" | "superseded_by">): string | null {
+  const count = (n: number, one: string, many: string) => (n ? `${n} ${n === 1 ? one : many}` : null);
+  const parts = [
+    count(rule.takes_the_place_of?.length ?? 0, "earlier rule", "earlier rules"),
+    count(rule.confirmed_by?.length ?? 0, "confirmation", "confirmations"),
+    count(rule.superseded_by?.length ?? 0, "later change", "later changes"),
+  ].filter(Boolean);
+  return parts.length ? `Connections: ${parts.join(", ")}` : null;
+}
+
 /** What a shipped slice's effects section was, in words. */
 export const sliceEffectsWords: Record<string, string> = {
   declared: "Says what it does to earlier rules",

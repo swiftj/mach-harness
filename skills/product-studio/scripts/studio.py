@@ -41,6 +41,8 @@ import mocks  # noqa: E402
 import prd  # noqa: E402
 import product  # noqa: E402
 import requests_in  # noqa: E402
+import shape  # noqa: E402
+import shape_route  # noqa: E402
 
 
 class StudioError(Exception):
@@ -508,7 +510,10 @@ class Studio:
                                          else p for p in result["intent_problems"]]
         result["risk"] = intent.get("risk")
         result["prd_problems"] = prd.slice_problems(sys.modules[__name__], self, slice_id, work)  # M13 D: a slice made from a PRD
-        result["ready"] = not (result["errors"] or result["open_questions"] or result["intent_problems"] or result["prd_problems"])
+        if "serves" in work:  # M16 B: a slice made from an idea names the outcomes it serves in its why
+            result["serves_problems"] = shape_route.slice_problems(sys.modules[__name__], self, slice_id, work)
+        result["ready"] = not (result["errors"] or result["open_questions"] or result["intent_problems"] or result["prd_problems"]
+                               or result.get("serves_problems"))
         return result
 
     @staticmethod
@@ -658,6 +663,7 @@ def describe(studio: Studio) -> Dict[str, Any]:
         "last_refreshed": session.get("refreshed_at"),
         **github_updates_waiting(studio),
         **prd.status_field(sys.modules[__name__], studio),  # M13 D: imported PRDs; nothing when there are none
+        **shape.status_field(sys.modules[__name__], studio),  # M16 A: ideas by stage; nothing when there are none
         "structurally_valid": structural["valid"] if structural else None,
         "structural_errors": structural["errors"] if structural else [],
         "factory_authorized": False,
@@ -697,6 +703,7 @@ def saved_state(studio: Studio, ledger: Dict[str, Any], slices: Dict[str, Dict[s
         else:
             waiting.append({"kind": "principles_unpublished", "target": None,
                             "text": "The product principles have changes that are not published. Publish them so the builders get them."})
+    waiting += shape.not_saved(sys.modules[__name__], studio)  # M16 A: an idea's save to GitHub unfinished, or changed since
     problem = (ledger.get("seen") or {}).get("problem")
     if problem:
         waiting.append({"kind": "refresh_failed", "target": None, "text": f"The last check of GitHub did not finish: {problem}"})
@@ -827,11 +834,13 @@ def cmd_project_set(studio: Studio, args: argparse.Namespace) -> int:
     return emit({"project": studio.load("project")})
 
 
-def add_epic(studio: Studio, title: str, criteria: Sequence[str]) -> Dict[str, Any]:
-    """The steps of `epic add`, shared with `prd apply`."""
+def add_epic(studio: Studio, title: str, criteria: Sequence[str], serves: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The steps of `epic add`, shared with `prd apply` and Shape's `idea apply` (which records the idea it serves)."""
     studio.prepare()
     data = {"schema_version": 1, "epic_id": studio.next_id("epic"), "project_id": studio.project_id(), "revision": 1,
             "title": title.strip(), "status": "open", "acceptance_criteria": clean_list(criteria, "acceptance criterion")}
+    if serves is not None:  # M16 B: identifiers only
+        data["serves"] = serves
     studio.commit_or_restore([("epic", data)], "Adding the epic")
     return data
 
@@ -990,8 +999,9 @@ def reserved_ids(studio: Studio) -> Dict[str, Any]:
 
 
 def start_slice(studio: Studio, epic_id: str, title: str, depends_on: Sequence[str], given_id: Optional[str],
-                origin: Optional[Dict[str, Any]] = None, source: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """The steps of `slice new`, shared with `request pick` and `prd apply`, which also record where the slice came from."""
+                origin: Optional[Dict[str, Any]] = None, source: Optional[Dict[str, Any]] = None,
+                serves: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The steps of `slice new`, shared with `request pick`, `prd apply` and `idea apply`, which also record where the slice came from."""
     studio.prepare()
     studio.load("epic", epic_id)
     if given_id:
@@ -1014,6 +1024,8 @@ def start_slice(studio: Studio, epic_id: str, title: str, depends_on: Sequence[s
         data["origin"] = origin
     if source is not None:  # M13 D: the PRD it was made from, identifiers and numbers only
         data["source"] = source
+    if serves is not None:  # M16 B: the idea and outcomes it serves, identifiers only
+        data["serves"] = serves
     studio.commit_or_restore([("slice", data)], "Starting the slice")
     session = studio.session()
     session["current_slice"] = slice_id
@@ -1082,6 +1094,7 @@ def cmd_slice_resume(studio: Studio, args: argparse.Namespace) -> int:
         **policies_field(studio),
         "shipped_rules": shipped_helper().for_interview(studio.shipped()),  # M13: the lookup for '## Effects on shipped behaviour'
         **prd.resume_field(sys.modules[__name__], studio, slice_id, data),  # M13 D: the PRD's cited lines, fenced
+        **shape_route.resume_field(sys.modules[__name__], studio, slice_id, data),  # M16 B: the brief, fenced as the PM's earlier words
     })
 
 
@@ -1266,6 +1279,7 @@ def cmd_slice_show(studio: Studio, args: argparse.Namespace) -> int:
         "github": handoff.slice_view(studio.handoff().load(), slice_id, data, ticket_rules()),
         **request_field(studio, slice_id, data),
         **prd.resume_field(sys.modules[__name__], studio, slice_id, data),  # M15: the same field as slice resume, read only
+        **shape_route.resume_field(sys.modules[__name__], studio, slice_id, data),  # M16 B: the same, read only
         "factory_authorized": False,
     })
 
@@ -1274,7 +1288,7 @@ def approval_problems(studio: Studio, data: Dict[str, Any], slice_id: str) -> Tu
     """The gates a slice passes before it is approved: the spec passes the validator with no open
     questions, the why is complete, and its epic and its dependencies exist."""
     result = studio.check_slice(slice_id, ready=True)
-    problems = list(result["errors"]) + list(result["intent_problems"]) + list(result["prd_problems"])
+    problems = list(result["errors"]) + list(result["intent_problems"]) + list(result["prd_problems"]) + list(result.get("serves_problems") or [])
     problems += [f"open question: {question}" for question in result["open_questions"]]
     epic = studio.all("epic").get(data.get("epic_id"))
     if not epic:
@@ -1372,8 +1386,11 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
                  "revision": saved["revision"], "follows": saved["follows"], "epic_issue": saved["epic_issue"], "project_issue": saved["project_issue"],
                  "approved_by": channel.login, "risk": result.get("risk"), "counts": result.get("counts"), "warnings": result["warnings"],
                  "request_updates": request, "factory_authorized": False, **({"mocks": delivery} if delivery else {}),
-                 "note": f"Saved to GitHub as #{saved['issue']} and marked ready. The builders take it from there; nothing has started yet."
-                         + (" " + delivery["note"] if delivery else "")})
+                 # The app shows where and what is left as rows of their own, so its note says only what happened and who waits.
+                 "note": say(f"Saved to GitHub as #{saved['issue']} and marked ready. The builders take it from there; nothing has started yet."
+                             + (" " + delivery["note"] if delivery else ""),
+                             f"Saved to GitHub as #{saved['issue']} and marked ready. "
+                             + (delivery["note"] if delivery else "The builders take it from there; nothing has started yet."))})
 
 
 def cmd_slice_reopen(studio: Studio, args: argparse.Namespace) -> int:
@@ -1789,6 +1806,7 @@ def cmd_refresh(studio: Studio, args: argparse.Namespace) -> int:
         "github": github,
         **({"principles_taken": taken} if taken else {}),
         **shipped_moved_field(studio),
+        **shape.refresh_field(sys.modules[__name__], studio),  # M16 A: the idea issues read back; nothing when there are no ideas
         "factory_authorized": False,
     })
 
@@ -2045,7 +2063,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MACH Product Studio operations (drafts only; never starts Factory work)")
     parser.add_argument("--project", type=Path, help="project root (default: nearest folder with .factory/ or .git)")
     parser.add_argument("--app", action="store_true", help="word refusals and reports for the local web app: no terminal commands, plus a hint")
-    sub = parser.add_subparsers(dest="command", required=True, metavar="{where,status,validate,refresh,reconcile,project,epic,slice,principle,policy,prd,request,acceptance,jira}")
+    sub = parser.add_subparsers(dest="command", required=True, metavar="{where,status,validate,refresh,reconcile,project,epic,slice,principle,policy,prd,request,acceptance,jira,idea,brief,case,verdict,lookback}")
 
     sub.add_parser("where", help="print the workspace and the files the interview needs").set_defaults(func=cmd_where)
     sub.add_parser("status", help="every artifact with its state, and what to do next").set_defaults(func=cmd_status)
@@ -2210,6 +2228,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_acceptance_record)
     prd.add_commands(sub, sys.modules[__name__])  # M13 D: the PRD on-ramp (prd.py)
     jira_export.add_commands(sub, sys.modules[__name__])  # M13 E: the Jira export and the keys back (jira_export.py)
+    # M16 A: Shape, ideas before epics: idea, brief, case, verdict (shape.py); M16 B: sizing, the map, change what exists, look back (shape_route.py)
+    shape_route.add_commands(sub, shape.add_commands(sub, sys.modules[__name__]), sys.modules[__name__])
     return parser
 
 

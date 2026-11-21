@@ -1,0 +1,70 @@
+{
+  "exit_code": 0,
+  "data": {
+    "ideas": [
+      {
+        "idea_id": "IDEA-001",
+        "title": "Let members renew a loan themselves",
+        "stage": "decided",
+        "stage_words": "Decided",
+        "source": {
+          "kind": "typed"
+        },
+        "created": "2026-11-21T01:38:31Z",
+        "revision": 1,
+        "has_brief": true,
+        "brief_checked": true,
+        "brief_passes": true,
+        "has_case": false,
+        "verdict": {
+          "decision": "go",
+          "by": "ada-pm",
+          "at": "2026-11-21T01:38:31Z",
+          "revision": 1,
+          "holds": true,
+          "stale": false,
+          "reason": "Members ask for it at every desk."
+        },
+        "route": null,
+        "made": null,
+        "github": {
+          "saved": "github",
+          "unfinished": false,
+          "issue": 1,
+          "url": "https://github.com/acme/team-space/issues/1",
+          "state": "open",
+          "up_to_date": true,
+          "changed_on_github": true,
+          "changed_after_verdict": true,
+          "verdict_on_github": true,
+          "number_taken": false,
+          "other_issues": [],
+          "last_read": "2026-11-21T01:38:35Z"
+        },
+        "next": {
+          "kind": "publish",
+          "sentence": "IDEA-001's issue was changed on GitHub after you saved it. Save it again to put your brief back."
+        }
+      }
+    ],
+    "by_stage": {
+      "new": [],
+      "exploring": [],
+      "brief": [],
+      "decided": [
+        "IDEA-001"
+      ],
+      "shaped": []
+    },
+    "counts": {
+      "new": 0,
+      "exploring": 0,
+      "brief": 0,
+      "decided": 1,
+      "shaped": 0
+    },
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

@@ -1,0 +1,516 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Teams work together.",
+      "outcomes": [
+        "Teams can work together"
+      ],
+      "issue": null,
+      "url": null
+    },
+    "approvals_withdrawn": [],
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "Team membership",
+        "status": "open",
+        "revision": 1,
+        "acceptance_criteria": [
+          "Only invited people can join"
+        ],
+        "issue": null,
+        "url": null,
+        "counts": {
+          "total": 1,
+          "by_progress": {
+            "draft": 1
+          },
+          "ready_or_further": 0,
+          "ready_or_further_means": "marked ready to build, being built, or shipped"
+        }
+      }
+    ],
+    "slices": [
+      {
+        "slice_id": "SLICE-005",
+        "title": "Show my loans",
+        "epic_id": "EPIC-001",
+        "status": "draft",
+        "revision": 1,
+        "open_questions": 0,
+        "spec": null,
+        "has_intent": false,
+        "resume_note": null,
+        "dependencies": [],
+        "editable": true,
+        "github": {
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": null,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": null,
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "draft"
+        }
+      }
+    ],
+    "principles": {
+      "active": [
+        "PP-01"
+      ],
+      "retired": [],
+      "unpublished_changes": true,
+      "published": {
+        "saved": null,
+        "unfinished": false,
+        "revision": null,
+        "sha256": null,
+        "approved_by": null,
+        "published_at": null,
+        "issue": null,
+        "url": null,
+        "github": null,
+        "newer_elsewhere": false,
+        "changed_on_github": false
+      },
+      "slices_answered_under_older": [],
+      "next": "The principles have changes that are not published: publish them so the builders get them."
+    },
+    "saved": {
+      "everything_saved": false,
+      "note": "1 thing is not saved yet.",
+      "not_saved": [
+        {
+          "kind": "principles_unpublished",
+          "target": null,
+          "text": "The product principles have changes that are not published. Publish them so the builders get them."
+        }
+      ]
+    },
+    "order": [
+      {
+        "epic_id": "EPIC-001",
+        "issue": null,
+        "slices": [
+          {
+            "slice_id": "SLICE-005",
+            "title": "Show my loans",
+            "in_workspace": true,
+            "issue": null,
+            "state_label": null
+          }
+        ],
+        "on_github": false,
+        "github_order": null,
+        "github_read_at": null,
+        "matches_github": null,
+        "unfinished": false,
+        "taken_from_github": false,
+        "could_not_read": false,
+        "note": null
+      }
+    ],
+    "github": {
+      "repository": null,
+      "form": null,
+      "last_read": null
+    },
+    "current_slice": "SLICE-005",
+    "last_refreshed": null,
+    "ideas": {
+      "ideas": [
+        {
+          "idea_id": "IDEA-001",
+          "title": "Email a reminder two days before a loan is due",
+          "stage": "new",
+          "stage_words": "New",
+          "source": {
+            "kind": "request",
+            "number": 57
+          },
+          "created": "2026-11-21T01:37:47Z",
+          "revision": 0,
+          "has_brief": false,
+          "brief_checked": false,
+          "brief_passes": false,
+          "has_case": false,
+          "verdict": null,
+          "route": null,
+          "made": null,
+          "github": {
+            "saved": null,
+            "unfinished": false,
+            "issue": null,
+            "url": null,
+            "state": null,
+            "up_to_date": false,
+            "changed_on_github": false,
+            "changed_after_verdict": false,
+            "verdict_on_github": null,
+            "number_taken": false,
+            "other_issues": [],
+            "last_read": null
+          },
+          "next": {
+            "kind": "explore",
+            "sentence": "Explore IDEA-001: open questions, one at a time."
+          }
+        },
+        {
+          "idea_id": "IDEA-002",
+          "title": "Let members renew a loan themselves",
+          "stage": "exploring",
+          "stage_words": "Exploring",
+          "source": {
+            "kind": "idea",
+            "number": 58
+          },
+          "created": "2026-11-21T01:37:47Z",
+          "revision": 1,
+          "has_brief": true,
+          "brief_checked": true,
+          "brief_passes": false,
+          "has_case": false,
+          "verdict": null,
+          "route": null,
+          "made": null,
+          "github": {
+            "saved": null,
+            "unfinished": false,
+            "issue": null,
+            "url": null,
+            "state": null,
+            "up_to_date": false,
+            "changed_on_github": false,
+            "changed_after_verdict": false,
+            "verdict_on_github": null,
+            "number_taken": false,
+            "other_issues": [],
+            "last_read": null
+          },
+          "next": {
+            "kind": "check_brief",
+            "sentence": "Check IDEA-002's brief."
+          }
+        },
+        {
+          "idea_id": "IDEA-003",
+          "title": "Reserve a study room online",
+          "stage": "brief",
+          "stage_words": "Brief written",
+          "source": {
+            "kind": "typed"
+          },
+          "created": "2026-11-21T01:37:48Z",
+          "revision": 1,
+          "has_brief": true,
+          "brief_checked": true,
+          "brief_passes": true,
+          "has_case": true,
+          "verdict": null,
+          "route": null,
+          "made": null,
+          "github": {
+            "saved": null,
+            "unfinished": false,
+            "issue": null,
+            "url": null,
+            "state": null,
+            "up_to_date": false,
+            "changed_on_github": false,
+            "changed_after_verdict": false,
+            "verdict_on_github": null,
+            "number_taken": false,
+            "other_issues": [],
+            "last_read": null
+          },
+          "next": {
+            "kind": "record_verdict",
+            "sentence": "Make the case for IDEA-003 and record your verdict: Go, Not now or No."
+          }
+        },
+        {
+          "idea_id": "IDEA-004",
+          "title": "Overdue fine shown twice at self-checkout",
+          "stage": "decided",
+          "stage_words": "Decided",
+          "source": {
+            "kind": "fault",
+            "ticket": "AUTO-20261120T101500Z"
+          },
+          "created": "2026-11-21T01:37:49Z",
+          "revision": 0,
+          "has_brief": false,
+          "brief_checked": false,
+          "brief_passes": false,
+          "has_case": false,
+          "verdict": {
+            "decision": "no",
+            "by": "ada-pm",
+            "at": "2026-11-21T01:37:49Z",
+            "revision": 0,
+            "holds": true,
+            "stale": false,
+            "reason": "The fine is shown twice by the kiosk's own screen; it is the supplier's fault, not ours."
+          },
+          "route": null,
+          "made": null,
+          "github": {
+            "saved": null,
+            "unfinished": false,
+            "issue": null,
+            "url": null,
+            "state": null,
+            "up_to_date": false,
+            "changed_on_github": false,
+            "changed_after_verdict": false,
+            "verdict_on_github": null,
+            "number_taken": false,
+            "other_issues": [],
+            "last_read": null
+          },
+          "next": {
+            "kind": "publish",
+            "sentence": "Save IDEA-004 as a GitHub issue so others can read the brief and the verdict."
+          }
+        },
+        {
+          "idea_id": "IDEA-005",
+          "title": "Reading challenges for children",
+          "stage": "decided",
+          "stage_words": "Decided",
+          "source": {
+            "kind": "typed"
+          },
+          "created": "2026-11-21T01:37:49Z",
+          "revision": 0,
+          "has_brief": false,
+          "brief_checked": false,
+          "brief_passes": false,
+          "has_case": false,
+          "verdict": {
+            "decision": "not-now",
+            "by": "ada-pm",
+            "at": "2026-11-21T01:37:49Z",
+            "revision": 0,
+            "holds": true,
+            "stale": false,
+            "reason": "Worth doing after the summer. The branches have nobody to run it before then."
+          },
+          "route": null,
+          "made": null,
+          "github": {
+            "saved": null,
+            "unfinished": false,
+            "issue": null,
+            "url": null,
+            "state": null,
+            "up_to_date": false,
+            "changed_on_github": false,
+            "changed_after_verdict": false,
+            "verdict_on_github": null,
+            "number_taken": false,
+            "other_issues": [],
+            "last_read": null
+          },
+          "next": {
+            "kind": "publish",
+            "sentence": "Save IDEA-005 as a GitHub issue so others can read the brief and the verdict."
+          }
+        },
+        {
+          "idea_id": "IDEA-006",
+          "title": "Members pay fines online",
+          "stage": "decided",
+          "stage_words": "Decided",
+          "source": {
+            "kind": "typed"
+          },
+          "created": "2026-11-21T01:37:49Z",
+          "revision": 1,
+          "has_brief": true,
+          "brief_checked": true,
+          "brief_passes": true,
+          "has_case": false,
+          "verdict": {
+            "decision": "go",
+            "by": "ada-pm",
+            "at": "2026-11-21T01:37:50Z",
+            "revision": 1,
+            "holds": true,
+            "stale": false,
+            "reason": "Members ask for it at every desk, and the payment provider is already approved."
+          },
+          "route": null,
+          "made": null,
+          "github": {
+            "saved": null,
+            "unfinished": false,
+            "issue": null,
+            "url": null,
+            "state": null,
+            "up_to_date": false,
+            "changed_on_github": false,
+            "changed_after_verdict": false,
+            "verdict_on_github": null,
+            "number_taken": false,
+            "other_issues": [],
+            "last_read": null
+          },
+          "next": {
+            "kind": "publish",
+            "sentence": "Save IDEA-006 as a GitHub issue so others can read the brief and the verdict."
+          }
+        },
+        {
+          "idea_id": "IDEA-007",
+          "title": "Let one address hold two memberships",
+          "stage": "exploring",
+          "stage_words": "Exploring",
+          "source": {
+            "kind": "change",
+            "rule": "SLICE-001/INV-02"
+          },
+          "created": "2026-11-21T01:37:50Z",
+          "revision": 1,
+          "has_brief": true,
+          "brief_checked": true,
+          "brief_passes": false,
+          "has_case": false,
+          "verdict": null,
+          "route": null,
+          "made": null,
+          "github": {
+            "saved": null,
+            "unfinished": false,
+            "issue": null,
+            "url": null,
+            "state": null,
+            "up_to_date": false,
+            "changed_on_github": false,
+            "changed_after_verdict": false,
+            "verdict_on_github": null,
+            "number_taken": false,
+            "other_issues": [],
+            "last_read": null
+          },
+          "next": {
+            "kind": "check_brief",
+            "sentence": "Check IDEA-007's brief."
+          }
+        },
+        {
+          "idea_id": "IDEA-008",
+          "title": "Show members what they have on loan",
+          "stage": "shaped",
+          "stage_words": "Shaped into work",
+          "source": {
+            "kind": "typed"
+          },
+          "created": "2026-11-21T01:37:51Z",
+          "revision": 1,
+          "has_brief": true,
+          "brief_checked": true,
+          "brief_passes": true,
+          "has_case": false,
+          "verdict": {
+            "decision": "go",
+            "by": "ada-pm",
+            "at": "2026-11-21T01:37:51Z",
+            "revision": 1,
+            "holds": true,
+            "stale": false,
+            "reason": "Members ask what they have out."
+          },
+          "route": "one-slice",
+          "made": {
+            "epics": [],
+            "slices": [
+              "SLICE-005"
+            ]
+          },
+          "github": {
+            "saved": null,
+            "unfinished": false,
+            "issue": null,
+            "url": null,
+            "state": null,
+            "up_to_date": false,
+            "changed_on_github": false,
+            "changed_after_verdict": false,
+            "verdict_on_github": null,
+            "number_taken": false,
+            "other_issues": [],
+            "last_read": null
+          },
+          "next": {
+            "kind": "none",
+            "sentence": "IDEA-008 is shaped into 1 draft slice. Look back on it once one has shipped."
+          }
+        }
+      ],
+      "by_stage": {
+        "new": [
+          "IDEA-001"
+        ],
+        "exploring": [
+          "IDEA-002",
+          "IDEA-007"
+        ],
+        "brief": [
+          "IDEA-003"
+        ],
+        "decided": [
+          "IDEA-004",
+          "IDEA-005",
+          "IDEA-006"
+        ],
+        "shaped": [
+          "IDEA-008"
+        ]
+      },
+      "counts": {
+        "new": 1,
+        "exploring": 2,
+        "brief": 1,
+        "decided": 3,
+        "shaped": 1
+      },
+      "note": "Shape: ideas, briefs and the case, before any epic. A person decides; scripts check."
+    },
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Continue the interview for SLICE-005: Show my loans (slice resume SLICE-005)."
+    ],
+    "next_actions": [
+      {
+        "kind": "continue_interview",
+        "target": "SLICE-005",
+        "title": "Continue the interview for SLICE-005",
+        "reason": "Show my loans is still being defined.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

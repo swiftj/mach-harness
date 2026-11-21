@@ -1,12 +1,12 @@
-import { useState } from "react";
-import { CircleCheck, Pause, RotateCcw } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { CircleCheck, FolderUp, Pause, RotateCcw } from "lucide-react";
 import { Banner, Button, Dialog, DialogClose, DialogContent, DialogTrigger, ErrorState, Field, Text, Textarea, describeError, toast, CheckCounts, CheckPill, DiagnosticList, diagnostics, plural as count } from "@mach/ui";
-import type { MachApiError, SliceReady, SliceShow } from "@mach/ui/api";
+import type { MachApiError, MocksToCommit, SliceReady, SliceShow } from "@mach/ui/api";
 import { IssueLink, SignInNote } from "../../shared/IssueLink";
 import { client as studioClient } from "../../api/client";
 import { toApiError } from "../../api/session";
 import { useStatus } from "../../api/store";
-import { MocksToCommitPanel } from "../../shared/MocksToCommit";
+import { Fold } from "../../shared/layout/Fold";
 import { forgetReadyAnswer, rememberReadyAnswer } from "../../shared/mocksDelivery";
 
 function Failure({ error, what }: { error: MachApiError; what: string }) {
@@ -26,6 +26,10 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<MachApiError | null>(null);
   const [saved, setSaved] = useState<SliceReady | null>(null);
+  const done = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (saved) done.current?.focus();
+  }, [saved]);
   const check = show.check;
   const problems = diagnostics(check);
   const again = show.slice.status === "approved_for_engineering";
@@ -74,18 +78,15 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
           description={saved.note}
           footer={
             <DialogClose asChild>
-              {/* The confirming button is gone; focus moves to the one way out. */}
+              {/* The confirming button is gone; focus moves to the one way out (the dialog stays open, so autoFocus alone does not). */}
               {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
-              <Button variant="primary" autoFocus>
+              <Button ref={done} variant="primary" autoFocus>
                 Done
               </Button>
             </DialogClose>
           }
         >
-          <div className="flex flex-col gap-4 pb-1">
-            <SavedPlace result={saved} />
-            {saved.saved_to === "github" && saved.mocks ? <MocksToCommitPanel sliceId={id} toCommit={saved.mocks} files={saved.mocks.files} level={3} /> : null}
-          </div>
+          <SavedPlace result={saved} />
         </DialogContent>
       ) : (
         <DialogContent
@@ -110,7 +111,7 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
             {error ? <Failure error={error} what={`${id} was not marked ready`} /> : null}
             <div className="flex flex-col gap-2 rounded-md border border-line bg-surface px-4 py-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-label text-ink">What the engine's check says</p>
+                <p className="text-label text-ink">What MACH's check says</p>
                 <CheckPill check={check} size="sm" />
               </div>
               <CheckCounts check={check} />
@@ -133,34 +134,127 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
   );
 }
 
-/** Where a slice marked ready was saved: its issue, as the engine linked it, or the folder and the engine's two ways on. */
+/**
+ * What marking ready did, at a glance (M16 layout): what was saved, where, and the one thing left for the person, each
+ * on its own row; the long detail (the pictures' file names) folded. Every fact is the engine's answer, shown as given.
+ */
 export function SavedPlace({ result }: { result: SliceReady }) {
   if (result.saved_to === "github") {
+    const mocks = result.mocks;
     return (
-      <div className="flex flex-col gap-1 rounded-md border border-line bg-surface px-4 py-3">
-        <p className="text-label text-ink">Saved on GitHub</p>
-        <p className="text-body">
-          Issue <IssueLink number={result.issue} url={result.url} />, under the epic&apos;s issue #{result.epic_issue}. Approved as{" "}
-          <span className="font-mono text-body-sm">{result.approved_by}</span>
-          {result.follows ? `; it changes #${result.follows}, which has shipped` : ""}.
-        </p>
-        <SignInNote />
+      <div className="flex flex-col gap-4 pb-1">
+        <dl className="grid grid-cols-[9rem_minmax(0,1fr)] gap-x-4 gap-y-3 rounded-md border border-line bg-surface px-4 py-3 text-body">
+          <dt className="text-label text-ink-muted">Saved</dt>
+          <dd className="flex min-w-0 flex-col gap-0.5">
+            <span>
+              Version {result.revision} of this text, approved as <span className="font-mono text-body-sm">{result.approved_by}</span>
+            </span>
+          </dd>
+          <dt className="text-label text-ink-muted">Where</dt>
+          <dd className="flex min-w-0 flex-col gap-0.5">
+            <span>
+              On GitHub as issue <IssueLink number={result.issue} url={result.url} />, under the epic&apos;s issue #{result.epic_issue}
+              {result.follows ? `; it changes #${result.follows}, which has shipped` : ""}
+            </span>
+            <SignInNote />
+          </dd>
+          {mocks ? null : (
+            <>
+              <dt className="text-label text-ink-muted">Your next step</dt>
+              <dd className="min-w-0 font-semibold">Nothing. The builders take it from here.</dd>
+            </>
+          )}
+        </dl>
+        {mocks ? <PicturesToAdd mocks={mocks} /> : null}
       </div>
     );
   }
+  const [first, ...others] = result.ways_on;
   return (
-    <div className="flex flex-col gap-2 rounded-md border border-line bg-surface px-4 py-3">
-      <p className="text-label text-ink">Saved to a folder</p>
-      <Text size="body-sm" tone="muted">
-        {result.why_folder}
-      </Text>
-      <p className="break-all font-mono text-body-sm text-ink">{result.folder}</p>
-      <ul className="flex list-disc flex-col gap-1 pl-5 text-body">
-        {result.ways_on.map((way) => (
-          <li key={way}>{way}</li>
-        ))}
-      </ul>
+    <div className="flex flex-col gap-4 pb-1">
+      <dl className="grid grid-cols-[9rem_minmax(0,1fr)] gap-x-4 gap-y-3 rounded-md border border-line bg-surface px-4 py-3 text-body">
+        <dt className="text-label text-ink-muted">Saved</dt>
+        <dd className="min-w-0">Version {result.revision} of this text, approved by you</dd>
+        <dt className="text-label text-ink-muted">Where</dt>
+        <dd className="flex min-w-0 flex-col gap-1">
+          <span>In a folder, not on GitHub</span>
+          <span translate="no" className="break-all font-mono text-body-sm text-ink">
+            {result.folder}
+          </span>
+        </dd>
+        <dt className="text-label text-ink-muted">Your next step</dt>
+        <dd className="flex min-w-0 flex-col gap-1">
+          {first ? <span className="font-semibold">{first}</span> : null}
+          {others.map((way) => (
+            <span key={way} className="text-body-sm text-ink-muted">
+              {way}
+            </span>
+          ))}
+        </dd>
+      </dl>
+      <Fold label="Why it went to a folder">
+        <Text size="body-sm" tone="muted" className="max-w-reading">
+          {result.why_folder}
+        </Text>
+      </Fold>
     </div>
+  );
+}
+
+/** The one thing left after marking a slice with design mocks ready: the pictures go to the repository by hand. */
+function PicturesToAdd({ mocks }: { mocks: MocksToCommit }) {
+  return (
+    <section aria-labelledby="pictures-to-add" className="grid grid-cols-[9rem_minmax(0,1fr)] gap-x-4 gap-y-3 rounded-md border-2 border-dashed border-warning-line bg-warning-soft px-4 py-3">
+      <p className="flex items-start gap-1.5 text-label text-ink-muted">
+        <FolderUp aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-warning-ink" />
+        Your next step
+      </p>
+      <div className="flex min-w-0 flex-col gap-3">
+        <div className="flex flex-col gap-0.5">
+          <h3 id="pictures-to-add" className="text-body font-semibold text-ink">
+            Add its pictures to the project&apos;s repository
+          </h3>
+          {mocks.factory_waits ? (
+            <Text size="body-sm" tone="muted">
+              The builders wait until they are there.
+            </Text>
+          ) : null}
+        </div>
+        <PicturePaths mocks={mocks} />
+      </div>
+    </section>
+  );
+}
+
+function PicturePaths({ mocks }: { mocks: MocksToCommit }) {
+  const names = mocks.files;
+  return (
+    <>
+      <dl className="grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-body-sm">
+        <dt className="text-ink-muted">From</dt>
+        <dd translate="no" className="min-w-0 break-all font-mono text-ink">
+          {mocks.folder}
+        </dd>
+        <dt className="text-ink-muted">To</dt>
+        <dd translate="no" className="min-w-0 break-all font-mono text-ink">
+          {mocks.commit_as}
+        </dd>
+      </dl>
+      <Text size="body-sm" tone="muted">
+        Or hand the folder to an engineer to add.
+      </Text>
+      {names.length ? (
+        <Fold label={`File names: ${names.length}`}>
+          <ul className="flex flex-col gap-1 text-body-sm">
+            {names.map((name) => (
+              <li key={name} translate="no" className="break-all font-mono">
+                {name}
+              </li>
+            ))}
+          </ul>
+        </Fold>
+      ) : null}
+    </>
   );
 }
 

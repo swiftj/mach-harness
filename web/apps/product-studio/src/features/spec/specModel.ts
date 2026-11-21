@@ -31,3 +31,14 @@ export const sectionTitles: Record<SpecSectionId, string> = {
   why: "Why this slice",
   source: "Source",
 };
+
+/**
+ * What the wide pane shows. The specification, its why and its source are one page: the section list beside it chooses
+ * between them (M16 layout), so a slice has one row of page tabs.
+ */
+export type View = "spec" | "why" | "source";
+
+export function viewOf(section: SpecSectionId): View {
+  return section === "why" ? "why" : section === "source" ? "source" : "spec";
+}
+

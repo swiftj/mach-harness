@@ -1,0 +1,121 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-002",
+    "stage": "decided",
+    "route": {
+      "at": "2026-11-21T01:38:15Z",
+      "brief_sha256": "ad173594db1a29145e2b916ec92437f4c548af68777e1c6fa34e6b5b4ab387a7",
+      "counted": {
+        "capabilities": 1,
+        "high_risk_areas": 0,
+        "high_risk_not_determined": [],
+        "outcomes": 2,
+        "policy_concerns": 0,
+        "principle_concerns": 0,
+        "shipped_rules": 2,
+        "shipped_rules_looked_up": 0
+      },
+      "details": {
+        "concerns": {
+          "policies": [],
+          "principles": []
+        },
+        "high_risk": {
+          "areas": [],
+          "count": 0,
+          "not_determined": []
+        },
+        "touches": {
+          "capabilities": [
+            "Lending"
+          ],
+          "outcomes": [
+            "O-1",
+            "O-2"
+          ],
+          "shipped_rules": [
+            "SLICE-001/FR-01",
+            "SLICE-001/INV-02"
+          ]
+        }
+      },
+      "revision": 1,
+      "route": "epic",
+      "why": "The brief has 2 outcomes inside one capability, so the route is an epic.",
+      "words": "an epic",
+      "holds": true,
+      "stale": false
+    },
+    "factory_authorized": false,
+    "map": {
+      "revision": 1,
+      "route": "epic",
+      "epics": [],
+      "slices": [
+        {
+          "key": "S1",
+          "title": "Renew from the catalogue",
+          "scope": "One loan",
+          "epic": "EPIC-001",
+          "depends_on": [],
+          "outcomes": [
+            "O-1"
+          ],
+          "cites": "9-10",
+          "slice_id": null,
+          "status": null
+        },
+        {
+          "key": "S2",
+          "title": "Renew every loan at once",
+          "scope": "All loans",
+          "epic": "EPIC-001",
+          "depends_on": [
+            "S1"
+          ],
+          "outcomes": [
+            "O-1"
+          ],
+          "cites": "9-9",
+          "slice_id": null,
+          "status": null
+        }
+      ],
+      "applied": false,
+      "mapped_at": "2026-11-21T01:38:15Z"
+    },
+    "coverage": [
+      {
+        "outcome": "O-1",
+        "carried_by": [
+          "S1",
+          "S2"
+        ],
+        "state": "covered"
+      },
+      {
+        "outcome": "O-2",
+        "carried_by": [],
+        "state": "settled",
+        "settled": {
+          "as": "out-of-scope",
+          "at": "2026-11-21T01:38:16Z",
+          "reason": "Refusals are explained by the desk for now."
+        }
+      }
+    ],
+    "not_covered": [],
+    "blockers": [],
+    "can_apply": true,
+    "note": "Every outcome of IDEA-002 is carried or settled.",
+    "settled": {
+      "outcome": "O-2",
+      "at": "2026-11-21T01:38:16Z",
+      "as": "out-of-scope",
+      "reason": "Refusals are explained by the desk for now."
+    }
+  },
+  "refused": null,
+  "hint": null
+}

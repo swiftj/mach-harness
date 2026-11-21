@@ -139,3 +139,28 @@ export function countWords(active: number, retired: number): string {
   const inForce = `${active} in force`;
   return retired ? `${inForce}, ${retired} retired` : inForce;
 }
+
+/* ---------------------------------------------------------------- the screen's parts (M16 layout) */
+
+/** The words of the publish act in this state, as the screen has always named it. */
+export function publishLabel(state: PublishState): string {
+  return state === "unfinished" ? "Finish publishing" : state === "unpublished" ? "Publish the changes" : "Publish the principles";
+}
+
+/** One line for the "In force" part: how many principles every slice must keep. */
+export function inForceSummary(active: number): string {
+  if (!active) return "None in force. Add one to give every slice a rule to keep.";
+  return `${active === 1 ? "1 principle" : `${active} principles`} every slice must keep.`;
+}
+
+/** One line for the "Slices to check" part, naming the slice when there is only one. */
+export function toCheckSummary(slices: Pick<SliceToCheck, "id">[]): string {
+  const only = slices.length === 1 ? slices[0] : undefined;
+  if (only) return `${only.id} answers an older version of a principle, or leaves one in force unanswered.`;
+  return `${slices.length} slices answer an older version of a principle, or leave one in force unanswered.`;
+}
+
+/** One line for the "Retired" part: which principles slices no longer answer. */
+export function retiredSummary(ids: string[]): string {
+  return `${ids.join(", ")}: slices no longer answer ${ids.length === 1 ? "it" : "them"}.`;
+}

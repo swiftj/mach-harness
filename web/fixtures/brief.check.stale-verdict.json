@@ -1,0 +1,35 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-001",
+    "revision": 2,
+    "new_revision": true,
+    "stage": "brief",
+    "passes": true,
+    "errors": [],
+    "warnings": [],
+    "findings": [],
+    "counts": {
+      "outcomes": 1,
+      "assumptions": 2,
+      "open_questions": 0,
+      "shipped_rules": 2,
+      "capabilities": 1
+    },
+    "verdict": {
+      "at": "2026-11-21T01:37:56Z",
+      "brief_sha256": "614b144a592c18e0686965816dcb89be8f8eb12fb8e661e9d8388599846ad907",
+      "by": "ada-pm",
+      "decision": "go",
+      "reason": "Members ask for it at every desk.",
+      "revision": 1,
+      "holds": false,
+      "stale": true,
+      "stale_note": "The brief changed after this verdict was recorded (revision 1), so it no longer holds. Record a verdict on the brief as it is now."
+    },
+    "note": "This is revision 2: the brief's text changed since revision 1 was checked. MACH checks the brief's structure; it never scores the idea.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

@@ -1,0 +1,23 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-005",
+    "verdict": {
+      "decision": "not-now",
+      "reason": "Worth doing after the summer. The branches have nobody to run it before then.",
+      "by": "ada-pm",
+      "at": "2026-11-21T01:37:49Z",
+      "brief_sha256": null,
+      "revision": 0,
+      "holds": true,
+      "stale": false
+    },
+    "replaced": null,
+    "stage": "decided",
+    "recorded_without_github": false,
+    "note": "Recorded. A person decides. MACH never recommends a verdict, and recording one creates no epic or slice and starts nothing. Save it to GitHub so others can read it.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

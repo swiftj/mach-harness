@@ -89,6 +89,7 @@ func New(cfg Config) (*Claude, error) {
 	}
 	p.Scripts = []string{link, realScript}
 	p.ReadDirs = cfg.ReadDirs
+	p.Inputs = filepath.Join(home, "inputs")
 	sort.Strings(p.Scripts)
 	c := &Claude{cfg: cfg, paths: p, env: Environment(cfg.HostEnv), command: ContinueCommandFor(cfg.Script),
 		sessions: map[string]*session{}, bySlice: map[string]*session{}}
@@ -175,7 +176,9 @@ func (c *Claude) ContinueCommand() string { return c.command }
 // ---- session state ----
 
 type record struct {
-	SliceID        string   `json:"slice_id"`
+	// One of the two: the slice's interview, or (M16) the Shape conversation for an idea.
+	SliceID        string   `json:"slice_id,omitempty"`
+	IdeaID         string   `json:"idea_id,omitempty"`
 	SessionID      string   `json:"session_id"`
 	Turns          int      `json:"turns"`
 	SessionCostUSD float64  `json:"session_cost_usd"`
@@ -186,10 +189,28 @@ type record struct {
 	SettledQuestion string `json:"settled_question,omitempty"`
 }
 
+// subject is the slice or idea the record is for.
+func (r record) subject() string {
+	if r.IdeaID != "" {
+		return r.IdeaID
+	}
+	return r.SliceID
+}
+
+func newRecord(subject string) *record {
+	r := &record{SessionID: newUUID(), Created: now()}
+	if IsIdea(subject) {
+		r.IdeaID = subject
+	} else {
+		r.SliceID = subject
+	}
+	return r
+}
+
 type session struct {
 	c       *Claude
 	id      string
-	sliceID string
+	sliceID string // the subject: a slice, or (M16) an idea
 	lock    *os.File
 
 	mu         sync.Mutex
@@ -262,7 +283,7 @@ func (c *Claude) loadRecord(sliceID string) *record {
 		return nil
 	}
 	var r record
-	if json.Unmarshal(raw, &r) != nil || r.SessionID == "" || r.SliceID != sliceID {
+	if json.Unmarshal(raw, &r) != nil || r.SessionID == "" || r.subject() != sliceID || (r.SliceID != "" && r.IdeaID != "") {
 		return nil
 	}
 	return &r
@@ -273,7 +294,7 @@ func (c *Claude) saveRecord(r record) error {
 	if err != nil {
 		return err
 	}
-	path := c.recordPath(r.SliceID)
+	path := c.recordPath(r.subject())
 	tmp := strings.TrimSuffix(path, ".json") + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o666); err != nil {
 		return err
@@ -288,6 +309,9 @@ func (c *Claude) prepare() error {
 		return err
 	}
 	if _, err := security.EnsureDir(c.cfg.Project, ".factory", "studio", "interviews", "plugin", "skills"); err != nil {
+		return err
+	}
+	if _, err := security.EnsureDir(c.cfg.Project, ".factory", "studio", "interviews", "inputs"); err != nil {
 		return err
 	}
 	manifest := filepath.Join(c.paths.PluginDir, ".claude-plugin", "plugin.json")
@@ -341,54 +365,55 @@ func (c *Claude) Start(ctx context.Context, req StartRequest) (Started, error) {
 	if ok, reason := c.Available(); !ok {
 		return Started{}, &unavailable{reason}
 	}
+	subject := req.Subject()
 	c.mu.Lock()
 	if c.closing {
 		c.mu.Unlock()
 		return Started{}, &unavailable{"Product Studio is shutting down."}
 	}
-	if s := c.bySlice[req.SliceID]; s != nil {
+	if s := c.bySlice[subject]; s != nil {
 		c.mu.Unlock()
 		if err := s.answerQuestion(questionDigest(req.BuildersQuestion)); err != nil {
 			return Started{}, err
 		}
-		return Started{}, openHere(req.SliceID, s.id)
+		return Started{}, openHere(subject, s.id)
 	}
 	c.mu.Unlock()
 
 	if err := c.prepare(); err != nil {
 		return Started{}, err
 	}
-	lock, err := acquireLock(c.lockPath(req.SliceID), req.SliceID)
+	lock, err := acquireLock(c.lockPath(subject), subject)
 	if err != nil {
 		return Started{}, err
 	}
-	rec := c.loadRecord(req.SliceID)
+	rec := c.loadRecord(subject)
 	resumed := rec != nil
 	if rec == nil {
-		rec = &record{SliceID: req.SliceID, SessionID: newUUID(), Created: now()}
+		rec = newRecord(subject)
 		if err := c.saveRecord(*rec); err != nil {
 			releaseLock(lock)
 			return Started{}, err
 		}
 	}
-	s := &session{c: c, id: randomID(), sliceID: req.SliceID, lock: lock, rec: *rec, subs: map[int]chan Event{}}
+	s := &session{c: c, id: randomID(), sliceID: subject, lock: lock, rec: *rec, subs: map[int]chan Event{}}
 	c.mu.Lock()
 	if c.closing {
 		c.mu.Unlock()
 		releaseLock(lock)
 		return Started{}, &unavailable{"Product Studio is shutting down."}
 	}
-	if existing := c.bySlice[req.SliceID]; existing != nil { // started by a request that won the race
+	if existing := c.bySlice[subject]; existing != nil { // started by a request that won the race
 		c.mu.Unlock()
 		releaseLock(lock)
-		return Started{}, openHere(req.SliceID, existing.id)
+		return Started{}, openHere(subject, existing.id)
 	}
-	c.sessions[s.id], c.bySlice[req.SliceID] = s, s
+	c.sessions[s.id], c.bySlice[subject] = s, s
 	c.mu.Unlock()
 
 	s.mu.Lock()
 	s.newTurnLocked()
-	s.emitLocked("state", map[string]any{"state": "starting", "slice_id": req.SliceID, "resumed": resumed})
+	s.emitLocked("state", map[string]any{"state": "starting", subjectKey(subject): subject, "resumed": resumed})
 	last := rec.LastMessage
 	digest := questionDigest(req.BuildersQuestion)
 	answering := digest != "" && digest != rec.SettledQuestion
@@ -398,13 +423,16 @@ func (c *Claude) Start(ctx context.Context, req StartRequest) (Started, error) {
 		s.lastFinal, s.pending = s.pending, nil
 		s.emitLocked("state", map[string]any{"state": "waiting_for_reply"})
 		s.mu.Unlock()
-		return Started{InterviewID: s.id, SliceID: req.SliceID, Resumed: true}, nil
+		return started(s.id, subject, true), nil
 	}
 	message := "I'm back. Let's continue."
 	if rec.Turns == 0 {
 		// Inside the interviewer the one-skill plugin is always named mach, whatever the install.
-		message = "/mach:product-studio continue " + req.SliceID
-		if req.Idea != "" {
+		message = "/mach:product-studio continue " + subject
+		if IsIdea(subject) {
+			// M16: the Shape conversation for one idea. Nothing the person typed is added here.
+			message = "/mach:product-studio explore " + subject + ". " + IdeaOpeningNote
+		} else if req.Idea != "" {
 			epic := req.EpicID
 			if epic == "" {
 				epic = "its epic"
@@ -426,7 +454,25 @@ func (c *Claude) Start(ctx context.Context, req StartRequest) (Started, error) {
 	if err != nil {
 		return Started{}, err
 	}
-	return Started{InterviewID: s.id, SliceID: req.SliceID, Resumed: resumed}, nil
+	return started(s.id, subject, resumed), nil
+}
+
+// subjectKey is the field that names an interview's subject in its events and answers.
+func subjectKey(subject string) string {
+	if IsIdea(subject) {
+		return "idea_id"
+	}
+	return "slice_id"
+}
+
+func started(id, subject string, resumed bool) Started {
+	out := Started{InterviewID: id, Resumed: resumed}
+	if IsIdea(subject) {
+		out.IdeaID = subject
+	} else {
+		out.SliceID = subject
+	}
+	return out
 }
 
 // questionDigest identifies a builders' question without keeping its text; "" for none.
@@ -502,15 +548,18 @@ func (c *Claude) Current(sliceID string) (*Current, error) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		id := s.id
-		return &Current{InterviewID: &id, SliceID: sliceID, Live: true, State: s.state, TurnRunning: s.running != nil,
-			LastMessage: withQuestion(s.rec.LastMessage), Turns: s.rec.Turns, SessionCostUSD: s.rec.SessionCostUSD}, nil
+		cur := &Current{InterviewID: &id, Live: true, State: s.state, TurnRunning: s.running != nil,
+			LastMessage: withQuestion(s.rec.LastMessage), Turns: s.rec.Turns, SessionCostUSD: s.rec.SessionCostUSD}
+		cur.setSubject(sliceID)
+		return cur, nil
 	}
 	rec := c.loadRecord(sliceID)
 	held := lockHeld(c.lockPath(sliceID))
 	if rec == nil && !held {
 		return nil, nil
 	}
-	cur := &Current{SliceID: sliceID, State: "saved", LockedElsewhere: held}
+	cur := &Current{State: "saved", LockedElsewhere: held}
+	cur.setSubject(sliceID)
 	if rec != nil {
 		cur.LastMessage, cur.Turns, cur.SessionCostUSD = withQuestion(rec.LastMessage), rec.Turns, rec.SessionCostUSD
 	}

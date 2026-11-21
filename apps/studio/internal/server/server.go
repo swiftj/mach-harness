@@ -227,7 +227,9 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 		problem = status.Error
 	}
 	available, reason := s.opts.Bridge.Available()
-	capabilities := map[string]any{"interview": available, "interview_reason": nil, "continue_command": s.opts.Bridge.ContinueCommand()}
+	continueCommand := s.opts.Bridge.ContinueCommand()
+	capabilities := map[string]any{"interview": available, "interview_reason": nil, "continue_command": continueCommand,
+		"explore_command": interview.ExploreCommandOf(continueCommand)}
 	if !available {
 		capabilities["interview_reason"] = reason
 	}
@@ -249,6 +251,13 @@ func (s *Server) operation(w http.ResponseWriter, r *http.Request) {
 	}
 	body, ok := readBody(w, r, op.BodyLimit())
 	if !ok {
+		return
+	}
+	// M16: an act on an idea waits while the guided conversation is writing that idea's brief or case,
+	// as a draft write waits for a slice's interview (drafts.go).
+	if idea := engine.WritesIdea(name, body); idea != "" && s.opts.Bridge.Busy(idea) {
+		env := engine.Fail(engine.KindConflict, "The conversation is writing this idea's brief or case right now. Wait for its reply, or interrupt it.")
+		writeEnvelope(w, statusFor(env), env)
 		return
 	}
 	env := s.opts.Engine.Do(r.Context(), name, body)

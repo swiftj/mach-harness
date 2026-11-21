@@ -69,6 +69,16 @@
                   "items": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "integer", "minimum": 1}}},
         "map_slice": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9-]{0,31}$"}
       }
+    },
+    "serves": {
+      "description": "Optional (M16 B): the idea and its brief's outcomes a draft slice made by Shape's idea apply serves. Identifiers only; never the brief. The slice's why names them in its header ('- **Serves:** IDEA-NNN O-1, O-2'), and the Factory's spec header line carries them.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idea", "outcomes"],
+      "properties": {
+        "idea": {"type": "string", "pattern": "^IDEA-[0-9]{3,}$"},
+        "outcomes": {"type": "array", "minItems": 1, "maxItems": 50, "uniqueItems": true, "items": {"type": "string", "pattern": "^O-[1-9][0-9]{0,3}$"}}
+      }
     }
   }
 }

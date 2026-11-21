@@ -19,6 +19,10 @@ import {
   rowWords,
   sliceKey,
   wouldRecord,
+  jiraOpenPart,
+  keysPartSummary,
+  exportPartSummary,
+  keysBackSummary,
 } from "../src/features/jira/model.ts";
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`../../../fixtures/${name}.json`, import.meta.url), "utf8")).data;
@@ -235,4 +239,31 @@ test("rows in words", () => {
 test("an item's label is its ID and its title, or the ID alone", () => {
   assert.equal(label({ id: "SLICE-001", name: "Invite a teammate" }), "SLICE-001 Invite a teammate");
   assert.equal(label({ id: "SLICE-009", name: null }), "SLICE-009");
+});
+
+/* ── The page's parts (M16 layout) ───────────────────────────────────── */
+
+test("the part open on arrival: the export until anything has a key, then the keys", () => {
+  assert.equal(jiraOpenPart(ledgerFacts(buildLedger(status))), "keys");
+  assert.equal(jiraOpenPart({ epics: 1, slices: 2, sliceKeys: 0, epicKeys: 0 }), "export");
+  assert.equal(jiraOpenPart({ epics: 1, slices: 2, sliceKeys: 0, epicKeys: 1 }), "keys");
+});
+
+test("each part's row says its state in words", () => {
+  assert.equal(keysPartSummary(ledgerFacts(buildLedger(status))), "1 epic, 2 slices, 1 slice with a key of its own");
+  assert.equal(exportPartSummary(null), "One CSV file and a README for Jira's importer. Not exported on this visit.");
+  assert.equal(exportPartSummary(exportSummary(offered(fixture("jira.export")), namesFrom(status))), "Exported: nothing to export");
+  assert.equal(exportPartSummary(exportSummary(offered(fixture("jira.export.all")), namesFrom(status))), `Exported: the file holds ${fileContents(fixture("jira.export.all").counts.epics, fixture("jira.export.all").counts.stories)}`);
+});
+
+test("bringing the keys back: the row says what a try found and that nothing has changed, then what was recorded", () => {
+  const names = namesFrom(status);
+  assert.equal(keysBackSummary({ chosen: false, trial: null, applied: null }), "No file chosen yet");
+  assert.equal(keysBackSummary({ chosen: true, trial: null, applied: null }), "A file is chosen: try it without changing anything");
+  const trial = keysSummary(fixture("jira.keys.dry-run"), names);
+  assert.equal(keysBackSummary({ chosen: true, trial, applied: null }), "Tried, nothing changed yet: would link 1 key, 1 not matched, 2 refused");
+  const applied = keysSummary(fixture("jira.keys"), names);
+  assert.match(keysBackSummary({ chosen: true, trial: null, applied }), /^Recorded: \d+ keys? linked/);
+  const reopen = keysSummary(fixture("jira.keys.reopen"), names);
+  assert.match(keysBackSummary({ chosen: true, trial: reopen, applied: null }), / to reopen first/);
 });

@@ -1,35 +1,45 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router";
 import { CircleAlert, FileText, Map as MapIcon } from "lucide-react";
-import {
-  ArtifactId,
-  Banner,
-  Button,
-  ConfirmDialog,
-  Disclosure,
-  EmptyState,
-  ErrorState,
-  Heading,
-  LoadingState,
-  SliceStatusPill,
-  Text,
-  describeError,
-  plural,
-  toast,
-} from "@mach/ui";
+import { ArtifactId, Banner, Button, ConfirmDialog, EmptyState, ErrorState, Heading, LoadingState, SliceStatusPill, Text, plural, describeError, toast } from "@mach/ui";
 import type { PrdApply, PrdCoverageRow, PrdMapSlice, PrdStatus } from "@mach/ui/api";
 import { useEngineAct } from "../../api/act";
 import { useStatus } from "../../api/store";
 import { useOperation } from "../../api/useOperation";
-import { ScreenFrame } from "../../shared/ScreenFrame";
-import { applyPlan, coverageProgress, coverageWords, fencedLines, journeyStep, quote } from "./model";
-import { CoveragePill, DataNotice, PrdJourney, PrdQuote, linesLabel } from "./parts";
+import { Fold } from "../../shared/layout/Fold";
+import { Part, Parts } from "../../shared/layout/Parts";
+import { ContextRow, OnePane, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
+import {
+  JOURNEY,
+  applyBlocked,
+  applyPlan,
+  applySummary,
+  applyWhat,
+  coverageCounts,
+  coverageProgress,
+  coverageWords,
+  fencedLines,
+  importSummary,
+  journeyStep,
+  mapSummary,
+  partForStep,
+  partPlace,
+  quote,
+  quotedCount,
+  settleSummary,
+  type ApplyPlan,
+} from "./model";
+import { CoveragePill, DataNotice, PrdQuote, lineCount, linesLabel } from "./parts";
 import { SettleDialog } from "./SettleDialog";
 
+const about = "How its sections map to epics and slices, and what is left to settle.";
+
 /**
- * One PRD: where it is on the path, its map of epics and thin slices with the lines each rests on,
- * the coverage of every section (the product manager settles each one no slice cites), and making
- * the drafts. Reads `prd.status` and `prd.show`; acts `prd.settle` and `prd.apply`, each confirmed.
+ * One PRD, in two panes (M16 layout). The wide pane is the path as four parts, one open at a time: the import, the
+ * map of epics and thin slices with the lines each rests on, settling the sections no slice cites, and making the
+ * drafts. The part the path is at is open; each part's row says its state. The narrow pane keeps the document's counts
+ * in view. Reads `prd.status` and `prd.show`; acts `prd.settle` and `prd.apply`, each confirmed. The same shape as
+ * Shape's Size and route, which was modelled on this page.
  */
 export function PrdScreen() {
   const prdId = useParams().prdId ?? "";
@@ -38,112 +48,182 @@ export function PrdScreen() {
 
   if (!status.data && status.loading) {
     return (
-      <ScreenFrame title={prdId}>
-        <LoadingState label={`Reading ${prdId}`} />
-      </ScreenFrame>
+      <PrdFrame prdId={prdId} title={prdId}>
+        <OnePane label={prdId}>
+          <LoadingState label={`Reading ${prdId}`} />
+        </OnePane>
+      </PrdFrame>
     );
   }
   if (!status.data) {
     const shown = status.error ? describeError(status.error) : { title: "Not available right now", message: "" };
     return (
-      <ScreenFrame title={prdId}>
-        <ErrorState
-          icon={<CircleAlert />}
-          title={status.error?.kind === "refused" ? `Could not read ${prdId}` : shown.title}
-          message={shown.message}
-          action={
-            <>
-              <Button onClick={status.reload}>Try again</Button>
-              <Button asChild variant="ghost">
-                <Link to="/prds">All PRDs</Link>
-              </Button>
-            </>
-          }
-        />
-      </ScreenFrame>
+      <PrdFrame prdId={prdId} title={prdId}>
+        <OnePane label={prdId}>
+          <ErrorState
+            className="max-w-reading"
+            icon={<CircleAlert />}
+            title={status.error?.kind === "refused" ? `Could not read ${prdId}` : shown.title}
+            message={shown.message}
+            action={
+              <>
+                <Button onClick={status.reload}>Try again</Button>
+                <Button asChild variant="ghost">
+                  <Link to="/prds">All PRDs</Link>
+                </Button>
+              </>
+            }
+          />
+        </OnePane>
+      </PrdFrame>
     );
   }
-  return <PrdPage data={status.data} lines={fencedLines(show.data?.fenced)} truncated={show.data?.truncated ?? false} fenced={show.data?.fenced ?? null} reload={status.reload} />;
-}
-
-function PrdPage({ data, lines, truncated, fenced, reload }: { data: PrdStatus; lines: Map<number, string> | null; truncated: boolean; fenced: string | null; reload: () => void }) {
-  const prd = data.prd;
-  const step = journeyStep(data);
-  const [settling, setSettling] = useState<PrdCoverageRow | null>(null);
-  const map = data.map;
-
   return (
-    <ScreenFrame
-      title={
-        <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <span>{prd.name}</span>
-          <ArtifactId className="text-body">{prd.prd_id}</ArtifactId>
-        </span>
-      }
-      lead={`${prd.format === "markdown" ? "Markdown" : "Plain text"} · ${plural(prd.sections, "section")} · ${plural(prd.line_count, "line")}. How its sections map to epics and slices, and what is left to settle.`}
-    >
-      <PrdJourney step={step} />
-      <DataNotice />
-      {!prd.document_matches ? (
-        <Banner tone="danger" title="The copy in your workspace changed">
-          It no longer matches the document that was imported, so nothing is shown or made from it. Import the document again from Start from a PRD.
-        </Banner>
-      ) : null}
-      {map ? (
-        <>
-          <CoverageSection data={data} lines={lines} onSettle={setSettling} />
-          <MapSection prdId={prd.prd_id} map={map} lines={lines} />
-          <ApplySection data={data} onDone={reload} />
-        </>
-      ) : (
-        <NoMap data={data} />
-      )}
-      {fenced && lines ? (
-        <Disclosure summary="Read the document" className="max-w-reading">
-          <div className="flex flex-col gap-2">
-            <p className="text-body-sm text-ink-muted">The document's words, as data. {truncated ? "Long documents are cut; this shows the first part." : null}</p>
-            <PrdQuote prdId={prd.prd_id} quotations={quote(lines, `1-${Math.max(...lines.keys(), 1)}`)} />
-          </div>
-        </Disclosure>
-      ) : null}
-      {map ? (
-        <SettleDialog
-          prdId={prd.prd_id}
-          section={settling}
-          quotations={settling ? quote(lines, settling.lines) : []}
-          slices={map.slices}
-          onOpenChange={(open) => (open ? undefined : setSettling(null))}
-          onDone={reload}
-        />
-      ) : null}
-    </ScreenFrame>
+    <PrdFrame prdId={status.data.prd.prd_id} title={status.data.prd.name}>
+      <PrdPage data={status.data} lines={fencedLines(show.data?.fenced)} truncated={show.data?.truncated ?? false} reload={status.reload} />
+    </PrdFrame>
   );
 }
 
-/** Before a map: what the map is, how to get one, and the document's sections. */
-function NoMap({ data }: { data: PrdStatus }) {
+/** The slim context row: the PRD's ID, its file name as the page's h1, and what the page is for behind "About this page". */
+function PrdFrame({ prdId, title, children }: { prdId: string; title: string; children: ReactNode }) {
   return (
-    <section aria-labelledby="map-heading" className="flex max-w-reading flex-col gap-4">
-      <Heading level={2} id="map-heading">
-        The map
-      </Heading>
-      <EmptyState
-        icon={<MapIcon />}
-        headingLevel={3}
-        title="No map yet"
-        description={
-          <>
-            The map of epics and thin slices is proposed in a conversation in Claude Code, not on this page. Ask the product studio skill there to propose a map for{" "}
-            {data.prd.prd_id}; it reads the document, proposes the slices with the lines each rests on, and records the map once you agree. This page then shows it, with
-            every section no slice covers.
-          </>
-        }
-      />
-      {data.sections?.length ? (
+    <WorkScreen header={<ContextRow identity={<ArtifactId plain>{prdId}</ArtifactId>} title={title} about={about} />}>
+      {children}
+    </WorkScreen>
+  );
+}
+
+function PrdPage({ data, lines, truncated, reload }: { data: PrdStatus; lines: Map<number, string> | null; truncated: boolean; reload: () => void }) {
+  const prd = data.prd;
+  const step = journeyStep(data);
+  const status = useStatus();
+  const [settling, setSettling] = useState<PrdCoverageRow | null>(null);
+  const map = data.map;
+  const plan = useMemo(() => (map ? applyPlan(map, (id) => status.data?.epics.find((e) => e.epic_id === id)?.title ?? null) : null), [map, status.data]);
+  const [open, setOpen] = useState<string | null>(partForStep(step));
+  const [seenStep, setSeenStep] = useState(step);
+  // When an act moves the path on (the last section settled, the drafts made), the part that now needs the person opens.
+  if (seenStep !== step) {
+    setSeenStep(step);
+    setOpen(partForStep(step));
+  }
+  const sections = data.sections ?? [];
+
+  return (
+    <WorkPanes>
+      <WorkPane label={`${prd.prd_id}, from import to drafts`}>
+        <div className="flex flex-col gap-6">
+          {!prd.document_matches ? (
+            <Banner tone="danger" title="The copy in your workspace changed">
+              It no longer matches the document that was imported, so nothing is shown or made from it. Import the document again from Start from a PRD.
+            </Banner>
+          ) : null}
+          <Parts label="Starting from a PRD" open={open} onOpenChange={setOpen}>
+            <Part id="import" number={1} place={partPlace("import", step)} name={JOURNEY[0]?.label ?? "Import"} summary={importSummary(prd)}>
+              <ImportBody prdId={prd.prd_id} sections={sections} lines={lines} truncated={truncated} />
+            </Part>
+            <Part id="map" number={2} place={partPlace("map", step)} name={JOURNEY[1]?.label ?? "Map"} summary={mapSummary(data)}>
+              {map ? <MapBody prdId={prd.prd_id} map={map} lines={lines} /> : <NoMap prdId={prd.prd_id} />}
+            </Part>
+            <Part id="settle" number={3} place={partPlace("settle", step)} name={JOURNEY[2]?.label ?? "Settle"} summary={map ? settleSummary(data.coverage) : "After the map"}>
+              {map ? <CoverageBody data={data} lines={lines} onSettle={setSettling} /> : undefined}
+            </Part>
+            <Part id="apply" number={4} place={partPlace("apply", step)} name={JOURNEY[3]?.label ?? "Make the drafts"} summary={applySummary(data, plan)}>
+              {map && plan ? <ApplyBody data={data} plan={plan} onDone={reload} /> : undefined}
+            </Part>
+          </Parts>
+        </div>
+        {map ? (
+          <SettleDialog
+            prdId={prd.prd_id}
+            section={settling}
+            quotations={settling ? quote(lines, settling.lines) : []}
+            slices={map.slices}
+            onOpenChange={(isOpen) => (isOpen ? undefined : setSettling(null))}
+            onDone={reload}
+          />
+        ) : null}
+      </WorkPane>
+      <WorkPane side label={`Where ${prd.prd_id} stands`}>
+        <CountsAside data={data} />
+      </WorkPane>
+    </WorkPanes>
+  );
+}
+
+/** The narrow pane: the document's counts, coverage by state and the map's size, then where the PRD's text goes. */
+function CountsAside({ data }: { data: PrdStatus }) {
+  const prd = data.prd;
+  const map = data.map;
+  const progress = coverageProgress(data.coverage);
+  return (
+    <div className="flex flex-col gap-8">
+      <section aria-labelledby="prd-aside-document" className="flex flex-col gap-3">
+        <div className="flex flex-col gap-1">
+          <Heading level={2} size="title-3" id="prd-aside-document">
+            The document
+          </Heading>
+          <Text size="body-sm" tone="muted">
+            {prd.format === "markdown" ? "Markdown" : "Plain text"}, imported as <ArtifactId plain>{prd.prd_id}</ArtifactId>.
+          </Text>
+        </div>
+        <Counts rows={[{ label: "Sections", value: prd.sections }, { label: "Lines", value: prd.line_count }]} />
+      </section>
+      {map ? (
+        <section aria-labelledby="prd-aside-coverage" className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1">
+            <Heading level={2} size="title-3" id="prd-aside-coverage">
+              Coverage
+            </Heading>
+            <Text size="body-sm" tone="muted">
+              {progress.total > 0 ? `${progress.settled} of ${plural(progress.total, "section")} no slice cites settled.` : "Every section is cited by a slice on the map."}
+            </Text>
+          </div>
+          <Counts rows={coverageCounts(data)} />
+        </section>
+      ) : null}
+      {map ? (
+        <section aria-labelledby="prd-aside-map" className="flex flex-col gap-3">
+          <Heading level={2} size="title-3" id="prd-aside-map">
+            The map
+          </Heading>
+          <Counts
+            rows={[
+              { label: map.applied ? "Epics it proposed" : "New epics", value: map.epics.length },
+              { label: "Thin slices", value: map.slices.length },
+              { label: "Draft slices made", value: (prd.applied ?? []).length },
+            ]}
+          />
+        </section>
+      ) : null}
+      <DataNotice />
+    </div>
+  );
+}
+
+function Counts({ rows }: { rows: Array<{ label: string; value: number }> }) {
+  return (
+    <dl className="grid grid-cols-2 gap-2">
+      {rows.map((r) => (
+        <div key={r.label} className="flex min-w-0 flex-col gap-0.5 rounded-sm bg-surface-sunken px-2.5 py-2">
+          <dt className="text-caption text-ink-muted">{r.label}</dt>
+          <dd className="text-title-3 font-semibold text-ink tabular">{r.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** The import: the document's sections, and the whole text folded as data. */
+function ImportBody({ prdId, sections, lines, truncated }: { prdId: string; sections: NonNullable<PrdStatus["sections"]>; lines: Map<number, string> | null; truncated: boolean }) {
+  return (
+    <div className="flex max-w-[48rem] flex-col gap-4">
+      {sections.length ? (
         <div className="flex flex-col gap-2">
           <Heading level={3}>The document's sections</Heading>
           <ol className="flex flex-col divide-y divide-line rounded-md border border-line bg-surface">
-            {data.sections.map((s) => (
+            {sections.map((s) => (
               <li key={s.n} className="flex items-baseline gap-4 px-4 py-2.5 text-body-sm">
                 <span className="w-6 shrink-0 text-right text-ink-subtle tabular">{s.n}</span>
                 <span className="min-w-0 flex-1 text-ink">{s.title}</span>
@@ -152,31 +232,57 @@ function NoMap({ data }: { data: PrdStatus }) {
             ))}
           </ol>
         </div>
+      ) : (
+        <Text size="body-sm" tone="muted">
+          Its sections are listed under Settle what is not covered, each with what covers it.
+        </Text>
+      )}
+      {lines ? (
+        <Fold boxed label="The document as written, with its line numbers">
+          <div className="flex flex-col gap-2">
+            <p className="text-body-sm text-ink-muted">The document's words, as data. {truncated ? "Long documents are cut; this shows the first part." : null}</p>
+            <PrdQuote prdId={prdId} quotations={quote(lines, `1-${Math.max(...lines.keys(), 1)}`)} />
+          </div>
+        </Fold>
       ) : null}
-    </section>
+    </div>
+  );
+}
+
+/** Before a map: what the map is and how to get one. Nothing in the app proposes a map; it is never faked here. */
+function NoMap({ prdId }: { prdId: string }) {
+  return (
+    <EmptyState
+      className="max-w-reading"
+      icon={<MapIcon />}
+      headingLevel={3}
+      title="No map yet"
+      description={
+        <>
+          The map of epics and thin slices is proposed in a conversation in Claude Code, not on this page. Ask the product studio skill there to propose a map for {prdId}; it
+          reads the document, proposes the slices with the lines each rests on, and records the map once you agree. This page then shows it, with every section no slice
+          covers.
+        </>
+      }
+    />
   );
 }
 
 /**
- * Coverage, the heart of the page: every section and what covers it. Sections no slice cites are
- * settled one by one; settled of total is a real fraction, and nothing is made while any is open.
+ * Coverage: every section and what covers it. Sections no slice cites are settled one by one; settled of total is a
+ * real fraction, and nothing is made while any is open.
  */
-function CoverageSection({ data, lines, onSettle }: { data: PrdStatus; lines: Map<number, string> | null; onSettle: (row: PrdCoverageRow) => void }) {
+function CoverageBody({ data, lines, onSettle }: { data: PrdStatus; lines: Map<number, string> | null; onSettle: (row: PrdCoverageRow) => void }) {
   const rows = data.coverage ?? [];
   const progress = coverageProgress(rows);
   const applied = data.map?.applied ?? false;
   const slices = data.map?.slices ?? [];
 
   return (
-    <section aria-labelledby="coverage-heading" className="flex max-w-reading flex-col gap-4">
-      <div className="flex flex-col gap-2">
-        <Heading level={2} id="coverage-heading">
-          Coverage
-        </Heading>
-        <Text tone="muted">
-          Each section of the document, and what covers it. A section no slice cites needs your word: part of a slice, out of scope, or later.
-        </Text>
-      </div>
+    <div className="flex max-w-[48rem] flex-col gap-4">
+      <Text size="body-sm" tone="muted" className="max-w-reading">
+        Each section of the document, and what covers it. A section no slice cites needs your word: part of a slice, out of scope, or later.
+      </Text>
       {progress.total > 0 ? (
         <div className="flex flex-col gap-2 rounded-md border border-line bg-surface px-4 py-3">
           <p className="text-body font-semibold text-ink tabular">
@@ -192,47 +298,54 @@ function CoverageSection({ data, lines, onSettle }: { data: PrdStatus; lines: Ma
               ? `${plural(progress.left.length, "section")} still to settle. Nothing can be made from this PRD while any section is unsettled.`
               : "Every section no slice cites is settled."}
           </p>
+          {progress.left.length && !applied ? (
+            <div className="flex flex-wrap gap-2 pt-1">
+              {progress.left.map((row) => (
+                <Button key={row.n} size="sm" onClick={() => onSettle(row)} aria-label={`Settle section ${row.n}, ${row.title}`}>
+                  Settle section {row.n}
+                </Button>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : (
         <p className="text-body-sm text-ink-muted">Every section is cited by a slice on the map, so there is nothing to settle.</p>
       )}
       <ol aria-label="Sections of the document" className="flex flex-col divide-y divide-line rounded-md border border-line bg-surface">
-        {rows.map((row) => (
-          <li key={row.n} className={row.state === "not_covered" ? "flex flex-col gap-2 bg-warning-soft px-4 py-3" : "flex flex-col gap-2 px-4 py-3"}>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              <span className="w-6 shrink-0 text-right text-body-sm text-ink-subtle tabular">{row.n}</span>
-              <div className="flex min-w-0 flex-1 flex-col">
-                <span className="text-body font-semibold text-ink">{row.title}</span>
-                <span className="text-body-sm text-ink-muted">
-                  {linesLabel(row.lines)} · {coverageWords(row, slices)}
-                </span>
+        {rows.map((row) => {
+          const quotations = row.state === "not_covered" && lines ? quote(lines, row.lines) : [];
+          return (
+            <li key={row.n} className={row.state === "not_covered" ? "flex flex-col gap-2 bg-warning-soft px-4 py-3" : "flex flex-col gap-2 px-4 py-3"}>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <span className="w-6 shrink-0 text-right text-body-sm text-ink-subtle tabular">{row.n}</span>
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="text-body font-semibold text-ink">{row.title}</span>
+                  <span className="text-body-sm text-ink-muted">
+                    {linesLabel(row.lines)} · {coverageWords(row, slices)}
+                  </span>
+                </div>
+                <CoveragePill state={row.state} />
               </div>
-              <CoveragePill state={row.state} />
-              {row.state === "not_covered" && !applied ? (
-                <Button size="sm" onClick={() => onSettle(row)} aria-label={`Settle section ${row.n}, ${row.title}`}>
-                  Settle section {row.n}
-                </Button>
+              {row.settled?.reason ? (
+                <p className="pl-10 text-body-sm text-ink-muted">
+                  Your reason: <span className="text-ink">{row.settled.reason}</span>
+                </p>
               ) : null}
-            </div>
-            {row.settled?.reason ? (
-              <p className="pl-10 text-body-sm text-ink-muted">
-                Your reason: <span className="text-ink">{row.settled.reason}</span>
-              </p>
-            ) : null}
-            {row.state === "not_covered" && lines ? (
-              <Disclosure summary={`Read section ${row.n}`} className="ml-10 bg-surface">
-                <PrdQuote prdId={data.prd.prd_id} quotations={quote(lines, row.lines)} />
-              </Disclosure>
-            ) : null}
-          </li>
-        ))}
+              {quotations.length ? (
+                <Fold className="pl-10" label={`Read section ${row.n}, ${lineCount(quotedCount(quotations))}`}>
+                  <PrdQuote prdId={data.prd.prd_id} quotations={quotations} />
+                </Fold>
+              ) : null}
+            </li>
+          );
+        })}
       </ol>
-    </section>
+    </div>
   );
 }
 
-/** The proposed epics and thin slices, in the order the builders take them, each with the lines it rests on. */
-function MapSection({ prdId, map, lines }: { prdId: string; map: NonNullable<PrdStatus["map"]>; lines: Map<number, string> | null }) {
+/** The proposed epics and thin slices, in the order the builders take them, each with the lines it rests on folded. */
+function MapBody({ prdId, map, lines }: { prdId: string; map: NonNullable<PrdStatus["map"]>; lines: Map<number, string> | null }) {
   const status = useStatus();
   const epicTitle = (id: string) => status.data?.epics.find((e) => e.epic_id === id)?.title ?? null;
   const newEpics = new Map(map.epics.map((e) => [e.key, e.title]));
@@ -240,21 +353,16 @@ function MapSection({ prdId, map, lines }: { prdId: string; map: NonNullable<Prd
   const epicName = (epic: string) => newEpics.get(epic) ?? epicTitle(epic) ?? epic;
 
   return (
-    <section aria-labelledby="map-heading" className="flex max-w-reading flex-col gap-5">
-      <div className="flex flex-col gap-2">
-        <Heading level={2} id="map-heading">
-          The map
-        </Heading>
-        <Text tone="muted">
-          {map.applied
-            ? "What was proposed and made from this PRD. The map is kept as it was when the drafts were made."
-            : "Proposed in Claude Code and recorded there. To change it, ask for a new map there; until the drafts are made, a new map replaces this one."}
-        </Text>
-      </div>
+    <div className="flex max-w-[48rem] flex-col gap-5">
+      <Text size="body-sm" tone="muted" className="max-w-reading">
+        {map.applied
+          ? "What was proposed and made from this PRD. The map is kept as it was when the drafts were made."
+          : "Proposed in Claude Code and recorded there. To change it, ask for a new map there; until the drafts are made, a new map replaces this one."}
+      </Text>
       {map.epics.length ? (
         <div className="flex flex-col gap-2">
           <Heading level={3}>{map.applied ? "Epics it proposed" : "New epics"}</Heading>
-          <ul className="flex flex-col gap-3">
+          <ul className="grid grid-cols-[repeat(auto-fill,minmax(18rem,1fr))] gap-3">
             {map.epics.map((e) => (
               <li key={e.key} className="flex flex-col gap-1 rounded-md border border-line bg-surface px-4 py-3">
                 <span className="flex flex-wrap items-center gap-2">
@@ -284,7 +392,7 @@ function MapSection({ prdId, map, lines }: { prdId: string; map: NonNullable<Prd
           ))}
         </ol>
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -305,8 +413,10 @@ function MapSliceItem({
 }) {
   const depends = slice.depends_on.map((d) => (keyTitle.has(d) ? `${d}, “${keyTitle.get(d)}”` : d));
   const answers = slice.answers;
+  const quotations = quote(lines, slice.cites);
+  const quoted = quotedCount(quotations);
   return (
-    <li className="flex flex-col gap-3 rounded-md border border-line bg-surface px-5 py-4">
+    <li className="flex flex-col gap-2 rounded-md border border-line bg-surface px-5 py-4">
       <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
         <span className="mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full border border-line-strong text-caption font-semibold text-ink-muted tabular" aria-hidden="true">
           {index + 1}
@@ -332,8 +442,13 @@ function MapSliceItem({
           ) : null}
         </div>
       </div>
-      <PrdQuote prdId={prdId} quotations={quote(lines, slice.cites)} className="pl-9" />
-      {!lines ? <p className="pl-9 text-body-sm text-ink-muted">Cites {slice.cites}.</p> : null}
+      {quoted ? (
+        <Fold className="pl-9" label={`Rests on ${lineCount(quoted)} of the PRD`}>
+          <PrdQuote prdId={prdId} quotations={quotations} />
+        </Fold>
+      ) : (
+        <p className="pl-9 text-body-sm text-ink-muted">Cites {slice.cites}.</p>
+      )}
       {slice.slice_id ? (
         <nav aria-label={`Pages of ${slice.slice_id}`} className="flex flex-wrap gap-x-5 gap-y-1 pl-9 text-body-sm font-semibold">
           <Link to={`/slices/${slice.slice_id}`} className="text-accent-ink underline-offset-2 hover:underline">
@@ -352,16 +467,13 @@ function MapSliceItem({
  * Make the drafts (`prd.apply`): an explicit act, confirmed in a dialog naming exactly what it makes.
  * Repeating it makes nothing twice, and the page says what already exists.
  */
-function ApplySection({ data, onDone }: { data: PrdStatus; onDone: () => void }) {
-  const status = useStatus();
+function ApplyBody({ data, plan, onDone }: { data: PrdStatus; plan: ApplyPlan; onDone: () => void }) {
   const act = useEngineAct();
   const [open, setOpen] = useState(false);
   const [result, setResult] = useState<PrdApply | null>(null);
-  const map = data.map!;
-  const plan = useMemo(() => applyPlan(map, (id) => status.data?.epics.find((e) => e.epic_id === id)?.title ?? null), [map, status.data]);
-  const left = data.not_covered ?? [];
-  const again = map.applied;
-  const what = [plan.epics.length ? plural(plan.epics.length, "epic") : null, plural(plan.slices.length, "draft slice")].filter(Boolean).join(" and ");
+  const again = data.map?.applied ?? false;
+  const blocked = applyBlocked(data);
+  const what = applyWhat(plan);
 
   const confirm = async () => {
     const applied = await act.run("prd.apply", { prd_id: data.prd.prd_id });
@@ -373,27 +485,23 @@ function ApplySection({ data, onDone }: { data: PrdStatus; onDone: () => void })
   };
 
   return (
-    <section aria-labelledby="apply-heading" className="flex max-w-reading flex-col gap-4 rounded-md border border-line bg-surface px-6 py-5">
-      <div className="flex flex-col gap-1">
-        <Heading level={2} id="apply-heading" size="title-3">
-          Make the drafts
-        </Heading>
-        <Text size="body-sm" tone="muted">
-          {again
-            ? `The drafts were made: ${plural((data.prd.applied ?? []).length, "draft slice")}. Running it again makes nothing twice; it only makes what is missing and says what already exists.`
-            : `Adds ${what} to your workspace as drafts, in the map's order. Nothing is approved, sent or started, and nothing goes to GitHub.`}
-        </Text>
-      </div>
-      {left.length && !again ? (
+    <div className="flex max-w-reading flex-col gap-4">
+      <Text size="body-sm" tone="muted">
+        {again
+          ? `The drafts were made: ${plural((data.prd.applied ?? []).length, "draft slice")}. Running it again makes nothing twice; it only makes what is missing and says what already exists.`
+          : `Adds ${what} to your workspace as drafts, in the map's order. Nothing is approved, sent or started, and nothing goes to GitHub.`}
+      </Text>
+      {again ? <Text size="body-sm">Every step is done. Each draft slice is now confirmed on its own page, under “From the PRD”.</Text> : null}
+      {blocked ? (
         <p className="text-body-sm text-ink" id="apply-blocked">
-          Settle {left.length === 1 ? `section ${left[0]}` : `sections ${left.join(", ")}`} first. Nothing can be made while any section is unsettled.
+          {blocked}
         </p>
       ) : null}
       <div>
         <Button
           variant={again ? "secondary" : "primary"}
-          disabled={left.length > 0 && !again}
-          aria-describedby={left.length && !again ? "apply-blocked" : undefined}
+          disabled={blocked !== null}
+          aria-describedby={blocked ? "apply-blocked" : undefined}
           onClick={() => {
             act.reset();
             setOpen(true);
@@ -402,7 +510,7 @@ function ApplySection({ data, onDone }: { data: PrdStatus; onDone: () => void })
           {again ? "Make the drafts again" : `Make ${what}`}
         </Button>
       </div>
-      {result ? <ApplyResult result={result} /> : null}
+      {result ? <ApplyResult result={result} /> : again ? <MadeBefore slices={data.map?.slices ?? []} /> : null}
       <ConfirmDialog
         open={open}
         onOpenChange={setOpen}
@@ -439,7 +547,30 @@ function ApplySection({ data, onDone }: { data: PrdStatus; onDone: () => void })
           </div>
         </div>
       </ConfirmDialog>
-    </section>
+    </div>
+  );
+}
+
+/** The draft slices the map made, each with the way to its specification and to its answers from the PRD. */
+function MadeBefore({ slices }: { slices: PrdMapSlice[] }) {
+  const made = slices.filter((s): s is PrdMapSlice & { slice_id: string } => Boolean(s.slice_id));
+  if (!made.length) return null;
+  return (
+    <ul aria-label="Draft slices made from this PRD" className="flex flex-col gap-2 border-t border-line pt-4 text-body-sm">
+      {made.map((s) => (
+        <li key={s.slice_id} className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <FileText aria-hidden="true" className="size-4 text-ink-subtle" />
+          <ArtifactId>{s.slice_id}</ArtifactId>
+          <span className="text-ink">{s.title}</span>
+          <Link to={`/slices/${s.slice_id}`} className="font-semibold text-accent-ink underline-offset-2 hover:underline">
+            Open {s.slice_id}
+          </Link>
+          <Link to={`/slices/${s.slice_id}/prd`} className="font-semibold text-accent-ink underline-offset-2 hover:underline">
+            Its answers from the PRD
+          </Link>
+        </li>
+      ))}
+    </ul>
   );
 }
 

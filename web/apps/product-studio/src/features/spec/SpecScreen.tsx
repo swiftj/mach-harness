@@ -1,21 +1,20 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { CircleAlert, MessagesSquare, SearchX } from "lucide-react";
-import { ArtifactId, Banner, Button, EmptyState, ErrorState, Heading, Page, Skeleton, SkeletonText, SliceGithubPills, SliceLifecycle, SliceStatusPill, Tabs, TabsContent, TabsList, TabsTrigger, Text, describeError, CheckCounts, CheckPill, checkVerdict, DiagnosticList, diagnostics as listDiagnostics, specModel, whyDocument, type Diagnostic, type SpecSectionId as SectionId, plural as count } from "@mach/ui";
+import { Banner, Button, EmptyState, ErrorState, Heading, Page, Skeleton, SkeletonText, Text, describeError, CheckCounts, CheckPill, checkVerdict, DiagnosticList, diagnostics as listDiagnostics, specModel, whyDocument, type Diagnostic, type SpecSectionId as SectionId, plural as count } from "@mach/ui";
 import { type SliceShow, ENGINE_ID as SLICE_ID } from "@mach/ui/api";
 import { MarkReadyDialog, PauseDialog, ReopenDialog } from "./SliceActs";
 import { SourceEditor } from "./SourceEditor";
 import { AssumptionsSection, DecisionTableSection, DependenciesSection, OpenQuestionsSection, RequirementsSection, RulesSection, ScenariosSection, SummarySection, WhySection } from "./SpecSections";
-import { sectionTitles } from "./specModel";
+import { sectionTitles, viewOf, type View } from "./specModel";
 import { useSliceShow } from "../../api/useSliceShow";
 import { useStatus } from "../../api/store";
 import { WithdrawnNote } from "../../shared/WithdrawnNote";
-import { IssueLink } from "../../shared/IssueLink";
 import { AnswerQuestionButton, BuildersQuestion } from "../../shared/BuildersQuestion";
 import { SliceTimes } from "../../shared/SliceTimes";
-import { SliceSections } from "../../shared/SliceSections";
-
-type View = "spec" | "why" | "source";
+import { SectionNav } from "../../shared/layout/SectionNav";
+import { WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
+import { SliceContextRow } from "../../shared/SliceContextRow";
 
 export function SpecScreen() {
   const { sliceId = "" } = useParams();
@@ -53,8 +52,7 @@ function SpecWorkspace({ sliceId }: { sliceId: string }) {
 
   const data = show.data;
   const goTo = (section: SectionId) => {
-    const target: View = section === "why" ? "why" : section === "source" ? "source" : "spec";
-    setView(target);
+    setView(viewOf(section));
     requestAnimationFrame(() => {
       const heading = document.getElementById(`section-${section}-title`);
       heading?.scrollIntoView({ block: "start" });
@@ -65,101 +63,93 @@ function SpecWorkspace({ sliceId }: { sliceId: string }) {
     });
   };
 
+  // The window is the desk (M16 layout): a slim context row with the slice's acts, then the document in the wide pane
+  // and its check, its sections and its times in the narrow pane beside it.
   return (
-    <Page className="flex flex-col gap-8">
-      <SpecHeader show={data} onChanged={show.reload} refreshing={show.loading} refreshError={show.error ? describeError(show.error).message : null} />
-      <SliceSections sliceId={data.slice.slice_id} fromPrd={data.slice.source?.kind === "prd"} />
-      <div className="grid grid-cols-[minmax(0,1fr)_17.5rem] items-start gap-10">
-        <Tabs value={view} onValueChange={(value) => setView(value as View)} className="min-w-0">
-          <TabsList aria-label="How to read this slice">
-            <TabsTrigger value="spec">Specification</TabsTrigger>
-            <TabsTrigger value="why">Why</TabsTrigger>
-            <TabsTrigger value="source">Source (advanced)</TabsTrigger>
-          </TabsList>
-          <TabsContent value="spec">
-            <SpecBody show={data} />
-          </TabsContent>
-          <TabsContent value="why">
-            <WhySection why={whyDocument(data)} diagnostics={listDiagnostics(data.check).filter((d) => d.section === "why")} />
-          </TabsContent>
-          <TabsContent value="source">
-            <SourceEditor
-              show={data}
-              why={whyDocument(data)}
-              onSaved={(check) => {
-                show.replaceCheck(check);
-                show.reload();
-              }}
-            />
-          </TabsContent>
-        </Tabs>
-        <CheckAside show={data} onGoTo={goTo} />
-      </div>
-    </Page>
+    <WorkScreen header={<SpecContext show={data} onChanged={show.reload} refreshing={show.loading} />}>
+      <WorkPanes>
+        <WorkPane label={`${data.slice.slice_id}, the document`}>
+          <div className="flex flex-col gap-6">
+            <SpecNotices show={data} refreshError={show.error ? describeError(show.error).message : null} />
+            {/* One row of page tabs (M16): the specification, its why and its source are chosen in the section list beside it. */}
+            <div hidden={view !== "spec"}>
+              <SpecBody show={data} />
+            </div>
+            <div hidden={view !== "why"}>
+              <WhySection why={whyDocument(data)} diagnostics={listDiagnostics(data.check).filter((d) => d.section === "why")} />
+            </div>
+            <section id="section-source" aria-labelledby="section-source-title" hidden={view !== "source"} className="flex scroll-mt-6 flex-col gap-3">
+              <Heading level={2} size="title-2" id="section-source-title">
+                {sectionTitles.source} (advanced)
+              </Heading>
+              <SourceEditor
+                show={data}
+                why={whyDocument(data)}
+                onSaved={(check) => {
+                  show.replaceCheck(check);
+                  show.reload();
+                }}
+              />
+            </section>
+          </div>
+        </WorkPane>
+        <WorkPane side label="Check and sections">
+          <CheckAside show={data} onGoTo={goTo} />
+        </WorkPane>
+      </WorkPanes>
+    </WorkScreen>
   );
 }
 
-function SpecHeader({ show, onChanged, refreshing, refreshError }: { show: SliceShow; onChanged: () => void; refreshing: boolean; refreshError: string | null }) {
+/** The slim context row: the slice's ID, epic and state, its title as the h1, its path, its acts, and its pages as tabs. */
+function SpecContext({ show, onChanged, refreshing }: { show: SliceShow; onChanged: () => void; refreshing: boolean }) {
   const slice = show.slice;
-  const model = specModel(show);
   const approved = slice.status === "approved_for_engineering";
   const ready = show.check.ready;
-  const openCount = show.check.open_questions.length;
   const status = useStatus().data;
-  const withdrawn = status?.approvals_withdrawn.find((w) => w.artifact === slice.slice_id);
   // An approved slice is offered "mark ready again" only when the engine says so (a changed issue, an unfinished save).
   const again = status?.next_actions.some((a) => a.target === slice.slice_id && (a.kind === "mark_ready" || a.kind === "finish_ready")) ?? false;
   return (
-    <header className="flex flex-col gap-5">
+    <SliceContextRow
+      sliceId={slice.slice_id}
+      show={show}
+      refreshing={refreshing}
+      actions={
+        <>
+          {show.github.question ? <AnswerQuestionButton sliceId={slice.slice_id} approved={approved} /> : null}
+          {approved ? (
+            <>
+              {again ? <MarkReadyDialog show={show} onDone={onChanged} primary /> : null}
+              <ReopenDialog show={show} onDone={onChanged} />
+            </>
+          ) : (
+            <>
+              {ready ? <MarkReadyDialog show={show} onDone={onChanged} primary /> : null}
+              <Button variant={ready ? "secondary" : "primary"} asChild>
+                <Link to={`/slices/${slice.slice_id}/interview`}>
+                  <MessagesSquare aria-hidden="true" />
+                  {slice.status === "draft" ? "Start the interview" : "Continue the interview"}
+                </Link>
+              </Button>
+              {!ready ? <MarkReadyDialog show={show} onDone={onChanged} primary={false} /> : null}
+              <PauseDialog show={show} onDone={onChanged} />
+            </>
+          )}
+        </>
+      }
+    />
+  );
+}
+
+/** What the person must see before the document: an approval withdrawn, the builders' question, and the state notes. */
+function SpecNotices({ show, refreshError }: { show: SliceShow; refreshError: string | null }) {
+  const slice = show.slice;
+  const approved = slice.status === "approved_for_engineering";
+  const withdrawn = useStatus().data?.approvals_withdrawn.find((w) => w.artifact === slice.slice_id);
+  return (
+    <div className="flex flex-col gap-4 empty:hidden">
       <WithdrawnNote item={withdrawn} />
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-2 text-body-sm text-ink-muted">
-          <ArtifactId>{slice.slice_id}</ArtifactId>
-          <span>
-            in <ArtifactId plain>{slice.epic_id}</ArtifactId>
-          </span>
-          <SliceStatusPill status={slice.status} size="sm" />
-          <SliceGithubPills github={show.github} size="sm" />
-          {show.github.issue ? (
-            <span>
-              Issue <IssueLink number={show.github.issue} url={show.github.url} />
-            </span>
-          ) : null}
-          {refreshing ? <span className="text-caption text-ink-subtle">Updating…</span> : null}
-        </div>
-        <Heading level={1} size="display">
-          {slice.title}
-        </Heading>
-        {model?.summary?.outcome ? (
-          <Text size="body-lg" editorial tone="muted" className="max-w-reading">
-            {model.summary.outcome}
-          </Text>
-        ) : null}
-      </div>
-      <SliceLifecycle status={slice.status} openQuestions={openCount} />
-      <SliceTimes github={show.github} mode="all" />
       <BuildersQuestion github={show.github} />
-      <div className="flex flex-wrap items-center gap-2">
-        {show.github.question ? <AnswerQuestionButton sliceId={slice.slice_id} approved={approved} /> : null}
-        {approved ? (
-          <>
-            {again ? <MarkReadyDialog show={show} onDone={onChanged} primary /> : null}
-            <ReopenDialog show={show} onDone={onChanged} />
-          </>
-        ) : (
-          <>
-            {ready ? <MarkReadyDialog show={show} onDone={onChanged} primary /> : null}
-            <Button variant={ready ? "secondary" : "primary"} asChild>
-              <Link to={`/slices/${slice.slice_id}/interview`}>
-                <MessagesSquare aria-hidden="true" />
-                {slice.status === "draft" ? "Start the interview" : "Continue the interview"}
-              </Link>
-            </Button>
-            {!ready ? <MarkReadyDialog show={show} onDone={onChanged} primary={false} /> : null}
-            <PauseDialog show={show} onDone={onChanged} />
-          </>
-        )}
-      </div>
       {approved ? (
         <Banner tone="success" title="Approved by you and marked ready. This slice is read-only.">
           {show.edit_refusal ?? "To change it, reopen it first."}
@@ -174,7 +164,7 @@ function SpecHeader({ show, onChanged, refreshing, refreshError }: { show: Slice
           {refreshError}
         </Banner>
       ) : null}
-    </header>
+    </div>
   );
 }
 
@@ -266,10 +256,10 @@ function CheckAside({ show, onGoTo }: { show: SliceShow; onGoTo: (section: Secti
     if (d.section) bySection.set(d.section, [...(bySection.get(d.section) ?? []), d]);
   });
   return (
-    <aside aria-labelledby="check-title" className="sticky top-6 flex flex-col gap-5">
-      <section className="flex flex-col gap-3 rounded-md border border-line bg-surface px-4 py-4">
+    <aside aria-labelledby="check-title" className="flex flex-col gap-8">
+      <section className="flex flex-col gap-3">
         <Heading level={2} size="title-3" id="check-title">
-          Engine check
+          Check
         </Heading>
         <span className="self-start">
           <CheckPill check={check} status={show.slice.status} />
@@ -284,32 +274,25 @@ function CheckAside({ show, onGoTo }: { show: SliceShow; onGoTo: (section: Secti
           </Text>
         ) : null}
       </section>
-      <nav aria-label="Sections of this slice" className="flex flex-col gap-1">
-        <p className="px-2 pb-1 text-label text-ink-muted">On this page</p>
-        <ul className="flex flex-col">
-          {[...asideSections, ...elsewhere.map((e) => e.id).filter((id) => bySection.has(id))].map((section) => {
-            const found = bySection.get(section) ?? [];
-            const open = section === "open-questions" ? check.open_questions.length : 0;
-            const issue = found.length || open;
-            return (
-              <li key={section}>
-                <button
-                  type="button"
-                  onClick={() => onGoTo(section)}
-                  className="flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-body-sm text-ink hover:bg-surface-sunken"
-                >
-                  <span className="min-w-0 truncate">{sectionTitles[section]}</span>
-                  {issue ? (
-                    <span className={found.some((d) => d.severity === "error" || d.severity === "why") ? "text-caption font-semibold text-danger-ink" : "text-caption font-semibold text-warning-ink"}>
-                      {found.length ? count(found.length, "problem") : count(open, "open", "open")}
-                    </span>
-                  ) : null}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      </nav>
+      <SectionNav
+        label="Sections of this slice"
+        onGo={(id) => onGoTo(id.replace(/^section-/, "") as SectionId)}
+        items={[...asideSections, ...elsewhere.map((e) => e.id).filter((id) => bySection.has(id)), "source" as const].map((section) => {
+          const found = bySection.get(section) ?? [];
+          const open = section === "open-questions" ? check.open_questions.length : 0;
+          const issue = found.length || open;
+          return {
+            id: `section-${section}`,
+            label: section === "source" ? `${sectionTitles.source} (advanced)` : sectionTitles[section],
+            note: issue ? (
+              <span className={found.some((d) => d.severity === "error" || d.severity === "why") ? "shrink-0 text-caption font-semibold text-danger-ink" : "shrink-0 text-caption font-semibold text-warning-ink"}>
+                {found.length ? count(found.length, "problem") : count(open, "open", "open")}
+              </span>
+            ) : undefined,
+          };
+        })}
+      />
+      <SliceTimes github={show.github} mode="all" />
     </aside>
   );
 }

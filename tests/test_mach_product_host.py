@@ -47,8 +47,10 @@ def workspace(project: Path):
     slice was marked ready) are the only bytes that may differ between two runs."""
     home = project / ".factory" / "studio"
     found = {p.relative_to(home).as_posix(): TIME_RE.sub(b"<TIME>", p.read_bytes()) for p in sorted(home.rglob("*")) if p.is_file()}
-    if "shipped.json" in found:  # it names the repository's own integration commit, which two repositories never share
-        found["shipped.json"] = COMMIT_RE.sub(b"<COMMIT>", found["shipped.json"])
+    # A file may name the repository's own commits (the shipped rules a spec was checked against, what an idea's
+    # lookups were read at), and two repositories made a moment apart never share one. A 40-character commit id is
+    # replaced; the 64-character content hashes that must match are left alone.
+    found = {name: COMMIT_RE.sub(b"<COMMIT>", data) for name, data in found.items()}
     return found
 
 
@@ -318,6 +320,112 @@ class HostConformanceTest(unittest.TestCase):
         for expected in ("draft/product/principles.json", "draft/product/prds/PRD-01/document.md", "jira/cloud-all/mach-jira.csv"):
             self.assertIn(expected, host_files)
         self.assertTrue(any(name.startswith("draft/product/mocks/SLICE-001/") for name in host_files))
+        for project in (self.via_host, self.direct):
+            self.assertEqual(git(project, "status", "--porcelain").stdout, "")
+
+    def test_the_m16_shape_operations_write_the_same_bytes_as_the_terminal(self):
+        """Every Shape operation M16 put on the host's list, through the host as the app sends it (lookups and the
+        map as JSON in the body) and through studio.py as the terminal skill runs it, with the brief and the case
+        written into the workspace as the conversation writes them: the same bytes in Product Studio's workspace, the
+        same refusals, and nothing staged left behind. No GitHub here: the idea is published to the folder."""
+        from test_mach_shape import FAULT
+        from test_mach_shape_brief import CASE
+        from test_mach_shape_route import brief_with
+
+        brief = brief_with(outcomes=1, capabilities="Lending (EPIC-001)", rules="None.")
+        lookups = {"principles": [{"id": "PP-01", "note": "A renewal refused today is explained by a person."}],
+                   "similar": [{"idea": "IDEA-002", "note": "Also about loans."}]}
+        mapped = {"epics": [], "slices": [{"key": "S1", "title": "Renew a loan from my loans", "scope": "One loan, from the loans page",
+                                           "epic": "EPIC-001", "depends_on": [], "outcomes": ["O-1"], "cites": ["9"]}]}
+        files = Path(self.tmp.name) / "shape-files"
+        files.mkdir()
+        (files / "lookups.json").write_text(json.dumps(lookups))
+        (files / "map.json").write_text(json.dumps(mapped))
+
+        def write(project, name, text):
+            path = project / ".factory/studio/draft/product/briefs" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+
+        def host_refused(operation, args):
+            status, _, raw = self.request("POST", f"/api/ops/{operation}", args)
+            envelope = json.loads(raw)
+            self.assertFalse(envelope["ok"], f"{operation} was not refused")
+            self.assertEqual((status, envelope["error"]["kind"]), (422, "refused"), envelope)
+            return envelope["error"]["message"]
+
+        # Through the host.
+        self.login()
+        self.op("project.init", id="team-space", name="Team Space", vision="Members borrow without friction.", outcome=["Members renew without calling"])
+        self.op("epic.add", title="Lending", criterion=["Loans follow the desk's rules"])
+        self.op("principle.add", title="Tell first", statement="A member MUST be told why a renewal is refused.", reason="Trust.")
+        self.assertEqual(self.op("idea.add", title="Let members renew a loan themselves")["idea"]["idea_id"], "IDEA-001")
+        self.assertEqual(self.op("idea.add", title="-renew by email, a title that starts with a hyphen")["idea"]["title"],
+                         "-renew by email, a title that starts with a hyphen")
+        self.assertEqual(self.op("idea.add", title="Fine shown twice", from_fault=FAULT)["idea"]["source"]["kind"], "fault")
+        self.op("idea.stage", idea_id="IDEA-001", stage="exploring")
+        self.op("idea.lookups", idea_id="IDEA-001", lookups=lookups)
+        write(self.via_host, "IDEA-001.md", brief)
+        checked = self.op("brief.check", idea_id="IDEA-001")
+        self.assertEqual((checked["passes"], checked["stage"]), (True, "brief"), checked["errors"])
+        self.op("brief.show", idea_id="IDEA-001")
+        write(self.via_host, "IDEA-001.case.md", CASE)
+        self.op("case.show", idea_id="IDEA-001")
+        self.op("case.check", idea_id="IDEA-001")
+        self.op("idea.show", idea_id="IDEA-001")
+        self.op("idea.list")
+        self.assertEqual(self.op("idea.faults")["faults"], [])
+        self.assertIsNone(self.op("verdict.record", idea_id="IDEA-001", decision="go", reason="Members ask for it at every desk.")["verdict"]["by"])
+        self.assertEqual(self.op("idea.size", idea_id="IDEA-001")["route"], "one-slice")
+        self.op("idea.map", idea_id="IDEA-001", map=mapped)
+        self.assertIn("already carried", host_refused("idea.settle", {"idea_id": "IDEA-001", "outcome": "O-1", "as": "later", "reason": "Next year."}))
+        self.assertTrue(self.op("idea.map-status", idea_id="IDEA-001")["can_apply"])
+        self.assertEqual(self.op("idea.apply", idea_id="IDEA-001")["stage"], "shaped")
+        self.op("idea.chain", idea_id="IDEA-001")
+        self.assertEqual(self.op("idea.publish", idea_id="IDEA-001")["saved_to"], "folder")
+        host_refused("lookback.record", {"idea_id": "IDEA-001", "outcome": "O-1", "result": "met", "note": "Down to 11 a week."})
+        host_refused("idea.change", {"rule": "SLICE-009/FR-01"})
+        self.op("idea.renumber", idea_id="IDEA-003")
+        self.assertFalse((self.via_host / ".factory/studio/uploads").exists() and any((self.via_host / ".factory/studio/uploads").iterdir()))
+
+        # Directly, as the terminal skill does.
+        self.studio("status")
+        self.studio("project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Members borrow without friction.", "--outcome", "Members renew without calling")
+        self.studio("epic", "add", "--title", "Lending", "--criterion", "Loans follow the desk's rules")
+        self.studio("principle", "add", "--title", "Tell first", "--statement", "A member MUST be told why a renewal is refused.", "--reason", "Trust.")
+        self.studio("idea", "add", "Let members renew a loan themselves")
+        self.studio("idea", "add", "--", "-renew by email, a title that starts with a hyphen")
+        self.studio("idea", "add", "Fine shown twice", "--from-fault", FAULT)
+        self.studio("idea", "stage", "IDEA-001", "exploring")
+        self.studio("idea", "lookups", "IDEA-001", "--from", str(files / "lookups.json"))
+        write(self.direct, "IDEA-001.md", brief)
+        self.studio("brief", "check", "IDEA-001")
+        self.studio("brief", "show", "IDEA-001")
+        write(self.direct, "IDEA-001.case.md", CASE)
+        self.studio("case", "show", "IDEA-001")
+        self.studio("case", "check", "IDEA-001")
+        self.studio("idea", "show", "IDEA-001")
+        self.studio("idea", "list")
+        self.studio("idea", "faults")
+        self.studio("verdict", "record", "IDEA-001", "--decision", "go", "--reason", "Members ask for it at every desk.")
+        self.studio("idea", "size", "IDEA-001")
+        self.studio("idea", "map", "IDEA-001", "--from", str(files / "map.json"))
+        self.studio("idea", "settle", "IDEA-001", "--outcome", "O-1", "--as", "later", "--reason", "Next year.", expect=1)
+        self.studio("idea", "map-status", "IDEA-001")
+        self.studio("idea", "apply", "IDEA-001")
+        self.studio("idea", "chain", "IDEA-001")
+        self.studio("idea", "publish", "IDEA-001")
+        self.studio("lookback", "record", "IDEA-001", "--outcome", "O-1", "--result", "met", "--note", "Down to 11 a week.", expect=1)
+        self.studio("idea", "change", "SLICE-009/FR-01", expect=1)
+        self.studio("idea", "renumber", "IDEA-003")
+
+        host_files, direct_files = workspace(self.via_host), workspace(self.direct)
+        self.assertEqual(sorted(host_files), sorted(direct_files))
+        for name in host_files:
+            self.assertEqual(host_files[name], direct_files[name], f"{name} differs between the host and the terminal")
+        for expected in ("draft/product/ideas/IDEA-001.json", "draft/product/ideas/IDEA-001.lookups.json", "draft/product/ideas/IDEA-001.map.json",
+                         "draft/product/ready/IDEAS/IDEA-001/brief.md", "draft/product/ideas/IDEA-004.json"):
+            self.assertIn(expected, host_files)
         for project in (self.via_host, self.direct):
             self.assertEqual(git(project, "status", "--porcelain").stdout, "")
 

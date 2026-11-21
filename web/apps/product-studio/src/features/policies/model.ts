@@ -71,6 +71,16 @@ export function packState(row: PackRow): { word: string; shape: "blocked" | "sup
 }
 
 /**
+ * A pack's row on the packs page, in one line (M16 layout): its owner, what it applies to and how many statements it
+ * has, or, for a pack that cannot be read, that its reasons are shown under its name (they are never folded).
+ */
+export function packSummary(row: PackRow): string {
+  if (row.problems.length) return `${row.problems.length === 1 ? "1 reason" : `${row.problems.length} reasons`} it cannot be read, shown under its name`;
+  const statements = `${row.statements.length} ${row.statements.length === 1 ? "statement" : "statements"}`;
+  return `Owner: ${row.owner ?? "not recorded"}. ${row.appliesTo.join("; ")}. ${statements}.`;
+}
+
+/**
  * Problems not already shown on a pack: a folder without a policy.md, or an unusable folder setting.
  * The engine repeats each pack's own problem here, prefixed with its file; those are shown on the pack.
  */
@@ -217,6 +227,38 @@ export function concernState(resolution: ConcernRow["resolution"]): { word: stri
 
 export function openConcerns(rows: PolicyRow[]): Array<ConcernRow & { pack: string }> {
   return rows.flatMap((row) => row.concerns.filter((c) => c.resolution === "open").map((c) => ({ ...c, pack: row.pack })));
+}
+
+/**
+ * A pack's row on the slice's page, in one line (M16 layout: the row says the state, the detail folds):
+ * "Followed, answered under version b7b600b3e580", or the concerns by how each stands, saying that an open one is
+ * shown above the rows (an open concern is never folded).
+ */
+export function packAnswerSummary(row: PolicyRow): string {
+  const version = `Answered under version ${row.version}.`;
+  if (row.answer === "followed" || !row.concerns.length) return `Followed. ${version}`;
+  const open = row.concerns.filter((c) => c.resolution === "open").length;
+  const accepted = row.concerns.filter((c) => c.resolution === "accepted").length;
+  const changed = row.concerns.filter((c) => c.resolution === "spec_changed").length;
+  const parts = [
+    ...(open ? [open === 1 ? "1 waits for its owner (shown above)" : `${open} wait for their owners (shown above)`] : []),
+    ...(accepted ? [`${accepted} accepted by ${accepted === 1 ? "its owner" : "their owners"}`] : []),
+    ...(changed ? [`${changed} met by changing the spec`] : []),
+  ];
+  const concerns = row.concerns.length === 1 ? "1 concern" : `${row.concerns.length} concerns`;
+  return `${concerns}: ${parts.join(", ")}. ${version}`;
+}
+
+/** Whether a pack's row has anything to open: the concerns that are no longer open (an open one is shown above). */
+export function settledConcerns(row: PolicyRow): ConcernRow[] {
+  return row.concerns.filter((c) => c.resolution !== "open");
+}
+
+/** A principle's row in one line: what upholds it, or that a reason or an exception is recorded. */
+export function principleSummary(row: PrincipleRow): string {
+  if (row.answer === "applies") return row.upheldBy.length ? `Upheld by ${row.upheldBy.join(", ")}` : "What upholds it is not recorded";
+  if (row.answer === "does_not_apply") return row.reason ? "Why it does not apply is recorded" : "Why it does not apply is not recorded";
+  return row.reason ? "Your exception, in your own words" : "The reason for the exception is not recorded";
 }
 
 /** The check's findings about the principles and policies sections, in the engine's words. */

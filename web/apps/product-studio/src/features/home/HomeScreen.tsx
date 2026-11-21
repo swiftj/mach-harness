@@ -35,7 +35,7 @@ import { useRefresh, useStatus } from "../../api/store";
 import { describePath, titleFor } from "../../api/describe";
 import { nextActions, routeFor } from "../../api/nextActions";
 import { destinations } from "../registry";
-import { useRequestList } from "../inbox/requests/api";
+import { useRequestList } from "../../shared/useRequestList";
 import { NewSliceDialog } from "../roadmap/NewSliceDialog";
 import { IssueLink, IssueNumber } from "../../shared/IssueLink";
 import { RenumberDialog } from "../../shared/RenumberDialog";
@@ -43,6 +43,10 @@ import { AnswerQuestionDialog } from "../../shared/BuildersQuestion";
 import { SliceTimes } from "../../shared/SliceTimes";
 import { EpicSheet } from "../vision/EpicSheet";
 import { FirstRun } from "./FirstRun";
+import { ShapeCarryOn } from "../shape/shell/ShapeCarryOn";
+import { Fold } from "../../shared/layout/Fold";
+import { ContextRow, OnePane, WorkScreen } from "../../shared/layout/WorkScreen";
+import { doneWhenLabel } from "./model";
 
 /** Refresh once per visit, when the project home first opens. */
 let refreshedThisVisit = false;
@@ -108,75 +112,80 @@ function ProjectHome({ status }: { status: Status }) {
   const orphans = status.slices.filter((s) => !known.has(s.epic_id));
 
   return (
-    <Page width="reading" className="max-w-[calc(var(--mach-reading-measure)+12rem)]">
-      <div className="flex flex-col gap-10">
-        <header className="flex flex-col gap-4">
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-              <Heading level={1} size="display">
-                {project.name}
-              </Heading>
-              {project.issue ? <IssueNumber number={project.issue} url={project.url} /> : null}
+    <WorkScreen
+      header={
+        <ContextRow
+          title={project.name}
+          trail={project.issue ? <IssueNumber number={project.issue} url={project.url} /> : null}
+          below={
+            <div className="flex flex-col gap-2 pb-3">
+              <Text tone="muted" className="max-w-reading">
+                {project.vision}
+              </Text>
+              <nav aria-label="Project">
+                <ul className="flex flex-wrap items-center gap-x-5 gap-y-1 text-body-sm">
+                  <li>
+                    <button type="button" onClick={() => setAddEpic(true)} className="rounded-xs font-semibold text-accent-ink underline-offset-2 hover:underline">
+                      Add an epic
+                    </button>
+                  </li>
+                  <RowLink to="/vision">Edit the vision and outcomes</RowLink>
+                  {requestCount > 0 ? <RowLink to="/inbox">{plural(requestCount, "request")} from other people</RowLink> : null}
+                  {destinations
+                    .filter((d) => d.to !== "/vision")
+                    .map((d) => (
+                      <RowLink key={d.to} to={d.to}>
+                        {d.label}
+                      </RowLink>
+                    ))}
+                </ul>
+              </nav>
             </div>
-            <Text size="body-lg" className="max-w-reading text-ink-muted">
-              {project.vision}
-            </Text>
-          </div>
-          <nav aria-label="Project">
-            <ul className="flex flex-wrap items-center gap-x-5 gap-y-2 text-body-sm">
-              <li>
-                <button type="button" onClick={() => setAddEpic(true)} className="rounded-xs font-semibold text-accent-ink underline-offset-2 hover:underline">
-                  Add an epic
-                </button>
-              </li>
-              <RowLink to="/vision">Edit the vision and outcomes</RowLink>
-              {requestCount > 0 ? <RowLink to="/inbox">{plural(requestCount, "request")} from other people</RowLink> : null}
-              {destinations
-                .filter((d) => d.to !== "/vision")
-                .map((d) => (
-                  <RowLink key={d.to} to={d.to}>
-                    {d.label}
-                  </RowLink>
-                ))}
-            </ul>
-          </nav>
-        </header>
+          }
+        />
+      }
+    >
+      <OnePane label="Next steps, epics and slices">
+        <div className="flex flex-col gap-8">
+          {/* The one act first: the engine's most useful next step. Then what waits for an answer, then the epics. */}
+          {next ? <CarryOn action={next} onGo={() => runRoute(next)} /> : null}
 
-        <Notices status={status} refresh={refresh.data} refreshError={refresh.error ? describeError(refresh.error).message : null} onRetry={() => void refresh.run()} />
+          <Notices status={status} refresh={refresh.data} refreshError={refresh.error ? describeError(refresh.error).message : null} onRetry={() => void refresh.run()} />
 
-        {next ? <CarryOn action={next} onGo={() => runRoute(next)} /> : null}
+          <ShapeCarryOn status={status} />
 
-        <section aria-labelledby="epics-title" className="flex flex-col gap-8">
-          <Heading level={2} size="title-3" id="epics-title" className="sr-only">
-            Epics and their slices
-          </Heading>
-          {status.epics.length ? (
-            status.epics.map((epic) => (
-              <EpicBlock
-                key={epic.epic_id}
-                epic={epic}
-                status={status}
-                onAddSlice={() => setNewSlice({ epicId: epic.epic_id })}
-              />
-            ))
-          ) : (
-            <div className="flex flex-col items-start gap-3 rounded-md border border-dashed border-line-strong px-5 py-5">
-              <Text>No epics yet. An epic is a larger capability, such as “Team membership”, that several slices of intent deliver.</Text>
-              <Button variant="primary" size="sm" onClick={() => setAddEpic(true)}>
-                Add the first epic
-              </Button>
-            </div>
-          )}
-          {orphans.length ? (
-            <section aria-labelledby="orphans-title" className="flex flex-col gap-3">
-              <Heading level={3} size="title-2" id="orphans-title">
-                Slices whose epic is not in your workspace
-              </Heading>
-              <SliceList slices={orphans} status={status} />
-            </section>
-          ) : null}
-        </section>
-      </div>
+          <section aria-labelledby="epics-title" className="flex flex-col gap-8">
+            <Heading level={2} size="title-3" id="epics-title" className="sr-only">
+              Epics and their slices
+            </Heading>
+            {status.epics.length ? (
+              status.epics.map((epic) => (
+                <EpicBlock
+                  key={epic.epic_id}
+                  epic={epic}
+                  status={status}
+                  onAddSlice={() => setNewSlice({ epicId: epic.epic_id })}
+                />
+              ))
+            ) : (
+              <div className="flex flex-col items-start gap-3 rounded-md border border-dashed border-line-strong px-5 py-5">
+                <Text>No epics yet. An epic is a larger capability, such as “Team membership”, that several slices of intent deliver.</Text>
+                <Button variant="primary" size="sm" onClick={() => setAddEpic(true)}>
+                  Add the first epic
+                </Button>
+              </div>
+            )}
+            {orphans.length ? (
+              <section aria-labelledby="orphans-title" className="flex flex-col gap-3">
+                <Heading level={3} size="title-2" id="orphans-title">
+                  Slices whose epic is not in your workspace
+                </Heading>
+                <SliceList slices={orphans} status={status} />
+              </section>
+            ) : null}
+          </section>
+        </div>
+      </OnePane>
 
       <NewSliceDialog open={newSlice !== null} onOpenChange={(open) => !open && setNewSlice(null)} epics={status.epics} epicId={newSlice?.epicId} />
       <RenumberDialog id={renumber} onOpenChange={(open) => !open && setRenumber(null)} />
@@ -189,7 +198,7 @@ function ProjectHome({ status }: { status: Status }) {
         setError={setAnswerError}
         onReopened={() => answer && void navigate(`/slices/${answer}/interview`, { state: { answer: true } })}
       />
-    </Page>
+    </WorkScreen>
   );
 }
 
@@ -341,26 +350,25 @@ function EpicBlock({ epic, status, onAddSlice }: { epic: StatusEpicRow; status: 
           </Text>
         ) : null}
       </div>
-      {epic.acceptance_criteria?.length ? (
-        <div className="flex max-w-reading flex-col gap-1">
-          <Text size="body-sm" tone="muted">
-            Done when:
-          </Text>
-          <ul className="flex list-disc flex-col gap-0.5 pl-5 text-body-sm text-ink-muted">
-            {epic.acceptance_criteria.map((c) => (
-              <li key={c}>{c}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
       {counts.total ? (
         <Text size="caption" tone="subtle">
           Ready or further means {counts.ready_or_further_means}.
         </Text>
       ) : null}
-      <Link to={`/epics/${epic.epic_id}/today`} className="self-start rounded-xs text-body-sm font-semibold text-accent-ink underline-offset-2 hover:underline">
-        How {epic.title} works today
-      </Link>
+      <div className="flex flex-wrap items-start gap-x-6 gap-y-2">
+        <Link to={`/epics/${epic.epic_id}/today`} className="min-h-6 rounded-xs text-body-sm font-semibold text-accent-ink underline-offset-2 hover:underline">
+          How {epic.title} works today
+        </Link>
+        {epic.acceptance_criteria?.length ? (
+          <Fold label={doneWhenLabel(epic.acceptance_criteria.length)} className="max-w-reading">
+            <ul className="flex list-disc flex-col gap-0.5 pl-5 text-body-sm text-ink-muted">
+              {epic.acceptance_criteria.map((c) => (
+                <li key={c}>{c}</li>
+              ))}
+            </ul>
+          </Fold>
+        ) : null}
+      </div>
       {order?.slices.length ? (
         <OrderedSlices order={order} status={status} />
       ) : slices.length ? (

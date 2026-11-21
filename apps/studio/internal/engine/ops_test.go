@@ -12,14 +12,18 @@ import (
 // The contract's section 3, plus slice.show. Nothing else may be reachable.
 func TestAllowlistIsExactlyTheContract(t *testing.T) {
 	want := []string{
-		"epic.add", "epic.current", "epic.link", "epic.renumber", "epic.set", "jira.export", "jira.keys",
+		"brief.check", "brief.show", "case.check", "case.show",
+		"epic.add", "epic.current", "epic.link", "epic.renumber", "epic.set",
+		"idea.add", "idea.apply", "idea.chain", "idea.change", "idea.faults", "idea.list", "idea.lookups", "idea.map", "idea.map-status", "idea.publish",
+		"idea.renumber", "idea.settle", "idea.show", "idea.size", "idea.stage",
+		"jira.export", "jira.keys", "lookback.record",
 		"policy.accept", "policy.list",
 		"prd.apply", "prd.confirm", "prd.draft", "prd.import", "prd.list", "prd.map", "prd.settle", "prd.show", "prd.status",
 		"principle.add", "principle.list", "principle.publish", "principle.retire", "principle.set",
 		"project.init", "project.set",
 		"reconcile", "reconcile.principles", "refresh", "request.link", "request.list", "request.met", "request.pick", "request.show",
 		"slice.check", "slice.link", "slice.mock.add", "slice.mock.list", "slice.mock.remove", "slice.move", "slice.new", "slice.pause", "slice.ready",
-		"slice.renumber", "slice.reopen", "slice.resume", "slice.set", "slice.show", "slice.take", "status", "validate", "where",
+		"slice.renumber", "slice.reopen", "slice.resume", "slice.set", "slice.show", "slice.take", "status", "validate", "verdict.record", "where",
 	}
 	if got := engine.Names(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("allowlist\n got %v\nwant %v", got, want)
@@ -43,12 +47,30 @@ func TestAllowlistIsExactlyTheContract(t *testing.T) {
 			t.Errorf("%s: Download is %v", name, op.Download)
 		}
 		_, file := op.New().(engine.FileArgs)
-		carries := map[string]bool{"jira.keys": true, "prd.import": true, "prd.map": true, "prd.draft": true, "slice.mock.add": true}[name]
+		carries := map[string]bool{"jira.keys": true, "prd.import": true, "prd.map": true, "prd.draft": true, "slice.mock.add": true,
+			"idea.lookups": true, "idea.map": true}[name]
 		if file != carries || (op.BodyLimit() > engine.MaxBodyBytes) != carries {
 			t.Errorf("%s: carries a file %v, body limit %d", name, file, op.BodyLimit())
 		}
 		if op.BodyLimit() > 12<<20 {
 			t.Errorf("%s: body limit %d is more than any file it carries needs", name, op.BodyLimit())
+		}
+	}
+	// M16: Shape's reads; publishing an idea, recording a verdict (the signed-in login) and a look back
+	// (a comment on the idea's issue) reach GitHub; every other Shape act stays on this computer.
+	for _, name := range []string{"idea.list", "idea.faults", "idea.show", "idea.map-status", "idea.chain", "brief.show", "case.show", "case.check"} {
+		if op, _ := engine.Lookup(name); !op.ReadOnly || op.Network {
+			t.Errorf("%s should be read-only and local", name)
+		}
+	}
+	for _, name := range []string{"idea.publish", "verdict.record", "lookback.record"} {
+		if op, _ := engine.Lookup(name); !op.Network || op.ReadOnly {
+			t.Errorf("%s reaches GitHub and changes the workspace", name)
+		}
+	}
+	for _, name := range []string{"idea.add", "idea.stage", "idea.lookups", "idea.renumber", "idea.size", "idea.map", "idea.settle", "idea.apply", "idea.change", "brief.check"} {
+		if op, _ := engine.Lookup(name); op.Network || op.ReadOnly {
+			t.Errorf("%s changes the workspace and never reaches GitHub", name)
 		}
 	}
 	for _, name := range []string{"request.list", "request.show", "slice.show", "where"} {
@@ -136,7 +158,8 @@ func argv(t *testing.T, name, body string) ([]string, error) {
 
 // studioCommands are the first words of the engine's own commands the host may run.
 var studioCommands = map[string]bool{"where": true, "status": true, "validate": true, "refresh": true, "project": true, "epic": true, "slice": true,
-	"reconcile": true, "request": true, "principle": true, "policy": true, "jira": true, "prd": true}
+	"reconcile": true, "request": true, "principle": true, "policy": true, "jira": true, "prd": true,
+	"idea": true, "brief": true, "case": true, "verdict": true, "lookback": true}
 
 // Every operation's JSON arguments become one fixed vector, options always in --name=value form.
 func TestEveryOperationsArgumentVector(t *testing.T) {
@@ -230,6 +253,40 @@ func TestEveryOperationsArgumentVector(t *testing.T) {
 		{"slice.mock.add", `{"slice_id":"SLICE-001","file":{"name":"whole.jpg","content_base64":"/9j/"}}`, []string{"slice", "mock", "add", "SLICE-001", "/staged/whole.jpg"}},
 		{"slice.mock.remove", `{"slice_id":"SLICE-001","mock":"0123abcd"}`, []string{"slice", "mock", "remove", "SLICE-001", "0123abcd"}},
 		{"slice.mock.list", `{"slice_id":"SLICE-001"}`, []string{"slice", "mock", "list", "SLICE-001"}},
+		// M16: Shape.
+		{"idea.add", `{"title":"Let members renew a loan themselves"}`, []string{"idea", "add", "--", "Let members renew a loan themselves"}},
+		{"idea.add", `{"title":"--from-request=5 looks like an option"}`, []string{"idea", "add", "--", "--from-request=5 looks like an option"}},
+		{"idea.add", `{"title":"Renew online","from_request":57}`, []string{"idea", "add", "--from-request=57", "--", "Renew online"}},
+		{"idea.add", `{"title":"Renew it myself","from_issue":58}`, []string{"idea", "add", "--from-issue=58", "--", "Renew it myself"}},
+		{"idea.add", `{"title":"Fine shown twice","from_fault":"AUTO-20261120T101500Z"}`, []string{"idea", "add", "--from-fault=AUTO-20261120T101500Z", "--", "Fine shown twice"}},
+		{"idea.list", ``, []string{"idea", "list"}},
+		{"idea.faults", `{}`, []string{"idea", "faults"}},
+		{"idea.show", `{"idea_id":"IDEA-019"}`, []string{"idea", "show", "IDEA-019"}},
+		{"idea.stage", `{"idea_id":"IDEA-019","stage":"exploring"}`, []string{"idea", "stage", "IDEA-019", "exploring"}},
+		{"idea.lookups", `{"idea_id":"IDEA-019","lookups":{"shipped_rules":[{"rule":"SLICE-004/FR-02","note":"n"}]}}`,
+			[]string{"idea", "lookups", "IDEA-019", "--from=/staged/lookups.json"}},
+		{"idea.renumber", `{"idea_id":"IDEA-019"}`, []string{"idea", "renumber", "IDEA-019"}},
+		{"idea.publish", `{"idea_id":"IDEA-019"}`, []string{"idea", "publish", "IDEA-019"}},
+		{"idea.size", `{"idea_id":"IDEA-019"}`, []string{"idea", "size", "IDEA-019"}},
+		{"idea.map", `{"idea_id":"IDEA-019","map":{"epics":[],"slices":[]}}`, []string{"idea", "map", "IDEA-019", "--from=/staged/map.json"}},
+		{"idea.settle", `{"idea_id":"IDEA-019","outcome":"O-2","as":"slice","slice":"S2","reason":"The catalogue says why."}`,
+			[]string{"idea", "settle", "IDEA-019", "--outcome=O-2", "--as=slice:S2", "--reason=The catalogue says why."}},
+		{"idea.settle", `{"idea_id":"IDEA-019","outcome":"O-3","as":"later"}`, []string{"idea", "settle", "IDEA-019", "--outcome=O-3", "--as=later"}},
+		{"idea.map-status", `{"idea_id":"IDEA-019"}`, []string{"idea", "map-status", "IDEA-019"}},
+		{"idea.apply", `{"idea_id":"IDEA-019"}`, []string{"idea", "apply", "IDEA-019"}},
+		{"idea.change", `{"rule":"SLICE-007/INV-01"}`, []string{"idea", "change", "SLICE-007/INV-01"}},
+		{"idea.change", `{"rule":"SLICE-004/R3","title":"-- a third renewal"}`, []string{"idea", "change", "SLICE-004/R3", "--title=-- a third renewal"}},
+		{"idea.chain", `{"idea_id":"IDEA-019"}`, []string{"idea", "chain", "IDEA-019"}},
+		{"brief.check", `{"idea_id":"IDEA-019"}`, []string{"brief", "check", "IDEA-019"}},
+		{"brief.show", `{"idea_id":"IDEA-019"}`, []string{"brief", "show", "IDEA-019"}},
+		{"case.show", `{"idea_id":"IDEA-019"}`, []string{"case", "show", "IDEA-019"}},
+		{"case.check", `{"idea_id":"IDEA-019"}`, []string{"case", "check", "IDEA-019"}},
+		{"verdict.record", `{"idea_id":"IDEA-019","decision":"not-now","reason":"--decision=go is not my reason"}`,
+			[]string{"verdict", "record", "IDEA-019", "--decision=not-now", "--reason=--decision=go is not my reason"}},
+		{"lookback.record", `{"idea_id":"IDEA-019","outcome":"O-1","result":"met","note":"Down to 11 a week."}`,
+			[]string{"lookback", "record", "IDEA-019", "--outcome=O-1", "--result=met", "--note=Down to 11 a week."}},
+		{"lookback.record", `{"idea_id":"IDEA-019","assumption":"A-2","result":"unknown","note":"Not counted."}`,
+			[]string{"lookback", "record", "IDEA-019", "--assumption=A-2", "--result=unknown", "--note=Not counted."}},
 	}
 	covered := map[string]bool{}
 	for _, c := range cases {

@@ -1,12 +1,13 @@
 import { CircleAlert, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { ArtifactId, Banner, Button, ConfirmDialog, ErrorState, Heading, Page, Skeleton, SliceGithubPills, SliceStatusPill, EpicStatusPill, Text, builderStates, describeError, formatWhen, toast, type OnGithubIssue, type RefreshGithubSlice, type Status } from "@mach/ui";
+import { ArtifactId, Banner, Button, ConfirmDialog, ErrorState, Heading, Skeleton, SliceGithubPills, SliceStatusPill, EpicStatusPill, Text, builderStates, describeError, formatWhen, toast, type OnGithubIssue, type RefreshGithubSlice, type Status } from "@mach/ui";
 import { failureText } from "@mach/ui/api";
 import { client } from "../../api/client";
 import { toApiError } from "../../api/session";
 import { useRefresh, useStatus } from "../../api/store";
 import { IssueLink, IssueNumber, SignInNote } from "../../shared/IssueLink";
+import { ContextRow, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
 
 /**
  * Where the project, its epics and its slices stand on GitHub, as the engine recorded them and as
@@ -20,65 +21,73 @@ export function GithubScreen() {
   const problem = refresh.error ? describeError(refresh.error).message : (github?.problem ?? null);
   const elsewhere = (github?.slices ?? []).filter((s) => !s.in_workspace);
 
+  const lastRead = data?.github.last_read ? `Last read ${formatWhen(data.github.last_read)}` : data ? "Not read yet" : "";
+
   return (
-    <Page>
-      <div className="flex flex-col gap-8">
-        <header className="flex flex-wrap items-end justify-between gap-4">
-          <div className="flex max-w-reading flex-col gap-2">
-            <Heading level={1}>On GitHub</Heading>
-            <Text tone="muted">
-              A slice of intent you mark ready is saved to the project on GitHub, under its epic, where the builders take it. Refreshing reads what is there
-              now; it never changes your drafts.
-            </Text>
-          </div>
-          <div className="flex flex-col items-end gap-1">
-            <Button variant="primary" loading={refresh.loading} onClick={() => void refresh.run()}>
-              <RefreshCw aria-hidden="true" />
-              Refresh
-            </Button>
-            <Text size="caption" tone="subtle" aria-live="polite">
-              {data?.github.last_read ? `Last read ${formatWhen(data.github.last_read)}` : data ? "Not read yet" : ""}
-            </Text>
-          </div>
-        </header>
+    <WorkScreen
+      header={
+        <ContextRow
+          title="On GitHub"
+          about="A slice of intent you mark ready is saved to the project on GitHub, under its epic, where the builders take it. Refreshing reads what is there now; it never changes your drafts."
+          trail={
+            // The page's one act sits on the title's line, with when GitHub was last read beside it.
+            <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+              <Text as="span" size="caption" tone="subtle" aria-live="polite">
+                {lastRead}
+              </Text>
+              <Button variant="primary" loading={refresh.loading} onClick={() => void refresh.run()}>
+                <RefreshCw aria-hidden="true" />
+                Refresh
+              </Button>
+            </div>
+          }
+        />
+      }
+    >
+      <WorkPanes>
+        <WorkPane label="Your slices on GitHub">
+          <div className="flex flex-col gap-8">
+            {problem ? (
+              <Banner tone="warning" live="polite" title="GitHub could not be read" actions={<Button size="sm" loading={refresh.loading} onClick={() => void refresh.run()}>Try again</Button>}>
+                <p>{problem}</p>
+                <p className="mt-1">Nothing in your workspace was changed. What you see below is from the last time GitHub was read.</p>
+              </Banner>
+            ) : null}
 
-        {problem ? (
-          <Banner tone="warning" live="polite" title="GitHub could not be read" actions={<Button size="sm" loading={refresh.loading} onClick={() => void refresh.run()}>Try again</Button>}>
-            <p>{problem}</p>
-            <p className="mt-1">Nothing in your workspace was changed. What you see below is from the last time GitHub was read.</p>
-          </Banner>
-        ) : null}
+            {status.loading && !data ? (
+              <div role="status" aria-busy="true" aria-label="Reading your workspace" className="flex flex-col gap-2">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+              </div>
+            ) : !data ? (
+              <ErrorState
+                icon={<CircleAlert />}
+                title="Your workspace could not be read"
+                message={status.error ? describeError(status.error).message : undefined}
+                action={<Button onClick={() => void status.reload()}>Try again</Button>}
+              />
+            ) : (
+              <Slices status={data} />
+            )}
 
-        {status.loading && !data ? (
-          <div role="status" aria-busy="true" aria-label="Reading your workspace" className="flex flex-col gap-2">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
+            {elsewhere.length ? <Elsewhere slices={elsewhere} /> : null}
           </div>
-        ) : !data ? (
-          <ErrorState
-            icon={<CircleAlert />}
-            title="Your workspace could not be read"
-            message={status.error ? describeError(status.error).message : undefined}
-            action={<Button onClick={() => void status.reload()}>Try again</Button>}
-          />
-        ) : (
-          <>
+        </WorkPane>
+        {data ? (
+          <WorkPane side label="The project and its epics">
             <Where status={data} />
-            <Slices status={data} />
-          </>
-        )}
-
-        {elsewhere.length ? <Elsewhere slices={elsewhere} /> : null}
-      </div>
-    </Page>
+          </WorkPane>
+        ) : null}
+      </WorkPanes>
+    </WorkScreen>
   );
 }
 
 function Where({ status }: { status: Status }) {
   const project = status.project;
   return (
-    <section aria-labelledby="where-title" className="flex flex-col gap-3">
-      <Heading level={2} id="where-title" size="title-2">
+    <div className="flex flex-col gap-3">
+      <Heading level={2} size="title-3">
         The project and its epics
       </Heading>
       {status.github.repository ? (
@@ -95,14 +104,14 @@ function Where({ status }: { status: Status }) {
       )}
       <ul className="flex flex-col divide-y divide-line rounded-md border border-line bg-surface">
         {project ? (
-          <li className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5">
+          <li className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5">
             <span className="min-w-0 flex-1 text-body font-semibold text-ink">{project.name}</span>
             {project.issue ? <IssueNumber number={project.issue} url={project.url} /> : <NotSaved />}
           </li>
         ) : null}
         {status.epics.map((epic) => (
-          <li key={epic.epic_id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5">
-            <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
+          <li key={epic.epic_id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5">
+            <span className="flex w-full min-w-0 flex-wrap items-baseline gap-x-2">
               <ArtifactId>{epic.epic_id}</ArtifactId>
               <span className="text-body text-ink">{epic.title}</span>
             </span>
@@ -111,7 +120,7 @@ function Where({ status }: { status: Status }) {
           </li>
         ))}
       </ul>
-    </section>
+    </div>
   );
 }
 

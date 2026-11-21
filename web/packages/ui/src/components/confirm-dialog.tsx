@@ -1,5 +1,5 @@
 import { CircleAlert } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Button } from "./button";
 import { Dialog, DialogClose, DialogContent } from "./dialog";
 import { HintAction } from "./hint";
@@ -18,6 +18,8 @@ export interface ConfirmDialogProps {
   confirmLabel: string;
   cancelLabel?: string;
   tone?: "primary" | "danger";
+  /** The panel's width (7.8): `md` by default; `lg` for a dialog that repeats the person's own words. */
+  width?: "sm" | "md" | "lg";
   /**
    * Performs the act. Resolve true (or nothing) to close; resolve false to stay open, for example
    * after a refusal that `error` now shows.
@@ -25,6 +27,11 @@ export interface ConfirmDialogProps {
   onConfirm: () => Promise<boolean | void> | boolean | void;
   /** Shown inside the dialog, above the buttons: a refusal in the engine's own words, and its hinted action. */
   error?: { title: string; message: string; hint?: ApiErrorHint | null } | null;
+  /**
+   * Where focus goes once the act is done, when the control that opened the dialog may be gone (a form that closes
+   * after its act). Cancelled, focus returns to the opener as usual; null falls back to the same.
+   */
+  focusAfter?: () => HTMLElement | null;
 }
 
 /**
@@ -40,15 +47,19 @@ export function ConfirmDialog({
   confirmLabel,
   cancelLabel = "Not now",
   tone = "primary",
+  width = "md",
   onConfirm,
   error,
+  focusAfter,
 }: ConfirmDialogProps) {
   const [pending, setPending] = useState(false);
+  const done = useRef(false);
   const confirm = async () => {
     setPending(true);
     try {
       const result = await onConfirm();
-      if (result !== false) onOpenChange(false);
+      done.current = result !== false;
+      if (done.current) onOpenChange(false);
     } finally {
       setPending(false);
     }
@@ -56,8 +67,16 @@ export function ConfirmDialog({
   return (
     <Dialog open={open} onOpenChange={(next) => (pending ? undefined : onOpenChange(next))}>
       <DialogContent
+        width={width}
         title={title}
         description={description}
+        onCloseAutoFocus={(event) => {
+          const target = done.current ? focusAfter?.() : null;
+          done.current = false;
+          if (!target) return;
+          event.preventDefault();
+          target.focus();
+        }}
         footer={
           <>
             <DialogClose asChild>

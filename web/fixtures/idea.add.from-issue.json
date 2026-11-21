@@ -1,0 +1,46 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea": {
+      "idea_id": "IDEA-002",
+      "title": "Let members renew a loan themselves",
+      "stage": "new",
+      "stage_words": "New",
+      "source": {
+        "kind": "idea",
+        "number": 58
+      },
+      "created": "2026-11-21T01:37:47Z",
+      "revision": 0,
+      "has_brief": false,
+      "brief_checked": false,
+      "brief_passes": false,
+      "has_case": false,
+      "verdict": null,
+      "route": null,
+      "made": null,
+      "github": {
+        "saved": null,
+        "unfinished": false,
+        "issue": null,
+        "url": null,
+        "state": null,
+        "up_to_date": false,
+        "changed_on_github": false,
+        "changed_after_verdict": false,
+        "verdict_on_github": null,
+        "number_taken": false,
+        "other_issues": [],
+        "last_read": null
+      },
+      "next": {
+        "kind": "explore",
+        "sentence": "Explore IDEA-002: open questions, one at a time."
+      }
+    },
+    "factory_authorized": false,
+    "note": "Added IDEA-002. Nothing was sent anywhere. Explore it next."
+  },
+  "refused": null,
+  "hint": null
+}

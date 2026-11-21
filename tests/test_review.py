@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 import review  # noqa: E402
 import verify  # noqa: E402
 from test_build import Base as BuildBase, git  # noqa: E402
+import class_template  # noqa: E402  (a step taken from the same starting folder is run once per class)
 
 TICKET = "LOCAL-001"
 TARGETS = ["AC-01", "AC-02", "AC-03", "R1", "R2", "R3", "R4", "R5"]
@@ -33,6 +34,9 @@ class Base(BuildBase):
     # --- getting a cell to the review station -------------------------------------------------
 
     def built(self):
+        class_template.step(self, "built", Path(self.tmp.name).resolve(), self._built)
+
+    def _built(self):
         self.ready()
         self.ok("start", TICKET)
         self.build_through("T05")
@@ -46,6 +50,9 @@ class Base(BuildBase):
         return json.loads(out.getvalue())
 
     def verified(self):
+        class_template.step(self, "verified", Path(self.tmp.name).resolve(), self._verified)
+
+    def _verified(self):
         self.built()
         self.run_verify("start", TICKET)
         (self.evidence / "consumer-run.log").write_text("AC-01 ok\n")

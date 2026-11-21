@@ -1,0 +1,70 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-007",
+    "revision": 1,
+    "new_revision": true,
+    "stage": "exploring",
+    "passes": false,
+    "errors": [
+      "Line 5 still holds a template placeholder (<why SLICE-001/INV-02 should change, in the product manager's words>). Write it in your own words.",
+      "Line 9 still holds a template placeholder (<who runs into the rule as it is today>). Write it in your own words.",
+      "Line 13 still holds a template placeholder (<what will be true once it changes>). Write it in your own words.",
+      "Line 14 still holds a template placeholder (<a measure or an observable change>). Write it in your own words.",
+      "Line 18 still holds a template placeholder (<what stays as it is>). Write it in your own words."
+    ],
+    "warnings": [
+      "O-1's 'how we would know' names no measure or observable change. Say what you would count or see."
+    ],
+    "findings": [
+      {
+        "severity": "error",
+        "rule": "brief-placeholder",
+        "line": 5,
+        "message": "Line 5 still holds a template placeholder (<why SLICE-001/INV-02 should change, in the product manager's words>). Write it in your own words."
+      },
+      {
+        "severity": "error",
+        "rule": "brief-placeholder",
+        "line": 9,
+        "message": "Line 9 still holds a template placeholder (<who runs into the rule as it is today>). Write it in your own words."
+      },
+      {
+        "severity": "error",
+        "rule": "brief-placeholder",
+        "line": 13,
+        "message": "Line 13 still holds a template placeholder (<what will be true once it changes>). Write it in your own words."
+      },
+      {
+        "severity": "error",
+        "rule": "brief-placeholder",
+        "line": 14,
+        "message": "Line 14 still holds a template placeholder (<a measure or an observable change>). Write it in your own words."
+      },
+      {
+        "severity": "error",
+        "rule": "brief-placeholder",
+        "line": 18,
+        "message": "Line 18 still holds a template placeholder (<what stays as it is>). Write it in your own words."
+      },
+      {
+        "severity": "warning",
+        "rule": "brief-how-vague",
+        "line": 14,
+        "message": "O-1's 'how we would know' names no measure or observable change. Say what you would count or see."
+      }
+    ],
+    "counts": {
+      "outcomes": 1,
+      "assumptions": 0,
+      "open_questions": 0,
+      "shipped_rules": 1,
+      "capabilities": 1
+    },
+    "verdict": null,
+    "note": "This is revision 1: the first text of the brief MACH has checked. MACH checks the brief's structure; it never scores the idea.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

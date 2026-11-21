@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-002",
+    "stage": "exploring",
+    "changed": true,
+    "factory_authorized": false,
+    "note": "IDEA-002 is being explored. Look facts up and record them; ask the product manager open questions, one at a time."
+  },
+  "refused": null,
+  "hint": null
+}

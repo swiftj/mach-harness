@@ -12,7 +12,6 @@ import os
 import stat
 import subprocess
 import sys
-import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -24,6 +23,7 @@ sys.path.insert(0, str(ROOT / "skills" / "product-studio" / "scripts"))
 sys.path.insert(0, str(ROOT / "skills" / "intent" / "scripts"))
 import issue_rules  # noqa: E402
 import studio  # noqa: E402
+import class_template  # noqa: E402  (each class builds its starting repositories once; every test gets its own copy)
 
 FIXTURE = (ROOT / "tests" / "fixtures" / "SLICE-001-invite-teammate.md").read_text()
 
@@ -297,26 +297,31 @@ class Base(unittest.TestCase):
     with a stand-in for gh on the PATH whose state is a JSON file."""
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = class_template.folder(self)
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name).resolve()
         self.origin = self.root / "origin.git"
-        git(self.root, "init", "-q", "--bare", "-b", "main", str(self.origin))
-        self.eng = self.clone("eng", "Erin Engineer")
-        (self.eng / "README.md").write_text("# Team Space\n")
-        (self.eng / "app.py").write_text("print('hello')\n")
-        git(self.eng, "add", "-A")
-        git(self.eng, "commit", "-q", "-m", "start")
-        git(self.eng, "push", "-q", "origin", "main")
-        self.a = self.clone("a", "Ada PM")
-        self.b = self.clone("b", "Ben PM")
+        self.eng, self.a, self.b = self.root / "eng", self.root / "a", self.root / "b"
+        class_template.step(self, "repositories", self.root, self.repositories)
         fake_bin = self.root / "bin"
-        fake_bin.mkdir()
         self.gh_state = self.root / "gh.json"
         saved = dict(os.environ)
         self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
         os.environ["PATH"] = str(fake_bin) + os.pathsep + os.environ["PATH"]
         os.environ["FAKE_GH_STATE"] = str(self.gh_state)
+
+    def repositories(self):
+        """The shared remote and the three clones; files only."""
+        git(self.root, "init", "-q", "--bare", "-b", "main", str(self.origin))
+        self.clone("eng", "Erin Engineer")
+        (self.eng / "README.md").write_text("# Team Space\n")
+        (self.eng / "app.py").write_text("print('hello')\n")
+        git(self.eng, "add", "-A")
+        git(self.eng, "commit", "-q", "-m", "start")
+        git(self.eng, "push", "-q", "origin", "main")
+        self.clone("a", "Ada PM")
+        self.clone("b", "Ben PM")
+        (self.root / "bin").mkdir()
 
     def clone(self, name, person):
         folder = self.root / name
@@ -369,6 +374,10 @@ class Base(unittest.TestCase):
 class IssuesBase(Base):
     def setUp(self):
         super().setUp()
+        class_template.step(self, "issues", self.root, self.stand_in)
+
+    def stand_in(self):
+        """The stand-in for gh and the clones' GitHub remote; files only."""
         gh = self.root / "bin" / "gh"
         gh.write_text(FAKE_GH.replace("#!/usr/bin/env python3", "#!" + sys.executable, 1))
         gh.chmod(gh.stat().st_mode | stat.S_IEXEC)

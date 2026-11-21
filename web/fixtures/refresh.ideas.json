@@ -1,0 +1,60 @@
+{
+  "exit_code": 0,
+  "data": {
+    "refreshed": true,
+    "problem": null,
+    "requests": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "refreshed_at": "2026-11-21T01:38:33Z",
+      "problem": null,
+      "truncated": false,
+      "truncated_note": null,
+      "items": [],
+      "updates_waiting": 0,
+      "updates_waiting_note": null,
+      "could_not_update": [],
+      "could_not_update_note": null
+    },
+    "github": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "problem": null,
+      "refreshed_at": "2026-11-21T01:38:34Z",
+      "form": null,
+      "project_issue": null,
+      "project_url": null,
+      "epics": {},
+      "epic_urls": {},
+      "slices": [],
+      "order": [],
+      "principles": {
+        "saved": null,
+        "unfinished": false,
+        "revision": null,
+        "sha256": null,
+        "approved_by": null,
+        "published_at": null,
+        "issue": null,
+        "url": null,
+        "github": {
+          "revision": null,
+          "approved": null,
+          "approved_by": null,
+          "read_at": "2026-11-21T01:38:34Z"
+        },
+        "newer_elsewhere": false,
+        "changed_on_github": false
+      }
+    },
+    "ideas": {
+      "refreshed": true,
+      "repository": "acme/team-space",
+      "issues": 1,
+      "changed_on_github": []
+    },
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

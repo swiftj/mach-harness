@@ -29,6 +29,20 @@ import resumeFromPrd from "../../../fixtures/slice.resume.from-prd.json" with { 
 import drafted from "../../../fixtures/prd.draft.json" with { type: "json" };
 import confirmed from "../../../fixtures/prd.confirm.json" with { type: "json" };
 import imported from "../../../fixtures/prd.import.json" with { type: "json" };
+import {
+  PRD_PARTS,
+  answerSections,
+  applyBlocked,
+  applySummary,
+  applyWhat,
+  coverageCounts,
+  importSummary,
+  mapSummary,
+  partForStep,
+  partPlace,
+  quotedCount,
+  settleSummary,
+} from "../src/features/prd/model.ts";
 
 test("where am I: map, settle, make the drafts, done", () => {
   assert.equal(journeyStep(noMap.data), 1);
@@ -172,4 +186,71 @@ test("confirming lists the numbers it accepts and discusses, never a contradicti
 test("import: the limits are said before picking, and sections carry their line counts", () => {
   assert.equal(limitWords({ maxBytes: 512 * 1024, extensions: [".md", ".markdown", ".txt", ".text"] }), "One Markdown or plain-text file (.md, .markdown, .txt, .text), at most 512 KB.");
   assert.deepEqual(imported.data.sections.map(sectionLines), [4, 6, 5, 4, 3]);
+});
+
+/* ── The page's parts (M16 layout) ───────────────────────────────────── */
+
+test("the four parts are the path: the part the path is at opens, the drafts stay open once made", () => {
+  assert.deepEqual(PRD_PARTS, ["import", "map", "settle", "apply"]);
+  assert.equal(partForStep(journeyStep(noMap.data)), "map");
+  assert.equal(partForStep(journeyStep(uncovered.data)), "settle");
+  assert.equal(partForStep(journeyStep({ ...oneLeft.data, not_covered: [] })), "apply");
+  assert.equal(partForStep(journeyStep(applied.data)), "apply");
+  assert.deepEqual(
+    PRD_PARTS.map((p) => partPlace(p, journeyStep(uncovered.data))),
+    ["done", "done", "current", "later"],
+  );
+  assert.deepEqual(
+    PRD_PARTS.map((p) => partPlace(p, journeyStep(applied.data))),
+    ["done", "done", "done", "done"],
+  );
+});
+
+test("each part's row says its state in words, from the engine's answer alone", () => {
+  assert.equal(importSummary(uncovered.data.prd), "Markdown, 5 sections, 22 lines");
+  assert.equal(mapSummary(noMap.data), "No map yet: it is proposed in Claude Code");
+  assert.equal(mapSummary(uncovered.data), "1 new epic and 2 thin slices in build order");
+  assert.match(mapSummary(applied.data), /kept as it was when the drafts were made$/);
+  assert.equal(settleSummary(uncovered.data.coverage), "3 sections still to settle: 1, 4, 5");
+  assert.equal(settleSummary(oneLeft.data.coverage), "1 section still to settle: 5");
+  assert.equal(settleSummary(applied.data.coverage), "Every section no slice cites is settled (3 of 3)");
+});
+
+test("making the drafts: blocked by name until every section is settled, then ready, then what was made", () => {
+  const plan = applyPlan(uncovered.data.map, () => null);
+  assert.equal(applyWhat(plan), "1 epic and 2 draft slices");
+  assert.equal(applyBlocked(uncovered.data), "Settle sections 1, 4, 5 first. Nothing can be made while any section is unsettled.");
+  assert.equal(applyBlocked(oneLeft.data), "Settle section 5 first. Nothing can be made while any section is unsettled.");
+  assert.equal(applySummary(uncovered.data, plan), applyBlocked(uncovered.data), "the blocker is in the closed part's row");
+  assert.equal(applySummary({ ...oneLeft.data, not_covered: [] }, plan), "Ready to make 1 epic and 2 draft slices");
+  assert.equal(applyBlocked(applied.data), null);
+  assert.equal(applySummary(applied.data, plan), "Made: SLICE-001, SLICE-002");
+  assert.equal(applySummary(noMap.data, null), "After the map");
+});
+
+test("the narrow pane counts sections by state, never inventing coverage before a map", () => {
+  assert.deepEqual(coverageCounts(noMap.data), [{ label: "Sections", value: 5 }]);
+  assert.deepEqual(
+    coverageCounts(uncovered.data).map((c) => c.value),
+    [2, 0, 3, 0],
+  );
+  assert.deepEqual(
+    coverageCounts(applied.data).map((c) => c.value),
+    [2, 3, 0, 0],
+  );
+});
+
+test("a fold says how many quoted lines it holds", () => {
+  const lines = fencedLines(shown.data.fenced);
+  assert.equal(quotedCount(quote(lines, "5-9")), 5);
+  assert.equal(quotedCount(quote(null, "5-9")), 0, "nothing read, nothing counted");
+});
+
+test("the slice page's sections: the groups with their counts, the ones that cannot be accepted kept apart", () => {
+  const groups = answerGroups(showPrdDrafted.data.prd.answers.recorded);
+  assert.deepEqual(answerSections(groups), [
+    { id: "waiting", label: "Waiting for your word", count: 2 },
+    { id: "always", label: "Always asked in the interview", count: 2 },
+  ]);
+  assert.deepEqual(answerSections(answerGroups([])), []);
 });

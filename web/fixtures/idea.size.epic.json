@@ -1,0 +1,54 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-002",
+    "route": "epic",
+    "route_words": "an epic",
+    "why": "The brief has 2 outcomes inside one capability, so the route is an epic.",
+    "counted": {
+      "outcomes": 2,
+      "capabilities": 1,
+      "shipped_rules": 2,
+      "shipped_rules_looked_up": 0,
+      "high_risk_areas": null,
+      "high_risk_not_determined": [
+        "SLICE-001/FR-01",
+        "SLICE-001/INV-02"
+      ],
+      "principle_concerns": 0,
+      "policy_concerns": 0
+    },
+    "touches": {
+      "outcomes": [
+        "O-1",
+        "O-2"
+      ],
+      "capabilities": [
+        "Lending"
+      ],
+      "shipped_rules": [
+        "SLICE-001/FR-01",
+        "SLICE-001/INV-02"
+      ]
+    },
+    "high_risk": {
+      "basis": "Applied to the files each shipped rule's slice changed when it was merged, as this computer has them. The rule is the security scan's (sign-in or permissions, billing, a database schema or migration, an existing contract).",
+      "areas": [],
+      "not_determined": [
+        "SLICE-001/FR-01",
+        "SLICE-001/INV-02"
+      ],
+      "count": null,
+      "not_determined_note": "Not determined for SLICE-001/FR-01, SLICE-001/INV-02: nothing on this computer says which files their slice changed."
+    },
+    "concerns": {
+      "principles": [],
+      "policies": []
+    },
+    "rule": "One outcome and at most three shipped rules is one slice; otherwise outcomes inside one capability is an epic, and outcomes in different capabilities is several epics. High-risk areas and concerns are counted, never part of the rule.",
+    "note": "MACH counted and named the route; nothing was created. A map of slices is proposed next.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

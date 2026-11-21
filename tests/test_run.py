@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 import run  # noqa: E402
 from test_build import git  # noqa: E402
 from test_verify import Base as VerifyBase, NOTE, TARGETS  # noqa: E402
+import class_template  # noqa: E402  (a step taken from the same starting folder is run once per class)
 
 
 class Base(VerifyBase):
@@ -39,6 +40,9 @@ class Base(VerifyBase):
         (self.cellroot / "cell.json").write_text(json.dumps(cell))
 
     def verified(self):
+        class_template.step(self, "verified", Path(self.tmp.name).resolve(), self._verified)
+
+    def _verified(self):
         self.built()
         self.v_ok("start", "LOCAL-001")
         for target in TARGETS:

@@ -1,0 +1,315 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Teams work together.",
+      "outcomes": [
+        "Teams can work together"
+      ],
+      "issue": null,
+      "url": null
+    },
+    "approvals_withdrawn": [],
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "Team membership",
+        "status": "open",
+        "revision": 1,
+        "acceptance_criteria": [
+          "Only invited people can join"
+        ],
+        "issue": null,
+        "url": null,
+        "counts": {
+          "total": 0,
+          "by_progress": {},
+          "ready_or_further": 0,
+          "ready_or_further_means": "marked ready to build, being built, or shipped"
+        }
+      },
+      {
+        "epic_id": "EPIC-002",
+        "title": "Renew loans yourself",
+        "status": "open",
+        "revision": 1,
+        "acceptance_criteria": [
+          "A member renews without calling"
+        ],
+        "issue": null,
+        "url": null,
+        "counts": {
+          "total": 1,
+          "by_progress": {
+            "draft": 1
+          },
+          "ready_or_further": 0,
+          "ready_or_further_means": "marked ready to build, being built, or shipped"
+        }
+      },
+      {
+        "epic_id": "EPIC-003",
+        "title": "Member notices",
+        "status": "open",
+        "revision": 1,
+        "acceptance_criteria": [
+          "A refusal says why"
+        ],
+        "issue": null,
+        "url": null,
+        "counts": {
+          "total": 1,
+          "by_progress": {
+            "draft": 1
+          },
+          "ready_or_further": 0,
+          "ready_or_further_means": "marked ready to build, being built, or shipped"
+        }
+      }
+    ],
+    "slices": [
+      {
+        "slice_id": "SLICE-005",
+        "title": "Renew a loan from my loans",
+        "epic_id": "EPIC-002",
+        "status": "draft",
+        "revision": 1,
+        "open_questions": 0,
+        "spec": null,
+        "has_intent": false,
+        "resume_note": null,
+        "dependencies": [],
+        "editable": true,
+        "github": {
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": null,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": null,
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "draft"
+        }
+      },
+      {
+        "slice_id": "SLICE-006",
+        "title": "Say why a renewal is refused",
+        "epic_id": "EPIC-003",
+        "status": "draft",
+        "revision": 1,
+        "open_questions": 0,
+        "spec": null,
+        "has_intent": false,
+        "resume_note": null,
+        "dependencies": [
+          "SLICE-005"
+        ],
+        "editable": true,
+        "github": {
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": null,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": null,
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "draft"
+        }
+      }
+    ],
+    "saved": {
+      "everything_saved": true,
+      "note": "Everything is saved.",
+      "not_saved": []
+    },
+    "order": [
+      {
+        "epic_id": "EPIC-001",
+        "issue": null,
+        "slices": [],
+        "on_github": false,
+        "github_order": null,
+        "github_read_at": null,
+        "matches_github": null,
+        "unfinished": false,
+        "taken_from_github": false,
+        "could_not_read": false,
+        "note": null
+      },
+      {
+        "epic_id": "EPIC-002",
+        "issue": null,
+        "slices": [
+          {
+            "slice_id": "SLICE-005",
+            "title": "Renew a loan from my loans",
+            "in_workspace": true,
+            "issue": null,
+            "state_label": null
+          }
+        ],
+        "on_github": false,
+        "github_order": null,
+        "github_read_at": null,
+        "matches_github": null,
+        "unfinished": false,
+        "taken_from_github": false,
+        "could_not_read": false,
+        "note": null
+      },
+      {
+        "epic_id": "EPIC-003",
+        "issue": null,
+        "slices": [
+          {
+            "slice_id": "SLICE-006",
+            "title": "Say why a renewal is refused",
+            "in_workspace": true,
+            "issue": null,
+            "state_label": null
+          }
+        ],
+        "on_github": false,
+        "github_order": null,
+        "github_read_at": null,
+        "matches_github": null,
+        "unfinished": false,
+        "taken_from_github": false,
+        "could_not_read": false,
+        "note": null
+      }
+    ],
+    "github": {
+      "repository": null,
+      "form": null,
+      "last_read": null
+    },
+    "current_slice": "SLICE-005",
+    "last_refreshed": null,
+    "ideas": {
+      "ideas": [
+        {
+          "idea_id": "IDEA-001",
+          "title": "Let members renew a loan themselves",
+          "stage": "shaped",
+          "stage_words": "Shaped into work",
+          "source": {
+            "kind": "typed"
+          },
+          "created": "2026-11-21T01:38:18Z",
+          "revision": 1,
+          "has_brief": true,
+          "brief_checked": true,
+          "brief_passes": true,
+          "has_case": false,
+          "verdict": {
+            "decision": "go",
+            "by": "ada-pm",
+            "at": "2026-11-21T01:38:18Z",
+            "revision": 1,
+            "holds": true,
+            "stale": false,
+            "reason": "Members ask for it at every desk."
+          },
+          "route": "several-epics",
+          "made": {
+            "epics": [
+              "EPIC-002",
+              "EPIC-003"
+            ],
+            "slices": [
+              "SLICE-005",
+              "SLICE-006"
+            ]
+          },
+          "github": {
+            "saved": "github",
+            "unfinished": false,
+            "issue": 1,
+            "url": "https://github.com/acme/team-space/issues/1",
+            "state": "open",
+            "up_to_date": true,
+            "changed_on_github": false,
+            "changed_after_verdict": false,
+            "verdict_on_github": true,
+            "number_taken": false,
+            "other_issues": [],
+            "last_read": null
+          },
+          "next": {
+            "kind": "none",
+            "sentence": "IDEA-001 is shaped into 2 draft slices. Look back on it once one has shipped."
+          }
+        }
+      ],
+      "by_stage": {
+        "new": [],
+        "exploring": [],
+        "brief": [],
+        "decided": [],
+        "shaped": [
+          "IDEA-001"
+        ]
+      },
+      "counts": {
+        "new": 0,
+        "exploring": 0,
+        "brief": 0,
+        "decided": 0,
+        "shaped": 1
+      },
+      "note": "Shape: ideas, briefs and the case, before any epic. A person decides; scripts check."
+    },
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Continue the interview for SLICE-005: Renew a loan from my loans (slice resume SLICE-005).",
+      "Continue the interview for SLICE-006: Say why a renewal is refused (slice resume SLICE-006)."
+    ],
+    "next_actions": [
+      {
+        "kind": "continue_interview",
+        "target": "SLICE-005",
+        "title": "Continue the interview for SLICE-005",
+        "reason": "Renew a loan from my loans is still being defined.",
+        "related": []
+      },
+      {
+        "kind": "continue_interview",
+        "target": "SLICE-006",
+        "title": "Continue the interview for SLICE-006",
+        "reason": "Say why a renewal is refused is still being defined.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

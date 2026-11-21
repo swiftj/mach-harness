@@ -1,7 +1,7 @@
 import { CircleAlert, CircleCheck, RefreshCw } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { ArtifactId, Button, EmptyState, ErrorState, Heading, Page, Skeleton, SliceGithubPills, Text, describeError, formatWhen, type ApprovalWithdrawn, type Status, type StatusSliceRow } from "@mach/ui";
+import { ArtifactId, Button, EmptyState, ErrorState, Heading, Page, Skeleton, SliceGithubPills, Text, describeError, formatWhen, plural, type ApprovalWithdrawn, type Status, type StatusSliceRow } from "@mach/ui";
 import { useStatus } from "../../api/store";
 import { titleFor } from "../../api/describe";
 import { IssueLink } from "../../shared/IssueLink";
@@ -9,21 +9,21 @@ import { RenumberDialog } from "../../shared/RenumberDialog";
 import { AnswerQuestionButton, BuildersQuestion } from "../../shared/BuildersQuestion";
 import { NewerVersionCard } from "./NewerVersionCard";
 import { OpenQuestionsCard } from "./OpenQuestionsCard";
-import { useRequestList } from "./requests/api";
+import { useRequestList } from "../../shared/useRequestList";
 import { RequestsGroup } from "./requests/RequestsGroup";
+import { requestActions } from "./requests/model";
+import { openGroup, questionsSummary, requestsSummary, sliceGroupSummary } from "./model";
+import { Part, Parts } from "../../shared/layout/Parts";
+import { ContextRow, OnePane, WorkScreen } from "../../shared/layout/WorkScreen";
 
-function Group({ id, title, hint, count, children }: { id: string; title: string; hint: string; count: number; children: ReactNode }) {
+/** One group's body: the sentence that explains it, then its items. The id keeps the group's old anchor. */
+function GroupBody({ id, hint, children }: { id: string; hint: string; children: ReactNode }) {
   return (
-    <section id={id} aria-labelledby={`${id}-title`} className="flex scroll-mt-6 flex-col gap-3">
-      <div className="flex flex-col gap-0.5">
-        <Heading level={2} id={`${id}-title`} size="title-2">
-          {title} <span className="font-sans text-body text-ink-subtle tabular">({count})</span>
-        </Heading>
-        <Text size="body-sm" tone="muted">
-          {hint}
-        </Text>
-      </div>
-      <div className="flex flex-col gap-4">{children}</div>
+    <section id={id} className="flex flex-col gap-4">
+      <Text size="body-sm" tone="muted" className="max-w-reading">
+        {hint}
+      </Text>
+      {children}
     </section>
   );
 }
@@ -79,6 +79,8 @@ export function InboxScreen() {
   const status = useStatus();
   const requests = useRequestList();
   const [renumber, setRenumber] = useState<string | null>(null);
+  // Undefined until the person opens or closes a group: then the most urgent group is open.
+  const [chosen, setChosen] = useState<string | null | undefined>(undefined);
 
   if (!status.data && !status.error) {
     return (
@@ -108,172 +110,184 @@ export function InboxScreen() {
   const builders = data.slices.filter((s) => s.github.state_label === "mach:question");
   const withdrawn = data.approvals_withdrawn;
   const questions = data.slices.filter((s) => s.open_questions > 0);
-  // Requests from GitHub issues: no section at all when the project is not on GitHub.
   const requestsShown = Boolean(requests.data?.repository) || (requests.error !== null && !requests.data);
 
-  const groups = [
-    { id: "changed", label: "Changed on GitHub", count: changed.length },
-    { id: "newer", label: "Versions to choose", count: newer.length },
-    { id: "numbers", label: "New numbers needed", count: taken.length },
-    { id: "unfinished", label: "Saving to finish", count: unfinished.length },
-    { id: "builders", label: "Questions from the builders", count: builders.length },
-    { id: "approvals", label: "Approvals to give again", count: withdrawn.length },
-    { id: "questions", label: "Open questions", count: questions.length },
-    { id: "requests", label: "Requests", count: requests.data?.items.length ?? 0 },
+  const titles = (slices: StatusSliceRow[]) => slices.map((s) => s.title);
+  const requestItems = requests.data?.items ?? null;
+  const pickable = (requestItems ?? []).filter((item) => {
+    const can = requestActions(item, []);
+    return can.pickUp || can.pickUpAsWell;
+  }).length;
+
+  // Most urgent first. Each group is a part: closed, it says how many things wait in it and which.
+  const groups: Array<{ id: string; name: string; summary: string; count: number; hint: string; body: ReactNode }> = [
+    {
+      id: "changed",
+      name: "Changed on GitHub after you approved it",
+      count: changed.length,
+      summary: sliceGroupSummary(titles(changed)),
+      hint: "The builders will not take these until you put your approved version back.",
+      body: changed.map((slice) => (
+        <SliceCard
+          key={slice.slice_id}
+          slice={slice}
+          label="changed"
+          action={
+            <Button asChild variant="primary">
+              <Link to={`/slices/${slice.slice_id}`}>Read it and mark it ready again</Link>
+            </Button>
+          }
+        >
+          Someone edited this slice&apos;s issue on GitHub after you approved it. Marking it ready again puts your approved version back.
+        </SliceCard>
+      )),
+    },
+    {
+      id: "newer",
+      name: "Versions to choose",
+      count: newer.length,
+      summary: sliceGroupSummary(titles(newer)),
+      hint: "Someone else saved a newer version of these on GitHub. Choose before you mark them ready.",
+      body: newer.map((slice) => <NewerVersionCard key={slice.slice_id} slice={slice} />),
+    },
+    {
+      id: "numbers",
+      name: "New numbers needed",
+      count: taken.length,
+      summary: sliceGroupSummary(titles(taken)),
+      hint: "Another slice on GitHub already uses these numbers. Your work is fine; it needs a new number.",
+      body: taken.map((slice) => (
+        <SliceCard
+          key={slice.slice_id}
+          slice={slice}
+          label="numbers"
+          action={
+            <Button variant="primary" onClick={() => setRenumber(slice.slice_id)}>
+              Give {slice.slice_id} a new number
+            </Button>
+          }
+        >
+          Another slice saved on GitHub uses the number {slice.slice_id}. Your draft keeps everything it says and gets the next free number.
+        </SliceCard>
+      )),
+    },
+    {
+      id: "unfinished",
+      name: "Saving to finish",
+      count: unfinished.length,
+      summary: sliceGroupSummary(titles(unfinished)),
+      hint: "You approved these, but saving them to GitHub stopped part way.",
+      body: unfinished.map((slice) => (
+        <SliceCard
+          key={slice.slice_id}
+          slice={slice}
+          label="unfinished"
+          action={
+            <Button asChild variant="primary">
+              <Link to={`/slices/${slice.slice_id}`}>Finish marking it ready</Link>
+            </Button>
+          }
+        >
+          Marking it ready again finishes the job; nothing is made twice.
+        </SliceCard>
+      )),
+    },
+    {
+      id: "builders",
+      name: "Questions from the builders",
+      count: builders.length,
+      summary: sliceGroupSummary(titles(builders)),
+      hint: "The builders need your answer before they go on. Answering reopens the slice and starts its interview from their question.",
+      body: builders.map((slice) => (
+        <SliceCard key={slice.slice_id} slice={slice} label="builders" action={<AnswerQuestionButton sliceId={slice.slice_id} approved={!slice.editable} />}>
+          <BuildersQuestion github={slice.github} headingLevel={3} />
+        </SliceCard>
+      )),
+    },
+    {
+      id: "approvals",
+      name: "Approvals to give again",
+      count: withdrawn.length,
+      summary: sliceGroupSummary(withdrawn.map((w) => titleFor(data, w.artifact) ?? w.artifact)),
+      hint: "Something changed what you had approved. Look again before you rely on it.",
+      body: withdrawn.map((item) => <WithdrawnCard key={item.artifact} item={item} status={data} />),
+    },
+    {
+      id: "questions",
+      name: "Open questions",
+      count: questions.length,
+      summary: questionsSummary(questions),
+      hint: "Interviews waiting for your answers.",
+      body: questions.map((slice) => <OpenQuestionsCard key={slice.slice_id} slice={slice} />),
+    },
   ].filter((g) => g.count > 0);
+  // Requests from GitHub issues: no group at all when the project is not on GitHub.
+  if (requestsShown) {
+    groups.push({
+      id: "requests",
+      name: "Requests",
+      count: requestItems?.length ?? 0,
+      summary: requestsSummary(requestItems ? requestItems.length : null, pickable),
+      hint: "Requests other people filed as GitHub issues. Picking one up starts a draft slice; the interview still asks you every question.",
+      body: <RequestsGroup list={requests} status={data} />,
+    });
+  }
   const total = groups.reduce((n, g) => n + g.count, 0);
+  const open = openGroup(
+    groups.map((g) => g.id),
+    chosen,
+  );
 
   return (
-    <Page>
-      <div className="flex max-w-[64rem] flex-col gap-8">
-        <header className="flex max-w-reading flex-col gap-3">
-          <Heading level={1}>Decisions</Heading>
-          <Text tone="muted">Things only you can decide, most urgent first. Nothing here is decided for you, and every choice asks you to confirm it.</Text>
-          {total > 0 ? (
-            <nav aria-label="Decisions by kind">
-              <ul className="flex flex-wrap gap-2">
-                {groups.map((g) => (
-                  <li key={g.id}>
-                    <a
-                      href={`#${g.id}`}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        document.getElementById(g.id)?.scrollIntoView({ block: "start" });
-                      }}
-                      className="inline-flex h-7 items-center gap-1.5 rounded-full border border-line-strong bg-surface px-3 text-body-sm text-ink hover:bg-surface-sunken"
-                    >
-                      {g.label}
-                      <span className="font-semibold tabular">{g.count}</span>
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </nav>
+    <WorkScreen
+      header={
+        <ContextRow
+          title="Decisions"
+          about="Things only you can decide, most urgent first. Nothing here is decided for you, and every choice asks you to confirm it."
+          trail={
+            total > 0 ? (
+              <Text as="span" size="body-sm" tone="muted">
+                {plural(total, "thing")} waiting for you
+              </Text>
+            ) : null
+          }
+        />
+      }
+    >
+      <OnePane label="What needs your decision">
+        <div className="flex flex-col gap-8">
+          {total === 0 ? (
+            <EmptyState
+              layout="page"
+              icon={<CircleCheck />}
+              title="Nothing to decide"
+              description="Nothing is waiting for your decision, and no interview has an open question."
+              action={
+                data.github.repository ? (
+                  <Button asChild>
+                    <Link to="/github">
+                      <RefreshCw aria-hidden="true" />
+                      Check GitHub for changes
+                    </Link>
+                  </Button>
+                ) : undefined
+              }
+            />
           ) : null}
-        </header>
-
-        {total === 0 ? (
-          <EmptyState
-            layout="page"
-            icon={<CircleCheck />}
-            title="Nothing to decide"
-            description="Nothing is waiting for your decision, and no interview has an open question."
-            action={
-              data.github.repository ? (
-                <Button asChild>
-                  <Link to="/github">
-                    <RefreshCw aria-hidden="true" />
-                    Check GitHub for changes
-                  </Link>
-                </Button>
-              ) : undefined
-            }
-          />
-        ) : null}
-
-        {changed.length ? (
-          <Group id="changed" title="Changed on GitHub after you approved it" hint="The builders will not take these until you put your approved version back." count={changed.length}>
-            {changed.map((slice) => (
-              <SliceCard
-                key={slice.slice_id}
-                slice={slice}
-                label="changed"
-                action={
-                  <Button asChild variant="primary">
-                    <Link to={`/slices/${slice.slice_id}`}>Read it and mark it ready again</Link>
-                  </Button>
-                }
-              >
-                Someone edited this slice&apos;s issue on GitHub after you approved it. Marking it ready again puts your approved version back.
-              </SliceCard>
-            ))}
-          </Group>
-        ) : null}
-
-        {newer.length ? (
-          <Group id="newer" title="Versions to choose" hint="Someone else saved a newer version of these on GitHub. Choose before you mark them ready." count={newer.length}>
-            {newer.map((slice) => (
-              <NewerVersionCard key={slice.slice_id} slice={slice} />
-            ))}
-          </Group>
-        ) : null}
-
-        {taken.length ? (
-          <Group id="numbers" title="New numbers needed" hint="Another slice on GitHub already uses these numbers. Your work is fine; it needs a new number." count={taken.length}>
-            {taken.map((slice) => (
-              <SliceCard
-                key={slice.slice_id}
-                slice={slice}
-                label="numbers"
-                action={
-                  <Button variant="primary" onClick={() => setRenumber(slice.slice_id)}>
-                    Give {slice.slice_id} a new number
-                  </Button>
-                }
-              >
-                Another slice saved on GitHub uses the number {slice.slice_id}. Your draft keeps everything it says and gets the next free number.
-              </SliceCard>
-            ))}
-          </Group>
-        ) : null}
-
-        {unfinished.length ? (
-          <Group id="unfinished" title="Saving to finish" hint="You approved these, but saving them to GitHub stopped part way." count={unfinished.length}>
-            {unfinished.map((slice) => (
-              <SliceCard
-                key={slice.slice_id}
-                slice={slice}
-                label="unfinished"
-                action={
-                  <Button asChild variant="primary">
-                    <Link to={`/slices/${slice.slice_id}`}>Finish marking it ready</Link>
-                  </Button>
-                }
-              >
-                Marking it ready again finishes the job; nothing is made twice.
-              </SliceCard>
-            ))}
-          </Group>
-        ) : null}
-
-        {builders.length ? (
-          <Group id="builders" title="Questions from the builders" hint="The builders need your answer before they go on. Answering reopens the slice and starts its interview from their question." count={builders.length}>
-            {builders.map((slice) => (
-              <SliceCard
-                key={slice.slice_id}
-                slice={slice}
-                label="builders"
-                action={<AnswerQuestionButton sliceId={slice.slice_id} approved={!slice.editable} />}
-              >
-                <BuildersQuestion github={slice.github} headingLevel={3} />
-              </SliceCard>
-            ))}
-          </Group>
-        ) : null}
-
-        {withdrawn.length ? (
-          <Group id="approvals" title="Approvals to give again" hint="Something changed what you had approved. Look again before you rely on it." count={withdrawn.length}>
-            {withdrawn.map((item) => (
-              <WithdrawnCard key={item.artifact} item={item} status={data} />
-            ))}
-          </Group>
-        ) : null}
-
-        {questions.length ? (
-          <Group id="questions" title="Open questions" hint="Interviews waiting for your answers." count={questions.length}>
-            {questions.map((slice) => (
-              <OpenQuestionsCard key={slice.slice_id} slice={slice} />
-            ))}
-          </Group>
-        ) : null}
-
-        {requestsShown ? (
-          <Group id="requests" title="Requests" hint="Requests other people filed as GitHub issues. Picking one up starts a draft slice; the interview still asks you every question." count={requests.data?.items.length ?? 0}>
-            <RequestsGroup list={requests} status={data} />
-          </Group>
-        ) : null}
-      </div>
-      <RenumberDialog id={renumber} onOpenChange={(open) => !open && setRenumber(null)} />
-    </Page>
+          {groups.length ? (
+            <Parts label="Decisions by kind" open={open} onOpenChange={setChosen}>
+              {groups.map((g) => (
+                <Part key={g.id} id={g.id} name={g.name} summary={g.summary}>
+                  <GroupBody id={g.id} hint={g.hint}>
+                    {g.body}
+                  </GroupBody>
+                </Part>
+              ))}
+            </Parts>
+          ) : null}
+        </div>
+      </OnePane>
+      <RenumberDialog id={renumber} onOpenChange={(next) => !next && setRenumber(null)} />
+    </WorkScreen>
   );
 }

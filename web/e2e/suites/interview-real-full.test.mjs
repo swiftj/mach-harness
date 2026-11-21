@@ -339,7 +339,7 @@ test("real claude, full: an AI-assisted interview to a slice marked ready to bui
     await page.goto(`${host.origin}/#/slices/${SLICE}`);
     await main().getByRole("heading", { level: 1 }).waitFor();
     await settle(page);
-    await page.getByRole("complementary", { name: "Engine check" }).getByText(/Ready for your approval/).waitFor({ timeout: 30000 });
+    await page.getByRole("complementary", { name: "Check" }).getByText(/Ready for your approval/).waitFor({ timeout: 30000 });
     await main().getByRole("button", { name: "Mark ready to build" }).click();
     await dialog().getByRole("button", { name: "Mark ready to build" }).click();
     await page.getByRole("dialog", { name: `${SLICE} is ready to build` }).waitFor({ timeout: 120000 });

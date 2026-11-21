@@ -50,6 +50,24 @@ export interface InterviewClient {
   stop(interviewId: string): Promise<void>;
 }
 
+/**
+ * M16: the Shape conversation for one idea. The same routes as a slice's interview, named by `idea_id`; once
+ * started, it is subscribed, replied to, interrupted and stopped by its interview ID exactly as an interview is.
+ * Its rules let it write only that idea's brief and case and record what it looked up; it can never record a
+ * verdict, size, map, apply, publish or look back (apps/studio/internal/interview, the idea mode).
+ */
+export interface IdeaConversationClient extends Pick<InterviewClient, "subscribe" | "reply" | "interrupt" | "stop"> {
+  /** GET /api/interview?idea_id=. Null when the idea has never had a conversation here. */
+  current(ideaId: string, signal?: AbortSignal): Promise<InterviewSummary | null>;
+  /** GET /api/interview/history?idea_id=. */
+  history(ideaId: string, signal?: AbortSignal): Promise<InterviewHistory>;
+  /** POST /api/interview {idea_id}. Refused for an idea shaped into work; `conflict` when another window holds it. */
+  start(ideaId: string): Promise<StartResult>;
+}
+
+/** IDEA-NNN, checked before it is placed in a URL. */
+export const IDEA_ID = /^IDEA-\d{3,}$/;
+
 const INTERVIEW_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 /**
@@ -76,7 +94,7 @@ export function createInterviewClient(deps: {
   const open: EventSourceFactory =
     deps.eventSource ?? ((url) => new EventSource(url, { withCredentials: true }) as unknown as EventSourceLike);
 
-  return {
+  const client: InterviewClient = {
     async current(sliceId, signal) {
       if (!ENGINE_ID.test(sliceId)) throw new MachApiError("invalid", `"${sliceId}" is not a slice ID.`, "interview.current");
       const data = (await deps.get(`/api/interview?slice_id=${encodeURIComponent(sliceId)}`, "interview.current", signal)) as {
@@ -162,5 +180,34 @@ export function createInterviewClient(deps: {
         source?.close();
       };
     },
+  };
+  return client;
+}
+
+export function createIdeaConversationClient(
+  deps: Parameters<typeof createInterviewClient>[0],
+  interviews: InterviewClient = createInterviewClient(deps),
+): IdeaConversationClient {
+  const check = (ideaId: string, operation: string) => {
+    if (!IDEA_ID.test(ideaId)) throw new MachApiError("invalid", `"${ideaId}" is not an idea ID.`, operation);
+    return encodeURIComponent(ideaId);
+  };
+  return {
+    async current(ideaId, signal) {
+      const id = check(ideaId, "conversation.current");
+      const data = (await deps.get(`/api/interview?idea_id=${id}`, "conversation.current", signal)) as { interview: InterviewSummary | null };
+      return data.interview;
+    },
+    async history(ideaId, signal) {
+      return (await deps.get(`/api/interview/history?idea_id=${check(ideaId, "conversation.history")}`, "conversation.history", signal)) as InterviewHistory;
+    },
+    start(ideaId) {
+      if (!IDEA_ID.test(ideaId)) return Promise.reject(new MachApiError("invalid", `"${ideaId}" is not an idea ID.`, "conversation.start"));
+      return deps.post("/api/interview", "conversation.start", { idea_id: ideaId }) as Promise<StartResult>;
+    },
+    subscribe: interviews.subscribe,
+    reply: interviews.reply,
+    interrupt: interviews.interrupt,
+    stop: interviews.stop,
   };
 }

@@ -5,7 +5,7 @@ import { ArtifactId, Banner, Button, EmptyState, ErrorState, Heading, LoadingSta
 import { isMachApiError, uploadFile, uploadLimits, type PrdImport, type PrdSummary } from "@mach/ui/api";
 import { useEngineAct } from "../../api/act";
 import { useOperation } from "../../api/useOperation";
-import { ScreenFrame } from "../../shared/ScreenFrame";
+import { ContextRow, OnePane, WorkScreen } from "../../shared/layout/WorkScreen";
 import { DataNotice } from "./parts";
 import { limitWords, sectionLines } from "./model";
 
@@ -18,42 +18,50 @@ export function PrdListScreen() {
   const prds = list.data?.prds ?? null;
 
   return (
-    <ScreenFrame
-      title="Start from a PRD"
-      lead="If you have an approved product requirements document, bring it in and turn it into epics and thin slices that you confirm one at a time. It is optional: without one, you work exactly as before."
+    <WorkScreen
+      header={
+        <ContextRow
+          title="Start from a PRD"
+          about="If you have an approved product requirements document, bring it in and turn it into epics and thin slices that you confirm one at a time. It is optional: without one, you work exactly as before."
+        />
+      }
     >
-      <DataNotice />
-      <ImportPanel onImported={list.reload} first={prds !== null && prds.length === 0} />
-      <section aria-labelledby="prds-heading" className="flex max-w-reading flex-col gap-4">
-        <Heading level={2} id="prds-heading">
-          Your PRDs
-        </Heading>
-        {prds === null && list.loading ? <LoadingState label="Reading your PRDs" /> : null}
-        {prds === null && list.error ? (
-          <ErrorState
-            icon={<CircleAlert />}
-            title={describeError(list.error).title}
-            message={describeError(list.error).message}
-            action={<Button onClick={list.reload}>Try again</Button>}
-          />
-        ) : null}
-        {prds && prds.length === 0 ? (
-          <EmptyState
-            icon={<FileText />}
-            headingLevel={3}
-            title="No PRD imported yet"
-            description="Import one above when you have it. Each document you import is listed here with what has been made from it."
-          />
-        ) : null}
-        {prds && prds.length > 0 ? (
-          <ul className="flex flex-col divide-y divide-line rounded-md border border-line bg-surface">
-            {prds.map((prd) => (
-              <PrdRow key={prd.prd_id} prd={prd} />
-            ))}
-          </ul>
-        ) : null}
-      </section>
-    </ScreenFrame>
+      <OnePane label="Your PRDs and importing one" width="reading">
+        <div className="flex flex-col gap-8">
+          <DataNotice />
+          <ImportPanel onImported={list.reload} first={prds !== null && prds.length === 0} />
+          <section aria-labelledby="prds-heading" className="flex max-w-reading flex-col gap-4">
+            <Heading level={2} id="prds-heading">
+              Your PRDs
+            </Heading>
+            {prds === null && list.loading ? <LoadingState label="Reading your PRDs" /> : null}
+            {prds === null && list.error ? (
+              <ErrorState
+                icon={<CircleAlert />}
+                title={describeError(list.error).title}
+                message={describeError(list.error).message}
+                action={<Button onClick={list.reload}>Try again</Button>}
+              />
+            ) : null}
+            {prds && prds.length === 0 ? (
+              <EmptyState
+                icon={<FileText />}
+                headingLevel={3}
+                title="No PRD imported yet"
+                description="Import one above when you have it. Each document you import is listed here with what has been made from it."
+              />
+            ) : null}
+            {prds && prds.length > 0 ? (
+              <ul className="flex flex-col divide-y divide-line rounded-md border border-line bg-surface">
+                {prds.map((prd) => (
+                  <PrdRow key={prd.prd_id} prd={prd} />
+                ))}
+              </ul>
+            ) : null}
+          </section>
+        </div>
+      </OnePane>
+    </WorkScreen>
   );
 }
 
