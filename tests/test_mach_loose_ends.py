@@ -421,12 +421,12 @@ class StudioTest(IssuesBase):
 
 
 class DocumentsTest(unittest.TestCase):
-    def test_the_as_built_note_and_claude_md_say_it(self):
+    def test_the_as_built_note_and_the_blueprint_say_it(self):
         note = (ROOT / "docs/mach-next/M15_LOOSE_ENDS.md").read_text()
         for phrase in ("policy-owner", "not checked against the owner", "policies.accept_by", "rules_changed", "accident, not forgery"):
             self.assertIn(phrase, note)
-        claude = (ROOT / "CLAUDE.md").read_text()
-        self.assertIn("M15_LOOSE_ENDS.md", claude)
+        blueprint = (ROOT / "docs/BLUEPRINT.md").read_text()
+        self.assertIn("M15_LOOSE_ENDS.md", blueprint)
 
 
 if __name__ == "__main__":
