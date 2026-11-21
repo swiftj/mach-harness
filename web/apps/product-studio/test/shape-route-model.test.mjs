@@ -20,6 +20,12 @@ import {
   gateWords,
   highRiskWords,
   journeyStep,
+  applySummary,
+  mapSummary,
+  partForStep,
+  partPlace,
+  settleSummary,
+  sizeSummary,
   outcomeText,
   parseRule,
   quote,
@@ -143,6 +149,38 @@ test("the steps: size, map, settle, make the drafts, done", () => {
   assert.equal(journeyStep(holds, data("idea.map-status.uncovered")), 2);
   assert.equal(journeyStep(holds, data("idea.map-status.settled")), 3);
   assert.equal(journeyStep(holds, data("idea.map-status.applied")), 4);
+});
+
+/* ── The parts of the page (M16 layout) ───────────────────────────────── */
+
+test("the part that needs the product manager is the journey's, and each part says where it is", () => {
+  assert.deepEqual([0, 1, 2, 3, 4].map(partForStep), ["size", "map", "settle", "apply", "apply"]);
+  assert.deepEqual(["size", "map", "settle", "apply"].map((p) => partPlace(p, 2)), ["done", "done", "current", "later"]);
+  assert.deepEqual(["size", "map", "settle", "apply"].map((p) => partPlace(p, 4)), ["done", "done", "done", "done"]);
+});
+
+test("a closed part's summary carries its state, and anything blocking the next act, in the engine's terms", () => {
+  const holds = { kind: "holds", route: "several-epics", why: "", at: "", counted: null };
+  const go = { kind: "go" };
+  assert.equal(sizeSummary(holds, go), "Route: several epics");
+  assert.equal(sizeSummary({ ...holds, route: "one-slice", kind: "stale", note: null }, go), "Route: one slice, which no longer holds. Size it again.");
+  assert.equal(sizeSummary({ kind: "not-sized" }, go), "Not sized yet");
+  assert.match(sizeSummary({ kind: "not-sized" }, { kind: "no-go", decision: null, why: null }), /^Not ready to size/);
+
+  const uncovered = data("idea.map-status.uncovered");
+  assert.equal(mapSummary({ map: null }), "No map yet: it is proposed in Claude Code");
+  assert.equal(mapSummary(uncovered), "1 new epic and 2 thin slices in build order");
+  assert.match(mapSummary(data("idea.map-status.applied")), /kept as it was when the drafts were made$/);
+
+  assert.equal(settleSummary(uncovered.coverage), "1 outcome still to settle: O-2");
+  assert.equal(settleSummary(data("idea.map-status.settled").coverage), "Every outcome no slice carries is settled (1 of 1)");
+  assert.equal(settleSummary([{ outcome: "O-1", state: "covered", carried_by: ["S1"] }]), "Every outcome is carried by a slice on the map");
+
+  // The blocker that holds the drafts back is in the closed part's summary, word for word as the open part says it.
+  assert.equal(applySummary(uncovered, null, null), applyBlocked(uncovered)[0]);
+  const settled = data("idea.map-status.settled");
+  assert.equal(applySummary(settled, applyPlan(settled.map, () => null), null), `Ready to make ${applyWhat(applyPlan(settled.map, () => null))}`);
+  assert.equal(applySummary(data("idea.map-status.applied"), null, { epics: ["EPIC-002"], slices: ["SLICE-005"] }), "Made: EPIC-002, SLICE-005");
 });
 
 /* ── Coverage and settling ────────────────────────────────────────────── */

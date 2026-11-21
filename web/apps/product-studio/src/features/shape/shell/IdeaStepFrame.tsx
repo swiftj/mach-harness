@@ -1,15 +1,18 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { CircleAlert, Lightbulb } from "lucide-react";
-import { ArtifactId, Button, EmptyState, ErrorState, Heading, Page, Skeleton, SkeletonText, Text, describeError } from "@mach/ui";
+import { ArtifactId, Button, EmptyState, ErrorState, Page, Skeleton, SkeletonText, describeError } from "@mach/ui";
 import type { IdeaRow } from "@mach/ui/api";
+import { ContextRow, OnePane, WorkScreen } from "../../../shared/layout/WorkScreen";
 import { ShapeStepper } from "./ShapeStepper";
 import { shapeHome, stepName, type ShapeStep } from "./steps";
 import { useIdea } from "./useIdea";
 
 /**
- * The frame of every page of one idea (shell-owned): the idea's ID and title, the step's name as the one h1, the
- * lead sentence, the stepper, then the page's own content. It reads the idea's row from the shared status and gives it
+ * The frame of every page of one idea (shell-owned): a work screen (M16 layout) whose slim context row holds the
+ * idea's ID and title, the step's name as the one h1, Shape's steps on one line and the lead sentence behind "About
+ * this step"; then the page's own content. A page laid out in panes (`layout="panes"`) returns its own <WorkPanes>;
+ * any other page's body is put in one scrolling pane, as it was laid out before. It reads the idea's row from the shared status and gives it
  * to the page, which reads anything more itself. While the status loads, a skeleton; an idea the board does not hold,
  * an empty state that leads back to the board. Screen engineers fill `children` and never change this file.
  */
@@ -17,11 +20,14 @@ export function IdeaStepFrame({
   ideaId,
   step,
   lead,
+  layout = "page",
   children,
 }: {
   ideaId: string;
   step: Exclude<ShapeStep, "ideas">;
   lead?: ReactNode;
+  /** "panes": the page returns <WorkPanes> itself. "page": its body goes in one scrolling pane. */
+  layout?: "panes" | "page";
   children: (row: IdeaRow) => ReactNode;
 }) {
   const { row, board, loading, error, reload } = useIdea(ideaId);
@@ -64,17 +70,22 @@ export function IdeaStepFrame({
     );
   }
   return (
-    <Page width="wide" className="flex flex-col gap-8">
-      <header className="flex max-w-reading flex-col gap-2">
-        <Text size="body-sm" tone="muted" className="flex flex-wrap items-baseline gap-x-2">
-          <ArtifactId plain>{row.idea_id}</ArtifactId>
-          <span>{row.title}</span>
-        </Text>
-        <Heading level={1}>{stepName(step)}</Heading>
-        {lead ? <Text tone="muted">{lead}</Text> : null}
-      </header>
-      <ShapeStepper row={row} here={step} ideasOnBoard={board?.ideas.length ?? 0} />
-      {children(row)}
-    </Page>
+    <WorkScreen
+      header={
+        <ContextRow
+          identity={
+            <>
+              <ArtifactId plain>{row.idea_id}</ArtifactId>
+              <span className="min-w-0 break-words">{row.title}</span>
+            </>
+          }
+          title={stepName(step)}
+          about={lead}
+          trail={<ShapeStepper row={row} here={step} ideasOnBoard={board?.ideas.length ?? 0} />}
+        />
+      }
+    >
+      {layout === "panes" ? children(row) : <OnePane label={stepName(step)} width="content">{children(row)}</OnePane>}
+    </WorkScreen>
   );
 }

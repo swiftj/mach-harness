@@ -47,6 +47,25 @@ export interface PlacedFindings {
   whole: PlacedFinding[];
 }
 
+/**
+ * How many findings sit in each section of the brief, counting those placed beside one outcome or assumption in their
+ * section: for the list of sections beside the document (M16 layout). Sections with none are left out.
+ */
+export function findingsPerSection(placed: Pick<PlacedFindings, "section" | "outcome" | "assumption">): Partial<Record<BriefSection, { errors: number; warnings: number }>> {
+  const out: Partial<Record<BriefSection, { errors: number; warnings: number }>> = {};
+  const add = (id: BriefSection, items: readonly PlacedFinding[] | undefined) => {
+    for (const f of items ?? []) {
+      const row = (out[id] ??= { errors: 0, warnings: 0 });
+      if (f.severity === "error") row.errors += 1;
+      else row.warnings += 1;
+    }
+  };
+  for (const s of briefSections) add(s.id, placed.section[s.id]);
+  for (const items of Object.values(placed.outcome)) add("outcomes", items);
+  for (const items of Object.values(placed.assumption)) add("assumptions", items);
+  return out;
+}
+
 export const anchorOf = (place: FindingPlace): string | null => {
   switch (place.kind) {
     case "outcome":

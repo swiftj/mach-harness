@@ -8,6 +8,7 @@ import {
   briefCounts,
   checkAgainWords,
   checkState,
+  findingsPerSection,
   isNone,
   placeFindings,
   proseBlocks,
@@ -50,6 +51,20 @@ test("a brief with a problem: each finding sits beside the outcome or section it
   assert.equal(state.word, "1 problem to fix");
   assert.equal(state.tone, "danger");
   assert.equal(state.glyph, "blocked");
+});
+
+test("the list of sections beside the brief counts each section's findings, those beside an outcome in Outcomes", () => {
+  assert.deepEqual(findingsPerSection(placeFindings(data("brief.show.finding"))), {
+    outcomes: { errors: 1, warnings: 1 },
+    "open-questions": { errors: 0, warnings: 1 },
+  });
+  assert.deepEqual(findingsPerSection(placeFindings(data("brief.show.change-starter"))), {
+    problem: { errors: 1, warnings: 0 },
+    who: { errors: 1, warnings: 0 },
+    "not-doing": { errors: 1, warnings: 0 },
+    outcomes: { errors: 2, warnings: 1 },
+  });
+  assert.deepEqual(findingsPerSection(placeFindings(data("brief.show.passes"))), {});
 });
 
 test("the change's starter brief: placeholders are placed in Problem, Who has it, O-1 and Not doing", () => {

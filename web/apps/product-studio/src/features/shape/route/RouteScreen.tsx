@@ -5,14 +5,12 @@ import {
   ArtifactId,
   Banner,
   Button,
-  Disclosure,
   ErrorState,
   Heading,
   HintAction,
   LoadingState,
   StateGlyph,
   StatusPill,
-  Stepper,
   Text,
   cn,
   describeError,
@@ -22,10 +20,13 @@ import {
 import type { IdeaRow, IdeaShow, IdeaSized, ShapeMapStatus } from "@mach/ui/api";
 import { useEngineAct } from "../../../api/act";
 import { useOperation } from "../../../api/useOperation";
+import { Fold } from "../../../shared/layout/Fold";
+import { Part, Parts } from "../../../shared/layout/Parts";
+import { OnePane, WorkPane, WorkPanes } from "../../../shared/layout/WorkScreen";
 import { IdeaStepFrame } from "../shell/IdeaStepFrame";
 import { ideaPath, verdictWords } from "../shell/steps";
-import { JOURNEY, ROUTES, countedRows, gateWords, journeyStep, routeState, sizeGate, type Gate, type RouteState } from "./model";
-import { TheMap } from "./TheMap";
+import { JOURNEY, ROUTES, countedRows, gateWords, journeyStep, partForStep, partPlace, routeName, routeState, sizeGate, sizeSummary, type Gate, type RouteState } from "./model";
+import { MapBlockers, TheMap } from "./TheMap";
 
 /**
  * Size and route: what MACH counted, the route its fixed rule names, the proposed map with its coverage, settling and
@@ -37,12 +38,23 @@ import { TheMap } from "./TheMap";
 export function RouteScreen() {
   const ideaId = useParams().ideaId ?? "";
   return (
-    <IdeaStepFrame key={ideaId} ideaId={ideaId} step="route" lead="MACH counts what the brief touches and names a route by a fixed rule. You decide what is created.">
+    <IdeaStepFrame
+      key={ideaId}
+      ideaId={ideaId}
+      step="route"
+      layout="panes"
+      lead="MACH counts what the brief touches and names a route by a fixed rule. You decide what is created."
+    >
       {(row) => <RoutePage row={row} />}
     </IdeaStepFrame>
   );
 }
 
+/**
+ * The page in two panes (M16 layout). The wide pane is the journey as four parts, one open at a time: size it (and
+ * the route the rule names), the map, settling what no slice carries, and making the drafts. Each part's row says its
+ * state; the part the journey is at is open. The narrow pane keeps what MACH counted in view while the person works.
+ */
 function RoutePage({ row }: { row: IdeaRow }) {
   const ideaId = row.idea_id;
   const show = useOperation("idea.show", { idea_id: ideaId });
@@ -52,18 +64,25 @@ function RoutePage({ row }: { row: IdeaRow }) {
   const brief = useOperation("brief.show", hasMap ? { idea_id: ideaId } : null);
 
   // Wait for both reads, so a route is never shown as stale while the engine's view of it is still on its way.
-  if ((!show.data && show.loading) || (!status.data && status.loading)) return <LoadingState label={`Reading ${ideaId}`} />;
+  if ((!show.data && show.loading) || (!status.data && status.loading))
+    return (
+      <OnePane label="Size and route">
+        <LoadingState label={`Reading ${ideaId}`} />
+      </OnePane>
+    );
   if (!show.data) {
     const shown = show.error ? describeError(show.error) : { title: "Not available right now", message: "" };
     return (
-      <ErrorState
-        className="max-w-reading"
-        icon={<CircleAlert />}
-        title={show.error?.kind === "refused" ? `Could not read ${ideaId}` : shown.title}
-        message={show.error?.kind === "refused" ? show.error.message : shown.message}
-        hint={show.error?.hint}
-        action={<Button onClick={show.reload}>Try again</Button>}
-      />
+      <OnePane label="Size and route">
+        <ErrorState
+          className="max-w-reading"
+          icon={<CircleAlert />}
+          title={show.error?.kind === "refused" ? `Could not read ${ideaId}` : shown.title}
+          message={show.error?.kind === "refused" ? show.error.message : shown.message}
+          hint={show.error?.hint}
+          action={<Button onClick={show.reload}>Try again</Button>}
+        />
+      </OnePane>
     );
   }
 
@@ -77,28 +96,83 @@ function RoutePage({ row }: { row: IdeaRow }) {
   };
 
   return (
-    <div className="flex flex-col gap-10">
-      <div className="overflow-x-auto pb-1">
-        <Stepper label="Sizing and the map" steps={JOURNEY} current={journeyStep(route, status.data)} />
-      </div>
-      {route.kind !== "holds" ? (
-        <SizeSection
+    <WorkPanes>
+      <WorkPane label="Sizing and the map">
+        <RouteParts
           ideaId={ideaId}
           gate={gate}
           route={route}
+          step={journeyStep(route, status.data)}
+          status={status}
+          brief={brief.data}
+          made={data.made}
           onSized={(result) => {
             setSized(result);
             reload();
           }}
+          onChanged={reload}
         />
-      ) : null}
+      </WorkPane>
       {route.kind !== "not-sized" ? (
-        <>
+        <WorkPane side label="The route and what MACH counted">
           <CountedSection route={route} detail={countedDetail(sized, data.route)} />
-          <RoutesSection ideaId={ideaId} route={route} />
-          <MapArea ideaId={ideaId} status={status} brief={brief.data} made={data.made} onChanged={reload} />
-        </>
+        </WorkPane>
       ) : null}
+    </WorkPanes>
+  );
+}
+
+/**
+ * The four parts. The part the journey is at opens on arrival; when an act moves the journey on (a size, the last
+ * outcome settled, the drafts made), the part that now needs the person opens, as the result of what they did.
+ */
+function RouteParts({
+  ideaId,
+  gate,
+  route,
+  step,
+  status,
+  brief,
+  made,
+  onSized,
+  onChanged,
+}: {
+  ideaId: string;
+  gate: Gate;
+  route: RouteState;
+  step: number;
+  status: ReturnType<typeof useOperation<"idea.map-status">>;
+  brief: Parameters<typeof TheMap>[0]["brief"];
+  made: IdeaShow["made"];
+  onSized: (result: IdeaSized) => void;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState<string | null>(partForStep(step));
+  const [seenStep, setSeenStep] = useState(step);
+  if (seenStep !== step) {
+    setSeenStep(step);
+    setOpen(partForStep(step));
+  }
+  return (
+    <div className="flex flex-col gap-6">
+      <MapBlockers status={status.data} />
+      <Parts label="Sizing and the map" open={open} onOpenChange={setOpen}>
+        <Part id="size" number={1} place={partPlace("size", step)} name={JOURNEY[0]?.label ?? "Size it"} summary={sizeSummary(route, gate)}>
+          <div className="flex flex-col gap-6">
+            {route.kind !== "holds" ? <SizeSection ideaId={ideaId} gate={gate} route={route} onSized={onSized} /> : null}
+            {route.kind !== "not-sized" ? <RoutesSection ideaId={ideaId} route={route} /> : null}
+          </div>
+        </Part>
+        {route.kind === "not-sized" ? (
+          <>
+            <Part id="map" number={2} place="later" name={JOURNEY[1]?.label ?? "Map"} summary="After sizing" />
+            <Part id="settle" number={3} place="later" name={JOURNEY[2]?.label ?? "Settle"} summary="After the map" />
+            <Part id="apply" number={4} place="later" name={JOURNEY[3]?.label ?? "Make the drafts"} summary="After the map" />
+          </>
+        ) : (
+          <MapArea ideaId={ideaId} status={status} brief={brief} made={made} step={step} onChanged={onChanged} />
+        )}
+      </Parts>
     </div>
   );
 }
@@ -117,10 +191,7 @@ function SizeSection({ ideaId, gate, route, onSized }: { ideaId: string; gate: G
   };
   const stale = route.kind === "stale";
   return (
-    <section aria-labelledby="size-heading" className="flex max-w-reading flex-col gap-4">
-      <Heading level={2} id="size-heading">
-        {stale ? "Size it again" : "Size it"}
-      </Heading>
+    <div className="flex max-w-reading flex-col gap-4">
       {stale ? (
         <Banner tone="warning" title="The route no longer holds">
           {route.note ?? "The brief or the verdict changed after this route was found, so it no longer holds. Record the verdict on the brief as it is now, then size it again."}
@@ -151,7 +222,7 @@ function SizeSection({ ideaId, gate, route, onSized }: { ideaId: string; gate: G
       ) : (
         <NeedsGo ideaId={ideaId} gate={gate} />
       )}
-    </section>
+    </div>
   );
 }
 
@@ -183,39 +254,56 @@ function NeedsGo({ ideaId, gate }: { ideaId: string; gate: Gate }) {
   );
 }
 
-/** What MACH counted: the engine's numbers, with "Not determined" said as such and never as zero. */
+/** The narrow pane: the route the rule names and why, then what MACH counted, with "Not determined" said as such and never as zero. */
 function CountedSection({ route, detail }: { route: Exclude<RouteState, { kind: "not-sized" }>; detail: CountedDetailData | null }) {
   const counted = route.counted;
+  const stale = route.kind === "stale";
   return (
-    <section aria-labelledby="counted-heading" className="flex max-w-reading flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <Heading level={2} id="counted-heading">
-          What MACH counted
+    <div className="flex flex-col gap-8">
+      <section aria-labelledby="aside-route-heading" className="flex flex-col gap-2">
+        <Heading level={2} size="title-3" id="aside-route-heading">
+          The route
         </Heading>
-        <Text size="body-sm" tone="muted">
-          {route.kind === "stale" ? "As counted for an earlier version of the brief." : "From the brief as it is now, and what was looked up while exploring."}
-          {route.at ? ` Sized ${formatWhen(route.at)}.` : null}
-        </Text>
-      </div>
-      {counted ? (
-        <dl className="grid grid-cols-3 gap-px overflow-hidden rounded-md border border-line bg-line">
-          {countedRows(counted).map((r) => (
-            <div key={r.label} className="flex flex-col gap-1 bg-surface px-4 py-3">
-              <dt className="text-body-sm text-ink-muted">{r.label}</dt>
-              <dd className={cn("tabular", r.value === "Not determined" ? "text-body font-semibold text-ink" : "text-title-3 font-semibold text-ink")}>{r.value}</dd>
-              {r.note ? <dd className="text-caption text-ink-muted">{r.note}</dd> : null}
-            </div>
-          ))}
-        </dl>
-      ) : (
-        <p className="text-body-sm text-ink-muted">The counts were not recorded with this route.</p>
-      )}
-      <Text size="body-sm" tone="muted">
-        High risk means sign-in or permissions, billing, a database schema or migration, or an existing contract. High-risk areas and concerns are counted and shown; they are
-        not part of the rule that names the route.
-      </Text>
-      {detail ? <CountedDetail detail={detail} /> : null}
-    </section>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <span className="text-title-3 text-ink">{routeName(route.route)}</span>
+          <StatusPill tone={stale ? "neutral" : "accent"} size="sm" icon={<StateGlyph shape={stale ? "superseded" : "ready"} />} className={cn(stale && "border-dashed")}>
+            {stale ? "No longer holds" : "Where the rule puts it"}
+          </StatusPill>
+        </div>
+        <Text size="body-sm">{route.why}</Text>
+      </section>
+      <section aria-labelledby="counted-heading" className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1">
+          <Heading level={2} size="title-3" id="counted-heading">
+            What MACH counted
+          </Heading>
+          <Text size="body-sm" tone="muted">
+            {route.kind === "stale" ? "As counted for an earlier version of the brief." : "From the brief as it is now, and what was looked up while exploring."}
+            {route.at ? ` Sized ${formatWhen(route.at)}.` : null}
+          </Text>
+        </div>
+        {counted ? (
+          <dl className="grid grid-cols-2 gap-2">
+            {countedRows(counted).map((r) => (
+              <div key={r.label} className="flex min-w-0 flex-col gap-0.5 rounded-sm bg-surface-sunken px-2.5 py-2">
+                <dt className="text-caption text-ink-muted">{r.label}</dt>
+                <dd className={cn("tabular", r.value === "Not determined" ? "text-body font-semibold text-ink" : "text-title-3 font-semibold text-ink")}>{r.value}</dd>
+                {r.note ? <dd className="text-caption text-ink-muted">{r.note}</dd> : null}
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <p className="text-body-sm text-ink-muted">The counts were not recorded with this route.</p>
+        )}
+        <div className="flex flex-col gap-2">
+          <Fold boxed label="What high risk means">
+            High risk means sign-in or permissions, billing, a database schema or migration, or an existing contract. High-risk areas and concerns are counted and shown; they
+            are not part of the rule that names the route.
+          </Fold>
+          {detail ? <CountedDetail detail={detail} /> : null}
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -263,7 +351,7 @@ function CountedDetail({ detail: sized }: { detail: CountedDetailData }) {
       <span className="text-ink-muted">None</span>
     );
   return (
-    <Disclosure summary="What each count is made of">
+    <Fold boxed label="What each count is made of">
       <dl className="flex flex-col gap-3 text-body-sm">
         <div className="flex flex-col gap-1">
           <dt className="font-semibold text-ink">Outcomes</dt>
@@ -306,49 +394,55 @@ function CountedDetail({ detail: sized }: { detail: CountedDetailData }) {
           </div>
         ) : null}
       </dl>
-    </Disclosure>
+    </Fold>
   );
 }
 
 /**
- * The three routes, each fully readable, the one the rule chose marked with the engine's sentence of why. There is no
- * way to choose one here: the brief is what changes.
+ * The three routes, in the order of their size: the one the rule chose in full, marked with the engine's sentence of
+ * why; the other two one line each, with when the rule would choose them. There is no way to choose one here: the
+ * brief is what changes.
  */
 function RoutesSection({ ideaId, route }: { ideaId: string; route: Exclude<RouteState, { kind: "not-sized" }> }) {
   const stale = route.kind === "stale";
   return (
-    <section aria-labelledby="routes-heading" className="flex flex-col gap-4">
+    <section aria-labelledby="routes-heading" className="flex max-w-[48rem] flex-col gap-3">
       <div className="flex max-w-reading flex-col gap-1">
-        <Heading level={2} id="routes-heading">
+        <Heading level={3} id="routes-heading">
           The route
         </Heading>
         <Text size="body-sm" tone="muted">
-          Three routes, one rule. MACH applies the rule to the counts above; the route is never chosen by hand.
+          Three routes, one rule. MACH applies the rule to what it counted; the route is never chosen by hand.
         </Text>
       </div>
-      <ol aria-label="Routes" className="grid grid-cols-3 gap-3">
+      <ol aria-label="Routes" className="flex flex-col gap-2">
         {ROUTES.map((r) => {
           const chosen = r.route === route.route;
+          if (!chosen) {
+            return (
+              <li key={r.route} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 rounded-md border border-dashed border-line-strong px-4 py-2">
+                <span className="text-body-sm font-semibold text-ink-muted">{r.name}</span>
+                <span className="text-body-sm text-ink-muted">{r.when}</span>
+              </li>
+            );
+          }
           return (
             <li
               key={r.route}
-              aria-current={chosen ? "true" : undefined}
-              className={cn(
-                "flex flex-col gap-2 rounded-md px-4 py-4",
-                chosen ? (stale ? "border-2 border-dashed border-line-strong bg-surface" : "border-2 border-accent bg-surface") : "border border-dashed border-line-strong",
-              )}
+              aria-current="true"
+              className={cn("flex flex-col gap-2 rounded-md px-4 py-4", stale ? "border-2 border-dashed border-line-strong bg-surface" : "border-2 border-accent bg-surface")}
             >
-              {chosen ? (
-                <StatusPill tone={stale ? "neutral" : "accent"} size="sm" icon={<StateGlyph shape={stale ? "superseded" : "ready"} />} className={cn("self-start", stale && "border-dashed")}>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <Heading level={4} size="title-3" className="text-ink">
+                  {r.name}
+                </Heading>
+                <StatusPill tone={stale ? "neutral" : "accent"} size="sm" icon={<StateGlyph shape={stale ? "superseded" : "ready"} />} className={cn(stale && "border-dashed")}>
                   {stale ? "Where the rule put it; no longer holds" : "This is where the rule puts it"}
                 </StatusPill>
-              ) : null}
-              <Heading level={3} size="title-3" className={chosen ? "text-ink" : "text-ink-muted"}>
-                {r.name}
-              </Heading>
-              <p className="text-body-sm text-ink">{r.when}</p>
-              <p className="text-body-sm text-ink-muted">{r.next}</p>
-              {chosen ? <p className="border-t border-line pt-2 text-body-sm text-ink">{route.why}</p> : null}
+              </div>
+              <p className="text-body-sm text-ink">
+                {r.when} <span className="text-ink-muted">{r.next}</span>
+              </p>
             </li>
           );
         })}
@@ -369,28 +463,35 @@ function MapArea({
   status,
   brief,
   made,
+  step,
   onChanged,
 }: {
   ideaId: string;
   status: ReturnType<typeof useOperation<"idea.map-status">>;
   brief: Parameters<typeof TheMap>[0]["brief"];
   made: IdeaShow["made"];
+  step: number;
   onChanged: () => void;
 }) {
-  if (!status.data && status.loading) return <LoadingState label={`Reading the map of ${ideaId}`} />;
   if (!status.data) {
     const shown = status.error ? describeError(status.error) : { title: "Not available right now", message: "" };
     return (
-      <ErrorState
-        className="max-w-reading"
-        icon={<CircleAlert />}
-        title={status.error?.kind === "refused" ? `Could not read the map of ${ideaId}` : shown.title}
-        message={status.error?.kind === "refused" ? status.error.message : shown.message}
-        hint={status.error?.hint}
-        action={<Button onClick={status.reload}>Try again</Button>}
-      />
+      <Part id="map" number={2} place={partPlace("map", step)} name={JOURNEY[1]?.label ?? "Map"} summary={status.loading ? "Reading the map" : "The map could not be read"}>
+        {status.loading ? (
+          <LoadingState label={`Reading the map of ${ideaId}`} />
+        ) : (
+          <ErrorState
+            className="max-w-reading"
+            icon={<CircleAlert />}
+            title={status.error?.kind === "refused" ? `Could not read the map of ${ideaId}` : shown.title}
+            message={status.error?.kind === "refused" ? status.error.message : shown.message}
+            hint={status.error?.hint}
+            action={<Button onClick={status.reload}>Try again</Button>}
+          />
+        )}
+      </Part>
     );
   }
   const data: ShapeMapStatus = status.data;
-  return <TheMap ideaId={ideaId} status={data} brief={brief} made={made} onChanged={onChanged} />;
+  return <TheMap ideaId={ideaId} status={data} brief={brief} made={made} step={step} onChanged={onChanged} />;
 }

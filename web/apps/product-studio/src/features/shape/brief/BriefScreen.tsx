@@ -7,7 +7,6 @@ import {
   Banner,
   Button,
   DiagnosticList,
-  Disclosure,
   EmptyState,
   ErrorState,
   Heading,
@@ -18,7 +17,11 @@ import {
   Text,
   cn,
   describeError,
+  plural as count,
 } from "@mach/ui";
+import { Fold } from "../../../shared/layout/Fold";
+import { SectionNav } from "../../../shared/layout/SectionNav";
+import { OnePane, WorkPane, WorkPanes } from "../../../shared/layout/WorkScreen";
 import type { BriefCheck, BriefModel, BriefShow, IdeaRow } from "@mach/ui/api";
 import { IdeaStepFrame } from "../shell/IdeaStepFrame";
 import { ideaPath } from "../shell/steps";
@@ -31,6 +34,7 @@ import {
   checkAgainWords,
   checkState,
   epicTodayPath,
+  findingsPerSection,
   isNone,
   numberedLines,
   placeFindings,
@@ -53,7 +57,7 @@ import {
 export function BriefScreen() {
   const ideaId = useParams().ideaId ?? "";
   return (
-    <IdeaStepFrame key={ideaId} ideaId={ideaId} step="brief" lead="One page, written by the conversation and owned by you. It never reaches the builders as instructions; the slice specs do.">
+    <IdeaStepFrame key={ideaId} ideaId={ideaId} step="brief" layout="panes" lead="One page, written by the conversation and owned by you. It never reaches the builders as instructions; the slice specs do.">
       {(row) => <BriefPage row={row} />}
     </IdeaStepFrame>
   );
@@ -86,53 +90,88 @@ function BriefPage({ row }: { row: IdeaRow }) {
     }
   };
 
-  if (!show.data && show.loading) return <BriefSkeleton />;
+  if (!show.data && show.loading)
+    return (
+      <OnePane label="The brief">
+        <BriefSkeleton />
+      </OnePane>
+    );
   if (!show.data) {
     const error = show.error;
-    if (error?.kind === "refused" && !row.has_brief) return <NoBrief ideaId={ideaId} />;
+    if (error?.kind === "refused" && !row.has_brief)
+      return (
+        <OnePane label="The brief">
+          <NoBrief ideaId={ideaId} />
+        </OnePane>
+      );
     const described = error ? describeError(error) : { title: "Could not read the brief", message: "" };
     return (
-      <ErrorState
-        icon={<CircleAlert />}
-        title={error?.kind === "refused" ? "The brief could not be shown" : described.title}
-        message={error?.kind === "refused" ? error.message : described.message}
-        hint={error?.hint}
-        action={
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={show.reload}>Try again</Button>
-            <Button variant="ghost" asChild>
-              <Link to={ideaPath(ideaId, "explore")}>Back to the conversation</Link>
-            </Button>
-          </div>
-        }
-      />
+      <OnePane label="The brief">
+        <ErrorState
+          icon={<CircleAlert />}
+          title={error?.kind === "refused" ? "The brief could not be shown" : described.title}
+          message={error?.kind === "refused" ? error.message : described.message}
+          hint={error?.hint}
+          action={
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={show.reload}>Try again</Button>
+              <Button variant="ghost" asChild>
+                <Link to={ideaPath(ideaId, "explore")}>Back to the conversation</Link>
+              </Button>
+            </div>
+          }
+        />
+      </OnePane>
     );
   }
 
   const data = show.data;
   const placed = placeFindings(data);
+  const perSection = findingsPerSection(placed);
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_19rem] items-start gap-10">
-      <div className="flex min-w-0 flex-col gap-5">
-        <WrittenElsewhere ideaId={ideaId} primary={!data.passes} />
-        <Notices show={data} lastCheck={lastCheck} actError={act.shown} ideaId={ideaId} />
-        <BriefDocument show={data} placed={placed} lookups={idea.data?.lookups ?? null} />
-        <Disclosure summary="The text as written, with its line numbers">
-          <Text size="body-sm" tone="muted" className="mb-3">
-            The check names lines by these numbers.
-          </Text>
-          <ol className="flex flex-col" aria-label="The brief's lines">
-            {numberedLines(data.text).map((l) => (
-              <li key={l.n} className="grid grid-cols-[2.5rem_minmax(0,1fr)] gap-3">
-                <span className="text-right text-caption tabular text-ink-subtle">{l.n}</span>
-                <span className="min-w-0 whitespace-pre-wrap break-words text-body-sm text-ink">{l.text || " "}</span>
-              </li>
-            ))}
-          </ol>
-        </Disclosure>
-      </div>
-      <CheckPanel show={data} placed={placed} ideaId={ideaId} onCheckAgain={checkAgain} checking={act.pending} />
-    </div>
+    <WorkPanes>
+      <WorkPane label="The brief">
+        <div className="flex flex-col gap-5">
+          <WrittenElsewhere ideaId={ideaId} primary={!data.passes} />
+          <Notices show={data} lastCheck={lastCheck} actError={act.shown} ideaId={ideaId} />
+          <BriefDocument show={data} placed={placed} lookups={idea.data?.lookups ?? null} />
+          <Fold boxed label="The text as written, with its line numbers">
+            <Text size="body-sm" tone="muted" className="mb-3">
+              The check names lines by these numbers.
+            </Text>
+            <ol className="flex flex-col" aria-label="The brief's lines">
+              {numberedLines(data.text).map((l) => (
+                <li key={l.n} className="grid grid-cols-[2.5rem_minmax(0,1fr)] gap-3">
+                  <span className="text-right text-caption tabular text-ink-subtle">{l.n}</span>
+                  <span className="min-w-0 whitespace-pre-wrap break-words text-body-sm text-ink">{l.text || " "}</span>
+                </li>
+              ))}
+            </ol>
+          </Fold>
+        </div>
+      </WorkPane>
+      <WorkPane side label="Check and sections">
+        <div className="flex flex-col gap-8">
+          <CheckPanel show={data} placed={placed} ideaId={ideaId} onCheckAgain={checkAgain} checking={act.pending} />
+          <SectionNav
+            label="Sections of the brief"
+            title="In this brief"
+            items={briefSections.map(({ id, heading }) => {
+              const found = perSection[id];
+              return {
+                id: `brief-section-${id}`,
+                label: heading,
+                note: found ? (
+                  <span className={cn("shrink-0 text-caption font-semibold", found.errors ? "text-danger-ink" : "text-warning-ink")}>
+                    {found.errors ? count(found.errors, "problem") : count(found.warnings, "warning")}
+                  </span>
+                ) : undefined,
+              };
+            })}
+          />
+        </div>
+      </WorkPane>
+    </WorkPanes>
   );
 }
 
@@ -507,8 +546,8 @@ function CheckPanel({
   const revision = revisionWords(show);
   const verdict = verdictState(show.verdict);
   return (
-    <aside aria-labelledby="check-title" className="sticky top-6 flex flex-col gap-5">
-      <section className="flex flex-col gap-4 rounded-md border border-line bg-surface px-4 py-4">
+    <aside aria-labelledby="check-title" className="flex flex-col gap-5">
+      <section className="flex flex-col gap-4">
         <div className="flex items-baseline justify-between gap-2">
           <Heading level={2} size="title-3" id="check-title">
             Check
