@@ -393,3 +393,54 @@ export function interviewReducer(model: InterviewModel, action: ModelAction): In
 export function isBusy(state: InterviewHostState | null): boolean {
   return state === "starting" || state === "thinking" || state === "working";
 }
+
+/* The slice so far: its sections, for the list beside the question (M16 layout) */
+
+/** What a section of the slice so far carries in the list: its findings, what is new in it, or what is still open. */
+export type DocSectionNote = { kind: "problems" | "new" | "open"; count: number } | null;
+
+export interface DocSectionRow {
+  /** The id of the section's heading in the document; the section element is `${id}-section`. */
+  id: string;
+  label: string;
+  note: DocSectionNote;
+}
+
+interface DocModel {
+  invariants?: Array<{ id: string }>;
+  functional_requirements?: Array<{ id: string }>;
+  decision_matrix?: { rules: Array<{ id: string }> } | null;
+  scenarios?: Array<{ id: string }>;
+  open_questions?: unknown[];
+  assumptions?: unknown[];
+}
+
+/**
+ * The sections the slice so far shows, in its order, each only when it has something in it (as the document does). A
+ * section's note is the check's findings placed in it first, then how many of its items arrived with the latest write,
+ * then, for "Still open", how many questions are open. Findings are the check's, placed by the section they name.
+ */
+export function docSections(
+  findings: Array<{ section: string | null }>,
+  model: DocModel | null,
+  openQuestions: number,
+  added: ReadonlySet<string>,
+): DocSectionRow[] {
+  const problems = (section: string) => findings.filter((f) => f.section === section).length;
+  const open = model?.open_questions?.length ? model.open_questions.length : openQuestions;
+  const rows: Array<{ id: string; label: string; items: Array<{ id: string }>; present: boolean; problems: number; open?: number }> = [
+    { id: "doc-rules", label: "What must always be true", items: model?.invariants ?? [], present: Boolean(model?.invariants?.length), problems: problems("rules") },
+    { id: "doc-reqs", label: "What it does", items: model?.functional_requirements ?? [], present: Boolean(model?.functional_requirements?.length), problems: problems("requirements") },
+    { id: "doc-cases", label: "Every case", items: model?.decision_matrix?.rules ?? [], present: Boolean(model?.decision_matrix?.rules.length), problems: problems("decision-table") },
+    { id: "doc-examples", label: "Examples to prove it", items: model?.scenarios ?? [], present: Boolean(model?.scenarios?.length), problems: problems("scenarios") },
+    { id: "doc-open", label: "Still open", items: [], present: open > 0, problems: problems("open-questions"), open },
+    { id: "doc-assumptions", label: "Assumed", items: [], present: Boolean(model?.assumptions?.length), problems: problems("assumptions") },
+  ];
+  return rows
+    .filter((row) => row.present)
+    .map((row) => {
+      const fresh = row.items.filter((item) => added.has(item.id)).length;
+      const note: DocSectionNote = row.problems ? { kind: "problems", count: row.problems } : fresh ? { kind: "new", count: fresh } : row.open ? { kind: "open", count: row.open } : null;
+      return { id: row.id, label: row.label, note };
+    });
+}

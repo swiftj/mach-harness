@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { CircleAlert, MessagesSquare, SearchX } from "lucide-react";
-import { ArtifactId, Banner, Button, EmptyState, ErrorState, Heading, Page, Skeleton, SkeletonText, SliceGithubPills, SliceLifecycle, SliceStatusPill, Tabs, TabsContent, TabsList, TabsTrigger, Text, describeError, CheckCounts, CheckPill, checkVerdict, DiagnosticList, diagnostics as listDiagnostics, specModel, whyDocument, type Diagnostic, type SpecSectionId as SectionId, plural as count } from "@mach/ui";
+import { ArtifactId, Banner, Button, EmptyState, ErrorState, Heading, Page, Skeleton, SkeletonText, SliceGithubPills, SliceLifecycle, SliceStatusPill, Text, describeError, CheckCounts, CheckPill, checkVerdict, DiagnosticList, diagnostics as listDiagnostics, specModel, whyDocument, type Diagnostic, type SpecSectionId as SectionId, plural as count } from "@mach/ui";
 import { type SliceShow, ENGINE_ID as SLICE_ID } from "@mach/ui/api";
 import { MarkReadyDialog, PauseDialog, ReopenDialog } from "./SliceActs";
 import { SourceEditor } from "./SourceEditor";
 import { AssumptionsSection, DecisionTableSection, DependenciesSection, OpenQuestionsSection, RequirementsSection, RulesSection, ScenariosSection, SummarySection, WhySection } from "./SpecSections";
-import { sectionTitles } from "./specModel";
+import { checkDetail, sectionTitles, viewOf, type View } from "./specModel";
 import { useSliceShow } from "../../api/useSliceShow";
 import { useStatus } from "../../api/store";
 import { WithdrawnNote } from "../../shared/WithdrawnNote";
@@ -16,8 +16,6 @@ import { SliceTimes } from "../../shared/SliceTimes";
 import { SliceSections } from "../../shared/SliceSections";
 import { SectionNav } from "../../shared/layout/SectionNav";
 import { ContextRow, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
-
-type View = "spec" | "why" | "source";
 
 export function SpecScreen() {
   const { sliceId = "" } = useParams();
@@ -55,8 +53,7 @@ function SpecWorkspace({ sliceId }: { sliceId: string }) {
 
   const data = show.data;
   const goTo = (section: SectionId) => {
-    const target: View = section === "why" ? "why" : section === "source" ? "source" : "spec";
-    setView(target);
+    setView(viewOf(section));
     requestAnimationFrame(() => {
       const heading = document.getElementById(`section-${section}-title`);
       heading?.scrollIntoView({ block: "start" });
@@ -75,29 +72,26 @@ function SpecWorkspace({ sliceId }: { sliceId: string }) {
         <WorkPane label={`${data.slice.slice_id}, the document`}>
           <div className="flex flex-col gap-6">
             <SpecNotices show={data} refreshError={show.error ? describeError(show.error).message : null} />
-            <Tabs value={view} onValueChange={(value) => setView(value as View)} className="min-w-0">
-              <TabsList aria-label="How to read this slice">
-                <TabsTrigger value="spec">Specification</TabsTrigger>
-                <TabsTrigger value="why">Why</TabsTrigger>
-                <TabsTrigger value="source">Source (advanced)</TabsTrigger>
-              </TabsList>
-              <TabsContent value="spec">
-                <SpecBody show={data} />
-              </TabsContent>
-              <TabsContent value="why">
-                <WhySection why={whyDocument(data)} diagnostics={listDiagnostics(data.check).filter((d) => d.section === "why")} />
-              </TabsContent>
-              <TabsContent value="source">
-                <SourceEditor
-                  show={data}
-                  why={whyDocument(data)}
-                  onSaved={(check) => {
-                    show.replaceCheck(check);
-                    show.reload();
-                  }}
-                />
-              </TabsContent>
-            </Tabs>
+            {/* One row of page tabs (M16): the specification, its why and its source are chosen in the section list beside it. */}
+            <div hidden={view !== "spec"}>
+              <SpecBody show={data} />
+            </div>
+            <div hidden={view !== "why"}>
+              <WhySection why={whyDocument(data)} diagnostics={listDiagnostics(data.check).filter((d) => d.section === "why")} />
+            </div>
+            <section id="section-source" aria-labelledby="section-source-title" hidden={view !== "source"} className="flex scroll-mt-6 flex-col gap-3">
+              <Heading level={2} size="title-2" id="section-source-title">
+                {sectionTitles.source} (advanced)
+              </Heading>
+              <SourceEditor
+                show={data}
+                why={whyDocument(data)}
+                onSaved={(check) => {
+                  show.replaceCheck(check);
+                  show.reload();
+                }}
+              />
+            </section>
           </div>
         </WorkPane>
         <WorkPane side label="Check and sections">
@@ -136,7 +130,7 @@ function SpecContext({ show, onChanged, refreshing }: { show: SliceShow; onChang
         </>
       }
       title={slice.title}
-      trail={<SliceLifecycle status={slice.status} openQuestions={openCount} className="w-[34rem] max-w-full" />}
+      trail={<SliceLifecycle status={slice.status} openQuestions={openCount} className="max-w-full" />}
       actions={
         <>
           {show.github.question ? <AnswerQuestionButton sliceId={slice.slice_id} approved={approved} /> : null}
@@ -283,13 +277,13 @@ function CheckAside({ show, onGoTo }: { show: SliceShow; onGoTo: (section: Secti
     <aside aria-labelledby="check-title" className="flex flex-col gap-8">
       <section className="flex flex-col gap-3">
         <Heading level={2} size="title-3" id="check-title">
-          Engine check
+          Check
         </Heading>
         <span className="self-start">
           <CheckPill check={check} status={show.slice.status} />
         </span>
         <Text size="body-sm" tone="muted">
-          {verdict.detail}
+          {checkDetail(verdict.detail)}
         </Text>
         <CheckCounts check={check} className="grid-cols-2" />
         {check.risk ? (
@@ -301,13 +295,13 @@ function CheckAside({ show, onGoTo }: { show: SliceShow; onGoTo: (section: Secti
       <SectionNav
         label="Sections of this slice"
         onGo={(id) => onGoTo(id.replace(/^section-/, "") as SectionId)}
-        items={[...asideSections, ...elsewhere.map((e) => e.id).filter((id) => bySection.has(id))].map((section) => {
+        items={[...asideSections, ...elsewhere.map((e) => e.id).filter((id) => bySection.has(id)), "source" as const].map((section) => {
           const found = bySection.get(section) ?? [];
           const open = section === "open-questions" ? check.open_questions.length : 0;
           const issue = found.length || open;
           return {
             id: `section-${section}`,
-            label: sectionTitles[section],
+            label: section === "source" ? `${sectionTitles.source} (advanced)` : sectionTitles[section],
             note: issue ? (
               <span className={found.some((d) => d.severity === "error" || d.severity === "why") ? "shrink-0 text-caption font-semibold text-danger-ink" : "shrink-0 text-caption font-semibold text-warning-ink"}>
                 {found.length ? count(found.length, "problem") : count(open, "open", "open")}

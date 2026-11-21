@@ -207,8 +207,7 @@ def deliver(host: Any, studio: Any, slice_id: str, items: List[Dict[str, Any]], 
     return {"folder": str(target), "commit_as": relative, "files": sorted(files), "factory_waits": True,
             "note": host.say(f"The builders hold {slice_id} until its design mocks are on the main branch. Commit the folder "
                              f"{target.relative_to(studio.draft)} to the repository at {relative}, with nothing else in it, or hand it to an engineer to commit.",
-                             f"The builders hold {slice_id} until its design mocks are in the project's repository. Add the pictures from this folder "
-                             f"to the repository at {relative}, or hand them to an engineer to add.")}
+                             f"The builders hold {slice_id} until its design mocks are in the project's repository, at {relative}.")}
 
 
 TAKE_REFUSAL = ("#{number} has design mocks. Their pictures are files on the main branch, not in the issue, so it cannot be opened here as a draft. "

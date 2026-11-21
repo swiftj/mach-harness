@@ -18,11 +18,15 @@ import {
   describeError,
   diagnostics,
   plain,
+  plural,
   specModel,
 } from "@mach/ui";
 import type { SliceShow, SpecModel } from "@mach/ui/api";
 import { type SliceShowState } from "../../api/useSliceShow";
 import { matrixCell } from "../spec/SpecSections";
+import { SectionNav, type SectionNavItem } from "../../shared/layout/SectionNav";
+import { WorkPane } from "../../shared/layout/WorkScreen";
+import { docSections } from "./model";
 
 /** Every identifier in the draft: requirements, rules, decision rules, examples. */
 function idsOf(model: Partial<SpecModel> | null): string[] {
@@ -54,9 +58,60 @@ function useJustAdded(data: SliceShow | null): Set<string> {
  * Beside the question: the slice as it builds up, set as a document to read. Everything here is the
  * engine's own read of the draft (`slice.show`), reloaded whenever the host reports a write; what
  * appeared with the latest write is marked "New".
+ *
+ * M16 layout: the top of the column keeps the slice's state and the list of the document's sections in view (each
+ * with its findings or what is new in it, and a way to jump there); the document scrolls below them on its own.
  */
-export function SliceDocument({ sliceId, show, epicTitle }: { sliceId: string; show: SliceShowState; epicTitle: string | null }) {
+export function SliceSoFar({ sliceId, show, epicTitle }: { sliceId: string; show: SliceShowState; epicTitle: string | null }) {
   const added = useJustAdded(show.data);
+  const data = show.data;
+  const sections: SectionNavItem[] = data
+    ? docSections(diagnostics(data.check), specModel(data), data.check.open_questions.length, added).map((s) => ({
+        id: `${s.id}-section`,
+        label: s.label,
+        note:
+          s.note === null ? undefined : (
+            <span className={cn("shrink-0 text-caption font-semibold", s.note.kind === "problems" ? "text-danger-ink" : s.note.kind === "new" ? "text-accent-ink" : "text-warning-ink")}>
+              {s.note.kind === "problems" ? plural(s.note.count, "problem") : `${s.note.count} ${s.note.kind}`}
+            </span>
+          ),
+      }))
+    : [];
+  return (
+    <aside aria-label="The slice so far" className="flex min-h-0 flex-col border-l border-line bg-surface max-[1023px]:border-l-0 max-[1023px]:border-t [@media(max-height:619px)]:border-l-0">
+      {data ? (
+        <div className="flex shrink-0 flex-col gap-2 border-b border-line px-10 pb-3 pt-4">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <Heading level={2} size="title-3" id="doc-check">
+              Check
+            </Heading>
+            <SliceStatusPill status={data.slice.status} size="sm" />
+            <CheckPill check={data.check} status={data.slice.status} size="sm" />
+            <span className="flex items-center gap-1.5 text-caption text-ink-subtle" role="status">
+              {show.loading ? (
+                <>
+                  <Spinner size="sm" />
+                  Updating
+                </>
+              ) : null}
+            </span>
+          </div>
+          {sections.length ? (
+            // Two columns of sections, so the document below keeps most of the height.
+            <div className="-mx-2 [&_ul]:grid [&_ul]:grid-cols-2 [&_ul]:gap-x-2">
+              <SectionNav label="Sections of the slice so far" title="In the slice so far" items={sections} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      <WorkPane label="The slice so far, as written" width="content">
+        <SliceDocument sliceId={sliceId} show={show} epicTitle={epicTitle} added={added} />
+      </WorkPane>
+    </aside>
+  );
+}
+
+function SliceDocument({ sliceId, show, epicTitle, added }: { sliceId: string; show: SliceShowState; epicTitle: string | null; added: Set<string> }) {
   if (!show.data && show.loading) {
     return (
       <div role="status" aria-busy="true" aria-label="Reading the draft">
@@ -102,28 +157,14 @@ export function SliceDocument({ sliceId, show, epicTitle }: { sliceId: string; s
         {model?.summary?.outcome ? <p className="text-body-lg text-ink-muted">{model.summary.outcome}</p> : null}
       </header>
 
-      <section aria-labelledby="doc-check" className="flex flex-col gap-2 rounded-md border border-line bg-canvas px-4 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <Heading level={3} size="title-3" id="doc-check" className="text-body">
-            Engine check
+      {problems.length ? (
+        <section aria-labelledby="doc-found" className="flex flex-col gap-2 rounded-md border border-line bg-canvas px-4 py-3">
+          <Heading level={3} size="title-3" id="doc-found" className="text-body">
+            What MACH&apos;s check found
           </Heading>
-          <span className="flex items-center gap-1.5 text-caption text-ink-subtle" role="status">
-            {show.loading ? (
-              <>
-                <Spinner size="sm" />
-                Updating
-              </>
-            ) : null}
-          </span>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <SliceStatusPill status={data.slice.status} size="sm" />
-          <CheckPill check={check} status={data.slice.status} size="sm" />
-        </div>
-        <Text size="caption" tone="subtle">
-          The interviewer proposes; this is what the engine checked in your draft.
-        </Text>
-        {problems.length ? (
+          <Text size="caption" tone="subtle">
+            The interviewer proposes; this is what MACH checked in your draft.
+          </Text>
           <div className="flex flex-col gap-1.5">
             <DiagnosticList items={problems.slice(0, 4)} compact />
             {problems.length > 4 ? (
@@ -132,8 +173,8 @@ export function SliceDocument({ sliceId, show, epicTitle }: { sliceId: string; s
               </Text>
             ) : null}
           </div>
-        ) : null}
-      </section>
+        </section>
+      ) : null}
 
       {!written ? (
         <Text tone="subtle">Nothing written yet. The interviewer writes the specification once the questions are settled.</Text>
@@ -251,7 +292,7 @@ export function SliceDocument({ sliceId, show, epicTitle }: { sliceId: string; s
 
 function DocSection({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
-    <section aria-labelledby={id} className="flex flex-col gap-3">
+    <section id={`${id}-section`} aria-labelledby={id} className="flex scroll-mt-6 flex-col gap-3">
       <Heading level={3} size="title-3" id={id}>
         {title}
       </Heading>

@@ -1386,8 +1386,11 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
                  "revision": saved["revision"], "follows": saved["follows"], "epic_issue": saved["epic_issue"], "project_issue": saved["project_issue"],
                  "approved_by": channel.login, "risk": result.get("risk"), "counts": result.get("counts"), "warnings": result["warnings"],
                  "request_updates": request, "factory_authorized": False, **({"mocks": delivery} if delivery else {}),
-                 "note": f"Saved to GitHub as #{saved['issue']} and marked ready. The builders take it from there; nothing has started yet."
-                         + (" " + delivery["note"] if delivery else "")})
+                 # The app shows where and what is left as rows of their own, so its note says only what happened and who waits.
+                 "note": say(f"Saved to GitHub as #{saved['issue']} and marked ready. The builders take it from there; nothing has started yet."
+                             + (" " + delivery["note"] if delivery else ""),
+                             f"Saved to GitHub as #{saved['issue']} and marked ready. "
+                             + (delivery["note"] if delivery else "The builders take it from there; nothing has started yet."))})
 
 
 def cmd_slice_reopen(studio: Studio, args: argparse.Namespace) -> int:

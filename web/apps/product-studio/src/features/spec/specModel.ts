@@ -31,3 +31,21 @@ export const sectionTitles: Record<SpecSectionId, string> = {
   why: "Why this slice",
   source: "Source",
 };
+
+/**
+ * What the wide pane shows. The specification, its why and its source are one page: the section list beside it chooses
+ * between them (M16 layout), so a slice has one row of page tabs.
+ */
+export type View = "spec" | "why" | "source";
+
+export function viewOf(section: SpecSectionId): View {
+  return section === "why" ? "why" : section === "source" ? "source" : "spec";
+}
+
+/**
+ * The check's one-sentence verdict in a person's words: MACH checks the draft, never "the engine". The sentence comes
+ * from @mach/ui's checkVerdict; only how it names the checker changes here.
+ */
+export function checkDetail(detail: string): string {
+  return detail.replace(/\b[Tt]he engine's check\b/g, "MACH's check").replace(/\b[Tt]he engine\b/g, "MACH");
+}
