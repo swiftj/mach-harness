@@ -1,5 +1,5 @@
-import { ExternalLink, Lightbulb } from "lucide-react";
-import { useState } from "react";
+import { ChevronRight, ExternalLink, Lightbulb } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import { isMachApiError } from "@mach/ui/api";
 import { Link } from "react-router";
 import { ArtifactId, Badge, Banner, Button, Heading, Text, type Status } from "@mach/ui";
@@ -24,35 +24,60 @@ export function RequestCard({ item, status, onChanged }: { item: RequestItem; st
   const approvedSlices = item.slices.filter((id) => status.slices.some((s) => s.slice_id === id && s.status === "approved_for_engineering"));
   const can = requestActions(item, approvedSlices);
   const close = (open: boolean) => (open ? undefined : setDialog(null));
+  const acts = (
+    <>
+      {can.pickUp ? (
+        <Button variant="primary" size="sm" onClick={() => setDialog("pick")}>
+          Pick up
+        </Button>
+      ) : null}
+      {can.pickUpAsWell ? (
+        <Button variant="primary" size="sm" onClick={() => setDialog("also")}>
+          Pick up as well
+        </Button>
+      ) : null}
+      {can.link ? (
+        <Button size="sm" onClick={() => setDialog("link")}>
+          Link a draft slice
+        </Button>
+      ) : null}
+      {can.markMet ? (
+        <Button size="sm" onClick={() => setDialog("met")}>
+          Mark as met
+        </Button>
+      ) : null}
+      {can.viewOnGitHub && item.url ? (
+        <Button asChild size="sm" variant="ghost">
+          <a href={item.url} target="_blank" rel="noopener noreferrer">
+            <ExternalLink aria-hidden="true" />
+            View on GitHub<span className="sr-only"> (request #{item.number}, opens a new tab)</span>
+          </a>
+        </Button>
+      ) : null}
+    </>
+  );
 
   return (
     <article aria-labelledby={headingId} className="flex flex-col gap-3 rounded-md border border-line bg-surface px-5 py-4">
-      <header className="flex flex-col gap-1.5">
-        <Heading level={3} id={headingId} size="title-3">
-          Request #{item.number}
-        </Heading>
-        {item.title ? <p className="break-words text-body font-semibold text-ink">{item.title}</p> : null}
-        {item.idea_template && item.state !== "not_accepted" ? (
-          <div>
-            <Badge tone="neutral" outline>
+      {/* One line for what it is, one for who marked and picked it up; its text stays folded until asked for. */}
+      <header className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <Heading level={3} id={headingId} size="title-3" className="shrink-0">
+            Request #{item.number}
+          </Heading>
+          {item.title ? <p className="min-w-0 break-words text-body font-semibold text-ink">{item.title}</p> : null}
+          {item.idea_template && item.state !== "not_accepted" ? (
+            <Badge tone="neutral" outline className="self-center">
               <Lightbulb aria-hidden="true" className="size-3.5" />
               Filed as an idea, in five parts
             </Badge>
-          </div>
-        ) : null}
-        {accepted && item.labelled_by ? (
-          <Text size="body-sm" tone="muted">
-            Marked as a request by @{item.labelled_by}
-          </Text>
-        ) : null}
-        {item.picked_up_here ? (
-          <Text size="body-sm" tone="muted">
-            Picked up by you
-          </Text>
-        ) : pickedElsewhere ? (
-          <Text size="body-sm" tone="muted">
-            Picked up by {logins(item.picked_up_by)}
-          </Text>
+          ) : null}
+        </div>
+        {(accepted && item.labelled_by) || item.picked_up_here || pickedElsewhere ? (
+          <p className="flex flex-wrap gap-x-4 gap-y-0.5 text-body-sm text-ink-muted">
+            {accepted && item.labelled_by ? <span>Marked as a request by @{item.labelled_by}</span> : null}
+            {item.picked_up_here ? <span>Picked up by you</span> : pickedElsewhere ? <span>Picked up by {logins(item.picked_up_by)}</span> : null}
+          </p>
         ) : null}
       </header>
 
@@ -72,11 +97,11 @@ export function RequestCard({ item, status, onChanged }: { item: RequestItem; st
         </Banner>
       ) : null}
 
-      {item.state === "not_accepted" ? null : <RequestText item={item} />}
-
       {item.slices.length ? (
-        <div className="flex flex-col gap-1">
-          <Text size="body-sm">Slices made from it</Text>
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <Text as="span" size="body-sm">
+            Slices made from it:
+          </Text>
           <ul className="flex flex-wrap gap-2">
             {item.slices.map((id) => (
               <li key={id}>
@@ -90,38 +115,11 @@ export function RequestCard({ item, status, onChanged }: { item: RequestItem; st
         </div>
       ) : null}
 
-      {!handled ? (
-        <div className="flex flex-wrap items-center gap-2">
-          {can.pickUp ? (
-            <Button variant="primary" size="sm" onClick={() => setDialog("pick")}>
-              Pick up
-            </Button>
-          ) : null}
-          {can.pickUpAsWell ? (
-            <Button variant="primary" size="sm" onClick={() => setDialog("also")}>
-              Pick up as well
-            </Button>
-          ) : null}
-          {can.link ? (
-            <Button size="sm" onClick={() => setDialog("link")}>
-              Link a draft slice
-            </Button>
-          ) : null}
-          {can.markMet ? (
-            <Button size="sm" onClick={() => setDialog("met")}>
-              Mark as met
-            </Button>
-          ) : null}
-          {can.viewOnGitHub && item.url ? (
-            <Button asChild size="sm" variant="ghost">
-              <a href={item.url} target="_blank" rel="noopener noreferrer">
-                <ExternalLink aria-hidden="true" />
-                View on GitHub<span className="sr-only"> (request #{item.number}, opens a new tab)</span>
-              </a>
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
+      {item.state === "not_accepted" ? (
+        !handled ? <div className="flex flex-wrap items-center gap-2">{acts}</div> : null
+      ) : (
+        <RequestText item={item} actions={handled ? null : acts} />
+      )}
 
       <PickUpDialog open={dialog === "pick" || dialog === "also"} also={dialog === "also"} onOpenChange={close} item={item} epics={status.epics} onDone={onChanged} />
       <LinkDialog open={dialog === "link"} onOpenChange={close} item={item} slices={status.slices} onDone={onChanged} />
@@ -134,7 +132,7 @@ export function RequestCard({ item, status, onChanged }: { item: RequestItem; st
  * The request's text, read with `request.show` only when the person asks to see it. The engine
  * returns it fenced; the two marker lines are removed and the rest is shown as one plain text node.
  */
-function RequestText({ item }: { item: RequestItem }) {
+function RequestText({ item, actions }: { item: RequestItem; actions: ReactNode }) {
   const [shown, setShown] = useState<{ text: string | null; idea: { sections: IdeaSection[]; note: string } | null; note: string | null; truncated: boolean } | null>(null);
   const [loading, setLoading] = useState(false);
   const regionId = `request-${item.number}-text`;
@@ -162,10 +160,12 @@ function RequestText({ item }: { item: RequestItem }) {
   };
   return (
     <div className="flex flex-col gap-1.5">
-      <div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <Button size="sm" variant="ghost" aria-expanded={shown !== null} aria-controls={shown ? regionId : undefined} disabled={loading} onClick={() => void open()}>
+          <ChevronRight aria-hidden="true" className={shown ? "rotate-90" : undefined} />
           {shown ? "Hide the request's text" : "Show the request's text"}
         </Button>
+        {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
       </div>
       {shown?.idea ? (
         <IdeaParts number={item.number} regionId={regionId} sections={shown.idea.sections} dataNote={item.text_is_data} ideaNote={shown.idea.note} truncated={shown.truncated} />
