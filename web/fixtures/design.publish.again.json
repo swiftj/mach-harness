@@ -1,0 +1,42 @@
+{
+  "exit_code": 0,
+  "data": {
+    "published": true,
+    "changed": false,
+    "folder": "/project/.factory/studio/draft/product/ready/DESIGN/DES-01",
+    "files": [
+      "/project/.factory/studio/draft/product/ready/DESIGN/DES-01/design.json",
+      "/project/.factory/studio/draft/product/ready/DESIGN/DES-01/design.md"
+    ],
+    "design": {
+      "design_id": "DES-01",
+      "name": "architecture.md",
+      "format": "markdown",
+      "sha256": "f2b9dbe5d56e4e573ebe1d492c6643a0a533138348aba180da50e37b5c7779a7",
+      "line_count": 22,
+      "sections": 5,
+      "document_matches": true,
+      "mapped": true,
+      "topics": {
+        "coding-standards": "silent",
+        "deployment": "silent",
+        "framework": "silent",
+        "language": "silent",
+        "storage": "decided",
+        "testing": "partly"
+      },
+      "other": 1,
+      "conflicts": 1,
+      "unsettled": [],
+      "published": true,
+      "unpublished_changes": false
+    },
+    "factory_authorized": false,
+    "ways_on": [
+      "Add this folder to the project's repository; the engineer's architecture baseline reads the design from there."
+    ],
+    "note": "Already published exactly so; nothing was changed. Nothing was sent to GitHub, no decision was taken and no work has started."
+  },
+  "refused": null,
+  "hint": null
+}

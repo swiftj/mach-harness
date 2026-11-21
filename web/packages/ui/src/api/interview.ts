@@ -65,6 +65,23 @@ export interface IdeaConversationClient extends Pick<InterviewClient, "subscribe
   start(ideaId: string): Promise<StartResult>;
 }
 
+/**
+ * M17: the needs conversation, for the product as a whole (one per project). The same routes, named by `needs: true`;
+ * once started, it is subscribed, replied to, interrupted and stopped by its interview ID as an interview is. Its
+ * rules let it record needs and "nothing to say" with the product manager's words (need add, set, none), read a
+ * design and record a design's map; it can never retire or publish needs, choose a version, bring in, settle or
+ * publish a design (apps/studio/internal/interview, the needs mode). Every act on the needs or a design is refused
+ * with `conflict` while its turn runs.
+ */
+export interface NeedsConversationClient extends Pick<InterviewClient, "subscribe" | "reply" | "interrupt" | "stop"> {
+  /** GET /api/interview?needs=true. Null when the needs have never had a conversation here. */
+  current(signal?: AbortSignal): Promise<InterviewSummary | null>;
+  /** GET /api/interview/history?needs=true. */
+  history(signal?: AbortSignal): Promise<InterviewHistory>;
+  /** POST /api/interview {needs: true}. Refused before a project exists; `conflict` when another window holds it. */
+  start(): Promise<StartResult>;
+}
+
 /** IDEA-NNN, checked before it is placed in a URL. */
 export const IDEA_ID = /^IDEA-\d{3,}$/;
 
@@ -204,6 +221,29 @@ export function createIdeaConversationClient(
     start(ideaId) {
       if (!IDEA_ID.test(ideaId)) return Promise.reject(new MachApiError("invalid", `"${ideaId}" is not an idea ID.`, "conversation.start"));
       return deps.post("/api/interview", "conversation.start", { idea_id: ideaId }) as Promise<StartResult>;
+    },
+    subscribe: interviews.subscribe,
+    reply: interviews.reply,
+    interrupt: interviews.interrupt,
+    stop: interviews.stop,
+  };
+}
+
+/** M17: the needs conversation's client (NeedsConversationClient). */
+export function createNeedsConversationClient(
+  deps: Parameters<typeof createInterviewClient>[0],
+  interviews: InterviewClient = createInterviewClient(deps),
+): NeedsConversationClient {
+  return {
+    async current(signal) {
+      const data = (await deps.get("/api/interview?needs=true", "conversation.current", signal)) as { interview: InterviewSummary | null };
+      return data.interview;
+    },
+    async history(signal) {
+      return (await deps.get("/api/interview/history?needs=true", "conversation.history", signal)) as InterviewHistory;
+    },
+    start() {
+      return deps.post("/api/interview", "conversation.start", { needs: true }) as Promise<StartResult>;
     },
     subscribe: interviews.subscribe,
     reply: interviews.reply,

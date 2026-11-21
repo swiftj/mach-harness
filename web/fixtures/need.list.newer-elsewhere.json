@@ -1,0 +1,102 @@
+{
+  "exit_code": 0,
+  "data": {
+    "needs": [
+      {
+        "kind": "people",
+        "need_id": "TN-01",
+        "revision": 1,
+        "statement": "About three hundred staff use it from two offices, busiest on Monday mornings.",
+        "status": "active",
+        "why": "It sets how large it must be."
+      },
+      {
+        "kind": "priority",
+        "need_id": "TN-02",
+        "revision": 1,
+        "statement": "When safety and speed of change conflict, safety wins.",
+        "status": "active",
+        "why": "A mistake costs more than a delay."
+      }
+    ],
+    "kinds": [
+      {
+        "kind": "people",
+        "question": "Who uses it, how many, from where, and at what busiest moment?",
+        "needs": [
+          "TN-01"
+        ],
+        "nothing_to_say": false
+      },
+      {
+        "kind": "data",
+        "question": "What does it keep, how sensitive is that, and how long must it be kept?",
+        "needs": [],
+        "nothing_to_say": false
+      },
+      {
+        "kind": "connections",
+        "question": "What must it work with that already exists?",
+        "needs": [],
+        "nothing_to_say": false
+      },
+      {
+        "kind": "never",
+        "question": "What must never happen, and what does it cost if it does?",
+        "needs": [],
+        "nothing_to_say": false
+      },
+      {
+        "kind": "priority",
+        "question": "When two qualities conflict (speed, cost, safety, ease of change), which wins?",
+        "needs": [
+          "TN-02"
+        ],
+        "nothing_to_say": false
+      },
+      {
+        "kind": "given",
+        "question": "What is already decided outside this product?",
+        "needs": [],
+        "nothing_to_say": false
+      }
+    ],
+    "active": [
+      "TN-01",
+      "TN-02"
+    ],
+    "retired": [],
+    "nothing_to_say": [],
+    "unanswered": [
+      "data",
+      "connections",
+      "never",
+      "given"
+    ],
+    "unpublished_changes": true,
+    "published": {
+      "saved": "github",
+      "unfinished": false,
+      "revision": 1,
+      "sha256": "452e454bd25fcfb34e5cf006e9f8bb11628d3fd88a0bcb013ef2515e9d4824d7",
+      "approved_by": "ada-pm",
+      "published_at": "2026-11-21T19:34:56Z",
+      "issue": 1,
+      "url": "https://github.com/acme/team-space/issues/1",
+      "github": {
+        "revision": 2,
+        "approved": true,
+        "approved_by": "ben-pm",
+        "read_at": "2026-11-21T19:34:58Z"
+      },
+      "newer_elsewhere": true,
+      "changed_on_github": false
+    },
+    "adrs_behind": [],
+    "next": "Someone else published a newer version of the technical needs on GitHub: choose yours or theirs.",
+    "note": "A technical need says what the product requires of whatever is built, without technology. The engineer reads the published needs when drafting the architecture decisions; only an accepted decision chooses a technology.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

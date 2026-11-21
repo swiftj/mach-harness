@@ -1,0 +1,9 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "Someone else published version 2 of the technical needs on GitHub. Choose yours or theirs on the Technical needs page before publishing. Nothing was saved.",
+  "hint": {
+    "kind": "reconcile",
+    "target": "needs"
+  }
+}

@@ -2,7 +2,10 @@ package interview
 
 import (
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,12 +22,13 @@ var (
 	// does only on a person's word (principles, a policy owner's acceptance, Jira keys and the export,
 	// the PRD on-ramp's import, map, settle, apply, draft and confirm, design mocks), and their reads,
 	// which the interview has no need of: the app's own buttons do them. Since M16 also every Shape
-	// command: the slice interview never touches an idea.
+	// command: the slice interview never touches an idea. Since M17 also every technical needs and
+	// design command: they belong to the product, not to a slice.
 	deniedOps = []string{"slice ready", "reconcile", "slice renumber", "epic renumber",
 		"slice reopen", "slice move", "slice take", "project", "slice new", "epic add", "epic set",
 		"slice approve", "wave", "send", "feedback", "acceptance",
 		"principle", "policy", "epic link", "slice link", "epic current", "jira", "prd", "slice mock",
-		"idea", "brief", "case", "verdict", "lookback"}
+		"idea", "brief", "case", "verdict", "lookback", "need", "design"}
 )
 
 // The Shape conversation (M16): the second, equally narrow mode, for exactly one idea. It may read
@@ -40,8 +44,29 @@ var (
 		"principle add", "principle set", "principle retire", "principle publish", "policy accept", "jira", "prd",
 		"request show", "request pick", "request link", "request met",
 		"idea add", "idea stage", "idea renumber", "idea publish", "idea size", "idea map", "idea settle", "idea map-status", "idea apply", "idea change", "idea chain",
-		"verdict", "lookback"}
+		"verdict", "lookback", "need", "design"}
 )
+
+// The needs conversation (M17): the third, equally narrow mode, for the product as a whole. It may
+// read (the workspace, the needs, the brought-in designs, the principles and policy packs), record
+// what the product manager said as a need or "nothing to say" (need add, need set, need none), read a
+// design's text (design show) and record a design's map, only from its one fixed input file. Nothing
+// else: retiring and publishing the needs, choosing a version of them, and bringing in, settling and
+// publishing a design are the product manager's buttons; and nothing of any slice or idea.
+var (
+	allowedNeedsOps     = []string{"where", "status", "validate", "refresh", "need list", "design list", "principle list", "policy list"}
+	allowedNeedsOpsArgs = []string{"need add", "need set", "need none", "design show"}
+	deniedNeedsOps      = []string{"slice", "reconcile", "epic", "project", "wave", "send", "feedback", "acceptance",
+		"principle add", "principle set", "principle retire", "principle publish", "policy accept", "jira", "prd", "request",
+		"idea", "brief", "case", "verdict", "lookback",
+		"need retire", "need publish", "design import", "design settle", "design publish"}
+)
+
+// NeedsSubject is the needs conversation's subject: one per project, never a slice or an idea ID.
+const NeedsSubject = "needs"
+
+// IsNeeds says whether an interview's subject is the needs conversation.
+func IsNeeds(subject string) bool { return subject == NeedsSubject }
 
 // IsIdea says whether an interview's subject is an idea (IDEA-NNN) rather than a slice. The server
 // checks both patterns before anything reaches this package.
@@ -74,6 +99,24 @@ func IdeaHostNote(lookups string) string {
 		"operation is unavailable; the others still work."
 }
 
+// NeedsHostNote is the needs conversation's note: the same rules, with the one file it records a
+// design's map from.
+func NeedsHostNote(mapInput string) string {
+	return "You are the technical needs conversation inside MACH Product Studio's local app, for the product as a whole. Each of your " +
+		"messages is shown to the product manager as is, and their reply comes back as the next message. You may record a need or " +
+		"'nothing to say' only with need add, need set and need none, and only with the product manager's own words. To record a " +
+		"design's map, write the map JSON to exactly " + mapInput + " and run design map with the design's ID, --from and that path; " +
+		"no other file can be written or read as input. Retiring and publishing the needs, choosing between versions of them, " +
+		"bringing in a design, settling its conflicts and publishing it are the product manager's own acts, done with the app's " +
+		"buttons; you cannot run them here, so if asked, tell the PM which button to use. Never offer a technology, never settle a " +
+		"conflict or recommend how, and never accept or recommend an architecture decision. Run the studio script as a plain " +
+		"command, one per Bash call, exactly as the skill spells it: no shell variables, functions, cd or chained commands. If one " +
+		"command is refused, only that operation is unavailable; the others still work."
+}
+
+// NeedsOpeningNote follows the skill's command in the needs conversation's first turn.
+const NeedsOpeningNote = "Talk through the product's technical needs with the product manager: run need list first, then ask about the unanswered kinds, one open question at a time."
+
 // IdeaOpeningNote follows the skill's command in an idea's first turn.
 const IdeaOpeningNote = "Explore this idea with the product manager: run idea show first, then ask open questions, one at a time."
 
@@ -104,6 +147,32 @@ type Paths struct {
 	Inputs string
 }
 
+// DesignMapInput is the one file the needs conversation may write for `design map` (M17): outside
+// the draft workspace, like the Shape conversation's lookups file.
+func (p Paths) DesignMapInput() string {
+	return filepath.Join(p.Inputs, "needs.design-map.json")
+}
+
+// designIDs are the designs brought into the workspace when a turn starts (product/designs/DES-NN):
+// the needs conversation's `design map` rules name each exactly, never a wildcard.
+func (p Paths) designIDs() []string {
+	entries, err := os.ReadDir(filepath.Join(p.Draft, "product", "designs"))
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	for _, e := range entries {
+		if e.IsDir() && e.Type()&fs.ModeSymlink == 0 && designIDPattern.MatchString(e.Name()) {
+			ids = append(ids, e.Name())
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// design.DES_RE.
+var designIDPattern = regexp.MustCompile(`^DES-[0-9]{2,}$`)
+
 // LookupsInput is the one file the Shape conversation for this idea may write for `idea lookups`.
 func (p Paths) LookupsInput(ideaID string) string {
 	return filepath.Join(p.Inputs, ideaID+".lookups.json")
@@ -115,6 +184,9 @@ func (p Paths) LookupsInput(ideaID string) string {
 func (p Paths) PermissionArgs(subject string) []string {
 	if IsIdea(subject) {
 		return p.ideaPermissionArgs(subject)
+	}
+	if IsNeeds(subject) {
+		return p.needsPermissionArgs()
 	}
 	sliceID := subject
 	allow := []string{"Read", "Glob", "Grep"}
@@ -170,6 +242,34 @@ func (p Paths) ideaPermissionArgs(ideaID string) []string {
 	return append(append([]string{"--allowedTools"}, allow...), append([]string{"--disallowedTools"}, deny...)...)
 }
 
+// needsPermissionArgs: the needs conversation's rules. `need add|set|none` and `design show` with
+// their options; `design map` only for a design in the workspace, by its exact ID, with --from naming
+// the one input file, in each spelling; edits to exactly that input file. product/needs.json is
+// written only by the engine, never edited.
+func (p Paths) needsPermissionArgs() []string {
+	allow := []string{"Read", "Glob", "Grep"}
+	var deny []string
+	input := p.DesignMapInput()
+	designs := p.designIDs()
+	for _, prefix := range p.prefixes() {
+		for _, op := range allowedNeedsOps {
+			allow = append(allow, "Bash("+prefix+op+")")
+		}
+		for _, op := range allowedNeedsOpsArgs {
+			allow = append(allow, "Bash("+prefix+op+" *)")
+		}
+		for _, id := range designs {
+			for _, spelled := range []string{input, `"` + input + `"`} {
+				allow = append(allow, "Bash("+prefix+"design map "+id+" --from "+spelled+")",
+					"Bash("+prefix+"design map "+id+" --from="+spelled+")")
+			}
+		}
+		deny = append(deny, denyRules(prefix, deniedNeedsOps)...)
+	}
+	allow = append(allow, "Edit(/"+input+")")
+	return append(append([]string{"--allowedTools"}, allow...), append([]string{"--disallowedTools"}, deny...)...)
+}
+
 // prefixes is every spelling of "<python> <studio.py> " the model may type.
 func (p Paths) prefixes() []string {
 	var out []string
@@ -217,6 +317,8 @@ func (p Paths) Args(subject string, o TurnOptions, message string) []string {
 	note := HostNote
 	if IsIdea(subject) {
 		note = IdeaHostNote(p.LookupsInput(subject))
+	} else if IsNeeds(subject) {
+		note = NeedsHostNote(p.DesignMapInput())
 	}
 	args = append(args, "--max-budget-usd", strconv.FormatFloat(o.BudgetUSD, 'f', -1, 64),
 		"--append-system-prompt", note)
@@ -287,6 +389,14 @@ var activityByOp = map[string][2]string{
 	"brief check":    {"check", "checked the brief"},
 	"case show":      {"lookup", "read the case"},
 	"case check":     {"check", "checked the case"},
+	// M17: the needs conversation.
+	"need list":   {"lookup", "read the technical needs"},
+	"need add":    {"save", "recorded a technical need"},
+	"need set":    {"save", "changed a technical need"},
+	"need none":   {"save", "recorded nothing to say about a kind"},
+	"design list": {"lookup", "looked at the designs brought in"},
+	"design show": {"lookup", "read the design"},
+	"design map":  {"save", "recorded the design's map"},
 }
 
 var refusedByWord = []struct{ key, text string }{
@@ -296,7 +406,8 @@ var refusedByWord = []struct{ key, text string }{
 
 // twoWordCommands are the engine's command groups whose second word names the operation.
 var twoWordCommands = map[string]bool{"slice": true, "epic": true, "wave": true, "project": true, "idea": true, "brief": true,
-	"case": true, "verdict": true, "lookback": true, "principle": true, "policy": true, "request": true}
+	"case": true, "verdict": true, "lookback": true, "principle": true, "policy": true, "request": true,
+	"need": true, "design": true}
 
 // studioOp finds the engine operation in a shell command, or "" with ok=false when the command
 // does not run the studio script.
@@ -363,6 +474,8 @@ func (p Paths) Describe(name string, input map[string]any) (kind, text string) {
 			return "write", "wrote the case"
 		case strings.Contains(path, "/product/briefs/"):
 			return "write", "wrote the brief"
+		case p.Inputs != "" && path == p.DesignMapInput():
+			return "write", "wrote down the design's map"
 		case p.Inputs != "" && strings.HasPrefix(path, p.Inputs+string(filepath.Separator)):
 			return "write", "wrote down what it looked up"
 		}
@@ -413,6 +526,11 @@ func WhatChanged(paths []string) []string {
 			kind = "lookups"
 		case strings.HasPrefix(p, "product/ideas/"):
 			kind = "idea"
+		// M17: the technical needs and a brought-in design's map.
+		case p == "product/needs.json":
+			kind = "needs"
+		case strings.HasPrefix(p, "product/designs/"):
+			kind = "design"
 		default:
 			continue
 		}

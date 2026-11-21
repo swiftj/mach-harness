@@ -1,5 +1,6 @@
 export * from "./types";
 export * from "./shape";
+export * from "./needs";
 export * from "./errors";
 export * from "./connection";
 export * from "./ids";

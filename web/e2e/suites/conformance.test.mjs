@@ -25,6 +25,10 @@ const ALLOWLIST = [
   // M16 (docs/mach-next/M16_SHAPE_APP_FOUNDATION.md): Shape.
   "idea.add", "idea.list", "idea.faults", "idea.show", "idea.stage", "idea.lookups", "idea.renumber", "idea.publish", "idea.size", "idea.map", "idea.settle",
   "idea.map-status", "idea.apply", "idea.change", "idea.chain", "brief.check", "brief.show", "case.show", "case.check", "verdict.record", "lookback.record",
+  // M17 (docs/mach-next/M17_APP_FOUNDATION.md): technical needs and a design you already have. No design.map: the
+  // needs conversation records a map.
+  "need.list", "need.add", "need.set", "need.retire", "need.none", "need.publish", "reconcile.needs",
+  "design.list", "design.import", "design.show", "design.settle", "design.publish",
 ];
 // Commands the engine keeps only for another team's tests (docs/mach-next/M11_STUDIO_ISSUES.md). The host never reaches them.
 const LEFTOVERS = [

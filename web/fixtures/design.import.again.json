@@ -1,0 +1,21 @@
+{
+  "exit_code": 0,
+  "data": {
+    "imported": false,
+    "already_imported": true,
+    "design": {
+      "design_id": "DES-01",
+      "name": "architecture.md",
+      "format": "markdown",
+      "sha256": "f2b9dbe5d56e4e573ebe1d492c6643a0a533138348aba180da50e37b5c7779a7",
+      "line_count": 22,
+      "sections": 5,
+      "document_matches": true,
+      "mapped": false
+    },
+    "factory_authorized": false,
+    "note": "This document was already brought in as DES-01. Nothing was changed."
+  },
+  "refused": null,
+  "hint": null
+}

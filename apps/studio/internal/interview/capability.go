@@ -102,6 +102,17 @@ func ExploreCommandOf(continueCommand string) string {
 	return skill + " explore"
 }
 
+// NeedsCommandOf is the Claude Code command that talks through the product's technical needs, for
+// the same install as a continue command: "/mach:product-studio needs" or "/mach-product-studio needs"
+// (M17). Empty when the continue command is not one this host reports.
+func NeedsCommandOf(continueCommand string) string {
+	skill, found := strings.CutSuffix(continueCommand, " continue")
+	if !found || skill == "" || strings.ContainsAny(skill, " \t\n") {
+		return ""
+	}
+	return skill + " needs"
+}
+
 type limited struct {
 	buf *bytes.Buffer
 	max int

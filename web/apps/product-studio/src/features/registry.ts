@@ -16,9 +16,11 @@ import { feature as jira } from "./jira";
 import { feature as mocks } from "./mocks";
 // M16: Shape (docs/mach-next/M16_SHAPE_APP_FOUNDATION.md).
 import { feature as shape } from "./shape";
+// M17: Technical needs (docs/mach-next/M17_APP_FOUNDATION.md).
+import { feature as needs } from "./needs";
 
 /** Every feature of the app. Add a folder under features/ and list it here; nothing else needs to change. */
-export const features: Feature[] = [home, vision, roadmap, spec, interview, inbox, activity, principles, policies, effects, epicToday, prd, jira, mocks, shape];
+export const features: Feature[] = [home, vision, roadmap, spec, interview, inbox, activity, principles, policies, effects, epicToday, prd, jira, mocks, shape, needs];
 
 export const routes = features.flatMap((feature) => feature.routes);
 

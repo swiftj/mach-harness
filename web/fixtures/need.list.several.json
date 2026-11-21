@@ -1,0 +1,135 @@
+{
+  "exit_code": 0,
+  "data": {
+    "needs": [
+      {
+        "kind": "people",
+        "need_id": "TN-01",
+        "revision": 2,
+        "statement": "About five hundred staff use it from three offices, busiest on Monday mornings.",
+        "status": "active",
+        "why": "It sets how large it must be."
+      },
+      {
+        "kind": "data",
+        "need_id": "TN-02",
+        "revision": 1,
+        "statement": "Invitations are kept at most one year; member names and email addresses are personal data.",
+        "status": "active",
+        "why": "Privacy law, and members expect it."
+      },
+      {
+        "kind": "given",
+        "need_id": "TN-03",
+        "revision": 1,
+        "said_by": "Jo Bloggs, CTO",
+        "said_on": "2026-11-02",
+        "statement": "It runs on the company's PostgreSQL cluster.",
+        "status": "active",
+        "why": "The company already pays for it."
+      },
+      {
+        "kind": "connections",
+        "need_id": "TN-04",
+        "revision": 1,
+        "statement": "Members sign in with the accounts the company already gives its staff.",
+        "status": "active",
+        "why": "Staff already have accounts."
+      },
+      {
+        "kind": "priority",
+        "need_id": "TN-05",
+        "revision": 1,
+        "statement": "When safety and speed of change conflict, safety wins.",
+        "status": "retired",
+        "why": "A mistake costs more than a delay."
+      }
+    ],
+    "kinds": [
+      {
+        "kind": "people",
+        "question": "Who uses it, how many, from where, and at what busiest moment?",
+        "needs": [
+          "TN-01"
+        ],
+        "nothing_to_say": false
+      },
+      {
+        "kind": "data",
+        "question": "What does it keep, how sensitive is that, and how long must it be kept?",
+        "needs": [
+          "TN-02"
+        ],
+        "nothing_to_say": false
+      },
+      {
+        "kind": "connections",
+        "question": "What must it work with that already exists?",
+        "needs": [
+          "TN-04"
+        ],
+        "nothing_to_say": false
+      },
+      {
+        "kind": "never",
+        "question": "What must never happen, and what does it cost if it does?",
+        "needs": [],
+        "nothing_to_say": true
+      },
+      {
+        "kind": "priority",
+        "question": "When two qualities conflict (speed, cost, safety, ease of change), which wins?",
+        "needs": [],
+        "nothing_to_say": false
+      },
+      {
+        "kind": "given",
+        "question": "What is already decided outside this product?",
+        "needs": [
+          "TN-03"
+        ],
+        "nothing_to_say": false
+      }
+    ],
+    "active": [
+      "TN-01",
+      "TN-02",
+      "TN-03",
+      "TN-04"
+    ],
+    "retired": [
+      "TN-05"
+    ],
+    "nothing_to_say": [
+      "never"
+    ],
+    "unanswered": [
+      "priority"
+    ],
+    "unpublished_changes": true,
+    "published": {
+      "saved": "github",
+      "unfinished": false,
+      "revision": 1,
+      "sha256": "af78a93ddb5fe4f65133596724ddd9f4552ea53d2c628ee9ff195792672ffe0f",
+      "approved_by": "ada-pm",
+      "published_at": "2026-11-21T19:34:51Z",
+      "issue": 1,
+      "url": "https://github.com/acme/team-space/issues/1",
+      "github": {
+        "revision": 1,
+        "approved": true,
+        "approved_by": "ada-pm",
+        "read_at": "2026-11-21T19:34:51Z"
+      },
+      "newer_elsewhere": false,
+      "changed_on_github": false
+    },
+    "adrs_behind": [],
+    "next": "The technical needs have changes that are not published: publish them so the engineer gets them.",
+    "note": "A technical need says what the product requires of whatever is built, without technology. The engineer reads the published needs when drafting the architecture decisions; only an accepted decision chooses a technology.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

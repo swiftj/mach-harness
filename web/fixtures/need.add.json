@@ -1,0 +1,19 @@
+{
+  "exit_code": 0,
+  "data": {
+    "need": {
+      "need_id": "TN-01",
+      "kind": "people",
+      "statement": "About three hundred staff use it from two offices, busiest on Monday mornings.",
+      "why": "It sets how large it must be.",
+      "status": "active",
+      "revision": 1
+    },
+    "warnings": [],
+    "published": false,
+    "factory_authorized": false,
+    "note": "TN-01 is saved here. Publish the technical needs to give them to the engineer."
+  },
+  "refused": null,
+  "hint": null
+}

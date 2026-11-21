@@ -1,0 +1,125 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Teams work together.",
+      "outcomes": [
+        "Teams can work together"
+      ],
+      "issue": 1,
+      "url": "https://github.com/acme/team-space/issues/1"
+    },
+    "approvals_withdrawn": [],
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "Team membership",
+        "status": "open",
+        "revision": 1,
+        "acceptance_criteria": [
+          "Only invited people can join"
+        ],
+        "issue": null,
+        "url": null,
+        "counts": {
+          "total": 0,
+          "by_progress": {},
+          "ready_or_further": 0,
+          "ready_or_further_means": "marked ready to build, being built, or shipped"
+        }
+      }
+    ],
+    "slices": [],
+    "saved": {
+      "everything_saved": true,
+      "note": "Everything is saved.",
+      "not_saved": []
+    },
+    "order": [
+      {
+        "epic_id": "EPIC-001",
+        "issue": null,
+        "slices": [],
+        "on_github": false,
+        "github_order": null,
+        "github_read_at": null,
+        "matches_github": null,
+        "unfinished": false,
+        "taken_from_github": false,
+        "could_not_read": false,
+        "note": null
+      }
+    ],
+    "github": {
+      "repository": "acme/team-space",
+      "form": null,
+      "last_read": null
+    },
+    "current_slice": null,
+    "last_refreshed": null,
+    "needs": {
+      "active": [
+        "TN-01",
+        "TN-02",
+        "TN-03",
+        "TN-04",
+        "TN-05"
+      ],
+      "retired": [],
+      "nothing_to_say": [
+        "never"
+      ],
+      "unanswered": [],
+      "unpublished_changes": false,
+      "published": {
+        "saved": "github",
+        "unfinished": false,
+        "revision": 2,
+        "sha256": "e8c761dfa918437cf388b6c5bb91c1c7d30caa91d6af6605788d1bdbe849b79c",
+        "approved_by": "ada-pm",
+        "published_at": "2026-11-21T19:34:54Z",
+        "issue": 1,
+        "url": "https://github.com/acme/team-space/issues/1",
+        "github": {
+          "revision": 2,
+          "approved": true,
+          "approved_by": "ada-pm",
+          "read_at": "2026-11-21T19:34:54Z"
+        },
+        "newer_elsewhere": false,
+        "changed_on_github": false
+      },
+      "adrs_behind": [
+        {
+          "adr": "ADR-0001",
+          "file": "docs/adr/0001-size-for-the-staff.md",
+          "need_id": "TN-01",
+          "served_revision": 1,
+          "revision_now": 2
+        }
+      ],
+      "next": "Decisions written for an older version of a need: ADR-0001. An engineer decides whether the change matters."
+    },
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Start a new slice (slice new --epic EPIC-NNN --title \"...\")."
+    ],
+    "next_actions": [
+      {
+        "kind": "start_slice",
+        "target": null,
+        "title": "Start a new slice",
+        "reason": "No slice of intent is being defined right now.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

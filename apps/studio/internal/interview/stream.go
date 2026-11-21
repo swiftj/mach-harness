@@ -150,7 +150,8 @@ func (t *turnParser) line(raw []byte) {
 			}
 		}
 		if what := WhatChanged(changed); len(what) > 0 {
-			t.emit("draft_changed", map[string]any{subjectKey(t.sliceID): t.sliceID, "what": what})
+			key, value := subjectField(t.sliceID)
+			t.emit("draft_changed", map[string]any{key: value, "what": what})
 		}
 		t.before = after
 		t.emit("state", map[string]any{"state": "thinking"})
