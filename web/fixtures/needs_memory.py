@@ -171,5 +171,31 @@ def design_states(Scenario):
         s.capture("design.show.published", "design", "show", "DES-01")
         s.capture("design.list.published", "design", "list")
         s.capture("status.designs-published", "status")
+        # The screens' remaining states (A design you already have): a settlement changed after publishing; the
+        # project's required topics changed since the map; the workspace copy changed; a file that is not text.
+        s.capture("design.settle.stands", "design", "settle", "DES-01", "--conflict", "1", "--as", "stands",
+                  "--reason", "The design was agreed with the customer; the engineer can weigh it.")
+        s.capture("design.settle.ask-engineer", "design", "settle", "DES-01", "--conflict", "1", "--as", "ask-engineer",
+                  "--reason", "Let the engineer weigh the privacy review against the design.")
+        s.capture("design.show.changed-since-published", "design", "show", "DES-01")
+        s.capture("design.list.changed-since-published", "design", "list")
+        config = s.a / ".factory" / "config.json"
+        before = config.read_text(encoding="utf-8") if config.is_file() else None
+        settings = json.loads(before) if before else {}
+        settings["adr"] = {"required_topics": ["storage", "testing"]}
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(json.dumps(settings), encoding="utf-8")
+        s.capture("design.publish.refused-topics-changed", "design", "publish", "DES-01")
+        if before is None:
+            config.unlink()
+        else:
+            config.write_text(before, encoding="utf-8")
+        binary = folder / "diagram.md"
+        binary.write_bytes(b"# Diagram\n\x00\x01\x02")
+        s.capture("design.import.refused-binary", "design", "import", str(binary))
+        s.draft(s.a, "product/designs/DES-01/design.md").write_text("Changed by hand.\n", encoding="utf-8")
+        s.capture("design.list.changed-copy", "design", "list")
+        s.capture("design.show.refused-changed-copy", "design", "show", "DES-01")
+        s.capture("design.publish.refused-changed-copy", "design", "publish", "DES-01")
     run(Scenario, body)
 

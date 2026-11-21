@@ -121,7 +121,7 @@ When the team already has an architecture or high-level design document, the PM 
 - **Mapping**: you propose the map and record it with `STUDIO design map <DES-NN> --from <file>`; the command refuses a map that leaves out a required topic, names an unknown one, cites a line the document does not have, or names a conflict with a principle, policy statement or need that does not exist.
 - **Conflicts** (only on the PM's explicit word, with their reason): `STUDIO design settle <DES-NN> --conflict <n> --as stands|design-is-wrong|ask-engineer --reason "<their words>"`. Never settle one yourself or recommend a choice.
 - **Publishing** (only on the PM's explicit word): `STUDIO design publish <DES-NN>` writes `product/ready/DESIGN/DES-NN/` in the workspace, which the PM adds to the repository's main branch (`ways_on`). Refused while a conflict is unsettled. Running it again changes nothing unless the map or a settlement changed.
-- These commands are terminal only for now; the visual app does not show designs yet.
+- The visual app has the same: **A design you already have**, reached from Technical needs, brings a file in, shows what the document decides on each topic with the lines it cites, settles each conflict on the PM's word with their reason, and publishes it. It has no map button: a map is recorded only in a conversation, this one or the needs conversation in the app. A PM working in the app can settle and publish there; do not repeat an act they already took (`design show` says what is settled and published).
 
 ## Policy packs
 
