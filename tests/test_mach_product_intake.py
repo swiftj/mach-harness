@@ -24,6 +24,7 @@ import intake  # noqa: E402
 import run  # noqa: E402
 from test_mach_product_issues import REPO, IssuesBase, git, intent_for, spec_for  # noqa: E402
 import adr_baseline_fixture  # noqa: E402
+import class_template  # noqa: E402  (a step taken from the same starting folder is run once per class)
 import issue_rules  # noqa: E402
 
 TICKET = ROOT / "skills" / "ticket" / "scripts" / "ticket.py"
@@ -34,6 +35,11 @@ EVENT_KEYS = {"schema_version", "seq", "at", "type", "source_commit", "epic_id",
 class Base(IssuesBase):
     def setUp(self):
         super().setUp()
+        class_template.step(self, "factory", self.root, self.factory_clone)
+        self.folders = {}
+
+    def factory_clone(self):
+        """The engineer's clone set up as the Factory; files only."""
         # The engineer's clone is the Factory. Execution state is git-ignored there, as in a real install.
         (self.eng / ".gitignore").write_text(".factory/\n__pycache__/\n")
         (self.eng / ".factory").mkdir()
@@ -44,7 +50,6 @@ class Base(IssuesBase):
         git(self.eng, "push", "-q", "origin", "main")
         git(self.a, "pull", "-q", "--ff-only")
         self.set_gh(me="erin-eng")  # the account gh is signed in as on the Factory's machine
-        self.folders = {}
 
     # ---- the Factory's commands ----
 
@@ -200,7 +205,12 @@ class Base(IssuesBase):
 
     def first(self):
         """SLICE-001 is in a ready folder on the shared main branch, and the engineer's main has it."""
+        # The same step from the same folder and the same slices in hand is run once per class; later tests get a copy.
+        self.folders = class_template.step(self, "first " + json.dumps(self.folders, sort_keys=True), self.root, self._first)
+
+    def _first(self):
         self.publish(self.a, self.slice(self.a, "Invite a teammate"))
+        return self.folders
 
     def chain(self):
         """SLICE-001; SLICE-002 needs 001; SLICE-003 needs 002. Taken in."""

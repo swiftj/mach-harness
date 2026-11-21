@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "skills" / "verify" / "scripts"))
 sys.path.insert(0, str(ROOT / "tests"))
 import verify  # noqa: E402
 from test_build import Base as BuildBase, git  # noqa: E402
+import class_template  # noqa: E402  (a step taken from the same starting folder is run once per class)
 
 TARGETS = ["AC-01", "AC-02", "AC-03", "R1", "R2", "R3", "R4", "R5"]
 NOTE = "Called invite() as a consumer and observed the expected outcome and unchanged seat count."
@@ -25,6 +26,9 @@ class Base(BuildBase):
         self.evidence = self.cellroot / "evidence"
 
     def built(self):
+        class_template.step(self, "built", Path(self.tmp.name).resolve(), self._built)
+
+    def _built(self):
         self.ready()
         self.ok("start", "LOCAL-001")
         self.build_through("T05")

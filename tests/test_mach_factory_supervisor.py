@@ -33,6 +33,7 @@ import service  # noqa: E402
 import supervisor  # noqa: E402
 from test_mach_product_issues import git  # noqa: E402
 from test_mach_product_intake import Base as IntakeBase  # noqa: E402
+import class_template  # noqa: E402  (a step taken from the same starting folder is run once per class)
 
 FAKE_CLAUDE = r'''#!/usr/bin/env python3
 import json, os, re, sys, time
@@ -126,20 +127,25 @@ class Base(IntakeBase):
         self.bin = self.root / "bin"
         self.scenario = self.root / "claude-scenario.json"
         self.claude_log = self.root / "claude.log"
+        self.launchctl_log = self.root / "launchctl.log"
+        self.home = self.root / "home"
+        # Writing the stand-ins below reads nothing from the environment, so it is set first; git then runs with this HOME as before.
+        os.environ.update({"FAKE_CLAUDE_SCENARIO": str(self.scenario), "FAKE_CLAUDE_LOG": str(self.claude_log),
+                           "FAKE_LAUNCHCTL_LOG": str(self.launchctl_log), "HOME": str(self.home)})
+        class_template.step(self, "supervisor", self.root, self.stand_ins)
+        self.addCleanup(self.end_executions)
+
+    def stand_ins(self):
+        """The stand-ins for Claude Code and launchctl, a home folder, and the Factory's settings; files only."""
         for name, text in (("claude", FAKE_CLAUDE.replace("@@SCENARIO@@", str(self.scenario)).replace("@@LOG@@", str(self.claude_log))), ("launchctl", FAKE_LAUNCHCTL)):
             path = self.bin / name
             path.write_text(text.replace("#!/usr/bin/env python3", "#!" + sys.executable, 1))
             path.chmod(path.stat().st_mode | stat.S_IEXEC)
-        self.launchctl_log = self.root / "launchctl.log"
-        self.home = self.root / "home"
         self.home.mkdir()
-        os.environ.update({"FAKE_CLAUDE_SCENARIO": str(self.scenario), "FAKE_CLAUDE_LOG": str(self.claude_log),
-                           "FAKE_LAUNCHCTL_LOG": str(self.launchctl_log), "HOME": str(self.home)})
         for clone in (self.eng, self.a, self.b):  # HOME moved, so each clone carries its own identity
             git(clone, "config", "commit.gpgsign", "false")
         self.claude({"default": {"stage": "approved"}})
         self.config(build={"require_audit": False})
-        self.addCleanup(self.end_executions)
 
     # ---- helpers ----
 
@@ -175,6 +181,10 @@ class Base(IntakeBase):
         return err + out
 
     def enable(self, *flags, autonomy="supervised"):
+        # The same step from the same folder is run once per class; later tests get a copy of what it left.
+        return class_template.step(self, "enable " + json.dumps([flags, autonomy]), self.root, lambda: self._enable(*flags, autonomy=autonomy))
+
+    def _enable(self, *flags, autonomy="supervised"):
         code, out, err = self.run_factory("enable", "--autonomy", autonomy, *flags)
         asked = json.loads(out)
         self.assertTrue(asked.get("ready"), out + err)
