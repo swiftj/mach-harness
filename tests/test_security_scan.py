@@ -26,6 +26,7 @@ import run  # noqa: E402
 import scan  # noqa: E402
 from test_build import IMPL, IMPL2, RED_TEST, SCENARIO_TEST, git  # noqa: E402
 from test_review import Base as ReviewBase, DETAIL, PANEL, SUMMARY, TICKET  # noqa: E402
+import class_template  # noqa: E402  (a step taken from the same starting folder is run once per class)
 
 J = "".join
 GITHUB = J(["gh", "p_", "Zq7Lm2Xv9Tc4Rb8Nw1Ks6Jd3Hf5Gy0Pa1Qe2"])
@@ -325,6 +326,9 @@ class ScanReviewBase(ReviewBase):
     override = None
 
     def built(self):
+        class_template.step(self, "built", Path(self.tmp.name).resolve(), self._built)
+
+    def _built(self):
         self.ready()
         self.ok("start", TICKET)
         self.build_through("T04")

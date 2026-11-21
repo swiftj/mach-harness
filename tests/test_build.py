@@ -5,7 +5,6 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
@@ -18,6 +17,7 @@ import build  # noqa: E402
 import cell as cell_script  # noqa: E402
 sys.path.insert(0, str(ROOT / "tests"))
 import adr_baseline_fixture  # noqa: E402  (the test projects' covered ADR baseline)
+import class_template  # noqa: E402  (each class builds its starting project once; every test gets its own copy)
 
 SPEC_NAME = "SLICE-001-invite-teammate.md"
 SPEC = (ROOT / "tests" / "fixtures" / SPEC_NAME).read_text(encoding="utf-8")
@@ -106,9 +106,15 @@ class Base(unittest.TestCase):
     commit_first = True
 
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = class_template.folder(self)
         self.addCleanup(self.tmp.cleanup)
         self.project = Path(self.tmp.name).resolve() / "project"
+        class_template.step(self, "project", self.project.parent, self.sample_project)
+        self.cellroot = self.project / ".factory/worktrees/LOCAL-001"
+        self.work = self.cellroot / "repo"
+
+    def sample_project(self):
+        """The sample project, committed unless the class says not to; files only."""
         self.project.mkdir()
         self.put(self.project, {".gitignore": ".factory/\n__pycache__/\n", "README.md": "# Sample\n", "app/__init__.py": "",
                                 "tests/test_base.py": "import unittest\n\nclass B(unittest.TestCase):\n    def test_ok(self):\n        self.assertTrue(True)\n",
@@ -118,8 +124,6 @@ class Base(unittest.TestCase):
             git(self.project, "config", key, value)
         if self.commit_first:
             self.commit_main()
-        self.cellroot = self.project / ".factory/worktrees/LOCAL-001"
-        self.work = self.cellroot / "repo"
 
     def commit_main(self):
         git(self.project, "add", "-A")

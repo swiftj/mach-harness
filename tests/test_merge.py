@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 import merge  # noqa: E402
 from test_build import git  # noqa: E402
 from test_run import Base as RunBase  # noqa: E402
+import class_template  # noqa: E402  (a step taken from the same starting folder is run once per class)
 
 FAKE_GH = '''#!/usr/bin/env python3
 import json, os, sys
@@ -214,20 +215,24 @@ class PullRequestBase(Base):
         super().setUp()
         root = Path(self.tmp.name).resolve()
         origin = root / "origin.git"
-        git(root, "init", "-q", "--bare", str(origin))
-        git(self.project, "remote", "add", "origin", str(origin))
-        git(self.project, "push", "-q", "-u", "origin", "main")
-        self.origin = origin
         bin_dir = root / "fakebin"
-        bin_dir.mkdir()
-        fake = bin_dir / "gh"
-        fake.write_text(FAKE_GH)
-        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+        self.origin = origin
+        class_template.step(self, "origin", root, lambda: self.remote_and_gh(root, origin, bin_dir))
         self.gh_log = root / "gh.log"
         env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "FAKE_GH_LOG": str(self.gh_log), "FAKE_GH_STATE": str(root / "merged.flag")}
         patcher = mock.patch.dict(os.environ, env)
         patcher.start()
         self.addCleanup(patcher.stop)
+
+    def remote_and_gh(self, root, origin, bin_dir):
+        """A shared remote holding main, and the stand-in for gh; files only."""
+        git(root, "init", "-q", "--bare", str(origin))
+        git(self.project, "remote", "add", "origin", str(origin))
+        git(self.project, "push", "-q", "-u", "origin", "main")
+        bin_dir.mkdir()
+        fake = bin_dir / "gh"
+        fake.write_text(FAKE_GH)
+        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
 
     def calls(self):
         return [json.loads(line) for line in self.gh_log.read_text().splitlines()] if self.gh_log.exists() else []

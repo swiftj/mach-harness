@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT / "skills" / "run" / "scripts"))
 import run  # noqa: E402
 from test_mach_product_intake import Base as IntakeBase, git  # noqa: E402
+import class_template  # noqa: E402  (a step taken from the same starting folder is run once per class)
 
 QUALIFY = ROOT / "skills" / "run" / "scripts" / "qualify.py"
 CHECK = "import pathlib, sys\nsys.exit(0 if pathlib.Path('ok.txt').is_file() else 1)\n"
@@ -31,6 +32,10 @@ CHECK = "import pathlib, sys\nsys.exit(0 if pathlib.Path('ok.txt').is_file() els
 class Base(IntakeBase):
     def setUp(self):
         super().setUp()
+        class_template.step(self, "suite", self.root, self.suite)
+
+    def suite(self):
+        """A test suite on main and the release settings; files only."""
         (self.eng / "check.py").write_text(CHECK)
         (self.eng / "ok.txt").write_text("ok\n")
         git(self.eng, "add", "check.py", "ok.txt")
@@ -117,10 +122,16 @@ class Base(IntakeBase):
 
     def built(self, **finish):
         """SLICE-001 taken in from its ready folder, built, verified, reviewed and merged."""
+        # The same step from the same folder and the same slices in hand is run once per class; later tests get a copy.
+        key = "built " + json.dumps([finish, self.folders], sort_keys=True)
+        commit, self.folders = class_template.step(self, key, self.root, lambda: self._built(**finish))
+        return commit
+
+    def _built(self, **finish):
         self.first()
         self.product("intake")
         self.product("dispatch", "SLICE-001")
-        return self.finish(**finish)
+        return [self.finish(**finish), self.folders]
 
     def studio_refused(self, project, *argv):
         code, out, err = self.run_studio(project, *argv)
