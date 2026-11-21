@@ -1,0 +1,15 @@
+{
+  "exit_code": 0,
+  "data": {
+    "published": true,
+    "saved_to": "folder",
+    "folder": "/project/.factory/studio/draft/product/ready/IDEAS/IDEA-001",
+    "why_folder": "You are not signed in to GitHub on this computer.",
+    "revision": 1,
+    "state_label": "mach:idea-go",
+    "factory_authorized": false,
+    "note": "Saved to the folder in the workspace. Nothing was sent to GitHub, and nothing reaches the builders: the brief is for people."
+  },
+  "refused": null,
+  "hint": null
+}

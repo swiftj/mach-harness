@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "IDEA-001 needs a Go verdict on its brief as it is now before it can be sized. The brief changed after this verdict was recorded (revision 1), so it no longer holds. Record a verdict on the brief as it is now.",
+  "hint": null
+}

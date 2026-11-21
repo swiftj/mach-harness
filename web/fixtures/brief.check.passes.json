@@ -1,0 +1,25 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-003",
+    "revision": 1,
+    "new_revision": true,
+    "stage": "brief",
+    "passes": true,
+    "errors": [],
+    "warnings": [],
+    "findings": [],
+    "counts": {
+      "outcomes": 2,
+      "assumptions": 2,
+      "open_questions": 0,
+      "shipped_rules": 2,
+      "capabilities": 1
+    },
+    "verdict": null,
+    "note": "A script checks the brief's structure. It never scores the idea.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

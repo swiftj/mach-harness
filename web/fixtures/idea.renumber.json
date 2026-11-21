@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "data": {
+    "renumbered": {
+      "from": "IDEA-003",
+      "to": "IDEA-004"
+    },
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

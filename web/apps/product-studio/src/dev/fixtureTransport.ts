@@ -14,6 +14,7 @@
  *
  * M15 (principles, policies, effects, the epic today, the PRD on-ramp, Jira, mocks): see
  * memoryTransport.ts for its parameters; ?show=, ?ready=, ?fixture= and ?refresh= take its names too.
+ * M16 (Shape): see shapeTransport.ts; ?fixture=status.ideas shows the ideas board.
  *
  * Every answer is a real engine run from web/fixtures. The only adjustment: the slice.ready and
  * slice.reopen fixtures are for SLICE-001, so their slice ID is set to the slice the screen asked about.
@@ -21,6 +22,7 @@
 import type { EngineRun, SliceCheck, SliceShow, Transport, TransportResponse } from "@mach/ui/api";
 import { devParam, devState } from "./devState";
 import { memoryRoute, memoryShow } from "./memoryTransport";
+import { shapeRoute, shapeShow } from "./shapeTransport";
 
 const files = import.meta.glob<EngineRun<unknown>>("../../../../fixtures/*.json", { import: "default" });
 
@@ -81,7 +83,7 @@ async function sliceShow(sliceId: string): Promise<SliceShow | null> {
       return data<SliceShow>("slice.show.errors");
     default:
       // M15: open-concern, concern-accepted, effects, mocks-and-jira (memoryTransport.ts).
-      return (memoryShow(scenario) as SliceShow | null) ?? null;
+      return ((memoryShow(scenario) ?? shapeShow(scenario)) as SliceShow | null) ?? null;
   }
 }
 
@@ -177,6 +179,8 @@ export const fixtureTransport: Transport = async ({ path, method, body }) => {
   if (slice) return slice;
   const memory = memoryRoute(path, args);
   if (memory) return memory;
+  const shape = shapeRoute(path, method, args);
+  if (shape) return shape;
 
   const op = path.startsWith("/api/ops/") ? path.slice("/api/ops/".length) : null;
   if (op === "slice.take") {

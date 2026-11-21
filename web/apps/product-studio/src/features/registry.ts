@@ -14,9 +14,11 @@ import { feature as epicToday } from "./epic-today";
 import { feature as prd } from "./prd";
 import { feature as jira } from "./jira";
 import { feature as mocks } from "./mocks";
+// M16: Shape (docs/mach-next/M16_SHAPE_APP_FOUNDATION.md).
+import { feature as shape } from "./shape";
 
 /** Every feature of the app. Add a folder under features/ and list it here; nothing else needs to change. */
-export const features: Feature[] = [home, vision, roadmap, spec, interview, inbox, activity, principles, policies, effects, epicToday, prd, jira, mocks];
+export const features: Feature[] = [home, vision, roadmap, spec, interview, inbox, activity, principles, policies, effects, epicToday, prd, jira, mocks, shape];
 
 export const routes = features.flatMap((feature) => feature.routes);
 

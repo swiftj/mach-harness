@@ -468,7 +468,9 @@ def analyze_case(text: str, brief: Optional[Dict[str, Any]] = None) -> Tuple[Lis
                 for ref in sorted(set(REF_RE.findall(f"{item['question']} {item['answer'] or ''}")) - known):
                     report.warning(item["line"], "case-unknown-id", f"{item['id']} names {ref}, which the brief does not hold.")
     secrets(text, "case", report)
-    model = {"title": title or None, "customer_sentences": sentences,
+    # `customer` (M16 app foundation): the words themselves, joined on one line, so a screen shows them without parsing.
+    model = {"title": title or None, "customer": " ".join(line.strip() for _, line in customer.content()) or None if customer is not None else None,
+             "customer_sentences": sentences,
              "questions": [{k: item[k] for k in ("id", "question", "state", "answer", "line")} for item in questions],
              "answered": sum(1 for item in questions if item["state"] == "answered"),
              "not_answered": sum(1 for item in questions if item["state"] == "not_answered"),

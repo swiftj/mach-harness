@@ -241,6 +241,7 @@ class CaseTest(unittest.TestCase):
         findings, model = validate_brief.analyze_case(CASE, self.model)
         self.assertEqual(rules_of(findings) + rules_of(findings, "warning"), [])
         self.assertEqual((model["customer_sentences"], model["answered"], model["not_answered"], model["open"]), (2, 2, 1, 0))
+        self.assertTrue(model["customer"].startswith("You can now renew a loan from your account"))  # the words, for the app
         self.assertEqual([q["state"] for q in model["questions"]], ["answered", "answered", "not_answered"])
 
     def test_a_question_not_answered_is_refused_until_answered_or_marked(self):

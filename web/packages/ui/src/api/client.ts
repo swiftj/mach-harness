@@ -1,7 +1,7 @@
 import { ENGINE_ID } from "./ids";
 import { createConnectionStore, type ConnectionStore } from "./connection";
 import { MachApiError, type HostErrorKind } from "./errors";
-import { createInterviewClient, type InterviewClient, type EventSourceFactory } from "./interview";
+import { createIdeaConversationClient, createInterviewClient, type EventSourceFactory, type IdeaConversationClient, type InterviewClient } from "./interview";
 import { readOnlyOperations, type DraftRead, type DraftWriteResult, type OperationArgs, type OperationName, type OperationResult, type Session } from "./types";
 
 /** The envelope every host response uses (contract section 4). */
@@ -56,6 +56,8 @@ export interface MachClient {
   writeDraft(kind: "spec" | "intent", sliceId: string, markdown: string, options?: { name?: string; signal?: AbortSignal }): Promise<DraftWriteResult>;
   /** The interview routes (contract 8.2). */
   interview: InterviewClient;
+  /** M16: the Shape conversation for one idea, on the same routes by `idea_id`. */
+  ideaConversation: IdeaConversationClient;
   /**
    * Called after every successful request that may have changed the workspace (an operation not in
    * readOnlyOperations, a draft write). Apps reload their cached status here, so no screen shows
@@ -174,6 +176,14 @@ export function createClient(options: ClientOptions = {}): MachClient {
     return `/api/drafts/${kind}/${encodeURIComponent(sliceId)}`;
   }
 
+  const interviewDeps = {
+    get: (path: string, operation: string, signal?: AbortSignal) => send("GET", path, operation, undefined, signal),
+    post: (path: string, operation: string, body: unknown) => send("POST", path, operation, body),
+    baseUrl: options.baseUrl ?? "",
+    eventSource: options.eventSource,
+  };
+  const interview = createInterviewClient(interviewDeps);
+
   return {
     connection,
     session: loadSession,
@@ -196,11 +206,7 @@ export function createClient(options: ClientOptions = {}): MachClient {
         return result;
       });
     },
-    interview: createInterviewClient({
-      get: (path, operation, signal) => send("GET", path, operation, undefined, signal),
-      post: (path, operation, body) => send("POST", path, operation, body),
-      baseUrl: options.baseUrl ?? "",
-      eventSource: options.eventSource,
-    }),
+    interview,
+    ideaConversation: createIdeaConversationClient(interviewDeps, interview),
   };
 }

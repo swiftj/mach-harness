@@ -36,18 +36,30 @@ type Event struct {
 // StartRequest is what the server passes after checking the slice with the engine.
 type StartRequest struct {
 	SliceID string
-	EpicID  string
-	Idea    string
+	// IdeaID (M16): the Shape conversation for one idea instead of a slice's interview. Exactly one
+	// of SliceID and IdeaID is set; EpicID, Idea and BuildersQuestion are for a slice only.
+	IdeaID string
+	EpicID string
+	Idea   string
 	// BuildersQuestion is the builders' question the engine reports on the slice (slice show). The
 	// host never sends its text to the interviewer: an opening turn says only that there is one,
 	// and the interviewer reads it from `slice resume`, fenced as data.
 	BuildersQuestion string
 }
 
+// Subject is the slice or idea the request is for.
+func (r StartRequest) Subject() string {
+	if r.IdeaID != "" {
+		return r.IdeaID
+	}
+	return r.SliceID
+}
+
 // Started answers POST /api/interview.
 type Started struct {
 	InterviewID string `json:"interview_id"`
-	SliceID     string `json:"slice_id"`
+	SliceID     string `json:"slice_id,omitempty"`
+	IdeaID      string `json:"idea_id,omitempty"`
 	Resumed     bool   `json:"resumed"`
 }
 
@@ -63,7 +75,8 @@ type Message struct {
 // saved of the last one, so the app can resume after a reload or a host restart.
 type Current struct {
 	InterviewID     *string  `json:"interview_id"` // null when no interview is live in this host
-	SliceID         string   `json:"slice_id"`
+	SliceID         string   `json:"slice_id,omitempty"`
+	IdeaID          string   `json:"idea_id,omitempty"` // M16: the Shape conversation's idea
 	Live            bool     `json:"live"`
 	State           string   `json:"state"` // a state event's value, or "saved" when not live
 	TurnRunning     bool     `json:"turn_running"`
@@ -73,7 +86,16 @@ type Current struct {
 	SessionCostUSD  float64  `json:"session_cost_usd"`
 }
 
-// Bridge is what the server talks to.
+func (c *Current) setSubject(subject string) {
+	if IsIdea(subject) {
+		c.IdeaID = subject
+	} else {
+		c.SliceID = subject
+	}
+}
+
+// Bridge is what the server talks to. Every method that takes a slice ID takes an idea ID (M16)
+// the same way: the two patterns never overlap.
 type Bridge interface {
 	// Available says whether interviews can run here, and if not, why, in a person's words.
 	Available() (bool, string)

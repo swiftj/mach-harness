@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "Go needs a brief that passes its check, and IDEA-001's does not: it has no brief yet. Nothing was recorded.",
+  "hint": null
+}

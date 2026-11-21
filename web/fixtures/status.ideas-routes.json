@@ -1,0 +1,272 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Teams work together.",
+      "outcomes": [
+        "Teams can work together"
+      ],
+      "issue": null,
+      "url": null
+    },
+    "approvals_withdrawn": [],
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "Team membership",
+        "status": "open",
+        "revision": 1,
+        "acceptance_criteria": [
+          "Only invited people can join"
+        ],
+        "issue": null,
+        "url": null,
+        "counts": {
+          "total": 0,
+          "by_progress": {},
+          "ready_or_further": 0,
+          "ready_or_further_means": "marked ready to build, being built, or shipped"
+        }
+      }
+    ],
+    "slices": [],
+    "saved": {
+      "everything_saved": true,
+      "note": "Everything is saved.",
+      "not_saved": []
+    },
+    "order": [
+      {
+        "epic_id": "EPIC-001",
+        "issue": null,
+        "slices": [],
+        "on_github": false,
+        "github_order": null,
+        "github_read_at": null,
+        "matches_github": null,
+        "unfinished": false,
+        "taken_from_github": false,
+        "could_not_read": false,
+        "note": null
+      }
+    ],
+    "github": {
+      "repository": null,
+      "form": null,
+      "last_read": null
+    },
+    "current_slice": null,
+    "last_refreshed": null,
+    "ideas": {
+      "ideas": [
+        {
+          "idea_id": "IDEA-001",
+          "title": "Renew one loan from my loans",
+          "stage": "decided",
+          "stage_words": "Decided",
+          "source": {
+            "kind": "typed"
+          },
+          "created": "2026-11-21T00:34:50Z",
+          "revision": 1,
+          "has_brief": true,
+          "brief_checked": false,
+          "brief_passes": false,
+          "has_case": false,
+          "verdict": {
+            "decision": "go",
+            "by": "ada-pm",
+            "at": "2026-11-21T00:34:50Z",
+            "revision": 1,
+            "holds": false,
+            "stale": true
+          },
+          "route": "one-slice",
+          "made": null,
+          "github": {
+            "saved": null,
+            "unfinished": false,
+            "issue": null,
+            "url": null,
+            "state": null,
+            "up_to_date": false,
+            "changed_on_github": false,
+            "changed_after_verdict": false,
+            "verdict_on_github": null,
+            "number_taken": false,
+            "other_issues": [],
+            "last_read": null
+          },
+          "next": {
+            "kind": "check_brief",
+            "sentence": "Check IDEA-001's brief."
+          }
+        },
+        {
+          "idea_id": "IDEA-002",
+          "title": "Let members renew a loan themselves",
+          "stage": "decided",
+          "stage_words": "Decided",
+          "source": {
+            "kind": "typed"
+          },
+          "created": "2026-11-21T00:34:50Z",
+          "revision": 1,
+          "has_brief": true,
+          "brief_checked": true,
+          "brief_passes": true,
+          "has_case": false,
+          "verdict": {
+            "decision": "go",
+            "by": "ada-pm",
+            "at": "2026-11-21T00:34:51Z",
+            "revision": 1,
+            "holds": true,
+            "stale": false
+          },
+          "route": "epic",
+          "made": null,
+          "github": {
+            "saved": null,
+            "unfinished": false,
+            "issue": null,
+            "url": null,
+            "state": null,
+            "up_to_date": false,
+            "changed_on_github": false,
+            "changed_after_verdict": false,
+            "verdict_on_github": null,
+            "number_taken": false,
+            "other_issues": [],
+            "last_read": null
+          },
+          "next": {
+            "kind": "publish",
+            "sentence": "Save IDEA-002 as a GitHub issue so others can read the brief and the verdict."
+          }
+        },
+        {
+          "idea_id": "IDEA-003",
+          "title": "Renew loans and pay fines in one place",
+          "stage": "decided",
+          "stage_words": "Decided",
+          "source": {
+            "kind": "typed"
+          },
+          "created": "2026-11-21T00:34:51Z",
+          "revision": 1,
+          "has_brief": true,
+          "brief_checked": true,
+          "brief_passes": true,
+          "has_case": false,
+          "verdict": {
+            "decision": "go",
+            "by": "ada-pm",
+            "at": "2026-11-21T00:34:51Z",
+            "revision": 1,
+            "holds": true,
+            "stale": false
+          },
+          "route": "several-epics",
+          "made": null,
+          "github": {
+            "saved": null,
+            "unfinished": false,
+            "issue": null,
+            "url": null,
+            "state": null,
+            "up_to_date": false,
+            "changed_on_github": false,
+            "changed_after_verdict": false,
+            "verdict_on_github": null,
+            "number_taken": false,
+            "other_issues": [],
+            "last_read": null
+          },
+          "next": {
+            "kind": "publish",
+            "sentence": "Save IDEA-003 as a GitHub issue so others can read the brief and the verdict."
+          }
+        },
+        {
+          "idea_id": "IDEA-004",
+          "title": "Reading challenges for children",
+          "stage": "new",
+          "stage_words": "New",
+          "source": {
+            "kind": "typed"
+          },
+          "created": "2026-11-21T00:34:51Z",
+          "revision": 0,
+          "has_brief": false,
+          "brief_checked": false,
+          "brief_passes": false,
+          "has_case": false,
+          "verdict": null,
+          "route": null,
+          "made": null,
+          "github": {
+            "saved": null,
+            "unfinished": false,
+            "issue": null,
+            "url": null,
+            "state": null,
+            "up_to_date": false,
+            "changed_on_github": false,
+            "changed_after_verdict": false,
+            "verdict_on_github": null,
+            "number_taken": false,
+            "other_issues": [],
+            "last_read": null
+          },
+          "next": {
+            "kind": "explore",
+            "sentence": "Explore IDEA-004: open questions, one at a time."
+          }
+        }
+      ],
+      "by_stage": {
+        "new": [
+          "IDEA-004"
+        ],
+        "exploring": [],
+        "brief": [],
+        "decided": [
+          "IDEA-001",
+          "IDEA-002",
+          "IDEA-003"
+        ],
+        "shaped": []
+      },
+      "counts": {
+        "new": 1,
+        "exploring": 0,
+        "brief": 0,
+        "decided": 3,
+        "shaped": 0
+      },
+      "note": "Shape: ideas, briefs and the case, before any epic. A person decides; scripts check."
+    },
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Start a new slice (slice new --epic EPIC-NNN --title \"...\")."
+    ],
+    "next_actions": [
+      {
+        "kind": "start_slice",
+        "target": null,
+        "title": "Start a new slice",
+        "reason": "No slice of intent is being defined right now.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

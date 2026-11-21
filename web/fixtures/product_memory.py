@@ -5,6 +5,9 @@ throwaway repositories and stand-ins for gh that the engine's own tests use, and
 here is invented: the awkward cases are made by doing the real thing (an older principle, an open policy concern, a
 shipped rule replaced and retired, a PRD section no slice cites, a slice waiting for its design mocks to be committed,
 a row in a Jira file that names nothing, a request filed in the idea template).
+
+M16 adds Shape's fixtures (the shape_* scenarios at the end): every state of the Shape sketch and the awkward ones,
+listed in docs/mach-next/M16_SHAPE_APP_FOUNDATION.md section 4 with the parameter that reaches each in fixture mode.
 """
 import json
 import os
@@ -39,6 +42,15 @@ def generate(Scenario, out: Path) -> None:
     policies_none(Scenario)
     jira_keys_awkward(Scenario)
     four_mocks(Scenario)
+    # M16: Shape (docs/mach-next/M16_SHAPE_APP_FOUNDATION.md).
+    shape_board(Scenario)
+    shape_verdicts(Scenario)
+    shape_routes(Scenario)
+    shape_map(Scenario)
+    shape_look_back(Scenario)
+    shape_look_back_without_github(Scenario)
+    shape_publish(Scenario)
+    shape_publish_to_the_folder(Scenario)
 
 
 def run(Scenario, body):
@@ -446,3 +458,334 @@ def four_mocks(Scenario):
         changed.write_bytes(png(shade=200))
         s.capture("slice.mock.list.problem", "slice", "mock", "list", first)
     run(Scenario, body)
+
+
+# ---- M16: Shape, the part of Product Studio before epics ----
+#
+# Every case the Shape sketch shows and the awkward ones, each made by doing the real thing in the engine's own test
+# repositories (test_mach_shape and test_mach_shape_route), with one exception said where it is made: "not determined"
+# high-risk areas need a computer that cannot say which files a shipped slice changed, so that one answer from Git is
+# withheld for the one size it is captured for.
+
+LOOKUP_NOTES = {
+    "shipped_rules": [{"rule": "SLICE-001/FR-01", "note": "An invitation is sent by email today; a renewal would reach members the same way."},
+                      {"rule": "SLICE-001/INV-02", "note": "One address, one membership: a renewal is for the member signed in."}],
+    "similar": [{"idea": "IDEA-001", "note": "A reminder before the due date is about the same loans."},
+                {"request": 57, "note": "Members asked for reminders by email."}],
+    "principles": [{"id": "PP-01", "note": "A renewal refused today is explained by a person; here the page must do it."}],
+    "policies": [{"id": "POL-privacy-02", "note": "A renewal notice must not leave the EU region."}],
+}
+FINDING_BRIEF_PARTS = (
+    ("  - How we would know: complaints about unexpected fines after a refused renewal fall to none in a quarter.",
+     "  - How we would know: not written yet"),
+    ("  - How we would know: renewal calls at Central fall from about 40 a week to under 15 within two months.",
+     "  - How we would know: members are happier with renewals."),
+    ("## Open questions\n\nNone.",
+     "## Open questions\n\n- What does a member see when a renewal is refused because someone else is waiting? Who can answer: the head of lending services."),
+)
+
+
+def shape_scenario(Scenario):
+    """Shape's own test base with the fixtures' save and capture: SLICE-001 shipped on main, the stand-in for gh."""
+    from test_mach_shape_route import LookbackTest, RouteBase
+
+    class ShapeScenario(RouteBase):
+        def runTest(self):  # pragma: no cover
+            pass
+        save = Scenario.save
+        capture = Scenario.capture
+        ship = LookbackTest.ship
+
+        def brief(self, idea_id, text, title=None):
+            if title:
+                text = text.replace("# Brief: Let members renew a loan themselves", f"# Brief: {title}", 1)
+            self.write_brief(idea_id, text)
+
+        def lookups(self, idea_id, data):
+            source = self.root / f"{idea_id}-lookups.json"
+            source.write_text(json.dumps(data))
+            return str(source)
+
+    return ShapeScenario
+
+
+def finding_brief(text):
+    for old, new in FINDING_BRIEF_PARTS:
+        text = text.replace(old, new, 1)
+    return text
+
+
+def shape_board(Scenario):
+    """The ideas board: every stage, every source (typed, a request, an idea-template issue, a fault, a change to a shipped
+    rule), a No kept with its reason, lookups in all three groups, a brief that passes and one with a finding and warnings,
+    a case with one question not answered on purpose."""
+    from test_mach_shape import FAULT, REQUEST_BODY, TEMPLATE_BODY
+    from test_mach_shape_brief import CASE
+    from test_mach_shape_route import EPIC, ONE, SEVERAL
+
+    def body(s):
+        commit_to_main(s, {"policies/privacy/policy.md": pack_text()}, "privacy pack")
+        s.ship_second_slice()
+        os.environ.pop("MACH_EXECUTION_ID", None)
+        s.project_and_epic()
+        s.ok(s.a, "principle", "add", "--title", "Tell before refusing", "--statement", "A member MUST be told why a renewal is refused.",
+             "--reason", "Members trust a reason.")
+        s.capture("idea.list.empty", "idea", "list")
+        s.requests_cache([(57, "Email a reminder two days before a loan is due", REQUEST_BODY, "accepted"),
+                          (58, "Let members renew a loan themselves", TEMPLATE_BODY, "accepted"),
+                          (59, "Not counted", "Body", "not_accepted")])
+        # New: from a request issue.
+        s.capture("idea.add.from-request", "idea", "add", "Email a reminder two days before a loan is due", "--from-request", "57")
+        s.capture("idea.add.refused-twice", "idea", "add", "Remind me again", "--from-request", "57")
+        s.capture("idea.add.refused-not-template", "idea", "add", "Email a reminder", "--from-issue", "57")
+        # Exploring: from an idea-template issue, with lookups in all three groups and a brief that does not pass yet.
+        s.capture("idea.add.from-issue", "idea", "add", "Let members renew a loan themselves", "--from-issue", "58")
+        s.capture("idea.stage", "idea", "stage", "IDEA-002", "exploring")
+        s.capture("idea.lookups", "idea", "lookups", "IDEA-002", "--from", s.lookups("IDEA-002", LOOKUP_NOTES))
+        s.brief("IDEA-002", finding_brief(SEVERAL))
+        s.capture("brief.check.finding", "brief", "check", "IDEA-002")
+        s.capture("brief.show.finding", "brief", "show", "IDEA-002")
+        s.capture("idea.show.exploring", "idea", "show", "IDEA-002")
+        s.capture("idea.show.request", "idea", "show", "IDEA-001")
+        # Brief written: typed by the product manager; its brief passes, its case has a question not answered on purpose.
+        s.capture("idea.add", "idea", "add", "Reserve a study room online")
+        s.capture("case.show.refused-none", "case", "show", "IDEA-003")
+        s.brief("IDEA-003", EPIC, "Reserve a study room online")
+        s.capture("brief.check.passes", "brief", "check", "IDEA-003")
+        s.capture("brief.show.passes", "brief", "show", "IDEA-003")
+        s.write_case("IDEA-003", CASE)
+        s.capture("case.show", "case", "show", "IDEA-003")
+        s.capture("case.check", "case", "check", "IDEA-003")
+        s.capture("idea.show.brief-written", "idea", "show", "IDEA-003")
+        # Decided No, from a fault, kept with its reason; the fault's own record on this computer is shown fenced.
+        s.capture("idea.add.from-fault", "idea", "add", "Overdue fine shown twice at self-checkout", "--from-fault", FAULT)
+        inbox = s.a / ".factory/inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / f"{FAULT}.json").write_text(json.dumps({"ticket_id": FAULT, "title": "TypeError in fines.py",
+                                                         "body": "Seen 14 times this week at self-checkout. Stack: fines.py line 88."}))
+        s.capture("verdict.record.no", "verdict", "record", "IDEA-004", "--decision", "no",
+                  "--reason", "The fine is shown twice by the kiosk's own screen; it is the supplier's fault, not ours.")
+        s.capture("idea.show.fault", "idea", "show", "IDEA-004")
+        # Decided Not now, typed, with no brief at all.
+        s.ok(s.a, "idea", "add", "Reading challenges for children")
+        s.capture("verdict.record.not-now", "verdict", "record", "IDEA-005", "--decision", "not-now",
+                  "--reason", "Worth doing after the summer. The branches have nobody to run it before then.")
+        s.capture("idea.show.not-now", "idea", "show", "IDEA-005")
+        # Decided Go.
+        s.ok(s.a, "idea", "add", "Members pay fines online")
+        s.brief("IDEA-006", ONE, "Members pay fines online")
+        s.capture("verdict.record.go", "verdict", "record", "IDEA-006", "--decision", "go",
+                  "--reason", "Members ask for it at every desk, and the payment provider is already approved.")
+        s.capture("idea.show.go", "idea", "show", "IDEA-006")
+        # Exploring: a change to what exists, from a shipped rule, with its starter brief.
+        s.capture("idea.change", "idea", "change", "SLICE-001/INV-02", "--title", "Let one address hold two memberships")
+        s.capture("idea.change.refused-replaced", "idea", "change", "SLICE-001/FR-09")
+        s.capture("idea.show.change", "idea", "show", "IDEA-007")
+        s.capture("brief.check.change-starter", "brief", "check", "IDEA-007")
+        s.capture("brief.show.change-starter", "brief", "show", "IDEA-007")
+        s.capture("brief.show.refused-none", "brief", "show", "IDEA-001")
+        # Shaped into work.
+        s.ok(s.a, "idea", "add", "Show members what they have on loan")
+        s.brief("IDEA-008", ONE, "Show members what they have on loan")
+        s.ok(s.a, "verdict", "record", "IDEA-008", "--decision", "go", "--reason", "Members ask what they have out.")
+        s.ok(s.a, "idea", "size", "IDEA-008")
+        s.record_map({"epics": [], "slices": [{"key": "S1", "title": "Show my loans", "scope": "The member's loans, on one page", "epic": "EPIC-001",
+                                               "depends_on": [], "outcomes": ["O-1"], "cites": ["9-10"]}]}, idea_id="IDEA-008")
+        s.ok(s.a, "idea", "apply", "IDEA-008")
+        s.capture("idea.show.shaped-one-slice", "idea", "show", "IDEA-008")
+        s.capture("idea.list.board", "idea", "list")
+        s.capture("status.ideas", "status")
+        s.capture("refresh.ideas-none-saved", "refresh")
+    run(shape_scenario(Scenario), body)
+
+
+def shape_verdicts(Scenario):
+    """A verdict gone stale when the brief changed; Go refused without a passing brief; GitHub unreachable; recorded with
+    nobody signed in, then refused for GitHub until it is recorded again."""
+    from test_mach_shape_route import ONE
+
+    def body(s):
+        s.project_and_epic()
+        s.ok(s.a, "idea", "add", "Let members renew a loan themselves")
+        s.capture("verdict.record.refused-go-without-brief", "verdict", "record", "IDEA-001", "--decision", "go", "--reason", "Yes.")
+        s.brief("IDEA-001", ONE)
+        s.ok(s.a, "verdict", "record", "IDEA-001", "--decision", "go", "--reason", "Members ask for it at every desk.")
+        s.brief("IDEA-001", ONE.replace("call or come in", "phone or visit"))
+        s.capture("brief.show.stale-verdict", "brief", "show", "IDEA-001")
+        s.capture("idea.show.stale-verdict", "idea", "show", "IDEA-001")
+        s.capture("brief.check.stale-verdict", "brief", "check", "IDEA-001")
+        s.capture("status.ideas-stale-verdict", "status")
+        s.fail("*", once=False)
+        s.capture("verdict.record.refused-offline", "verdict", "record", "IDEA-001", "--decision", "go", "--reason", "Still yes.")
+        s.set_gh(fail={})
+        s.set_gh(signed_in=False)
+        s.capture("verdict.record.no-login", "verdict", "record", "IDEA-001", "--decision", "go", "--reason", "Still yes.")
+        s.set_gh(signed_in=True)
+        s.capture("idea.publish.refused-no-login", "idea", "publish", "IDEA-001")
+    run(shape_scenario(Scenario), body)
+
+
+def shape_routes(Scenario):
+    """Size and route: one slice, an epic with high-risk areas not determined, several epics reaching sign-in and billing;
+    sizing refused without a Go; a route gone stale."""
+    from test_mach_shape_route import EPIC, ONE, brief_with
+
+    def body(s):
+        import shape_route  # noqa: E402  (the engine's own module, as studio loads it)
+        s.ship_second_slice(files=("src/auth/login.py", "src/billing/invoice.py", "src/catalogue/search.py"))
+        s.project_and_epic()
+        s.go(ONE, "IDEA-001", "Renew one loan from my loans")
+        s.capture("idea.size.one-slice", "idea", "size", "IDEA-001")
+        s.go(EPIC, "IDEA-002", "Let members renew a loan themselves")
+        real = shape_route.changed_files
+        shape_route.changed_files = lambda *args: None  # this computer cannot say which files SLICE-001 changed
+        try:
+            s.capture("idea.size.epic", "idea", "size", "IDEA-002")
+        finally:
+            shape_route.changed_files = real
+        s.go(brief_with(rules="SLICE-002/FR-01, SLICE-001/FR-01"), "IDEA-003", "Renew loans and pay fines in one place")
+        s.capture("idea.size.several-epics", "idea", "size", "IDEA-003")
+        s.ok(s.a, "idea", "add", "Reading challenges for children")
+        s.capture("idea.size.refused-no-go", "idea", "size", "IDEA-004")
+        s.brief("IDEA-001", ONE.replace("call or come in", "phone or visit"))
+        s.capture("idea.show.stale-route", "idea", "show", "IDEA-001")
+        s.capture("idea.map.refused-stale", "idea", "map", "IDEA-001", "--from", s.map_file({"epics": [], "slices": []}))
+        s.capture("status.ideas-routes", "status")
+    run(shape_scenario(Scenario), body)
+
+
+def shape_map(Scenario):
+    """The map: an outcome no slice carries, settled to a slice and out of scope, applied, applied again; the chain."""
+    from test_mach_shape_route import EPIC, SEVERAL
+
+    def body(s):
+        s.project_and_epic()
+        s.sized(SEVERAL)
+        partial = s.several_map()
+        partial["slices"] = partial["slices"][:1]
+        partial["epics"] = partial["epics"][:1]
+        partial["slices"].append({"key": "S2", "title": "Renew from the catalogue", "scope": "One loan, from the catalogue", "epic": "EPIC-001",
+                                  "depends_on": ["S1"], "outcomes": ["O-1"], "cites": ["9"]})
+        s.capture("idea.map.uncovered", "idea", "map", "IDEA-001", "--from", s.map_file(partial))
+        s.capture("idea.map-status.uncovered", "idea", "map-status", "IDEA-001")
+        s.capture("status.ideas-settle", "status")
+        s.capture("idea.apply.refused-unsettled", "idea", "apply", "IDEA-001")
+        s.capture("idea.settle.refused-carried", "idea", "settle", "IDEA-001", "--outcome", "O-1", "--as", "later")
+        s.capture("idea.settle", "idea", "settle", "IDEA-001", "--outcome", "O-2", "--as", "slice:S2", "--reason", "The catalogue says why.")
+        s.capture("idea.map-status.settled", "idea", "map-status", "IDEA-001")
+        s.capture("status.ideas-apply", "status")
+        s.capture("idea.apply", "idea", "apply", "IDEA-001")
+        s.capture("idea.apply.again", "idea", "apply", "IDEA-001")
+        s.capture("idea.map-status.applied", "idea", "map-status", "IDEA-001")
+        s.write_slice(s.a, "SLICE-005")
+        s.capture("slice.show.from-idea", "slice", "show", "SLICE-005")
+        s.capture("slice.resume.from-idea", "slice", "resume", "SLICE-005")
+        s.capture("idea.chain", "idea", "chain", "IDEA-001")
+        s.capture("idea.show.shaped", "idea", "show", "IDEA-001")
+        # An epic route whose second outcome is out of scope, in the product manager's words.
+        s.go(EPIC, "IDEA-002", "Renew loans from the catalogue")
+        s.ok(s.a, "idea", "size", "IDEA-002")
+        s.record_map({"epics": [], "slices": [{"key": "S1", "title": "Renew from the catalogue", "scope": "One loan", "epic": "EPIC-001",
+                                               "depends_on": [], "outcomes": ["O-1"], "cites": ["9-10"]},
+                                              {"key": "S2", "title": "Renew every loan at once", "scope": "All loans", "epic": "EPIC-001",
+                                               "depends_on": ["S1"], "outcomes": ["O-1"], "cites": ["9"]}]}, idea_id="IDEA-002")
+        s.capture("idea.settle.out-of-scope", "idea", "settle", "IDEA-002", "--outcome", "O-2", "--as", "out-of-scope",
+                  "--reason", "Refusals are explained by the desk for now.")
+        s.capture("idea.show.mapped", "idea", "show", "IDEA-002")
+    run(shape_scenario(Scenario), body)
+
+
+def shape_look_back(Scenario):
+    """Look back: not yet allowed (nothing shipped), allowed once a slice shipped, recorded and posted once on the idea's
+    issue, the same words not posted again, an assumption, a note refused; the chain with a result."""
+    from test_mach_shape_route import SEVERAL
+
+    def body(s):
+        s.project_and_epic()
+        s.sized(SEVERAL)
+        s.record_map(s.several_map())
+        s.ok(s.a, "idea", "apply", "IDEA-001")
+        s.capture("idea.publish.shaped", "idea", "publish", "IDEA-001")
+        s.capture("lookback.record.refused-not-shipped", "lookback", "record", "IDEA-001", "--outcome", "O-1", "--result", "met",
+                  "--note", "Calls at Central were down to 11 a week.")
+        s.capture("status.ideas-shaped", "status")
+        s.ship("SLICE-005")
+        s.capture("status.ideas-look-back", "status")
+        s.capture("idea.show.look-back", "idea", "show", "IDEA-001")
+        s.capture("lookback.record", "lookback", "record", "IDEA-001", "--outcome", "O-1", "--result", "met",
+                  "--note", "Calls at Central were down to 11 a week by the start of March.")
+        s.capture("lookback.record.again", "lookback", "record", "IDEA-001", "--outcome", "O-1", "--result", "met",
+                  "--note", "Calls at Central were down to 11 a week by the start of March.")
+        s.capture("lookback.record.assumption", "lookback", "record", "IDEA-001", "--assumption", "A-1", "--result", "wrong",
+                  "--note", "About half the calls were about held items. O-1 was met anyway.")
+        s.capture("lookback.record.too-early", "lookback", "record", "IDEA-001", "--outcome", "O-2", "--result", "too-early",
+                  "--note", "One quarter has not passed yet.")
+        s.capture("lookback.record.refused-secret", "lookback", "record", "IDEA-001", "--assumption", "A-2", "--result", "confirmed",
+                  "--note", "token ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8")
+        s.capture("idea.show.looked-back", "idea", "show", "IDEA-001")
+        s.capture("idea.chain.looked-back", "idea", "chain", "IDEA-001")
+    run(shape_scenario(Scenario), body)
+
+
+def shape_look_back_without_github(Scenario):
+    """Look back with nobody signed in to GitHub: kept on this computer only."""
+    from test_mach_shape_route import ONE
+
+    def body(s):
+        s.set_gh(signed_in=False)
+        s.applied(text=ONE, data={"epics": [], "slices": [{"key": "S1", "title": "Renew a loan", "scope": "One loan", "epic": "EPIC-001",
+                                                           "depends_on": [], "outcomes": ["O-1"], "cites": ["9"]}]})
+        s.ship("SLICE-005")
+        s.capture("lookback.record.folder", "lookback", "record", "IDEA-001", "--outcome", "O-1", "--result", "too-early",
+                  "--note", "One month of numbers only.")
+    run(shape_scenario(Scenario), body)
+
+
+def shape_publish(Scenario):
+    """Published to GitHub, again with nothing to change, changed on GitHub after its verdict, publishing stopped part way,
+    and another product manager's idea holding the same number."""
+    from test_mach_shape_route import ONE
+
+    def body(s):
+        s.project_and_epic()
+        s.go(ONE, "IDEA-001", "Let members renew a loan themselves")
+        s.capture("idea.publish", "idea", "publish", "IDEA-001")
+        s.capture("idea.publish.again", "idea", "publish", "IDEA-001")
+        s.capture("idea.show.on-github", "idea", "show", "IDEA-001")
+        s.capture("refresh.ideas", "refresh")
+        number = s.idea_issues()[0]["number"]
+        s.change_issue(number, body=s.issue(number)["body"].replace("under 15", "under 5"))
+        s.capture("refresh.ideas-changed", "refresh")
+        s.capture("status.ideas-changed", "status")
+        s.capture("idea.list.changed", "idea", "list")
+        s.ok(s.a, "idea", "publish", "IDEA-001")  # publishing again puts the saved brief back
+        # Stopped part way: the issue is made, the verdict comment's answer is lost.
+        s.go(ONE, "IDEA-002", "Members pay fines online")
+        s.lose("issue comment")
+        s.capture("idea.publish.refused-stopped", "idea", "publish", "IDEA-002")
+        s.capture("status.ideas-unfinished", "status")
+        s.capture("idea.publish.finished", "idea", "publish", "IDEA-002")
+        # Ben's IDEA-003 is on GitHub; Ada's own IDEA-003 must take another number.
+        s.set_gh(me="ben-pm")
+        s.ok(s.b, "idea", "add", "Their idea")
+        s.ok(s.b, "idea", "add", "Their second idea")
+        s.ok(s.b, "idea", "add", "Their third idea")
+        s.ok(s.b, "idea", "publish", "IDEA-003")
+        s.set_gh(me="ada-pm")
+        s.ok(s.a, "idea", "add", "Reserve a study room online")
+        s.capture("idea.publish.refused-number-taken", "idea", "publish", "IDEA-003")
+        s.capture("idea.renumber", "idea", "renumber", "IDEA-003")
+    run(shape_scenario(Scenario), body)
+
+
+def shape_publish_to_the_folder(Scenario):
+    """No GitHub on this computer: the idea and its verdict go to the ready folder in the workspace."""
+    from test_mach_shape_route import ONE
+
+    def body(s):
+        s.set_gh(signed_in=False)
+        s.project_and_epic()
+        s.go(ONE, "IDEA-001", "Let members renew a loan themselves")
+        s.capture("idea.publish.folder", "idea", "publish", "IDEA-001")
+        s.capture("status.ideas-folder", "status")
+    run(shape_scenario(Scenario), body)

@@ -189,6 +189,13 @@ class IdeaTest(ShapeBase):
         saved = json.loads(self.path("product/ideas/IDEA-001.lookups.json").read_text())
         self.assertEqual(saved["shipped_rules"][0]["in_force"], True)
         self.assertEqual(self.ok(self.a, "idea", "show", "IDEA-001")["lookups"]["counts"], {"shipped_rules": 1, "similar": 2, "principles": 0, "policies": 0})
+        # The terminal gets the entries fenced only; the app also gets each entry in its group (M16 app foundation), as recorded.
+        self.assertNotIn("items", shown)
+        self.assertNotIn("items", self.ok(self.a, "idea", "show", "IDEA-001")["lookups"])
+        items = self.ok(self.a, "--app", "idea", "show", "IDEA-001")["lookups"]["items"]
+        self.assertEqual(items["shipped_rules"], saved["shipped_rules"])
+        self.assertNotIn("ada@example.com", json.dumps(items))
+        self.assertEqual(([i.get("idea") or i.get("request") for i in items["similar"]], items["principles"], items["policies"]), (["IDEA-002", 57], [], []))
 
 
 class BriefAndVerdictTest(ShapeBase):
