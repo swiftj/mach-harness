@@ -281,9 +281,10 @@ class NothingIsWiredInTest(unittest.TestCase):
                          {"add_labels", "add_sub_issue", "comment", "comments", "create", "create_label", "database_id", "label_names", "labels",
                           "list_issues", "pin", "place_sub_issue", "remove_ready", "rewrite", "signed_in", "sub_issue_numbers", "sub_issues",
                           "unavailable", "view"})
-        publish = handoff_source[handoff_source.index("    def publish_principles("):handoff_source.index("    def write_principles_folder(")]
+        # M17: the principles and the technical needs are published by one shared function, publish_set.
+        publish = handoff_source[handoff_source.index("    def publish_set("):handoff_source.index("    def write_set_folder(")]
         self.assertEqual(set(re.findall(r"\bissues\.([a-z_]+)\(", publish)), {"labels", "create_label", "comments", "comment"})
-        self.assertIn("principles_approval_comment(", publish)  # the only comment it writes is the fixed approval template
+        self.assertIn("rules_set.approval_comment(", publish)  # the only comment it writes is the set's fixed approval template
         # M16: Shape reaches GitHub only through issues.py (and handoff's channel, which decides GitHub or the folder), with exactly
         # these calls. Publishing writes the idea's issue from its fixed template, its labels, and the one verdict comment template.
         shape_source = (PRODUCT_SCRIPTS / "shape.py").read_text()
@@ -372,10 +373,10 @@ class NothingIsWiredInTest(unittest.TestCase):
 
     def test_report_never_authorizes(self):
         for name in ("product.py", "studio.py", "collab.py", "requests_in.py", "issues.py", "handoff.py", "prd.py", "jira_export.py", "shape.py", "validate_brief.py",
-                     "shape_route.py"):
+                     "shape_route.py", "needs.py"):
             source = (PRODUCT_SCRIPTS / name).read_text()
             self.assertNotIn('"factory_authorized": True', source)
-        for name in ("product.py", "studio.py", "prd.py", "jira_export.py", "shape.py", "shape_route.py"):
+        for name in ("product.py", "studio.py", "prd.py", "jira_export.py", "shape.py", "shape_route.py", "needs.py"):
             self.assertIn('"factory_authorized": False', (PRODUCT_SCRIPTS / name).read_text())
 
 
