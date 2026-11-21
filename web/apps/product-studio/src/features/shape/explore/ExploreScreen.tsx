@@ -4,6 +4,7 @@ import { ArrowRight, CircleAlert, FileText } from "lucide-react";
 import { Button, ErrorState, Skeleton, SkeletonText, Text, describeError } from "@mach/ui";
 import type { IdeaRow } from "@mach/ui/api";
 import { useOperation } from "../../../api/useOperation";
+import { WorkPane, WorkPanes } from "../../../shared/layout/WorkScreen";
 import { IdeaStepFrame } from "../shell/IdeaStepFrame";
 import { ideaPath } from "../shell/steps";
 import { useIdeaBoard } from "../shell/useIdea";
@@ -15,13 +16,15 @@ import { useIdeaConversation } from "./useIdeaConversation";
 
 /**
  * Explore one idea (screen engineer 2, M16): the Shape conversation, one open question at a time, beside what MACH
- * looked up and where the idea came from. Side by side on a wide window, stacked when narrower. The page shows what
- * the engine returns: `idea.show` (source, lookups, brief), the shared board row (stage), and the conversation's events.
+ * looked up and where the idea came from. In two panes (M16 layout): the conversation in the wide pane, its newest turn
+ * kept in view by scrolling that pane; where the idea came from and what was looked up in the narrow pane, each group
+ * folded with its count. The page shows what the engine returns: `idea.show` (source, lookups, brief), the shared board
+ * row (stage), and the conversation's events.
  */
 export function ExploreScreen() {
   const ideaId = useParams().ideaId ?? "";
   return (
-    <IdeaStepFrame key={ideaId} ideaId={ideaId} step="explore" lead="Open questions, one at a time, answered in your own words. Facts are looked up, never asked.">
+    <IdeaStepFrame key={ideaId} ideaId={ideaId} step="explore" layout="panes" lead="Open questions, one at a time, answered in your own words. Facts are looked up, never asked.">
       {(row) => <Explore row={row} />}
     </IdeaStepFrame>
   );
@@ -52,24 +55,26 @@ function Explore({ row }: { row: IdeaRow }) {
   const way = briefWayOn(show.data);
 
   return (
-    <div className="flex flex-col gap-8">
-      {way ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-surface px-4 py-3">
-          <span className="flex items-center gap-2 text-body text-ink">
-            <FileText aria-hidden="true" className="size-4 shrink-0 text-ink-subtle" />
-            Your brief is written. {way.state}
-          </span>
-          <Button variant="secondary" asChild>
-            <Link to={ideaPath(ideaId, "brief")}>
-              Read the brief
-              <ArrowRight aria-hidden="true" />
-            </Link>
-          </Button>
-        </div>
-      ) : null}
-      <div className="grid grid-cols-1 gap-10 xl:grid-cols-[minmax(0,1.25fr)_minmax(20rem,1fr)]">
+    <WorkPanes>
+      <WorkPane label="The conversation">
         <Conversation conv={conv} row={row} />
-        <aside aria-label="What MACH looked up, and where the idea came from" className="flex min-w-0 flex-col gap-8 border-t border-line pt-8 xl:border-l xl:border-t-0 xl:pl-8 xl:pt-0">
+      </WorkPane>
+      <WorkPane side label="Where this idea came from and what MACH looked up">
+        <div className="flex min-w-0 flex-col gap-6">
+          {way ? (
+            <div className="flex flex-col items-start gap-3 rounded-md border border-line bg-canvas px-4 py-3">
+              <span className="flex items-start gap-2 text-body-sm text-ink">
+                <FileText aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-ink-subtle" />
+                <span>Your brief is written. {way.state}</span>
+              </span>
+              <Button variant="secondary" size="sm" asChild>
+                <Link to={ideaPath(ideaId, "brief")}>
+                  Read the brief
+                  <ArrowRight aria-hidden="true" />
+                </Link>
+              </Button>
+            </div>
+          ) : null}
           {show.data ? (
             <>
               <IdeaSource source={show.data.source} />
@@ -94,8 +99,8 @@ function Explore({ row }: { row: IdeaRow }) {
               Reading the idea again
             </Text>
           ) : null}
-        </aside>
-      </div>
-    </div>
+        </div>
+      </WorkPane>
+    </WorkPanes>
   );
 }

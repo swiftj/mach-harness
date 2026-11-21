@@ -6,10 +6,12 @@ import type { EpicCurrent } from "@mach/ui/api";
 import { useEngineAct } from "../../../api/act";
 import { useStatus } from "../../../api/store";
 import { useOperation } from "../../../api/useOperation";
-import { ScreenFrame } from "../../../shared/ScreenFrame";
+import { ContextRow, OnePane, WorkPane, WorkPanes, WorkScreen } from "../../../shared/layout/WorkScreen";
 import { ideaPath } from "../shell/steps";
 import { changeArgs, connections, epicOfRule, findRule, parseRule, standingWords } from "./model";
 
+const TITLE = "Change what exists";
+const ABOUT_LABEL = "About this page";
 const LEAD = "Start from a rule that has shipped. Its connected rules are carried in, and the change goes the same way as any idea.";
 
 /**
@@ -28,19 +30,21 @@ export function ChangeScreen() {
 
 function NoRule({ given }: { given: string | null }) {
   return (
-    <ScreenFrame title="Change what exists" lead={LEAD}>
-      <EmptyState
-        className="max-w-reading"
-        icon={<PencilLine />}
-        title={given ? "That is not a shipped rule's name" : "Pick a rule to change"}
-        description="Open how an epic works today from the project home, and choose Change this beside a rule in force. A rule is named like SLICE-001/FR-01."
-        action={
-          <Button asChild>
-            <Link to="/">Go to the project home</Link>
-          </Button>
-        }
-      />
-    </ScreenFrame>
+    <WorkScreen header={<ContextRow title={TITLE} about={LEAD} aboutLabel={ABOUT_LABEL} />}>
+      <OnePane label="Pick a rule">
+        <EmptyState
+          className="max-w-reading"
+          icon={<PencilLine />}
+          title={given ? "That is not a shipped rule's name" : "Pick a rule to change"}
+          description="Open how an epic works today from the project home, and choose Change this beside a rule in force. A rule is named like SLICE-001/FR-01."
+          action={
+            <Button asChild>
+              <Link to="/">Go to the project home</Link>
+            </Button>
+          }
+        />
+      </OnePane>
+    </WorkScreen>
   );
 }
 
@@ -51,13 +55,33 @@ function ChangeRule({ rule, sliceId, epicParam }: { rule: string; sliceId: strin
   const waitingForEpic = !epicId && !status.data && !status.error;
 
   return (
-    <ScreenFrame title="Change what exists" lead={LEAD}>
+    <WorkScreen
+      header={
+        <ContextRow
+          identity={
+            <>
+              <ArtifactId plain>{rule}</ArtifactId>
+              {epicId ? (
+                <span>
+                  in <ArtifactId plain>{epicId}</ArtifactId>
+                </span>
+              ) : null}
+            </>
+          }
+          title={TITLE}
+          about={LEAD}
+          aboutLabel={ABOUT_LABEL}
+        />
+      }
+    >
       {waitingForEpic || (epicId && !current.data && current.loading) ? (
-        <LoadingState label={`Reading ${rule}`} />
+        <OnePane label={TITLE}>
+          <LoadingState label={`Reading ${rule}`} />
+        </OnePane>
       ) : (
         <ChangeBody rule={rule} epicId={epicId} current={current.data} readProblem={current.error?.message ?? null} />
       )}
-    </ScreenFrame>
+    </WorkScreen>
   );
 }
 
@@ -65,104 +89,109 @@ function ChangeBody({ rule, epicId, current, readProblem }: { rule: string; epic
   const found = findRule(current?.epic, rule);
   const links = found ? connections(found.rule) : [];
   return (
-    <div className="flex max-w-reading flex-col gap-8">
-      <section aria-labelledby="rule-heading" className="flex flex-col gap-3">
-        <Heading level={2} id="rule-heading">
-          The rule
-        </Heading>
-        {found ? (
-          <div className="flex flex-col gap-2 rounded-md border border-line bg-surface px-5 py-4">
-            <span className="flex flex-wrap items-center gap-2">
-              <ArtifactId>{rule}</ArtifactId>
-              <StatusPill
-                tone={found.standing === "no-longer" ? "neutral" : "success"}
-                size="sm"
-                icon={<StateGlyph shape={found.standing === "no-longer" ? "superseded" : "approved"} />}
-                className={found.standing === "no-longer" ? "border-dashed" : undefined}
-              >
-                {standingWords[found.standing]}
-              </StatusPill>
-            </span>
-            <p className="break-words text-body-lg text-ink">{plain(found.rule.text)}</p>
-            <p className="text-caption text-ink-subtle">
-              From <ArtifactId plain>{found.rule.slice_id}</ArtifactId>
-              {epicId ? (
-                <>
-                  {" "}
-                  in <ArtifactId plain>{epicId}</ArtifactId>
-                </>
-              ) : null}
-            </p>
-            {found.standing === "no-longer" && found.rule.now?.length ? (
-              <div className="mt-1 flex flex-col gap-1 rounded-sm bg-surface-sunken px-3 py-2">
-                <span className="text-caption font-semibold text-ink-muted">What holds now</span>
-                {found.rule.now.map((n) => (
-                  <p key={n.rule} className="text-body-sm text-ink">
-                    <ArtifactId plain className="mr-1.5">
-                      {n.rule}
-                    </ArtifactId>
-                    {plain(n.text)}
-                  </p>
-                ))}
+    <WorkPanes>
+      <WorkPane label="Start an idea from this rule" width="reading">
+        <StartSection rule={rule} />
+      </WorkPane>
+      <WorkPane side label="The rule and its connections">
+        <div className="flex flex-col gap-8">
+          <section aria-labelledby="rule-heading" className="flex flex-col gap-3">
+            <Heading level={2} size="title-3" id="rule-heading">
+              The rule
+            </Heading>
+            {found ? (
+              <div className="flex flex-col gap-2 rounded-md border border-line bg-canvas px-4 py-3.5">
+                <span className="flex flex-wrap items-center gap-2">
+                  <ArtifactId>{rule}</ArtifactId>
+                  <StatusPill
+                    tone={found.standing === "no-longer" ? "neutral" : "success"}
+                    size="sm"
+                    icon={<StateGlyph shape={found.standing === "no-longer" ? "superseded" : "approved"} />}
+                    className={found.standing === "no-longer" ? "border-dashed" : undefined}
+                  >
+                    {standingWords[found.standing]}
+                  </StatusPill>
+                </span>
+                <p className="break-words text-body-lg text-ink">{plain(found.rule.text)}</p>
+                <p className="text-caption text-ink-subtle">
+                  From <ArtifactId plain>{found.rule.slice_id}</ArtifactId>
+                  {epicId ? (
+                    <>
+                      {" "}
+                      in <ArtifactId plain>{epicId}</ArtifactId>
+                    </>
+                  ) : null}
+                </p>
+                {found.standing === "no-longer" && found.rule.now?.length ? (
+                  <div className="mt-1 flex flex-col gap-1 rounded-sm bg-surface-sunken px-3 py-2">
+                    <span className="text-caption font-semibold text-ink-muted">What holds now</span>
+                    {found.rule.now.map((n) => (
+                      <p key={n.rule} className="text-body-sm text-ink">
+                        <ArtifactId plain className="mr-1.5">
+                          {n.rule}
+                        </ArtifactId>
+                        {plain(n.text)}
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
               </div>
+            ) : (
+              <div className="flex flex-col gap-2 rounded-md border border-dashed border-line-strong bg-canvas px-4 py-3.5">
+                <ArtifactId className="self-start">{rule}</ArtifactId>
+                <p className="text-body-sm text-ink">
+                  {current?.epic
+                    ? `${rule} is not among the rules MACH read for ${epicId} on this computer.`
+                    : readProblem
+                      ? `Its words could not be read here: ${readProblem}`
+                      : epicId
+                        ? `Nothing in ${epicId} has shipped on this computer, so its words could not be read here.`
+                        : "Its epic is not known here, so its words could not be read."}{" "}
+                  MACH checks the rule when you start: if it is not shipped and in force, it says so and nothing is started.
+                </p>
+              </div>
+            )}
+            {current ? (
+              <p className="flex items-start gap-2 text-body-sm text-ink-muted">
+                <GitCommitHorizontal aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-ink-subtle" />
+                <span>{current.note}</span>
+              </p>
             ) : null}
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2 rounded-md border border-dashed border-line-strong bg-surface px-5 py-4">
-            <ArtifactId className="self-start">{rule}</ArtifactId>
-            <p className="text-body-sm text-ink">
-              {current?.epic
-                ? `${rule} is not among the rules MACH read for ${epicId} on this computer.`
-                : readProblem
-                  ? `Its words could not be read here: ${readProblem}`
-                  : epicId
-                    ? `Nothing in ${epicId} has shipped on this computer, so its words could not be read here.`
-                    : "Its epic is not known here, so its words could not be read."}{" "}
-              MACH checks the rule when you start: if it is not shipped and in force, it says so and nothing is started.
-            </p>
-          </div>
-        )}
-        {current ? (
-          <p className="flex items-start gap-2 text-body-sm text-ink-muted">
-            <GitCommitHorizontal aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-ink-subtle" />
-            <span>{current.note}</span>
-          </p>
-        ) : null}
-      </section>
+          </section>
 
-      {found ? (
-        <section aria-labelledby="connected-heading" className="flex flex-col gap-3">
-          <Heading level={2} id="connected-heading">
-            Connected rules MACH carries in
-          </Heading>
-          {links.length ? (
-            <>
-              <Text size="body-sm" tone="muted">
-                The new idea records these as what it touches: the rules in force of each slice that declared this rule kept, and the rules it took the place of. MACH
-                reads the full list when you start.
-              </Text>
-              <ul className="flex flex-col divide-y divide-line rounded-md border border-line bg-surface">
-                {links.map((c) => (
-                  <li key={`${c.kind}-${c.id}`} className="flex flex-col gap-0.5 px-4 py-3">
-                    <span className="flex flex-wrap items-center gap-2 text-body-sm text-ink">
-                      <ArtifactId plain>{c.id}</ArtifactId>
-                      <span>{c.words}</span>
-                    </span>
-                    {c.note ? <span className="text-body-sm text-ink-muted">{c.note}</span> : null}
-                  </li>
-                ))}
-              </ul>
-            </>
-          ) : (
-            <Text size="body-sm" tone="muted">
-              No other shipped rule is connected to it: no slice declared it kept, and it took no earlier rule's place. MACH carries in this rule alone.
-            </Text>
-          )}
-        </section>
-      ) : null}
-
-      <StartSection rule={rule} />
-    </div>
+          {found ? (
+            <section aria-labelledby="connected-heading" className="flex flex-col gap-3">
+              <Heading level={2} size="title-3" id="connected-heading">
+                Connected rules MACH carries in
+              </Heading>
+              {links.length ? (
+                <>
+                  <Text size="body-sm" tone="muted">
+                    The new idea records these as what it touches: the rules in force of each slice that declared this rule kept, and the rules it took the place of. MACH
+                    reads the full list when you start.
+                  </Text>
+                  <ul className="flex flex-col divide-y divide-line rounded-md border border-line bg-canvas">
+                    {links.map((c) => (
+                      <li key={`${c.kind}-${c.id}`} className="flex flex-col gap-0.5 px-4 py-3">
+                        <span className="flex flex-wrap items-center gap-2 text-body-sm text-ink">
+                          <ArtifactId plain>{c.id}</ArtifactId>
+                          <span>{c.words}</span>
+                        </span>
+                        {c.note ? <span className="text-body-sm text-ink-muted">{c.note}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                <Text size="body-sm" tone="muted">
+                  No other shipped rule is connected to it: no slice declared it kept, and it took no earlier rule's place. MACH carries in this rule alone.
+                </Text>
+              )}
+            </section>
+          ) : null}
+        </div>
+      </WorkPane>
+    </WorkPanes>
   );
 }
 

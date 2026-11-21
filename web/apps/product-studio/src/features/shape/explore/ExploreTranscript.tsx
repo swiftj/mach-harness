@@ -1,8 +1,9 @@
 import { type ReactNode } from "react";
-import { BookOpen, CircleDot, ListChecks, Lock, PenLine, Save, Search } from "lucide-react";
+import { CircleDot, ListChecks, Lock, PenLine, Save, Search } from "lucide-react";
 import { Banner, Button, Heading, RichText, Text, cn, plural as count } from "@mach/ui";
 import type { ActivityKind } from "@mach/ui/api";
 import type { AnswerKind, InterviewModel, InterviewerMessage, TimelineItem } from "../../interview/model";
+import { Fold } from "../../../shared/layout/Fold";
 import { openQuestion } from "./model";
 
 const answerLabels: Record<AnswerKind, string> = {
@@ -44,19 +45,15 @@ function rows(timeline: TimelineItem[]): Row[] {
 
 /**
  * The conversation so far, as the sketch lays it out: "MACH asked" and "You answered", oldest first. The message being
- * answered now is shown above, not repeated. Every word of it is the conversation's or the PM's, shown as text
+ * answered now is shown below it, with what it said before its question, and not repeated here. Every word of it is the conversation's or the PM's, shown as text
  * (RichText interprets no HTML).
  */
 export function ExploreTranscript({ model, onRetry }: { model: InterviewModel; onRetry: (() => void) | null }) {
-  // The message being answered is shown above; it stays here only for what it said before its question.
-  const shownAbove = (id: string) => {
-    const message = model.messages[id];
-    return id === model.awaiting && !(message?.question ?? openQuestion(message?.text ?? ""))?.preface;
-  };
-  const list = rows(model.timeline).filter((row) => !(row.type === "item" && row.item.type === "message" && shownAbove(row.item.id)));
+  // The message being answered, with what it said before its question, is shown directly below the transcript.
+  const list = rows(model.timeline).filter((row) => !(row.type === "item" && row.item.type === "message" && row.item.id === model.awaiting));
   if (!list.length) return null;
   return (
-    <section aria-labelledby="so-far-title" className="flex flex-col gap-3 border-t border-line pt-6">
+    <section aria-labelledby="so-far-title" className="flex flex-col gap-3 border-b border-line pb-6">
       <Heading level={3} size="title-3" id="so-far-title">
         The conversation so far
       </Heading>
@@ -76,7 +73,7 @@ export function ExploreTranscript({ model, onRetry }: { model: InterviewModel; o
               if (!message) return null;
               return (
                 <li key={item.key}>
-                  <Asked message={message} awaiting={model.awaiting === message.id} />
+                  <Asked message={message} />
                 </li>
               );
             }
@@ -128,17 +125,8 @@ function Turn({ who, children, muted = false }: { who: string; children: ReactNo
   );
 }
 
-function Asked({ message, awaiting }: { message: InterviewerMessage; awaiting: boolean }) {
+function Asked({ message }: { message: InterviewerMessage }) {
   const q = message.question ?? openQuestion(message.text);
-  if (awaiting) {
-    // The question being asked is shown above; only what came before it stays here.
-    return q?.preface ? (
-      <Turn who="MACH said">
-        <RichText text={q.preface} />
-        <p className="mt-1 text-body-sm text-ink-muted">Question {q.number} is asked above.</p>
-      </Turn>
-    ) : null;
-  }
   if (q) {
     return (
       <Turn who={`MACH asked, question ${q.number}: ${q.title}`}>
@@ -171,14 +159,7 @@ function ActivityGroup({ items, finished }: { items: Array<Extract<TimelineItem,
     <div className="flex flex-col gap-2 border-l-2 border-line pl-3">
       {routine.length ? (
         finished && routine.length > 2 ? (
-          <details className="group">
-            <summary className="flex cursor-pointer items-center gap-2 rounded-xs text-body-sm text-ink-muted marker:content-none [&_svg]:size-3.5">
-              <BookOpen aria-hidden="true" />
-              {count(routine.length, "step")} taken
-              <span className="text-caption text-ink-subtle group-open:hidden">(show)</span>
-            </summary>
-            <div className="pt-1.5">{list(routine)}</div>
-          </details>
+          <Fold label={`${count(routine.length, "step")} taken`}>{list(routine)}</Fold>
         ) : (
           list(routine)
         )

@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { CircleAlert, Lightbulb, Plus } from "lucide-react";
-import { Badge, Banner, Button, Disclosure, EmptyState, ErrorState, Heading, Skeleton, Text, describeError } from "@mach/ui";
+import { Badge, Banner, Button, EmptyState, ErrorState, Heading, Skeleton, Text, describeError } from "@mach/ui";
 import type { IdeaRow } from "@mach/ui/api";
-import { ScreenFrame } from "../../../shared/ScreenFrame";
+import { Fold } from "../../../shared/layout/Fold";
+import { ContextRow, OnePane, WorkScreen } from "../../../shared/layout/WorkScreen";
 import { useIdeaBoard } from "../shell/useIdea";
 import { AddIdeaDialog } from "./AddIdeaDialog";
 import { IdeaCard } from "./IdeaCard";
@@ -10,6 +11,12 @@ import { boardColumns, ideaCount, stages, type BoardColumn } from "./model";
 
 const TITLE = "Shape";
 const LEAD = "Where an idea is explored, argued for, sized and turned into epics. You decide at every step; MACH checks. Nothing here reaches the builders.";
+const ABOUT = (
+  <>
+    <span className="block">{LEAD}</span>
+    <span className="mt-2 block">Everything that might become work, wherever it came from. Saying no loses nothing: the verdict is kept with its reason and the idea stays on the board.</span>
+  </>
+);
 
 /**
  * Shape's ideas board: every idea, wherever it came from, at one of its five places, with the engine's next step for
@@ -31,101 +38,117 @@ export function IdeasBoardScreen() {
     </Button>
   );
   const dialog = <AddIdeaDialog open={adding} onOpenChange={setAdding} onAdded={reload} />;
+  const header = (actions?: ReactNode, identity?: ReactNode) => <ContextRow identity={identity} title={TITLE} about={ABOUT} aboutLabel="About Shape" actions={actions} />;
 
   if (loading) {
     return (
-      <ScreenFrame title={TITLE} width="wide" lead={LEAD}>
-        <div role="status" aria-label="Reading your ideas" aria-busy="true" className="grid grid-cols-5 gap-3">
-          {stages.map((stage) => (
-            <div key={stage} className="flex flex-col gap-3 rounded-md bg-surface-sunken p-3">
-              <Skeleton className="h-5 w-24" />
-              <Skeleton className="h-28 w-full" />
-            </div>
-          ))}
-        </div>
-      </ScreenFrame>
+      <WorkScreen header={header()}>
+        <BoardArea>
+          <div role="status" aria-label="Reading your ideas" aria-busy="true" className="grid min-w-[72rem] grid-cols-5 gap-3">
+            {stages.map((stage) => (
+              <div key={stage} className="flex flex-col gap-3 rounded-md bg-surface-sunken p-3">
+                <Skeleton className="h-5 w-24" />
+                <Skeleton className="h-28 w-full" />
+              </div>
+            ))}
+          </div>
+        </BoardArea>
+      </WorkScreen>
     );
   }
 
   if (!board && error) {
     const shown = error.kind === "refused" ? { title: "Your ideas could not be read", message: error.message } : describeError(error);
     return (
-      <ScreenFrame title={TITLE} width="wide" lead={LEAD}>
-        <ErrorState icon={<CircleAlert />} title={shown.title} message={shown.message} hint={error.hint} action={<Button onClick={reload}>Try again</Button>} />
-      </ScreenFrame>
+      <WorkScreen header={header()}>
+        <OnePane label="Ideas">
+          <ErrorState icon={<CircleAlert />} title={shown.title} message={shown.message} hint={error.hint} action={<Button onClick={reload}>Try again</Button>} />
+        </OnePane>
+      </WorkScreen>
     );
   }
 
   if (!board || board.ideas.length === 0) {
     return (
-      <ScreenFrame title={TITLE} width="wide" lead={LEAD}>
-        <EmptyState
-          icon={<Lightbulb />}
-          title="No ideas yet"
-          description="Shape is optional. It is a place to think an idea through before any epic exists: explore it, write a short brief, make the case and record your verdict. Add one whenever you have something worth that thought."
-          action={addButton(true)}
-        />
+      <WorkScreen header={header()}>
+        <OnePane label="Ideas">
+          <EmptyState
+            icon={<Lightbulb />}
+            title="No ideas yet"
+            description="Shape is optional. It is a place to think an idea through before any epic exists: explore it, write a short brief, make the case and record your verdict. Add one whenever you have something worth that thought."
+            action={addButton(true)}
+          />
+        </OnePane>
         {dialog}
-      </ScreenFrame>
+      </WorkScreen>
     );
   }
 
   const { columns, elsewhere } = boardColumns(board);
   return (
-    <ScreenFrame title={TITLE} width="wide" lead={LEAD}>
-      {board.unreadable?.length ? (
-        <Banner tone="warning" title={board.unreadable.length === 1 ? "1 idea could not be read" : `${board.unreadable.length} ideas could not be read`}>
-          <span className="block">The rest of the board is shown as recorded. The files that could not be read are left as they are.</span>
-          <Disclosure summary="Which files">
-            <ul className="flex flex-col gap-0.5 font-mono text-mono">
-              {board.unreadable.map((file) => (
-                <li key={file} translate="no">
-                  {file}
-                </li>
-              ))}
-            </ul>
-          </Disclosure>
-        </Banner>
-      ) : null}
-
-      <section aria-labelledby="ideas-heading" className="flex flex-col gap-4">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="flex max-w-reading flex-col gap-1">
-            <Heading level={2} id="ideas-heading">
-              Ideas
-            </Heading>
-            <Text size="body-sm" tone="muted">
-              Everything that might become work, wherever it came from. Saying no loses nothing: the verdict is kept with its reason and the idea stays on the board.
-            </Text>
-          </div>
-          {addButton(false)}
+    <WorkScreen header={header(addButton(false), <span>{ideaCount(board.ideas.length)}. Ideas appear here only when you add them.</span>)}>
+      <BoardArea
+        above={
+          board.unreadable?.length ? (
+            <Banner tone="warning" title={board.unreadable.length === 1 ? "1 idea could not be read" : `${board.unreadable.length} ideas could not be read`}>
+              <span className="block">The rest of the board is shown as recorded. The files that could not be read are left as they are.</span>
+              <Fold label="Which files" className="mt-2">
+                <ul className="flex flex-col gap-0.5 font-mono text-mono">
+                  {board.unreadable.map((file) => (
+                    <li key={file} translate="no">
+                      {file}
+                    </li>
+                  ))}
+                </ul>
+              </Fold>
+            </Banner>
+          ) : null
+        }
+      >
+        <h2 id="ideas-heading" className="sr-only">
+          Ideas
+        </h2>
+        <div className="grid min-w-[72rem] grid-cols-5 gap-3">
+          {columns.map((column) => (
+            <StageColumn key={column.stage} column={column} />
+          ))}
         </div>
-
-        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- the board scrolls sideways inside its own region, which must be reachable by keyboard */}
-        <div role="region" aria-label="Ideas board, scrolls sideways when narrow" tabIndex={0} className="overflow-x-auto rounded-md pb-2">
-          <div className="grid min-w-[72rem] grid-cols-5 gap-3">
-            {columns.map((column) => (
-              <StageColumn key={column.stage} column={column} />
-            ))}
-          </div>
-        </div>
-
         {elsewhere.length ? <OtherPlaces rows={elsewhere} /> : null}
-
-        <p className="border-t border-line pt-3 text-body-sm text-ink-muted">
-          {ideaCount(board.ideas.length)}. Ideas appear here only when you add them.
-        </p>
-      </section>
+      </BoardArea>
       {dialog}
-    </ScreenFrame>
+    </WorkScreen>
+  );
+}
+
+/**
+ * The board's area under the context row (M16 layout, style guide 8.9): the columns in one region that scrolls on its
+ * own, sideways when the window is narrower than the five columns and down when a column holds more than fits, with
+ * each column's heading kept in view at the top. In a window narrower than 1,024 or shorter than 620 the region grows
+ * with its content and the page scrolls; it still scrolls sideways inside itself.
+ */
+function BoardArea({ above, children }: { above?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3 px-10 pb-4 pt-5 max-[1023px]:flex-none [@media(max-height:619px)]:flex-none">
+      {above}
+      <section
+        aria-label="Ideas board, scrolls sideways when narrow"
+        // The board scrolls inside its own region, which must be reachable by keyboard.
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+        tabIndex={0}
+        className="flex min-h-0 flex-1 flex-col gap-6 overflow-auto overscroll-contain rounded-md pb-2 max-[1023px]:flex-none [@media(max-height:619px)]:flex-none"
+      >
+        {children}
+      </section>
+    </div>
   );
 }
 
 function StageColumn({ column }: { column: BoardColumn }) {
   const headingId = `stage-${column.stage}`;
   return (
-    <section aria-labelledby={headingId} className="flex min-w-0 flex-col gap-3 rounded-md bg-surface-sunken p-3">
-      <div className="flex flex-col gap-0.5 px-0.5">
+    <section aria-labelledby={headingId} className="flex min-w-0 flex-col gap-3 rounded-md bg-surface-sunken px-3 pb-3">
+      {/* The column's heading stays in view while the board scrolls down, so every column's count is always seen. */}
+      <div className="sticky top-0 z-10 -mx-3 flex flex-col gap-0.5 rounded-t-md bg-surface-sunken px-3.5 pb-1 pt-3">
         <h3 id={headingId} className="flex items-center gap-2 text-label text-ink">
           {column.words}
           <Badge>
