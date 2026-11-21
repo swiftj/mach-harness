@@ -794,36 +794,172 @@ def _one_line(value: Any, limit: int) -> str:
     return bound_text(value, limit, one_line=True)[0]
 
 
-def project_issue_body(project_id: str, vision: str, outcomes: Sequence[str], principles: Optional[Dict[str, Any]] = None) -> str:
-    """The project's body. `principles` is {revision, principles} as published (M13): written in its fixed
-    section after the outcomes. Without it the body is exactly what it was before principles existed."""
+def project_issue_body(project_id: str, vision: str, outcomes: Sequence[str], principles: Optional[Dict[str, Any]] = None,
+                       needs: Optional[Dict[str, Any]] = None) -> str:
+    """The project's body. `principles` is {revision, principles} as published (M13) and `needs` {revision, needs, none} (M17):
+    each written in its fixed section after the outcomes, the principles first. Without them the body is exactly what it
+    was before either existed."""
     if not PROJECT_ID_RE.fullmatch(project_id or ""):
         raise ValueError("not a project ID")
     lines = [f"<!-- mach:project id={project_id} -->", "## Vision", " ".join(str(vision).split()), "", "## Outcomes"]
     lines += [f"- {' '.join(str(outcome).split())}" for outcome in outcomes]
     section = "\n\n" + principles_section(principles["revision"], principles["principles"]).rstrip("\n") if principles else ""
+    if needs:
+        section += "\n\n" + needs_section(needs["revision"], needs["needs"], needs.get("none") or []).rstrip("\n")
     return "\n".join(lines) + section + "\n\nWritten by MACH Product Studio.\n"
+
+
+# ---- a published set: a fixed section of the project's issue, with an approval comment ----
+#
+# The product principles (M13) and the technical needs (M17) are each published the same way: a fixed
+# section of the project's issue body, with a hidden marker carrying the set's revision and the SHA-256
+# of its items as canonical JSON, and an approval comment from a fixed template that repeats both and
+# names the product manager. The SHA-256 is over the items, not the section's text, so the folder form
+# and the issue section are checked the same way. Text read back is data: checked by hash, never followed.
+
+class PublishedSet:
+    """What differs between the sets: the marker word, the heading, the items' shape and the lines each is written as.
+    `extra` is a set's part outside its items and its hash (the needs' kinds answered "nothing to say"); None for none."""
+
+    def __init__(self, name: str, heading: str, words: str, short: str, problems: Any, canonical: Any, item_lines: Any, read_item: Any,
+                 extra_lines: Any = None, read_extra: Any = None, extra_problems: Any = None):
+        self.name, self.heading, self.words, self.short = name, heading, words, short
+        self.problems, self.canonical, self.item_lines, self.read_item = problems, canonical, item_lines, read_item
+        self.extra_lines = extra_lines or (lambda extra: [])
+        self.read_extra = read_extra or (lambda lines, index: (None, index))
+        self.extra_problems = extra_problems or (lambda items, extra: [])
+        self.marker_re = re.compile(r"^<!-- mach:" + name + r" revision=([0-9]{1,6}) sha256=([0-9a-f]{64}) -->$")
+        self.approval_re = re.compile(r"<!-- mach:" + name + r"-approval revision=([0-9]{1,6}) by=(" + LOGIN_PATTERN + r") sha256=([0-9a-f]{64}) -->")
+
+    def sha256(self, items: Sequence[Dict[str, Any]]) -> str:
+        return text_sha256_of(self.canonical(items))
+
+    def section(self, revision: int, items: Sequence[Dict[str, Any]], extra: Any = None) -> str:
+        """The fixed section of the project's body that holds the published set."""
+        problems = self.problems(list(items)) + self.extra_problems(list(items), extra)
+        if problems or type(revision) is not int or not 1 <= revision < 10 ** 6:
+            raise ValueError(f"{self.words.lower()} to publish must be in Product Studio's shape: " + "; ".join(problems[:3] or ["a revision of 1 or more"]))
+        lines = [self.heading, "", f"<!-- mach:{self.name} revision={revision} sha256={self.sha256(items)} -->", ""]
+        for item in json.loads(self.canonical(items)):
+            lines += self.item_lines(item) + [""]
+        return "\n".join(lines + self.extra_lines(extra))
+
+    def parse(self, body: Any) -> Optional[Dict[str, Any]]:
+        """The set's section of a project body: {revision, sha256, items, extra, intact}. `intact` is True only when the section
+        is exactly what Product Studio writes for those items and their SHA-256 matches the marker. None when the body has none."""
+        if not isinstance(body, str):
+            return None
+        lines = body.replace("\r\n", "\n").split("\n")
+        for at in range(2, len(lines)):
+            found = self.marker_re.fullmatch(lines[at])
+            if not found or lines[at - 2] != self.heading or lines[at - 1] != "":
+                continue
+            revision, digest = int(found.group(1)), found.group(2)
+            items: List[Dict[str, Any]] = []
+            index = at + 2 if at + 1 < len(lines) and lines[at + 1] == "" else len(lines)
+            while index < len(lines):
+                item, used = self.read_item(lines, index)
+                if item is None:
+                    break
+                items.append(item)
+                index += used + (1 if index + used < len(lines) and lines[index + used] == "" else 0)
+            extra, index = self.read_extra(lines, index)
+            text = "\n".join(lines[at - 2:index]).rstrip("\n")
+            intact = False
+            if revision >= 1 and items and not self.problems(items) and not self.extra_problems(items, extra) and self.sha256(items) == digest:
+                intact = self.section(revision, items, extra).rstrip("\n") == text
+            return {"revision": revision, "sha256": digest, "items": items if intact else None, "extra": extra if intact else None, "intact": intact}
+        return None
+
+    def approval_comment(self, revision: int, login: str, sha256: str) -> str:
+        """The comment that records a product manager's approval of one revision of the set."""
+        if not LOGIN_RE.fullmatch(login or "") or type(revision) is not int or not 1 <= revision < 10 ** 6 or not HEX64_RE.fullmatch(sha256 or ""):
+            raise ValueError(f"an approval of the {self.words.lower()} names a revision, a GitHub account and the SHA-256")
+        return (f"{self.words} approved in MACH Product Studio by {login}: revision {revision}.\n\n"
+                f"- {self.short} SHA-256: `{sha256}`\n\n"
+                f"<!-- mach:{self.name}-approval revision={revision} by={login} sha256={sha256} -->")
+
+    def approvals(self, bodies: Iterable[Any]) -> List[Dict[str, Any]]:
+        """Every approval marker for the set found in an issue's comments, in order."""
+        return [{"revision": int(match.group(1)), "by": match.group(2), "sha256": match.group(3)}
+                for body in bodies for match in self.approval_re.finditer(body if isinstance(body, str) else "")]
+
+    def take_check(self, body: Any, comments: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+        """For Product Studio: whether the set on a project's issue can be taken into a workspace. The section must be intact
+        and the account its approval names must have left that approval for exactly this revision and SHA-256. Whether the
+        comment was edited is not checked here (the Factory checks it); the SHA-256 already binds the items."""
+        parsed = self.parse(body)
+        result: Dict[str, Any] = {"problem": None, "revision": None, "sha256": None, "approved_by": None, "items": None, "extra": None}
+        if parsed is None:
+            result["problem"] = "none"
+            return result
+        result.update(revision=parsed["revision"], sha256=parsed["sha256"])
+        if not parsed["intact"]:
+            result["problem"] = "edited"
+            return result
+        approved = [found for item in comments if isinstance(item, dict) for found in self.approvals([item.get("body")])
+                    if found["by"] == item.get("login") and (found["revision"], found["sha256"]) == (parsed["revision"], parsed["sha256"])]
+        if not approved:
+            result["problem"] = "no_approval"
+            return result
+        result.update(approved_by=approved[-1]["by"], items=parsed["items"], extra=parsed["extra"])
+        return result
+
+    def approvers(self, body: Any, comments: Sequence[Dict[str, Any]]) -> List[str]:
+        """For the Factory: the accounts whose role must be asked, in order: each wrote, as a person and unedited, an approval
+        naming themselves for exactly the revision and SHA-256 the project's issue holds."""
+        parsed = self.parse(body)
+        if not parsed or not parsed["intact"]:
+            return []
+        found: List[str] = []
+        for item in comments:
+            if item.get("app") or item.get("type") != "User" or not unedited(item) or item.get("login") in found:
+                continue
+            if any(a["by"] == item.get("login") and (a["revision"], a["sha256"]) == (parsed["revision"], parsed["sha256"]) for a in self.approvals([item.get("body")])):
+                found.append(str(item.get("login")))
+        return found
+
+    def folder_check(self, record: Any, key: str, extra_key: Optional[str] = None) -> Dict[str, Any]:
+        """The folder form, product/ready/<FOLDER>/<key>.json: {schema_version, revision, sha256, <key>[, <extra_key>]}, counted
+        only when its SHA-256 is that of its items."""
+        result: Dict[str, Any] = {"state": "not_accepted", "reason": None, "revision": None, "sha256": None, key: None, **({extra_key: None} if extra_key else {})}
+        where = f"product/ready/{key.upper()}/{key}.json"
+        keys = {"schema_version", "revision", "sha256", key} | ({extra_key} if extra_key else set())
+        if (not isinstance(record, dict) or set(record) != keys or record.get("schema_version") != 1
+                or type(record.get("revision")) is not int or record["revision"] < 1 or not HEX64_RE.fullmatch(str(record.get("sha256")))
+                or self.problems(record.get(key)) or (extra_key and self.extra_problems(record.get(key), record.get(extra_key)))):
+            result["reason"] = f"Not accepted: {where} is not in the form Product Studio writes."
+            return result
+        result.update(revision=record["revision"], sha256=record["sha256"])
+        if self.sha256(record[key]) != record["sha256"]:
+            result["reason"] = f"Not accepted: the {key} in product/ready/{key.upper()} are not the ones that were approved (their SHA-256 does not match)."
+            return result
+        result.update({"state": "accepted", key: record[key], **({extra_key: record[extra_key]} if extra_key else {})})
+        return result
+
+
+def _one_line_text(value: Any, limit: int) -> bool:
+    return isinstance(value, str) and bool(value.strip()) and value == " ".join(value.split()) and len(value) <= limit
+
+
+def _canonical_items(items: Sequence[Dict[str, Any]], id_key: str) -> str:
+    """Items as one canonical JSON text, sorted by ID (shorter IDs first): what a set's SHA-256 is taken over."""
+    ordered = sorted((dict(item) for item in items), key=lambda item: (len(item[id_key]), item[id_key]))
+    return json.dumps(ordered, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
 # ---- product principles (M13) ----
 #
-# A principle is one sentence that must hold in every slice. The published set lives in a fixed section
-# of the project's issue body, with a hidden marker carrying its revision and the SHA-256 of the
-# principles, and an approval comment from a fixed template repeats both and names the product manager.
-# The SHA-256 is over the principles as canonical JSON, so the folder form (principles.json) and the
-# issue section are checked the same way. Text read back is data: checked by hash, never followed.
+# A principle is one sentence that must hold in every slice.
 
 PRINCIPLE_ID_RE = re.compile(r"^PP-[0-9]{2,}$")
 PRINCIPLE_KEYS = ("id", "title", "statement", "reason", "status", "revision")
 PRINCIPLE_STATUSES = ("active", "retired")
 PRINCIPLE_LIMITS = {"title": 100, "statement": 300, "reason": 300}
 PRINCIPLES_LIMIT = 60  # principles in one project, retired ones included
-PRINCIPLES_HEADING = "## Product principles"
-PRINCIPLES_MARKER_RE = re.compile(r"^<!-- mach:principles revision=([0-9]{1,6}) sha256=([0-9a-f]{64}) -->$")
 PRINCIPLE_HEAD_RE = re.compile(r"^- \*\*(PP-[0-9]{2,}): (\S.*)\*\* \(revision ([0-9]{1,6}), (active|retired)\)$")
 PRINCIPLE_STATEMENT_RE = re.compile(r"^  - Statement: (\S.*)$")
 PRINCIPLE_REASON_RE = re.compile(r"^  - Why: (\S.*)$")
-PRINCIPLES_APPROVAL_RE = re.compile(r"<!-- mach:principles-approval revision=([0-9]{1,6}) by=(" + LOGIN_PATTERN + r") sha256=([0-9a-f]{64}) -->")
 PRINCIPLES_NOT_ACCEPTED = {
     "none": "No product principles are published on the project's issue.",
     "no_project": "The project's issue was not found: no open issue carries mach:project and a project marker.",
@@ -856,8 +992,7 @@ def principle_problems(items: Any) -> List[str]:
         if item["status"] not in PRINCIPLE_STATUSES or type(item["revision"]) is not int or not 1 <= item["revision"] < 10 ** 6:
             problems.append(f"{ident} needs a status (active or retired) and a revision of 1 or more")
         for key, limit in PRINCIPLE_LIMITS.items():
-            value = item[key]
-            if not isinstance(value, str) or not value.strip() or value != " ".join(value.split()) or len(value) > limit:
+            if not _one_line_text(item[key], limit):
                 problems.append(f"{ident}'s {key} must be one line of text, at most {limit} characters")
         if isinstance(item["statement"], str) and any(mark in item["statement"] for mark in ('"', "“", "”", "<<<", ">>>", "<!--")):
             problems.append(f"{ident}'s statement must not contain double quotation marks or markers")
@@ -868,111 +1003,65 @@ def principle_problems(items: Any) -> List[str]:
 
 def principles_canonical(items: Sequence[Dict[str, Any]]) -> str:
     """The principles as one canonical JSON text, sorted by ID: what their SHA-256 is taken over."""
-    ordered = sorted(({key: item[key] for key in PRINCIPLE_KEYS} for item in items), key=lambda item: (len(item["id"]), item["id"]))
-    return json.dumps(ordered, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return _canonical_items([{key: item[key] for key in PRINCIPLE_KEYS} for item in items], "id")
+
+
+def _principle_lines(item: Dict[str, Any]) -> List[str]:
+    return [f"- **{item['id']}: {item['title']}** (revision {item['revision']}, {item['status']})",
+            f"  - Statement: {item['statement']}", f"  - Why: {item['reason']}"]
+
+
+def _read_principle(lines: Sequence[str], index: int) -> Tuple[Optional[Dict[str, Any]], int]:
+    if index + 2 >= len(lines):
+        return None, 0
+    head, statement, reason = PRINCIPLE_HEAD_RE.fullmatch(lines[index]), PRINCIPLE_STATEMENT_RE.fullmatch(lines[index + 1]), PRINCIPLE_REASON_RE.fullmatch(lines[index + 2])
+    if not (head and statement and reason):
+        return None, 0
+    return {"id": head.group(1), "title": head.group(2), "statement": statement.group(1), "reason": reason.group(1),
+            "status": head.group(4), "revision": int(head.group(3))}, 3
+
+
+PRINCIPLES = PublishedSet("principles", "## Product principles", "Product principles", "Principles", principle_problems, principles_canonical,
+                          _principle_lines, _read_principle)
+PRINCIPLES_HEADING = PRINCIPLES.heading
 
 
 def principles_sha256(items: Sequence[Dict[str, Any]]) -> str:
-    return text_sha256_of(principles_canonical(items))
+    return PRINCIPLES.sha256(items)
 
 
 def principles_section(revision: int, items: Sequence[Dict[str, Any]]) -> str:
     """The fixed section of the project's body that holds the published principles."""
-    problems = principle_problems(list(items))
-    if problems or type(revision) is not int or not 1 <= revision < 10 ** 6:
-        raise ValueError("principles to publish must be in Product Studio's shape: " + "; ".join(problems[:3] or ["a revision of 1 or more"]))
-    ordered = json.loads(principles_canonical(items))
-    lines = [PRINCIPLES_HEADING, "", f"<!-- mach:principles revision={revision} sha256={principles_sha256(items)} -->", ""]
-    for item in ordered:
-        lines += [f"- **{item['id']}: {item['title']}** (revision {item['revision']}, {item['status']})",
-                  f"  - Statement: {item['statement']}", f"  - Why: {item['reason']}", ""]
-    return "\n".join(lines)
+    return PRINCIPLES.section(revision, items)
 
 
 def parse_principles_section(body: Any) -> Optional[Dict[str, Any]]:
-    """The principles section of a project body: {revision, sha256, principles, intact}. `intact` is True only when the
-    section is exactly what Product Studio writes for those principles and their SHA-256 matches the marker. None when
-    the body has no principles section."""
-    if not isinstance(body, str):
-        return None
-    lines = body.replace("\r\n", "\n").split("\n")
-    for at in range(2, len(lines)):
-        found = PRINCIPLES_MARKER_RE.fullmatch(lines[at])
-        if not found or lines[at - 2] != PRINCIPLES_HEADING or lines[at - 1] != "":
-            continue
-        revision, digest = int(found.group(1)), found.group(2)
-        items: List[Dict[str, Any]] = []
-        index = at + 2 if at + 1 < len(lines) and lines[at + 1] == "" else len(lines)
-        while index + 2 < len(lines):
-            head = PRINCIPLE_HEAD_RE.fullmatch(lines[index])
-            statement = PRINCIPLE_STATEMENT_RE.fullmatch(lines[index + 1])
-            reason = PRINCIPLE_REASON_RE.fullmatch(lines[index + 2])
-            if not (head and statement and reason):
-                break
-            items.append({"id": head.group(1), "title": head.group(2), "statement": statement.group(1), "reason": reason.group(1),
-                          "status": head.group(4), "revision": int(head.group(3))})
-            index += 4 if index + 3 < len(lines) and lines[index + 3] == "" else 3
-        text = "\n".join(lines[at - 2:index]).rstrip("\n")
-        intact = False
-        if revision >= 1 and items and not principle_problems(items) and principles_sha256(items) == digest:
-            intact = principles_section(revision, items).rstrip("\n") == text
-        return {"revision": revision, "sha256": digest, "principles": items if intact else None, "intact": intact}
-    return None
+    """The principles section of a project body: {revision, sha256, principles, intact} (PublishedSet.parse). None when the
+    body has no principles section."""
+    parsed = PRINCIPLES.parse(body)
+    return parsed and {"revision": parsed["revision"], "sha256": parsed["sha256"], "principles": parsed["items"], "intact": parsed["intact"]}
 
 
 def principles_approval_comment(revision: int, login: str, sha256: str) -> str:
     """The comment that records a product manager's approval of one revision of the principles."""
-    if not LOGIN_RE.fullmatch(login or "") or type(revision) is not int or not 1 <= revision < 10 ** 6 or not HEX64_RE.fullmatch(sha256 or ""):
-        raise ValueError("an approval of the principles names a revision, a GitHub account and the SHA-256")
-    return (f"Product principles approved in MACH Product Studio by {login}: revision {revision}.\n\n"
-            f"- Principles SHA-256: `{sha256}`\n\n"
-            f"<!-- mach:principles-approval revision={revision} by={login} sha256={sha256} -->")
+    return PRINCIPLES.approval_comment(revision, login, sha256)
 
 
 def principles_approvals(bodies: Iterable[Any]) -> List[Dict[str, Any]]:
     """Every approval marker for the principles found in an issue's comments, in order."""
-    found = []
-    for body in bodies:
-        for match in PRINCIPLES_APPROVAL_RE.finditer(body if isinstance(body, str) else ""):
-            found.append({"revision": int(match.group(1)), "by": match.group(2), "sha256": match.group(3)})
-    return found
+    return PRINCIPLES.approvals(bodies)
 
 
 def principles_take_check(body: Any, comments: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
-    """For Product Studio: whether the principles on a project's issue can be taken into a workspace. The section must be
-    intact and the account its approval names must have left that approval for exactly this revision and SHA-256.
-    Whether the comment was edited is not checked here (the Factory checks it); the SHA-256 already binds the text."""
-    parsed = parse_principles_section(body)
-    result: Dict[str, Any] = {"problem": None, "revision": None, "sha256": None, "approved_by": None, "principles": None}
-    if parsed is None:
-        result["problem"] = "none"
-        return result
-    result.update(revision=parsed["revision"], sha256=parsed["sha256"])
-    if not parsed["intact"]:
-        result["problem"] = "edited"
-        return result
-    approved = [found for item in comments if isinstance(item, dict) for found in principles_approvals([item.get("body")])
-                if found["by"] == item.get("login") and (found["revision"], found["sha256"]) == (parsed["revision"], parsed["sha256"])]
-    if not approved:
-        result["problem"] = "no_approval"
-        return result
-    result.update(approved_by=approved[-1]["by"], principles=parsed["principles"])
-    return result
+    """For Product Studio: whether the principles on a project's issue can be taken into a workspace (PublishedSet.take_check)."""
+    check = PRINCIPLES.take_check(body, comments)
+    return {"problem": check["problem"], "revision": check["revision"], "sha256": check["sha256"], "approved_by": check["approved_by"],
+            "principles": check["items"]}
 
 
 def principles_approvers(body: Any, comments: Sequence[Dict[str, Any]]) -> List[str]:
-    """For the Factory: the accounts whose role must be asked, in order: each wrote, as a person and unedited, an approval
-    naming themselves for exactly the revision and SHA-256 the project's issue holds."""
-    parsed = parse_principles_section(body)
-    if not parsed or not parsed["intact"]:
-        return []
-    found: List[str] = []
-    for item in comments:
-        if item.get("app") or item.get("type") != "User" or not unedited(item) or item.get("login") in found:
-            continue
-        if any(a["by"] == item.get("login") and (a["revision"], a["sha256"]) == (parsed["revision"], parsed["sha256"]) for a in principles_approvals([item.get("body")])):
-            found.append(str(item.get("login")))
-    return found
+    """For the Factory: the accounts whose role must be asked (PublishedSet.approvers)."""
+    return PRINCIPLES.approvers(body, comments)
 
 
 def principles_acceptance(body: Any, comments: Sequence[Dict[str, Any]], roles: Dict[str, Any]) -> Dict[str, Any]:
@@ -1013,18 +1102,156 @@ def principles_acceptance(body: Any, comments: Sequence[Dict[str, Any]], roles: 
 def principles_folder_check(record: Any) -> Dict[str, Any]:
     """The folder form, product/ready/PRINCIPLES/principles.json: {schema_version, revision, sha256, principles}, counted only
     when its SHA-256 is that of its principles."""
-    result: Dict[str, Any] = {"state": "not_accepted", "reason": None, "revision": None, "sha256": None, "principles": None}
-    if (not isinstance(record, dict) or set(record) != {"schema_version", "revision", "sha256", "principles"} or record.get("schema_version") != 1
-            or type(record.get("revision")) is not int or record["revision"] < 1 or not HEX64_RE.fullmatch(str(record.get("sha256")))
-            or principle_problems(record.get("principles"))):
-        result["reason"] = "Not accepted: product/ready/PRINCIPLES/principles.json is not in the form Product Studio writes."
-        return result
-    result.update(revision=record["revision"], sha256=record["sha256"])
-    if principles_sha256(record["principles"]) != record["sha256"]:
-        result["reason"] = "Not accepted: the principles in product/ready/PRINCIPLES are not the ones that were approved (their SHA-256 does not match)."
-        return result
-    result.update(state="accepted", principles=record["principles"])
-    return result
+    return PRINCIPLES.folder_check(record, "principles")
+
+
+# ---- technical needs (M17) ----
+#
+# A technical need is what the product requires of whatever is built, said without technology: who uses it,
+# what it keeps, what it must work with, what must never happen, which quality wins, and what is already
+# decided outside the product (a `given`, which may name a technology and says who said it and when).
+# Published the same way as the principles. The kinds answered "nothing to say" travel with the needs in
+# both forms; they are a note about the interview, outside the hash, which binds the needs themselves.
+
+NEED_ID_RE = re.compile(r"^TN-[0-9]{2,}$")
+NEED_KINDS = ("people", "data", "connections", "never", "priority", "given")
+NEED_KEYS = ("need_id", "kind", "statement", "why", "status", "revision")
+GIVEN_KEYS = ("said_by", "said_on")
+NEED_STATUSES = ("active", "retired")
+NEED_LIMITS = {"statement": 400, "why": 300}
+SAID_BY_LIMIT = 100
+SAID_ON_RE = re.compile(r"^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])$")
+NEEDS_LIMIT = 60  # needs in one project, retired ones included
+NEED_HEAD_RE = re.compile(r"^- \*\*(TN-[0-9]{2,})\*\* \(([a-z]+), revision ([0-9]{1,6}), (active|retired)\)$")
+NEED_STATEMENT_RE = re.compile(r"^  - Statement: (\S.*)$")
+NEED_WHY_RE = re.compile(r"^  - Why: (\S.*)$")
+NEED_SAID_RE = re.compile(r"^  - Said by: (\S.*), on ([0-9]{4}-[0-9]{2}-[0-9]{2})$")
+NEEDS_NONE_RE = re.compile(r"^Nothing to say: ([a-z]+(?:, [a-z]+)*)\.$")
+MARKS = ("<<<", ">>>", "<!--", "-->")
+
+
+def need_problems(items: Any) -> List[str]:
+    """Why a list of technical needs is not in the shape Product Studio writes, or [] when it is."""
+    if not isinstance(items, list):
+        return ["the needs are not a list"]
+    problems: List[str] = []
+    if len(items) > NEEDS_LIMIT:
+        problems.append(f"there are more than {NEEDS_LIMIT} needs")
+    seen = set()
+    for at, item in enumerate(items, start=1):
+        kind = item.get("kind") if isinstance(item, dict) else None
+        keys = set(NEED_KEYS) | (set(GIVEN_KEYS) if kind == "given" else set())
+        if not isinstance(item, dict) or set(item) != keys:
+            problems.append(f"need {at} does not have exactly the fields {', '.join(sorted(keys, key=lambda key: (NEED_KEYS + GIVEN_KEYS).index(key)))}")
+            continue
+        ident = item["need_id"]
+        if not isinstance(ident, str) or not NEED_ID_RE.fullmatch(ident) or ident in seen:
+            problems.append(f"need {at} has no usable ID, or one used twice")
+            continue
+        seen.add(ident)
+        if kind not in NEED_KINDS:
+            problems.append(f"{ident}'s kind must be one of {', '.join(NEED_KINDS)}")
+        if item["status"] not in NEED_STATUSES or type(item["revision"]) is not int or not 1 <= item["revision"] < 10 ** 6:
+            problems.append(f"{ident} needs a status (active or retired) and a revision of 1 or more")
+        for key, limit in NEED_LIMITS.items():
+            if not _one_line_text(item[key], limit):
+                problems.append(f"{ident}'s {key} must be one line of text, at most {limit} characters")
+        if kind == "given":
+            if not _one_line_text(item["said_by"], SAID_BY_LIMIT):
+                problems.append(f"{ident}'s said_by must be one line of text, at most {SAID_BY_LIMIT} characters")
+            if not isinstance(item["said_on"], str) or not SAID_ON_RE.fullmatch(item["said_on"]):
+                problems.append(f"{ident}'s said_on must be a date, such as 2026-11-21")
+        if any(isinstance(item.get(key), str) and any(mark in item[key] for mark in MARKS) for key in ("statement", "why", "said_by")):
+            problems.append(f"{ident}'s text must not contain markers")
+    return problems
+
+
+def needs_none_problems(items: Any, none: Any) -> List[str]:
+    """Why the kinds answered "nothing to say" are not in the shape Product Studio writes: distinct kinds in the fixed
+    order, none of them holding an active need."""
+    if not isinstance(none, list) or any(kind not in NEED_KINDS for kind in none) or none != [kind for kind in NEED_KINDS if kind in none]:
+        return [f"the kinds with nothing to say must be distinct kinds, in the order {', '.join(NEED_KINDS)}"]
+    active = {item.get("kind") for item in items if isinstance(item, dict) and item.get("status") == "active"} if isinstance(items, list) else set()
+    return [f"{kind} has an active need, so it is not 'nothing to say'" for kind in none if kind in active]
+
+
+def needs_canonical(items: Sequence[Dict[str, Any]]) -> str:
+    """The needs as one canonical JSON text, sorted by ID: what their SHA-256 is taken over."""
+    return _canonical_items(items, "need_id")
+
+
+def _need_lines(item: Dict[str, Any]) -> List[str]:
+    lines = [f"- **{item['need_id']}** ({item['kind']}, revision {item['revision']}, {item['status']})",
+             f"  - Statement: {item['statement']}", f"  - Why: {item['why']}"]
+    return lines + ([f"  - Said by: {item['said_by']}, on {item['said_on']}"] if item["kind"] == "given" else [])
+
+
+def _read_need(lines: Sequence[str], index: int) -> Tuple[Optional[Dict[str, Any]], int]:
+    if index + 2 >= len(lines):
+        return None, 0
+    head, statement, why = NEED_HEAD_RE.fullmatch(lines[index]), NEED_STATEMENT_RE.fullmatch(lines[index + 1]), NEED_WHY_RE.fullmatch(lines[index + 2])
+    if not (head and statement and why):
+        return None, 0
+    item = {"need_id": head.group(1), "kind": head.group(2), "statement": statement.group(1), "why": why.group(1),
+            "status": head.group(4), "revision": int(head.group(3))}
+    said = NEED_SAID_RE.fullmatch(lines[index + 3]) if index + 3 < len(lines) else None
+    if item["kind"] == "given" and said:
+        item.update(said_by=said.group(1), said_on=said.group(2))
+        return item, 4
+    return item, 3
+
+
+def _needs_none_lines(none: Any) -> List[str]:
+    return [f"Nothing to say: {', '.join(none)}.", ""] if none else []
+
+
+def _read_needs_none(lines: Sequence[str], index: int) -> Tuple[List[str], int]:
+    found = NEEDS_NONE_RE.fullmatch(lines[index]) if index < len(lines) else None
+    if not found:
+        return [], index
+    return found.group(1).split(", "), index + (2 if index + 1 < len(lines) and lines[index + 1] == "" else 1)
+
+
+NEEDS = PublishedSet("needs", "## Technical needs", "Technical needs", "Needs", need_problems, needs_canonical, _need_lines, _read_need,
+                     _needs_none_lines, _read_needs_none, lambda items, none: needs_none_problems(items, none if none is not None else []))
+
+
+def needs_sha256(items: Sequence[Dict[str, Any]]) -> str:
+    return NEEDS.sha256(items)
+
+
+def needs_section(revision: int, items: Sequence[Dict[str, Any]], none: Sequence[str] = ()) -> str:
+    """The fixed section of the project's body that holds the published technical needs, and the kinds with nothing to say."""
+    return NEEDS.section(revision, items, list(none))
+
+
+def parse_needs_section(body: Any) -> Optional[Dict[str, Any]]:
+    """The needs section of a project body: {revision, sha256, needs, none, intact} (PublishedSet.parse). None when the body
+    has no needs section."""
+    parsed = NEEDS.parse(body)
+    return parsed and {"revision": parsed["revision"], "sha256": parsed["sha256"], "needs": parsed["items"], "none": parsed["extra"], "intact": parsed["intact"]}
+
+
+def needs_approval_comment(revision: int, login: str, sha256: str) -> str:
+    """The comment that records a product manager's approval of one revision of the technical needs."""
+    return NEEDS.approval_comment(revision, login, sha256)
+
+
+def needs_approvals(bodies: Iterable[Any]) -> List[Dict[str, Any]]:
+    return NEEDS.approvals(bodies)
+
+
+def needs_take_check(body: Any, comments: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """For Product Studio: whether the needs on a project's issue can be taken into a workspace (PublishedSet.take_check)."""
+    check = NEEDS.take_check(body, comments)
+    return {"problem": check["problem"], "revision": check["revision"], "sha256": check["sha256"], "approved_by": check["approved_by"],
+            "needs": check["items"], "none": check["extra"]}
+
+
+def needs_folder_check(record: Any) -> Dict[str, Any]:
+    """The folder form, product/ready/NEEDS/needs.json: {schema_version, revision, sha256, needs, none}, counted only when its
+    SHA-256 is that of its needs."""
+    return NEEDS.folder_check(record, "needs", "none")
 
 
 def epic_issue_body(epic_id: str, criteria: Sequence[str], tasks: Optional[Sequence[Tuple[int, str, bool]]] = None) -> str:
