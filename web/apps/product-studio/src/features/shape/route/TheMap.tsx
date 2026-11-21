@@ -5,55 +5,86 @@ import { ArtifactId, Banner, Button, ConfirmDialog, EmptyState, Heading, SliceSt
 import type { BriefShow, IdeaMade, ShapeApplied, SliceStatus, ShapeCoverageRow, ShapeMapSlice, ShapeMapStatus } from "@mach/ui/api";
 import { useEngineAct } from "../../../api/act";
 import { useStatus } from "../../../api/store";
-import { applyBlocked, applyOutcome, applyPlan, applyWhat, briefLines, coverageProgress, coverageWords, outcomeText, quote } from "./model";
+import { Fold } from "../../../shared/layout/Fold";
+import { Part } from "../../../shared/layout/Parts";
+import {
+  JOURNEY,
+  applyBlocked,
+  applyOutcome,
+  applyPlan,
+  applySummary,
+  applyWhat,
+  briefLines,
+  coverageProgress,
+  coverageWords,
+  mapSummary,
+  outcomeText,
+  partPlace,
+  quote,
+  settleSummary,
+} from "./model";
 import { BriefQuote, CoveragePill } from "./parts";
 import { SettleOutcomeDialog } from "./SettleOutcomeDialog";
 
 type MapData = NonNullable<ShapeMapStatus["map"]>;
 
 /**
- * The map and everything after it: coverage of the brief's outcomes (the centre), the proposed epics and thin slices in
- * build order, and making the drafts. Follows the PRD on-ramp's page (features/prd/PrdScreen.tsx) with outcomes in
- * place of sections. Reads `idea.map-status` and `brief.show`; acts `idea.settle` and `idea.apply`, each confirmed.
+ * The map and everything after it, as the last three parts of the page (M16 layout): the proposed epics and thin
+ * slices in build order, coverage of the brief's outcomes (settling what no slice carries), and making the drafts. Each
+ * part's summary says its state; the part that needs the product manager is the one RouteScreen opens. Follows the
+ * PRD on-ramp's page (features/prd/PrdScreen.tsx) with outcomes in place of sections. Reads `idea.map-status` and
+ * `brief.show`; acts `idea.settle` and `idea.apply`, each confirmed.
  */
-export function TheMap({ ideaId, status, brief, made, onChanged }: { ideaId: string; status: ShapeMapStatus; brief: BriefShow | null; made: IdeaMade | null; onChanged: () => void }) {
+export function TheMap({ ideaId, status, brief, made, step, onChanged }: { ideaId: string; status: ShapeMapStatus; brief: BriefShow | null; made: IdeaMade | null; step: number; onChanged: () => void }) {
+  const shared = useStatus();
   const [settling, setSettling] = useState<ShapeCoverageRow | null>(null);
   const lines = useMemo(() => briefLines(brief?.text), [brief?.text]);
   const map = status.map;
-  if (!map) return <NoMap ideaId={ideaId} note={status.note} />;
+  const plan = useMemo(() => (map ? applyPlan(map, (id) => shared.data?.epics.find((e) => e.epic_id === id)?.title ?? null) : null), [map, shared.data]);
+  const madeIds = made ?? (map ? { epics: [], slices: map.slices.map((s) => s.slice_id).filter((id): id is string => Boolean(id)) } : null);
   return (
     <>
-      {(status.blockers ?? []).length && !map.applied ? (
-        <Banner tone="warning" title="This map cannot be used as it is">
-          <ul className="flex flex-col gap-1">
-            {(status.blockers ?? []).map((b) => (
-              <li key={b}>{b}</li>
-            ))}
-          </ul>
-        </Banner>
+      <Part id="map" number={2} place={partPlace("map", step)} name={JOURNEY[1]?.label ?? "Map"} summary={mapSummary(status)}>
+        {map ? <MapBody ideaId={ideaId} map={map} lines={lines} /> : <NoMap ideaId={ideaId} note={status.note} />}
+      </Part>
+      <Part id="settle" number={3} place={partPlace("settle", step)} name={JOURNEY[2]?.label ?? "Settle"} summary={map ? settleSummary(status.coverage) : "After the map"}>
+        {map ? <CoverageBody status={status} brief={brief} onSettle={setSettling} /> : undefined}
+      </Part>
+      <Part id="apply" number={4} place={partPlace("apply", step)} name={JOURNEY[3]?.label ?? "Make the drafts"} summary={map ? applySummary(status, plan, madeIds) : "After the map"}>
+        {map ? <ApplyBody ideaId={ideaId} status={status} map={map} made={made} onDone={onChanged} /> : undefined}
+      </Part>
+      {map ? (
+        <SettleOutcomeDialog
+          ideaId={ideaId}
+          outcome={settling}
+          outcomeText={settling ? outcomeText(brief, settling.outcome) : null}
+          slices={map.slices}
+          onOpenChange={(open) => (open ? undefined : setSettling(null))}
+          onDone={onChanged}
+        />
       ) : null}
-      <CoverageSection status={status} brief={brief} onSettle={setSettling} />
-      <MapSection ideaId={ideaId} map={map} lines={lines} />
-      <ApplySection ideaId={ideaId} status={status} map={map} made={made} onDone={onChanged} />
-      <SettleOutcomeDialog
-        ideaId={ideaId}
-        outcome={settling}
-        outcomeText={settling ? outcomeText(brief, settling.outcome) : null}
-        slices={map.slices}
-        onOpenChange={(open) => (open ? undefined : setSettling(null))}
-        onDone={onChanged}
-      />
     </>
+  );
+}
+
+/** What stops this map from being used, in the engine's words: shown above the parts, never folded away. */
+export function MapBlockers({ status }: { status: ShapeMapStatus | null }) {
+  if (!status?.map || status.map.applied || !(status.blockers ?? []).length) return null;
+  return (
+    <Banner tone="warning" title="This map cannot be used as it is">
+      <ul className="flex flex-col gap-1">
+        {(status.blockers ?? []).map((b) => (
+          <li key={b}>{b}</li>
+        ))}
+      </ul>
+    </Banner>
   );
 }
 
 /** Before a map: what it is and how to get one. Nothing in the app proposes a map; it is never faked here. */
 function NoMap({ ideaId, note }: { ideaId: string; note: string }) {
   return (
-    <section aria-labelledby="map-heading" className="flex max-w-reading flex-col gap-4">
-      <Heading level={2} id="map-heading">
-        The map
-      </Heading>
+    <div className="flex max-w-reading flex-col gap-4">
       <EmptyState
         icon={<MapIcon />}
         headingLevel={3}
@@ -69,7 +100,7 @@ function NoMap({ ideaId, note }: { ideaId: string; note: string }) {
       <Text size="body-sm" tone="muted">
         {note}
       </Text>
-    </section>
+    </div>
   );
 }
 
@@ -77,20 +108,17 @@ function NoMap({ ideaId, note }: { ideaId: string; note: string }) {
  * Coverage, the centre of the map: every outcome of the brief and what carries it. An outcome no slice carries is
  * settled one by one; settled of total is a real fraction, and nothing is made while any is open.
  */
-function CoverageSection({ status, brief, onSettle }: { status: ShapeMapStatus; brief: BriefShow | null; onSettle: (row: ShapeCoverageRow) => void }) {
+function CoverageBody({ status, brief, onSettle }: { status: ShapeMapStatus; brief: BriefShow | null; onSettle: (row: ShapeCoverageRow) => void }) {
   const rows = status.coverage ?? [];
   const progress = coverageProgress(rows);
   const applied = status.map?.applied ?? false;
   const slices = status.map?.slices ?? [];
 
   return (
-    <section aria-labelledby="coverage-heading" className="flex max-w-reading flex-col gap-4">
-      <div className="flex flex-col gap-2">
-        <Heading level={2} id="coverage-heading">
-          Coverage
-        </Heading>
-        <Text tone="muted">Each outcome of the brief, and what carries it. An outcome no slice carries needs your word: part of a slice, out of scope, or later.</Text>
-      </div>
+    <div className="flex max-w-[48rem] flex-col gap-4">
+      <Text size="body-sm" tone="muted" className="max-w-reading">
+        Each outcome of the brief, and what carries it. An outcome no slice carries needs your word: part of a slice, out of scope, or later.
+      </Text>
       {progress.total > 0 ? (
         <div className="flex flex-col gap-2 rounded-md border border-line bg-surface px-4 py-3">
           <p className="text-body font-semibold text-ink tabular">
@@ -138,12 +166,12 @@ function CoverageSection({ status, brief, onSettle }: { status: ShapeMapStatus; 
         })}
       </ol>
       {!brief ? <p className="text-body-sm text-ink-muted">The brief could not be read here, so each outcome is shown by its ID only.</p> : null}
-    </section>
+    </div>
   );
 }
 
 /** The proposed epics and thin slices, in the order the builders take them, each with the brief lines it rests on. */
-function MapSection({ ideaId, map, lines }: { ideaId: string; map: MapData; lines: Map<number, string> | null }) {
+function MapBody({ ideaId, map, lines }: { ideaId: string; map: MapData; lines: Map<number, string> | null }) {
   const status = useStatus();
   const epicTitle = (id: string) => status.data?.epics.find((e) => e.epic_id === id)?.title ?? null;
   const newEpics = new Map(map.epics.map((e) => [e.key, e.title]));
@@ -151,21 +179,16 @@ function MapSection({ ideaId, map, lines }: { ideaId: string; map: MapData; line
   const epicName = (epic: string) => newEpics.get(epic) ?? epicTitle(epic) ?? epic;
 
   return (
-    <section aria-labelledby="map-heading" className="flex max-w-reading flex-col gap-5">
-      <div className="flex flex-col gap-2">
-        <Heading level={2} id="map-heading">
-          The map
-        </Heading>
-        <Text tone="muted">
-          {map.applied
-            ? "What was proposed and made from this idea. The map is kept as it was when the drafts were made."
-            : "Proposed in Claude Code and recorded there. To change it, ask for a new map there; until the drafts are made, a new map replaces this one."}
-        </Text>
-      </div>
+    <div className="flex max-w-[48rem] flex-col gap-5">
+      <Text size="body-sm" tone="muted" className="max-w-reading">
+        {map.applied
+          ? "What was proposed and made from this idea. The map is kept as it was when the drafts were made."
+          : "Proposed in Claude Code and recorded there. To change it, ask for a new map there; until the drafts are made, a new map replaces this one."}
+      </Text>
       {map.epics.length ? (
         <div className="flex flex-col gap-2">
           <Heading level={3}>{map.applied ? "Epics it proposed" : "New epics"}</Heading>
-          <ul className="flex flex-col gap-3">
+          <ul className="grid grid-cols-[repeat(auto-fill,minmax(18rem,1fr))] gap-3">
             {map.epics.map((e) => (
               <li key={e.key} className="flex flex-col gap-1 rounded-md border border-line bg-surface px-4 py-3">
                 <span className="flex flex-wrap items-center gap-2">
@@ -195,7 +218,7 @@ function MapSection({ ideaId, map, lines }: { ideaId: string; map: MapData; line
           ))}
         </ol>
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -216,8 +239,9 @@ function MapSliceItem({
 }) {
   const depends = slice.depends_on.map((d) => (keyTitle.has(d) ? `${d}, “${keyTitle.get(d)}”` : d));
   const quotations = quote(lines, slice.cites);
+  const quoted = quotations.reduce((sum, q) => sum + q.lines.length, 0);
   return (
-    <li className="flex flex-col gap-3 rounded-md border border-line bg-surface px-5 py-4">
+    <li className="flex flex-col gap-2 rounded-md border border-line bg-surface px-5 py-4">
       <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
         <span className="mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full border border-line-strong text-caption font-semibold text-ink-muted tabular" aria-hidden="true">
           {index + 1}
@@ -246,11 +270,10 @@ function MapSliceItem({
           </p>
         </div>
       </div>
-      {quotations.some((q) => q.lines.length) ? (
-        <div className="flex flex-col gap-1 pl-9">
-          <span className="text-body-sm text-ink-muted">Rests on:</span>
+      {quoted ? (
+        <Fold className="pl-9" label={`Rests on ${quoted === 1 ? "1 line" : `${quoted} lines`} of the brief`}>
           <BriefQuote ideaId={ideaId} quotations={quotations} />
-        </div>
+        </Fold>
       ) : (
         <p className="pl-9 text-body-sm text-ink-muted">Rests on the brief, {slice.cites}.</p>
       )}
@@ -269,7 +292,7 @@ function MapSliceItem({
  * Make the drafts (`idea.apply`): an explicit act, confirmed in a dialog naming exactly what it makes, in order.
  * Repeating it makes nothing twice, and the page says what already exists.
  */
-function ApplySection({ ideaId, status, map, made, onDone }: { ideaId: string; status: ShapeMapStatus; map: MapData; made: IdeaMade | null; onDone: () => void }) {
+function ApplyBody({ ideaId, status, map, made, onDone }: { ideaId: string; status: ShapeMapStatus; map: MapData; made: IdeaMade | null; onDone: () => void }) {
   const shared = useStatus();
   const act = useEngineAct();
   const [open, setOpen] = useState(false);
@@ -289,17 +312,12 @@ function ApplySection({ ideaId, status, map, made, onDone }: { ideaId: string; s
   };
 
   return (
-    <section aria-labelledby="apply-heading" className="flex max-w-reading flex-col gap-4 rounded-md border border-line bg-surface px-6 py-5">
-      <div className="flex flex-col gap-1">
-        <Heading level={2} id="apply-heading" size="title-3">
-          Make the drafts
-        </Heading>
-        <Text size="body-sm" tone="muted">
-          {again
-            ? "The drafts were made. Running it again makes nothing twice; it only makes what is missing and says what already exists."
-            : `Adds ${what} to your workspace as drafts, in the map's order, each recording the outcomes it serves. Nothing is marked ready, sent or started.`}
-        </Text>
-      </div>
+    <div className="flex max-w-reading flex-col gap-4">
+      <Text size="body-sm" tone="muted">
+        {again
+          ? "The drafts were made. Running it again makes nothing twice; it only makes what is missing and says what already exists."
+          : `Adds ${what} to your workspace as drafts, in the map's order, each recording the outcomes it serves. Nothing is marked ready, sent or started.`}
+      </Text>
       {blocked.length ? (
         <ul id="apply-blocked" className="flex flex-col gap-1 text-body-sm text-ink">
           {blocked.map((b) => (
@@ -357,7 +375,7 @@ function ApplySection({ ideaId, status, map, made, onDone }: { ideaId: string; s
           </div>
         </div>
       </ConfirmDialog>
-    </section>
+    </div>
   );
 }
 

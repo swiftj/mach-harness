@@ -5,6 +5,7 @@ import { cn } from "../lib/cn";
 import { useFocusReturn } from "./focus-return";
 import { useModalEscape } from "./modal-escape";
 import { Button } from "./button";
+import { DialogBody } from "./dialog-body";
 
 export const Dialog = DialogPrimitive.Root;
 export const DialogTrigger = DialogPrimitive.Trigger;
@@ -72,19 +73,19 @@ export const DialogContent = forwardRef<HTMLDivElement, DialogContentProps>(func
           if (!event.defaultPrevented) returnFocus(event);
         }}
       >
-        <div className="flex items-start justify-between gap-4 px-6 pt-5">
-          <div className="flex flex-col gap-1.5">
-            <DialogPrimitive.Title className="font-display text-title-2 font-[650] text-ink">{title}</DialogPrimitive.Title>
-            <DialogPrimitive.Description className="text-body text-ink-muted">{description}</DialogPrimitive.Description>
-          </div>
+        <div className="flex shrink-0 items-start justify-between gap-4 px-6 pt-5">
+          <DialogPrimitive.Title className="font-display text-title-2 font-[650] text-ink">{title}</DialogPrimitive.Title>
           <DialogPrimitive.Close asChild>
             <Button ref={escape.closeRef} variant="ghost" size="icon-sm" aria-label="Close" className="-mr-2">
               <X aria-hidden="true" />
             </Button>
           </DialogPrimitive.Close>
         </div>
-        {children ? <div className="min-h-0 overflow-y-auto px-6 pt-4">{children}</div> : null}
-        <div className="flex justify-end gap-2 px-6 pb-5 pt-5">{footer}</div>
+        <DialogBody title={title}>
+          <DialogPrimitive.Description className="text-body text-ink-muted">{description}</DialogPrimitive.Description>
+          {children ? <div className="pt-4">{children}</div> : null}
+        </DialogBody>
+        <div className="flex shrink-0 justify-end gap-2 px-6 pb-5 pt-5">{footer}</div>
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
   );

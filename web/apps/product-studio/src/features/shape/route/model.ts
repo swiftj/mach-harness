@@ -262,6 +262,61 @@ export function applyBlocked(status: Pick<ShapeMapStatus, "not_covered" | "block
   return out;
 }
 
+/* ── The parts of the page (M16 layout) ───────────────────────────────── */
+
+/** The page's four parts, one per step of the journey, in its order. */
+export type RoutePart = "size" | "map" | "settle" | "apply";
+export const ROUTE_PARTS: readonly RoutePart[] = ["size", "map", "settle", "apply"];
+
+/** The part that needs the product manager at a journey step: the current step's, and the drafts once they are made. */
+export function partForStep(step: number): RoutePart {
+  return ROUTE_PARTS[Math.min(Math.max(step, 0), ROUTE_PARTS.length - 1)] as RoutePart;
+}
+
+/** Where a part is on the journey: done before the current step, the current step, or not reached. */
+export function partPlace(part: RoutePart, step: number): "done" | "current" | "later" {
+  const index = ROUTE_PARTS.indexOf(part);
+  return index < step ? "done" : index === step ? "current" : "later";
+}
+
+/** Each part's state in one line of plain words, from the engine's answers only; anything blocking the next act is in it. */
+export function sizeSummary(route: RouteState, gate: Gate): string {
+  if (route.kind === "holds") return `Route: ${routeName(route.route).toLowerCase()}`;
+  if (route.kind === "stale") return `Route: ${routeName(route.route).toLowerCase()}, which no longer holds. Size it again.`;
+  return gate.kind === "go" ? "Not sized yet" : "Not ready to size: it needs a Go on the brief as it is now";
+}
+
+export function mapSummary(status: Pick<ShapeMapStatus, "map"> | null): string {
+  const map = status?.map;
+  if (!map) return "No map yet: it is proposed in Claude Code";
+  const n = (count: number, one: string) => `${count} ${count === 1 ? one : `${one}s`}`;
+  const what = [map.epics.length ? n(map.epics.length, "new epic") : null, `${n(map.slices.length, "thin slice")} in build order`].filter(Boolean).join(" and ");
+  return map.applied ? `${what}, kept as it was when the drafts were made` : what;
+}
+
+export function settleSummary(coverage: readonly ShapeCoverageRow[] | undefined): string {
+  const progress = coverageProgress(coverage);
+  const n = (count: number) => `${count} ${count === 1 ? "outcome" : "outcomes"}`;
+  if (!(coverage ?? []).length) return "No outcomes to show";
+  if (progress.total === 0) return "Every outcome is carried by a slice on the map";
+  if (progress.left.length) return `${n(progress.left.length)} still to settle: ${progress.left.map((r) => r.outcome).join(", ")}`;
+  return `Every outcome no slice carries is settled (${progress.settled} of ${progress.total})`;
+}
+
+export function applySummary(
+  status: Pick<ShapeMapStatus, "not_covered" | "blockers" | "can_apply" | "map">,
+  plan: ApplyPlan | null,
+  made: { epics: readonly string[]; slices: readonly string[] } | null,
+): string {
+  if (status.map?.applied) {
+    const ids = [...(made?.epics ?? []), ...(made?.slices ?? [])];
+    return ids.length ? `Made: ${ids.join(", ")}` : "The drafts were made";
+  }
+  const blocked = applyBlocked(status);
+  if (blocked.length) return blocked[0] as string;
+  return plan ? `Ready to make ${applyWhat(plan)}` : "Ready to make the drafts";
+}
+
 /* ── The brief's own lines, as data ───────────────────────────────────── */
 
 /** The brief's lines by number, from `brief.show`'s text. The text is kept exactly as the engine gave it. */
