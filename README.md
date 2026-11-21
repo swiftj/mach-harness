@@ -2,7 +2,7 @@
 
 MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A product manager describes what is wanted; the factory turns each piece into a checked specification, builds it test-first in an isolated workspace, proves it works with captured evidence, has it reviewed by a panel of independent agents, and merges it. Every station hands the next one artifacts a script has checked, not a claim that the work is done.
 
-> **Status: 0.16.0.** [`CLAUDE.md`](CLAUDE.md) is the full blueprint.
+> **Status: 0.16.0.** [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) is the full blueprint.
 
 ![The Factory Floor: an isometric drawing of the factory with three tickets being built, each in its own cell](docs/images/factory-floor-isometric.jpg)
 
@@ -459,7 +459,7 @@ A high-risk change always needs a person's approval in review unless you change 
 | [Station Reference](docs/guides/STATION_REFERENCE.md) | What each station does and what it refuses |
 | [Installing](docs/guides/INSTALLING.md) | The browser programs and what the installer verifies |
 | [Operator Security Guide](docs/guides/OPERATOR_SECURITY_GUIDE.md) | What an unattended run can reach, and the limits to know |
-| [`CLAUDE.md`](CLAUDE.md) | The full blueprint |
+| [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) | The full blueprint |
 
 ## Uninstall
 
