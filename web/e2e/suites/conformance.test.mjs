@@ -22,6 +22,9 @@ const ALLOWLIST = [
   "policy.list", "policy.accept", "epic.current", "epic.link", "slice.link", "jira.export", "jira.keys",
   "prd.import", "prd.list", "prd.show", "prd.map", "prd.settle", "prd.status", "prd.apply", "prd.draft", "prd.confirm",
   "slice.mock.add", "slice.mock.remove", "slice.mock.list",
+  // M16 (docs/mach-next/M16_SHAPE_APP_FOUNDATION.md): Shape.
+  "idea.add", "idea.list", "idea.show", "idea.stage", "idea.lookups", "idea.renumber", "idea.publish", "idea.size", "idea.map", "idea.settle",
+  "idea.map-status", "idea.apply", "idea.change", "idea.chain", "brief.check", "brief.show", "case.show", "case.check", "verdict.record", "lookback.record",
 ];
 // Commands the engine keeps only for another team's tests (docs/mach-next/M11_STUDIO_ISSUES.md). The host never reaches them.
 const LEFTOVERS = [

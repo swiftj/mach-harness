@@ -1,0 +1,67 @@
+{
+  "exit_code": 0,
+  "data": {
+    "refreshed": true,
+    "problem": null,
+    "requests": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "refreshed_at": "2026-11-21T00:35:06Z",
+      "problem": null,
+      "truncated": false,
+      "truncated_note": null,
+      "items": [],
+      "updates_waiting": 0,
+      "updates_waiting_note": null,
+      "could_not_update": [],
+      "could_not_update_note": null
+    },
+    "github": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "problem": null,
+      "refreshed_at": "2026-11-21T00:35:06Z",
+      "form": null,
+      "project_issue": null,
+      "project_url": null,
+      "epics": {},
+      "epic_urls": {},
+      "slices": [],
+      "order": [],
+      "principles": {
+        "saved": null,
+        "unfinished": false,
+        "revision": null,
+        "sha256": null,
+        "approved_by": null,
+        "published_at": null,
+        "issue": null,
+        "url": null,
+        "github": {
+          "revision": null,
+          "approved": null,
+          "approved_by": null,
+          "read_at": "2026-11-21T00:35:06Z"
+        },
+        "newer_elsewhere": false,
+        "changed_on_github": false
+      }
+    },
+    "ideas": {
+      "refreshed": true,
+      "repository": "acme/team-space",
+      "issues": 1,
+      "changed_on_github": [
+        {
+          "idea_id": "IDEA-001",
+          "issue": 1,
+          "after_verdict": true,
+          "note": "IDEA-001's issue was changed on GitHub after its verdict was recorded. The verdict holds only for the brief it was recorded on."
+        }
+      ]
+    },
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

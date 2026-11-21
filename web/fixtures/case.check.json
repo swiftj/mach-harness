@@ -1,0 +1,45 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-003",
+    "model": {
+      "title": "Let members renew a loan themselves",
+      "customer": "You can now renew a loan from your account, at any hour, without calling us. If you cannot renew, the page tells you why.",
+      "customer_sentences": 2,
+      "questions": [
+        {
+          "id": "Q-1",
+          "question": "Who would not want this?",
+          "state": "answered",
+          "answer": "Desk staff at the small branches, who use renewal calls to check on older members.",
+          "line": 9
+        },
+        {
+          "id": "Q-2",
+          "question": "What does it cost if A-1 is wrong?",
+          "state": "answered",
+          "answer": "Calls fall less than we hope, and O-1 is not met.",
+          "line": 11
+        },
+        {
+          "id": "Q-3",
+          "question": "What would make us stop?",
+          "state": "not_answered",
+          "answer": "the product manager wants the first month's numbers first.",
+          "line": 13
+        }
+      ],
+      "answered": 2,
+      "not_answered": 1,
+      "open": 0
+    },
+    "passes": true,
+    "errors": [],
+    "warnings": [],
+    "findings": [],
+    "verdict_note": "A person decides. MACH never recommends a verdict, and recording one creates no epic or slice and starts nothing.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

@@ -79,18 +79,27 @@ func checkPMText(field, text string, max int, required bool) string {
 	return ""
 }
 
-// POST /api/interview {slice_id, idea?}
+// POST /api/interview {slice_id, idea?} or, M16, {idea_id}: the Shape conversation for one idea.
 func (s *Server) interviewStart(w http.ResponseWriter, r *http.Request) {
 	raw, ok := readBody(w, r, 32<<10)
 	if !ok {
 		return
 	}
 	var body struct {
-		SliceID string `json:"slice_id"`
-		Idea    string `json:"idea"`
+		SliceID string  `json:"slice_id"`
+		Idea    string  `json:"idea"`
+		IdeaID  *string `json:"idea_id"`
 	}
 	if err := engine.Decode(raw, &body); err != nil {
 		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, err.Error()))
+		return
+	}
+	if body.IdeaID != nil {
+		if body.SliceID != "" || body.Idea != "" {
+			writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "Give slice_id or idea_id, not both."))
+			return
+		}
+		s.ideaConversationStart(w, r, *body.IdeaID)
 		return
 	}
 	if len(body.SliceID) > 32 || !engine.SliceIDPattern.MatchString(body.SliceID) {
@@ -138,11 +147,74 @@ func (s *Server) interviewStart(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, http.StatusOK, engine.OKValue(started))
 }
 
-// GET /api/interview?slice_id=SLICE-001 → {interview: Current|null}
-func (s *Server) interviewCurrent(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Query().Get("slice_id")
-	if len(id) > 32 || !engine.SliceIDPattern.MatchString(id) {
+// ideaConversationStart: the engine says whether the idea exists and is not yet shaped into work
+// (its brief is then kept as it was when its slices were made); then the bridge starts the Shape
+// conversation, whose rules let it write only this idea's brief and case (interview.Paths).
+func (s *Server) ideaConversationStart(w http.ResponseWriter, r *http.Request, ideaID string) {
+	if len(ideaID) > 32 || !engine.IdeaIDPattern.MatchString(ideaID) {
+		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "idea_id must be an ID such as IDEA-001."))
+		return
+	}
+	if available, reason := s.opts.Bridge.Available(); !available {
+		writeEnvelope(w, http.StatusServiceUnavailable, engine.Fail(engine.KindUnavailable, reason))
+		return
+	}
+	check := s.opts.Engine.Transaction(r.Context(), func(tx *engine.Tx) engine.Envelope {
+		env := tx.Call(r.Context(), "idea.show", engine.ShowIdea(ideaID))
+		if !env.OK {
+			return env
+		}
+		var view struct {
+			Idea struct {
+				Stage string `json:"stage"`
+			} `json:"idea"`
+		}
+		if json.Unmarshal(env.Data, &view) != nil || view.Idea.Stage == "" {
+			return engine.Fail(engine.KindInternal, "The product engine's answer about the idea could not be read.")
+		}
+		if view.Idea.Stage == "shaped" {
+			return engine.Fail(engine.KindRefused, ideaID+" is shaped into work, so its brief stays as it was when its slices were made.")
+		}
+		return engine.OKValue(nil)
+	})
+	if !check.OK {
+		writeEnvelope(w, statusFor(check), check)
+		return
+	}
+	started, err := s.opts.Bridge.Start(r.Context(), interview.StartRequest{IdeaID: ideaID})
+	if err != nil {
+		s.interviewError(w, err)
+		return
+	}
+	writeEnvelope(w, http.StatusOK, engine.OKValue(started))
+}
+
+// subjectParam reads ?slice_id= or, M16, ?idea_id=: exactly one, in its engine pattern.
+func subjectParam(w http.ResponseWriter, r *http.Request) (string, bool) {
+	query := r.URL.Query()
+	slice, idea := query.Get("slice_id"), query.Get("idea_id")
+	switch {
+	case query.Has("idea_id") && query.Has("slice_id"):
+		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "Give slice_id or idea_id, not both."))
+		return "", false
+	case query.Has("idea_id"):
+		if len(idea) > 32 || !engine.IdeaIDPattern.MatchString(idea) {
+			writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "idea_id must be an ID such as IDEA-001."))
+			return "", false
+		}
+		return idea, true
+	}
+	if len(slice) > 32 || !engine.SliceIDPattern.MatchString(slice) {
 		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "slice_id must be an ID such as SLICE-001."))
+		return "", false
+	}
+	return slice, true
+}
+
+// GET /api/interview?slice_id=SLICE-001 (or ?idea_id=IDEA-001) → {interview: Current|null}
+func (s *Server) interviewCurrent(w http.ResponseWriter, r *http.Request) {
+	id, ok := subjectParam(w, r)
+	if !ok {
 		return
 	}
 	current, err := s.opts.Bridge.Current(id)
@@ -153,11 +225,10 @@ func (s *Server) interviewCurrent(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, http.StatusOK, engine.OKValue(map[string]any{"interview": current}))
 }
 
-// GET /api/interview/history?slice_id=SLICE-001 → {slice_id, events, truncated}
+// GET /api/interview/history?slice_id=SLICE-001 (or ?idea_id=IDEA-001) → {slice_id|idea_id, events, truncated}
 func (s *Server) interviewHistory(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Query().Get("slice_id")
-	if len(id) > 32 || !engine.SliceIDPattern.MatchString(id) {
-		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "slice_id must be an ID such as SLICE-001."))
+	id, ok := subjectParam(w, r)
+	if !ok {
 		return
 	}
 	events, truncated, err := s.opts.Bridge.History(id)
@@ -165,7 +236,11 @@ func (s *Server) interviewHistory(w http.ResponseWriter, r *http.Request) {
 		s.interviewError(w, err)
 		return
 	}
-	writeEnvelope(w, http.StatusOK, engine.OKValue(map[string]any{"slice_id": id, "events": events, "truncated": truncated}))
+	key := "slice_id"
+	if interview.IsIdea(id) {
+		key = "idea_id"
+	}
+	writeEnvelope(w, http.StatusOK, engine.OKValue(map[string]any{key: id, "events": events, "truncated": truncated}))
 }
 
 // GET /api/interview/<id>/events: server-sent events, replayed after Last-Event-ID.

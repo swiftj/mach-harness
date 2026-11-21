@@ -1,0 +1,24 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-001",
+    "item": "O-1",
+    "result": "too-early",
+    "by": null,
+    "shipped_slices": [
+      "SLICE-005"
+    ],
+    "comment": {
+      "posted": false,
+      "why": "not_signed_in"
+    },
+    "waiting": [
+      "A-1",
+      "A-2"
+    ],
+    "factory_authorized": false,
+    "note": "Recorded in the product manager's words. MACH never proposes a result. This computer is not signed in to GitHub, so the look-back is kept here only."
+  },
+  "refused": null,
+  "hint": null
+}

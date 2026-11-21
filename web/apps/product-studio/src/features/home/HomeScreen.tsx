@@ -43,6 +43,7 @@ import { AnswerQuestionDialog } from "../../shared/BuildersQuestion";
 import { SliceTimes } from "../../shared/SliceTimes";
 import { EpicSheet } from "../vision/EpicSheet";
 import { FirstRun } from "./FirstRun";
+import { ShapeCarryOn } from "../shape/shell/ShapeCarryOn";
 
 /** Refresh once per visit, when the project home first opens. */
 let refreshedThisVisit = false;
@@ -145,6 +146,8 @@ function ProjectHome({ status }: { status: Status }) {
         <Notices status={status} refresh={refresh.data} refreshError={refresh.error ? describeError(refresh.error).message : null} onRetry={() => void refresh.run()} />
 
         {next ? <CarryOn action={next} onGo={() => runRoute(next)} /> : null}
+
+        <ShapeCarryOn status={status} />
 
         <section aria-labelledby="epics-title" className="flex flex-col gap-8">
           <Heading level={2} size="title-3" id="epics-title" className="sr-only">

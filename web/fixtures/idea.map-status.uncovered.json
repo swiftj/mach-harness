@@ -1,0 +1,96 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-001",
+    "stage": "decided",
+    "route": {
+      "at": "2026-11-21T00:34:53Z",
+      "brief_sha256": "5c0fcf8917b5ec60044fbc43068faadc6c89a54f8c485c23a941f799fae08836",
+      "counted": {
+        "capabilities": 2,
+        "high_risk_areas": 0,
+        "high_risk_not_determined": [],
+        "outcomes": 2,
+        "policy_concerns": 0,
+        "principle_concerns": 0,
+        "shipped_rules": 2,
+        "shipped_rules_looked_up": 0
+      },
+      "revision": 1,
+      "route": "several-epics",
+      "why": "The brief's outcomes are in 2 different capabilities, so the route is several epics.",
+      "words": "several epics",
+      "holds": true,
+      "stale": false
+    },
+    "factory_authorized": false,
+    "map": {
+      "revision": 1,
+      "route": "several-epics",
+      "epics": [
+        {
+          "criteria": [
+            "A member renews without calling"
+          ],
+          "key": "E1",
+          "title": "Renew loans yourself"
+        }
+      ],
+      "slices": [
+        {
+          "key": "S1",
+          "title": "Renew a loan from my loans",
+          "scope": "One loan, from the loans page",
+          "epic": "E1",
+          "depends_on": [],
+          "outcomes": [
+            "O-1"
+          ],
+          "cites": "9-10",
+          "slice_id": null,
+          "status": null
+        },
+        {
+          "key": "S2",
+          "title": "Renew from the catalogue",
+          "scope": "One loan, from the catalogue",
+          "epic": "EPIC-001",
+          "depends_on": [
+            "S1"
+          ],
+          "outcomes": [
+            "O-1"
+          ],
+          "cites": "9-9",
+          "slice_id": null,
+          "status": null
+        }
+      ],
+      "applied": false,
+      "mapped_at": "2026-11-21T00:34:53Z"
+    },
+    "coverage": [
+      {
+        "outcome": "O-1",
+        "carried_by": [
+          "S1",
+          "S2"
+        ],
+        "state": "covered"
+      },
+      {
+        "outcome": "O-2",
+        "carried_by": [],
+        "state": "not_covered"
+      }
+    ],
+    "not_covered": [
+      "O-2"
+    ],
+    "blockers": [],
+    "can_apply": false,
+    "note": "1 outcome of IDEA-001 no slice carries: O-2. Settle each: a slice, out of scope, or later."
+  },
+  "refused": null,
+  "hint": null
+}

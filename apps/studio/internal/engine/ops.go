@@ -493,5 +493,10 @@ func ShowSlice(sliceID string) Args { return &SliceIDArgs{SliceID: sliceID, verb
 // CheckSlice is the arguments of slice.check (without --ready), for the host's own draft routes.
 func CheckSlice(sliceID string) Args { return &SliceCheckArgs{SliceID: sliceID} }
 
+// ShowIdea is the arguments of idea.show, for the Shape conversation's start route (M16).
+func ShowIdea(ideaID string) Args {
+	return &IdeaIDArgs{IdeaID: ideaID, words: []string{"idea", "show"}}
+}
+
 // StatusArgs is the arguments of status, for the session route.
 func StatusArgs() Args { return &statusArgs{} }

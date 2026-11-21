@@ -1,0 +1,49 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-002",
+    "revision": 1,
+    "new_revision": true,
+    "stage": "exploring",
+    "passes": false,
+    "errors": [
+      "O-2 has no way to know it happened. Say what you would see or count."
+    ],
+    "warnings": [
+      "O-1's 'how we would know' names no measure or observable change. Say what you would count or see.",
+      "An open question is still open: What does a member see when a renewal is refused because someone else is waiting? Who can answer: the head of lending se"
+    ],
+    "findings": [
+      {
+        "severity": "warning",
+        "rule": "brief-how-vague",
+        "line": 14,
+        "message": "O-1's 'how we would know' names no measure or observable change. Say what you would count or see."
+      },
+      {
+        "severity": "error",
+        "rule": "brief-outcome-how",
+        "line": 16,
+        "message": "O-2 has no way to know it happened. Say what you would see or count."
+      },
+      {
+        "severity": "warning",
+        "rule": "brief-open-question",
+        "line": 27,
+        "message": "An open question is still open: What does a member see when a renewal is refused because someone else is waiting? Who can answer: the head of lending se"
+      }
+    ],
+    "counts": {
+      "outcomes": 2,
+      "assumptions": 2,
+      "open_questions": 1,
+      "shipped_rules": 2,
+      "capabilities": 2
+    },
+    "verdict": null,
+    "note": "A script checks the brief's structure. It never scores the idea.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

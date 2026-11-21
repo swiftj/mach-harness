@@ -1,0 +1,23 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-006",
+    "verdict": {
+      "decision": "go",
+      "reason": "Members ask for it at every desk, and the payment provider is already approved.",
+      "by": "ada-pm",
+      "at": "2026-11-21T00:34:44Z",
+      "brief_sha256": "915f24d88dc658da1c1fa15068524bda867eec965a5ad759566c4d42748b7536",
+      "revision": 1,
+      "holds": true,
+      "stale": false
+    },
+    "replaced": null,
+    "stage": "decided",
+    "recorded_without_github": false,
+    "note": "Recorded. A person decides. MACH never recommends a verdict, and recording one creates no epic or slice and starts nothing. Save it to GitHub so others can read it.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

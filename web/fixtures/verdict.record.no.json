@@ -1,0 +1,23 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-004",
+    "verdict": {
+      "decision": "no",
+      "reason": "The fine is shown twice by the kiosk's own screen; it is the supplier's fault, not ours.",
+      "by": "ada-pm",
+      "at": "2026-11-21T00:34:44Z",
+      "brief_sha256": null,
+      "revision": 0,
+      "holds": true,
+      "stale": false
+    },
+    "replaced": null,
+    "stage": "decided",
+    "recorded_without_github": false,
+    "note": "Recorded. A person decides. MACH never recommends a verdict, and recording one creates no epic or slice and starts nothing. Save it to GitHub so others can read it.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

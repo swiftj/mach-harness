@@ -1,0 +1,26 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-001",
+    "item": "O-1",
+    "result": "met",
+    "by": "ada-pm",
+    "shipped_slices": [
+      "SLICE-005"
+    ],
+    "comment": {
+      "posted": false,
+      "why": "already_there",
+      "issue": 1
+    },
+    "waiting": [
+      "O-2",
+      "A-1",
+      "A-2"
+    ],
+    "factory_authorized": false,
+    "note": "Recorded in the product manager's words. MACH never proposes a result. The same look-back is already on the idea's issue."
+  },
+  "refused": null,
+  "hint": null
+}

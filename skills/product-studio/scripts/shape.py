@@ -720,12 +720,17 @@ def lookups_view(ideas: Ideas, idea_id: str) -> Optional[Dict[str, Any]]:
         lines.append(f"principle {item.get('id')}: {item.get('note') or ''}".rstrip(": "))
     for item in data.get("policies") or []:
         lines.append(f"policy {item.get('id')}: {item.get('note') or ''}".rstrip(": "))
-    return {"recorded_at": data.get("recorded_at"), "shipped_commit": data.get("shipped_commit"),
+    view = {"recorded_at": data.get("recorded_at"), "shipped_commit": data.get("shipped_commit"),
             "counts": {key: len(data.get(key) or []) for key in LOOKUP_LIMITS},
             "ids": {"shipped_rules": [i.get("rule") for i in data.get("shipped_rules") or []],
                     "similar": [i.get("idea") or i.get("request") for i in data.get("similar") or []],
                     "principles": [i.get("id") for i in data.get("principles") or []], "policies": [i.get("id") for i in data.get("policies") or []]},
             **fence("SHAPE-LOOKUPS", f"idea={idea_id}", "\n".join(lines) or "(nothing looked up)", rules)}
+    if getattr(ideas.host, "APP", False):
+        # The app shows each entry in its group (M16 app foundation): the entries as recorded, already checked, bounded and
+        # redacted. The terminal gets them fenced only, so the conversation reads them as data.
+        view["items"] = {key: [dict(item) for item in data.get(key) or [] if isinstance(item, dict)] for key in LOOKUP_LIMITS}
+    return view
 
 
 # ---- what an idea needs next ----

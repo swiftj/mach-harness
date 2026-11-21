@@ -251,6 +251,13 @@ func (s *Server) operation(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// M16: an act on an idea waits while the guided conversation is writing that idea's brief or case,
+	// as a draft write waits for a slice's interview (drafts.go).
+	if idea := engine.WritesIdea(name, body); idea != "" && s.opts.Bridge.Busy(idea) {
+		env := engine.Fail(engine.KindConflict, "The conversation is writing this idea's brief or case right now. Wait for its reply, or interrupt it.")
+		writeEnvelope(w, statusFor(env), env)
+		return
+	}
 	env := s.opts.Engine.Do(r.Context(), name, body)
 	if env.OK && op.Download {
 		data, err := s.downloads.record(s.opts.Engine.Project(), env.Data)

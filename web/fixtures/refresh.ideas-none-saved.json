@@ -1,0 +1,82 @@
+{
+  "exit_code": 0,
+  "data": {
+    "refreshed": true,
+    "problem": null,
+    "requests": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "refreshed_at": "2026-11-21T00:34:46Z",
+      "problem": null,
+      "truncated": false,
+      "truncated_note": null,
+      "items": [],
+      "updates_waiting": 0,
+      "updates_waiting_note": null,
+      "could_not_update": [],
+      "could_not_update_note": null
+    },
+    "github": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "problem": null,
+      "refreshed_at": "2026-11-21T00:34:46Z",
+      "form": null,
+      "project_issue": null,
+      "project_url": null,
+      "epics": {},
+      "epic_urls": {},
+      "slices": [],
+      "order": [
+        {
+          "epic_id": "EPIC-001",
+          "issue": null,
+          "slices": [
+            {
+              "slice_id": "SLICE-005",
+              "title": "Show my loans",
+              "in_workspace": true,
+              "issue": null,
+              "state_label": null
+            }
+          ],
+          "on_github": false,
+          "github_order": null,
+          "github_read_at": null,
+          "matches_github": null,
+          "unfinished": false,
+          "taken_from_github": false,
+          "could_not_read": false,
+          "note": null
+        }
+      ],
+      "principles": {
+        "saved": null,
+        "unfinished": false,
+        "revision": null,
+        "sha256": null,
+        "approved_by": null,
+        "published_at": null,
+        "issue": null,
+        "url": null,
+        "github": {
+          "revision": null,
+          "approved": null,
+          "approved_by": null,
+          "read_at": "2026-11-21T00:34:46Z"
+        },
+        "newer_elsewhere": false,
+        "changed_on_github": false
+      }
+    },
+    "ideas": {
+      "refreshed": true,
+      "repository": "acme/team-space",
+      "issues": 0,
+      "changed_on_github": []
+    },
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}
