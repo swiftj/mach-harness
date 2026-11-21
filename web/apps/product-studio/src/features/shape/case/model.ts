@@ -164,6 +164,55 @@ export function publishOutcome(result: IdeaPublished): PublishOutcome {
   return { where: "folder", folder: result.folder, whyFolder: result.why_folder, revision: result.revision, note: result.note };
 }
 
+/**
+ * The page's parts (M16 layout): the case, the verdict and publishing, one open at a time. Which part opens on arrival
+ * follows what the engine reported: publishing when saving stopped part way, the number is taken, or the board's next
+ * step is to publish or renumber; otherwise the verdict. It never depends on which verdict was recorded.
+ */
+export type CasePart = "case" | "verdict" | "publish";
+
+export function openOnArrival(state: PublishState, next: IdeaRow["next"]["kind"]): CasePart {
+  if (state.kind === "stopped" || state.kind === "number-taken" || next === "publish" || next === "renumber") return "publish";
+  return "verdict";
+}
+
+/** The case part's one line: what the case holds, in words. The check's result is its pill; its findings are beside the parts. */
+export function caseSummary(model: Pick<CaseModel, "customer" | "questions" | "answered" | "not_answered" | "open"> | null): string {
+  if (!model) return "No case yet. It is written in the conversation on the Explore step.";
+  const told = model.customer ? "Told as the customer would hear it" : "Not yet told as the customer would hear it";
+  const n = model.questions.length;
+  if (n === 0) return `${told}. No questions are written in the case.`;
+  return `${told}, with ${count(n, "hard question", "hard questions")}: ${questionCounts(model)}`;
+}
+
+/** The verdict part's one line, in the same words for every decision; the decision itself is the part's pill. */
+export function verdictSummary(state: VerdictState, shaped: boolean, note: string): string {
+  // With no verdict yet, the engine's own note (who decides, and that recording creates nothing) is the summary.
+  if (state.kind === "none") return note;
+  const by = state.verdict.by ? ` by ${state.verdict.by}` : " with nobody signed in to GitHub";
+  // What to do about it is the banner just under the row, in the engine's words.
+  if (state.kind === "stale") return `Recorded${by} on an earlier brief, so it no longer holds.`;
+  if (shaped) return `Recorded${by}. The idea is shaped into work.`;
+  return `Recorded${by}. ${verdictConsequence(state.verdict.decision).wayOn === "route" ? "Next, size it to find its route." : "It is kept with your reason, and the idea stays on the board."}`;
+}
+
+/** The publishing part's one line: where the idea is saved and what, if anything, is left to do. */
+export function publishSummary(state: PublishState): string {
+  switch (state.kind) {
+    case "not-published":
+      return "Saved nowhere others can read it yet.";
+    case "stopped":
+      return "Saving stopped part way. Save again to finish.";
+    case "number-taken":
+      return "Another idea on GitHub uses this number. Give yours the next free number, then save it.";
+    case "folder":
+      return "In a folder in your workspace, for you to commit.";
+    case "github":
+      if (state.changedOnGithub) return "The issue was edited on GitHub after it was saved. Save again to put the saved brief back.";
+      return state.upToDate ? `${state.issue !== null ? `Issue #${state.issue}` : "The issue"} shows the brief and the verdict as they are here.` : "The brief or the verdict changed here since it was saved.";
+  }
+}
+
 /** What publishing would save, from idea.show: the brief as the issue's body; the verdict as a signed comment only while it holds. Never the case. */
 export function whatIsSaved(show: Pick<IdeaShow, "brief" | "verdict">): { brief: string; verdict: string; caseNote: string } {
   const brief = show.brief.exists ? `The brief, revision ${show.brief.revision}, as the issue's body.` : "The brief: there is none yet, so the issue's body says so.";

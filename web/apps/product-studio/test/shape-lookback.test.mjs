@@ -7,11 +7,13 @@ import { readFileSync } from "node:fs";
 import {
   NOTE_LIMIT,
   chainLines,
+  chainSummary,
   confirmWords,
   emptyDraft,
   lookbackGate,
   lookbackItems,
   oneLine,
+  openOnArrival,
   placeMissing,
   progressLook,
   progressWords,
@@ -236,4 +238,33 @@ test("a settlement from the map reads in words", () => {
 test("refusals come back in the engine's words", () => {
   assert.match(run("lookback.record.refused-not-shipped").refused, /once a slice made from it has shipped/);
   assert.match(run("lookback.record.refused-secret").refused, /shaped like a secret/);
+});
+
+// ---- the page's parts (M16 layout): one per outcome and assumption, the chain in a line as each outcome's row ----
+
+test("each outcome's row says which slices serve it and where each stands, as the chain reports it", () => {
+  const [o1, o2] = chainLines(data("idea.chain"));
+  assert.equal(chainSummary(o1), "Served by SLICE-005 (being specified) and SLICE-006 (drafted)");
+  assert.equal(chainSummary(o2), "Served by SLICE-006 (drafted)");
+  const [shipped] = chainLines(data("idea.chain.looked-back"));
+  assert.match(chainSummary(shipped), /\(shipped\)/);
+  // A slice the chain names but does not hold, an unknown place, no slice, a settled outcome, one gone from the brief.
+  const chain = data("idea.chain");
+  const absent = chainLines({ ...chain, slices: chain.slices.filter((s) => s.slice_id !== "SLICE-006") })[1];
+  assert.equal(chainSummary(absent), "Served by SLICE-006 (not in this workspace)");
+  const unknown = { ...o2, slices: [{ slice: { ...o2.slices[0].slice, progress: null }, epic: null }] };
+  assert.equal(chainSummary(unknown), "Served by SLICE-006 (where it stands is not known here)");
+  assert.equal(chainSummary({ ...o2, slices: [], outcome: { ...o2.outcome, settled: null } }), "No slice serves it");
+  assert.equal(chainSummary({ ...o2, slices: [] }), "Settled to a slice in the map");
+  assert.match(chainSummary({ ...o1, outcome: { ...o1.outcome, in_brief: false } }), /^No longer in the brief\. Served by/);
+});
+
+test("the item open on arrival is the first still to record, only while the engine allows recording", () => {
+  const items = lookbackItems(data("idea.chain"), data("idea.show.look-back").lookback);
+  assert.equal(openOnArrival(items, "open"), "O-1");
+  const partly = lookbackItems(data("idea.chain"), data("idea.show.looked-back").lookback);
+  assert.equal(openOnArrival(partly, "open"), partly.find((i) => i.entry === null)?.id ?? null);
+  assert.equal(openOnArrival(partly.map((i) => ({ ...i, entry: i.entry ?? { result: "met" } })), "open"), null, "everything recorded: none open, each row says its result");
+  assert.equal(openOnArrival(items, "waiting"), "O-1", "waiting: the first outcome, so where each slice stands is in view");
+  assert.equal(openOnArrival([{ id: "O-1", kind: "outcome", recordable: false, entry: null }], "open"), null, "an outcome gone from the brief cannot be recorded");
 });

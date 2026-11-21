@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { ArtifactId, Button, ConfirmDialog, Field, Quote, RadioGroup, RelativeTime, StateGlyph, StatusPill, Text, Textarea, cn, toast } from "@mach/ui";
 import { failureText, type IdeaGithubView, type MachApiError } from "@mach/ui/api";
 import { client } from "../../../api/client";
@@ -19,91 +19,71 @@ import {
 } from "./model";
 
 /**
- * One outcome or assumption: what the brief said, what is already recorded (who, when, the note quoted, where it is
- * saved), and, once the engine allows it, the three-way record. Nothing is chosen for the person, the three choices look
- * alike, and each record is its own act, confirmed in a dialog that repeats the result and the note.
+ * The act on one outcome or assumption, inside its part (M16 layout): once the engine allows it, the three-way record.
+ * The part's row is the item's heading and says its result; what is already recorded (who, when, the note) is beside
+ * the parts. Nothing is chosen for the person, the three choices look alike, and each record is its own act, confirmed
+ * in a dialog that repeats the result and the note. `partRow` is the part's own row, where focus returns.
  */
 export function RecordItem({
   ideaId,
   item,
   open,
-  github,
   onRecorded,
+  partRow,
 }: {
   ideaId: string;
   item: LookbackItem;
   /** The engine allows recording now. */
   open: boolean;
-  github: IdeaGithubView | null;
   onRecorded: () => Promise<void>;
+  partRow: () => HTMLElement | null;
 }) {
-  const headingId = useId();
-  const headingRef = useRef<HTMLHeadingElement>(null);
   const [editing, setEditing] = useState(false);
   const showForm = open && item.recordable && (item.entry === null || editing);
-  return (
-    <article aria-labelledby={headingId} className="flex flex-col gap-3 border-t border-line py-5">
-      <div className="flex max-w-reading flex-col gap-1">
-        <h4 id={headingId} ref={headingRef} tabIndex={-1} className="flex flex-wrap items-baseline gap-x-2 rounded-xs text-body font-semibold text-ink">
-          <ArtifactId className="text-body-sm">{item.id}</ArtifactId>
-          <span>{item.text ?? "Its words are not in the brief as it is now"}</span>
-        </h4>
-        {item.howWeWouldKnow ? (
-          <Text size="body-sm" tone="muted">
-            <span className="font-semibold text-ink">How we would know:</span> {item.howWeWouldKnow}
-          </Text>
-        ) : null}
-      </div>
-
-      {item.entry ? <Recorded entry={item.entry} github={github} /> : <NotRecorded />}
-
-      {!item.recordable ? (
+  if (!item.recordable)
+    return (
+      <Text size="body-sm" tone="muted">
+        This outcome is no longer in the brief, so a look back cannot be recorded on it.
+      </Text>
+    );
+  if (showForm)
+    return (
+      <RecordForm
+        ideaId={ideaId}
+        item={item}
+        again={item.entry !== null}
+        onCancel={item.entry ? () => setEditing(false) : null}
+        onDone={async () => {
+          await onRecorded();
+          setEditing(false);
+        }}
+        focusAfter={partRow}
+      />
+    );
+  if (open && item.entry)
+    return (
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <Button size="sm" onClick={() => setEditing(true)}>
+          Record {item.id} again
+        </Button>
         <Text size="body-sm" tone="muted">
-          This outcome is no longer in the brief, so a look back cannot be recorded on it.
+          What is recorded now, with your note, is under “What you saw so far”.
         </Text>
-      ) : showForm ? (
-        <RecordForm
-          ideaId={ideaId}
-          item={item}
-          again={item.entry !== null}
-          onCancel={item.entry ? () => setEditing(false) : null}
-          onDone={async () => {
-            await onRecorded();
-            setEditing(false);
-            // The form is gone once the act is done: focus goes to the item's heading, not to the page's start.
-            requestAnimationFrame(() => headingRef.current?.focus());
-          }}
-          focusAfter={() => headingRef.current}
-        />
-      ) : open && item.entry ? (
-        <div>
-          <Button size="sm" onClick={() => setEditing(true)}>
-            Record {item.id} again
-          </Button>
-        </div>
-      ) : null}
-    </article>
-  );
-}
-
-function NotRecorded() {
-  return (
-    <p className="flex items-center gap-2 text-body-sm text-ink-muted">
-      <StateGlyph shape="open" />
-      Not recorded yet
-    </p>
-  );
+      </div>
+    );
+  return null;
 }
 
 /** What is already recorded: the result as a word and a shape, the note quoted with who wrote it and when, where it is saved. */
-function Recorded({ entry, github }: { entry: NonNullable<LookbackItem["entry"]>; github: IdeaGithubView | null }) {
+export function Recorded({ id, entry, github }: { id: string; entry: NonNullable<LookbackItem["entry"]>; github: IdeaGithubView | null }) {
   const look = resultLook(entry.result);
   const saved = savedWhere(entry, github);
   return (
-    <div className="flex max-w-reading flex-col gap-3">
-      <div>
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <ArtifactId className="text-body-sm">{id}</ArtifactId>
         <StatusPill tone="neutral" icon={<StateGlyph shape={look.glyph} />}>
-          Recorded: {look.word}
+          {look.word}
         </StatusPill>
       </div>
       <Quote
@@ -183,7 +163,7 @@ function RecordForm({
             Your look back on <span translate="no">{item.id}</span>
           </>
         }
-        hint={`${again ? "Recording again replaces the result above. " : ""}Choose the one that matches what you saw. Nothing is chosen for you.`}
+        hint={`${again ? "Recording again replaces the result recorded before. " : ""}Choose the one that matches what you saw. Nothing is chosen for you.`}
         layout="chips"
         options={choices.map((choice) => ({ value: choice.value, label: choice.word, icon: <StateGlyph shape={choice.glyph} /> }))}
         value={draft.result}

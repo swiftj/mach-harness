@@ -8,8 +8,8 @@ import { caseCheckState, questionCounts, questionViews, type QuestionView } from
 /** Where the case is written, and the way back to it. The case is never edited on this page. */
 export function WrittenInExplore({ ideaId }: { ideaId: string }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 rounded-md bg-surface-sunken px-4 py-3">
-      <Text size="body-sm" tone="muted" className="max-w-reading">
+    <div className="flex flex-col items-start gap-3 rounded-md bg-surface-sunken px-4 py-3">
+      <Text size="body-sm" tone="muted">
         The case is written in the conversation on the Explore step, not edited here. To change a sentence or answer a question, go back to the conversation.
       </Text>
       <Button asChild size="sm">
@@ -22,15 +22,12 @@ export function WrittenInExplore({ ideaId }: { ideaId: string }) {
   );
 }
 
-/** No case yet: the engine's own words, and the way to write one. */
+/** No case yet: the engine's own words, and the way to write one. Shown as the body of the case part. */
 export function NoCase({ ideaId, message }: { ideaId: string; message: string | null }) {
   return (
-    <section aria-labelledby="case-none" className="flex flex-col gap-3 rounded-md border border-dashed border-line-strong bg-surface px-6 py-5">
-      <Heading level={2} size="title-3" id="case-none">
-        No case yet
-      </Heading>
-      <Text tone="muted" className="max-w-reading">
-        {message ?? `${ideaId} has no case yet.`} The case is a few sentences as the customer would hear it, and the hardest questions with your answers. You write it in the conversation on the Explore step. You can still record a verdict below.
+    <div className="flex max-w-reading flex-col gap-3 rounded-md border border-dashed border-line-strong bg-surface px-6 py-5">
+      <Text tone="muted">
+        {message ?? `${ideaId} has no case yet.`} The case is a few sentences as the customer would hear it, and the hardest questions with your answers. You write it in the conversation on the Explore step. You can still record a verdict.
       </Text>
       <div>
         <Button asChild>
@@ -40,21 +37,28 @@ export function NoCase({ ideaId, message }: { ideaId: string; message: string | 
           </Link>
         </Button>
       </div>
-    </section>
+    </div>
   );
 }
 
-/** Part 1 and part 2: the case as the customer would hear it, then the hard questions and the case's check. */
-export function CaseSection({ ideaId, shown }: { ideaId: string; shown: CaseShow }) {
+/** The case check's result as its pill: its word and a shape, never colour alone. */
+export function CaseCheckPill({ shown }: { shown: CaseShow }) {
+  const check = caseCheckState(shown);
+  return (
+    <StatusPill tone={check.tone} icon={check.glyph === "check" ? <CircleCheck aria-hidden="true" /> : <CircleAlert aria-hidden="true" />} className={check.glyph === "alert" ? "border-2" : undefined}>
+      {check.word}
+    </StatusPill>
+  );
+}
+
+/** The body of the case part: the case as the customer would hear it, then every hard question with its answer. */
+export function CaseSection({ shown }: { shown: CaseShow }) {
   const model = shown.model;
   const questions = questionViews(model);
-  const check = caseCheckState(shown);
-  const errors = shown.findings.filter((f) => f.severity === "error");
-  const warnings = shown.findings.filter((f) => f.severity === "warning");
   return (
-    <>
-      <section aria-labelledby="case-customer" className="flex flex-col gap-3 rounded-md border border-line bg-surface px-6 py-5">
-        <Heading level={2} size="title-3" id="case-customer">
+    <div className="flex flex-col gap-6">
+      <section aria-labelledby="case-customer" className="flex flex-col gap-3">
+        <Heading level={3} size="title-3" id="case-customer">
           As the customer would hear it
         </Heading>
         {model.customer ? (
@@ -66,23 +70,13 @@ export function CaseSection({ ideaId, shown }: { ideaId: string; shown: CaseShow
         )}
       </section>
 
-      <section aria-labelledby="case-questions" className="flex flex-col gap-4">
-        <div className="flex flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-3">
-            <Heading level={2} size="title-2" id="case-questions">
-              The hard questions
-            </Heading>
-            <StatusPill tone={check.tone} icon={check.glyph === "check" ? <CircleCheck aria-hidden="true" /> : <CircleAlert aria-hidden="true" />} className={check.glyph === "alert" ? "border-2" : undefined}>
-              {check.word}
-            </StatusPill>
-          </div>
-          <Text size="body-sm" tone="muted">
-            {questions.length === 0 ? "No questions are written in the case." : questionCounts(model)}
-          </Text>
-        </div>
-
-        {errors.length > 0 || warnings.length > 0 ? <Findings errors={errors} warnings={warnings} /> : null}
-
+      <section aria-labelledby="case-questions" className="flex flex-col gap-2">
+        <Heading level={3} size="title-3" id="case-questions">
+          The hard questions
+        </Heading>
+        <Text size="body-sm" tone="muted">
+          {questions.length === 0 ? "No questions are written in the case." : questionCounts(model)}
+        </Text>
         {questions.length > 0 ? (
           <ol className="flex max-w-reading flex-col border-t border-line">
             {questions.map((q) => (
@@ -90,10 +84,59 @@ export function CaseSection({ ideaId, shown }: { ideaId: string; shown: CaseShow
             ))}
           </ol>
         ) : null}
-
-        <WrittenInExplore ideaId={ideaId} />
       </section>
-    </>
+    </div>
+  );
+}
+
+/**
+ * Beside the parts: the case's check, its findings in the engine's words, and the questions still without an answer,
+ * so they stay in view while the person records the verdict. Then the way back to Explore, where the case is written.
+ */
+export function CaseCheck({ ideaId, shown }: { ideaId: string; shown: CaseShow }) {
+  const model = shown.model;
+  const errors = shown.findings.filter((f) => f.severity === "error");
+  const warnings = shown.findings.filter((f) => f.severity === "warning");
+  const unanswered = questionViews(model).filter((q) => q.state !== "answered");
+  return (
+    <div className="flex flex-col gap-6">
+      <section aria-labelledby="case-check-h" className="flex flex-col gap-3">
+        <Heading level={2} size="title-3" id="case-check-h">
+          The case&apos;s check
+        </Heading>
+        <div>
+          <CaseCheckPill shown={shown} />
+        </div>
+        {errors.length > 0 || warnings.length > 0 ? <Findings errors={errors} warnings={warnings} /> : null}
+      </section>
+
+      <section aria-labelledby="case-unanswered-h" className="flex flex-col gap-2">
+        <Heading level={2} size="title-3" id="case-unanswered-h">
+          Without an answer
+        </Heading>
+        {unanswered.length === 0 ? (
+          <Text size="body-sm" tone="muted">
+            {model.questions.length === 0 ? "No questions are written in the case." : "Every question in the case has an answer."}
+          </Text>
+        ) : (
+          <ul className="flex flex-col border-t border-line">
+            {unanswered.map((q) => (
+              <li key={q.id} className="flex flex-col gap-1.5 border-b border-line py-3">
+                <p className="flex items-baseline gap-2 text-body-sm">
+                  <ArtifactId plain className="shrink-0 text-ink-muted">
+                    {q.id}
+                  </ArtifactId>
+                  <span className="whitespace-pre-wrap font-semibold text-ink">{q.question}</span>
+                </p>
+                <AnswerState q={q} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <WrittenInExplore ideaId={ideaId} />
+    </div>
   );
 }
 
@@ -112,35 +155,44 @@ function Question({ q }: { q: QuestionView }) {
             <span className="text-caption text-ink-muted">Your answer</span>
             <p className="whitespace-pre-wrap text-body text-ink">{q.answer}</p>
           </>
-        ) : q.state === "left" ? (
-          <>
-            <StatusPill size="sm" icon={<CircleDashed aria-hidden="true" />} className="self-start border-dashed">
-              Not answered
-            </StatusPill>
-            <p className="text-body-sm text-ink-muted">
-              {q.leftBecause ? (
-                <>
-                  Left on purpose: <span className="whitespace-pre-wrap text-ink">{q.leftBecause}</span>
-                </>
-              ) : (
-                "Left on purpose, with no reason written."
-              )}
-            </p>
-          </>
         ) : (
-          <StatusPill size="sm" tone="warning" icon={<CircleHelp aria-hidden="true" />} className="self-start">
-            No answer yet
-          </StatusPill>
+          <AnswerState q={q} />
         )}
       </div>
     </li>
   );
 }
 
+/** A question without an answer: left on purpose (with the reason when one was written), or not answered yet. */
+function AnswerState({ q }: { q: QuestionView }) {
+  if (q.state === "left")
+    return (
+      <>
+        <StatusPill size="sm" icon={<CircleDashed aria-hidden="true" />} className="self-start border-dashed">
+          Not answered
+        </StatusPill>
+        <p className="text-body-sm text-ink-muted">
+          {q.leftBecause ? (
+            <>
+              Left on purpose: <span className="whitespace-pre-wrap text-ink">{q.leftBecause}</span>
+            </>
+          ) : (
+            "Left on purpose, with no reason written."
+          )}
+        </p>
+      </>
+    );
+  return (
+    <StatusPill size="sm" tone="warning" icon={<CircleHelp aria-hidden="true" />} className="self-start">
+      No answer yet
+    </StatusPill>
+  );
+}
+
 /** The case check's findings, each in the engine's own words with its line. Errors stop it passing; warnings never do. */
 function Findings({ errors, warnings }: { errors: ShapeFinding[]; warnings: ShapeFinding[] }) {
   return (
-    <div className="flex max-w-reading flex-col gap-3">
+    <div className="flex flex-col gap-3">
       {errors.length > 0 ? <FindingList title="What stops the case passing its check" findings={errors} tone="error" /> : null}
       {warnings.length > 0 ? <FindingList title="Worth a look (these do not stop it passing)" findings={warnings} tone="warning" /> : null}
     </div>

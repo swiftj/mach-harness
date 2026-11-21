@@ -9,6 +9,10 @@ import * as model from "../src/features/shape/case/model.ts";
 
 const {
   caseCheckState,
+  caseSummary,
+  openOnArrival,
+  publishSummary,
+  verdictSummary,
   decisionWord,
   oneLine,
   publishAct,
@@ -81,11 +85,14 @@ test("the model has no function that takes the brief, the case or a check and re
   const exported = Object.keys(model).sort();
   assert.deepEqual(exported, [
     "caseCheckState",
+    "caseSummary",
     "decisionWord",
     "oneLine",
+    "openOnArrival",
     "publishAct",
     "publishOutcome",
     "publishState",
+    "publishSummary",
     "questionCounts",
     "questionViews",
     "reasonLimit",
@@ -97,6 +104,7 @@ test("the model has no function that takes the brief, the case or a check and re
     "verdictFor",
     "verdictFormProblem",
     "verdictState",
+    "verdictSummary",
     "whatIsSaved",
   ]);
   const shown = data("case.show");
@@ -279,4 +287,50 @@ test("the screen's words name MACH, never a script, a terminal command or an opt
   }
   // The product manager's text is shown as text: nothing is rendered as markup.
   assert.doesNotMatch(allSources(), /dangerouslySetInnerHTML|RichText|inline\(/);
+});
+
+// ---- the page's parts (M16 layout): which opens, and what each closed row says ----
+
+test("the verdict part opens on arrival whatever verdict is recorded; publishing only when saving needs finishing", () => {
+  for (const name of ["idea.show.go", "idea.show.not-now", "idea.show.fault", "idea.show.stale-verdict", "idea.show.brief-written", "idea.show.on-github", "idea.show.folder"]) {
+    assert.equal(openOnArrival(publishState(data(name).idea.github), "verdict"), "verdict", name);
+  }
+  assert.equal(openOnArrival(publishState(data("idea.show.unfinished").idea.github), "verdict"), "publish");
+  assert.equal(openOnArrival(publishState(data("idea.show.number-taken").idea.github), "verdict"), "publish");
+  assert.equal(openOnArrival(publishState(data("idea.show.go").idea.github), "publish"), "publish");
+  assert.equal(openOnArrival(publishState(data("idea.show.go").idea.github), "renumber"), "publish");
+  // Go, Not now and No open the same part: the page's arrangement never depends on which verdict was given.
+  const opened = ["idea.show.go", "idea.show.not-now", "idea.show.fault"].map((n) => openOnArrival(publishState(data(n).idea.github), "none"));
+  assert.equal(new Set(opened).size, 1);
+});
+
+test("the case part's row says what the case holds, from the engine's counts", () => {
+  const shown = data("case.show");
+  assert.equal(caseSummary(shown.model), "Told as the customer would hear it, with 3 hard questions: 2 answered · 1 left unanswered on purpose");
+  assert.equal(caseSummary(null), "No case yet. It is written in the conversation on the Explore step.");
+  assert.match(caseSummary({ ...shown.model, questions: [] }), /No questions are written in the case\.$/);
+});
+
+test("the verdict part's row reads alike for Go, Not now and No, and says when a verdict no longer holds", () => {
+  const note = data("idea.show.go").verdict_note;
+  assert.equal(verdictSummary(verdictState(null), false, note), note, "with no verdict, the engine's own note is the row");
+  const go = verdictSummary(verdictState(data("idea.show.go").verdict), false, note);
+  const notNow = verdictSummary(verdictState(data("idea.show.not-now").verdict), false, note);
+  const no = verdictSummary(verdictState(data("idea.show.fault").verdict), false, note);
+  assert.equal(go, "Recorded by ada-pm. Next, size it to find its route.");
+  assert.match(no, /^Recorded by ada-pm\. It is kept with your reason/);
+  for (const words of [go, notNow, no]) {
+    // The decision itself is the row's pill, the same look for all three; the words never praise or rank it.
+    assert.doesNotMatch(words, /recommend|best|should/i);
+  }
+  assert.match(verdictSummary(verdictState(data("idea.show.stale-verdict").verdict), false, note), /^Recorded by ada-pm on an earlier brief, so it no longer holds\.$/);
+  assert.match(verdictSummary(verdictState(data("idea.show.go").verdict), true, note), /shaped into work/);
+});
+
+test("the publishing part's row says where the idea is saved and what is left to do", () => {
+  assert.equal(publishSummary(publishState(data("idea.show.go").idea.github)), "Saved nowhere others can read it yet.");
+  assert.match(publishSummary(publishState(data("idea.show.unfinished").idea.github)), /stopped part way/);
+  assert.match(publishSummary(publishState(data("idea.show.number-taken").idea.github)), /next free number/);
+  assert.match(publishSummary(publishState(data("idea.show.folder").idea.github)), /folder in your workspace/);
+  assert.equal(publishSummary(publishState(data("idea.show.on-github").idea.github)), "Issue #1 shows the brief and the verdict as they are here.");
 });
