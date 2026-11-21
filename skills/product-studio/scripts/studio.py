@@ -34,6 +34,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import design  # noqa: E402
 import handoff  # noqa: E402
 import issues  # noqa: E402
 import jira_export  # noqa: E402
@@ -671,6 +672,7 @@ def describe(studio: Studio) -> Dict[str, Any]:
         **prd.status_field(sys.modules[__name__], studio),  # M13 D: imported PRDs; nothing when there are none
         **shape.status_field(sys.modules[__name__], studio),  # M16 A: ideas by stage; nothing when there are none
         **needs.status_field(sys.modules[__name__], studio),  # M17 A: technical needs; nothing for a project that never opened them
+        **design.status_field(sys.modules[__name__], studio),  # M17 B: brought-in designs; nothing when there are none
         "structurally_valid": structural["valid"] if structural else None,
         "structural_errors": structural["errors"] if structural else [],
         "factory_authorized": False,
@@ -2077,7 +2079,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MACH Product Studio operations (drafts only; never starts Factory work)")
     parser.add_argument("--project", type=Path, help="project root (default: nearest folder with .factory/ or .git)")
     parser.add_argument("--app", action="store_true", help="word refusals and reports for the local web app: no terminal commands, plus a hint")
-    sub = parser.add_subparsers(dest="command", required=True, metavar="{where,status,validate,refresh,reconcile,project,epic,slice,principle,need,policy,prd,request,acceptance,jira,idea,brief,case,verdict,lookback}")
+    sub = parser.add_subparsers(dest="command", required=True, metavar="{where,status,validate,refresh,reconcile,project,epic,slice,principle,need,design,policy,prd,request,acceptance,jira,idea,brief,case,verdict,lookback}")
 
     sub.add_parser("where", help="print the workspace and the files the interview needs").set_defaults(func=cmd_where)
     sub.add_parser("status", help="every artifact with its state, and what to do next").set_defaults(func=cmd_status)
@@ -2204,6 +2206,7 @@ def build_parser() -> argparse.ArgumentParser:
                          ).set_defaults(func=cmd_principle_publish)
 
     needs.add_commands(sub, sys.modules[__name__])  # M17 A: technical needs (needs.py)
+    design.add_commands(sub, sys.modules[__name__])  # M17 B: bringing in a design (design.py)
 
     policy = sub.add_parser("policy", help="the organisation's policy packs (M14): list them, or record an owner's acceptance of a concern").add_subparsers(
         dest="action", required=True)
