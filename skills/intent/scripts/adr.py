@@ -12,6 +12,7 @@ Only an ADR whose status is `accepted` binds the Factory. Each file starts with 
       - path:services/api/**         # a file glob, relative to the repository root
       - app:api                      # an app type the plan states
       - topic:database               # a word in the slice's spec or the plan
+    serves: TN-01@2, TN-04@1         # optional: the published technical needs it serves, each at its revision
     ---
 
     # Use PostgreSQL for every service's own data
@@ -208,6 +209,58 @@ def check_applies(value: Any) -> Tuple[List[str], List[str]]:
     return [str(item).strip() for item in items], problems
 
 
+SERVES_RE = re.compile(r"^(TN-\d{2,})@([1-9]\d*)$")
+
+
+def check_serves(value: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """The `serves` field (M17): the technical needs an ADR serves, each at the revision it was written under, as
+    `TN-01@2, TN-04@1` (or a list). Returns [{"need_id", "revision"}] and the problems with it."""
+    items = [part for part in value.split(",")] if isinstance(value, str) else list(value) if isinstance(value, list) else []
+    items = [str(item).strip() for item in items if str(item).strip()]
+    if not items:
+        return [], ["'serves' is empty: name each technical need at its revision, such as TN-01@2, or leave the field out"]
+    served: List[Dict[str, Any]] = []
+    problems = []
+    for item in items:
+        match = SERVES_RE.match(item)
+        if not match:
+            problems.append(f"'serves' item '{item[:80]}' is not a technical need at a revision, such as TN-01@2")
+        elif any(entry["need_id"] == match.group(1) for entry in served):
+            problems.append(f"'serves' names {match.group(1)} twice")
+        else:
+            served.append({"need_id": match.group(1), "revision": int(match.group(2))})
+    return served, problems
+
+
+def serves_flags(records: Iterable[Dict[str, Any]], needs: Optional[Sequence[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Accepted and proposed ADRs that serve a technical need at another revision than the published one, or a need now
+    retired or missing. `needs` is every published need ({"need_id", "revision", "status"}); None when the published file
+    cannot be read, so nothing is judged. A flag says so in a sentence; nothing is blocked, reopened or restarted."""
+    if needs is None:
+        return []
+    published = {need["need_id"]: need for need in needs}
+    flags = []
+    for record in records:
+        if record.get("status") not in ("accepted", "proposed"):
+            continue
+        for served in record.get("serves") or []:
+            ident, revision, need = record.get("id") or record.get("file"), served["revision"], published.get(served["need_id"])
+            said = f"{ident} serves {served['need_id']} at revision {revision}"
+            if need is None:
+                change, text = "missing", f"{said}, which the published technical needs do not have."
+            elif need.get("status") == "retired":
+                change, text = "retired", f"{said}, which the product manager has retired."
+            elif need.get("revision") != revision:
+                change = "older-revision" if revision < need["revision"] else "unknown-revision"
+                text = f"{said}; the published need is at revision {need['revision']}."
+            else:
+                continue
+            flags.append({"id": record.get("id"), "file": record.get("file"), "status": record.get("status"), "need_id": served["need_id"],
+                          "served_revision": revision, "published_revision": need.get("revision") if need else None, "change": change,
+                          "say": text + " An engineer reads the need and supersedes the ADR if the change matters; nothing is reopened or blocked."})
+    return flags
+
+
 def parse(text: str, name: str) -> Dict[str, Any]:
     """One ADR file as a record. `problems` lists everything wrong with it; a record with any problem never binds."""
     base = name.rsplit("/", 1)[-1]
@@ -242,6 +295,9 @@ def parse(text: str, name: str) -> Dict[str, Any]:
         record["applies_to"], applies_problems = check_applies(fields["applies-to"])
         record["applies_to_given"] = True
         problems += applies_problems
+    if "serves" in fields:  # only an ADR that names it carries the key
+        record["serves"], serves_problems = check_serves(fields["serves"])
+        problems += serves_problems
     fenced = False
     for line in body.split("\n"):
         if re.match(r"^\s*(```|~~~)", line):
@@ -534,7 +590,8 @@ def path_matches(record: Dict[str, Any], files: Sequence[str]) -> List[str]:
 
 def public(record: Dict[str, Any]) -> Dict[str, Any]:
     """An ADR without its text: what is listed and recorded."""
-    keys = ("id", "file", "title", "status", "superseded_by", "applies_to", "applies_to_given", "digest", "origin", "binding", "problems", "committed")
+    keys = ("id", "file", "title", "status", "superseded_by", "applies_to", "applies_to_given", "serves", "digest", "origin", "binding", "problems",
+            "committed")
     return {key: record[key] for key in keys if key in record}
 
 
@@ -633,15 +690,18 @@ def slug(title: str) -> str:
 
 def render(title: str, *, applies_to: Sequence[str] = (), context: str = "", options: Sequence[str] = (), decision: str = "",
            consequences: Sequence[str] = (), date: Optional[str] = None, evidence: Sequence[str] = (), open_points: Sequence[str] = (),
-           diagram: str = "") -> str:
+           diagram: str = "", serves: Sequence[str] = ()) -> str:
     """A MADR file with status `proposed`. Empty sections carry a template comment, which check-plan refuses.
 
-    `diagram` is Mermaid source the caller has checked (diagrams.problems); it is drawn under the decision."""
+    `diagram` is Mermaid source the caller has checked (diagrams.problems); it is drawn under the decision. `serves` is
+    the technical needs it serves, each as `TN-NN@revision`, checked by the caller against the published needs."""
     title = " ".join(title.split())
     header = ["---", "status: proposed", f"date: {date or datetime.now(timezone.utc).date().isoformat()}"]
     if applies_to:
         header.append("applies-to:")
         header += [f"  - {item}" for item in applies_to]
+    if serves:
+        header.append(f"serves: {', '.join(serves)}")
     header.append("---")
 
     def block(text: str, hint: str) -> str:

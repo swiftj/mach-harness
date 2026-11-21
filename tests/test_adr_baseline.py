@@ -484,5 +484,238 @@ class ListAuditDoctorTest(Uncovered):
         self.assertEqual(checks["adr.baseline"]["status"], "ok")
 
 
+def need(ident, kind, statement, status="active", revision=1, **extra):
+    return {"need_id": ident, "kind": kind, "statement": statement, "why": "Because the product needs it.", "status": status, "revision": revision, **extra}
+
+
+GIVEN = need("TN-06", "given", "The organisation runs everything on Azure.", said_by="Head of IT", said_on="2026-11-02")
+ALL_KINDS = [need("TN-01", "people", "About 2,000 shop staff use it at once on Monday mornings."),
+             need("TN-02", "data", "It keeps customer orders for seven years; card numbers never."),
+             need("TN-03", "connections", "It must read stock levels from the warehouse system."),
+             need("TN-04", "never", "An order must never be charged twice."),
+             need("TN-05", "priority", "Safety wins over speed when they conflict."), GIVEN]
+
+
+def needs_json(needs, revision=3, none=()):
+    return json.dumps({"schema_version": 1, "revision": revision, "sha256": "ab" * 32, "needs": needs, "none": list(none)})
+
+
+class NeedsRepository(Repository):
+    """A repository whose main branch has the product manager's published technical needs (M17)."""
+
+    def publish(self, text):
+        path = self.project / baseline.NEEDS_FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        git(self.project, "add", "-A")
+        git(self.project, "commit", "-q", "-m", "needs")
+        adr._LISTINGS.clear()
+
+    def sources(self, result, topic):
+        return [item["source"] for item in self.evidence(result, topic) if "source" in item]
+
+    def row(self, result, topic):
+        return next(item for item in result["to_draft"] if item["topic"] == topic)
+
+
+class NeedsEvidenceTest(NeedsRepository):
+    def test_each_kind_informs_the_topics_the_table_names(self):
+        self.make({"README.md": "# New\n"})
+        self.publish(needs_json(ALL_KINDS))
+        result = self.baseline()
+        expected = {"language": ["TN-05", "TN-06"], "framework": ["TN-01", "TN-03", "TN-05", "TN-06"], "storage": ["TN-02", "TN-04", "TN-05", "TN-06"],
+                    "testing": ["TN-04", "TN-06"], "deployment": ["TN-01", "TN-02", "TN-03", "TN-04", "TN-05", "TN-06"], "coding-standards": ["TN-06"]}
+        for topic, ids in expected.items():
+            with self.subTest(topic=topic):
+                self.assertEqual(self.sources(result, topic), [f"need:{ident} revision 1" for ident in ids])
+                row = self.row(result, topic)
+                self.assertEqual((row["no_evidence"], row["from_product"]), (False, True), "needs alone: not no_evidence, and from_product")
+        item = self.evidence(result, "storage")[0]
+        self.assertEqual((item["file"], item["found"], item["excerpt"]),
+                         (baseline.NEEDS_FILE, "technical need (data)", "It keeps customer orders for seven years; card numbers never."))
+        given = self.evidence(result, "coding-standards")[0]
+        self.assertEqual((given["said_by"], given["said_on"]), ("Head of IT", "2026-11-02"))
+        self.assertIn("said by Head of IT on 2026-11-02", given["found"])
+        self.assertEqual([entry["need_id"] for entry in result["needs"]], [entry["need_id"] for entry in ALL_KINDS], "every active need once")
+        self.assertEqual(result["needs"][0], {"need_id": "TN-01", "kind": "people", "revision": 1, "statement": ALL_KINDS[0]["statement"]})
+        self.assertEqual(result["needs_published"], {"file": baseline.NEEDS_FILE, "revision": 3, "sha256": "ab" * 32})
+        self.assertIsNone(result["needs_problem"])
+        self.assertEqual(adr.coverage(self.project, {})["missing"], DEFAULTS, "a need never covers a topic")
+
+    def test_a_given_informs_a_topic_the_project_added_and_other_kinds_do_not(self):
+        self.make({"README.md": "# New\n"})
+        (self.project / ".factory/config.json").write_text(json.dumps({"adr": {"required_topics": DEFAULTS + ["security"]}}))
+        self.publish(needs_json(ALL_KINDS))
+        self.assertEqual(self.sources(self.baseline(), "security"), ["need:TN-06 revision 1"])
+
+    def test_retired_needs_are_not_evidence_and_revisions_are_named(self):
+        self.make({"README.md": "# New\n"})
+        self.publish(needs_json([need("TN-01", "data", "Orders are kept for seven years.", revision=2),
+                                 need("TN-02", "data", "Nothing personal is kept.", status="retired")]))
+        result = self.baseline()
+        self.assertEqual(self.sources(result, "storage"), ["need:TN-01 revision 2"])
+        self.assertEqual([entry["need_id"] for entry in result["needs"]], ["TN-01"])
+        self.assertTrue(self.row(result, "language")["no_evidence"], "a topic no need informs is unchanged")
+        self.assertFalse(self.row(result, "language")["from_product"])
+
+    def test_with_code_evidence_a_topic_is_not_from_product(self):
+        self.make(PYTHON_REPO)
+        self.publish(needs_json(ALL_KINDS))
+        result = self.baseline()
+        storage = self.found(result, "storage")
+        self.assertIn(("pyproject.toml", "storage named in dependencies: PostgreSQL"), storage)
+        self.assertIn((baseline.NEEDS_FILE, "technical need (data)"), storage)
+        self.assertFalse(any(row["from_product"] for row in result["to_draft"]))
+
+    def test_only_the_committed_file_is_read_redacted_and_bounded(self):
+        self.make({"README.md": "# New\n"})
+        path = self.project / baseline.NEEDS_FILE
+        path.parent.mkdir(parents=True)
+        path.write_text(needs_json(ALL_KINDS))
+        result = self.baseline()
+        self.assertEqual((result["needs"], result["needs_published"]), ([], None), "the working tree is never read")
+        self.assertTrue(all(row["no_evidence"] for row in result["to_draft"]))
+        (self.project / baseline.RECORD).unlink()
+        secret = "token ghp_abcdefghijklmnopqrstuvwxyz0123 then " + "long words " * 60
+        self.publish(needs_json([need("TN-01", "data", secret)]))
+        result = self.baseline()
+        self.assertNotIn("ghp_abcdefghijklmnopqrstuvwxyz0123", json.dumps(result))
+        self.assertLessEqual(len(result["needs"][0]["statement"]), baseline.NEED_EXCERPT)
+        self.assertLessEqual(len(self.evidence(result, "storage")[0]["excerpt"]), baseline.NEED_EXCERPT)
+
+    def test_no_needs_file_is_todays_baseline(self):
+        self.make(PYTHON_REPO)
+        result = self.baseline()
+        self.assertEqual((result["needs"], result["needs_published"], result["needs_problem"]), ([], None, None))
+        self.assertFalse(any("source" in item for row in result["to_draft"] for item in row["evidence"]))
+        self.assertFalse(any(row["from_product"] for row in result["to_draft"]))
+        record = json.loads((self.project / baseline.RECORD).read_text())
+        self.assertEqual([row["evidence"] for row in result["to_draft"]], [record["topics"][topic]["evidence"] for topic in DEFAULTS])
+
+    def test_a_malformed_file_is_a_problem_with_its_reason_never_used_and_never_a_crash(self):
+        self.make({"README.md": "# New\n"})
+        good = json.loads(needs_json(ALL_KINDS))
+        cases = {
+            "it is not JSON": "{not json",
+            "it is not a JSON object": "[]",
+            "its schema_version is 2": json.dumps({**good, "schema_version": 2}),
+            "its revision is not a whole number": json.dumps({**good, "revision": "3"}),
+            "its sha256 is not 64": json.dumps({**good, "sha256": "abc"}),
+            "'needs' is not a list": json.dumps({**good, "needs": {}}),
+            "TN-02's kind is not one of": json.dumps({**good, "needs": [need("TN-02", "database", "Postgres.")]}),
+            "need 1 has no need_id": json.dumps({**good, "needs": [need("N-1", "data", "Kept.")]}),
+            "TN-01 appears twice": json.dumps({**good, "needs": [need("TN-01", "data", "Kept."), need("TN-01", "people", "Many.")]}),
+            "TN-06 is a given without said_by": json.dumps({**good, "needs": [need("TN-06", "given", "Azure.", said_on="2026-11-02")]}),
+            "TN-01's status is neither": json.dumps({**good, "needs": [need("TN-01", "data", "Kept.", status="draft")]}),
+            "TN-01 has no statement": json.dumps({**good, "needs": [need("TN-01", "data", " ")]}),
+            "'none' is not a list of kinds": json.dumps({**good, "none": ["database"]}),
+        }
+        for expected, text in cases.items():
+            with self.subTest(expected=expected):
+                self.publish(text)
+                result = self.baseline()
+                self.assertIn(expected, result["needs_problem"] or "")
+                self.assertIn(baseline.NEEDS_FILE, result["needs_problem"])
+                self.assertEqual((result["needs"], result["needs_published"]), ([], None))
+                self.assertTrue(all(row["no_evidence"] and not row["from_product"] for row in result["to_draft"]), "nothing is used in part")
+
+    def test_needs_published_after_the_record_are_read_and_never_recorded(self):
+        """The reuse rule: code evidence is recorded once; needs are read again on every run and never kept in the record."""
+        self.make({"README.md": "# New\n"})
+        self.baseline()
+        record = (self.project / baseline.RECORD).read_text()
+        self.publish(needs_json([need("TN-01", "data", "Orders are kept for seven years.")]))
+        with mock.patch.object(baseline, "gather", side_effect=AssertionError("gathered again")):
+            later = self.baseline()
+        self.assertTrue(all(row["reused_from_record"] for row in later["to_draft"]))
+        self.assertEqual(self.sources(later, "storage"), ["need:TN-01 revision 1"])
+        self.assertTrue(self.row(later, "storage")["from_product"])
+        self.assertFalse(later["record_written"])
+        self.assertEqual((self.project / baseline.RECORD).read_text(), record, "needs are never recorded")
+        self.publish(needs_json([need("TN-01", "data", "Orders are kept for ten years.", revision=2)], revision=4))
+        self.assertEqual(self.sources(self.baseline(), "storage"), ["need:TN-01 revision 2"], "a changed need is seen at its new revision")
+        self.publish(needs_json([need("TN-01", "data", "Orders are kept for ten years.", status="retired", revision=2)], revision=5))
+        self.assertTrue(self.row(self.baseline(), "storage")["no_evidence"], "a retired need leaves the topic")
+
+
+class ServesTest(NeedsRepository):
+    def setUp(self):
+        self.make({"README.md": "# New\n"})
+
+    def new(self, *extra, code=0):
+        got, out, err = self.run_cmd("adr", "new", "--title", "Keep orders in PostgreSQL", "--context", "Orders must be kept for years.",
+                                     "--decision", "PostgreSQL, because it keeps orders safely.", *extra)
+        self.assertEqual(got, code, err + out)
+        return json.loads(out) if code == 0 else err
+
+    def test_adr_new_serves_writes_the_published_revision(self):
+        self.publish(needs_json([need("TN-01", "data", "Orders are kept for seven years.", revision=2), need("TN-04", "never", "Never charge twice.")]))
+        written = self.new("--serves", "TN-01", "--serves", "tn-04", "--serves", "TN-01", "--option", "PostgreSQL", "--option", "SQLite",
+                           "--consequence", "Good, because orders are kept for seven years.", "--applies-to", "topic:storage")
+        self.assertEqual(written["serves"], ["TN-01@2", "TN-04@1"])
+        text = (self.project / written["file"]).read_text()
+        self.assertIn("serves: TN-01@2, TN-04@1\n", text)
+        parsed = adr.parse(text, written["file"])
+        self.assertEqual((parsed["status"], parsed["problems"]), ("proposed", []))
+        listed = self.json_list()
+        self.assertEqual(listed["serves_flags"], [])
+        self.assertEqual(next(row for row in listed["adrs"] if row["id"] == written["id"])["serves"],
+                         [{"need_id": "TN-01", "revision": 2}, {"need_id": "TN-04", "revision": 1}])
+
+    def test_adr_new_serves_refusals_write_nothing(self):
+        two = ("--option", "PostgreSQL", "--option", "SQLite")
+        self.assertIn("No technical needs are published on the main branch", self.new("--serves", "TN-01", *two, code=1))
+        self.publish(needs_json([need("TN-01", "data", "Kept for seven years."), need("TN-02", "data", "Nothing personal.", status="retired")]))
+        cases = {"no such need": ("--serves", "TN-09", *two), "has retired it": ("--serves", "TN-02", *two),
+                 "at least two --option entries": ("--serves", "TN-01", "--option", "PostgreSQL"),
+                 "at least two --option": ("--serves", "TN-01")}
+        for expected, extra in cases.items():
+            with self.subTest(expected=expected):
+                self.assertIn(expected, self.new(*extra, code=1))
+                self.assertIn("nothing was written", self.new(*extra, code=1))
+        self.publish("{broken")
+        self.assertIn("is not JSON", self.new("--serves", "TN-01", *two, code=1))
+        self.assertFalse((self.project / "docs/adr").exists(), "nothing was written")
+        self.assertNotIn("serves", self.new(), "without --serves, one option or none is still fine")
+
+    def test_adr_new_baseline_lists_the_needs_and_serves_them(self):
+        self.publish(needs_json([need("TN-02", "data", "Orders are kept for seven years."), GIVEN]))
+        self.assertTrue(self.row(self.baseline(), "storage")["from_product"])
+        written = self.json_run("adr", "new", "--baseline", "storage", "--title", "Keep orders in a managed PostgreSQL", "--context", "The product keeps orders.",
+                                "--decision", "Managed PostgreSQL, so orders are kept for seven years.", "--option", "Managed PostgreSQL",
+                                "--option", "SQLite on the server", "--consequence", "Good, because orders survive for seven years.", "--serves", "TN-02",
+                                "--open-point", "The organisation runs everything on Azure (said by Head of IT on 2026-11-02): confirm this still holds")
+        text = (self.project / written["file"]).read_text()
+        self.assertIn("serves: TN-02@1\n", text)
+        self.assertIn("- need:TN-02 revision 1, technical need (data): Orders are kept for seven years.", text)
+        self.assertIn("- need:TN-06 revision 1, technical need (given): said by Head of IT on 2026-11-02", text)
+        self.assertEqual(adr.open_points(text), ["The organisation runs everything on Azure (said by Head of IT on 2026-11-02): confirm this still holds"])
+        self.assertEqual(adr.parse(text, written["file"])["problems"], [])
+
+    def test_adr_list_flags_adrs_serving_an_older_revision_or_a_retired_or_missing_need(self):
+        self.publish(needs_json([need("TN-01", "data", "Kept for ten years.", revision=2), need("TN-02", "people", "Many.", status="retired")]))
+        folder = self.project / "docs/adr"
+        folder.mkdir(parents=True)
+        for name, status, serves in (("0001-a.md", "accepted", "TN-01@1"), ("0002-b.md", "proposed", "TN-02@1"), ("0003-c.md", "proposed", "TN-07@1"),
+                                     ("0004-d.md", "accepted", "TN-01@2"), ("0005-e.md", "rejected", "TN-01@1")):
+            (folder / name).write_text(adr_text(f"Decision {name[:4]} here", status=status).replace("---\n\n#", f"serves: {serves}\n---\n\n#", 1))
+        flags = self.json_list()["serves_flags"]
+        self.assertEqual([(flag["id"], flag["need_id"], flag["change"]) for flag in flags],
+                         [("ADR-0001", "TN-01", "older-revision"), ("ADR-0002", "TN-02", "retired"), ("ADR-0003", "TN-07", "missing")])
+        self.assertTrue(all(flag["say"] for flag in flags))
+        self.publish("{broken")
+        listed = self.json_list()
+        self.assertEqual(listed["serves_flags"], [])
+        self.assertIn("is not JSON", listed["needs_problem"])
+
+    def json_list(self):
+        return self.json_run("adr", "list")
+
+    def json_run(self, *argv):
+        code, out, err = self.run_cmd(*argv)
+        self.assertEqual(code, 0, err + out)
+        return json.loads(out)
+
+
 if __name__ == "__main__":
     unittest.main()

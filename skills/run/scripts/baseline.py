@@ -16,8 +16,17 @@ topic that is still uncovered and has no record (or whose drafted ADR has since 
 shown from the record, marked when it was read at an earlier commit. It never drafts a topic that has an ADR in the
 folder, whatever its status.
 
+Technical needs the product manager published (M17: `product/ready/NEEDS/needs.json`, committed on the main branch,
+read at the same commit as the code) add evidence per topic by a fixed table (NEED_TOPICS), never by a model's
+judgement. Only active needs count. They are read again on every run and never recorded, so a need published, changed
+or retired after a topic's code evidence was recorded is seen the next time that topic is shown. A topic whose only
+evidence is technical needs is `from_product`. A need informs the engineer; it never covers a topic: only an accepted
+ADR does. No needs file means no product evidence; a file that cannot be read is reported with its reason and used
+for nothing.
+
 The skill (planning tier) then writes each ADR as `proposed` with `run.py adr new --baseline <topic>`, which takes
-the evidence files from this record and records the ADR here. Nothing is committed and nothing is accepted.
+the evidence files from this record (and the published needs, read again) and records the ADR here. Nothing is
+committed and nothing is accepted.
 
 Standard library only (tomllib where the Python has it; without it, TOML files are listed but not read).
 """
@@ -102,6 +111,20 @@ DEPLOY_FILES = ("Procfile", "fly.toml", "vercel.json", "netlify.toml", "app.yaml
                 "compose.yaml", "compose.yml", ".gitlab-ci.yml", "Jenkinsfile", "azure-pipelines.yml", "bitbucket-pipelines.yml", ".travis.yml")
 DEPLOY_DIRS = ("k8s/", "kubernetes/", "helm/", "charts/", "deploy/", "deployment/", "infra/", "terraform/", ".github/workflows/", ".circleci/")
 MIGRATION_DIRS = ("migrations/", "alembic/", "db/migrate/", "prisma/", "db/migrations/", "flyway/", "liquibase/", "supabase/migrations/")
+NEEDS_FILE = "product/ready/NEEDS/needs.json"  # Product Studio's published technical needs (M17 part A), committed by the product manager
+NEEDS_SCHEMA_VERSION = 1
+NEED_KINDS = ("people", "data", "connections", "never", "priority", "given")
+NEED_TOPICS: Dict[str, Optional[Tuple[str, ...]]] = {  # which kind of need informs which required topic; None: every topic, a project's own included
+    "people": ("framework", "deployment"),
+    "data": ("storage", "deployment"),
+    "connections": ("framework", "deployment"),
+    "never": ("storage", "testing", "deployment"),
+    "priority": ("language", "framework", "storage", "deployment"),
+    "given": None,
+}
+NEED_ID_RE = re.compile(r"^TN-\d{2,}$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+NEED_EXCERPT = 300  # characters of one need's statement
 STORAGE_IMAGES = re.compile(r"\b(postgres|postgis|mysql|mariadb|mongo|redis|elasticsearch|opensearch|cassandra|memcached|minio|clickhouse)\b", re.IGNORECASE)
 
 
@@ -142,9 +165,14 @@ class Repo:
         return [name for name in self.files if self.base(name) in bases or (prefixes and self.base(name).startswith(prefixes))]
 
     def excerpt(self, text: Any) -> str:
-        clean = " ".join(self.redact(str(text or "")).split())
-        clean = "".join(ch for ch in clean if ord(ch) >= 32 and ord(ch) != 127)
-        return clean if len(clean) <= EXCERPT else clean[:EXCERPT - 1] + "…"
+        return excerpt(text, self.redact)
+
+
+def excerpt(text: Any, redact: Optional[Callable[[str], str]] = None, limit: int = EXCERPT) -> str:
+    """Text on one line: redacted, control characters removed, cut at `limit`."""
+    clean = " ".join((redact or str)(str(text or "")).split())
+    clean = "".join(ch for ch in clean if ord(ch) >= 32 and ord(ch) != 127)
+    return clean if len(clean) <= limit else clean[:limit - 1] + "…"
 
 
 def item(repo: Repo, file: Optional[str], found: str, excerpt: Any = None) -> Dict[str, Any]:
@@ -374,6 +402,119 @@ def gather(repo: Repo, audit: Any = None) -> Dict[str, List[Dict[str, Any]]]:
     return {topic: found[:MAX_ITEMS] for topic, found in evidence.items()}
 
 
+# ---------------------------------------------------------------- published technical needs (M17)
+
+def _positive(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+
+
+def _need_problems(need: Any, index: int, seen: set) -> List[str]:
+    if not isinstance(need, dict):
+        return [f"need {index} is not an object"]
+    ident = need.get("need_id")
+    valid_id = isinstance(ident, str) and bool(NEED_ID_RE.match(ident))
+    name = ident if valid_id else f"need {index}"
+    problems = []
+    if not valid_id:
+        problems.append(f"need {index} has no need_id of the form TN-NN")
+    elif ident in seen:
+        problems.append(f"{ident} appears twice")
+    seen.add(ident)
+    if need.get("kind") not in NEED_KINDS:
+        problems.append(f"{name}'s kind is not one of {', '.join(NEED_KINDS)}")
+    if not isinstance(need.get("statement"), str) or not need["statement"].strip():
+        problems.append(f"{name} has no statement")
+    if need.get("status") not in ("active", "retired"):
+        problems.append(f"{name}'s status is neither active nor retired")
+    if not _positive(need.get("revision")):
+        problems.append(f"{name}'s revision is not a whole number from 1")
+    if need.get("kind") == "given":
+        for key in ("said_by", "said_on"):
+            if not isinstance(need.get(key), str) or not need[key].strip():
+                problems.append(f"{name} is a given without {key}")
+    return problems
+
+
+def published_needs(root: Path, commit: Optional[str], redact: Optional[Callable[[str], str]] = None) -> Dict[str, Any]:
+    """The technical needs committed at `commit` in NEEDS_FILE, read from git (never the working tree).
+
+    {"file", "present", "revision", "sha256", "needs" (every need, retired included, statements redacted and bounded),
+    "none" (kinds with nothing to say), "problem"}. A file that cannot be read is `present` with a `problem` and no
+    needs: reported, never used in part, never a crash."""
+    out: Dict[str, Any] = {"file": NEEDS_FILE, "present": False, "revision": None, "sha256": None, "needs": [], "none": [], "problem": None}
+    if not commit:
+        return out
+
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *args], cwd=str(root), capture_output=True, text=True, errors="replace")
+
+    size = git("cat-file", "-s", f"{commit}:{NEEDS_FILE}")
+    if size.returncode != 0:
+        return out
+    out["present"] = True
+    lead = f"{NEEDS_FILE} on the main branch cannot be read, so no technical need is used: "
+    if int(size.stdout.strip() or 0) > MAX_READ:
+        out["problem"] = lead + f"it is larger than {MAX_READ // 1000} KB"
+        return out
+    try:
+        data = json.loads(git("show", f"{commit}:{NEEDS_FILE}").stdout)
+    except ValueError as exc:
+        out["problem"] = lead + f"it is not JSON ({excerpt(exc, limit=120)})"
+        return out
+    if not isinstance(data, dict):
+        out["problem"] = lead + "it is not a JSON object"
+        return out
+    problems: List[str] = []
+    if data.get("schema_version") != NEEDS_SCHEMA_VERSION:
+        problems.append(f"its schema_version is {excerpt(repr(data.get('schema_version')), limit=20)}, not {NEEDS_SCHEMA_VERSION}")
+    if not _positive(data.get("revision")):
+        problems.append("its revision is not a whole number from 1")
+    if not isinstance(data.get("sha256"), str) or not SHA256_RE.match(data["sha256"]):
+        problems.append("its sha256 is not 64 lowercase hexadecimal characters")
+    needs = data.get("needs")
+    if not isinstance(needs, list):
+        problems.append("'needs' is not a list")
+        needs = []
+    seen: set = set()
+    for index, need in enumerate(needs, 1):
+        problems += _need_problems(need, index, seen)
+    none = data.get("none", [])
+    if not isinstance(none, list) or any(kind not in NEED_KINDS for kind in none):
+        problems.append(f"'none' is not a list of kinds ({', '.join(NEED_KINDS)})")
+    if problems:
+        out["problem"] = lead + "; ".join(problems[:5]) + (f"; and {len(problems) - 5} more" if len(problems) > 5 else "")
+        return out
+    out.update(revision=data["revision"], sha256=data["sha256"], none=list(none))
+    for need in needs:
+        shown = {"need_id": need["need_id"], "kind": need["kind"], "revision": need["revision"], "status": need["status"],
+                 "statement": excerpt(need["statement"], redact, NEED_EXCERPT)}
+        if need["kind"] == "given":
+            shown.update(said_by=excerpt(need["said_by"], redact, 80), said_on=excerpt(need["said_on"], redact, 40))
+        out["needs"].append(shown)
+    return out
+
+
+def active_needs(published: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The active needs, once each, for the report (and the overview later)."""
+    return [{key: value for key, value in need.items() if key != "status"} for need in published.get("needs") or [] if need.get("status") == "active"]
+
+
+def need_items(published: Dict[str, Any], topic: str) -> List[Dict[str, Any]]:
+    """Evidence for one topic from the active published needs whose kind informs it (NEED_TOPICS)."""
+    found = []
+    for need in active_needs(published):
+        topics = NEED_TOPICS.get(need["kind"], ())
+        if topics is not None and topic not in topics:
+            continue
+        entry: Dict[str, Any] = {"file": NEEDS_FILE, "source": f"need:{need['need_id']} revision {need['revision']}",
+                                 "found": f"technical need ({need['kind']})", "excerpt": need["statement"]}
+        if need["kind"] == "given":
+            entry.update(found=f"technical need (given): said by {need['said_by']} on {need['said_on']}; a constraint to confirm, never settled by itself",
+                         said_by=need["said_by"], said_on=need["said_on"])
+        found.append(entry)
+    return found[:MAX_ITEMS]
+
+
 def evidence_digest(found: List[Dict[str, Any]]) -> str:
     return hashlib.sha256(json.dumps(found, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
@@ -402,6 +543,7 @@ def baseline(root: Path, config: Any, A: Any, redact: Callable[[str], str], audi
     found = A.coverage(root, config)
     commit = A.head_of(root)  # None in a project with no commit yet: there is nothing committed to read, so no evidence
     listing = A.full_listing(root, config)
+    published = published_needs(root, commit, redact)  # read on every run and never recorded (see the module's note)
     record = load_record(root)
     topics = record["topics"]
     repo: Optional[Repo] = None
@@ -433,7 +575,9 @@ def baseline(root: Path, config: Any, A: Any, redact: Callable[[str], str], audi
             reused = False
         else:
             reused = True
-        to_draft.append({"topic": topic, "description": A.describe_topic(topic), "evidence": entry["evidence"], "no_evidence": not entry["evidence"],
+        from_needs = need_items(published, topic)
+        to_draft.append({"topic": topic, "description": A.describe_topic(topic), "evidence": entry["evidence"] + from_needs,
+                         "no_evidence": not entry["evidence"] and not from_needs, "from_product": bool(from_needs) and not entry["evidence"],
                          "applies_to": [f"topic:{topic}"], "evidence_recorded_at": entry.get("gathered_at"),
                          "evidence_commit": entry.get("commit"), "reused_from_record": reused,
                          "read_at_an_earlier_commit": reused and entry.get("commit") != commit})
@@ -442,4 +586,7 @@ def baseline(root: Path, config: Any, A: Any, redact: Callable[[str], str], audi
         save_record(root, record)
     return {"status": "BASELINE", "commit": commit, "required": found["required"], "setting_problems": found["problems"], "adr_problems": found["adr_problems"],
             "covered": covered, "waiting": waiting, "to_draft": to_draft, "record": RECORD, "record_tracked": False, "record_written": changed,
-            "data_note": DATA_NOTE}
+            "needs": active_needs(published),
+            "needs_published": ({"file": NEEDS_FILE, "revision": published["revision"], "sha256": published["sha256"]}
+                                if published["present"] and not published["problem"] else None),
+            "needs_problem": published["problem"], "data_note": DATA_NOTE}

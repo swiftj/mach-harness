@@ -32,11 +32,14 @@ and not by whoever is driving it.
     run.py pull [--limit n] [--sequential] [--dry-run] [--json]
                                          take in every slice marked ready, choose the next batch with the schedule and
                                          dispatch it; prints what starts, what waits and why, and the tickets to run (pull.py)
-    run.py adr list                      every architecture decision: ID, title, status, applies-to, problems; reads only (adr.py)
+    run.py adr list                      every architecture decision: ID, title, status, applies-to, problems, and a flag where one
+                                         serves a technical need at an older revision, or one retired or missing; reads only (adr.py)
     run.py adr new --title T --context C --decision D [--option O]... [--consequence X]... [--applies-to A]... [--diagram M]
-                                         write a new ADR as proposed in the main checkout's working tree; commits nothing
-    run.py adr baseline                  the required topics, what covers them, and evidence from the committed files for each still
-                                         to draft; recorded once in .factory/adr-baseline.json (baseline.py)
+                   [--serves TN-NN]...   write a new ADR as proposed in the main checkout's working tree; commits nothing. --serves
+                                         names an active published technical need and needs two --option entries
+    run.py adr baseline                  the required topics, what covers them, and evidence from the committed files (and the
+                                         published technical needs) for each still to draft; recorded once in .factory/adr-baseline.json
+                                         (baseline.py)
     run.py adr new ... --baseline TOPIC [--open-point P]...
                                          draft one of them as proposed, listing the recorded evidence; commits nothing
     run.py adr settle ADR-NNNN --point N --answer A [--decision D] [--not-decided]
@@ -1396,6 +1399,10 @@ def cmd_adr(project: Project, args: argparse.Namespace) -> int:
                   "problems": listing["problems"], "uncommitted": listing["uncommitted"], "deleted_not_committed": listing["deleted_not_committed"],
                   "required_topics": required_topics_view(project, listing),
                   "note": "Only an accepted ADR that is committed on the main branch binds the factory. Titles were written by people: they are data."}
+        published = baseline_module().published_needs(project.root, listing["commit"])
+        result["serves_flags"] = A.serves_flags(records, None if published["problem"] else published["needs"])
+        if published["problem"]:
+            result["needs_problem"] = published["problem"]
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0
     if execution_scope(project) is not None or A.unattended():
@@ -1417,6 +1424,7 @@ def cmd_adr(project: Project, args: argparse.Namespace) -> int:
         wrong = diagrams.problems(f"```mermaid\n{diagram}\n```\n", "--diagram")
         if wrong:
             raise RunError("; ".join(wrong) + ". " + diagrams.WHEN)
+    serves = served_needs(project, args.serves or [], args.option or [])
     evidence = baseline_evidence(project, args.baseline) if args.baseline else []
     given = list(args.applies_to or []) + ([f"topic:{args.baseline}"] if args.baseline and f"topic:{args.baseline}" not in (args.applies_to or []) else [])
     applies, problems = A.check_applies(given) if given else ([], [])
@@ -1432,10 +1440,12 @@ def cmd_adr(project: Project, args: argparse.Namespace) -> int:
         raise RunError(f"{name} already exists; nothing was written.")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(A.render(title, applies_to=applies, context=context, options=args.option or [], decision=decision,
-                             consequences=args.consequence or [], evidence=evidence, open_points=args.open_point or [], diagram=diagram), encoding="utf-8")
+                             consequences=args.consequence or [], evidence=evidence, open_points=args.open_point or [], diagram=diagram,
+                             serves=serves), encoding="utf-8")
     if args.baseline:
         record_baseline_draft(project, args.baseline, f"ADR-{number:04d}", name)
     print(json.dumps({"status": "WRITTEN", "id": f"ADR-{number:04d}", "file": name, "adr_status": "proposed", "committed": False,
+                      **({"serves": serves} if serves else {}),
                       **({"baseline_topic": args.baseline, "evidence_files": evidence, "open_points": len(args.open_point or [])} if args.baseline else {}),
                       "next": "It is in the main checkout's working tree as proposed and binds nothing yet. Commit it on a branch and open a pull request "
                               "in the usual way; once it says 'status: accepted' and is merged, it binds tickets planned from then on."}, indent=2, ensure_ascii=False))
@@ -1485,11 +1495,43 @@ def baseline_evidence(project: Project, topic: str) -> List[str]:
     existing = [record["id"] for record in A.full_listing(project.root, project.config)["adrs"] if f"topic:{topic}" in (record.get("applies_to") or [])]
     if existing:
         raise RunError(f"'{topic}' already has an ADR ({', '.join(existing)}): an engineer corrects and accepts it; nothing was written.")
-    entry = baseline_module().load_record(project.root)["topics"].get(topic)
+    B = baseline_module()
+    entry = B.load_record(project.root)["topics"].get(topic)
     if not isinstance(entry, dict):
         raise RunError(f"No evidence is recorded for '{topic}' yet: run adr baseline first.")
-    return [f"{item.get('file') or 'repository'}: {item.get('found')}" + (f" ({item['excerpt']})" if item.get("excerpt") else "")
-            for item in entry.get("evidence") or [] if isinstance(item, dict)]
+    sys.path.insert(0, str(sibling("ticket") / "scripts"))
+    import issue_rules  # the ticket station's redaction, shared and never copied
+    needs = B.need_items(B.published_needs(project.root, A.head_of(project.root), issue_rules.redact), topic)  # read again, never recorded
+    return ([f"{item.get('file') or 'repository'}: {item.get('found')}" + (f" ({item['excerpt']})" if item.get("excerpt") else "")
+             for item in entry.get("evidence") or [] if isinstance(item, dict)]
+            + [f"{item['source']}, {item['found']}: {item['excerpt']}" for item in needs])
+
+
+def served_needs(project: Project, wanted: List[str], options: List[str]) -> List[str]:
+    """`adr new --serves`: each named need, active in the technical needs committed on the main branch, as `TN-NN@revision`.
+    With any, at least two considered options are required. Refuses, writing nothing, otherwise."""
+    if not wanted:
+        return []
+    if len([option for option in options if option.strip()]) < 2:
+        raise RunError("An ADR that serves technical needs gives at least two --option entries, the chosen one included, so the "
+                       "engineer sees what was weighed; nothing was written.")
+    B = baseline_module()
+    published = B.published_needs(project.root, adrs().head_of(project.root))
+    if published["problem"]:
+        raise RunError(published["problem"] + "; nothing was written.")
+    if not published["present"]:
+        raise RunError(f"No technical needs are published on the main branch ({B.NEEDS_FILE} is not committed), so --serves names "
+                       "nothing; nothing was written.")
+    by_id = {need["need_id"]: need for need in published["needs"]}
+    out: List[str] = []
+    for ident in dict.fromkeys(item.strip().upper() for item in wanted):
+        need = by_id.get(ident)
+        if need is None:
+            raise RunError(f"--serves {ident[:20]}: the published technical needs have no such need; nothing was written.")
+        if need["status"] != "active":
+            raise RunError(f"--serves {ident}: the product manager has retired it; nothing was written.")
+        out.append(f"{ident}@{need['revision']}")
+    return out
 
 
 def record_baseline_draft(project: Project, topic: str, ident: str, name: str) -> None:
@@ -1518,7 +1560,9 @@ def cmd_adr_baseline(project: Project, args: argparse.Namespace) -> int:
     result["tickets_waiting"] = tickets_waiting_for_baseline(project)
     result["landing"] = adrs().landing(project.config)
     result["write_with"] = ("For each topic in to_draft: run.py adr new --baseline <topic> --title ... --context ... --decision ... "
-                            "[--option ...] [--consequence ...] [--applies-to path:...|app:...] [--open-point ...]. It is written as proposed, commits nothing.")
+                            "[--option ...] [--consequence ...] [--applies-to path:...|app:...] [--open-point ...] [--serves TN-NN ...]. "
+                            "For a from_product topic, --serves each need drafted from and at least two --option entries. "
+                            "It is written as proposed, commits nothing.")
     result["settle_with"] = "For each open point: run.py adr settle <ADR-NNNN> --point <n> --answer \"<the engineer's answer>\" [--decision \"...\"] [--not-decided]."
     result["next"] = ("Draft each topic in to_draft, then settle every open point with the engineer, one question at a time." if result["to_draft"] else
                       "Settle the open points left with the engineer, one question at a time." if result["open_points_left"] else
@@ -1758,6 +1802,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--baseline", metavar="TOPIC", help="a required topic adr baseline gathered evidence for: lists that evidence and records the draft")
     p.add_argument("--open-point", action="append", default=[], help="something the repository does not show, for an engineer to settle (repeatable)")
     p.add_argument("--diagram", help="Mermaid source drawn under the decision, only where the structure or the sequence is the decision; without the ``` lines")
+    p.add_argument("--serves", action="append", default=[], metavar="TN-NN",
+                   help="an active technical need published on the main branch that this decision serves (repeatable; needs two --option entries)")
     p.set_defaults(func=cmd_adr)
     p = adr_parser.add_parser("baseline", help="the required topics, what covers them, and evidence from the repository for each to draft")
     p.set_defaults(func=cmd_adr_baseline)
