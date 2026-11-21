@@ -1,6 +1,25 @@
-# MACH release notes: 0.16.0
+# MACH release notes: 0.17.0
 
-Status: a full release. MACH is not claimed to be ready for regulated or enterprise production use. This document opens with what changed in 0.16.0, then 0.15.0 and 0.14.0, each with how far it was tested. Everything from "Supported platforms" on was written for 0.13.0 from its test runs (the M7 documents in `docs/mach-next/`); where a later release replaced something it describes, the tables say so, and the 0.13.0 test record was not repeated.
+Status: a full release. MACH is not claimed to be ready for regulated or enterprise production use. This document opens with what changed in 0.17.0, then 0.16.0, 0.15.0 and 0.14.0, each with how far it was tested. Everything from "Supported platforms" on was written for 0.13.0 from its test runs (the M7 documents in `docs/mach-next/`); where a later release replaced something it describes, the tables say so, and the 0.13.0 test record was not repeated.
+
+## What changed in 0.17.0
+
+One milestone: Shape, the part of Product Studio that comes before epics, and a new layout for every Product Studio screen. Everything below passed the automated suites (1,840 Python tests, the Go tests for both programs, the web typecheck, lint and unit tests, and 268 browser tests including the app-versus-terminal conformance suite and accessibility checks in both themes). **None of it has been run against real GitHub or a real model.**
+
+| Change | What it is | How far it was tested |
+|---|---|---|
+| Shape: ideas | Optional, and one of the ways to start. One board for every idea, from your own words, a request, an idea filed with `/mach-idea`, or a fault MACH recorded. A decision of no keeps its reason and stays findable. | Automated tests only. |
+| Shape: explore and the brief | A conversation with open questions, one at a time; MACH looks up shipped rules, similar ideas, principles and policies instead of asking. The brief is one page with outcomes, each with how you would know, and assumptions marked as assumed. MACH checks it is complete. | Automated tests, and a scripted conversation in the app. **The conversation has not been held with a real model.** |
+| Shape: the case and the verdict | MACH asks the hardest questions it can find; the product manager records go, not now or no in their own words, saved with the brief's hash and their GitHub login. MACH never scores an idea or recommends a verdict. A changed brief makes the verdict stale. | Automated tests only. |
+| Shape: size and route | After a go, MACH sizes the work from what the brief touches, by fixed rules: one slice, an epic, or several epics. A map is settled as the PRD on-ramp's is, with every outcome carried or accounted for, and applied on the product manager's word. | Automated tests only. The app shows and settles a map but cannot yet propose one; that is done in the conversation. |
+| Shape: the chain and look back | A slice made from an idea names the outcome it serves. When it ships, each outcome and assumption comes back for the product manager to record. "Change what exists" starts an idea from a shipped rule. | Automated tests only. Look back opens when a slice ships; product acceptance is not read back. |
+| Ideas on GitHub | An idea is saved as one issue: the brief as its body, the verdict as a comment. Without GitHub it is written to a folder. | Automated tests with a stand-in. **Nothing was saved to real GitHub.** MACH does not report whether the repository is public; an issue is as visible as its repository. |
+| Product Studio layout | Every screen now fits the window instead of scrolling the page: side-by-side panes, parts that open one at a time, and a "More below" mark where a pane has more. | 103 screens and states measured at 1440 by 900 and 1024 by 768: none is taller than the window, and the main action is in view on arrival wherever there is one. An earlier set of screenshots was reviewed by a person, which is what led to this change; the final set has not been confirmed by a person. |
+| Wording | The README and these notes say what MACH does, without naming its parts. | Not applicable. |
+
+**Known gaps in Shape:** two product managers editing one idea are not reconciled; an idea may be started from a fault that is already closed or used.
+
+**Still the main thing not proven:** no ticket has yet been built from start to merge through the hand-off that 0.14.0 introduced.
 
 ## What changed in 0.16.0
 

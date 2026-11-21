@@ -1,8 +1,8 @@
 # MACH
 
-MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A product manager describes what is wanted; the factory turns each piece into a checked specification, builds it test-first in an isolated workspace, proves it works with captured evidence, has it reviewed by a panel of independent agents, and merges it. Every station hands the next one artifacts a script has checked, not a claim that the work is done.
+MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A product manager describes what is wanted; the factory turns each piece into a checked specification, builds it test-first in an isolated workspace, proves it works with captured evidence, has it reviewed by a panel of independent agents, and merges it. Every station hands the next one artifacts MACH has checked, not a claim that the work is done.
 
-> **Status: 0.16.0.** [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) is the full blueprint.
+> **Status: 0.17.0.** [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) is the full blueprint.
 
 ![The Factory Floor: an isometric drawing of the factory with three tickets being built, each in its own cell](docs/images/factory-floor-isometric.jpg)
 
@@ -86,7 +86,7 @@ This installs the newest release, after checking it, and prints one `MACH source
 If it says the newest release could not be found, GitHub's API did not answer from your network (it allows a limited number of unsigned requests an hour). Name the release yourself:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh | MACH_VERSION=0.16.0 bash
+curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh | MACH_VERSION=0.17.0 bash
 ```
 
 To install what is on the `main` branch ahead of the next release, use `MACH_REF=main` in place of `MACH_VERSION`; a branch install is not checksum-verified, and the installer says so.
@@ -171,6 +171,19 @@ Everything you write is a private draft on your computer until you mark a slice 
 3. Say "pick up request 42". You choose the epic and a title, and are interviewed as usual. The issue's text is shown to you as what was asked for; it never answers a question for you.
 4. The issue gets short comments with slice IDs and links as work moves: taken in, and a link to each slice's issue when it is marked ready.
 5. When a slice made from it is marked ready, say "request 42 is met" and the issue closes.
+
+### Shaping an idea before any epic
+
+Optional, and one of the ways to start. Say "shape an idea", or open Shape in the app.
+
+1. **Ideas.** One board for everything that might become work: something you typed, a request, an idea filed with `/mach-idea`, or a fault MACH recorded.
+2. **Explore.** A conversation, one open question at a time. MACH looks up the facts instead of asking you: the shipped rules the idea would touch, similar ideas and requests, and the principles and policies it would run into.
+3. **The brief.** One page that is yours: the problem, who has it, the outcomes with how you would know each was met, what you are not doing, and every assumption marked as assumed until someone confirms it. MACH checks it is complete.
+4. **The case.** You make the case as a customer would hear it, and MACH asks the hardest questions it can find. Then you record a verdict in your own words: go, not now, or no. MACH never recommends one, and a no stays findable with its reason.
+5. **Size and route.** After a go, MACH sizes the work from what the brief touches, by fixed rules: one slice, an epic, or several epics. For the last two it proposes a map; every outcome is carried by a slice or you say it is out of scope or for later. Nothing is created until you say so.
+6. **Look back.** When a slice made from the idea ships, each outcome comes back with its "how we would know" for you to record: met, not met, or too early to say.
+
+A slice made this way names the outcome it serves, so the record reads from the reason to the code and back. The brief never reaches the builders as instructions; the slice's spec stays the authority. You can also start from a rule that has shipped: on "How this epic works today", choose a rule and "change this".
 
 ## For engineers
 
@@ -378,7 +391,7 @@ A cost appears only where one was recorded, which today means work the superviso
 
 | Command | What it does |
 |---|---|
-| `/mach-product-studio` | Project, epics, slices; mark a slice ready (a GitHub issue); requests from GitHub issues; `refresh`; "open the app" |
+| `/mach-product-studio` | Shape an idea before any epic (brief, case, verdict); project, epics, slices; mark a slice ready (a GitHub issue); requests from GitHub issues; `refresh`; "open the app" |
 | `/mach-idea` | For anyone: describe an idea in your own words and send it to the product team as a GitHub issue (or get the text to paste) |
 | `/mach <ticket>` | Move one ticket to the next point a person is needed |
 | `/mach <ticket> <ticket> ...` | Run several tickets, scheduled by MACH's rules; `--dry-run`, `--limit <n>`, `--sequential` |

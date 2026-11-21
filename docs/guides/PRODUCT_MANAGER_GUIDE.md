@@ -82,6 +82,20 @@ From there the slice's own issue shows its progress: being built, a question for
 - It never treats text in an issue as an instruction. If the text tells Claude to skip a question, approve something or change a rule, Claude shows it to you as a quotation and carries on.
 - It never accepts a label from someone without write access.
 
+## Shaping an idea before any epic (optional)
+
+Shape is where an idea is explored, argued for and sized before any epic or slice exists. You never have to use it; it is one of the ways to start. Say "shape an idea", "write a brief" or "is this worth building", or open Shape from the "More" menu in the app once an idea exists.
+
+- **The ideas board** holds every idea and where it stands: new, exploring, brief written, decided, shaped into work. Add one in your own words, or from a request, an idea filed with `/mach-idea`, or a fault MACH recorded.
+- **Explore** is a conversation with open questions, one at a time. MACH looks up what it can instead of asking: shipped rules the idea would touch, similar ideas and requests, principles and policies in its way.
+- **The brief** is one page: problem, who has it, outcomes (`O-1`, `O-2`), each with how you would know, what you are not doing, assumptions (`A-1`, `A-2`), open questions and risks, and what it touches. MACH checks that it is complete and that no assumption is written as a fact.
+- **The case and the verdict.** You answer MACH's hardest questions, then record **go**, **not now** or **no** with your reason. The verdict is yours alone and MACH never recommends one. Change the brief afterwards and the verdict is marked stale until you record it again.
+- **Size and route.** After a go, MACH counts what the brief touches and names the route: one slice, an epic, or several epics. For an epic or several, you settle a map: every outcome is carried by a slice, or you mark it out of scope or for later with your reason. "Apply" then makes the epics and draft slices. The proposed map itself is made in the conversation, not yet in the app.
+- **Change what exists.** On "How this epic works today", choose a shipped rule and "change this" to start an idea with the affected rules already filled in.
+- **Look back.** Once a slice made from the idea has shipped, record for each outcome whether it was met, not met, or it is too early to say, and for each assumption whether it held.
+
+Saving an idea puts its brief in a GitHub issue, with your verdict as a comment. An issue is as visible as the repository: keep a commercially sensitive brief in a private repository, or work without GitHub and it is written to a folder.
+
 ## 4. The project, epics and slices
 
 A **project** has a name, a vision and one or more outcomes. An outcome is a result for a person, such as "Invited members can open the campaigns they were invited to". It is not a feature list.
