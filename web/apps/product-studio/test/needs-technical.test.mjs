@@ -290,7 +290,7 @@ test("no decision act is shown or offered, and the page never says architecture"
     // The engine's own `note` names the engineer's side in its words, so the page writes its own lead.
     assert.doesNotMatch(said(text), /\b(data|list)\.note\b/, `${file}: need.list's note is not shown`);
   }
-  assert.match(list("several").note, /architecture/, "why the page does not show the engine's note");
+  assert.doesNotMatch(list("several").note, /architecture/i, "the engine's note keeps to the product manager's words too");
 });
 
 test("the screen's files: tokens only, no inline style, no markup injection, no serif", () => {

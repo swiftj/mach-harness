@@ -117,7 +117,7 @@ Built in `web/apps/product-studio/src/features/needs/technical/` on the shell ab
 - **Conversation.** The needs conversation (`useNeedsConversation`), drawn as Shape's Explore draws its own (its transcript, `ReplyField` and pane-end behaviour are reused, exported from `features/shape/explore/Conversation.tsx`), with the needs' words: an open question with "Nothing to say" and "I don't know", never a recommended answer. When Claude Code cannot run here it shows `capabilities.needs_command` to run in Claude Code. A need it records (`draft_changed`) is read again.
 - **Tests**: `test/needs-technical.test.mjs` (17), on the real fixtures: each state, the arguments of each act and the operations the folder sends, the refusals in the engine's words, the waiting state, the two equal choices, no decision act and no "architecture".
 
-**Open.** The engine's `ways_on` after a publish says "the engineer's architecture baseline reads the needs from there", and `need.list`'s `note` uses the word too. The page shows `ways_on` as the engine wrote it, so that one word reaches the page after a publish; rewording it is the engine's (`needs.py`) and its fixtures'.
+**Wording.** The engine's `ways_on` and `need.list`'s `note` say "the engineers read the needs from there when they record their decisions"; neither uses the word "architecture", so the page can show them as written.
 
 ## 10. A design you already have: screens
 

@@ -151,7 +151,7 @@
       "conflicts": [
         {
           "against": "TN-01",
-          "at": "2026-11-21T19:34:59Z",
+          "at": "2026-11-21T20:23:08Z",
           "by": "the product manager",
           "lines": [
             [
@@ -168,9 +168,9 @@
       ],
       "unsettled": [],
       "published": {
-        "at": "2026-11-21T19:34:59Z",
+        "at": "2026-11-21T20:23:08Z",
         "revision": 1,
-        "sha256": "368b87255198a040a7c6491124b1e9c8bbb85e58370dccb7e8bae5ccea58bb36"
+        "sha256": "57c97c926c5c94f4d637b8859d29065b477dd7fd8db9e55b89648e3e8e475068"
       },
       "unpublished_changes": false
     },

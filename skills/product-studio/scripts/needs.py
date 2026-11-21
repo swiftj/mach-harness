@@ -43,7 +43,7 @@ QUESTIONS = {
     "given": "What is already decided outside this product?",
 }
 NOTE = ("A technical need says what the product requires of whatever is built, without technology. The engineer reads the "
-        "published needs when drafting the architecture decisions; only an accepted decision chooses a technology.")
+        "published needs when recording their decisions; only an accepted decision chooses a technology.")
 SERVES_RE = re.compile(r"^(TN-[0-9]{2,})@([0-9]{1,6})$")
 ADR_NOT_SERVING = ("rejected", "superseded")
 
@@ -384,9 +384,9 @@ def cmd_publish(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str, A
     # The architecture baseline reads the needs only from files committed on the main branch, so the folder is written too.
     folder = Path(saved["folder"])
     return {"published": True, **saved, "files": [str(folder / "needs.json")], "active": active, "unanswered": open_kinds, "factory_authorized": False,
-            "ways_on": [host.say(f"Commit the folder {folder.relative_to(studio.draft)} to the repository's main branch; the engineer's architecture "
-                                 "baseline reads the needs from there.",
-                                 "Add this folder to the project's repository; the engineer's architecture baseline reads the needs from there.")],
+            "ways_on": [host.say(f"Commit the folder {folder.relative_to(studio.draft)} to the repository's main branch; the engineers read the needs "
+                                 "from there when they record their decisions.",
+                                 "Add this folder to the project's repository; the engineers read the needs from there when they record their decisions.")],
             "note": f"Published on the project's issue (#{saved['issue']}) as version {saved['revision']}, and to the folder with the same version. "
                     "No decision was taken and no work has started."}
 

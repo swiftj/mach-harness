@@ -93,21 +93,21 @@
       "revision": 1,
       "sha256": "af78a93ddb5fe4f65133596724ddd9f4552ea53d2c628ee9ff195792672ffe0f",
       "approved_by": "ada-pm",
-      "published_at": "2026-11-21T19:34:51Z",
+      "published_at": "2026-11-21T20:23:05Z",
       "issue": 1,
       "url": "https://github.com/acme/team-space/issues/1",
       "github": {
         "revision": 1,
         "approved": true,
         "approved_by": "ada-pm",
-        "read_at": "2026-11-21T19:34:51Z"
+        "read_at": "2026-11-21T20:23:05Z"
       },
       "newer_elsewhere": false,
       "changed_on_github": false
     },
     "adrs_behind": [],
     "next": "Not answered yet: connections, priority. Each can be a need or 'nothing to say'.",
-    "note": "A technical need says what the product requires of whatever is built, without technology. The engineer reads the published needs when drafting the architecture decisions; only an accepted decision chooses a technology.",
+    "note": "A technical need says what the product requires of whatever is built, without technology. The engineer reads the published needs when recording their decisions; only an accepted decision chooses a technology.",
     "factory_authorized": false
   },
   "refused": null,

@@ -404,8 +404,8 @@ def cmd_publish(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str, A
     where = target.relative_to(studio.draft)
     return {"published": True, "changed": not same, "folder": str(target), "files": [str(target / "design.json"), str(target / meta["file"])],
             "design": designs.summary(meta), "factory_authorized": False,
-            "ways_on": [host.say(f"Commit the folder {where} to the repository's main branch; the engineer's architecture baseline reads the design from there.",
-                                 "Add this folder to the project's repository; the engineer's architecture baseline reads the design from there.")],
+            "ways_on": [host.say(f"Commit the folder {where} to the repository's main branch; the engineers read the design from there when they record their decisions.",
+                                 "Add this folder to the project's repository; the engineers read the design from there when they record their decisions.")],
             "note": ("Published to the folder. " if not same else "Already published exactly so; nothing was changed. ")
                     + "Nothing was sent to GitHub, no decision was taken and no work has started."}
 

@@ -102,7 +102,7 @@
     },
     "adrs_behind": [],
     "next": "The technical needs have changes that are not published: publish them so the engineer gets them.",
-    "note": "A technical need says what the product requires of whatever is built, without technology. The engineer reads the published needs when drafting the architecture decisions; only an accepted decision chooses a technology.",
+    "note": "A technical need says what the product requires of whatever is built, without technology. The engineer reads the published needs when recording their decisions; only an accepted decision chooses a technology.",
     "factory_authorized": false
   },
   "refused": null,

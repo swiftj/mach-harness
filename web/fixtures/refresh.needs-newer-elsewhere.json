@@ -6,7 +6,7 @@
     "requests": {
       "repository": "acme/team-space",
       "refreshed": true,
-      "refreshed_at": "2026-11-21T19:34:58Z",
+      "refreshed_at": "2026-11-21T20:23:08Z",
       "problem": null,
       "truncated": false,
       "truncated_note": null,
@@ -20,7 +20,7 @@
       "repository": "acme/team-space",
       "refreshed": true,
       "problem": null,
-      "refreshed_at": "2026-11-21T19:34:58Z",
+      "refreshed_at": "2026-11-21T20:23:08Z",
       "form": null,
       "project_issue": 1,
       "project_url": "https://github.com/acme/team-space/issues/1",
@@ -41,7 +41,7 @@
           "revision": null,
           "approved": null,
           "approved_by": null,
-          "read_at": "2026-11-21T19:34:58Z"
+          "read_at": "2026-11-21T20:23:08Z"
         },
         "newer_elsewhere": false,
         "changed_on_github": false
@@ -52,14 +52,14 @@
         "revision": 1,
         "sha256": "452e454bd25fcfb34e5cf006e9f8bb11628d3fd88a0bcb013ef2515e9d4824d7",
         "approved_by": "ada-pm",
-        "published_at": "2026-11-21T19:34:56Z",
+        "published_at": "2026-11-21T20:23:07Z",
         "issue": 1,
         "url": "https://github.com/acme/team-space/issues/1",
         "github": {
           "revision": 2,
           "approved": true,
           "approved_by": "ben-pm",
-          "read_at": "2026-11-21T19:34:58Z"
+          "read_at": "2026-11-21T20:23:08Z"
         },
         "newer_elsewhere": true,
         "changed_on_github": false

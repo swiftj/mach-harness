@@ -19,7 +19,7 @@
     ],
     "factory_authorized": false,
     "ways_on": [
-      "Add this folder to the project's repository; the engineer's architecture baseline reads the needs from there."
+      "Add this folder to the project's repository; the engineers read the needs from there when they record their decisions."
     ],
     "note": "Published on the project's issue (#1) as version 1, and to the folder with the same version. No decision was taken and no work has started."
   },
