@@ -3,7 +3,7 @@
  * the line on a slice that became a full slice. Pure: the unit tests import this file directly. Whether a change is
  * small is the engine's to decide; nothing here judges it. The app's words are "small change" and "full slice".
  */
-import type { EpicCurrent, ShippedRule, SmallStart, SmallWidened, StatusSliceRow, WorkOrder } from "@mach/ui/api";
+import type { EpicCurrent, ShippedRule, SliceReadyAnswer, SliceReadyWidened, SmallStart, SmallWidened, StatusSliceRow, WorkOrder } from "@mach/ui/api";
 
 /** What a small change is, said once wherever one is started. */
 export const SMALL_CHANGE_MEANS =
@@ -99,6 +99,22 @@ export function widenProblem(why: string): string | null {
   if (!said) return "Say why, in your own words: what makes it more than a small change.";
   if ([...said].length > MAX_WIDEN_REASON) return `Keep the reason to ${MAX_WIDEN_REASON} characters or fewer.`;
   return null;
+}
+
+/** `slice ready` answered that it made a small change a full slice instead of marking it ready (M18). */
+export function isMadeFullAtReady(answer: SliceReadyAnswer): answer is SliceReadyWidened {
+  return answer.ready === false && answer.widened === true;
+}
+
+/** What the mark-ready dialog says when that happened: not marked ready, a full slice now, why, and what to do next.
+ *  Neither a success nor a failure: nothing went wrong, and nothing was saved. */
+export function madeFullAtReady(answer: SliceReadyWidened): { title: string; lead: string; sentence: string | null; next: string } {
+  return {
+    title: `${answer.slice.slice_id} was not marked ready`,
+    lead: "MACH checked it as you marked it ready: it is more than a small change, so it is a full slice now. Nothing was saved or sent to the builders.",
+    sentence: answer.small_change.widened?.reason ?? null,
+    next: "Carry on the conversation: the interview now goes through it in full, with every answer kept. Then mark it ready again.",
+  };
 }
 
 /** Words a person must never read in this feature (M18 wording). */

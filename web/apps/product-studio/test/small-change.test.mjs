@@ -14,6 +14,8 @@ import {
   canWiden,
   changeOptions,
   fullSlice,
+  isMadeFullAtReady,
+  madeFullAtReady,
   rulesToFix,
   smallArgs,
   smallLabel,
@@ -99,6 +101,33 @@ test("making it a full slice: offered on an editable small change only, with a r
   assert.match(run("slice.widen.refused-full").refused, /is not a small change/);
 });
 
+test("marking a small change ready can make it a full slice instead: said plainly, neither a success nor a failure", () => {
+  const answer = run("slice.ready.small-widened");
+  assert.equal(answer.exit_code, 0);
+  assert.equal(isMadeFullAtReady(answer.data), true);
+  assert.equal(isMadeFullAtReady(run("slice.ready.small").data), false);
+  assert.equal(isMadeFullAtReady(run("slice.ready").data), false);
+  const said = madeFullAtReady(answer.data);
+  assert.match(said.title, /^SLICE-\d{3} was not marked ready$/);
+  assert.match(said.lead, /full slice now/);
+  assert.match(said.lead, /Nothing was saved/);
+  assert.equal(said.sentence, "This is not a small change: a small change is Low or Medium risk, and this one is High.");
+  assert.match(said.next, /Carry on the conversation/);
+  assert.match(said.next, /mark it ready again/);
+  // Nothing was approved: the slice is not approved and is still editable.
+  const shown = run("slice.show.small-widened-at-ready").data;
+  assert.notEqual(shown.slice.status, "approved_for_engineering");
+  assert.equal(shown.editable, true);
+  assert.equal(shown.slice.widened.rule, "risk");
+  // The dialog narrows the answer before treating it as saved, and the well uses neither the success nor the danger tone.
+  const acts = source("features/spec/SliceActs.tsx");
+  assert.ok(acts.indexOf("isMadeFullAtReady(result)") < acts.indexOf("rememberReadyAnswer(result)"));
+  assert.match(acts, /<MadeFullAtReady answer=\{madeFull\} \/>/);
+  assert.match(acts, /Continue the interview/);
+  const well = source("features/small-change/MadeFullAtReady.tsx");
+  assert.doesNotMatch(well, /tone="(success|danger)"|(text|bg|border)-(success|danger)|CircleCheck|CircleAlert/);
+});
+
 test("every place a slice is started offers a small change", () => {
   const dialog = source("features/roadmap/NewSliceDialog.tsx");
   assert.match(dialog, /<StartChoiceFields /);
@@ -145,6 +174,7 @@ test("the wording: small change and full slice; never the light path, the engine
     ...startOptions.flatMap((o) => [o.label, o.description]),
     ...changeOptions.flatMap((o) => [o.label, o.description]),
     widenedLine({ at: "2026-11-22T10:00:00Z", reason: "R.", rule: null }).lead,
+    ...Object.values(madeFullAtReady({ slice: { slice_id: "SLICE-001" }, small_change: { widened: null } })).filter(Boolean),
   ];
   const files = readdirSync(new URL("../src/features/small-change/", import.meta.url)).filter((f) => f.endsWith(".tsx"));
   // The words a person reads in the components: sentences in string and template literals and JSX text (they start

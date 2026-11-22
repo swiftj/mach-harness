@@ -110,6 +110,13 @@ def small_changes(Scenario):
         s.capture("slice.ready.small", "slice", "ready", adjustment)
         s.capture("slice.show.small-ready", "slice", "show", adjustment)
         s.capture("status.small-ready", "status")
+
+        # Marked ready, and that same act finds it is not small (a High risk tier): not marked ready, a full slice now.
+        at_ready = s.ok(s.a, "slice", "new", "--epic", "EPIC-001", "--title", "Invitation link for a single sign-on workspace",
+                        "--small", "--change", "adjustment")["slice"]["slice_id"]
+        write(s, at_ready, SPEC, tier="High")
+        s.capture("slice.ready.small-widened", "slice", "ready", at_ready)
+        s.capture("slice.show.small-widened-at-ready", "slice", "show", at_ready)
     run(Scenario, body)
 
 

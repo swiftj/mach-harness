@@ -458,7 +458,7 @@ class StudioCheckTest(StudioBase):
         resumed = self.ok("slice", "resume", "SLICE-001")["small_change"]
         self.assertEqual(Path(resumed["method"]).name, "interview-method.md")
         self.assertNotIn("questions_sentence", resumed)
-        self.assertIn("left the light path", resumed["note"])
+        self.assertIn("is a full slice now", resumed["note"])
         shown = self.ok("slice", "show", "SLICE-001")
         self.assertEqual(shown["check"]["small_change"]["widened"], work["widened"])
 
@@ -526,7 +526,7 @@ class StudioWidenTest(StudioBase):
         self.assertEqual((work["widened"]["reason"], work["widened"]["rule"], work["revision"]), ("It should also change the reminder email.", None, revision + 1))
         self.assertEqual(widened["small_change"]["widened"], work["widened"])
         self.assertEqual(Path(widened["small_change"]["method"]).name, "interview-method.md")
-        self.assertIn("already left the light path", self.refused("slice", "widen", "SLICE-001", "--why", "Again."))
+        self.assertIn("is already a full slice", self.refused("slice", "widen", "SLICE-001", "--why", "Again."))
         self.assertNotIn("verdict", self.ok("slice", "check", "SLICE-001")["small_change"])
         self.assertTrue(product.validate_workspace(self.draft)["valid"])
 

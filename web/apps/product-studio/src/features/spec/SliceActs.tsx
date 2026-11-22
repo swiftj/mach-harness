@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { CircleCheck, FolderUp, Pause, RotateCcw } from "lucide-react";
 import { Banner, Button, Dialog, DialogClose, DialogContent, DialogTrigger, ErrorState, Field, Text, Textarea, describeError, toast, CheckCounts, CheckPill, DiagnosticList, diagnostics, plural as count } from "@mach/ui";
-import type { MachApiError, MocksToCommit, SliceReady, SliceShow } from "@mach/ui/api";
+import type { MachApiError, MocksToCommit, SliceReady, SliceReadyWidened, SliceShow } from "@mach/ui/api";
+import { Link } from "react-router";
+import { MadeFullAtReady } from "../small-change/MadeFullAtReady";
+import { isMadeFullAtReady, madeFullAtReady } from "../small-change/model";
 import { IssueLink, SignInNote } from "../../shared/IssueLink";
 import { client as studioClient } from "../../api/client";
 import { toApiError } from "../../api/session";
@@ -26,10 +29,12 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<MachApiError | null>(null);
   const [saved, setSaved] = useState<SliceReady | null>(null);
+  // M18: marking a small change ready may make it a full slice instead; nothing is saved then.
+  const [madeFull, setMadeFull] = useState<SliceReadyWidened | null>(null);
   const done = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
-    if (saved) done.current?.focus();
-  }, [saved]);
+    if (saved || madeFull) done.current?.focus();
+  }, [saved, madeFull]);
   const check = show.check;
   const problems = diagnostics(check);
   const again = show.slice.status === "approved_for_engineering";
@@ -43,6 +48,10 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
     studioClient.op("slice.ready", { slice_id: id }).then(
       (result) => {
         setBusy(false);
+        if (isMadeFullAtReady(result)) {
+          setMadeFull(result);
+          return;
+        }
         rememberReadyAnswer(result);
         setSaved(result);
       },
@@ -57,8 +66,9 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
     setOpen(next);
     if (next) return;
     setError(null);
-    if (saved) {
+    if (saved || madeFull) {
       setSaved(null);
+      setMadeFull(null);
       onDone();
     }
   };
@@ -71,7 +81,28 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
           {again ? `Mark ${id} ready again` : "Mark ready to build"}
         </Button>
       </DialogTrigger>
-      {saved ? (
+      {madeFull ? (
+        <DialogContent
+          width="lg"
+          title={madeFullAtReady(madeFull).title}
+          description={madeFullAtReady(madeFull).lead}
+          footer={
+            <>
+              <DialogClose asChild>
+                <Button variant="secondary">Close</Button>
+              </DialogClose>
+              {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
+              <Button ref={done} variant="primary" autoFocus asChild>
+                <Link to={`/slices/${id}/interview`} onClick={() => close(false)}>
+                  Continue the interview
+                </Link>
+              </Button>
+            </>
+          }
+        >
+          <MadeFullAtReady answer={madeFull} />
+        </DialogContent>
+      ) : saved ? (
         <DialogContent
           width="lg"
           title={`${id} is ready to build`}

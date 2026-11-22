@@ -20,7 +20,7 @@
       "status": "draft",
       "title": "Shorter reminder wording",
       "widened": {
-        "at": "2026-11-22T02:38:55Z",
+        "at": "2026-11-22T03:11:11Z",
         "reason": "It should also change the reminder email, which is a second message.",
         "rule": null
       }
@@ -31,11 +31,11 @@
       "shipped_rule": null,
       "light_path": false,
       "widened": {
-        "at": "2026-11-22T02:38:55Z",
+        "at": "2026-11-22T03:11:11Z",
         "reason": "It should also change the reminder email, which is a second message.",
         "rule": null
       },
-      "note": "This slice left the light path: It should also change the reminder email, which is a second message. It is a full slice now: the interview carries on in full, with every answer kept.",
+      "note": "This small change is a full slice now: It should also change the reminder email, which is a second message. The interview carries on in full, with every answer kept.",
       "limits": {
         "requirements": 3,
         "scenarios": 4,
