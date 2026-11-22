@@ -1440,7 +1440,7 @@ def cmd_slice_reopen(studio: Studio, args: argparse.Namespace) -> int:
     studio.note_withdrawn({args.slice_id: "You reopened it to change it."})
     note = "You can change it now. Mark it ready again when it is done."
     if widened:
-        note = (f"The builders said: {widened['reason']} So it left the light path: it is a full slice now, and the interview carries on in full, "
+        note = (f"The builders said: {widened['reason']} So it is a full slice now, and the interview carries on in full, "
                 "with every answer kept. " + note)
     if taken.get("where") == "github":
         note = f"It is no longer marked ready on GitHub (#{taken['issue']}). " + note

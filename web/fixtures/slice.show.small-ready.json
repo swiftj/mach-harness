@@ -228,7 +228,7 @@
       },
       "title": "Clearer expired invitation message",
       "shipped": {
-        "commit": "9f9ec8d9cac45778471c2a2789f39a3efdcc18bd",
+        "commit": "a72291138845ca13a38f1817e3abcc0e7bc2be03",
         "branch": "main",
         "rules": 5,
         "notes": []
@@ -266,7 +266,7 @@
       "question_note": null,
       "shipped_issues": [],
       "times": {
-        "marked_ready": "2026-11-22T02:38:56Z",
+        "marked_ready": "2026-11-22T03:11:13Z",
         "building": null,
         "question": null,
         "shipped": null

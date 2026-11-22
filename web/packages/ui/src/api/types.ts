@@ -556,6 +556,26 @@ export interface SliceReadyInFolder extends SliceReadyCommon {
 
 export type SliceReady = SliceReadyOnGithub | SliceReadyInFolder;
 
+/**
+ * M18: `slice ready` on a small change that this same act found is not small (exit 0). Nothing was saved or approved:
+ * it is a full slice now, the interview carries on in full, and the product manager marks it ready again after.
+ */
+export interface SliceReadyWidened {
+  ready: false;
+  widened: true;
+  slice: WorkOrder;
+  /** `widened_now` is true; `widened.reason` is the rule's fixed sentence. */
+  small_change: SliceSmallChange;
+  risk: RiskTier | null;
+  counts: SpecCounts;
+  warnings: string[];
+  factory_authorized: false;
+  note: string;
+}
+
+/** What `slice ready` answers: marked ready (on GitHub or in the folder), or, for a small change, made a full slice instead. */
+export type SliceReadyAnswer = SliceReady | SliceReadyWidened;
+
 export interface SliceReopen {
   reopened: true;
   slice: WorkOrder;
@@ -784,7 +804,7 @@ export interface Operations {
   "slice.resume": { args: { slice_id?: string }; result: SliceResume };
   "slice.pause": { args: { slice_id: string; note: string }; result: SlicePause };
   "slice.check": { args: { slice_id: string; ready?: boolean }; result: SliceCheck };
-  "slice.ready": { args: { slice_id: string }; result: SliceReady };
+  "slice.ready": { args: { slice_id: string }; result: SliceReadyAnswer };
   "slice.reopen": { args: { slice_id: string }; result: SliceReopen };
   "slice.show": { args: { slice_id: string }; result: SliceShow };
   "slice.renumber": { args: { identifier: string }; result: Renumber };

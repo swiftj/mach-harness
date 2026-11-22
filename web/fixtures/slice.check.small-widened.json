@@ -16,7 +16,7 @@
     },
     "title": "Clearer expired invitation message",
     "shipped": {
-      "commit": "9f9ec8d9cac45778471c2a2789f39a3efdcc18bd",
+      "commit": "a72291138845ca13a38f1817e3abcc0e7bc2be03",
       "branch": "main",
       "rules": 5,
       "notes": []
@@ -28,11 +28,11 @@
       "shipped_rule": null,
       "light_path": false,
       "widened": {
-        "at": "2026-11-22T02:38:55Z",
+        "at": "2026-11-22T03:11:11Z",
         "reason": "This is not a small change: a small change has at most 3 functional requirements, and this one has more.",
         "rule": "requirements"
       },
-      "note": "This slice left the light path: This is not a small change: a small change has at most 3 functional requirements, and this one has more. It is a full slice now: the interview carries on in full, with every answer kept.",
+      "note": "This small change is a full slice now: This is not a small change: a small change has at most 3 functional requirements, and this one has more. The interview carries on in full, with every answer kept.",
       "widened_now": true
     },
     "prd_problems": [],

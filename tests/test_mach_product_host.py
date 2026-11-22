@@ -543,11 +543,11 @@ class HostConformanceTest(unittest.TestCase):
             git(project, "add", "-A")
             git(project, "commit", "-q", "-m", "SLICE-001 shipped")
 
-        def write(project, slice_id, text):
+        def write(project, slice_id, text, tier="Low"):
             draft = project / ".factory/studio/draft"
             name = f"{slice_id}-expired-invitation-message.md"
             (draft / "specs/slices" / name).write_text(text.replace("# SLICE-001:", f"# {slice_id}:", 1))
-            (draft / f"product/intents/{slice_id}.md").write_text(INTENT.format(slice_id=slice_id, name=name, tier="Low"))
+            (draft / f"product/intents/{slice_id}.md").write_text(INTENT.format(slice_id=slice_id, name=name, tier=tier))
 
         def host_refused(operation, args):
             status, _, raw = self.request("POST", f"/api/ops/{operation}", args)
@@ -567,10 +567,15 @@ class HostConformanceTest(unittest.TestCase):
         self.op("slice.new", epic="EPIC-001", title="Clearer expired invitation message", small={"change": "adjustment"})
         write(self.via_host, "SLICE-006", with_frs(SPEC))
         self.assertEqual(self.op("slice.check", slice_id="SLICE-006")["small_change"]["widened"]["rule"], "requirements")
-        self.assertIn("already left the light path", host_refused("slice.widen", {"slice_id": "SLICE-006", "why": "W."}))
+        self.assertIn("is already a full slice", host_refused("slice.widen", {"slice_id": "SLICE-006", "why": "W."}))
         self.op("slice.widen", slice_id="SLICE-005", why="It should also change the reminder email.")
         self.assertEqual(self.op("slice.new", epic="EPIC-001", title="Invite a teammate")["slice"]["slice_id"], "SLICE-007")
         self.assertIn("not a small change", host_refused("slice.widen", {"slice_id": "SLICE-007", "why": "W."}))
+        # Marking ready finds it is not small (High risk): not marked ready, a full slice now, passed through as an answer.
+        self.op("slice.new", epic="EPIC-001", title="Single sign-on invitation link", small={"change": "adjustment"})
+        write(self.via_host, "SLICE-008", SPEC, tier="High")
+        answer = self.op("slice.ready", slice_id="SLICE-008")
+        self.assertEqual((answer["ready"], answer["widened"], answer["small_change"]["widened"]["rule"]), (False, True, "risk"))
         self.op("status")
 
         # Directly, as the terminal skill does.
@@ -585,6 +590,9 @@ class HostConformanceTest(unittest.TestCase):
         self.studio("slice", "widen", "SLICE-005", "--why", "It should also change the reminder email.")
         self.studio("slice", "new", "--epic", "EPIC-001", "--title", "Invite a teammate")
         self.studio("slice", "widen", "SLICE-007", "--why", "W.", expect=1)
+        self.studio("slice", "new", "--epic", "EPIC-001", "--title", "Single sign-on invitation link", "--small", "--change", "adjustment")
+        write(self.direct, "SLICE-008", SPEC, tier="High")
+        self.assertIs(self.studio("slice", "ready", "SLICE-008")["ready"], False)
         self.studio("status")
 
         host_files, direct_files = workspace(self.via_host), workspace(self.direct)

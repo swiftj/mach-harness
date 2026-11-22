@@ -10,7 +10,8 @@
  *   ?epic=small                       epic.current: the epic with the shipped rules a fix chooses from
  *   ?small-start=refused-not-in-force slice.new with a fix answers with the engine's refusal
  *   ?widen=refused-already | refused-full                                           slice.widen (default: widened)
- *   ?ready=small                      slice.ready of a small change
+ *   ?ready=small | small-widened      slice.ready of a small change: marked ready, or made a full slice instead
+ *   ?show=small-widened-at-ready      the slice that marking ready made a full slice
  *
  * slice.new with `small` answers the engine's small change (a fix or an adjustment, by the kind sent); without it, the
  * engine's full slice. request.pick with `small` is answered by requestFixtures.ts from request.pick.small. The answers'
@@ -60,8 +61,10 @@ export function smallRoute(path: string, args: Record<string, unknown>): Transpo
       const chosen = named("slice.resume", devParam("resume"), null);
       return chosen ? answer(chosen, sliceId) : null;
     }
-    case "slice.ready":
-      return devParam("ready") === "small" ? answer("slice.ready.small", sliceId) : null;
+    case "slice.ready": {
+      const chosen = devParam("ready") === "small" ? "slice.ready.small" : devParam("ready") === "small-widened" ? "slice.ready.small-widened" : null;
+      return chosen ? answer(chosen, sliceId) : null;
+    }
     case "epic.current":
       return devParam("epic") === "small" ? answer("epic.current.small") : null;
   }

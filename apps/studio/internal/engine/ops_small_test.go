@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -84,6 +85,40 @@ func TestSliceWidenStaysOnThisComputer(t *testing.T) {
 	}
 }
 
+// M18 engine B item 5: marking a small change ready that this same act finds is not small answers ready: false and
+// widened: true with exit 0, and the host passes it through as a success, not a refusal. Nothing is approved; the next
+// slice.ready marks it ready as the full slice.
+func TestMarkingASmallChangeReadyCanMakeItAFullSliceInstead(t *testing.T) {
+	project := testkit.NewProject(t)
+	e := testkit.NewEngine(t, project)
+	mustOK(t, e, "project.init", `{"id":"team-space","name":"Team Space","vision":"Teams work together.","outcome":["Teams can work together"]}`)
+	mustOK(t, e, "epic.add", `{"title":"Team membership","criterion":["Only invited people can join"]}`)
+	if id := mustOK(t, e, "slice.new", `{"epic":"EPIC-001","title":"Invite a teammate","small":{"change":"adjustment"}}`)["slice"].(map[string]any)["slice_id"]; id != "SLICE-001" {
+		t.Fatalf("slice id %v", id)
+	}
+	// The fixture spec has more functional requirements than a small change has.
+	if err := os.WriteFile(testkit.Draft(project, "specs", "slices", testkit.SpecName), testkit.Fixture(t), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(testkit.Draft(project, "product", "intents", "SLICE-001.md"), []byte(testkit.IntentText), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	answer := mustOK(t, e, "slice.ready", `{"slice_id":"SLICE-001"}`)
+	small := answer["small_change"].(map[string]any)
+	if answer["ready"] != false || answer["widened"] != true || small["widened_now"] != true || small["widened"].(map[string]any)["rule"] != "requirements" {
+		t.Fatalf("slice.ready that widens: %v", answer)
+	}
+	if work := readJSON(t, testkit.Draft(project, "product", "slices", "SLICE-001.json")); work["status"] == "approved_for_engineering" || work["widened"] == nil {
+		t.Fatalf("nothing is approved, the widening is kept: %v", work)
+	}
+	if _, err := os.Stat(testkit.Draft(project, "product", "ready", "SLICE-001")); !os.IsNotExist(err) {
+		t.Fatalf("nothing is written to the ready folder: %v", err)
+	}
+	if again := mustOK(t, e, "slice.ready", `{"slice_id":"SLICE-001"}`); again["ready"] != true || again["saved_to"] != "folder" {
+		t.Fatalf("the next slice.ready marks the full slice ready: %v", again)
+	}
+}
+
 // Against the real engine: a small change started, reported, refused where the engine refuses, and
 // widened on the product manager's word.
 func TestSmallChangeAgainstTheRealEngine(t *testing.T) {
@@ -123,7 +158,7 @@ func TestSmallChangeAgainstTheRealEngine(t *testing.T) {
 	if work := readJSON(t, testkit.Draft(project, "product", "slices", id+".json")); work["widened"] == nil || work["kind"] != "small" {
 		t.Fatalf("the work order: %v", work)
 	}
-	mustFail(t, e, "slice.widen", `{"slice_id":"`+id+`","why":"Again."}`, engine.KindRefused, "already left the light path")
+	mustFail(t, e, "slice.widen", `{"slice_id":"`+id+`","why":"Again."}`, engine.KindRefused, "is already a full slice")
 	if row := mustOK(t, e, "status", ``)["slices"].([]any)[0].(map[string]any); row["small"].(map[string]any)["light_path"] != false {
 		t.Fatalf("status after widening: %v", row)
 	}

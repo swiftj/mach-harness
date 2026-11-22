@@ -5,7 +5,7 @@
  * smallTransport.ts answers from these in fixture mode; production code never imports this module. Add a capture to
  * small_memory.py, regenerate, and add its row here.
  */
-import type { EngineRun, EpicCurrent, LooseJson, RequestPickResult, SliceCheck, SliceNew, SliceReady, SliceResume, SliceShow, SliceWiden, Status } from "@mach/ui/api";
+import type { EngineRun, EpicCurrent, LooseJson, RequestPickResult, SliceCheck, SliceNew, SliceReady, SliceReadyWidened, SliceResume, SliceShow, SliceWiden, Status } from "@mach/ui/api";
 
 import epicCurrentSmall from "../../../../fixtures/epic.current.small.json";
 import requestPickSmall from "../../../../fixtures/request.pick.small.json";
@@ -16,6 +16,7 @@ import sliceNewRefusedSmallNotInForce from "../../../../fixtures/slice.new.refus
 import sliceNewSmall from "../../../../fixtures/slice.new.small.json";
 import sliceNewSmallFix from "../../../../fixtures/slice.new.small-fix.json";
 import sliceReadySmall from "../../../../fixtures/slice.ready.small.json";
+import sliceReadySmallWidened from "../../../../fixtures/slice.ready.small-widened.json";
 import sliceResumeSmall from "../../../../fixtures/slice.resume.small.json";
 import sliceResumeSmallFix from "../../../../fixtures/slice.resume.small-fix.json";
 import sliceResumeSmallWidened from "../../../../fixtures/slice.resume.small-widened.json";
@@ -25,6 +26,7 @@ import sliceShowSmallFix from "../../../../fixtures/slice.show.small-fix.json";
 import sliceShowSmallReady from "../../../../fixtures/slice.show.small-ready.json";
 import sliceShowSmallWidened from "../../../../fixtures/slice.show.small-widened.json";
 import sliceShowSmallWidenedAsked from "../../../../fixtures/slice.show.small-widened-asked.json";
+import sliceShowSmallWidenedAtReady from "../../../../fixtures/slice.show.small-widened-at-ready.json";
 import sliceWiden from "../../../../fixtures/slice.widen.json";
 import sliceWidenRefusedAlready from "../../../../fixtures/slice.widen.refused-already.json";
 import sliceWidenRefusedFull from "../../../../fixtures/slice.widen.refused-full.json";
@@ -51,6 +53,7 @@ export const smallRuns = {
   "slice.new.small": run<SliceNew>(sliceNewSmall),
   "slice.new.small-fix": run<SliceNew>(sliceNewSmallFix),
   "slice.ready.small": run<SliceReady>(sliceReadySmall),
+  "slice.ready.small-widened": run<SliceReadyWidened>(sliceReadySmallWidened),
   "slice.resume.small": run<SliceResume>(sliceResumeSmall),
   "slice.resume.small-fix": run<SliceResume>(sliceResumeSmallFix),
   "slice.resume.small-widened": run<SliceResume>(sliceResumeSmallWidened),
@@ -60,6 +63,7 @@ export const smallRuns = {
   "slice.show.small-ready": run<SliceShow>(sliceShowSmallReady),
   "slice.show.small-widened": run<SliceShow>(sliceShowSmallWidened),
   "slice.show.small-widened-asked": run<SliceShow>(sliceShowSmallWidenedAsked),
+  "slice.show.small-widened-at-ready": run<SliceShow>(sliceShowSmallWidenedAtReady),
   "slice.widen": run<SliceWiden>(sliceWiden),
   "slice.widen.refused-already": refusal(sliceWidenRefusedAlready),
   "slice.widen.refused-full": refusal(sliceWidenRefusedFull),

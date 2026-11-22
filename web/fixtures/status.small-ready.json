@@ -71,7 +71,7 @@
           "question_note": null,
           "shipped_issues": [],
           "times": {
-            "marked_ready": "2026-11-22T02:38:56Z",
+            "marked_ready": "2026-11-22T03:11:13Z",
             "building": null,
             "question": null,
             "shipped": null
@@ -127,7 +127,7 @@
           "shipped_rule": null,
           "light_path": false,
           "widened": {
-            "at": "2026-11-22T02:38:55Z",
+            "at": "2026-11-22T03:11:11Z",
             "reason": "This is not a small change: a small change has at most 3 functional requirements, and this one has more.",
             "rule": "requirements"
           }
@@ -172,7 +172,7 @@
           "shipped_rule": null,
           "light_path": false,
           "widened": {
-            "at": "2026-11-22T02:38:55Z",
+            "at": "2026-11-22T03:11:11Z",
             "reason": "It should also change the reminder email, which is a second message.",
             "rule": null
           }

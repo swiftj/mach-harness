@@ -105,7 +105,7 @@ def view(host: Any, studio: Any, data: Dict[str, Any], verdict: Optional[Dict[st
     if widened is None and verdict is not None:
         out["verdict"] = verdict
     if widened is not None:
-        out["note"] = (f"This slice left the light path: {widened.get('reason')} It is a full slice now: the interview carries on in full, "
+        out["note"] = (f"This small change is a full slice now: {widened.get('reason')} The interview carries on in full, "
                        "with every answer kept.")
     return out
 
@@ -180,7 +180,7 @@ def resume_field(host: Any, studio: Any, slice_id: str, data: Dict[str, Any], ch
         field["questions_sentence"] = small.sentence("questions", found)
         field["rules"] = {rule: small.sentence(rule, found) for rule in small.SPEC_RULES + ("questions",)}
         field["note"] = (f"A small change: follow the short interview in {METHOD}. Ask at most {found['questions']} yes-or-no questions. "
-                         "When an answer or a check shows it is not small, it leaves the light path: never trim the change to keep it small.")
+                         "When an answer or a check shows it is not small, it becomes a full slice: never trim the change to keep it small.")
     else:
         field["method"] = str(host.sibling("intent") / "references" / "interview-method.md")
     return {"small_change": field}
@@ -195,7 +195,7 @@ def cmd_widen(host: Any, studio: Any, args: argparse.Namespace) -> int:
     if not is_small(data):
         raise host.StudioError(f"{args.slice_id} is not a small change, so it is already a full slice.")
     if data.get("widened"):
-        raise host.StudioError(f"{args.slice_id} already left the light path ({data['widened'].get('at')}): {data['widened'].get('reason')}")
+        raise host.StudioError(f"{args.slice_id} is already a full slice ({data['widened'].get('at')}): {data['widened'].get('reason')}")
     small = helper(host)
     if args.by_rule is not None:
         if args.by_rule not in small.RULES:
@@ -213,7 +213,7 @@ def cmd_widen(host: Any, studio: Any, args: argparse.Namespace) -> int:
 
 
 def add_commands(slice_parsers: Any, host: Any) -> None:
-    p = slice_parsers.add_parser("widen", help="take a small change off the light path, so it carries on as a full slice")
+    p = slice_parsers.add_parser("widen", help="make a small change a full slice, so its interview carries on in full")
     p.add_argument("slice_id")
     reason = p.add_mutually_exclusive_group(required=True)
     reason.add_argument("--why", help="the product manager's reason, in their words (only on their word)")
