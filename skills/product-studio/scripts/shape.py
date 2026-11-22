@@ -806,7 +806,8 @@ def next_step(ideas: Ideas, record: Dict[str, Any], github: Dict[str, Any]) -> D
     if github.get("saved") == "github" and not github.get("up_to_date"):
         return step("publish", host.say(f"{idea_id} changed since it was saved to GitHub: publish it again (idea publish {idea_id}).",
                     f"{idea_id} changed since it was saved to GitHub. Save it again."))
-    if github.get("saved") is None:
+    # After a Go, sizing and routing come first: saving an idea that was never saved stays the product manager's optional act.
+    if github.get("saved") is None and view["decision"] != "go":
         return step("publish", host.say(f"Save {idea_id} as a GitHub issue so others can read the brief and the verdict (idea publish {idea_id}).",
                     f"Save {idea_id} as a GitHub issue so others can read the brief and the verdict."))
     if view["decision"] == "go":
