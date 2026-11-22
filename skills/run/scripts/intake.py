@@ -116,9 +116,12 @@ def text_sha(text: str) -> str:
     return sha(text.encode("utf-8"))
 
 
-def digest_of(why: str, spec: str, mocks_sha256: Optional[str] = None) -> str:
-    """One identity for a slice revision: its why and its spec together, and its design mocks' digest when it has mocks (M14 C)."""
-    return sha(why.encode("utf-8") + b"\0" + spec.encode("utf-8") + (b"\0mocks=" + mocks_sha256.encode("ascii") if mocks_sha256 else b""))
+def digest_of(why: str, spec: str, mocks_sha256: Optional[str] = None, small: Optional[str] = None) -> str:
+    """One identity for a slice revision: its why and its spec together, and its design mocks' digest when it has mocks (M14 C),
+    and a small change's identifiers as its marker carries them (M18, `issue_rules.small_suffix`), so a revision that only
+    left the light path is a new revision here too. A slice with neither has the identity it always had."""
+    return sha(why.encode("utf-8") + b"\0" + spec.encode("utf-8") + (b"\0mocks=" + mocks_sha256.encode("ascii") if mocks_sha256 else b"")
+               + (b"\0small=" + small.strip().encode("ascii") if small else b""))
 
 
 def now() -> str:
@@ -588,6 +591,11 @@ class Factory:
                 found["not_accepted"].append({"issue": issue, "slice_id": marker["slice_id"], "revision": marker["revision"],
                                               "reason": self.rules.SLICE_NOT_ACCEPTED["edited"]})
                 continue
+            small = marker.get("small")  # M18: issue text is data; the record is checked again here
+            if small is not None and not self.rules.is_small_record(small):
+                found["not_accepted"].append({"issue": issue, "slice_id": marker["slice_id"], "revision": marker["revision"],
+                                              "reason": self.rules.SLICE_NOT_ACCEPTED["edited"]})
+                continue
             order = epic.get("order") or []
             found["rows"].append({
                 "source": "github", "repository": found["repository"], "issue": issue, "slice_id": marker["slice_id"], "revision": marker["revision"],
@@ -595,7 +603,8 @@ class Factory:
                 "depends": [{"issue": dep} for dep in marker.get("depends") or []], "follows": marker.get("follows"), "jira": marker.get("jira"),
                 "order": order.index(issue) if issue in order else None, "ready_at": decision.get("ready_at"), "approved_by": decision.get("approved_by"),
                 "why": why, "spec": spec, "why_sha256": text_sha(why), "spec_sha256": text_sha(spec),
-                "digest": digest_of(why, spec, marker["mocks_sha256"] if mocks else None), **({"mocks": mocks, "mocks_sha256": marker["mocks_sha256"]} if mocks else {}),
+                "digest": digest_of(why, spec, marker["mocks_sha256"] if mocks else None, self.rules.small_suffix(small) if small else None),
+                **({"mocks": mocks, "mocks_sha256": marker["mocks_sha256"]} if mocks else {}), **({"small": small} if small else {}),
                 "key": self.source_key("github", found["repository"], issue, marker["slice_id"], marker["revision"])})
         return found
 
@@ -623,7 +632,11 @@ class Factory:
         mock_reason = self.folder_mocks(mocks, mock_files or {}, where) if isinstance(record, dict) and ("mocks" in record or mock_files) else None
         if mock_reason:
             return None, mock_reason
-        if (not isinstance(record, dict) or set(record) - {"jira", "mocks"} != FOLDER_KEYS or record.get("schema_version") != 1 or not SLICE_ID_RE.fullmatch(str(record.get("slice_id")))
+        small = record.get("small") if isinstance(record, dict) else None
+        if isinstance(record, dict) and "small" in record and not self.rules.is_small_record(small):  # M18: optional, identifiers in their form
+            return None, f"Not accepted: the small-change record in {where}/slice.json is not in the form Product Studio writes."
+        if (not isinstance(record, dict) or set(record) - {"jira", "mocks", "small"} != FOLDER_KEYS or record.get("schema_version") != 1
+                or not SLICE_ID_RE.fullmatch(str(record.get("slice_id")))
                 or type(record.get("revision")) is not int or record["revision"] < 1 or not isinstance(record.get("title"), str)
                 or not isinstance(epic, dict) or set(epic) != {"epic_id", "title"} or not self.rules.EPIC_ID_RE.fullmatch(str(epic.get("epic_id")))
                 or not isinstance(record.get("dependencies"), list) or not all(isinstance(dep, str) and SLICE_ID_RE.fullmatch(dep) for dep in record["dependencies"])):
@@ -637,8 +650,9 @@ class Factory:
                 "title": self.rules.issue_title(record["title"]), "epic": {"epic_id": epic["epic_id"], "issue": None, "title": self.rules.issue_title(epic.get("title"))},
                 "depends": [{"slice_id": dep} for dep in record["dependencies"]], "follows": None, "jira": record.get("jira"), "order": None, "ready_at": None, "approved_by": None,
                 "why": why, "spec": spec, "why_sha256": record["why_sha256"], "spec_sha256": record["spec_sha256"],
-                "digest": digest_of(why, spec, self.rules.mocks_sha256(mocks) if mocks else None),
+                "digest": digest_of(why, spec, self.rules.mocks_sha256(mocks) if mocks else None, self.rules.small_suffix(small) if small else None),
                 **({"mocks": mocks, "mocks_sha256": self.rules.mocks_sha256(mocks), "mock_files": dict(mock_files or {})} if mocks else {}),
+                **({"small": small} if small else {}),
                 "key": self.source_key(source, None, None, record["slice_id"], record["revision"])}, None
 
     def folder_mocks(self, mocks: Any, mock_files: Dict[str, bytes], where: str) -> Optional[str]:
@@ -1009,7 +1023,8 @@ class Factory:
                 "revision": row["revision"], "digest": row["digest"], "spec_sha256": row["spec_sha256"], "why_sha256": row["why_sha256"],
                 "depends": list(row["depends"]), "follows": row.get("follows"), "jira": row.get("jira"), "order": row.get("order"), "ready_at": row.get("ready_at") or now(),
                 "approved_by": row.get("approved_by"), "intake_key": row["key"], "stored": self.store(row), "available": True, "unavailable_reason": None,
-                **({"mocks": list(row["mocks"]), "mocks_sha256": row["mocks_sha256"]} if row.get("mocks") else {})}  # M14 C: only a slice with mocks
+                **({"mocks": list(row["mocks"]), "mocks_sha256": row["mocks_sha256"]} if row.get("mocks") else {}),  # M14 C: only a slice with mocks
+                **({"small": dict(row["small"])} if row.get("small") else {})}  # M18: only a small change
 
     def new_entry(self, row: Dict[str, Any], history: List[Dict[str, Any]], earlier_runs: int = 0, ticket_id: Optional[str] = None) -> Dict[str, Any]:
         ticket = ticket_id or (str(row["issue"]) if row["source"] == "github" else None)
@@ -1036,6 +1051,7 @@ class Factory:
             self.emit(ledger, "revision.superseded", **self.about(entry), from_revision=entry.get("revision"), to_revision=row["revision"],
                       effect="The waiting ticket now carries the new revision.")
             entry.pop("mocks", None), entry.pop("mocks_sha256", None)  # M14 C: the new revision's mocks, or none
+            entry.pop("small", None)  # M18: the new revision's small-change record, or none
             entry.update(self.definition(row))
             self.save(ledger)
             self.materialize(ledger, entry, report, updated=True)
@@ -1108,6 +1124,7 @@ class Factory:
         self.emit(ledger, "revision.superseded", **self.about(entry), from_revision=entry.get("revision"), to_revision=row["revision"],
                   effect="The product manager answered the builders' question with a new revision; the cell takes it and plans again.")
         entry.pop("mocks", None), entry.pop("mocks_sha256", None)  # M14 C: the new revision's mocks, or none
+        entry.pop("small", None)  # M18: the new revision's small-change record, or none
         entry.update(self.definition(row))
         entry.pop("product_pending", None)
         self.save(ledger)
@@ -1661,6 +1678,46 @@ class Factory:
             found["mocks_sha256"] = self.rules.mocks_sha256(entry["mocks"])
         return found
 
+    def small_rules(self) -> Any:
+        """The intent station's small.py (M18), loaded by path, never copied: the sentence a rule code stands for."""
+        if not hasattr(self, "_small"):
+            folder = self.sibling("intent") / "scripts"
+            if str(folder) not in sys.path:
+                sys.path.insert(0, str(folder))  # small.py imports validate_slice from beside it
+            import importlib.util
+            found = importlib.util.spec_from_file_location("mach_small_for_intake", folder / "small.py")
+            module = importlib.util.module_from_spec(found)
+            found.loader.exec_module(module)
+            self._small = module
+        return self._small
+
+    def cell_kind(self, entry: Dict[str, Any], cell_file: Path) -> None:
+        """M18: a small change's kind in the cell, written before finalize so the intent station judges it and exports it:
+        `kind`, `small` (from Product Studio, fix or adjustment, a fix's shipped rule) and, once it left the light path,
+        `widened` (the rule's fixed sentence, or a fixed line when the product manager asked, with when). A slice that is not
+        small leaves cell.json exactly as cell.py wrote it."""
+        small = entry.get("small") if self.rules.is_small_record(entry.get("small")) else None
+        cell = json.loads(cell_file.read_text(encoding="utf-8"))
+        before = json.dumps(cell, sort_keys=True)
+        if small is None:
+            if (cell.get("small") or {}).get("from") == "product-studio":  # an earlier revision was small; this one is not
+                for key in ("kind", "small", "widened"):
+                    cell.pop(key, None)
+        else:
+            cell["kind"] = "small"
+            cell["small"] = {"from": "product-studio", "change": small["change"], "shipped_rule": small["shipped_rule"]}
+            widened = small["widened"]
+            if widened is None:
+                cell.pop("widened", None)
+            else:
+                rules = self.small_rules()
+                reason = (rules.sentence(widened["rule"], rules.settings(self.config)[0]) if widened["rule"] in rules.RULES
+                          else "The product manager took this change off the light path in Product Studio.")
+                cell["widened"] = {"at": widened["at"], "reason": reason, "rule": widened["rule"] if widened["rule"] in rules.RULES else None,
+                                   "by": "product-studio"}
+        if json.dumps(cell, sort_keys=True) != before:
+            write_atomic(cell_file, json.dumps(cell, indent=2) + "\n")
+
     def write_cell_spec(self, entry: Dict[str, Any], ticket_id: str) -> Dict[str, Any]:
         """Write the spec (with its header) and intent.md into the cell, then pass the intent station's finalize."""
         described = json.loads(self.script("intent", "cell.py", "open", ticket_id).stdout or "{}")
@@ -1681,6 +1738,7 @@ class Factory:
         provider = "github" if entry.get("source") == "github" else LOCAL
         Path(described["intent_path"]).write_text(self.cell_intent(why, ticket_id, str(entry.get("title")), str(entry.get("approved_by") or ""), provider), encoding="utf-8")
         relative = str(target.relative_to(workdir))
+        self.cell_kind(entry, self.root / ".factory" / "worktrees" / ticket_id / "cell.json")
         finalized = self.script("intent", "cell.py", "finalize", ticket_id, "--spec", relative)
         if finalized.returncode != 0:
             raise IntakeError(f"The intent station's gate refused {entry['slice_id']} for ticket {ticket_id}, so it was not dispatched:\n" + finalized.stdout.strip()[-1200:])
