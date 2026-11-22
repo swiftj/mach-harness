@@ -63,7 +63,7 @@ SCHEMA_VERSION = 1
 STAGES = ("new", "exploring", "brief", "decided", "shaped")
 SOURCE_KINDS = ("typed", "idea", "request", "fault", "change")  # change: Part B's `idea change`, from one shipped rule
 VERDICTS = ("go", "not-now", "no")
-ROUTES = ("one-slice", "epic", "several-epics")
+ROUTES = ("small-change", "one-slice", "epic", "several-epics")
 OUTCOME_RESULTS = ("met", "not-met", "too-early")
 ASSUMPTION_RESULTS = ("confirmed", "wrong", "unknown")
 # The record's fields. Part B owns route, made and lookback; Part A checks their shape and never writes them.
@@ -154,7 +154,7 @@ def route_problems(route: Any) -> List[str]:
     if route.get("details") is not None and not isinstance(route["details"], dict):
         problems.append("route.details is an object: what was counted, by identifier")
     if route.get("route") not in ROUTES:
-        problems.append("route.route is one-slice, epic or several-epics")
+        problems.append("route.route is small-change, one-slice, epic or several-epics")
     if not isinstance(route.get("counted"), dict):
         problems.append("route.counted is an object of counts")
     if not _is_text(route.get("why"), 1000):

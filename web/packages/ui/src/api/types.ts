@@ -847,7 +847,8 @@ export interface Operations {
     result: ShapeSettled;
   };
   "idea.map-status": { args: { idea_id: string }; result: ShapeMapStatus };
-  "idea.apply": { args: { idea_id: string }; result: ShapeApplied };
+  /** `change`: for the small-change route only (M18), the product manager's word on which kind it is. */
+  "idea.apply": { args: { idea_id: string; change?: "fix" | "adjustment" }; result: ShapeApplied };
   "idea.change": { args: { rule: string; title?: string }; result: IdeaChanged };
   "idea.chain": { args: { idea_id: string }; result: IdeaChain };
   "brief.check": { args: { idea_id: string }; result: BriefCheck };

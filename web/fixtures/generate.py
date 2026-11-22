@@ -78,6 +78,13 @@ def main():
         written = [p for p in OUT.glob("*.json") if before.get(p) != p.read_bytes()]
         print("wrote", len(written), "fixtures to", OUT)
         return
+    if sys.argv[1:] == ["--only", "small-change"]:
+        # M18: write only Shape's small-change fixtures, leaving the others as they are.
+        import product_memory  # noqa: E402  (beside this file)
+        before = set(OUT.glob("*.json"))
+        product_memory.shape_small_change(Scenario)
+        print("wrote", len(set(OUT.glob("*.json")) - before), "new fixtures to", OUT)
+        return
     for name in OUT.glob("*.json"):
         name.unlink()
     on_github()
