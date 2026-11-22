@@ -1380,6 +1380,7 @@ def epic_tasks(body: Any) -> List[int]:
 # with write access who sets out to forge an approval.
 
 READY_LABEL = "mach:ready"
+BUILDING_LABEL = "mach:building"
 SLICE_LABEL = "mach:slice"
 EPIC_LABEL = "mach:epic"
 ROLES_THAT_COUNT = ("triage", "write", "maintain", "admin")
@@ -1394,7 +1395,34 @@ SLICE_NOT_ACCEPTED = {
     "jira_changed": "Not accepted: its Jira key is not the one that was approved. The product manager marks it ready again in Product Studio.",
     "mocks_changed": "Not accepted: its design mocks are not the ones that were approved. The product manager marks it ready again in Product Studio.",
     "small_changed": "Not accepted: whether it is a small change is not what was approved. The product manager marks it ready again in Product Studio.",
+    "not_taken": "Not accepted: it is not open with the mach:slice and mach:building labels.",
+    "taken_back": "Not accepted: mach:ready was taken off it by someone other than the builders. The product manager marks it ready again in Product Studio.",
 }
+
+
+def slice_ready_event(events: Sequence[Dict[str, Any]], taken: bool = False) -> Optional[Dict[str, Any]]:
+    """The event that marked the slice ready, or None. Normally the last time mach:ready was added, with no later removal.
+    With `taken` (a slice the builders took, whose abandoned work an engineer reissues): the last time mach:ready was added,
+    only when every later removal of it was made by the account that marked it mach:building, which is still on it.
+    A removal by anyone else is the product manager taking it back."""
+    if not taken:
+        return deciding_event(events, READY_LABEL)
+    building = deciding_event(events, BUILDING_LABEL)
+    if building is None:
+        return None
+    ordered = [event for _, event in sorted(enumerate(events), key=lambda pair: (pair[1].get("at") or "", pair[0]))]
+    decided: Optional[Dict[str, Any]] = None
+    removals: List[Dict[str, Any]] = []
+    for event in ordered:
+        if event.get("label") != READY_LABEL:
+            continue
+        if event.get("event") == "labeled":
+            decided, removals = event, []
+        else:
+            removals.append(event)
+    if decided is None or any((item.get("login"), item.get("id")) != (building.get("login"), building.get("id")) for item in removals):
+        return None
+    return decided
 
 
 def role_counts(answer: Any) -> bool:
@@ -1426,11 +1454,13 @@ def unedited(item: Dict[str, Any]) -> bool:
 
 
 def slice_acceptance(issue: Dict[str, Any], events: Sequence[Dict[str, Any]], comments: Sequence[Dict[str, Any]], permission: Any,
-                     failure: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+                     failure: Optional[Dict[str, str]] = None, taken: bool = False) -> Dict[str, Any]:
     """Whether a slice issue counts, from what GitHub said. `issue` is {state, labels (names), body};
     `events` from label_events; `comments` from issue_comments; `permission` the labeller's
     collaborator permission answer, or None when it was not asked or could not be (`failure` says why).
-    Never accepted unless established. The why and spec are returned only when accepted."""
+    Never accepted unless established. The why and spec are returned only when accepted.
+    With `taken`, for a slice the builders took: mach:building stands in for mach:ready (see slice_ready_event);
+    every other rule is the same."""
     result: Dict[str, Any] = {"state": "not_accepted", "reason": None, "marker": None, "approved_by": None, "ready_at": None, "why": None, "spec": None}
 
     def refuse(reason: str) -> Dict[str, Any]:
@@ -1438,8 +1468,8 @@ def slice_acceptance(issue: Dict[str, Any], events: Sequence[Dict[str, Any]], co
         return result
 
     labels = issue.get("labels") or []
-    if str(issue.get("state") or "").lower() != "open" or SLICE_LABEL not in labels or READY_LABEL not in labels:
-        return refuse(SLICE_NOT_ACCEPTED["not_ready"])
+    if str(issue.get("state") or "").lower() != "open" or SLICE_LABEL not in labels or (BUILDING_LABEL if taken else READY_LABEL) not in labels:
+        return refuse(SLICE_NOT_ACCEPTED["not_taken" if taken else "not_ready"])
     parsed = parse_slice_body(issue.get("body"))
     if parsed is None:
         return refuse(SLICE_NOT_ACCEPTED["no_marker"])
@@ -1449,7 +1479,9 @@ def slice_acceptance(issue: Dict[str, Any], events: Sequence[Dict[str, Any]], co
         return refuse(SLICE_NOT_ACCEPTED["bad_jira"])
     if not parsed["intact"]:
         return refuse(SLICE_NOT_ACCEPTED["edited"])
-    event = deciding_event(events, READY_LABEL)
+    event = slice_ready_event(events, taken)
+    if taken and event is None and failure is None:
+        return refuse(SLICE_NOT_ACCEPTED["taken_back"])
     problem = "unconfirmed" if failure is not None and event is None else actor_problem(event)
     if problem is not None:
         return refuse(NOT_ACCEPTED[problem].replace("labelled it", "marked it ready"))
