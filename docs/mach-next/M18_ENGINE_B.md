@@ -99,4 +99,4 @@ No event carries the kind yet. The places a groom exit happens: `cell.py finaliz
 
 `tests/test_small_change.py`: `slice ready` that widens is not marked ready, the next one marks it ready; a slice widened earlier is marked ready as before; the ready folder's `slice.json` carries the record for a small slice and no `small` key otherwise.
 
-`make check` result: see the report of this milestone part. Not tested: a real interview run by a model against `small-change.md` in the cell; the app (its host has no operation for `slice widen` and does not yet show `ready: false` from `slice ready`).
+`make check` on 2026-11-22: 1964 tests in 454 classes passed (one skipped, as before), and the manifests validated (passed, with the existing missing-icon warning). Every existing test passes unchanged except `test_small_change.StudioCheckTest.test_ready_widens_and_is_never_refused_for_size`, replaced as item 5 asks. Not tested: a real interview run by a model against `small-change.md` in the cell; the app (its host has no operation for `slice widen` and does not yet show `ready: false` from `slice ready`).
