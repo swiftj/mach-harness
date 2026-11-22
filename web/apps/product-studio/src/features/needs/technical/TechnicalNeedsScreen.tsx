@@ -210,7 +210,8 @@ function Needs({ data, reading, reload, conv }: { data: NeedList; reading: boole
             ) : (
               <PublishedState state={state} list={data} outcome={outcome} checking={refresh.loading} onCheckGithub={checkGithub} />
             )}
-            {!empty && data.next ? (
+            {/* The engine's next step, unless the card above already says it: its own sentence on what is not published. */}
+            {!empty && data.next && !publishOffered(state) ? (
               <Text size="body-sm" className="max-w-reading">
                 {data.next}
               </Text>
