@@ -1461,7 +1461,9 @@ class Factory:
         for position, key in enumerate(ready):
             rows[key]["dispatchable"] = position < free
             if position >= free:
-                rows[key]["reasons"].append(f"Ready, and waiting for a free place: {len(active)} of {self.max_parallel} are in use.")
+                # The places it waits for: those in use and those the ready slices ahead of it take.
+                rows[key]["reasons"].append(f"Ready, and waiting for a free place: {len(active) + free} of {self.max_parallel} are in use"
+                                            + (" or taken by work ahead of it." if free else "."))
         if record:
             self.record(ledger, rows)
         counts: Dict[str, int] = {}
