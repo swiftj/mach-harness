@@ -494,7 +494,7 @@ class IntakeTest(IntakeBase):
         self.product("dispatch", "SLICE-001")
         state = self.cell(str(self.ledger()["slices"]["SLICE-001"]["ticket_id"]))
         self.assertEqual((state["widened"]["rule"], state["widened"]["by"]), (None, "product-studio"))
-        self.assertIn("off the light path", state["widened"]["reason"])
+        self.assertIn("made this small change a full slice", state["widened"]["reason"])
 
     def test_a_ready_folder_carries_the_kind(self):
         slice_id = self.slice(self.a, "Clearer expired invitation message")
