@@ -95,7 +95,7 @@ Read the plan template and write `plan.md` to `plan_path`. The builder follows i
 
 ## Gate
 
-Run `CELL check-plan <ticket-id>`. It checks the plan header, that each listed contract exists, that the plan is test-first, that every requirement and scenario is assigned, that no `[impl]` task waits on a later one to go green, and the architecture-decision rules above. Fix what it reports and rerun, at most 5 times. On `PLANNED` it records the app type, risk tier, contracts and the ADRs the plan was made under on the cell, keeps a copy of each ADR's text in the cell, and commits the contract files and any proposed ADR on the cell's branch.
+Run `CELL check-plan <ticket-id>`. It checks the plan header, that each listed contract exists, that the plan is test-first, that every requirement and scenario is assigned, that no `[impl]` task waits on a later one to go green, and the architecture-decision rules above. Fix what it reports and rerun, at most 5 times. On `PLANNED` it records the app type, risk tier, contracts and the ADRs the plan was made under on the cell, keeps a copy of each ADR's text in the cell, and commits the contract files and any proposed ADR on the cell's branch. For a small change (`cell.json` has `kind: small`) a valid plan may instead print `WIDENED` or `STOPPED`: the plan shows the change is not small (an existing contract changed, a file in a high-risk area, a proposed ADR, a plan raised to High), so the plan is kept on record and the ticket goes back to the interview or waits for the product manager. That is not a plan error: do not change the plan to make the change look small, and do not run check-plan again; report the sentence it printed.
 
 ## Report
 
