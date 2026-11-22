@@ -500,7 +500,7 @@ class ReadyTest(IssuesBase):
         refused = self.refused(self.a, "slice", "ready", second)
         self.assertIn(f"depends on {first}, which is not ready yet", refused)
         self.assertEqual(self.issues(), [])  # refused before anything was written
-        self.assertEqual(self.artifact(self.a, f"product/slices/{second}.json")["status"], "interviewing")
+        self.assertEqual(self.artifact(self.a, f"product/slices/{second}.json")["status"], "draft")  # a refusal leaves the slice as it was: created, never resumed
         number = self.ready(first)["issue"]
         self.ready(second)
         marker = issue_rules.parse_slice_body(self.slice_issue(second)[0]["body"])
@@ -525,7 +525,7 @@ class ReadyTest(IssuesBase):
         self.assertIn("65,536", refused)
         self.assertIn("A slice of intent that large is not thin", refused)
         self.assertEqual(self.writes(), [])
-        self.assertEqual(self.artifact(self.a, f"product/slices/{slice_id}.json")["status"], "interviewing")
+        self.assertEqual(self.artifact(self.a, f"product/slices/{slice_id}.json")["status"], "draft")  # a refusal leaves the slice as it was: created, never resumed
 
     def test_a_slice_from_a_request_tells_the_request(self):
         self.project_and_epic()
@@ -609,7 +609,7 @@ class InterruptedTest(IssuesBase):
         refused = self.refused(self.a, "slice", "ready", "SLICE-001")
         self.assertIn("Nothing was saved", refused)
         self.assertEqual(self.writes(), [])
-        self.assertEqual(self.artifact(self.a, "product/slices/SLICE-001.json")["status"], "interviewing")
+        self.assertEqual(self.artifact(self.a, "product/slices/SLICE-001.json")["status"], "draft")  # a refusal leaves the slice as it was: created, never resumed
         self.assertFalse(self.draft(self.a, "product/ready").exists())  # a passing failure never falls back to the folder
 
     def test_an_issue_without_its_mach_label_is_left_alone(self):
