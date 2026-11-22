@@ -375,7 +375,7 @@ function ApplyBody({ ideaId, status, map, made, onDone }: { ideaId: string; stat
                   setKind(value as SmallChangeKind);
                   setMissing(null);
                 }}
-                placeholder="Choose which kind"
+                placeholder="A fix or an adjustment"
                 options={SMALL_CHANGE_KINDS.map((k) => ({ value: k.kind, label: k.name, description: k.words }))}
               />
             </Field>

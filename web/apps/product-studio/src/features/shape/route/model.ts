@@ -255,7 +255,7 @@ export function applyArgs(
   kind: SmallChangeKind | "",
 ): { args: { idea_id: string; change?: SmallChangeKind } } | { missing: string } {
   if (!needsSmallKind(status)) return { args: { idea_id: ideaId } };
-  if (!kind) return { missing: "Choose which kind of small change this is: a fix or an adjustment." };
+  if (!kind) return { missing: "Choose whether this small change is a fix or an adjustment." };
   return { args: { idea_id: ideaId, change: kind } };
 }
 

@@ -1,10 +1,11 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Button, ConfirmDialog, Dialog, DialogClose, DialogContent, Field, HintAction, Input, Select, toast } from "@mach/ui";
 import type { StatusEpicRow, StatusSliceRow } from "@mach/ui/api";
 import { Link } from "react-router";
 import { useRequestAct, type RequestItem } from "./api";
 import { questionsToAskFirst } from "./model";
 import { StartChoiceFields } from "../../small-change/StartChoiceFields";
+import { useProblemInView } from "../../small-change/useProblemInView";
 import { fullSlice, smallArgs, type StartChoice } from "../../small-change/model";
 
 interface DialogProps {
@@ -57,14 +58,17 @@ function PickUpBody({ onOpenChange, item, onDone, also, epics }: DialogProps & {
   const formId = `pick-request-${item.number}`;
   // M18: the request may be picked up as a small change (a fix with its shipped rule, or an adjustment).
   const [choice, setChoice] = useState<StartChoice>(fullSlice);
-  const [tried, setTried] = useState(false);
+  const [tries, setTries] = useState(0);
+  const tried = tries > 0;
+  const form = useRef<HTMLFormElement>(null);
+  useProblemInView(form, tries, act.shown?.message ?? null);
   const smallStart = smallArgs(choice);
 
   const [started, setStarted] = useState<{ sliceId: string; questions: { count: number; text: string } } | null>(null);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    setTried(true);
+    setTries((n) => n + 1);
     if (!title.trim()) {
       setTitleError("Give the slice a title in your own words: the outcome for one kind of user.");
       return;
@@ -117,7 +121,7 @@ function PickUpBody({ onOpenChange, item, onDone, also, epics }: DialogProps & {
         </>
       }
     >
-      <form id={formId} onSubmit={submit} className="flex flex-col gap-4" noValidate>
+      <form id={formId} ref={form} onSubmit={submit} className="flex flex-col gap-4" noValidate>
         {epics.length ? (
           <StartChoiceFields choice={choice} onChange={setChoice} epicId={epic} explain missing={tried ? (smallStart.missing ?? null) : null} />
         ) : null}

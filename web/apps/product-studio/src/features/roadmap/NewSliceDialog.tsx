@@ -1,10 +1,11 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { Button, Dialog, DialogClose, DialogContent, Field, Input, Select, Textarea, epicStates, toast, HintAction } from "@mach/ui";
 import type { StatusEpicRow } from "@mach/ui/api";
 import { useEngineAct } from "../../api/act";
 import { rememberIdea } from "../../api/pendingIdea";
 import { StartChoiceFields } from "../small-change/StartChoiceFields";
+import { useProblemInView } from "../small-change/useProblemInView";
 import { SMALL_CHANGE_MEANS, smallArgs, type StartAs, type StartChoice } from "../small-change/model";
 
 export interface NewSliceDialogProps {
@@ -46,13 +47,16 @@ function NewSliceBody({ onOpenChange, epics, epicId, start = "slice" }: NewSlice
   const [idea, setIdea] = useState("");
   const [titleError, setTitleError] = useState<string | null>(null);
   const [choice, setChoice] = useState<StartChoice>({ as: start, change: null, rule: null });
-  const [tried, setTried] = useState(false);
+  const [tries, setTries] = useState(0);
+  const tried = tries > 0;
+  const form = useRef<HTMLFormElement>(null);
   const small = choice.as === "small";
   const args = smallArgs(choice);
+  useProblemInView(form, tries, act.shown?.message ?? null);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    setTried(true);
+    setTries((n) => n + 1);
     if (!title.trim()) {
       setTitleError(
         small
@@ -92,7 +96,7 @@ function NewSliceBody({ onOpenChange, epics, epicId, start = "slice" }: NewSlice
           </>
         }
       >
-        <form id="new-slice" onSubmit={submit} className="flex flex-col gap-4" noValidate>
+        <form id="new-slice" ref={form} onSubmit={submit} className="flex flex-col gap-4" noValidate>
           <StartChoiceFields choice={choice} onChange={setChoice} epicId={epic} missing={tried ? (args.missing ?? null) : null} />
           <Field label="Epic" hint={small ? "The capability the change belongs to." : "The larger capability this slice delivers part of."}>
             <Select

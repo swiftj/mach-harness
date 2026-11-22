@@ -347,7 +347,7 @@ test("a small change is made only with the product manager's word on its kind", 
   const status = data("idea.map-status.small-change");
   assert.equal(status.route.route, "small-change");
   assert.equal(needsSmallKind(status), true);
-  assert.deepEqual(applyArgs("IDEA-001", status, ""), { missing: "Choose which kind of small change this is: a fix or an adjustment." });
+  assert.deepEqual(applyArgs("IDEA-001", status, ""), { missing: "Choose whether this small change is a fix or an adjustment." });
   assert.deepEqual(applyArgs("IDEA-001", status, "adjustment"), { args: { idea_id: "IDEA-001", change: "adjustment" } });
   assert.match(run("idea.apply.refused-small-kind").refused, /Say which kind it is/);
   const applied = data("idea.apply.small-change");
