@@ -34,6 +34,7 @@ note, so a typo never loosens a rule. Missing data is never evidence: a spec wit
     judge(model, text=None, ...)                  -> verdict     pure
     judge_plan(project, files, ...)               -> verdict
     sentence(rule, limits=None)                   -> str
+    sentence_in(text) / rule_in(text)             -> the rule (and its sentence) a text quotes, such as the Factory's question
     widening(verdict, at) / asked(why, at)        -> the `widened` record a slice or a cell keeps
 
 A verdict is {"verdict": "small" | "not small", "small": bool, "rule": code or None, "sentence": str, "failed": [codes]}.
@@ -120,6 +121,27 @@ def sentence(rule: Optional[str], limits: Optional[Mapping[str, int]] = None) ->
         return SMALL_SENTENCE
     given = dict(DEFAULTS, **(limits or {}))
     return SENTENCES[rule].format(s="" if given["changed_shipped_rules"] == 1 else "s", **given)
+
+
+def sentence_in(text: Any) -> Optional[Tuple[str, str]]:
+    """The rule whose fixed sentence a text quotes (whatever limits filled it in) and that sentence as quoted, or None: how
+    Product Studio reads which rule the Factory named in its question on a slice's issue. Only a rule's code and its own
+    fixed words, with a number of at most two digits, come out of the text."""
+    if not isinstance(text, str):
+        return None
+    for rule in RULES:
+        pattern = re.escape(SENTENCES[rule]).replace(re.escape("{s}"), "s?")
+        pattern = re.sub(r"\\\{[a-z_]+\\\}", r"[0-9]{1,2}", pattern)
+        found = re.search(pattern, text)
+        if found:
+            return rule, found.group(0)
+    return None
+
+
+def rule_in(text: Any) -> Optional[str]:
+    """The rule whose fixed sentence a text quotes, or None (sentence_in)."""
+    found = sentence_in(text)
+    return found[0] if found else None
 
 
 def verdict(failed: Sequence[str], limits: Optional[Mapping[str, int]] = None) -> Dict[str, Any]:

@@ -131,6 +131,31 @@ def widen_if_needed(host: Any, studio: Any, slice_id: str, data: Dict[str, Any],
     return data["widened"]
 
 
+def handoff_record(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """What travels with the slice when it is marked ready (M18 part D): the issue's marker and approval, or the ready
+    folder's slice.json, carry it as identifiers, beside the approved text and never inside its SHA-256. None for a slice
+    that is not small, so its handoff is exactly what it was. The product manager's own words for widening stay here."""
+    if not is_small(data):
+        return None
+    small = data.get("small") if isinstance(data.get("small"), dict) else {}
+    widened = data.get("widened") if isinstance(data.get("widened"), dict) else None
+    return {"kind": KIND, "change": small.get("change"), "shipped_rule": small.get("shipped_rule"),
+            "widened": None if widened is None else {"rule": widened.get("rule"), "at": widened.get("at")}}
+
+
+def widened_by_question(host: Any, studio: Any, data: Dict[str, Any], question: Optional[str]) -> Optional[Dict[str, Any]]:
+    """At `slice reopen`: a small change the Factory stopped because a rule says it is not small (its question on the
+    slice's issue quotes the rule's fixed sentence) comes back widened, with that sentence as the reason. Only the rule's
+    code is read from the question, which is the builders' text and data; widening only ever leads to the full interview."""
+    if not on_light_path(data):
+        return None
+    found = helper(host).sentence_in(question)
+    if found is None:
+        return None
+    data["widened"] = {"at": host.now(None), "reason": found[1], "rule": found[0]}  # the Factory's own sentence is the reason
+    return data["widened"]
+
+
 def status_field(data: Dict[str, Any]) -> Dict[str, Any]:
     """For a status row: the kind and, when it left the light path, why. Nothing for any other slice."""
     if not is_small(data):
