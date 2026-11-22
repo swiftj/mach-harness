@@ -25,8 +25,8 @@ const SchemaVersion = 3
 // not additive (M11): ids.epic_id and ids.issue for ids.wave_id, no wave.discovered,
 // slice.materialized epic_title; 5 (M12): the cell-lifecycle kind review.exception_recorded; 6 (M12): the
 // cell-lifecycle kind review.scan_recorded; 7 (M15): needs, waiting, repeat, design mock, jira and
-// change_record, all additive).
-const SchemaRevision = 7
+// change_record, all additive; 8 (M18): the groom exit's kind, widened and widened_rule, additive).
+const SchemaRevision = 8
 
 // Errors a Log read returns.
 var (

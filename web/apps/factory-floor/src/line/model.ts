@@ -34,6 +34,7 @@ import {
   type Risk,
   type Scene,
   type SliceState,
+  type SmallChangeFact,
   type StationId,
   type StationVisit,
 } from "../sim";
@@ -155,6 +156,8 @@ export interface LineRow {
   readonly jira?: string | null;
   /** M15: the change record's repository-relative path, when recorded (shown as text, never a link). */
   readonly changeRecord?: string | null;
+  /** M18: a small change, said beside the ticket's facts; absent for every other ticket. */
+  readonly smallChange?: SmallChangeFact | null;
   /** M15: the merge-time recheck sent it back this many times (each a repeat review round, no judging round used). */
   readonly rechecks?: number;
   readonly times: readonly StationTime[];
@@ -370,10 +373,13 @@ export function needVerb(row: Pick<LineRow, "state" | "beforeMerge" | "stop">): 
 /** The accept command for a policy concern, as the run skill routes it (M14 part A). The POL id and the owner's words are the person's to fill in. */
 export const policyAcceptCommand = (ticketId: string): string => `/mach policy accept ${ticketId} <POL-id> "<the owner's words>"`;
 
-/** What M13 and M14 put on a row besides its state: the Jira key, the change record, the rechecks. */
-function m15Facts(cell: CellState, slice: SliceState | undefined): Pick<LineRow, "jira" | "changeRecord" | "rechecks"> {
-  return { jira: cell.jira ?? slice?.jira ?? null, changeRecord: cell.changeRecord?.path ?? null, rechecks: recheckCount(cell) };
+/** What M13, M14 and M18 put on a row besides its state: the Jira key, the change record, the rechecks, a small change. */
+function m15Facts(cell: CellState, slice: SliceState | undefined): Pick<LineRow, "jira" | "changeRecord" | "rechecks" | "smallChange"> {
+  return { jira: cell.jira ?? slice?.jira ?? null, changeRecord: cell.changeRecord?.path ?? null, rechecks: recheckCount(cell), ...(cell.smallChange ? { smallChange: cell.smallChange } : {}) };
 }
+
+/** M18: the words for a small change beside a ticket's facts. */
+export const smallChangeWords = (f: SmallChangeFact): string => (f.widened ? "began as a small change, now a full slice" : "a small change");
 
 /** One cell as a row of the Line. */
 export function rowOfCell(scene: Scene, cell: CellState, now: number): LineRow {

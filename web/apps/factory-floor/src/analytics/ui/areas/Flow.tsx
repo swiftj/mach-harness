@@ -5,7 +5,7 @@
  * visits to it and marks it in the ranking; a chip says so and removes it.
  */
 import { useMemo } from "react";
-import { contributorKey, groupedKey, type Station } from "../../contract";
+import { contributorKey, groupedKey, groupedPairKey, type Station } from "../../contract";
 import { bottleneckRanking, groupOf, histogramBins, peakWords, transitionKind, type StationLoad } from "../../model/charts";
 import { count, coverageText, durationText, p50Text, p90Text, pct, plural } from "../../model/format";
 import { durationShows } from "../../model/sample";
@@ -22,6 +22,7 @@ import { kindOf } from "../../../shell/vocab";
 import type { AnyRef, VisitEntity } from "../../../sim";
 import { visitPlace, visitPlaceWords } from "../../model/visitPlace";
 import { cappedCount, cappedText, countOr } from "../../model/capped";
+import { groomSplit, tooFewWords, widenedWords } from "../../model/groomSplit";
 
 /**
  * The station visit selected when Analytics was opened (I-12): the one selection the store holds,
@@ -264,6 +265,7 @@ function StationDetail({ station }: { station: Station }) {
       <p className="-mt-2 text-caption text-ink-subtle" data-figure-limits="">
         Measured visits only (C1, from the cell's lifecycle log): an open or unknown visit is counted apart, never averaged; revise entries are recorded moves back to this station, visits after the first are read from the visit list.
       </p>
+      {station === "groom" ? <GroomBySize /> : null}
       <ChartFrame
         chart="flow-visit-durations"
         title="Visit durations"
@@ -296,6 +298,50 @@ function StationDetail({ station }: { station: Station }) {
           . Station read from the agent's label{agents.coverage.share !== null && agents.coverage.share < 1 ? `; coverage ${coverageText(agents.coverage)}` : ""}.
         </p>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * M18: time at Groom for small changes beside full slices. A small change that became a full slice is
+ * counted as a full slice, with a note of how many did. Too few visits on either side: the counts in
+ * words, no figure set beside another.
+ */
+function GroomBySize() {
+  const { snapshot: s } = useAnalytics();
+  const split = groomSplit(s.grouped[groupedPairKey("C1", "station", "change")], s.grouped[groupedPairKey("C2", "station", "widened")]);
+  const note = split.state === "not-told-apart" ? null : widenedWords(split.widened);
+  return (
+    <div data-groom-by-size={split.state}>
+      <h3 className="mb-1 text-label text-ink">Small changes beside full slices</h3>
+      {split.state === "not-told-apart" ? (
+        <p className="text-body-sm text-ink-muted">Small changes are not told apart from full slices here. {split.reason}</p>
+      ) : split.state === "too-few" ? (
+        <p className="text-body-sm text-ink-muted">{tooFewWords(split)}</p>
+      ) : (
+        <table className="an-table">
+          <caption className="sr-only">Measured groom visits of small changes and of full slices</caption>
+          <thead>
+            <tr>
+              <th scope="col">Ticket</th>
+              <th scope="col" className="num">Measured visits</th>
+              <th scope="col" className="num">Median</th>
+              <th scope="col" className="num">Mean</th>
+            </tr>
+          </thead>
+          <tbody>
+            {([["Small change", split.small], ["Full slice", split.full]] as const).map(([label, g]) => (
+              <tr key={label}>
+                <th scope="row">{label}</th>
+                <td className="num an-num">{count(g.denominator)}</td>
+                <td className="num an-num font-semibold">{p50Text(g)}</td>
+                <td className="num an-num">{durationText(g.value)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {note ? <p className="mt-1 text-caption text-ink-subtle">{note}</p> : null}
     </div>
   );
 }

@@ -11,7 +11,7 @@ import { useSceneStore } from "../scene";
 import { FreeText, FreeTextLabel, KindWords } from "../shell/inspector/FreeText";
 import { quotingKindOf } from "../shell/history";
 import { duration, timecode } from "../shell/time";
-import { LINE_STATIONS, sentBackWords, timesWords, type LineRow, type StationStat, type StationTime } from "./model";
+import { LINE_STATIONS, sentBackWords, smallChangeWords, timesWords, type LineRow, type StationStat, type StationTime } from "./model";
 import { StatePill } from "./Marks";
 import { costWords, modelWords } from "./words";
 import { EpicName, issueWords } from "./Epic";
@@ -124,6 +124,7 @@ export function TicketPanel({ row, now, onBack, onRecord, onFloor }: { row: Line
                 {row.epicTitle && row.epicId ? <span className="ml-1 font-mono text-caption text-ink-muted">{row.epicId}</span> : null}
               </span>
             ) : "not recorded"],
+            ...(row.smallChange ? ([["Small change", row.smallChange.widened ? smallChangeWords(row.smallChange) : "yes"]] as const) : []),
             ["Jira", row.jira ? <span key="j" className="font-mono text-[13px]">{row.jira}</span> : "not recorded"],
             ["Risk", row.risk ?? "not recorded"],
             ["Rounds used", `${row.roundsUsed} of ${MAX_ROUNDS}`],

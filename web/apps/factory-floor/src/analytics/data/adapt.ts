@@ -168,7 +168,7 @@ export interface SnapshotParts {
   readonly generated_ms: number;
   /** The ungrouped metrics reply's rows. */
   readonly totals: readonly MetricRow[];
-  /** Rows grouped by one dimension. */
+  /** Rows grouped by one dimension, or by two (keyed `C1|station,change`). */
   readonly grouped?: readonly MetricRow[];
   readonly contributors?: readonly { readonly metric: MetricId; readonly dimension?: Dimension; readonly value?: string; readonly reply: ContributorsReply }[];
   readonly runs?: readonly RunItem[];
@@ -274,8 +274,8 @@ export function toContractSnapshot(p: SnapshotParts): AnalyticsSnapshot {
   }
   const grouped: Record<string, ContractRow> = {};
   for (const r of p.grouped ?? []) {
-    const row = r.group_dims.length === 1 ? toContractRow(r) : null;
-    if (row) grouped[groupedKey(r.id as MetricId, r.group_dims[0] as Dimension)] = row;
+    const row = r.group_dims.length === 1 || r.group_dims.length === 2 ? toContractRow(r) : null;
+    if (row) grouped[groupedKey(r.id as MetricId, r.group_dims.join(",") as Dimension)] = row;
   }
   const contributors: Record<string, ContributorPage> = {};
   for (const c of p.contributors ?? []) contributors[contributorKey(c.metric, c.dimension, c.value)] = toContractContributors(c.reply);

@@ -174,7 +174,9 @@ export interface V3DataMap {
   "execution.failed": { stage: Stage | null; next: StepAction | null; how: string | null; claude_error: string | null; exit_code: number | null; attempt: number; not_progressing?: "workflow-stuck" | "same-refusal" | null };
   "station.entered": { station: StationId; stage: Stage | null; action: StepAction | null; resumed: boolean; unclosed_visit: string | null; head: string | null; counts: Counts };
   /** Revision 2: on the plan's exit, `app_type` and `risk` (the plan's own facts); `counts.contracts` and `counts.tasks`. */
-  "station.exited": { station: StationId; outcome: string; stage: Stage | null; duration_ms: number | null; closed_by: "cleanup" | null; head: string | null; counts: Counts; app_type?: string | null; risk?: Risk | null };
+  "station.exited": { station: StationId; outcome: string; stage: Stage | null; duration_ms: number | null; closed_by: "cleanup" | null; head: string | null; counts: Counts; app_type?: string | null; risk?: Risk | null;
+    /** Revision 8 (M18), on the groom exit of a small change only: the kind, whether it became a full slice, and the rule's code. */
+    kind?: "small" | null; widened?: boolean | null; widened_rule?: string | null };
   "gate.evaluated": { gate: string; verdict: "passed" | "refused" | "overridden"; reason_code: string | null; subject: string | null; status: "PASS" | "FAIL_WITH_EVIDENCE" | "INCOMPLETE_EVIDENCE" | null; audit_tier: string | null; counts: Counts };
   "build.task_completed": { task_id: string; kind: "test" | "impl" | "contract" | "refactor" | "docs"; step: "red" | "green" | "done"; first_run: "pass" | "fail" | "not-run" | null; suite: "unknown" | "red" | "green" | null; commit: string | null };
   "verify.check_recorded": { target_id: string; target_kind: "scenario" | "matrix rule" | "holdout" | "design mock"; result: "pass" | "fail"; evidence: Array<{ file: string; sha256: string | null; bytes?: number | null }>; rerecorded: boolean };
