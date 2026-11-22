@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "SLICE-006 is not a small change, so it is already a full slice.",
+  "hint": null
+}

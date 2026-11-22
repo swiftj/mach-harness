@@ -4,6 +4,8 @@ import { Button, Dialog, DialogClose, DialogContent, Field, Input, Select, Texta
 import type { StatusEpicRow } from "@mach/ui/api";
 import { useEngineAct } from "../../api/act";
 import { rememberIdea } from "../../api/pendingIdea";
+import { StartChoiceFields } from "../small-change/StartChoiceFields";
+import { SMALL_CHANGE_MEANS, smallArgs, type StartAs, type StartChoice } from "../small-change/model";
 
 export interface NewSliceDialogProps {
   open: boolean;
@@ -11,11 +13,14 @@ export interface NewSliceDialogProps {
   epics: StatusEpicRow[];
   /** Preselects the epic. */
   epicId?: string | null;
+  /** M18: what the dialog opens on, a new slice (the default) or a small change; the person can change it. */
+  start?: StartAs;
 }
 
 /**
  * Starts a slice: `slice.new` with the PM's title, then the interview. The idea, if given, is kept
- * for the slice (api/pendingIdea) and sent with its first POST /api/interview.
+ * for the slice (api/pendingIdea) and sent with its first POST /api/interview. M18: or a small change, the same
+ * operation with `small` (a fix with its shipped rule, or an adjustment).
  */
 export function NewSliceDialog(props: NewSliceDialogProps) {
   // A fresh body (empty fields) for every opening, kept mounted while it closes so the dialog can
@@ -33,34 +38,49 @@ export function NewSliceDialog(props: NewSliceDialogProps) {
   );
 }
 
-function NewSliceBody({ onOpenChange, epics, epicId }: NewSliceDialogProps) {
+function NewSliceBody({ onOpenChange, epics, epicId, start = "slice" }: NewSliceDialogProps) {
   const navigate = useNavigate();
   const act = useEngineAct();
   const [epic, setEpic] = useState(epicId ?? epics[0]?.epic_id ?? "");
   const [title, setTitle] = useState("");
   const [idea, setIdea] = useState("");
   const [titleError, setTitleError] = useState<string | null>(null);
+  const [choice, setChoice] = useState<StartChoice>({ as: start, change: null, rule: null });
+  const [tried, setTried] = useState(false);
+  const small = choice.as === "small";
+  const args = smallArgs(choice);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    setTried(true);
     if (!title.trim()) {
-      setTitleError("Give the slice a title: the outcome for one kind of user, such as “Invite a teammate”.");
+      setTitleError(
+        small
+          ? "Give the change a title: what changes, in a few words, such as “Clearer expired invitation message”."
+          : "Give the slice a title: the outcome for one kind of user, such as “Invite a teammate”.",
+      );
       return;
     }
-    const result = await act.run("slice.new", { epic, title: title.trim() });
+    if (args.missing) return;
+    const result = await act.run("slice.new", { epic, title: title.trim(), ...(args.small ? { small: args.small } : {}) });
     if (!result) return;
     rememberIdea(result.slice.slice_id, idea);
-    toast({ tone: "success", title: `Started ${result.slice.slice_id}`, description: result.slice.title });
+    toast({ tone: "success", title: `Started ${result.slice.slice_id}`, description: small ? `${result.slice.title} · Small change` : result.slice.title });
     onOpenChange(false);
     navigate(`/slices/${result.slice.slice_id}/interview`);
   };
 
   return (
       <DialogContent
+        width="lg"
         onEscapeKeyDown={(e) => act.pending && e.preventDefault()}
         onPointerDownOutside={(e) => act.pending && e.preventDefault()}
-        title="Start a slice"
-        description="A slice of intent is one complete outcome for one kind of user, thin enough to build and check in one go. The interview works out the rest with you."
+        title={small ? "Start a small change" : "Start a slice"}
+        description={
+          small
+            ? SMALL_CHANGE_MEANS
+            : "A slice of intent is one complete outcome for one kind of user, thin enough to build and check in one go. The interview works out the rest with you."
+        }
         footer={
           <>
             <DialogClose asChild>
@@ -73,24 +93,32 @@ function NewSliceBody({ onOpenChange, epics, epicId }: NewSliceDialogProps) {
         }
       >
         <form id="new-slice" onSubmit={submit} className="flex flex-col gap-4" noValidate>
-          <Field label="Epic" hint="The larger capability this slice delivers part of.">
+          <StartChoiceFields choice={choice} onChange={setChoice} epicId={epic} missing={tried ? (args.missing ?? null) : null} />
+          <Field label="Epic" hint={small ? "The capability the change belongs to." : "The larger capability this slice delivers part of."}>
             <Select
               value={epic}
-              onValueChange={setEpic}
+              onValueChange={(next) => {
+                setEpic(next);
+                setChoice((c) => ({ ...c, rule: null }));
+              }}
               options={epics.map((e) => ({ value: e.epic_id, label: `${e.epic_id} ${e.title}`, description: epicStates[e.status].label }))}
             />
           </Field>
-          <Field label="Title" hint="The outcome, in a few words." error={titleError}>
+          <Field label="Title" hint={small ? "What changes, in a few words." : "The outcome, in a few words."} error={titleError}>
             <Input
               value={title}
               onChange={(e) => {
                 setTitle(e.target.value);
                 setTitleError(null);
               }}
-              placeholder="For example, Invite a teammate"
+              placeholder={small ? "For example, Clearer expired invitation message" : "For example, Invite a teammate"}
             />
           </Field>
-          <Field label="The idea" optional hint="A sentence or two for the interviewer to start from.">
+          <Field
+            label={small ? "What is so today, and what should be so" : "The idea"}
+            optional
+            hint={small ? "A sentence or two in your words, for the interviewer to start from." : "A sentence or two for the interviewer to start from."}
+          >
             <Textarea editorial rows={3} value={idea} onChange={(e) => setIdea(e.target.value)} />
           </Field>
         </form>

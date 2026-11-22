@@ -21,6 +21,8 @@ import {
 import { graphStates, type GraphState, type MachNode } from "@mach/ui/graph";
 import { client } from "../../api/client";
 import { IssueLink, IssueNumber } from "../../shared/IssueLink";
+import { SmallChangeLabel } from "../small-change/SmallChangeLabel";
+import type { StartAs } from "../small-change/model";
 
 export interface NodeSheetProps {
   node: MachNode | null;
@@ -28,7 +30,7 @@ export interface NodeSheetProps {
   nodes: MachNode[];
   onClose: () => void;
   onSelect: (node: MachNode) => void;
-  onNewSlice: (epicId: string) => void;
+  onNewSlice: (epicId: string, start?: StartAs) => void;
 }
 
 /** What it means for the PM, by graph state (an epic says its own). Never presents approval as built work. */
@@ -133,7 +135,10 @@ function SliceDetail({ id, status }: { id: string; status: Status }) {
     <>
       <Facts>
         <Fact term="Status">
-          <SliceStatusPill status={row.status} size="sm" />
+          <span className="inline-flex flex-wrap items-center gap-1.5">
+            <SliceStatusPill status={row.status} size="sm" />
+            <SmallChangeLabel slice={row} />
+          </span>
         </Fact>
         <Fact term="Epic">{epic ? `${epic.epic_id} ${epic.title}` : row.epic_id}</Fact>
         {row.github.state_label || githubMarksOf(row.github).length ? (
@@ -220,7 +225,7 @@ function EpicDetail({
   status: Status;
   nodes: MachNode[];
   onSelect: (node: MachNode) => void;
-  onNewSlice: (epicId: string) => void;
+  onNewSlice: (epicId: string, start?: StartAs) => void;
 }) {
   const epic = status.epics.find((e) => e.epic_id === id);
   if (!epic) return null;
@@ -254,6 +259,7 @@ function EpicDetail({
                   >
                     <ArtifactId plain>{s.slice_id}</ArtifactId>
                     <span className="min-w-0 flex-1 truncate">{s.title}</span>
+                    <SmallChangeLabel slice={s} />
                     <SliceStatusPill status={s.status} size="sm" />
                   </button>
                 </li>
@@ -270,6 +276,7 @@ function EpicDetail({
         <Button variant="primary" onClick={() => onNewSlice(id)}>
           Start a slice in this epic
         </Button>
+        <Button onClick={() => onNewSlice(id, "small")}>Start a small change</Button>
         <Button variant="ghost" asChild>
           <Link to="/vision" state={{ focus: "epics" }}>
             Edit in Vision

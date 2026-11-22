@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
-import { ArrowDown, ArrowRight, ArrowUp, CircleAlert, Plus } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, CircleAlert, Feather, Plus } from "lucide-react";
 import {
   ArtifactId,
   Banner,
@@ -37,6 +37,8 @@ import { nextActions, routeFor } from "../../api/nextActions";
 import { destinations } from "../registry";
 import { useRequestList } from "../../shared/useRequestList";
 import { NewSliceDialog } from "../roadmap/NewSliceDialog";
+import { SmallChangeLabel } from "../small-change/SmallChangeLabel";
+import type { StartAs } from "../small-change/model";
 import { IssueLink, IssueNumber } from "../../shared/IssueLink";
 import { RenumberDialog } from "../../shared/RenumberDialog";
 import { AnswerQuestionDialog } from "../../shared/BuildersQuestion";
@@ -86,7 +88,7 @@ function ProjectHome({ status }: { status: Status }) {
   const refresh = useRefresh();
   const requests = useRequestList();
   const navigate = useNavigate();
-  const [newSlice, setNewSlice] = useState<{ epicId: string | null } | null>(null);
+  const [newSlice, setNewSlice] = useState<{ epicId: string | null; start?: StartAs } | null>(null);
   const [renumber, setRenumber] = useState<string | null>(null);
   const [addEpic, setAddEpic] = useState(false);
   const [answer, setAnswer] = useState<string | null>(null);
@@ -164,7 +166,7 @@ function ProjectHome({ status }: { status: Status }) {
                   key={epic.epic_id}
                   epic={epic}
                   status={status}
-                  onAddSlice={() => setNewSlice({ epicId: epic.epic_id })}
+                  onAddSlice={(start) => setNewSlice({ epicId: epic.epic_id, start })}
                 />
               ))
             ) : (
@@ -187,7 +189,7 @@ function ProjectHome({ status }: { status: Status }) {
         </div>
       </OnePane>
 
-      <NewSliceDialog open={newSlice !== null} onOpenChange={(open) => !open && setNewSlice(null)} epics={status.epics} epicId={newSlice?.epicId} />
+      <NewSliceDialog open={newSlice !== null} onOpenChange={(open) => !open && setNewSlice(null)} epics={status.epics} epicId={newSlice?.epicId} start={newSlice?.start} />
       <RenumberDialog id={renumber} onOpenChange={(open) => !open && setRenumber(null)} />
       <EpicSheet state={addEpic ? { mode: "add" } : null} onClose={() => setAddEpic(false)} />
       <AnswerQuestionDialog
@@ -329,7 +331,7 @@ function titled(id: string, status: Status): string {
   return title ? `${title} (${id})` : id;
 }
 
-function EpicBlock({ epic, status, onAddSlice }: { epic: StatusEpicRow; status: Status; onAddSlice: () => void }) {
+function EpicBlock({ epic, status, onAddSlice }: { epic: StatusEpicRow; status: Status; onAddSlice: (start?: StartAs) => void }) {
   const slices = status.slices.filter((s) => s.epic_id === epic.epic_id);
   const headingId = `epic-${epic.epic_id}-title`;
   const counts = epic.counts;
@@ -378,10 +380,16 @@ function EpicBlock({ epic, status, onAddSlice }: { epic: StatusEpicRow; status: 
           No slices yet.
         </Text>
       )}
-      <Button variant="ghost" size="sm" className="self-start" onClick={onAddSlice}>
-        <Plus aria-hidden="true" />
-        Add a slice to {epic.title}
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="ghost" size="sm" onClick={() => onAddSlice()}>
+          <Plus aria-hidden="true" />
+          Add a slice to {epic.title}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => onAddSlice("small")}>
+          <Feather aria-hidden="true" />
+          Start a small change in {epic.title}
+        </Button>
+      </div>
     </section>
   );
 }
@@ -408,6 +416,7 @@ function SliceRow({ slice, status, children }: { slice: StatusSliceRow; status: 
             {slice.title}
           </Link>
           <ArtifactId>{slice.slice_id}</ArtifactId>
+          <SmallChangeLabel slice={slice} className="self-center" />
         </span>
         {slice.open_questions > 0 || current ? (
           <span className="text-caption text-ink-muted">

@@ -8,6 +8,7 @@ import { toApiError } from "../../api/session";
 import { useRefresh, useStatus } from "../../api/store";
 import { IssueLink, IssueNumber, SignInNote } from "../../shared/IssueLink";
 import { ContextRow, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
+import { SmallChangeLabel } from "../small-change/SmallChangeLabel";
 
 /**
  * Where the project, its epics and its slices stand on GitHub, as the engine recorded them and as
@@ -167,6 +168,7 @@ function Slices({ status }: { status: Status }) {
                       <Link to={`/slices/${slice.slice_id}`} className="min-w-0 rounded-xs text-body text-ink underline-offset-2 hover:underline">
                         {slice.title}
                       </Link>
+                      <SmallChangeLabel slice={slice} className="self-center" />
                     </div>
                   </td>
                   <td className="px-4 py-2.5">

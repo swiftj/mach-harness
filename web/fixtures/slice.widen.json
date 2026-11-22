@@ -1,0 +1,52 @@
+{
+  "exit_code": 0,
+  "data": {
+    "widened": true,
+    "slice": {
+      "dependencies": [],
+      "epic_id": "EPIC-001",
+      "kind": "small",
+      "open_questions": [],
+      "project_id": "team-space",
+      "revision": 2,
+      "schema_version": 1,
+      "slice_id": "SLICE-005",
+      "small": {
+        "change": "adjustment",
+        "shipped_rule": null
+      },
+      "spec_path": null,
+      "spec_sha256": null,
+      "status": "draft",
+      "title": "Shorter reminder wording",
+      "widened": {
+        "at": "2026-11-22T02:38:55Z",
+        "reason": "It should also change the reminder email, which is a second message.",
+        "rule": null
+      }
+    },
+    "small_change": {
+      "kind": "small",
+      "change": "adjustment",
+      "shipped_rule": null,
+      "light_path": false,
+      "widened": {
+        "at": "2026-11-22T02:38:55Z",
+        "reason": "It should also change the reminder email, which is a second message.",
+        "rule": null
+      },
+      "note": "This slice left the light path: It should also change the reminder email, which is a second message. It is a full slice now: the interview carries on in full, with every answer kept.",
+      "limits": {
+        "requirements": 3,
+        "scenarios": 4,
+        "questions": 5,
+        "changed_shipped_rules": 1
+      },
+      "method": "/mach/skills/intent/references/interview-method.md"
+    },
+    "factory_authorized": false,
+    "note": "It is a full slice now: the interview carries on in full, with every answer kept. Nothing in its spec or why was changed."
+  },
+  "refused": null,
+  "hint": null
+}

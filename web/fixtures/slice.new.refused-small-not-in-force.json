@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "SLICE-001/FR-09 is not a shipped rule in force, so there is nothing to fix there. Look the rule up, or start an adjustment.",
+  "hint": null
+}

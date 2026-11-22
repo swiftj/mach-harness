@@ -4,6 +4,7 @@ import type { SliceShow, WorkOrder } from "@mach/ui/api";
 import { IssueLink } from "./IssueLink";
 import { SliceSections } from "./SliceSections";
 import { ContextRow } from "./layout/WorkScreen";
+import { SmallChangeLabel } from "../features/small-change/SmallChangeLabel";
 
 /**
  * The slim context row of a slice's own pages (M16 layout): line one says which slice (its ID, name, epic, state, its
@@ -25,7 +26,7 @@ export function SliceContextRow({
 }: {
   sliceId: string;
   show?: SliceShow | null;
-  slice?: Pick<WorkOrder, "slice_id" | "title" | "epic_id" | "status" | "source"> | null;
+  slice?: Pick<WorkOrder, "slice_id" | "title" | "epic_id" | "status" | "source" | "kind" | "widened"> | null;
   /** The page's h1. Leave it out on the specification page, whose h1 is the slice's title. */
   title?: string;
   about?: ReactNode;
@@ -47,6 +48,7 @@ export function SliceContextRow({
               </span>
             ) : null}
             <SliceStatusPill status={slice.status} size="sm" />
+            <SmallChangeLabel slice={slice} />
             {show ? <SliceGithubPills github={show.github} size="sm" /> : null}
             {show?.github.issue ? (
               <span>

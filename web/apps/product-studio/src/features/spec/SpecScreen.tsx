@@ -15,6 +15,7 @@ import { SliceTimes } from "../../shared/SliceTimes";
 import { SectionNav } from "../../shared/layout/SectionNav";
 import { WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
 import { SliceContextRow } from "../../shared/SliceContextRow";
+import { SmallChangeNotice } from "../small-change/SmallChangeNotice";
 
 export function SpecScreen() {
   const { sliceId = "" } = useParams();
@@ -70,7 +71,7 @@ function SpecWorkspace({ sliceId }: { sliceId: string }) {
       <WorkPanes>
         <WorkPane label={`${data.slice.slice_id}, the document`}>
           <div className="flex flex-col gap-6">
-            <SpecNotices show={data} refreshError={show.error ? describeError(show.error).message : null} />
+            <SpecNotices show={data} refreshError={show.error ? describeError(show.error).message : null} onChanged={show.reload} />
             {/* One row of page tabs (M16): the specification, its why and its source are chosen in the section list beside it. */}
             <div hidden={view !== "spec"}>
               <SpecBody show={data} />
@@ -142,7 +143,7 @@ function SpecContext({ show, onChanged, refreshing }: { show: SliceShow; onChang
 }
 
 /** What the person must see before the document: an approval withdrawn, the builders' question, and the state notes. */
-function SpecNotices({ show, refreshError }: { show: SliceShow; refreshError: string | null }) {
+function SpecNotices({ show, refreshError, onChanged }: { show: SliceShow; refreshError: string | null; onChanged: () => void }) {
   const slice = show.slice;
   const approved = slice.status === "approved_for_engineering";
   const withdrawn = useStatus().data?.approvals_withdrawn.find((w) => w.artifact === slice.slice_id);
@@ -150,6 +151,7 @@ function SpecNotices({ show, refreshError }: { show: SliceShow; refreshError: st
     <div className="flex flex-col gap-4 empty:hidden">
       <WithdrawnNote item={withdrawn} />
       <BuildersQuestion github={show.github} />
+      <SmallChangeNotice show={show} onChanged={onChanged} />
       {approved ? (
         <Banner tone="success" title="Approved by you and marked ready. This slice is read-only.">
           {show.edit_refusal ?? "To change it, reopen it first."}
