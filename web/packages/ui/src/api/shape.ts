@@ -11,7 +11,8 @@
 /** The five places an idea can be. Shown to the person as `stage_words`. */
 export type IdeaStage = "new" | "exploring" | "brief" | "decided" | "shaped";
 export type VerdictDecision = "go" | "not-now" | "no";
-export type ShapeRoute = "one-slice" | "epic" | "several-epics";
+/** M18 adds "small-change": one outcome in one capability, at most one shipped rule, nothing in a high-risk area. */
+export type ShapeRoute = "small-change" | "one-slice" | "epic" | "several-epics";
 export type OutcomeResult = "met" | "not-met" | "too-early";
 export type AssumptionResult = "confirmed" | "wrong" | "unknown";
 export type LookbackResult = OutcomeResult | AssumptionResult;
@@ -521,6 +522,8 @@ export interface ShapeApplied extends ShapeMapStatus {
   made: IdeaMade;
   kept: IdeaMade;
   missing: string[];
+  /** M18: present when the apply started a small change, with the kind the product manager gave. */
+  small_change?: { change: "fix" | "adjustment"; shipped_rule: string | null };
 }
 
 /** The proposed map the conversation writes; `idea.map` checks it. */

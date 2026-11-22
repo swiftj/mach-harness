@@ -413,7 +413,7 @@ class ChangeTest(RouteBase):
         made = self.ok(self.a, "idea", "change", "SLICE-001/INV-02")
         self.write_brief(made["idea_id"], ONE.replace("- Shipped rules: SLICE-001/FR-01, SLICE-001/INV-02", "- Shipped rules: SLICE-001/INV-02"))
         self.ok(self.a, "verdict", "record", made["idea_id"], "--decision", "go", "--reason", "One address, one membership, stays; the message changes.")
-        self.assertEqual(self.ok(self.a, "idea", "size", made["idea_id"])["route"], "one-slice")
+        self.assertEqual(self.ok(self.a, "idea", "size", made["idea_id"])["route"], "small-change")  # M18: one outcome, one capability, one rule
         self.ok(self.a, "idea", "publish", made["idea_id"])
         body = self.idea_issues()[0]["body"]
         self.assertIn("from=rule:SLICE-001/INV-02", body.splitlines()[0])

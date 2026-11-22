@@ -297,8 +297,8 @@ function CountedSection({ route, detail }: { route: Exclude<RouteState, { kind: 
         )}
         <div className="flex flex-col gap-2">
           <Fold boxed label="What high risk means">
-            High risk means sign-in or permissions, billing, a database schema or migration, or an existing contract. High-risk areas and concerns are counted and shown; they
-            are not part of the rule that names the route.
+            High risk means sign-in or permissions, billing, a database schema or migration, or an existing contract. High-risk areas and concerns are counted and shown.
+            Concerns are not part of the rule that names the route; a high-risk area only rules out a small change.
           </Fold>
           {detail ? <CountedDetail detail={detail} /> : null}
         </div>
@@ -399,8 +399,8 @@ function CountedDetail({ detail: sized }: { detail: CountedDetailData }) {
 }
 
 /**
- * The three routes, in the order of their size: the one the rule chose in full, marked with the engine's sentence of
- * why; the other two one line each, with when the rule would choose them. There is no way to choose one here: the
+ * The four routes, in the order of their size: the one the rule chose in full, marked with the engine's sentence of
+ * why; the other three one line each, with when the rule would choose them. There is no way to choose one here: the
  * brief is what changes.
  */
 function RoutesSection({ ideaId, route }: { ideaId: string; route: Exclude<RouteState, { kind: "not-sized" }> }) {
@@ -412,7 +412,7 @@ function RoutesSection({ ideaId, route }: { ideaId: string; route: Exclude<Route
           The route
         </Heading>
         <Text size="body-sm" tone="muted">
-          Three routes, one rule. MACH applies the rule to what it counted; the route is never chosen by hand.
+          Four routes, one rule. MACH applies the rule to what it counted; the route is never chosen by hand.
         </Text>
       </div>
       <ol aria-label="Routes" className="flex flex-col gap-2">

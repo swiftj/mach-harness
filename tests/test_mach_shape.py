@@ -264,7 +264,7 @@ class BriefAndVerdictTest(ShapeBase):
         self.assertEqual((after["route"], after["made"], after["lookback"]), (record["route"], record["made"], record["lookback"]))  # untouched
         record["route"]["route"] = "a-small-change"  # the light path is deferred
         self.path("product/ideas/IDEA-001.json").write_text(json.dumps(record))
-        self.assertIn("route.route is one-slice, epic or several-epics", self.refused(self.a, "idea", "show", "IDEA-001"))
+        self.assertIn("route.route is small-change, one-slice, epic or several-epics", self.refused(self.a, "idea", "show", "IDEA-001"))
 
     def test_the_case_is_checked(self):
         self.add()

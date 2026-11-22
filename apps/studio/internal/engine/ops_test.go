@@ -298,6 +298,8 @@ func TestEveryOperationsArgumentVector(t *testing.T) {
 		{"idea.settle", `{"idea_id":"IDEA-019","outcome":"O-3","as":"later"}`, []string{"idea", "settle", "IDEA-019", "--outcome=O-3", "--as=later"}},
 		{"idea.map-status", `{"idea_id":"IDEA-019"}`, []string{"idea", "map-status", "IDEA-019"}},
 		{"idea.apply", `{"idea_id":"IDEA-019"}`, []string{"idea", "apply", "IDEA-019"}},
+		{"idea.apply", `{"idea_id":"IDEA-019","change":"fix"}`, []string{"idea", "apply", "IDEA-019", "--change=fix"}},
+		{"idea.apply", `{"idea_id":"IDEA-019","change":"adjustment"}`, []string{"idea", "apply", "IDEA-019", "--change=adjustment"}},
 		{"idea.change", `{"rule":"SLICE-007/INV-01"}`, []string{"idea", "change", "SLICE-007/INV-01"}},
 		{"idea.change", `{"rule":"SLICE-004/R3","title":"-- a third renewal"}`, []string{"idea", "change", "SLICE-004/R3", "--title=-- a third renewal"}},
 		{"idea.chain", `{"idea_id":"IDEA-019"}`, []string{"idea", "chain", "IDEA-019"}},

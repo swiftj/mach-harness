@@ -53,6 +53,8 @@ def generate(Scenario, out: Path) -> None:
     shape_publish_to_the_folder(Scenario)
     # M16 clean-up: the states the Shape screens built by hand, and idea.show and idea.map-status in pairs.
     shape_awkward(Scenario)
+    # M18: Shape's fourth route, a small change.
+    shape_small_change(Scenario)
 
 
 def run(Scenario, body):
@@ -693,6 +695,24 @@ def shape_routes(Scenario):
         s.capture("idea.map-status.stale-route", "idea", "map-status", "IDEA-001")
         s.capture("idea.map.refused-stale", "idea", "map", "IDEA-001", "--from", s.map_file({"epics": [], "slices": []}))
         s.capture("status.ideas-routes", "status")
+    run(shape_scenario(Scenario), body)
+
+
+def shape_small_change(Scenario):
+    """M18: the small-change route: one outcome in one capability, one shipped rule, nothing in a high-risk area. Its map
+    holds one slice; applying it is refused until the product manager says which kind it is, then makes a small draft."""
+    from test_mach_shape_route import brief_with
+
+    def body(s):
+        s.project_and_epic()
+        s.go(brief_with(outcomes=1, capabilities="Lending (EPIC-001)", rules="SLICE-001/INV-02"), "IDEA-001", "Say who to ask when a renewal is refused")
+        s.capture("idea.size.small-change", "idea", "size", "IDEA-001")
+        s.record_map({"epics": [], "slices": [{"key": "S1", "title": "Say who to ask", "scope": "The refusal message on the loans page",
+                                               "epic": "EPIC-001", "depends_on": [], "outcomes": ["O-1"], "cites": ["9-10"]}]})
+        s.capture("idea.show.small-change", "idea", "show", "IDEA-001")
+        s.capture("idea.map-status.small-change", "idea", "map-status", "IDEA-001")
+        s.capture("idea.apply.refused-small-kind", "idea", "apply", "IDEA-001")
+        s.capture("idea.apply.small-change", "idea", "apply", "IDEA-001", "--change", "adjustment")
     run(shape_scenario(Scenario), body)
 
 

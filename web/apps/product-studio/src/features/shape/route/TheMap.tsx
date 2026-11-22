@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { FileText, Layers, Map as MapIcon } from "lucide-react";
-import { ArtifactId, Banner, Button, ConfirmDialog, EmptyState, Heading, SliceStatusPill, Text, plural, toast } from "@mach/ui";
+import { ArtifactId, Banner, Button, ConfirmDialog, EmptyState, Field, Heading, Select, SliceStatusPill, Text, plural, toast } from "@mach/ui";
 import type { BriefShow, IdeaMade, ShapeApplied, SliceStatus, ShapeCoverageRow, ShapeMapSlice, ShapeMapStatus } from "@mach/ui/api";
 import { useEngineAct } from "../../../api/act";
 import { useStatus } from "../../../api/store";
@@ -9,6 +9,8 @@ import { Fold } from "../../../shared/layout/Fold";
 import { Part } from "../../../shared/layout/Parts";
 import {
   JOURNEY,
+  SMALL_CHANGE_KINDS,
+  applyArgs,
   applyBlocked,
   applyOutcome,
   applyPlan,
@@ -18,10 +20,12 @@ import {
   coverageProgress,
   coverageWords,
   mapSummary,
+  needsSmallKind,
   outcomeText,
   partPlace,
   quote,
   settleSummary,
+  type SmallChangeKind,
 } from "./model";
 import { BriefQuote, CoveragePill } from "./parts";
 import { SettleOutcomeDialog } from "./SettleOutcomeDialog";
@@ -290,20 +294,29 @@ function MapSliceItem({
 
 /**
  * Make the drafts (`idea.apply`): an explicit act, confirmed in a dialog naming exactly what it makes, in order.
- * Repeating it makes nothing twice, and the page says what already exists.
+ * Repeating it makes nothing twice, and the page says what already exists. For a small change (M18) the dialog also
+ * asks which kind it is, a fix or an adjustment: the product manager's word, which the engine needs to make it.
  */
 function ApplyBody({ ideaId, status, map, made, onDone }: { ideaId: string; status: ShapeMapStatus; map: MapData; made: IdeaMade | null; onDone: () => void }) {
   const shared = useStatus();
   const act = useEngineAct();
   const [open, setOpen] = useState(false);
   const [result, setResult] = useState<ShapeApplied | null>(null);
+  const [kind, setKind] = useState<SmallChangeKind | "">("");
+  const [missing, setMissing] = useState<string | null>(null);
+  const small = needsSmallKind(status);
   const plan = useMemo(() => applyPlan(map, (id) => shared.data?.epics.find((e) => e.epic_id === id)?.title ?? null), [map, shared.data]);
   const again = map.applied;
   const blocked = applyBlocked(status);
   const what = applyWhat(plan);
 
   const confirm = async () => {
-    const applied = await act.run("idea.apply", { idea_id: ideaId });
+    const sent = applyArgs(ideaId, status, kind);
+    if ("missing" in sent) {
+      setMissing(sent.missing);
+      return false;
+    }
+    const applied = await act.run("idea.apply", sent.args);
     if (!applied) return false;
     setResult(applied);
     toast({ tone: "success", title: applied.made.slices.length || applied.made.epics.length ? `Made the drafts from ${ideaId}` : "Nothing new to make", description: applied.note });
@@ -332,6 +345,7 @@ function ApplyBody({ ideaId, status, map, made, onDone }: { ideaId: string; stat
           aria-describedby={blocked.length ? "apply-blocked" : undefined}
           onClick={() => {
             act.reset();
+            setMissing(null);
             setOpen(true);
           }}
         >
@@ -353,6 +367,19 @@ function ApplyBody({ ideaId, status, map, made, onDone }: { ideaId: string; stat
         error={act.shown ? { ...act.shown, title: act.error?.kind === "refused" ? "Nothing was made" : act.shown.title } : null}
       >
         <div className="flex flex-col gap-3 text-body-sm">
+          {small ? (
+            <Field label="This small change is" error={missing && kind === "" ? missing : null}>
+              <Select
+                value={kind}
+                onValueChange={(value) => {
+                  setKind(value as SmallChangeKind);
+                  setMissing(null);
+                }}
+                placeholder="Choose which kind"
+                options={SMALL_CHANGE_KINDS.map((k) => ({ value: k.kind, label: k.name, description: k.words }))}
+              />
+            </Field>
+          ) : null}
           {plan.epics.length ? (
             <div className="flex flex-col gap-1">
               <p className="font-semibold text-ink">{again ? "Epics on the map" : plural(plan.epics.length, "new epic")}</p>

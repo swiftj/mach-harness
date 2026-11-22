@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "This is a small change. Say which kind it is: a fix (a shipped rule is not holding) or an adjustment (wording, presentation, a default or a limit). Nothing was made.",
+  "hint": null
+}

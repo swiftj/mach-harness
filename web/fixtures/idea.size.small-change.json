@@ -1,0 +1,45 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-001",
+    "route": "small-change",
+    "route_words": "a small change",
+    "why": "The brief has one outcome in one capability, 1 shipped rule, at most 1, and nothing in a high-risk area, so the route is a small change.",
+    "counted": {
+      "outcomes": 1,
+      "capabilities": 1,
+      "shipped_rules": 1,
+      "shipped_rules_looked_up": 0,
+      "high_risk_areas": 0,
+      "high_risk_not_determined": [],
+      "principle_concerns": 0,
+      "policy_concerns": 0
+    },
+    "touches": {
+      "outcomes": [
+        "O-1"
+      ],
+      "capabilities": [
+        "Lending"
+      ],
+      "shipped_rules": [
+        "SLICE-001/INV-02"
+      ]
+    },
+    "high_risk": {
+      "basis": "Applied to the files each shipped rule's slice changed when it was merged, as this computer has them. The rule is the security scan's (sign-in or permissions, billing, a database schema or migration, an existing contract).",
+      "areas": [],
+      "not_determined": [],
+      "count": 0
+    },
+    "concerns": {
+      "principles": [],
+      "policies": []
+    },
+    "rule": "One outcome in one capability, at most 1 shipped rule and nothing in a high-risk area is a small change; otherwise one outcome and at most three shipped rules is one slice; otherwise outcomes inside one capability is an epic, and outcomes in different capabilities is several epics. Concerns are counted, never part of the rule; high-risk areas are part of it only for a small change.",
+    "note": "MACH counted and named the route; nothing was created. A map of slices is proposed next.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}
