@@ -606,7 +606,9 @@ def source_view(ideas: Ideas, source: Dict[str, Any]) -> Dict[str, Any]:
         if not record or (record.get("decision") or {}).get("state") != "accepted":
             view.update(text_shown=False, text_note="Its text is not kept on this computer, or it no longer counts as a request. It can be read on GitHub.")
             return view
-        view.update(rules.fence(number, record.get("title") or "", record.get("body") or ""), text_shown=True)
+        # Bounded and redacted again as it is shown, as a fault's text is: the cache is a local file, and what it holds is not trusted.
+        text = rules.request_text(record.get("title"), record.get("body"))
+        view.update(rules.fence(number, text["title"], text["body"]), text_shown=True)
         parts = rules.parse_idea_body(record.get("body"))
         if kind == "idea" and parts:
             view["parts"] = [{"part": key, "heading": heading, **rules.idea_fence(number, key, parts[key])} for key, heading in rules.IDEA_SECTIONS]

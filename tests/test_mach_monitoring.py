@@ -103,6 +103,13 @@ class Base(SupervisorBase):
     def gh_calls(self):
         return [json.loads(line) for line in self.gh_log.read_text().splitlines()] if self.gh_log.exists() else []
 
+    def monitoring_gh_calls(self):
+        """The GitHub calls other than a pass's intake of ready slices (intake's reconcile reads the team space's
+        name and the open mach:ready issues on every pass, monitoring or not); none of those reads a request."""
+        intake_reads = (["repo", "view", "acme/team-space", "--json", "nameWithOwner"],
+                        ["issue", "list", "--repo", "acme/app", "--label", "mach:ready", "--state", "open", "--limit", "200", "--json", "number,labels,updatedAt"])
+        return [call for call in self.gh_calls() if call not in intake_reads]
+
     def run_requests(self, *argv):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
@@ -294,14 +301,14 @@ class SupervisorTest(Base):
         report = self.tick()
         self.assertEqual(report["state"], "supervised")
         self.assertNotIn("monitoring", report)
-        self.assertEqual((self.gh_calls(), self.calls(), self.entries()), ([], [], {}))
+        self.assertEqual((self.monitoring_gh_calls(), self.calls(), self.entries()), ([], [], {}))
 
     def test_tracked_false_holds_a_granted_machine(self):
         self.github({"42": issue("Crash", "2026-11-10T09:00:00Z")})
         self.enable("--monitoring-requests")
         self.config(tickets={"provider": "github", "github": {"monitor_accounts": [MONITOR]}}, factory={"monitoring_requests": False})
         self.tick()
-        self.assertEqual((self.gh_calls(), self.calls()), ([], []))
+        self.assertEqual((self.monitoring_gh_calls(), self.calls()), ([], []))
 
     def first_execution(self, title="Crash in checkout"):
         self.github({"42": issue(title, "2026-11-10T09:00:00Z")})

@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 for folder in ("ticket", "intent", "product-studio"):
     sys.path.insert(0, str(ROOT / "skills" / folder / "scripts"))
 sys.path.insert(0, str(ROOT / "skills" / "run" / "scripts"))
+import collab  # noqa: E402
 import intake  # noqa: E402
 import issue_rules  # noqa: E402
 import shape  # noqa: E402
@@ -249,7 +250,7 @@ class MapTest(RouteBase):
         self.assertIn("already been applied", self.refused(self.a, "idea", "settle", "IDEA-001", "--outcome", "O-2", "--as", "later"))
         self.assertIn("already shaped", self.refused(self.a, "verdict", "record", "IDEA-001", "--decision", "no", "--reason", "No."))
         self.assertIn("already shaped", self.refused(self.a, "idea", "size", "IDEA-001"))
-        self.assertEqual(self.gh()["calls"][-1][:2] if self.gh()["calls"] else None, ["api", "user"])  # only the login was read
+        self.assertEqual(self.gh()["calls"][-1] if self.gh()["calls"] else None, ["api", *collab.API_HEADERS, "user", "--jq", "{login}"])  # only the login was read
 
     def test_the_route_decides_the_shape_of_the_map(self):
         self.project_and_epic()

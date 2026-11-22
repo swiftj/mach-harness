@@ -861,8 +861,19 @@ class FolderTest(Base):
         folder.mkdir(parents=True)
         for name, text in self.folder("SLICE-001", "Invite").items():
             (folder / name).write_text(text)
+        # An execution the ledger does not record may work on nothing at all, import included.
         with mock.patch.dict("os.environ", {"MACH_EXECUTION_ID": "x000000000001"}):
-            self.assertIn("a supervised execution", self.refused("import", str(folder)) + " ")
+            self.assertIn("which the intake ledger does not record, so it may work on no ticket", self.refused("import", str(folder)))
+        # A supervised execution the ledger does record is still refused: importing is an engineer's act.
+        ledger_path = self.eng / ".factory/intake/ledger.json"
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else {}
+        ledger.setdefault("supervisor", {}).setdefault("executions", {})["x000000000001"] = {"ticket_id": "LOCAL-001"}
+        ledger_path.write_text(json.dumps(ledger))
+        with mock.patch.dict("os.environ", {"MACH_EXECUTION_ID": "x000000000001"}):
+            self.assertIn("Importing a ready folder is an engineer's act, in conversation; a supervised execution does not import.",
+                          self.refused("import", str(folder)))
+        self.assertNotIn("SLICE-001", self.ledger().get("slices", {}))
 
     def test_product_studios_folder_is_imported(self):
         """End to end: Product Studio's `slice ready` without gh writes the folder the Factory imports."""
