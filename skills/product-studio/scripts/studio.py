@@ -1346,6 +1346,13 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
         if problems:
             # The app titles the refusal itself, so its wording is the reasons alone.
             raise StudioError(say(f"{slice_id} cannot be marked ready yet:\n  " + "\n  ".join(problems), "\n".join(problems)))
+        if (result.get("small_change") or {}).get("widened_now"):
+            # M18: this check has just taken a small change off the light path. It was interviewed the short way, so it is not
+            # marked ready in the same act: the interview carries on in full, and the product manager marks it ready again then.
+            return emit({"ready": False, "widened": True, "slice": studio.load("slice", slice_id), "small_change": result["small_change"],
+                         "risk": result.get("risk"), "counts": result.get("counts"), "warnings": result["warnings"], "factory_authorized": False,
+                         "note": f"{data['widened']['reason']} It was not marked ready: it is a full slice now, and the interview carries on in full, "
+                                 "with every answer kept. Mark it ready again once the interview is done."})
     elif data.get("status") == APPROVED:
         spec = studio.spec_of(slice_id)
         if spec is None or sha(spec.read_bytes()) != data.get("spec_sha256"):
@@ -1367,6 +1374,7 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
     rules = ticket_rules()
     jira = effective_jira(data, epic)  # M13: the slice's Jira key, else its epic's
     mock_list, mock_files = mocks.for_ready(sys.modules[__name__], studio, slice_id, data)  # M14 C: each picture checked again; ([], {}) without mocks
+    small = small_change.handoff_record(data)  # M18: the kind travels with the slice; None for a slice that is not small
     hand = studio.handoff()
     with hand.exclusive():
         ledger = hand.load()
@@ -1380,12 +1388,12 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
             if waiting:
                 raise StudioError(f"{slice_id} depends on {', '.join(waiting)}, which {'is' if len(waiting) == 1 else 'are'} not ready yet. Mark {waiting[0]} ready first.",
                                   hint("mark_ready", waiting[0]))
-            length = len(rules.slice_issue_body(slice_id, 999999, 999999999, [999999999] * len(dependencies), why, spec, jira=jira, mocks=mock_list))
+            length = len(rules.slice_issue_body(slice_id, 999999, 999999999, [999999999] * len(dependencies), why, spec, jira=jira, mocks=mock_list, small=small))
             if length > rules.ISSUE_BODY_LIMIT:
                 raise StudioError(handoff.too_large(slice_id, length, rules.ISSUE_BODY_LIMIT))
             if data.get("status") != APPROVED:
                 approve_locally(studio, data, slice_id)
-            saved = hand.write_folder(ledger, slice_id, data.get("title") or slice_id, epic, dependencies, why, spec, jira, mock_list, mock_files)
+            saved = hand.write_folder(ledger, slice_id, data.get("title") or slice_id, epic, dependencies, why, spec, jira, mock_list, mock_files, small)
             folder = Path(saved["folder"])
             return emit({"ready": True, "saved_to": "folder", "slice": studio.load("slice", slice_id), "folder": str(folder),
                          "files": [str(folder / name) for name in ("spec.md", "why.md", "slice.json", *sorted("mocks/" + name for name in mock_files))],
@@ -1398,7 +1406,7 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
                                          "Or hand the folder to the engineer, who brings it in with MACH.")],
                          "factory_authorized": False,
                          "note": "Approved and written to the folder. Nothing was sent to GitHub and no work has started."})
-        plan = hand.prepare(ledger, channel, slice_id, data.get("title") or slice_id, epic, project, dependencies, why, spec, jira, mock_list)
+        plan = hand.prepare(ledger, channel, slice_id, data.get("title") or slice_id, epic, project, dependencies, why, spec, jira, mock_list, small)
         if data.get("status") != APPROVED:
             approve_locally(studio, data, slice_id)
         saved = hand.run(plan, channel, slice_id, project, epic, why, spec)
@@ -1423,11 +1431,17 @@ def cmd_slice_reopen(studio: Studio, args: argparse.Namespace) -> int:
     data = studio.load("slice", args.slice_id)
     if data.get("status") != APPROVED:
         raise StudioError(f"{args.slice_id} is {state(data.get('status'))}; only an approved slice can be reopened.")
-    taken = studio.handoff().withdraw(args.slice_id)  # off GitHub first; nothing local changes if that fails
+    light = small_change.on_light_path(data)
+    taken = studio.handoff().withdraw(args.slice_id, read_question=light)  # off GitHub first; nothing local changes if that fails
+    # M18: a small change the Factory stopped because a rule says it is not small comes back widened, with the Factory's sentence.
+    widened = small_change.widened_by_question(sys.modules[__name__], studio, data, taken.pop("question_text", None)) if light else None
     data.update({"status": "interviewing", "spec_sha256": None})
     studio.commit_or_restore([("slice", data)], f"Reopening {args.slice_id}")
     studio.note_withdrawn({args.slice_id: "You reopened it to change it."})
     note = "You can change it now. Mark it ready again when it is done."
+    if widened:
+        note = (f"The builders said: {widened['reason']} So it left the light path: it is a full slice now, and the interview carries on in full, "
+                "with every answer kept. " + note)
     if taken.get("where") == "github":
         note = f"It is no longer marked ready on GitHub (#{taken['issue']}). " + note
         if taken.get("question"):
@@ -1438,7 +1452,8 @@ def cmd_slice_reopen(studio: Studio, args: argparse.Namespace) -> int:
             note += " The builders have already started on it; when you mark it ready again they will be told it changed."
     elif taken.get("where") == "folder":
         note = "Its ready folder was removed. " + note
-    return emit({"reopened": True, "slice": studio.load("slice", args.slice_id), "github": taken, "note": note, "factory_authorized": False})
+    return emit({"reopened": True, "slice": studio.load("slice", args.slice_id), "github": taken, "note": note, "factory_authorized": False,
+                 **({"small_change": dict(small_change.view(sys.modules[__name__], studio, data), widened_now=True)} if widened else {})})
 
 
 def cmd_acceptance_record(studio: Studio, args: argparse.Namespace) -> int:

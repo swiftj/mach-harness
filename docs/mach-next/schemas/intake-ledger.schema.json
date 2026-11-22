@@ -110,6 +110,11 @@
       "pattern": "^[0-9a-f]{64}$",
       "description": "M14 C: present only with mocks: the digest of the list, as the marker and the approval carry it. It is part of the revision's digest."
      },
+     "small": {
+      "type": "object",
+      "required": ["kind", "change", "shipped_rule", "widened"],
+      "description": "M18: present only for a small change: {kind: small, change: fix | adjustment, shipped_rule: SLICE-NNN/FR-NN for a fix or null, widened: null on the light path or {rule: a small.py rule code or null on the product manager's word, at}}, identifiers only, as the marker, the approval or the ready folder's slice.json carry it (issue_rules.is_small_record). Outside the spec's and why's SHA-256; part of the revision's digest."
+     },
      "digest": {
       "type": "string",
       "description": "SHA-256 over the why and the spec (and, M14 C, the design mocks' digest when there are some): the identity of this slice revision."

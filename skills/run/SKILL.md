@@ -90,7 +90,7 @@ If the input is exactly `where`, an automated workflow is asking where this skil
 | Action | What you do |
 |--------|-------------|
 | `audit` | Run the audit skill yourself, as the prompt says. It only measures. If the result is Bronze, the next `RUN next` will stop the line. |
-| `groom` | If `interactive` is true, run the intent skill in this conversation: the user is the product owner and answers its questions. Otherwise start a sub-agent on `model` with the prompt. |
+| `groom` | If `interactive` is true, run the intent skill in this conversation: the user is the product owner and answers its questions. When the person has said in this conversation that this ticket is a small change, add ` --small` to the intent skill's input (never in headless mode, and never on your own judgment); a ticket labelled `small-change` needs nothing added. Otherwise start a sub-agent on `model` with the prompt. |
 | `plan` | Start a sub-agent on `model` with the prompt. |
 | `build`, `revise` | Start the sub-agent named by `agent_type` with the prompt. |
 | `verify` | Start the sub-agent named by `agent_type` with the prompt. |
