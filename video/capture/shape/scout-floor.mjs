@@ -1,0 +1,16 @@
+import { serve } from "../floor/lib.mjs";
+import { chromium } from "playwright";
+const s = await serve();
+const b = await chromium.launch();
+const ctx = await b.newContext({ viewport: { width: 1440, height: 810 }, colorScheme: "light" });
+const page = await ctx.newPage();
+await page.goto(`${s.origin}/?simulation&theme=light#line`);
+await page.waitForFunction(() => window.__machSim);
+await page.evaluate((t) => window.__machSim.seek(t * 1000), 3340);
+await page.waitForTimeout(800);
+await page.locator(`[data-line-row="132"] [data-row-button]`).dblclick();
+await page.waitForTimeout(1200);
+const all = await page.evaluate(() => document.body.innerText);
+console.log(/Jira|Change record|jira|change record/i.test(all), (all.match(/.{0,60}(Jira|Change record).{0,80}/gi)||[]).join("\n--\n"));
+await page.screenshot({ path: process.argv[2] });
+await b.close(); await s.stop(); process.exit(0);
