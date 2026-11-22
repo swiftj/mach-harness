@@ -25,7 +25,7 @@ func TestAllowlistIsExactlyTheContract(t *testing.T) {
 		"project.init", "project.set",
 		"reconcile", "reconcile.needs", "reconcile.principles", "refresh", "request.link", "request.list", "request.met", "request.pick", "request.show",
 		"slice.check", "slice.link", "slice.mock.add", "slice.mock.list", "slice.mock.remove", "slice.move", "slice.new", "slice.pause", "slice.ready",
-		"slice.renumber", "slice.reopen", "slice.resume", "slice.set", "slice.show", "slice.take", "status", "validate", "verdict.record", "where",
+		"slice.renumber", "slice.reopen", "slice.resume", "slice.set", "slice.show", "slice.take", "slice.widen", "status", "validate", "verdict.record", "where",
 	}
 	if got := engine.Names(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("allowlist\n got %v\nwant %v", got, want)
@@ -313,6 +313,7 @@ func TestEveryOperationsArgumentVector(t *testing.T) {
 			[]string{"lookback", "record", "IDEA-019", "--assumption=A-2", "--result=unknown", "--note=Not counted."}},
 	}
 	cases = append(cases, needsArgvCases...)
+	cases = append(cases, smallArgvCases...)
 	covered := map[string]bool{}
 	for _, c := range cases {
 		got, err := argv(t, c.op, c.body)

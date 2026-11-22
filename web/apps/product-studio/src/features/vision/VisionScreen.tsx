@@ -10,6 +10,7 @@ import { SectionNav } from "../../shared/layout/SectionNav";
 import { ContextRow, OnePane, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
 import { EpicSheet, knownCriteria } from "./EpicSheet";
 import { NewSliceDialog } from "../roadmap/NewSliceDialog";
+import type { StartAs } from "../small-change/model";
 
 const LEAD =
   "What the product is for and what people will get from it. Changes are saved to your draft; the project's issue on GitHub follows the next time you mark a slice ready.";
@@ -323,7 +324,7 @@ function ProjectEditor({ status }: { status: Status }) {
 
 function Epics({ status }: { status: Status }) {
   const [sheet, setSheet] = useState<{ mode: "add" } | { mode: "edit"; epic: StatusEpicRow } | null>(null);
-  const [newSlice, setNewSlice] = useState<string | null>(null);
+  const [newSlice, setNewSlice] = useState<{ epicId: string; start?: StartAs } | null>(null);
   const act = useEngineAct();
   const slicesOf = useMemo(() => {
     const map = new Map<string, Status["slices"]>();
@@ -389,8 +390,11 @@ function Epics({ status }: { status: Status }) {
                   ) : null}
                 </div>
                 <div className="flex flex-wrap items-start justify-end gap-2">
-                  <Button size="sm" onClick={() => setNewSlice(epic.epic_id)}>
+                  <Button size="sm" onClick={() => setNewSlice({ epicId: epic.epic_id })}>
                     Start a slice
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setNewSlice({ epicId: epic.epic_id, start: "small" })}>
+                    Start a small change
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setSheet({ mode: "edit", epic })}>
                     Edit
@@ -422,7 +426,7 @@ function Epics({ status }: { status: Status }) {
       )}
 
       <EpicSheet state={sheet} onClose={() => setSheet(null)} />
-      <NewSliceDialog open={newSlice !== null} onOpenChange={(open) => !open && setNewSlice(null)} epics={status.epics} epicId={newSlice} />
+      <NewSliceDialog open={newSlice !== null} onOpenChange={(open) => !open && setNewSlice(null)} epics={status.epics} epicId={newSlice?.epicId} start={newSlice?.start} />
     </section>
   );
 }

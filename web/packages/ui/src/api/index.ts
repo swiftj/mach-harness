@@ -7,3 +7,4 @@ export * from "./ids";
 export * from "./interview";
 export * from "./client";
 export * from "./upload";
+export * from "./small";

@@ -1,0 +1,88 @@
+{
+  "exit_code": 0,
+  "data": {
+    "slice": {
+      "dependencies": [],
+      "epic_id": "EPIC-001",
+      "kind": "small",
+      "open_questions": [],
+      "project_id": "team-space",
+      "revision": 1,
+      "schema_version": 1,
+      "slice_id": "SLICE-002",
+      "small": {
+        "change": "adjustment",
+        "shipped_rule": null
+      },
+      "spec_path": null,
+      "spec_sha256": null,
+      "status": "interviewing",
+      "title": "Clearer expired invitation message"
+    },
+    "editable": true,
+    "edit_refusal": null,
+    "paths": {
+      "work_order": "product/slices/SLICE-002.json",
+      "specs_dir": "specs/slices",
+      "spec": null,
+      "spec_name_pattern": "SLICE-002-<lowercase-kebab-name>.md",
+      "intent": "product/intents/SLICE-002.md"
+    },
+    "spec": null,
+    "why": {
+      "exists": false,
+      "markdown": null,
+      "title": null,
+      "header": {},
+      "sections": []
+    },
+    "check": {
+      "slice_id": "SLICE-002",
+      "spec": null,
+      "errors": [
+        "No spec yet."
+      ],
+      "warnings": [],
+      "diagnostics": [],
+      "open_questions": [],
+      "intent_problems": [
+        "The slice's why is not written yet."
+      ],
+      "risk": null,
+      "small_change": {
+        "kind": "small",
+        "change": "adjustment",
+        "shipped_rule": null,
+        "light_path": true,
+        "widened": null
+      },
+      "prd_problems": [],
+      "ready": false
+    },
+    "resume_note": null,
+    "github": {
+      "saved": null,
+      "unfinished": false,
+      "issue": null,
+      "url": null,
+      "state_label": null,
+      "revision": null,
+      "changed_on_github": false,
+      "newer_elsewhere": false,
+      "number_taken": false,
+      "question": null,
+      "question_note": null,
+      "shipped_issues": [],
+      "times": {
+        "marked_ready": null,
+        "building": null,
+        "question": null,
+        "shipped": null
+      },
+      "progress": "interviewing"
+    },
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

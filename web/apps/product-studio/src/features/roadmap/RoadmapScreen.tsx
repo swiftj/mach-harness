@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
-import { CircleAlert, Info, List, Network, Plus } from "lucide-react";
+import { CircleAlert, Feather, Info, List, Network, Plus } from "lucide-react";
+import type { StartAs } from "../small-change/model";
 import {
   Button,
   EmptyState,
@@ -74,7 +75,7 @@ function Roadmap({ status }: { status: Status }) {
   const [epicFilter, setEpicFilter] = useState("all");
   const [states, setStates] = useState<Set<GraphState>>(new Set());
   const [selected, setSelected] = useState<MachNode | null>(null);
-  const [newSlice, setNewSlice] = useState<{ epicId: string | null } | null>(null);
+  const [newSlice, setNewSlice] = useState<{ epicId: string | null; start?: StartAs } | null>(null);
 
   const full = useMemo(() => productGraphFromStatus({ status }), [status]);
   const present = useMemo(() => new Set(full.nodes.filter((n) => n.data.kind === "slice").map((n) => n.data.state)), [full]);
@@ -97,10 +98,16 @@ function Roadmap({ status }: { status: Status }) {
           title="Roadmap"
           about={`Everything in ${status.project!.name}, from the project to its slices of intent. Select an item to see where it stands and what you can do.`}
           actions={
-            <Button variant="primary" onClick={() => setNewSlice({ epicId: epicFilter === "all" ? null : epicFilter })} disabled={!status.epics.length}>
-              <Plus aria-hidden="true" />
-              Start a slice
-            </Button>
+            <>
+              <Button onClick={() => setNewSlice({ epicId: epicFilter === "all" ? null : epicFilter, start: "small" })} disabled={!status.epics.length}>
+                <Feather aria-hidden="true" />
+                Start a small change
+              </Button>
+              <Button variant="primary" onClick={() => setNewSlice({ epicId: epicFilter === "all" ? null : epicFilter })} disabled={!status.epics.length}>
+                <Plus aria-hidden="true" />
+                Start a slice
+              </Button>
+            </>
           }
         />
       }
@@ -219,8 +226,8 @@ function Roadmap({ status }: { status: Status }) {
           Approved means you approved the text and marked it ready. Ready to build, being built and shipped are where the builders have it, as read from GitHub at the last refresh.
         </Text>
 
-        <NodeSheet node={selected} status={status} onClose={() => setSelected(null)} onSelect={setSelected} nodes={full.nodes} onNewSlice={(epicId) => setNewSlice({ epicId })} />
-        <NewSliceDialog open={newSlice !== null} onOpenChange={(open) => !open && setNewSlice(null)} epics={status.epics} epicId={newSlice?.epicId} />
+        <NodeSheet node={selected} status={status} onClose={() => setSelected(null)} onSelect={setSelected} nodes={full.nodes} onNewSlice={(epicId, start) => setNewSlice({ epicId, start })} />
+        <NewSliceDialog open={newSlice !== null} onOpenChange={(open) => !open && setNewSlice(null)} epics={status.epics} epicId={newSlice?.epicId} start={newSlice?.start} />
       </div>
     </WorkScreen>
   );

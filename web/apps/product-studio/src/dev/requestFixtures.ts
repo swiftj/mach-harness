@@ -19,6 +19,7 @@ import { MachApiError } from "@mach/ui/api";
 import type { RequestItem, RequestOpName, RequestsBlock, RequestShown } from "../features/inbox/requests/api";
 import { devParam } from "./devState";
 import { memoryRuns } from "./productMemoryFixtures";
+import { smallRuns } from "./smallFixtures";
 
 const REPOSITORY = "team-space/app";
 const DATA_NOTE =
@@ -197,8 +198,13 @@ export async function requestFixtureOp(name: RequestOpName, args: Record<string,
       target.picked_up_by = [...new Set([...target.picked_up_by, "pat-pm"])];
       target.slices = [...target.slices, sliceId];
       const real = memoryRuns["request.pick.idea"].data;
+      // M18: picked up as a small change, the engine's own work order for one (request.pick.small), with what was asked.
+      const small = args.small as { change?: string; rule?: string } | undefined;
+      const smallFields = small
+        ? { ...smallRuns["request.pick.small"].data?.slice, small: { change: small.change === "fix" ? "fix" : "adjustment", shipped_rule: small.rule ?? null } }
+        : {};
       return {
-        slice: { ...(real?.slice ?? {}), slice_id: sliceId, title: String(args.title ?? "") },
+        slice: { ...(real?.slice ?? {}), ...smallFields, slice_id: sliceId, title: String(args.title ?? "") },
         ...(target.idea_template && real?.request ? { request: renumber({ ...real.request, number: IDEA }) } : {}),
         picked: true,
         github_updates: { note: null },

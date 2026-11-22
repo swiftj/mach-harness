@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "SLICE-005 already left the light path (2026-11-22T02:38:55Z): It should also change the reminder email, which is a second message.",
+  "hint": null
+}

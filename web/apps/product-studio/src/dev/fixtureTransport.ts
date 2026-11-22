@@ -16,6 +16,7 @@
  * memoryTransport.ts for its parameters; ?show=, ?ready=, ?fixture= and ?refresh= take its names too.
  * M16 (Shape): see shapeTransport.ts; ?fixture=status.ideas shows the ideas board.
  * M17 (Technical needs): see needsTransport.ts; ?fixture=status.needs-unpublished shows the needs in status.
+ * M18 (a small change): see smallTransport.ts; ?fixture=status.small-changes lists small changes in every state.
  *
  * Every answer is a real engine run from web/fixtures. The only adjustment: the slice.ready and
  * slice.reopen fixtures are for SLICE-001, so their slice ID is set to the slice the screen asked about.
@@ -25,6 +26,7 @@ import { devParam, devState } from "./devState";
 import { memoryRoute, memoryShow } from "./memoryTransport";
 import { shapeRoute, shapeShow } from "./shapeTransport";
 import { needsRoute } from "./needsTransport";
+import { smallRoute, smallShow } from "./smallTransport";
 
 const files = import.meta.glob<EngineRun<unknown>>("../../../../fixtures/*.json", { import: "default" });
 
@@ -53,6 +55,7 @@ const defaults: Record<string, string> = {
   validate: "validate",
   refresh: "refresh.rich",
   "slice.resume": "slice.resume.ready",
+  "slice.new": "slice.new",
   "slice.renumber": "slice.renumber",
   "slice.move": "slice.move",
   reconcile: "reconcile.theirs",
@@ -85,7 +88,7 @@ async function sliceShow(sliceId: string): Promise<SliceShow | null> {
       return data<SliceShow>("slice.show.errors");
     default:
       // M15: open-concern, concern-accepted, effects, mocks-and-jira (memoryTransport.ts).
-      return ((memoryShow(scenario) ?? shapeShow(scenario)) as SliceShow | null) ?? null;
+      return ((memoryShow(scenario) ?? shapeShow(scenario) ?? smallShow(scenario)) as SliceShow | null) ?? null;
   }
 }
 
@@ -179,6 +182,8 @@ export const fixtureTransport: Transport = async ({ path, method, body }) => {
     });
   }
   const args = body ? (JSON.parse(body) as Record<string, unknown>) : {};
+  const small = smallRoute(path, args);
+  if (small) return small;
   const slice = await sliceRoute(path, method, args);
   if (slice) return slice;
   const memory = memoryRoute(path, args);

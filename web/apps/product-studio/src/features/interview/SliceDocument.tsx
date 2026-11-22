@@ -27,6 +27,7 @@ import { matrixCell } from "../spec/SpecSections";
 import { SectionNav, type SectionNavItem } from "../../shared/layout/SectionNav";
 import { ScrollRegion, WorkPane } from "../../shared/layout/WorkScreen";
 import { docSections } from "./model";
+import { SmallChangeLabel } from "../small-change/SmallChangeLabel";
 
 /** Every identifier in the draft: requirements, rules, decision rules, examples. */
 function idsOf(model: Partial<SpecModel> | null): string[] {
@@ -84,6 +85,7 @@ export function SliceSoFar({ sliceId, show, epicTitle }: { sliceId: string; show
           Check
         </Heading>
         <SliceStatusPill status={data.slice.status} size="sm" />
+        <SmallChangeLabel slice={data.slice} />
         <CheckPill check={data.check} status={data.slice.status} size="sm" />
         <span className="flex items-center gap-1.5 text-caption text-ink-subtle" role="status">
           {show.loading ? (
