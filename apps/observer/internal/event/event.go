@@ -32,10 +32,12 @@ import (
 // sheet's stop code, from MACH's own record, only when known), intake.refused gains waiting ("mocks"),
 // review.round_started gains repeat (a repeat of a judging round after a voided approval),
 // verify.check_recorded's target_kind gains "design mock", slice.materialized and run.recorded gain
-// jira, and merge.completed and run.recorded gain change_record (path and SHA-256).
+// jira, and merge.completed and run.recorded gain change_record (path and SHA-256). Revision 8 (M18) is
+// additive: the groom station's station.exited gains kind ("small"), widened and widened_rule (a rule's
+// code), only for a small change.
 const (
 	Version  = 3
-	Revision = 7
+	Revision = 8
 )
 
 // Gap classes (history.gap data.class, revision 2): what a gap means for the history a reader

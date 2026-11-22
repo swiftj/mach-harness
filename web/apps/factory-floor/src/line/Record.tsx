@@ -129,6 +129,7 @@ export function TicketRecord({ row, now, onClose }: { row: LineRow | null; now: 
               </span>
             </p>
             <p className="mt-1 text-body-sm text-ink-muted" data-record-ids="">
+              {row.smallChange ? <span data-small-change="">{row.smallChange.widened ? "Began as a small change, now a full slice. " : "A small change. "}</span> : null}
               Jira: {row.jira ? <span className="font-mono text-[13px] text-ink">{row.jira}</span> : "not recorded"}. Change record:{" "}
               {row.changeRecord ? <span className="break-all font-mono text-[13px] text-ink">{row.changeRecord}</span> : "not recorded"}.
             </p>

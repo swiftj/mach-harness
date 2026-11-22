@@ -42,7 +42,7 @@ func m15Served(t *testing.T, ev *event.Event) map[string]any {
 	}
 	var served map[string]any
 	_ = json.Unmarshal(b, &served)
-	if served["schema_revision"] != float64(7) {
+	if served["schema_revision"] != float64(event.Revision) {
 		t.Fatalf("schema_revision %v", served["schema_revision"])
 	}
 	return served["data"].(map[string]any)

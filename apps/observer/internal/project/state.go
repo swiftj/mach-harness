@@ -19,7 +19,7 @@ import (
 
 // FormatVersion changes whenever State's shape or a fold rule changes: a persisted projection
 // built under another version is discarded and rebuilt.
-const FormatVersion = 9 // 9: M11, waves gone, a slice and a cell carry their epic and issue; 8: a person's decision at the approval gate (M9: approved or sent back); 7: M7 released claims, slice revision changes and pending revisions, wave revisions from intake, killed executions; 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history; 4: slice capacity waits; 5: dropped waits folded, source tallies; 6: slice titles and holds, a required gate ended by the approval it waited for
+const FormatVersion = 10 // 10: M18, a cell carries what its groom exit recorded of a small change; 9: M11, waves gone, a slice and a cell carry their epic and issue; 8: a person's decision at the approval gate (M9: approved or sent back); 7: M7 released claims, slice revision changes and pending revisions, wave revisions from intake, killed executions; 2: gap classes; 3: wait history, capacity waits, recovery and gap times, limit history; 4: slice capacity waits; 5: dropped waits folded, source tallies; 6: slice titles and holds, a required gate ended by the approval it waited for
 
 // Bounds on lists one hostile source could grow without limit; what is dropped is counted.
 const (
@@ -389,6 +389,13 @@ type Cell struct {
 	MRunBlockers int64  `json:"m_run_blockers,omitempty"`
 	MR2Day       string `json:"m_r2_day,omitempty"`
 	MR2Ex        int64  `json:"m_r2_ex,omitempty"`
+	// Change is what the groom station's last exit recorded of the ticket's size (M18): "small" for a
+	// small change, "full" for a full slice (an exit that names no kind, as every exit did before
+	// M18). A small change that became a full slice is "full", with Widened set and the rule's code in
+	// WidenedRule ("" on a person's word). "" until a groom exit is read.
+	Change      string `json:"change,omitempty"`
+	Widened     bool   `json:"widened,omitempty"`
+	WidenedRule string `json:"widened_rule,omitempty"`
 }
 
 // ArtifactCounts counts artifact.recorded events by nature and integrity.

@@ -45,7 +45,9 @@ export type MetricStatus = "available" | "partial" | "deferred" | "not-recorded"
 /** Dimensions the observer accepts in `group_by` (routes.go `groupDims`), plus the M6.5 periods. */
 export type Dimension =
   | "day" | "week" | "risk" | "app_type" | "station" | "round" | "seat" | "model" | "phase" | "epic" | "stage" | "gate"
-  | "reason_code" | "kind" | "tool" | "rule" | "target_kind" | "stop_reason" | "writer" | "ticket" | "token_kind" | "outcome";
+  | "reason_code" | "kind" | "tool" | "rule" | "target_kind" | "stop_reason" | "writer" | "ticket" | "token_kind" | "outcome"
+  /** M18: a ticket's size as its last groom exit recorded it (small or full), and whether a small change became a full slice (yes or no). */
+  | "change" | "widened";
 
 /** query.go `Excluded`: members of the population left out of the value, and why. */
 export interface Excluded {
@@ -336,4 +338,6 @@ export interface AnalyticsSnapshot {
 }
 
 export const groupedKey = (id: MetricId, dim: Dimension): string => `${id}|${dim}`;
+/** A metric grouped by two dimensions (`C1|station,change`); its groups' keys are "a|b". */
+export const groupedPairKey = (id: MetricId, a: Dimension, b: Dimension): string => `${id}|${a},${b}`;
 export const contributorKey = (id: MetricId, dim?: Dimension, value?: string): string => (dim ? `${id}|${dim}=${value}` : id);

@@ -411,6 +411,57 @@ class AfterThePlanTest(CellBase):
         self.assertEqual((step["action"], step["needs"]), ("stop", "product-answer"))
 
 
+
+class GroomExitTest(CellBase):
+    """Part D: the groom station's exit event carries the kind, read from the cell, and nothing else changes; a ticket that is
+    not small exits exactly as before. Only a rule's code reaches the event, never the person's words for a widening."""
+
+    BEFORE_READY = {"outcome", "stage", "slice_id", "risk", "invariants", "functional_requirements", "matrix_rules", "matrix_cases",
+                    "scenarios", "open_questions"}
+
+    def exits(self, ticket="LOCAL-001"):
+        import lifecycle
+        from test_lifecycle import SCHEMA, schema_errors
+        records = lifecycle.read(self.project / ".factory/worktrees" / ticket)
+        for record in records:
+            self.assertEqual(schema_errors(record, SCHEMA), [], record)
+        return [r["data"] for r in records if r["type"] == "station.exited" and r["station"] == "groom"]
+
+    def test_a_ticket_that_is_not_small_exits_exactly_as_before(self):
+        self.groom()
+        self.assertEqual(self.finalize()[0], 0)
+        (data,) = self.exits()
+        self.assertEqual(set(data), self.BEFORE_READY)
+        self.assertEqual(json.dumps(data, sort_keys=True), json.dumps({
+            "outcome": "spec-ready", "stage": "spec-ready", "slice_id": "SLICE-001", "risk": "Low", "invariants": data["invariants"],
+            "functional_requirements": data["functional_requirements"], "matrix_rules": data["matrix_rules"], "matrix_cases": data["matrix_cases"],
+            "scenarios": data["scenarios"], "open_questions": data["open_questions"]}, sort_keys=True))
+
+    def test_a_small_change_on_the_light_path(self):
+        self.groom("LOCAL-001", None, "Low", "--small")
+        self.assertEqual(self.finalize()[0], 0)
+        (data,) = self.exits()
+        self.assertEqual(set(data) - self.BEFORE_READY, {"kind", "widened"})
+        self.assertEqual((data["kind"], data["widened"]), ("small", False))
+
+    def test_widened_by_a_rule_carries_its_code(self):
+        self.groom("LOCAL-001", None, "High", "--small")
+        self.finalize()  # widens: saved at spec-open
+        self.finalize()  # after the full interview: ready
+        first, second = self.exits()
+        self.assertEqual((first["outcome"], first["kind"], first["widened"], first["widened_rule"]), ("spec-open", "small", True, "risk"))
+        self.assertEqual(set(first), {"outcome", "stage", "slice_id", "kind", "widened", "widened_rule"})
+        self.assertEqual((second["outcome"], second["widened"], second["widened_rule"]), ("spec-ready", True, "risk"))
+
+    def test_widened_on_the_engineers_word_carries_no_words(self):
+        self.groom("LOCAL-001", None, "Low", "--small")
+        self.assertEqual(self.cmd("widen", "LOCAL-001", "--why", "It also changes the reminder email.")[0], 0)
+        self.assertEqual(self.finalize()[0], 0)
+        (data,) = self.exits()
+        self.assertEqual((data["kind"], data["widened"], data["widened_rule"]), ("small", True, None))
+        raw = (self.project / ".factory/worktrees/LOCAL-001/lifecycle.jsonl").read_text()
+        self.assertNotIn("reminder", raw)
+
 class IntakeTest(IntakeBase):
     """Studio to the issue or the folder, to intake, to the cell, with the kind intact; and both ways back."""
 

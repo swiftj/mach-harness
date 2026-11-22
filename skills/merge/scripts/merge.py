@@ -698,7 +698,8 @@ def refs_line(cell: Cell) -> Optional[str]:
 
 def pr_title(cell: Cell) -> str:
     """The pull request's title; a slice's Jira key (M13), checked, comes first, which Jira's GitHub integration reads."""
-    title = inert(f"{cell.ticket_id}: {cell.info.get('title') or cell.info.get('slice_id') or 'change'}", 240)
+    small = " (small change)" if change_record.small_change_words(cell.info) == "a small change" else ""  # M18: beside the ticket
+    title = inert(f"{cell.ticket_id}{small}: {cell.info.get('title') or cell.info.get('slice_id') or 'change'}", 240)
     return f"{cell.jira} {title}" if cell.jira else title
 
 
@@ -710,8 +711,9 @@ def pr_body(cell: Cell) -> str:
     human = cell.decision.get("human_approval") or {}
     evidence = [entry.get("file") for entry in cell.summary.get("evidence_files") or [] if isinstance(entry, dict)]
     passed = sum(1 for c in checks.values() if isinstance(c, dict) and c.get("result") == "pass")
+    small = change_record.small_change_words(cell.info)  # M18: a small change, said beside the ticket
     lines = [
-        f"**Ticket:** {inert(cell.ticket_id)}  ",
+        f"**Ticket:** {inert(cell.ticket_id)}" + (f", {inert(small, 300)}" if small else "") + "  ",
         f"**Slice:** {inert(cell.info.get('slice_id'))} (`{inert(cell.info.get('spec_path'))}`)  ",
         f"**Risk tier:** {inert(cell.info.get('risk'))}" + (f"  \n**Jira:** {jira_text(cell)}" if cell.jira else ""),
         "",

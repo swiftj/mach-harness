@@ -278,6 +278,19 @@ def judge_spec(project: Path, root: Path, cell: Dict[str, Any], model: Dict[str,
                        depends_on=list(product.get("depends_on") or []), shipped_slices=shipped_slice_ids(found), limits=small_limits(project))
 
 
+def kind_facts(cell: Dict[str, Any]) -> Dict[str, Any]:
+    """M18 part D: what the groom station's exit says of a small change, read from the cell alone: the kind, whether it left
+    the light path, and by which rule's code (null on a person's word). The person's own words for a widening never go into an
+    event. Nothing at all for a ticket that is not small, so its exit is exactly as before."""
+    if cell.get("kind") != small.KIND:
+        return {}
+    widened = cell.get("widened")
+    if not isinstance(widened, dict):
+        return {"kind": small.KIND, "widened": False}
+    rule = widened.get("rule")
+    return {"kind": small.KIND, "widened": True, "widened_rule": rule if rule in small.RULES else None}
+
+
 def widen(cell: Dict[str, Any], found: Dict[str, Any], by: str) -> Dict[str, Any]:
     cell["widened"] = dict(small.widening(found, now()), by=by)
     return cell["widened"]
@@ -1012,7 +1025,7 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
         if open_items:
             telemetry(root, "gate.evaluated", "groom", lambda: {"gate": "groom.finalize", "outcome": "refuse", "reason_code": "open-questions",
                                                                 "overridden_by_reason": False, "open_questions": counts["open_questions"]})
-        telemetry(root, "station.exited", "groom", lambda: {"outcome": "spec-open", "stage": "spec-open", "slice_id": cell["slice_id"]})
+        telemetry(root, "station.exited", "groom", lambda: {"outcome": "spec-open", "stage": "spec-open", "slice_id": cell["slice_id"], **kind_facts(cell)})
         report(commit(project, cell, [cell["spec_path"]], f"spec({cell['slice_id']}): save draft with open questions [{cell['ticket_id']}]", args.no_commit))
         print(json.dumps({"status": "WIDENED" if widened_now and not open_items else "SAVED_NOT_READY", "slice_id": cell["slice_id"], **counts,
                           **({"widened": widened_now} if widened_now else {})}, indent=2))
@@ -1036,7 +1049,8 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     cell["stage"] = "spec-ready"
     write_cell(project, cell)
     telemetry(root, "gate.evaluated", "groom", lambda: {"gate": "groom.finalize", "outcome": "pass", "reason_code": None, "overridden_by_reason": False})
-    telemetry(root, "station.exited", "groom", lambda: {"outcome": "spec-ready", "stage": "spec-ready", "slice_id": cell["slice_id"], "risk": cell["risk"], **counts})
+    telemetry(root, "station.exited", "groom", lambda: {"outcome": "spec-ready", "stage": "spec-ready", "slice_id": cell["slice_id"], "risk": cell["risk"], **counts,
+                                                       **kind_facts(cell)})
     report(commit(project, cell, [cell["spec_path"]], f"spec({cell['slice_id']}): {cell['title']} [{cell['ticket_id']}]", args.no_commit))
     if cell.get("isolation") == "worktree":
         # The branch as it stands at spec-ready: where a re-plan returns it to (cell.py replan).
