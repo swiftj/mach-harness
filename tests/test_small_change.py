@@ -424,6 +424,10 @@ class StudioCheckTest(StudioBase):
         work = self.work()
         self.assertEqual((work["status"], work["kind"]), ("approved_for_engineering", "small"))
         self.assertTrue(product.validate_workspace(self.draft)["valid"])
+        # The kind travels with the slice (M18 part D): in the ready folder's slice.json, as identifiers.
+        self.assertEqual(ready["saved_to"], "folder")  # no GitHub repository here
+        record = json.loads((Path(ready["folder"]) / "slice.json").read_text())
+        self.assertEqual(record["small"], {"kind": "small", "change": "adjustment", "shipped_rule": None, "widened": None})
 
     def test_the_check_widens_a_slice_that_is_not_small_and_loses_nothing(self):
         self.begin("--small", "--change", "adjustment")
@@ -465,14 +469,34 @@ class StudioCheckTest(StudioBase):
         self.assertEqual(shown["check"]["small_change"]["verdict"]["rule"], "requirements")
         self.assertNotIn("widened", self.work())
 
-    def test_ready_widens_and_is_never_refused_for_size(self):
+    def test_ready_that_widens_does_not_mark_it_ready_in_that_act(self):
         self.begin("--small", "--change", "adjustment")
         self.write(tier="High")
-        ready = self.ok("slice", "ready", "SLICE-001")
-        self.assertEqual((ready["ready"], ready["small_change"]["widened"]["rule"]), (True, "risk"))
+        code, out, err = self.run_studio("slice", "ready", "SLICE-001")
+        self.assertEqual(code, 0, err + out)  # never refused for its size
+        ready = json.loads(out)
+        self.assertEqual((ready["ready"], ready["widened"], ready["small_change"]["widened_now"], ready["small_change"]["widened"]["rule"]),
+                         (False, True, True, "risk"))
+        self.assertIs(ready["factory_authorized"], False)
+        self.assertTrue(ready["note"].startswith(small.sentence("risk") + " It was not marked ready"))
+        self.assertIn("the interview carries on in full", ready["note"])
         work = self.work()
-        self.assertEqual((work["status"], work["widened"]["reason"]), ("approved_for_engineering", small.sentence("risk")))
+        self.assertEqual((work["status"] != "approved_for_engineering", work["widened"]["reason"]), (True, small.sentence("risk")))
+        self.assertFalse((self.draft / "product/ready/SLICE-001").exists(), "nothing was handed over")
         self.assertTrue(product.validate_workspace(self.draft)["valid"])
+        # The interview carries on in full; then it is marked ready again, as the full slice it now is.
+        again = self.ok("slice", "ready", "SLICE-001")
+        self.assertEqual((again["ready"], again["small_change"]["light_path"]), (True, False))
+        self.assertNotIn("widened_now", again["small_change"])
+        self.assertEqual(self.work()["status"], "approved_for_engineering")
+
+    def test_a_slice_widened_earlier_is_marked_ready_as_before(self):
+        self.begin("--small", "--change", "adjustment")
+        self.write(tier="High")
+        self.ok("slice", "widen", "SLICE-001", "--why", "It touches access.")
+        ready = self.ok("slice", "ready", "SLICE-001")
+        self.assertEqual((ready["ready"], ready["small_change"]["widened"]["rule"]), (True, None))
+        self.assertEqual(self.work()["status"], "approved_for_engineering")
 
     def test_a_refused_ready_still_keeps_the_widening(self):
         self.begin("--small", "--change", "adjustment")
@@ -542,6 +566,7 @@ class NeverSmallTest(StudioBase):
         ready = self.ok("slice", "ready", "SLICE-001")
         self.assertNotIn("small_change", ready)
         self.assertFalse({"kind", "small", "widened"} & set(self.work()))
+        self.assertNotIn("small", json.loads((Path(ready["folder"]) / "slice.json").read_text()), "the ready folder is exactly as before")
 
     def test_a_full_slice_is_never_judged_for_size(self):
         self.begin()
