@@ -180,6 +180,11 @@
      "product_pending": {
       "type": "object",
       "description": "A newer revision that arrived while work was in progress; taken once that work leaves the line."
+     },
+     "reissued": {
+      "type": "object",
+      "required": ["at", "revision"],
+      "description": "Present from an engineer's `product intake --reissue` until the slice is dispatched again (or a new revision is taken): {at, revision}. While it is present a GitHub slice is not withdrawn for lacking mach:ready, which the builders replaced with mach:building; it is withdrawn when its issue is closed, edited, or mach:ready was taken off it by anyone but the builders (ticket.py slice-check --taken)."
      }
     }
    }
