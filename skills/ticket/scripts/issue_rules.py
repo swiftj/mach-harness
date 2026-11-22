@@ -573,7 +573,7 @@ def small_from(change: Optional[str], rule: Optional[str], widened_rule: Optiona
 def small_line(small: Dict[str, Any]) -> str:
     """The approval comment's visible line for a small change."""
     what = f"a fix to {small['shipped_rule']}" if small["change"] == "fix" else "an adjustment"
-    return f"- Small change: {what}" + (", which left the light path" if small["widened"] else "") + "\n"
+    return f"- Small change: {what}" + (", now a full slice" if small["widened"] else "") + "\n"
 
 
 WHY_HEADING = "## Why\n"

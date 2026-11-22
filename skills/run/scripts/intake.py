@@ -1712,7 +1712,7 @@ class Factory:
             else:
                 rules = self.small_rules()
                 reason = (rules.sentence(widened["rule"], rules.settings(self.config)[0]) if widened["rule"] in rules.RULES
-                          else "The product manager took this change off the light path in Product Studio.")
+                          else "The product manager made this small change a full slice in Product Studio.")
                 cell["widened"] = {"at": widened["at"], "reason": reason, "rule": widened["rule"] if widened["rule"] in rules.RULES else None,
                                    "by": "product-studio"}
         if json.dumps(cell, sort_keys=True) != before:
