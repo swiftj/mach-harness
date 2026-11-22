@@ -49,6 +49,17 @@ Through `ticket.py slice-status`, from fixed templates with a hidden marker, rec
 - Shipped work changed comes as a new issue that says `Changes #N, which has shipped.`
 - `product intake --reissue <SLICE-ID>` puts abandoned work back in the queue on the same ticket, only when you say so.
 
+### A small change
+
+A small change is a fix to a shipped rule that is not holding, or an adjustment to wording, presentation, a default or a limit. It has a short interview and a shorter spec. No station after grooming does less for it: the plan, the failing test first, verification, the review panel at the ticket's risk tier and the merge station are the same.
+
+- **From Product Studio.** The slice's issue and its approval say it is a small change, and whether it is a fix (with the shipped rule) or an adjustment. Intake checks that the two agree; one edited after approval is not accepted. It is taken in, scheduled and dispatched as any slice.
+- **Your own ticket.** Say it is a small change when the interview starts (`/mach new "..."`, then say so), or label the ticket `small-change`. Headless grooming and `AUTO-` tickets never take the short interview.
+- **MACH decides what is small**, by fixed rules, when the spec is checked: one actor and one epic; at most three functional requirements, four scenarios and one decision matrix; at most one shipped rule changed or replaced and none retired; no principle answered with an exception; no policy concern; no new permission and no dependency on a slice that has not shipped; risk Low or Medium. A change that is not small is never refused for its size and never trimmed: it becomes a full slice, with one fixed sentence naming the rule, and the interview carries on in full.
+- **After the plan.** `check-plan` applies what only a plan can show: an existing contract changed, a file in a high-risk area, a proposed ADR, or a plan that raises the risk to High. Your own ticket goes back to the interview in full, with its plan kept under `plan-history/`. A Product Studio slice stops with a question for the product manager on its issue (`needs: product-answer`); they reopen it, it comes back as a new revision that is a full slice, and the line plans it again.
+- **Limits.** `intent.small_change` in `.factory/config.json`: `requirements` (3), `scenarios` (4), `questions` (5) and `changed_shipped_rules` (1, which can only be lowered).
+- **Where it shows.** The pull request title and the change record say "small change" beside the ticket; one that became a full slice says so, with the rule. The Line names it on the ticket, and Analytics sets time at Groom for small changes beside full slices.
+
 **Re-planning a wrong plan.** `cell.py replan <ticket> --reason "<why>"` (the intent station's script), only when you say so, returns a `planned` or `building` cell to `spec-ready` so the line plans it again. Nothing is lost: the old `plan.md`, `build.json` and `build-report.json` go under `plan-history/<n>/`, and if the branch had moved its old tip is kept as `refs/mach/replan/<ticket>/<n>`. It refuses a cell that has been through a judging round, uncommitted changes, task work already on main, and an empty reason. It adds no judging round. `RUN next` then says `plan`.
 
 Open question from testing: nothing distinguishes a product manager's copy from an engineer's. A refused dispatch there was refused only because the copy had no intake ledger. `factory enable` ran its preflight and issued a code there. Treat "only an engineer dispatches" as a convention until this is decided.
