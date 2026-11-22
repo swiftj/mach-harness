@@ -286,7 +286,7 @@ class StudioTest(IssuesBase):
 
     def test_check_requires_the_section_and_records_what_it_was_checked_against(self):
         slice_id = self.drafted()
-        self.assertEqual(slice_id, "SLICE-002")
+        self.assertEqual(slice_id, "SLICE-005")  # SLICE-002 to SLICE-004 are reserved: the shipped spec defers features to them
         head = issues_git(self.a, "rev-parse", "HEAD").strip()
         checked = self.ok(self.a, "slice", "check", slice_id, "--ready")
         self.assertEqual((checked["shipped"]["commit"], checked["shipped"]["rules"]), (head, SHIPPED_RULES))
