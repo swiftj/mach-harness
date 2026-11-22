@@ -418,6 +418,17 @@ class TakeRefusalTest(TakeBase):
                       self.refused(self.b, "slice", "take", "41"))
 
 
+class InPlaceTest(unittest.TestCase):
+    def test_only_what_is_out_of_place_moves_and_on_a_tie_the_slice_moved(self):
+        in_place = studio.handoff.in_place
+        self.assertEqual(in_place([3, 1, 2], [1, 2, 3]), {1, 2})  # one way to do it: 3 is placed, whichever was named
+        self.assertEqual(in_place([3, 1, 2], [1, 2, 3], moved=3), {1, 2})
+        self.assertEqual(in_place([3, 1], [1, 2, 3], moved=3), {1})  # a tie: 3 or 1 could move; 3 was moved, so 3 is placed
+        self.assertEqual(in_place([3, 1], [1, 2, 3], moved=1), {3})
+        self.assertEqual(in_place([2, 1, 3], [1, 2, 3], moved=2), {1, 3})
+        self.assertEqual(in_place([1, 2, 3], [1, 2, 3], moved=2), {1, 2, 3})  # nothing out of place: nothing moves
+
+
 class TakeRulesTest(unittest.TestCase):
     def test_slice_take_check(self):
         why, spec = intent_for("SLICE-007"), spec_for("SLICE-007")

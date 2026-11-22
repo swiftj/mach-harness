@@ -1551,7 +1551,7 @@ def cmd_slice_move(studio: Studio, args: argparse.Namespace) -> int:
             record = ledger["order"].setdefault(epic_id, handoff.empty_order())
             record.update(slices=order, move={"state": "trying", "slices": order, "at": handoff.utc_now()})
             hand.save(ledger)
-            failure = hand.arrange(ledger, str(channel.repository), epic, order)
+            failure = hand.arrange(ledger, str(channel.repository), epic, order, moved=slice_id)
             if failure:
                 hand.save(ledger)
                 raise StudioError(f"The new order of {epic_id} is saved here, but putting it in place on GitHub stopped part way. {handoff.explain(failure)} "

@@ -1010,9 +1010,11 @@ class Handoff:
             record["github"] = {"repository": repository, "slices": found, "read_at": utc_now()}
         data["seen"].update(order_taken=taken, order_not_read=problems)
 
-    def arrange(self, data: Dict[str, Any], repository: str, epic: Dict[str, Any], wanted: Sequence[str]) -> Optional[Dict[str, str]]:
+    def arrange(self, data: Dict[str, Any], repository: str, epic: Dict[str, Any], wanted: Sequence[str],
+                moved: Optional[str] = None) -> Optional[Dict[str, str]]:
         """Put the epic's slices on GitHub in the product manager's order. Reads GitHub first and moves only
-        what is out of place, so a repeated or interrupted run never moves anything twice."""
+        what is out of place, so a repeated or interrupted run never moves anything twice. Where either of two
+        slices could be moved, the one the product manager moved (`moved`) is."""
         snapshot, failure = self.read(repository)
         if failure or snapshot is None:
             return failure or {"kind": "other", "reason": "", "link": ""}
@@ -1043,7 +1045,7 @@ class Handoff:
                 newest[slice_id] = (child, number)
         desired = [newest[slice_id][0] for slice_id in wanted if slice_id in newest]
         current = [child for child, _ in children]
-        staying = in_place(desired, current)
+        staying = in_place(desired, current, newest[moved][0] if moved in newest else None)
         for at, child in enumerate(desired):
             if child in staying:
                 continue
@@ -1303,14 +1305,23 @@ def current_order(numbers: Sequence[int], number_to_slice: Dict[int, str]) -> Li
     return [slice_id for slice_id, _ in sorted(newest.items(), key=lambda item: item[1][0])]
 
 
-def in_place(desired: Sequence[int], current: Sequence[int]) -> set:
-    """The largest set of sub-issues already in the wanted order relative to each other; only the others are moved."""
-    positions = [current.index(child) for child in desired]
-    best: List[List[int]] = []
-    for at, position in enumerate(positions):
-        longest = max((best[earlier] for earlier in range(at) if positions[earlier] < position), key=len, default=[])
-        best.append(longest + [at])
-    return {desired[at] for at in max(best, key=len, default=[])}
+def in_place(desired: Sequence[int], current: Sequence[int], moved: Optional[int] = None) -> set:
+    """The largest set of sub-issues already in the wanted order relative to each other; only the others are moved.
+    On a tie, the set that leaves out `moved` (the slice the product manager moved), so that slice is the one placed."""
+    def largest(children: Sequence[int]) -> set:
+        positions = [current.index(child) for child in children]
+        best: List[List[int]] = []
+        for at, position in enumerate(positions):
+            longest = max((best[earlier] for earlier in range(at) if positions[earlier] < position), key=len, default=[])
+            best.append(longest + [at])
+        return {children[at] for at in max(best, key=len, default=[])}
+
+    staying = largest(desired)
+    if moved in staying:
+        without = largest([child for child in desired if child != moved])
+        if len(without) == len(staying):
+            return without
+    return staying
 
 
 def merge_order(github: Sequence[str], mine: Sequence[str]) -> List[str]:
