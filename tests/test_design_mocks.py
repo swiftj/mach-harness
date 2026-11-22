@@ -122,7 +122,7 @@ class StudioTest(issues_tests.IssuesBase):
         delivered = self.draft(self.a, f"product/ready/SLICE-001/mocks/{sha}.png")
         self.assertEqual(delivered.read_bytes(), png())
         self.assertEqual((result["mocks"]["commit_as"], result["mocks"]["files"]), ("product/ready/SLICE-001/mocks/", [f"{sha}.png"]))
-        self.assertIn("holds SLICE-001 until its design mocks are on the main branch", result["note"])
+        self.assertIn("The builders hold SLICE-001 until its design mocks are on the main branch.", result["note"])
         # A changed mock needs the slice reopened, and marking it ready again is a new revision.
         self.assertIn("reopen it first", self.refused(self.a, "slice", "mock", "remove", "SLICE-001", sha[:8]))
         self.ok(self.a, "slice", "reopen", "SLICE-001")
