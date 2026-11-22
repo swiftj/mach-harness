@@ -97,7 +97,7 @@ class FactoryCommentTest(EpicViewBase):
         self.product("intake")
         self.product("dispatch", "SLICE-001")
         self.integrate(str(number))
-        self.fail("api user")  # the epic view's first step after the checks: GitHub out of reach, once
+        self.gh_fails("api user")  # the epic view's first step after the checks: GitHub out of reach, once
         self.product("intake")
         self.assertEqual(self.gh()["issues"][str(number)]["state"], "CLOSED")  # the slice shipped all the same
         (write,) = self.epic_writes()

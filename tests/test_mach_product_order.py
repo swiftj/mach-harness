@@ -410,7 +410,7 @@ class TakeRefusalTest(TakeBase):
 
     def test_without_gh_or_github(self):
         self.ok(self.b, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
-        self.fail("*", once=False)
+        self.gh_fails("*", once=False)
         self.assertIn("Nothing was changed. GitHub could not be reached.", self.refused(self.b, "slice", "take", "41"))
         (self.root / "bin" / "gh").unlink()
         os.environ["PATH"] = os.pathsep.join(p for p in os.environ["PATH"].split(os.pathsep) if not (Path(p) / "gh").exists())

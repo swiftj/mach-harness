@@ -62,7 +62,6 @@ class SmallRouteRuleTest(unittest.TestCase):
 
 
 class SmallRouteTest(RouteBase):
-    fail = unittest.TestCase.fail  # see the module's docstring
 
     def settings(self, **values):
         config = self.a / ".factory" / "config.json"

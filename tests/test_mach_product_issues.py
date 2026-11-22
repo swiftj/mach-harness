@@ -409,7 +409,7 @@ class IssuesBase(Base):
         reading = (["issue", "list"], ["issue", "view"], ["label", "list"], ["repo", "view"])
         return [call for call in self.gh()["calls"] if call[:2] not in reading and not (call[0] == "api" and "--method" not in call)]
 
-    def fail(self, key, message=NETWORK_DOWN, once=True):
+    def gh_fails(self, key, message=NETWORK_DOWN, once=True):
         state = self.gh()
         state["fail"][key] = message
         if once:
@@ -597,7 +597,7 @@ class InterruptedTest(IssuesBase):
                 self.setUp()
                 self.project_and_epic()
                 self.drafted()
-                self.fail(key)
+                self.gh_fails(key)
                 self.refused(self.a, "slice", "ready", "SLICE-001")
                 self.ready()
                 self.check_whole()
@@ -605,7 +605,7 @@ class InterruptedTest(IssuesBase):
     def test_github_unreachable_before_anything_is_written(self):
         self.project_and_epic()
         self.drafted()
-        self.fail("issue list", once=False)
+        self.gh_fails("issue list", once=False)
         refused = self.refused(self.a, "slice", "ready", "SLICE-001")
         self.assertIn("Nothing was saved", refused)
         self.assertEqual(self.writes(), [])
@@ -748,7 +748,7 @@ class RefreshTest(IssuesBase):
         self.assertEqual(self.issue(77)["body"], body)  # never touched
 
     def test_refresh_without_github_says_so_and_changes_nothing(self):
-        self.fail("*", once=False)
+        self.gh_fails("*", once=False)
         block = self.ok(self.a, "refresh")["github"]
         self.assertEqual(block["refreshed"], False)
         self.assertIn("could not be reached", block["problem"])
@@ -759,7 +759,7 @@ class ReopenTest(IssuesBase):
         self.project_and_epic()
         self.drafted()
         number = self.ready()["issue"]
-        self.fail("issue edit labels")
+        self.gh_fails("issue edit labels")
         self.assertIn("nothing was changed", self.refused(self.a, "slice", "reopen", "SLICE-001"))
         self.assertEqual(self.artifact(self.a, "product/slices/SLICE-001.json")["status"], "approved_for_engineering")
         reopened = self.ok(self.a, "slice", "reopen", "SLICE-001")
@@ -928,7 +928,7 @@ class FinishingTest(IssuesBase):
         saved = self.ok(self.a, "status")["saved"]
         self.assertEqual([(w["kind"], w["target"]) for w in saved["not_saved"]], [("changed_since_ready", "SLICE-001")])
         # A read of GitHub that failed is kept until one succeeds.
-        self.fail("issue list", once=False)
+        self.gh_fails("issue list", once=False)
         self.ok(self.a, "refresh")
         kinds = [w["kind"] for w in self.ok(self.a, "status")["saved"]["not_saved"]]
         self.assertEqual(kinds, ["changed_since_ready", "refresh_failed"])

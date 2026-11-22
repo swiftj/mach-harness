@@ -289,7 +289,7 @@ class StudioTest(IssuesBase):
         self.ok(self.a, "principle", "publish")
         (project,) = self.issues("mach:project")
         self.assertEqual(len(project["comments"]), 1)
-        self.fail("issue edit body")
+        self.gh_fails("issue edit body")
         self.ok(self.a, "principle", "set", "PP-01", "--reason", "Readers trust it.")
         self.assertIn("stopped part way", self.refused(self.a, "principle", "publish"))
         self.ok(self.a, "principle", "publish")
