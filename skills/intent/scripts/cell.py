@@ -254,10 +254,10 @@ def small_view(project: Path, cell: Dict[str, Any]) -> Dict[str, Any]:
     if on_light_path(cell):
         view.update(method=str(references / "small-change.md"), rules={rule: small.sentence(rule, limits) for rule in small.SPEC_RULES + ("questions",)},
                     note=(f"A small change: follow the short interview in small-change.md. Ask at most {limits['questions']} yes-or-no questions. "
-                          "When an answer or a check shows it is not small, it leaves the light path: never trim the change to keep it small."))
+                          "When an answer or a check shows it is not small, it becomes a full slice: never trim the change to keep it small."))
     else:
         view.update(method=str(references / "interview-method.md"),
-                    note=f"This ticket left the light path: {(cell.get('widened') or {}).get('reason')} The interview carries on in full, with every answer kept.")
+                    note=f"This small change is a full slice now: {(cell.get('widened') or {}).get('reason')} The interview carries on in full, with every answer kept.")
     return view
 
 
@@ -309,7 +309,7 @@ def stop_for_product(cell: Dict[str, Any], found: Dict[str, Any], slice_id: Opti
 
 
 def small_line(found: Dict[str, Any], widened_now: bool) -> str:
-    return "small change: " + found["sentence"] + (" It left the light path: the interview carries on in full, with every answer kept "
+    return "small change: " + found["sentence"] + (" It is a full slice now: the interview carries on in full, with every answer kept "
                                                    "(references/interview-method.md)." if widened_now else "")
 
 
@@ -321,11 +321,11 @@ def cmd_widen(project: Path, args: argparse.Namespace) -> int:
     if cell.get("kind") != small.KIND:
         raise CellError(f"{args.ticket_id} is not a small change, so its interview is already the full one.")
     if cell.get("widened"):
-        raise CellError(f"{args.ticket_id} already left the light path ({cell['widened'].get('at')}): {cell['widened'].get('reason')}")
+        raise CellError(f"{args.ticket_id} is already a full slice ({cell['widened'].get('at')}): {cell['widened'].get('reason')}")
     if from_studio(cell):
-        raise CellError(f"{args.ticket_id} came from Product Studio: the product manager takes it off the light path there (slice widen).")
+        raise CellError(f"{args.ticket_id} came from Product Studio: the product manager makes it a full slice there (slice widen).")
     if cell.get("stage") not in STAGES[:2]:
-        raise CellError(f"A small change leaves the light path by this command while its spec is written (interview or spec-open); {args.ticket_id} is "
+        raise CellError(f"A small change is made a full slice by this command while its spec is written (interview or spec-open); {args.ticket_id} is "
                         f"'{cell.get('stage')}'. After that, the checks do it themselves.")
     if args.by_rule is not None:
         if args.by_rule not in small.RULES:
@@ -1034,7 +1034,7 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
                   + (" An open policy concern waits for its owner: only they accept it (policy accept), or the spec changes so the statement is met."
                      if any(f.rule == "policy-concern-open" for f in open_items) else ""))
         if widened_now:
-            print(f"SAVED: {widened_now['reason']} It left the light path, so it is not ready yet: the interview carries on in full "
+            print(f"SAVED: {widened_now['reason']} It is a full slice now, so it is not ready yet: the interview carries on in full "
                   "(references/interview-method.md), with every answer kept, and then the spec is finalized again.")
         return 0 if args.allow_open else 1
 
@@ -1120,7 +1120,7 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
     if not spec_json.is_file():
         widened = cell.get("widened") if cell.get("kind") == small.KIND and cell.get("stage") in STAGES[:2] else None
         raise CellError("spec.json is missing: the spec is not ready. Run 'cell.py finalize' first."
-                        + (f" This small change left the light path ({widened.get('reason')}): the interview carries on in full first." if widened else ""))
+                        + (f" This small change is a full slice now ({widened.get('reason')}): the interview carries on in full first." if widened else ""))
     spec_path = work / str(cell.get("spec_path"))
     if not spec_path.is_file() or hashlib.sha256(spec_path.read_text(encoding="utf-8-sig").encode("utf-8")).hexdigest() != cell.get("spec_sha256"):
         raise CellError("The slice spec changed after it was finalized. Run 'cell.py finalize' again, then redo the plan.")
@@ -1883,7 +1883,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--small", action="store_true", help="a small change, on the engineer's word: the short interview, the same spec and gates (M18)")
     p.set_defaults(func=cmd_open)
 
-    p = sub.add_parser("widen", help="take a small change off the light path while its spec is written, so the interview carries on in full")
+    p = sub.add_parser("widen", help="make a small change a full slice while its spec is written, so the interview carries on in full")
     p.add_argument("ticket_id")
     reason = p.add_mutually_exclusive_group(required=True)
     reason.add_argument("--why", help="the engineer's reason, in their words (only on their word)")
