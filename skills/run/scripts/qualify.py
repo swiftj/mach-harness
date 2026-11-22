@@ -439,14 +439,19 @@ class Release:
                 check(f"slice.{slice_id}.current", "slice", "pass", "No newer approved revision supersedes this one.")
 
             earlier_runs = int((match or {}).get("earlier_runs") or 0)
-            facts = self.line.work(ticket_id, commit, earlier_runs) if ticket_id else {"status": "unticketed"}
+            # With no spec at this commit to match a life against, a slice already dispatched is still its ledger ticket's
+            # work: whether that work is on the branch is a fact to check, never "unticketed".
+            worked = ticket_id or (entry.get("ticket_id") if spec is None and entry.get("dispatched_at") else None)
+            if worked and not ticket_id:
+                earlier_runs = int(entry.get("earlier_runs") or 0)
+            facts = self.line.work(worked, commit, earlier_runs) if worked else {"status": "unticketed"}
             integrated[slice_id] = facts.get("status") == "integrated"
             record = self.record_of(ticket_id, earlier_runs)
             records_by_ticket[str(ticket_id)] = record
             row["integration"] = {"status": facts.get("status"), "commit": facts.get("commit"),
                                   "established_by": f"git merge-base --is-ancestor {facts.get('commit')} {commit}" if integrated[slice_id] else None,
                                   "recorded_in": "run record (integration)" if record.get("integration") else "the cell's merge record" if integrated[slice_id] else None}
-            check(f"slice.{slice_id}.integrated", "slice", "pass" if integrated[slice_id] else "missing" if not ticket_id else "fail",
+            check(f"slice.{slice_id}.integrated", "slice", "pass" if integrated[slice_id] else "missing" if not worked else "fail",
                   f"Its commit {str(facts.get('commit'))[:12]} is an ancestor of the release commit." if integrated[slice_id]
                   else f"Its work is not on the integration branch at this commit (now {facts.get('status')}).")
 
