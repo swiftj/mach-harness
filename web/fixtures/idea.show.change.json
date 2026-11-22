@@ -10,7 +10,7 @@
         "kind": "change",
         "rule": "SLICE-001/INV-02"
       },
-      "created": "2026-11-21T01:37:50Z",
+      "created": "2026-11-22T12:34:09Z",
       "revision": 0,
       "has_brief": true,
       "brief_checked": false,
@@ -44,8 +44,8 @@
       "rule": "SLICE-001/INV-02"
     },
     "lookups": {
-      "recorded_at": "2026-11-21T01:37:50Z",
-      "shipped_commit": "f694c7fcacbd53b4c2b604079786bba5a77bad1d",
+      "recorded_at": "2026-11-22T12:34:09Z",
+      "shipped_commit": "81cf82eba5d0dda8ccbdf35c046ee286ad269b1b",
       "counts": {
         "shipped_rules": 19,
         "similar": 0,

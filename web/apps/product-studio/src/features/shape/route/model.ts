@@ -83,8 +83,14 @@ export function routeState(recorded: RecordedRoute | null | undefined, view: Rou
   return { kind: "stale", route: base.route, why: base.why, at: base.at, counted, note: view?.stale_note ?? null };
 }
 
-/** The three routes, in the order of their size. The engine's rule chooses one; none is ever chosen here. */
+/** The four routes, in the order of their size. The engine's rule chooses one; none is ever chosen here. */
 export const ROUTES: ReadonlyArray<{ route: ShapeRoute; name: string; when: string; next: string }> = [
+  {
+    route: "small-change",
+    name: "A small change",
+    when: "One outcome in one capability, at most one shipped rule, and nothing in a high-risk area.",
+    next: "One draft slice of kind small: the short interview, started from the brief.",
+  },
   {
     route: "one-slice",
     name: "One slice",
@@ -228,6 +234,29 @@ export function settleArgs(ideaId: string, outcome: string, form: SettleForm): {
 export interface ApplyPlan {
   epics: Array<{ key: string; title: string }>;
   slices: Array<{ key: string; title: string; epic: string }>;
+}
+
+/** The two kinds of small change, as the product manager chooses one when the route is a small change (M18). */
+export type SmallChangeKind = "fix" | "adjustment";
+export const SMALL_CHANGE_KINDS: ReadonlyArray<{ kind: SmallChangeKind; name: string; words: string }> = [
+  { kind: "fix", name: "A fix", words: "A shipped rule is not holding." },
+  { kind: "adjustment", name: "An adjustment", words: "Wording, presentation, a default or a limit." },
+];
+
+/** Whether making the drafts needs the product manager to say which kind of small change it is: the route is a small change and its slice is not made yet. */
+export function needsSmallKind(status: Pick<ShapeMapStatus, "route" | "map">): boolean {
+  return status.route?.route === "small-change" && !status.map?.applied;
+}
+
+/** What `idea.apply` is sent: the kind only when the route is a small change, or the one thing still missing. */
+export function applyArgs(
+  ideaId: string,
+  status: Pick<ShapeMapStatus, "route" | "map">,
+  kind: SmallChangeKind | "",
+): { args: { idea_id: string; change?: SmallChangeKind } } | { missing: string } {
+  if (!needsSmallKind(status)) return { args: { idea_id: ideaId } };
+  if (!kind) return { missing: "Choose whether this small change is a fix or an adjustment." };
+  return { args: { idea_id: ideaId, change: kind } };
 }
 
 /** What `idea.apply` would make, by name, in the map's order. `epicTitle` names an existing epic. */

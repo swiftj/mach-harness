@@ -2,6 +2,7 @@ import { MessageCircleQuestion } from "lucide-react";
 import { Link } from "react-router";
 import { ArtifactId, Button, Heading, SkeletonText, SliceStatusPill, Text, type StatusSliceRow, plural } from "@mach/ui";
 import { useOperation } from "../../api/useOperation";
+import { SmallChangeLabel } from "../small-change/SmallChangeLabel";
 
 /** A slice whose interview has questions only the PM can answer. The text comes from `slice.show`. */
 export function OpenQuestionsCard({ slice }: { slice: StatusSliceRow }) {
@@ -19,6 +20,7 @@ export function OpenQuestionsCard({ slice }: { slice: StatusSliceRow }) {
             </span>
           </Heading>
           <SliceStatusPill status={slice.status} size="sm" />
+          <SmallChangeLabel slice={slice} />
         </div>
         <Text size="body-sm" tone="muted">
           {plural(slice.open_questions, "open question")}. It can't be marked ready until each is answered.

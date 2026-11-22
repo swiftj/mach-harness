@@ -786,6 +786,130 @@ class RevisionTest(Base):
         self.assertEqual(sent["tickets"], [str(number)])
 
 
+class ReissueTest(Base):
+    """`product intake --reissue` acts on the ledger's entry; whatever a product manager took back stays out of the line."""
+
+    def abandoned(self):
+        """SLICE-001 from GitHub, dispatched (its issue now mach:building, not mach:ready), its work abandoned."""
+        number = self.ready("SLICE-001")
+        self.product("intake")
+        self.product("dispatch", "SLICE-001")
+        self.clean_up(str(number), outcome="abandoned")
+        self.assertEqual(sorted(self.labels_of(number)), ["mach:building", "mach:slice"])
+        return number
+
+    def not_dispatched(self):
+        sent = self.product("dispatch", "SLICE-001")
+        self.assertEqual((sent["tickets"], [(item["slice_id"], item["state"]) for item in sent["refused"]]), ([], [("SLICE-001", "blocked")]))
+
+    def test_a_reissued_slice_waits_through_later_intakes_until_it_is_dispatched_again(self):
+        number = self.abandoned()
+        before = self.ledger()["slices"]["SLICE-001"]
+        dry = self.product("intake", "--dry-run", "--reissue", "SLICE-001")
+        self.assertEqual(dry["updated"], [{"slice_id": "SLICE-001", "ticket_id": str(number), "effect": "would be reissued"}])
+        self.assertEqual(self.ledger()["slices"]["SLICE-001"]["history"], before["history"])
+        taken = self.product("intake", "--reissue", "#%d" % number)
+        self.assertEqual(taken["updated"], [{"slice_id": "SLICE-001", "ticket_id": str(number), "effect": "reissued"}])
+        again = self.product("intake")
+        self.assertEqual(again["withdrawn"], [])
+        self.assertEqual(self.plan()[1]["SLICE-001"]["state"], "ready")
+        self.assertNotIn("mach:ready", self.labels_of(number))  # the Factory never marks a slice ready
+        self.assertEqual(self.product("dispatch", "SLICE-001")["tickets"], [str(number)])
+        entry = self.ledger()["slices"]["SLICE-001"]
+        self.assertNotIn("reissued", entry)
+        self.assertEqual((entry["history"][-1]["outcome"], entry["history"][-1]["why"]), ("abandoned", "reissued by an engineer"))
+        self.assertEqual(self.cell(str(number))["product"]["revision"], 1)
+
+    def test_a_reissue_it_cannot_act_on_is_refused_with_the_reason(self):
+        number = self.ready("SLICE-001")
+        self.product("intake")
+        self.assertIn("SLICE-009 cannot be reissued: this Factory has not taken it in. Nothing was done.", self.refused("intake", "--reissue", "SLICE-009"))
+        self.assertIn(f"SLICE-001 cannot be reissued: its ticket {number} is queued, not abandoned.", self.refused("intake", "--reissue", "SLICE-001"))
+        self.product("dispatch", "SLICE-001")
+        self.assertIn(f"SLICE-001 cannot be reissued: its ticket {number} is active, not abandoned.", self.refused("intake", "--reissue", "SLICE-001"))
+        self.assertNotIn("reissued", self.ledger()["slices"]["SLICE-001"])
+
+    def test_a_closed_issue_is_not_reissued(self):
+        number = self.abandoned()
+        self.change(number, state="CLOSED")
+        refused = self.refused("intake", "--reissue", "SLICE-001")
+        self.assertIn("SLICE-001 cannot be reissued: it is not ready any more: Issue #%d: " % number, refused)
+        self.assertIn(issue_rules.SLICE_NOT_ACCEPTED["not_taken"], refused)
+        self.assertEqual(self.plan()[1]["SLICE-001"]["state"], "blocked")
+        self.not_dispatched()
+        self.assertFalse((self.eng / ".factory/worktrees" / str(number)).exists())
+
+    def test_an_issue_edited_after_its_approval_is_not_reissued(self):
+        number = self.abandoned()
+        self.change(number, body=self.gh()["issues"][str(number)]["body"].replace("## Why", "## Why\nSlipped in.", 1))
+        self.assertIn(issue_rules.SLICE_NOT_ACCEPTED["edited"], self.refused("intake", "--reissue", "SLICE-001"))
+        self.assertNotIn("reissued", self.ledger()["slices"]["SLICE-001"])
+
+    def test_a_received_copy_that_changed_is_not_reissued(self):
+        self.abandoned()
+        stored = self.eng / self.ledger()["slices"]["SLICE-001"]["stored"]
+        (stored / "spec.md").write_text(spec_for("SLICE-001") + "\nSlipped in.\n")
+        self.assertIn("SLICE-001 cannot be reissued: the received copy of SLICE-001 revision 1 no longer matches what was approved.",
+                      self.refused("intake", "--reissue", "SLICE-001"))
+
+    def test_github_out_of_reach_refuses_a_reissue_and_changes_nothing(self):
+        self.abandoned()
+        before = self.ledger()["slices"]["SLICE-001"]
+        self.gh_fails("issue list")
+        self.assertIn("GitHub could not be read, so whether the product manager still offers it cannot be checked. Nothing was changed.",
+                      self.refused("intake", "--reissue", "SLICE-001"))
+        after = self.ledger()["slices"]["SLICE-001"]
+        self.assertEqual((after["history"], after.get("reissued"), after["earlier_runs"]), (before["history"], None, before["earlier_runs"]))
+
+    def test_a_reissued_slice_closed_before_it_is_dispatched_is_withdrawn(self):
+        number = self.abandoned()
+        self.product("intake", "--reissue", "SLICE-001")
+        self.change(number, state="CLOSED")
+        taken = self.product("intake")
+        self.assertEqual([item["slice_id"] for item in taken["withdrawn"]], ["SLICE-001"])
+        plan, rows = self.plan()
+        self.assertEqual((rows["SLICE-001"]["state"], plan["dispatchable"]), ("blocked", []))
+        self.assertIn("It is not ready any more: Issue #%d: " % number, rows["SLICE-001"]["reasons"][-1])
+        self.not_dispatched()
+        self.assertFalse((self.eng / ".factory/worktrees" / str(number)).exists())
+
+    def test_a_reissued_slice_taken_back_by_the_product_manager_is_withdrawn(self):
+        number = self.abandoned()
+        self.product("intake", "--reissue", "SLICE-001")
+        state = self.gh()
+        issue = state["issues"][str(number)]
+        self.label(state, issue, "mach:ready", by="ada-pm")  # marked ready again, then taken back: mach:ready removed by a person
+        self.label(state, issue, "mach:ready", by="ada-pm", kind="unlabeled")
+        self.write_state(state)
+        self.assertEqual(sorted(self.labels_of(number)), ["mach:building", "mach:slice"])
+        taken = self.product("intake")
+        self.assertEqual([item["reason"] for item in taken["withdrawn"]], [f"Issue #{number}: " + issue_rules.SLICE_NOT_ACCEPTED["taken_back"]])
+        self.assertEqual(self.plan()[1]["SLICE-001"]["state"], "blocked")
+        self.not_dispatched()
+
+    def test_a_new_revision_marked_ready_after_a_reissue_is_the_one_built(self):
+        number = self.abandoned()
+        self.product("intake", "--reissue", "SLICE-001")
+        self.ready("SLICE-001", revision=2, extra="\nRevised.\n", number=number)
+        taken = self.product("intake")
+        self.assertEqual((taken["updated"][0]["to_revision"], taken["updated"][0]["ticket_id"]), (2, str(number)))
+        self.assertNotIn("reissued", self.ledger()["slices"]["SLICE-001"])
+        self.product("dispatch", "SLICE-001")
+        self.assertEqual(self.cell(str(number))["product"]["revision"], 2)
+
+    def test_only_an_engineer_reissues(self):
+        self.abandoned()
+        self.product("reconcile")  # the supervisor's step never reissues
+        self.assertEqual(self.plan()[1]["SLICE-001"]["state"], "blocked")
+        ledger = self.ledger()
+        ledger.setdefault("supervisor", {}).setdefault("executions", {})["x000000000001"] = {"ticket_id": "LOCAL-001"}
+        (self.eng / ".factory/intake/ledger.json").write_text(json.dumps(ledger))
+        with mock.patch.dict("os.environ", {"MACH_EXECUTION_ID": "x000000000001"}):
+            self.assertIn("Reissuing abandoned work is an engineer's act, in conversation; a supervised execution does not reissue.",
+                          self.refused("intake", "--reissue", "SLICE-001"))
+        self.assertNotIn("reissued", self.ledger()["slices"]["SLICE-001"])
+
+
 class FolderTest(Base):
     def test_a_committed_ready_folder_is_taken_in_with_a_local_ticket(self):
         self.first()
@@ -800,6 +924,27 @@ class FolderTest(Base):
         self.assertIn("\n> Epic: Team membership (EPIC-001). Slice issue: none.\n", committed)
         self.assertEqual(self.cell("LOCAL-001")["product"]["source"], "folder")
         self.assertNotIn("issue", self.cell("LOCAL-001")["product"])
+
+    def test_a_folder_slice_is_reissued_only_while_its_folder_is_on_the_branch(self):
+        self.first()
+        self.product("intake")
+        self.product("dispatch", "SLICE-001")
+        self.clean_up("LOCAL-001", outcome="abandoned")
+        # Product takes it back: the ready folder leaves the integration branch.
+        git(self.eng, "push", "-q", "origin", "main")
+        git(self.a, "pull", "-q", "--ff-only")
+        git(self.a, "rm", "-q", "-r", "product/ready/SLICE-001")
+        git(self.a, "commit", "-q", "-m", "reopen SLICE-001")
+        git(self.a, "push", "-q", "origin", "main")
+        git(self.eng, "pull", "-q", "--ff-only")
+        self.assertIn("SLICE-001 cannot be reissued: it is not ready any more: product/ready/SLICE-001 is no longer on the integration branch.",
+                      self.refused("intake", "--reissue", "SLICE-001"))
+        self.assertEqual(self.plan()[1]["SLICE-001"]["state"], "blocked")
+        # Marked ready again with the same revision: the abandoned work is reissued on its ticket.
+        self.publish(self.a, "SLICE-001")
+        self.assertEqual(self.product("intake", "--reissue", "SLICE-001")["updated"],
+                         [{"slice_id": "SLICE-001", "ticket_id": "LOCAL-001", "effect": "reissued"}])
+        self.assertEqual(self.plan()[1]["SLICE-001"]["state"], "ready")
 
     def test_a_tampered_folder_is_refused(self):
         slice_id = self.slice(self.a, "Invite")
@@ -861,8 +1006,19 @@ class FolderTest(Base):
         folder.mkdir(parents=True)
         for name, text in self.folder("SLICE-001", "Invite").items():
             (folder / name).write_text(text)
+        # An execution the ledger does not record may work on nothing at all, import included.
         with mock.patch.dict("os.environ", {"MACH_EXECUTION_ID": "x000000000001"}):
-            self.assertIn("a supervised execution", self.refused("import", str(folder)) + " ")
+            self.assertIn("which the intake ledger does not record, so it may work on no ticket", self.refused("import", str(folder)))
+        # A supervised execution the ledger does record is still refused: importing is an engineer's act.
+        ledger_path = self.eng / ".factory/intake/ledger.json"
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else {}
+        ledger.setdefault("supervisor", {}).setdefault("executions", {})["x000000000001"] = {"ticket_id": "LOCAL-001"}
+        ledger_path.write_text(json.dumps(ledger))
+        with mock.patch.dict("os.environ", {"MACH_EXECUTION_ID": "x000000000001"}):
+            self.assertIn("Importing a ready folder is an engineer's act, in conversation; a supervised execution does not import.",
+                          self.refused("import", str(folder)))
+        self.assertNotIn("SLICE-001", self.ledger().get("slices", {}))
 
     def test_product_studios_folder_is_imported(self):
         """End to end: Product Studio's `slice ready` without gh writes the folder the Factory imports."""
@@ -1039,6 +1195,21 @@ class RulesTest(unittest.TestCase):
         self.assertEqual((back, found.group(2), found.group(3), found.group(4)), (spec, "EPIC-002", "41", "57"))
         self.assertNotIn("<!--", text)
         self.assertEqual(intake.without_header(spec), (spec, None))
+
+    def test_a_taken_slice_counts_only_while_the_builders_alone_took_mach_ready_off(self):
+        def event(kind, label, login, at):
+            return {"event": kind, "label": label, "login": login, "id": {"ada-pm": 1, "erin-eng": 2}[login], "type": "User", "app": False, "at": at}
+        ready = event("labeled", "mach:ready", "ada-pm", "t1")
+        taken = [ready, event("labeled", "mach:building", "erin-eng", "t2"), event("unlabeled", "mach:ready", "erin-eng", "t2")]
+        self.assertIsNone(issue_rules.slice_ready_event(taken))  # not marked ready any more
+        self.assertEqual(issue_rules.slice_ready_event(taken, taken=True), ready)
+        self.assertIsNone(issue_rules.slice_ready_event(taken[:1] + taken[2:], taken=True))  # never marked mach:building
+        by_a_person = [ready, event("unlabeled", "mach:ready", "ada-pm", "t2"), event("labeled", "mach:building", "erin-eng", "t3")]
+        self.assertIsNone(issue_rules.slice_ready_event(by_a_person, taken=True))
+        building_removed = taken + [event("unlabeled", "mach:building", "ada-pm", "t3")]
+        self.assertIsNone(issue_rules.slice_ready_event(building_removed, taken=True))
+        refused = issue_rules.slice_acceptance({"state": "OPEN", "labels": ["mach:slice", "mach:ready"], "body": ""}, taken, [], None, taken=True)
+        self.assertEqual(refused["reason"], issue_rules.SLICE_NOT_ACCEPTED["not_taken"])
 
     def test_status_comments_name_identifiers_only(self):
         nonce = "0" * 32

@@ -625,7 +625,15 @@ export interface CellState {
   readonly jira?: string | null;
   /** M15: the change record the merge station wrote (merge.completed, then the run record): its path, shown as text. */
   readonly changeRecord?: ChangeRecordRef | null;
+  /** M18: a small change, as the groom station's last exit recorded it (revision 8); `widened` when it became a full slice. Absent for every other ticket. */
+  readonly smallChange?: SmallChangeFact | null;
   readonly meta: EntityMeta;
+}
+
+/** M18: what the groom exit recorded of a small change. The rule's code only, never a person's words. */
+export interface SmallChangeFact {
+  readonly widened: boolean;
+  readonly rule: string | null;
 }
 
 export interface GateEvaluation {

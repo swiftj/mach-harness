@@ -32,6 +32,7 @@ import diagrams  # noqa: E402  (Mermaid diagrams in a plan and in a proposed ADR
 import shipped  # noqa: E402  (M13: the shipped rules a spec's effects are checked against, from the current-behaviour view)
 import policies  # noqa: E402  (M14: the organisation's policy packs a spec answers in '## Policies')
 import scan  # noqa: E402  (M15: the risk floor a security-scan ticket's labels set)
+import small  # noqa: E402  (M18: whether a change is small, by fixed rules; the same module Product Studio loads)
 
 try:  # M6.1 station telemetry: observational only; if it cannot be loaded nothing is recorded
     import lifecycle  # noqa: E402
@@ -62,6 +63,8 @@ STAGES = ("interview", "spec-open", "spec-ready", "planned")
 EXCLUDE_LINE = ".factory/worktrees/"
 TUNING_LABEL = "factory-tuning"
 ADR_ID_RE = re.compile(r"^ADR-\d{4}$")
+SMALL_LABEL = "small-change"  # M18: an engineer's ticket with this label is groomed with the short interview
+AUTO_TICKET_RE = re.compile(r"^AUTO-")  # a fault ticket, groomed headless: never a small change
 
 
 class CellError(Exception):
@@ -212,22 +215,169 @@ def describe(project: Path, cell: Dict[str, Any]) -> Dict[str, Any]:
         "spec_json_path": str(root / "spec.json"),
         "ticket": find_ticket(project, cell["ticket_id"]),
     })
+    if cell.get("kind") == small.KIND:
+        info["small_change"] = small_view(project, cell)
     return info
+
+
+# ---- a small change (M18) ----
+#
+# cell.json, only for a small change, so every other cell is exactly as before:
+#   "kind": "small"
+#   "small": {"from": "engineer" | "label" | "product-studio", and from Product Studio "change" and "shipped_rule"}
+#   "widened": {"at", "reason" (the rule's fixed sentence, or the person's words), "rule" (a small.py code, or null),
+#               "by": "validate" | "finalize" | "check-plan" | "interview" | "engineer" | "product-studio"}
+# "On the light path" is kind small with no widened. spec.json carries "kind" and, once it left the path, "widened".
+# A script decides whether it is small, at validate, finalize and check-plan; never a model, never a person past a rule.
+
+def on_light_path(cell: Dict[str, Any]) -> bool:
+    return cell.get("kind") == small.KIND and not cell.get("widened")
+
+
+def from_studio(cell: Dict[str, Any]) -> bool:
+    """A slice Product Studio handed over: its spec is the product manager's approved text, never changed in the cell."""
+    return isinstance(cell.get("product"), dict) or (cell.get("small") or {}).get("from") == "product-studio"
+
+
+def small_limits(project: Path) -> Dict[str, int]:
+    return small.settings(load_config(project))[0]
+
+
+def small_view(project: Path, cell: Dict[str, Any]) -> Dict[str, Any]:
+    """What `open` and `status` say of a small change: which interview to follow, the limits, and each rule's sentence."""
+    limits, notes = small.settings(load_config(project))
+    references = Path(__file__).resolve().parent.parent / "references"
+    view: Dict[str, Any] = {"kind": small.KIND, "from": (cell.get("small") or {}).get("from"), "light_path": on_light_path(cell),
+                            "widened": cell.get("widened"), "limits": limits}
+    if notes:
+        view["settings_notes"] = notes
+    if on_light_path(cell):
+        view.update(method=str(references / "small-change.md"), rules={rule: small.sentence(rule, limits) for rule in small.SPEC_RULES + ("questions",)},
+                    note=(f"A small change: follow the short interview in small-change.md. Ask at most {limits['questions']} yes-or-no questions. "
+                          "When an answer or a check shows it is not small, it becomes a full slice: never trim the change to keep it small."))
+    else:
+        view.update(method=str(references / "interview-method.md"),
+                    note=f"This small change is a full slice now: {(cell.get('widened') or {}).get('reason')} The interview carries on in full, with every answer kept.")
+    return view
+
+
+def shipped_slice_ids(found: Dict[str, Any]) -> List[str]:
+    """The slices that have shipped: the slice IDs of the shipped rules on the integration branch."""
+    names = {item.get("rule") if isinstance(item, dict) else item for item in found.get("rules") or []}
+    return sorted({name.split("/")[0] for name in names if isinstance(name, str) and "/" in name})
+
+
+def judge_spec(project: Path, root: Path, cell: Dict[str, Any], model: Dict[str, Any], text: str, found: Dict[str, Any]) -> Dict[str, Any]:
+    """Part A's spec rules for this cell: intent.md's risk tier and the risk floor the cell holds, its epic and dependencies
+    when Product Studio handed it over, and the slices shipped on the integration branch."""
+    intent = root / "intent.md"
+    tier = check_intent(intent)[1].get("risk") if intent.is_file() else None
+    floor = cell.get("risk_floor") if isinstance(cell.get("risk_floor"), dict) else {}
+    product = cell.get("product") if isinstance(cell.get("product"), dict) else {}
+    return small.judge(model, text, epics=[product.get("epic_id")], risks=[tier, scan.risk_floor(ticket_labels(project, cell["ticket_id"])), floor.get("to")],
+                       depends_on=list(product.get("depends_on") or []), shipped_slices=shipped_slice_ids(found), limits=small_limits(project))
+
+
+def kind_facts(cell: Dict[str, Any]) -> Dict[str, Any]:
+    """M18 part D: what the groom station's exit says of a small change, read from the cell alone: the kind, whether it left
+    the light path, and by which rule's code (null on a person's word). The person's own words for a widening never go into an
+    event. Nothing at all for a ticket that is not small, so its exit is exactly as before."""
+    if cell.get("kind") != small.KIND:
+        return {}
+    widened = cell.get("widened")
+    if not isinstance(widened, dict):
+        return {"kind": small.KIND, "widened": False}
+    rule = widened.get("rule")
+    return {"kind": small.KIND, "widened": True, "widened_rule": rule if rule in small.RULES else None}
+
+
+def widen(cell: Dict[str, Any], found: Dict[str, Any], by: str) -> Dict[str, Any]:
+    cell["widened"] = dict(small.widening(found, now()), by=by)
+    return cell["widened"]
+
+
+SMALL_QUESTION = ("{sentence} {slice_id} was started in Product Studio as a small change, so it had the short interview. The product manager "
+                  "reopens it in Product Studio, where it comes back as a full slice with this reason, finishes its interview in full and marks it ready again.")
+
+
+def stop_for_product(cell: Dict[str, Any], found: Dict[str, Any], slice_id: Optional[str]) -> Dict[str, Any]:
+    """A Product Studio slice a rule says is not small: the Factory cannot widen the product manager's slice, so the ticket
+    stops with their question on the slice's issue (spec-question's path), saying in a fixed sentence which rule decided."""
+    cell["spec_question"] = {"text": SMALL_QUESTION.format(sentence=found["sentence"], slice_id=slice_id or "This slice"), "at": now(),
+                             "revision": (cell.get("product") or {}).get("revision"), "small_change": found["rule"]}
+    return cell["spec_question"]
+
+
+def small_line(found: Dict[str, Any], widened_now: bool) -> str:
+    return "small change: " + found["sentence"] + (" It is a full slice now: the interview carries on in full, with every answer kept "
+                                                   "(references/interview-method.md)." if widened_now else "")
+
+
+def cmd_widen(project: Path, args: argparse.Namespace) -> int:
+    """Leave the light path, while the spec is written: on the engineer's word (--why, their reason), or when an answer in the
+    short interview shows a rule of a small change does not hold (--by-rule, whose fixed sentence is the reason). Never the
+    other way. The ticket carries on as the full interview, with nothing in it changed."""
+    cell = read_cell(project, args.ticket_id)
+    if cell.get("kind") != small.KIND:
+        raise CellError(f"{args.ticket_id} is not a small change, so its interview is already the full one.")
+    if cell.get("widened"):
+        raise CellError(f"{args.ticket_id} is already a full slice ({cell['widened'].get('at')}): {cell['widened'].get('reason')}")
+    if from_studio(cell):
+        raise CellError(f"{args.ticket_id} came from Product Studio: the product manager makes it a full slice there (slice widen).")
+    if cell.get("stage") not in STAGES[:2]:
+        raise CellError(f"A small change is made a full slice by this command while its spec is written (interview or spec-open); {args.ticket_id} is "
+                        f"'{cell.get('stage')}'. After that, the checks do it themselves.")
+    if args.by_rule is not None:
+        if args.by_rule not in small.RULES:
+            raise CellError(f"'{args.by_rule[:40]}' is not a rule for a small change. The rules are: {', '.join(small.RULES)}.")
+        widen(cell, small.verdict([args.by_rule], small_limits(project)), "interview")
+    else:
+        why = " ".join((args.why or "").split())
+        if not why:
+            raise CellError("Give the reason in the engineer's own words (--why).")
+        cell["widened"] = dict(small.asked(why, now()), by="engineer")
+    write_cell(project, cell)
+    print(json.dumps({"status": "WIDENED", "ticket_id": args.ticket_id, "widened": cell["widened"], "small_change": small_view(project, cell),
+                      "next": "Say the reason in that one sentence, then carry on with the full interview (references/interview-method.md) on the same "
+                              "ticket: every answer so far stands. Never trim the change to keep it small."}, indent=2))
+    return 0
+
+
+def open_small(project: Path, cell: Dict[str, Any], args: argparse.Namespace) -> Optional[str]:
+    """Whether a cell being opened is a small change: on the engineer's word (--small) or the ticket's `small-change` label,
+    while its spec is still to be written. Headless grooming and fault (AUTO-) tickets never are; neither is a slice from
+    Product Studio, whose kind comes with it. Returns a note when the word could not be taken."""
+    if args.small and (args.headless or AUTO_TICKET_RE.match(cell["ticket_id"])):
+        raise CellError("Headless grooming, and a fault ticket (AUTO-), is never a small change: it is groomed with the full method.")
+    if args.headless or AUTO_TICKET_RE.match(cell["ticket_id"]) or from_studio(cell) or cell.get("kind"):
+        return None
+    source = "engineer" if args.small else ("label" if SMALL_LABEL in ticket_labels(project, cell["ticket_id"]) else None)
+    if source is None:
+        return None
+    if cell.get("stage") not in STAGES[:2]:
+        return f"{cell['ticket_id']} has left grooming ('{cell.get('stage')}'), so it is not taken as a small change." if args.small else None
+    cell["kind"] = small.KIND
+    cell["small"] = {"from": source}
+    return None
 
 
 def cmd_open(project: Path, args: argparse.Namespace) -> int:
     ticket_id = check_ticket_id(args.ticket_id)
+    if args.small and (args.headless or AUTO_TICKET_RE.match(ticket_id)):  # refused before anything is made
+        raise CellError("Headless grooming, and a fault ticket (AUTO-), is never a small change: it is groomed with the full method.")
     root = cell_dir(project, ticket_id)
     path = root / "cell.json"
     if path.is_file():
         cell = json.loads(path.read_text(encoding="utf-8"))
         mode = "headless" if args.headless else "interactive"
-        if cell.get("mode") != mode:  # a person may resume a ticket that was groomed headless
+        was_small = cell.get("kind")
+        note = open_small(project, cell, args)
+        if cell.get("mode") != mode or cell.get("kind") != was_small:  # a person may resume a ticket that was groomed headless
             cell["mode"] = mode
             write_cell(project, cell)
         if cell.get("stage") in ("interview", "spec-open"):  # grooming resumes; a session already under way is the same visit
             telemetry(root, "station.entered", "groom", lambda: {"stage": cell.get("stage"), "mode": mode, "resumed": True}, once=True)
-        print(json.dumps(describe(project, cell), indent=2))
+        print(json.dumps({**describe(project, cell), **({"small_note": note} if note else {})}, indent=2))
         return 0
 
     root.mkdir(parents=True, exist_ok=True)
@@ -264,6 +414,7 @@ def cmd_open(project: Path, args: argparse.Namespace) -> int:
     }
     if note:
         cell["note"] = note
+    open_small(project, cell, args)  # M18: on the engineer's word or the ticket's label; nothing is added otherwise
     write_cell(project, cell)
     telemetry(root, "station.entered", "groom", lambda: {"stage": "interview", "mode": cell["mode"], "isolation": isolation})
     (workdir(project, cell) / "specs" / "slices").mkdir(parents=True, exist_ok=True)
@@ -680,13 +831,25 @@ def cmd_validate(project: Path, args: argparse.Namespace) -> int:
     cell = read_cell(project, args.ticket_id)
     spec = resolve_spec(project, cell, args.spec)
     found = shipped_rules(project)
-    findings, _ = analyze_spec(project, spec, args.ready, cell_dir(project, args.ticket_id), found["rules"], policy_input(project, cell))
+    root = cell_dir(project, args.ticket_id)
+    findings, model = analyze_spec(project, spec, args.ready, root, found["rules"], policy_input(project, cell))
     errors = print_findings(spec, findings)
     print(shipped_line(found))
+    changed = False
+    if on_light_path(cell) and not from_studio(cell):
+        # M18: a small change is judged whenever its spec is checked; one a rule says is not small leaves the light path here,
+        # with the rule's sentence. The result of the check is otherwise what it would have been: never refused for its size.
+        verdict = judge_spec(project, root, cell, model, spec.read_text(encoding="utf-8-sig"), found)
+        if not verdict["small"]:
+            widen(cell, verdict, "validate")
+            changed = True
+        print(small_line(verdict, not verdict["small"]))
     status = "FAILED" if errors else ("READY" if args.ready else "PASSED")
     print(f"{status}: {errors} error(s), {len(findings) - errors} warning(s)")
     if cell.get("spec_path") is None:
         cell["spec_path"] = str(spec.resolve().relative_to(workdir(project, cell).resolve()))
+        changed = True
+    if changed:
         write_cell(project, cell)
     return 1 if errors else 0
 
@@ -844,37 +1007,59 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     cell.pop("policy_concerns_open", None)
     if concerns and concerns == len(open_items):
         cell["policy_concerns_open"] = concerns  # nothing else is open: the routing sheet says the ticket waits for the owner
-    if open_items:
+    # M18: a small change is judged again here. An engineer's own ticket a rule says is not small leaves the light path and is
+    # not made ready in this act: it was interviewed the short way, so the interview carries on in full first. A slice from
+    # Product Studio stops with the product manager's question below instead, as its spec is their approved text.
+    verdict = judge_spec(project, root, cell, model, text, found) if on_light_path(cell) else None
+    widened_now = widen(cell, verdict, "finalize") if verdict and not verdict["small"] and not from_studio(cell) else None
+    question = cell.get("spec_question")
+    if isinstance(question, dict) and question.get("small_change") and not on_light_path(cell):
+        cell.pop("spec_question")  # the product manager's slice came back off the light path: that is their answer
+    if verdict:
+        print(small_line(verdict, bool(widened_now)))
+    if open_items or widened_now:
         cell["stage"] = "spec-open"
         if spec_json.exists():
             spec_json.unlink()
         write_cell(project, cell)
-        telemetry(root, "gate.evaluated", "groom", lambda: {"gate": "groom.finalize", "outcome": "refuse", "reason_code": "open-questions",
-                                                            "overridden_by_reason": False, "open_questions": counts["open_questions"]})
-        telemetry(root, "station.exited", "groom", lambda: {"outcome": "spec-open", "stage": "spec-open", "slice_id": cell["slice_id"]})
+        if open_items:
+            telemetry(root, "gate.evaluated", "groom", lambda: {"gate": "groom.finalize", "outcome": "refuse", "reason_code": "open-questions",
+                                                                "overridden_by_reason": False, "open_questions": counts["open_questions"]})
+        telemetry(root, "station.exited", "groom", lambda: {"outcome": "spec-open", "stage": "spec-open", "slice_id": cell["slice_id"], **kind_facts(cell)})
         report(commit(project, cell, [cell["spec_path"]], f"spec({cell['slice_id']}): save draft with open questions [{cell['ticket_id']}]", args.no_commit))
-        print(json.dumps({"status": "SAVED_NOT_READY", "slice_id": cell["slice_id"], **counts}, indent=2))
-        print("SAVED: the spec is valid but open questions remain, so it is not ready for contracts or building."
-              + (" An open policy concern waits for its owner: only they accept it (policy accept), or the spec changes so the statement is met."
-                 if any(f.rule == "policy-concern-open" for f in open_items) else ""))
+        print(json.dumps({"status": "WIDENED" if widened_now and not open_items else "SAVED_NOT_READY", "slice_id": cell["slice_id"], **counts,
+                          **({"widened": widened_now} if widened_now else {})}, indent=2))
+        if open_items:
+            print("SAVED: the spec is valid but open questions remain, so it is not ready for contracts or building."
+                  + (" An open policy concern waits for its owner: only they accept it (policy accept), or the spec changes so the statement is met."
+                     if any(f.rule == "policy-concern-open" for f in open_items) else ""))
+        if widened_now:
+            print(f"SAVED: {widened_now['reason']} It is a full slice now, so it is not ready yet: the interview carries on in full "
+                  "(references/interview-method.md), with every answer kept, and then the spec is finalized again.")
         return 0 if args.allow_open else 1
 
     if spec_before and spec_before != cell["spec_sha256"]:
         cell.pop("spec_question", None)  # a changed spec is the product manager's answer to the builders' question
+    stopped = stop_for_product(cell, verdict, cell.get("slice_id")) if verdict and not verdict["small"] and from_studio(cell) else None
     export = {"ticket_id": cell["ticket_id"], "risk": cell["risk"], "spec_path": cell["spec_path"], **model}
+    if cell.get("kind") == small.KIND:  # M18 part D: the kind, and when it left the light path, why; no station reads it to do less
+        export.update({"kind": small.KIND, **({"widened": cell["widened"]} if cell.get("widened") else {})})
     spec_json.write_text(json.dumps(export, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     replanned = set_aside_plan(root, cell, SPEC_CHANGED) if stage_before == "planned" and spec_before and spec_before != cell["spec_sha256"] else None
     cell["stage"] = "spec-ready"
     write_cell(project, cell)
     telemetry(root, "gate.evaluated", "groom", lambda: {"gate": "groom.finalize", "outcome": "pass", "reason_code": None, "overridden_by_reason": False})
-    telemetry(root, "station.exited", "groom", lambda: {"outcome": "spec-ready", "stage": "spec-ready", "slice_id": cell["slice_id"], "risk": cell["risk"], **counts})
+    telemetry(root, "station.exited", "groom", lambda: {"outcome": "spec-ready", "stage": "spec-ready", "slice_id": cell["slice_id"], "risk": cell["risk"], **counts,
+                                                       **kind_facts(cell)})
     report(commit(project, cell, [cell["spec_path"]], f"spec({cell['slice_id']}): {cell['title']} [{cell['ticket_id']}]", args.no_commit))
     if cell.get("isolation") == "worktree":
         # The branch as it stands at spec-ready: where a re-plan returns it to (cell.py replan).
         cell["spec_commit"] = git(["rev-parse", "HEAD"], workdir(project, cell)).stdout.strip() or None
         write_cell(project, cell)
     print(json.dumps({"status": "READY", "slice_id": cell["slice_id"], "risk": cell["risk"], **counts, **({"replanned": replanned} if replanned else {}),
-                      **({"risk_floor": floored} if floored else {})}, indent=2))
+                      **({"risk_floor": floored} if floored else {}),
+                      **({"spec_question": stopped, "next": "Stop: this ticket waits for the product manager. The question goes on the slice's issue."}
+                         if stopped else {})}, indent=2))
     print(f"READY: wrote {root / 'spec.md'} and {spec_json}." + (" The spec changed after its plan was written, so the old plan is kept on record and "
                                                                 "the contract engineer writes a new one: go to stage 2." if replanned else ""))
     return 0
@@ -933,7 +1118,9 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
     work = workdir(project, cell)
     spec_json = root / "spec.json"
     if not spec_json.is_file():
-        raise CellError("spec.json is missing: the spec is not ready. Run 'cell.py finalize' first.")
+        widened = cell.get("widened") if cell.get("kind") == small.KIND and cell.get("stage") in STAGES[:2] else None
+        raise CellError("spec.json is missing: the spec is not ready. Run 'cell.py finalize' first."
+                        + (f" This small change is a full slice now ({widened.get('reason')}): the interview carries on in full first." if widened else ""))
     spec_path = work / str(cell.get("spec_path"))
     if not spec_path.is_file() or hashlib.sha256(spec_path.read_text(encoding="utf-8-sig").encode("utf-8")).hexdigest() != cell.get("spec_sha256"):
         raise CellError("The slice spec changed after it was finalized. Run 'cell.py finalize' again, then redo the plan.")
@@ -1004,6 +1191,10 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
                                                            "overridden_by_reason": False, "errors": len(problems)})
         print(f"FAILED: {len(problems)} error(s)")
         return 1
+    if on_light_path(cell):
+        stopped = small_after_plan(project, root, cell, work, text, contracts, risk, decisions, spec_json)
+        if stopped is not None:
+            return stopped
     keep_adr_copies(root, decisions["copies"])
     cell.update({"app_type": app_type, "risk": risk, "contracts": contracts, "stage": "planned", "adrs": decisions["record"]})
     cell.pop("adr_conflict", None)
@@ -1063,6 +1254,59 @@ def plan_files(text: str) -> List[str]:
     tasks, touch = _PARSE_PLAN[0](text)
     names = set(touch) | {name for task in tasks for name in task.get("files") or []}
     return sorted(name[2:] if name.startswith("./") else name for name in names if isinstance(name, str) and name)
+
+
+def keep_plan_aside(root: Path, cell: Dict[str, Any], reason: str) -> Dict[str, Any]:
+    """A plan written for a small change that turned out not to be one: kept on record in plan-history/<n>/, as a re-plan
+    keeps it. Nothing has been built, so nothing is lost."""
+    history = root / "plan-history"
+    number = 1 + max([int(path.name) for path in history.glob("*") if path.name.isdigit()] or [0])
+    keep = history / str(number)
+    keep.mkdir(parents=True)
+    (root / "plan.md").replace(keep / "plan.md")
+    (keep / "replan.json").write_text(json.dumps({"replan": number, "at": now(), "reason": reason, "from_stage": cell.get("stage"), "kept": ["plan.md"],
+                                                 "reset": None, "automatic": True}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    cell["replans"] = number
+    return {"replan": number, "kept_in": str(keep), "reason": reason}
+
+
+def small_after_plan(project: Path, root: Path, cell: Dict[str, Any], work: Path, text: str, contracts: List[str], risk: str,
+                     decisions: Dict[str, Any], spec_json: Path) -> Optional[int]:
+    """M18, check-plan: what only a plan can show (an existing contract changed, a file in a high-risk area, an ADR proposed;
+    and a plan that raises the tier to High). A ticket a rule says is no longer small: an engineer's own goes back to the
+    interview in full (spec-open, its plan kept on record), a Product Studio slice stops with the product manager's question.
+    Returns the exit code when it stopped, None when it is still small."""
+    limits = small_limits(project)
+    main_head = git(["rev-parse", "HEAD"], project).stdout.strip() if cell.get("isolation") == "worktree" else ""
+    existing = [item for item in contracts if main_head and git(["cat-file", "-e", f"{main_head}:{item}"], work).returncode == 0]
+    try:
+        found = small.judge_plan(project, plan_files(text), existing, [item["file"] for item in decisions["record"]["proposed"]], limits=limits)
+    except RuntimeError as exc:
+        raise CellError(f"Whether this small change is still small after its plan cannot be judged: {exc}")
+    if found["small"] and risk == "High":
+        found = dict(small.verdict(["risk"], limits), high_risk=[])
+    if found["small"]:
+        print(small_line(found, False))
+        return None
+    kept = keep_plan_aside(root, cell, found["sentence"])
+    if from_studio(cell):
+        question = stop_for_product(cell, found, cell.get("slice_id"))
+        write_cell(project, cell)
+        telemetry(root, "gate.evaluated", "plan", lambda: {"gate": "plan.spec", "outcome": "refuse", "reason_code": "spec-question", "overridden_by_reason": False})
+        print(json.dumps({"status": "STOPPED", "ticket_id": cell["ticket_id"], "small_change": {"verdict": found, "plan_kept": kept}, "spec_question": question,
+                          "next": "Stop: this slice is not a small change. The question goes to the product manager on the slice's issue; they reopen it "
+                                  "as a full slice in Product Studio, and its new revision is planned again then."}, indent=2))
+        return 0
+    widened = widen(cell, found, "check-plan")
+    cell["stage"] = "spec-open"
+    if spec_json.exists():
+        spec_json.unlink()
+    write_cell(project, cell)
+    print(json.dumps({"status": "WIDENED", "ticket_id": cell["ticket_id"], "stage": "spec-open", "widened": widened, "high_risk": found["high_risk"],
+                      "plan_kept": kept, "next": f"{found['sentence']} It is no longer a small change, so it goes back to the interview in full "
+                                                 "(references/interview-method.md), with every answer kept; nothing has been built. Then the spec is "
+                                                 "finalized again and planned again."}, indent=2))
+    return 0
 
 
 def plan_adrs(project: Path, root: Path, cell: Dict[str, Any], header: Dict[str, str], text: str, app_type: str, problems: List[str]) -> Dict[str, Any]:
@@ -1636,7 +1880,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("ticket_id")
     p.add_argument("--title")
     p.add_argument("--headless", action="store_true", help="record that no person is answering questions")
+    p.add_argument("--small", action="store_true", help="a small change, on the engineer's word: the short interview, the same spec and gates (M18)")
     p.set_defaults(func=cmd_open)
+
+    p = sub.add_parser("widen", help="make a small change a full slice while its spec is written, so the interview carries on in full")
+    p.add_argument("ticket_id")
+    reason = p.add_mutually_exclusive_group(required=True)
+    reason.add_argument("--why", help="the engineer's reason, in their words (only on their word)")
+    reason.add_argument("--by-rule", metavar="RULE", help="the rule of a small change an answer showed does not hold, such as actor or questions")
+    p.set_defaults(func=cmd_widen)
 
     p = sub.add_parser("next-id", help="list the next free slice IDs and the IDs earlier specs reserved")
     p.add_argument("--count", type=int, default=6)

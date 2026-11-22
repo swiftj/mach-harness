@@ -314,6 +314,61 @@ class ProductRulesTest(Base):
         self.assertIn("@\u200boctocat", section)
 
 
+
+class SmallChangeTest(Base):
+    """M18: the record and the pull request say "small change" beside the ticket, read from cell.json; when it became a full
+    slice, that it began as one and the rule's fixed sentence, never the person's own words. Every other ticket is as before."""
+
+    SENTENCE = "This is not a small change: a small change is Low or Medium risk, and this one is High."
+
+    def texts(self):
+        cell = merge.Cell(self.project, "LOCAL-001")
+        record = change_record.render(cell.root, cell.info, "LOCAL-001", {"approved": "d" * 40, "base": "d" * 40}, merge.issue_rules())
+        return record, merge.pr_title(cell), merge.pr_body(cell)
+
+    def test_a_ticket_that_is_not_small_is_exactly_as_before(self):
+        self.approved(mode="auto")
+        before = self.texts()
+        self.set_cell(kind=None)  # a kind that is not small says nothing
+        self.assertEqual(self.texts(), before)
+        self.assertNotIn("small change", "\n".join(before).lower())
+
+    def test_a_small_change_is_said_beside_the_ticket(self):
+        self.approved(mode="auto")
+        record, title, body = self.before_and_after(kind="small", small={"from": "engineer"})
+        self.assertIn("- Ticket: LOCAL-001, a small change\n", record)
+        self.assertTrue(title.startswith("LOCAL-001 (small change): "), title)
+        self.assertIn("**Ticket:** LOCAL-001, a small change  \n", body)
+
+    def test_one_that_became_a_full_slice_says_so_with_the_rules_sentence(self):
+        self.approved(mode="auto")
+        record, title, body = self.before_and_after(kind="small", small={"from": "engineer"},
+                                                    widened={"at": "2026-11-22T10:00:00Z", "reason": self.SENTENCE, "rule": "risk", "by": "finalize"})
+        words = "a full slice that began as a small change. " + self.SENTENCE
+        self.assertIn(f"- Ticket: LOCAL-001, {words}\n", record)
+        self.assertIn(f"**Ticket:** LOCAL-001, {words}  \n", body)
+        self.assertNotIn("small change", title, "a full slice's title is a full slice's")
+
+    def test_a_persons_words_for_the_widening_are_never_repeated(self):
+        self.approved(mode="auto")
+        record, _, body = self.before_and_after(kind="small", small={"from": "engineer"},
+                                                widened={"at": "2026-11-22T10:00:00Z", "reason": "It also changes the reminder email.", "rule": None, "by": "engineer"})
+        for text in (record, body):
+            self.assertIn("a full slice that began as a small change, made a full slice on a person's word", text)
+            self.assertNotIn("reminder", text)
+
+    def before_and_after(self, **cell):
+        before = self.texts()
+        self.set_cell(**cell)
+        after = self.texts()
+        for old, new in zip(before, after):
+            self.assertNotIn("light path", new.lower())
+            self.assertNotRegex(new, r"\bkind\b")
+            # Only the line beside the ticket (and the title) changes.
+            changed = [line for line in new.splitlines() if line not in old.splitlines()]
+            self.assertLessEqual(len(changed), 1, changed)
+        return after
+
 class ApprovalBindingTest(PullRequestBase):
     def open_pr(self):
         head = self.approved(mode="auto", method="pr")

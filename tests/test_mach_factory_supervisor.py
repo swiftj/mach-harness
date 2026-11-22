@@ -330,8 +330,11 @@ class ActivationTest(Base):
                 {"instance": "other", "runner_id": "r", "pid": os.getpid(), "host": supervisor.platform.node(), "heartbeat_at": "x", "expires_at": "2099-01-01T00:00:00Z"})),
              "ownership", "Another supervisor"),
         ]
+        # Each case starts from the same tracked settings: a section one case breaks (security, say) must not carry into the next.
+        settings = (self.eng / ".factory/config.json").read_text()
         for break_it, name, words in cases:
             with self.subTest(check=name):
+                (self.eng / ".factory/config.json").write_text(settings)
                 self.config(build={"require_audit": False}, review={}, factory={"max_parallel": 3})
                 self.claude({"default": {"stage": "approved"}})
                 if self.local("supervisor.json").exists():
@@ -1558,7 +1561,7 @@ class EventsTest(Base):
         for secret in ("Run the workflow named", "--allowedTools", "Use the Workflow tool"):
             self.assertNotIn(secret, log)
         schema = json.loads((ROOT / "docs/mach-next/schemas/factory-event.schema.json").read_text())
-        self.assertEqual((sorted(schema["required"]), schema["properties"]["type"]["enum"], schema["properties"]["schema_version"]), (sorted(keys), list(intake.EVENT_TYPES), {"const": 2}))
+        self.assertEqual((sorted(schema["required"]), schema["properties"]["type"]["enum"], schema["properties"]["schema_version"]), (sorted(keys), list(intake.EVENT_TYPES), {"const": 3}))
         policy_schema = json.loads((ROOT / "docs/mach-next/schemas/runner-policy.schema.json").read_text())
         stored = json.loads(self.local("runner.json").read_text())
         self.assertEqual(sorted(policy_schema["required"]), sorted(stored))

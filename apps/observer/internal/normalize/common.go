@@ -323,6 +323,11 @@ var (
 	stations = []string{"intake", "groom", "plan", "audit", "build", "verify", "review", "human-approval", "merge", "cleanup", "observe"}
 )
 
+// SmallRules are the codes of the rules that decide whether a change is small, in the intent station's
+// order (skills/intent/scripts/small.py RULES): the only text a small change's widening carries.
+var SmallRules = []string{"actor", "capability", "requirements", "scenarios", "matrix", "changed-rules", "retired-rule",
+	"principle-exception", "policy-concern", "permission", "unshipped-dependency", "risk", "questions", "contract", "high-risk-file", "adr"}
+
 func stage(v any) any  { return enum(v, stages...) }
 func action(v any) any { return enum(v, actions...) }
 

@@ -1,0 +1,45 @@
+{
+  "exit_code": 0,
+  "data": {
+    "slice_id": "SLICE-003",
+    "spec": "/project/.factory/studio/draft/specs/slices/SLICE-003-expired-invitation-message.md",
+    "errors": [],
+    "warnings": [],
+    "diagnostics": [],
+    "open_questions": [],
+    "intent_problems": [],
+    "counts": {
+      "invariants": 1,
+      "functional_requirements": 1,
+      "matrix_rules": 2,
+      "scenarios": 1
+    },
+    "title": "Clearer expired invitation message",
+    "shipped": {
+      "commit": "b1b8b38df74c0bf56fc309f8fe6cc1ad922cee4a",
+      "branch": "main",
+      "rules": 5,
+      "notes": []
+    },
+    "risk": "Low",
+    "small_change": {
+      "kind": "small",
+      "change": "fix",
+      "shipped_rule": "SLICE-001/FR-02",
+      "light_path": true,
+      "widened": null,
+      "verdict": {
+        "verdict": "small",
+        "small": true,
+        "rule": null,
+        "sentence": "This is a small change: every rule for a small change holds.",
+        "failed": []
+      }
+    },
+    "prd_problems": [],
+    "ready": true,
+    "status": "ready_for_approval"
+  },
+  "refused": null,
+  "hint": null
+}

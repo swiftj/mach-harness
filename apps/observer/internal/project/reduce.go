@@ -241,7 +241,13 @@ func TicketDims(s *State, ticket string) map[string]string {
 	if c == nil {
 		return nil
 	}
-	return map[string]string{"risk": c.Risk, "app_type": c.AppType, "epic": s.epicOf(c)}
+	widened := ""
+	if c.Change != "" {
+		widened = map[bool]string{true: "yes", false: "no"}[c.Widened]
+	}
+	// M18: change (small or full) and widened (a small change that became a full slice, counted as
+	// full) are read now, so a ticket widened after an earlier groom visit counts every visit as full.
+	return map[string]string{"risk": c.Risk, "app_type": c.AppType, "epic": s.epicOf(c), "change": c.Change, "widened": widened}
 }
 
 // MetricQuery evaluates metrics with the ticket dimensions joined from this state.
@@ -1098,10 +1104,25 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 			AppType    *string        `json:"app_type"`
 			Risk       *string        `json:"risk"`
 			Counts     map[string]any `json:"counts"`
+			// Revision 8 (M18): a small change, on the groom station's exit only.
+			Kind        *string `json:"kind"`
+			Widened     *bool   `json:"widened"`
+			WidenedRule *string `json:"widened_rule"`
 		}
 		e.DataAs(&d)
 		if station == "" {
 			station = d.Station
+		}
+		if station == "groom" && d.ClosedBy != "cleanup" {
+			// What the station recorded of the ticket's size when it left grooming; an exit cleanup
+			// closed records nothing of it. Once widened, a full slice from then on.
+			c.Change = "full"
+			if feed.Str(d.Kind) == "small" && !c.Widened {
+				c.Change = "small"
+				if d.Widened != nil && *d.Widened {
+					c.Change, c.Widened, c.WidenedRule = "full", true, feed.Str(d.WidenedRule)
+				}
+			}
 		}
 		// The facts the plan fixed (D11): recorded on the plan station's exit.
 		if v := feed.Str(d.AppType); v != "" {

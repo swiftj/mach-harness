@@ -218,7 +218,7 @@ type Row struct {
 }
 
 // joinable are the dimensions a read joins to a ticket-keyed cell (Query.Resolve).
-var joinable = map[string]bool{"risk": true, "app_type": true, "epic": true}
+var joinable = map[string]bool{"risk": true, "app_type": true, "epic": true, "change": true, "widened": true}
 
 // Exclusion reasons for durations that are not measured.
 const (

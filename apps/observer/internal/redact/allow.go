@@ -81,7 +81,7 @@ var Allow = map[string]*Shape{
 	"execution.failed":    obj("stage", "next", "how", "claude_error", "exit_code", "attempt", "not_progressing"),
 
 	"station.entered":           obj("station", "stage", "action", "resumed", "unclosed_visit", "head", "counts", anyKeys(scalar)),
-	"station.exited":            obj("station", "outcome", "stage", "duration_ms", "closed_by", "head", "counts", anyKeys(scalar), "app_type", "risk"), // revision 2: app_type, risk (plan exit)
+	"station.exited":            obj("station", "outcome", "stage", "duration_ms", "closed_by", "head", "counts", anyKeys(scalar), "app_type", "risk", "kind", "widened", "widened_rule"), // revision 2: app_type, risk (plan exit); revision 8: kind, widened, widened_rule (a small change, groom exit)
 	"gate.evaluated":            obj("gate", "verdict", "reason_code", "subject", "status", "audit_tier", "counts", anyKeys(scalar)),
 	"build.task_completed":      obj("task_id", "kind", "step", "first_run", "suite", "commit"),
 	"verify.check_recorded":     obj("target_id", "target_kind", "result", "evidence", list(obj("file", "sha256", "bytes")), "rerecorded"),

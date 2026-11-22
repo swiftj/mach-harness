@@ -45,6 +45,7 @@ import product  # noqa: E402
 import requests_in  # noqa: E402
 import shape  # noqa: E402
 import shape_route  # noqa: E402
+import small_change  # noqa: E402
 
 
 class StudioError(Exception):
@@ -486,11 +487,14 @@ class Studio:
         work = self.load("slice", slice_id)
         spec = self.spec_of(slice_id)
         result: Dict[str, Any] = {"slice_id": slice_id, "spec": None, "errors": [], "warnings": [], "diagnostics": [], "open_questions": [], "intent_problems": []}
+        spec_model: Optional[Dict[str, Any]] = None
+        spec_text: Optional[str] = None
         if spec is None:
             result["errors"].append(say(f"No spec yet. Write it to {self.draft / 'specs' / 'slices'}/{slice_id}-<short-name>.md", "No spec yet."))
         else:
             result["spec"] = str(spec)
             findings, model = self.analyze(spec, ready)
+            spec_model, spec_text = model, spec.read_text(encoding="utf-8-sig")
             result["diagnostics"] = [d for d in self.diagnostics(spec, findings) if d["rule"] != "open-questions"]
             for finding in findings:
                 line = f"{spec.name}:{finding.line}: " if finding.line else f"{spec.name}: "
@@ -516,6 +520,7 @@ class Studio:
             result["intent_problems"] = [say(p, "The slice's why is not written yet.") if p.startswith(str(self.intent_path(slice_id)))
                                          else p for p in result["intent_problems"]]
         result["risk"] = intent.get("risk")
+        result.update(small_change.check_field(sys.modules[__name__], self, work, spec_model, spec_text, result["risk"]))  # M18: nothing for a full slice
         result["prd_problems"] = prd.slice_problems(sys.modules[__name__], self, slice_id, work)  # M13 D: a slice made from a PRD
         if "serves" in work:  # M16 B: a slice made from an idea names the outcomes it serves in its why
             result["serves_problems"] = shape_route.slice_problems(sys.modules[__name__], self, slice_id, work)
@@ -637,6 +642,7 @@ def describe(studio: Studio) -> Dict[str, Any]:
             **({"shipped_moved": moved} if moved else {}),
             **({"policies_changed": older_packs} if older_packs else {}),
             **tracking_field(data),
+            **small_change.status_field(data),  # M18: the kind and any widening; nothing for a full slice
             "slice_id": slice_id, "title": data.get("title"), "epic_id": data.get("epic_id"), "status": data.get("status"),
             "revision": data.get("revision"), "open_questions": len(data.get("open_questions") or []),
             "spec": studio.relative(spec) if spec else None, "has_intent": studio.intent_path(slice_id).is_file(),
@@ -1010,8 +1016,9 @@ def reserved_ids(studio: Studio) -> Dict[str, Any]:
 
 def start_slice(studio: Studio, epic_id: str, title: str, depends_on: Sequence[str], given_id: Optional[str],
                 origin: Optional[Dict[str, Any]] = None, source: Optional[Dict[str, Any]] = None,
-                serves: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """The steps of `slice new`, shared with `request pick`, `prd apply` and `idea apply`, which also record where the slice came from."""
+                serves: Optional[Dict[str, Any]] = None, small: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The steps of `slice new`, shared with `request pick`, `prd apply` and `idea apply`, which also record where the slice came from.
+    `small` (M18): the kind and change of a small change, from small_change.start_fields."""
     studio.prepare()
     studio.load("epic", epic_id)
     if given_id:
@@ -1036,6 +1043,8 @@ def start_slice(studio: Studio, epic_id: str, title: str, depends_on: Sequence[s
         data["source"] = source
     if serves is not None:  # M16 B: the idea and outcomes it serves, identifiers only
         data["serves"] = serves
+    if small is not None:  # M18: a small change; every other slice is as before
+        data.update(small)
     studio.commit_or_restore([("slice", data)], "Starting the slice")
     session = studio.session()
     session["current_slice"] = slice_id
@@ -1044,7 +1053,8 @@ def start_slice(studio: Studio, epic_id: str, title: str, depends_on: Sequence[s
 
 
 def cmd_slice_new(studio: Studio, args: argparse.Namespace) -> int:
-    return emit(start_slice(studio, args.epic, args.title, args.depends_on, args.id))
+    small = small_change.start_from_args(sys.modules[__name__], studio, args)
+    return emit(start_slice(studio, args.epic, args.title, args.depends_on, args.id, small=small))
 
 
 def edit_refusal(slice_id: str, data: Dict[str, Any]) -> Optional[str]:
@@ -1105,6 +1115,7 @@ def cmd_slice_resume(studio: Studio, args: argparse.Namespace) -> int:
         "shipped_rules": shipped_helper().for_interview(studio.shipped()),  # M13: the lookup for '## Effects on shipped behaviour'
         **prd.resume_field(sys.modules[__name__], studio, slice_id, data),  # M13 D: the PRD's cited lines, fenced
         **shape_route.resume_field(sys.modules[__name__], studio, slice_id, data),  # M16 B: the brief, fenced as the PM's earlier words
+        **small_change.resume_field(sys.modules[__name__], studio, slice_id, data, check),  # M18: the short interview; nothing for a full slice
     })
 
 
@@ -1217,6 +1228,7 @@ def cmd_slice_check(studio: Studio, args: argparse.Namespace) -> int:
     studio.prepare()
     data = require_editable(studio, args.slice_id)
     result = studio.check_slice(args.slice_id, ready=args.ready)
+    small_change.widen_if_needed(sys.modules[__name__], studio, args.slice_id, data, result)  # M18: widened by the check, never refused for size
     # Bookkeeping the validator decides: the open questions, where the spec is, and whether it is ready.
     spec = studio.spec_of(args.slice_id)
     data["open_questions"] = result["open_questions"]
@@ -1298,6 +1310,7 @@ def approval_problems(studio: Studio, data: Dict[str, Any], slice_id: str) -> Tu
     """The gates a slice passes before it is approved: the spec passes the validator with no open
     questions, the why is complete, and its epic and its dependencies exist."""
     result = studio.check_slice(slice_id, ready=True)
+    small_change.widen_if_needed(sys.modules[__name__], studio, slice_id, data, result)  # M18: widened by the check, never refused for size
     problems = list(result["errors"]) + list(result["intent_problems"]) + list(result["prd_problems"]) + list(result.get("serves_problems") or [])
     problems += [f"open question: {question}" for question in result["open_questions"]]
     epic = studio.all("epic").get(data.get("epic_id"))
@@ -1333,6 +1346,13 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
         if problems:
             # The app titles the refusal itself, so its wording is the reasons alone.
             raise StudioError(say(f"{slice_id} cannot be marked ready yet:\n  " + "\n  ".join(problems), "\n".join(problems)))
+        if (result.get("small_change") or {}).get("widened_now"):
+            # M18: this check has just taken a small change off the light path. It was interviewed the short way, so it is not
+            # marked ready in the same act: the interview carries on in full, and the product manager marks it ready again then.
+            return emit({"ready": False, "widened": True, "slice": studio.load("slice", slice_id), "small_change": result["small_change"],
+                         "risk": result.get("risk"), "counts": result.get("counts"), "warnings": result["warnings"], "factory_authorized": False,
+                         "note": f"{data['widened']['reason']} It was not marked ready: it is a full slice now, and the interview carries on in full, "
+                                 "with every answer kept. Mark it ready again once the interview is done."})
     elif data.get("status") == APPROVED:
         spec = studio.spec_of(slice_id)
         if spec is None or sha(spec.read_bytes()) != data.get("spec_sha256"):
@@ -1354,6 +1374,7 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
     rules = ticket_rules()
     jira = effective_jira(data, epic)  # M13: the slice's Jira key, else its epic's
     mock_list, mock_files = mocks.for_ready(sys.modules[__name__], studio, slice_id, data)  # M14 C: each picture checked again; ([], {}) without mocks
+    small = small_change.handoff_record(data)  # M18: the kind travels with the slice; None for a slice that is not small
     hand = studio.handoff()
     with hand.exclusive():
         ledger = hand.load()
@@ -1367,24 +1388,25 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
             if waiting:
                 raise StudioError(f"{slice_id} depends on {', '.join(waiting)}, which {'is' if len(waiting) == 1 else 'are'} not ready yet. Mark {waiting[0]} ready first.",
                                   hint("mark_ready", waiting[0]))
-            length = len(rules.slice_issue_body(slice_id, 999999, 999999999, [999999999] * len(dependencies), why, spec, jira=jira, mocks=mock_list))
+            length = len(rules.slice_issue_body(slice_id, 999999, 999999999, [999999999] * len(dependencies), why, spec, jira=jira, mocks=mock_list, small=small))
             if length > rules.ISSUE_BODY_LIMIT:
                 raise StudioError(handoff.too_large(slice_id, length, rules.ISSUE_BODY_LIMIT))
             if data.get("status") != APPROVED:
                 approve_locally(studio, data, slice_id)
-            saved = hand.write_folder(ledger, slice_id, data.get("title") or slice_id, epic, dependencies, why, spec, jira, mock_list, mock_files)
+            saved = hand.write_folder(ledger, slice_id, data.get("title") or slice_id, epic, dependencies, why, spec, jira, mock_list, mock_files, small)
             folder = Path(saved["folder"])
             return emit({"ready": True, "saved_to": "folder", "slice": studio.load("slice", slice_id), "folder": str(folder),
                          "files": [str(folder / name) for name in ("spec.md", "why.md", "slice.json", *sorted("mocks/" + name for name in mock_files))],
                          "revision": saved["revision"],
                          "why_folder": channel.why, "risk": result.get("risk"), "counts": result.get("counts"), "warnings": result["warnings"],
+                         **({"small_change": result["small_change"]} if "small_change" in result else {}),
                          "ways_on": [say(f"Commit the folder {folder.relative_to(studio.draft)} to the repository; the builders take it from the main branch.",
                                          "Add this folder to the project's repository; the builders take it from there."),
                                      say(f"Or hand the folder to the engineer, who runs /mach product import {folder}.",
                                          "Or hand the folder to the engineer, who brings it in with MACH.")],
                          "factory_authorized": False,
                          "note": "Approved and written to the folder. Nothing was sent to GitHub and no work has started."})
-        plan = hand.prepare(ledger, channel, slice_id, data.get("title") or slice_id, epic, project, dependencies, why, spec, jira, mock_list)
+        plan = hand.prepare(ledger, channel, slice_id, data.get("title") or slice_id, epic, project, dependencies, why, spec, jira, mock_list, small)
         if data.get("status") != APPROVED:
             approve_locally(studio, data, slice_id)
         saved = hand.run(plan, channel, slice_id, project, epic, why, spec)
@@ -1395,6 +1417,7 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
     return emit({"ready": True, "saved_to": "github", "slice": studio.load("slice", slice_id), "issue": saved["issue"], "url": saved["url"],
                  "revision": saved["revision"], "follows": saved["follows"], "epic_issue": saved["epic_issue"], "project_issue": saved["project_issue"],
                  "approved_by": channel.login, "risk": result.get("risk"), "counts": result.get("counts"), "warnings": result["warnings"],
+                 **({"small_change": result["small_change"]} if "small_change" in result else {}),
                  "request_updates": request, "factory_authorized": False, **({"mocks": delivery} if delivery else {}),
                  # The app shows where and what is left as rows of their own, so its note says only what happened and who waits.
                  "note": say(f"Saved to GitHub as #{saved['issue']} and marked ready. The builders take it from there; nothing has started yet."
@@ -1408,11 +1431,17 @@ def cmd_slice_reopen(studio: Studio, args: argparse.Namespace) -> int:
     data = studio.load("slice", args.slice_id)
     if data.get("status") != APPROVED:
         raise StudioError(f"{args.slice_id} is {state(data.get('status'))}; only an approved slice can be reopened.")
-    taken = studio.handoff().withdraw(args.slice_id)  # off GitHub first; nothing local changes if that fails
+    light = small_change.on_light_path(data)
+    taken = studio.handoff().withdraw(args.slice_id, read_question=light)  # off GitHub first; nothing local changes if that fails
+    # M18: a small change the Factory stopped because a rule says it is not small comes back widened, with the Factory's sentence.
+    widened = small_change.widened_by_question(sys.modules[__name__], studio, data, taken.pop("question_text", None)) if light else None
     data.update({"status": "interviewing", "spec_sha256": None})
     studio.commit_or_restore([("slice", data)], f"Reopening {args.slice_id}")
     studio.note_withdrawn({args.slice_id: "You reopened it to change it."})
     note = "You can change it now. Mark it ready again when it is done."
+    if widened:
+        note = (f"The builders said: {widened['reason']} So it is a full slice now, and the interview carries on in full, "
+                "with every answer kept. " + note)
     if taken.get("where") == "github":
         note = f"It is no longer marked ready on GitHub (#{taken['issue']}). " + note
         if taken.get("question"):
@@ -1423,7 +1452,8 @@ def cmd_slice_reopen(studio: Studio, args: argparse.Namespace) -> int:
             note += " The builders have already started on it; when you mark it ready again they will be told it changed."
     elif taken.get("where") == "folder":
         note = "Its ready folder was removed. " + note
-    return emit({"reopened": True, "slice": studio.load("slice", args.slice_id), "github": taken, "note": note, "factory_authorized": False})
+    return emit({"reopened": True, "slice": studio.load("slice", args.slice_id), "github": taken, "note": note, "factory_authorized": False,
+                 **({"small_change": dict(small_change.view(sys.modules[__name__], studio, data), widened_now=True)} if widened else {})})
 
 
 def cmd_acceptance_record(studio: Studio, args: argparse.Namespace) -> int:
@@ -1521,7 +1551,7 @@ def cmd_slice_move(studio: Studio, args: argparse.Namespace) -> int:
             record = ledger["order"].setdefault(epic_id, handoff.empty_order())
             record.update(slices=order, move={"state": "trying", "slices": order, "at": handoff.utc_now()})
             hand.save(ledger)
-            failure = hand.arrange(ledger, str(channel.repository), epic, order)
+            failure = hand.arrange(ledger, str(channel.repository), epic, order, moved=slice_id)
             if failure:
                 hand.save(ledger)
                 raise StudioError(f"The new order of {epic_id} is saved here, but putting it in place on GitHub stopped part way. {handoff.explain(failure)} "
@@ -1862,6 +1892,7 @@ def cmd_request_show(studio: Studio, args: argparse.Namespace) -> int:
 
 def cmd_request_pick(studio: Studio, args: argparse.Namespace) -> int:
     number = request_number(args.number)
+    small = small_change.start_from_args(sys.modules[__name__], studio, args)  # M18: checked before anything is written
     reqs = studio.requests()
     try:
         record, offline = reqs.check_pick(number, args.also)
@@ -1869,7 +1900,7 @@ def cmd_request_pick(studio: Studio, args: argparse.Namespace) -> int:
         raise request_error(exc)
     repository = reqs.load().get("repository")
     origin = {"kind": "github_issue", "repository": repository, "number": number}
-    started = start_slice(studio, args.epic, args.title, [], args.id, origin)  # the local act completes before any GitHub write
+    started = start_slice(studio, args.epic, args.title, [], args.id, origin, small=small)  # the local act completes before any GitHub write
     slice_id = started["slice"]["slice_id"]
     writes = reqs.record_pick(number, record, slice_id)
     gave_up = writes.pop("gave_up", 0)
@@ -2136,6 +2167,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--title", required=True)
     p.add_argument("--depends-on", action="append", default=[])
     p.add_argument("--id", help="only to pick up an ID that an earlier spec reserved for this feature")
+    small_change.add_start_flags(p)
     p.set_defaults(func=cmd_slice_new)
     p = slice_.add_parser("set")
     p.add_argument("slice_id")
@@ -2163,6 +2195,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = slice_.add_parser("show", help="the work order, spec, why and current check in one read; changes nothing")
     p.add_argument("slice_id")
     p.set_defaults(func=cmd_slice_show)
+    small_change.add_commands(slice_, sys.modules[__name__])  # M18: slice widen
     p = slice_.add_parser("ready", help="approve the slice and hand it to the builders (only on the product manager's word)")
     p.add_argument("slice_id")
     p.set_defaults(func=cmd_slice_ready)
@@ -2228,6 +2261,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--title", required=True)
     p.add_argument("--id", help="only to pick up an ID that an earlier spec reserved for this feature")
     p.add_argument("--also", action="store_true", help="pick it up even though another product manager already has")
+    small_change.add_start_flags(p)
     p.set_defaults(func=cmd_request_pick)
     p = request.add_parser("link", help="record that a draft slice also serves a request (only on the product manager's word)")
     p.add_argument("number")

@@ -63,7 +63,7 @@ SCHEMA_VERSION = 1
 STAGES = ("new", "exploring", "brief", "decided", "shaped")
 SOURCE_KINDS = ("typed", "idea", "request", "fault", "change")  # change: Part B's `idea change`, from one shipped rule
 VERDICTS = ("go", "not-now", "no")
-ROUTES = ("one-slice", "epic", "several-epics")
+ROUTES = ("small-change", "one-slice", "epic", "several-epics")
 OUTCOME_RESULTS = ("met", "not-met", "too-early")
 ASSUMPTION_RESULTS = ("confirmed", "wrong", "unknown")
 # The record's fields. Part B owns route, made and lookback; Part A checks their shape and never writes them.
@@ -154,7 +154,7 @@ def route_problems(route: Any) -> List[str]:
     if route.get("details") is not None and not isinstance(route["details"], dict):
         problems.append("route.details is an object: what was counted, by identifier")
     if route.get("route") not in ROUTES:
-        problems.append("route.route is one-slice, epic or several-epics")
+        problems.append("route.route is small-change, one-slice, epic or several-epics")
     if not isinstance(route.get("counted"), dict):
         problems.append("route.counted is an object of counts")
     if not _is_text(route.get("why"), 1000):
@@ -606,7 +606,9 @@ def source_view(ideas: Ideas, source: Dict[str, Any]) -> Dict[str, Any]:
         if not record or (record.get("decision") or {}).get("state") != "accepted":
             view.update(text_shown=False, text_note="Its text is not kept on this computer, or it no longer counts as a request. It can be read on GitHub.")
             return view
-        view.update(rules.fence(number, record.get("title") or "", record.get("body") or ""), text_shown=True)
+        # Bounded and redacted again as it is shown, as a fault's text is: the cache is a local file, and what it holds is not trusted.
+        text = rules.request_text(record.get("title"), record.get("body"))
+        view.update(rules.fence(number, text["title"], text["body"]), text_shown=True)
         parts = rules.parse_idea_body(record.get("body"))
         if kind == "idea" and parts:
             view["parts"] = [{"part": key, "heading": heading, **rules.idea_fence(number, key, parts[key])} for key, heading in rules.IDEA_SECTIONS]
@@ -804,7 +806,8 @@ def next_step(ideas: Ideas, record: Dict[str, Any], github: Dict[str, Any]) -> D
     if github.get("saved") == "github" and not github.get("up_to_date"):
         return step("publish", host.say(f"{idea_id} changed since it was saved to GitHub: publish it again (idea publish {idea_id}).",
                     f"{idea_id} changed since it was saved to GitHub. Save it again."))
-    if github.get("saved") is None:
+    # After a Go, sizing and routing come first: saving an idea that was never saved stays the product manager's optional act.
+    if github.get("saved") is None and view["decision"] != "go":
         return step("publish", host.say(f"Save {idea_id} as a GitHub issue so others can read the brief and the verdict (idea publish {idea_id}).",
                     f"Save {idea_id} as a GitHub issue so others can read the brief and the verdict."))
     if view["decision"] == "go":

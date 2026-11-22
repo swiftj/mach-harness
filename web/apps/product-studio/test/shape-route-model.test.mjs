@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import {
   ROUTES,
+  applyArgs,
   applyBlocked,
   applyOutcome,
   applyPlan,
@@ -22,6 +23,7 @@ import {
   journeyStep,
   applySummary,
   mapSummary,
+  needsSmallKind,
   partForStep,
   partPlace,
   settleSummary,
@@ -87,7 +89,7 @@ test("not sized, holds, stale: the engine's record and its view of whether it ho
 });
 
 test("a route sized on this page holds, with the engine's sentence and counts", () => {
-  for (const name of ["one-slice", "epic", "several-epics"]) {
+  for (const name of ["small-change", "one-slice", "epic", "several-epics"]) {
     const sized = data(`idea.size.${name}`);
     const state = routeState(null, null, sized);
     assert.equal(state.kind, "holds");
@@ -97,11 +99,12 @@ test("a route sized on this page holds, with the engine's sentence and counts", 
   }
 });
 
-test("there are exactly three routes, the engine's, and no light path", () => {
+test("there are exactly four routes, the engine's, the light path first (M18)", () => {
   assert.deepEqual(
     ROUTES.map((r) => r.route),
-    ["one-slice", "epic", "several-epics"],
+    ["small-change", "one-slice", "epic", "several-epics"],
   );
+  assert.equal(routeName("small-change"), "A small change");
   const engine = readFileSync(new URL("../../../../skills/product-studio/scripts/shape_route.py", import.meta.url), "utf8");
   for (const r of ROUTES) assert.ok(engine.includes(`"${r.route}"`), r.route);
 });
@@ -336,4 +339,22 @@ test("in fixture mode idea.show and idea.map-status answer for the same idea, so
   assert.equal(routeState(sized.route, data("idea.map-status.sized").route).kind, "holds");
   assert.equal(data("idea.map-status.sized").map, null);
   assert.deepEqual(sized.route.details.touches.shipped_rules, ["SLICE-002/FR-01", "SLICE-001/FR-01"]);
+});
+
+/* ── A small change (M18) ─────────────────────────────────────────────── */
+
+test("a small change is made only with the product manager's word on its kind", () => {
+  const status = data("idea.map-status.small-change");
+  assert.equal(status.route.route, "small-change");
+  assert.equal(needsSmallKind(status), true);
+  assert.deepEqual(applyArgs("IDEA-001", status, ""), { missing: "Choose whether this small change is a fix or an adjustment." });
+  assert.deepEqual(applyArgs("IDEA-001", status, "adjustment"), { args: { idea_id: "IDEA-001", change: "adjustment" } });
+  assert.match(run("idea.apply.refused-small-kind").refused, /Say which kind it is/);
+  const applied = data("idea.apply.small-change");
+  assert.deepEqual(applied.small_change, { change: "adjustment", shipped_rule: null });
+  assert.equal(needsSmallKind(applied), false); // made: nothing more is asked
+  // Any other route sends only the idea, as before.
+  const other = data("idea.map-status.settled");
+  assert.equal(needsSmallKind(other), false);
+  assert.deepEqual(applyArgs("IDEA-001", other, "fix"), { args: { idea_id: "IDEA-001" } });
 });

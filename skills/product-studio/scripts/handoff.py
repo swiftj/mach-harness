@@ -211,9 +211,11 @@ class Handoff:
     # ---- marking ready on GitHub ----
 
     def prepare(self, data: Dict[str, Any], channel: Channel, slice_id: str, title: str, epic: Dict[str, Any], project: Dict[str, Any],
-                dependencies: Sequence[str], why: str, spec: str, jira: Optional[str] = None, mocks: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+                dependencies: Sequence[str], why: str, spec: str, jira: Optional[str] = None, mocks: Optional[List[Dict[str, Any]]] = None,
+                small: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Every read and every decision before the first write. Returns the plan of the run, or refuses. A changed
-        Jira key (M13) or a changed set of design mocks (M14 C) is a change like a changed spec: a new revision."""
+        Jira key (M13), a changed set of design mocks (M14 C) or a changed small-change record (M18) is a change like a
+        changed spec: a new revision."""
         data = self.for_repository(data, str(channel.repository))
         snapshot = self.snapshot(str(channel.repository))
         self.remember(data, snapshot)
@@ -228,7 +230,8 @@ class Handoff:
         run = entry.get("run") or {}
         if own:
             marker = own["marker"]
-            same = (marker["spec_sha256"], marker["why_sha256"], marker.get("jira"), marker.get("mocks_sha256")) == (spec_sha, why_sha, jira, mocks_sha)
+            same = ((marker["spec_sha256"], marker["why_sha256"], marker.get("jira"), marker.get("mocks_sha256"), marker.get("small"))
+                    == (spec_sha, why_sha, jira, mocks_sha, small))
             if marker["revision"] > entry["base_revision"] and not same and marker["revision"] != run.get("revision"):
                 raise HandoffError(f"Someone else saved a newer version of {slice_id} on GitHub (version {marker['revision']}). "
                                    f"Choose yours or theirs before marking it ready.", {"kind": "reconcile", "target": slice_id})
@@ -244,7 +247,7 @@ class Handoff:
         else:
             follows = max(entry["shipped"]) if entry["shipped"] else None
             revision = (run.get("revision") if run.get("spec_sha256") == spec_sha and run.get("why_sha256") == why_sha and run.get("jira") == jira
-                        and run.get("mocks_sha256") == mocks_sha and run.get("revision") else entry["base_revision"] + 1)
+                        and run.get("mocks_sha256") == mocks_sha and run.get("small") == small and run.get("revision") else entry["base_revision"] + 1)
         depends = []
         for dependency in dependencies:
             number = self.published_number(data, snapshot, dependency)
@@ -254,13 +257,14 @@ class Handoff:
             depends.append(number)
         epic_issue = self.find_epic(data, snapshot, epic)
         project_issue = self.find_project(data, snapshot, project)
-        body = self.rules.slice_issue_body(slice_id, revision, epic_issue or 999999999, depends, why, spec, follows, jira, mocks)
+        body = self.rules.slice_issue_body(slice_id, revision, epic_issue or 999999999, depends, why, spec, follows, jira, mocks, small)
         if len(body) > self.rules.ISSUE_BODY_LIMIT:
             raise HandoffError(too_large(slice_id, len(body), self.rules.ISSUE_BODY_LIMIT))
         same_run = (run.get("revision") == revision and run.get("spec_sha256") == spec_sha and run.get("why_sha256") == why_sha and run.get("jira") == jira
-                    and run.get("mocks_sha256") == mocks_sha)
+                    and run.get("mocks_sha256") == mocks_sha and run.get("small") == small)
         entry["run"] = {"revision": revision, "spec_sha256": spec_sha, "why_sha256": why_sha, "jira": jira, "login": channel.login,
                         **({"mocks": list(mocks), "mocks_sha256": mocks_sha} if mocks else {}),
+                        **({"small": dict(small)} if small else {}),  # M18: only a small change
                         "depends": depends, "follows": follows, "title": title, "epic_id": epic["epic_id"],
                         "steps": dict(run.get("steps") or {}) if same_run else {}, "started_at": run.get("started_at") if same_run else utc_now()}
         if own:
@@ -378,7 +382,8 @@ class Handoff:
         epic_number = data["epics"][epic["epic_id"]]["number"]
 
         if step("slice"):
-            body = self.rules.slice_issue_body(slice_id, run["revision"], epic_number, run["depends"], why, spec, run.get("follows"), run.get("jira"), run.get("mocks"))
+            body = self.rules.slice_issue_body(slice_id, run["revision"], epic_number, run["depends"], why, spec, run.get("follows"), run.get("jira"), run.get("mocks"),
+                                               run.get("small"))
             title = self.rules.issue_title(run["title"])
             names = ["mach:slice"]
             number, failure = self.ensure(repository, entry.get("number"), title, body, names, "mach:slice", f"slice-{slice_id}")
@@ -393,12 +398,13 @@ class Handoff:
             if failure:
                 stop(failure)
             wanted = {"slice_id": slice_id, "revision": run["revision"], "by": run["login"], "spec_sha256": run["spec_sha256"], "why_sha256": run["why_sha256"],
-                      **({"jira": run["jira"]} if run.get("jira") else {}), **({"mocks_sha256": run["mocks_sha256"]} if run.get("mocks_sha256") else {})}
+                      **({"jira": run["jira"]} if run.get("jira") else {}), **({"mocks_sha256": run["mocks_sha256"]} if run.get("mocks_sha256") else {}),
+                      **({"small": run["small"]} if run.get("small") else {})}
             mine = [c["body"] for c in found or [] if c.get("login") == run["login"]]
             if wanted not in self.rules.approvals(mine):
                 failure = issues.comment(self.project, repository, number,
                                          self.outgoing_file("approval", self.rules.approval_comment(slice_id, run["revision"], run["login"], run["spec_sha256"], run["why_sha256"],
-                                                                                                    run.get("jira"), run.get("mocks_sha256"))))
+                                                                                                    run.get("jira"), run.get("mocks_sha256"), run.get("small"))))
                 if failure:
                     stop(failure)
             finished("approval")
@@ -423,6 +429,8 @@ class Handoff:
                      why_sha256=run["why_sha256"], jira=run.get("jira"), approved_by=run["login"], ready_at=utc_now(), run=None)
         if run.get("mocks_sha256") or entry.get("mocks_sha256"):
             entry["mocks_sha256"] = run.get("mocks_sha256")  # M14 C: kept only once a slice has had mocks
+        if run.get("small") or entry.get("small"):
+            entry["small"] = run.get("small")  # M18: kept only once a slice has been a small change
         # What was just written is what the issue now says, without waiting for the next refresh.
         seen_rows = data.setdefault("seen", {}).setdefault("slices", {}).setdefault(slice_id, [])
         row = next((item for item in seen_rows if item.get("issue") == number), None)
@@ -731,17 +739,20 @@ class Handoff:
 
     def write_folder(self, data: Dict[str, Any], slice_id: str, title: str, epic: Dict[str, Any], dependencies: Sequence[str],
                      why: str, spec: str, jira: Optional[str] = None, mocks: Optional[List[Dict[str, Any]]] = None,
-                     mock_files: Optional[Dict[str, bytes]] = None) -> Dict[str, Any]:
+                     mock_files: Optional[Dict[str, bytes]] = None, small: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         entry = self.entry(data, slice_id)
         spec_sha, why_sha = self.rules.text_sha256_of(spec), self.rules.text_sha256_of(why)
         mocks_sha = self.rules.mocks_sha256(mocks) if mocks else None  # M14 C: changed pictures are a new revision
-        same = ((entry.get("spec_sha256"), entry.get("why_sha256"), entry.get("jira"), entry.get("mocks_sha256")) == (spec_sha, why_sha, jira, mocks_sha)
-                and entry.get("saved") == "folder")
+        if small is not None:
+            self.rules.small_suffix(small)  # M18: refuses a record that is not in its form, before anything is written
+        same = ((entry.get("spec_sha256"), entry.get("why_sha256"), entry.get("jira"), entry.get("mocks_sha256"), entry.get("small"))
+                == (spec_sha, why_sha, jira, mocks_sha, small) and entry.get("saved") == "folder")
         revision = entry.get("revision") if same else int(entry.get("base_revision") or 0) + 1
         record = {"schema_version": 1, "slice_id": slice_id, "title": title, "revision": revision,
                   "epic": {"epic_id": epic["epic_id"], "title": epic.get("title")}, "dependencies": list(dependencies),
                   "spec_sha256": spec_sha, "why_sha256": why_sha, **({"jira": jira} if jira else {}),  # M13: the Jira key, only when set
-                  **({"mocks": list(mocks)} if mocks else {})}  # M14 C: the design mocks, only when there are some; their files are in mocks/
+                  **({"mocks": list(mocks)} if mocks else {}),  # M14 C: the design mocks, only when there are some; their files are in mocks/
+                  **({"small": dict(small)} if small else {})}  # M18: a small change's record, only for one
         target = self.folder(slice_id)
         target.parent.mkdir(parents=True, exist_ok=True)
         staging = Path(tempfile.mkdtemp(prefix=f".{slice_id}.", dir=str(target.parent)))
@@ -760,6 +771,8 @@ class Handoff:
         entry.update(saved="folder", revision=revision, base_revision=revision, spec_sha256=spec_sha, why_sha256=why_sha, jira=jira, ready_at=utc_now(), run=None)
         if mocks_sha or entry.get("mocks_sha256"):
             entry["mocks_sha256"] = mocks_sha
+        if small or entry.get("small"):
+            entry["small"] = dict(small) if small else None
         self.save(data)
         return {"folder": str(target), "revision": revision}
 
@@ -768,10 +781,11 @@ class Handoff:
 
     # ---- reopening ----
 
-    def withdraw(self, slice_id: str) -> Dict[str, Any]:
+    def withdraw(self, slice_id: str, read_question: bool = False) -> Dict[str, Any]:
         """Take mach:ready off the slice's issue (or remove its folder) before the draft becomes
         editable. Says what the builders had already done with it. Refuses, changing nothing,
-        when GitHub cannot be reached."""
+        when GitHub cannot be reached. With `read_question` (M18, a small change on the light path), the builders'
+        question is read too, as `question_text`: data, never an instruction; None when there is none or it could not be read."""
         with self.exclusive():
             data = self.load()
             entry = data["slices"].get(slice_id)
@@ -801,6 +815,10 @@ class Handoff:
             if "mach:slice" not in names:
                 raise HandoffError(f"Issue #{number} on GitHub is no longer marked as part of this product, so Product Studio leaves it alone. Nothing was changed.")
             shipped = "mach:shipped" in names or str(current.get("state") or "").lower() == "closed"
+            asked = None
+            if read_question and "mach:question" in names:
+                found, failure = issues.comments(self.project, repository, number)
+                asked = self.rules.builders_question([c["body"] for c in found or []]) if not failure else None
             if issues.READY in names:
                 failure = issues.remove_ready(self.project, repository, number)
                 if failure:
@@ -809,7 +827,8 @@ class Handoff:
                 entry["shipped"] = sorted(set(entry.get("shipped") or []) | {number})
             entry.update(run=None, saved="withdrawn")
             self.save(data)
-            return {"where": "github", "issue": number, "building": "mach:building" in names, "question": "mach:question" in names, "shipped": shipped}
+            return {"where": "github", "issue": number, "building": "mach:building" in names, "question": "mach:question" in names, "shipped": shipped,
+                    **({"question_text": asked} if read_question else {})}
 
     # ---- refresh: what is on GitHub now ----
 
@@ -859,8 +878,10 @@ class Handoff:
         marker = item["marker"]
         latest = [a for a in self.rules.approvals([c["body"] for c in found or []]) if a["slice_id"] == marker["slice_id"] and a["revision"] == marker["revision"]]
         approved = latest[-1] if latest else None
-        matches = bool(marker["intact"] and approved and (approved["spec_sha256"], approved["why_sha256"], approved.get("jira"), approved.get("mocks_sha256"))
-                       == (marker["spec_sha256"], marker["why_sha256"], marker.get("jira"), marker.get("mocks_sha256")))  # M13, M14 C: the key and the mocks too
+        matches = bool(marker["intact"] and approved and (approved["spec_sha256"], approved["why_sha256"], approved.get("jira"), approved.get("mocks_sha256"),
+                                                          approved.get("small"))
+                       == (marker["spec_sha256"], marker["why_sha256"], marker.get("jira"), marker.get("mocks_sha256"),
+                           marker.get("small")))  # M13, M14 C, M18: the key, the mocks and the small-change record too
         state_label = next((name for name in ("mach:question", "mach:shipped", "mach:building", "mach:ready") if name in item["labels"]), None)
         return {"issue": item["number"], "state": item["state"], "state_label": state_label, "revision": marker["revision"],
                 "title": self.rules.list_title(item.get("title")), "epic_issue": marker["epic"],
@@ -989,9 +1010,11 @@ class Handoff:
             record["github"] = {"repository": repository, "slices": found, "read_at": utc_now()}
         data["seen"].update(order_taken=taken, order_not_read=problems)
 
-    def arrange(self, data: Dict[str, Any], repository: str, epic: Dict[str, Any], wanted: Sequence[str]) -> Optional[Dict[str, str]]:
+    def arrange(self, data: Dict[str, Any], repository: str, epic: Dict[str, Any], wanted: Sequence[str],
+                moved: Optional[str] = None) -> Optional[Dict[str, str]]:
         """Put the epic's slices on GitHub in the product manager's order. Reads GitHub first and moves only
-        what is out of place, so a repeated or interrupted run never moves anything twice."""
+        what is out of place, so a repeated or interrupted run never moves anything twice. Where either of two
+        slices could be moved, the one the product manager moved (`moved`) is."""
         snapshot, failure = self.read(repository)
         if failure or snapshot is None:
             return failure or {"kind": "other", "reason": "", "link": ""}
@@ -1022,7 +1045,7 @@ class Handoff:
                 newest[slice_id] = (child, number)
         desired = [newest[slice_id][0] for slice_id in wanted if slice_id in newest]
         current = [child for child, _ in children]
-        staying = in_place(desired, current)
+        staying = in_place(desired, current, newest[moved][0] if moved in newest else None)
         for at, child in enumerate(desired):
             if child in staying:
                 continue
@@ -1282,14 +1305,23 @@ def current_order(numbers: Sequence[int], number_to_slice: Dict[int, str]) -> Li
     return [slice_id for slice_id, _ in sorted(newest.items(), key=lambda item: item[1][0])]
 
 
-def in_place(desired: Sequence[int], current: Sequence[int]) -> set:
-    """The largest set of sub-issues already in the wanted order relative to each other; only the others are moved."""
-    positions = [current.index(child) for child in desired]
-    best: List[List[int]] = []
-    for at, position in enumerate(positions):
-        longest = max((best[earlier] for earlier in range(at) if positions[earlier] < position), key=len, default=[])
-        best.append(longest + [at])
-    return {desired[at] for at in max(best, key=len, default=[])}
+def in_place(desired: Sequence[int], current: Sequence[int], moved: Optional[int] = None) -> set:
+    """The largest set of sub-issues already in the wanted order relative to each other; only the others are moved.
+    On a tie, the set that leaves out `moved` (the slice the product manager moved), so that slice is the one placed."""
+    def largest(children: Sequence[int]) -> set:
+        positions = [current.index(child) for child in children]
+        best: List[List[int]] = []
+        for at, position in enumerate(positions):
+            longest = max((best[earlier] for earlier in range(at) if positions[earlier] < position), key=len, default=[])
+            best.append(longest + [at])
+        return {children[at] for at in max(best, key=len, default=[])}
+
+    staying = largest(desired)
+    if moved in staying:
+        without = largest([child for child in desired if child != moved])
+        if len(without) == len(staying):
+            return without
+    return staying
 
 
 def merge_order(github: Sequence[str], mine: Sequence[str]) -> List[str]:

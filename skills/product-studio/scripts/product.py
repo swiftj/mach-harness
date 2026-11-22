@@ -32,7 +32,12 @@ SHAPES = {
     "slice": ("schema_version", "slice_id", "project_id", "epic_id", "revision", "title", "status", "dependencies", "open_questions", "spec_path", "spec_sha256"),
 }
 # Fields an artifact may carry or leave out. A slice without them is byte-for-byte what it was before.
-OPTIONAL = {"slice": ("origin", "source", "tracking", "mocks", "serves"), "epic": ("tracking", "serves")}
+OPTIONAL = {"slice": ("origin", "source", "tracking", "mocks", "serves", "kind", "small", "widened"), "epic": ("tracking", "serves")}
+# A small change (M18): kind "small", what it changes, and when it left the light path. The same rule forms as the intent
+# skill's small.py (SHIPPED_RULE_RE, RULES), which stays authoritative.
+SMALL_CHANGES = ("fix", "adjustment")
+SHIPPED_RULE_RE = re.compile(r"^SLICE-[0-9]{3,}/(?:(?:INV|FR)-[0-9]{2,}|R[0-9]+)$")
+SMALL_RULE_RE = re.compile(r"^[a-z]+(?:-[a-z]+)*$")
 # The idea and its outcomes an epic or a slice made by Shape's `idea apply` serves (M16 B): identifiers only, never the brief.
 IDEA_RE = re.compile(r"^IDEA-[0-9]{3,}$")
 OUTCOME_RE = re.compile(r"^O-[1-9][0-9]{0,3}$")
@@ -119,6 +124,19 @@ def _is_serves(value: Any) -> bool:
             and outcomes == sorted(set(outcomes), key=lambda o: int(o[2:])))
 
 
+def _is_small(value: Any) -> bool:
+    if not (isinstance(value, dict) and set(value) == {"change", "shipped_rule"} and value["change"] in SMALL_CHANGES):
+        return False
+    rule = value["shipped_rule"]
+    return rule is None if value["change"] == "adjustment" else isinstance(rule, str) and bool(SHIPPED_RULE_RE.fullmatch(rule))
+
+
+def _is_widened(value: Any) -> bool:
+    return (isinstance(value, dict) and set(value) == {"at", "reason", "rule"} and _is_timestamp(value["at"])
+            and isinstance(value["reason"], str) and 0 < len(value["reason"].strip()) <= 1000
+            and (value["rule"] is None or (isinstance(value["rule"], str) and bool(SMALL_RULE_RE.fullmatch(value["rule"])))))
+
+
 def _is_mocks(value: Any) -> bool:
     if not isinstance(value, list) or not 1 <= len(value) <= 4:
         return False
@@ -175,6 +193,12 @@ def _shape(kind: str, data: Dict[str, Any], location: str, errors: List[str]) ->
             _error(errors, location, "source must be {kind: prd, prd_id: PRD-NN, sha256, lines: [[first, last], ...], map_slice}")
         if "mocks" in data and not _is_mocks(data["mocks"]):
             _error(errors, location, "mocks must be 1 to 4 pictures in SHA-256 order, each {sha256, format: png or jpeg, width, height, bytes, for, binding, note}")
+        if ("kind" in data or "small" in data or "widened" in data) and (data.get("kind") != "small" or "small" not in data):
+            _error(errors, location, "a small change has kind 'small' and its small record; widened only with them")
+        if "small" in data and not _is_small(data["small"]):
+            _error(errors, location, "small must be {change: fix with shipped_rule SLICE-NNN/FR-NN, or adjustment with shipped_rule null}")
+        if "widened" in data and not _is_widened(data["widened"]):
+            _error(errors, location, "widened must be {at: a date-time, reason: nonempty text, rule: a rule code or null}")
     if "serves" in data and not _is_serves(data["serves"]):
         _error(errors, location, "serves must be {idea: IDEA-NNN, outcomes: [O-N, ...] in order, each once}")
     if "tracking" in data and not (isinstance(data["tracking"], dict) and set(data["tracking"]) == {"jira"}

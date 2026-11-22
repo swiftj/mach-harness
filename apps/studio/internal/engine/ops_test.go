@@ -25,7 +25,7 @@ func TestAllowlistIsExactlyTheContract(t *testing.T) {
 		"project.init", "project.set",
 		"reconcile", "reconcile.needs", "reconcile.principles", "refresh", "request.link", "request.list", "request.met", "request.pick", "request.show",
 		"slice.check", "slice.link", "slice.mock.add", "slice.mock.list", "slice.mock.remove", "slice.move", "slice.new", "slice.pause", "slice.ready",
-		"slice.renumber", "slice.reopen", "slice.resume", "slice.set", "slice.show", "slice.take", "status", "validate", "verdict.record", "where",
+		"slice.renumber", "slice.reopen", "slice.resume", "slice.set", "slice.show", "slice.take", "slice.widen", "status", "validate", "verdict.record", "where",
 	}
 	if got := engine.Names(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("allowlist\n got %v\nwant %v", got, want)
@@ -298,6 +298,8 @@ func TestEveryOperationsArgumentVector(t *testing.T) {
 		{"idea.settle", `{"idea_id":"IDEA-019","outcome":"O-3","as":"later"}`, []string{"idea", "settle", "IDEA-019", "--outcome=O-3", "--as=later"}},
 		{"idea.map-status", `{"idea_id":"IDEA-019"}`, []string{"idea", "map-status", "IDEA-019"}},
 		{"idea.apply", `{"idea_id":"IDEA-019"}`, []string{"idea", "apply", "IDEA-019"}},
+		{"idea.apply", `{"idea_id":"IDEA-019","change":"fix"}`, []string{"idea", "apply", "IDEA-019", "--change=fix"}},
+		{"idea.apply", `{"idea_id":"IDEA-019","change":"adjustment"}`, []string{"idea", "apply", "IDEA-019", "--change=adjustment"}},
 		{"idea.change", `{"rule":"SLICE-007/INV-01"}`, []string{"idea", "change", "SLICE-007/INV-01"}},
 		{"idea.change", `{"rule":"SLICE-004/R3","title":"-- a third renewal"}`, []string{"idea", "change", "SLICE-004/R3", "--title=-- a third renewal"}},
 		{"idea.chain", `{"idea_id":"IDEA-019"}`, []string{"idea", "chain", "IDEA-019"}},
@@ -313,6 +315,7 @@ func TestEveryOperationsArgumentVector(t *testing.T) {
 			[]string{"lookback", "record", "IDEA-019", "--assumption=A-2", "--result=unknown", "--note=Not counted."}},
 	}
 	cases = append(cases, needsArgvCases...)
+	cases = append(cases, smallArgvCases...)
 	covered := map[string]bool{}
 	for _, c := range cases {
 		got, err := argv(t, c.op, c.body)

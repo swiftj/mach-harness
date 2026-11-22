@@ -57,10 +57,10 @@
     "github": {
       "repository": "acme/team-space",
       "form": null,
-      "last_read": "2026-11-21T01:38:34Z"
+      "last_read": "2026-11-22T12:34:23Z"
     },
     "current_slice": null,
-    "last_refreshed": "2026-11-21T01:38:34Z",
+    "last_refreshed": "2026-11-22T12:34:23Z",
     "ideas": {
       "ideas": [
         {
@@ -71,7 +71,7 @@
           "source": {
             "kind": "typed"
           },
-          "created": "2026-11-21T01:38:31Z",
+          "created": "2026-11-22T12:34:22Z",
           "revision": 1,
           "has_brief": true,
           "brief_checked": true,
@@ -80,7 +80,7 @@
           "verdict": {
             "decision": "go",
             "by": "ada-pm",
-            "at": "2026-11-21T01:38:31Z",
+            "at": "2026-11-22T12:34:22Z",
             "revision": 1,
             "holds": true,
             "stale": false,
@@ -100,7 +100,7 @@
             "verdict_on_github": true,
             "number_taken": false,
             "other_issues": [],
-            "last_read": "2026-11-21T01:38:35Z"
+            "last_read": "2026-11-22T12:34:23Z"
           },
           "next": {
             "kind": "publish",

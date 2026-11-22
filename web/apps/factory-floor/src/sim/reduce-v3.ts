@@ -1166,6 +1166,11 @@ function stationExited(input: Scene, e: E<"station.exited">, at: number): Scene 
     const facts = { appType: typeof d.app_type === "string" && d.app_type ? d.app_type : null, risk: riskOf(d.risk), contracts: d.station === "plan" ? countOf(d.counts?.contracts) : null, tasks: d.station === "plan" ? countOf(d.counts?.tasks) : null };
     input = withCell(input, ticket, (c) => withPlanFacts(c, facts, e.id, e.authority as Authority));
   }
+  // M18: the groom exit of a small change (revision 8). An exit cleanup closed records nothing of it.
+  if (d.station === "groom" && !d.closed_by && d.kind === "small") {
+    const fact = { widened: d.widened === true, rule: d.widened === true && typeof d.widened_rule === "string" ? d.widened_rule : null };
+    input = withCell(input, ticket, (c) => ({ ...c, smallChange: c.smallChange?.widened ? c.smallChange : fact }));
+  }
   // An exit record wins over a closing the scene inferred (an unclosed visit resumed and exited after all).
   const match = (v: CellState["visits"][number]): boolean => (e.ids.visit_id ? v.visitId === e.ids.visit_id && (v.leftAt === null || v.unclosed !== null) : v.leftAt === null && v.station === d.station);
   return withCell(input, ticket, (c) => {

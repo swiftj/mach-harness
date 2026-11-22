@@ -17,7 +17,7 @@
       "capabilities": 1
     },
     "verdict": {
-      "at": "2026-11-21T01:37:56Z",
+      "at": "2026-11-22T12:34:11Z",
       "brief_sha256": "614b144a592c18e0686965816dcb89be8f8eb12fb8e661e9d8388599846ad907",
       "by": "ada-pm",
       "decision": "go",

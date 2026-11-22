@@ -175,6 +175,8 @@ type SliceNewArgs struct {
 	Title     string   `json:"title"`
 	DependsOn []string `json:"depends_on"`
 	ID        *string  `json:"id"`
+	// Small starts a small change (M18); absent for a full slice.
+	Small *SmallStart `json:"small"`
 }
 
 func (a *SliceNewArgs) Argv() ([]string, error) {
@@ -190,9 +192,14 @@ func (a *SliceNewArgs) Argv() ([]string, error) {
 	if err := checkOptionalID("id", a.ID, SliceIDPattern, "SLICE-004"); err != nil {
 		return nil, err
 	}
+	small, err := smallFlags(a.Small)
+	if err != nil {
+		return nil, err
+	}
 	argv := []string{"slice", "new", flag("epic", a.Epic), flag("title", a.Title)}
 	argv = append(argv, repeated("depends-on", a.DependsOn)...)
-	return append(argv, optional("id", a.ID)...), nil
+	argv = append(argv, optional("id", a.ID)...)
+	return append(argv, small...), nil
 }
 
 type SliceSetArgs struct {
@@ -402,6 +409,8 @@ type RequestPickArgs struct {
 	Title  string `json:"title"`
 	// Also picks the request up even though another product manager already has.
 	Also bool `json:"also"`
+	// Small picks the request up as a small change (M18); absent for a full slice.
+	Small *SmallStart `json:"small"`
 }
 
 func (a *RequestPickArgs) Argv() ([]string, error) {
@@ -414,11 +423,15 @@ func (a *RequestPickArgs) Argv() ([]string, error) {
 	if err := checkText("title", a.Title, maxShortText, true); err != nil {
 		return nil, err
 	}
+	small, err := smallFlags(a.Small)
+	if err != nil {
+		return nil, err
+	}
 	argv := []string{"request", "pick", strconv.Itoa(a.Number), flag("epic", a.Epic), flag("title", a.Title)}
 	if a.Also {
 		argv = append(argv, "--also")
 	}
-	return argv, nil
+	return append(argv, small...), nil
 }
 
 type RequestLinkArgs struct {

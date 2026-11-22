@@ -90,7 +90,7 @@ Shape is where an idea is explored, argued for and sized before any epic or slic
 - **Explore** is a conversation with open questions, one at a time. MACH looks up what it can instead of asking: shipped rules the idea would touch, similar ideas and requests, principles and policies in its way.
 - **The brief** is one page: problem, who has it, outcomes (`O-1`, `O-2`), each with how you would know, what you are not doing, assumptions (`A-1`, `A-2`), open questions and risks, and what it touches. MACH checks that it is complete and that no assumption is written as a fact.
 - **The case and the verdict.** You answer MACH's hardest questions, then record **go**, **not now** or **no** with your reason. The verdict is yours alone and MACH never recommends one. Change the brief afterwards and the verdict is marked stale until you record it again.
-- **Size and route.** After a go, MACH counts what the brief touches and names the route: one slice, an epic, or several epics. For an epic or several, you settle a map: every outcome is carried by a slice, or you mark it out of scope or for later with your reason. "Apply" then makes the epics and draft slices. The map is proposed in the conversation.
+- **Size and route.** After a go, MACH counts what the brief touches and names the route: a small change, one slice, an epic, or several epics. For a small change you say whether it is a fix or an adjustment, and one draft slice is made. For an epic or several, you settle a map: every outcome is carried by a slice, or you mark it out of scope or for later with your reason. "Apply" then makes the epics and draft slices. The map is proposed in the conversation.
 - **Change what exists.** On "How this epic works today", choose a shipped rule and "change this" to start an idea with the affected rules already filled in.
 - **Look back.** Once a slice made from the idea has shipped, record for each outcome whether it was met, not met, or it is too early to say, and for each assumption whether it held.
 
@@ -107,6 +107,26 @@ Technical needs are what the product requires of whatever is built, said without
 - **After a change**, the page lists each decision written for an older version of a need. Nothing is reopened or blocked; an engineer decides whether the change matters.
 
 **A design you already have.** From Technical needs, bring in one Markdown or plain-text file. Ask the conversation to read it. For each basic topic the page then shows what the document decides, partly decides or says nothing on, with the lines it cites. Where the document contradicts a need, a principle or a policy statement, you settle it with your reason: **the design stands**, **the design is wrong**, or **ask the engineer**. MACH never settles one and recommends none. Publishing writes the document and what was read to `product/ready/DESIGN/`, for you to commit. The document is never put in a GitHub issue, and it decides nothing by itself.
+
+## A small change (optional)
+
+Most changes to a product that has shipped are small: a rule that is not holding, a changed sentence, a different default or limit. A small change asks you fewer questions and gives a shorter spec. The builders check it exactly as they check any slice (sections 4 to 6 explain slices, the interview and marking ready).
+
+- **Two kinds.** A **fix** is for a shipped rule that is not holding: you say what you saw, and MACH finds the rule. An **adjustment** changes wording, presentation, a default or a limit.
+- **Starting one.** Say "a small change", or choose it in the app wherever a slice is started: the roadmap, an epic, Vision, or a request you pick up. For a fix in the app, you choose the shipped rule from how the epic works today. Shape leads to one too, when it sizes an idea as a small change.
+- **The short interview.** You say what is so today and what should be so instead. MACH looks up the shipped rules it touches, the screen or message as it is now, and the principles and policies that apply. It proposes the whole spec at once and reads back what changes, what stays the same and the scenarios. It asks only what it could not read, at most five yes-or-no questions, and then you confirm.
+- **What counts as small.** MACH decides by fixed rules, the same ones every time. A small change has:
+  - one kind of user and one epic;
+  - at most three rules and four scenarios (an engineer can change these limits);
+  - at most one shipped rule changed, and none retired; any number may be kept as they are;
+  - no exception to a principle and no policy concern;
+  - no new permission, and nothing that depends on a slice that has not shipped;
+  - Low or Medium risk.
+
+- **When it is not small.** MACH says so in one sentence that names the rule, and the slice becomes a full slice. Every answer is kept and the interview carries on in full. MACH never trims your change to keep it small and never asks you to. If this happens as you mark the slice ready, it is not marked ready in that step: finish the interview, then mark it ready.
+- **Making it a full slice yourself.** Say so with your reason, or press **Make it a full slice** on the slice's page. You cannot do the reverse: a change the rules say is not small stays a full slice.
+- **When the builders find it is not small.** Some things only their plan can show, such as a change that reaches a high-risk part of the product. The slice then comes back with a question from the builders (section 8). Reopen it: it returns as a full slice with their reason. Finish the interview and mark it ready again.
+- **How it is shown.** A slice that is a small change carries the label "Small change" wherever slices are listed. One that became a full slice carries no label; its page says it began as a small change, why, and when.
 
 ## 4. The project, epics and slices
 
@@ -128,7 +148,7 @@ For each slice, Claude interviews you one question at a time. Each question is a
 | `you decide` | The recommendation is used and listed as an assumption for you to review. |
 | `I need to stop` | Your progress is saved. Say "continue SLICE-004" later. |
 
-Claude cuts the idea down to the smallest complete outcome and reserves IDs for what it defers. It will not ask you about technology. When nothing is left to ask, it gives a three-point summary and asks for your yes before it writes the spec.
+Claude cuts the idea down to the smallest complete outcome and reserves IDs for what it defers. It will not ask you about technology. When nothing is left to ask, it gives a three-point summary and asks for your yes before it writes the spec. A small change has a shorter interview (see "A small change" above).
 
 In the visual app the interview runs through your own Claude Code, one reply at a time. In one test it ran two real turns for about USD 0.23 in total. That was a single interview on one slice, so do not treat the figure as typical.
 

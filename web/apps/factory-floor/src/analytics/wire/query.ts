@@ -122,11 +122,13 @@ export function asOfWords(f: AsOfFacts): string {
 
 // --------------------------------------------------------------------------------------- plan
 
-/** A metrics query grouped by one dimension (the ids that the areas read grouped that way). */
+/** A metrics query grouped by one dimension (the ids that the areas read grouped that way), or by two (`by`). */
 export interface GroupPart {
   readonly dim: string;
   readonly ids: readonly string[];
   readonly distribution: boolean;
+  /** Two dimensions, asked together (`group_by=station,change`); `dim` is then their names joined by a comma. */
+  readonly by?: readonly [string, string];
 }
 
 const G: Readonly<Record<string, GroupPart>> = {
@@ -140,6 +142,9 @@ const G: Readonly<Record<string, GroupPart>> = {
   stop_reason: { dim: "stop_reason", ids: ["S6"], distribution: false },
   risk: { dim: "risk", ids: ["W3"], distribution: true },
   phase: { dim: "phase", ids: ["K9"], distribution: false },
+  // M18: time at Groom for small changes beside full slices, and how many small changes became full slices.
+  station_change: { dim: "station,change", ids: ["C1"], distribution: true, by: ["station", "change"] },
+  station_widened: { dim: "station,widened", ids: ["C2"], distribution: false, by: ["station", "widened"] },
 };
 
 /** What an area reads, beyond the ungrouped totals. */
@@ -167,7 +172,7 @@ export function planFor(area: AnalyticsArea, pick: Pick | null): AreaPlan {
     case "pulse":
       return { ...none, groups: [G.day!, G.station!, G.kind!], flow: true, insights: true, freshness: true };
     case "flow":
-      return { ...none, groups: [G.station!, G.risk!], flow: true, concurrency: true, contributors: [{ metric: "W1" }, { metric: "W2" }, { metric: "W2b" }, { metric: "W3" }], perGroup: [{ metric: "C1", dim: "station" }] };
+      return { ...none, groups: [G.station!, G.risk!, G.station_change!, G.station_widened!], flow: true, concurrency: true, contributors: [{ metric: "W1" }, { metric: "W2" }, { metric: "W2b" }, { metric: "W3" }], perGroup: [{ metric: "C1", dim: "station" }] };
     case "quality":
       return { ...none, groups: [G.target_kind!, G.rule!, G.day!], contributors: [{ metric: "K4" }, ...(pick && (pick.dim === "target_kind" || pick.dim === "rule") ? [{ metric: pick.dim === "target_kind" ? "Q4" : "R2", dim: pick.dim, value: pick.value }] : [])] };
     case "economics":

@@ -240,11 +240,37 @@ def render(root: Path, info: Dict[str, Any], ticket_id: str, commits: Dict[str, 
     return "\n".join(lines).rstrip() + "\n"
 
 
+# M18: a small change is said beside the ticket, in the record and in the pull request. A rule's fixed sentence (the intent
+# station's small.py) always begins with these words and is one line; anything else in `widened.reason` is a person's words,
+# which are not repeated here.
+SMALL_KIND = "small"
+NOT_SMALL_LEAD = "This is not a small change: "
+RULE_CODE_RE = re.compile(r"^[a-z][a-z-]{1,39}$")
+SENTENCE_LIMIT = 240
+
+
+def small_change_words(info: Dict[str, Any]) -> Optional[str]:
+    """What the cell records of a small change, in words for people: "a small change", or, when it became a full slice, that it
+    began as one and the rule's fixed sentence. None for every other ticket, so its record and pull request are as before."""
+    if info.get("kind") != SMALL_KIND:
+        return None
+    widened = info.get("widened")
+    if not isinstance(widened, dict):
+        return "a small change"
+    rule, reason = widened.get("rule"), widened.get("reason")
+    if (isinstance(rule, str) and RULE_CODE_RE.match(rule) and isinstance(reason, str) and reason.startswith(NOT_SMALL_LEAD)
+            and "\n" not in reason and len(reason) <= SENTENCE_LIMIT):
+        return f"a full slice that began as a small change. {reason}"
+    return "a full slice that began as a small change, made a full slice on a person's word"
+
+
 def ticket_section(t: Text, info: Dict[str, Any], ticket_id: str, rules: Any = None, jira_url: Optional[str] = None) -> List[str]:
     product = info.get("product") if isinstance(info.get("product"), dict) else {}
     slice_id = product.get("slice_id") or info.get("slice_id")
     revision = product.get("revision")
-    lines = ["## Ticket", "", f"- Ticket: {t.one(ticket_id, 80)}", f"- Title: {t.one(info.get('title'), TITLE_LIMIT)}",
+    small = small_change_words(info)
+    lines = ["## Ticket", "", f"- Ticket: {t.one(ticket_id, 80)}" + (f", {t.one(small, SENTENCE_LIMIT + 60)}" if small else ""),
+             f"- Title: {t.one(info.get('title'), TITLE_LIMIT)}",
              f"- Slice: {t.one(slice_id, 80)}" + (f", revision {t.one(revision, 20)}" if revision is not None else "")]
     if product.get("epic_id"):
         lines.append(f"- Epic: {t.one(product.get('epic_id'), 80)}")

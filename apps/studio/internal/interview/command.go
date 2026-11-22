@@ -1,6 +1,7 @@
 package interview
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -62,6 +63,35 @@ var (
 		"need retire", "need publish", "design import", "design settle", "design publish"}
 )
 
+// M18: a small change. The slice interview for a slice started as one may also leave the light path
+// when an answer shows a rule of a small change does not hold: `slice widen <its ID> --by-rule <rule>`,
+// for exactly the rules the short interview names (small_change.rules: small.SPEC_RULES and
+// "questions"), never a wildcard. Widening on the product manager's own word (--why) is their button.
+var smallChangeRules = []string{"actor", "capability", "requirements", "scenarios", "matrix", "changed-rules", "retired-rule",
+	"principle-exception", "policy-concern", "permission", "unshipped-dependency", "risk", "questions"}
+
+// SmallChangeRules are the rules the slice interview may widen a small change by.
+func SmallChangeRules() []string { return append([]string(nil), smallChangeRules...) }
+
+// isSmallChange says whether this slice's work order, in the draft workspace when the turn starts,
+// was started as a small change (kind "small"). Whether it is still on the light path is the
+// engine's to judge: it refuses to widen one already widened.
+func (p Paths) isSmallChange(sliceID string) bool {
+	path := filepath.Join(p.Draft, "product", "slices", sliceID+".json")
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
+		return false
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var work struct {
+		Kind string `json:"kind"`
+	}
+	return json.Unmarshal(raw, &work) == nil && work.Kind == "small"
+}
+
 // NeedsSubject is the needs conversation's subject: one per project, never a slice or an idea ID.
 const NeedsSubject = "needs"
 
@@ -81,7 +111,9 @@ const HostNote = "You are the interviewer inside MACH Product Studio's local app
 	"this session started. Marking a slice ready to build, reopening, choosing between versions and " +
 	"renumbering, and changing principles, accepting a policy concern, Jira keys, design mocks and PRD steps, " +
 	"are the product manager's own acts, done with the app's buttons; you cannot run them here, so " +
-	"if asked, tell the PM which button to use. Run the studio script as a plain command, one per Bash call, " +
+	"if asked, tell the PM which button to use. For a small change, when an answer shows that a rule of a small change " +
+	"does not hold, run slice widen with --by-rule and that rule; making it a full slice for the PM's own reason is their " +
+	"button. Run the studio script as a plain command, one per Bash call, " +
 	"exactly as the skill spells it: no shell variables, functions, cd or chained commands. If one command is " +
 	"refused, only that operation is unavailable; the others still work."
 
@@ -189,6 +221,7 @@ func (p Paths) PermissionArgs(subject string) []string {
 		return p.needsPermissionArgs()
 	}
 	sliceID := subject
+	small := p.isSmallChange(sliceID)
 	allow := []string{"Read", "Glob", "Grep"}
 	var deny []string
 	for _, prefix := range p.prefixes() {
@@ -201,7 +234,15 @@ func (p Paths) PermissionArgs(subject string) []string {
 		for _, op := range allowedSliceOpsArgs {
 			allow = append(allow, "Bash("+prefix+fmt.Sprintf(op, sliceID)+" *)")
 		}
+		if small {
+			widen := prefix + "slice widen " + sliceID
+			for _, rule := range smallChangeRules {
+				allow = append(allow, "Bash("+widen+" --by-rule "+rule+")", "Bash("+widen+" --by-rule="+rule+")")
+			}
+		}
 		deny = append(deny, denyRules(prefix, deniedOps)...)
+		// The product manager's own reason is theirs to give, with the app's button.
+		deny = append(deny, "Bash("+prefix+"slice widen "+sliceID+" --why *)", "Bash("+prefix+"slice widen "+sliceID+" --why=*)")
 	}
 	// Absolute rules ("//path"): relative ones follow the shell's working folder, which the model
 	// can change. Only this slice's spec and why. Edit rules cover the Write tool too.
@@ -377,6 +418,7 @@ var activityByOp = map[string][2]string{
 	"slice check":  {"check", "checked the draft"},
 	"slice pause":  {"save", "saved where the interview stopped"},
 	"slice set":    {"save", "updated the slice's details"},
+	"slice widen":  {"save", "made this small change a full slice"},
 	// M16: the Shape conversation.
 	"idea show":      {"lookup", "read the idea"},
 	"idea list":      {"lookup", "looked at the other ideas"},

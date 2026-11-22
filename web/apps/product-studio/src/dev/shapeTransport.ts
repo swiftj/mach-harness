@@ -12,6 +12,7 @@
  *   ?faults=empty                     idea.faults (default: two open faults, one already started as IDEA-004)
  *   ?idea=<name>                      idea.show, by fixture suffix: request | exploring | brief-written | fault |
  *                                     not-now | go | change | shaped-one-slice | stale-verdict | stale-route | sized |
+ *                                     small-change |
  *                                     uncovered | settled | applied | mapped | shaped | blockers | look-back |
  *                                     looked-back | on-github | changed | unfinished | folder | number-taken |
  *                                     long-reason | refused-unreadable. Default: the board's own idea for IDEA-001 to
@@ -22,14 +23,15 @@
  *                                     answered on purpose; none: refused, no case yet)
  *   ?verdict=refused-go-without-brief | refused-offline | no-login | long-reason   verdict.record (default: by the decision sent)
  *   ?publish-idea=again | folder | finished | shaped | refused-stopped | refused-no-login | refused-number-taken
- *   ?size=one-slice | epic | several-epics | refused-no-go             idea.size (default: several-epics; epic has
- *                                     high-risk areas not determined)
+ *   ?size=small-change | one-slice | epic | several-epics | refused-no-go   idea.size (default: several-epics; epic
+ *                                     has high-risk areas not determined)
  *   ?map=refused-stale                idea.map (default: an outcome no slice carries)
  *   ?map-status=<name>                idea.map-status, by fixture suffix (uncovered | settled | applied | sized |
  *                                     blockers | stale-route | mapped | ...); idea.show then answers for the same idea.
  *                                     Default: the same scenario as idea.show.
  *   ?settle=refused-carried           idea.settle (default: by the `as` sent)
- *   ?apply=again | refused-unsettled  idea.apply
+ *   ?apply=again | refused-unsettled | small-change | refused-small-kind   idea.apply (default for ?idea=small-change:
+ *                                     small-change when a kind is sent, else refused-small-kind)
  *   ?chain=looked-back                idea.chain (default: missing values)
  *   ?change=refused-replaced          idea.change
  *   ?add=refused-twice | refused-not-template                          idea.add (default: by the source sent)
@@ -138,6 +140,9 @@ export function shapeRoute(path: string, method: string, args: Record<string, un
     case "idea.settle":
       return answer(named("idea.settle", devParam("settle") ?? (args.as === "out-of-scope" ? "out-of-scope" : null), "idea.settle"));
     case "idea.apply":
+      if (!devParam("apply") && (devParam("idea") ?? devParam("map-status")) === "small-change") {
+        return answer(args.change ? "idea.apply.small-change" : "idea.apply.refused-small-kind");
+      }
       return answer(named("idea.apply", devParam("apply"), "idea.apply"));
     case "idea.change":
       return answer(named("idea.change", devParam("change"), "idea.change"));

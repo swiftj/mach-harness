@@ -497,13 +497,28 @@ SLICE_ID_RE = re.compile(r"^SLICE-[0-9]{3,}$")
 EPIC_ID_RE = re.compile(r"^EPIC-[0-9]{3,}$")
 PROJECT_ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+# M18: a small change's kind travels beside the approved text, never inside its SHA-256: the marker and the approval
+# carry it as identifiers (whether it is a fix or an adjustment, a fix's shipped rule, and, once it left the light path,
+# the rule code that widened it, or `asked` on the product manager's word, and when). A slice that is not small carries
+# none of it, so its marker and approval are exactly what they were.
+SMALL_CHANGES = ("fix", "adjustment")
+SMALL_SHIPPED_RULE_PATTERN = r"SLICE-[0-9]{3,}/(?:(?:INV|FR)-[0-9]{2,}|R[0-9]+)"
+SMALL_WIDENED_RULE_PATTERN = r"[a-z][a-z-]{0,39}"
+SMALL_AT_PATTERN = r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})"
+SMALL_ASKED = "asked"
+SMALL_PATTERN = (r"(?: kind=small change=(fix|adjustment)(?: rule=(" + SMALL_SHIPPED_RULE_PATTERN + r"))?"
+                 r"(?: widened=(" + SMALL_WIDENED_RULE_PATTERN + r")@(" + SMALL_AT_PATTERN + r"))?)?")
+SMALL_SHIPPED_RULE_RE = re.compile(r"^" + SMALL_SHIPPED_RULE_PATTERN + r"$")
+SMALL_WIDENED_RULE_RE = re.compile(r"^" + SMALL_WIDENED_RULE_PATTERN + r"$")
+SMALL_AT_RE = re.compile(r"^" + SMALL_AT_PATTERN + r"$")
 SLICE_MARKER_RE = re.compile(
     r"\A<!-- mach:slice id=(SLICE-[0-9]{3,}) revision=([0-9]{1,6}) epic=#([0-9]{1,9}) depends=(none|#[0-9]{1,9}(?:,#[0-9]{1,9})*)\n"
-    r"     spec-sha256=([0-9a-f]{64}) why-sha256=([0-9a-f]{64})(?: jira=(\S+))?(?: mocks=([0-9a-f]{64}))? -->\n")
+    r"     spec-sha256=([0-9a-f]{64}) why-sha256=([0-9a-f]{64})(?: jira=(\S+))?(?: mocks=([0-9a-f]{64}))?" + SMALL_PATTERN + r" -->\n")
 FOLLOWS_RE = re.compile(r"\AChanges #([0-9]{1,9}), which has shipped\.\n")
 PRODUCT_MARKER_RE = re.compile(r"\A<!-- mach:(project|epic) id=([A-Za-z0-9-]{1,64}) -->\n")
 APPROVAL_RE = re.compile(r"<!-- mach:approval id=(SLICE-[0-9]{3,}) revision=([0-9]{1,6}) by=(" + LOGIN_PATTERN + r") "
-                         r"spec-sha256=([0-9a-f]{64}) why-sha256=([0-9a-f]{64})(?: jira=([A-Z][A-Z0-9_]{1,31}-[1-9][0-9]{0,8}))?(?: mocks=([0-9a-f]{64}))? -->")
+                         r"spec-sha256=([0-9a-f]{64}) why-sha256=([0-9a-f]{64})(?: jira=([A-Z][A-Z0-9_]{1,31}-[1-9][0-9]{0,8}))?(?: mocks=([0-9a-f]{64}))?"
+                         + SMALL_PATTERN + r" -->")
 # M13 part E: a Jira issue key, in Jira's form. Identifiers only: MACH never calls Jira and holds no Jira credentials.
 JIRA_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,31}-[1-9][0-9]{0,8}$")
 JIRA_KEY_LIMIT = 42  # the longest key the form allows
@@ -514,6 +529,53 @@ def is_jira_key(value: Any) -> bool:
     """True for a Jira issue key such as ABC-123: a project key of 2 to 32 capitals, digits or underscores starting
     with a letter, a hyphen, and an issue number with no leading zero."""
     return isinstance(value, str) and len(value) <= JIRA_KEY_LIMIT and bool(JIRA_KEY_RE.fullmatch(value))
+
+
+def is_small_record(value: Any) -> bool:
+    """M18: a small change's record as the handoff carries it, identifiers only:
+    {"kind": "small", "change": "fix" | "adjustment", "shipped_rule": "SLICE-NNN/FR-NN" (a fix) | None (an adjustment),
+     "widened": None (on the light path) | {"rule": a rule code | None (on the product manager's word), "at": a date-time}}."""
+    if not isinstance(value, dict) or set(value) != {"kind", "change", "shipped_rule", "widened"} or value.get("kind") != "small":
+        return False
+    if value["change"] not in SMALL_CHANGES:
+        return False
+    rule = value["shipped_rule"]
+    if (value["change"] == "fix") != (rule is not None) or (rule is not None and not (isinstance(rule, str) and SMALL_SHIPPED_RULE_RE.fullmatch(rule))):
+        return False
+    widened = value["widened"]
+    if widened is None:
+        return True
+    return (isinstance(widened, dict) and set(widened) == {"rule", "at"} and isinstance(widened["at"], str) and bool(SMALL_AT_RE.fullmatch(widened["at"]))
+            and (widened["rule"] is None or (isinstance(widened["rule"], str) and widened["rule"] != SMALL_ASKED
+                                             and bool(SMALL_WIDENED_RULE_RE.fullmatch(widened["rule"])))))
+
+
+def small_suffix(small: Optional[Dict[str, Any]]) -> str:
+    """The identifiers a small change adds to its marker and its approval, or "" for a slice that is not small."""
+    if small is None:
+        return ""
+    if not is_small_record(small):
+        raise ValueError("a small change carries its kind, fix or adjustment, a fix's shipped rule and when it was widened, as identifiers")
+    widened = small["widened"]
+    return (f" kind=small change={small['change']}" + (f" rule={small['shipped_rule']}" if small["shipped_rule"] else "")
+            + (f" widened={widened['rule'] or SMALL_ASKED}@{widened['at']}" if widened else ""))
+
+
+def small_from(change: Optional[str], rule: Optional[str], widened_rule: Optional[str], at: Optional[str]) -> Optional[Dict[str, Any]]:
+    """The record a marker's or an approval's small-change identifiers name; None when there are none. May be malformed
+    (a fix with no rule): the caller checks it with is_small_record."""
+    if change is None:
+        return None
+    return {"kind": "small", "change": change, "shipped_rule": rule,
+            "widened": None if widened_rule is None else {"rule": None if widened_rule == SMALL_ASKED else widened_rule, "at": at}}
+
+
+def small_line(small: Dict[str, Any]) -> str:
+    """The approval comment's visible line for a small change."""
+    what = f"a fix to {small['shipped_rule']}" if small["change"] == "fix" else "an adjustment"
+    return f"- Small change: {what}" + (", now a full slice" if small["widened"] else "") + "\n"
+
+
 WHY_HEADING = "## Why\n"
 SPEC_HEADING = "\n## Specification\n"
 
@@ -530,7 +592,7 @@ def text_sha256_of(text: str) -> str:
 
 
 def slice_marker(slice_id: str, revision: int, epic: int, depends: Sequence[int], spec_sha256: str, why_sha256: str,
-                 jira: Optional[str] = None, mocks_sha256: Optional[str] = None) -> str:
+                 jira: Optional[str] = None, mocks_sha256: Optional[str] = None, small: Optional[Dict[str, Any]] = None) -> str:
     if not SLICE_ID_RE.fullmatch(slice_id) or type(revision) is not int or not 1 <= revision < 10 ** 6 or not is_issue_number(epic):
         raise ValueError("a slice marker names a slice ID, a revision and its epic's issue")
     if any(not is_issue_number(n) for n in depends) or not HEX64_RE.fullmatch(spec_sha256) or not HEX64_RE.fullmatch(why_sha256):
@@ -541,16 +603,19 @@ def slice_marker(slice_id: str, revision: int, epic: int, depends: Sequence[int]
         raise ValueError("design mocks are named by a SHA-256 digest")
     listed = ",".join(f"#{n}" for n in depends) or "none"
     return (f"<!-- mach:slice id={slice_id} revision={revision} epic=#{epic} depends={listed}\n"
-            f"     spec-sha256={spec_sha256} why-sha256={why_sha256}{f' jira={jira}' if jira else ''}{f' mocks={mocks_sha256}' if mocks_sha256 else ''} -->\n")
+            f"     spec-sha256={spec_sha256} why-sha256={why_sha256}{f' jira={jira}' if jira else ''}{f' mocks={mocks_sha256}' if mocks_sha256 else ''}"
+            f"{small_suffix(small)} -->\n")
 
 
 def slice_issue_body(slice_id: str, revision: int, epic: int, depends: Sequence[int], why: str, spec: str,
-                     follows: Optional[int] = None, jira: Optional[str] = None, mocks: Optional[Sequence[Dict[str, Any]]] = None) -> str:
+                     follows: Optional[int] = None, jira: Optional[str] = None, mocks: Optional[Sequence[Dict[str, Any]]] = None,
+                     small: Optional[Dict[str, Any]] = None) -> str:
     """A slice's issue body: the marker, then the why and the spec exactly as approved. A slice with a Jira key
-    (M13) carries it in the marker and in one line, `Jira: KEY-123`, before the why; one without is unchanged."""
+    (M13) carries it in the marker and in one line, `Jira: KEY-123`, before the why; one without is unchanged. A small
+    change (M18) carries its kind in the marker only."""
     if mocks and mock_problems(list(mocks)):
         raise ValueError("design mocks are in the form Product Studio writes")
-    head = slice_marker(slice_id, revision, epic, depends, text_sha256_of(spec), text_sha256_of(why), jira, mocks_sha256(mocks) if mocks else None)
+    head = slice_marker(slice_id, revision, epic, depends, text_sha256_of(spec), text_sha256_of(why), jira, mocks_sha256(mocks) if mocks else None, small)
     if follows is not None:
         if not is_issue_number(follows):
             raise ValueError("not an issue number")
@@ -579,6 +644,11 @@ def parse_slice_body(body: Any) -> Optional[Dict[str, Any]]:
                   "spec_sha256": found.group(5), "why_sha256": found.group(6), "follows": None,
                   "jira": key if is_jira_key(key) else None, "jira_invalid": key is not None and not is_jira_key(key)}
         rest = text[found.end():]
+        small = small_from(found.group(9), found.group(10), found.group(11), found.group(12))
+        if small is not None:  # M18: only a small change's marker carries it
+            marker["small"] = small
+            if not is_small_record(small):
+                rest = "(changed)"
         follows = FOLLOWS_RE.match(rest)
         if follows:
             marker["follows"] = int(follows.group(1))
@@ -608,7 +678,7 @@ def parse_slice_body(body: Any) -> Optional[Dict[str, Any]]:
 
 
 def approval_comment(slice_id: str, revision: int, login: str, spec_sha256: str, why_sha256: str, jira: Optional[str] = None,
-                     mocks_sha256: Optional[str] = None) -> str:
+                     mocks_sha256: Optional[str] = None, small: Optional[Dict[str, Any]] = None) -> str:
     """The comment that records a product manager's approval of one revision of a slice. A Jira key (M13) is one of
     the approved fields: a body whose key is not the approved one is not accepted."""
     if not LOGIN_RE.fullmatch(login or "") or not SLICE_ID_RE.fullmatch(slice_id) or type(revision) is not int:
@@ -619,11 +689,12 @@ def approval_comment(slice_id: str, revision: int, login: str, spec_sha256: str,
         raise ValueError("a Jira key is in Jira's form, such as ABC-123")
     if mocks_sha256 is not None and not HEX64_RE.fullmatch(mocks_sha256):
         raise ValueError("design mocks are named by a SHA-256 digest")
+    small_suffix(small)  # M18: refuses a small change's record that is not identifiers in its form
     return (f"Approved in MACH Product Studio by {login}: {slice_id}, revision {revision}.\n\n"
             f"- Specification SHA-256: `{spec_sha256}`\n- Why SHA-256: `{why_sha256}`\n" + (f"- Jira: `{jira}`\n" if jira else "")
-            + (f"- Design mocks SHA-256: `{mocks_sha256}`\n" if mocks_sha256 else "") + "\n"
+            + (f"- Design mocks SHA-256: `{mocks_sha256}`\n" if mocks_sha256 else "") + (small_line(small) if small else "") + "\n"
             f"<!-- mach:approval id={slice_id} revision={revision} by={login} spec-sha256={spec_sha256} why-sha256={why_sha256}"
-            f"{f' jira={jira}' if jira else ''}{f' mocks={mocks_sha256}' if mocks_sha256 else ''} -->")
+            f"{f' jira={jira}' if jira else ''}{f' mocks={mocks_sha256}' if mocks_sha256 else ''}{small_suffix(small)} -->")
 
 
 def approvals(bodies: Iterable[Any]) -> List[Dict[str, Any]]:
@@ -633,7 +704,8 @@ def approvals(bodies: Iterable[Any]) -> List[Dict[str, Any]]:
         for match in APPROVAL_RE.finditer(body if isinstance(body, str) else ""):
             found.append({"slice_id": match.group(1), "revision": int(match.group(2)), "by": match.group(3),
                           "spec_sha256": match.group(4), "why_sha256": match.group(5), **({"jira": match.group(6)} if match.group(6) else {}),
-                          **({"mocks_sha256": match.group(7)} if match.group(7) else {})})
+                          **({"mocks_sha256": match.group(7)} if match.group(7) else {}),
+                          **({"small": small_from(*match.group(8, 9, 10, 11))} if match.group(8) else {})})  # M18: only a small change's
     return found
 
 
@@ -1308,6 +1380,7 @@ def epic_tasks(body: Any) -> List[int]:
 # with write access who sets out to forge an approval.
 
 READY_LABEL = "mach:ready"
+BUILDING_LABEL = "mach:building"
 SLICE_LABEL = "mach:slice"
 EPIC_LABEL = "mach:epic"
 ROLES_THAT_COUNT = ("triage", "write", "maintain", "admin")
@@ -1321,7 +1394,35 @@ SLICE_NOT_ACCEPTED = {
     "bad_jira": "Not accepted: the Jira key in its body is not in Jira's form (such as ABC-123). The product manager marks it ready again in Product Studio.",
     "jira_changed": "Not accepted: its Jira key is not the one that was approved. The product manager marks it ready again in Product Studio.",
     "mocks_changed": "Not accepted: its design mocks are not the ones that were approved. The product manager marks it ready again in Product Studio.",
+    "small_changed": "Not accepted: whether it is a small change is not what was approved. The product manager marks it ready again in Product Studio.",
+    "not_taken": "Not accepted: it is not open with the mach:slice and mach:building labels.",
+    "taken_back": "Not accepted: mach:ready was taken off it by someone other than the builders. The product manager marks it ready again in Product Studio.",
 }
+
+
+def slice_ready_event(events: Sequence[Dict[str, Any]], taken: bool = False) -> Optional[Dict[str, Any]]:
+    """The event that marked the slice ready, or None. Normally the last time mach:ready was added, with no later removal.
+    With `taken` (a slice the builders took, whose abandoned work an engineer reissues): the last time mach:ready was added,
+    only when every later removal of it was made by the account that marked it mach:building, which is still on it.
+    A removal by anyone else is the product manager taking it back."""
+    if not taken:
+        return deciding_event(events, READY_LABEL)
+    building = deciding_event(events, BUILDING_LABEL)
+    if building is None:
+        return None
+    ordered = [event for _, event in sorted(enumerate(events), key=lambda pair: (pair[1].get("at") or "", pair[0]))]
+    decided: Optional[Dict[str, Any]] = None
+    removals: List[Dict[str, Any]] = []
+    for event in ordered:
+        if event.get("label") != READY_LABEL:
+            continue
+        if event.get("event") == "labeled":
+            decided, removals = event, []
+        else:
+            removals.append(event)
+    if decided is None or any((item.get("login"), item.get("id")) != (building.get("login"), building.get("id")) for item in removals):
+        return None
+    return decided
 
 
 def role_counts(answer: Any) -> bool:
@@ -1353,11 +1454,13 @@ def unedited(item: Dict[str, Any]) -> bool:
 
 
 def slice_acceptance(issue: Dict[str, Any], events: Sequence[Dict[str, Any]], comments: Sequence[Dict[str, Any]], permission: Any,
-                     failure: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+                     failure: Optional[Dict[str, str]] = None, taken: bool = False) -> Dict[str, Any]:
     """Whether a slice issue counts, from what GitHub said. `issue` is {state, labels (names), body};
     `events` from label_events; `comments` from issue_comments; `permission` the labeller's
     collaborator permission answer, or None when it was not asked or could not be (`failure` says why).
-    Never accepted unless established. The why and spec are returned only when accepted."""
+    Never accepted unless established. The why and spec are returned only when accepted.
+    With `taken`, for a slice the builders took: mach:building stands in for mach:ready (see slice_ready_event);
+    every other rule is the same."""
     result: Dict[str, Any] = {"state": "not_accepted", "reason": None, "marker": None, "approved_by": None, "ready_at": None, "why": None, "spec": None}
 
     def refuse(reason: str) -> Dict[str, Any]:
@@ -1365,18 +1468,20 @@ def slice_acceptance(issue: Dict[str, Any], events: Sequence[Dict[str, Any]], co
         return result
 
     labels = issue.get("labels") or []
-    if str(issue.get("state") or "").lower() != "open" or SLICE_LABEL not in labels or READY_LABEL not in labels:
-        return refuse(SLICE_NOT_ACCEPTED["not_ready"])
+    if str(issue.get("state") or "").lower() != "open" or SLICE_LABEL not in labels or (BUILDING_LABEL if taken else READY_LABEL) not in labels:
+        return refuse(SLICE_NOT_ACCEPTED["not_taken" if taken else "not_ready"])
     parsed = parse_slice_body(issue.get("body"))
     if parsed is None:
         return refuse(SLICE_NOT_ACCEPTED["no_marker"])
     result["marker"] = {key: parsed[key] for key in ("slice_id", "revision", "epic", "depends", "spec_sha256", "why_sha256", "follows", "jira")}
-    result["marker"].update({key: parsed[key] for key in ("mocks_sha256", "mocks") if key in parsed})  # M14 C: only a slice with mocks
+    result["marker"].update({key: parsed[key] for key in ("mocks_sha256", "mocks", "small") if key in parsed})  # M14 C, M18: only a slice with them
     if parsed["jira_invalid"]:
         return refuse(SLICE_NOT_ACCEPTED["bad_jira"])
     if not parsed["intact"]:
         return refuse(SLICE_NOT_ACCEPTED["edited"])
-    event = deciding_event(events, READY_LABEL)
+    event = slice_ready_event(events, taken)
+    if taken and event is None and failure is None:
+        return refuse(SLICE_NOT_ACCEPTED["taken_back"])
     problem = "unconfirmed" if failure is not None and event is None else actor_problem(event)
     if problem is not None:
         return refuse(NOT_ACCEPTED[problem].replace("labelled it", "marked it ready"))
@@ -1388,16 +1493,18 @@ def slice_acceptance(issue: Dict[str, Any], events: Sequence[Dict[str, Any]], co
         return refuse(SLICE_NOT_ACCEPTED["no_role"])
     login, account = event["login"], event["id"]
 
-    def approving(item: Dict[str, Any], same_key: bool, same_mocks: bool = True) -> bool:
+    def approving(item: Dict[str, Any], same_key: bool, same_mocks: bool = True, same_small: bool = True) -> bool:
         return (item.get("login") == login and item.get("id") == account and not item.get("app") and item.get("type") == "User"
                 and any(found["slice_id"] == parsed["slice_id"] and found["revision"] == parsed["revision"] and found["by"] == login
                         and found["spec_sha256"] == parsed["spec_sha256"] and found["why_sha256"] == parsed["why_sha256"]
                         and (not same_key or found.get("jira") == parsed["jira"])
-                        and (not same_mocks or found.get("mocks_sha256") == parsed.get("mocks_sha256")) for found in approvals([item.get("body")])))
+                        and (not same_mocks or found.get("mocks_sha256") == parsed.get("mocks_sha256"))
+                        and (not same_small or found.get("small") == parsed.get("small")) for found in approvals([item.get("body")])))
 
     matching = [item for item in comments if approving(item, True)]
     if not matching:
-        return refuse(SLICE_NOT_ACCEPTED["mocks_changed" if any(approving(item, True, False) for item in comments)
+        return refuse(SLICE_NOT_ACCEPTED["small_changed" if any(approving(item, True, True, False) for item in comments)
+                                         else "mocks_changed" if any(approving(item, True, False) for item in comments)
                                          else "jira_changed" if any(approving(item, False, False) for item in comments) else "no_approval"])
     if not any(unedited(item) for item in matching):
         return refuse(SLICE_NOT_ACCEPTED["approval_edited"])
@@ -1525,7 +1632,7 @@ def slice_take_check(issue: Dict[str, Any], comments: Sequence[Dict[str, Any]]) 
         result["problem"] = "not_ours"
         return result
     result["marker"] = {key: parsed[key] for key in ("slice_id", "revision", "epic", "depends", "spec_sha256", "why_sha256", "follows", "jira")}
-    result["marker"].update({key: parsed[key] for key in ("mocks_sha256", "mocks") if key in parsed})  # M14 C: only a slice with mocks
+    result["marker"].update({key: parsed[key] for key in ("mocks_sha256", "mocks", "small") if key in parsed})  # M14 C, M18: only a slice with them
     if str(issue.get("state") or "").lower() == "closed" or "mach:shipped" in labels:
         result["problem"] = "shipped"
         return result
@@ -1534,8 +1641,8 @@ def slice_take_check(issue: Dict[str, Any], comments: Sequence[Dict[str, Any]]) 
         return result
     approved = [found for item in comments if isinstance(item, dict) for found in approvals([item.get("body")])
                 if found["by"] == item.get("login") and found["slice_id"] == parsed["slice_id"] and found["revision"] == parsed["revision"]
-                and (found["spec_sha256"], found["why_sha256"], found.get("jira"), found.get("mocks_sha256"))
-                == (parsed["spec_sha256"], parsed["why_sha256"], parsed["jira"], parsed.get("mocks_sha256"))]
+                and (found["spec_sha256"], found["why_sha256"], found.get("jira"), found.get("mocks_sha256"), found.get("small"))
+                == (parsed["spec_sha256"], parsed["why_sha256"], parsed["jira"], parsed.get("mocks_sha256"), parsed.get("small"))]
     if not approved:
         result["problem"] = "no_approval"
         return result

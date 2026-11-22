@@ -68,11 +68,21 @@ class Scenario(IssuesBase):
 
 def main():
     import needs_memory  # noqa: E402  (beside this file)
-    if sys.argv[1:] == ["--only", "needs"]:
-        # M17: write only the technical needs and design fixtures, leaving the others as they are (a full run changes
-        # only times and paths in them).
+    import small_memory  # noqa: E402  (beside this file)
+    only = {"needs": needs_memory, "small": small_memory}
+    if len(sys.argv) == 3 and sys.argv[1] == "--only" and sys.argv[2] in only:
+        # M17 and M18: write only one milestone's fixtures, leaving the others as they are (a full run changes only times
+        # and paths in them).
+        before = {p: p.read_bytes() for p in OUT.glob("*.json")}
+        only[sys.argv[2]].generate(Scenario, OUT)
+        written = [p for p in OUT.glob("*.json") if before.get(p) != p.read_bytes()]
+        print("wrote", len(written), "fixtures to", OUT)
+        return
+    if sys.argv[1:] == ["--only", "small-change"]:
+        # M18: write only Shape's small-change fixtures, leaving the others as they are.
+        import product_memory  # noqa: E402  (beside this file)
         before = set(OUT.glob("*.json"))
-        needs_memory.generate(Scenario, OUT)
+        product_memory.shape_small_change(Scenario)
         print("wrote", len(set(OUT.glob("*.json")) - before), "new fixtures to", OUT)
         return
     for name in OUT.glob("*.json"):
@@ -87,6 +97,8 @@ def main():
     product_memory.generate(Scenario, OUT)
     # M17: technical needs and a design the team already has.
     needs_memory.generate(Scenario, OUT)
+    # M18: a small change.
+    small_memory.generate(Scenario, OUT)
     print("wrote", len(list(OUT.glob("*.json"))), "fixtures to", OUT)
 
 
@@ -202,7 +214,7 @@ def on_github():
         s.capture("status.finish-ready", "status")
 
         # GitHub cannot be reached.
-        s.fail("*", once=False)
+        s.gh_fails("*", once=False)
         s.capture("refresh.offline", "refresh")
         s.capture("status.offline", "status")
     finally:

@@ -1,9 +1,12 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Button, ConfirmDialog, Dialog, DialogClose, DialogContent, Field, HintAction, Input, Select, toast } from "@mach/ui";
 import type { StatusEpicRow, StatusSliceRow } from "@mach/ui/api";
 import { Link } from "react-router";
 import { useRequestAct, type RequestItem } from "./api";
 import { questionsToAskFirst } from "./model";
+import { StartChoiceFields } from "../../small-change/StartChoiceFields";
+import { useProblemInView } from "../../small-change/useProblemInView";
+import { fullSlice, smallArgs, type StartChoice } from "../../small-change/model";
 
 interface DialogProps {
   open: boolean;
@@ -53,16 +56,31 @@ function PickUpBody({ onOpenChange, item, onDone, also, epics }: DialogProps & {
   const [title, setTitle] = useState("");
   const [titleError, setTitleError] = useState<string | null>(null);
   const formId = `pick-request-${item.number}`;
+  // M18: the request may be picked up as a small change (a fix with its shipped rule, or an adjustment).
+  const [choice, setChoice] = useState<StartChoice>(fullSlice);
+  const [tries, setTries] = useState(0);
+  const tried = tries > 0;
+  const form = useRef<HTMLFormElement>(null);
+  useProblemInView(form, tries, act.shown?.message ?? null);
+  const smallStart = smallArgs(choice);
 
   const [started, setStarted] = useState<{ sliceId: string; questions: { count: number; text: string } } | null>(null);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    setTries((n) => n + 1);
     if (!title.trim()) {
       setTitleError("Give the slice a title in your own words: the outcome for one kind of user.");
       return;
     }
-    const result = await act.run("request.pick", { number: item.number, epic, title: title.trim(), ...(also ? { also: true } : {}) });
+    if (smallStart.missing) return;
+    const result = await act.run("request.pick", {
+      number: item.number,
+      epic,
+      title: title.trim(),
+      ...(also ? { also: true } : {}),
+      ...(smallStart.small ? { small: smallStart.small } : {}),
+    });
     if (!result) return;
     toast({ tone: "success", title: `Started ${result.slice.slice_id}`, description: result.github_updates?.note ?? result.note });
     // M14 D: a request filed in the idea template carries its author's open questions. They are
@@ -86,7 +104,12 @@ function PickUpBody({ onOpenChange, item, onDone, also, epics }: DialogProps & {
       onEscapeKeyDown={(e) => act.pending && e.preventDefault()}
       onPointerDownOutside={(e) => act.pending && e.preventDefault()}
       title={also ? `Pick up request #${item.number} as well?` : `Pick up request #${item.number}?`}
-      description="This starts a draft slice from the request. The interview still asks you every question; nothing is marked ready."
+      width="lg"
+      description={
+        choice.as === "small"
+          ? "This starts a small change from the request. The interview asks only what MACH cannot look up; nothing is marked ready."
+          : "This starts a draft slice from the request. The interview still asks you every question; nothing is marked ready."
+      }
       footer={
         <>
           <DialogClose asChild>
@@ -98,10 +121,20 @@ function PickUpBody({ onOpenChange, item, onDone, also, epics }: DialogProps & {
         </>
       }
     >
-      <form id={formId} onSubmit={submit} className="flex flex-col gap-4" noValidate>
+      <form id={formId} ref={form} onSubmit={submit} className="flex flex-col gap-4" noValidate>
+        {epics.length ? (
+          <StartChoiceFields choice={choice} onChange={setChoice} epicId={epic} explain missing={tried ? (smallStart.missing ?? null) : null} />
+        ) : null}
         {epics.length ? (
           <Field label="Epic" hint="The larger capability the new slice delivers part of.">
-            <Select value={epic} onValueChange={setEpic} options={epics.map((e) => ({ value: e.epic_id, label: `${e.epic_id} ${e.title}` }))} />
+            <Select
+              value={epic}
+              onValueChange={(next) => {
+                setEpic(next);
+                setChoice((c) => ({ ...c, rule: null }));
+              }}
+              options={epics.map((e) => ({ value: e.epic_id, label: `${e.epic_id} ${e.title}` }))}
+            />
           </Field>
         ) : (
           <p className="text-body-sm text-ink">Add an epic on the roadmap first: a slice always belongs to one.</p>

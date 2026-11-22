@@ -27,6 +27,16 @@ REPLACES_FR01 = ("\n## Effects on shipped behaviour\n\n| Shipped rule | Effect |
                  "| SLICE-001/FR-01 | replaced | FR-01 | |\n")
 
 
+def unclocked(result):
+    """A refresh's answer without the wall-clock times it read GitHub at, which differ between two refreshes
+    that straddle a second; every other field is compared as it is."""
+    result = json.loads(json.dumps(result))
+    for block in (result["requests"], result["github"], result["github"]["principles"]["github"], *result["github"]["order"]):
+        key = "read_at" if "read_at" in block else "github_read_at" if "github_read_at" in block else "refreshed_at"
+        assert isinstance(block.pop(key), str), key
+    return result
+
+
 class EpicViewBase(Base):
     def ship(self, slice_id, epic, extra="", title="Invite a teammate"):
         """Product marks the slice ready on its issue; the Factory takes it in, builds it (stand-in), merges it, and runs a pass."""
@@ -97,7 +107,7 @@ class FactoryCommentTest(EpicViewBase):
         self.product("intake")
         self.product("dispatch", "SLICE-001")
         self.integrate(str(number))
-        self.fail("api user")  # the epic view's first step after the checks: GitHub out of reach, once
+        self.gh_fails("api user")  # the epic view's first step after the checks: GitHub out of reach, once
         self.product("intake")
         self.assertEqual(self.gh()["issues"][str(number)]["state"], "CLOSED")  # the slice shipped all the same
         (write,) = self.epic_writes()
@@ -219,7 +229,7 @@ class OthersUnaffectedTest(EpicViewBase):
         state["issues"][str(epic)]["comments"] = [c for c in kept if not issue_rules.epic_view_marker(c["body"])]
         self.write_state(state)
         without_view = self.ok(self.a, "refresh")
-        self.assertEqual(with_view, without_view)
+        self.assertEqual(unclocked(with_view), unclocked(without_view))
         state = self.gh()
         state["issues"][str(epic)]["comments"] = kept
         self.write_state(state)

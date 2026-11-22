@@ -56,6 +56,7 @@ import type {
   NeedsPublishResult,
   ReconcileNeeds,
 } from "./needs";
+import type { SliceSmallChange, SliceWiden, SmallChangeResume, SmallOnWorkOrder, SmallStart, SmallWidened, StatusSmall } from "./small";
 
 /* ── Vocabulary ─────────────────────────────────────────────────────────── */
 
@@ -120,6 +121,12 @@ export interface WorkOrder {
   origin?: { kind: "github_issue" | (string & {}); repository: string; number: number };
   /** M16: the idea and outcomes a slice made by Shape's apply serves; its why must name them (`idea.why_line`). */
   serves?: Serves;
+  /** M18: present only for a slice started as a small change; it stays "small" after it was widened. */
+  kind?: "small";
+  /** M18: the kind of small change and, for a fix, the shipped rule. */
+  small?: SmallOnWorkOrder;
+  /** M18: when and why it became a full slice; absent while it is still a small change. */
+  widened?: SmallWidened;
 }
 
 /* ── Operation results ──────────────────────────────────────────────────── */
@@ -250,6 +257,9 @@ export interface StatusSliceRow {
   policies_changed?: string;
   /** M15: the slice's own Jira key; absent when it has none (its epic's key is on the epic's row). */
   tracking?: Tracking;
+  /** M18: present only for a slice started as a small change. */
+  kind?: "small";
+  small?: StatusSmall;
 }
 
 /** An approval the engine withdrew, and why, in the PM's words (status.approvals_withdrawn). */
@@ -451,6 +461,8 @@ export interface SliceCheck {
   ready: boolean;
   /** Present on `slice check`; absent on the copy inside `slice resume`. */
   status?: SliceStatus;
+  /** M18: present only for a slice started as a small change. */
+  small_change?: SliceSmallChange;
 }
 
 export interface SliceIds {
@@ -492,6 +504,8 @@ export interface SliceResume extends SlicePaths {
   request?: RequestForSlice;
   /** M16: for a slice made from an idea, the outcomes it serves and the brief's earlier words, fenced. */
   idea?: SliceFromIdea;
+  /** M18: present only for a slice started as a small change. */
+  small_change?: SmallChangeResume;
 }
 
 export interface SlicePause {
@@ -510,6 +524,8 @@ interface SliceReadyCommon {
   warnings: string[];
   factory_authorized: false;
   note: string;
+  /** M18: present only for a slice started as a small change (widened by this check, when `widened_now`). */
+  small_change?: SliceSmallChange;
 }
 
 /** `slice ready` when the slice was saved as a GitHub issue under its epic's issue. */
@@ -539,6 +555,26 @@ export interface SliceReadyInFolder extends SliceReadyCommon {
 }
 
 export type SliceReady = SliceReadyOnGithub | SliceReadyInFolder;
+
+/**
+ * M18: `slice ready` on a small change that this same act found is not small (exit 0). Nothing was saved or approved:
+ * it is a full slice now, the interview carries on in full, and the product manager marks it ready again after.
+ */
+export interface SliceReadyWidened {
+  ready: false;
+  widened: true;
+  slice: WorkOrder;
+  /** `widened_now` is true; `widened.reason` is the rule's fixed sentence. */
+  small_change: SliceSmallChange;
+  risk: RiskTier | null;
+  counts: SpecCounts;
+  warnings: string[];
+  factory_authorized: false;
+  note: string;
+}
+
+/** What `slice ready` answers: marked ready (on GitHub or in the folder), or, for a small change, made a full slice instead. */
+export type SliceReadyAnswer = SliceReady | SliceReadyWidened;
 
 export interface SliceReopen {
   reopened: true;
@@ -761,12 +797,14 @@ export interface Operations {
     result: { epic: Epic };
   };
   "epic.renumber": { args: { identifier: string }; result: Renumber };
-  "slice.new": { args: { epic: string; title: string; depends_on?: string[]; id?: string }; result: SliceNew };
+  "slice.new": { args: { epic: string; title: string; depends_on?: string[]; id?: string; small?: SmallStart }; result: SliceNew };
+  /** M18: a small change becomes a full slice on the product manager's word, with their reason. */
+  "slice.widen": { args: { slice_id: string; why: string }; result: SliceWiden };
   "slice.set": { args: { slice_id: string; title?: string; epic?: string; depends_on?: string[] }; result: { slice: WorkOrder } };
   "slice.resume": { args: { slice_id?: string }; result: SliceResume };
   "slice.pause": { args: { slice_id: string; note: string }; result: SlicePause };
   "slice.check": { args: { slice_id: string; ready?: boolean }; result: SliceCheck };
-  "slice.ready": { args: { slice_id: string }; result: SliceReady };
+  "slice.ready": { args: { slice_id: string }; result: SliceReadyAnswer };
   "slice.reopen": { args: { slice_id: string }; result: SliceReopen };
   "slice.show": { args: { slice_id: string }; result: SliceShow };
   "slice.renumber": { args: { identifier: string }; result: Renumber };
@@ -777,7 +815,7 @@ export interface Operations {
   /* Requests from GitHub issues (M8), promoted from features/inbox/requests/api.ts in M15. */
   "request.list": { args: Record<string, never>; result: { requests: RequestsBlock; note: string; factory_authorized?: false } };
   "request.show": { args: { number: number }; result: { request: RequestShown; note: string; factory_authorized?: false } };
-  "request.pick": { args: { number: number; epic: string; title: string; also?: boolean }; result: RequestPickResult };
+  "request.pick": { args: { number: number; epic: string; title: string; also?: boolean; small?: SmallStart }; result: RequestPickResult };
   "request.link": { args: { number: number; slice_id: string }; result: { linked: true; request: number; note: string } };
   "request.met": { args: { number: number }; result: { met: true; request: number; approved_slices: string[]; closed: boolean; note: string } };
 
@@ -829,7 +867,8 @@ export interface Operations {
     result: ShapeSettled;
   };
   "idea.map-status": { args: { idea_id: string }; result: ShapeMapStatus };
-  "idea.apply": { args: { idea_id: string }; result: ShapeApplied };
+  /** `change`: for the small-change route only (M18), the product manager's word on which kind it is. */
+  "idea.apply": { args: { idea_id: string; change?: "fix" | "adjustment" }; result: ShapeApplied };
   "idea.change": { args: { rule: string; title?: string }; result: IdeaChanged };
   "idea.chain": { args: { idea_id: string }; result: IdeaChain };
   "brief.check": { args: { idea_id: string }; result: BriefCheck };
@@ -950,6 +989,8 @@ export const personalActs: ReadonlySet<OperationName> = new Set<OperationName>([
   "design.import",
   "design.settle",
   "design.publish",
+  // M18: making a small change a full slice, for the product manager's own reason.
+  "slice.widen",
 ]);
 
 /* ── M15: types for what M13 and M14 added (web/fixtures/product_memory.py holds real samples) ── */

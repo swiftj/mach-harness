@@ -90,7 +90,7 @@ If the input is exactly `where`, an automated workflow is asking where this skil
 | Action | What you do |
 |--------|-------------|
 | `audit` | Run the audit skill yourself, as the prompt says. It only measures. If the result is Bronze, the next `RUN next` will stop the line. |
-| `groom` | If `interactive` is true, run the intent skill in this conversation: the user is the product owner and answers its questions. Otherwise start a sub-agent on `model` with the prompt. |
+| `groom` | If `interactive` is true, run the intent skill in this conversation: the user is the product owner and answers its questions. When the person has said in this conversation that this ticket is a small change, add ` --small` to the intent skill's input (never in headless mode, and never on your own judgment); a ticket labelled `small-change` needs nothing added. Otherwise start a sub-agent on `model` with the prompt. |
 | `plan` | Start a sub-agent on `model` with the prompt. |
 | `build`, `revise` | Start the sub-agent named by `agent_type` with the prompt. |
 | `verify` | Start the sub-agent named by `agent_type` with the prompt. |
@@ -273,7 +273,7 @@ When the input starts with `product`, an engineer is working with slices that pr
 | `product dispatch <SLICE-ID or issue number>...` or `product dispatch --ready` | `RUN product dispatch ...` | Report what was dispatched and what was refused, with reasons. Dispatch prepares each cell (the spec committed on the ticket's branch with its header line, `intent.md` from the why) and starts nothing; the slice's issue is labelled `mach:building`. Then ask whether to run the dispatched tickets now. |
 | `product events` | `RUN product events` | Summarize the recent transitions. |
 | `product reconcile` | `RUN product reconcile` | Intake, a recorded plan and the status writes to slices' issues in one step, for catching up after time away. It never dispatches. |
-| `product intake --reissue <SLICE-ID>` | `RUN product intake --reissue <SLICE-ID>`, **only on the engineer's explicit word** | Puts a slice whose work was abandoned back in the queue, on the same ticket. |
+| `product intake --reissue <SLICE-ID>` | `RUN product intake --reissue <SLICE-ID>`, **only on the engineer's explicit word** | Puts a slice whose work was abandoned back in the queue, on the same ticket, including a GitHub slice whose issue is marked `mach:building`. If it is refused, give the reason word for word (not abandoned, a newer revision waiting, the issue closed, edited or taken back, the folder gone, GitHub out of reach); do not work around it. Refused inside a supervised execution. |
 
 After a dispatch, on the engineer's yes: for one ticket, continue with **One ticket** above for that ticket ID. For several, continue with **Several tickets at once** below with those ticket IDs. Either way every station and every gate applies exactly as for any other ticket; the first step is the contracts and plan stage, because the spec is already approved.
 

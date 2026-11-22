@@ -1,0 +1,360 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Teams work together.",
+      "outcomes": [
+        "Teams can work together"
+      ],
+      "issue": null,
+      "url": null
+    },
+    "approvals_withdrawn": [],
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "Team membership",
+        "status": "open",
+        "revision": 1,
+        "acceptance_criteria": [
+          "Only invited people can join"
+        ],
+        "issue": null,
+        "url": null,
+        "counts": {
+          "total": 5,
+          "by_progress": {
+            "draft": 2,
+            "ready_for_approval": 3
+          },
+          "ready_or_further": 0,
+          "ready_or_further_means": "marked ready to build, being built, or shipped"
+        }
+      }
+    ],
+    "slices": [
+      {
+        "kind": "small",
+        "small": {
+          "change": "adjustment",
+          "shipped_rule": null,
+          "light_path": true,
+          "widened": null
+        },
+        "slice_id": "SLICE-002",
+        "title": "Clearer expired invitation message",
+        "epic_id": "EPIC-001",
+        "status": "ready_for_approval",
+        "revision": 1,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-002-expired-invitation-message.md",
+        "has_intent": true,
+        "resume_note": null,
+        "dependencies": [],
+        "editable": true,
+        "github": {
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": null,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": null,
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "ready_for_approval"
+        }
+      },
+      {
+        "kind": "small",
+        "small": {
+          "change": "fix",
+          "shipped_rule": "SLICE-001/FR-02",
+          "light_path": true,
+          "widened": null
+        },
+        "slice_id": "SLICE-003",
+        "title": "Expire invitations after 14 days again",
+        "epic_id": "EPIC-001",
+        "status": "ready_for_approval",
+        "revision": 1,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-003-expired-invitation-message.md",
+        "has_intent": true,
+        "resume_note": null,
+        "dependencies": [],
+        "editable": true,
+        "github": {
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": null,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": null,
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "ready_for_approval"
+        }
+      },
+      {
+        "kind": "small",
+        "small": {
+          "change": "adjustment",
+          "shipped_rule": null,
+          "light_path": false,
+          "widened": {
+            "at": "2026-11-22T12:34:35Z",
+            "reason": "This is not a small change: a small change has at most 3 functional requirements, and this one has more.",
+            "rule": "requirements"
+          }
+        },
+        "slice_id": "SLICE-004",
+        "title": "Help text on the expired invitation page",
+        "epic_id": "EPIC-001",
+        "status": "ready_for_approval",
+        "revision": 1,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-004-expired-invitation-message.md",
+        "has_intent": true,
+        "resume_note": null,
+        "dependencies": [],
+        "editable": true,
+        "github": {
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": null,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": null,
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "ready_for_approval"
+        }
+      },
+      {
+        "kind": "small",
+        "small": {
+          "change": "adjustment",
+          "shipped_rule": null,
+          "light_path": false,
+          "widened": {
+            "at": "2026-11-22T12:34:35Z",
+            "reason": "It should also change the reminder email, which is a second message.",
+            "rule": null
+          }
+        },
+        "slice_id": "SLICE-005",
+        "title": "Shorter reminder wording",
+        "epic_id": "EPIC-001",
+        "status": "draft",
+        "revision": 2,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-005-expired-invitation-message.md",
+        "has_intent": true,
+        "resume_note": null,
+        "dependencies": [],
+        "editable": true,
+        "github": {
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": null,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": null,
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "draft"
+        }
+      },
+      {
+        "slice_id": "SLICE-006",
+        "title": "Invite a teammate",
+        "epic_id": "EPIC-001",
+        "status": "draft",
+        "revision": 1,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-006-invite-teammate.md",
+        "has_intent": true,
+        "resume_note": null,
+        "dependencies": [],
+        "editable": true,
+        "github": {
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": null,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": null,
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "draft"
+        }
+      }
+    ],
+    "saved": {
+      "everything_saved": true,
+      "note": "Everything is saved.",
+      "not_saved": []
+    },
+    "order": [
+      {
+        "epic_id": "EPIC-001",
+        "issue": null,
+        "slices": [
+          {
+            "slice_id": "SLICE-002",
+            "title": "Clearer expired invitation message",
+            "in_workspace": true,
+            "issue": null,
+            "state_label": null
+          },
+          {
+            "slice_id": "SLICE-003",
+            "title": "Expire invitations after 14 days again",
+            "in_workspace": true,
+            "issue": null,
+            "state_label": null
+          },
+          {
+            "slice_id": "SLICE-004",
+            "title": "Help text on the expired invitation page",
+            "in_workspace": true,
+            "issue": null,
+            "state_label": null
+          },
+          {
+            "slice_id": "SLICE-005",
+            "title": "Shorter reminder wording",
+            "in_workspace": true,
+            "issue": null,
+            "state_label": null
+          },
+          {
+            "slice_id": "SLICE-006",
+            "title": "Invite a teammate",
+            "in_workspace": true,
+            "issue": null,
+            "state_label": null
+          }
+        ],
+        "on_github": false,
+        "github_order": null,
+        "github_read_at": null,
+        "matches_github": null,
+        "unfinished": false,
+        "taken_from_github": false,
+        "could_not_read": false,
+        "note": null
+      }
+    ],
+    "github": {
+      "repository": null,
+      "form": null,
+      "last_read": null
+    },
+    "current_slice": "SLICE-006",
+    "last_refreshed": null,
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "SLICE-002 is ready for your approval: mark it ready for the builders (slice ready SLICE-002).",
+      "SLICE-003 is ready for your approval: mark it ready for the builders (slice ready SLICE-003).",
+      "SLICE-004 is ready for your approval: mark it ready for the builders (slice ready SLICE-004).",
+      "Continue the interview for SLICE-005: Shorter reminder wording (slice resume SLICE-005).",
+      "Continue the interview for SLICE-006: Invite a teammate (slice resume SLICE-006)."
+    ],
+    "next_actions": [
+      {
+        "kind": "mark_ready",
+        "target": "SLICE-002",
+        "title": "Mark SLICE-002 ready",
+        "reason": "Clearer expired invitation message is ready for your approval. Marking it ready hands it to the builders.",
+        "related": []
+      },
+      {
+        "kind": "mark_ready",
+        "target": "SLICE-003",
+        "title": "Mark SLICE-003 ready",
+        "reason": "Expire invitations after 14 days again is ready for your approval. Marking it ready hands it to the builders.",
+        "related": []
+      },
+      {
+        "kind": "mark_ready",
+        "target": "SLICE-004",
+        "title": "Mark SLICE-004 ready",
+        "reason": "Help text on the expired invitation page is ready for your approval. Marking it ready hands it to the builders.",
+        "related": []
+      },
+      {
+        "kind": "continue_interview",
+        "target": "SLICE-005",
+        "title": "Continue the interview for SLICE-005",
+        "reason": "Shorter reminder wording is still being defined.",
+        "related": []
+      },
+      {
+        "kind": "continue_interview",
+        "target": "SLICE-006",
+        "title": "Continue the interview for SLICE-006",
+        "reason": "Invite a teammate is still being defined.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

@@ -1,0 +1,41 @@
+{
+  "exit_code": 0,
+  "data": {
+    "slice": {
+      "schema_version": 1,
+      "slice_id": "SLICE-003",
+      "project_id": "team-space",
+      "epic_id": "EPIC-001",
+      "revision": 1,
+      "title": "Expire invitations after 14 days again",
+      "status": "draft",
+      "dependencies": [],
+      "open_questions": [],
+      "spec_path": null,
+      "spec_sha256": null,
+      "kind": "small",
+      "small": {
+        "change": "fix",
+        "shipped_rule": "SLICE-001/FR-02"
+      }
+    },
+    "work_order": "/project/.factory/studio/draft/product/slices/SLICE-003.json",
+    "specs_dir": "/project/.factory/studio/draft/specs/slices",
+    "spec": null,
+    "spec_name_pattern": "SLICE-003-<lowercase-kebab-name>.md",
+    "intent_path": "/project/.factory/studio/draft/product/intents/SLICE-003.md",
+    "ids": {
+      "next": [
+        "SLICE-004",
+        "SLICE-005",
+        "SLICE-006",
+        "SLICE-007",
+        "SLICE-008",
+        "SLICE-009"
+      ],
+      "reserved_without_spec": []
+    }
+  },
+  "refused": null,
+  "hint": null
+}

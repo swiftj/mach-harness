@@ -37,7 +37,7 @@
       "principles": [],
       "policies": []
     },
-    "rule": "One outcome and at most three shipped rules is one slice; otherwise outcomes inside one capability is an epic, and outcomes in different capabilities is several epics. High-risk areas and concerns are counted, never part of the rule.",
+    "rule": "One outcome in one capability, at most 1 shipped rule and nothing in a high-risk area is a small change; otherwise one outcome and at most three shipped rules is one slice; otherwise outcomes inside one capability is an epic, and outcomes in different capabilities is several epics. Concerns are counted, never part of the rule; high-risk areas are part of it only for a small change.",
     "note": "MACH counted and named the route; nothing was created. A map of slices is proposed next.",
     "factory_authorized": false
   },

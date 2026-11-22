@@ -1188,6 +1188,8 @@ def cmd_product(project: Project, args: argparse.Namespace) -> int:
             result = {**found, "plan_summary": {key: plan[key] for key in ("counts", "order", "dispatchable", "waiting_for_a_place", "needs_person", "intake_is_current", "limits")},
                       **line.status_summary(), "factory_started": False}
         elif args.action == "intake":
+            if args.reissue and execution_scope(project) is not None:
+                raise RunError("Reissuing abandoned work is an engineer's act, in conversation; a supervised execution does not reissue.")
             if args.fetch:
                 fetch(project)
             result = line.intake(dry_run=args.dry_run, reissue=args.reissue or [])

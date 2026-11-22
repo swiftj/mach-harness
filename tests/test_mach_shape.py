@@ -264,7 +264,7 @@ class BriefAndVerdictTest(ShapeBase):
         self.assertEqual((after["route"], after["made"], after["lookback"]), (record["route"], record["made"], record["lookback"]))  # untouched
         record["route"]["route"] = "a-small-change"  # the light path is deferred
         self.path("product/ideas/IDEA-001.json").write_text(json.dumps(record))
-        self.assertIn("route.route is one-slice, epic or several-epics", self.refused(self.a, "idea", "show", "IDEA-001"))
+        self.assertIn("route.route is small-change, one-slice, epic or several-epics", self.refused(self.a, "idea", "show", "IDEA-001"))
 
     def test_the_case_is_checked(self):
         self.add()
@@ -335,7 +335,7 @@ class PublishTest(ShapeBase):
         self.assertEqual(len(self.idea_issues()), 1)
         self.assertEqual(self.ok(self.a, "status")["saved"]["not_saved"][0]["kind"], "idea_unfinished")
         self.assertEqual(self.ok(self.a, "idea", "list")["ideas"][0]["next"]["kind"], "publish")
-        self.fail("issue comment")  # then the verdict comment fails before it is written
+        self.gh_fails("issue comment")  # then the verdict comment fails before it is written
         self.assertIn("stopped part way", self.refused(self.a, "idea", "publish", "IDEA-001"))
         self.lose("issue comment")  # and then it is written but the answer is lost
         self.refused(self.a, "idea", "publish", "IDEA-001")
@@ -347,7 +347,7 @@ class PublishTest(ShapeBase):
 
     def test_github_unreachable_saves_nothing(self):
         self.decided()
-        self.fail("repo view", NETWORK_DOWN, once=False)
+        self.gh_fails("repo view", NETWORK_DOWN, once=False)
         self.assertIn("Nothing was saved", self.refused(self.a, "idea", "publish", "IDEA-001"))
         self.assertEqual(self.idea_issues(), [])
         self.assertFalse((self.a / ".factory/studio/ideas.json").exists() and self.shape_ledger()["ideas"].get("IDEA-001", {}).get("saved"))

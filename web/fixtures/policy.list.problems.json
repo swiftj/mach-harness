@@ -3,7 +3,7 @@
   "data": {
     "reads_only": true,
     "dir": "policies",
-    "commit": "ad4b8960257f9cc53e75aad690d6bdca9d16fc81",
+    "commit": "707a99e00677acbde8642aa8e18ce2ed773984cb",
     "packs": [
       {
         "id": "POL-brand",

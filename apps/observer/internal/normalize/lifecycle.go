@@ -303,6 +303,14 @@ func (l *Lifecycle) data(ev *event.Event, typ, station string, in map[string]any
 		if _, ok := in["risk"]; ok {
 			d["risk"] = enum(get("risk"), risks...)
 		}
+		// Revision 8 (M18): the groom station's exit says when the ticket is a small change, whether it
+		// became a full slice and by which rule's code (never the person's words). Absent for every
+		// other ticket, so its exit is exactly as before.
+		if _, ok := in["kind"]; ok && station == "groom" {
+			d["kind"] = enum(get("kind"), "small")
+			d["widened"] = boolOrNil(get("widened"))
+			d["widened_rule"] = enum(get("widened_rule"), SmallRules...)
+		}
 		d["counts"] = counts(in, used)
 	case "gate.evaluated":
 		gate, _ := get("gate").(string)

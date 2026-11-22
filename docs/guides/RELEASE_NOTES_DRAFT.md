@@ -1,6 +1,23 @@
-# MACH release notes: 0.18.0
+# MACH release notes: 0.19.0
 
 What is new in each release, newest first, followed by supported platforms, what you need, upgrading and security notes.
+
+## What changed in 0.19.0
+
+Small changes: a short way to ask for a fix or an adjustment to something that has shipped, built and checked exactly as any slice is.
+
+| Change | What it is |
+| --- | --- |
+| A small change | Optional. A fix to a shipped rule that is not holding, or an adjustment to wording, presentation, a default or a limit. The product manager says what is so today and what should be so instead; MACH looks up the rest, proposes the whole spec at once and asks at most five yes-or-no questions. |
+| Nothing is checked less | A small change's spec has the same sections and passes the same checks. The plan, the failing test first, verification, the review panel at the ticket's risk tier and the merge station are unchanged. |
+| What counts as small | MACH decides by fixed rules: one actor and one epic; at most three rules and four scenarios; at most one shipped rule changed and none retired; no exception to a principle, no policy concern, no new permission; risk Low or Medium. `intent.small_change` sets the limits. |
+| Becoming a full slice | A change the rules say is not small carries on as a full slice, with one sentence naming the rule and every answer kept. MACH never trims a change to fit. The product manager can make one a full slice on their own word. |
+| After the plan | The plan can show what a spec cannot: an existing contract changed, a file in a high-risk area, a proposed ADR. An engineer's ticket then returns to the full interview with its plan kept; a Product Studio slice stops with a question for the product manager. |
+| For engineers | Say a ticket is a small change when its interview starts, or label it `small-change`. Unattended grooming never takes the short interview. |
+| Shape | A fourth route beside one slice, an epic and several epics: one outcome in one capability, at most one shipped rule and no high-risk area is sized as a small change. |
+| Product Studio app | A small change can be started wherever a slice is, as a fix (choosing the shipped rule) or an adjustment. It carries a "Small change" label where slices are listed, and a slice that became a full slice says why and when on its page. |
+| Factory Floor and the record | The Line names a small change on its ticket. Analytics sets time at Groom for small changes beside full slices. The pull request and the change record say "small change" beside the ticket. |
+| Product Studio dialogs | When a start is refused or a field is missing, what stopped it is brought into view. |
 
 ## What changed in 0.18.0
 

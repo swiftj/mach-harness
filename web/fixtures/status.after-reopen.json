@@ -19,7 +19,7 @@
         "artifact": "SLICE-001",
         "kind": "slice",
         "reason": "You reopened it to change it.",
-        "at": "2026-11-20T22:05:24Z"
+        "at": "2026-11-22T12:33:43Z"
       }
     ],
     "epics": [
@@ -204,7 +204,7 @@
           "revision": null,
           "approved": null,
           "approved_by": null,
-          "read_at": "2026-11-20T22:05:24Z"
+          "read_at": "2026-11-22T12:33:43Z"
         },
         "newer_elsewhere": false,
         "changed_on_github": false
@@ -258,7 +258,7 @@
           "SLICE-003",
           "SLICE-004"
         ],
-        "github_read_at": "2026-11-20T22:05:24Z",
+        "github_read_at": "2026-11-22T12:33:43Z",
         "matches_github": true,
         "unfinished": false,
         "taken_from_github": false,
@@ -269,10 +269,10 @@
     "github": {
       "repository": "acme/team-space",
       "form": "sub_issues",
-      "last_read": "2026-11-20T22:05:24Z"
+      "last_read": "2026-11-22T12:33:43Z"
     },
     "current_slice": "SLICE-004",
-    "last_refreshed": "2026-11-20T22:05:24Z",
+    "last_refreshed": "2026-11-22T12:33:43Z",
     "structurally_valid": true,
     "structural_errors": [],
     "factory_authorized": false,

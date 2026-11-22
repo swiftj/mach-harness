@@ -1,0 +1,44 @@
+{
+  "exit_code": 0,
+  "data": {
+    "slice_id": "SLICE-004",
+    "spec": "/project/.factory/studio/draft/specs/slices/SLICE-004-expired-invitation-message.md",
+    "errors": [],
+    "warnings": [],
+    "diagnostics": [],
+    "open_questions": [],
+    "intent_problems": [],
+    "counts": {
+      "invariants": 1,
+      "functional_requirements": 4,
+      "matrix_rules": 2,
+      "scenarios": 1
+    },
+    "title": "Clearer expired invitation message",
+    "shipped": {
+      "commit": "b1b8b38df74c0bf56fc309f8fe6cc1ad922cee4a",
+      "branch": "main",
+      "rules": 5,
+      "notes": []
+    },
+    "risk": "Low",
+    "small_change": {
+      "kind": "small",
+      "change": "adjustment",
+      "shipped_rule": null,
+      "light_path": false,
+      "widened": {
+        "at": "2026-11-22T12:34:35Z",
+        "reason": "This is not a small change: a small change has at most 3 functional requirements, and this one has more.",
+        "rule": "requirements"
+      },
+      "note": "This small change is a full slice now: This is not a small change: a small change has at most 3 functional requirements, and this one has more. The interview carries on in full, with every answer kept.",
+      "widened_now": true
+    },
+    "prd_problems": [],
+    "ready": true,
+    "status": "ready_for_approval"
+  },
+  "refused": null,
+  "hint": null
+}

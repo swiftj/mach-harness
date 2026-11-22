@@ -29,6 +29,8 @@ const ALLOWLIST = [
   // needs conversation records a map.
   "need.list", "need.add", "need.set", "need.retire", "need.none", "need.publish", "reconcile.needs",
   "design.list", "design.import", "design.show", "design.settle", "design.publish",
+  // M18: a small change made a full slice on the product manager's word.
+  "slice.widen",
 ];
 // Commands the engine keeps only for another team's tests (docs/mach-next/M11_STUDIO_ISSUES.md). The host never reaches them.
 const LEFTOVERS = [

@@ -172,6 +172,16 @@ Everything you write is a private draft on your computer until you mark a slice 
 4. The issue gets short comments with slice IDs and links as work moves: taken in, and a link to each slice's issue when it is marked ready.
 5. When a slice made from it is marked ready, say "request 42 is met" and the issue closes.
 
+### A small change
+
+Optional. Most changes to a product that has shipped are small: a rule that is not holding, a changed sentence, a different default or limit. Say "a small change", or choose it in the app wherever a slice is started.
+
+1. **A fix or an adjustment.** A fix is for a shipped rule that is not holding: you say what you saw, and MACH finds the rule. An adjustment changes wording, presentation, a default or a limit.
+2. **A short interview.** You say what is so today and what should be so instead. MACH looks up the rest, proposes the whole spec at once, and reads back what changes, what stays the same and the scenarios. It asks at most five yes-or-no questions, then you confirm.
+3. **MACH decides what is small**, by fixed rules: one kind of user and one epic, at most three rules and four scenarios, at most one shipped rule changed and none retired, no new permission, no policy concern, no exception to a principle, and risk no higher than Medium.
+4. **When it is not small**, MACH says so in one sentence naming the rule, and the slice carries on as a full slice with every answer kept. It never trims your change to fit. You can make one a full slice yourself at any time.
+5. **Nothing is checked less.** The builders plan, test, verify and review a small change exactly as they do a full slice.
+
 ### Shaping an idea before any epic
 
 Optional, and one of the ways to start. Say "shape an idea", or open Shape in the app.
@@ -180,7 +190,7 @@ Optional, and one of the ways to start. Say "shape an idea", or open Shape in th
 2. **Explore.** A conversation, one open question at a time. MACH looks up the facts instead of asking you: the shipped rules the idea would touch, similar ideas and requests, and the principles and policies it would run into.
 3. **The brief.** One page that is yours: the problem, who has it, the outcomes with how you would know each was met, what you are not doing, and every assumption marked as assumed until someone confirms it. MACH checks it is complete.
 4. **The case.** You make the case as a customer would hear it, and MACH asks the hardest questions it can find. Then you record a verdict in your own words: go, not now, or no. MACH never recommends one, and a no stays findable with its reason.
-5. **Size and route.** After a go, MACH sizes the work from what the brief touches, by fixed rules: one slice, an epic, or several epics. For the last two it proposes a map; every outcome is carried by a slice or you say it is out of scope or for later. Nothing is created until you say so.
+5. **Size and route.** After a go, MACH sizes the work from what the brief touches, by fixed rules: a small change, one slice, an epic, or several epics. For the last two it proposes a map; every outcome is carried by a slice or you say it is out of scope or for later. Nothing is created until you say so.
 6. **Look back.** When a slice made from the idea ships, each outcome comes back with its "how we would know" for you to record: met, not met, or too early to say.
 
 ### Technical needs, and a design you already have
@@ -257,6 +267,8 @@ MACH creates a ticket and a cell and interviews you, the same way as in Product 
 This moves the ticket from wherever it is to the next point where a person is needed. MACH reads what each station recorded and names the next step; a fresh agent does it; then MACH is asked again. You can name a ticket by its number alone: `/mach 1`.
 
 An interrupted run loses nothing. Run the same command again and it resumes at the station it had reached.
+
+For a fix or an adjustment to something that has shipped, say it is a small change when the interview starts, or label the ticket `small-change`. The interview is short: MACH proposes the whole spec and asks at most five questions. Fixed rules decide whether the change is small, when the spec is checked and again when the plan is. One that is not goes back to the full interview with its answers and its plan kept. Every station after grooming treats it as any other ticket.
 
 ### Approved product work
 
@@ -403,7 +415,7 @@ A cost appears only where one was recorded, which today means work the superviso
 
 | Command | What it does |
 |---|---|
-| `/mach-product-studio` | Shape an idea before any epic (brief, case, verdict); project, epics, slices; mark a slice ready (a GitHub issue); requests from GitHub issues; `refresh`; "open the app" |
+| `/mach-product-studio` | Shape an idea before any epic (brief, case, verdict); project, epics, slices; a small change; mark a slice ready (a GitHub issue); requests from GitHub issues; `refresh`; "open the app" |
 | `/mach-idea` | For anyone: describe an idea in your own words and send it to the product team as a GitHub issue (or get the text to paste) |
 | `/mach <ticket>` | Move one ticket to the next point a person is needed |
 | `/mach <ticket> <ticket> ...` | Run several tickets, scheduled by MACH's rules; `--dry-run`, `--limit <n>`, `--sequential` |
@@ -472,6 +484,7 @@ Settings are in `.factory/config.json`. The ones people change most:
 | `tickets.github.status_comments` | `true` | `false` stops MACH's comments on request issues; its labels are still set |
 | `adr.dir` | `docs/adr` | The folder of the project's architecture decision records |
 | `adr.required_topics` | the six basics | Topics that need an accepted ADR before any ticket is planned. Add names to extend it; `[]` requires nothing |
+| `intent.small_change` | `requirements` 3, `scenarios` 4, `questions` 5, `changed_shipped_rules` 1 | The most a small change may hold: rules, scenarios, questions asked, and shipped rules changed. The last can only be lowered |
 | `floor.evidence_media` | off | Let the Factory Floor's evidence player show screenshots and recordings; transcripts and other text are shown either way |
 
 A high-risk change always needs a person's approval in review unless you change that setting yourself. `REVIEW.md` and `AGENTS.md` are yours to edit once created.

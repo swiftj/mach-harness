@@ -70,7 +70,7 @@ export function stepForNext(kind: IdeaNextKind, stage: IdeaRow["stage"]): Exclud
 /** Where an idea's next step is, as a path. */
 export const nextPathOf = (row: Pick<IdeaRow, "idea_id" | "stage" | "next">): string => ideaPath(row.idea_id, stepForNext(row.next.kind, row.stage));
 
-const routeWords: Record<ShapeRoute, string> = { "one-slice": "One slice", epic: "An epic", "several-epics": "Several epics" };
+const routeWords: Record<ShapeRoute, string> = { "small-change": "A small change", "one-slice": "One slice", epic: "An epic", "several-epics": "Several epics" };
 const decisionWords: Record<string, string> = { go: "Go", "not-now": "Not now", no: "No" };
 
 export const verdictWords = (decision: string): string => decisionWords[decision] ?? decision;

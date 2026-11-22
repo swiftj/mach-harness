@@ -63,6 +63,11 @@ import ideaAddRefusedTwice from "../../../../fixtures/idea.add.refused-twice.jso
 import ideaApplyAgain from "../../../../fixtures/idea.apply.again.json";
 import ideaApply from "../../../../fixtures/idea.apply.json";
 import ideaApplyRefusedUnsettled from "../../../../fixtures/idea.apply.refused-unsettled.json";
+import ideaApplyRefusedSmallKind from "../../../../fixtures/idea.apply.refused-small-kind.json";
+import ideaApplySmallChange from "../../../../fixtures/idea.apply.small-change.json";
+import ideaMapStatusSmallChange from "../../../../fixtures/idea.map-status.small-change.json";
+import ideaShowSmallChange from "../../../../fixtures/idea.show.small-change.json";
+import ideaSizeSmallChange from "../../../../fixtures/idea.size.small-change.json";
 import ideaChain from "../../../../fixtures/idea.chain.json";
 import ideaChainLookedBack from "../../../../fixtures/idea.chain.looked-back.json";
 import ideaChange from "../../../../fixtures/idea.change.json";
@@ -211,6 +216,11 @@ export const shapeRuns = {
   "idea.apply.again": run<ShapeApplied>(ideaApplyAgain),
   "idea.apply": run<ShapeApplied>(ideaApply),
   "idea.apply.refused-unsettled": refusal(ideaApplyRefusedUnsettled),
+  "idea.apply.refused-small-kind": refusal(ideaApplyRefusedSmallKind),
+  "idea.apply.small-change": run<ShapeApplied>(ideaApplySmallChange),
+  "idea.map-status.small-change": run<ShapeMapStatus>(ideaMapStatusSmallChange),
+  "idea.show.small-change": run<IdeaShow>(ideaShowSmallChange),
+  "idea.size.small-change": run<IdeaSized>(ideaSizeSmallChange),
   "idea.chain": run<IdeaChain>(ideaChain),
   "idea.chain.looked-back": run<IdeaChain>(ideaChainLookedBack),
   "idea.change": run<IdeaChanged>(ideaChange),

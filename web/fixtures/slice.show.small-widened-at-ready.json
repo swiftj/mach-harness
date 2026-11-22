@@ -1,0 +1,283 @@
+{
+  "exit_code": 0,
+  "data": {
+    "slice": {
+      "dependencies": [],
+      "epic_id": "EPIC-001",
+      "kind": "small",
+      "open_questions": [],
+      "project_id": "team-space",
+      "revision": 1,
+      "schema_version": 1,
+      "slice_id": "SLICE-007",
+      "small": {
+        "change": "adjustment",
+        "shipped_rule": null
+      },
+      "spec_path": null,
+      "spec_sha256": null,
+      "status": "draft",
+      "title": "Invitation link for a single sign-on workspace",
+      "widened": {
+        "at": "2026-11-22T12:34:36Z",
+        "reason": "This is not a small change: a small change is Low or Medium risk, and this one is High.",
+        "rule": "risk"
+      }
+    },
+    "editable": true,
+    "edit_refusal": null,
+    "paths": {
+      "work_order": "product/slices/SLICE-007.json",
+      "specs_dir": "specs/slices",
+      "spec": "specs/slices/SLICE-007-expired-invitation-message.md",
+      "spec_name_pattern": "SLICE-007-<lowercase-kebab-name>.md",
+      "intent": "product/intents/SLICE-007.md"
+    },
+    "spec": {
+      "path": "specs/slices/SLICE-007-expired-invitation-message.md",
+      "name": "SLICE-007-expired-invitation-message.md",
+      "markdown": "# SLICE-007: Clearer expired invitation message\n\n## Summary\n\n- **Actor:** Invitee\n- **Trigger:** The invitee opens an invitation link that has expired\n- **Outcome:** The invitee is told who to ask for a new invitation\n\n## Scope\n\n### In scope\n\n- The message shown when an expired invitation link is opened\n\n### Out of scope\n\n- None.\n\n## Preconditions\n\n- The invitation link was sent more than 7 days ago\n\n## Invariants\n\n- **INV-01:** An expired invitation link MUST NOT add the invitee to the workspace.\n\n## Functional requirements\n\n- **FR-01:** [Unwanted behavior] If the invitee opens an expired invitation link, then the system SHALL display \"This invitation has expired. Ask the person who invited you for a new one.\"\n\n## Acceptance criteria\n\n### Decision matrix\n\n| Rule | Link expired (Yes / No) | Expected outcome | Side effects | Covers |\n|---|---|---|---|---|\n| R1 | Yes | Shows \"This invitation has expired. Ask the person who invited you for a new one.\" | None | FR-01, INV-01 |\n| R2 | No | Not possible: this slice covers only expired links | None | INV-01 |\n\n### Scenarios\n\n#### AC-01: An expired link says who to ask\n\n- **Covers:** FR-01, INV-01\n- **Given** an invitation was sent to \"sam@example.com\" 8 days ago\n- **When** the invitee opens the invitation link\n- **Then** the system displays \"This invitation has expired. Ask the person who invited you for a new one.\"\n- **And** \"sam@example.com\" is not a member of the workspace\n\n## Effects on shipped behaviour\n\nNone.\n\n## Dependencies and permissions\n\n- **External dependencies:** None.\n- **Required permissions:** None.\n\n## Assumptions\n\n- None.\n\n## Accepted defaults\n\n- None.\n\n## Open questions\n\n- None.\n",
+      "model": {
+        "slice_id": "SLICE-007",
+        "title": "Clearer expired invitation message",
+        "summary": {
+          "actor": "Invitee",
+          "trigger": "The invitee opens an invitation link that has expired",
+          "outcome": "The invitee is told who to ask for a new invitation"
+        },
+        "in_scope": [
+          "The message shown when an expired invitation link is opened"
+        ],
+        "out_of_scope": [],
+        "preconditions": [
+          "The invitation link was sent more than 7 days ago"
+        ],
+        "invariants": [
+          {
+            "id": "INV-01",
+            "text": "An expired invitation link MUST NOT add the invitee to the workspace."
+          }
+        ],
+        "functional_requirements": [
+          {
+            "id": "FR-01",
+            "pattern": "unwanted-behavior",
+            "text": "If the invitee opens an expired invitation link, then the system SHALL display \"This invitation has expired. Ask the person who invited you for a new one.\""
+          }
+        ],
+        "decision_matrix": {
+          "conditions": [
+            {
+              "name": "Link expired",
+              "values": [
+                "Yes",
+                "No"
+              ]
+            }
+          ],
+          "rules": [
+            {
+              "id": "R1",
+              "conditions": {
+                "Link expired": [
+                  "Yes"
+                ]
+              },
+              "expected_outcome": "Shows \"This invitation has expired. Ask the person who invited you for a new one.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-01",
+                "INV-01"
+              ]
+            },
+            {
+              "id": "R2",
+              "conditions": {
+                "Link expired": [
+                  "No"
+                ]
+              },
+              "expected_outcome": "Not possible: this slice covers only expired links",
+              "side_effects": "None",
+              "covers": [
+                "INV-01"
+              ]
+            }
+          ],
+          "complete": true,
+          "cases": [
+            {
+              "id": "R1-1",
+              "rule": "R1",
+              "conditions": {
+                "Link expired": "Yes"
+              },
+              "expected_outcome": "Shows \"This invitation has expired. Ask the person who invited you for a new one.\"",
+              "side_effects": "None",
+              "covers": [
+                "FR-01",
+                "INV-01"
+              ]
+            },
+            {
+              "id": "R2-1",
+              "rule": "R2",
+              "conditions": {
+                "Link expired": "No"
+              },
+              "expected_outcome": "Not possible: this slice covers only expired links",
+              "side_effects": "None",
+              "covers": [
+                "INV-01"
+              ]
+            }
+          ]
+        },
+        "scenarios": [
+          {
+            "id": "AC-01",
+            "title": "An expired link says who to ask",
+            "covers": [
+              "FR-01",
+              "INV-01"
+            ],
+            "steps": [
+              {
+                "keyword": "Given",
+                "text": "an invitation was sent to \"sam@example.com\" 8 days ago"
+              },
+              {
+                "keyword": "When",
+                "text": "the invitee opens the invitation link"
+              },
+              {
+                "keyword": "Then",
+                "text": "the system displays \"This invitation has expired. Ask the person who invited you for a new one.\""
+              },
+              {
+                "keyword": "And",
+                "text": "\"sam@example.com\" is not a member of the workspace"
+              }
+            ]
+          }
+        ],
+        "effects": [],
+        "external_dependencies": [],
+        "required_permissions": "None.",
+        "assumptions": [],
+        "accepted_defaults": [],
+        "open_questions": []
+      },
+      "findings": []
+    },
+    "why": {
+      "exists": true,
+      "markdown": "# Intent: Clearer expired invitation message\n\n- **Slice:** SLICE-007 at specs/slices/SLICE-007-expired-invitation-message.md\n- **Status:** Ready for approval\n\n## Why\n\n- **Problem:** An invitee with an expired link does not know who to ask.\n- **Who it is for:** An invitee.\n- **Success looks like:** The invitee asks the right person for a new invitation.\n\n## Goal ancestry\n\n- **Goal:** Teams can work together\n- **Epic:** EPIC-001: Team membership\n- **Slice:** SLICE-007: An expired link says who to ask.\n\n## Constraints\n\n- None.\n\n## Risk\n\n- **Tier:** High\n- **Reason:** It changes one message.\n\n## Deferred work\n\n- None.\n",
+      "title": "Clearer expired invitation message",
+      "header": {
+        "Slice": "SLICE-007 at specs/slices/SLICE-007-expired-invitation-message.md",
+        "Status": "Ready for approval"
+      },
+      "sections": [
+        {
+          "heading": "Why",
+          "text": "- **Problem:** An invitee with an expired link does not know who to ask.\n- **Who it is for:** An invitee.\n- **Success looks like:** The invitee asks the right person for a new invitation.",
+          "fields": {
+            "Problem": "An invitee with an expired link does not know who to ask.",
+            "Who it is for": "An invitee.",
+            "Success looks like": "The invitee asks the right person for a new invitation."
+          }
+        },
+        {
+          "heading": "Goal ancestry",
+          "text": "- **Goal:** Teams can work together\n- **Epic:** EPIC-001: Team membership\n- **Slice:** SLICE-007: An expired link says who to ask.",
+          "fields": {
+            "Goal": "Teams can work together",
+            "Epic": "EPIC-001: Team membership",
+            "Slice": "SLICE-007: An expired link says who to ask."
+          }
+        },
+        {
+          "heading": "Constraints",
+          "text": "- None.",
+          "fields": {}
+        },
+        {
+          "heading": "Risk",
+          "text": "- **Tier:** High\n- **Reason:** It changes one message.",
+          "fields": {
+            "Tier": "High",
+            "Reason": "It changes one message."
+          }
+        },
+        {
+          "heading": "Deferred work",
+          "text": "- None.",
+          "fields": {}
+        }
+      ]
+    },
+    "check": {
+      "slice_id": "SLICE-007",
+      "spec": "specs/slices/SLICE-007-expired-invitation-message.md",
+      "errors": [],
+      "warnings": [],
+      "diagnostics": [],
+      "open_questions": [],
+      "intent_problems": [],
+      "counts": {
+        "invariants": 1,
+        "functional_requirements": 1,
+        "matrix_rules": 2,
+        "scenarios": 1
+      },
+      "title": "Clearer expired invitation message",
+      "shipped": {
+        "commit": "b1b8b38df74c0bf56fc309f8fe6cc1ad922cee4a",
+        "branch": "main",
+        "rules": 5,
+        "notes": []
+      },
+      "risk": "High",
+      "small_change": {
+        "kind": "small",
+        "change": "adjustment",
+        "shipped_rule": null,
+        "light_path": false,
+        "widened": {
+          "at": "2026-11-22T12:34:36Z",
+          "reason": "This is not a small change: a small change is Low or Medium risk, and this one is High.",
+          "rule": "risk"
+        },
+        "note": "This small change is a full slice now: This is not a small change: a small change is Low or Medium risk, and this one is High. The interview carries on in full, with every answer kept."
+      },
+      "prd_problems": [],
+      "ready": true
+    },
+    "resume_note": null,
+    "github": {
+      "saved": null,
+      "unfinished": false,
+      "issue": null,
+      "url": null,
+      "state_label": null,
+      "revision": null,
+      "changed_on_github": false,
+      "newer_elsewhere": false,
+      "number_taken": false,
+      "question": null,
+      "question_note": null,
+      "shipped_issues": [],
+      "times": {
+        "marked_ready": null,
+        "building": null,
+        "question": null,
+        "shipped": null
+      },
+      "progress": "draft"
+    },
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

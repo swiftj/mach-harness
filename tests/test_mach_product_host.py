@@ -376,11 +376,12 @@ class HostConformanceTest(unittest.TestCase):
         self.op("idea.list")
         self.assertEqual(self.op("idea.faults")["faults"], [])
         self.assertIsNone(self.op("verdict.record", idea_id="IDEA-001", decision="go", reason="Members ask for it at every desk.")["verdict"]["by"])
-        self.assertEqual(self.op("idea.size", idea_id="IDEA-001")["route"], "one-slice")
+        self.assertEqual(self.op("idea.size", idea_id="IDEA-001")["route"], "small-change")  # M18: one outcome, one capability, no rule
         self.op("idea.map", idea_id="IDEA-001", map=mapped)
         self.assertIn("already carried", host_refused("idea.settle", {"idea_id": "IDEA-001", "outcome": "O-1", "as": "later", "reason": "Next year."}))
         self.assertTrue(self.op("idea.map-status", idea_id="IDEA-001")["can_apply"])
-        self.assertEqual(self.op("idea.apply", idea_id="IDEA-001")["stage"], "shaped")
+        self.assertIn("which kind", host_refused("idea.apply", {"idea_id": "IDEA-001"}))
+        self.assertEqual(self.op("idea.apply", idea_id="IDEA-001", change="adjustment")["stage"], "shaped")
         self.op("idea.chain", idea_id="IDEA-001")
         self.assertEqual(self.op("idea.publish", idea_id="IDEA-001")["saved_to"], "folder")
         host_refused("lookback.record", {"idea_id": "IDEA-001", "outcome": "O-1", "result": "met", "note": "Down to 11 a week."})
@@ -412,7 +413,8 @@ class HostConformanceTest(unittest.TestCase):
         self.studio("idea", "map", "IDEA-001", "--from", str(files / "map.json"))
         self.studio("idea", "settle", "IDEA-001", "--outcome", "O-1", "--as", "later", "--reason", "Next year.", expect=1)
         self.studio("idea", "map-status", "IDEA-001")
-        self.studio("idea", "apply", "IDEA-001")
+        self.studio("idea", "apply", "IDEA-001", expect=1)
+        self.studio("idea", "apply", "IDEA-001", "--change", "adjustment")
         self.studio("idea", "chain", "IDEA-001")
         self.studio("idea", "publish", "IDEA-001")
         self.studio("lookback", "record", "IDEA-001", "--outcome", "O-1", "--result", "met", "--note", "Down to 11 a week.", expect=1)
@@ -526,6 +528,80 @@ class HostConformanceTest(unittest.TestCase):
             self.assertIn(expected, host_files)
         for project in (self.via_host, self.direct):
             self.assertEqual(git(project, "status", "--porcelain").stdout, "")
+
+    def test_the_m18_small_change_operations_write_the_same_bytes_as_the_terminal(self):
+        """Starting a small change (slice.new with small, a fix against a shipped rule and an adjustment), a check that
+        widens one by itself, and slice.widen on the product manager's word, through the host as the app sends them and
+        through studio.py as the terminal skill runs them: the same bytes in Product Studio's workspace, the same
+        refusals."""
+        from test_small_change import INTENT, SPEC, with_frs
+
+        for project in (self.via_host, self.direct):
+            spec = project / "specs/slices/SLICE-001-invite-teammate.md"
+            spec.parent.mkdir(parents=True)
+            spec.write_text((ROOT / "tests/fixtures/SLICE-001-invite-teammate.md").read_text())
+            git(project, "add", "-A")
+            git(project, "commit", "-q", "-m", "SLICE-001 shipped")
+
+        def write(project, slice_id, text, tier="Low"):
+            draft = project / ".factory/studio/draft"
+            name = f"{slice_id}-expired-invitation-message.md"
+            (draft / "specs/slices" / name).write_text(text.replace("# SLICE-001:", f"# {slice_id}:", 1))
+            (draft / f"product/intents/{slice_id}.md").write_text(INTENT.format(slice_id=slice_id, name=name, tier=tier))
+
+        def host_refused(operation, args):
+            status, _, raw = self.request("POST", f"/api/ops/{operation}", args)
+            envelope = json.loads(raw)
+            self.assertFalse(envelope["ok"], f"{operation} was not refused")
+            self.assertEqual((status, envelope["error"]["kind"]), (422, "refused"), envelope)
+            return envelope["error"]["message"]
+
+        # Through the host.
+        self.login()
+        self.op("project.init", id="team-space", name="Team Space", vision="Teams work together.", outcome=["Teams can work together"])
+        self.op("epic.add", title="Team membership", criterion=["Only invited people can join"])
+        self.assertIn("not a shipped rule in force",
+                      host_refused("slice.new", {"epic": "EPIC-001", "title": "T", "small": {"change": "fix", "rule": "SLICE-001/FR-99"}}))
+        fix = self.op("slice.new", epic="EPIC-001", title="Reject an email with a space", small={"change": "fix", "rule": "SLICE-001/FR-03"})["slice"]
+        self.assertEqual((fix["slice_id"], fix["small"]["shipped_rule"]), ("SLICE-005", "SLICE-001/FR-03"))
+        self.op("slice.new", epic="EPIC-001", title="Clearer expired invitation message", small={"change": "adjustment"})
+        write(self.via_host, "SLICE-006", with_frs(SPEC))
+        self.assertEqual(self.op("slice.check", slice_id="SLICE-006")["small_change"]["widened"]["rule"], "requirements")
+        self.assertIn("is already a full slice", host_refused("slice.widen", {"slice_id": "SLICE-006", "why": "W."}))
+        self.op("slice.widen", slice_id="SLICE-005", why="It should also change the reminder email.")
+        self.assertEqual(self.op("slice.new", epic="EPIC-001", title="Invite a teammate")["slice"]["slice_id"], "SLICE-007")
+        self.assertIn("not a small change", host_refused("slice.widen", {"slice_id": "SLICE-007", "why": "W."}))
+        # Marking ready finds it is not small (High risk): not marked ready, a full slice now, passed through as an answer.
+        self.op("slice.new", epic="EPIC-001", title="Single sign-on invitation link", small={"change": "adjustment"})
+        write(self.via_host, "SLICE-008", SPEC, tier="High")
+        answer = self.op("slice.ready", slice_id="SLICE-008")
+        self.assertEqual((answer["ready"], answer["widened"], answer["small_change"]["widened"]["rule"]), (False, True, "risk"))
+        self.op("status")
+
+        # Directly, as the terminal skill does.
+        self.studio("project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
+        self.studio("epic", "add", "--title", "Team membership", "--criterion", "Only invited people can join")
+        self.studio("slice", "new", "--epic", "EPIC-001", "--title", "T", "--small", "--change", "fix", "--rule", "SLICE-001/FR-99", expect=1)
+        self.studio("slice", "new", "--epic", "EPIC-001", "--title", "Reject an email with a space", "--small", "--change", "fix", "--rule", "SLICE-001/FR-03")
+        self.studio("slice", "new", "--epic", "EPIC-001", "--title", "Clearer expired invitation message", "--small", "--change", "adjustment")
+        write(self.direct, "SLICE-006", with_frs(SPEC))
+        self.studio("slice", "check", "SLICE-006")
+        self.studio("slice", "widen", "SLICE-006", "--why", "W.", expect=1)
+        self.studio("slice", "widen", "SLICE-005", "--why", "It should also change the reminder email.")
+        self.studio("slice", "new", "--epic", "EPIC-001", "--title", "Invite a teammate")
+        self.studio("slice", "widen", "SLICE-007", "--why", "W.", expect=1)
+        self.studio("slice", "new", "--epic", "EPIC-001", "--title", "Single sign-on invitation link", "--small", "--change", "adjustment")
+        write(self.direct, "SLICE-008", SPEC, tier="High")
+        self.assertIs(self.studio("slice", "ready", "SLICE-008")["ready"], False)
+        self.studio("status")
+
+        host_files, direct_files = workspace(self.via_host), workspace(self.direct)
+        self.assertEqual(sorted(host_files), sorted(direct_files))
+        for name in host_files:
+            self.assertEqual(host_files[name], direct_files[name], f"{name} differs between the host and the terminal")
+        for slice_id, rule in (("SLICE-005", None), ("SLICE-006", "requirements")):
+            work = json.loads((self.via_host / f".factory/studio/draft/product/slices/{slice_id}.json").read_text())
+            self.assertEqual((work["kind"], work["widened"]["rule"]), ("small", rule))
 
     def test_the_host_refuses_without_a_session_and_from_another_origin(self):
         status, _, raw = self.request("POST", "/api/ops/status", {})

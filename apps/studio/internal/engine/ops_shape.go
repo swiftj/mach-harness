@@ -40,7 +40,7 @@ type ShapeTarget interface {
 }
 
 // IdeaIDArgs serves every Shape command that takes only the idea: idea show, renumber, publish,
-// size, map-status, apply and chain; brief check and show; case show and check.
+// size, map-status and chain; brief check and show; case show and check.
 type IdeaIDArgs struct {
 	IdeaID string `json:"idea_id"`
 	words  []string
@@ -341,6 +341,30 @@ func WritesIdea(name string, body []byte) string {
 	return target.IdeaTarget()
 }
 
+// IdeaApplyArgs: make the map's drafts. For the small-change route (M18) the product manager says
+// which kind it is, "fix" or "adjustment"; the engine refuses a small change without it and any
+// other route with it.
+type IdeaApplyArgs struct {
+	IdeaID string  `json:"idea_id"`
+	Change *string `json:"change"`
+}
+
+func (a *IdeaApplyArgs) IdeaTarget() string { return a.IdeaID }
+
+func (a *IdeaApplyArgs) Argv() ([]string, error) {
+	if err := checkID("idea_id", a.IdeaID, IdeaIDPattern, "IDEA-001"); err != nil {
+		return nil, err
+	}
+	argv := []string{"idea", "apply", a.IdeaID}
+	if a.Change != nil {
+		if *a.Change != "fix" && *a.Change != "adjustment" {
+			return nil, invalid("change must be \"fix\" or \"adjustment\".")
+		}
+		argv = append(argv, flag("change", *a.Change))
+	}
+	return argv, nil
+}
+
 func ideaOp(words ...string) func() Args {
 	return func() Args { return &IdeaIDArgs{words: words} }
 }
@@ -358,7 +382,7 @@ func init() {
 	register(Operation{Name: "idea.map", New: func() Args { return &IdeaMapArgs{} }, MaxBody: shapeInputBody})
 	register(Operation{Name: "idea.settle", New: func() Args { return &IdeaSettleArgs{} }})
 	register(Operation{Name: "idea.map-status", New: ideaOp("idea", "map-status"), ReadOnly: true})
-	register(Operation{Name: "idea.apply", New: ideaOp("idea", "apply")})
+	register(Operation{Name: "idea.apply", New: func() Args { return &IdeaApplyArgs{} }})
 	register(Operation{Name: "idea.change", New: func() Args { return &IdeaChangeArgs{} }})
 	register(Operation{Name: "idea.chain", New: ideaOp("idea", "chain"), ReadOnly: true})
 	register(Operation{Name: "brief.check", New: ideaOp("brief", "check")})

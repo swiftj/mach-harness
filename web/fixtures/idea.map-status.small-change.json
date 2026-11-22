@@ -1,0 +1,87 @@
+{
+  "exit_code": 0,
+  "data": {
+    "idea_id": "IDEA-001",
+    "stage": "decided",
+    "route": {
+      "at": "2026-11-22T12:34:29Z",
+      "brief_sha256": "064a82ff33ae1afef33536e1697b2ea31f973ca82505e1966ac8b031e95be215",
+      "counted": {
+        "capabilities": 1,
+        "high_risk_areas": 0,
+        "high_risk_not_determined": [],
+        "outcomes": 1,
+        "policy_concerns": 0,
+        "principle_concerns": 0,
+        "shipped_rules": 1,
+        "shipped_rules_looked_up": 0
+      },
+      "details": {
+        "concerns": {
+          "policies": [],
+          "principles": []
+        },
+        "high_risk": {
+          "areas": [],
+          "count": 0,
+          "not_determined": []
+        },
+        "touches": {
+          "capabilities": [
+            "Lending"
+          ],
+          "outcomes": [
+            "O-1"
+          ],
+          "shipped_rules": [
+            "SLICE-001/INV-02"
+          ]
+        }
+      },
+      "revision": 1,
+      "route": "small-change",
+      "why": "The brief has one outcome in one capability, 1 shipped rule, at most 1, and nothing in a high-risk area, so the route is a small change.",
+      "words": "a small change",
+      "holds": true,
+      "stale": false
+    },
+    "factory_authorized": false,
+    "map": {
+      "revision": 1,
+      "route": "small-change",
+      "epics": [],
+      "slices": [
+        {
+          "key": "S1",
+          "title": "Say who to ask",
+          "scope": "The refusal message on the loans page",
+          "epic": "EPIC-001",
+          "depends_on": [],
+          "outcomes": [
+            "O-1"
+          ],
+          "cites": "9-10",
+          "slice_id": null,
+          "status": null
+        }
+      ],
+      "applied": false,
+      "mapped_at": "2026-11-22T12:34:29Z"
+    },
+    "coverage": [
+      {
+        "outcome": "O-1",
+        "carried_by": [
+          "S1"
+        ],
+        "state": "covered"
+      }
+    ],
+    "not_covered": [],
+    "blockers": [],
+    "can_apply": true,
+    "note": "Every outcome of IDEA-001 is carried or settled."
+  },
+  "refused": null,
+  "hint": null
+}

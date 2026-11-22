@@ -1,0 +1,89 @@
+{
+  "exit_code": 0,
+  "data": {
+    "epic_id": "EPIC-001",
+    "branch": "main",
+    "commit": "b1b8b38df74c0bf56fc309f8fe6cc1ad922cee4a",
+    "note": "This shows the work merged on this computer, which may be behind GitHub. The slices are the authority.",
+    "epic": {
+      "epic_id": "EPIC-001",
+      "title": "Team membership",
+      "issue": null,
+      "slices": [
+        {
+          "slice_id": "SLICE-001",
+          "title": "Invite by email",
+          "issue": null,
+          "path": "specs/slices/SLICE-001-invite.md",
+          "effects": "none",
+          "notes": []
+        }
+      ],
+      "in_force": [
+        {
+          "rule": "SLICE-001/INV-01",
+          "slice_id": "SLICE-001",
+          "id": "INV-01",
+          "kind": "invariant",
+          "text": "An invitation MUST name one email address.",
+          "epic_id": "EPIC-001",
+          "confirmed_by": [],
+          "takes_the_place_of": [],
+          "lineage": []
+        },
+        {
+          "rule": "SLICE-001/FR-01",
+          "slice_id": "SLICE-001",
+          "id": "FR-01",
+          "kind": "requirement",
+          "text": "The system SHALL send the invitation by email.",
+          "epic_id": "EPIC-001",
+          "confirmed_by": [],
+          "takes_the_place_of": [],
+          "lineage": []
+        },
+        {
+          "rule": "SLICE-001/FR-02",
+          "slice_id": "SLICE-001",
+          "id": "FR-02",
+          "kind": "requirement",
+          "text": "The system SHALL expire an invitation after 14 days.",
+          "epic_id": "EPIC-001",
+          "confirmed_by": [],
+          "takes_the_place_of": [],
+          "lineage": []
+        },
+        {
+          "rule": "SLICE-001/R1",
+          "slice_id": "SLICE-001",
+          "id": "R1",
+          "kind": "decision rule",
+          "text": "Signed in Yes: Sent",
+          "epic_id": "EPIC-001",
+          "confirmed_by": [],
+          "takes_the_place_of": [],
+          "lineage": []
+        },
+        {
+          "rule": "SLICE-001/R2",
+          "slice_id": "SLICE-001",
+          "id": "R2",
+          "kind": "decision rule",
+          "text": "Signed in No: Refused",
+          "epic_id": "EPIC-001",
+          "confirmed_by": [],
+          "takes_the_place_of": [],
+          "lineage": []
+        }
+      ],
+      "not_yet_reconciled": [],
+      "no_longer_in_force": [],
+      "not_applied": [],
+      "conflicts": []
+    },
+    "notes": [],
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

@@ -143,7 +143,7 @@ export async function loadArea(input: LoadInput): Promise<LoadResult> {
 
   try {
     const grouped = Promise.all(
-      plan.groups.map((g) => part(`${g.ids.join(", ")} by ${g.dim}`, () => session.metrics({ ...(g.ids.some((id) => id.startsWith("K")) ? withModel : base), ids: g.ids, groupBy: [g.dim], ...(g.distribution ? { distribution: true } : {}) }))),
+      plan.groups.map((g) => part(`${g.ids.join(", ")} by ${g.dim}`, () => session.metrics({ ...(g.ids.some((id) => id.startsWith("K")) ? withModel : base), ids: g.ids, groupBy: g.by ? [...g.by] : [g.dim], ...(g.distribution ? { distribution: true } : {}) }))),
     );
     const runs = plan.runs ? readRuns(session, base, part) : Promise.resolve(null);
     const flow = plan.flow ? part("flow", () => session.flow(base)) : Promise.resolve(null);
@@ -197,7 +197,7 @@ export async function loadArea(input: LoadInput): Promise<LoadResult> {
       plan.freshness ? part("freshness", () => input.data.freshness()) : Promise.resolve(null),
     ]);
 
-    const groupedMetrics: MetricRow[] = groupedRows.flatMap((r) => r?.metrics ?? []).filter((m) => m.group_dims.length === 1);
+    const groupedMetrics: MetricRow[] = groupedRows.flatMap((r) => r?.metrics ?? []).filter((m) => m.group_dims.length === 1 || m.group_dims.length === 2);
     const contributors = [...fixedC, ...groupC].filter((c): c is { metric: string; dim: string | undefined; value: string | undefined; reply: ContributorsReply } => c !== null);
     const parts: SnapshotParts = {
       source: input.source === "simulation" ? "simulated" : input.source,

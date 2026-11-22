@@ -13,7 +13,7 @@
     ticket.py scan-dismiss FP --reason R  a person's dismissal of one scan finding; it is not ticketed again (M15)
     ticket.py request-check N             read only: who filed issue N and who labelled it a request (M8)
     ticket.py slice-list                  read only: the open slice issues marked ready (M11)
-    ticket.py slice-check N               read only: whether slice issue N counts, with its why and spec (M11)
+    ticket.py slice-check N [--taken]     read only: whether slice issue N counts, with its why and spec (M11); --taken: one the builders took
     ticket.py slice-status N --moment M --ref SLICE-NNN@rN... --nonce HEX [--question-file F]
                                           a status label, comment or close on a slice's own issue (M11)
     ticket.py epic-view N --repository R --epic-id EPIC-NNN --commit C --view-file F
@@ -1317,12 +1317,12 @@ def cmd_slice_check(ctx: Context, args: argparse.Namespace) -> int:
     comments, failure = read_comments(ctx, repository, number)
     if comments is None:
         return unconfirmed(failure)
-    event = issue_rules.deciding_event(events, issue_rules.READY_LABEL)
+    event = issue_rules.slice_ready_event(events, args.taken)
     permission, failure = None, None
     if issue_rules.actor_problem(event) is None:
         permission, failure = read_permission(ctx, repository, event["login"])
         report["transient"] = (failure or {}).get("kind") == "network"
-    decision = issue_rules.slice_acceptance(issue, events, comments, permission, failure)
+    decision = issue_rules.slice_acceptance(issue, events, comments, permission, failure, taken=args.taken)
     marker = decision.get("marker")
     if decision["state"] == "accepted" and marker:
         epic = read_epic(ctx, repository, marker["epic"])
@@ -1753,6 +1753,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_slice_list)
     p = sub.add_parser("slice-check", help="read only: whether slice issue N counts, with its why and spec when it does")
     p.add_argument("number")
+    p.add_argument("--taken", action="store_true", help="a slice the builders took: mach:building in place of mach:ready (a reissue)")
     p.set_defaults(func=cmd_slice_check)
     p = sub.add_parser("epic-check", help="read only: an epic's slices in order, and product's decisions on one release of it")
     p.add_argument("number")

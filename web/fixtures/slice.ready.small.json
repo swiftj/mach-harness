@@ -1,0 +1,59 @@
+{
+  "exit_code": 0,
+  "data": {
+    "ready": true,
+    "saved_to": "github",
+    "slice": {
+      "dependencies": [],
+      "epic_id": "EPIC-001",
+      "kind": "small",
+      "open_questions": [],
+      "project_id": "team-space",
+      "revision": 2,
+      "schema_version": 1,
+      "slice_id": "SLICE-002",
+      "small": {
+        "change": "adjustment",
+        "shipped_rule": null
+      },
+      "spec_path": "specs/slices/SLICE-002-expired-invitation-message.md",
+      "spec_sha256": "e891d94b9bad92900fd638366d0a4edd30d13f636955e01a702502bc15023660",
+      "status": "approved_for_engineering",
+      "title": "Clearer expired invitation message"
+    },
+    "issue": 3,
+    "url": "https://github.com/acme/team-space/issues/3",
+    "revision": 1,
+    "follows": null,
+    "epic_issue": 2,
+    "project_issue": 1,
+    "approved_by": "ada-pm",
+    "risk": "Low",
+    "counts": {
+      "invariants": 1,
+      "functional_requirements": 1,
+      "matrix_rules": 2,
+      "scenarios": 1
+    },
+    "warnings": [],
+    "small_change": {
+      "kind": "small",
+      "change": "adjustment",
+      "shipped_rule": null,
+      "light_path": true,
+      "widened": null,
+      "verdict": {
+        "verdict": "small",
+        "small": true,
+        "rule": null,
+        "sentence": "This is a small change: every rule for a small change holds.",
+        "failed": []
+      }
+    },
+    "request_updates": null,
+    "factory_authorized": false,
+    "note": "Saved to GitHub as #3 and marked ready. The builders take it from there; nothing has started yet."
+  },
+  "refused": null,
+  "hint": null
+}

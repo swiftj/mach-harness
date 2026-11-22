@@ -447,7 +447,7 @@ class StudioTest(IssuesBase):
         path = self.spec_path(slice_id)
         path.write_text(concern(path.read_text()))
         self.assertIn("policy-concern-open", self.refused(self.a, "slice", "ready", slice_id))
-        self.assertIn("POL-privacy-02 has no open concern", self.refused(self.a, "policy", "accept", slice_id, "POL-privacy-01", "--by", "x y",
+        self.assertIn("POL-privacy-01 has no open concern in this spec. Open concerns: POL-privacy-02.", self.refused(self.a, "policy", "accept", slice_id, "POL-privacy-01", "--by", "x y",
                                                                            "--reason", "Wrong statement."))
         accepted = self.ok(self.a, "policy", "accept", slice_id, "POL-privacy-02", "--by", "Data protection officer", "--reason", "Accepted for the pilot only.")
         self.assertEqual((accepted["open_left"], accepted["factory_authorized"]), ([], False))
