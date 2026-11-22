@@ -89,9 +89,18 @@ func (s *Server) interviewStart(w http.ResponseWriter, r *http.Request) {
 		SliceID string  `json:"slice_id"`
 		Idea    string  `json:"idea"`
 		IdeaID  *string `json:"idea_id"`
+		Needs   *bool   `json:"needs"`
 	}
 	if err := engine.Decode(raw, &body); err != nil {
 		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, err.Error()))
+		return
+	}
+	if body.Needs != nil {
+		if !*body.Needs || body.IdeaID != nil || body.SliceID != "" || body.Idea != "" {
+			writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "Give needs: true alone, or slice_id, or idea_id."))
+			return
+		}
+		s.needsConversationStart(w, r)
 		return
 	}
 	if body.IdeaID != nil {
@@ -189,14 +198,61 @@ func (s *Server) ideaConversationStart(w http.ResponseWriter, r *http.Request, i
 	writeEnvelope(w, http.StatusOK, engine.OKValue(started))
 }
 
-// subjectParam reads ?slice_id= or, M16, ?idea_id=: exactly one, in its engine pattern.
+// needsConversationStart: the engine says the technical needs can be read (a project exists and its
+// needs file is in the form Product Studio writes); then the bridge starts the needs conversation,
+// whose rules let it record needs and a design's map only (interview.Paths).
+func (s *Server) needsConversationStart(w http.ResponseWriter, r *http.Request) {
+	if available, reason := s.opts.Bridge.Available(); !available {
+		writeEnvelope(w, http.StatusServiceUnavailable, engine.Fail(engine.KindUnavailable, reason))
+		return
+	}
+	check := s.opts.Engine.Transaction(r.Context(), func(tx *engine.Tx) engine.Envelope {
+		env := tx.Call(r.Context(), "status", engine.StatusArgs())
+		if !env.OK {
+			return env
+		}
+		var view struct {
+			Project *struct {
+				ProjectID string `json:"project_id"`
+			} `json:"project"`
+		}
+		if json.Unmarshal(env.Data, &view) != nil || view.Project == nil || view.Project.ProjectID == "" {
+			return engine.Fail(engine.KindRefused, "Set up the project first: technical needs belong to a project.")
+		}
+		return tx.Call(r.Context(), "need.list", engine.NeedListArgs())
+	})
+	if !check.OK {
+		writeEnvelope(w, statusFor(check), check)
+		return
+	}
+	started, err := s.opts.Bridge.Start(r.Context(), interview.StartRequest{Needs: true})
+	if err != nil {
+		s.interviewError(w, err)
+		return
+	}
+	writeEnvelope(w, http.StatusOK, engine.OKValue(started))
+}
+
+// subjectParam reads ?slice_id=, M16 ?idea_id= or M17 ?needs=true: exactly one, in its engine pattern.
 func subjectParam(w http.ResponseWriter, r *http.Request) (string, bool) {
 	query := r.URL.Query()
 	slice, idea := query.Get("slice_id"), query.Get("idea_id")
+	given := 0
+	for _, name := range []string{"slice_id", "idea_id", "needs"} {
+		if query.Has(name) {
+			given++
+		}
+	}
 	switch {
-	case query.Has("idea_id") && query.Has("slice_id"):
-		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "Give slice_id or idea_id, not both."))
+	case given > 1:
+		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "Give one of slice_id, idea_id or needs."))
 		return "", false
+	case query.Has("needs"):
+		if query.Get("needs") != "true" {
+			writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "needs must be true."))
+			return "", false
+		}
+		return interview.NeedsSubject, true
 	case query.Has("idea_id"):
 		if len(idea) > 32 || !engine.IdeaIDPattern.MatchString(idea) {
 			writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "idea_id must be an ID such as IDEA-001."))
@@ -236,11 +292,17 @@ func (s *Server) interviewHistory(w http.ResponseWriter, r *http.Request) {
 		s.interviewError(w, err)
 		return
 	}
-	key := "slice_id"
-	if interview.IsIdea(id) {
-		key = "idea_id"
+	var answer map[string]any
+	switch {
+	case interview.IsNeeds(id):
+		answer = map[string]any{"needs": true}
+	case interview.IsIdea(id):
+		answer = map[string]any{"idea_id": id}
+	default:
+		answer = map[string]any{"slice_id": id}
 	}
-	writeEnvelope(w, http.StatusOK, engine.OKValue(map[string]any{key: id, "events": events, "truncated": truncated}))
+	answer["events"], answer["truncated"] = events, truncated
+	writeEnvelope(w, http.StatusOK, engine.OKValue(answer))
 }
 
 // GET /api/interview/<id>/events: server-sent events, replayed after Last-Event-ID.

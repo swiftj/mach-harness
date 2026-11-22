@@ -1,0 +1,19 @@
+{
+  "exit_code": 0,
+  "data": {
+    "need": {
+      "kind": "data",
+      "need_id": "TN-02",
+      "revision": 1,
+      "statement": "Invitations are kept at most one year; member names and email addresses are personal data.",
+      "status": "active",
+      "why": "Privacy law, and members expect it."
+    },
+    "warnings": [],
+    "published": false,
+    "factory_authorized": false,
+    "note": "TN-02 is changed here. Publish the technical needs to give them to the engineer."
+  },
+  "refused": null,
+  "hint": null
+}

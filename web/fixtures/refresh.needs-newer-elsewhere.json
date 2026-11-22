@@ -1,0 +1,72 @@
+{
+  "exit_code": 0,
+  "data": {
+    "refreshed": true,
+    "problem": null,
+    "requests": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "refreshed_at": "2026-11-21T20:23:08Z",
+      "problem": null,
+      "truncated": false,
+      "truncated_note": null,
+      "items": [],
+      "updates_waiting": 0,
+      "updates_waiting_note": null,
+      "could_not_update": [],
+      "could_not_update_note": null
+    },
+    "github": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "problem": null,
+      "refreshed_at": "2026-11-21T20:23:08Z",
+      "form": null,
+      "project_issue": 1,
+      "project_url": "https://github.com/acme/team-space/issues/1",
+      "epics": {},
+      "epic_urls": {},
+      "slices": [],
+      "order": [],
+      "principles": {
+        "saved": null,
+        "unfinished": false,
+        "revision": null,
+        "sha256": null,
+        "approved_by": null,
+        "published_at": null,
+        "issue": 1,
+        "url": "https://github.com/acme/team-space/issues/1",
+        "github": {
+          "revision": null,
+          "approved": null,
+          "approved_by": null,
+          "read_at": "2026-11-21T20:23:08Z"
+        },
+        "newer_elsewhere": false,
+        "changed_on_github": false
+      },
+      "needs": {
+        "saved": "github",
+        "unfinished": false,
+        "revision": 1,
+        "sha256": "452e454bd25fcfb34e5cf006e9f8bb11628d3fd88a0bcb013ef2515e9d4824d7",
+        "approved_by": "ada-pm",
+        "published_at": "2026-11-21T20:23:07Z",
+        "issue": 1,
+        "url": "https://github.com/acme/team-space/issues/1",
+        "github": {
+          "revision": 2,
+          "approved": true,
+          "approved_by": "ben-pm",
+          "read_at": "2026-11-21T20:23:08Z"
+        },
+        "newer_elsewhere": true,
+        "changed_on_github": false
+      }
+    },
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

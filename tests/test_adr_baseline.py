@@ -8,8 +8,14 @@ digest, status, explain and decide; the refusals of `cell.py claim plan` and `ch
 factory-tuning tickets left alone and repo-hardening tickets held; the evidence on small Python, Node and empty
 repositories; the record, and a second run that redoes and overwrites nothing; `adr new --baseline`; `adr accept`
 and its refusals, unattended included; `adr list`'s required topics; the audit and doctor notes.
+
+M17: published technical needs as evidence, their SHA-256 recomputed (a file edited by hand is used for nothing), and
+`serves`; brought-in designs as evidence per topic state, bad designs reported and unused, `from_product`; the
+architecture overview (`adr overview`): its read form and behind flag, the written file's fixed parts, diagram and
+content refusals, the supervised refusal and the `adr.overview` setting.
 """
 
+import hashlib
 import io
 import json
 import os
@@ -28,6 +34,7 @@ import adr  # noqa: E402
 import adr_baseline_fixture  # noqa: E402
 import baseline  # noqa: E402
 import doctor  # noqa: E402
+import issue_rules  # noqa: E402
 import run  # noqa: E402
 from test_adr import PLAN_ADR, UNATTENDED, Project, adr_text  # noqa: E402
 from test_build import git  # noqa: E402
@@ -482,6 +489,580 @@ class ListAuditDoctorTest(Uncovered):
         adr._LISTINGS.clear()
         checks = {item["id"]: item for item in doctor.diagnose(self.project)["checks"]}
         self.assertEqual(checks["adr.baseline"]["status"], "ok")
+
+
+def need(ident, kind, statement, status="active", revision=1, **extra):
+    return {"need_id": ident, "kind": kind, "statement": statement, "why": "Because the product needs it.", "status": status, "revision": revision, **extra}
+
+
+GIVEN = need("TN-06", "given", "The organisation runs everything on Azure.", said_by="Head of IT", said_on="2026-11-02")
+ALL_KINDS = [need("TN-01", "people", "About 2,000 shop staff use it at once on Monday mornings."),
+             need("TN-02", "data", "It keeps customer orders for seven years; card numbers never."),
+             need("TN-03", "connections", "It must read stock levels from the warehouse system."),
+             need("TN-04", "never", "An order must never be charged twice."),
+             need("TN-05", "priority", "Safety wins over speed when they conflict."), GIVEN]
+
+
+def needs_hash(needs):
+    """The SHA-256 Product Studio writes for these needs; a placeholder for a list it could never publish."""
+    try:
+        return issue_rules.needs_sha256(needs)
+    except (KeyError, TypeError, AttributeError):
+        return "ab" * 32
+
+
+def needs_json(needs, revision=3, none=(), sha256=None):
+    return json.dumps({"schema_version": 1, "revision": revision, "sha256": sha256 or needs_hash(needs), "needs": needs, "none": list(none)})
+
+
+class NeedsRepository(Repository):
+    """A repository whose main branch has the product manager's published technical needs (M17)."""
+
+    def publish(self, text):
+        path = self.project / baseline.NEEDS_FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        git(self.project, "add", "-A")
+        git(self.project, "commit", "-q", "-m", "needs")
+        adr._LISTINGS.clear()
+
+    def sources(self, result, topic):
+        return [item["source"] for item in self.evidence(result, topic) if "source" in item]
+
+    def row(self, result, topic):
+        return next(item for item in result["to_draft"] if item["topic"] == topic)
+
+
+class NeedsEvidenceTest(NeedsRepository):
+    def test_each_kind_informs_the_topics_the_table_names(self):
+        self.make({"README.md": "# New\n"})
+        self.publish(needs_json(ALL_KINDS))
+        result = self.baseline()
+        expected = {"language": ["TN-05", "TN-06"], "framework": ["TN-01", "TN-03", "TN-05", "TN-06"], "storage": ["TN-02", "TN-04", "TN-05", "TN-06"],
+                    "testing": ["TN-04", "TN-06"], "deployment": ["TN-01", "TN-02", "TN-03", "TN-04", "TN-05", "TN-06"], "coding-standards": ["TN-06"]}
+        for topic, ids in expected.items():
+            with self.subTest(topic=topic):
+                self.assertEqual(self.sources(result, topic), [f"need:{ident} revision 1" for ident in ids])
+                row = self.row(result, topic)
+                self.assertEqual((row["no_evidence"], row["from_product"]), (False, True), "needs alone: not no_evidence, and from_product")
+        item = self.evidence(result, "storage")[0]
+        self.assertEqual((item["file"], item["found"], item["excerpt"]),
+                         (baseline.NEEDS_FILE, "technical need (data)", "It keeps customer orders for seven years; card numbers never."))
+        given = self.evidence(result, "coding-standards")[0]
+        self.assertEqual((given["said_by"], given["said_on"]), ("Head of IT", "2026-11-02"))
+        self.assertIn("said by Head of IT on 2026-11-02", given["found"])
+        self.assertEqual([entry["need_id"] for entry in result["needs"]], [entry["need_id"] for entry in ALL_KINDS], "every active need once")
+        self.assertEqual(result["needs"][0], {"need_id": "TN-01", "kind": "people", "revision": 1, "statement": ALL_KINDS[0]["statement"]})
+        self.assertEqual(result["needs_published"], {"file": baseline.NEEDS_FILE, "revision": 3, "sha256": issue_rules.needs_sha256(ALL_KINDS)})
+        self.assertIsNone(result["needs_problem"])
+        self.assertEqual(adr.coverage(self.project, {})["missing"], DEFAULTS, "a need never covers a topic")
+
+    def test_a_given_informs_a_topic_the_project_added_and_other_kinds_do_not(self):
+        self.make({"README.md": "# New\n"})
+        (self.project / ".factory/config.json").write_text(json.dumps({"adr": {"required_topics": DEFAULTS + ["security"]}}))
+        self.publish(needs_json(ALL_KINDS))
+        self.assertEqual(self.sources(self.baseline(), "security"), ["need:TN-06 revision 1"])
+
+    def test_retired_needs_are_not_evidence_and_revisions_are_named(self):
+        self.make({"README.md": "# New\n"})
+        self.publish(needs_json([need("TN-01", "data", "Orders are kept for seven years.", revision=2),
+                                 need("TN-02", "data", "Nothing personal is kept.", status="retired")]))
+        result = self.baseline()
+        self.assertEqual(self.sources(result, "storage"), ["need:TN-01 revision 2"])
+        self.assertEqual([entry["need_id"] for entry in result["needs"]], ["TN-01"])
+        self.assertTrue(self.row(result, "language")["no_evidence"], "a topic no need informs is unchanged")
+        self.assertFalse(self.row(result, "language")["from_product"])
+
+    def test_with_code_evidence_a_topic_is_not_from_product(self):
+        self.make(PYTHON_REPO)
+        self.publish(needs_json(ALL_KINDS))
+        result = self.baseline()
+        storage = self.found(result, "storage")
+        self.assertIn(("pyproject.toml", "storage named in dependencies: PostgreSQL"), storage)
+        self.assertIn((baseline.NEEDS_FILE, "technical need (data)"), storage)
+        self.assertFalse(any(row["from_product"] for row in result["to_draft"]))
+
+    def test_only_the_committed_file_is_read_redacted_and_bounded(self):
+        self.make({"README.md": "# New\n"})
+        path = self.project / baseline.NEEDS_FILE
+        path.parent.mkdir(parents=True)
+        path.write_text(needs_json(ALL_KINDS))
+        result = self.baseline()
+        self.assertEqual((result["needs"], result["needs_published"]), ([], None), "the working tree is never read")
+        self.assertTrue(all(row["no_evidence"] for row in result["to_draft"]))
+        (self.project / baseline.RECORD).unlink()
+        secret = "token ghp_abcdefghijklmnopqrstuvwxyz0123 then " + " ".join(["long words"] * 32)  # within the 400 Product Studio allows
+        self.publish(needs_json([need("TN-01", "data", secret)]))
+        result = self.baseline()
+        self.assertNotIn("ghp_abcdefghijklmnopqrstuvwxyz0123", json.dumps(result))
+        self.assertLessEqual(len(result["needs"][0]["statement"]), baseline.NEED_EXCERPT)
+        self.assertLessEqual(len(self.evidence(result, "storage")[0]["excerpt"]), baseline.NEED_EXCERPT)
+
+    def test_no_needs_file_is_todays_baseline(self):
+        self.make(PYTHON_REPO)
+        result = self.baseline()
+        self.assertEqual((result["needs"], result["needs_published"], result["needs_problem"]), ([], None, None))
+        self.assertFalse(any("source" in item for row in result["to_draft"] for item in row["evidence"]))
+        self.assertFalse(any(row["from_product"] for row in result["to_draft"]))
+        record = json.loads((self.project / baseline.RECORD).read_text())
+        self.assertEqual([row["evidence"] for row in result["to_draft"]], [record["topics"][topic]["evidence"] for topic in DEFAULTS])
+
+    def test_a_malformed_file_is_a_problem_with_its_reason_never_used_and_never_a_crash(self):
+        self.make({"README.md": "# New\n"})
+        good = json.loads(needs_json(ALL_KINDS))
+        cases = {
+            "it is not JSON": "{not json",
+            "it is not a JSON object": "[]",
+            "its schema_version is 2": json.dumps({**good, "schema_version": 2}),
+            "its revision is not a whole number": json.dumps({**good, "revision": "3"}),
+            "its sha256 is not 64": json.dumps({**good, "sha256": "abc"}),
+            "'needs' is not a list": json.dumps({**good, "needs": {}}),
+            "TN-02's kind is not one of": json.dumps({**good, "needs": [need("TN-02", "database", "Postgres.")]}),
+            "need 1 has no need_id": json.dumps({**good, "needs": [need("N-1", "data", "Kept.")]}),
+            "TN-01 appears twice": json.dumps({**good, "needs": [need("TN-01", "data", "Kept."), need("TN-01", "people", "Many.")]}),
+            "TN-06 is a given without said_by": json.dumps({**good, "needs": [need("TN-06", "given", "Azure.", said_on="2026-11-02")]}),
+            "TN-01's status is neither": json.dumps({**good, "needs": [need("TN-01", "data", "Kept.", status="draft")]}),
+            "TN-01 has no statement": json.dumps({**good, "needs": [need("TN-01", "data", " ")]}),
+            "'none' is not a list of kinds": json.dumps({**good, "none": ["database"]}),
+        }
+        for expected, text in cases.items():
+            with self.subTest(expected=expected):
+                self.publish(text)
+                result = self.baseline()
+                self.assertIn(expected, result["needs_problem"] or "")
+                self.assertIn(baseline.NEEDS_FILE, result["needs_problem"])
+                self.assertEqual((result["needs"], result["needs_published"]), ([], None))
+                self.assertTrue(all(row["no_evidence"] and not row["from_product"] for row in result["to_draft"]), "nothing is used in part")
+
+    def test_needs_published_after_the_record_are_read_and_never_recorded(self):
+        """The reuse rule: code evidence is recorded once; needs are read again on every run and never kept in the record."""
+        self.make({"README.md": "# New\n"})
+        self.baseline()
+        record = (self.project / baseline.RECORD).read_text()
+        self.publish(needs_json([need("TN-01", "data", "Orders are kept for seven years.")]))
+        with mock.patch.object(baseline, "gather", side_effect=AssertionError("gathered again")):
+            later = self.baseline()
+        self.assertTrue(all(row["reused_from_record"] for row in later["to_draft"]))
+        self.assertEqual(self.sources(later, "storage"), ["need:TN-01 revision 1"])
+        self.assertTrue(self.row(later, "storage")["from_product"])
+        self.assertFalse(later["record_written"])
+        self.assertEqual((self.project / baseline.RECORD).read_text(), record, "needs are never recorded")
+        self.publish(needs_json([need("TN-01", "data", "Orders are kept for ten years.", revision=2)], revision=4))
+        self.assertEqual(self.sources(self.baseline(), "storage"), ["need:TN-01 revision 2"], "a changed need is seen at its new revision")
+        self.publish(needs_json([need("TN-01", "data", "Orders are kept for ten years.", status="retired", revision=2)], revision=5))
+        self.assertTrue(self.row(self.baseline(), "storage")["no_evidence"], "a retired need leaves the topic")
+
+
+class NeedsHashTest(NeedsRepository):
+    """The needs file's SHA-256 is recomputed with the ticket station's own folder check (issue_rules.needs_folder_check)."""
+
+    def setUp(self):
+        self.make({"README.md": "# New\n"})
+
+    def test_a_file_edited_by_hand_after_publishing_is_a_problem_and_none_of_its_needs_is_used(self):
+        published = json.loads(needs_json(ALL_KINDS))
+        published["needs"][1] = {**published["needs"][1], "statement": "It keeps customer orders for one year."}  # the hash is the old one
+        self.publish(json.dumps(published))
+        result = self.baseline()
+        self.assertIn("is not the SHA-256 of the needs it holds", result["needs_problem"])
+        self.assertIn(baseline.NEEDS_FILE, result["needs_problem"])
+        self.assertEqual((result["needs"], result["needs_published"]), ([], None))
+        self.assertTrue(all(row["no_evidence"] and not row["from_product"] for row in result["to_draft"]), "nothing is used in part")
+        code, out, err = self.run_cmd("adr", "new", "--title", "Keep orders in PostgreSQL", "--context", "Orders must be kept for years.",
+                                      "--decision", "PostgreSQL, because it keeps orders safely.", "--serves", "TN-02", "--option", "A", "--option", "B")
+        self.assertEqual(code, 1)
+        self.assertIn("is not the SHA-256 of the needs it holds", err + out)
+        self.assertIn("is not the SHA-256", json.loads(self.run_cmd("adr", "list")[1])["needs_problem"])
+
+    def test_a_field_product_studio_does_not_write_is_a_problem(self):
+        cases = {"it has a field Product Studio does not write": json.dumps({**json.loads(needs_json(ALL_KINDS)), "extra": 1}),
+                 "need 1 does not have exactly the fields": needs_json([{**ALL_KINDS[0], "priority": "high"}]),
+                 "has an active need, so it is not 'nothing to say'": needs_json(ALL_KINDS[:2], none=["data"])}
+        for expected, text in cases.items():
+            with self.subTest(expected=expected):
+                self.publish(text)
+                result = self.baseline()
+                self.assertIn("is not in the form Product Studio writes", result["needs_problem"])
+                self.assertIn(expected, result["needs_problem"])
+                self.assertEqual(result["needs"], [])
+
+    def test_the_hash_covers_the_needs_as_stored_not_as_shown(self):
+        secret = need("TN-01", "data", "Orders are kept for seven years; the key is ghp_abcdefghijklmnopqrstuvwxyz0123 for now.")
+        self.publish(needs_json([secret]))
+        result = self.baseline()
+        self.assertIsNone(result["needs_problem"])
+        self.assertEqual(result["needs_published"]["sha256"], issue_rules.needs_sha256([secret]))
+        self.assertNotIn("ghp_abcdefghijklmnopqrstuvwxyz0123", json.dumps(result), "shown redacted, though the hash is of the text as stored")
+
+
+DESIGN_DOC = "\n".join(f"Line {number} of the design." for number in range(1, 121)) + "\n"
+
+
+def design_record(doc=DESIGN_DOC, ident="DES-01", topics=None, other=None, conflicts=None, **override):
+    raw = doc.encode("utf-8")
+    record = {"schema_version": 1, "design_id": ident, "file": "design.md", "sha256": hashlib.sha256(raw).hexdigest(),
+              "lines": len(doc.splitlines()),
+              "topics": topics if topics is not None else {
+                  "storage": {"state": "decided", "lines": [[40, 52], [60, 60]], "summary": "Orders live in one relational database, kept seven years."},
+                  "testing": {"state": "partly", "lines": [[90, 95]], "summary": "Every service has contract tests.", "missing": "Which runner, and where end-to-end tests live."},
+                  "deployment": {"state": "silent"}},
+              "other": other if other is not None else [{"lines": [[100, 110]], "summary": "Search is a separate service.", "applies_to": ["topic:search"]}],
+              "conflicts": conflicts if conflicts is not None else [
+                  {"n": 1, "lines": [[20, 21]], "against": "TN-02", "note": "The design keeps card numbers.", "settled": "ask-engineer",
+                   "reason": "An engineer knows whether tokens replace them.", "by": "Priya", "at": "2026-11-20T10:00:00Z"},
+                  {"n": 2, "lines": [[30, 30]], "against": "PP-01", "note": "Batch jobs at night.", "settled": "stands",
+                   "reason": "Agreed with operations.", "by": "Priya", "at": "2026-11-20T10:05:00Z"}]}
+    record.update(override)
+    return record
+
+
+class DesignRepository(NeedsRepository):
+    def design(self, record=None, doc=DESIGN_DOC, ident="DES-01", commit=True):
+        record = record if record is not None else design_record(doc, ident)
+        folder = self.project / baseline.DESIGN_DIR / ident
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "design.json").write_text(record if isinstance(record, str) else json.dumps(record))
+        if doc is not None:
+            (folder / "design.md").write_bytes(doc.encode("utf-8"))
+        if commit:
+            git(self.project, "add", "-A")
+            git(self.project, "commit", "-q", "-m", f"design {ident}")
+        adr._LISTINGS.clear()
+
+
+class DesignEvidenceTest(DesignRepository):
+    def test_each_state_gives_its_evidence_and_the_report_carries_the_design(self):
+        self.make({"README.md": "# New\n"})
+        self.design()
+        result = self.baseline()
+        self.assertEqual(self.sources(result, "storage"), ["design:DES-01 lines 40-52, 60"])
+        storage = self.evidence(result, "storage")[0]
+        self.assertEqual((storage["file"], storage["found"], storage["excerpt"]),
+                         (f"{baseline.DESIGN_DIR}/DES-01/design.md", "brought-in design (decided)", "Orders live in one relational database, kept seven years."))
+        self.assertNotIn("missing", storage)
+        testing = self.evidence(result, "testing")[0]
+        self.assertEqual((testing["source"], testing["missing"]), ("design:DES-01 lines 90-95", "Which runner, and where end-to-end tests live."))
+        self.assertIn("partly", testing["found"])
+        self.assertEqual(self.evidence(result, "deployment"), [], "silent gives nothing")
+        self.assertEqual({row["topic"]: (row["from_product"], row["no_evidence"]) for row in result["to_draft"]},
+                         {"language": (False, True), "framework": (False, True), "storage": (True, False), "testing": (True, False),
+                          "deployment": (False, True), "coding-standards": (False, True)})
+        [shown] = result["designs"]
+        self.assertEqual((shown["design_id"], shown["sha256"], shown["topics"]),
+                         ("DES-01", hashlib.sha256(DESIGN_DOC.encode()).hexdigest(), {"storage": "decided", "testing": "partly", "deployment": "silent"}))
+        self.assertEqual(shown["other"], [{"lines": "100-110", "summary": "Search is a separate service.", "applies_to": ["topic:search"]}])
+        self.assertEqual([(item["n"], item["against"], item["lines"]) for item in shown["ask_engineer"]], [(1, "TN-02", "20-21")], "only ask-engineer")
+        self.assertNotIn("evidence", shown)
+        self.assertEqual(result["designs_problems"], [])
+        self.assertIn("brought-in design", result["data_note"])
+        self.assertEqual(adr.coverage(self.project, {})["missing"], DEFAULTS, "a design never covers a topic")
+
+    def test_with_code_evidence_a_topic_is_not_from_product_and_needs_and_designs_join(self):
+        self.make(PYTHON_REPO)
+        self.publish(needs_json(ALL_KINDS))
+        self.design()
+        result = self.baseline()
+        self.assertFalse(any(row["from_product"] for row in result["to_draft"]))
+        self.assertEqual(self.sources(result, "storage"), ["need:TN-02 revision 1", "need:TN-04 revision 1", "need:TN-05 revision 1",
+                                                           "need:TN-06 revision 1", "design:DES-01 lines 40-52, 60"])
+
+    def test_only_committed_designs_are_read_redacted_and_bounded_and_never_recorded(self):
+        self.make({"README.md": "# New\n"})
+        self.design(commit=False)
+        result = self.baseline()
+        self.assertEqual((result["designs"], result["designs_problems"]), ([], []), "the working tree is never read")
+        record = (self.project / baseline.RECORD).read_text()
+        secret = "Keys like ghp_abcdefghijklmnopqrstuvwxyz0123 stay in the vault. " + " ".join(["more words"] * 200)
+        topics = {"storage": {"state": "decided", "lines": [[1, 2]], "summary": secret}}
+        self.design(design_record(topics=topics))
+        with mock.patch.object(baseline, "gather", side_effect=AssertionError("gathered again")):
+            later = self.baseline()
+        self.assertNotIn("ghp_abcdefghijklmnopqrstuvwxyz0123", json.dumps(later))
+        self.assertLessEqual(len(self.evidence(later, "storage")[0]["excerpt"]), baseline.DESIGN_TEXT_LIMIT)
+        self.assertTrue(self.row(later, "storage")["from_product"])
+        self.assertEqual((self.project / baseline.RECORD).read_text(), record, "designs are never recorded")
+
+    def test_a_bad_design_is_a_problem_with_its_reason_never_used_and_never_a_crash(self):
+        self.make({"README.md": "# New\n"})
+        good = design_record()
+        cases = {
+            "its design.json is not JSON": ("{nope", DESIGN_DOC),
+            "its document's SHA-256 is not the one recorded": (good, DESIGN_DOC.replace("Line 7 ", "Line seven ")),
+            "does not have the 120 lines recorded": (design_record(DESIGN_DOC + "extra\n", lines=120), DESIGN_DOC + "extra\n"),
+            "its document design.md is not committed beside it": (good, None),
+            "its design_id is not DES-01": (design_record(design_id="DES-02"), DESIGN_DOC),
+            "topic storage's lines are not ranges inside the document": (design_record(topics={"storage": {"state": "decided", "lines": [[100, 130]], "summary": "S."}}), DESIGN_DOC),
+            "topic storage's state is not one of": (design_record(topics={"storage": {"state": "maybe"}}), DESIGN_DOC),
+            "topic testing is partly decided but does not say what is missing": (design_record(topics={"testing": {"state": "partly", "lines": [[1, 1]], "summary": "S."}}), DESIGN_DOC),
+            "conflict 1 is not settled": (design_record(conflicts=[{**good["conflicts"][0], "settled": None}]), DESIGN_DOC),
+            "its schema_version is 2": (design_record(schema_version=2), DESIGN_DOC),
+            "its file is not the plain name": (design_record(file="../secrets.md"), DESIGN_DOC),
+        }
+        for expected, (record, doc) in cases.items():
+            with self.subTest(expected=expected):
+                folder = self.project / baseline.DESIGN_DIR / "DES-01"
+                if folder.exists():
+                    git(self.project, "rm", "-rq", str(folder))
+                    git(self.project, "commit", "-qm", "clear")
+                self.design(record, doc=doc)
+                result = self.baseline()
+                [problem] = result["designs_problems"]
+                self.assertEqual((problem["design"], problem["file"]), ("DES-01", f"{baseline.DESIGN_DIR}/DES-01/design.json"))
+                self.assertIn(expected, problem["problem"])
+                self.assertEqual(result["designs"], [])
+                self.assertTrue(all(row["no_evidence"] for row in result["to_draft"]), "nothing is used in part")
+
+    def test_a_bad_design_leaves_a_good_one_in_use_and_a_misnamed_folder_is_reported(self):
+        self.make({"README.md": "# New\n"})
+        self.design()
+        self.design(design_record(ident="DES-02", design_id="DES-02", sha256="cd" * 32), ident="DES-02")
+        self.design(design_record(ident="notes", design_id="notes"), ident="notes")
+        result = self.baseline()
+        self.assertEqual([design["design_id"] for design in result["designs"]], ["DES-01"])
+        problems = {problem["design"]: problem["problem"] for problem in result["designs_problems"]}
+        self.assertEqual(sorted(problems), ["DES-02", "notes"])
+        self.assertIn("document's SHA-256 is not the one recorded", problems["DES-02"])
+        self.assertIn("is not named DES-NN", problems["notes"])
+
+    def test_adr_new_baseline_lists_the_design_lines(self):
+        self.make({"README.md": "# New\n"})
+        self.design()
+        self.baseline()
+        code, out, err = self.run_cmd("adr", "new", "--baseline", "testing", "--title", "Contract tests for every service", "--context", "The design asks for them.",
+                                      "--decision", "Contract tests in every service, as the design says.", "--option", "Contract tests", "--option", "End-to-end only",
+                                      "--open-point", "Which runner, and where end-to-end tests live")
+        self.assertEqual(code, 0, err + out)
+        text = (self.project / json.loads(out)["file"]).read_text()
+        self.assertIn("- design:DES-01 lines 90-95, brought-in design (partly): what is missing becomes an open point: Every service has contract tests. "
+                      "Missing: Which runner, and where end-to-end tests live.", text)
+
+    def test_no_design_is_todays_baseline(self):
+        self.make(PYTHON_REPO)
+        result = self.baseline()
+        self.assertEqual((result["designs"], result["designs_problems"]), ([], []))
+        self.assertNotIn("brought-in design", result["data_note"])
+
+
+OVERVIEW_CONTEXT = "A shop that takes orders from staff in 40 stores; its architecture is shaped by order safety and the warehouse link."
+PARTS = "flowchart LR\n  ui[Store app] --> api[Order service]\n  api --> db[(Orders)]"
+FLOW = "sequenceDiagram\n  participant S as Store app\n  participant O as Order service\n  S->>O: place order\n  O-->>S: confirmed"
+
+
+class OverviewTest(DesignRepository):
+    def setUp(self):
+        self.make({"README.md": "# New\n"})
+
+    def adr_file(self, name, title, status="accepted", applies=None, serves=None, commit=True):
+        text = adr_text(title, status=status, applies=applies)
+        if serves:
+            text = text.replace("---\n\n#", f"serves: {serves}\n---\n\n#", 1)
+        path = self.project / "docs/adr" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        if commit:
+            git(self.project, "add", "-A")
+            git(self.project, "commit", "-qm", name)
+        adr._LISTINGS.clear()
+
+    def overview(self, *extra, env=None, code=0):
+        got, out, err = self.run_cmd("adr", "overview", *extra, env=env)
+        self.assertEqual(got, code, err + out)
+        return json.loads(out) if code == 0 else err + out
+
+    def write(self, *extra, env=None, code=0, parts=PARTS, flow=FLOW):
+        return self.overview("--context", OVERVIEW_CONTEXT, "--parts", parts, "--data-flow", flow, *extra, env=env, code=code)
+
+    def test_the_read_form_reports_what_the_overview_is_built_from(self):
+        empty = self.overview()
+        self.assertEqual((empty["reads_only"], empty["adrs"], empty["overview"]["exists"]), (True, [], False))
+        self.assertIn("no accepted or proposed ADR", empty["next"])
+        self.publish(needs_json([need("TN-01", "data", "Orders are kept for seven years.", revision=2), GIVEN]))
+        self.design()
+        self.adr_file("0001-orders-in-postgresql.md", "Keep orders in PostgreSQL", applies=["topic:storage"], serves="TN-01@2")
+        self.adr_file("0003-rejected.md", "Use a spreadsheet", status="rejected", applies=["topic:storage"])
+        self.adr_file("0002-python.md", "Write it in Python", status="proposed", applies=["topic:language"], commit=False)
+        shown = self.overview()
+        self.assertEqual([(row["id"], row["status"], row["topics"], row["serves"], row["committed"]) for row in shown["adrs"]],
+                         [("ADR-0001", "accepted", ["storage"], ["TN-01@2"], True), ("ADR-0002", "proposed", ["language"], [], False)])
+        self.assertEqual([item["need_id"] for item in shown["needs"]], ["TN-01", "TN-06"])
+        self.assertEqual([design["design_id"] for design in shown["designs"]], ["DES-01"])
+        self.assertEqual((shown["file"], shown["setting_problem"], shown["overview"]), (adr.DEFAULT_OVERVIEW, None,
+                         {"exists": False, "behind": False, "changes": [], "problem": None}))
+        self.assertIn("Offer to write", shown["next"])
+        self.assertFalse((self.project / adr.DEFAULT_OVERVIEW).exists(), "the read form writes nothing")
+
+    def test_the_written_file_has_its_fixed_parts_and_commits_and_accepts_nothing(self):
+        self.publish(needs_json([need("TN-01", "data", "Orders are kept for seven years.", revision=2), GIVEN]))
+        self.adr_file("0001-orders-in-postgresql.md", "Keep orders in PostgreSQL | managed", applies=["topic:storage"], serves="TN-01@2")
+        self.adr_file("0002-python.md", "Write it in Python", status="proposed", applies=["topic:language"], commit=False)
+        self.adr_file("0003-search.md", "Search is its own service", status="proposed")
+        written = self.write("--note", "Drawn from the ADRs on 2026-11-21.")
+        self.assertEqual((written["status"], written["file"], written["committed"], written["accepted"]), ("WRITTEN", adr.DEFAULT_OVERVIEW, False, []))
+        self.assertEqual([item["id"] for item in written["written_from"]], ["ADR-0001", "ADR-0002", "ADR-0003"])
+        text = (self.project / adr.DEFAULT_OVERVIEW).read_text()
+        lines = text.splitlines()
+        self.assertRegex(lines[0], r"^<!-- mach:overview written-from: ADR-0001@[0-9a-f]{16} ADR-0002@[0-9a-f]{16} ADR-0003@[0-9a-f]{16} -->$")
+        self.assertEqual(lines[2], "# Architecture overview")
+        self.assertEqual(lines[4], adr.OVERVIEW_AUTHORITY.format(folder="docs/adr"))
+        self.assertIn(f"## Context\n\n{OVERVIEW_CONTEXT}\n", text)
+        self.assertIn("## What the product needs\n\n- **TN-01** (data, revision 2): Orders are kept for seven years.\n"
+                      "- **TN-06** (given, revision 1): The organisation runs everything on Azure. (said by Head of IT on 2026-11-02)\n", text)
+        self.assertIn(f"## The parts and how they connect\n\n```mermaid\n{PARTS}\n```\n", text)
+        self.assertIn(f"## How data moves\n\n```mermaid\n{FLOW}\n```\n", text)
+        table = text.split("## Decisions by topic\n\n", 1)[1].split("\n\n")[0].splitlines()
+        self.assertEqual(table[2:], ["| language | ADR-0002 | Write it in Python | proposed | - |",
+                                     "| storage | ADR-0001 | Keep orders in PostgreSQL \\| managed | accepted | TN-01@2 |",
+                                     "| other | ADR-0003 | Search is its own service | proposed | - |"])
+        self.assertTrue(text.endswith("## Notes\n\nDrawn from the ADRs on 2026-11-21.\n"))
+        self.assertEqual(diagrams_module().problems(text), [])
+        self.assertIn("status: proposed", (self.project / "docs/adr/0002-python.md").read_text(), "nothing is accepted")
+        self.assertIn(adr.DEFAULT_OVERVIEW, git(self.project, "status", "--porcelain", "--untracked-files=all").stdout, "nothing is committed")
+        self.assertFalse(self.overview()["overview"]["behind"])
+        self.assertIn("up to date", self.overview()["next"])
+
+    def test_the_overview_is_behind_when_an_adr_is_accepted_added_or_superseded(self):
+        self.adr_file("0001-orders.md", "Keep orders in PostgreSQL", status="proposed", applies=["topic:storage"])
+        self.adr_file("0002-python.md", "Write it in Python", applies=["topic:language"])
+        self.write()
+        self.assertFalse(self.overview()["overview"]["behind"])
+        self.adr_file("0001-orders.md", "Keep orders in PostgreSQL", status="accepted", applies=["topic:storage"])
+        self.assertEqual(self.overview()["overview"]["changes"], [{"id": "ADR-0001", "change": "changed"}])
+        self.adr_file("0003-go.md", "Write it in Go", applies=["topic:language"])
+        self.adr_file("0002-python.md", "Write it in Python", status="superseded by ADR-0003", applies=["topic:language"])
+        state = self.overview()
+        self.assertTrue(state["overview"]["behind"])
+        self.assertEqual(state["overview"]["changes"], [{"id": "ADR-0001", "change": "changed"}, {"id": "ADR-0002", "change": "gone"},
+                                                        {"id": "ADR-0003", "change": "added"}])
+        self.assertIn("behind", state["next"])
+        self.write()
+        self.assertFalse(self.overview()["overview"]["behind"])
+        path = self.project / adr.DEFAULT_OVERVIEW
+        path.write_text(path.read_text().split("\n", 1)[1])
+        state = self.overview()["overview"]
+        self.assertEqual((state["behind"], state["changes"]), (True, []))
+        self.assertIn("no single marker", state["problem"])
+
+    def test_diagram_and_content_refusals_write_nothing(self):
+        self.adr_file("0001-python.md", "Write it in Python", applies=["topic:language"])
+        cases = {"--parts opens with 'sequenceDiagram'": {"parts": FLOW},
+                 "--data-flow opens with 'erDiagram'": {"flow": "erDiagram\n  ORDER ||--o{ LINE : has"},
+                 "carries a click action": {"parts": PARTS + "\n  click api callback"},
+                 "carries a link": {"flow": FLOW + "\n  Note over S: see https://example.com"},
+                 "without the ``` lines": {"parts": f"```mermaid\n{PARTS}\n```"},
+                 "at most 40 are allowed": {"parts": "flowchart LR\n" + "\n".join(f"  a{n} --> b{n}" for n in range(45))}}
+        for expected, given in cases.items():
+            with self.subTest(expected=expected):
+                self.assertIn(expected, self.write(code=1, **given))
+        self.assertIn("needs --data-flow", self.overview("--context", OVERVIEW_CONTEXT, "--parts", PARTS, code=1))
+        self.assertIn("with no content, adr overview only reads", self.overview("--note", "Just a note.", code=1))
+        self.assertIn("no HTML comments", self.overview("--context", OVERVIEW_CONTEXT + " <!-- mach:overview written-from: -->", "--parts", PARTS,
+                                                         "--data-flow", FLOW, code=1))
+        self.assertFalse((self.project / adr.DEFAULT_OVERVIEW).exists())
+
+    def test_no_adr_to_map_and_a_supervised_execution_are_refused(self):
+        self.assertIn("no accepted or proposed ADR to map", self.write(code=1))
+        self.adr_file("0001-python.md", "Write it in Python", applies=["topic:language"])
+        self.assertIn("a supervised execution does not write it", self.write(env=UNATTENDED, code=1))
+        self.assertFalse((self.project / adr.DEFAULT_OVERVIEW).exists())
+        self.assertTrue(self.overview(env=UNATTENDED)["reads_only"], "the read form reads, supervised or not")
+
+    def test_adr_overview_setting_moves_it_and_a_bad_setting_is_refused(self):
+        self.adr_file("0001-python.md", "Write it in Python", applies=["topic:language"])
+        config = self.project / ".factory/config.json"
+        config.write_text(json.dumps({"adr": {"overview": "docs/design/map.md"}}))
+        self.assertEqual(self.overview()["file"], "docs/design/map.md")
+        self.assertEqual(self.write()["file"], "docs/design/map.md")
+        self.assertTrue((self.project / "docs/design/map.md").is_file())
+        for value in ("../outside.md", ".factory/overview.md", "docs/adr/overview.md", "docs/overview.txt", "/tmp/o.md", 5, ""):
+            with self.subTest(value=value):
+                config.write_text(json.dumps({"adr": {"overview": value}}))
+                self.assertIn("adr.overview in .factory/config.json", self.overview()["setting_problem"])
+                self.assertIn("adr.overview in .factory/config.json", self.write(code=1))
+        self.assertFalse((self.project / adr.DEFAULT_OVERVIEW).exists())
+
+
+def diagrams_module():
+    import diagrams
+    return diagrams
+
+
+class ServesTest(NeedsRepository):
+    def setUp(self):
+        self.make({"README.md": "# New\n"})
+
+    def new(self, *extra, code=0):
+        got, out, err = self.run_cmd("adr", "new", "--title", "Keep orders in PostgreSQL", "--context", "Orders must be kept for years.",
+                                     "--decision", "PostgreSQL, because it keeps orders safely.", *extra)
+        self.assertEqual(got, code, err + out)
+        return json.loads(out) if code == 0 else err
+
+    def test_adr_new_serves_writes_the_published_revision(self):
+        self.publish(needs_json([need("TN-01", "data", "Orders are kept for seven years.", revision=2), need("TN-04", "never", "Never charge twice.")]))
+        written = self.new("--serves", "TN-01", "--serves", "tn-04", "--serves", "TN-01", "--option", "PostgreSQL", "--option", "SQLite",
+                           "--consequence", "Good, because orders are kept for seven years.", "--applies-to", "topic:storage")
+        self.assertEqual(written["serves"], ["TN-01@2", "TN-04@1"])
+        text = (self.project / written["file"]).read_text()
+        self.assertIn("serves: TN-01@2, TN-04@1\n", text)
+        parsed = adr.parse(text, written["file"])
+        self.assertEqual((parsed["status"], parsed["problems"]), ("proposed", []))
+        listed = self.json_list()
+        self.assertEqual(listed["serves_flags"], [])
+        self.assertEqual(next(row for row in listed["adrs"] if row["id"] == written["id"])["serves"],
+                         [{"need_id": "TN-01", "revision": 2}, {"need_id": "TN-04", "revision": 1}])
+
+    def test_adr_new_serves_refusals_write_nothing(self):
+        two = ("--option", "PostgreSQL", "--option", "SQLite")
+        self.assertIn("No technical needs are published on the main branch", self.new("--serves", "TN-01", *two, code=1))
+        self.publish(needs_json([need("TN-01", "data", "Kept for seven years."), need("TN-02", "data", "Nothing personal.", status="retired")]))
+        cases = {"no such need": ("--serves", "TN-09", *two), "has retired it": ("--serves", "TN-02", *two),
+                 "at least two --option entries": ("--serves", "TN-01", "--option", "PostgreSQL"),
+                 "at least two --option": ("--serves", "TN-01")}
+        for expected, extra in cases.items():
+            with self.subTest(expected=expected):
+                self.assertIn(expected, self.new(*extra, code=1))
+                self.assertIn("nothing was written", self.new(*extra, code=1))
+        self.publish("{broken")
+        self.assertIn("is not JSON", self.new("--serves", "TN-01", *two, code=1))
+        self.assertFalse((self.project / "docs/adr").exists(), "nothing was written")
+        self.assertNotIn("serves", self.new(), "without --serves, one option or none is still fine")
+
+    def test_adr_new_baseline_lists_the_needs_and_serves_them(self):
+        self.publish(needs_json([need("TN-02", "data", "Orders are kept for seven years."), GIVEN]))
+        self.assertTrue(self.row(self.baseline(), "storage")["from_product"])
+        written = self.json_run("adr", "new", "--baseline", "storage", "--title", "Keep orders in a managed PostgreSQL", "--context", "The product keeps orders.",
+                                "--decision", "Managed PostgreSQL, so orders are kept for seven years.", "--option", "Managed PostgreSQL",
+                                "--option", "SQLite on the server", "--consequence", "Good, because orders survive for seven years.", "--serves", "TN-02",
+                                "--open-point", "The organisation runs everything on Azure (said by Head of IT on 2026-11-02): confirm this still holds")
+        text = (self.project / written["file"]).read_text()
+        self.assertIn("serves: TN-02@1\n", text)
+        self.assertIn("- need:TN-02 revision 1, technical need (data): Orders are kept for seven years.", text)
+        self.assertIn("- need:TN-06 revision 1, technical need (given): said by Head of IT on 2026-11-02", text)
+        self.assertEqual(adr.open_points(text), ["The organisation runs everything on Azure (said by Head of IT on 2026-11-02): confirm this still holds"])
+        self.assertEqual(adr.parse(text, written["file"])["problems"], [])
+
+    def test_adr_list_flags_adrs_serving_an_older_revision_or_a_retired_or_missing_need(self):
+        self.publish(needs_json([need("TN-01", "data", "Kept for ten years.", revision=2), need("TN-02", "people", "Many.", status="retired")]))
+        folder = self.project / "docs/adr"
+        folder.mkdir(parents=True)
+        for name, status, serves in (("0001-a.md", "accepted", "TN-01@1"), ("0002-b.md", "proposed", "TN-02@1"), ("0003-c.md", "proposed", "TN-07@1"),
+                                     ("0004-d.md", "accepted", "TN-01@2"), ("0005-e.md", "rejected", "TN-01@1")):
+            (folder / name).write_text(adr_text(f"Decision {name[:4]} here", status=status).replace("---\n\n#", f"serves: {serves}\n---\n\n#", 1))
+        flags = self.json_list()["serves_flags"]
+        self.assertEqual([(flag["id"], flag["need_id"], flag["change"]) for flag in flags],
+                         [("ADR-0001", "TN-01", "older-revision"), ("ADR-0002", "TN-02", "retired"), ("ADR-0003", "TN-07", "missing")])
+        self.assertTrue(all(flag["say"] for flag in flags))
+        self.publish("{broken")
+        listed = self.json_list()
+        self.assertEqual(listed["serves_flags"], [])
+        self.assertIn("is not JSON", listed["needs_problem"])
+
+    def json_list(self):
+        return self.json_run("adr", "list")
+
+    def json_run(self, *argv):
+        code, out, err = self.run_cmd(*argv)
+        self.assertEqual(code, 0, err + out)
+        return json.loads(out)
 
 
 if __name__ == "__main__":

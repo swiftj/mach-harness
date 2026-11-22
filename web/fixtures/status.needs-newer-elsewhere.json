@@ -1,0 +1,123 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Teams work together.",
+      "outcomes": [
+        "Teams can work together"
+      ],
+      "issue": 1,
+      "url": "https://github.com/acme/team-space/issues/1"
+    },
+    "approvals_withdrawn": [],
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "Team membership",
+        "status": "open",
+        "revision": 1,
+        "acceptance_criteria": [
+          "Only invited people can join"
+        ],
+        "issue": null,
+        "url": null,
+        "counts": {
+          "total": 0,
+          "by_progress": {},
+          "ready_or_further": 0,
+          "ready_or_further_means": "marked ready to build, being built, or shipped"
+        }
+      }
+    ],
+    "slices": [],
+    "saved": {
+      "everything_saved": false,
+      "note": "1 thing is not saved yet.",
+      "not_saved": [
+        {
+          "kind": "needs_unpublished",
+          "target": null,
+          "text": "The technical needs have changes that are not published. Publish them so the engineer gets them."
+        }
+      ]
+    },
+    "order": [
+      {
+        "epic_id": "EPIC-001",
+        "issue": null,
+        "slices": [],
+        "on_github": false,
+        "github_order": null,
+        "github_read_at": null,
+        "matches_github": null,
+        "unfinished": false,
+        "taken_from_github": false,
+        "could_not_read": false,
+        "note": null
+      }
+    ],
+    "github": {
+      "repository": "acme/team-space",
+      "form": null,
+      "last_read": "2026-11-21T20:23:08Z"
+    },
+    "current_slice": null,
+    "last_refreshed": "2026-11-21T20:23:08Z",
+    "needs": {
+      "active": [
+        "TN-01",
+        "TN-02"
+      ],
+      "retired": [],
+      "nothing_to_say": [],
+      "unanswered": [
+        "data",
+        "connections",
+        "never",
+        "given"
+      ],
+      "unpublished_changes": true,
+      "published": {
+        "saved": "github",
+        "unfinished": false,
+        "revision": 1,
+        "sha256": "452e454bd25fcfb34e5cf006e9f8bb11628d3fd88a0bcb013ef2515e9d4824d7",
+        "approved_by": "ada-pm",
+        "published_at": "2026-11-21T20:23:07Z",
+        "issue": 1,
+        "url": "https://github.com/acme/team-space/issues/1",
+        "github": {
+          "revision": 2,
+          "approved": true,
+          "approved_by": "ben-pm",
+          "read_at": "2026-11-21T20:23:08Z"
+        },
+        "newer_elsewhere": true,
+        "changed_on_github": false
+      },
+      "adrs_behind": [],
+      "next": "Someone else published a newer version of the technical needs on GitHub: choose yours or theirs."
+    },
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Start a new slice (slice new --epic EPIC-NNN --title \"...\")."
+    ],
+    "next_actions": [
+      {
+        "kind": "start_slice",
+        "target": null,
+        "title": "Start a new slice",
+        "reason": "No slice of intent is being defined right now.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

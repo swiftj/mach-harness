@@ -78,7 +78,7 @@ export function Conversation({ conv, row }: { conv: ConversationController; row:
  * brings it back to the end. Only the conversation's own pane scrolls, never the page: where the window is too small
  * for panes, nothing is moved.
  */
-function useNewestInView(ref: RefObject<HTMLElement | null>, turn: string) {
+export function useNewestInView(ref: RefObject<HTMLElement | null>, turn: string) {
   const pinned = useRef(true);
   useEffect(() => {
     const node = ref.current;
@@ -397,8 +397,8 @@ function AskCard({
   );
 }
 
-/** A free answer, sent with the button or Ctrl+Enter (the interview's Composer, with Shape's words). */
-function ReplyField({
+/** A free answer, sent with the button or Ctrl+Enter (the interview's Composer, with Shape's words). Technical needs' conversation uses it too. */
+export function ReplyField({
   label,
   hint,
   busy,

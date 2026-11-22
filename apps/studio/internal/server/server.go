@@ -229,7 +229,7 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 	available, reason := s.opts.Bridge.Available()
 	continueCommand := s.opts.Bridge.ContinueCommand()
 	capabilities := map[string]any{"interview": available, "interview_reason": nil, "continue_command": continueCommand,
-		"explore_command": interview.ExploreCommandOf(continueCommand)}
+		"explore_command": interview.ExploreCommandOf(continueCommand), "needs_command": interview.NeedsCommandOf(continueCommand)}
 	if !available {
 		capabilities["interview_reason"] = reason
 	}
@@ -257,6 +257,13 @@ func (s *Server) operation(w http.ResponseWriter, r *http.Request) {
 	// as a draft write waits for a slice's interview (drafts.go).
 	if idea := engine.WritesIdea(name, body); idea != "" && s.opts.Bridge.Busy(idea) {
 		env := engine.Fail(engine.KindConflict, "The conversation is writing this idea's brief or case right now. Wait for its reply, or interrupt it.")
+		writeEnvelope(w, statusFor(env), env)
+		return
+	}
+	// M17: an act on the technical needs or a brought-in design waits while the needs conversation is
+	// writing, in the same way.
+	if engine.WritesNeeds(name, body) && s.opts.Bridge.Busy(interview.NeedsSubject) {
+		env := engine.Fail(engine.KindConflict, "The conversation is writing the technical needs right now. Wait for its reply, or interrupt it.")
 		writeEnvelope(w, statusFor(env), env)
 		return
 	}

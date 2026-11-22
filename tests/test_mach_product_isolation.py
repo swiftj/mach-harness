@@ -161,8 +161,8 @@ class NothingIsWiredInTest(unittest.TestCase):
         """Product Studio may read, fetch, build a contribution in its own temporary worktree and
         push that one branch. It may never rewrite history or move the product manager's checkout."""
         sources = {name: (PRODUCT_SCRIPTS / name).read_text() for name in ("studio.py", "collab.py", "requests_in.py", "prd.py", "shape.py", "validate_brief.py",
-                                                                            "shape_route.py")}
-        for name in ("studio.py", "requests_in.py", "prd.py", "shape.py", "validate_brief.py", "shape_route.py"):
+                                                                            "shape_route.py", "design.py")}
+        for name in ("studio.py", "requests_in.py", "prd.py", "shape.py", "validate_brief.py", "shape_route.py", "design.py"):
             imported = set()
             for node in ast.walk(ast.parse(sources[name])):
                 if isinstance(node, ast.Import):
@@ -204,9 +204,11 @@ class NothingIsWiredInTest(unittest.TestCase):
                 self.assertNotIn(word, re.sub(r"(?i)\bblock\w*|\bclock\w*|\blocal\w*", "", sources[name]), (name, word))
         self.assertFalse(re.findall(r"git\([^\n]*\"push\"", "\n".join(sources.values())))  # nothing is ever pushed
         # M13 D: the PRD on-ramp reaches neither Git nor GitHub at all, so a PRD's text has no way there.
-        self.assertFalse(re.findall(r"\b(?:git|git_bytes|gh|gh_json|gh_write)\(", sources["prd.py"]))
-        for word in ("collab", "issues.", "handoff", "requests_in", "import subprocess", "urllib", "socket"):
-            self.assertNotIn(word, sources["prd.py"], word)
+        # M17 B: a brought-in design likewise; it shares the PRD import and never names what reaches GitHub.
+        for name in ("prd.py", "design.py"):
+            self.assertFalse(re.findall(r"\b(?:git|git_bytes|gh|gh_json|gh_write)\(", sources[name]), name)
+            for word in ("collab", "issues.", "handoff", "requests_in", "import subprocess", "urllib", "socket"):
+                self.assertNotIn(word, sources[name], (name, word))
         # M16: the brief's validator is pure; it reads no file, runs nothing and reaches neither Git nor GitHub.
         validator = sources["validate_brief.py"]
         self.assertFalse(re.findall(r"\b(?:git|git_bytes|gh|gh_json|gh_write)\(", validator))
@@ -281,9 +283,10 @@ class NothingIsWiredInTest(unittest.TestCase):
                          {"add_labels", "add_sub_issue", "comment", "comments", "create", "create_label", "database_id", "label_names", "labels",
                           "list_issues", "pin", "place_sub_issue", "remove_ready", "rewrite", "signed_in", "sub_issue_numbers", "sub_issues",
                           "unavailable", "view"})
-        publish = handoff_source[handoff_source.index("    def publish_principles("):handoff_source.index("    def write_principles_folder(")]
+        # M17: the principles and the technical needs are published by one shared function, publish_set.
+        publish = handoff_source[handoff_source.index("    def publish_set("):handoff_source.index("    def write_set_folder(")]
         self.assertEqual(set(re.findall(r"\bissues\.([a-z_]+)\(", publish)), {"labels", "create_label", "comments", "comment"})
-        self.assertIn("principles_approval_comment(", publish)  # the only comment it writes is the fixed approval template
+        self.assertIn("rules_set.approval_comment(", publish)  # the only comment it writes is the set's fixed approval template
         # M16: Shape reaches GitHub only through issues.py (and handoff's channel, which decides GitHub or the folder), with exactly
         # these calls. Publishing writes the idea's issue from its fixed template, its labels, and the one verdict comment template.
         shape_source = (PRODUCT_SCRIPTS / "shape.py").read_text()
@@ -372,10 +375,10 @@ class NothingIsWiredInTest(unittest.TestCase):
 
     def test_report_never_authorizes(self):
         for name in ("product.py", "studio.py", "collab.py", "requests_in.py", "issues.py", "handoff.py", "prd.py", "jira_export.py", "shape.py", "validate_brief.py",
-                     "shape_route.py"):
+                     "shape_route.py", "needs.py", "design.py"):
             source = (PRODUCT_SCRIPTS / name).read_text()
             self.assertNotIn('"factory_authorized": True', source)
-        for name in ("product.py", "studio.py", "prd.py", "jira_export.py", "shape.py", "shape_route.py"):
+        for name in ("product.py", "studio.py", "prd.py", "jira_export.py", "shape.py", "shape_route.py", "needs.py", "design.py"):
             self.assertIn('"factory_authorized": False', (PRODUCT_SCRIPTS / name).read_text())
 
 

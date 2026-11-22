@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "The project's required topics changed since DES-01 was mapped (now: storage, testing). Record the map again.",
+  "hint": null
+}

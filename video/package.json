@@ -7,6 +7,8 @@
     "studio": "remotion studio src/index.ts",
     "render": "remotion render src/index.ts MachDemo out/mach-demo.mp4",
     "render:factory": "remotion render src/index.ts MachFactory out/mach-factory.mp4",
+    "render:shape": "remotion render src/index.ts MachShape out/mach-shape.mp4",
+    "small:shape": "ffmpeg -y -i out/mach-shape.mp4 -c:v libx264 -crf 27 -preset slow -pix_fmt yuv420p -c:a aac -b:a 160k -movflags +faststart out/mach-shape-small.mp4",
     "still": "remotion still src/index.ts MachDemo"
   },
   "dependencies": {

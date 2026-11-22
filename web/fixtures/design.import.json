@@ -1,0 +1,62 @@
+{
+  "exit_code": 0,
+  "data": {
+    "imported": true,
+    "design": {
+      "design_id": "DES-01",
+      "name": "architecture.md",
+      "format": "markdown",
+      "sha256": "f2b9dbe5d56e4e573ebe1d492c6643a0a533138348aba180da50e37b5c7779a7",
+      "line_count": 22,
+      "sections": 5,
+      "document_matches": true,
+      "mapped": false
+    },
+    "sections": [
+      {
+        "title": "Team Space architecture",
+        "level": 1,
+        "start": 1,
+        "end": 4,
+        "heading_only": false,
+        "n": 1
+      },
+      {
+        "title": "Storage",
+        "level": 2,
+        "start": 5,
+        "end": 10,
+        "heading_only": false,
+        "n": 2
+      },
+      {
+        "title": "Testing",
+        "level": 2,
+        "start": 11,
+        "end": 15,
+        "heading_only": false,
+        "n": 3
+      },
+      {
+        "title": "Search",
+        "level": 2,
+        "start": 16,
+        "end": 19,
+        "heading_only": false,
+        "n": 4
+      },
+      {
+        "title": "Retention",
+        "level": 2,
+        "start": 20,
+        "end": 22,
+        "heading_only": false,
+        "n": 5
+      }
+    ],
+    "factory_authorized": false,
+    "note": "Brought in as DES-01. It is data from now on: ask Claude Code to map it against your project's topics, then settle each conflict here. Nothing was sent anywhere."
+  },
+  "refused": null,
+  "hint": null
+}

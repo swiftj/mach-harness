@@ -31,6 +31,9 @@ interface PartsContext {
 
 const Ctx = createContext<PartsContext | null>(null);
 
+/** How far above the pane's foot a part's act ends on arrival: clear of the "more below" mark, which covers the last 48px. */
+const ACT_CLEAR = 56;
+
 export function Parts({
   label,
   open,
@@ -63,17 +66,40 @@ export function Parts({
     const item = list.current?.querySelector<HTMLElement>(':scope > li:has(> * > button[aria-expanded="true"])');
     const pane = item?.closest<HTMLElement>("[data-pane]");
     if (!item || !pane || getComputedStyle(pane).overflowY === "visible") return;
-    const box = pane.getBoundingClientRect();
-    const at = item.getBoundingClientRect();
-    const header = pane.querySelector<HTMLElement>(":scope > .sticky")?.offsetHeight ?? 0;
-    const toRow = at.top - box.top - header - 8;
-    if (at.bottom <= box.bottom && at.top >= box.top + header) return;
-    // The part's own act, when it marks one (`data-part-act`), must be in view too: the row goes to the top, and if
-    // the act is still below the pane's foot, the pane goes on until the act is in view.
-    const act = item.querySelector<HTMLElement>("[data-part-act]");
-    const actBelow = act ? act.getBoundingClientRect().bottom - box.bottom + 24 : 0;
-    const fitAll = Math.max(0, at.bottom - box.bottom + 24);
-    pane.scrollTop += Math.max(Math.min(toRow, fitAll), actBelow);
+    const bring = (onlyOn: boolean) => {
+      const box = pane.getBoundingClientRect();
+      const at = item.getBoundingClientRect();
+      const header = pane.querySelector<HTMLElement>(":scope > .sticky")?.offsetHeight ?? 0;
+      const toRow = at.top - box.top - header - 8;
+      if (at.bottom <= box.bottom && at.top >= box.top + header) return;
+      // The part's own act, when it marks one (`data-part-act`), must be in view too: the row goes to the top, and if
+      // the act is still below the pane's foot, the pane goes on until the act is clear of the "more below" mark there.
+      const act = item.querySelector<HTMLElement>("[data-part-act]");
+      const actBelow = act ? act.getBoundingClientRect().bottom - box.bottom + ACT_CLEAR : 0;
+      const fitAll = Math.max(0, at.bottom - box.bottom + 24);
+      const by = onlyOn ? actBelow : Math.max(Math.min(toRow, fitAll), actBelow);
+      if (!onlyOn || by > 0) pane.scrollTop += by;
+    };
+    bring(false);
+    // What the part shows may arrive a moment later (a quotation read from the engine) and push the act back under the
+    // pane's foot. Until the person does anything, or a few seconds pass, the pane goes on by as much as the part grew.
+    if (typeof ResizeObserver === "undefined") return;
+    let left = pane.scrollTop;
+    const watch = new ResizeObserver(() => {
+      if (Math.abs(pane.scrollTop - left) > 1) return stop();
+      bring(true);
+      left = pane.scrollTop;
+    });
+    const events = ["wheel", "pointerdown", "keydown", "touchstart"] as const;
+    const timer = window.setTimeout(() => stop(), 3000);
+    function stop() {
+      watch.disconnect();
+      window.clearTimeout(timer);
+      for (const name of events) pane?.removeEventListener(name, stop);
+    }
+    for (const name of events) pane.addEventListener(name, stop, { passive: true });
+    watch.observe(item);
+    return stop;
   }, [open]);
   const toggle = (id: string, from: HTMLElement) => {
     anchor.current = { node: from, top: from.getBoundingClientRect().top };

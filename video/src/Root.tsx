@@ -9,6 +9,8 @@ import { Analytics, Engineer, Line, Visibility } from "./scenes/factory";
 import { FPS, H, W, c } from "./theme";
 import * as F from "./factory/scenes";
 import * as FS from "./factory/script";
+import * as S from "./shape/scenes";
+import * as SS from "./shape/script";
 
 const FSCENE: Record<FS.SceneId, React.FC<{ voiceAt: number }>> = { title: F.Title, premise: F.Premise, studio: F.Studio, engineer: F.Engineer, floor: F.Floor, proof: F.Proof, line: F.Line, people: F.People, close: F.Close };
 const fVoiceStart = Math.round(FS.LEAD * FPS);
@@ -31,6 +33,32 @@ const FactoryFilm: React.FC = () => (
     {FS.hasNarration ? (
       <Sequence from={fVoiceStart}>
         <Audio src={staticFile("audio/narration-factory.mp3")} />
+      </Sequence>
+    ) : null}
+  </AbsoluteFill>
+);
+
+const SSCENE: Record<SS.SceneId, React.FC<S.Props>> = { title: S.Title, ideas: S.Ideas, explore: S.Explore, brief: S.Brief, verdict: S.VerdictScene, route: S.Route, slice: S.Slice, factory: S.Factory, lookback: S.Lookback, close: S.Close };
+const sVoiceStart = Math.round(SS.LEAD * FPS);
+const sVoiceEnd = SS.cuts[SS.cuts.length - 1].from + SS.cuts[SS.cuts.length - 1].voiceAt + SS.cuts[SS.cuts.length - 1].voiceLen;
+const sMusic = (f: number) =>
+  interpolate(f, [0, 12, sVoiceStart - 8, sVoiceStart + 14, sVoiceEnd, sVoiceEnd + 20, SS.TOTAL - 50, SS.TOTAL - 2], [0, 0.6, 0.6, 0.16, 0.16, 0.58, 0.58, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+
+/** The third film: an idea's way through MACH, from the first thought to proof, in light theme. */
+const ShapeFilm: React.FC = () => (
+  <AbsoluteFill style={{ background: c.cream }}>
+    {SS.cuts.map((cut) => {
+      const Part = SSCENE[cut.id];
+      return (
+        <Sequence key={cut.id} from={cut.from} durationInFrames={cut.frames} name={cut.id}>
+          <Part voiceAt={cut.voiceAt} cue={SS.cueFor(cut.id, cut.voiceAt, cut.voiceLen)} />
+        </Sequence>
+      );
+    })}
+    {SS.hasMusic ? <Audio src={staticFile("audio/music-shape.mp3")} volume={sMusic} /> : null}
+    {SS.hasNarration ? (
+      <Sequence from={sVoiceStart}>
+        <Audio src={staticFile("audio/narration-shape.mp3")} />
       </Sequence>
     ) : null}
   </AbsoluteFill>
@@ -69,5 +97,6 @@ export const Root: React.FC = () => (
   <>
     <Composition id="MachDemo" component={Film} durationInFrames={TOTAL} fps={FPS} width={W} height={H} />
     <Composition id="MachFactory" component={FactoryFilm} durationInFrames={FS.TOTAL} fps={FPS} width={W} height={H} />
+    <Composition id="MachShape" component={ShapeFilm} durationInFrames={SS.TOTAL} fps={FPS} width={W} height={H} />
   </>
 );

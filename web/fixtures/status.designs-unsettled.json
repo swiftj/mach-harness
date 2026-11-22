@@ -1,0 +1,145 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Teams work together.",
+      "outcomes": [
+        "Teams can work together"
+      ],
+      "issue": null,
+      "url": null
+    },
+    "approvals_withdrawn": [],
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "Team membership",
+        "status": "open",
+        "revision": 1,
+        "acceptance_criteria": [
+          "Only invited people can join"
+        ],
+        "issue": null,
+        "url": null,
+        "counts": {
+          "total": 0,
+          "by_progress": {},
+          "ready_or_further": 0,
+          "ready_or_further_means": "marked ready to build, being built, or shipped"
+        }
+      }
+    ],
+    "slices": [],
+    "saved": {
+      "everything_saved": false,
+      "note": "1 thing is not saved yet.",
+      "not_saved": [
+        {
+          "kind": "needs_unpublished",
+          "target": null,
+          "text": "The technical needs have changes that are not published. Publish them so the engineer gets them."
+        }
+      ]
+    },
+    "order": [
+      {
+        "epic_id": "EPIC-001",
+        "issue": null,
+        "slices": [],
+        "on_github": false,
+        "github_order": null,
+        "github_read_at": null,
+        "matches_github": null,
+        "unfinished": false,
+        "taken_from_github": false,
+        "could_not_read": false,
+        "note": null
+      }
+    ],
+    "github": {
+      "repository": null,
+      "form": null,
+      "last_read": null
+    },
+    "current_slice": null,
+    "last_refreshed": null,
+    "needs": {
+      "active": [
+        "TN-01"
+      ],
+      "retired": [],
+      "nothing_to_say": [],
+      "unanswered": [
+        "people",
+        "connections",
+        "never",
+        "priority",
+        "given"
+      ],
+      "unpublished_changes": true,
+      "published": {
+        "saved": null,
+        "unfinished": false,
+        "revision": null,
+        "sha256": null,
+        "approved_by": null,
+        "published_at": null,
+        "issue": null,
+        "url": null,
+        "github": null,
+        "newer_elsewhere": false,
+        "changed_on_github": false
+      },
+      "adrs_behind": [],
+      "next": "The technical needs have changes that are not published: publish them so the engineer gets them."
+    },
+    "designs": [
+      {
+        "design_id": "DES-01",
+        "name": "architecture.md",
+        "format": "markdown",
+        "sha256": "f2b9dbe5d56e4e573ebe1d492c6643a0a533138348aba180da50e37b5c7779a7",
+        "line_count": 22,
+        "sections": 5,
+        "document_matches": true,
+        "mapped": true,
+        "topics": {
+          "coding-standards": "silent",
+          "deployment": "silent",
+          "framework": "silent",
+          "language": "silent",
+          "storage": "decided",
+          "testing": "partly"
+        },
+        "other": 1,
+        "conflicts": 1,
+        "unsettled": [
+          1
+        ],
+        "published": false,
+        "unpublished_changes": false
+      }
+    ],
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Start a new slice (slice new --epic EPIC-NNN --title \"...\")."
+    ],
+    "next_actions": [
+      {
+        "kind": "start_slice",
+        "target": null,
+        "title": "Start a new slice",
+        "reason": "No slice of intent is being defined right now.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

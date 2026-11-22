@@ -22,7 +22,7 @@ if (existsSync(cues)) {
   const lines = sheet.timeline ?? sheet.lines ?? sheet.cues ?? [];
   audio.lines = lines.map((l) => ({ start: l.start, end: l.end }));
 }
-// The companion film about the factory has its own voice and music.
+// The companion films (the factory, and shape: from idea to proof) each have their own voice and music.
 const film = (name) => {
   const out = { narration: null, music: null, lines: [] };
   const voice = join(root, `public/audio/narration-${name}.mp3`), bed = join(root, `public/audio/music-${name}.mp3`), sheet = join(root, `public/audio/narration-${name}.cues.json`);
@@ -32,5 +32,6 @@ const film = (name) => {
   return out;
 };
 audio.factory = film("factory");
+audio.shape = film("shape");
 writeFileSync(join(root, "src/assets.json"), JSON.stringify({ footage, audio }, null, 2) + "\n");
 console.log(JSON.stringify({ footage, audio }, null, 2));

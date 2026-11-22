@@ -1,0 +1,13 @@
+{
+  "exit_code": 0,
+  "data": {
+    "kind": "never",
+    "nothing_to_say": true,
+    "changed": true,
+    "published": false,
+    "factory_authorized": false,
+    "note": "Nothing to say about never: it is not asked again. Adding a need of this kind answers it instead."
+  },
+  "refused": null,
+  "hint": null
+}

@@ -16,9 +16,16 @@
     "light-needs-you": 8.8,
     "light-record": 15.53,
     "light-switch": 8.53,
+    "shape-board": 11.8,
+    "shape-brief": 11.67,
+    "shape-case": 17.23,
+    "shape-explore": 17.37,
+    "shape-lookback": 14.13,
+    "shape-route": 16.4,
     "studio-home": 10.03,
     "studio-interview": 26.23,
     "studio-ready": 12.3,
+    "studio-spec-rules": 14.57,
     "studio-spec": 10.17
   },
   "audio": {
@@ -101,6 +108,52 @@
         {
           "start": 116.42,
           "end": 125.22
+        }
+      ]
+    },
+    "shape": {
+      "narration": 157.79,
+      "music": 180.04,
+      "lines": [
+        {
+          "start": 0.3,
+          "end": 7.9
+        },
+        {
+          "start": 9.4,
+          "end": 27.88
+        },
+        {
+          "start": 29.38,
+          "end": 43.38
+        },
+        {
+          "start": 44.88,
+          "end": 58.56
+        },
+        {
+          "start": 60.06,
+          "end": 76.94
+        },
+        {
+          "start": 78.44,
+          "end": 95.56
+        },
+        {
+          "start": 97.06,
+          "end": 109.78
+        },
+        {
+          "start": 111.28,
+          "end": 127.92
+        },
+        {
+          "start": 129.42,
+          "end": 139.26
+        },
+        {
+          "start": 140.96,
+          "end": 147.76
         }
       ]
     }

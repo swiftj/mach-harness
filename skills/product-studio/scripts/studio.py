@@ -34,10 +34,12 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import design  # noqa: E402
 import handoff  # noqa: E402
 import issues  # noqa: E402
 import jira_export  # noqa: E402
 import mocks  # noqa: E402
+import needs  # noqa: E402
 import prd  # noqa: E402
 import product  # noqa: E402
 import requests_in  # noqa: E402
@@ -437,11 +439,16 @@ class Studio:
         return self.validate_slice.principles_shape(found) if found else None
 
     def save_principles(self, items: List[Dict[str, Any]], what: str) -> None:
-        """Write the draft principles, then check the whole workspace; on a new structural problem, put the file back and refuse."""
+        """Write the draft principles (save_product_file)."""
+        self.save_product_file(self.principles_path, {"schema_version": 1, "project_id": self.project_id(),
+                                                      "principles": json.loads(ticket_rules().principles_canonical(items))}, what)
+
+    def save_product_file(self, path: Path, data: Dict[str, Any], what: str) -> None:
+        """Write one project-wide product file (the principles, M13; the technical needs, M17), then check the whole workspace;
+        on a new structural problem, put the file back and refuse."""
         before_errors = set(self.structural()["errors"])
-        path = self.principles_path
         before = path.read_text(encoding="utf-8") if path.is_file() else None
-        write(path, canonical({"schema_version": 1, "project_id": self.project_id(), "principles": json.loads(ticket_rules().principles_canonical(items))}))
+        write(path, canonical(data))
         introduced = [error for error in self.structural()["errors"] if error not in before_errors]
         if introduced:
             if before is None:
@@ -585,7 +592,7 @@ def principle_flags(studio: Studio, slice_id: str, current: Sequence[Dict[str, A
 def principles_status(studio: Studio, ledger: Dict[str, Any], slice_rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     """The principles block of status, refresh and principle list."""
     items = studio.principles()
-    view = handoff.principles_view(ledger, ticket_rules())
+    view = handoff.published_view(handoff.PRINCIPLES_KIND, ledger, ticket_rules())
     unpublished = studio.unpublished(ledger)
     stale = [row["slice_id"] for row in slice_rows if (row.get("principles") or {}).get("note")]
     if view["newer_elsewhere"]:
@@ -664,6 +671,8 @@ def describe(studio: Studio) -> Dict[str, Any]:
         **github_updates_waiting(studio),
         **prd.status_field(sys.modules[__name__], studio),  # M13 D: imported PRDs; nothing when there are none
         **shape.status_field(sys.modules[__name__], studio),  # M16 A: ideas by stage; nothing when there are none
+        **needs.status_field(sys.modules[__name__], studio),  # M17 A: technical needs; nothing for a project that never opened them
+        **design.status_field(sys.modules[__name__], studio),  # M17 B: brought-in designs; nothing when there are none
         "structurally_valid": structural["valid"] if structural else None,
         "structural_errors": structural["errors"] if structural else [],
         "factory_authorized": False,
@@ -703,6 +712,7 @@ def saved_state(studio: Studio, ledger: Dict[str, Any], slices: Dict[str, Dict[s
         else:
             waiting.append({"kind": "principles_unpublished", "target": None,
                             "text": "The product principles have changes that are not published. Publish them so the builders get them."})
+    waiting += needs.not_saved(sys.modules[__name__], studio, ledger)  # M17 A: technical needs not published, or a publish unfinished
     waiting += shape.not_saved(sys.modules[__name__], studio)  # M16 A: an idea's save to GitHub unfinished, or changed since
     problem = (ledger.get("seen") or {}).get("problem")
     if problem:
@@ -1745,7 +1755,7 @@ def cmd_principle_publish(studio: Studio, args: argparse.Namespace) -> int:
     for item in items:
         if item["status"] == "active":
             principle_findings(studio, item["id"], item["statement"])
-    saved = studio.handoff().publish_principles(project, items)
+    saved = studio.handoff().publish_set(handoff.PRINCIPLES_KIND, project, items)
     active = sum(1 for item in items if item["status"] == "active")
     if saved["saved_to"] == "folder":
         folder = Path(saved["folder"])
@@ -1762,17 +1772,17 @@ def reconcile_principles(studio: Studio, take: str) -> int:
     """Someone else published a newer version of the principles: keep mine (my next publish replaces theirs) or take theirs."""
     hand = studio.handoff()
     ledger = hand.load()
-    view = handoff.principles_view(ledger, ticket_rules())
+    view = handoff.published_view(handoff.PRINCIPLES_KIND, ledger, ticket_rules())
     seen = (ledger.get("seen") or {}).get("principles") or {}
     if not view["newer_elsewhere"] or not seen.get("principles"):
         raise StudioError("There is no newer version of the principles on GitHub to choose from. Refresh first if someone has just published one.")
     if take == "theirs":
         theirs = seen["principles"]
         studio.save_principles(theirs, "Taking the principles from GitHub")
-        hand.take_principles(seen["revision"], ticket_rules().principles_sha256(theirs), theirs, seen.get("approved_by"))
+        hand.take_set(handoff.PRINCIPLES_KIND, seen["revision"], ticket_rules().principles_sha256(theirs), theirs, None, seen.get("approved_by"))
         note = "Your principles now are the version from GitHub."
     else:
-        hand.keep_mine(seen["revision"])
+        hand.keep_mine(handoff.PRINCIPLES_KIND, seen["revision"])
         note = "Your principles stay as they are. Publishing them replaces the version on GitHub."
     return emit({"reconciled": "principles", "took": take, "github_version": seen["revision"], "note": note, "factory_authorized": False})
 
@@ -1791,10 +1801,12 @@ def cmd_refresh(studio: Studio, args: argparse.Namespace) -> int:
     if view.get("newer_elsewhere") and seen.get("principles") and studio.path("project").is_file() and not studio.unpublished(hand.load()):
         # Nothing here is unpublished, so nothing is lost: the newer principles another product manager published are taken.
         studio.save_principles(seen["principles"], "Taking the principles from GitHub")
-        hand.take_principles(seen["revision"], ticket_rules().principles_sha256(seen["principles"]), seen["principles"], seen.get("approved_by"))
-        github["principles"] = handoff.principles_view(hand.load(), ticket_rules())
+        hand.take_set(handoff.PRINCIPLES_KIND, seen["revision"], ticket_rules().principles_sha256(seen["principles"]), seen["principles"], None,
+                      seen.get("approved_by"))
+        github["principles"] = handoff.published_view(handoff.PRINCIPLES_KIND, hand.load(), ticket_rules())
         taken = {"revision": seen["revision"], "note": f"Another product manager published version {seen['revision']} of the principles; it was taken, "
                                                        "since you had no unpublished changes."}
+    needs_taken = needs.take_at_refresh(sys.modules[__name__], studio, github)  # M17 A: nothing for a project without needs
     if github.get("refreshed"):
         session = studio.session()
         session["refreshed_at"] = now(None)
@@ -1805,6 +1817,7 @@ def cmd_refresh(studio: Studio, args: argparse.Namespace) -> int:
         "requests": requests,
         "github": github,
         **({"principles_taken": taken} if taken else {}),
+        **needs_taken,
         **shipped_moved_field(studio),
         **shape.refresh_field(sys.modules[__name__], studio),  # M16 A: the idea issues read back; nothing when there are no ideas
         "factory_authorized": False,
@@ -1960,10 +1973,13 @@ def kebab(title: str) -> str:
 
 
 def cmd_reconcile(studio: Studio, args: argparse.Namespace) -> int:
-    """A slice someone else saved a newer version of on GitHub, or the principles: keep mine or take theirs, whole."""
+    """A slice someone else saved a newer version of on GitHub, or the principles or technical needs: keep mine or take theirs, whole."""
     if args.artifact == "principles":
         studio.prepare()
         return reconcile_principles(studio, args.take)
+    if args.artifact == "needs":
+        studio.prepare()
+        return emit(needs.reconcile(sys.modules[__name__], studio, args.take))
     if not product.SLICE_RE.fullmatch(args.artifact) or not handoff.slice_view(studio.handoff().load(), args.artifact, None, ticket_rules())["newer_elsewhere"]:
         raise StudioError(f"{args.artifact} has no newer version on GitHub to choose from. Refresh first if someone has just saved one.")
     return reconcile_slice(studio, args.artifact, args.take)
@@ -2063,14 +2079,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MACH Product Studio operations (drafts only; never starts Factory work)")
     parser.add_argument("--project", type=Path, help="project root (default: nearest folder with .factory/ or .git)")
     parser.add_argument("--app", action="store_true", help="word refusals and reports for the local web app: no terminal commands, plus a hint")
-    sub = parser.add_subparsers(dest="command", required=True, metavar="{where,status,validate,refresh,reconcile,project,epic,slice,principle,policy,prd,request,acceptance,jira,idea,brief,case,verdict,lookback}")
+    sub = parser.add_subparsers(dest="command", required=True, metavar="{where,status,validate,refresh,reconcile,project,epic,slice,principle,need,design,policy,prd,request,acceptance,jira,idea,brief,case,verdict,lookback}")
 
     sub.add_parser("where", help="print the workspace and the files the interview needs").set_defaults(func=cmd_where)
     sub.add_parser("status", help="every artifact with its state, and what to do next").set_defaults(func=cmd_status)
     sub.add_parser("validate", help="structural check of the whole workspace").set_defaults(func=cmd_validate)
     sub.add_parser("refresh", help="read the project, epics and slices on GitHub, and the requests; drafts are never lost").set_defaults(func=cmd_refresh)
     p = sub.add_parser("reconcile", help="choose yours or theirs for a slice someone else saved a newer version of on GitHub")
-    p.add_argument("artifact", metavar="SLICE-ID|principles", help="the slice, or the principles, whose newer version on GitHub you are choosing about")
+    p.add_argument("artifact", metavar="SLICE-ID|principles|needs", help="the slice, the principles or the technical needs whose newer version on GitHub you are choosing about")
     p.add_argument("--take", required=True, choices=("mine", "theirs"), help="keep your draft, or take the version on GitHub whole")
     p.set_defaults(func=cmd_reconcile)
 
@@ -2188,6 +2204,9 @@ def build_parser() -> argparse.ArgumentParser:
     principle.add_parser("list", help="the principles, where they are published, and slices answered under older ones; changes nothing").set_defaults(func=cmd_principle_list)
     principle.add_parser("publish", help="publish the principles on the project's GitHub issue, or to the ready folder (only on the product manager's word)"
                          ).set_defaults(func=cmd_principle_publish)
+
+    needs.add_commands(sub, sys.modules[__name__])  # M17 A: technical needs (needs.py)
+    design.add_commands(sub, sys.modules[__name__])  # M17 B: bringing in a design (design.py)
 
     policy = sub.add_parser("policy", help="the organisation's policy packs (M14): list them, or record an owner's acceptance of a concern").add_subparsers(
         dest="action", required=True)

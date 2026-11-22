@@ -1,0 +1,75 @@
+{
+  "exit_code": 0,
+  "data": {
+    "needs": [],
+    "kinds": [
+      {
+        "kind": "people",
+        "question": "Who uses it, how many, from where, and at what busiest moment?",
+        "needs": [],
+        "nothing_to_say": false
+      },
+      {
+        "kind": "data",
+        "question": "What does it keep, how sensitive is that, and how long must it be kept?",
+        "needs": [],
+        "nothing_to_say": false
+      },
+      {
+        "kind": "connections",
+        "question": "What must it work with that already exists?",
+        "needs": [],
+        "nothing_to_say": false
+      },
+      {
+        "kind": "never",
+        "question": "What must never happen, and what does it cost if it does?",
+        "needs": [],
+        "nothing_to_say": false
+      },
+      {
+        "kind": "priority",
+        "question": "When two qualities conflict (speed, cost, safety, ease of change), which wins?",
+        "needs": [],
+        "nothing_to_say": false
+      },
+      {
+        "kind": "given",
+        "question": "What is already decided outside this product?",
+        "needs": [],
+        "nothing_to_say": false
+      }
+    ],
+    "active": [],
+    "retired": [],
+    "nothing_to_say": [],
+    "unanswered": [
+      "people",
+      "data",
+      "connections",
+      "never",
+      "priority",
+      "given"
+    ],
+    "unpublished_changes": false,
+    "published": {
+      "saved": null,
+      "unfinished": false,
+      "revision": null,
+      "sha256": null,
+      "approved_by": null,
+      "published_at": null,
+      "issue": null,
+      "url": null,
+      "github": null,
+      "newer_elsewhere": false,
+      "changed_on_github": false
+    },
+    "adrs_behind": [],
+    "next": "Not answered yet: people, data, connections, never, priority, given. Each can be a need or 'nothing to say'.",
+    "note": "A technical need says what the product requires of whatever is built, without technology. The engineer reads the published needs when recording their decisions; only an accepted decision chooses a technology.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

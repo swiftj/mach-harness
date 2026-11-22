@@ -96,6 +96,15 @@ IMPLEMENTATION_TERMS = (
     "api", "cache", "cron", "database", "db", "endpoint", "http", "https", "json", "kafka",
     "microservice", "payload", "redis", "schema", "sql", "status code", "ttl",
 )
+# Products and vendors a product manager is likely to name in a technical need (M17). Needs only: a spec or a principle
+# is held to IMPLEMENTATION_TERMS alone, as before. Unambiguous names only, so a plain word is never refused.
+PRODUCT_TERMS = (
+    "angular", "aws", "azure", "cassandra", "django", "docker", "dynamodb", "elasticsearch", "firebase", "gcp", "golang", "graphql",
+    "javascript", "kotlin", "kubernetes", "lambda", "laravel", "mariadb", "mongo", "mongodb", "mysql", "next.js", "nextjs", "node.js",
+    "nodejs", "oauth", "postgres", "postgresql", "rabbitmq", "s3", "saml", "snowflake", "sqlite", "supabase",
+    "terraform", "typescript", "vercel", "vue",
+)
+PRODUCT_RE = re.compile(r"(?<![\w-])(" + "|".join(re.escape(t) for t in PRODUCT_TERMS) + r")(?![\w-])", re.IGNORECASE)
 IMPLEMENTATION_RE = re.compile(
     r"(?<![\w-])(" + "|".join(re.escape(t) for t in IMPLEMENTATION_TERMS) + r")(?![\w-])",
     re.IGNORECASE,
@@ -489,10 +498,30 @@ def statement_findings(identifier: str, statement: str) -> List[Finding]:
     report = Report()
     check_absolute(identifier, statement, 0, report, "A principle is absolute")
     check_vague(identifier, statement, 0, report)
+    check_technology(identifier, statement, report, "A principle says what must hold for the people using the product; "
+                                                    "a technical rule is an architecture decision (ADR).")
+    return report.findings
+
+
+def check_technology(identifier: str, statement: str, report: Report, advice: str) -> None:
+    """No technology in a product-level statement: an error naming the words found, then `advice`. Shared by the principles
+    (statement_findings) and the technical needs (need_findings), so both are held to the same words."""
     words = implementation_words(statement)
     if words:
-        report.error(0, "implementation-detail", f"{identifier} names technology ({', '.join(sorted(words))}). A principle says what must hold for "
-                                                 "the people using the product; a technical rule is an architecture decision (ADR).")
+        report.error(0, "implementation-detail", f"{identifier} names technology ({', '.join(sorted(words))}). {advice}")
+
+
+def need_findings(identifier: str, statement: str) -> List[Finding]:
+    """The check a technical need's statement is held to (M17): the principles' technology check, nothing else. A need says
+    what the product requires of whatever is built; choosing the technology is an engineer's decision, recorded as an ADR.
+    A need of kind `given` is not checked: it records a technology someone outside the product already decided."""
+    report = Report()
+    advice = ("A technical need says what the product requires, without technology; "
+              "if someone already decided the technology, record it as a given, with who said it.")
+    check_technology(identifier, statement, report, advice)
+    products = sorted({match.group(1).lower() for match in PRODUCT_RE.finditer(strip_quotes(statement))})
+    if products and not report.findings:
+        report.error(0, "implementation-detail", f"{identifier} names technology ({', '.join(products)}). {advice}")
     return report.findings
 
 

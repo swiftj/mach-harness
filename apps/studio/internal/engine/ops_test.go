@@ -13,15 +13,17 @@ import (
 func TestAllowlistIsExactlyTheContract(t *testing.T) {
 	want := []string{
 		"brief.check", "brief.show", "case.check", "case.show",
+		"design.import", "design.list", "design.publish", "design.settle", "design.show",
 		"epic.add", "epic.current", "epic.link", "epic.renumber", "epic.set",
 		"idea.add", "idea.apply", "idea.chain", "idea.change", "idea.faults", "idea.list", "idea.lookups", "idea.map", "idea.map-status", "idea.publish",
 		"idea.renumber", "idea.settle", "idea.show", "idea.size", "idea.stage",
 		"jira.export", "jira.keys", "lookback.record",
+		"need.add", "need.list", "need.none", "need.publish", "need.retire", "need.set",
 		"policy.accept", "policy.list",
 		"prd.apply", "prd.confirm", "prd.draft", "prd.import", "prd.list", "prd.map", "prd.settle", "prd.show", "prd.status",
 		"principle.add", "principle.list", "principle.publish", "principle.retire", "principle.set",
 		"project.init", "project.set",
-		"reconcile", "reconcile.principles", "refresh", "request.link", "request.list", "request.met", "request.pick", "request.show",
+		"reconcile", "reconcile.needs", "reconcile.principles", "refresh", "request.link", "request.list", "request.met", "request.pick", "request.show",
 		"slice.check", "slice.link", "slice.mock.add", "slice.mock.list", "slice.mock.remove", "slice.move", "slice.new", "slice.pause", "slice.ready",
 		"slice.renumber", "slice.reopen", "slice.resume", "slice.set", "slice.show", "slice.take", "status", "validate", "verdict.record", "where",
 	}
@@ -48,7 +50,7 @@ func TestAllowlistIsExactlyTheContract(t *testing.T) {
 		}
 		_, file := op.New().(engine.FileArgs)
 		carries := map[string]bool{"jira.keys": true, "prd.import": true, "prd.map": true, "prd.draft": true, "slice.mock.add": true,
-			"idea.lookups": true, "idea.map": true}[name]
+			"idea.lookups": true, "idea.map": true, "design.import": true}[name]
 		if file != carries || (op.BodyLimit() > engine.MaxBodyBytes) != carries {
 			t.Errorf("%s: carries a file %v, body limit %d", name, file, op.BodyLimit())
 		}
@@ -72,6 +74,28 @@ func TestAllowlistIsExactlyTheContract(t *testing.T) {
 		if op, _ := engine.Lookup(name); op.Network || op.ReadOnly {
 			t.Errorf("%s changes the workspace and never reaches GitHub", name)
 		}
+	}
+	// M17: the needs' and designs' reads; publishing the needs writes the project's GitHub issue and
+	// choosing a version of them reads GitHub's; every other act stays on this computer (a design is
+	// never sent to GitHub).
+	for _, name := range []string{"need.list", "design.list", "design.show"} {
+		if op, _ := engine.Lookup(name); !op.ReadOnly || op.Network {
+			t.Errorf("%s should be read-only and local", name)
+		}
+	}
+	for _, name := range []string{"need.publish", "reconcile.needs"} {
+		if op, _ := engine.Lookup(name); !op.Network || op.ReadOnly {
+			t.Errorf("%s reaches GitHub and changes the workspace", name)
+		}
+	}
+	for _, name := range []string{"need.add", "need.set", "need.retire", "need.none", "design.import", "design.settle", "design.publish"} {
+		if op, _ := engine.Lookup(name); op.Network || op.ReadOnly {
+			t.Errorf("%s changes the workspace and never reaches GitHub", name)
+		}
+	}
+	// The needs conversation records a design's map; no person's button does.
+	if _, ok := engine.Lookup("design.map"); ok {
+		t.Errorf("design.map is reachable as an operation")
 	}
 	for _, name := range []string{"request.list", "request.show", "slice.show", "where"} {
 		if op, _ := engine.Lookup(name); !op.ReadOnly {
@@ -159,7 +183,7 @@ func argv(t *testing.T, name, body string) ([]string, error) {
 // studioCommands are the first words of the engine's own commands the host may run.
 var studioCommands = map[string]bool{"where": true, "status": true, "validate": true, "refresh": true, "project": true, "epic": true, "slice": true,
 	"reconcile": true, "request": true, "principle": true, "policy": true, "jira": true, "prd": true,
-	"idea": true, "brief": true, "case": true, "verdict": true, "lookback": true}
+	"idea": true, "brief": true, "case": true, "verdict": true, "lookback": true, "need": true, "design": true}
 
 // Every operation's JSON arguments become one fixed vector, options always in --name=value form.
 func TestEveryOperationsArgumentVector(t *testing.T) {
@@ -288,6 +312,7 @@ func TestEveryOperationsArgumentVector(t *testing.T) {
 		{"lookback.record", `{"idea_id":"IDEA-019","assumption":"A-2","result":"unknown","note":"Not counted."}`,
 			[]string{"lookback", "record", "IDEA-019", "--assumption=A-2", "--result=unknown", "--note=Not counted."}},
 	}
+	cases = append(cases, needsArgvCases...)
 	covered := map[string]bool{}
 	for _, c := range cases {
 		got, err := argv(t, c.op, c.body)

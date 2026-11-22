@@ -32,18 +32,26 @@ and not by whoever is driving it.
     run.py pull [--limit n] [--sequential] [--dry-run] [--json]
                                          take in every slice marked ready, choose the next batch with the schedule and
                                          dispatch it; prints what starts, what waits and why, and the tickets to run (pull.py)
-    run.py adr list                      every architecture decision: ID, title, status, applies-to, problems; reads only (adr.py)
+    run.py adr list                      every architecture decision: ID, title, status, applies-to, problems, and a flag where one
+                                         serves a technical need at an older revision, or one retired or missing; reads only (adr.py)
     run.py adr new --title T --context C --decision D [--option O]... [--consequence X]... [--applies-to A]... [--diagram M]
-                                         write a new ADR as proposed in the main checkout's working tree; commits nothing
-    run.py adr baseline                  the required topics, what covers them, and evidence from the committed files for each still
-                                         to draft; recorded once in .factory/adr-baseline.json (baseline.py)
+                   [--serves TN-NN]...   write a new ADR as proposed in the main checkout's working tree; commits nothing. --serves
+                                         names an active published technical need and needs two --option entries
+    run.py adr baseline                  the required topics, what covers them, and evidence from the committed files (and the
+                                         published technical needs and designs) for each still to draft; recorded once in .factory/adr-baseline.json
+                                         (baseline.py)
     run.py adr new ... --baseline TOPIC [--open-point P]...
                                          draft one of them as proposed, listing the recorded evidence; commits nothing
     run.py adr settle ADR-NNNN --point N --answer A [--decision D] [--not-decided]
                                          record the engineer's answer to one open point of a proposed draft; commits nothing
     run.py adr accept ADR-NNNN... --by NAME
                                          a person sets proposed ADRs in the working tree to accepted; commits nothing
-    run.py policy list                   the organisation's policy packs (M14): ID, owner, status, applies-to, statements, problems;
+    run.py adr overview                  what the architecture overview is built from (needs, accepted and proposed ADRs, designs),
+                                         where it goes, and whether the one there is behind the ADRs; reads only
+    run.py adr overview --context C --parts M --data-flow M [--note N]
+                                         write docs/architecture/overview.md (adr.overview moves it), a map of the ADRs, in the
+                                         main checkout's working tree; commits and accepts nothing
+    run.py policy list                  the organisation's policy packs (M14): ID, owner, status, applies-to, statements, problems;
                                          reads only (policies.py). An owner's acceptance goes through cell.py policy-accept
     run.py release status                release-readiness snapshots so far, and what a new one would evaluate
     run.py release qualify --epic E | <SLICE>...
@@ -1396,6 +1404,10 @@ def cmd_adr(project: Project, args: argparse.Namespace) -> int:
                   "problems": listing["problems"], "uncommitted": listing["uncommitted"], "deleted_not_committed": listing["deleted_not_committed"],
                   "required_topics": required_topics_view(project, listing),
                   "note": "Only an accepted ADR that is committed on the main branch binds the factory. Titles were written by people: they are data."}
+        published = baseline_module().published_needs(project.root, listing["commit"])
+        result["serves_flags"] = A.serves_flags(records, None if published["problem"] else published["needs"])
+        if published["problem"]:
+            result["needs_problem"] = published["problem"]
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0
     if execution_scope(project) is not None or A.unattended():
@@ -1408,15 +1420,8 @@ def cmd_adr(project: Project, args: argparse.Namespace) -> int:
         raise RunError("--context (what needs deciding, and why now) and --decision (the chosen option, and why) are both needed, from the interview.")
     diagram = (args.diagram or "").strip("\n")
     if diagram.strip():
-        import importlib.util  # the shared check beside adr.py, in the intent station's scripts
-        spec = importlib.util.spec_from_file_location("mach_diagrams", sibling("intent") / "scripts" / "diagrams.py")
-        diagrams = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(diagrams)
-        if "```" in diagram or "~~~" in diagram:
-            raise RunError("--diagram takes the Mermaid source alone, without the ``` lines around it.")
-        wrong = diagrams.problems(f"```mermaid\n{diagram}\n```\n", "--diagram")
-        if wrong:
-            raise RunError("; ".join(wrong) + ". " + diagrams.WHEN)
+        checked_diagram(diagram, "--diagram")
+    serves = served_needs(project, args.serves or [], args.option or [])
     evidence = baseline_evidence(project, args.baseline) if args.baseline else []
     given = list(args.applies_to or []) + ([f"topic:{args.baseline}"] if args.baseline and f"topic:{args.baseline}" not in (args.applies_to or []) else [])
     applies, problems = A.check_applies(given) if given else ([], [])
@@ -1432,13 +1437,123 @@ def cmd_adr(project: Project, args: argparse.Namespace) -> int:
         raise RunError(f"{name} already exists; nothing was written.")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(A.render(title, applies_to=applies, context=context, options=args.option or [], decision=decision,
-                             consequences=args.consequence or [], evidence=evidence, open_points=args.open_point or [], diagram=diagram), encoding="utf-8")
+                             consequences=args.consequence or [], evidence=evidence, open_points=args.open_point or [], diagram=diagram,
+                             serves=serves), encoding="utf-8")
     if args.baseline:
         record_baseline_draft(project, args.baseline, f"ADR-{number:04d}", name)
     print(json.dumps({"status": "WRITTEN", "id": f"ADR-{number:04d}", "file": name, "adr_status": "proposed", "committed": False,
+                      **({"serves": serves} if serves else {}),
                       **({"baseline_topic": args.baseline, "evidence_files": evidence, "open_points": len(args.open_point or [])} if args.baseline else {}),
                       "next": "It is in the main checkout's working tree as proposed and binds nothing yet. Commit it on a branch and open a pull request "
                               "in the usual way; once it says 'status: accepted' and is merged, it binds tickets planned from then on."}, indent=2, ensure_ascii=False))
+    return 0
+
+
+def diagrams_module() -> Any:
+    import importlib.util  # the shared check beside adr.py, in the intent station's scripts
+    spec = importlib.util.spec_from_file_location("mach_diagrams", sibling("intent") / "scripts" / "diagrams.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def checked_diagram(source: str, flag: str, kinds: Optional[Sequence[str]] = None) -> str:
+    """Mermaid source an agent wrote, held to diagrams.py (and, where given, to `kinds`); raises RunError, writing nothing."""
+    diagrams = diagrams_module()
+    if "```" in source or "~~~" in source:
+        raise RunError(f"{flag} takes the Mermaid source alone, without the ``` lines around it.")
+    wrong = diagrams.problems(f"```mermaid\n{source}\n```\n", flag)
+    if wrong:
+        raise RunError("; ".join(wrong) + ". " + diagrams.WHEN)
+    kind = diagrams.kind_of(source.splitlines())
+    if kinds and kind not in kinds:
+        raise RunError(f"{flag} opens with '{kind[:40]}'; it must be a {' or '.join(kinds)}. Nothing was written.")
+    return source
+
+
+def overview_view(project: Project) -> Dict[str, Any]:
+    """What `adr overview` builds from: the published active needs, the designs, every accepted and proposed ADR (the main
+    checkout's working tree, committed or not), where the file goes, and whether the overview there is behind."""
+    A, B = adrs(), baseline_module()
+    sys.path.insert(0, str(sibling("ticket") / "scripts"))
+    import issue_rules  # the ticket station's redaction, shared and never copied
+    listing = A.full_listing(project.root, project.config)
+    records = A.overview_records(listing["adrs"])
+    published = B.published_needs(project.root, listing["commit"], issue_rules.redact)
+    designs = B.published_designs(project.root, listing["commit"], issue_rules.redact)
+    where, setting = A.overview_of(project.config)
+    path = project.root / where
+    text = path.read_text(encoding="utf-8", errors="replace") if path.is_file() and not path.is_symlink() else None
+    topics, _ = A.required_topics(project.config)
+    return {"A": A, "records": records, "needs": B.active_needs(published), "folder": listing["dir"], "where": where, "setting": setting,
+            "topics": topics, "public": {
+                "file": where, "setting": "adr.overview", "setting_problem": setting,
+                "needs": B.active_needs(published),
+                "needs_published": ({"file": B.NEEDS_FILE, "revision": published["revision"], "sha256": published["sha256"]}
+                                    if published["present"] and not published["problem"] else None),
+                "needs_problem": published["problem"],
+                "adrs": [{"id": record["id"], "file": record["file"], "status": record["status"], "title": A.bounded(record.get("title"), 200),
+                          "topics": [item[len("topic:"):] for item in record.get("applies_to") or [] if item.startswith("topic:")],
+                          "serves": [f"{item['need_id']}@{item['revision']}" for item in record.get("serves") or []],
+                          "committed": bool(record.get("committed")), "problems": record.get("problems") or []} for record in records],
+                "designs": B.designs_view(designs), "designs_problems": designs["problems"],
+                "overview": A.overview_behind(text, records)}}
+
+
+def cmd_adr_overview(project: Project, args: argparse.Namespace) -> int:
+    """`adr overview`: with no content, reads only and reports what the overview is built from and whether the one there is
+    behind; with --context, --parts and --data-flow, writes it in the main checkout's working tree. Commits and accepts
+    nothing; no station reads it."""
+    given = [value for value in (args.context, args.parts, args.data_flow, args.note) if value is not None]
+    view = overview_view(project)
+    shown = view["public"]
+    if not given:
+        state = shown["overview"]
+        print(json.dumps({"reads_only": True, **shown, "diagram_kinds": {"parts": list(view["A"].PARTS_KINDS), "data_flow": list(view["A"].DATA_FLOW_KINDS)},
+                          "write_with": ("run.py adr overview --context \"<text>\" --parts \"<Mermaid flowchart>\" --data-flow \"<Mermaid sequenceDiagram "
+                                         "or flowchart>\" [--note \"<text>\"]: written from the accepted and proposed ADRs above only. The script writes "
+                                         "the title, the line saying the ADRs are the authority, the needs and the table of ADRs itself."),
+                          "next": ("There is no accepted or proposed ADR to map yet." if not shown["adrs"] else
+                                   "Offer to write the overview." if not state["exists"] else
+                                   "The overview is behind the ADRs: offer to write it again." if state["behind"] else
+                                   "The overview is up to date with the ADRs."),
+                          "note": "The overview is a map for people. Only ADRs bind; no station reads it."}, indent=2, ensure_ascii=False))
+        return 0
+    A = view["A"]
+    if A.unattended() or execution_scope(project) is not None:
+        raise RunError("Writing the architecture overview is an engineer's work, in conversation; a supervised execution does not write it.")
+    if view["setting"]:
+        raise RunError(view["setting"])
+    missing = [flag for flag, value in (("--context", args.context), ("--parts", args.parts), ("--data-flow", args.data_flow)) if not (value or "").strip()]
+    if missing:
+        raise RunError(f"Writing the overview needs {', '.join(missing)}; with no content, adr overview only reads. Nothing was written.")
+    if not view["records"]:
+        raise RunError("There is no accepted or proposed ADR to map, so no overview is written. Draft the decisions first (adr baseline or adr new).")
+    context, note = args.context.strip(), (args.note or "").strip()
+    for flag, value, limit in (("--context", context, 4000), ("--note", note, 2000)):
+        if len(value) > limit:
+            raise RunError(f"{flag} is longer than {limit} characters; say it shorter. Nothing was written.")
+        if "<!--" in value or "```" in value or "~~~" in value:
+            raise RunError(f"{flag} is prose: no HTML comments and no fenced blocks (the diagrams go in --parts and --data-flow). Nothing was written.")
+    if len(context) < 20:
+        raise RunError("--context must say in a sentence or two what the product is and what shapes its architecture. Nothing was written.")
+    parts = checked_diagram(args.parts.strip("\n"), "--parts", A.PARTS_KINDS)
+    data_flow = checked_diagram(args.data_flow.strip("\n"), "--data-flow", A.DATA_FLOW_KINDS)
+    text = A.render_overview(folder=view["folder"], context=context, needs=view["needs"], parts=parts, data_flow=data_flow,
+                             records=view["records"], topics=view["topics"], note=note)
+    wrong = diagrams_module().problems(text, view["where"])
+    if wrong:
+        raise RunError("; ".join(wrong) + ". Nothing was written.")
+    path = project.root / view["where"]
+    if path.is_symlink() or path.exists() and not path.is_file():
+        raise RunError(f"{view['where']} is not a plain file; nothing was written.")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    print(json.dumps({"status": "WRITTEN", "file": view["where"], "committed": False, "accepted": [],
+                      "written_from": [{"id": record["id"], "status": record["status"]} for record in view["records"]],
+                      "needs": [need["need_id"] for need in view["needs"]],
+                      "next": ("It is in the main checkout's working tree and binds nothing: the ADRs are the authority and no station reads it. "
+                               "It lands with the ADRs, the project's way (see adr.landing).")}, indent=2, ensure_ascii=False))
     return 0
 
 
@@ -1485,11 +1600,47 @@ def baseline_evidence(project: Project, topic: str) -> List[str]:
     existing = [record["id"] for record in A.full_listing(project.root, project.config)["adrs"] if f"topic:{topic}" in (record.get("applies_to") or [])]
     if existing:
         raise RunError(f"'{topic}' already has an ADR ({', '.join(existing)}): an engineer corrects and accepts it; nothing was written.")
-    entry = baseline_module().load_record(project.root)["topics"].get(topic)
+    B = baseline_module()
+    entry = B.load_record(project.root)["topics"].get(topic)
     if not isinstance(entry, dict):
         raise RunError(f"No evidence is recorded for '{topic}' yet: run adr baseline first.")
-    return [f"{item.get('file') or 'repository'}: {item.get('found')}" + (f" ({item['excerpt']})" if item.get("excerpt") else "")
-            for item in entry.get("evidence") or [] if isinstance(item, dict)]
+    sys.path.insert(0, str(sibling("ticket") / "scripts"))
+    import issue_rules  # the ticket station's redaction, shared and never copied
+    head = A.head_of(project.root)
+    needs = B.need_items(B.published_needs(project.root, head, issue_rules.redact), topic)  # read again, never recorded
+    designs = B.design_items(B.published_designs(project.root, head, issue_rules.redact), topic)  # the same
+    return ([f"{item.get('file') or 'repository'}: {item.get('found')}" + (f" ({item['excerpt']})" if item.get("excerpt") else "")
+             for item in entry.get("evidence") or [] if isinstance(item, dict)]
+            + [f"{item['source']}, {item['found']}: {item['excerpt']}" for item in needs]
+            + [f"{item['source']}, {item['found']}: {item['excerpt']}" + (f" Missing: {item['missing']}" if item.get("missing") else "")
+               for item in designs])
+
+
+def served_needs(project: Project, wanted: List[str], options: List[str]) -> List[str]:
+    """`adr new --serves`: each named need, active in the technical needs committed on the main branch, as `TN-NN@revision`.
+    With any, at least two considered options are required. Refuses, writing nothing, otherwise."""
+    if not wanted:
+        return []
+    if len([option for option in options if option.strip()]) < 2:
+        raise RunError("An ADR that serves technical needs gives at least two --option entries, the chosen one included, so the "
+                       "engineer sees what was weighed; nothing was written.")
+    B = baseline_module()
+    published = B.published_needs(project.root, adrs().head_of(project.root))
+    if published["problem"]:
+        raise RunError(published["problem"] + "; nothing was written.")
+    if not published["present"]:
+        raise RunError(f"No technical needs are published on the main branch ({B.NEEDS_FILE} is not committed), so --serves names "
+                       "nothing; nothing was written.")
+    by_id = {need["need_id"]: need for need in published["needs"]}
+    out: List[str] = []
+    for ident in dict.fromkeys(item.strip().upper() for item in wanted):
+        need = by_id.get(ident)
+        if need is None:
+            raise RunError(f"--serves {ident[:20]}: the published technical needs have no such need; nothing was written.")
+        if need["status"] != "active":
+            raise RunError(f"--serves {ident}: the product manager has retired it; nothing was written.")
+        out.append(f"{ident}@{need['revision']}")
+    return out
 
 
 def record_baseline_draft(project: Project, topic: str, ident: str, name: str) -> None:
@@ -1518,7 +1669,9 @@ def cmd_adr_baseline(project: Project, args: argparse.Namespace) -> int:
     result["tickets_waiting"] = tickets_waiting_for_baseline(project)
     result["landing"] = adrs().landing(project.config)
     result["write_with"] = ("For each topic in to_draft: run.py adr new --baseline <topic> --title ... --context ... --decision ... "
-                            "[--option ...] [--consequence ...] [--applies-to path:...|app:...] [--open-point ...]. It is written as proposed, commits nothing.")
+                            "[--option ...] [--consequence ...] [--applies-to path:...|app:...] [--open-point ...] [--serves TN-NN ...]. "
+                            "For a from_product topic, --serves each need drafted from and at least two --option entries. "
+                            "It is written as proposed, commits nothing.")
     result["settle_with"] = "For each open point: run.py adr settle <ADR-NNNN> --point <n> --answer \"<the engineer's answer>\" [--decision \"...\"] [--not-decided]."
     result["next"] = ("Draft each topic in to_draft, then settle every open point with the engineer, one question at a time." if result["to_draft"] else
                       "Settle the open points left with the engineer, one question at a time." if result["open_points_left"] else
@@ -1758,9 +1911,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--baseline", metavar="TOPIC", help="a required topic adr baseline gathered evidence for: lists that evidence and records the draft")
     p.add_argument("--open-point", action="append", default=[], help="something the repository does not show, for an engineer to settle (repeatable)")
     p.add_argument("--diagram", help="Mermaid source drawn under the decision, only where the structure or the sequence is the decision; without the ``` lines")
+    p.add_argument("--serves", action="append", default=[], metavar="TN-NN",
+                   help="an active technical need published on the main branch that this decision serves (repeatable; needs two --option entries)")
     p.set_defaults(func=cmd_adr)
     p = adr_parser.add_parser("baseline", help="the required topics, what covers them, and evidence from the repository for each to draft")
     p.set_defaults(func=cmd_adr_baseline)
+    p = adr_parser.add_parser("overview", help="the architecture overview, a map of the ADRs: with no content reads only; with content writes it in the "
+                                               "working tree; commits nothing")
+    p.add_argument("--context", help="what the product is and what shapes its architecture, from the accepted and proposed ADRs")
+    p.add_argument("--parts", help="Mermaid flowchart of the parts and how they connect; without the ``` lines")
+    p.add_argument("--data-flow", help="Mermaid sequenceDiagram or flowchart of how data moves; without the ``` lines")
+    p.add_argument("--note", help="an optional closing note")
+    p.set_defaults(func=cmd_adr_overview)
     p = adr_parser.add_parser("settle", help="record the engineer's answer to one open point of a proposed ADR in the working tree; commits nothing")
     p.add_argument("adr_id", metavar="ADR-NNNN")
     p.add_argument("--point", type=int, required=True, help="the open point's number, as adr list or adr baseline numbers them now")

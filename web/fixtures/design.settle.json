@@ -1,0 +1,42 @@
+{
+  "exit_code": 0,
+  "data": {
+    "settled": {
+      "n": 1,
+      "against": "TN-01",
+      "settled": "design-is-wrong",
+      "reason": "The design predates the privacy review; invitations go after a year.",
+      "by": "the product manager",
+      "at": "2026-11-21T20:23:08Z"
+    },
+    "settled_means": "the design is wrong on this point",
+    "unsettled": [],
+    "design": {
+      "design_id": "DES-01",
+      "name": "architecture.md",
+      "format": "markdown",
+      "sha256": "f2b9dbe5d56e4e573ebe1d492c6643a0a533138348aba180da50e37b5c7779a7",
+      "line_count": 22,
+      "sections": 5,
+      "document_matches": true,
+      "mapped": true,
+      "topics": {
+        "coding-standards": "silent",
+        "deployment": "silent",
+        "framework": "silent",
+        "language": "silent",
+        "storage": "decided",
+        "testing": "partly"
+      },
+      "other": 1,
+      "conflicts": 1,
+      "unsettled": [],
+      "published": false,
+      "unpublished_changes": false
+    },
+    "factory_authorized": false,
+    "note": "Conflict 1 is settled: the design is wrong on this point. No conflict waits now; DES-01 can be published."
+  },
+  "refused": null,
+  "hint": null
+}

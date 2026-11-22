@@ -16,7 +16,7 @@ import json
 import re
 import sys
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
 EPIC_RE = re.compile(r"^EPIC-[0-9]{3,}$")
@@ -187,19 +187,29 @@ PRINCIPLE_FIELDS = ("id", "title", "statement", "reason", "status", "revision")
 PRINCIPLE_STATUSES = ("active", "retired")
 
 
+def _project_list(data: Optional[Dict[str, Any]], project_id: Any, errors: List[str], key: str, also: Sequence[str] = ()) -> Optional[List[Any]]:
+    """The frame product/principles.json (M13) and product/needs.json (M17) share: exactly schema_version 1, the project's
+    ID, the list under `key` and the lists named in `also`. The list, or None when the frame is wrong."""
+    location = "product/{}.json".format(key)
+    if data is None:
+        return None
+    if set(data) != {"schema_version", "project_id", key, *also} or data.get("schema_version") != 1:
+        _error(errors, location, "must hold exactly schema_version 1, project_id and " + " and ".join((key,) + tuple(also)))
+        return None
+    if data.get("project_id") != project_id:
+        _error(errors, location, "project_id does not match project.json")
+    for name in (key,) + tuple(also):
+        if not isinstance(data.get(name), list):
+            _error(errors, location, "{} must be a list".format(name))
+            return None
+    return data[key]
+
+
 def _principles(data: Optional[Dict[str, Any]], project_id: Any, errors: List[str]) -> None:
     """product/principles.json (M13): the project's product principles, PP-NN, each active or retired."""
     location = "product/principles.json"
-    if data is None:
-        return
-    if set(data) != {"schema_version", "project_id", "principles"} or data.get("schema_version") != 1:
-        _error(errors, location, "must hold exactly schema_version 1, project_id and principles")
-        return
-    if data.get("project_id") != project_id:
-        _error(errors, location, "project_id does not match project.json")
-    items = data.get("principles")
-    if not isinstance(items, list):
-        _error(errors, location, "principles must be a list")
+    items = _project_list(data, project_id, errors, "principles")
+    if items is None:
         return
     seen = set()
     for item in items:
@@ -215,6 +225,41 @@ def _principles(data: Optional[Dict[str, Any]], project_id: Any, errors: List[st
         for key in ("title", "statement", "reason"):
             if not isinstance(item[key], str) or not item[key].strip():
                 _error(errors, location, "{} {} must be nonempty text".format(ident, key))
+
+
+NEED_RE = re.compile(r"^TN-[0-9]{2,}$")
+NEED_FIELDS = ("need_id", "kind", "statement", "why", "status", "revision")
+NEED_GIVEN_FIELDS = ("said_by", "said_on")
+NEED_KINDS = ("people", "data", "connections", "never", "priority", "given")
+
+
+def _needs(data: Optional[Dict[str, Any]], project_id: Any, errors: List[str]) -> None:
+    """product/needs.json (M17): the project's technical needs, TN-NN, each of a fixed kind and active or retired; a given
+    also says who said it and when. `none` lists the kinds answered "nothing to say"."""
+    location = "product/needs.json"
+    items = _project_list(data, project_id, errors, "needs", ("none",))
+    if items is None:
+        return
+    seen = set()
+    for item in items:
+        ident = item.get("need_id") if isinstance(item, dict) else None
+        fields = NEED_FIELDS + (NEED_GIVEN_FIELDS if isinstance(item, dict) and item.get("kind") == "given" else ())
+        if not isinstance(item, dict) or set(item) != set(fields) or not isinstance(ident, str) or not NEED_RE.fullmatch(ident):
+            _error(errors, location, "each need needs exactly: " + ", ".join(fields))
+            continue
+        if ident in seen:
+            _error(errors, location, "duplicate need {}".format(ident))
+        seen.add(ident)
+        if item["kind"] not in NEED_KINDS:
+            _error(errors, location, "{} kind must be one of {}".format(ident, ", ".join(NEED_KINDS)))
+        if item["status"] not in PRINCIPLE_STATUSES or type(item["revision"]) is not int or item["revision"] < 1:
+            _error(errors, location, "{} needs status active or retired and a positive revision".format(ident))
+        for key in ("statement", "why") + (NEED_GIVEN_FIELDS if item["kind"] == "given" else ()):
+            if not isinstance(item[key], str) or not item[key].strip():
+                _error(errors, location, "{} {} must be nonempty text".format(ident, key))
+    none = data["none"] if isinstance(data, dict) else []
+    if any(kind not in NEED_KINDS for kind in none) or len(set(none)) != len(none):
+        _error(errors, location, "none must list distinct kinds: " + ", ".join(NEED_KINDS))
 
 
 def _safe_spec(root: Path, value: str, slice_id: str) -> Tuple[Optional[Path], Optional[str]]:
@@ -352,6 +397,9 @@ def validate_workspace(root: Path) -> Dict[str, Any]:
     principles_path = root / "product" / "principles.json"
     if principles_path.exists() or principles_path.is_symlink():
         _principles(_read_json(principles_path, errors, root), project_id, errors)
+    needs_path = root / "product" / "needs.json"
+    if needs_path.exists() or needs_path.is_symlink():
+        _needs(_read_json(needs_path, errors, root), project_id, errors)
     return {
         "valid": not errors,
         "validation_scope": "structural_only",
