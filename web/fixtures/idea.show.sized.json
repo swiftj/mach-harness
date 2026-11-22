@@ -9,7 +9,7 @@
       "source": {
         "kind": "typed"
       },
-      "created": "2026-11-21T01:38:02Z",
+      "created": "2026-11-22T12:34:13Z",
       "revision": 1,
       "has_brief": true,
       "brief_checked": true,
@@ -18,7 +18,7 @@
       "verdict": {
         "decision": "go",
         "by": "ada-pm",
-        "at": "2026-11-21T01:38:02Z",
+        "at": "2026-11-22T12:34:13Z",
         "revision": 1,
         "holds": true,
         "stale": false,
@@ -41,8 +41,8 @@
         "last_read": null
       },
       "next": {
-        "kind": "publish",
-        "sentence": "Save IDEA-003 as a GitHub issue so others can read the brief and the verdict."
+        "kind": "map",
+        "sentence": "IDEA-003's route is several epics: propose a map of slices."
       }
     },
     "source": {
@@ -64,7 +64,7 @@
       "path": "/project/.factory/studio/draft/product/briefs/IDEA-003.case.md"
     },
     "verdict": {
-      "at": "2026-11-21T01:38:02Z",
+      "at": "2026-11-22T12:34:13Z",
       "brief_sha256": "c916b98c27233a7bb01c7dbafa9f9c858e6dd30e6766ce7d5d80c538d7f7a611",
       "by": "ada-pm",
       "decision": "go",
@@ -74,7 +74,7 @@
       "stale": false
     },
     "route": {
-      "at": "2026-11-21T01:38:02Z",
+      "at": "2026-11-22T12:34:13Z",
       "brief_sha256": "c916b98c27233a7bb01c7dbafa9f9c858e6dd30e6766ce7d5d80c538d7f7a611",
       "counted": {
         "capabilities": 2,

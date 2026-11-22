@@ -3,7 +3,7 @@
   "data": {
     "epic_id": "EPIC-001",
     "branch": "main",
-    "commit": "c1dad634e9df889d0d1883df16b7424adea08923",
+    "commit": "4960123f86867fb5d19cf15bd5afe9b3b37ac67c",
     "note": "This shows the work merged on this computer, which may be behind GitHub. The slices are the authority.",
     "epic": {
       "epic_id": "EPIC-001",

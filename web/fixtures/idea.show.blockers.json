@@ -9,7 +9,7 @@
       "source": {
         "kind": "typed"
       },
-      "created": "2026-11-21T01:38:49Z",
+      "created": "2026-11-22T12:34:27Z",
       "revision": 1,
       "has_brief": true,
       "brief_checked": false,
@@ -18,7 +18,7 @@
       "verdict": {
         "decision": "go",
         "by": "ada-pm",
-        "at": "2026-11-21T01:38:49Z",
+        "at": "2026-11-22T12:34:27Z",
         "revision": 1,
         "holds": false,
         "stale": true,
@@ -64,7 +64,7 @@
       "path": "/project/.factory/studio/draft/product/briefs/IDEA-003.case.md"
     },
     "verdict": {
-      "at": "2026-11-21T01:38:49Z",
+      "at": "2026-11-22T12:34:27Z",
       "brief_sha256": "ad173594db1a29145e2b916ec92437f4c548af68777e1c6fa34e6b5b4ab387a7",
       "by": "ada-pm",
       "decision": "go",
@@ -75,7 +75,7 @@
       "stale_note": "The brief changed after this verdict was recorded (revision 1), so it no longer holds. Record a verdict on the brief as it is now."
     },
     "route": {
-      "at": "2026-11-21T01:38:49Z",
+      "at": "2026-11-22T12:34:28Z",
       "brief_sha256": "ad173594db1a29145e2b916ec92437f4c548af68777e1c6fa34e6b5b4ab387a7",
       "counted": {
         "capabilities": 1,

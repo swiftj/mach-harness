@@ -71,7 +71,7 @@
           "source": {
             "kind": "typed"
           },
-          "created": "2026-11-21T01:38:00Z",
+          "created": "2026-11-22T12:34:12Z",
           "revision": 1,
           "has_brief": true,
           "brief_checked": false,
@@ -80,7 +80,7 @@
           "verdict": {
             "decision": "go",
             "by": "ada-pm",
-            "at": "2026-11-21T01:38:00Z",
+            "at": "2026-11-22T12:34:12Z",
             "revision": 1,
             "holds": false,
             "stale": true,
@@ -115,7 +115,7 @@
           "source": {
             "kind": "typed"
           },
-          "created": "2026-11-21T01:38:01Z",
+          "created": "2026-11-22T12:34:13Z",
           "revision": 1,
           "has_brief": true,
           "brief_checked": true,
@@ -124,7 +124,7 @@
           "verdict": {
             "decision": "go",
             "by": "ada-pm",
-            "at": "2026-11-21T01:38:01Z",
+            "at": "2026-11-22T12:34:13Z",
             "revision": 1,
             "holds": true,
             "stale": false,
@@ -147,8 +147,8 @@
             "last_read": null
           },
           "next": {
-            "kind": "publish",
-            "sentence": "Save IDEA-002 as a GitHub issue so others can read the brief and the verdict."
+            "kind": "map",
+            "sentence": "IDEA-002's route is an epic: propose a map of slices."
           }
         },
         {
@@ -159,7 +159,7 @@
           "source": {
             "kind": "typed"
           },
-          "created": "2026-11-21T01:38:02Z",
+          "created": "2026-11-22T12:34:13Z",
           "revision": 1,
           "has_brief": true,
           "brief_checked": true,
@@ -168,7 +168,7 @@
           "verdict": {
             "decision": "go",
             "by": "ada-pm",
-            "at": "2026-11-21T01:38:02Z",
+            "at": "2026-11-22T12:34:13Z",
             "revision": 1,
             "holds": true,
             "stale": false,
@@ -191,8 +191,8 @@
             "last_read": null
           },
           "next": {
-            "kind": "publish",
-            "sentence": "Save IDEA-003 as a GitHub issue so others can read the brief and the verdict."
+            "kind": "map",
+            "sentence": "IDEA-003's route is several epics: propose a map of slices."
           }
         },
         {
@@ -203,7 +203,7 @@
           "source": {
             "kind": "typed"
           },
-          "created": "2026-11-21T01:38:03Z",
+          "created": "2026-11-22T12:34:13Z",
           "revision": 0,
           "has_brief": false,
           "brief_checked": false,

@@ -9,7 +9,7 @@
       "source": {
         "kind": "typed"
       },
-      "created": "2026-11-21T01:38:48Z",
+      "created": "2026-11-22T12:34:27Z",
       "revision": 0,
       "has_brief": false,
       "brief_checked": false,
@@ -18,7 +18,7 @@
       "verdict": {
         "decision": "not-now",
         "by": "ada-pm",
-        "at": "2026-11-21T01:38:48Z",
+        "at": "2026-11-22T12:34:27Z",
         "revision": 0,
         "holds": true,
         "stale": false,
@@ -64,7 +64,7 @@
       "path": "/project/.factory/studio/draft/product/briefs/IDEA-002.case.md"
     },
     "verdict": {
-      "at": "2026-11-21T01:38:48Z",
+      "at": "2026-11-22T12:34:27Z",
       "brief_sha256": null,
       "by": "ada-pm",
       "decision": "not-now",

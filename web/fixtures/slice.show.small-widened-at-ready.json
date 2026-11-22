@@ -19,7 +19,7 @@
       "status": "draft",
       "title": "Invitation link for a single sign-on workspace",
       "widened": {
-        "at": "2026-11-22T03:11:14Z",
+        "at": "2026-11-22T12:34:36Z",
         "reason": "This is not a small change: a small change is Low or Medium risk, and this one is High.",
         "rule": "risk"
       }
@@ -233,7 +233,7 @@
       },
       "title": "Clearer expired invitation message",
       "shipped": {
-        "commit": "a72291138845ca13a38f1817e3abcc0e7bc2be03",
+        "commit": "b1b8b38df74c0bf56fc309f8fe6cc1ad922cee4a",
         "branch": "main",
         "rules": 5,
         "notes": []
@@ -245,7 +245,7 @@
         "shipped_rule": null,
         "light_path": false,
         "widened": {
-          "at": "2026-11-22T03:11:14Z",
+          "at": "2026-11-22T12:34:36Z",
           "reason": "This is not a small change: a small change is Low or Medium risk, and this one is High.",
           "rule": "risk"
         },

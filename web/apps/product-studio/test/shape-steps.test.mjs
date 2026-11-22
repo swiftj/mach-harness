@@ -42,7 +42,7 @@ test("each idea on the real board opens at the step that holds its next step", (
     "IDEA-003": "case", // brief written: record the verdict
     "IDEA-004": "case", // No, never saved: publish
     "IDEA-005": "case",
-    "IDEA-006": "case",
+    "IDEA-006": "route", // a Go never saved: sizing comes next, and saving stays optional
     "IDEA-007": "brief", // a change: its starter brief
     "IDEA-008": "look-back", // shaped: nothing to do until a slice ships
   });

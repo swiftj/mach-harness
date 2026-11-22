@@ -214,7 +214,7 @@ def on_github():
         s.capture("status.finish-ready", "status")
 
         # GitHub cannot be reached.
-        s.fail("*", once=False)
+        s.gh_fails("*", once=False)
         s.capture("refresh.offline", "refresh")
         s.capture("status.offline", "status")
     finally:

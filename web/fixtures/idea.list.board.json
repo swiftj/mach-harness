@@ -11,7 +11,7 @@
           "kind": "request",
           "number": 57
         },
-        "created": "2026-11-21T01:37:47Z",
+        "created": "2026-11-22T12:34:07Z",
         "revision": 0,
         "has_brief": false,
         "brief_checked": false,
@@ -48,7 +48,7 @@
           "kind": "idea",
           "number": 58
         },
-        "created": "2026-11-21T01:37:47Z",
+        "created": "2026-11-22T12:34:07Z",
         "revision": 1,
         "has_brief": true,
         "brief_checked": true,
@@ -84,7 +84,7 @@
         "source": {
           "kind": "typed"
         },
-        "created": "2026-11-21T01:37:48Z",
+        "created": "2026-11-22T12:34:08Z",
         "revision": 1,
         "has_brief": true,
         "brief_checked": true,
@@ -121,7 +121,7 @@
           "kind": "fault",
           "ticket": "AUTO-20261120T101500Z"
         },
-        "created": "2026-11-21T01:37:49Z",
+        "created": "2026-11-22T12:34:08Z",
         "revision": 0,
         "has_brief": false,
         "brief_checked": false,
@@ -130,7 +130,7 @@
         "verdict": {
           "decision": "no",
           "by": "ada-pm",
-          "at": "2026-11-21T01:37:49Z",
+          "at": "2026-11-22T12:34:08Z",
           "revision": 0,
           "holds": true,
           "stale": false,
@@ -165,7 +165,7 @@
         "source": {
           "kind": "typed"
         },
-        "created": "2026-11-21T01:37:49Z",
+        "created": "2026-11-22T12:34:08Z",
         "revision": 0,
         "has_brief": false,
         "brief_checked": false,
@@ -174,7 +174,7 @@
         "verdict": {
           "decision": "not-now",
           "by": "ada-pm",
-          "at": "2026-11-21T01:37:49Z",
+          "at": "2026-11-22T12:34:08Z",
           "revision": 0,
           "holds": true,
           "stale": false,
@@ -209,7 +209,7 @@
         "source": {
           "kind": "typed"
         },
-        "created": "2026-11-21T01:37:49Z",
+        "created": "2026-11-22T12:34:08Z",
         "revision": 1,
         "has_brief": true,
         "brief_checked": true,
@@ -218,7 +218,7 @@
         "verdict": {
           "decision": "go",
           "by": "ada-pm",
-          "at": "2026-11-21T01:37:50Z",
+          "at": "2026-11-22T12:34:08Z",
           "revision": 1,
           "holds": true,
           "stale": false,
@@ -241,8 +241,8 @@
           "last_read": null
         },
         "next": {
-          "kind": "publish",
-          "sentence": "Save IDEA-006 as a GitHub issue so others can read the brief and the verdict."
+          "kind": "size",
+          "sentence": "IDEA-006 has a Go verdict: size it to find its route."
         }
       },
       {
@@ -254,7 +254,7 @@
           "kind": "change",
           "rule": "SLICE-001/INV-02"
         },
-        "created": "2026-11-21T01:37:50Z",
+        "created": "2026-11-22T12:34:09Z",
         "revision": 1,
         "has_brief": true,
         "brief_checked": true,
@@ -290,7 +290,7 @@
         "source": {
           "kind": "typed"
         },
-        "created": "2026-11-21T01:37:51Z",
+        "created": "2026-11-22T12:34:09Z",
         "revision": 1,
         "has_brief": true,
         "brief_checked": true,
@@ -299,7 +299,7 @@
         "verdict": {
           "decision": "go",
           "by": "ada-pm",
-          "at": "2026-11-21T01:37:51Z",
+          "at": "2026-11-22T12:34:09Z",
           "revision": 1,
           "holds": true,
           "stale": false,

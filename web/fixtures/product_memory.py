@@ -340,7 +340,7 @@ def principles_published(Scenario):
         s.capture("principle.list.changed-on-github", "principle", "list")
         # GitHub cannot be reached at all.
         s.ok(s.a, "principle", "set", "PP-01", "--reason", "Readers rely on it.")
-        s.fail("*", once=False)
+        s.gh_fails("*", once=False)
         s.capture("principle.publish.refused-offline", "principle", "publish")
         s.set_gh(fail={})
         s.ok(s.a, "principle", "publish")
@@ -656,7 +656,7 @@ def shape_verdicts(Scenario):
         s.capture("idea.show.stale-verdict", "idea", "show", "IDEA-001")
         s.capture("brief.check.stale-verdict", "brief", "check", "IDEA-001")
         s.capture("status.ideas-stale-verdict", "status")
-        s.fail("*", once=False)
+        s.gh_fails("*", once=False)
         s.capture("verdict.record.refused-offline", "verdict", "record", "IDEA-001", "--decision", "go", "--reason", "Still yes.")
         s.set_gh(fail={})
         s.set_gh(signed_in=False)

@@ -22,14 +22,14 @@
       "revision": 2,
       "sha256": "6bcfb8f15e124d4531d753ba8b2f4d2801f4b7cd31dc690683c4d70d55f26128",
       "approved_by": "ada-pm",
-      "published_at": "2026-11-20T22:05:56Z",
+      "published_at": "2026-11-22T12:34:01Z",
       "issue": 1,
       "url": "https://github.com/acme/team-space/issues/1",
       "github": {
         "revision": 2,
         "approved": false,
         "approved_by": null,
-        "read_at": "2026-11-20T22:05:57Z"
+        "read_at": "2026-11-22T12:34:01Z"
       },
       "newer_elsewhere": false,
       "changed_on_github": true

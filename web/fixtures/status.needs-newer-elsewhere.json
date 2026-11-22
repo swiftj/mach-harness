@@ -63,10 +63,10 @@
     "github": {
       "repository": "acme/team-space",
       "form": null,
-      "last_read": "2026-11-21T20:23:08Z"
+      "last_read": "2026-11-22T12:34:32Z"
     },
     "current_slice": null,
-    "last_refreshed": "2026-11-21T20:23:08Z",
+    "last_refreshed": "2026-11-22T12:34:33Z",
     "needs": {
       "active": [
         "TN-01",
@@ -87,14 +87,14 @@
         "revision": 1,
         "sha256": "452e454bd25fcfb34e5cf006e9f8bb11628d3fd88a0bcb013ef2515e9d4824d7",
         "approved_by": "ada-pm",
-        "published_at": "2026-11-21T20:23:07Z",
+        "published_at": "2026-11-22T12:34:32Z",
         "issue": 1,
         "url": "https://github.com/acme/team-space/issues/1",
         "github": {
           "revision": 2,
           "approved": true,
           "approved_by": "ben-pm",
-          "read_at": "2026-11-21T20:23:08Z"
+          "read_at": "2026-11-22T12:34:33Z"
         },
         "newer_elsewhere": true,
         "changed_on_github": false
