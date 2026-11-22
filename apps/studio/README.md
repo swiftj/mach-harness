@@ -193,6 +193,16 @@ on-ramp's limits), `design.show`, `design.settle`, `design.publish`. `design map
 operation: the needs conversation records a design's map. While the needs conversation's turn is
 running, every operation that changes the needs or a design is a `conflict`.
 
+### A small change (M18)
+
+`docs/mach-next/M18_APP.md` is the full reference (`internal/engine/ops_small.go`). `slice.new` and
+`request.pick` take an optional `small: {change: "fix"|"adjustment", rule?}`, which becomes
+`--small --change=<change> [--rule=<SLICE-NNN/FR-NN>]`: a fix names exactly one shipped rule (the
+engine's pattern), an adjustment names none. `slice.widen` `{slice_id, why}` is `slice widen <SLICE>
+--why=<the product manager's words>` (at most 300 characters), on this computer only. The slice
+interview for a slice started as a small change may also run `slice widen <its ID> --by-rule <rule>`
+for exactly the thirteen rules the short interview names; `--why` is denied to it.
+
 `acceptance record` stays a terminal command; it is not on the allowlist, and neither is any name of
 the removed `slice approve`, waves, `send` or `feedback`. No operation's argument vector can start
 with one (`internal/engine/ops_test.go`).
