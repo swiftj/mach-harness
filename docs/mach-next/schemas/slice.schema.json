@@ -79,6 +79,31 @@
         "idea": {"type": "string", "pattern": "^IDEA-[0-9]{3,}$"},
         "outcomes": {"type": "array", "minItems": 1, "maxItems": 50, "uniqueItems": true, "items": {"type": "string", "pattern": "^O-[1-9][0-9]{0,3}$"}}
       }
+    },
+    "kind": {
+      "description": "Optional (M18): 'small' for a slice started as a small change; always with 'small'. Absent for every other slice.",
+      "const": "small"
+    },
+    "small": {
+      "description": "Optional (M18): what a small change changes. A fix names the shipped rule that is not holding; an adjustment names none.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["change", "shipped_rule"],
+      "properties": {
+        "change": {"enum": ["fix", "adjustment"]},
+        "shipped_rule": {"type": ["string", "null"], "pattern": "^SLICE-[0-9]{3,}/(?:(?:INV|FR)-[0-9]{2,}|R[0-9]+)$"}
+      }
+    },
+    "widened": {
+      "description": "Optional (M18): when a small change left the light path. 'rule' is the small.py rule code that decided, or null on the product manager's word; 'reason' is that rule's fixed sentence or their words. A full slice from then on.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "reason", "rule"],
+      "properties": {
+        "at": {"type": "string", "format": "date-time"},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "rule": {"type": ["string", "null"], "pattern": "^[a-z]+(?:-[a-z]+)*$"}
+      }
     }
   }
 }

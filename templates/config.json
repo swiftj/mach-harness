@@ -25,6 +25,9 @@
   "security": {
     "scan": { "enabled": true }
   },
+  "intent": {
+    "small_change": { "requirements": 3, "scenarios": 4, "questions": 5, "changed_shipped_rules": 1 }
+  },
   "verify": {
     "neighbours": 2
   },
