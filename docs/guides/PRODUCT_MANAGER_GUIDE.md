@@ -96,6 +96,18 @@ Shape is where an idea is explored, argued for and sized before any epic or slic
 
 Saving an idea puts its brief in a GitHub issue, with your verdict as a comment. An issue is as visible as the repository: keep a commercially sensitive brief in a private repository, or work without GitHub and it is written to a folder.
 
+## Technical needs, and a design you already have (optional)
+
+Technical needs are what the product requires of whatever is built, said without technology. The engineers read them when they record their technology decisions. You never have to use the page. Say "technical needs", or open Technical needs from the "More" menu in the app.
+
+- **Six kinds.** Who uses it; what it keeps; what it must work with; what must never happen; which quality wins when two conflict; what is already decided outside this product. Answer in the conversation, one question at a time, or write a need yourself. "Nothing to say" is recorded, so the question is not asked again.
+- **No technology.** MACH never offers one as an answer and refuses one in a need. When you name one, it asks who decided it and records a **given** with their name or role and the date, or records the need behind it.
+- **Each need** has an ID (`TN-01`) and a revision that counts changes to its statement. You can change or retire one; an ID is never reused.
+- **Publishing** saves the needs on the project's issue with your approval and writes `product/ready/NEEDS/needs.json`, which you commit to the main branch. The engineers read them from there.
+- **After a change**, the page lists each decision written for an older version of a need. Nothing is reopened or blocked; an engineer decides whether the change matters.
+
+**A design you already have.** From Technical needs, bring in one Markdown or plain-text file. Ask the conversation to read it. For each basic topic the page then shows what the document decides, partly decides or says nothing on, with the lines it cites. Where the document contradicts a need, a principle or a policy statement, you settle it with your reason: **the design stands**, **the design is wrong**, or **ask the engineer**. MACH never settles one and recommends none. Publishing writes the document and what was read to `product/ready/DESIGN/`, for you to commit. The document is never put in a GitHub issue, and it decides nothing by itself.
+
 ## 4. The project, epics and slices
 
 A **project** has a name, a vision and one or more outcomes. An outcome is a result for a person, such as "Invited members can open the campaigns they were invited to". It is not a feature list.

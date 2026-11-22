@@ -1,6 +1,21 @@
-# MACH release notes: 0.17.0
+# MACH release notes: 0.18.0
 
 What is new in each release, newest first, followed by supported platforms, what you need, upgrading and security notes.
+
+## What changed in 0.18.0
+
+Technical needs, and a way in for a design you already have, so a new project's first technology decisions start from what the product requires.
+
+| Change | What it is |
+| --- | --- |
+| Technical needs | Optional. Six questions in the product manager's words: who uses it, what it keeps, what it must work with, what must never happen, which quality wins, and what is already decided. MACH never suggests a technology and refuses one in a need; something already decided is recorded as a given, with who said it and when. |
+| Publishing needs | Published on the project's issue with the product manager's approval, and to a folder they commit. Each need has a revision; a decision written for an older one is flagged, and nothing is reopened. |
+| A design you already have | Bring in an architecture or design document. MACH records what it decides on each basic topic, citing lines, and each place it contradicts a need, a principle or a policy. The product manager settles each conflict in their own words; the document is published to a folder, never to an issue. |
+| The baseline starts from the product | `/mach adr baseline` reads published needs and designs as evidence beside the code. A drafted decision names the needs it serves and offers at least two options; a given comes to the engineer as a point to confirm. Only an ADR an engineer accepts decides anything. |
+| `serves` on an ADR | An ADR may name the needs it serves, with their revisions. `/mach adr list` flags one written for an older revision or a retired need. |
+| The architecture overview | `/mach adr overview` writes a map of the decisions: the parts, how data moves, and the decisions by topic. The ADRs remain the authority and no station checks a plan against the map. |
+| Product Studio app | Two screens: Technical needs, with the conversation beside the six kinds, and A design you already have, with the topics, the conflicts and publishing. |
+| Product Studio layout | The act a part asks of you is in view when you arrive, above the "More below" mark. |
 
 ## What changed in 0.17.0
 

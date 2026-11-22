@@ -2,7 +2,7 @@
 
 MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A product manager describes what is wanted; the factory turns each piece into a checked specification, builds it test-first in an isolated workspace, proves it works with captured evidence, has it reviewed by a panel of independent agents, and merges it. Every station hands the next one artifacts MACH has checked, not a claim that the work is done.
 
-> **Status: 0.17.0.** [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) is the full blueprint.
+> **Status: 0.18.0.** [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) is the full blueprint.
 
 ![The Factory Floor: an isometric drawing of the factory with three tickets being built, each in its own cell](docs/images/factory-floor-isometric.jpg)
 
@@ -86,7 +86,7 @@ This installs the newest release, after checking it, and prints one `MACH source
 If it says the newest release could not be found, GitHub's API did not answer from your network (it allows a limited number of unsigned requests an hour). Name the release yourself:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh | MACH_VERSION=0.17.0 bash
+curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh | MACH_VERSION=0.18.0 bash
 ```
 
 To install what is on the `main` branch ahead of the next release, use `MACH_REF=main` in place of `MACH_VERSION`; a branch install is not checksum-verified, and the installer says so.
@@ -183,6 +183,15 @@ Optional, and one of the ways to start. Say "shape an idea", or open Shape in th
 5. **Size and route.** After a go, MACH sizes the work from what the brief touches, by fixed rules: one slice, an epic, or several epics. For the last two it proposes a map; every outcome is carried by a slice or you say it is out of scope or for later. Nothing is created until you say so.
 6. **Look back.** When a slice made from the idea ships, each outcome comes back with its "how we would know" for you to record: met, not met, or too early to say.
 
+### Technical needs, and a design you already have
+
+Optional. Say "technical needs", or open Technical needs in the app. It is where you tell the engineers what the product requires of whatever is built, without choosing any technology.
+
+1. **Six questions**, one at a time, in plain words: who uses it and how many, what it keeps and how sensitive that is, what it must work with, what must never happen, which quality wins when two conflict, and what is already decided outside the product. "Nothing to say" is a fine answer.
+2. **No technology.** MACH never suggests one, and refuses one in a need. If something really is decided already, it is recorded as a given, with who said so and when.
+3. **Publish.** The needs go to the project's issue with your approval and to a folder you commit. Change a need later and each decision written for the older version is flagged for an engineer to look at; nothing is reopened.
+4. **A design you already have.** Bring in an architecture or design document. MACH reads what it decides on each basic topic, citing lines, and names each place where it contradicts a need, a principle or a policy. You settle each one in your own words, then publish it for the engineers.
+
 A slice made this way names the outcome it serves, so the record reads from the reason to the code and back. The brief never reaches the builders as instructions; the slice's spec stays the authority. You can also start from a rule that has shipped: on "How this epic works today", choose a rule and "change this".
 
 ## For engineers
@@ -223,10 +232,13 @@ The contract engineer plans under the accepted ones and names each it relied on;
 
 **Nothing is planned until the basics are decided.** The factory does not guess your stack. Until each required topic has an accepted ADR on the main branch that names it (`topic:language`, `topic:framework`, `topic:storage`, `topic:testing`, `topic:deployment`, `topic:coding-standards` by default), tickets are groomed but not planned or built. An ADR may decide a topic does not apply ("This library stores no data"). Add your own topics to `adr.required_topics`; an empty list requires nothing. For an existing repository, `/mach adr baseline` reads the committed files (manifests, lockfiles, test and lint settings, CI, container and deployment files, migrations) and drafts one proposed ADR per missing topic, stating what the repository already does and listing what it could not tell as open points; for a new project it asks you instead. You correct them, accept them and commit them by pull request.
 
+**Starting from what the product needs.** When the product manager has published technical needs or a design, `/mach adr baseline` reads them as evidence beside the code, so a new project with no code is not six questions from nothing. A drafted decision names the needs it serves (`serves: TN-01@2`) and offers at least two options. A given is quoted with who said it and comes to you as a point to confirm. Neither a need nor a design decides anything: only an ADR you accept does. `/mach adr overview` writes `docs/architecture/overview.md`, a map of the decisions with two diagrams; the ADRs remain the authority.
+
 ```
 /mach adr list                 every decision, its status and what it applies to, and which required topics are missing
 /mach adr new "<decision>"     a short interview, then the file is written as proposed for you to commit
 /mach adr baseline             draft the missing required decisions from the repository, then settle what it could not find with you, one question at a time
+/mach adr overview             write a map of the decisions: the parts, how data moves, and the decisions by topic
 /mach adr accept <ADR-NNNN>... mark proposed files you have read as accepted; you commit them
 ```
 
@@ -414,6 +426,7 @@ A cost appears only where one was recorded, which today means work the superviso
 | `/mach adr except <ticket> <ADR-NNNN> "<why>"` | Let one ticket depart from an accepted ADR, with your reason |
 | `/mach adr accept <ticket> <ADR-NNNN>` | Accept the ADR a ticket proposes, on that ticket's branch |
 | `/mach adr baseline` | Draft the required basic decisions (language, framework, storage, testing, deployment, coding standards) from the repository |
+| `/mach adr overview` | Write the architecture overview, a map of the decisions with two diagrams, for you to commit |
 | `/mach adr accept <ADR-NNNN>...` | Mark proposed ADRs in your working tree accepted; you commit them |
 | `/mach audit` | The repository's readiness tier |
 | `/mach pull [--limit n] [--sequential] [--dry-run]` | Take in every slice marked ready and start the next batch |
