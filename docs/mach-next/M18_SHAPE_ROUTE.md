@@ -75,4 +75,11 @@ To find what this change really broke, test_mach_shape, test_mach_shape_route an
   - The app's dialog in a browser (no captures taken).
   - The Shape conversation, which cannot apply anyway.
 
-Results are in the report that delivered this branch.
+Results on 2026-11-22:
+
+- `make check`: 1951 tests in 451 classes passed, one skipped as before. The manifests validated, passing with the existing warnings (no plugin icon, no author, CLAUDE.md at the plugin root).
+- `go test ./...` in `apps/studio` passed.
+- From `web/`:
+  - `pnpm typecheck` and `pnpm lint` passed clean.
+  - `pnpm build` built.
+  - `pnpm --filter @mach/product-studio test`: 314 of 314 passed.
