@@ -50,7 +50,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -86,6 +86,7 @@ STATUS_MAX_ATTEMPTS = 20  # a status write GitHub could not be reached for is gi
 STATUS_GIVE_UP_KINDS = ("auth", "refused", "not_found", "moved", "no_github", "no_gh")  # failures a retry cannot fix
 EPIC_VIEW_MOMENT = "epic-view"  # M13: the outbox write that replaces the epic's current-view comment
 CLAIM_WITHDRAW_MOMENT = "claim-withdraw"  # M20: the outbox write that withdraws this Factory's claim on a slice's issue
+DEFAULT_CLAIM_STALE_DAYS = 3  # M20: a claim with no activity for this long holds nothing (intake.claim_stale_days)
 LOCK_STALE_SECONDS = 15 * 60  # a lock older than this, or held by a process that is gone, is taken over
 ENGINEER = "engineer"  # the only caller that may dispatch without an authorization
 IGNORE_LINE = ".factory/intake/"
@@ -278,8 +279,7 @@ class Factory:
         return info
 
     def git_bytes(self, *args: str) -> Optional[bytes]:
-        done = subprocess.run(["git", *args], cwd=str(self.root), capture_output=True)
-        return done.stdout if done.returncode == 0 else None
+        return git_read(self.root, *args)
 
     # ---- one writer at a time ----
 
@@ -546,15 +546,20 @@ class Factory:
         for item in listed["issues"]:
             issue = item["number"]
             found["listed"].append(issue)
+            # M20: a slice a Factory started building (mach:building, mach:ready taken off by the builders) is judged as a reissue
+            # is, by the approval it was marked ready with: taken in, and shown as held by that Factory until its claim is stale or
+            # a person takes it over.
+            check = ["slice-check", str(issue), *(["--taken"] if item.get("taken") else [])]
             cached = cache.get(str(issue))
             if cached and cached.get("updated_at") == item.get("updated_at") and not cached.get("transient") and cached.get("decision"):
                 checked = cached
             else:
-                answer = self.ticket_json("slice-check", str(issue)) or {}
+                answer = self.ticket_json(*check) or {}
                 decision = answer.get("decision") if isinstance(answer.get("decision"), dict) else {"state": "not_accepted", "reason": "Not accepted: the ticket station could not check it."}
                 checked = {"updated_at": item.get("updated_at"), "decision": decision, "title": answer.get("title"), "epic": answer.get("epic"),
                            "transient": bool(answer.get("transient")), "at": now(),
-                           "building": answer.get("building") is True, "claims": answer.get("claims") if isinstance(answer.get("claims"), list) else []}
+                           "building": answer.get("building") is True, "building_since": answer.get("building_since"), "building_by": answer.get("building_by"),
+                           "claims": answer.get("claims") if isinstance(answer.get("claims"), list) else []}
                 if decision.get("state") == "accepted":  # the text is kept only in received/, never in the ledger
                     checked["why"], checked["spec"] = decision.pop("why", None), decision.pop("spec", None)
                 if not dry_run:
@@ -571,17 +576,14 @@ class Factory:
                 if key in ledger["intakes"] and entry.get("intake_key") == key:
                     why, spec = self.stored(entry)
                 else:
-                    answer = self.ticket_json("slice-check", str(issue)) or {}
+                    answer = self.ticket_json(*check) or {}
                     decision = answer.get("decision") if isinstance(answer.get("decision"), dict) else {}
                     why, spec = decision.get("why"), decision.get("spec")
                     if why is None or spec is None:
                         found["not_accepted"].append({"issue": issue, "slice_id": marker.get("slice_id"), "revision": marker.get("revision"),
                                                       "reason": decision.get("reason") or "Not accepted: it could not be read again."})
                         continue
-            elsewhere = self.taken_elsewhere(ledger, found["repository"], issue, marker, checked)
-            if elsewhere:  # M20: being built by another Factory; never taken in here
-                found["not_accepted"].append({"issue": issue, "slice_id": marker["slice_id"], "revision": marker["revision"], "reason": elsewhere})
-                continue
+            held_by = self.held_elsewhere(ledger, found["repository"], issue, marker, checked)  # M20: never a refusal; the plan skips it
             epic = checked.get("epic") or {}
             problems = self.gates(marker["slice_id"], why, spec)
             if problems:
@@ -611,7 +613,7 @@ class Factory:
                 "why": why, "spec": spec, "why_sha256": text_sha(why), "spec_sha256": text_sha(spec),
                 "digest": digest_of(why, spec, marker["mocks_sha256"] if mocks else None, self.rules.small_suffix(small) if small else None),
                 **({"mocks": mocks, "mocks_sha256": marker["mocks_sha256"]} if mocks else {}), **({"small": small} if small else {}),
-                "key": self.source_key("github", found["repository"], issue, marker["slice_id"], marker["revision"])})
+                "key": self.source_key("github", found["repository"], issue, marker["slice_id"], marker["revision"]), "held_by": held_by})
         return found
 
     def source_key(self, source: str, repository: Optional[str], issue: Optional[int], slice_id: Optional[str], revision: Any) -> str:
@@ -740,6 +742,8 @@ class Factory:
                 continue
             seen[row["slice_id"]] = row
             result["slices"].append(self.classify(ledger, row, source))
+            if row.get("held_by"):  # M20: shown, never a refusal
+                result["slices"][-1]["being_built_elsewhere"] = self.held_reason(row["slice_id"], row["held_by"])[1]
         result["_rows"] = list(seen.values())  # with their text: for intake only, never reported
         result["listed_issues"] = list(github["listed"])
         # What the ledger holds but the sources no longer offer as ready: only waiting work cares.
@@ -749,7 +753,7 @@ class Factory:
                 continue  # only waiting work cares whether its source still offers it
             if entry.get("source") == "github" and (not github["read"] or entry.get("repository") != github["repository"]):
                 continue  # GitHub was not read this time: what was known is kept
-            if entry.get("source") == "github" and entry.get("issue") in github["listed"]:
+            if entry.get("source") == "github" and entry.get("issue") in github["listed"] and not entry.get("reissued"):
                 reason = next((item["reason"] for item in github["not_accepted"] if item.get("issue") == entry.get("issue")), None)
             elif entry.get("source") == "github" and entry.get("reissued"):
                 # Reissued work: the builders replaced mach:ready with mach:building, and only Product Studio sets mach:ready.
@@ -1031,6 +1035,15 @@ class Factory:
                     self.materialize(ledger, entry, report)  # finish what an interrupted intake began
                 continue
             self.take_revision(ledger, full[slice_id], row, report, source)
+        # M20: who else is building each slice from an issue, as just read. The plan skips one held elsewhere.
+        for slice_id, row in full.items():
+            entry = ledger["slices"].get(slice_id)
+            if row.get("source") == "github" and entry is not None and entry.get("issue") == row.get("issue") and entry.get("held_by") != row.get("held_by"):
+                if row.get("held_by"):
+                    entry["held_by"] = row["held_by"]
+                else:
+                    entry.pop("held_by", None)
+                self.save(ledger)
         for item in found["withdrawn"]:
             entry = ledger["slices"].get(item["slice_id"])
             if entry is not None and entry.get("available") is not False:
@@ -1283,8 +1296,8 @@ class Factory:
     # Factory whose claim is the earliest that counts goes on. A Factory is known by a random value kept on this machine in
     # .factory/local/factory.json, never by the GitHub account alone: one engineer may run two machines.
 
-    def factory_secret(self) -> str:
-        """This Factory's own random value, made once and kept on this machine only."""
+    def factory_secret(self, make: bool = True) -> Optional[str]:
+        """This Factory's own random value, made once (when it first claims; never by a read) and kept on this machine only."""
         folder = self.root / ".factory" / "local"
         path = folder / "factory.json"
         if folder.is_symlink() or path.is_symlink():
@@ -1296,6 +1309,8 @@ class Factory:
             value = None
         if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{32}", value):
             return value
+        if not make:
+            return None
         value = secrets.token_hex(16)
         folder.mkdir(parents=True, exist_ok=True)
         ignore = folder / ".gitignore"
@@ -1304,8 +1319,9 @@ class Factory:
         write_atomic(path, canonical({"schema_version": 1, "factory_id": value, "made_at": now()}))
         return value
 
-    def claim_token(self, slice_id: str) -> str:
-        return self.rules.claim_token(self.factory_secret(), slice_id)
+    def claim_token(self, slice_id: str, make: bool = True) -> Optional[str]:
+        secret = self.factory_secret(make)
+        return self.rules.claim_token(secret, slice_id) if secret else None
 
     def holds(self, ledger: Dict[str, Any], repository: Optional[str], issue: int, slice_id: str) -> bool:
         """This Factory holds the slice: its own ledger has it from this issue and this Factory claimed it or put it in the line."""
@@ -1313,28 +1329,71 @@ class Factory:
         return (entry.get("source") == "github" and entry.get("issue") == issue and entry.get("repository") == repository
                 and bool(entry.get("dispatched_at") or entry.get("claim")))
 
-    def taken_elsewhere(self, ledger: Dict[str, Any], repository: Optional[str], issue: int, marker: Dict[str, Any], checked: Dict[str, Any]) -> Optional[str]:
-        """Why a ready slice issue is being built by another Factory, or None. An issue that carries mach:building, or another
-        Factory's claim that counts, is left alone unless this Factory holds the slice itself."""
+    def stale_days(self) -> int:
+        """intake.claim_stale_days in .factory/config.json (whole days, 1 to 365): how long a claim may show no activity before it
+        holds nothing. Default 3."""
+        section = self.config.get("intake") if isinstance(self.config.get("intake"), dict) else {}
+        value = section.get("claim_stale_days")
+        return value if type(value) is int and 1 <= value <= 365 else DEFAULT_CLAIM_STALE_DAYS
+
+    def stale_before(self) -> str:
+        """The GitHub time before which a claim's last activity makes it stale."""
+        moment = datetime.now(timezone.utc) - timedelta(days=self.stale_days())
+        return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def branch_active_at(self, issue: Any) -> Optional[str]:
+        """The last commit time of the slice's branch (feature/<issue>) on GitHub, as last fetched: activity of whoever holds it."""
+        done = self.git(self.root, "log", "-1", "--format=%ct", f"refs/remotes/origin/feature/{issue}")
+        stamp = done.stdout.strip() if done.returncode == 0 else ""
+        return datetime.fromtimestamp(int(stamp), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if stamp.isdigit() else None
+
+    def held_elsewhere(self, ledger: Dict[str, Any], repository: Optional[str], issue: int, marker: Dict[str, Any], checked: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Who else is building this slice, or None: another Factory's counting claim (this revision, or while the issue carries
+        mach:building, another), or mach:building with no claim at all. Recorded with when it was last active; the plan skips a
+        slice held elsewhere and offers one whose holder went quiet for longer than intake.claim_stale_days. Never a refusal."""
         slice_id = marker.get("slice_id")
         if not slice_id or self.holds(ledger, repository, issue, slice_id):
             return None
-        mine = self.claim_token(slice_id)
-        others = [item for item in checked.get("claims") or [] if isinstance(item, dict) and item.get("slice_id") == slice_id and item.get("token") != mine]
-        live = [item for item in others if item.get("revision") == marker.get("revision") or checked.get("building")]
-        if live:
-            return (f"Not accepted here: {slice_id} is being built by another Factory (claimed by @{live[0].get('login')} "
-                    f"at {self.rules.claim_time(live[0].get('at'))}).")
+        mine = self.claim_token(slice_id, make=False)  # a read makes no value; with none, no claim here is this Factory's
+        listed = [item for item in checked.get("claims") or [] if isinstance(item, dict) and item.get("slice_id") == slice_id]
+        holder = self.rules.claim_holder(listed, slice_id, marker.get("revision"), bool(checked.get("building")), lambda login: True)
+        if holder is not None and holder.get("token") == mine:
+            return None
+        if holder is not None:
+            return {"login": holder.get("login"), "since": holder.get("at"), "active_at": holder.get("active_at"), "revision": holder.get("revision"),
+                    "issue": issue}
         if checked.get("building"):
-            return f"Not accepted here: {slice_id} is being built by another Factory (its issue carries mach:building)."
+            return {"login": checked.get("building_by"), "since": checked.get("building_since"), "active_at": checked.get("building_since"),
+                    "revision": None, "issue": issue}
         return None
 
-    def claim(self, ledger: Dict[str, Any], entry: Dict[str, Any]) -> Optional[str]:
+    def held_reason(self, slice_id: str, held: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+        """(the reason the plan skips it, or None when its holder went quiet; a line for a person about the holder)."""
+        who = f"@{held.get('login')}" if held.get("login") else "another Factory"
+        since = self.rules.claim_time(held.get("since"))
+        last = max(str(held.get("active_at") or ""), str(self.branch_active_at(held.get("issue")) or ""))
+        if last and last < self.stale_before():
+            try:
+                days = (datetime.now(timezone.utc) - datetime.strptime(last[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)).days
+            except ValueError:
+                days = self.stale_days()
+            return None, f"Claimed by {who}, no activity for {days} days: free to take."
+        line = f"{slice_id} is being built by {who} since {since}."
+        return line, line
+
+    def claim(self, ledger: Dict[str, Any], entry: Dict[str, Any], take_over: bool = False) -> Optional[str]:
         """Claim the slice's issue for this Factory just before its cell is opened. None when this Factory holds it now;
-        otherwise the reason nothing was started, said plainly, with the outcome in the ledger."""
+        otherwise the reason nothing was started, said plainly, with the outcome in the ledger. With `take_over` (an engineer's
+        explicit word only), the claim is a take-over: every earlier claim on the slice stops holding, and the issue says so."""
         slice_id, revision = entry["slice_id"], entry.get("revision")
-        done = self.ticket("slice-claim", str(entry["issue"]), "--repository", str(entry["repository"]), "--slice", slice_id,
-                           "--revision", str(revision), "--token", self.claim_token(slice_id))
+        argv = ["slice-claim", str(entry["issue"]), "--repository", str(entry["repository"]), "--slice", slice_id,
+                "--revision", str(revision), "--token", self.claim_token(slice_id), "--stale-before", self.stale_before()]
+        branch = self.branch_active_at(entry["issue"])
+        if branch:
+            argv += ["--branch-active-at", branch]
+        if take_over:
+            argv.append("--take-over")
+        done = self.ticket(*argv)
         try:
             answer = json.loads(done.stdout) if done.stdout.strip() else {}
         except ValueError:
@@ -1343,14 +1402,27 @@ class Factory:
         holder = answer.get("holder") if isinstance(answer.get("holder"), dict) else {}
         if status == "won":
             entry["claim"] = {"revision": revision, "comment_id": holder.get("comment_id"), "login": holder.get("login"), "at": holder.get("at"), "claimed_at": now()}
+            notes = []
+            for key, words in (("taken_over_from", "Taken over from"), ("stale_holder", "Taken from")):
+                earlier = answer.get(key) if isinstance(answer.get(key), dict) else None
+                if earlier:
+                    notes.append(f"{words} @{earlier.get('login')}, whose claim dated from {self.rules.claim_time(earlier.get('at'))}"
+                                 + (" and had no activity since " + self.rules.claim_time(earlier.get("active_at")) if key == "stale_holder" else "") + ".")
+            for pull in answer.get("pull_requests") or []:
+                if isinstance(pull, dict) and pull.get("login") != holder.get("login"):
+                    notes.append(f"An open pull request for {slice_id} already exists: #{pull.get('number')} by @{pull.get('login')}. "
+                                 "Look at it before building a second copy.")
+            entry["claim"]["notes"] = notes
             entry.pop("claim_lost", None)
+            entry.pop("held_by", None)
             self.save(ledger)
             return None
         if status == "lost":
             who = f"@{holder.get('login')}" if holder.get("login") else "another account"
-            reason = f"Another Factory took {slice_id} (claimed by {who} at {self.rules.claim_time(holder.get('at'))}). Nothing was started here."
+            reason = f"{slice_id} is being built by {who} since {self.rules.claim_time(holder.get('at'))}. Nothing was started here."
             entry["claim_lost"] = {"revision": revision, "by": holder.get("login"), "at": holder.get("at"), "noted_at": now()}
-            entry.update(available=False, unavailable_reason=reason)
+            entry["held_by"] = {"login": holder.get("login"), "since": holder.get("at"), "active_at": holder.get("at"), "revision": holder.get("revision"),
+                                "issue": entry.get("issue")}
             own = answer.get("claim") if isinstance(answer.get("claim"), dict) else {}
             if own.get("comment_id") and not answer.get("withdrawn"):  # its own claim stays until it is withdrawn: retried with the status writes
                 self.queue_withdraw(ledger, entry, int(own["comment_id"]), "lost")
@@ -1553,11 +1625,15 @@ class Factory:
         return found
 
     @staticmethod
-    def built_elsewhere(entry: Dict[str, Any], facts: Dict[str, Any], in_git: Dict[str, Any]) -> bool:
-        """M20 A5: a slice this Factory took in and never put in the line, whose approved spec (this very revision) is on the
-        integration branch: another Factory built and merged it."""
-        return (facts.get("status") in ("queued", "unticketed") and not entry.get("dispatched_at") and bool(entry.get("spec_sha256"))
-                and entry.get("spec_sha256") in (in_git.get("specs") or {}).get(entry.get("slice_id"), set()))
+    def spec_there(entry: Dict[str, Any], in_git: Dict[str, Any]) -> bool:
+        """M20: this very revision's approved spec (by SHA-256, without its header) is on that branch."""
+        return bool(entry.get("spec_sha256")) and entry.get("spec_sha256") in (in_git.get("specs") or {}).get(entry.get("slice_id"), set())
+
+    @classmethod
+    def built_elsewhere(cls, entry: Dict[str, Any], facts: Dict[str, Any], in_git: Dict[str, Any]) -> bool:
+        """M20 A5: a slice this Factory took in and is not building (never put in the line, or its copy put aside), whose approved
+        spec for this very revision is on the integration branch: another Factory built and merged it."""
+        return facts.get("status") in ("queued", "unticketed", "abandoned") and cls.spec_there(entry, in_git)
 
     def resolve_dep(self, dep: Dict[str, Any], entries: Dict[str, Dict[str, Any]]) -> Tuple[str, Optional[str]]:
         """A dependency's name for a person, and the slice it is in the ledger (None when this Factory does not have it)."""
@@ -1590,9 +1666,12 @@ class Factory:
         in_cycle = {node: cycle for cycle in cycles for node in cycle}
         rows: Dict[str, Dict[str, Any]] = {}
         elsewhere = {key for key in entries if self.built_elsewhere(entries[key], work[key], in_git)}
+        on_main = {key for key in entries if self.spec_there(entries[key], in_git)}  # landed, from this Factory or another
+        shared_ref = f"refs/remotes/origin/{source['branch']}" if source.get("has_remote") and source.get("branch") else None
+        in_shared = self.merged_in_git(shared_ref) if shared_ref else {"specs": {}}
 
         def integrated(key: str) -> bool:
-            return (work[key]["status"] == "integrated" or key in elsewhere) and not entries[key].get("product_pending")
+            return (work[key]["status"] == "integrated" or key in on_main) and not entries[key].get("product_pending")
 
         for key in sorted(entries, key=number):
             entry, facts = entries[key], work[key]
@@ -1655,6 +1734,16 @@ class Factory:
                     row["reasons"].append("Its ticket has not been filed yet. Run intake again.")
                 if entry.get("available") is False:
                     row["reasons"].append(f"It is not ready any more: {entry.get('unavailable_reason')}")
+                held = entry.get("held_by") if isinstance(entry.get("held_by"), dict) and not entry.get("dispatched_at") else None
+                if held:  # M20: another Factory is building it: skipped, so the next slice nobody is building is taken
+                    reason, line = self.held_reason(key, held)
+                    row["being_built_elsewhere"] = line
+                    if reason:
+                        row["reasons"].append(reason)
+                        row["held"] = reason
+                if self.spec_there(entry, in_shared) and key not in on_main:  # M20: on the shared main already; the local main is behind
+                    row["reasons"].append(f"{key} was already shipped from another Factory: it is on the shared '{source['branch']}'. "
+                                          "Update your main branch; there is nothing to build.")
                 if source["problems"]:
                     row["reasons"] += source["problems"]
                 if key in in_cycle:
@@ -1697,6 +1786,9 @@ class Factory:
             "dispatchable": [key for key in ready if rows[key]["dispatchable"]],
             "waiting_for_a_place": [key for key in ready if not rows[key]["dispatchable"]],
             "needs_person": [key for key, row in rows.items() if row["needs_person"]],
+            # M20: slices skipped because another Factory is building them; said plainly when that is everything left to start.
+            "being_built_elsewhere": [key for key, row in sorted(rows.items(), key=lambda item: number(item[0])) if row.get("held")],
+            "all_ready_built_elsewhere": bool([row for row in rows.values() if row.get("held")]) and not ready,
             # Dispatched work the line can move right now: what a driver would start, in order.
             "runnable": [{"slice_id": key, "ticket_id": row["ticket_id"], "next": work[key].get("next")} for key, row in sorted(rows.items(), key=lambda item: number(item[0]))
                          if row["state"] == "active" and work[key].get("next") not in (None, "stop")],
@@ -1775,7 +1867,7 @@ class Factory:
     # ---- dispatch ----
 
     def dispatch(self, slice_ids: Sequence[str], all_ready: bool = False, limit: Optional[int] = None, by: str = ENGINEER,
-                 authorize: Optional[Callable[[Dict[str, Any]], Tuple[bool, str]]] = None) -> Dict[str, Any]:
+                 authorize: Optional[Callable[[Dict[str, Any]], Tuple[bool, str]]] = None, take_over: bool = False) -> Dict[str, Any]:
         """Put chosen ready slices into the line: open each cell and bring it to 'spec-ready'.
 
         This is the only place work enters the line. An engineer's explicit command needs nothing
@@ -1787,7 +1879,7 @@ class Factory:
         every step, with every gate in place.
         """
         with self.lock("dispatch"):
-            result = self._dispatch(slice_ids, all_ready, limit, by, authorize)
+            result = self._dispatch(slice_ids, all_ready, limit, by, authorize, take_over)
             report: Dict[str, Any] = {}
             self.send_status(report)
         if report.get("issue_status"):
@@ -1807,7 +1899,7 @@ class Factory:
         return list(dict.fromkeys(chosen))
 
     def _dispatch(self, slice_ids: Sequence[str], all_ready: bool, limit: Optional[int], by: str,
-                  authorize: Optional[Callable[[Dict[str, Any]], Tuple[bool, str]]]) -> Dict[str, Any]:
+                  authorize: Optional[Callable[[Dict[str, Any]], Tuple[bool, str]]], take_over: bool = False) -> Dict[str, Any]:
         ledger = self.ledger()
         plan = self.plan(ledger=ledger, record=True)
         authorization = "an engineer's explicit command"
@@ -1831,12 +1923,18 @@ class Factory:
             chosen = chosen[:max(0, limit)]
         refused: List[Dict[str, Any]] = []
         accepted: List[str] = []
+        taking_over: List[str] = []
+        if take_over and (by != ENGINEER or all_ready):
+            raise IntakeError("Taking a slice over from another Factory is an engineer's explicit word, naming the slice. Nothing was dispatched.")
         for key in chosen:
             row = by_id.get(key)
             if row is None:
                 refused.append({"slice_id": key, "why": ["It is not in the intake ledger. Run intake first."]})
             elif row["state"] == "active" and (ledger["slices"][key].get("dispatched_at") or row["stage"] == "interview"):
                 accepted.append(key)  # already dispatched, or interrupted part-way: carry on, never twice
+            elif take_over and row.get("held") and row["reasons"] == [row["held"]]:
+                accepted.append(key)  # M20: held only by another Factory's claim, and an engineer said to take it over
+                taking_over.append(key)
             elif not row["dispatchable"]:
                 refused.append({"slice_id": key, "state": row["state"], "why": row["reasons"]})
             else:
@@ -1849,12 +1947,17 @@ class Factory:
         for key in accepted:
             entry = ledger["slices"][key]
             if entry.get("source") == "github" and not entry.get("dispatched_at"):
-                # M20: claimed on GitHub first, by every caller (an engineer, pull, or a supervisor): one Factory builds a slice.
-                why = self.claim(ledger, entry)
+                # M20: claimed on GitHub first, by every caller (an engineer, pull, or a supervisor), so two Factories do not
+                # build one slice at once. A slice another Factory claimed meanwhile is skipped and stays with that Factory.
+                why = self.claim(ledger, entry, take_over=key in taking_over)
                 if why:
-                    refused.append({"slice_id": key, "state": "not_claimed", "why": [why]})
+                    refused.append({"slice_id": key, "state": "being_built_elsewhere" if entry.get("claim_lost") else "not_claimed", "why": [why]})
                     continue
-            dispatched.append(self.open_cell(ledger, entry, by, authorization))
+            opened = self.open_cell(ledger, entry, by, authorization)
+            notes = list((entry.get("claim") or {}).get("notes") or []) if not opened.get("already_dispatched") else []
+            if notes:
+                opened["notes"] = notes
+            dispatched.append(opened)
         tickets = [item["ticket_id"] for item in dispatched]
         return {"dispatched": dispatched, "refused": refused, "tickets": tickets, "factory_started": False,
                 "next": ("Nothing was dispatched." if not tickets else
@@ -2048,6 +2151,41 @@ class Factory:
             self.ticket("--provider", LOCAL, "update", ticket_id, "--state", "in_progress", "--label", "groomed",
                         "--comment", f"Dispatched from the approved product definition ({slice_id} revision {entry.get('revision')}). No interview was repeated.")
         return {"slice_id": slice_id, "ticket_id": ticket_id, "stage": cell.get("stage"), "risk": cell.get("risk"), "already_dispatched": False}
+
+
+def already_landed(root: Path, slice_id: str, spec_sha256: Optional[str], refs: Sequence[str]) -> Optional[Dict[str, Any]]:
+    """M20: where this slice revision has already landed on the main branch, or None. Several Factories may build one slice;
+    the shared main takes it once. A copy whose approved spec (this very revision, by SHA-256 of the spec without its header
+    line) is already on `refs` (the local integration branch and origin/<branch>, after a fetch) must not be merged again.
+
+    Returns {"ref", "path", "commit"}: the commit is the one that first brought the spec onto that branch (a merge commit,
+    or the squashed commit of a pull request). A newer revision has another SHA-256, so it is new work, never a duplicate.
+    The caller decides whether the landed copy is its own (its own merge recorded on the cell) before calling it another's."""
+    if not SLICE_ID_RE.fullmatch(slice_id or "") or not isinstance(spec_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", spec_sha256):
+        return None
+    for ref in refs:
+        listed = git_read(root, "ls-tree", "--name-only", ref, "--", "specs/slices/")
+        for path in (listed or b"").decode("utf-8", errors="replace").splitlines():
+            if not path.rsplit("/", 1)[-1].startswith(f"{slice_id}-"):
+                continue
+            data = git_read(root, "show", f"{ref}:{path}")
+            if data is None or len(data) > MAX_TEXT_BYTES or text_sha(without_header(data.decode("utf-8", errors="replace"))[0]) != spec_sha256:
+                continue
+            commits = (git_read(root, "log", "--first-parent", "--diff-filter=A", "--format=%H", ref, "--", path) or b"").decode().split()
+            return {"ref": ref, "path": path, "commit": commits[-1] if commits else None}
+    return None
+
+
+def git_read(root: Path, *args: str) -> Optional[bytes]:
+    """One read-only Git call in `root`: its output, or None when it failed."""
+    done = subprocess.run(["git", *args], cwd=str(root), capture_output=True)
+    return done.stdout if done.returncode == 0 else None
+
+
+def landed_message(slice_id: str, landed: Dict[str, Any]) -> str:
+    """What a person is told about a copy that was not merged because the slice landed first from another Factory."""
+    where = str(landed.get("commit") or "")[:12] or landed.get("ref")
+    return f"{slice_id} was already shipped from another Factory (merged as {where}). This copy was not merged."
 
 
 def find_cycles(graph: Dict[str, List[str]]) -> List[List[str]]:

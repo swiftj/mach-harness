@@ -1276,11 +1276,28 @@ def cmd_slice_list(ctx: Context, args: argparse.Namespace) -> int:
             except ValueError:
                 items, report["failure"] = None, {"kind": "other", "reason": "GitHub's list could not be read"}
             if isinstance(items, list):
-                report["issues"] = sorted(({"number": item["number"], "updated_at": item.get("updatedAt") if isinstance(item.get("updatedAt"), str) else None}
-                                           for item in items if isinstance(item, dict) and issue_rules.is_issue_number(item.get("number"))
-                                           and issue_rules.SLICE_LABEL in [l.get("name") for l in item.get("labels") or [] if isinstance(l, dict)]),
-                                          key=lambda item: item["number"])
                 report["limit_reached"] = len(items) >= int(READY_LIST_LIMIT)
+                # M20: a slice a Factory started building (mach:building in place of mach:ready) is listed too, marked `taken`
+                # (slice-check --taken judges it), so another Factory can show who has it, and take it when the claim is stale
+                # or a person takes it over.
+                out, failure = gh_read(ctx, "issue", "list", "--repo", repository, "--label", issue_rules.BUILDING_LABEL, "--state", "open",
+                                       "--limit", READY_LIST_LIMIT, "--json", "number,labels,updatedAt")
+                try:
+                    building = json.loads(out) if out is not None else None
+                except ValueError:
+                    building = None
+                if not isinstance(building, list):
+                    report["failure"] = failure or {"kind": "other", "reason": "GitHub's list could not be read"}
+                else:
+                    report["limit_reached"] = report["limit_reached"] or len(building) >= int(READY_LIST_LIMIT)
+                    found: Dict[int, Dict[str, Any]] = {}
+                    for item in items + building:
+                        names = [l.get("name") for l in item.get("labels") or [] if isinstance(l, dict)] if isinstance(item, dict) else []
+                        if not isinstance(item, dict) or not issue_rules.is_issue_number(item.get("number")) or issue_rules.SLICE_LABEL not in names:
+                            continue
+                        found[item["number"]] = {"number": item["number"], "updated_at": item.get("updatedAt") if isinstance(item.get("updatedAt"), str) else None,
+                                                 **({"taken": True} if issue_rules.READY_LABEL not in names else {})}
+                    report["issues"] = [found[number] for number in sorted(found)]
     print(json.dumps(report, indent=2))
     return 0
 
@@ -1325,15 +1342,19 @@ def cmd_slice_check(ctx: Context, args: argparse.Namespace) -> int:
         report["transient"] = (failure or {}).get("kind") == "network"
     decision = issue_rules.slice_acceptance(issue, events, comments, permission, failure, taken=args.taken)
     marker = decision.get("marker")
-    if decision["state"] == "accepted" and marker and not args.taken:
-        # M20: whether another Factory may be building it. The Factory compares the claims' tokens with its own.
+    if decision["state"] == "accepted" and marker:
+        # M20: who is building it. The Factory compares the claims' tokens with its own, and judges staleness.
         found = [item for item in issue_rules.claims(comments) if item["slice_id"] == marker["slice_id"]]
         roles: Dict[str, bool] = {}
         for login in dict.fromkeys(item["login"] for item in found):
             answer, failed = read_permission(ctx, repository, login)
             roles[login] = True if failed else issue_rules.role_counts(answer)  # not known: it may count, so it holds
+        building = issue_rules.deciding_event(events, issue_rules.BUILDING_LABEL)
         report["building"] = issue_rules.BUILDING_LABEL in issue["labels"]
-        report["claims"] = [{key: item[key] for key in ("slice_id", "revision", "token", "login", "at", "comment_id")} for item in found if roles[item["login"]]]
+        report["building_since"] = (building or {}).get("at") if report["building"] else None
+        report["building_by"] = (building or {}).get("login") if report["building"] else None
+        report["claims"] = [{key: item[key] for key in ("slice_id", "revision", "token", "login", "at", "active_at", "takeover", "comment_id")}
+                            for item in found if roles[item["login"]]]
     if decision["state"] == "accepted" and marker:
         epic = read_epic(ctx, repository, marker["epic"])
         epic.pop("body", None)
@@ -1555,6 +1576,7 @@ def cmd_slice_claim(ctx: Context, args: argparse.Namespace) -> int:
         raise TicketError("Name the slice's repository as OWNER/REPO (--repository).")
     try:
         mine_body = issue_rules.claim_comment(args.slice_id, args.revision, args.token)
+        takeover_body = issue_rules.claim_comment(args.slice_id, args.revision, args.token, takeover=True)
     except ValueError as exc:
         raise TicketError(f"The claim cannot be written: {exc}.")
     if args.withdraw and not args.comment_id:
@@ -1603,7 +1625,7 @@ def cmd_slice_claim(ctx: Context, args: argparse.Namespace) -> int:
             if issue_rules.CLAIM_WITHDRAWN_RE.search(body) and f"factory={args.token} " in body:
                 result["withdrawn"] = True
                 return answer("already_done")
-            if body != mine_body:
+            if body not in (mine_body, takeover_body):
                 return answer("refused", "not_ours", "That comment is not this Factory's claim on this slice revision; nothing was changed.")
             patch(args.comment_id, withdrawn)
             result["withdrawn"] = True
@@ -1628,10 +1650,20 @@ def cmd_slice_claim(ctx: Context, args: argparse.Namespace) -> int:
             return roles[login]
 
         def holder(found: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-            return issue_rules.claim_holder(found, args.slice_id, args.revision, building, counts)
+            return issue_rules.claim_holder(found, args.slice_id, args.revision, building, counts, args.stale_before, args.branch_active_at, args.token)
+
+        def open_pull_requests() -> List[Dict[str, Any]]:
+            """Open pull requests from the slice's branch (feature/<issue>): another Factory's copy may be waiting for review. Information only."""
+            try:
+                out = gh_call(ctx.project, "pr", "list", "--repo", repository, "--head", f"feature/{number}", "--state", "open", "--json", "number,url,author")
+                listed = json.loads(out or "[]")
+            except (GhFailed, ValueError):
+                return []
+            return [{"number": item.get("number"), "url": item.get("url"), "login": (item.get("author") or {}).get("login")}
+                    for item in listed if isinstance(item, dict) and issue_rules.is_issue_number(item.get("number"))] if isinstance(listed, list) else []
 
         def report_holder(item: Dict[str, Any]) -> None:
-            result["holder"] = {key: item[key] for key in ("login", "at", "comment_id", "revision")}
+            result["holder"] = {key: item.get(key) for key in ("login", "at", "active_at", "comment_id", "revision")}
 
         def lose(first: Dict[str, Any], found: List[Dict[str, Any]]) -> int:
             """Another Factory holds it: this Factory's own claims on this revision are withdrawn (edited, so they never count again)."""
@@ -1650,11 +1682,18 @@ def cmd_slice_claim(ctx: Context, args: argparse.Namespace) -> int:
 
         _, found = read_claims()
         first = holder(found)
-        if first is not None and first["token"] != args.token:
+        quiet = issue_rules.claim_holder(found, args.slice_id, args.revision, building, counts)  # ignoring staleness
+        if first is None and quiet is not None and quiet["token"] != args.token:  # a stale claim: it holds nothing any more
+            result["stale_holder"] = {key: quiet[key] for key in ("login", "at", "active_at", "comment_id", "revision")}
+        taking_over = bool(args.take_over and first is not None and first["token"] != args.token)
+        if first is not None and first["token"] != args.token and not taking_over:
             return lose(first, found)  # another Factory holds it already: nothing is posted
-        if first is None or first["revision"] != args.revision:  # free, or held by this Factory's own claim on an earlier revision
+        if taking_over:
+            result["taken_over_from"] = {key: first[key] for key in ("login", "at", "active_at", "comment_id", "revision")}
+        if first is None or first["revision"] != args.revision or first["token"] != args.token:
+            # free; held by this Factory's own claim on an earlier revision; or taken over on a person's word
             with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as handle:
-                handle.write(mine_body)
+                handle.write(takeover_body if taking_over else mine_body)
             try:
                 gh_call(ctx.project, "issue", "comment", str(number), "--repo", repository, "--body-file", handle.name)
             finally:
@@ -1666,6 +1705,7 @@ def cmd_slice_claim(ctx: Context, args: argparse.Namespace) -> int:
             result["claim"] = {key: own[0][key] for key in ("login", "at", "comment_id")}
         if first is not None and first["token"] == args.token and first["revision"] == args.revision:
             report_holder(first)
+            result["pull_requests"] = open_pull_requests()
             return answer("won")
         if first is None or first["token"] == args.token:
             if not own:  # posted, and not yet listed: nothing may start until the claim can be read back
@@ -1931,6 +1971,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--token", required=True, help="this Factory's claim token for the slice (16 hexadecimal characters)")
     p.add_argument("--withdraw", choices=sorted(issue_rules.CLAIM_WITHDRAWN_WHY), help="withdraw this Factory's claim comment --comment-id")
     p.add_argument("--comment-id", type=int)
+    p.add_argument("--stale-before", help="a claim with no activity since this GitHub time (ISO, UTC) is stale and holds nothing")
+    p.add_argument("--branch-active-at", help="the slice branch's last commit time on GitHub, as activity of the claim that holds it")
+    p.add_argument("--take-over", action="store_true", help="on a person's explicit word: take the slice over from the Factory that holds it")
     p.set_defaults(func=cmd_slice_claim)
     p = sub.add_parser("epic-view", help="create or replace the one comment on an epic's issue holding how it works today (called by intake)")
     p.add_argument("number")

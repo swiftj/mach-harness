@@ -107,7 +107,9 @@ class Base(SupervisorBase):
         """The GitHub calls other than a pass's intake of ready slices (intake's reconcile reads the team space's
         name and the open mach:ready issues on every pass, monitoring or not); none of those reads a request."""
         intake_reads = (["repo", "view", "acme/team-space", "--json", "nameWithOwner"],
-                        ["issue", "list", "--repo", "acme/app", "--label", "mach:ready", "--state", "open", "--limit", "200", "--json", "number,labels,updatedAt"])
+                        ["issue", "list", "--repo", "acme/app", "--label", "mach:ready", "--state", "open", "--limit", "200", "--json", "number,labels,updatedAt"],
+                        # M20: and the slices another Factory is building, to show who holds them
+                        ["issue", "list", "--repo", "acme/app", "--label", "mach:building", "--state", "open", "--limit", "200", "--json", "number,labels,updatedAt"])
         return [call for call in self.gh_calls() if call not in intake_reads]
 
     def run_requests(self, *argv):

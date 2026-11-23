@@ -97,7 +97,7 @@ class NothingIsWiredInTest(unittest.TestCase):
         machine-local Factory policy is never read."""
         source = (ROOT / "skills" / "run" / "scripts" / "intake.py").read_text()
         used = set(re.findall(r"git\(self\.root, \"([a-z-]+)\"", source)) | set(re.findall(r"git_bytes\(\"([a-z-]+)\"", source))
-        self.assertEqual(used, {"symbolic-ref", "show-ref", "rev-parse", "merge-base", "diff", "rev-list", "check-ignore", "show", "ls-tree"})
+        self.assertEqual(used, {"symbolic-ref", "show-ref", "rev-parse", "merge-base", "diff", "rev-list", "check-ignore", "show", "ls-tree", "log"})  # M20: log reads when a branch was last active
         runs = sorted(re.findall(r"subprocess\.run\(\[([^\]]*)\]", source))
         self.assertEqual(runs, ["\"git\", *args", "sys.executable, str(path), \"--project\", str(self.root), *argv"])  # Git reads, and another station's script
         self.assertEqual(set(re.findall(r"self\.script\(\"(\w+)\", \"([\w.]+)\"", source)), {("ticket", "ticket.py"), ("intent", "cell.py")})

@@ -174,6 +174,9 @@ elif args[:2] == ["issue", "close"]:
     find(args[2])["updatedAt"] = tick()
 elif args[:2] == ["issue", "pin"]:
     find(args[2])["pinned"] = True
+elif args[:2] == ["pr", "list"]:
+    head = value("--head")
+    print(json.dumps([p for p in state.get("pulls", []) if p.get("head") == head and p.get("state", "open") == "open"]))
 elif args[:2] == ["label", "list"]:
     print(json.dumps([{"name": n} for n in labels]))
 elif args[:2] == ["label", "create"]:

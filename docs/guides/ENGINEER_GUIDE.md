@@ -51,17 +51,21 @@ Through `ticket.py slice-status`, from fixed templates with a hidden marker, rec
 
 ### Working as a team
 
-Several engineers may run `/mach pull`, or their own supervisor, against one repository at the same time. Each Factory builds only the slices it claimed.
+Several engineers may run `/mach pull`, or their own supervisor, against one repository at the same time. No slice belongs to anyone in advance. A Factory takes a slice nobody is building; another Factory skips it and takes the next. You can take one over by saying so.
 
-- **The claim.** Just before MACH opens a cell for a slice from an issue, it reads the issue again and posts a claim comment: "The MACH Factory is taking SLICE-011 revision 2 to build it." It then reads the comments again. Only the Factory whose claim came first, in GitHub's own order, goes on.
+- **The claim.** Just before MACH opens a cell for a slice from an issue, it posts a claim on the issue: "The MACH Factory is taking SLICE-011 revision 2 to build it." It then reads the comments again. Only the Factory whose claim came first, in GitHub's own order, goes on.
 - **Each machine is its own Factory.** MACH keeps a random value for this clone in `.factory/local/factory.json`. Your two machines are two Factories, even when both are signed in to GitHub as you.
-- **If another Factory took it,** MACH starts nothing here: no cell, no branch. It edits its own claim into a "Withdrawn" note and tells you who took it: "Another Factory took SLICE-011 (claimed by @x at 2026-11-23 14:02 UTC). Nothing was started here." The plan shows the slice as blocked with that reason.
-- **A slice another Factory is building** is not taken in here. Status and plan say "being built by another Factory". That holds when the product manager reopens it and marks a new revision ready: the Factory building it decides about the new revision.
-- **A dependency built on another machine** counts as done once its approved spec is on the main branch you pulled. The plan shows it as "Another Factory built it".
-- **A claim from an account without at least the triage role** does not count, and blocks nobody.
-- **When GitHub does not answer,** MACH starts nothing and says so. Pull again later. A claim that reached GitHub counts as this Factory's own next time.
-- **To release a claim.** Abandon the work on the machine that holds it: MACH withdraws its claim, and `product intake --reissue` on that machine claims it again. To hand the slice to another Factory, remove `mach:building` from the issue and ask the product manager to mark it ready again. If the machine that claimed it is gone, also delete its claim comment on GitHub.
-- Slices from ready folders are not claimed. With folders, agree who pulls.
+- **A slice someone else is building** is skipped. `product status`, `product plan` and `/mach pull` say "SLICE-011 is being built by @x since 2026-11-23 14:02 UTC", and pull starts the next slice nobody is building. If two Factories reach for the same slice at the same moment, the one that came second starts nothing and says who has it. When everything ready is being built elsewhere, pull says so.
+- **A slice reopened and marked ready again** stays with the Factory building it. That Factory decides about the new revision.
+- **When a claim goes quiet.** A claim with no activity from its Factory for 3 days is stale. The plan says "Claimed by @x, no activity for 4 days: free to take", and the next pull may take it. Activity is a MACH comment on the issue from that account, or a commit on the slice's branch on GitHub. Change the number of days with `intake.claim_stale_days` in `.factory/config.json`.
+- **Taking a slice over.** Run `product dispatch SLICE-011 --take-over` after checking who has it. MACH builds it here, and the issue says it was taken over. MACH never takes a slice over by itself, and a supervisor never does.
+- **Releasing a claim.** Abandon the work on your machine, and MACH withdraws its claim. A reissue on the same machine claims it again.
+- **An open pull request.** When you start a slice and a pull request for it is already open, MACH tells you, so you can look at it first.
+- **The main branch takes a slice once.** Before your copy is merged, MACH looks at the main branch, including the shared one as last fetched. If this revision is already there, it stops and says: "SLICE-011 was already shipped from another Factory (merged as 4be1c09a2f3d). This copy was not merged." Put the copy aside with `cleanup run <ticket> --abandon "already shipped from another Factory"`. The branch's commits are kept in the archive. To keep the branch itself, copy it first with `git branch feature/<ticket>-copy feature/<ticket>`.
+- **A dependency built on another machine** counts as done once its approved spec is on your main branch. The plan shows it as "Another Factory built it".
+- **The issue stays truthful.** Only the Factory whose merge landed marks the issue shipped and closes it.
+- A claim from an account without at least the triage role does not count. Slices from ready folders are not claimed: with folders, agree who pulls.
+
 
 ### A small change
 
@@ -129,7 +133,7 @@ Enabling does not start a supervisor. Run `RUN factory serve` for the session, o
 
 **A run that makes no progress is parked at once.** If an execution ends with the same refusal twice (a build stopped on the same task) or the belt reports `stuck` for the ticket, the supervisor records `not_progressing`, parks the ticket for a person and does not spend the remaining attempts ("Retrying would repeat it"). A killed execution (a signal, a negative exit code) is recorded as killed with its exit code and counts as a failed attempt; only a clean exit clears the count. The plan gate also refuses, at `cell.py check-plan`, a plan whose later `[impl]` task names a requirement that all of its tests already preceded, which is the plan that cannot go green. Observed live: the plan check refusing a real plan, a stuck belt parked at once (at the plan station, not a build) and a killed execution recorded as killed. The same-refusal build case has tests only. Where a parked ticket's plan is wrong, use `replan` above.
 
-**One runner per project per machine.** An ownership lease with a heartbeat enforces that. Several engineers may each enable a supervisor on their own machine for one repository. Every supervisor dispatches through the same claim on GitHub as `/mach pull` (see "Working as a team" in section 2), so each builds only what it claimed.
+**One runner per project per machine.** An ownership lease with a heartbeat enforces that. Several engineers may each enable a supervisor on their own machine for one repository. Every supervisor claims through the same rule as `/mach pull`, skips a slice another Factory is building and never takes one over (see "Working as a team" in section 2), so each builds only what it claimed.
 
 ## 4. Human gates
 

@@ -1465,7 +1465,7 @@ def unedited(item: Dict[str, Any]) -> bool:
 # final. GitHub offers no atomic test-and-set on an issue: this is the strongest rule available without a server.
 
 CLAIM_TOKEN_RE = re.compile(r"^[0-9a-f]{16}$")
-CLAIM_RE = re.compile(r"<!-- mach:claim v1 slice=(SLICE-[0-9]{3,}) revision=([0-9]{1,6}) factory=([0-9a-f]{16}) -->")
+CLAIM_RE = re.compile(r"<!-- mach:claim v1 slice=(SLICE-[0-9]{3,}) revision=([0-9]{1,6}) factory=([0-9a-f]{16})(?: takeover=yes)? -->")
 CLAIM_WITHDRAWN_RE = re.compile(r"<!-- mach:claim-withdrawn v1 slice=(SLICE-[0-9]{3,}) revision=([0-9]{1,6}) factory=([0-9a-f]{16}) -->")
 CLAIM_WITHDRAWN_WHY = {"lost": "Another Factory claimed it first.", "stopped": "Its work there was stopped."}
 
@@ -1483,8 +1483,13 @@ def _claim_args(slice_id: str, revision: Any, token: str) -> None:
         raise ValueError("a claim names a slice, its revision and the Factory's token")
 
 
-def claim_comment(slice_id: str, revision: int, token: str) -> str:
+def claim_comment(slice_id: str, revision: int, token: str, takeover: bool = False) -> str:
+    """A claim, or a take-over: a claim made on a person's explicit word, after which every earlier claim on the slice no longer holds."""
     _claim_args(slice_id, revision, token)
+    if takeover:
+        return (f"The MACH Factory is taking over {slice_id} revision {revision}, on a person's word: the earlier claim on it no longer holds. "
+                "Another MACH Factory that reads this leaves the slice alone.\n\n"
+                f"<!-- mach:claim v1 slice={slice_id} revision={revision} factory={token} takeover=yes -->")
     return (f"The MACH Factory is taking {slice_id} revision {revision} to build it. Another MACH Factory that reads this claim leaves the slice alone.\n\n"
             f"<!-- mach:claim v1 slice={slice_id} revision={revision} factory={token} -->")
 
@@ -1505,29 +1510,53 @@ def claims(comments: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if not match:
             continue
         slice_id, revision, token = match.group(1), int(match.group(2)), match.group(3)
-        if body != claim_comment(slice_id, revision, token) or not unedited(item):
+        takeover = body == claim_comment(slice_id, revision, token, takeover=True)
+        if (body != claim_comment(slice_id, revision, token) and not takeover) or not unedited(item):
             continue
         login = item.get("login")
         if (item.get("app") or item.get("type") != "User" or not isinstance(login, str) or not LOGIN_RE.fullmatch(login)
                 or login.lower() == GHOST or login.endswith("[bot]") or item.get("id") is None):
             continue
+        # Its Factory's activity on the issue: the claim, and every later MACH status comment by the same account.
+        later = [other.get("created_at") for other in comments[index:] if other.get("login") == login and isinstance(other.get("created_at"), str)
+                 and MARKER_RE.search(other.get("body") or "")]
         found.append({"slice_id": slice_id, "revision": revision, "token": token, "login": login, "at": item.get("created_at"),
+                      "active_at": max([item.get("created_at") or "", *later]) or None, "takeover": takeover,
                       "comment_id": item.get("comment_id"), "index": index})
     if all(type(item["comment_id"]) is int for item in found):
         found.sort(key=lambda item: item["comment_id"])
     return found
 
 
-def claim_holder(found: Sequence[Dict[str, Any]], slice_id: str, revision: int, building: bool, counts: Callable[[str], bool]) -> Optional[Dict[str, Any]]:
-    """The claim that holds this slice revision: the earliest counting claim for exactly this revision; failing that, while the
-    issue carries mach:building, the earliest counting claim on another revision (that Factory is building it). None when free.
-    `counts(login)` says whether an author's role counts."""
+def claim_holder(found: Sequence[Dict[str, Any]], slice_id: str, revision: int, building: bool, counts: Callable[[str], bool],
+                 stale_before: Optional[str] = None, branch_active_at: Optional[str] = None, own_token: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """The claim that holds this slice revision, or None when it is free. Only claims at or after the latest take-over count (a
+    take-over is a claim made on a person's explicit word). Of those: the earliest counting claim for exactly this revision;
+    failing that, while the issue carries mach:building, the earliest counting claim on another revision (that Factory is
+    building it). A claim whose last activity (the claim, a later MACH status comment by its account, or `branch_active_at`,
+    the slice branch's last commit on GitHub) is before `stale_before` is stale and holds nothing. `counts(login)` says
+    whether an author's role counts. Times are GitHub's ISO times, compared as text."""
     mine = [item for item in found if item["slice_id"] == slice_id and counts(item["login"])]
+    takeovers = [position for position, item in enumerate(mine) if item.get("takeover")]
+    if takeovers:
+        mine = mine[takeovers[-1]:]
+
+    def live(item: Dict[str, Any]) -> bool:
+        if own_token is not None and item.get("token") == own_token:
+            return True  # the asking Factory's own claim is never stale to itself
+        last = max(item.get("active_at") or "", branch_active_at or "")
+        return stale_before is None or last >= stale_before
+
+    mine = [item for item in mine if live(item)]
     same = [item for item in mine if item["revision"] == revision]
     if same:
         return same[0]
     other = [item for item in mine if item["revision"] != revision] if building else []
     return other[0] if other else None
+
+
+def claim_is_stale(item: Dict[str, Any], stale_before: Optional[str], branch_active_at: Optional[str] = None) -> bool:
+    return stale_before is not None and max(item.get("active_at") or "", branch_active_at or "") < stale_before
 
 
 def claim_time(at: Any) -> str:
