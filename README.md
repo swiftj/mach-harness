@@ -2,7 +2,7 @@
 
 MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A product manager describes what is wanted; the factory turns each piece into a checked specification, builds it test-first in an isolated workspace, proves it works with captured evidence, has it reviewed by a panel of independent agents, and merges it. Every station hands the next one artifacts MACH has checked, not a claim that the work is done.
 
-> **Status: 0.19.0.** [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) is the full blueprint.
+> **Status: 0.19.1.** [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) is the full blueprint.
 
 ![The Factory Floor: an isometric drawing of the factory with three tickets being built, each in its own cell](docs/images/factory-floor-isometric.jpg)
 
@@ -86,7 +86,7 @@ This installs the newest release, after checking it, and prints one `MACH source
 If it says the newest release could not be found, GitHub's API did not answer from your network (it allows a limited number of unsigned requests an hour). Name the release yourself:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh | MACH_VERSION=0.19.0 bash
+curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh | MACH_VERSION=0.19.1 bash
 ```
 
 To install what is on the `main` branch ahead of the next release, use `MACH_REF=main` in place of `MACH_VERSION`; a branch install is not checksum-verified, and the installer says so.
@@ -162,7 +162,7 @@ With nothing after it, it shows where things stand and suggests the next step. S
 4. **Mark the slice ready** once the spec passes its checks and no question is open. It is saved as a GitHub issue under its epic's issue, with your approval recorded on it; the builders take it from there. Without GitHub on your computer it is written to a folder you can hand to an engineer. Marking a slice ready starts no engineering work by itself.
 5. **Change a ready slice** by saying so: it is taken back from the builders, you revise it, and you mark it ready again. "Refresh" shows each slice's issue, whether the builders have it, and anything changed on GitHub after you approved it.
 
-Everything you write is a private draft on your computer until you mark a slice ready. Full guide: [Product Manager Guide](docs/guides/PRODUCT_MANAGER_GUIDE.md).
+Everything you write is a private draft on your computer until you mark a slice ready. New to MACH and Claude Code: [Quick start for product managers](docs/guides/PRODUCT_MANAGER_QUICK_START.md). Full guide: [Product Manager Guide](docs/guides/PRODUCT_MANAGER_GUIDE.md).
 
 ### Starting from a GitHub issue
 
@@ -493,6 +493,7 @@ A high-risk change always needs a person's approval in review unless you change 
 
 | Guide | For |
 |---|---|
+| [Quick start for product managers](docs/guides/PRODUCT_MANAGER_QUICK_START.md) | New to MACH and Claude Code: set up, then a first slice from a PRD or from an idea |
 | [Product Manager Guide](docs/guides/PRODUCT_MANAGER_GUIDE.md) | Product Studio from first project to recorded acceptance |
 | [Engineer Guide](docs/guides/ENGINEER_GUIDE.md) | Intake, the supervisor, human gates, recovery, release qualification |
 | [Station Reference](docs/guides/STATION_REFERENCE.md) | What each station does and what it refuses |

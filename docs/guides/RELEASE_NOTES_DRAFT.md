@@ -1,6 +1,14 @@
-# MACH release notes: 0.19.0
+# MACH release notes: 0.19.1
 
 What is new in each release, newest first, followed by supported platforms, what you need, upgrading and security notes.
+
+## What changed in 0.19.1
+
+A quick start for product managers.
+
+| Change | What it is |
+| --- | --- |
+| Quick start for product managers | A step-by-step guide for a product manager new to MACH and Claude Code: setting up, describing the project, and getting a first slice marked ready, starting either from a PRD or from an idea. It also covers what to do while the builders work, the optional parts of Product Studio, and getting a newer version of MACH. See [the quick start](PRODUCT_MANAGER_QUICK_START.md). |
 
 ## What changed in 0.19.0
 

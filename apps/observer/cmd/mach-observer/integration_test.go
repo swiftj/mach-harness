@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 // The real ingest's version 3 events reach the serving side's projection: what the fixture's
@@ -21,9 +22,21 @@ func TestRealIngestFeedsTheProjection(t *testing.T) {
 			} `json:"projection"`
 		} `json:"data"`
 	}
-	json.Unmarshal(r.get(t, "/api/v1/health"), &health)
-	if health.Data.Projection.NotV3 != 0 || health.Data.Projection.Applied < 7 {
-		t.Fatalf("projection %+v", health.Data.Projection)
+	// The events are stored before the projection has applied them, so wait for it as waitEvents
+	// waits for the store: on a slow machine the first read of /health can still say none applied.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		json.Unmarshal(r.get(t, "/api/v1/health"), &health)
+		if health.Data.Projection.NotV3 != 0 {
+			t.Fatalf("projection %+v", health.Data.Projection)
+		}
+		if health.Data.Projection.Applied >= 7 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("projection %+v", health.Data.Projection)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	var cell struct {
 		Data struct {
