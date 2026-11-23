@@ -13,6 +13,7 @@
     ticket.py scan-dismiss FP --reason R  a person's dismissal of one scan finding; it is not ticketed again (M15)
     ticket.py request-check N             read only: who filed issue N and who labelled it a request (M8)
     ticket.py slice-list                  read only: the open slice issues marked ready (M11)
+    ticket.py slice-ids                   read only: the slice IDs every slice issue holds, open or closed (M20)
     ticket.py slice-check N [--taken]     read only: whether slice issue N counts, with its why and spec (M11); --taken: one the builders took
     ticket.py slice-status N --moment M --ref SLICE-NNN@rN... --nonce HEX [--question-file F]
                                           a status label, comment or close on a slice's own issue (M11)
@@ -1302,6 +1303,30 @@ def cmd_slice_list(ctx: Context, args: argparse.Namespace) -> int:
     return 0
 
 
+SLICE_IDS_LIMIT = "1000"
+
+
+def cmd_slice_ids(ctx: Context, args: argparse.Namespace) -> int:
+    """M20: the slice IDs the repository's slice issues hold, open or closed, read from each issue's marker, so an engineer's
+    Factory numbering its own ticket does not take one Product Studio or another engineer already gave out. Reads only."""
+    repository, failure = here(ctx)
+    report: Dict[str, Any] = {"repository": repository, "slice_ids": None, "failure": failure}
+    if repository is not None:
+        out, failure = gh_read(ctx, "issue", "list", "--repo", repository, "--label", issue_rules.SLICE_LABEL, "--state", "all",
+                               "--limit", SLICE_IDS_LIMIT, "--json", "number,body")
+        report["failure"] = failure
+        try:
+            items = json.loads(out) if out is not None else None
+        except ValueError:
+            items, report["failure"] = None, {"kind": "other", "reason": "GitHub's list could not be read"}
+        if isinstance(items, list):
+            found = {(issue_rules.parse_slice_body(item.get("body")) or {}).get("slice_id") for item in items if isinstance(item, dict)}
+            report["slice_ids"] = sorted(sid for sid in found if isinstance(sid, str) and issue_rules.SLICE_ID_RE.fullmatch(sid))
+            report["limit_reached"] = len(items) >= int(SLICE_IDS_LIMIT)
+    print(json.dumps(report, indent=2))
+    return 0
+
+
 def cmd_slice_check(ctx: Context, args: argparse.Namespace) -> int:
     """Whether slice issue N counts, by the rules in issue_rules.slice_acceptance. Reads only. The why and the spec
     are printed only when accepted, verbatim (they are checked against their SHA-256, not redacted); the title is bounded."""
@@ -1442,7 +1467,8 @@ def cmd_principles_check(ctx: Context, args: argparse.Namespace) -> int:
                     and (issue_rules.product_marker(item.get("body")) or ("",))[0] == "project"] if isinstance(listed, list) else []
         if len(projects) != 1:
             return done({"state": "none" if not projects else "not_accepted", "reason": issue_rules.PRINCIPLES_NOT_ACCEPTED["no_project" if not projects else "several"],
-                         "revision": None, "sha256": None, "approved_by": None, "principles": None})
+                         "revision": None, "sha256": None, "approved_by": None, "principles": None,
+                         **({"project_issues": sorted(projects)} if projects else {})})
         number = report["number"] = projects[0]
     issue, failure = read_issue(ctx, repository, number)
     if issue is None:
@@ -1943,6 +1969,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_request_check)
     p = sub.add_parser("slice-list", help="read only: the open slice issues marked ready, in the origin remote's repository")
     p.set_defaults(func=cmd_slice_list)
+    p = sub.add_parser("slice-ids", help="read only: the slice IDs every slice issue holds, open or closed (for numbering an engineer's own ticket)")
+    p.set_defaults(func=cmd_slice_ids)
     p = sub.add_parser("slice-check", help="read only: whether slice issue N counts, with its why and spec when it does")
     p.add_argument("number")
     p.add_argument("--taken", action="store_true", help="a slice the builders took: mach:building in place of mach:ready (a reissue)")

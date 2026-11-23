@@ -20,6 +20,7 @@ can decide, so the model only makes the judgment calls.
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -513,8 +514,61 @@ def slice_ids(project: Path) -> Tuple[Dict[int, str], Dict[int, List[Dict[str, s
     return used, reserved
 
 
+def shared_main_ref(project: Path) -> Optional[str]:
+    """origin's main branch as this checkout last fetched it (refs/remotes/origin/<main>), or None when there is none."""
+    config = load_config(project)
+    merge = config.get("merge") if isinstance(config.get("merge"), dict) else {}
+    named = merge.get("into") if isinstance(merge.get("into"), str) and merge.get("into").strip() else None
+    remote_head = git(["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], project).stdout.strip()
+    for branch in ([named.strip()] if named else [remote_head.split("/", 1)[-1]] if remote_head else ["main", "master"]):
+        if git(["rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}"], project).returncode == 0:
+            return f"refs/remotes/origin/{branch}"
+    return None
+
+
+def shared_slice_ids(project: Path) -> Tuple[Dict[int, str], List[str]]:
+    """M20 A3, for an engineer numbering their own ticket: slice numbers taken where this computer's folders cannot see them.
+    The specs on origin/<main> as last fetched (nothing is fetched here), and, when the ticket provider is GitHub, every slice
+    issue's ID, open or closed, read through the ticket station. Returns ({number: where}, notes); a note says plainly what
+    could not be read."""
+    used: Dict[int, str] = {}
+    notes: List[str] = []
+    ref = shared_main_ref(project)
+    if ref:
+        listed = git(["ls-tree", "--name-only", ref, "--", "specs/slices/"], project)
+        for path in listed.stdout.splitlines() if listed.returncode == 0 else []:
+            match = SLICE_FILE_RE.match(path.rsplit("/", 1)[-1])
+            if match:
+                used.setdefault(int(match.group(1)), f"{ref[len('refs/remotes/'):]}:{path}")
+    config = load_config(project)
+    tickets = config.get("tickets") if isinstance(config.get("tickets"), dict) else {}
+    if (os.environ.get("ISSUE_PROVIDER") or tickets.get("provider")) == "github":
+        script = ticket_script()
+        found = None
+        if script is not None:
+            done = subprocess.run([sys.executable, str(script), "--project", str(project), "slice-ids"], capture_output=True, text=True)
+            try:
+                found = json.loads(done.stdout) if done.returncode == 0 and done.stdout.strip() else None
+            except ValueError:
+                found = None
+        ids = found.get("slice_ids") if isinstance(found, dict) else None
+        if isinstance(ids, list):
+            for slice_id in ids:
+                match = SLICE_ID_RE.match(str(slice_id))
+                if match:
+                    used.setdefault(int(match.group(1)), f"a slice issue on GitHub ({slice_id})")
+        else:
+            kind = ((found or {}).get("failure") or {}).get("kind", "other") if isinstance(found, dict) else "the ticket station could not read it"
+            notes.append(f"GitHub could not be read ({kind}), so slice IDs held only by issues on GitHub were not counted. "
+                         "Check the slice issues before taking this number, or try again when GitHub can be reached.")
+    return used, notes
+
+
 def cmd_next_id(project: Path, args: argparse.Namespace) -> int:
     used, reserved = slice_ids(project)
+    shared, notes = shared_slice_ids(project)
+    for number, where in shared.items():
+        used.setdefault(number, where)
     highest = max([0, *used, *reserved])
     result = {
         "next": [f"SLICE-{highest + offset:03d}" for offset in range(1, args.count + 1)],
@@ -524,6 +578,8 @@ def cmd_next_id(project: Path, args: argparse.Namespace) -> int:
         ],
         "existing": [{"id": f"SLICE-{number:03d}", "file": used[number]} for number in sorted(used)],
     }
+    if notes:
+        result["not_counted"] = notes
     print(json.dumps(result, indent=2))
     return 0
 
@@ -581,8 +637,23 @@ FOLDER_PRINCIPLES = "product/ready/PRINCIPLES/principles.json"
 NO_PRINCIPLES = "so this slice's spec has no Principles section."
 
 
+def several_projects(numbers: Sequence[int]) -> str:
+    """M20: the one sentence when a repository has more than one open project issue (as Product Studio refuses to publish then)."""
+    named = (", ".join(f"#{number}" for number in numbers[:-1]) + f" and #{numbers[-1]}") if len(numbers) > 1 else f"#{numbers[0]}"
+    return (f"This repository has more than one open project issue ({named}), so MACH cannot tell which one holds the product principles, "
+            "and grooming stops here rather than go on without them: a person closes the one that should not be there, then grooming carries on.")
+
+
 def cell_principles(cell_root: Path) -> Optional[List[Dict[str, Any]]]:
-    """The principles this cell's spec answers, as `cell.py principles` recorded them; None when none were read."""
+    """The principles this cell's spec answers, as `cell.py principles` recorded them; None when none were read. Refuses while
+    `cell.py principles` last found several project issues, so a spec is never checked as if there were no principles."""
+    try:
+        recorded = json.loads((cell_root / "cell.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        recorded = None
+    principles = recorded.get("principles") if isinstance(recorded, dict) else None
+    if isinstance(principles, dict) and principles.get("several"):
+        raise CellError(several_projects(principles["several"]) + f" Then run 'cell.py principles {cell_root.name}' again.")
     path = cell_root / PRINCIPLES_FILE
     if not path.is_file() or path.is_symlink():
         return None
@@ -629,6 +700,9 @@ def published_principles(project: Path) -> Dict[str, Any]:
         if isinstance(decision, dict) and decision.get("state") == "accepted":
             return {"source": "github", "issue": found.get("number"), "repository": found.get("repository"), "revision": decision.get("revision"),
                     "sha256": decision.get("sha256"), "approved_by": decision.get("approved_by"), "principles": decision.get("principles"), "tried": tried}
+        several = decision.get("project_issues") if isinstance(decision, dict) else None
+        if isinstance(several, list) and len(several) > 1:  # M20: never read as "no principles"; grooming stops
+            return {"source": None, "principles": None, "several": [n for n in several if isinstance(n, int)], "tried": tried}
         if isinstance(decision, dict) and decision.get("reason"):
             tried.append(f"GitHub: {decision['reason']}")
         elif isinstance(found, dict) and isinstance(found.get("failure"), dict):
@@ -665,6 +739,12 @@ def cmd_principles(project: Path, args: argparse.Namespace) -> int:
         raise CellError(f"{args.ticket_id} is past grooming or came from Product Studio, so its principles are not read again here.")
     found = published_principles(project)
     path = root / PRINCIPLES_FILE
+    if found.get("several"):
+        if path.exists():
+            path.unlink()
+        cell["principles"] = {"source": None, "several": found["several"], "read_at": now()}
+        write_cell(project, cell)
+        raise CellError(several_projects(found["several"]))
     if found["source"] is None:
         if path.exists():
             path.unlink()
