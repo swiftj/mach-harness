@@ -8,6 +8,8 @@ What each station does, what its script refuses, and how to run one yourself. Mo
 /mach-intent LOCAL-001
 ```
 
+The ticket's work happens in its cell: `.factory/worktrees/<ticket>/repo`, a Git worktree on `feature/<ticket>`. It holds every file of the branch except `.claude/` and `.mcp.json`, which Claude Code's sandbox does not let an agent write. If Git cannot make it, the ticket is not opened and the message says what Git said; nothing is left behind and no work happens in the project root.
+
 The interview and what it produces are described in the README. Two details:
 
 ### What is checked by script, not by a model
@@ -16,6 +18,7 @@ The interview and what it produces are described in the README. Two details:
 - That no open question remains before contracts are written (`cell.py finalize`).
 - That slice IDs are unique across every ticket being groomed at once, the main checkout and Product Studio's draft workspace. A slice Product Studio handed over is one slice on both sides: the product manager's draft of it and the Factory's copy share its ID, even under different file names, and neither is called a duplicate of the other.
 - That the plan puts tests first, assigns every requirement and scenario, and lists only contracts that exist (`cell.py check-plan`).
+- That the plan changes no file under `.claude/` and no `.mcp.json` (`cell.py check-plan`). A cell never holds them, so a person makes that change outside the factory.
 
 ### Headless grooming
 
