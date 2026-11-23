@@ -11,6 +11,7 @@ observer), and a pnpm workspace in `web/`.
   are changing, not the whole file.
 - How each station behaves: its `skills/<station>/SKILL.md`. Where it and the blueprint
   differ, the skill is right.
+- Where the work stands and what is next: `docs/mach-next/NEXT.md`. Read it first in a new session, and keep it current.
 - What was built in each milestone, and how far it was tested: `docs/mach-next/`.
 - How the two apps should look and read: `docs/mach-next/STYLE_GUIDE.md`.
 
