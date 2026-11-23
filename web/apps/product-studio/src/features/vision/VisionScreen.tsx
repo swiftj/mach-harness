@@ -12,6 +12,9 @@ import { EpicSheet, knownCriteria } from "./EpicSheet";
 import { OutcomesEditor, ProjectCreator, cleanList } from "./ProjectForm";
 import { NewSliceDialog } from "../roadmap/NewSliceDialog";
 import type { StartAs } from "../small-change/model";
+import { SharedTextChoice } from "../../shared/SharedTextChoice";
+import { ProjectStartNotice } from "../../shared/ProjectStartNotice";
+import { mineOf, sharedTextAnchor } from "../../shared/team";
 
 const LEAD =
   "What the product is for and what people will get from it. Changes are saved to your draft; the project's issue on GitHub follows the next time you mark a slice ready.";
@@ -53,7 +56,10 @@ function Vision({ status }: { status: Status }) {
   const location = useLocation();
   useEffect(() => {
     const focus = (location.state as { focus?: string } | null)?.focus;
-    if (focus) document.getElementById(focus)?.scrollIntoView({ block: "start" });
+    const target = focus ? document.getElementById(focus) : null;
+    target?.scrollIntoView({ block: "start" });
+    // A choice waiting for the person (M20) is focusable: "Carry on" leads to it, and the keyboard lands on it too.
+    if (target?.getAttribute("tabindex") === "-1") target.focus({ preventScroll: true });
   }, [location.state]);
 
   const project = status.project;
@@ -91,6 +97,11 @@ function Vision({ status }: { status: Status }) {
       <WorkPanes>
         <WorkPane label="Vision, outcomes and epics">
           <div className="flex max-w-[44rem] flex-col gap-12">
+            <ProjectStartNotice />
+            {/* M20: someone else changed the project on GitHub while this person changed it too: both versions, before the editor. */}
+            {project.changed_elsewhere ? (
+              <SharedTextChoice id={sharedTextAnchor("project")} changed={project.changed_elsewhere} mine={mineOf(status, project.changed_elsewhere)} />
+            ) : null}
             <ProjectEditor key={JSON.stringify([project.name, project.vision, project.outcomes, project.revision])} status={status} />
             <Epics status={status} />
           </div>
@@ -278,6 +289,16 @@ function Epics({ status }: { status: Status }) {
                     </Fold>
                   ) : null}
                 </div>
+                {epic.changed_elsewhere ? (
+                  // M20: the epic's title or criteria changed on GitHub by someone else and here too; full width, under the epic.
+                  <SharedTextChoice
+                    id={sharedTextAnchor(epic.epic_id)}
+                    className="order-last col-span-2 mt-2"
+                    level={4}
+                    changed={epic.changed_elsewhere}
+                    mine={mineOf(status, epic.changed_elsewhere)}
+                  />
+                ) : null}
                 <div className="flex flex-wrap items-start justify-end gap-2">
                   <Button size="sm" onClick={() => setNewSlice({ epicId: epic.epic_id })}>
                     Start a slice

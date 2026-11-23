@@ -1,0 +1,52 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": null,
+    "approvals_withdrawn": [],
+    "epics": [],
+    "slices": [],
+    "saved": {
+      "everything_saved": true,
+      "note": "Everything is saved.",
+      "not_saved": []
+    },
+    "order": [],
+    "same_id_twice": [
+      {
+        "id": null,
+        "kept": null,
+        "kind": "project",
+        "note": "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project. Ask someone who looks after the repository to close the one that should not be there, then try again.",
+        "others": [
+          1,
+          4
+        ],
+        "yours": null
+      }
+    ],
+    "github": {
+      "repository": "acme/team-space",
+      "form": null,
+      "last_read": "2026-11-23T22:02:07Z"
+    },
+    "current_slice": null,
+    "last_refreshed": "2026-11-23T22:02:07Z",
+    "structurally_valid": null,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Define the project: its name, vision and outcomes (project init)."
+    ],
+    "next_actions": [
+      {
+        "kind": "define_project",
+        "target": null,
+        "title": "Define the project",
+        "reason": "Say what the product is for: its name, vision and outcomes.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

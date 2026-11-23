@@ -18,6 +18,7 @@
  * M17 (Technical needs): see needsTransport.ts; ?fixture=status.needs-unpublished shows the needs in status.
  * M18 (a small change): see smallTransport.ts; ?fixture=status.small-changes lists small changes in every state.
  * M19 (starting from nothing): see startTransport.ts; ?start=empty shows the start screen and walks each way.
+ * M20 (several product managers on one repository): see teamTransport.ts; ?team=same-moment#/slices/SLICE-001 and others.
  *
  * Every answer is a real engine run from web/fixtures. The only adjustment: the slice.ready and
  * slice.reopen fixtures are for SLICE-001, so their slice ID is set to the slice the screen asked about.
@@ -29,6 +30,7 @@ import { shapeRoute, shapeShow } from "./shapeTransport";
 import { needsRoute } from "./needsTransport";
 import { smallRoute, smallShow } from "./smallTransport";
 import { startRoute } from "./startTransport";
+import { teamRoute } from "./teamTransport";
 
 const files = import.meta.glob<EngineRun<unknown>>("../../../../fixtures/*.json", { import: "default" });
 
@@ -184,6 +186,8 @@ export const fixtureTransport: Transport = async ({ path, method, body }) => {
     });
   }
   const args = body ? (JSON.parse(body) as Record<string, unknown>) : {};
+  const team = teamRoute(path, args);
+  if (team) return team;
   const start = startRoute(path, args);
   if (start) return start;
   const small = smallRoute(path, args);

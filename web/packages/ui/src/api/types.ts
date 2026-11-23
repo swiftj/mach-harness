@@ -30,6 +30,7 @@ import type {
   IdeaSized,
   IdeaStageResult,
   LookbackRecorded,
+  NumbersFromGithub,
   RefreshIdeas,
   Serves,
   ShapeApplied,
@@ -163,6 +164,12 @@ export interface SliceGithub {
   newer_elsewhere: boolean;
   /** Another slice on GitHub already uses this draft's number. */
   number_taken: boolean;
+  /**
+   * M20: this draft was marked ready at the same moment as someone else's slice with the same number. Their issue
+   * (`holder`) was made first and keeps the number; this person's (`issue`) was closed and never reached the builders.
+   * `by` is the holder's GitHub account when known. Null otherwise; absent from runs before M20.
+   */
+  same_moment?: SameMoment | null;
   /** The builders' question, written by them on the slice's issue: data, shown as their words. */
   question: string | null;
   /** The engine's sentence saying whose words the question is. */
@@ -173,6 +180,63 @@ export interface SliceGithub {
   times: { marked_ready: string | null; building: string | null; question: string | null; shipped: string | null };
   /** One word for where the slice is: its draft's state until approved, then where it is with the builders. */
   progress: SliceProgress | null;
+}
+
+/** `slices[].github.same_moment` (M20). The engine gives issue numbers only, no addresses. */
+export interface SameMoment {
+  issue: number;
+  holder: number;
+  by: string | null;
+  /** ISO 8601. */
+  at: string | null;
+}
+
+/**
+ * M20: one ID held by more than one open issue on GitHub at the last refresh (`refresh.github.same_id_twice`,
+ * `status.same_id_twice`). `kept` was made first; `others` came later. `yours` says where this person's issue is:
+ * "kept" (theirs keeps the number), "closed" (MACH closed this person's later one), "taken_by_builders" (the later one is
+ * this person's and the builders already took it), "not_closed", "other" (an epic linked to a later issue), or null when
+ * none is theirs. For the project, `id` and `kept` are null and `others` names every project issue. `note` is the
+ * engine's sentence.
+ */
+export interface SameIdTwice {
+  kind: "slice" | "epic" | "project" | (string & {});
+  id: string | null;
+  kept: number | null;
+  others: number[];
+  yours: "kept" | "closed" | "taken_by_builders" | "not_closed" | "other" | (string & {}) | null;
+  note: string;
+}
+
+/**
+ * M20: the project's or an epic's own text, changed on GitHub by someone else while this workspace changed it too
+ * (`status.project.changed_elsewhere`, `status.epics[].changed_elsewhere`, `refresh.github.changed_elsewhere`). It waits
+ * for the person to keep theirs or take the other, whole. `theirs` is null when `readable` is false: the text on GitHub is
+ * not in the form MACH writes, so it cannot be shown or taken.
+ */
+export interface SharedTextChanged {
+  /** "project" or the epic's ID. */
+  target: string;
+  kind: "project" | "epic";
+  issue: number | null;
+  url: string | null;
+  readable: boolean;
+  theirs: { name: string; vision: string; outcomes: string[] } | { title: string; acceptance_criteria: string[] } | null;
+  note: string;
+}
+
+/** M20: what happened to the project's or an epic's text in one command (`refresh.github.text_taken`, `slice.ready`'s `shared_text`). */
+export interface SharedTextNote {
+  kind: "project" | "epic";
+  /** "project" or the epic's ID. */
+  target: string;
+  issue: number | null;
+  /** MACH took someone else's text into the workspace instead of writing over it. */
+  taken?: boolean;
+  /** Both changed: nothing was written, and the person chooses. */
+  changed?: boolean;
+  /** The engine's sentence; present on `slice.ready`'s `shared_text`, absent on refresh's `text_taken`. */
+  note?: string;
 }
 
 export type SliceProgress =
@@ -231,6 +295,8 @@ export interface StatusEpicRow {
   counts: EpicCounts;
   /** M15: the epic's own Jira key; absent when it has none. */
   tracking?: Tracking;
+  /** M20: someone else's change to this epic's title or criteria, waiting for a choice; null otherwise. */
+  changed_elsewhere?: SharedTextChanged | null;
 }
 
 export interface StatusSliceRow {
@@ -273,7 +339,10 @@ export interface ApprovalWithdrawn {
 }
 
 export interface Status {
-  project: (Omit<Project, "schema_version"> & { issue: number | null; url: string | null }) | null;
+  /** M20: `changed_elsewhere` is someone else's change to the project's name, vision or outcomes, waiting for a choice. */
+  project: (Omit<Project, "schema_version"> & { issue: number | null; url: string | null; changed_elsewhere?: SharedTextChanged | null }) | null;
+  /** M20: IDs more than one open issue held at the last refresh. */
+  same_id_twice?: SameIdTwice[];
   /** Approvals the engine withdrew (a reopen, a renumber, a version taken from GitHub), with the reason. */
   approvals_withdrawn: ApprovalWithdrawn[];
   epics: StatusEpicRow[];
@@ -400,6 +469,12 @@ export interface RefreshGithub {
   principles?: PrinciplesPublished;
   /** M17: where the technical needs are published, as this refresh read them (the same shape). */
   needs?: PrinciplesPublished;
+  /** M20: IDs more than one open issue holds on GitHub. */
+  same_id_twice?: SameIdTwice[];
+  /** M20: the project's and epics' text someone else changed while this workspace changed it too. */
+  changed_elsewhere?: SharedTextChanged[];
+  /** M20: the project's and epics' text MACH took into the workspace in this refresh, instead of writing over it. */
+  text_taken?: SharedTextNote[];
 }
 
 export interface Refresh {
@@ -526,6 +601,8 @@ interface SliceReadyCommon {
   note: string;
   /** M18: present only for a slice started as a small change (widened by this check, when `widened_now`). */
   small_change?: SliceSmallChange;
+  /** M20: what happened to the project's and its epic's own text; absent when nothing did. */
+  shared_text?: SharedTextNote[];
 }
 
 /** `slice ready` when the slice was saved as a GitHub issue under its epic's issue. */
@@ -645,6 +722,29 @@ export interface Reconcile {
   github_version: number;
   approvals_withdrawn: string[];
   note: string;
+}
+
+/** M20: `reconcile project|EPIC-NNN --take mine|theirs`, for the project's or an epic's own text. */
+export interface ReconcileText {
+  /** "project" or the epic's ID. */
+  reconciled: string;
+  took: "mine" | "theirs";
+  issue: number | null;
+  note: string;
+  factory_authorized: false;
+}
+
+/** `project.init`. M20: the project already on GitHub was taken (`taken_from_github`), or GitHub could not be checked. */
+export interface ProjectInit {
+  project: Project;
+  path: string;
+  /** The project issue whose name, vision and outcomes were taken instead of the words given. */
+  taken_from_github?: number;
+  url?: string | null;
+  /** Why GitHub could not be checked for a project already there. */
+  github_not_checked?: string;
+  /** The engine's sentence, present with either of the two above. */
+  note?: string;
 }
 
 /* ── slice show: the spec as the validator's model ─────────────────────── */
@@ -786,7 +886,7 @@ export interface Operations {
   status: { args: Record<string, never>; result: Status };
   validate: { args: Record<string, never>; result: Validate };
   refresh: { args: Record<string, never>; result: Refresh };
-  "project.init": { args: { id: string; name: string; vision: string; outcome: string[] }; result: { project: Project; path: string } };
+  "project.init": { args: { id: string; name: string; vision: string; outcome: string[] }; result: ProjectInit };
   "project.set": {
     args: { name?: string; vision?: string; outcome?: string[]; status?: ProjectStatus };
     result: { project: Project };
@@ -810,7 +910,10 @@ export interface Operations {
   "slice.renumber": { args: { identifier: string }; result: Renumber };
   "slice.move": { args: { slice_id: string; before?: string; after?: string; first?: true; last?: true }; result: SliceMove };
   "slice.take": { args: { issue: number } | { slice_id: string }; result: SliceTake };
-  reconcile: { args: { slice_id: string; take: "mine" | "theirs" }; result: Reconcile };
+  /** A slice by slice_id; M20, the project's or an epic's own text by target ("project" or EPIC-NNN). */
+  reconcile:
+    | { args: { slice_id: string; take: "mine" | "theirs" }; result: Reconcile }
+    | { args: { target: string; take: "mine" | "theirs" }; result: ReconcileText };
 
   /* Requests from GitHub issues (M8), promoted from features/inbox/requests/api.ts in M15. */
   "request.list": { args: Record<string, never>; result: { requests: RequestsBlock; note: string; factory_authorized?: false } };
@@ -1461,6 +1564,8 @@ export interface PrdApply extends PrdStatus {
   made: { epics: string[]; slices: string[] };
   kept: { epics: string[]; slices: string[] };
   missing: string[];
+  /** M20: whether GitHub's slice and epic numbers were read before the drafts were numbered. */
+  numbers_from_github?: NumbersFromGithub;
 }
 
 /** The map `prd.map` records, as the planning model proposes it (skills/product-studio/references/prd-onramp.md). */

@@ -49,6 +49,8 @@ import { ShapeCarryOn } from "../shape/shell/ShapeCarryOn";
 import { Fold } from "../../shared/layout/Fold";
 import { ContextRow, OnePane, WorkScreen } from "../../shared/layout/WorkScreen";
 import { doneWhenLabel } from "./model";
+import { ProjectStartNotice } from "../../shared/ProjectStartNotice";
+import { numberTakenLine, teamNotices } from "../../shared/team";
 
 /** Refresh once per visit, when the project home first opens. */
 let refreshedThisVisit = false;
@@ -97,7 +99,7 @@ function ProjectHome({ status }: { status: Status }) {
 
   const runRoute = (action: NextAction) => {
     const route = routeFor(action);
-    if (route.type === "navigate") void navigate(route.to);
+    if (route.type === "navigate") void navigate(route.to, route.state ? { state: route.state } : undefined);
     else if (route.type === "new-slice") setNewSlice({ epicId: route.epicId });
     else if (route.type === "add-epic") setAddEpic(true);
     else if (route.type === "answer-question") {
@@ -238,7 +240,7 @@ function CarryOn({ action, onGo }: { action: NextAction; onGo: () => void }) {
 
 /** Everything the engine reports as waiting for the PM, in one notice, plus problems reaching GitHub. */
 function Notices({ status, refresh, refreshError, onRetry }: { status: Status; refresh: Refresh | null; refreshError: string | null; onRetry: () => void }) {
-  const notices: ReactNode[] = [];
+  const notices: ReactNode[] = [<ProjectStartNotice key="start" />];
   if (refreshError) {
     notices.push(
       <Banner key="host" tone="danger" live="assertive" title="Could not check GitHub" actions={<Button size="sm" onClick={onRetry}>Try again</Button>}>
@@ -258,7 +260,7 @@ function Notices({ status, refresh, refreshError, onRetry }: { status: Status; r
   for (const slice of status.slices) {
     if (slice.github.changed_on_github) waiting.push(<li key={`c-${slice.slice_id}`}>{named(slice)} was changed on GitHub after you approved it: the builders will not take it until you mark it ready again.</li>);
     if (slice.github.newer_elsewhere) waiting.push(<li key={`n-${slice.slice_id}`}>Someone else saved a newer version of {named(slice)}: choose theirs or keep yours.</li>);
-    if (slice.github.number_taken) waiting.push(<li key={`t-${slice.slice_id}`}>{named(slice)} needs a new number, because another slice on GitHub uses it.</li>);
+    if (slice.github.number_taken) waiting.push(<li key={`t-${slice.slice_id}`}>{named(slice)} {numberTakenLine(slice.github)}</li>);
     if (slice.github.unfinished) waiting.push(<li key={`u-${slice.slice_id}`}>Saving {named(slice)} to GitHub stopped part way: mark it ready again to finish.</li>);
     if (slice.github.state_label === "mach:question") waiting.push(<li key={`b-${slice.slice_id}`}>The builders have a question about {named(slice)}.</li>);
   }
@@ -293,6 +295,30 @@ function Notices({ status, refresh, refreshError, onRetry }: { status: Status; r
       </Banner>,
     );
   }
+  // M20: other product managers on the same repository. Calm and informational: nothing here stops other work, and
+  // the one act a closed slice needs is already in the list above and under "Carry on".
+  const team = teamNotices(status, refresh);
+  if (team.length) {
+    notices.push(
+      <Banner key="team" tone="info" live="polite" title={team.length === 1 ? "From other product managers on GitHub" : `${team.length} things from other product managers on GitHub`}>
+        <ul className="flex flex-col gap-1">
+          {team.map((notice) => (
+            <li key={notice.key}>
+              {notice.text}
+              {notice.link ? (
+                <>
+                  {" "}
+                  <span className="whitespace-nowrap text-ink-muted">
+                    (issue <IssueLink number={notice.link.number} url={notice.link.url} />)
+                  </span>
+                </>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </Banner>,
+    );
+  }
   if (status.github_updates_note || status.github_updates_not_made_note) {
     notices.push(
       <Banner key="updates" tone="info" title="Updates to GitHub">
@@ -322,7 +348,7 @@ function Notices({ status, refresh, refreshError, onRetry }: { status: Status; r
       </Banner>,
     );
   }
-  return notices.length ? <div className="flex flex-col gap-3">{notices}</div> : null;
+  return <div className="flex flex-col gap-3 empty:hidden">{notices}</div>;
 }
 
 /** "Invite a teammate (SLICE-001)" for an engine ID. */

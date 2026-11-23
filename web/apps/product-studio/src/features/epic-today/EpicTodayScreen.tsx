@@ -6,6 +6,8 @@ import type { EpicCurrent, EpicView, ShippedRule } from "@mach/ui/api";
 import { useOperation } from "../../api/useOperation";
 import { useStatus } from "../../api/store";
 import { Fold } from "../../shared/layout/Fold";
+import { SharedTextChoice } from "../../shared/SharedTextChoice";
+import { mineOf } from "../../shared/team";
 import { SectionNav } from "../../shared/layout/SectionNav";
 import { ContextRow, OnePane, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
 import { connectionWords, earlierText, effectWord, epicPage, sliceEffectsWords, sliceTitle, type GroupId, type NotApplied, type RuleGroup } from "./model";
@@ -89,6 +91,17 @@ function TodaySkeleton() {
   );
 }
 
+/**
+ * M20: someone else changed this epic's title or criteria on GitHub while this person changed them too. The choice is
+ * the same one Vision shows under the epic, here first, since this is the epic's own page.
+ */
+function EpicTextChoice({ epicId }: { epicId: string }) {
+  const status = useStatus().data;
+  const changed = status?.epics.find((e) => e.epic_id === epicId)?.changed_elsewhere;
+  if (!status || !changed) return null;
+  return <SharedTextChoice className="max-w-[44rem]" changed={changed} mine={mineOf(status, changed)} />;
+}
+
 /** MACH's note, once: which commit, and that it is this computer's copy of the main branch. */
 function SourceNote({ current }: { current: EpicCurrent }) {
   return (
@@ -126,6 +139,7 @@ function EpicBody({ current, epicId, label }: { current: EpicCurrent; epicId: st
     return (
       <OnePane label={label} width="reading">
         <div className="flex flex-col gap-6">
+          <EpicTextChoice epicId={epicId} />
           <EmptyState
             className="max-w-reading"
             icon={<PackageOpen />}
@@ -147,6 +161,7 @@ function EpicBody({ current, epicId, label }: { current: EpicCurrent; epicId: st
     <WorkPanes>
       <WorkPane label={label}>
         <div className="flex flex-col gap-10">
+          <EpicTextChoice epicId={epicId} />
           {current.notes.length ? (
             <Banner tone="info" title="What MACH noted">
               <ul className="flex list-disc flex-col gap-1 pl-5">

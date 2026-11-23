@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { CircleCheck, FolderUp, Pause, RotateCcw } from "lucide-react";
+import { CircleCheck, FolderUp, GitBranch, Hash, Pause, RotateCcw } from "lucide-react";
 import { Banner, Button, Dialog, DialogClose, DialogContent, DialogTrigger, ErrorState, Field, Text, Textarea, describeError, toast, CheckCounts, CheckPill, DiagnosticList, diagnostics, plural as count } from "@mach/ui";
 import type { MachApiError, MocksToCommit, SliceReady, SliceReadyWidened, SliceShow } from "@mach/ui/api";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
+import { RenumberDialog } from "../../shared/RenumberDialog";
+import { renumberHint, sharedTextAfterReady, sharedTextAnchor } from "../../shared/team";
 import { MadeFullAtReady } from "../small-change/MadeFullAtReady";
 import { isMadeFullAtReady, madeFullAtReady } from "../small-change/model";
 import { IssueLink, SignInNote } from "../../shared/IssueLink";
@@ -16,6 +18,30 @@ function Failure({ error, what }: { error: MachApiError; what: string }) {
   // A refusal is the engine's own words, shown as written; the title names what did not happen.
   const described = describeError(error);
   return <ErrorState title={error.kind === "refused" ? what : described.title} message={error.kind === "refused" ? error.message : described.message} hint={error.hint} />;
+}
+
+/**
+ * M20: marking ready was refused because the slice's or its epic's number is someone else's on GitHub (taken at the same
+ * moment, or before). Something to settle, not a failure: the engine's words as written (who holds the number, which
+ * issue), and the one act, a new number.
+ */
+function NumberTaken({ error, what, onRenumber }: { error: MachApiError; what: string; onRenumber: () => void }) {
+  return (
+    <div role="alert" className="flex flex-col items-start gap-3 rounded-md border border-warning-line bg-warning-soft px-5 py-4">
+      <div className="flex items-start gap-3">
+        <Hash aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-warning-ink" />
+        <div className="flex flex-col gap-1">
+          <p className="text-title-3 font-semibold text-warning-ink">{what}</p>
+          <p className="whitespace-pre-line text-body text-ink">{error.message}</p>
+        </div>
+      </div>
+      <div className="pl-8">
+        <Button variant="primary" onClick={onRenumber}>
+          Give it a new number
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -41,6 +67,10 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
   const epicId = show.slice.epic_id;
   const epicTitle = useStatus().data?.epics.find((e) => e.epic_id === epicId)?.title;
   const epicName = epicTitle ? `the epic “${epicTitle}” (${epicId})` : `its epic, ${epicId}`;
+  // M20: a refusal whose hint is a new number for this slice or its epic.
+  const taken = error?.kind === "refused" ? renumberHint(error.hint) : null;
+  const [renumber, setRenumber] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   const markReady = () => {
     setBusy(true);
@@ -74,6 +104,16 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
   };
 
   return (
+    <>
+    <RenumberDialog
+      id={renumber}
+      onOpenChange={(next) => !next && setRenumber(null)}
+      onRenumbered={({ to }) => {
+        // A slice moves to its new number's page, where it is marked ready again; an epic's slice stays here.
+        if (to.startsWith("SLICE-")) void navigate(`/slices/${to}`, { replace: true });
+        else onDone();
+      }}
+    />
     <Dialog open={open} onOpenChange={(next) => (busy ? undefined : close(next))}>
       <DialogTrigger asChild>
         <Button variant={primary ? "primary" : "secondary"}>
@@ -131,7 +171,8 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
                   Cancel
                 </Button>
               </DialogClose>
-              <Button variant="primary" loading={busy} onClick={markReady}>
+              {/* After a refusal for a taken number, the new number is the act; marking ready again would be refused. */}
+              <Button variant={taken ? "secondary" : "primary"} loading={busy} onClick={markReady}>
                 Mark ready to build
               </Button>
             </>
@@ -139,7 +180,20 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
         >
           <div className="flex flex-col gap-4 pb-1">
             {/* First, so the reason and the way on are never below the fold. */}
-            {error ? <Failure error={error} what={`${id} was not marked ready`} /> : null}
+            {error && taken ? (
+              <NumberTaken
+                error={error}
+                what={`${id} was not marked ready`}
+                onRenumber={() => {
+                  // This dialog closes and the renumbering one opens: one dialog at a time.
+                  setOpen(false);
+                  setError(null);
+                  setRenumber(taken.id);
+                }}
+              />
+            ) : error ? (
+              <Failure error={error} what={`${id} was not marked ready`} />
+            ) : null}
             <div className="flex flex-col gap-2 rounded-md border border-line bg-surface px-4 py-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-label text-ink">What MACH's check says</p>
@@ -162,6 +216,7 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
         </DialogContent>
       )}
     </Dialog>
+    </>
   );
 }
 
@@ -197,6 +252,7 @@ export function SavedPlace({ result }: { result: SliceReady }) {
           )}
         </dl>
         {mocks ? <PicturesToAdd mocks={mocks} /> : null}
+        <SharedTextAfterReady result={result} />
       </div>
     );
   }
@@ -229,6 +285,39 @@ export function SavedPlace({ result }: { result: SliceReady }) {
         </Text>
       </Fold>
     </div>
+  );
+}
+
+/**
+ * M20: what happened to the project's and the epic's own text while the slice was saved. Someone else's text MACH took
+ * in instead of writing over it, or a change on both sides that was not written and waits for a choice on Vision. The
+ * slice itself was saved either way; this is said calmly, in the engine's words.
+ */
+function SharedTextAfterReady({ result }: { result: SliceReady }) {
+  const notes = sharedTextAfterReady(result.shared_text);
+  if (!notes.length) return null;
+  return (
+    <section aria-labelledby="shared-text-after-ready" className="flex flex-col gap-2 rounded-md border border-info-line bg-info-soft px-4 py-3">
+      <h3 id="shared-text-after-ready" className="flex items-start gap-2 text-label text-info-ink">
+        <GitBranch aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+        Shared with other product managers
+      </h3>
+      <ul className="flex flex-col gap-1.5 pl-6 text-body-sm text-ink">
+        {notes.map((note) => (
+          <li key={note.key}>
+            {note.text}
+            {note.choose ? (
+              <>
+                {" "}
+                <Link to="/vision" state={{ focus: sharedTextAnchor(note.choose) }} className="font-semibold text-accent-ink underline-offset-2 hover:underline">
+                  Choose a version on Vision
+                </Link>
+              </>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

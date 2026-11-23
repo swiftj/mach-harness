@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "data": {
+    "reconciled": "project",
+    "took": "mine",
+    "issue": 1,
+    "note": "Your copy of the project stays as it is. MACH writes it to GitHub the next time you mark a slice ready.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

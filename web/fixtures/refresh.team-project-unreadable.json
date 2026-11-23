@@ -1,0 +1,133 @@
+{
+  "exit_code": 0,
+  "data": {
+    "refreshed": true,
+    "problem": null,
+    "requests": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "refreshed_at": "2026-11-23T22:01:28Z",
+      "problem": null,
+      "truncated": false,
+      "truncated_note": null,
+      "items": [],
+      "updates_waiting": 0,
+      "updates_waiting_note": null,
+      "could_not_update": [],
+      "could_not_update_note": null
+    },
+    "github": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "problem": null,
+      "refreshed_at": "2026-11-23T22:01:28Z",
+      "form": null,
+      "project_issue": 1,
+      "project_url": "https://github.com/acme/team-space/issues/1",
+      "epics": {
+        "EPIC-001": 2
+      },
+      "epic_urls": {
+        "EPIC-001": "https://github.com/acme/team-space/issues/2"
+      },
+      "slices": [
+        {
+          "slice_id": "SLICE-001",
+          "in_workspace": false,
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": null,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "same_moment": null,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": null,
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": null,
+          "on_github": [
+            {
+              "issue": 3,
+              "state": "open",
+              "state_label": "mach:ready",
+              "revision": 1,
+              "title": "Invite a teammate",
+              "matches_approval": true,
+              "approved_by": "ada-pm",
+              "question": null
+            }
+          ],
+          "title": "Invite a teammate"
+        }
+      ],
+      "order": [
+        {
+          "epic_id": "EPIC-001",
+          "issue": 2,
+          "slices": [
+            {
+              "slice_id": "SLICE-001",
+              "title": "Invite a teammate",
+              "in_workspace": false,
+              "issue": 3,
+              "state_label": "mach:ready"
+            }
+          ],
+          "on_github": true,
+          "github_order": [
+            "SLICE-001"
+          ],
+          "github_read_at": "2026-11-23T22:01:28Z",
+          "matches_github": true,
+          "unfinished": false,
+          "taken_from_github": false,
+          "could_not_read": false,
+          "note": null
+        }
+      ],
+      "principles": {
+        "saved": null,
+        "unfinished": false,
+        "revision": null,
+        "sha256": null,
+        "approved_by": null,
+        "published_at": null,
+        "issue": 1,
+        "url": "https://github.com/acme/team-space/issues/1",
+        "github": {
+          "revision": null,
+          "approved": null,
+          "approved_by": null,
+          "read_at": "2026-11-23T22:01:28Z"
+        },
+        "newer_elsewhere": false,
+        "changed_on_github": false
+      },
+      "same_id_twice": [],
+      "changed_elsewhere": [
+        {
+          "target": "project",
+          "kind": "project",
+          "issue": 1,
+          "url": "https://github.com/acme/team-space/issues/1",
+          "readable": false,
+          "theirs": null,
+          "note": "Someone else changed the project on GitHub since you last saw it, and your copy here is different. Choose yours or theirs."
+        }
+      ],
+      "text_taken": []
+    },
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

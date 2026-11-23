@@ -517,6 +517,15 @@ export interface ShapeSettled extends ShapeMapStatus {
   settled: ShapeSettlement & { outcome: string };
 }
 
+/**
+ * M20, on `prd.apply` and `idea.apply`: whether the slice and epic numbers GitHub's issues hold were read before the drafts
+ * were numbered. When they were not, `problem` says why, and the result's `note` already carries the sentence that says so.
+ */
+export interface NumbersFromGithub {
+  checked: boolean;
+  problem: string | null;
+}
+
 export interface ShapeApplied extends ShapeMapStatus {
   applied: boolean;
   made: IdeaMade;
@@ -524,6 +533,8 @@ export interface ShapeApplied extends ShapeMapStatus {
   missing: string[];
   /** M18: present when the apply started a small change, with the kind the product manager gave. */
   small_change?: { change: "fix" | "adjustment"; shipped_rule: string | null };
+  /** M20: whether GitHub's slice and epic numbers were read before the drafts were numbered. */
+  numbers_from_github?: NumbersFromGithub;
 }
 
 /** The proposed map the conversation writes; `idea.map` checks it. */

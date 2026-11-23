@@ -4,6 +4,8 @@ import { Banner, Button, Field, HintAction, Input, Textarea, toast } from "@mach
 import type { OperationResult } from "@mach/ui/api";
 import { useEngineAct } from "../../api/act";
 import { projectIdFrom } from "../home/start/model";
+import { rememberProjectStart } from "../../api/projectStart";
+import { projectStartNote } from "../../shared/team";
 
 /* ── Outcomes ────────────────────────────────────────────────────────── */
 
@@ -90,7 +92,12 @@ export function ProjectCreator({
     if (Object.keys(next).length) return;
     const result = await act.run("project.init", { id: projectId, name: name.trim(), vision: vision.trim(), outcome: cleanList(outcomes) });
     if (!result) return;
-    toast({ tone: "success", title: `${doneVerb} ${result.project.name}`, description: createdNote });
+    // M20: the repository already had a project on GitHub (its words were taken, not these), or GitHub was not checked.
+    // The page moves on at once, so the note is kept for the next page as well as said here.
+    const note = projectStartNote(result);
+    rememberProjectStart(note);
+    if (note?.kind === "taken") toast({ tone: "info", title: `Took ${result.project.name} from GitHub`, description: note.note });
+    else toast({ tone: "success", title: `${doneVerb} ${result.project.name}`, description: note ? `${createdNote} ${note.note}` : createdNote });
     onCreated?.(result);
   };
 
@@ -114,10 +121,18 @@ export function ProjectCreator({
         />
       </Field>
       {act.shown ? (
-        <Banner tone="danger" live="assertive" title={act.shown.title} actions={act.shown.hint ? <HintAction hint={act.shown.hint} /> : undefined}>
+        <Banner
+          tone="danger"
+          live="assertive"
+          title={act.error?.kind === "refused" ? "The project was not defined" : act.shown.title}
+          actions={act.shown.hint ? <HintAction hint={act.shown.hint} /> : undefined}
+        >
           <span className="whitespace-pre-line">{act.shown.message}</span>
         </Banner>
       ) : null}
+      <p className="max-w-reading text-body-sm text-ink-muted">
+        A repository holds one project. If this one already has a project on GitHub, MACH uses its name, vision and outcomes instead of these, and tells you.
+      </p>
       <div>
         <Button variant="primary" size="lg" type="submit" loading={act.pending}>
           {submitLabel}

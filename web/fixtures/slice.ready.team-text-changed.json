@@ -1,0 +1,49 @@
+{
+  "exit_code": 0,
+  "data": {
+    "ready": true,
+    "saved_to": "github",
+    "slice": {
+      "dependencies": [],
+      "epic_id": "EPIC-001",
+      "open_questions": [],
+      "project_id": "team-space",
+      "revision": 2,
+      "schema_version": 1,
+      "slice_id": "SLICE-002",
+      "spec_path": "specs/slices/SLICE-002-invite-teammate.md",
+      "spec_sha256": "c3d3b270393bc111fafce4279b3677f3453d58ec2025c330885bd7ae7b6f8888",
+      "status": "approved_for_engineering",
+      "title": "Remove a teammate"
+    },
+    "issue": 4,
+    "url": "https://github.com/acme/team-space/issues/4",
+    "revision": 1,
+    "follows": null,
+    "epic_issue": 2,
+    "project_issue": 1,
+    "approved_by": "ben-pm",
+    "risk": "High",
+    "counts": {
+      "invariants": 4,
+      "functional_requirements": 9,
+      "matrix_rules": 5,
+      "scenarios": 3
+    },
+    "warnings": [],
+    "request_updates": null,
+    "factory_authorized": false,
+    "shared_text": [
+      {
+        "kind": "project",
+        "target": "project",
+        "issue": 1,
+        "changed": true,
+        "note": "Someone else changed the project on GitHub since you last saw it, so your copy was not written there. Choose yours or theirs."
+      }
+    ],
+    "note": "Saved to GitHub as #4 and marked ready. The builders take it from there; nothing has started yet."
+  },
+  "refused": null,
+  "hint": null
+}

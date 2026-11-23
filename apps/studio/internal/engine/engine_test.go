@@ -139,6 +139,9 @@ func TestEveryOperationAgainstTheRealEngine(t *testing.T) {
 	// The fixture spec reserves SLICE-002 to SLICE-004 for deferred features, so the engine picks the next.
 	second := mustOK(t, e, "slice.new", `{"epic":"EPIC-001","title":"Remove a teammate"}`)["slice"].(map[string]any)["slice_id"].(string)
 	mustFail(t, e, "reconcile", `{"slice_id":"SLICE-001","take":"mine"}`, engine.KindRefused, "")
+	// M20: the project's and an epic's text reach the engine's reconcile; with nothing changed elsewhere it refuses.
+	mustFail(t, e, "reconcile", `{"target":"project","take":"theirs"}`, engine.KindRefused, "has no change on GitHub to choose from")
+	mustFail(t, e, "reconcile", `{"target":"EPIC-001","take":"mine"}`, engine.KindRefused, "has no change on GitHub to choose from")
 	if reopened := mustOK(t, e, "slice.reopen", `{"slice_id":"SLICE-001"}`); reopened["github"].(map[string]any)["where"] != "folder" {
 		t.Fatalf("slice.reopen: %v", reopened)
 	}
