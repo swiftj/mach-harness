@@ -1,6 +1,6 @@
 # M20 design: teams, and moving a project
 
-Status: a proposal. Nothing here is built. It rests on two investigations run against MACH 0.20.0 on 2026-11-23:
+Status: a proposal; A1 and A5 are built (section 4). It rests on two investigations run against MACH 0.20.0 on 2026-11-23:
 
 - a real GitHub issue transfer between two private throwaway repositories, with a real MACH project in the first;
 - an audit of what happens when several product managers and several engineers use MACH at once on one repository, with 15 reproduction tests (9 of them show a defect and are marked as expected failures).
@@ -156,6 +156,10 @@ One decision is needed: one repository still means one project. Two products in 
 | 4 | B2 move this project | L |
 | 5 | B4 merging two projects | L |
 | 6 | A6 qualifying across machines | L |
+
+**A1. Built.** `ticket.py slice-claim` (rules in `issue_rules`: `claim_token`, `claim_comment`, `claims`, `claim_holder`) is called by `intake.py` `_dispatch` for every slice from an issue not yet in the line, so an engineer's dispatch, `/mach pull` and the supervisor all go through it. A Factory is its random value in `.factory/local/factory.json`; a claim carries a token derived from it and the slice ID. Earliest counting claim per revision by comment ID; a claim counts only as the exact template, unedited, by a person with triage or above. The loser edits its own claim into a withdrawn note (retried through the status outbox if the edit fails), records `claim_lost`, and reports who took it. Intake leaves alone an issue carrying `mach:building` or another Factory's counting claim unless its own ledger holds the slice. Abandoned work withdraws its claim; a reissue claims again. Differs from the text above: a failed status write does not block dispatch; the claim comment is the claim, so the label waiting in the outbox does not matter. A release command was not added: a person deletes or edits the claim and removes `mach:building` on GitHub. Tests: `tests/test_team_factory.py`.
+
+**A5. Built.** The plan treats a slice this Factory took in and never put in the line as completed when its approved spec, for that revision (SHA-256 without the header), is on the integration branch; dependents become ready, and nothing is written to the issue from this machine.
 
 Step 1 removes the three ways work is duplicated or merged untested without anyone being told. The nine failing reproduction tests become the acceptance tests: each must pass when its item is done.
 

@@ -1,7 +1,7 @@
 ---
 name: ticket
 description: Reads and updates tickets for the MACH factory across any tracker (local Markdown files, GitHub, Gitea, Jira, Fossil), and turns production telemetry (Sentry, PostHog, Datadog, failed CI runs, error logs) into self-healing tickets. Use to view, list, create, comment on, relabel or change the state of a ticket, or to ingest a crash report, alert or failing build log as a new ticket, or a security scanner's findings export (SARIF or CSV) as one ticket per finding.
-argument-hint: "[view|list|create|update|comment|ingest-telemetry|ingest-scan|scan-dismiss|request-check|slice-list|slice-check|epic-check|principles-check|slice-status] [ticket ID, issue number or payload file] [flags]"
+argument-hint: "[view|list|create|update|comment|ingest-telemetry|ingest-scan|scan-dismiss|request-check|slice-list|slice-check|epic-check|principles-check|slice-status|slice-claim] [ticket ID, issue number or payload file] [flags]"
 compatibility: "python3 >= 3.8"
 ---
 
@@ -38,6 +38,7 @@ The tracker comes from `.factory/config.json` (`tickets.provider`, `local` by de
 | Slice issues marked ready (read only, called by intake) | `TICKET slice-list`, `TICKET slice-check <n>`, `TICKET epic-check <n> [--release <id> --commit <sha>]` |
 | The product principles on the project's issue (read only, called by the intent station) | `TICKET principles-check [<n>]` |
 | Status on a slice's issue (called by intake) | `TICKET slice-status <n> --repository OWNER/REPO --moment <building\|question\|shipped\|blocked\|changed> --ref SLICE-NNN@rN... --nonce <hex> [--question-file <f>]` |
+| Claim a slice's issue just before its cell opens, or withdraw a claim (called by intake) | `TICKET slice-claim <n> --repository OWNER/REPO --slice SLICE-NNN --revision <r> --token <hex16> [--withdraw lost\|stopped --comment-id <id>]` |
 
 `update` takes `--state`, `--label`, `--remove-label` and `--comment` together in one call. For long text, pass `-` as the body or comment and send the text on standard input.
 
@@ -88,6 +89,8 @@ These are how the run skill's intake reads slices Product Studio marked ready an
 - `slice-status <n>` writes one status on the slice's own issue: `building` adds `mach:building` and takes off `mach:ready` and `mach:question`; `question` adds `mach:question` and posts the contract engineer's question (from `--question-file`, redacted, bounded, unable to mention or link anyone); `shipped` adds `mach:shipped`, takes off the others and closes the issue; `blocked` and `changed` post a comment only. Comments come from the shared templates in `issue_rules.py` and end in a hidden marker keyed with the ledger's nonce; the issue's comments are read first and a comment carrying the same key counts as already done. A missing MACH label is created, never with `--force`. `tickets.github.status_comments: false` stops comments; labels and closing still happen. An issue that moved to another repository is never written to.
 
 `slice-status` prints JSON with `status`: `done` (exit 0), `already_done` (exit 3) or `pending` (exit 4, with a `kind` such as `network`, `auth`, `refused`, `not_found`, `moved`, `no_gh`); it never relays `gh`'s own words. A refusal (another repository, no nonce, a reference that is not an identifier) exits 2. Intake records the outcome in its ledger and retries `pending` on its next pass.
+
+`slice-claim <n>` (M20) reads the issue again (open, `mach:slice`, still this slice and revision), reads its comments, posts a claim from `issue_rules.claim_comment` unless a claim already holds the slice, reads the comments again, and prints `status`: `won` (this Factory's claim is the earliest that counts for the revision; its own earlier claim counts, and nothing is posted twice), `lost` (with `holder`: login, time, comment ID; its own claim is edited into the withdrawn form, `withdrawn` says whether that worked), `refused` (with `kind` and a plain `reason`: moved, not open, changed, or this account's role does not count) or `pending` (exit 4: GitHub did not answer; nothing may start). A claim counts while it is exactly the template, unedited, by a person with the triage role or above; order is GitHub's comment IDs. While the issue carries `mach:building`, a counting claim on another revision holds the slice too. With `--withdraw`, it edits only the named comment, only when it is this token's claim. Claims are posted whatever `status_comments` says. `slice-check` also prints `building` and the counting `claims` (slice, revision, token, login, time) for an accepted issue.
 
 The Factory writes nothing to a request's issue (`mach:request`): Product Studio tells it when a slice made from it is marked ready, with a link to the slice's issue.
 

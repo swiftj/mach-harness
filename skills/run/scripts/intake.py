@@ -85,6 +85,7 @@ RISK_FLOOR = "Medium"  # product-sourced work is never reviewed below this tier
 STATUS_MAX_ATTEMPTS = 20  # a status write GitHub could not be reached for is given up after this many tries
 STATUS_GIVE_UP_KINDS = ("auth", "refused", "not_found", "moved", "no_github", "no_gh")  # failures a retry cannot fix
 EPIC_VIEW_MOMENT = "epic-view"  # M13: the outbox write that replaces the epic's current-view comment
+CLAIM_WITHDRAW_MOMENT = "claim-withdraw"  # M20: the outbox write that withdraws this Factory's claim on a slice's issue
 LOCK_STALE_SECONDS = 15 * 60  # a lock older than this, or held by a process that is gone, is taken over
 ENGINEER = "engineer"  # the only caller that may dispatch without an authorization
 IGNORE_LINE = ".factory/intake/"
@@ -552,7 +553,8 @@ class Factory:
                 answer = self.ticket_json("slice-check", str(issue)) or {}
                 decision = answer.get("decision") if isinstance(answer.get("decision"), dict) else {"state": "not_accepted", "reason": "Not accepted: the ticket station could not check it."}
                 checked = {"updated_at": item.get("updated_at"), "decision": decision, "title": answer.get("title"), "epic": answer.get("epic"),
-                           "transient": bool(answer.get("transient")), "at": now()}
+                           "transient": bool(answer.get("transient")), "at": now(),
+                           "building": answer.get("building") is True, "claims": answer.get("claims") if isinstance(answer.get("claims"), list) else []}
                 if decision.get("state") == "accepted":  # the text is kept only in received/, never in the ledger
                     checked["why"], checked["spec"] = decision.pop("why", None), decision.pop("spec", None)
                 if not dry_run:
@@ -576,6 +578,10 @@ class Factory:
                         found["not_accepted"].append({"issue": issue, "slice_id": marker.get("slice_id"), "revision": marker.get("revision"),
                                                       "reason": decision.get("reason") or "Not accepted: it could not be read again."})
                         continue
+            elsewhere = self.taken_elsewhere(ledger, found["repository"], issue, marker, checked)
+            if elsewhere:  # M20: being built by another Factory; never taken in here
+                found["not_accepted"].append({"issue": issue, "slice_id": marker["slice_id"], "revision": marker["revision"], "reason": elsewhere})
+                continue
             epic = checked.get("epic") or {}
             problems = self.gates(marker["slice_id"], why, spec)
             if problems:
@@ -1088,7 +1094,7 @@ class Factory:
             entry.pop("mocks", None), entry.pop("mocks_sha256", None)  # M14 C: the new revision's mocks, or none
             entry.pop("small", None)  # M18: the new revision's small-change record, or none
             entry.pop("reissued", None)  # a revision marked ready again is waited on like any other
-            entry.update(self.definition(row))
+            entry.update(self.definition(row), integrated=None)  # M20 A5: an earlier revision another Factory built is not this one
             self.save(ledger)
             self.materialize(ledger, entry, report, updated=True)
             report["updated"].append({**change, "effect": "the waiting ticket carries the new revision"})
@@ -1270,6 +1276,115 @@ class Factory:
                 found[ticket_id] = {"ticket_id": ticket_id, "outcome": records[-1].get("outcome")}
         return found
 
+    # ---- M20 A1: the claim on GitHub, so one Factory builds a slice ----
+    #
+    # Several engineers' Factories (attended or supervised) may take slices from one repository at once. Just before a
+    # cell is opened for a slice from an issue, the ticket station claims the issue (issue_rules' claim rule); only the
+    # Factory whose claim is the earliest that counts goes on. A Factory is known by a random value kept on this machine in
+    # .factory/local/factory.json, never by the GitHub account alone: one engineer may run two machines.
+
+    def factory_secret(self) -> str:
+        """This Factory's own random value, made once and kept on this machine only."""
+        folder = self.root / ".factory" / "local"
+        path = folder / "factory.json"
+        if folder.is_symlink() or path.is_symlink():
+            raise IntakeError(f"{path} is a symbolic link. This Factory's own value must be a real file inside the project.")
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            value = data.get("factory_id") if isinstance(data, dict) else None
+        except (OSError, ValueError):
+            value = None
+        if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{32}", value):
+            return value
+        value = secrets.token_hex(16)
+        folder.mkdir(parents=True, exist_ok=True)
+        ignore = folder / ".gitignore"
+        if not ignore.exists():
+            ignore.write_text("*\n", encoding="utf-8")
+        write_atomic(path, canonical({"schema_version": 1, "factory_id": value, "made_at": now()}))
+        return value
+
+    def claim_token(self, slice_id: str) -> str:
+        return self.rules.claim_token(self.factory_secret(), slice_id)
+
+    def holds(self, ledger: Dict[str, Any], repository: Optional[str], issue: int, slice_id: str) -> bool:
+        """This Factory holds the slice: its own ledger has it from this issue and this Factory claimed it or put it in the line."""
+        entry = ledger["slices"].get(slice_id) or {}
+        return (entry.get("source") == "github" and entry.get("issue") == issue and entry.get("repository") == repository
+                and bool(entry.get("dispatched_at") or entry.get("claim")))
+
+    def taken_elsewhere(self, ledger: Dict[str, Any], repository: Optional[str], issue: int, marker: Dict[str, Any], checked: Dict[str, Any]) -> Optional[str]:
+        """Why a ready slice issue is being built by another Factory, or None. An issue that carries mach:building, or another
+        Factory's claim that counts, is left alone unless this Factory holds the slice itself."""
+        slice_id = marker.get("slice_id")
+        if not slice_id or self.holds(ledger, repository, issue, slice_id):
+            return None
+        mine = self.claim_token(slice_id)
+        others = [item for item in checked.get("claims") or [] if isinstance(item, dict) and item.get("slice_id") == slice_id and item.get("token") != mine]
+        live = [item for item in others if item.get("revision") == marker.get("revision") or checked.get("building")]
+        if live:
+            return (f"Not accepted here: {slice_id} is being built by another Factory (claimed by @{live[0].get('login')} "
+                    f"at {self.rules.claim_time(live[0].get('at'))}).")
+        if checked.get("building"):
+            return f"Not accepted here: {slice_id} is being built by another Factory (its issue carries mach:building)."
+        return None
+
+    def claim(self, ledger: Dict[str, Any], entry: Dict[str, Any]) -> Optional[str]:
+        """Claim the slice's issue for this Factory just before its cell is opened. None when this Factory holds it now;
+        otherwise the reason nothing was started, said plainly, with the outcome in the ledger."""
+        slice_id, revision = entry["slice_id"], entry.get("revision")
+        done = self.ticket("slice-claim", str(entry["issue"]), "--repository", str(entry["repository"]), "--slice", slice_id,
+                           "--revision", str(revision), "--token", self.claim_token(slice_id))
+        try:
+            answer = json.loads(done.stdout) if done.stdout.strip() else {}
+        except ValueError:
+            answer = {}
+        status = answer.get("status") if isinstance(answer, dict) else None
+        holder = answer.get("holder") if isinstance(answer.get("holder"), dict) else {}
+        if status == "won":
+            entry["claim"] = {"revision": revision, "comment_id": holder.get("comment_id"), "login": holder.get("login"), "at": holder.get("at"), "claimed_at": now()}
+            entry.pop("claim_lost", None)
+            self.save(ledger)
+            return None
+        if status == "lost":
+            who = f"@{holder.get('login')}" if holder.get("login") else "another account"
+            reason = f"Another Factory took {slice_id} (claimed by {who} at {self.rules.claim_time(holder.get('at'))}). Nothing was started here."
+            entry["claim_lost"] = {"revision": revision, "by": holder.get("login"), "at": holder.get("at"), "noted_at": now()}
+            entry.update(available=False, unavailable_reason=reason)
+            own = answer.get("claim") if isinstance(answer.get("claim"), dict) else {}
+            if own.get("comment_id") and not answer.get("withdrawn"):  # its own claim stays until it is withdrawn: retried with the status writes
+                self.queue_withdraw(ledger, entry, int(own["comment_id"]), "lost")
+            self.emit(ledger, "intake.refused", **self.about(entry), problems=[reason])
+            self.save(ledger)
+            return reason
+        if status == "refused":
+            reason = f"{slice_id} was not started: {answer.get('reason') or 'its issue could not be claimed.'}"
+            self.emit(ledger, "intake.refused", **self.about(entry), problems=[reason])
+            self.save(ledger)
+            return reason
+        kind = answer.get("kind") if isinstance(answer, dict) and isinstance(answer.get("kind"), str) else "no answer"
+        return (f"GitHub could not be reached to claim {slice_id} on issue #{entry['issue']} ({kind}), so it was not started and nothing was made. "
+                "Pull again when GitHub answers.")
+
+    def queue_withdraw(self, ledger: Dict[str, Any], entry: Dict[str, Any], comment_id: int, why: str) -> None:
+        """Record the withdrawal of this Factory's claim comment, once; sent with the status writes and retried like them."""
+        key = sha("\n".join([CLAIM_WITHDRAW_MOMENT, str(entry["repository"]), str(entry["issue"]), str(comment_id)]).encode("utf-8"))[:16]
+        if key in ledger["status"]:
+            return
+        ledger["status"][key] = {"moment": CLAIM_WITHDRAW_MOMENT, "repository": entry["repository"], "issue": entry["issue"], "refs": [],
+                                 "slice_id": entry.get("slice_id"), "revision": entry.get("revision"), "comment_id": comment_id, "why": why,
+                                 "state": "pending", "queued_at": now(), "attempts": 0, "last_attempt_at": None, "kind": None, "done_at": None}
+
+    @staticmethod
+    def claim_in_use(ledger: Dict[str, Any], write: Dict[str, Any]) -> bool:
+        claim = (ledger["slices"].get(str(write.get("slice_id"))) or {}).get("claim") or {}
+        return claim.get("comment_id") == write.get("comment_id") and not claim.get("withdrawn")
+
+    def send_withdraw(self, write: Dict[str, Any]) -> subprocess.CompletedProcess:
+        return self.ticket("slice-claim", str(write["issue"]), "--repository", str(write["repository"]), "--slice", str(write["slice_id"]),
+                           "--revision", str(write["revision"]), "--token", self.claim_token(str(write["slice_id"])),
+                           "--withdraw", str(write["why"]), "--comment-id", str(write["comment_id"]))
+
     # ---- status writes on a slice's issue ----
     #
     # The ledger's status map is an outbox. A write is recorded there before it is tried, and a write
@@ -1311,8 +1426,15 @@ class Factory:
                 write.update(state="gave_up", kind=write.get("kind") or "network", gave_up_at=now())
                 self.save(ledger)
                 continue
+            if write.get("moment") == CLAIM_WITHDRAW_MOMENT and self.claim_in_use(ledger, write):
+                # The same claim was taken up again (the slice was reissued and dispatched before this was sent): it stays.
+                write.update(state="done", kind=None, done_at=now(), outcome="still_in_use")
+                self.save(ledger)
+                continue
             if write.get("moment") == EPIC_VIEW_MOMENT:
                 done = self.send_epic_view(write)
+            elif write.get("moment") == CLAIM_WITHDRAW_MOMENT:
+                done = self.send_withdraw(write)
             else:
                 argv = ["slice-status", str(write["issue"]), "--repository", str(write["repository"]), "--moment", str(write["moment"]), "--nonce", self.nonce(ledger)]
                 for ref in write.get("refs") or []:
@@ -1332,7 +1454,7 @@ class Factory:
             write["last_attempt_at"] = now()
             if done.returncode in (0, 3) and status in ("done", "already_done"):
                 write.update(state="done", kind=None, done_at=now(), outcome=status)
-            elif done.returncode == 2:
+            elif done.returncode == 2 or status == "refused":
                 write.update(state="refused", kind="refused")  # refused here (another repository, bad references): never retried
             else:
                 kind = answer.get("kind") if isinstance(answer, dict) else None
@@ -1413,7 +1535,7 @@ class Factory:
     def merged_in_git(self, ref: Optional[str]) -> Dict[str, set]:
         """Slices whose spec is on the integration branch: by slice ID, and by the issue number its header names.
         A dependency this Factory never took in counts as merged when its spec is there."""
-        found: Dict[str, set] = {"slices": set(), "issues": set()}
+        found: Dict[str, Any] = {"slices": set(), "issues": set(), "specs": {}}
         if not ref:
             return found
         for path in self.git(self.root, "ls-tree", "--name-only", ref, "--", "specs/slices/").stdout.splitlines():
@@ -1423,10 +1545,19 @@ class Factory:
                 continue
             found["slices"].add(match.group(1))
             data = self.git_bytes("show", f"{ref}:{path}")
-            header = without_header(data.decode("utf-8", errors="replace"))[1] if data and len(data) <= MAX_TEXT_BYTES else None
+            text, header = without_header(data.decode("utf-8", errors="replace")) if data and len(data) <= MAX_TEXT_BYTES else (None, None)
             if header and header.group(4):
                 found["issues"].add(int(header.group(4)))
+            if text is not None:  # M20 A5: which revision is there, by its approved spec's SHA-256
+                found["specs"].setdefault(match.group(1), set()).add(text_sha(text))
         return found
+
+    @staticmethod
+    def built_elsewhere(entry: Dict[str, Any], facts: Dict[str, Any], in_git: Dict[str, Any]) -> bool:
+        """M20 A5: a slice this Factory took in and never put in the line, whose approved spec (this very revision) is on the
+        integration branch: another Factory built and merged it."""
+        return (facts.get("status") in ("queued", "unticketed") and not entry.get("dispatched_at") and bool(entry.get("spec_sha256"))
+                and entry.get("spec_sha256") in (in_git.get("specs") or {}).get(entry.get("slice_id"), set()))
 
     def resolve_dep(self, dep: Dict[str, Any], entries: Dict[str, Dict[str, Any]]) -> Tuple[str, Optional[str]]:
         """A dependency's name for a person, and the slice it is in the ledger (None when this Factory does not have it)."""
@@ -1458,9 +1589,10 @@ class Factory:
         cycles = find_cycles(graph)
         in_cycle = {node: cycle for cycle in cycles for node in cycle}
         rows: Dict[str, Dict[str, Any]] = {}
+        elsewhere = {key for key in entries if self.built_elsewhere(entries[key], work[key], in_git)}
 
         def integrated(key: str) -> bool:
-            return work[key]["status"] == "integrated" and not entries[key].get("product_pending")
+            return (work[key]["status"] == "integrated" or key in elsewhere) and not entries[key].get("product_pending")
 
         for key in sorted(entries, key=number):
             entry, facts = entries[key], work[key]
@@ -1480,7 +1612,13 @@ class Factory:
             interrupted = facts["status"] == "active" and facts.get("stage") == "interview" and not entry.get("dispatched_at")
             if interrupted:
                 row["interrupted"] = True
-            if facts["status"] == "integrated":
+            if facts["status"] == "abandoned":
+                row["abandoned"] = True
+            if key in elsewhere:
+                row["state"] = "completed"
+                row["elsewhere"] = True
+                row["reasons"].append("Another Factory built it: its approved spec is on the integration branch.")
+            elif facts["status"] == "integrated":
                 row["state"] = "completed"
                 row["integrated_commit"] = facts.get("commit")
                 row["reasons"].append(f"Its work is on the integration branch ({str(facts.get('commit'))[:12]}).")
@@ -1596,12 +1734,23 @@ class Factory:
             reasons = [reason for reason in row["reasons"] if "waiting for a free place" not in reason]
             before = entry.get("last_state")
             refs = [f"{key}@r{entry.get('revision')}"]
-            if row["state"] == "completed" and not entry.get("integrated"):
+            if row["state"] == "completed" and not entry.get("integrated") and row.get("elsewhere"):
+                # M20 A5: built and merged by another Factory, which writes its issue's status; nothing is written from here.
+                entry["integrated"] = {"commit": None, "verified_at": now(), "elsewhere": True}
+                self.emit(ledger, "slice.integrated", **about, commit=None, elsewhere=True)
+                changed = True
+            elif row["state"] == "completed" and not entry.get("integrated"):
                 entry["integrated"] = {"commit": row.get("integrated_commit"), "verified_at": now()}
                 self.emit(ledger, "slice.integrated", **about, commit=row.get("integrated_commit"))
                 if not entry.get("product_pending"):
                     self.queue_status(ledger, entry, "shipped", refs)
                     self.queue_epic_views(ledger, entry, refs)  # M13: the epic's current view, and any other epic it changed
+                changed = True
+            claim = entry.get("claim") if isinstance(entry.get("claim"), dict) else {}
+            if row.get("abandoned") and type(claim.get("comment_id")) is int and not claim.get("withdrawn") and entry.get("source") == "github":
+                # M20: its work was stopped here, so this Factory's claim on the issue is withdrawn. A reissue claims it again.
+                claim["withdrawn"] = now()
+                self.queue_withdraw(ledger, entry, claim["comment_id"], "stopped")
                 changed = True
             if row["state"] == "ready" and before != "ready":
                 self.emit(ledger, "dependency.resolved", **about, depends_on=[dep.get("slice_id") or dep.get("name") for dep in row["depends_on"]])
@@ -1698,7 +1847,14 @@ class Factory:
                               "Switch to it; dispatch never changes your checkout.")
         dispatched: List[Dict[str, Any]] = []
         for key in accepted:
-            dispatched.append(self.open_cell(ledger, ledger["slices"][key], by, authorization))
+            entry = ledger["slices"][key]
+            if entry.get("source") == "github" and not entry.get("dispatched_at"):
+                # M20: claimed on GitHub first, by every caller (an engineer, pull, or a supervisor): one Factory builds a slice.
+                why = self.claim(ledger, entry)
+                if why:
+                    refused.append({"slice_id": key, "state": "not_claimed", "why": [why]})
+                    continue
+            dispatched.append(self.open_cell(ledger, entry, by, authorization))
         tickets = [item["ticket_id"] for item in dispatched]
         return {"dispatched": dispatched, "refused": refused, "tickets": tickets, "factory_started": False,
                 "next": ("Nothing was dispatched." if not tickets else

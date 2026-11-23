@@ -12,7 +12,7 @@ import hashlib
 import json
 import re
 import unicodedata
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 # ---- redaction (one redaction for telemetry and requests) ----
 
@@ -1445,12 +1445,96 @@ def issue_comments(raw: Iterable[Any]) -> List[Dict[str, Any]]:
             "created_at": item.get("created_at") if isinstance(item.get("created_at"), str) else None,
             "updated_at": item.get("updated_at") if isinstance(item.get("updated_at"), str) else None,
             "body": item.get("body") if isinstance(item.get("body"), str) else "",
+            "comment_id": item.get("comment_id") if type(item.get("comment_id")) is int else None,  # M20: GitHub's own order of comments
         })
     return found
 
 
 def unedited(item: Dict[str, Any]) -> bool:
     return bool(item.get("created_at")) and item.get("created_at") == item.get("updated_at")
+
+
+# ---- the claim on a slice's issue (M20 A1) ----
+#
+# Just before a Factory opens a cell for a slice from an issue, it posts a claim comment in a fixed template: the slice,
+# its revision, and a token derived from a random value only that Factory holds (.factory/local/factory.json), so two
+# machines signed in as one account are still two Factories. It reads the comments again and goes on only if its claim is
+# the earliest that counts for that revision, by GitHub's own comment order. A claim counts while it is exactly the
+# template, unedited, written by a person whose role on the repository is triage or above (the rule mach:ready uses). A
+# Factory that loses edits its own claim into the withdrawn form; an edited claim never counts again, so withdrawing is
+# final. GitHub offers no atomic test-and-set on an issue: this is the strongest rule available without a server.
+
+CLAIM_TOKEN_RE = re.compile(r"^[0-9a-f]{16}$")
+CLAIM_RE = re.compile(r"<!-- mach:claim v1 slice=(SLICE-[0-9]{3,}) revision=([0-9]{1,6}) factory=([0-9a-f]{16}) -->")
+CLAIM_WITHDRAWN_RE = re.compile(r"<!-- mach:claim-withdrawn v1 slice=(SLICE-[0-9]{3,}) revision=([0-9]{1,6}) factory=([0-9a-f]{16}) -->")
+CLAIM_WITHDRAWN_WHY = {"lost": "Another Factory claimed it first.", "stopped": "Its work there was stopped."}
+
+
+def claim_token(secret: str, slice_id: str) -> str:
+    """The token a Factory's claims on one slice carry: from its private random value, so nobody can write a claim this
+    Factory takes as its own, and one per slice, so a claim on one slice says nothing about another."""
+    if not (isinstance(secret, str) and re.fullmatch(r"[0-9a-f]{32}", secret)) or not SLICE_ID_RE.fullmatch(slice_id or ""):
+        raise ValueError("a claim token needs the Factory's value and a slice ID")
+    return hashlib.sha256(f"{secret}\nmach:claim\n{slice_id}".encode("utf-8")).hexdigest()[:16]
+
+
+def _claim_args(slice_id: str, revision: Any, token: str) -> None:
+    if not SLICE_ID_RE.fullmatch(slice_id or "") or type(revision) is not int or not 1 <= revision <= 999999 or not CLAIM_TOKEN_RE.fullmatch(token or ""):
+        raise ValueError("a claim names a slice, its revision and the Factory's token")
+
+
+def claim_comment(slice_id: str, revision: int, token: str) -> str:
+    _claim_args(slice_id, revision, token)
+    return (f"The MACH Factory is taking {slice_id} revision {revision} to build it. Another MACH Factory that reads this claim leaves the slice alone.\n\n"
+            f"<!-- mach:claim v1 slice={slice_id} revision={revision} factory={token} -->")
+
+
+def claim_withdrawn_comment(slice_id: str, revision: int, token: str, why: str) -> str:
+    _claim_args(slice_id, revision, token)
+    return (f"Withdrawn: this MACH Factory is not building {slice_id} revision {revision}. {CLAIM_WITHDRAWN_WHY[why]}\n\n"
+            f"<!-- mach:claim-withdrawn v1 slice={slice_id} revision={revision} factory={token} -->")
+
+
+def claims(comments: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The claim comments that can count, in GitHub's order (by comment ID; the order listed when an ID is missing): exactly
+    the template, unedited, written by a person. Whether each author's role counts is for the caller to ask."""
+    found = []
+    for index, item in enumerate(comments):
+        body = item.get("body") or ""
+        match = CLAIM_RE.search(body)
+        if not match:
+            continue
+        slice_id, revision, token = match.group(1), int(match.group(2)), match.group(3)
+        if body != claim_comment(slice_id, revision, token) or not unedited(item):
+            continue
+        login = item.get("login")
+        if (item.get("app") or item.get("type") != "User" or not isinstance(login, str) or not LOGIN_RE.fullmatch(login)
+                or login.lower() == GHOST or login.endswith("[bot]") or item.get("id") is None):
+            continue
+        found.append({"slice_id": slice_id, "revision": revision, "token": token, "login": login, "at": item.get("created_at"),
+                      "comment_id": item.get("comment_id"), "index": index})
+    if all(type(item["comment_id"]) is int for item in found):
+        found.sort(key=lambda item: item["comment_id"])
+    return found
+
+
+def claim_holder(found: Sequence[Dict[str, Any]], slice_id: str, revision: int, building: bool, counts: Callable[[str], bool]) -> Optional[Dict[str, Any]]:
+    """The claim that holds this slice revision: the earliest counting claim for exactly this revision; failing that, while the
+    issue carries mach:building, the earliest counting claim on another revision (that Factory is building it). None when free.
+    `counts(login)` says whether an author's role counts."""
+    mine = [item for item in found if item["slice_id"] == slice_id and counts(item["login"])]
+    same = [item for item in mine if item["revision"] == revision]
+    if same:
+        return same[0]
+    other = [item for item in mine if item["revision"] != revision] if building else []
+    return other[0] if other else None
+
+
+def claim_time(at: Any) -> str:
+    """A claim's time as a person reads it: 2026-11-17 14:02 UTC."""
+    if isinstance(at, str) and re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}", at):
+        return f"{at[:10]} {at[11:16]} UTC"
+    return "an unknown time"
 
 
 def slice_acceptance(issue: Dict[str, Any], events: Sequence[Dict[str, Any]], comments: Sequence[Dict[str, Any]], permission: Any,
