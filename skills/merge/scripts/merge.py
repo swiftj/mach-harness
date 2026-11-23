@@ -14,9 +14,9 @@ that were each approved alone cannot break main together.
 Settings, in .factory/config.json under "merge":
     mode    "auto"   the line merges approved tickets itself
             "manual" (default) a person merges; this script still works when a person runs it
-    method  "local"  (default) merge into the main checkout with a merge commit; refused when the repository has a remote
+    method  "local"  (default) merge into the main checkout with a merge commit; never pushed
             "pr"     push the branch and open a pull request, then merge it there
-With an origin remote, every check is made against origin/<into>, fetched first (M20 A2; see "the shared main" below).
+With an origin remote, origin/<into> is fetched first (M20 A2; see "the shared main" below).
     into    the branch tickets land on (default: the remote's default branch, else main or master)
     auto    which risk tiers the line may merge on its own in auto mode,
             default {"low": true, "medium": true, "high": true}. A High ticket only reaches
@@ -211,10 +211,13 @@ def default_branch(project: Path) -> str:
 
 # ---- the shared main (M20 A2) ----
 #
-# One rule: when the repository has an `origin` remote, the shared main is `origin/<into>`, and every check before
-# landing is made against it. `run` fetches that one branch first (a fetch changes no checkout, as `--fetch` and the
-# supervisor's auto_sync never do); if origin cannot be reached, nothing is merged. `plan` reads the view as last
-# fetched and fetches nothing. A repository with no remote has no shared main: the local checkout's HEAD is the main.
+# When the repository has an `origin` remote, `run` fetches origin's <into> first (a fetch changes no checkout, as
+# `--fetch` and the supervisor's auto_sync never do); if origin cannot be reached, nothing is merged. Then:
+#   method pr:    every check before landing is made against origin/<into>, the main the pull request merges into.
+#   method local: the merge goes into this checkout, so checks are made against the local <into>, but only once it
+#                 provably contains origin/<into>; if the shared main has commits this checkout lacks, nothing is merged
+#                 and the engineer is told to pull. The local merge is never pushed; the result says it must be.
+# `plan` reads origin as last fetched and fetches nothing. With no remote, the local checkout's HEAD is the main.
 
 REMOTE_TIMEOUT = 120
 MAX_MAIN_MOVES = 2  # times one run re-validates because the shared main moved again before the merge; then it stops
@@ -262,11 +265,21 @@ def shared_tip(project: Path, main: str) -> str:
     return done.stdout.strip() if done.returncode == 0 else ""
 
 
-def main_tip(project: Path, main: str) -> Tuple[str, str]:
-    """(commit, name) of the main every check is made against: origin/<main> when there is an origin, else HEAD."""
-    if has_origin(project):
+def main_tip(project: Path, main: str, method: str) -> Tuple[str, str]:
+    """(commit, name) of the main every check is made against: origin/<main> for a pull request when there is an
+    origin, else the main checkout's HEAD (the local method merges there)."""
+    if method == "pr" and has_origin(project):
         return shared_tip(project, main), f"origin/{main}"
     return git(project, "rev-parse", "HEAD").stdout.strip(), main
+
+
+def shared_ahead(project: Path, main: str) -> Optional[int]:
+    """How many commits origin/<main> (as last fetched) holds that the main checkout's HEAD does not; None if unknown."""
+    tip = shared_tip(project, main)
+    if not tip:
+        return None
+    done = git(project, "rev-list", "--count", f"HEAD..{tip}")
+    return int(done.stdout.strip()) if done.returncode == 0 and done.stdout.strip().isdigit() else None
 
 
 def remote_tip(project: Path, main: str) -> Optional[str]:
@@ -313,7 +326,7 @@ def survey(cell: Cell, by_person: bool) -> Dict[str, Any]:
     head = cell.head()
     risk = cell.info.get("risk") if cell.info.get("risk") in TIERS else "High"
     main = default_branch(cell.project)
-    main_head, compared_with = main_tip(cell.project, main)
+    main_head, compared_with = main_tip(cell.project, main, cell.method)
     plan: Dict[str, Any] = {
         "ticket_id": cell.ticket_id, "stage": stage, "branch": cell.branch, "into": main, "risk": risk, "mode": cell.mode, "method": cell.method,
         "approved_commit": cell.decision.get("head"), "branch_commit": head, "approval_valid": cell.decision.get("head") == head,
@@ -358,12 +371,13 @@ def survey(cell: Cell, by_person: bool) -> Dict[str, Any]:
     if cell.jira_problem:
         refusals.append(cell.jira_problem)
     plan["jira"] = cell.jira
-    shared = remotes(cell.project)
-    if cell.method == "local" and shared:
-        # M20 A2: a local merge would land only in this checkout, untested against what others merged, and never pushed.
-        refusals.append(f"merge.method is 'local', but this repository has a shared remote ({', '.join(shared[:3])}). A local merge lands only in this checkout: "
-                        "it is not tested against what others merged there, and it is never pushed. Set merge.method to \"pr\" in .factory/config.json. "
-                        "A repository with no remote keeps 'local'.")
+    if cell.method == "local" and has_origin(cell.project):
+        # M20 A2: a local merge is tested against the local main, so that main must already hold the shared main.
+        ahead = shared_ahead(cell.project, main)
+        plan["shared_main_ahead"] = ahead
+        if ahead:
+            refusals.append(f"The shared main (origin/{main}) has {ahead} commit{'s' if ahead != 1 else ''} this checkout's {main} does not have yet. "
+                            f"Pull {main}, then merge again. Nothing was merged.")
     if cell.method == "pr":
         if not git(cell.project, "remote", "get-url", "origin").stdout.strip():
             refusals.append("merge.method is 'pr' but the repository has no 'origin' remote.")
@@ -371,7 +385,9 @@ def survey(cell: Cell, by_person: bool) -> Dict[str, Any]:
             refusals.append("merge.method is 'pr' but the gh tool is not installed.")
     record = cell.info.get("change_record") if isinstance(cell.info.get("change_record"), dict) else None
     plan["would"] = ([f"fetch {main} from origin and make every check below against origin/{main} (this plan reads it as last fetched)"]
-                     if compared_with != main else []) + ([] if not plan["behind_main"] else [f"bring {cell.branch} up to date with {main} and rerun the test suite"]
+                     if compared_with != main else
+                     [f"fetch {main} from origin and merge only if this checkout's {main} already holds everything on origin/{main}"]
+                     if has_origin(cell.project) else []) + ([] if not plan["behind_main"] else [f"bring {cell.branch} up to date with {main} and rerun the test suite"]
                      + ([f"check what landed on {main} since approval: a file this ticket also changed, or a shipped rule this ticket's spec "
                          "relies on that a landed slice changed, sends it back to be verified and reviewed again"] if cell.revalidate_overlap else [])) + (
         [] if not cell.records["enabled"] or record_on_branch(cell, record)
@@ -930,7 +946,7 @@ def plain_path(value: Any) -> Optional[str]:
 def diff_lines(cell: Cell) -> Optional[Dict[str, Set[int]]]:
     """For each file, the right-side lines inside the pull request's diff: the branch against its merge base
     with the main branch, with Git's default three lines of context. None if Git cannot say."""
-    main_head = main_tip(cell.project, default_branch(cell.project))[0]
+    main_head = main_tip(cell.project, default_branch(cell.project), cell.method)[0]
     base = git(cell.work, "merge-base", main_head, "HEAD").stdout.strip() if main_head else ""
     if not re.fullmatch(r"[0-9a-f]{40,64}", base):
         return None
@@ -1283,6 +1299,8 @@ def land(cell: Cell, args: argparse.Namespace, plan: Dict[str, Any]) -> int:
             raise MergeError("git could not merge the branch into the main checkout: " + ((merged.stderr.strip() or merged.stdout.strip()).splitlines() or ["merge failed"])[-1],
                              code="merge-failed")
         result.update({"status": "MERGED", "merge_commit": git(cell.project, "rev-parse", "HEAD").stdout.strip()})
+        if has_origin(cell.project):
+            result["note"] = (f"Merged on this machine only. Push {main} to origin for others to get it; MACH does not push.")
     else:
         result.update(landed)
         result["status"] = "MERGED" if landed["merged"] else "PR_OPEN"

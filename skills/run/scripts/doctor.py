@@ -5,7 +5,7 @@ Read-only by default. It measures and reports; a check that could not be perform
 "not_checked", never "ok". With --fix it creates only the installer's standard data folders that
 are missing, and only when .factory/ already exists. It never writes a settings file, never enables
 or installs anything, starts no MACH station or agent, and never reads the machine-local Factory
-folder (.factory/local/). Its only network access is `gh` (`auth status`, and `label list` and four `api`
+folder (.factory/local/). Its only network access is `gh` (`auth status`, and `label list` and up to five `api`
 reads when origin is on github.com), whose output is never shown: only exit codes and parsed fields are used. Standard library only.
 
 MACH's own internal errors are recorded under .factory/local/, so this script never lists them itself: run.py's doctor
@@ -553,6 +553,42 @@ def check_merge_protection(project: Path, config: Any, gh_state: Dict[str, Any])
                   f"{branch} in {repo} does not require {lacking} before merging, so GitHub can merge a pull request onto a {branch} that moved since its checks ran.", fix)]
 
 
+LOCAL_METHOD_FIX = ("For a team, set merge.method to \"pr\" in .factory/config.json: MACH then tests each ticket against origin's "
+                    "{branch} and merges it through a pull request. A person working alone can keep \"local\".")
+
+
+def check_merge_method(project: Path, config: Any, gh_state: Dict[str, Any]) -> List[Dict[str, str]]:
+    """M20 A2: merge.method local (the default) merges on this machine and never pushes, which suits one person, not a
+    team. Whether others push cannot be seen from Git, so the signal is GitHub's: more than one collaborator with write
+    access. Read-only (`gh api .../collaborators`); runs only for a github.com origin and the local method."""
+    merge = config.get("merge") if isinstance(config, dict) else None
+    method = merge.get("method") if isinstance(merge, dict) else None
+    if method == "pr":
+        return []
+    repo = github_repo(project)
+    if repo is None:
+        return []
+    branch = integration_branch(project, config)
+    title = "Merge method for a team"
+    fix = LOCAL_METHOD_FIX.format(branch=branch)
+    path = shutil.which("gh")
+    if not path:
+        return [check("merge.method", title, "not_checked", f"merge.method is local; the GitHub CLI ('gh') is not on PATH, so who can push to {repo} cannot be read.", fix)]
+    if "auth" not in gh_state:
+        code, out, err = run([path, "auth", "status", "--hostname", GH_HOST], project, GH_TIMEOUT)
+        gh_state["auth"] = (code, (out + "\n" + err).lower())
+    if gh_state["auth"][0] != 0:
+        return [check("merge.method", title, "not_checked", "merge.method is local; needs the GitHub CLI signed in first to see who can push.", fix)]
+    code, out, _ = run([path, "api", f"repos/{repo}/collaborators?per_page=100", "--jq", "[.[] | select(.permissions.push)] | length"], project, GH_TIMEOUT)
+    writers = out.strip()
+    if code != 0 or not writers.isdigit():
+        return [check("merge.method", title, "not_checked", f"merge.method is local; who can push to {repo} could not be read.", fix)]
+    if int(writers) > 1:
+        return [check("merge.method", title, "warn",
+                      f"merge.method is local, and {writers} people can push to {repo}. A local merge lands on this machine only and is never pushed by MACH.", fix)]
+    return [check("merge.method", title, "ok", f"merge.method is local, and only one person can push to {repo}.")]
+
+
 # --- running and reporting --------------------------------------------------------------------
 
 def diagnose(project: Path, fix: bool = False) -> Dict[str, Any]:
@@ -572,6 +608,7 @@ def diagnose(project: Path, fix: bool = False) -> Dict[str, Any]:
     checks += check_remote(project)
     checks += check_requests(project, config, gh_state)
     checks += check_merge_protection(project, config, gh_state)
+    checks += check_merge_method(project, config, gh_state)
     summary = {status: sum(1 for c in checks if c["status"] == status) for status in STATUSES}
     return {"project": str(project), "checks": checks, "summary": summary, "created": created}
 

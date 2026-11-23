@@ -424,7 +424,6 @@ class ApprovalBindingTest(PullRequestBase):
     def test_the_line_routes_an_approved_ticket_with_its_record_to_merge_not_to_voiding(self):
         """A local merge that failed after the record commit leaves the cell approved with the record on its branch."""
         head = self.approved(mode="auto")
-        self.without_remote()
         merge.write_record(merge.Cell(self.project, "LOCAL-001"), None)
         self.assertNotEqual(git(self.work, "rev-parse", "HEAD").stdout.strip(), head)
         step = self.next()
@@ -458,7 +457,6 @@ class SettingsTest(PullRequestBase):
     def configure(self, records, **rest):
         if not (self.cellroot / "review/decision.json").is_file():
             self.approved(mode="auto")
-        self.without_remote()
         (self.project / ".factory/config.json").write_text(json.dumps({"merge": {"mode": "auto"}, "records": records, **rest}))
 
     def test_another_folder_is_used(self):
@@ -481,7 +479,6 @@ class SettingsTest(PullRequestBase):
         self.put(self.project, {"docs/changes/LOCAL-001.md": "# An earlier record\n"})
         self.commit_main()
         self.approved(mode="auto")
-        self.without_remote()
         done = self.m_ok("run", "LOCAL-001")
         self.assertEqual(done["change_record"]["path"], "docs/changes/LOCAL-001-2.md")
         self.assertEqual((self.project / "docs/changes/LOCAL-001.md").read_text(), "# An earlier record\n")

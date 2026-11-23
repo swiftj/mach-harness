@@ -22,7 +22,9 @@ CLASH = ("import unittest\n\n\nclass Clash(unittest.TestCase):\n    def test_cla
          "        self.fail('main now disagrees with this ticket')\n")
 
 
-class SharedMainMovedTest(PullRequestBase):
+class SharedRemote(PullRequestBase):
+    """A shared bare repository as origin, and another engineer's clone of it."""
+
     def other(self):
         return Path(self.tmp.name).resolve() / "other-engineer"
 
@@ -40,6 +42,8 @@ class SharedMainMovedTest(PullRequestBase):
         git(other, "push", "-q", "origin", "HEAD:main")
         return git(other, "rev-parse", "HEAD").stdout.strip()
 
+
+class SharedMainMovedTest(SharedRemote):
     def test_the_local_checkout_moving_is_revalidated(self):
         """The merge queue step holds for work this machine has: main moved in the local checkout and was pushed, the
         suite fails, nothing lands."""
@@ -173,26 +177,59 @@ class SharedMainMovedTest(PullRequestBase):
 
 
 class LocalMethodTest(Base):
-    """M20 A2: merge.method local is for a repository with no remote; with one, it is refused with the fix."""
+    """M20 A2: with no remote, merge.method local works exactly as before."""
 
     def test_without_a_remote_local_works_as_before(self):
         head = self.approved(mode="auto")
         self.assertEqual(self.m_ok("plan", "LOCAL-001")["compared_with"], "main")
         done = self.m_ok("run", "LOCAL-001")
         self.assertEqual((done["status"], done["compared_with"], done["revalidated"]), ("MERGED", "main", None))
+        self.assertNotIn("note", done, "nothing to push without a remote")
         self.assertEqual(git(self.project, "merge-base", "--is-ancestor", head, "main").returncode, 0)
 
-    def test_with_a_shared_remote_local_is_refused(self):
-        self.approved(mode="auto", method="local")
-        shared = Path(self.tmp.name).resolve() / "shared.git"
-        git(Path(self.tmp.name).resolve(), "init", "-q", "--bare", str(shared))
-        git(self.project, "remote", "add", "origin", str(shared))
-        self.assertFalse(self.m_ok("plan", "LOCAL-001")["allowed"])
+
+class LocalMethodWithRemoteTest(SharedRemote):
+    """M20 A2: merge.method local with an origin remote. origin's main is fetched; the local main must already hold it;
+    the merge is then local exactly as before, tested against the local main, never pushed, and the result says so."""
+
+    def test_local_main_holding_the_shared_main_merges_locally_and_says_to_push(self):
+        head = self.approved(mode="auto")
+        origin_before = git(self.project, "ls-remote", str(self.origin), "refs/heads/main").stdout.split()[0]
+        done = self.m_ok("run", "LOCAL-001")
+        self.assertEqual((done["status"], done["compared_with"]), ("MERGED", "main"))
+        self.assertIn("Merged on this machine only", done["note"])
+        self.assertIn("Push main to origin", done["note"])
+        self.assertEqual(git(self.project, "merge-base", "--is-ancestor", head, "main").returncode, 0)
+        self.assertEqual(git(self.project, "ls-remote", str(self.origin), "refs/heads/main").stdout.split()[0], origin_before, "never pushed")
+        self.assertEqual(self.calls(), [], "no gh at all")
+
+    def test_a_shared_main_ahead_of_this_checkout_is_refused_until_pulled(self):
+        self.approved(mode="auto")
+        self.another_engineer_lands({"app/one.py": "VALUE = 1\n"})
+        self.another_engineer_lands({"app/two.py": "VALUE = 2\n"})
         err = self.m_refused("run", "LOCAL-001")
-        self.assertIn("merge.method is 'local', but this repository has a shared remote (origin)", err)
-        self.assertIn('Set merge.method to "pr"', err)
-        self.assertEqual(self.main_log(), ["work"], "nothing merged into the checkout")
+        self.assertIn("The shared main (origin/main) has 2 commits this checkout's main does not have yet. Pull main, then merge again.", err)
+        self.assertEqual(self.main_log(), ["work"], "nothing merged")
         self.assertEqual(self.cell_json()["stage"], "approved")
+        git(self.project, "pull", "-q", "--no-rebase", "origin", "main")
+        done = self.m_ok("run", "LOCAL-001")
+        self.assertEqual(done["status"], "MERGED")
+        self.assertTrue((self.project / "app/one.py").is_file() and (self.project / "app/invite.py").is_file())
+
+    def test_unpushed_local_commits_are_tested_against(self):
+        """The local main is what the ticket lands on, so its unpushed commits count, as before M20."""
+        self.approved(mode="auto")
+        self.put(self.project, {"tests/test_clash.py": CLASH})
+        self.commit_main()
+        self.assertIn("the test suite fails, so nothing was merged", self.m_refused("run", "LOCAL-001"))
+        self.assertNotIn("Merge LOCAL-001", " ".join(self.main_log()))
+
+    def test_an_unreachable_remote_merges_nothing_locally_either(self):
+        self.approved(mode="auto")
+        git(self.project, "remote", "set-url", "origin", str(Path(self.tmp.name).resolve() / "gone.git"))
+        err = self.m_refused("run", "LOCAL-001")
+        self.assertIn("could not reach the shared repository (origin)", err)
+        self.assertEqual(self.main_log(), ["work"])
 
 
 if __name__ == "__main__":
