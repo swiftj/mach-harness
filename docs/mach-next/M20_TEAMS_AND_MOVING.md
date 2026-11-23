@@ -83,10 +83,14 @@ Drafts stay private until marked ready; that rule does not change. So numbers ar
 - **ADR numbers**: the next number also counts `origin/main` and open pull-request branches.
 - **Ready folders**: intake refuses one epic ID with two titles.
 
+**Built (Product Studio's part).** After `slice ready` makes a slice's issue, a step of its own reads the slice issues again, before the approval comment and `mach:ready`. If an earlier open issue holds the same ID, GitHub's first one keeps it. The later one is closed with a fixed comment and loses MACH's labels, so neither Product Studio nor the Factory reads it again (closing was chosen over taking off `mach:ready`: an open issue still holding the ID would stay a duplicate in every later read, and could be taken as a dependency's issue). The product manager is refused in plain words (who holds the number, which issue), the slice goes back to waiting for approval, and the renumber is offered. A new epic issue gets the same look-again (another title: closed, renumber the epic; the same title: the earlier issue is used). A refresh on either computer reports an ID held twice; the computer whose slice issue came second closes it then, unless the builders took it. `prd apply` and `idea apply` read GitHub's numbers before numbering. Engineers' own tickets, ADR numbers and ready folders are not part of this.
+
 ### A4. Shared text is never silently replaced (T5, T7). M
 
 - The project issue and each epic issue get what slices already have: a recorded base revision, "someone else changed it" at refresh, and a choice of yours or theirs. Marking a slice ready never rewrites a project or epic body this workspace did not last save.
 - One project per repository is enforced: `project init` adopts the project issue that exists; when several exist, MACH refuses and names them.
+
+**Built.** The workspace keeps the SHA-256 of the project's own text (title, vision, outcomes) and of each epic's (title, criteria) as it last wrote or read them. `slice ready`, and publishing the principles or needs, rewrite that text only while GitHub still holds it. A workspace that never saw it, or has nothing of its own unwritten, takes GitHub's; when both changed, nothing is written, refresh and status say someone else changed the project (or the epic), and `reconcile project|EPIC-NNN --take mine|theirs` settles it. `project init` takes an open project issue already there; with several open, `project init`, `slice ready` and publishing refuse and name them. A project issue made at the same moment as an earlier one is closed and the earlier one used. The Factory side is unchanged: with several project issues, grooming still carries on with no principles (`cell.py` treats `principles-check`'s "several" like "none").
 
 ### A5. A dependency built elsewhere (T8). S
 

@@ -13,7 +13,9 @@ Writes, and nothing else:
 - add MACH's product labels, and remove only mach:ready;
 - on an idea's issue (M16), set one of MACH's idea state labels and remove only the other idea state labels;
 - create a missing MACH label (never overwriting one);
-- add a slice as a sub-issue of its epic, and place it in the product manager's order.
+- add a slice as a sub-issue of its epic, and place it in the product manager's order;
+- close an issue Product Studio itself made at the same moment as an earlier one holding the same ID (M20), taking
+  MACH's product labels off it so neither MACH nor the Factory reads it again.
 
 Standard library only. Imported by studio.py; not a command of its own.
 """
@@ -160,6 +162,23 @@ def set_idea_state(project: Path, repository: str, number: int, add: str, remove
 
 def comment(project: Path, repository: str, number: int, body_file: Path) -> Failure:
     return collab._gh_write(project, "issue", "comment", str(int(number)), "--repo", repository, "--body-file", str(body_file))
+
+
+def stand_down(project: Path, repository: str, number: int, names: Sequence[str]) -> Failure:
+    """M20: take MACH's product labels `names` off an issue Product Studio made, then close it. Only MACH's own labels."""
+    if any(name not in STAND_DOWN_LABELS for name in names):
+        return _failure("Only MACH's product labels are taken off here.")
+    if names:
+        args = ["issue", "edit", str(int(number)), "--repo", repository]
+        for name in names:
+            args += ["--remove-label", name]
+        failure = collab._gh_write(project, *args)
+        if failure:
+            return failure
+    return collab._gh_write(project, "issue", "close", str(int(number)), "--repo", repository)
+
+
+STAND_DOWN_LABELS = ("mach:project", "mach:epic", "mach:slice", "mach:ready")
 
 
 def pin(project: Path, repository: str, number: int) -> Failure:

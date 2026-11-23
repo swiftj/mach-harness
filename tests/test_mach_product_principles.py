@@ -257,7 +257,7 @@ class StudioTest(IssuesBase):
         self.assertEqual((listed["active"], listed["retired"], listed["unpublished_changes"]), (["PP-01"], ["PP-02"], True))
         code, out, _ = self.run_studio(self.a, "validate")
         self.assertEqual(code, 0, out)
-        self.assertEqual(self.gh()["calls"], [])  # nothing here reaches GitHub
+        self.assertEqual(self.calls_since_init(), [])  # nothing here reaches GitHub
 
     def test_publishing_saves_the_section_and_the_approval_once(self):
         self.add()
@@ -304,7 +304,7 @@ class StudioTest(IssuesBase):
         self.answered(slice_id)
         refused = self.refused(self.a, "slice", "ready", slice_id)
         self.assertIn("not published", refused)
-        self.assertEqual(self.gh()["calls"], [])
+        self.assertEqual(self.calls_since_init(), [])
         resumed = self.ok(self.a, "slice", "resume", slice_id)
         self.assertEqual(resumed["principles"]["active"][0]["statement"], STATEMENT)
         self.ok(self.a, "principle", "publish")

@@ -390,6 +390,16 @@ class IssuesBase(Base):
 
     # ---- the stand-in ----
 
+    def run_studio(self, project, *argv):
+        done = super().run_studio(project, *argv)
+        if list(argv[:2]) == ["project", "init"]:
+            self.init_calls = len(self.gh()["calls"])  # M20: project init reads GitHub for a project already there
+        return done
+
+    def calls_since_init(self):
+        """gh's calls since the last `project init`, whose read of GitHub for a project already there is not counted."""
+        return self.gh()["calls"][getattr(self, "init_calls", 0):]
+
     def issues(self, label=None):
         found = self.gh()["issues"].values()
         return sorted((i for i in found if label is None or label in [l["name"] for l in i["labels"]]), key=lambda i: i["number"])
@@ -512,8 +522,9 @@ class ReadyTest(IssuesBase):
         slice_id = self.ok(self.a, "slice", "new", "--epic", "EPIC-002", "--title", "Send an invoice")["slice"]["slice_id"]
         self.write_slice(self.a, slice_id)
         self.draft(self.a, f"product/intents/{slice_id}.md").unlink()
+        before = len(self.gh()["calls"])  # project init read GitHub for a project already there (M20)
         self.assertIn("cannot be marked ready yet", self.refused(self.a, "slice", "ready", slice_id))
-        self.assertEqual(self.gh()["calls"], [])  # the gates are judged before GitHub is asked anything
+        self.assertEqual(self.gh()["calls"][before:], [])  # the gates are judged before GitHub is asked anything
 
     def test_an_oversized_slice_is_refused_with_the_reason(self):
         self.project_and_epic()

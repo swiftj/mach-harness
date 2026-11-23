@@ -145,7 +145,7 @@ class StudioTest(IssuesBase):
         self.assertEqual(set(data), {"schema_version", "project_id", "needs", "none"})
         code, out, _ = self.run_studio(self.a, "validate")
         self.assertEqual(code, 0, out)
-        self.assertEqual(self.gh()["calls"], [])  # nothing here reaches GitHub
+        self.assertEqual(self.calls_since_init(), [])  # nothing here reaches GitHub
 
     def test_ids_are_never_reused(self):
         self.add()

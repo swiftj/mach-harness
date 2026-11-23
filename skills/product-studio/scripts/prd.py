@@ -811,6 +811,7 @@ def cmd_apply(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str, Any
             source = {"kind": "prd", "prd_id": args.prd_id, "sha256": meta["sha256"], "lines": lines, "map_slice": item["key"]}
             return host.start_slice(studio, epic_id, item["title"], depends, None, None, source)["slice"]["slice_id"]
 
+        numbers = host.numbers_in_use(studio)  # M20: the numbers GitHub's issues hold are read first (by Studio), so none is given out twice
         made, kept, missing, first = apply_map(studio, record, lambda: prds.save(prds.map_path(args.prd_id), record),
                                                lambda epic: host.add_epic(studio, epic["title"], epic["criteria"]), new_slice, made_before)
     if first:
@@ -823,8 +824,18 @@ def cmd_apply(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str, Any
                         f"{'s' if len(made['slices']) != 1 else ''} from {args.prd_id}." if made["epics"] or made["slices"]
                         else f"Nothing new: everything the map of {args.prd_id} names already exists.")
                   + (f" Not made again, because they were removed after being made: {', '.join(missing)}." if missing else "")
-                  + " Nothing is approved, sent or started; each slice is confirmed with the product manager when it is resumed.")
+                  + " Nothing is approved, sent or started; each slice is confirmed with the product manager when it is resumed."
+                  + numbers_note(numbers, made))
+    report["numbers_from_github"] = numbers
     return report
+
+
+def numbers_note(numbers: Dict[str, Any], made: Dict[str, List[str]]) -> str:
+    """M20: said only when something was numbered without GitHub's numbers having been read first."""
+    if numbers.get("checked") or not numbers.get("problem") or not (made.get("epics") or made.get("slices")):
+        return ""
+    return (f" MACH could not read GitHub before numbering them ({numbers['problem'].rstrip('.')}), so a number may already be in use there; "
+            "marking a slice ready checks again.")
 
 
 def apply_map(studio: Any, record: Dict[str, Any], save: Callable[[], None], new_epic: Callable[[Dict[str, Any]], Dict[str, Any]],
