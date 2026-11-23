@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """MACH doctor: checks that this workstation and project are ready for the MACH line.
 
-Read-only by default. It measures and reports; a check that could not be performed is
+Read-only by default, but for one throwaway ticket workspace it makes and removes to prove one can be made
+(check_workspace). It measures and reports; a check that could not be performed is
 "not_checked", never "ok". With --fix it creates only the installer's standard data folders that
 are missing, and only when .factory/ already exists. It never writes a settings file, never enables
 or installs anything, starts no MACH station or agent, and never reads the machine-local Factory
@@ -123,6 +124,48 @@ def check_git(project: Path) -> List[Dict[str, str]]:
         return [check("git", title, "warn", f"{version}; the repository has no commit yet, so cells work in the project folder itself.",
                       "Make a first commit so each ticket gets its own isolated worktree.")]
     return [check("git", title, "ok", f"{version}; worktrees work and the repository has commits.")]
+
+
+def check_workspace(project: Path) -> List[Dict[str, str]]:
+    """Makes and removes a throwaway ticket workspace the way cell.py does (workspace.py: a sparse worktree that never
+    holds .claude/ or .mcp.json), detached so no branch is made, under .factory/worktrees/. Its only writes: that folder
+    and Git's record of it, both removed, and extensions.worktreeConfig, which every cell sets anyway."""
+    title = "Ticket workspaces"
+    folder = project / ".factory" / "worktrees"
+    if git_run(project, "rev-parse", "--verify", "--quiet", "HEAD") != 0 or not folder.is_dir():
+        return [check("workspace", title, "not_checked", "It needs a Git repository with a commit and MACH's .factory/worktrees folder.")]
+    try:
+        import importlib.util
+        skills = Path(__file__).resolve().parent.parent.parent
+        script = next(f / "scripts" / "workspace.py" for f in (skills / "mach-intent", skills / "intent") if (f / "scripts" / "workspace.py").is_file())
+        spec = importlib.util.spec_from_file_location("mach_workspace_for_doctor", script)
+        workspace = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(workspace)
+    except Exception as exc:  # noqa: BLE001  (a check that cannot run says so)
+        return [check("workspace", title, "not_checked", f"It could not be checked ({exc.__class__.__name__}).")]
+    version = workspace.git_version(project)
+    too_old = workspace.version_problem(version)
+    if too_old:
+        return [check("workspace", title, "fail", too_old, "Install a newer Git, then run this check again.")]
+    probe = folder / f".doctor-{os.getpid()}-{os.urandom(3).hex()}"
+    try:
+        workspace.create(project, probe, None)
+    except workspace.WorkspaceError as exc:
+        return [check("workspace", title, "fail", str(exc), "Fix what Git reports; until then no ticket can be opened.")]
+    held = [name for name in (".claude", ".mcp.json") if (probe / name).exists()]
+    done = git_run(project, "worktree", "remove", "--force", "--force", str(probe))
+    if done != 0 or probe.exists():
+        return [check("workspace", title, "warn", f"A throwaway workspace was made, but {probe} could not be removed.",
+                      f"Run: git worktree remove --force {probe}")]
+    if held:
+        return [check("workspace", title, "fail", f"A throwaway workspace still held {', '.join(held)}.",
+                      "Install a newer Git, then run this check again.")]
+    return [check("workspace", title, "ok", f"Git {workspace.version_text(version)} makes a ticket's workspace without {workspace.LEFT_OUT}.")]
+
+
+def git_run(project: Path, *args: str) -> Optional[int]:
+    code, _, _ = run(["git", *args], project, GIT_TIMEOUT)
+    return code
 
 
 def check_python() -> List[Dict[str, str]]:
@@ -478,6 +521,7 @@ def diagnose(project: Path, fix: bool = False) -> Dict[str, Any]:
     created: List[str] = []
     checks: List[Dict[str, str]] = []
     checks += check_git(project)
+    checks += check_workspace(project)
     checks += check_python()
     checks += check_claude(project)
     install, config = check_install(project, fix, created)

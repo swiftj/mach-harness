@@ -5,7 +5,9 @@ A cell lives at .factory/worktrees/<ticket_id>/ and holds the ticket's factory a
 (cell.json, intent.md, spec.md, spec.json, plan.md, evidence/). When the project is a git
 repository with at least one commit, the cell also holds repo/, a git worktree on the branch
 feature/<ticket_id>; all code, contracts, and the slice spec are written there, never on the
-main checkout. Without git history the cell has no repo/ and work happens in the project root.
+main checkout. repo/ is a sparse worktree that never holds .claude/ or .mcp.json, which Claude Code's
+sandbox protects (workspace.py); when Git cannot make it, the ticket is not opened. Only without git
+history (not a repository, or no commit yet) does the cell have no repo/ and work happen in the project root.
 
 Architecture decisions (adr.py, beside this script): `adrs` shows the contract engineer the ADRs that bind the cell;
 `adr-draft` proposes one on the ticket's branch; `adr-conflict` stops a plan that cannot follow one; `adr-exception`
@@ -19,6 +21,7 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -33,6 +36,7 @@ import shipped  # noqa: E402  (M13: the shipped rules a spec's effects are check
 import policies  # noqa: E402  (M14: the organisation's policy packs a spec answers in '## Policies')
 import scan  # noqa: E402  (M15: the risk floor a security-scan ticket's labels set)
 import small  # noqa: E402  (M18: whether a change is small, by fixed rules; the same module Product Studio loads)
+import workspace  # noqa: E402  (a cell's worktree never holds .claude/ or .mcp.json, which Claude Code's sandbox protects)
 
 try:  # M6.1 station telemetry: observational only; if it cannot be loaded nothing is recorded
     import lifecycle  # noqa: E402
@@ -415,6 +419,7 @@ def cmd_open(project: Path, args: argparse.Namespace) -> int:
         print(json.dumps({**describe(project, cell), **({"small_note": note} if note else {})}, indent=2))
         return 0
 
+    fresh, had_evidence = not root.exists(), (root / "evidence").exists()
     root.mkdir(parents=True, exist_ok=True)
     (root / "evidence").mkdir(exist_ok=True)
     branch = f"feature/{ticket_id}"
@@ -426,13 +431,15 @@ def cmd_open(project: Path, args: argparse.Namespace) -> int:
         note = "The repository has no commits yet, so the cell works in the project root. Commit once to enable isolated cells."
     else:
         ensure_ignored(project)
-        repo = root / "repo"
-        exists = git(["show-ref", "--verify", "-q", f"refs/heads/{branch}"], project).returncode == 0
-        added = git(["worktree", "add", str(repo), branch] if exists else ["worktree", "add", "-b", branch, str(repo)], project)
-        if added.returncode == 0:
-            isolation = "worktree"
-        else:
-            note = "git worktree add failed, so the cell works in the project root: " + added.stderr.strip()
+        try:  # a sparse worktree that never holds .claude/ or .mcp.json (workspace.py); never the project root instead
+            workspace.create(project, root / "repo", branch)
+        except workspace.WorkspaceError as exc:
+            if fresh:
+                shutil.rmtree(str(root), ignore_errors=True)
+            elif not had_evidence:
+                shutil.rmtree(str(root / "evidence"), ignore_errors=True)
+            raise CellError(f"{ticket_id} was not opened, and no work happens in the project root instead. {exc}")
+        isolation = "worktree"
     cell = {
         "ticket_id": ticket_id,
         "title": args.title or "",
@@ -1225,6 +1232,7 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
     elif not re.search(r"\[test\]", task_lines[0]):
         problems.append("the first task must be a [test] task: tests are written before implementation")
     problems.extend(unreachable_green(task_lines))
+    problems.extend(claude_config_problems(plan_files(text) + contracts))
     decisions = plan_adrs(project, root, cell, header, text, app_type, problems)
 
     if problems:
@@ -1260,6 +1268,18 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
                       **({"waits_for_acceptance": waiting, "next": "This High-risk ticket proposes a new ADR: the build waits until an engineer accepts it "
                                                                   "(cell.py adr-accept, on their word)."} if waiting else {})}, indent=2))
     return 0
+
+
+CLAUDE_CONFIG_REFUSAL = ("the plan changes {files}, which is Claude Code configuration that a ticket's workspace never holds, "
+                         "so a person makes that change outside the factory")
+
+
+def claude_config_problems(files: Sequence[str]) -> List[str]:
+    """A plan that changes a file under a .claude folder or a .mcp.json cannot be built in a cell (workspace.py leaves them
+    out, and Claude Code's sandbox protects them). Only the files the plan's tasks, touch map and contracts name count:
+    the plan's or spec's prose may mention such a path freely."""
+    named = sorted({name for name in files if isinstance(name, str) and workspace.protected(name)})
+    return [CLAUDE_CONFIG_REFUSAL.format(files=", ".join(named[:5]) + (f" and {len(named) - 5} more" if len(named) > 5 else ""))] if named else []
 
 
 def ticket_labels(project: Path, ticket_id: str) -> List[str]:

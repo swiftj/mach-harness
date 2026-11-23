@@ -123,6 +123,12 @@ try:
 except Exception:  # noqa: BLE001
     scan = None
 
+# A ticket's workspace (the cell's sparse worktree, which never holds .claude/ or .mcp.json): shared with the intent station.
+try:
+    import workspace  # noqa: E402
+except Exception:  # noqa: BLE001
+    workspace = None
+
 SECRET_REMEDY = ("Never commit a credential. Read it at run time from the environment or a secret store; in a test, build a fake one at run time "
                  "(for example by joining two strings) so that no file holds it. If what was found is not a secret at all, rerun with "
                  "--not-a-secret \"<why>\"; the reason and the places (never the value) go to the reviewers. Never use it for a real credential.")
@@ -436,7 +442,7 @@ def calibrate_test_file(cell: Cell) -> Dict[str, Any]:
     run on its own. Otherwise a new test could fail on its own for a reason that is not the test (the runner cannot
     load it that way), and be counted as seen failing. With no such proof the whole suite is run for every step."""
     listed = git(cell.work, "ls-files").stdout.split("\n")
-    known = sorted(name for name in listed if TEST_FILE_RE.search(name))
+    known = sorted(name for name in listed if TEST_FILE_RE.search(name) and (cell.work / name).is_file())  # not one a sparse cell leaves out
     if not known:
         return {"trusted": False, "why": "no Python test file is committed yet to check a single-file run against"}
     # The project's own way first; then, for a test command of another shape (make test, a script), the two usual
@@ -579,6 +585,10 @@ def check_scope(cell: Cell, task: Dict[str, Any], files: Sequence[str], args: ar
     architecture decision record, and no override allows it."""
     if not files:
         raise BuildError(f"{task['id']} changed no files. Do the task's work in {cell.work} first.", code="changed-no-files")
+    config = [name for name in files if workspace is not None and workspace.protected(name)]
+    if config:
+        raise BuildError(f"{task['id']} writes Claude Code configuration ({', '.join(config[:3])}), which a ticket's workspace never holds. "
+                         "Remove it; a person makes that change outside the factory. No override allows it.", code="claude-config")
     folder = adr_folder(cell)
     decisions = [name for name in files if adr_module().in_folder(name, folder)]
     if decisions:
@@ -704,10 +714,12 @@ def ensure_isolated(cell: Cell) -> None:
         with exclude.open("a", encoding="utf-8") as handle:
             handle.write("\n" + EXCLUDE_LINE + "\n")
     branch = f"feature/{cell.ticket_id}"
-    exists = git(cell.project, "show-ref", "--verify", "-q", f"refs/heads/{branch}").returncode == 0
-    added = git(cell.project, "worktree", "add", *([str(cell.root / "repo"), branch] if exists else ["-b", branch, str(cell.root / "repo")]))
-    if added.returncode != 0:
-        raise BuildError("git worktree add failed: " + added.stderr.strip(), code="worktree-failed")
+    if workspace is None:
+        raise BuildError("The intent station's workspace.py is not installed beside this skill, so the ticket's workspace cannot be made.", code="worktree-failed")
+    try:  # the same sparse worktree cell.py open makes: it never holds .claude/ or .mcp.json
+        workspace.create(cell.project, cell.root / "repo", branch)
+    except workspace.WorkspaceError as exc:
+        raise BuildError(f"The build did not start, and no work happens in the project root instead. {exc}", code="worktree-failed")
     cell.info.update({"isolation": "worktree", "branch": branch})
     cell.info.pop("note", None)
     cell.save_info()
