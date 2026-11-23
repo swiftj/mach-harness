@@ -102,7 +102,11 @@ def choose(args: Any, root: Path, config: Dict[str, Any], line: Any, schedule: A
     # The line: every cell, by its next step. A stop is a person's, whatever it waits for; "nothing" is finished.
     movable: List[str] = []
     for_a_person: List[Dict[str, Any]] = []
+    # A cell whose dispatch was cut short is not in the line yet: the plan offers its slice for dispatch again, which finishes it.
+    cut_short = {str(row["ticket_id"]) for row in plan["slices"] if row.get("interrupted") and row.get("ticket_id")}
     for ticket_id in cells(root):
+        if ticket_id in cut_short:
+            continue
         found = next_step(ticket_id)
         if not found.get("stop"):
             movable.append(ticket_id)

@@ -1475,6 +1475,11 @@ class Factory:
                     done = (dep.get("slice_id") in in_git["slices"]) if dep.get("slice_id") else (dep.get("issue") in in_git["issues"])
                     row["depends_on"].append({"slice_id": dep.get("slice_id"), "issue": dep.get("issue"), "name": name, "integrated": done,
                                               "state": "merged (its spec is on the integration branch)" if done else "not taken in by this Factory"})
+            # A dispatch cut short: the cell was opened for it, and its spec never passed finalize. It is not in the line yet;
+            # dispatching it again finishes the same cell, with the spec already written there.
+            interrupted = facts["status"] == "active" and facts.get("stage") == "interview" and not entry.get("dispatched_at")
+            if interrupted:
+                row["interrupted"] = True
             if facts["status"] == "integrated":
                 row["state"] = "completed"
                 row["integrated_commit"] = facts.get("commit")
@@ -1484,7 +1489,7 @@ class Factory:
                 for dep, revision in (entry.get("built_against") or {}).items():
                     if dep in entries and entries[dep].get("revision") != revision:
                         row["stale"].append(f"Built against {dep} revision {revision}; {dep} is now revision {entries[dep].get('revision')}.")
-            elif facts["status"] == "active":
+            elif facts["status"] == "active" and not interrupted:
                 row["state"] = "active"
                 row["reasons"].append(f"In the line at stage '{facts.get('stage')}': next is {facts.get('next')}." + (f" {facts.get('reason')}" if facts.get("next") == "stop" else ""))
                 if facts.get("next") == "stop" and facts.get("needs") not in (None, "nothing"):
@@ -1524,6 +1529,9 @@ class Factory:
                 row["state"] = "blocked" if row["reasons"] else "ready"
                 if row["state"] == "ready":
                     row["reasons"].append("Everything it depends on is merged." if row["depends_on"] else "It depends on nothing.")
+                if interrupted:
+                    row["reasons"].append(f"Its dispatch to ticket {entry.get('ticket_id')} was cut short before its spec passed the intent station's gate; "
+                                          "dispatching it again finishes that cell.")
             rows[key] = row
 
         active = [key for key, row in rows.items() if row["state"] == "active"]
@@ -1812,9 +1820,14 @@ class Factory:
         Path(described["intent_path"]).write_text(self.cell_intent(why, ticket_id, str(entry.get("title")), str(entry.get("approved_by") or ""), provider), encoding="utf-8")
         relative = str(target.relative_to(workdir))
         self.cell_kind(entry, self.root / ".factory" / "worktrees" / ticket_id / "cell.json")
-        finalized = self.script("intent", "cell.py", "finalize", ticket_id, "--spec", relative)
+        # --from-studio: the product manager's own draft of this slice in Product Studio's workspace is this slice, not another.
+        finalized = self.script("intent", "cell.py", "finalize", ticket_id, "--spec", relative, "--from-studio", entry["slice_id"])
         if finalized.returncode != 0:
-            raise IntakeError(f"The intent station's gate refused {entry['slice_id']} for ticket {ticket_id}, so it was not dispatched:\n" + finalized.stdout.strip()[-1200:])
+            said = finalized.stdout.strip()[-1200:]
+            if "[duplicate-slice-id]" in said:
+                said += (f"\nA different slice already uses {entry['slice_id']}. One of the two needs a new number: the product manager renumbers "
+                         "this one in Product Studio and marks it ready again, or the other spec is renumbered. Then pull again.")
+            raise IntakeError(f"The intent station's gate refused {entry['slice_id']} for ticket {ticket_id}, so it was not dispatched:\n" + said)
         cell_file = self.root / ".factory" / "worktrees" / ticket_id / "cell.json"
         cell = json.loads(cell_file.read_text(encoding="utf-8"))
         cell["product"] = self.provenance(entry)

@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -22,6 +23,7 @@ sys.path.insert(0, str(ROOT / "skills" / "run" / "scripts"))
 import intake  # noqa: E402
 import run  # noqa: E402
 from test_mach_product_intake import Base  # noqa: E402
+from test_mach_product_issues import git, spec_for  # noqa: E402
 from test_mach_schedule import plan_md  # noqa: E402
 
 
@@ -261,6 +263,83 @@ class LineTest(PullBase):
         self.integrate(str(a), cleanup=True)
         report = self.pull()
         self.assertEqual((report["run"], report["for_a_person"], report["waits"]), ([], [], []))
+
+
+class HandOffOnOneComputerTest(PullBase):
+    """The product manager and the Factory on one computer: the Product Studio draft of a slice, under the name it was started
+    with, sits beside the Factory's copy that intake names from the spec's title. They are one slice, never a duplicate."""
+
+    DRAFT = ".factory/studio/draft/specs/slices/SLICE-001-invite.md"
+
+    def studio_draft(self):
+        path = self.eng / self.DRAFT
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(spec_for("SLICE-001"))
+
+    def test_the_draft_of_the_slice_handed_over_is_not_a_duplicate(self):
+        (number,) = self.issues(1)
+        self.studio_draft()
+        report = self.pull()
+        self.assertEqual(self.started(report, "dispatched"), [str(number)], report["in_words"])
+        cell = self.cell(str(number))
+        self.assertEqual((cell["stage"], cell["slice_id"], cell["product"]["slice_id"]), ("spec-ready", "SLICE-001", "SLICE-001"))
+        self.assertTrue((self.eng / self.DRAFT).is_file())  # the product manager's draft is left as it is
+
+    def test_a_different_slice_with_the_same_id_is_refused_and_says_what_to_do(self):
+        (number,) = self.issues(1)
+        other = self.eng / ".factory/worktrees/LOCAL-009/repo/specs/slices/SLICE-001-pause-a-plan.md"  # an engineer's own slice
+        other.parent.mkdir(parents=True)
+        other.write_text(spec_for("SLICE-001").replace("Invite a teammate by email", "Pause a plan"))
+        report = self.pull()
+        self.assertEqual(self.started(report), [])
+        why = " ".join(item["why"] for item in report["waits"])
+        self.assertIn("SLICE-001 is already used by SLICE-001-pause-a-plan.md", why)
+        self.assertIn("A different slice already uses SLICE-001. One of the two needs a new number", why)
+
+    def cut_short(self, number):
+        """What the earlier check left behind: the cell opened, the why and the spec written, the spec refused at finalize."""
+        real = intake.Factory.script
+
+        def refusing(factory, station, name, *argv, **kwargs):
+            if name == "cell.py" and argv[:1] == ("finalize",):
+                return subprocess.CompletedProcess([name], 1, stdout="error: SLICE-001 is already used by SLICE-001-invite.md. [duplicate-slice-id]\n"
+                                                                  "FAILED: 1 error(s). Nothing was finalized.\n", stderr="")
+            return real(factory, station, name, *argv, **kwargs)
+
+        with mock.patch.object(intake.Factory, "script", refusing):
+            report = self.pull()
+        self.assertEqual(self.started(report), [])
+        root = self.eng / ".factory/worktrees" / str(number)
+        self.assertEqual(sorted(path.name for path in root.iterdir()), ["cell.json", "evidence", "intent.md", "lifecycle.jsonl", "repo"])
+        cell = self.cell(str(number))
+        self.assertEqual((cell["stage"], cell["slice_id"], "product" in cell), ("interview", None, False))
+        self.assertEqual(git(root / "repo", "status", "--porcelain").strip(), "?? specs/")  # the spec, untracked
+        self.assertIsNone(self.ledger()["slices"]["SLICE-001"]["dispatched_at"])
+
+    def test_a_pull_cut_short_by_the_old_check_carries_on_with_the_next_pull(self):
+        (number,) = self.issues(1)
+        self.studio_draft()
+        self.cut_short(number)
+        ticket = str(number)
+        # Never groomed again as if it were an engineer's ticket: it waits to be dispatched, and the plan offers it again.
+        step = run.next_step(run.Project(self.eng), ticket, True)
+        self.assertEqual((step["action"], step["needs"]), ("stop", "dispatch"))
+        _, rows = self.plan()
+        self.assertEqual((rows["SLICE-001"]["state"], rows["SLICE-001"]["dispatchable"], rows["SLICE-001"]["interrupted"]), ("ready", True, True))
+        self.assertIn("was cut short", " ".join(rows["SLICE-001"]["reasons"]))
+        dry = self.pull("--dry-run")
+        self.assertEqual((dry["start_now"][0]["how"], dry["for_a_person"]), ("would be dispatched", []))
+        report = self.pull()  # what the person types next: /mach pull
+        self.assertEqual(self.started(report, "dispatched"), [ticket], report["in_words"])
+        self.assertEqual((report["for_a_person"], report["run"]), ([], [ticket]))
+        cell = self.cell(ticket)
+        self.assertEqual((cell["stage"], cell["slice_id"], cell["product"]["slice_id"]), ("spec-ready", "SLICE-001", "SLICE-001"))
+        repo = self.eng / ".factory/worktrees" / ticket / "repo"
+        self.assertEqual(git(repo, "status", "--porcelain").strip(), "")  # the same spec file, now committed on the ticket's branch
+        self.assertEqual(sorted(path.name for path in (repo / "specs/slices").iterdir()), ["SLICE-001-invite-a-teammate-by-email.md"])
+        self.assertEqual(len(self.scheduled()), 1)
+        again = self.pull()
+        self.assertEqual((self.started(again, "dispatched"), self.started(again, "carried on")), ([], [ticket]))
 
 
 class RefusalTest(PullBase):

@@ -348,8 +348,9 @@ class Studio:
 
     def analyze(self, spec: Path, ready: bool) -> Tuple[List[Any], Dict[str, Any]]:
         """The intent skill's validator, with every folder that shares the slice ID space, the project's product principles,
-        and the shipped rules, so '## Effects on shipped behaviour' is always required (M13)."""
-        others = self.validate_slice.sibling_specs(spec, self.cell.registries(self.project, own=spec.parent))
+        and the shipped rules, so '## Effects on shipped behaviour' is always required (M13). The Factory's copy of a slice this
+        workspace handed over is that same slice, whatever its file is called there, and never a duplicate of the draft."""
+        others = self.cell.specs_sharing_ids(self.project, spec, self.handoff().handed_over())
         findings, model = self.validate_slice.analyze(spec.read_text(encoding="utf-8-sig"), spec.name, others, ready=ready,
                                                       principles=self.principles_for_check(), shipped=self.shipped()["rules"],
                                                       policies=policies_helper().for_validator(self.policy_listing()))
@@ -1636,7 +1637,8 @@ def cmd_slice_take(studio: Studio, args: argparse.Namespace) -> int:
                 raise StudioError(say(f"Your workspace already holds other text for {slice_id} that is not a draft ({studio.relative(path)}), so it was left alone and nothing was changed.",
                                       f"Your workspace already holds other text for {slice_id} that is not a draft, so it was left alone and nothing was changed."))
         spec_path = existing or studio.draft / "specs" / "slices" / f"{slice_id}-{kebab(title)}.md"
-        others = studio.validate_slice.sibling_specs(spec_path, studio.cell.registries(studio.project, own=spec_path.parent))
+        # The issue is a slice this product handed over: the Factory's copy of it on this computer is the same slice.
+        others = studio.cell.specs_sharing_ids(studio.project, spec_path, [*hand.handed_over(), slice_id])
         findings, model = studio.validate_slice.analyze(spec, spec_path.name, others, ready=True)
         errors = [f"{finding.message} [{finding.rule}]" for finding in findings if finding.severity == "error"]
         if model.get("slice_id") != slice_id:

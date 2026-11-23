@@ -23,7 +23,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import validate_slice  # noqa: E402
@@ -150,6 +150,41 @@ def registries(project: Path, own: Optional[Path] = None) -> List[Path]:
         folders.extend(sorted(p / "repo" / "specs" / "slices" for p in worktrees.iterdir() if p.is_dir()))
     own_resolved = own.resolve() if own else None
     return [f for f in folders if f.is_dir() and f.resolve() != own_resolved]
+
+
+def specs_sharing_ids(project: Path, spec: Path, same_slice: Iterable[str] = ()) -> Dict[str, str]:
+    """The other slice specs `spec`'s ID is checked against: those beside it and in every folder that shares the ID space.
+
+    A slice Product Studio handed over is one slice on both sides of the hand-off, whatever its file is called on each
+    side. `same_slice` names the slice IDs whose file on the other side of the hand-off is that same slice, on the record
+    of the side asking: for a spec outside the Studio draft workspace, a draft there with that ID; for a draft, a spec
+    anywhere else with that ID. Every other file with the spec's ID is another slice, and so a duplicate.
+    """
+    twins = {slice_id for slice_id in same_slice if isinstance(slice_id, str)}
+    draft = project.joinpath(*STUDIO_DRAFT, "specs", "slices").resolve()
+    in_draft = spec.parent.resolve() == draft
+    near: List[Path] = []
+    across: List[Path] = []
+    for folder in registries(project, own=spec.parent):
+        (across if (folder.resolve() == draft) != in_draft else near).append(folder)
+    others = validate_slice.sibling_specs(spec, near)
+    for folder in across:
+        for path in sorted(folder.glob("SLICE-*.md")):
+            match = validate_slice.FILENAME_RE.match(path.name)
+            if path.name == spec.name or path.name in others or (match and match.group(1) in twins):
+                continue
+            try:
+                others[path.name] = path.read_text(encoding="utf-8-sig")
+            except (OSError, UnicodeDecodeError):
+                others[path.name] = ""
+    return others
+
+
+def handed_over(cell: Dict[str, Any]) -> List[str]:
+    """The slice ID Product Studio handed this cell, from the cell's own record of where its slice came from; [] for any other cell."""
+    product = cell.get("product") if isinstance(cell.get("product"), dict) else {}
+    slice_id = product.get("slice_id")
+    return [slice_id] if isinstance(slice_id, str) and SLICE_ID_RE.fullmatch(slice_id) else []
 
 
 def ensure_ignored(project: Path) -> None:
@@ -500,12 +535,14 @@ def resolve_spec(project: Path, cell: Dict[str, Any], given: Optional[str]) -> P
 
 
 def analyze_spec(project: Path, spec: Path, ready: bool, cell_root: Optional[Path] = None,
-                 rules: Optional[List[Any]] = None, packs: Optional[Dict[str, Any]] = None) -> Tuple[List[Any], Dict[str, Any]]:
+                 rules: Optional[List[Any]] = None, packs: Optional[Dict[str, Any]] = None,
+                 same_slice: Iterable[str] = ()) -> Tuple[List[Any], Dict[str, Any]]:
     """Validate a spec. When the cell holds the project's published product principles (cell.py principles), every
     active one must be answered in the spec's '## Principles' section. With the shipped rules (M13), the spec's
-    '## Effects on shipped behaviour' is required and checked against them."""
+    '## Effects on shipped behaviour' is required and checked against them. `same_slice`: the slice ID Product Studio
+    handed this cell, whose draft in the Studio workspace is this same slice and not a duplicate."""
     text = spec.read_text(encoding="utf-8-sig")
-    others = validate_slice.sibling_specs(spec, registries(project, own=spec.parent))
+    others = specs_sharing_ids(project, spec, same_slice)
     return validate_slice.analyze(text, spec.name, others, ready=ready, principles=cell_principles(cell_root) if cell_root else None, shipped=rules,
                                   policies=packs)
 
@@ -832,7 +869,7 @@ def cmd_validate(project: Path, args: argparse.Namespace) -> int:
     spec = resolve_spec(project, cell, args.spec)
     found = shipped_rules(project)
     root = cell_dir(project, args.ticket_id)
-    findings, model = analyze_spec(project, spec, args.ready, root, found["rules"], policy_input(project, cell))
+    findings, model = analyze_spec(project, spec, args.ready, root, found["rules"], policy_input(project, cell), same_slice=handed_over(cell))
     errors = print_findings(spec, findings)
     print(shipped_line(found))
     changed = False
@@ -968,7 +1005,13 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     spec = resolve_spec(project, cell, args.spec)
     found = shipped_rules(project)
     packs = policy_input(project, cell)
-    findings, model = analyze_spec(project, spec, ready=True, cell_root=root, rules=found["rules"], packs=packs)
+    # A slice Product Studio handed over is the same slice as the product manager's draft of it: intake names it with
+    # --from-studio on the first finalize, before the cell records where it came from; afterwards the cell's record says so.
+    from_studio_id = getattr(args, "from_studio", None)
+    if from_studio_id is not None and not SLICE_ID_RE.fullmatch(from_studio_id):
+        raise CellError(f"--from-studio: '{from_studio_id}' is not a slice ID, such as SLICE-001.")
+    same_slice = handed_over(cell) + ([from_studio_id] if from_studio_id else [])
+    findings, model = analyze_spec(project, spec, ready=True, cell_root=root, rules=found["rules"], packs=packs, same_slice=same_slice)
     # An open policy concern (M14) holds the spec back like an open question: saved at spec-open, never ready, until the owner accepts it.
     hard = [f for f in findings if f.severity == "error" and f.rule not in ("open-questions", "policy-concern-open")]
     open_items = [f for f in findings if f.rule in ("open-questions", "policy-concern-open")]
@@ -1925,6 +1968,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--spec")
     p.add_argument("--allow-open", action="store_true", help="exit 0 when the only problem is open questions (a paused spec)")
     p.add_argument("--no-commit", action="store_true", help="do not commit the spec on the cell's branch")
+    p.add_argument("--from-studio", metavar="SLICE-NNN",
+                   help="intake's: the spec is the slice Product Studio handed over with this ID, so the product manager's draft of it "
+                        "in the Studio workspace is the same slice, not a duplicate")
     p.set_defaults(func=cmd_finalize)
 
     p = sub.add_parser("replan", help="return a planned or building cell to spec-ready to plan it again, or plan again a cell stopped at an ADR an "
