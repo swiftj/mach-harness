@@ -10,6 +10,7 @@ import { sectionTitles, viewOf, type View } from "./specModel";
 import { useSliceShow } from "../../api/useSliceShow";
 import { useStatus } from "../../api/store";
 import { WithdrawnNote } from "../../shared/WithdrawnNote";
+import { NumberTakenNotice } from "../../shared/NumberTakenNotice";
 import { AnswerQuestionButton, BuildersQuestion } from "../../shared/BuildersQuestion";
 import { SliceTimes } from "../../shared/SliceTimes";
 import { SectionNav } from "../../shared/layout/SectionNav";
@@ -149,6 +150,7 @@ function SpecNotices({ show, refreshError, onChanged }: { show: SliceShow; refre
   const withdrawn = useStatus().data?.approvals_withdrawn.find((w) => w.artifact === slice.slice_id);
   return (
     <div className="flex flex-col gap-4 empty:hidden">
+      <NumberTakenNotice sliceId={slice.slice_id} github={show.github} />
       <WithdrawnNote item={withdrawn} />
       <BuildersQuestion github={show.github} />
       <SmallChangeNotice show={show} onChanged={onChanged} />

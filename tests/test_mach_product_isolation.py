@@ -97,7 +97,7 @@ class NothingIsWiredInTest(unittest.TestCase):
         machine-local Factory policy is never read."""
         source = (ROOT / "skills" / "run" / "scripts" / "intake.py").read_text()
         used = set(re.findall(r"git\(self\.root, \"([a-z-]+)\"", source)) | set(re.findall(r"git_bytes\(\"([a-z-]+)\"", source))
-        self.assertEqual(used, {"symbolic-ref", "show-ref", "rev-parse", "merge-base", "diff", "rev-list", "check-ignore", "show", "ls-tree"})
+        self.assertEqual(used, {"symbolic-ref", "show-ref", "rev-parse", "merge-base", "diff", "rev-list", "check-ignore", "show", "ls-tree", "log"})  # M20: log reads when a branch was last active
         runs = sorted(re.findall(r"subprocess\.run\(\[([^\]]*)\]", source))
         self.assertEqual(runs, ["\"git\", *args", "sys.executable, str(path), \"--project\", str(self.root), *argv"])  # Git reads, and another station's script
         self.assertEqual(set(re.findall(r"self\.script\(\"(\w+)\", \"([\w.]+)\"", source)), {("ticket", "ticket.py"), ("intent", "cell.py")})
@@ -234,8 +234,9 @@ class NothingIsWiredInTest(unittest.TestCase):
 
     def test_the_hand_off_uses_only_the_gh_calls_it_is_meant_to(self):
         """M11: issues.py holds every GitHub call that saves a slice as an issue; handoff.py decides and
-        records, and reaches GitHub only through it. No Git at all, no closing, deleting, locking or
-        transferring an issue, and only mach:ready is ever removed."""
+        records, and reaches GitHub only through it. No Git at all, no deleting, locking or transferring an
+        issue; only mach:ready is removed, except that an issue Product Studio made at the same moment as an
+        earlier one holding the same ID loses MACH's labels and is closed (M20)."""
         sources = {name: (PRODUCT_SCRIPTS / name).read_text() for name in ("issues.py", "handoff.py")}
         for name, source in sources.items():
             imported = set()
@@ -245,15 +246,22 @@ class NothingIsWiredInTest(unittest.TestCase):
                 elif isinstance(node, ast.ImportFrom):
                     imported.add((node.module or "").split(".")[0])
             self.assertFalse(imported & {"subprocess", "socket", "http", "urllib"}, (name, imported))
-            for word in ("git(", "git_bytes(", "\"push\"", "\"close\"", "\"delete\"", "\"lock\"", "\"transfer\"", "\"reopen\"", "--force", "runner.json",
+            for word in ("git(", "git_bytes(", "\"push\"", "\"delete\"", "\"lock\"", "\"transfer\"", "\"reopen\"", "--force", "runner.json",
                          "read_local_policy", "run.py", "ticket.py", "import ticket", "\"DELETE\""):
                 self.assertFalse(word in source, (name, word))
+        # M20: one close, of an issue Product Studio itself made at the same moment as an earlier one with the same ID (stand_down),
+        # and only after taking MACH's product labels off it.
+        self.assertNotIn("\"close\"", sources["handoff.py"])
+        self.assertEqual(sources["issues.py"].count("\"close\""), 1)
+        stand_down = sources["issues.py"].split("def stand_down(")[1].split("\ndef ")[0]
+        self.assertIn("\"close\"", stand_down)
+        self.assertIn('STAND_DOWN_LABELS = ("mach:project", "mach:epic", "mach:slice", "mach:ready")', sources["issues.py"])
         handoff_source = sources["handoff.py"]
         self.assertFalse(re.findall(r"collab\.(gh|_gh_json|_gh_write)\(", handoff_source))  # GitHub only through issues.py
         issues_source = sources["issues.py"]
         calls = set(re.findall(r"_gh_(?:json|write)\(project, \"([a-z]+)\", \"([a-z]+|--[a-z]+)\"", issues_source))
         calls |= set(re.findall(r"args = \[\"(issue)\", \"([a-z]+)\"", issues_source))
-        self.assertEqual(calls, {("issue", "list"), ("issue", "view"), ("issue", "create"), ("issue", "edit"), ("issue", "comment"), ("issue", "pin"),
+        self.assertEqual(calls, {("issue", "list"), ("issue", "view"), ("issue", "create"), ("issue", "edit"), ("issue", "comment"), ("issue", "pin"), ("issue", "close"),
                                  ("label", "list"), ("label", "create"), ("api", "--paginate"), ("api", "--method")} | {("api", "--method")})
         api = re.findall(r"_gh_(?:json|write)\(project, \"api\"[^\n]*", issues_source)
         paths = sorted(re.search(r"(\"user\"|ISSUE_PATH|SUB_ISSUES_PATH|PRIORITY_PATH)", call).group(1) for call in api)
@@ -267,8 +275,11 @@ class NothingIsWiredInTest(unittest.TestCase):
         self.assertIn('PRIORITY_PATH = "repos/{repository}/issues/{number}/sub_issues/priority"', issues_source)
         self.assertIn('ISSUE_PATH = "repos/{repository}/issues/{number}"', issues_source)
         removals = re.findall(r"--remove-label[^\n]*", issues_source)
-        self.assertEqual(removals, ['--remove-label", READY)', '--remove-label", name]'])
+        self.assertEqual(removals, ['--remove-label", READY)', '--remove-label", name]', '--remove-label", name]'])
         self.assertIn('READY = "mach:ready"', issues_source)
+        # M20: the third is stand_down's, and only MACH's product labels: it refuses any other name first.
+        down = issues_source[issues_source.index("def stand_down("):issues_source.index("STAND_DOWN_LABELS = ")]
+        self.assertIn("if any(name not in STAND_DOWN_LABELS for name in names):", down)
         # M16: the second removal is an idea's own state labels, and only those: set_idea_state refuses any other name first.
         states = issues_source[issues_source.index("def set_idea_state("):issues_source.index("def comment(")]
         self.assertIn("if add not in IDEA_STATES or any(name not in IDEA_STATES or name == add for name in remove):", states)
@@ -282,7 +293,7 @@ class NothingIsWiredInTest(unittest.TestCase):
         self.assertEqual(set(re.findall(r"\bissues\.([a-z_]+)\(", handoff_source)),
                          {"add_labels", "add_sub_issue", "comment", "comments", "create", "create_label", "database_id", "label_names", "labels",
                           "list_issues", "pin", "place_sub_issue", "remove_ready", "rewrite", "signed_in", "sub_issue_numbers", "sub_issues",
-                          "unavailable", "view"})
+                          "unavailable", "view", "stand_down"})  # M20: stand_down closes this workspace's own issue made at the same moment
         # M17: the principles and the technical needs are published by one shared function, publish_set.
         publish = handoff_source[handoff_source.index("    def publish_set("):handoff_source.index("    def write_set_folder(")]
         self.assertEqual(set(re.findall(r"\bissues\.([a-z_]+)\(", publish)), {"labels", "create_label", "comments", "comment"})

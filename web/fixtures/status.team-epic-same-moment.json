@@ -1,0 +1,175 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Teams work together.",
+      "outcomes": [
+        "Teams can work together"
+      ],
+      "issue": 1,
+      "url": "https://github.com/acme/team-space/issues/1",
+      "changed_elsewhere": null
+    },
+    "approvals_withdrawn": [
+      {
+        "artifact": "SLICE-002",
+        "kind": "slice",
+        "reason": "Someone else saved a different epic as EPIC-001 at the same moment, so the epic needs a new number and this slice needs your approval again.",
+        "at": "2026-11-23T22:38:32Z"
+      }
+    ],
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "Billing",
+        "status": "open",
+        "revision": 1,
+        "acceptance_criteria": [
+          "Invoices are sent"
+        ],
+        "issue": null,
+        "url": null,
+        "changed_elsewhere": null,
+        "same_moment": {
+          "issue": 4,
+          "holder": 2,
+          "by": null,
+          "at": "2026-11-23T22:38:32Z",
+          "issue_url": "https://github.com/acme/team-space/issues/4",
+          "holder_url": "https://github.com/acme/team-space/issues/2"
+        },
+        "counts": {
+          "total": 1,
+          "by_progress": {
+            "ready_for_approval": 1
+          },
+          "ready_or_further": 0,
+          "ready_or_further_means": "marked ready to build, being built, or shipped"
+        }
+      }
+    ],
+    "slices": [
+      {
+        "slice_id": "SLICE-002",
+        "title": "Send an invoice",
+        "epic_id": "EPIC-001",
+        "status": "ready_for_approval",
+        "revision": 3,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-002-invite-teammate.md",
+        "has_intent": true,
+        "resume_note": null,
+        "dependencies": [],
+        "editable": true,
+        "github": {
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": null,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "same_moment": null,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": null,
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "ready_for_approval"
+        }
+      }
+    ],
+    "principles": {
+      "active": [],
+      "retired": [],
+      "unpublished_changes": false,
+      "published": {
+        "saved": null,
+        "unfinished": false,
+        "revision": null,
+        "sha256": null,
+        "approved_by": null,
+        "published_at": null,
+        "issue": null,
+        "url": null,
+        "github": null,
+        "newer_elsewhere": false,
+        "changed_on_github": false
+      },
+      "slices_answered_under_older": [],
+      "next": null
+    },
+    "saved": {
+      "everything_saved": true,
+      "note": "Everything is saved.",
+      "not_saved": []
+    },
+    "order": [
+      {
+        "epic_id": "EPIC-001",
+        "issue": null,
+        "slices": [
+          {
+            "slice_id": "SLICE-002",
+            "title": "Send an invoice",
+            "in_workspace": true,
+            "issue": null,
+            "state_label": null
+          }
+        ],
+        "on_github": false,
+        "github_order": null,
+        "github_read_at": null,
+        "matches_github": null,
+        "unfinished": false,
+        "taken_from_github": false,
+        "could_not_read": false,
+        "note": null
+      }
+    ],
+    "same_id_twice": [],
+    "project_on_github": null,
+    "github": {
+      "repository": "acme/team-space",
+      "form": null,
+      "last_read": null
+    },
+    "current_slice": "SLICE-002",
+    "last_refreshed": null,
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Someone else saved a different epic as EPIC-001 at the same moment (their issue #2 keeps the number; yours, #4, was closed): give your epic a new number and mark its slice ready again (epic renumber EPIC-001).",
+      "SLICE-002 is ready for your approval: mark it ready for the builders (slice ready SLICE-002)."
+    ],
+    "next_actions": [
+      {
+        "kind": "renumber_epic",
+        "target": "EPIC-001",
+        "title": "Give EPIC-001 a new number",
+        "reason": "Someone else saved a different epic as EPIC-001 at the same moment: their issue #2 was made first and keeps the number. Your issue #4 was closed. Give Billing a new number, then mark its slice ready again.",
+        "related": []
+      },
+      {
+        "kind": "mark_ready",
+        "target": "SLICE-002",
+        "title": "Mark SLICE-002 ready",
+        "reason": "Send an invoice is ready for your approval. Marking it ready hands it to the builders.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

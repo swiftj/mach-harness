@@ -410,6 +410,105 @@ exit 1''')
         self.assertNotIn("secret", text)
         self.assertFalse([c for c in self.gh_calls() if "secret" in c or "https://" in c])
 
+    # merge protection (M20 A2): read-only, warns with the fix, not_checked when it cannot be read
+    def fake_protection(self, rules="[]", classic='echo \'{"strict": true, "contexts": ["ci"]}\'; exit 0', branch="main", signed_in=True,
+                        writers="echo 1; exit 0"):
+        self.fake("gh", f'''echo "$@" >> "{self.log}"
+case "$1 $2" in
+  "auth status") {"exit 0" if signed_in else "exit 1"};;
+esac
+case "$2" in
+  repos/acme/widgets/rules/branches/{branch}) echo '{rules}'; exit 0;;
+  repos/acme/widgets/branches/{branch}/protection/required_status_checks) {classic};;
+  "repos/acme/widgets/collaborators?per_page=100") {writers};;
+esac
+exit 1''')
+
+    # merge method (M20 A2): local, the default, warns only when GitHub shows more than one person who can push
+    def method_check(self, config=None, **kwargs):
+        self.github_project(config=config)
+        self.fake_protection(**kwargs)
+        _, checks, _, _ = self.checks()
+        return checks.get("merge.method")
+
+    def test_local_method_with_one_writer_is_ok(self):
+        found = self.method_check()
+        self.assertEqual(found["status"], "ok", found)
+        self.assertIn("only one person", found["detail"])
+        self.assertTrue(any("collaborators" in c and "--method" not in c for c in self.gh_calls()))
+
+    def test_local_method_with_several_writers_warns_with_the_fix(self):
+        found = self.method_check(config={"tickets": {"provider": "local"}, "merge": {"method": "local"}}, writers="echo 3; exit 0")
+        self.assertEqual(found["status"], "warn", found)
+        self.assertIn("3 people can push to acme/widgets", found["detail"])
+        self.assertIn('set merge.method to "pr"', found["fix"])
+
+    def test_local_method_whose_writers_cannot_be_read_is_not_checked(self):
+        found = self.method_check(writers='echo "gh: Must have push access (HTTP 403)" >&2; exit 1')
+        self.assertEqual(found["status"], "not_checked", found)
+        self.fake_protection(signed_in=False)
+        _, checks, _, _ = self.checks()
+        self.assertEqual(checks["merge.method"]["status"], "not_checked", checks["merge.method"])
+
+    def test_pr_method_or_another_host_has_no_method_check(self):
+        self.assertIsNone(self.method_check(config={"tickets": {"provider": "local"}, "merge": {"method": "pr"}}, writers="echo 5; exit 0"))
+        self.git("remote", "set-url", "origin", "https://example.com/acme/widgets.git")
+        _, checks, _, _ = self.checks()
+        self.assertNotIn("merge.method", checks)
+
+    def protection(self, **kwargs):
+        self.fake_protection(**kwargs)
+        _, checks, _, _ = self.checks()
+        calls = [c for c in self.gh_calls() if "protection" in c or "rules/" in c]
+        self.assertTrue(all(c.startswith("api repos/acme/widgets/") and "--method" not in c and "-X" not in c for c in calls), calls)
+        return checks["merge.protection"]
+
+    def test_merge_protection_up_to_date_and_checks_is_ok(self):
+        self.github_project()
+        found = self.protection()
+        self.assertEqual(found["status"], "ok", found)
+        self.assertIn("up to date", found["detail"])
+
+    def test_merge_protection_from_a_ruleset_is_ok(self):
+        self.github_project()
+        rules = '[{"type": "pull_request"}, {"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true, "required_status_checks": [{"context": "ci"}]}}]'
+        found = self.protection(rules=rules, classic="exit 1")
+        self.assertEqual(found["status"], "ok", found)
+        self.assertIn("ruleset", found["detail"])
+
+    def test_merge_protection_not_up_to_date_warns_with_the_fix(self):
+        self.github_project()
+        found = self.protection(classic='echo \'{"strict": false, "contexts": ["ci"]}\'; exit 0')
+        self.assertEqual(found["status"], "warn", found)
+        self.assertIn("branches to be up to date", found["detail"])
+        self.assertIn("require branches to be up to date before merging", found["fix"])
+        self.assertIn("changes no setting", found["fix"])
+
+    def test_merge_protection_without_checks_or_protection_warns(self):
+        self.github_project()
+        found = self.protection(classic='echo \'{"strict": true, "contexts": [], "checks": []}\'; exit 0')
+        self.assertEqual((found["status"], "any status check" in found["detail"]), ("warn", True), found)
+        found = self.protection(classic='echo \'{"message": "Branch not protected"}\'; echo "gh: Branch not protected (HTTP 404)" >&2; exit 1')
+        self.assertEqual(found["status"], "warn", found)
+        self.assertIn("is not protected", found["detail"])
+
+    def test_merge_protection_that_cannot_be_read_is_not_checked(self):
+        self.github_project()
+        found = self.protection(classic='echo \'{"message": "Not Found"}\'; echo "gh: Not Found (HTTP 404)" >&2; exit 1')
+        self.assertEqual(found["status"], "not_checked", found)
+        self.assertIn("admin access", found["detail"])
+        found = self.protection(signed_in=False)
+        self.assertEqual(found["status"], "not_checked", found)
+
+    def test_merge_protection_reads_merge_into_and_skips_other_hosts(self):
+        self.github_project(config={"tickets": {"provider": "local"}, "merge": {"into": "trunk"}})
+        found = self.protection(branch="trunk")
+        self.assertEqual(found["status"], "ok", found)
+        self.assertIn("trunk", found["title"])
+        self.git("remote", "set-url", "origin", "https://example.com/acme/widgets.git")
+        _, checks, _, _ = self.checks()
+        self.assertNotIn("merge.protection", checks)
+
     def test_github_repo_forms(self):
         self.healthy()
         for url, want in (("git@github.com:o/r.git", "o/r"), ("ssh://git@github.com/o/r", "o/r"),

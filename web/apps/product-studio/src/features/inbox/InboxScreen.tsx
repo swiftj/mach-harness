@@ -4,8 +4,9 @@ import { Link } from "react-router";
 import { ArtifactId, Button, EmptyState, ErrorState, Heading, Page, Skeleton, SliceGithubPills, Text, describeError, formatWhen, plural, type ApprovalWithdrawn, type Status, type StatusSliceRow } from "@mach/ui";
 import { useStatus } from "../../api/store";
 import { titleFor } from "../../api/describe";
-import { IssueLink } from "../../shared/IssueLink";
+import { IssueLink, IssueText } from "../../shared/IssueLink";
 import { RenumberDialog } from "../../shared/RenumberDialog";
+import { holderWords, momentUrls } from "../../shared/team";
 import { AnswerQuestionButton, BuildersQuestion } from "../../shared/BuildersQuestion";
 import { NewerVersionCard } from "./NewerVersionCard";
 import { OpenQuestionsCard } from "./OpenQuestionsCard";
@@ -167,7 +168,14 @@ export function InboxScreen() {
             </Button>
           }
         >
-          Another slice saved on GitHub uses the number {slice.slice_id}. Your draft keeps everything it says and gets the next free number.
+          {slice.github.same_moment ? (
+            <IssueText
+              text={`Someone else marked ${slice.slice_id} ready at the same moment. ${holderWords(slice.github.same_moment)} issue #${slice.github.same_moment.holder} was made first and keeps the number; yours, #${slice.github.same_moment.issue}, was closed and never reached the builders. Your draft keeps everything it says and gets the next free number.`}
+              urls={momentUrls(slice.github.same_moment)}
+            />
+          ) : (
+            `Another slice saved on GitHub uses the number ${slice.slice_id}. Your draft keeps everything it says and gets the next free number.`
+          )}
         </SliceCard>
       )),
     },

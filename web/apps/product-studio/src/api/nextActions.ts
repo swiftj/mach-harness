@@ -6,8 +6,8 @@ import type { ApiErrorHint, NextAction, Status } from "@mach/ui/api";
 import { artifactKind } from "@mach/ui/ids";
 
 export type ActionRoute =
-  /** Go to a screen. */
-  | { type: "navigate"; to: string; label: string }
+  /** Go to a screen; `state.focus` names the place on it to bring into view (M20: a choice waiting on Vision). */
+  | { type: "navigate"; to: string; label: string; state?: { focus: string } }
   /** Start a slice: ask for its title, then open its interview. */
   | { type: "new-slice"; epicId: string | null; label: string }
   /** Give a draft the next free number, confirmed in place. */
@@ -37,10 +37,17 @@ export function routeFor(action: NextAction): ActionRoute {
     case "answer_question":
       return slice ? { type: "answer-question", sliceId: slice, label: "Answer it" } : { type: "navigate", to: "/inbox", label: "Open decisions" };
     case "reconcile":
-      // The engine's target is a slice, or "principles" when someone else published newer product principles.
-      return id === "principles" ? { type: "navigate", to: "/principles", label: "Choose a version of the principles" } : { type: "navigate", to: "/inbox", label: "Choose a version" };
+      // The engine's target is a slice, or "principles" when someone else published newer product principles, or (M20)
+      // "project" or an epic when someone else changed its own text: that choice waits on Vision, beside the text.
+      if (id === "principles") return { type: "navigate", to: "/principles", label: "Choose a version of the principles" };
+      if (id === "project") return { type: "navigate", to: "/vision", label: "Choose a version of the project", state: { focus: "shared-project" } };
+      if (kind === "epic" && id) return { type: "navigate", to: "/vision", label: `Choose a version of ${id}`, state: { focus: `shared-${id}` } };
+      return { type: "navigate", to: "/inbox", label: "Choose a version" };
     case "renumber_slice":
       return slice ? { type: "renumber", id: slice, label: "Give it a new number" } : { type: "navigate", to: "/inbox", label: "Open decisions" };
+    case "renumber_epic":
+      // M20: an epic's number taken at the same moment by someone else's epic: the same act, in place.
+      return kind === "epic" && id ? { type: "renumber", id, label: "Give it a new number" } : { type: "navigate", to: "/vision", label: "Open the epics" };
     default:
       return byTarget(id);
   }

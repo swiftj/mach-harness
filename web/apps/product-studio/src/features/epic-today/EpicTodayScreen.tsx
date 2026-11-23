@@ -1,11 +1,14 @@
 import type { ReactNode } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import { CircleAlert, GitCommitHorizontal, PackageOpen } from "lucide-react";
 import { ArtifactId, Badge, Banner, Button, DiagnosticList, EmptyState, ErrorState, Heading, Skeleton, SkeletonText, StateGlyph, Text, cn, describeError, plain, plural } from "@mach/ui";
 import type { EpicCurrent, EpicView, ShippedRule } from "@mach/ui/api";
 import { useOperation } from "../../api/useOperation";
 import { useStatus } from "../../api/store";
 import { Fold } from "../../shared/layout/Fold";
+import { SharedTextChoice } from "../../shared/SharedTextChoice";
+import { EpicNumberTakenNotice } from "../../shared/NumberTakenNotice";
+import { mineOf } from "../../shared/team";
 import { SectionNav } from "../../shared/layout/SectionNav";
 import { ContextRow, OnePane, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
 import { connectionWords, earlierText, effectWord, epicPage, sliceEffectsWords, sliceTitle, type GroupId, type NotApplied, type RuleGroup } from "./model";
@@ -89,6 +92,29 @@ function TodaySkeleton() {
   );
 }
 
+/**
+ * M20: someone else changed this epic's title or criteria on GitHub while this person changed them too. The choice is
+ * the same one Vision shows under the epic, here first, since this is the epic's own page.
+ */
+function EpicTextChoice({ epicId }: { epicId: string }) {
+  const status = useStatus().data;
+  const navigate = useNavigate();
+  const row = status?.epics.find((e) => e.epic_id === epicId);
+  const changed = row?.changed_elsewhere;
+  return (
+    <>
+      {/* M20: this epic's number was taken at the same moment by someone else's epic. After a new number, the page follows it. */}
+      <EpicNumberTakenNotice
+        className="max-w-[44rem]"
+        epicId={epicId}
+        moment={row?.same_moment}
+        onRenumbered={({ to }) => void navigate(`/epics/${to}/today`, { replace: true })}
+      />
+      {status && changed ? <SharedTextChoice className="max-w-[44rem]" changed={changed} mine={mineOf(status, changed)} /> : null}
+    </>
+  );
+}
+
 /** MACH's note, once: which commit, and that it is this computer's copy of the main branch. */
 function SourceNote({ current }: { current: EpicCurrent }) {
   return (
@@ -126,6 +152,7 @@ function EpicBody({ current, epicId, label }: { current: EpicCurrent; epicId: st
     return (
       <OnePane label={label} width="reading">
         <div className="flex flex-col gap-6">
+          <EpicTextChoice epicId={epicId} />
           <EmptyState
             className="max-w-reading"
             icon={<PackageOpen />}
@@ -147,6 +174,7 @@ function EpicBody({ current, epicId, label }: { current: EpicCurrent; epicId: st
     <WorkPanes>
       <WorkPane label={label}>
         <div className="flex flex-col gap-10">
+          <EpicTextChoice epicId={epicId} />
           {current.notes.length ? (
             <Banner tone="info" title="What MACH noted">
               <ul className="flex list-disc flex-col gap-1 pl-5">

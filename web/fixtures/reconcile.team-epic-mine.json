@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "data": {
+    "reconciled": "EPIC-001",
+    "took": "mine",
+    "issue": 2,
+    "note": "Your copy of EPIC-001 stays as it is. MACH writes it to GitHub the next time you mark one of its slices ready.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

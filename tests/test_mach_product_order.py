@@ -53,7 +53,7 @@ class MoveDraftsTest(OrderBase):
         self.assertEqual(self.ids(), [third, second, first])
         self.ok(self.a, "slice", "move", first, "--before", second)
         self.assertEqual(self.ids(), [third, first, second])
-        self.assertEqual(self.gh()["calls"], [])  # drafts only: GitHub is never asked
+        self.assertEqual(self.calls_since_init(), [])  # drafts only: GitHub is never asked
         for slice_id in (first, second, third):  # marked ready in another order than the one set
             self.ready(slice_id)
         self.assertEqual(self.sub_issue_slices(), [third, first, second])
@@ -92,7 +92,7 @@ class MoveRefusalTest(OrderBase):
         after = (self.a / ".factory/studio/issues.json").read_text() if (self.a / ".factory/studio/issues.json").exists() else None
         self.assertEqual(before, after)
         self.assertEqual(self.ids(), [first, second, self.ids()[2]])
-        self.assertEqual(self.gh()["calls"], [])
+        self.assertEqual(self.calls_since_init(), [])
 
     def test_github_unusable_refuses_before_anything_changes(self):
         first, second, third = self.three()
@@ -394,9 +394,10 @@ class TakeRefusalTest(TakeBase):
         self.assertFalse(self.draft(self.b, f"product/slices/{slice_id}.json").exists())
 
     def test_a_repository_holding_a_different_project_is_refused(self):
+        # Ben defined his project before Ada's issue existed (M20: project init takes a project already on GitHub).
+        self.ok(self.b, "project", "init", "--id", "other-space", "--name", "Other", "--vision", "Something else.", "--outcome", "Other things")
         self.project_and_epic(self.a)
         self.ready(self.drafted(self.a), self.a)
-        self.ok(self.b, "project", "init", "--id", "other-space", "--name", "Other", "--vision", "Something else.", "--outcome", "Other things")
         self.set_gh(me="ben-pm")
         self.assertIn("This repository's project on GitHub is a different one", self.refused(self.b, "slice", "take", "SLICE-001"))
         self.assertFalse(self.draft(self.b, "product/slices/SLICE-001.json").exists())

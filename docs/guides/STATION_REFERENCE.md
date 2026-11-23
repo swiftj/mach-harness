@@ -8,6 +8,8 @@ What each station does, what its script refuses, and how to run one yourself. Mo
 /mach-intent LOCAL-001
 ```
 
+The ticket's work happens in its cell: `.factory/worktrees/<ticket>/repo`, a Git worktree on `feature/<ticket>`. It holds every file of the branch except `.claude/` and `.mcp.json`, which Claude Code's sandbox does not let an agent write. If Git cannot make it, the ticket is not opened and the message says what Git said; nothing is left behind and no work happens in the project root.
+
 The interview and what it produces are described in the README. Two details:
 
 ### What is checked by script, not by a model
@@ -16,6 +18,7 @@ The interview and what it produces are described in the README. Two details:
 - That no open question remains before contracts are written (`cell.py finalize`).
 - That slice IDs are unique across every ticket being groomed at once, the main checkout and Product Studio's draft workspace. A slice Product Studio handed over is one slice on both sides: the product manager's draft of it and the Factory's copy share its ID, even under different file names, and neither is called a duplicate of the other.
 - That the plan puts tests first, assigns every requirement and scenario, and lists only contracts that exist (`cell.py check-plan`).
+- That the plan changes no file under `.claude/` and no `.mcp.json` (`cell.py check-plan`). A cell never holds them, so a person makes that change outside the factory.
 
 ### Headless grooming
 
@@ -110,7 +113,11 @@ Review approves one exact commit, and the merge station lands that commit or ref
 
 - **Approval is bound to the commit.** If anything was added to the branch after review, the approval is void and the ticket goes back to verification. An approval that rests on a person's security exception is bound the same way, and an exception past its expiry stops the merge until a person records a new one or abandons the ticket.
 - **It is re-tested against today's main.** If main has moved since approval, the branch is brought up to date inside the cell and the test suite runs again before anything lands, so two tickets that each passed alone cannot break main together. A failing suite sends the ticket back to the build station; a conflict stops for a person.
-- **Locally or through a pull request.** With `merge.method` set to `local` it makes a merge commit on your main checkout. With `pr` it pushes the branch, opens a pull request summarising the verification and review, and merges it at the approved commit, so your CI, review bots and team see a normal pull request.
+- **It looks at the shared main.** When the repository has a remote named `origin`, MACH fetches `origin/main` first. If origin cannot be reached, MACH merges nothing and says so.
+- **Locally or through a pull request.** With `merge.method` set to `local` (the default) it makes a merge commit on your main checkout. If `origin/main` has commits your main does not have, MACH merges nothing and asks you to pull main first. MACH never pushes a local merge; it tells you to push main yourself. With `pr` it does every check against `origin/main`, pushes the branch, opens a pull request summarising the verification and review, and merges it at the approved commit, so your CI, review bots and team see a normal pull request.
+- **The main branch takes a slice once.** After the fetch, and before it merges, pushes or opens anything, MACH checks whether this revision of a slice from Product Studio is already on main from another Factory. If it is, MACH says "SLICE-011 was already shipped from another Factory (merged as 4be1c09a2f3d). This copy was not merged. Nothing was pushed or merged." and leaves the ticket for cleanup. If this copy's pull request is already open, MACH leaves it open and tells you to close it on GitHub. Your own merge, landed earlier, is never mistaken for another's.
+- **One slice number, one slice.** If the branch adds a spec whose slice number is already on main under another file name, MACH merges nothing and says two engineers took one slice number. Give your slice a free number on its branch; it is then verified and reviewed again.
+- **With `pr`, it checks main once more just before merging.** If `origin/main` moved after the re-test, MACH says "main moved again; re-validating", re-tests on the new main, and then merges. It tries this twice at most, then stops and leaves the pull request open.
 
 Who merges is a setting, by risk tier:
 

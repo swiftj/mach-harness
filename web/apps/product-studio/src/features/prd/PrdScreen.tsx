@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { splitNumbersNote } from "../../shared/team";
+import { NumbersNotChecked } from "../../shared/NumbersNotChecked";
 import { Link, useParams } from "react-router";
 import { CircleAlert, FileText } from "lucide-react";
 import { ArtifactId, Banner, Button, ConfirmDialog, ErrorState, Heading, LoadingState, SliceStatusPill, Text, plural, describeError, toast } from "@mach/ui";
@@ -581,13 +583,16 @@ function MadeBefore({ slices }: { slices: PrdMapSlice[] }) {
 
 /** What the last apply made, what already existed, and what was removed since and not made again. */
 function ApplyResult({ result }: { result: PrdApply }) {
+  // M20: the sentence that GitHub's numbers were not read is shown on its own, not inside the success message.
+  const note = splitNumbersNote(result.note, result.numbers_from_github);
   const made = [...result.made.epics, ...result.made.slices];
   const kept = [...result.kept.epics, ...result.kept.slices];
   return (
     <div role="status" className="flex flex-col gap-3 border-t border-line pt-4">
       <Banner tone={made.length ? "success" : "info"} title={made.length ? `Made ${made.join(", ")}` : "Nothing new was made"}>
-        {result.note}
+        {note.made}
       </Banner>
+      <NumbersNotChecked text={note.numbers} />
       {kept.length ? (
         <p className="text-body-sm text-ink">
           Already there, so not made again: <span className="font-semibold">{kept.join(", ")}</span>.

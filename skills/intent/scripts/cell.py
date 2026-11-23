@@ -5,7 +5,9 @@ A cell lives at .factory/worktrees/<ticket_id>/ and holds the ticket's factory a
 (cell.json, intent.md, spec.md, spec.json, plan.md, evidence/). When the project is a git
 repository with at least one commit, the cell also holds repo/, a git worktree on the branch
 feature/<ticket_id>; all code, contracts, and the slice spec are written there, never on the
-main checkout. Without git history the cell has no repo/ and work happens in the project root.
+main checkout. repo/ is a sparse worktree that never holds .claude/ or .mcp.json, which Claude Code's
+sandbox protects (workspace.py); when Git cannot make it, the ticket is not opened. Only without git
+history (not a repository, or no commit yet) does the cell have no repo/ and work happen in the project root.
 
 Architecture decisions (adr.py, beside this script): `adrs` shows the contract engineer the ADRs that bind the cell;
 `adr-draft` proposes one on the ticket's branch; `adr-conflict` stops a plan that cannot follow one; `adr-exception`
@@ -18,7 +20,9 @@ can decide, so the model only makes the judgment calls.
 import argparse
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -33,6 +37,7 @@ import shipped  # noqa: E402  (M13: the shipped rules a spec's effects are check
 import policies  # noqa: E402  (M14: the organisation's policy packs a spec answers in '## Policies')
 import scan  # noqa: E402  (M15: the risk floor a security-scan ticket's labels set)
 import small  # noqa: E402  (M18: whether a change is small, by fixed rules; the same module Product Studio loads)
+import workspace  # noqa: E402  (a cell's worktree never holds .claude/ or .mcp.json, which Claude Code's sandbox protects)
 
 try:  # M6.1 station telemetry: observational only; if it cannot be loaded nothing is recorded
     import lifecycle  # noqa: E402
@@ -415,24 +420,32 @@ def cmd_open(project: Path, args: argparse.Namespace) -> int:
         print(json.dumps({**describe(project, cell), **({"small_note": note} if note else {})}, indent=2))
         return 0
 
+    fresh, had_evidence = not root.exists(), (root / "evidence").exists()
     root.mkdir(parents=True, exist_ok=True)
     (root / "evidence").mkdir(exist_ok=True)
     branch = f"feature/{ticket_id}"
     isolation, note = "none", ""
     inside = git(["rev-parse", "--is-inside-work-tree"], project)
+    if inside.returncode != 0 and any((folder / ".git").exists() for folder in (project, *project.parents)):
+        # Git is here but refused to answer (an ownership rule, a broken repository): never take that for "no Git"
+        # and work in the project root.
+        raise CellError(f"{ticket_id} was not opened, and no work happens in the project root instead. Git could not read this "
+                        f"repository: {(inside.stderr or '').strip()[:300] or 'it gave no reason'}. Fix what Git reports, then run this again.")
     if inside.returncode != 0:
         note = "The project is not a git repository, so the cell works in the project root."
     elif git(["rev-parse", "--verify", "-q", "HEAD"], project).returncode != 0:
         note = "The repository has no commits yet, so the cell works in the project root. Commit once to enable isolated cells."
     else:
         ensure_ignored(project)
-        repo = root / "repo"
-        exists = git(["show-ref", "--verify", "-q", f"refs/heads/{branch}"], project).returncode == 0
-        added = git(["worktree", "add", str(repo), branch] if exists else ["worktree", "add", "-b", branch, str(repo)], project)
-        if added.returncode == 0:
-            isolation = "worktree"
-        else:
-            note = "git worktree add failed, so the cell works in the project root: " + added.stderr.strip()
+        try:  # a sparse worktree that never holds .claude/ or .mcp.json (workspace.py); never the project root instead
+            workspace.create(project, root / "repo", branch)
+        except workspace.WorkspaceError as exc:
+            if fresh:
+                shutil.rmtree(str(root), ignore_errors=True)
+            elif not had_evidence:
+                shutil.rmtree(str(root / "evidence"), ignore_errors=True)
+            raise CellError(f"{ticket_id} was not opened, and no work happens in the project root instead. {exc}")
+        isolation = "worktree"
     cell = {
         "ticket_id": ticket_id,
         "title": args.title or "",
@@ -501,8 +514,61 @@ def slice_ids(project: Path) -> Tuple[Dict[int, str], Dict[int, List[Dict[str, s
     return used, reserved
 
 
+def shared_main_ref(project: Path) -> Optional[str]:
+    """origin's main branch as this checkout last fetched it (refs/remotes/origin/<main>), or None when there is none."""
+    config = load_config(project)
+    merge = config.get("merge") if isinstance(config.get("merge"), dict) else {}
+    named = merge.get("into") if isinstance(merge.get("into"), str) and merge.get("into").strip() else None
+    remote_head = git(["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], project).stdout.strip()
+    for branch in ([named.strip()] if named else [remote_head.split("/", 1)[-1]] if remote_head else ["main", "master"]):
+        if git(["rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}"], project).returncode == 0:
+            return f"refs/remotes/origin/{branch}"
+    return None
+
+
+def shared_slice_ids(project: Path) -> Tuple[Dict[int, str], List[str]]:
+    """M20 A3, for an engineer numbering their own ticket: slice numbers taken where this computer's folders cannot see them.
+    The specs on origin/<main> as last fetched (nothing is fetched here), and, when the ticket provider is GitHub, every slice
+    issue's ID, open or closed, read through the ticket station. Returns ({number: where}, notes); a note says plainly what
+    could not be read."""
+    used: Dict[int, str] = {}
+    notes: List[str] = []
+    ref = shared_main_ref(project)
+    if ref:
+        listed = git(["ls-tree", "--name-only", ref, "--", "specs/slices/"], project)
+        for path in listed.stdout.splitlines() if listed.returncode == 0 else []:
+            match = SLICE_FILE_RE.match(path.rsplit("/", 1)[-1])
+            if match:
+                used.setdefault(int(match.group(1)), f"{ref[len('refs/remotes/'):]}:{path}")
+    config = load_config(project)
+    tickets = config.get("tickets") if isinstance(config.get("tickets"), dict) else {}
+    if (os.environ.get("ISSUE_PROVIDER") or tickets.get("provider")) == "github":
+        script = ticket_script()
+        found = None
+        if script is not None:
+            done = subprocess.run([sys.executable, str(script), "--project", str(project), "slice-ids"], capture_output=True, text=True)
+            try:
+                found = json.loads(done.stdout) if done.returncode == 0 and done.stdout.strip() else None
+            except ValueError:
+                found = None
+        ids = found.get("slice_ids") if isinstance(found, dict) else None
+        if isinstance(ids, list):
+            for slice_id in ids:
+                match = SLICE_ID_RE.match(str(slice_id))
+                if match:
+                    used.setdefault(int(match.group(1)), f"a slice issue on GitHub ({slice_id})")
+        else:
+            kind = ((found or {}).get("failure") or {}).get("kind", "other") if isinstance(found, dict) else "the ticket station could not read it"
+            notes.append(f"GitHub could not be read ({kind}), so slice IDs held only by issues on GitHub were not counted. "
+                         "Check the slice issues before taking this number, or try again when GitHub can be reached.")
+    return used, notes
+
+
 def cmd_next_id(project: Path, args: argparse.Namespace) -> int:
     used, reserved = slice_ids(project)
+    shared, notes = shared_slice_ids(project)
+    for number, where in shared.items():
+        used.setdefault(number, where)
     highest = max([0, *used, *reserved])
     result = {
         "next": [f"SLICE-{highest + offset:03d}" for offset in range(1, args.count + 1)],
@@ -512,6 +578,8 @@ def cmd_next_id(project: Path, args: argparse.Namespace) -> int:
         ],
         "existing": [{"id": f"SLICE-{number:03d}", "file": used[number]} for number in sorted(used)],
     }
+    if notes:
+        result["not_counted"] = notes
     print(json.dumps(result, indent=2))
     return 0
 
@@ -569,8 +637,23 @@ FOLDER_PRINCIPLES = "product/ready/PRINCIPLES/principles.json"
 NO_PRINCIPLES = "so this slice's spec has no Principles section."
 
 
+def several_projects(numbers: Sequence[int]) -> str:
+    """M20: the one sentence when a repository has more than one open project issue (as Product Studio refuses to publish then)."""
+    named = (", ".join(f"#{number}" for number in numbers[:-1]) + f" and #{numbers[-1]}") if len(numbers) > 1 else f"#{numbers[0]}"
+    return (f"This repository has more than one open project issue ({named}), so MACH cannot tell which one holds the product principles, "
+            "and grooming stops here rather than go on without them: a person closes the one that should not be there, then grooming carries on.")
+
+
 def cell_principles(cell_root: Path) -> Optional[List[Dict[str, Any]]]:
-    """The principles this cell's spec answers, as `cell.py principles` recorded them; None when none were read."""
+    """The principles this cell's spec answers, as `cell.py principles` recorded them; None when none were read. Refuses while
+    `cell.py principles` last found several project issues, so a spec is never checked as if there were no principles."""
+    try:
+        recorded = json.loads((cell_root / "cell.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        recorded = None
+    principles = recorded.get("principles") if isinstance(recorded, dict) else None
+    if isinstance(principles, dict) and principles.get("several"):
+        raise CellError(several_projects(principles["several"]) + f" Then run 'cell.py principles {cell_root.name}' again.")
     path = cell_root / PRINCIPLES_FILE
     if not path.is_file() or path.is_symlink():
         return None
@@ -617,6 +700,9 @@ def published_principles(project: Path) -> Dict[str, Any]:
         if isinstance(decision, dict) and decision.get("state") == "accepted":
             return {"source": "github", "issue": found.get("number"), "repository": found.get("repository"), "revision": decision.get("revision"),
                     "sha256": decision.get("sha256"), "approved_by": decision.get("approved_by"), "principles": decision.get("principles"), "tried": tried}
+        several = decision.get("project_issues") if isinstance(decision, dict) else None
+        if isinstance(several, list) and len(several) > 1:  # M20: never read as "no principles"; grooming stops
+            return {"source": None, "principles": None, "several": [n for n in several if isinstance(n, int)], "tried": tried}
         if isinstance(decision, dict) and decision.get("reason"):
             tried.append(f"GitHub: {decision['reason']}")
         elif isinstance(found, dict) and isinstance(found.get("failure"), dict):
@@ -653,6 +739,12 @@ def cmd_principles(project: Path, args: argparse.Namespace) -> int:
         raise CellError(f"{args.ticket_id} is past grooming or came from Product Studio, so its principles are not read again here.")
     found = published_principles(project)
     path = root / PRINCIPLES_FILE
+    if found.get("several"):
+        if path.exists():
+            path.unlink()
+        cell["principles"] = {"source": None, "several": found["several"], "read_at": now()}
+        write_cell(project, cell)
+        raise CellError(several_projects(found["several"]))
     if found["source"] is None:
         if path.exists():
             path.unlink()
@@ -1225,6 +1317,7 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
     elif not re.search(r"\[test\]", task_lines[0]):
         problems.append("the first task must be a [test] task: tests are written before implementation")
     problems.extend(unreachable_green(task_lines))
+    problems.extend(claude_config_problems(plan_files(text) + contracts))
     decisions = plan_adrs(project, root, cell, header, text, app_type, problems)
 
     if problems:
@@ -1260,6 +1353,18 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
                       **({"waits_for_acceptance": waiting, "next": "This High-risk ticket proposes a new ADR: the build waits until an engineer accepts it "
                                                                   "(cell.py adr-accept, on their word)."} if waiting else {})}, indent=2))
     return 0
+
+
+CLAUDE_CONFIG_REFUSAL = ("the plan changes {files}, which is Claude Code configuration that a ticket's workspace never holds, "
+                         "so a person makes that change outside the factory")
+
+
+def claude_config_problems(files: Sequence[str]) -> List[str]:
+    """A plan that changes a file under a .claude folder or a .mcp.json cannot be built in a cell (workspace.py leaves them
+    out, and Claude Code's sandbox protects them). Only the files the plan's tasks, touch map and contracts name count:
+    the plan's or spec's prose may mention such a path freely."""
+    named = sorted({name for name in files if isinstance(name, str) and workspace.protected(name)})
+    return [CLAUDE_CONFIG_REFUSAL.format(files=", ".join(named[:5]) + (f" and {len(named) - 5} more" if len(named) > 5 else ""))] if named else []
 
 
 def ticket_labels(project: Path, ticket_id: str) -> List[str]:

@@ -1,0 +1,9 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "EPIC-001 was saved at the same moment by someone else, for a different epic: their issue #2 was made first and keeps the number. Your issue #4 was closed. Give your epic a new number, then mark the slice ready again.",
+  "hint": {
+    "kind": "renumber_epic",
+    "target": "EPIC-001"
+  }
+}

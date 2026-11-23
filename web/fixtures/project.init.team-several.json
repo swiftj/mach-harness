@@ -1,0 +1,19 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so nothing was defined. Ask someone who looks after the repository to close the one that should not be there, then try again.",
+  "hint": {
+    "kind": "several_projects",
+    "target": null,
+    "issues": [
+      {
+        "issue": 1,
+        "url": "https://github.com/acme/team-space/issues/1"
+      },
+      {
+        "issue": 4,
+        "url": "https://github.com/acme/team-space/issues/4"
+      }
+    ]
+  }
+}

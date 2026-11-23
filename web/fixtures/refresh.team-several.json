@@ -1,0 +1,146 @@
+{
+  "exit_code": 0,
+  "data": {
+    "refreshed": true,
+    "problem": null,
+    "requests": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "refreshed_at": "2026-11-23T22:38:53Z",
+      "problem": null,
+      "truncated": false,
+      "truncated_note": null,
+      "items": [],
+      "updates_waiting": 0,
+      "updates_waiting_note": null,
+      "could_not_update": [],
+      "could_not_update_note": null
+    },
+    "github": {
+      "repository": "acme/team-space",
+      "refreshed": true,
+      "problem": null,
+      "refreshed_at": "2026-11-23T22:38:53Z",
+      "form": "sub_issues",
+      "project_issue": 1,
+      "project_url": "https://github.com/acme/team-space/issues/1",
+      "epics": {
+        "EPIC-001": 2
+      },
+      "epic_urls": {
+        "EPIC-001": "https://github.com/acme/team-space/issues/2"
+      },
+      "slices": [
+        {
+          "slice_id": "SLICE-001",
+          "in_workspace": true,
+          "saved": "github",
+          "unfinished": false,
+          "issue": 3,
+          "url": "https://github.com/acme/team-space/issues/3",
+          "state_label": "mach:ready",
+          "revision": 1,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "same_moment": null,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": "2026-11-17T10:00:07Z",
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "ready_to_build",
+          "on_github": [
+            {
+              "issue": 3,
+              "state": "open",
+              "state_label": "mach:ready",
+              "revision": 1,
+              "title": "Invite a teammate",
+              "matches_approval": true,
+              "approved_by": "ada-pm",
+              "question": null
+            }
+          ],
+          "title": "Invite a teammate"
+        }
+      ],
+      "order": [
+        {
+          "epic_id": "EPIC-001",
+          "issue": 2,
+          "slices": [
+            {
+              "slice_id": "SLICE-001",
+              "title": "Invite a teammate",
+              "in_workspace": true,
+              "issue": 3,
+              "state_label": "mach:ready"
+            },
+            {
+              "slice_id": "SLICE-002",
+              "title": "Remove a teammate",
+              "in_workspace": true,
+              "issue": null,
+              "state_label": null
+            }
+          ],
+          "on_github": true,
+          "github_order": [
+            "SLICE-001"
+          ],
+          "github_read_at": "2026-11-23T22:38:53Z",
+          "matches_github": true,
+          "unfinished": false,
+          "taken_from_github": false,
+          "could_not_read": false,
+          "note": null
+        }
+      ],
+      "principles": {
+        "saved": null,
+        "unfinished": false,
+        "revision": null,
+        "sha256": null,
+        "approved_by": null,
+        "published_at": null,
+        "issue": 1,
+        "url": "https://github.com/acme/team-space/issues/1",
+        "github": {
+          "revision": null,
+          "approved": null,
+          "approved_by": null,
+          "read_at": "2026-11-23T22:38:53Z"
+        },
+        "newer_elsewhere": false,
+        "changed_on_github": false
+      },
+      "same_id_twice": [
+        {
+          "id": null,
+          "kept": null,
+          "kind": "project",
+          "note": "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project. Ask someone who looks after the repository to close the one that should not be there, then try again.",
+          "others": [
+            1,
+            4
+          ],
+          "urls": {
+            "1": "https://github.com/acme/team-space/issues/1",
+            "4": "https://github.com/acme/team-space/issues/4"
+          },
+          "yours": null
+        }
+      ],
+      "changed_elsewhere": [],
+      "text_taken": []
+    },
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

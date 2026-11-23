@@ -1,4 +1,6 @@
 import { useMemo, useState } from "react";
+import { splitNumbersNote } from "../../../shared/team";
+import { NumbersNotChecked } from "../../../shared/NumbersNotChecked";
 import { Link } from "react-router";
 import { FileText, Layers, Map as MapIcon } from "lucide-react";
 import { ArtifactId, Banner, Button, ConfirmDialog, EmptyState, Field, Heading, Select, SliceStatusPill, Text, plural, toast } from "@mach/ui";
@@ -447,13 +449,16 @@ const isEpic = (id: string) => id.startsWith("EPIC-");
 
 /** What the last apply made, what already existed, and what was removed since and not made again. */
 function ApplyResult({ result }: { result: ShapeApplied }) {
+  // M20: the sentence that GitHub's numbers were not read is shown on its own, not inside the success message.
+  const note = splitNumbersNote(result.note, result.numbers_from_github);
   const outcome = applyOutcome(result);
   const linked = [...result.made.epics, ...result.made.slices, ...result.kept.epics, ...result.kept.slices];
   return (
     <div role="status" className="flex flex-col gap-3 border-t border-line pt-4">
       <Banner tone={outcome.nothingNew ? "info" : "success"} title={outcome.nothingNew ? "Nothing new was made" : `Made ${outcome.made.join(", ")}`}>
-        {result.note}
+        {note.made}
       </Banner>
+      <NumbersNotChecked text={note.numbers} />
       {outcome.kept.length ? (
         <p className="text-body-sm text-ink">
           Already there, so not made again: <span className="font-semibold">{outcome.kept.join(", ")}</span>.

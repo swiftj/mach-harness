@@ -16,6 +16,7 @@ Standard library only. Imported by studio.py; not a command of its own.
 """
 
 import contextlib
+import hashlib
 import json
 import os
 import shutil
@@ -30,7 +31,7 @@ import one_writer
 
 SCHEMA_VERSION = 1
 WAIT_SECONDS = 5.0
-STEPS = ("labels", "project", "epic", "slice", "approval", "link", "ready")
+STEPS = ("labels", "project", "epic", "slice", "unique", "approval", "link", "ready")
 STUDIO_LABELS = ("mach:project", "mach:epic", "mach:slice", "mach:ready")
 BUSY = "Another Product Studio command is saving to GitHub; try again."
 
@@ -75,6 +76,11 @@ class Channel:
 class Handoff:
     def __init__(self, project: Path, home: Path, draft: Path, rules: Any, write: Callable[[Path, str], None]):
         self.project, self.home, self.draft, self.rules, self._write = project, home, draft, rules, write
+        # M20: called to take the project's or an epic's text from GitHub into the workspace: adopt("project", None, fields)
+        # or adopt("epic", epic_id, fields). Without it, MACH never takes text in, and so never writes over GitHub's either.
+        self.adopt: Optional[Callable[[str, Optional[str], Dict[str, Any]], None]] = None
+        self.text_notes: List[Dict[str, Any]] = []  # M20: what happened to the project's and epics' text in this command
+        self.chosen: Dict[str, Dict[str, Any]] = {}  # M20: each epic as decided in this command, by epic ID
         self.path = home / "issues.json"
         self.outgoing = home / "outgoing"
         for item in (self.path, self.outgoing, draft / "product" / "ready"):
@@ -293,6 +299,9 @@ class Handoff:
         return listed[-1]["number"] if listed else None
 
     def find_project(self, data: Dict[str, Any], snapshot: Dict[str, Any], project: Dict[str, Any]) -> Optional[int]:
+        several = sorted(item["number"] for item in snapshot["projects"] if item["state"] == "open")
+        if len(several) > 1:
+            raise HandoffError(several_projects(several), several_hint(self.rules, data.get("repository"), several))
         linked = data.get("project") or {}
         if linked.get("number") in [item["number"] for item in snapshot["projects"]]:
             return linked["number"]
@@ -360,7 +369,10 @@ class Handoff:
 
         if step("project"):
             number = targets["project"] or (data.get("project") or {}).get("number")
-            failure = self.write_project(data, repository, number, project, self.kept(data, project_body(snapshot, number)))
+            if number is None:
+                failure = self.write_project(data, repository, None, project, self.kept(data, None))
+            else:
+                failure = self.sync_project(data, repository, number, project, snapshot)
             if failure:
                 stop(failure)
             finished("project")
@@ -368,12 +380,42 @@ class Handoff:
         epic_number = targets["epic"] or (data["epics"].get(epic["epic_id"]) or {}).get("number")
         title = self.rules.issue_title(epic.get("title"))
         if step("epic"):
-            body = (self.epic_body(epic, epic_number, snapshot, entry, slice_id, entry.get("number")) if epic_number and data.get("form") == "task_list"
-                    else self.rules.epic_issue_body(epic["epic_id"], epic.get("acceptance_criteria") or []))
-            epic_number, failure = self.ensure(repository, epic_number, title, body, ["mach:epic"], "mach:epic", f"epic-{epic['epic_id']}")
-            if failure:
-                stop(failure)
-            data["epics"][epic["epic_id"]] = {"number": epic_number}
+            item = next((found for found in snapshot["epics"] if found["number"] == epic_number), None) if epic_number else None
+            if epic_number is None:
+                epic_number, failure = self.ensure(repository, None, title, self.rules.epic_issue_body(epic["epic_id"], epic.get("acceptance_criteria") or []),
+                                                   ["mach:epic"], "mach:epic", f"epic-{epic['epic_id']}")
+                if failure:
+                    stop(failure)
+                data["epics"][epic["epic_id"]] = {"number": epic_number, "text_sha256": epic_sha(title, epic.get("acceptance_criteria"))}
+                self.save(data)
+                # M20: look again. Another product manager may have made this epic's issue at the same moment.
+                earlier, failure = self.earlier_open(repository, "mach:epic", lambda found: found["kind"] == "epic" and found["id"] == epic["epic_id"], epic_number)
+                if failure:
+                    stop(failure)
+                if earlier:
+                    failure = self.stand_down(repository, epic_number, "epic", epic["epic_id"], earlier["number"])
+                    if failure:
+                        stop(failure)
+                    if earlier.get("title") != title:
+                        data["epics"].pop(epic["epic_id"], None)
+                        entry["run"] = None
+                        # Kept so status can offer the renumber until it is done or the clash is gone at a refresh.
+                        data.setdefault("seen", {}).setdefault("epic_lost", {})[epic["epic_id"]] = {
+                            "issue": epic_number, "holder": earlier["number"], "by": None, "at": utc_now()}
+                        self.save(data)
+                        raise lost_error(epic_lost_words(epic["epic_id"], epic_number, earlier["number"]), {"kind": "renumber_epic", "target": epic["epic_id"]})
+                    epic_number, item = earlier["number"], earlier  # the same epic, made twice at once: the issue GitHub made first is kept
+                    data["epics"][epic["epic_id"]] = {"number": epic_number}
+                    self.save(data)
+            # An epic not read with MACH's label is written as before, which leaves an issue no longer MACH's alone.
+            chosen, write = self.sync_epic(data, epic, epic_number, item) if item is not None else (epic, True)
+            if write:
+                _, failure = self.ensure(repository, epic_number, title, self.rules.epic_issue_body(epic["epic_id"], chosen.get("acceptance_criteria") or []),
+                                         ["mach:epic"], "mach:epic", f"epic-{epic['epic_id']}")
+                if failure:
+                    stop(failure)
+                data["epics"][epic["epic_id"]]["text_sha256"] = epic_sha(title, chosen.get("acceptance_criteria"))
+                data.setdefault("seen", {}).setdefault("text_changed", {}).pop(epic["epic_id"], None)
             if data.get("form") is None:
                 _, failure = issues.sub_issues(self.project, repository, epic_number)
                 if failure and not issues.unavailable(failure):
@@ -381,12 +423,13 @@ class Handoff:
                 data["form"] = "task_list" if failure else "sub_issues"
                 data["form_decided_at"] = utc_now()
             if data["form"] == "task_list":
-                _, failure = self.ensure(repository, epic_number, title, self.epic_body(epic, epic_number, snapshot, entry, slice_id, entry.get("number")),
+                _, failure = self.ensure(repository, epic_number, title, self.epic_body(chosen, epic_number, snapshot, entry, slice_id, entry.get("number")),
                                          ["mach:epic"], "mach:epic", f"epic-{epic['epic_id']}")
                 if failure:
                     stop(failure)
             finished("epic")
         epic_number = data["epics"][epic["epic_id"]]["number"]
+        epic = self.epic_to_write(data, epic)  # the criteria the epic's task list is written with: GitHub's unless this workspace's may replace them
 
         if step("slice"):
             body = self.rules.slice_issue_body(slice_id, run["revision"], epic_number, run["depends"], why, spec, run.get("follows"), run.get("jira"), run.get("mocks"),
@@ -398,6 +441,18 @@ class Handoff:
                 stop(failure)
             entry["number"] = number
             finished("slice")
+
+        if step("unique"):
+            # M20: look again, before the approval and mach:ready. Another product manager may have made an issue holding this
+            # slice ID at the same moment; the one GitHub made first keeps the number, and this one is closed, never ready.
+            shipped = set(entry["shipped"])
+            earlier, failure = self.earlier_open(repository, "mach:slice", lambda found: found["marker"]["slice_id"] == slice_id
+                                                 and found["number"] not in shipped and "mach:shipped" not in found["labels"], entry["number"])
+            if failure:
+                stop(failure)
+            if earlier:
+                self.lose_slice(data, repository, slice_id, earlier["number"])
+            finished("unique")
         number = entry["number"]
 
         if step("approval"):
@@ -452,16 +507,37 @@ class Handoff:
                 "follows": run.get("follows"), "epic_issue": epic_number, "project_issue": data["project"]["number"]}
 
     def write_project(self, data: Dict[str, Any], repository: str, number: Optional[int], project: Dict[str, Any],
-                      sections: Dict[str, Optional[Dict[str, Any]]]) -> Optional[Dict[str, str]]:
+                      sections: Dict[str, Optional[Dict[str, Any]]], keep_seen: bool = False) -> Optional[Dict[str, str]]:
         """Create the project's issue, or bring its title and body up to date, with the published sections given (the principles
-        and the technical needs, from kept()). Pinned once."""
+        and the technical needs, from kept()). Pinned once. `project` carries the text to write; what this workspace last saw of
+        it becomes that text, unless `keep_seen` (GitHub's text was written back while someone else's change waits for a choice)."""
         body = self.rules.project_issue_body(project["project_id"], project.get("vision") or "", project.get("outcomes") or [],
                                              sections.get("principles"), sections.get("needs"))
         title = self.rules.issue_title(project.get("name"))
+        made = number is None
         number, failure = self.ensure(repository, number, title, body, ["mach:project"], "mach:project", f"project-{project['project_id']}")
         if failure:
             return failure
         data["project"] = {**(data.get("project") or {}), "number": number}
+        if not keep_seen:
+            data["project"]["text_sha256"] = project_sha(title, project.get("vision"), project.get("outcomes"))
+            data.setdefault("seen", {}).setdefault("text_changed", {}).pop("project", None)
+        if made:
+            self.save(data)
+            # M20: look again. Someone else may have made the project's issue at the same moment; the one GitHub made first is kept.
+            earlier, failure = self.earlier_open(repository, "mach:project", lambda found: found["kind"] == "project", number)
+            if failure:
+                return failure
+            if earlier:
+                failure = self.stand_down(repository, number, "project", project["project_id"], earlier["number"])
+                if failure:
+                    return failure
+                data["project"] = {"number": earlier["number"], "pin_tried": True, "pinned": None}
+                self.save(data)
+                if earlier["id"] != project["project_id"]:
+                    raise HandoffError(f"This repository's project on GitHub is a different one ({earlier['id']}, #{earlier['number']}). "
+                                       "An engineer needs to look at this before anything is saved.")
+                return self.sync_project(data, repository, earlier["number"], project, {"projects": [earlier]})
         if not data["project"].get("pin_tried"):
             # Pinned once. A repository holds only a few pinned issues, so not pinning stops nothing.
             data["project"].update(pin_tried=True, pinned=issues.pin(self.project, repository, number) is None)
@@ -479,6 +555,199 @@ class Handoff:
             if theirs and theirs["intact"] and (mine is None or theirs["revision"] >= mine["revision"]):
                 mine = kind.section_of(theirs["revision"], theirs["items"], theirs["extra"])
             found[kind.name] = mine
+        return found
+
+    # ---- M20: shared text, and an ID made twice at the same moment ----
+
+    def project_choice(self, data: Dict[str, Any], item: Optional[Dict[str, Any]], project: Dict[str, Any]) -> Tuple[str, Optional[Dict[str, Any]]]:
+        """What to do with the project's text on its issue: ("same"|"take"|"write"|"changed", GitHub's text or None when it is
+        not in MACH's form). It is written over only when GitHub still holds what this workspace last saw there."""
+        title = self.rules.issue_title(project.get("name"))
+        mine = project_sha(title, project.get("vision"), project.get("outcomes"))
+        theirs = parse_project_text(item) if item else None
+        seen = (data.get("project") or {}).get("text_sha256")
+        return text_plan(seen, mine, project_sha(theirs["name"], theirs["vision"], theirs["outcomes"]) if theirs else None,
+                         raw_sha(item)), theirs
+
+    def sync_project(self, data: Dict[str, Any], repository: str, number: int, project: Dict[str, Any], snapshot: Dict[str, Any]) -> Optional[Dict[str, str]]:
+        """Slice ready (and the look-again): bring the project's issue and this workspace into step without writing over anyone."""
+        item = next((found for found in snapshot.get("projects") or [] if found["number"] == number), None)
+        if item is None:  # not read with MACH's label: written as before, which leaves an issue no longer MACH's alone
+            return self.write_project(data, repository, number, project, self.kept(data, None))
+        data["project"] = {**(data.get("project") or {}), "number": number}
+        plan, theirs = self.project_choice(data, item, project)
+        if plan == "write":
+            return self.write_project(data, repository, number, project, self.kept(data, item.get("body")))
+        self.settle_text(data, "project", None, number, plan, theirs, raw_sha(item))
+        if not data["project"].get("pin_tried"):  # made by a run whose answer was lost: pinned once, as when it is made
+            data["project"].update(pin_tried=True, pinned=issues.pin(self.project, repository, number) is None)
+        return None
+
+    def epic_choice(self, data: Dict[str, Any], epic: Dict[str, Any], item: Dict[str, Any]) -> Tuple[str, Optional[Dict[str, Any]]]:
+        title = self.rules.issue_title(epic.get("title"))
+        theirs = parse_epic_text(item)
+        seen = (data["epics"].get(epic["epic_id"]) or {}).get("text_sha256")
+        return text_plan(seen, epic_sha(title, epic.get("acceptance_criteria")), epic_sha(theirs["title"], theirs["acceptance_criteria"]) if theirs else None,
+                         raw_sha(item)), theirs
+
+    def sync_epic(self, data: Dict[str, Any], epic: Dict[str, Any], number: int, item: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
+        """The epic as it is to be written, and whether this workspace's criteria may replace GitHub's."""
+        plan, theirs = self.epic_choice(data, epic, item)
+        if plan == "write":
+            self.chosen[epic["epic_id"]] = epic
+            return epic, True
+        self.settle_text(data, "epic", epic["epic_id"], number, plan, theirs, raw_sha(item))
+        chosen = {**epic, "acceptance_criteria": list(theirs["acceptance_criteria"])} if theirs else epic
+        self.chosen[epic["epic_id"]] = chosen
+        return chosen, False
+
+    def epic_to_write(self, data: Dict[str, Any], epic: Dict[str, Any]) -> Dict[str, Any]:
+        """The epic's criteria as the task list rewrites them: as decided in this command, else GitHub's while someone else's change
+        waits for a choice, else this workspace's."""
+        if epic["epic_id"] in self.chosen:
+            return self.chosen[epic["epic_id"]]
+        waiting = ((data.get("seen") or {}).get("text_changed") or {}).get(epic["epic_id"]) or {}
+        return {**epic, "acceptance_criteria": list(waiting["acceptance_criteria"])} if waiting.get("acceptance_criteria") is not None else epic
+
+    def settle_text(self, data: Dict[str, Any], kind: str, epic_id: Optional[str], number: int, plan: str, theirs: Optional[Dict[str, Any]],
+                    raw: Optional[str]) -> None:
+        """Record what was decided for text this workspace does not write: the same as GitHub's, taken from GitHub, or changed by someone
+        else and waiting for the product manager's choice (reconcile)."""
+        key = epic_id or "project"
+        record = data["project"] if kind == "project" else data["epics"].setdefault(str(epic_id), {"number": number})
+        waiting = data.setdefault("seen", {}).setdefault("text_changed", {})
+        if plan == "take" and theirs and self.adopt is None:
+            plan = "changed"  # nothing here can take it in, so nothing is written over either
+        if plan in ("same", "take") and theirs:
+            if plan == "take":
+                self.adopt(kind, epic_id, theirs)  # type: ignore[misc]
+                self.text_notes.append({"kind": kind, "target": key, "issue": number, "taken": True})
+            record["text_sha256"] = (project_sha(theirs["name"], theirs["vision"], theirs["outcomes"]) if kind == "project"
+                                     else epic_sha(theirs["title"], theirs["acceptance_criteria"]))
+            waiting.pop(key, None)
+        else:
+            waiting[key] = {"issue": number, "readable": theirs is not None, "raw_sha256": raw, "read_at": utc_now(), **(theirs or {})}
+            self.text_notes.append({"kind": kind, "target": key, "issue": number, "changed": True})
+
+    def listed_now(self, repository: str, label: str) -> Tuple[Optional[List[Dict[str, Any]]], Optional[Dict[str, str]]]:
+        """One label's issues read again, in the shape read() gives them."""
+        listed, failure = issues.list_issues(self.project, repository, label)
+        if failure:
+            return None, failure
+        found = []
+        for item in listed or []:
+            state = str(item.get("state") or "").lower()
+            if label == "mach:slice":
+                marker = self.rules.parse_slice_body(item.get("body"))
+                if marker:
+                    found.append({"number": item["number"], "state": state, "labels": issues.label_names(item), "title": item.get("title"), "marker": marker})
+            else:
+                kind, ident = self.rules.product_marker(item.get("body")) or (None, None)
+                found.append({"number": item["number"], "id": ident, "kind": kind, "title": item.get("title"), "body": item.get("body"), "state": state,
+                              "labels": issues.label_names(item)})
+        return found, None
+
+    def earlier_open(self, repository: str, label: str, same: Callable[[Dict[str, Any]], bool], number: int) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, str]]]:
+        """The first open issue GitHub made before `number` that holds the same ID, read again now; None when there is none."""
+        found, failure = self.listed_now(repository, label)
+        if failure:
+            return None, failure
+        earlier = sorted((item for item in found or [] if item["state"] == "open" and item["number"] < number and same(item)), key=lambda item: item["number"])
+        return (earlier[0] if earlier else None), None
+
+    def stand_down(self, repository: str, number: int, kind: str, ident: str, holder: int) -> Optional[Dict[str, str]]:
+        """Close an issue this workspace made at the same moment as `holder`, with a comment from a fixed template, and take MACH's
+        labels off it, so neither Product Studio nor the Factory reads it again. Looks before each write."""
+        marker = f"<!-- mach:closed {kind}={ident} kept=#{int(holder)} -->"
+        found, failure = issues.comments(self.project, repository, number)
+        if failure:
+            return failure
+        if not any(marker in (c.get("body") or "") for c in found or []):
+            what = "this repository's project" if kind == "project" else ident
+            text = (f"{marker}\nMACH Product Studio closed this issue. It was made at the same moment as #{int(holder)}, which already holds {what}. "
+                    f"#{int(holder)} is kept; MACH does not read this issue again.\n")
+            failure = issues.comment(self.project, repository, number, self.outgoing_file(f"closed-{kind}-{ident}", text))
+            if failure:
+                return failure
+        current, failure = issues.view(self.project, repository, number)
+        if failure:
+            return failure
+        names = [name for name in (f"mach:{kind}", issues.READY) if name in issues.label_names(current or {})]
+        if names or str((current or {}).get("state") or "").lower() != "closed":
+            return issues.stand_down(self.project, repository, number, names)
+        return None
+
+    def lose_slice(self, data: Dict[str, Any], repository: str, slice_id: str, holder: int) -> None:
+        """This workspace's issue for `slice_id` was made after another open one holding the same ID: close it (it never became
+        ready), forget it, and refuse in plain words with the renumber that already exists."""
+        entry = self.entry(data, slice_id)
+        number = entry["number"]
+        found, failure = issues.comments(self.project, repository, holder)
+        approvals = [a for a in self.rules.approvals([c["body"] for c in found or []]) if a["slice_id"] == slice_id] if not failure else []
+        by = approvals[-1]["by"] if approvals else None
+        entry["lost"] = {"issue": number, "holder": holder, "by": by, "at": utc_now(), "closed": False}
+        self.save(data)
+        failure = self.stand_down(repository, number, "slice", slice_id, holder)
+        if failure:
+            raise HandoffError(f"{slice_id} is already held on GitHub by #{holder}, made at the same moment as yours (#{number}). Yours was not marked ready, "
+                               f"but closing it stopped part way. {explain(failure)} Mark it ready again to finish closing it.", {"kind": "finish_ready", "target": slice_id})
+        entry.update(number=None, id=None, run=None, saved=None)
+        entry["lost"]["closed"] = True
+        self.save(data)
+        raise lost_error(slice_lost_words(slice_id, number, holder, by, app=False), {"kind": "renumber_slice", "target": slice_id},
+                         slice_lost_words(slice_id, number, holder, by, app=True))
+
+    def clashes(self, data: Dict[str, Any], repository: str, snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """For refresh: IDs held by more than one open issue (made at the same moment and missed then). This workspace's own later
+        slice issue is closed here unless the builders already took it; everything else is only reported."""
+        found: List[Dict[str, Any]] = []
+        by_slice: Dict[str, List[Dict[str, Any]]] = {}
+        for item in snapshot["slices"]:
+            if item["state"] == "open" and "mach:shipped" not in item["labels"]:
+                by_slice.setdefault(item["marker"]["slice_id"], []).append(item)
+        closed: List[int] = []
+        for slice_id, items in sorted(by_slice.items()):
+            if len(items) < 2:
+                continue
+            items.sort(key=lambda item: item["number"])
+            holder, later = items[0], items[1:]
+            entry = data["slices"].get(slice_id) or {}
+            yours = "kept" if entry.get("number") == holder["number"] else None
+            for item in later:
+                if entry.get("number") != item["number"] or entry.get("taken_at"):
+                    continue  # only an issue this workspace made itself is closed here; one opened from GitHub is someone else's
+                taken = [name for name in ("mach:building", "mach:question") if name in item["labels"]]
+                if taken:
+                    yours = "taken_by_builders"
+                    continue
+                failure = self.stand_down(repository, item["number"], "slice", slice_id, holder["number"])
+                if failure:
+                    yours = "not_closed"
+                    continue
+                entry.update(number=None, id=None, run=None, saved=None,
+                             lost={"issue": item["number"], "holder": holder["number"], "by": None, "at": utc_now(), "closed": True})
+                closed.append(item["number"])
+                yours = "closed"
+            found.append({"kind": "slice", "id": slice_id, "kept": holder["number"], "others": [item["number"] for item in later], "yours": yours,
+                          "urls": issue_urls(self.rules, repository, [holder["number"], *(item["number"] for item in later)])})
+        snapshot["slices"] = [item for item in snapshot["slices"] if item["number"] not in closed]
+        by_epic: Dict[str, List[int]] = {}
+        for item in snapshot["epics"]:
+            if item["state"] == "open" and self.rules.EPIC_ID_RE.fullmatch(str(item["id"])):
+                by_epic.setdefault(item["id"], []).append(item["number"])
+        for epic_id, numbers in sorted(by_epic.items()):
+            if len(numbers) > 1:
+                numbers.sort()
+                linked = (data["epics"].get(epic_id) or {}).get("number")
+                found.append({"kind": "epic", "id": epic_id, "kept": numbers[0], "others": numbers[1:],
+                              "yours": "kept" if linked == numbers[0] else "other" if linked in numbers[1:] else None,
+                              "urls": issue_urls(self.rules, repository, numbers)})
+        projects = sorted(item["number"] for item in snapshot["projects"] if item["state"] == "open")
+        if len(projects) > 1:
+            found.append({"kind": "project", "id": None, "kept": None, "others": projects, "yours": None,
+                          "urls": issue_urls(self.rules, repository, projects)})
+        for clash in found:
+            clash["note"] = clash_note(clash)
         return found
 
     # ---- published sets: the product principles (M13) and the technical needs (M17) ----
@@ -533,6 +802,19 @@ class Handoff:
             else:
                 revision = max(base, theirs["revision"] if theirs else 0) + 1
             sections = {**self.kept(data, body_now), kind.name: kind.section_of(revision, items, extra)}
+            item = next((found for found in snapshot["projects"] if found["number"] == number), None) if number else None
+            keep_seen = False
+            if item is not None:
+                # M20: the project's own text is written as GitHub holds it unless this workspace's may replace it.
+                plan, theirs_text = self.project_choice(data, item, project)
+                if plan != "write":
+                    if plan == "changed" and theirs_text is None:
+                        raise HandoffError("Someone else changed the project on GitHub, and its text is not in the form MACH writes. Choose yours or theirs "
+                                           "(reconcile project --take mine|theirs) before publishing. Nothing was saved.", {"kind": "reconcile", "target": "project"},
+                                           app="Someone else changed the project on GitHub. Choose yours or theirs before publishing. Nothing was saved.")
+                    self.settle_text(data, "project", None, number, plan, theirs_text, raw_sha(item))
+                    project = {**project, **({key: theirs_text[key] for key in ("name", "vision", "outcomes")} if theirs_text else {})}
+                    keep_seen = plan == "changed"
             body = self.rules.project_issue_body(project["project_id"], project.get("vision") or "", project.get("outcomes") or [],
                                                  sections.get("principles"), sections.get("needs"))
             if len(body) > self.rules.ISSUE_BODY_LIMIT:
@@ -567,7 +849,7 @@ class Handoff:
                         stop(failure)
                 steps["labels"] = "done"
             if step("project"):
-                failure = self.write_project(data, repository, number or (data.get("project") or {}).get("number"), project, sections)
+                failure = self.write_project(data, repository, number or (data.get("project") or {}).get("number"), project, sections, keep_seen)
                 if failure:
                     stop(failure)
                 steps["project"] = "done"
@@ -839,10 +1121,13 @@ class Handoff:
 
     # ---- refresh: what is on GitHub now ----
 
-    def refresh(self, local: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    def refresh(self, local: Dict[str, Dict[str, Any]], project: Optional[Dict[str, Any]] = None,
+                epics: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
         """Read the project, epics and slices from their issues, and say for each slice whether it
         still matches its approval and whether someone else saved a newer version. Never raises
-        for GitHub: a problem is reported in the block."""
+        for GitHub: a problem is reported in the block. M20: also says whether someone else changed the
+        project's or an epic's text (taking it when nothing here waits to be written), and which IDs more
+        than one open issue holds; this workspace's own later slice issue among them is closed."""
         if shutil.which("gh") is None:
             return self.block(None, "The GitHub tool (gh) is not installed on this computer.", local)
         repository, failure = collab.request_repository(self.project)
@@ -855,12 +1140,17 @@ class Handoff:
             with self.exclusive():
                 data = self.for_repository(self.load(), repository)
                 self.remember(data, snapshot)
+                data["seen"]["clashes"] = self.clashes(data, repository, snapshot)
+                self.settle_epic_lost(data, snapshot)
+                self.save(data)
+                self.read_text(data, snapshot, project, epics or {})
                 rows = {}
                 for item in snapshot["slices"]:
                     found, failure = issues.comments(self.project, repository, item["number"])
                     rows.setdefault(item["marker"]["slice_id"], []).append(self.describe(data, item, found, failure))
                 data["seen"].update(refreshed_at=utc_now(), problem=None, problem_at=None, slices=rows,
-                                    project=[{"number": p["number"], "project_id": p["id"]} for p in snapshot["projects"]],
+                                    project=[{"number": p["number"], "project_id": p["id"], "state": p["state"],
+                                              "name": (parse_project_text(p) or {}).get("name")} for p in snapshot["projects"]],
                                     epics=[{"number": e["number"], "epic_id": e["id"], "title": self.rules.list_title(e.get("title"))} for e in snapshot["epics"]])
                 self.read_order(data, repository, snapshot, local)
                 for kind in SETS:
@@ -869,6 +1159,80 @@ class Handoff:
         except HandoffError as exc:
             return self.failed(repository, str(exc), local)
         return self.block(repository, None, local, refreshed=True)
+
+    def settle_epic_lost(self, data: Dict[str, Any], snapshot: Dict[str, Any]) -> None:
+        """For refresh: an epic refused because another epic's issue took its number at the same moment is forgotten once its
+        number is free again on GitHub (no open epic issue holds it), or once this workspace's epic is linked to an issue."""
+        lost = data["seen"].get("epic_lost") or {}
+        held = {item["id"] for item in snapshot["epics"] if item["state"] == "open"}
+        for epic_id in list(lost):
+            if epic_id not in held or (data["epics"].get(epic_id) or {}).get("number"):
+                del lost[epic_id]
+
+    def forget_epic_lost(self, epic_id: str) -> None:
+        """epic renumber: the draft no longer uses the number another epic's issue took."""
+        with self.exclusive():
+            data = self.load()
+            if ((data.get("seen") or {}).get("epic_lost") or {}).pop(epic_id, None) is not None:
+                self.save(data)
+
+    def read_text(self, data: Dict[str, Any], snapshot: Dict[str, Any], project: Optional[Dict[str, Any]], epics: Dict[str, Dict[str, Any]]) -> None:
+        """For refresh: the project's and each epic's text on GitHub against what this workspace last saw. GitHub's is taken when
+        nothing here waits to be written (or this workspace never saw it); when both changed, it waits for the product manager's choice."""
+        waiting = data["seen"].setdefault("text_changed", {})
+        if project:
+            open_projects = [item for item in snapshot["projects"] if item["state"] == "open"]
+            linked = (data.get("project") or {}).get("number")
+            item = next((found for found in snapshot["projects"] if found["number"] == linked), None)
+            if item is None and len(open_projects) == 1 and open_projects[0]["id"] == project.get("project_id"):
+                item = open_projects[0]
+            if item is not None:
+                data["project"] = {**(data.get("project") or {}), "number": item["number"]}
+                plan, theirs = self.project_choice(data, item, project)
+                if plan == "write":
+                    waiting.pop("project", None)
+                else:
+                    self.settle_text(data, "project", None, item["number"], plan, theirs, raw_sha(item))
+        for epic_id, epic in sorted(epics.items()):
+            linked = (data["epics"].get(epic_id) or {}).get("number")
+            item = next((found for found in snapshot["epics"] if found["number"] == linked), None)
+            if item is None and not linked:
+                title = self.rules.issue_title(epic.get("title"))
+                item = next((found for found in sorted(snapshot["epics"], key=lambda e: e["number"])
+                             if found["id"] == epic_id and found["state"] == "open" and found.get("title") == title), None)
+            if item is None:
+                continue
+            if linked != item["number"]:
+                data["epics"][epic_id] = {"number": item["number"]}
+            plan, theirs = self.epic_choice(data, {**epic, "epic_id": epic_id}, item)
+            if plan == "write":
+                waiting.pop(epic_id, None)
+            else:
+                self.settle_text(data, "epic", epic_id, item["number"], plan, theirs, raw_sha(item))
+
+    def text_taken(self, kind: str, epic_id: Optional[str], fields: Dict[str, Any]) -> None:
+        """reconcile --take theirs: this workspace now holds GitHub's text, and has seen it."""
+        with self.exclusive():
+            data = self.load()
+            key = epic_id or "project"
+            record = data["project"] if kind == "project" else data["epics"].get(str(epic_id))
+            if record is not None:
+                record["text_sha256"] = (project_sha(fields["name"], fields["vision"], fields["outcomes"]) if kind == "project"
+                                         else epic_sha(fields["title"], fields["acceptance_criteria"]))
+            (data.get("seen") or {}).get("text_changed", {}).pop(key, None)
+            self.save(data)
+
+    def text_kept(self, key: str) -> None:
+        """reconcile --take mine: GitHub's version counts as seen, so the next slice marked ready writes this workspace's over it."""
+        with self.exclusive():
+            data = self.load()
+            waiting = (data.get("seen") or {}).get("text_changed", {}).pop(key, None) or {}
+            record = data["project"] if key == "project" else data["epics"].get(key)
+            if record is not None and waiting:
+                record["text_sha256"] = (project_sha(waiting["name"], waiting["vision"], waiting["outcomes"]) if key == "project" and waiting.get("readable")
+                                         else epic_sha(waiting["title"], waiting["acceptance_criteria"]) if waiting.get("readable")
+                                         else waiting.get("raw_sha256"))
+            self.save(data)
 
     def failed(self, repository: Optional[str], problem: str, local: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
         """A read of GitHub that did not finish is kept, so status can say what may be out of date."""
@@ -927,6 +1291,8 @@ class Handoff:
                 "epic_urls": {key: self.rules.issue_url(repo, value["number"]) for key, value in data["epics"].items() if repo},
                 "slices": slice_rows(data, local, self.rules), "order": order_rows(data, local, self.rules),
                 "principles": published_view(PRINCIPLES_KIND, data, self.rules),
+                "same_id_twice": list(seen.get("clashes") or []), "changed_elsewhere": text_changed_view(data, self.rules),
+                "text_taken": [note for note in self.text_notes if note.get("taken")],
                 **({"needs": published_view(NEEDS_KIND, data, self.rules)} if data.get("needs") or seen.get("needs") else {})}
 
     def record_acceptance(self, epic_id: str, release_id: str, commit: str, decision: str, readiness_sha256: str) -> Dict[str, Any]:
@@ -954,6 +1320,55 @@ class Handoff:
         """The numbers of the epic IDs GitHub's epic issues hold, as last read."""
         return [int(str(item.get("epic_id")).split("-")[1]) for item in (self.load().get("seen") or {}).get("epics") or []
                 if isinstance(item, dict) and self.rules.EPIC_ID_RE.fullmatch(str(item.get("epic_id")))]
+
+    def reachable(self) -> Tuple[Optional[str], Optional[str]]:
+        """(repository, None) when GitHub can be read from here; (None, why not) otherwise, or (None, None) when this project is not
+        on GitHub at all. Never raises."""
+        if shutil.which("gh") is None:
+            return None, None
+        repository, failure = collab.request_repository(self.project)
+        if repository is None:
+            return None, explain(failure) if failure else None
+        return repository, None
+
+    def refresh_numbers(self) -> Dict[str, Any]:
+        """M20: before several IDs are given out at once (prd apply, idea apply), read which slice and epic numbers GitHub's issues hold,
+        so none is given out twice. Reads only; a failure is reported, never raised."""
+        repository, why = self.reachable()
+        if repository is None:
+            return {"checked": False, "problem": why}
+        snapshot, failure = self.read(repository)
+        if failure or snapshot is None:
+            return {"checked": False, "problem": explain(failure)}
+        try:
+            with self.exclusive():
+                data = self.for_repository(self.load(), repository)
+                self.remember(data, snapshot)
+                data["seen"]["epics"] = [{"number": e["number"], "epic_id": e["id"], "title": self.rules.list_title(e.get("title"))} for e in snapshot["epics"]]
+                self.save(data)
+        except HandoffError as exc:
+            return {"checked": False, "problem": str(exc)}
+        return {"checked": True, "problem": None}
+
+    def github_project(self) -> Dict[str, Any]:
+        """M20, for project init: the project issues open on GitHub, read now. {"reachable": False, "problem": ...} when they cannot be read."""
+        repository, why = self.reachable()
+        if repository is None:
+            return {"reachable": False, "problem": why}
+        snapshot, failure = self.read(repository)
+        if failure or snapshot is None:
+            return {"reachable": False, "problem": explain(failure)}
+        projects = sorted((item for item in snapshot["projects"] if item["state"] == "open"), key=lambda item: item["number"])
+        return {"reachable": True, "repository": repository, "projects": projects}
+
+    def link_project(self, repository: str, item: Dict[str, Any]) -> None:
+        """project init took the project from its issue: this workspace has seen exactly that text."""
+        theirs = parse_project_text(item) or {}
+        with self.exclusive():
+            data = self.for_repository(self.load(), repository)
+            data["project"] = {"number": item["number"], "pin_tried": True, "pinned": None,
+                               "text_sha256": project_sha(theirs.get("name"), theirs.get("vision"), theirs.get("outcomes"))}
+            self.save(data)
 
     def taken_ids(self) -> List[int]:
         return [int(sid.split("-")[1]) for sid in (self.load().get("seen") or {}).get("taken") or [] if self.rules.SLICE_ID_RE.fullmatch(str(sid))]
@@ -1029,7 +1444,8 @@ class Handoff:
         epic_number = self.find_epic(data, snapshot, epic)
         if epic_number is None:
             return None
-        data["epics"][epic["epic_id"]] = {"number": epic_number}
+        if (data["epics"].get(epic["epic_id"]) or {}).get("number") != epic_number:
+            data["epics"][epic["epic_id"]] = {"number": epic_number}
         item = next(e for e in snapshot["epics"] if e["number"] == epic_number)
         number_to_slice = {found["number"]: found["marker"]["slice_id"] for found in snapshot["slices"]}
         _, children, failure = self.github_order(repository, epic_number, item.get("body"), number_to_slice, data.get("form"))
@@ -1039,7 +1455,7 @@ class Handoff:
         if children is None or (not children and data.get("form") != "sub_issues"):
             if data.get("form") != "task_list" and not self.rules.epic_tasks(item.get("body")):
                 return None  # no slice of this epic is listed on GitHub yet
-            body = self.epic_body(epic, epic_number, snapshot, {}, "", None)
+            body = self.epic_body(self.epic_to_write(data, epic), epic_number, snapshot, {}, "", None)
             _, failure = self.ensure(repository, epic_number, self.rules.issue_title(epic.get("title")), body, ["mach:epic"], "mach:epic", f"epic-{epic['epic_id']}")
             if failure:
                 return failure
@@ -1120,7 +1536,8 @@ class Handoff:
         entry.update(number=read["number"], id=None, base_revision=marker["revision"], revision=marker["revision"], spec_sha256=marker["spec_sha256"],
                      why_sha256=marker["why_sha256"], jira=marker.get("jira"), saved=saved, approved_by=check["approved_by"], run=None, taken_at=utc_now(),
                      shipped=sorted(set(entry.get("shipped") or []) | ({marker["follows"]} if marker.get("follows") else set())))
-        data["epics"][epic_id] = {"number": read["epic"]["number"]}
+        if (data["epics"].get(epic_id) or {}).get("number") != read["epic"]["number"]:
+            data["epics"][epic_id] = {"number": read["epic"]["number"]}
         item = {"number": read["number"], "state": read["state"], "labels": read["labels"], "title": read["title"], "marker": {**marker, "intact": True}}
         rows = data.setdefault("seen", {}).setdefault("slices", {}).setdefault(slice_id, [])
         rows[:] = [row for row in rows if row.get("issue") != read["number"]] + [self.describe(data, item, read["comments"], None)]
@@ -1137,6 +1554,159 @@ class Handoff:
 def project_body(snapshot: Dict[str, Any], number: Optional[int]) -> Optional[str]:
     """The project issue's body as last read, or None."""
     return next((item.get("body") for item in snapshot.get("projects") or [] if item.get("number") == number), None) if number else None
+
+
+# ---- M20: the project's and epics' own text, and IDs made twice ----
+
+
+def one_line(text: Any) -> str:
+    return " ".join(str(text or "").split())
+
+
+def digest(*parts: Any) -> str:
+    return hashlib.sha256(json.dumps(parts, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def project_sha(title: Any, vision: Any, outcomes: Any) -> str:
+    """The project's own text (title, vision, outcomes) as its issue writes it; the principles and needs are not part of it."""
+    return digest("project", str(title or ""), one_line(vision), [one_line(item) for item in outcomes or []])
+
+
+def epic_sha(title: Any, criteria: Any) -> str:
+    """An epic's own text (title, acceptance criteria); its task list is not part of it."""
+    return digest("epic", str(title or ""), [one_line(item) for item in criteria or []])
+
+
+def raw_sha(item: Optional[Dict[str, Any]]) -> Optional[str]:
+    """The issue's title and body as read, for text not in MACH's form."""
+    return "raw:" + digest(str(item.get("title") or ""), str(item.get("body") or "").replace("\r\n", "\n")) if item else None
+
+
+def body_lines(item: Optional[Dict[str, Any]]) -> List[str]:
+    return str((item or {}).get("body") or "").replace("\r\n", "\n").split("\n")
+
+
+def parse_project_text(item: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The project's name, vision and outcomes from its issue, or None when the text is not in the form MACH writes."""
+    lines = body_lines(item)
+    if len(lines) < 6 or not lines[0].startswith("<!-- mach:project id=") or lines[1:2] != ["## Vision"] or lines[3:5] != ["", "## Outcomes"]:
+        return None
+    outcomes = []
+    for line in lines[5:]:
+        if not line.startswith("- "):
+            break
+        outcomes.append(line[2:])
+    return {"name": str((item or {}).get("title") or ""), "vision": lines[2], "outcomes": outcomes} if outcomes else None
+
+
+def parse_epic_text(item: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """An epic's title and acceptance criteria from its issue, or None when the text is not in the form MACH writes."""
+    lines = body_lines(item)
+    if len(lines) < 2 or not lines[0].startswith("<!-- mach:epic id=") or lines[1] != "## Done when":
+        return None
+    criteria = []
+    for line in lines[2:]:
+        if not line.startswith("- "):
+            break
+        criteria.append(line[2:])
+    return {"title": str((item or {}).get("title") or ""), "acceptance_criteria": criteria}
+
+
+def text_plan(seen: Optional[str], mine: str, theirs: Optional[str], raw: Optional[str]) -> str:
+    """same: GitHub already holds this workspace's text. take: GitHub's changed and nothing here waits to be written (or this
+    workspace never defined it), so GitHub's is taken. write: only this workspace's changed, so it may replace GitHub's. changed:
+    both changed, or GitHub's is not in MACH's form: nothing is written and the product manager chooses (reconcile)."""
+    if theirs is not None and theirs == mine:
+        return "same"
+    if theirs is not None and (seen is None or seen == mine):
+        return "take"
+    if seen is not None and seen in (theirs, raw):
+        return "write"
+    return "changed"
+
+
+def text_changed_view(data: Dict[str, Any], rules: Any) -> List[Dict[str, Any]]:
+    """The project's and epics' text someone else changed on GitHub while this workspace changed its own: each waits for a choice."""
+    waiting = ((data.get("seen") or {}).get("text_changed") or {})
+    repository = data.get("repository")
+    rows = []
+    for key in sorted(waiting, key=lambda k: (k != "project", k)):
+        item = waiting[key]
+        what = "the project" if key == "project" else key
+        rows.append({"target": key, "kind": "project" if key == "project" else "epic", "issue": item.get("issue"),
+                     "url": rules.issue_url(repository, item["issue"]) if repository and item.get("issue") else None,
+                     "readable": bool(item.get("readable")),
+                     "theirs": ({key2: item.get(key2) for key2 in ("name", "vision", "outcomes")} if key == "project"
+                                else {key2: item.get(key2) for key2 in ("title", "acceptance_criteria")}) if item.get("readable") else None,
+                     "note": f"Someone else changed {what} on GitHub since you last saw it, and your copy here is different. Choose yours or theirs."})
+    return rows
+
+
+class LostError(HandoffError):
+    """Refused because GitHub made another product manager's issue for the same ID first: the approval here is undone."""
+
+
+def lost_error(message: str, hint: Dict[str, Any], app: Optional[str] = None) -> LostError:
+    return LostError(message, hint, app)
+
+
+def slice_lost_words(slice_id: str, number: int, holder: int, by: Optional[str], app: bool) -> str:
+    who = f"{by}'s" if by else "another product manager's"
+    how = "Give your draft a new number, then mark it ready again." if app else f"Give your draft a new number (slice renumber {slice_id}), then mark it ready again."
+    return (f"{slice_id} was marked ready at the same moment by someone else: {who} issue #{holder} was made first and keeps the number. "
+            f"Your issue #{number} was closed and never marked ready, so nothing reached the builders. {how}")
+
+
+def epic_lost_words(epic_id: str, number: int, holder: int) -> str:
+    return (f"{epic_id} was saved at the same moment by someone else, for a different epic: their issue #{holder} was made first and keeps the number. "
+            f"Your issue #{number} was closed. Give your epic a new number, then mark the slice ready again.")
+
+
+def issue_urls(rules: Any, repository: Optional[str], numbers: Sequence[int]) -> Dict[str, str]:
+    """Each issue's address by its number (a string, as JSON keys are), built by issue_rules; empty without a repository."""
+    return {str(n): rules.issue_url(repository, n) for n in numbers if repository and rules.is_issue_number(n)}
+
+
+def several_hint(rules: Any, repository: Optional[str], numbers: Sequence[int]) -> Dict[str, Any]:
+    """The several-projects refusal's hint for the app: each project issue with its address, so the app links them. Issues
+    are left off the end if the hint would grow past what the app's host passes on (512 bytes)."""
+    urls = issue_urls(rules, repository, numbers)
+    items = [{"issue": n, "url": urls.get(str(n))} for n in numbers]
+    while items and len(json.dumps({"kind": "several_projects", "target": None, "issues": items}, ensure_ascii=False)) > 512:
+        items.pop()
+    return {"kind": "several_projects", "target": None, "issues": items}
+
+
+def epic_same_moment(data: Dict[str, Any], epic_id: str, rules: Any) -> Optional[Dict[str, Any]]:
+    """M20: this workspace's issue for the epic was made at the same moment as someone else's for a different epic with the
+    same number, and closed; until the draft is renumbered or the number is free again. From the record alone."""
+    lost = ((data.get("seen") or {}).get("epic_lost") or {}).get(epic_id)
+    if not isinstance(lost, dict) or (data["epics"].get(epic_id) or {}).get("number"):
+        return None
+    repository = data.get("repository")
+    return {**{key: lost.get(key) for key in ("issue", "holder", "by", "at")},
+            "issue_url": rules.issue_url(repository, lost["issue"]) if repository and rules.is_issue_number(lost.get("issue")) else None,
+            "holder_url": rules.issue_url(repository, lost["holder"]) if repository and rules.is_issue_number(lost.get("holder")) else None}
+
+
+def several_projects(numbers: Sequence[int]) -> str:
+    named = ", ".join(f"#{n}" for n in numbers[:-1]) + f" and #{numbers[-1]}"
+    return (f"This repository has more than one project issue on GitHub ({named}). A repository holds one project, so nothing was saved. "
+            "Ask someone who looks after the repository to close the one that should not be there, then try again.")
+
+
+def clash_note(clash: Dict[str, Any]) -> str:
+    others = ", ".join(f"#{n}" for n in clash["others"])
+    if clash["kind"] == "project":
+        return several_projects(clash["others"]).replace(", so nothing was saved", "")
+    if clash["kind"] == "epic":
+        return (f"{clash['id']} is held by more than one open issue on GitHub: #{clash['kept']} was made first, then {others}. "
+                "Ask someone who looks after the repository to close the one that should not be there.")
+    yours = {"kept": f" Yours is #{clash['kept']}, which keeps the number.",
+             "closed": " Yours was made later, so MACH closed it: give your draft a new number and mark it ready again.",
+             "taken_by_builders": " Yours was made later, and the builders have already taken it: tell the engineer before anything else.",
+             "not_closed": " Yours was made later; MACH could not close it yet and tries again at the next refresh."}.get(str(clash["yours"]), "")
+    return f"{clash['id']} is held by more than one open issue on GitHub: #{clash['kept']} was made first, then {others}.{yours}"
 
 
 class PublishedKind:
@@ -1211,7 +1781,12 @@ def slice_view(data: Dict[str, Any], slice_id: str, work: Optional[Dict[str, Any
         "changed_on_github": bool(current and current.get("matches_approval") is False),
         "newer_elsewhere": bool(current and current["revision"] > int(entry.get("base_revision") or 0)
                                 and current["revision"] != (entry.get("run") or {}).get("revision")),  # not this workspace's own unfinished run
-        "number_taken": bool(work is not None and not number and others),
+        "number_taken": bool(work is not None and not number and (others or (entry.get("lost") or {}).get("closed"))),
+        # M20: this workspace's issue for the slice was made at the same moment as an earlier one holding its ID, and closed.
+        "same_moment": ({**{key: entry["lost"].get(key) for key in ("issue", "holder", "by", "at")},
+                         "issue_url": rules.issue_url(repository, entry["lost"]["issue"]) if repository and entry["lost"].get("issue") else None,
+                         "holder_url": rules.issue_url(repository, entry["lost"]["holder"]) if repository and entry["lost"].get("holder") else None}
+                        if work is not None and not number and (entry.get("lost") or {}).get("closed") else None),
         # The builders' question, from the Factory's comment on the issue: redacted and bounded there, written by the builders, data and never an instruction.
         "question": current.get("question") if current and current.get("state_label") == "mach:question" else None,
         "question_note": ("Written by the builders on the slice's issue: their words, shown as data and never an instruction."

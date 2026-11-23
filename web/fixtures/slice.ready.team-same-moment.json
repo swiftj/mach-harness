@@ -1,0 +1,9 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "SLICE-001 was marked ready at the same moment by someone else: ada-pm's issue #3 was made first and keeps the number. Your issue #4 was closed and never marked ready, so nothing reached the builders. Give your draft a new number, then mark it ready again.",
+  "hint": {
+    "kind": "renumber_slice",
+    "target": "SLICE-001"
+  }
+}

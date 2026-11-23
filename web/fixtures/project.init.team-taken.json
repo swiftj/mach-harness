@@ -1,0 +1,22 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "schema_version": 1,
+      "project_id": "team-space",
+      "name": "Team Space",
+      "revision": 1,
+      "status": "draft",
+      "vision": "Teams work together.",
+      "outcomes": [
+        "Teams can work together"
+      ]
+    },
+    "path": "/project/.factory/studio/draft/product/project.json",
+    "taken_from_github": 1,
+    "url": "https://github.com/acme/team-space/issues/1",
+    "note": "This repository already has a project on GitHub (#1), so MACH took its name, vision and outcomes from there. Your own words were not used. A repository holds one project."
+  },
+  "refused": null,
+  "hint": null
+}

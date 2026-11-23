@@ -293,6 +293,92 @@ class RecordingTest(unittest.TestCase):
         self.assertIn("<redacted>", message)
 
 
+MIXED_CALLER = '''import os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "@@TICKET@@", "scripts"))
+import issue_rules
+
+
+def main():
+    if sys.argv[1:] == ["missing"]:
+        return issue_rules.slice_ready_event([])
+    if sys.argv[1:] == ["import"]:
+        from issue_rules import needs_none_problems  # noqa: F401
+    if sys.argv[1:] == ["own-bug"]:
+        return os.no_such_thing
+    return 0
+
+
+if __name__ == "__main__":
+@@WRAPPER@@
+    sys.exit(main())
+'''
+
+
+class MixedVersionsTest(unittest.TestCase):
+    """Where the installer put MACH in a project and one of its scripts is from another version than the script that
+    calls it, the person is told to run the installer again: no traceback, nothing recorded, nothing to report. In this
+    repository's layout (and a plugin's) the same error is a defect and is recorded."""
+
+    def layout(self, installed: bool):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        project = Path(tmp.name) / "proj"
+        prefix = "mach-" if installed else ""
+        skills = project / ".claude" / "skills" if installed else Path(tmp.name) / "mach" / "skills"
+        for folder in ("intent", "ticket", "demo"):
+            (skills / (prefix + folder) / "scripts").mkdir(parents=True)
+        shutil.copy(FAULTS, skills / (prefix + "intent") / "scripts" / "faults.py")
+        shutil.copy(ROOT / "skills/intent/scripts/scan.py", skills / (prefix + "intent") / "scripts" / "scan.py")
+        (skills / (prefix + "ticket") / "scripts" / "issue_rules.py").write_text("OLDER = True\n")  # an older copy: the newer names are missing
+        script = skills / (prefix + "demo") / "scripts" / "demo.py"
+        script.write_text(MIXED_CALLER.replace("@@TICKET@@", prefix + "ticket").replace("@@WRAPPER@@", "\n".join("    " + line.strip() for line in wrapper_lines())))
+        (project / ".factory" / "tickets").mkdir(parents=True)
+        (project / ".factory" / ".mach-manifest.json").write_text(json.dumps({"version": "0.20.0", "files": {}}))
+        env = {**os.environ}
+        env.pop("MACH_EXECUTION_ID", None)
+
+        def run(*argv):
+            return subprocess.run([sys.executable, str(script), *argv], cwd=str(project), env=env, capture_output=True, text=True)
+
+        return run, project / ".factory" / "local" / "faults", skills / (prefix + "intent") / "scripts"
+
+    def test_an_installed_project_is_told_to_run_the_installer_again(self):
+        run, faults, _ = self.layout(installed=True)
+        for argv in (["missing"], ["import"]):
+            done = run(*argv)
+            self.assertEqual(done.returncode, 1, argv)
+            self.assertEqual(done.stderr.strip(), "MACH: MACH's files in this project are from different versions; run the installer again.", argv)
+            self.assertFalse(faults.is_dir() and list(faults.glob("*.json")), argv)
+
+    def test_another_error_in_an_installed_project_is_still_recorded(self):
+        run, faults, _ = self.layout(installed=True)
+        done = run("own-bug")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("AttributeError", done.stderr)
+        self.assertEqual(len(list(faults.glob("*.json"))), 1)
+
+    def test_in_the_repository_layout_the_same_error_is_a_defect(self):
+        run, faults, _ = self.layout(installed=False)
+        done = run("missing")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("Traceback", done.stderr)
+        self.assertEqual(len(list(faults.glob("*.json"))), 1)
+
+    def test_a_record_of_it_from_an_earlier_version_is_no_longer_offered(self):
+        _, faults, helper = self.layout(installed=True)
+        faults.mkdir(parents=True)
+        base = {"schema": 1, "first_seen": "2026-11-23T10:00:00Z", "last_seen": "2026-11-23T10:00:00Z",
+                "count": 2, "reported": None, "script": "ticket/scripts/ticket.py", "command": ["slice-check"], "exception": "AttributeError",
+                "message": "module 'issue_rules' has no attribute 'slice_ready_event'", "traceback": []}
+        for ident, extra in (("96424cb9f8c4", {"mach": {"version": "0.19.1", "install": "project"}}),
+                             ("aaaaaaaaaaaa", {"mach": {"version": "0.20.0", "install": "project"}}),
+                             ("bbbbbbbbbbbb", {"exception": "KeyError", "message": "'x'", "mach": {"version": "0.19.1", "install": "project"}})):
+            (faults / (ident + ".json")).write_text(json.dumps({**base, "id": ident, "fingerprint": ident + "0" * 52, **extra}))
+        code = "import sys, json; sys.path.insert(0, sys.argv[1]); import faults; print(json.dumps(sorted(i['id'] for i in faults.unreported(sys.argv[2]))))"
+        done = subprocess.run([sys.executable, "-c", code, str(helper), str(faults.parents[2])], capture_output=True, text=True)
+        self.assertEqual(json.loads(done.stdout), ["aaaaaaaaaaaa", "bbbbbbbbbbbb"], done.stderr)
+
+
 class RealScriptTest(unittest.TestCase):
     """The wrapper in a real station script, in this repository's own layout: run.py status meeting a ticket file
     that is a folder is an internal error (IsADirectoryError), and the next status offers to report it."""

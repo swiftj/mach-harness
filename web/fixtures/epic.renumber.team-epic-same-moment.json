@@ -1,0 +1,19 @@
+{
+  "exit_code": 0,
+  "data": {
+    "renumbered": {
+      "from": "EPIC-001",
+      "to": "EPIC-002"
+    },
+    "changed": [
+      "product/epics/EPIC-002.json",
+      "product/intents/SLICE-002.md",
+      "product/slices/SLICE-002.json"
+    ],
+    "needs_approval_again": [],
+    "structurally_valid": true,
+    "structural_errors": []
+  },
+  "refused": null,
+  "hint": null
+}

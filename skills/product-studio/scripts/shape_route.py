@@ -520,6 +520,7 @@ def cmd_idea_apply(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str
                 same = [sid for sid, work in sorted(slices_here.items()) if work.get("serves") == wanted and work.get("title") == item["title"].strip()]
                 return same[0] if len(same) == 1 else None
 
+            numbers = host.numbers_in_use(studio)  # M20: the numbers GitHub's issues hold are read first, so none is given out twice
             made, kept, missing, first = prd.apply_map(studio, data, lambda: save_map(ideas, data), new_epic, new_slice, made_before)
         applied = data.get("applied") or {}
         record = ideas.load(idea_id)
@@ -541,7 +542,9 @@ def cmd_idea_apply(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str
                         if made["epics"] or made["slices"] else f"Nothing new: everything the map of {idea_id} names already exists.")
                   + (f" Not made again, because they were removed after being made: {', '.join(missing)}." if missing else "")
                   + f" {idea_id} is shaped into work. Nothing is marked ready, sent or started; "
-                  + ("the slice goes through the short interview of a small change." if small is not None else "each slice goes through the interview."))
+                  + ("the slice goes through the short interview of a small change." if small is not None else "each slice goes through the interview.")
+                  + prd.numbers_note(numbers, made))
+    report["numbers_from_github"] = numbers
     return report
 
 

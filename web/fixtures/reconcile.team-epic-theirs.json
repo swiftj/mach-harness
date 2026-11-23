@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "data": {
+    "reconciled": "EPIC-001",
+    "took": "theirs",
+    "issue": 2,
+    "note": "Your copy of EPIC-001 now is the version from GitHub.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

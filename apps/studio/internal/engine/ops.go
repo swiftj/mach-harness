@@ -295,8 +295,6 @@ func (a *SliceIDArgs) Argv() ([]string, error) {
 	return []string{"slice", a.verb, a.SliceID}, nil
 }
 
-// ReconcileArgs serves reconcile for a slice someone else saved a newer version of on GitHub:
-// the product manager keeps theirs or takes the other version, whole.
 // SliceMoveArgs serves slice.move: exactly one of before, after, first or last.
 type SliceMoveArgs struct {
 	SliceID string  `json:"slice_id"`
@@ -357,19 +355,35 @@ func (a *SliceTakeArgs) Argv() ([]string, error) {
 	return nil, invalid("Give exactly one of issue or slice_id.")
 }
 
+// ReconcileArgs serves reconcile: the product manager keeps their version or takes the other, whole. Exactly one of
+// slice_id (a slice someone else saved a newer version of on GitHub) or, M20, target: "project" or an epic's ID
+// (EPIC-001), whose own text someone else changed on GitHub while this workspace changed it too.
 type ReconcileArgs struct {
 	SliceID string `json:"slice_id"`
+	Target  string `json:"target"`
 	Take    string `json:"take"`
 }
 
 func (a *ReconcileArgs) Argv() ([]string, error) {
-	if err := checkID("slice_id", a.SliceID, SliceIDPattern, "SLICE-001"); err != nil {
-		return nil, err
+	var subject string
+	switch {
+	case a.SliceID != "" && a.Target != "":
+		return nil, invalid("Give slice_id or target, not both.")
+	case a.Target != "":
+		if a.Target != "project" && (len(a.Target) > maxIDLength || !EpicIDPattern.MatchString(a.Target)) {
+			return nil, invalid("target must be \"project\" or an epic's ID such as EPIC-001.")
+		}
+		subject = a.Target
+	default:
+		if err := checkID("slice_id", a.SliceID, SliceIDPattern, "SLICE-001"); err != nil {
+			return nil, err
+		}
+		subject = a.SliceID
 	}
 	if a.Take != "mine" && a.Take != "theirs" {
 		return nil, invalid("take must be \"mine\" or \"theirs\".")
 	}
-	return []string{"reconcile", a.SliceID, flag("take", a.Take)}, nil
+	return []string{"reconcile", subject, flag("take", a.Take)}, nil
 }
 
 // ---- requests: GitHub issues labelled as requests (M8) ----

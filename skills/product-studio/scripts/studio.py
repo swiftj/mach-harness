@@ -180,7 +180,25 @@ class Studio:
 
     def handoff(self) -> handoff.Handoff:
         """Where a slice marked ready goes: its GitHub issue, or the ready folder."""
-        return handoff.Handoff(self.project, self.home, self.draft, ticket_rules(), write)
+        hand = handoff.Handoff(self.project, self.home, self.draft, ticket_rules(), write)
+        hand.adopt = self.adopt_text  # M20: GitHub's project or epic text is taken in here, never written over unseen
+        return hand
+
+    def adopt_text(self, kind: str, epic_id: Optional[str], fields: Dict[str, Any]) -> None:
+        """M20: the project's or an epic's text as GitHub holds it, taken into this workspace. Only the text: IDs and the rest stay."""
+        if kind == "project":
+            if self.path("project").is_file():
+                data = self.load("project")
+                if ticket_rules().issue_title(data.get("name")) != fields["name"]:  # a title GitHub shortened stays whole here
+                    data["name"] = fields["name"]
+                data.update(vision=fields["vision"], outcomes=list(fields["outcomes"]))
+                self.save("project", data)
+        elif epic_id and self.path("epic", epic_id).is_file():
+            data = self.load("epic", epic_id)
+            if ticket_rules().issue_title(data.get("title")) != fields["title"]:
+                data["title"] = fields["title"]
+            data["acceptance_criteria"] = list(fields["acceptance_criteria"])
+            self.save("epic", data)
 
     def requests(self) -> requests_in.Requests:
         """GitHub issues labelled as requests: the cache, pick-up and the outbox of status writes."""
@@ -652,7 +670,11 @@ def describe(studio: Studio) -> Dict[str, Any]:
             "github": handoff.slice_view(ledger, slice_id, data, ticket_rules()),
         })
     structural = studio.structural() if project else None
-    actions = next_actions(project, epics, slice_rows)
+    changed = [row for row in handoff.text_changed_view(ledger, rules) if row["target"] == "project" or row["target"] in epics]
+    changed_by = {row["target"]: row for row in changed}
+    moments = {key: handoff.epic_same_moment(ledger, key, rules) for key in epics}
+    moments = {key: moment for key, moment in moments.items() if moment}
+    actions = next_actions(project, epics, slice_rows, changed, moments)
     withdrawn = []
     for artifact, note in sorted((session.get("withdrawn") or {}).items()):
         current = slices.get(artifact)
@@ -660,17 +682,22 @@ def describe(studio: Studio) -> Dict[str, Any]:
             withdrawn.append({"artifact": artifact, "kind": "slice", "reason": note.get("reason"), "at": note.get("at")})
     return {
         "project": project and {**{key: project.get(key) for key in ("project_id", "name", "status", "revision", "vision", "outcomes")},
-                                "issue": (ledger.get("project") or {}).get("number"), "url": url((ledger.get("project") or {}).get("number"))},
+                                "issue": (ledger.get("project") or {}).get("number"), "url": url((ledger.get("project") or {}).get("number")),
+                                "changed_elsewhere": changed_by.get("project")},  # M20: someone else's change waiting for a choice, else None
         "approvals_withdrawn": withdrawn,
         "epics": [{"epic_id": key, "title": data.get("title"), "status": data.get("status"), "revision": data.get("revision"),
                    "acceptance_criteria": list(data.get("acceptance_criteria") or []),
                    "issue": (ledger["epics"].get(key) or {}).get("number"), "url": url((ledger["epics"].get(key) or {}).get("number")),
+                   "changed_elsewhere": changed_by.get(key),
+                   "same_moment": moments.get(key),  # M20: its number taken at the same moment by a different epic, else None
                    "counts": handoff.epic_counts([row for row in slice_rows if row["epic_id"] == key]), **tracking_field(data)}
                   for key, data in epics.items()],
         "slices": slice_rows,
         **({"principles": principles_status(studio, ledger, slice_rows)} if current or (ledger.get("principles") or {}).get("saved") else {}),
         "saved": saved_state(studio, ledger, slices),
         "order": handoff.order_rows(ledger, slices, rules, list(epics)),
+        "same_id_twice": list((ledger.get("seen") or {}).get("clashes") or []),  # M20: IDs more than one open issue held at the last refresh
+        "project_on_github": project_on_github(ledger, rules),  # M20: the one project issue GitHub held at the last refresh, else None
         "github": {"repository": ledger.get("repository"), "form": ledger.get("form"),
                    "last_read": (ledger.get("seen") or {}).get("refreshed_at")},
         "current_slice": session.get("current_slice"),
@@ -686,6 +713,23 @@ def describe(studio: Studio) -> Dict[str, Any]:
         "suggested_next": [action["sentence"] for action in actions],
         "next_actions": [{key: action[key] for key in ("kind", "target", "title", "reason", "related")} for action in actions],
     }
+
+
+def project_on_github(ledger: Dict[str, Any], rules: Any) -> Optional[Dict[str, Any]]:
+    """M20: exactly one open project issue on GitHub at the last refresh: its number, address and name, and whether its text is in
+    the form MACH writes (only then can naming the product take it). None when there is none, several, or GitHub was not read.
+    From the record alone: status never reads GitHub."""
+    repository = ledger.get("repository")
+    seen = (ledger.get("seen") or {}).get("project")
+    if not repository or not isinstance(seen, list):
+        return None
+    open_ = [item for item in seen if isinstance(item, dict) and item.get("state") == "open" and rules.is_issue_number(item.get("number"))]
+    if len(open_) != 1:
+        return None
+    item = open_[0]
+    readable = bool(item.get("name")) and bool(product.PROJECT_RE.fullmatch(str(item.get("project_id") or "")))
+    return {"issue": item["number"], "url": rules.issue_url(repository, item["number"]), "name": item.get("name") if readable else None,
+            "readable": readable, "read_at": (ledger.get("seen") or {}).get("refreshed_at")}
 
 
 def saved_state(studio: Studio, ledger: Dict[str, Any], slices: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
@@ -749,13 +793,15 @@ def github_updates_waiting(studio: Studio) -> Dict[str, Any]:
 
 
 # The vocabulary of next_actions[].kind. A client maps each to its own button or screen.
-NEXT_ACTION_KINDS = ("define_project", "add_epic", "reconcile", "renumber_slice", "answer_question", "continue_interview", "mark_ready", "finish_ready",
-                     "start_slice")
+NEXT_ACTION_KINDS = ("define_project", "add_epic", "reconcile", "renumber_slice", "renumber_epic", "answer_question", "continue_interview", "mark_ready",
+                     "finish_ready", "start_slice")
 # The vocabulary of a refusal's hint (--app): the next-action kinds, plus the acts that resolve a refusal.
-HINT_KINDS = NEXT_ACTION_KINDS + ("reopen_slice", "renumber_epic", "edit_project")
+# several_projects carries the project issues with their addresses, for the app to link; it is not an act.
+HINT_KINDS = NEXT_ACTION_KINDS + ("reopen_slice", "edit_project", "several_projects")
 
 
-def next_actions(project, epics, slice_rows) -> List[Dict[str, Any]]:
+def next_actions(project, epics, slice_rows, changed: Sequence[Dict[str, Any]] = (),
+                 epic_moments: Optional[Dict[str, Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
     """What to do next, in order. One decision produces both forms: `sentence` for the terminal
     (it ends with the command in brackets) and kind, target, title and reason for an app."""
     actions: List[Dict[str, Any]] = []
@@ -782,6 +828,14 @@ def next_actions(project, epics, slice_rows) -> List[Dict[str, Any]]:
             act("answer_question", sid, f"Answer the builders' question on {sid}",
                 f"The builders need your answer before they can plan {row['title']}. Reopen it, change it in the interview, and mark it ready again.",
                 f"The builders asked a question about {sid}: reopen it, answer it in the interview, and mark it ready again (slice reopen {sid}).", first=True)
+        elif gh["number_taken"] and gh.get("same_moment"):
+            moment = gh["same_moment"]
+            who = f"{moment['by']}'s" if moment.get("by") else "another product manager's"
+            act("renumber_slice", sid, f"Give {sid} a new number",
+                f"{sid} was marked ready at the same moment by someone else: {who} issue #{moment['holder']} was made first and keeps the number. "
+                f"Your issue #{moment['issue']} was closed and never reached the builders. Give your draft a new number and mark it ready again.",
+                f"{sid} was marked ready at the same moment by someone else ({who} issue #{moment['holder']} keeps the number; yours, #{moment['issue']}, "
+                f"was closed): give your draft a new number and mark it ready again (slice renumber {sid}).", first=True)
         elif gh["number_taken"]:
             act("renumber_slice", sid, f"Give {sid} a new number", f"Another slice on GitHub already has the number of {row['title']}.",
                 f"Another slice on GitHub already uses {sid}: give your draft a new number (slice renumber {sid}).", first=True)
@@ -797,6 +851,18 @@ def next_actions(project, epics, slice_rows) -> List[Dict[str, Any]]:
         elif row["status"] == APPROVED and gh["changed_on_github"]:
             act("mark_ready", sid, f"Mark {sid} ready again", f"{row['title']} was changed on GitHub after you approved it, so the builders will not take it.",
                 f"{sid} was changed on GitHub after you approved it: mark it ready again to put your approved version back (slice ready {sid}).")
+    for epic_id, moment in sorted((epic_moments or {}).items(), reverse=True):  # M20: an epic's number taken at the same moment
+        title = (epics.get(epic_id) or {}).get("title") or epic_id
+        act("renumber_epic", epic_id, f"Give {epic_id} a new number",
+            f"Someone else saved a different epic as {epic_id} at the same moment: their issue #{moment['holder']} was made first and keeps the number. "
+            f"Your issue #{moment['issue']} was closed. Give {title} a new number, then mark its slice ready again.",
+            f"Someone else saved a different epic as {epic_id} at the same moment (their issue #{moment['holder']} keeps the number; yours, "
+            f"#{moment['issue']}, was closed): give your epic a new number and mark its slice ready again (epic renumber {epic_id}).", first=True)
+    for row in reversed(list(changed)):  # M20: the project's or an epic's text, changed on GitHub and here
+        what = "the project" if row["target"] == "project" else row["target"]
+        act("reconcile", row["target"], f"Choose a version of {what}", row["note"],
+            f"Someone else changed {what} on GitHub since you last saw it, and your copy is different: choose yours or theirs "
+            f"(reconcile {row['target']} --take mine|theirs).", first=True)
     if not any(row["status"] in EDITABLE_SLICE for row in slice_rows):
         act("start_slice", None, "Start a new slice", "No slice of intent is being defined right now.",
             "Start a new slice (slice new --epic EPIC-NNN --title \"...\").")
@@ -832,8 +898,33 @@ def cmd_project_init(studio: Studio, args: argparse.Namespace) -> int:
             "vision": args.vision.strip(), "outcomes": clean_list(args.outcome, "outcome")}
     if not data["outcomes"]:
         raise StudioError(say("A project needs at least one outcome (--outcome, repeatable).", "A project needs at least one outcome."))
+    # M20: one project per repository. The project issue already on GitHub is taken, never a second one started beside it.
+    hand = studio.handoff()
+    found = hand.github_project()
+    adopted = None
+    if found["reachable"] and len(found["projects"]) > 1:
+        numbers = [item["number"] for item in found["projects"]]
+        raise StudioError(handoff.several_projects(numbers).replace("so nothing was saved", "so nothing was defined"),
+                          handoff.several_hint(ticket_rules(), found["repository"], numbers))
+    if found["reachable"] and found["projects"]:
+        item = found["projects"][0]
+        theirs = handoff.parse_project_text(item)
+        if theirs is None or not product.PROJECT_RE.fullmatch(str(item.get("id") or "")):
+            raise StudioError(f"This repository already has a project on GitHub (#{item['number']}), but its text is not in the form MACH writes, so it could "
+                              "not be taken. Nothing was defined. Ask the person who looks after the repository to check it.")
+        data.update(project_id=item["id"], name=theirs["name"], vision=theirs["vision"], outcomes=list(theirs["outcomes"]))
+        adopted = item["number"]
     studio.commit_or_restore([("project", data)], "Defining the project")
-    return emit({"project": data, "path": str(studio.path("project"))})
+    if adopted:
+        hand.link_project(found["repository"], found["projects"][0])
+        return emit({"project": data, "path": str(studio.path("project")), "taken_from_github": adopted,
+                     "url": ticket_rules().issue_url(found["repository"], adopted),
+                     "note": f"This repository already has a project on GitHub (#{adopted}), so MACH took its name, vision and outcomes from there. "
+                             "Your own words were not used. A repository holds one project."})
+    return emit({"project": data, "path": str(studio.path("project")),
+                 **({"github_not_checked": found["problem"],
+                     "note": f"MACH could not check GitHub for a project already there. {found['problem']} It checks again when you mark a slice ready."}
+                    if not found["reachable"] and found.get("problem") else {})})
 
 
 def cmd_project_set(studio: Studio, args: argparse.Namespace) -> int:
@@ -1337,6 +1428,37 @@ def approve_locally(studio: Studio, data: Dict[str, Any], slice_id: str) -> None
     studio.clear_withdrawn(slice_id)
 
 
+def numbers_in_use(studio: Studio) -> Dict[str, Any]:
+    """M20, for prd apply and idea apply: read the slice and epic numbers GitHub's issues hold before several are given out.
+    Reads only; {"checked": bool, "problem": words or None}. The PRD's or brief's text is never part of it."""
+    return studio.handoff().refresh_numbers()
+
+
+def undo_approval(studio: Studio, slice_id: str, reason: str) -> None:
+    """M20: a slice whose issue was closed for a number taken at the same moment is no longer approved."""
+    data = studio.load("slice", slice_id)
+    if data.get("status") == APPROVED:
+        data.update(status="ready_for_approval", spec_sha256=None)
+        studio.save("slice", data)
+        studio.note_withdrawn({slice_id: reason})
+
+
+def text_words(note: Dict[str, Any]) -> str:
+    what = "the project" if note["kind"] == "project" else note["target"]
+    if note.get("taken"):
+        return (f"{what[0].upper() + what[1:]} on GitHub (#{note['issue']}) holds text someone else wrote. "
+                "MACH took it into your workspace instead of writing yours over it.")
+    return say(f"Someone else changed {what} on GitHub since you last saw it, so your copy was not written there. "
+               f"Choose yours or theirs (reconcile {note['target']} --take mine|theirs).",
+               f"Someone else changed {what} on GitHub since you last saw it, so your copy was not written there. Choose yours or theirs.")
+
+
+def text_field(hand: handoff.Handoff) -> Dict[str, Any]:
+    """M20: what happened to the project's and epics' own text in this command, in plain words; nothing when nothing did."""
+    notes = list({(note["target"], bool(note.get("taken"))): note for note in hand.text_notes}.values())
+    return {"shared_text": [{**note, "note": text_words(note)} for note in notes]} if notes else {}
+
+
 def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
     """Approve a slice and hand it to the builders: its GitHub issue under its epic, or the ready folder."""
     studio.prepare()
@@ -1410,7 +1532,16 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
         plan = hand.prepare(ledger, channel, slice_id, data.get("title") or slice_id, epic, project, dependencies, why, spec, jira, mock_list, small)
         if data.get("status") != APPROVED:
             approve_locally(studio, data, slice_id)
-        saved = hand.run(plan, channel, slice_id, project, epic, why, spec)
+        try:
+            saved = hand.run(plan, channel, slice_id, project, epic, why, spec)
+        except handoff.LostError as exc:
+            # M20: GitHub made someone else's issue for this ID first; this one was closed, never ready. The approval is undone.
+            if (exc.hint or {}).get("kind") == "renumber_epic":
+                undo_approval(studio, slice_id, f"Someone else saved a different epic as {data['epic_id']} at the same moment, so the epic needs a new number "
+                                                "and this slice needs your approval again.")
+            else:
+                undo_approval(studio, slice_id, "Someone else marked a slice ready with the same number at the same moment, so it needs a new number and your approval again.")
+            raise
     delivery = mocks.deliver(sys.modules[__name__], studio, slice_id, mock_list, mock_files)  # M14 C: the pictures, for the product manager to commit
     request = None
     if isinstance(data.get("origin"), dict):
@@ -1420,6 +1551,7 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
                  "approved_by": channel.login, "risk": result.get("risk"), "counts": result.get("counts"), "warnings": result["warnings"],
                  **({"small_change": result["small_change"]} if "small_change" in result else {}),
                  "request_updates": request, "factory_authorized": False, **({"mocks": delivery} if delivery else {}),
+                 **text_field(hand),  # M20: the project's or epic's text taken from GitHub, or left as it is there; nothing when neither
                  # The app shows where and what is left as rows of their own, so its note says only what happened and who waits.
                  "note": say(f"Saved to GitHub as #{saved['issue']} and marked ready. The builders take it from there; nothing has started yet."
                              + (" " + delivery["note"] if delivery else ""),
@@ -1826,7 +1958,13 @@ def cmd_refresh(studio: Studio, args: argparse.Namespace) -> int:
     studio.prepare()
     requests = studio.requests().refresh(studio.all("slice"))  # never refuses: GitHub's problems are reported in the block
     hand = studio.handoff()
-    github = hand.refresh(studio.all("slice"))  # read only; never refuses
+    project = studio.load("project") if studio.path("project").is_file() else None
+    github = hand.refresh(studio.all("slice"), project, studio.all("epic"))  # never refuses; writes only to close this workspace's own duplicate
+    for slice_id, entry in hand.load()["slices"].items():
+        if (entry.get("lost") or {}).get("closed") and not entry.get("number") and studio.path("slice", slice_id).is_file():
+            undo_approval(studio, slice_id, "Someone else marked a slice ready with the same number at the same moment, so it needs a new number and your approval again.")
+    if any((entry.get("lost") or {}).get("closed") for entry in hand.load()["slices"].values()):
+        github = {**github, "slices": handoff.slice_rows(hand.load(), studio.all("slice"), ticket_rules())}
     taken = None
     view = github.get("principles") or {}
     seen = (hand.load().get("seen") or {}).get("principles") or {}
@@ -2001,6 +2139,29 @@ def reconcile_slice(studio: Studio, slice_id: str, take: str) -> int:
                  else "Your draft stays as it is. Marking it ready replaces the version on GitHub."})
 
 
+def reconcile_text(studio: Studio, target: str, take: str) -> int:
+    """M20: someone else changed the project's or an epic's text on GitHub while this workspace changed its own. Keep mine (the next
+    slice marked ready writes it over theirs) or take theirs (it replaces the text here)."""
+    hand = studio.handoff()
+    what = "the project" if target == "project" else target
+    row = next((row for row in handoff.text_changed_view(hand.load(), ticket_rules()) if row["target"] == target), None)
+    if row is None:
+        raise StudioError(f"{what[0].upper() + what[1:]} has no change on GitHub to choose from. Refresh first if someone has just changed it.")
+    kind, epic_id = ("project", None) if target == "project" else ("epic", target)
+    if take == "theirs":
+        if not row["readable"]:
+            raise StudioError(f"{what[0].upper() + what[1:]} on GitHub is not in the form MACH writes, so it cannot be taken. Keep yours, "
+                              "or ask the person who changed it.")
+        studio.adopt_text(kind, epic_id, row["theirs"])
+        hand.text_taken(kind, epic_id, row["theirs"])
+        note = f"Your copy of {what} now is the version from GitHub."
+    else:
+        hand.text_kept(target)
+        note = (f"Your copy of {what} stays as it is. MACH writes it to GitHub the next time you mark "
+                + ("a slice ready." if target == "project" else "one of its slices ready."))
+    return emit({"reconciled": target, "took": take, "issue": row["issue"], "note": note, "factory_authorized": False})
+
+
 def kebab(title: str) -> str:
     return "-".join(re.findall(r"[a-z0-9]+", title.lower())[:8]) or "slice"
 
@@ -2013,6 +2174,9 @@ def cmd_reconcile(studio: Studio, args: argparse.Namespace) -> int:
     if args.artifact == "needs":
         studio.prepare()
         return emit(needs.reconcile(sys.modules[__name__], studio, args.take))
+    if args.artifact == "project" or product.EPIC_RE.fullmatch(args.artifact):
+        studio.prepare()
+        return reconcile_text(studio, args.artifact, args.take)
     if not product.SLICE_RE.fullmatch(args.artifact) or not handoff.slice_view(studio.handoff().load(), args.artifact, None, ticket_rules())["newer_elsewhere"]:
         raise StudioError(f"{args.artifact} has no newer version on GitHub to choose from. Refresh first if someone has just saved one.")
     return reconcile_slice(studio, args.artifact, args.take)
@@ -2102,6 +2266,8 @@ def cmd_renumber(studio: Studio, args: argparse.Namespace) -> int:
     studio.save_session(session)
     if kind == "slice":
         studio.handoff().rename_in_order(old, new)
+    if kind == "epic":
+        studio.handoff().forget_epic_lost(old)  # M20: the number another epic's issue took is no longer this draft's
     studio.note_withdrawn({artifact: "It was given a new number, so it needs your approval again." for artifact in set(returned)})
     structural = studio.structural()
     return emit({"renumbered": {"from": old, "to": new}, "changed": sorted(set(changed)), "needs_approval_again": sorted(set(returned)),
@@ -2118,8 +2284,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("status", help="every artifact with its state, and what to do next").set_defaults(func=cmd_status)
     sub.add_parser("validate", help="structural check of the whole workspace").set_defaults(func=cmd_validate)
     sub.add_parser("refresh", help="read the project, epics and slices on GitHub, and the requests; drafts are never lost").set_defaults(func=cmd_refresh)
-    p = sub.add_parser("reconcile", help="choose yours or theirs for a slice someone else saved a newer version of on GitHub")
-    p.add_argument("artifact", metavar="SLICE-ID|principles|needs", help="the slice, the principles or the technical needs whose newer version on GitHub you are choosing about")
+    p = sub.add_parser("reconcile", help="choose yours or theirs for something someone else changed on GitHub")
+    p.add_argument("artifact", metavar="SLICE-ID|EPIC-ID|project|principles|needs",
+                   help="the slice, the epic, the project, the principles or the technical needs whose version on GitHub you are choosing about")
     p.add_argument("--take", required=True, choices=("mine", "theirs"), help="keep your draft, or take the version on GitHub whole")
     p.set_defaults(func=cmd_reconcile)
 

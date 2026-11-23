@@ -84,6 +84,13 @@ def install(script: str) -> None:
 
     def hook(kind: Any, value: Any, tb: Any) -> None:
         try:
+            mixed = mixed_versions(value)
+        except BaseException:  # noqa: BLE001
+            mixed = False
+        if mixed:  # not a defect in MACH: say what to do, record nothing, and leave Python's exit status as it is (1)
+            print("MACH: " + MIXED_VERSIONS, file=sys.stderr)
+            return
+        try:
             if internal(value):
                 record(value, tb, script_path, list(sys.argv), dict(os.environ), os.getcwd())
         except BaseException:  # noqa: BLE001  recording never changes what happens next
@@ -94,6 +101,53 @@ def install(script: str) -> None:
 
 
 # ---- what counts ---------------------------------------------------------------------------------
+
+MIXED_VERSIONS = "MACH's files in this project are from different versions; run the installer again."
+MISSING_RE = re.compile(r"^module '([\w.]+)' has no attribute ")
+
+
+def mixed_versions(value: Any) -> bool:
+    """Whether an uncaught AttributeError or ImportError was raised for one of MACH's own modules where MACH was put
+    in by its installer (.claude/skills/mach-*): one MACH script asked another for something it does not have, so the
+    two come from different versions. In a plugin or this repository every file comes from one version, so there the
+    error is left as it is and recorded."""
+    if not PROJECT_INSTALL or not isinstance(value, (AttributeError, ImportError)):
+        return False
+    if isinstance(value, ImportError):
+        name = value.name or ""
+        path = value.path or getattr(sys.modules.get(name), "__file__", None)
+    else:
+        found = MISSING_RE.match(str(value))
+        if not found:
+            return False
+        name = found.group(1)
+        path = getattr(sys.modules.get(name), "__file__", None)
+    if path:
+        return mach_path(path) is not None
+    return name.startswith("mach_") or own_module(name)
+
+
+def own_module(name: str) -> bool:
+    """Whether a module name is one of MACH's own scripts (issue_rules -> <a MACH skill>/scripts/issue_rules.py)."""
+    if not re.match(r"^\w+$", name or ""):
+        return False
+    try:
+        return any(skill_name(folder) and os.path.isfile(os.path.join(SKILLS, folder, "scripts", name + ".py")) for folder in os.listdir(SKILLS))
+    except OSError:
+        return False
+
+
+def outdated_mix(item: Dict[str, Any]) -> bool:
+    """A record made before the hook above existed: MACH's files were from different versions, and MACH has been
+    installed again since (the record names another version). It is not offered for a report."""
+    if not PROJECT_INSTALL or item.get("exception") != "AttributeError":
+        return False
+    found = MISSING_RE.match(str(item.get("message") or ""))
+    if not found or not own_module(found.group(1)):
+        return False
+    then = (item.get("mach") or {}).get("version")
+    now_ = mach_version(os.path.dirname(os.path.dirname(SKILLS))).get("version")
+    return bool(then and now_ and then != now_)
 
 def internal(value: Any) -> bool:
     """Whether an uncaught exception is an internal error: not MACH's own class, not a stop, not a usage error."""
@@ -547,7 +601,7 @@ def records(root: str) -> List[Dict[str, Any]]:
 
 
 def unreported(root: str) -> List[Dict[str, Any]]:
-    return [item for item in records(root) if not item.get("reported")]
+    return [item for item in records(root) if not item.get("reported") and not outdated_mix(item)]
 
 
 def load(root: str, fault_id: str) -> Optional[Dict[str, Any]]:

@@ -6,7 +6,9 @@ In the commands below, `RUN` means `python3 .claude/skills/mach/scripts/run.py -
 
 ## 1. Installation and repository requirements
 
-You need Claude Code, `git` and `python3` 3.8 or later. Install as a plugin (`/plugin marketplace add swiftj/mach-harness`, `/plugin install mach@mach-harness`, then `/mach:init` in each project) or with `install.sh` (script install, commands such as `/mach`). `--dry-run` shows what would change. Install again to update in place. An update brings every one of MACH's own files (`.claude/skills/mach*/`, `.claude/agents/mach-*`, `.claude/workflows/mach-*`, `.factory/bin/`, `.factory/mach.mk`) to the new version, because the scripts import each other across skills. One you changed is saved to `.factory/mach-backup-<time>/` first and then replaced, without `--force`. `python3 .factory/bin/mach status` and `/mach doctor` say when MACH's files do not match the installed version. `python3 .factory/bin/mach uninstall` removes only what the manifest lists, and keeps files you changed and everything under `.factory/` that is state.
+You need Claude Code, `git` 2.36 or later and `python3` 3.8 or later. Install as a plugin (`/plugin marketplace add swiftj/mach-harness`, `/plugin install mach@mach-harness`, then `/mach:init` in each project) or with `install.sh` (script install, commands such as `/mach`). `--dry-run` shows what would change. Install again to update in place. An update brings every one of MACH's own files (`.claude/skills/mach*/`, `.claude/agents/mach-*`, `.claude/workflows/mach-*`, `.factory/bin/`, `.factory/mach.mk`) to the new version, because the scripts import each other across skills. One you changed is saved to `.factory/mach-backup-<time>/` first and then replaced, without `--force`. `python3 .factory/bin/mach status` and `/mach doctor` say when MACH's files do not match the installed version. `python3 .factory/bin/mach uninstall` removes only what the manifest lists, and keeps files you changed and everything under `.factory/` that is state.
+
+**Each ticket's workspace.** MACH builds each ticket in its own Git worktree, `.factory/worktrees/<ticket>/repo`, on the branch `feature/<ticket>`. That worktree never holds `.claude/` or `.mcp.json`, at any depth, because Claude Code's sandbox does not let an agent write them. The branch still carries them, so commits, merges and pull requests are unchanged. If Git cannot make the workspace, the ticket stops with what Git said and what to do; it never runs in the project root instead. `/mach doctor` makes and removes a throwaway workspace to check this. A plan that would change a file under `.claude/` or a `.mcp.json` is refused: make that change yourself, outside the factory.
 
 A missing Git or Python stops the installer with a message that names `xcode-select --install` on a Mac. Python 3.8 is the stated minimum. Only 3.9.6 and 3.15 were run.
 
@@ -23,6 +25,16 @@ Autonomous work needs a repository that builds, tests and lints cleanly. `/mach-
 | Bronze | under 70 | Autonomous work blocked. Only `repo-hardening` tickets build. |
 
 A build or test suite that fails, is missing or cannot be run is Bronze whatever the score. The report goes stale after `audit.max_age_days` and is bound to a commit. The secret-scanning check only looks for a scanner's name in configuration. It runs no scanner (2 of 100 points).
+
+### Starting from documents you already have
+
+MACH plans no ticket until the project's basic technical decisions are accepted ADRs on the main branch. You may already have them written down somewhere: an ARCHITECTURE.md, a high-level design, a stack or deployment note, coding standards, or ADRs in another format.
+
+Run `/mach adr baseline`. MACH asks whether you have such documents. Name the files or a folder, inside the repository or anywhere on your machine. MACH reads Markdown and plain text; it does not read PDFs. It never edits, moves or commits your documents. It keeps their path, SHA-256 and line count in `.factory/adr-baseline.json`, which Git ignores.
+
+MACH reads every document and works out, for each required topic, whether the documents decide it, decide part of it or say nothing. It drafts one proposed ADR per topic from the lines that decide it, and lists each document's path, SHA-256 and lines in the ADR. It also lists the other decisions the documents make, such as an ADR written in another format; you take all of them, some or none. Where your documents leave a gap, or two of them disagree, or one disagrees with the code, MACH asks you, one question at a time. Where one disagrees with a technical need the product manager published, MACH asks you which to follow and says the product manager owns the need; it never changes the need.
+
+When nothing is open, MACH asks once whether to accept the drafts, then offers to commit them your project's way. Once they are on the main branch, MACH plans and builds tickets. Change a document later and MACH says so the next time; it uses that document again only after you name it again.
 
 ## 2. Product intake, plan and dispatch
 
@@ -48,6 +60,27 @@ Through `ticket.py slice-status`, from fixed templates with a hidden marker, rec
 - A cell stopped for the product manager's answer (`needs: product-answer`) takes the new revision and plans again.
 - Shipped work changed comes as a new issue that says `Changes #N, which has shipped.`
 - `product intake --reissue <SLICE-ID>` puts abandoned work back in the queue on the same ticket, only when you say so.
+
+### Working as a team
+
+Several engineers may run `/mach pull`, or their own supervisor, against one repository at the same time. No slice belongs to anyone in advance. A Factory takes a slice nobody is building; another Factory skips it and takes the next. You can take one over by saying so.
+
+- **The claim.** Just before MACH opens a cell for a slice from an issue, it posts a claim on the issue: "The MACH Factory is taking SLICE-011 revision 2 to build it." It then reads the comments again. Only the Factory whose claim came first, in GitHub's own order, goes on.
+- **Each machine is its own Factory.** MACH keeps a random value for this clone in `.factory/local/factory.json`. Your two machines are two Factories, even when both are signed in to GitHub as you.
+- **A slice someone else is building** is skipped. `product status`, `product plan` and `/mach pull` say "SLICE-011 is being built by @x since 2026-11-23 14:02 UTC", and pull starts the next slice nobody is building. If two Factories reach for the same slice at the same moment, the one that came second starts nothing and says who has it. When everything ready is being built elsewhere, pull says so.
+- **A slice reopened and marked ready again** stays with the Factory building it. That Factory decides about the new revision.
+- **When a claim goes quiet.** A claim with no activity from its Factory for 3 days is stale. The plan says "Claimed by @x, no activity for 4 days: free to take", and the next pull may take it. Activity is a MACH comment on the issue from that account, or a commit on the slice's branch on GitHub. Change the number of days with `intake.claim_stale_days` in `.factory/config.json`.
+- **Taking a slice over.** Run `product dispatch SLICE-011 --take-over` after checking who has it. MACH builds it here, and the issue says it was taken over. MACH never takes a slice over by itself, and a supervisor never does.
+- **Releasing a claim.** Abandon the work on your machine, and MACH withdraws its claim. A reissue on the same machine claims it again.
+- **An open pull request.** When you start a slice and a pull request for it is already open, MACH tells you, so you can look at it first.
+- **The main branch takes a slice once.** Before your copy is merged, MACH looks at the main branch, including the shared one as last fetched. If this revision is already there, it stops and says: "SLICE-011 was already shipped from another Factory (merged as 4be1c09a2f3d). This copy was not merged." Put the copy aside with `cleanup run <ticket> --abandon "already shipped from another Factory"`. The branch's commits are kept in the archive. To keep the branch itself, copy it first with `git branch feature/<ticket>-copy feature/<ticket>`. The merge station checks the same again before it merges, pushes or opens a pull request. If your copy's pull request is already open, MACH leaves it open and tells you to close it on GitHub.
+- **Slice numbers for your own tickets.** When you groom a ticket, MACH takes the next slice number after the ones on this computer, on the shared main as last fetched, and, on GitHub, on every slice issue. If GitHub cannot be read, MACH says so. Two engineers who number a ticket in the same minute can still take one number. The merge station then refuses the second: "SLICE-011 is already on main as ..., which is another slice than this ticket's ...". Give that slice a free number on its branch.
+- **Architecture decision numbers.** A new ADR takes the next number after the ones on main, in your working tree, in your open cells, and on the shared repository's branches as last fetched, open pull requests' among them. Fetch before you write one. Two engineers can still take one number in the same hour. Then neither ADR binds, and every plan is refused, until one is renumbered. The refusal names both files and gives the command for the later one: `/mach adr renumber docs/adr/0007-use-sqlite.md`. It renames the file and changes the references to it in the other ADRs and the overview. It lists any file it cannot be sure about for you to check. Commit the change by pull request.
+- **Several project issues.** If the repository has more than one open project issue, MACH stops grooming your ticket instead of going on without the product principles. It names the issues. A person closes the one that should not be there, and grooming carries on.
+- **A dependency built on another machine** counts as done once its approved spec is on your main branch. The plan shows it as "Another Factory built it".
+- **The issue stays truthful.** Only the Factory whose merge landed marks the issue shipped and closes it.
+- A claim from an account without at least the triage role does not count. Slices from ready folders are not claimed: with folders, agree who pulls.
+
 
 ### A small change
 
@@ -115,7 +148,7 @@ Enabling does not start a supervisor. Run `RUN factory serve` for the session, o
 
 **A run that makes no progress is parked at once.** If an execution ends with the same refusal twice (a build stopped on the same task) or the belt reports `stuck` for the ticket, the supervisor records `not_progressing`, parks the ticket for a person and does not spend the remaining attempts ("Retrying would repeat it"). A killed execution (a signal, a negative exit code) is recorded as killed with its exit code and counts as a failed attempt; only a clean exit clears the count. The plan gate also refuses, at `cell.py check-plan`, a plan whose later `[impl]` task names a requirement that all of its tests already preceded, which is the plan that cannot go green. Observed live: the plan check refusing a real plan, a stuck belt parked at once (at the plan station, not a build) and a killed execution recorded as killed. The same-refusal build case has tests only. Where a parked ticket's plan is wrong, use `replan` above.
 
-**One runner per project per machine.** An ownership lease with a heartbeat enforces that. Nothing coordinates two engineers' machines. Two clones on two machines can both enable. That is unsupported, and it was not tested on real separate machines.
+**One runner per project per machine.** An ownership lease with a heartbeat enforces that. Several engineers may each enable a supervisor on their own machine for one repository. Every supervisor claims through the same rule as `/mach pull`, skips a slice another Factory is building and never takes one over (see "Working as a team" in section 2), so each builds only what it claimed.
 
 ## 4. Human gates
 
@@ -124,6 +157,8 @@ The scripts decide the order. These stay with a person:
 - **High-risk approval.** The panel approves first; only then can `review.py approve-human` record a person's approval, on their explicit word and after seeing the findings. A person cannot approve over a rejection. A Silver tier also needs it.
 - **The merge.** By default an unattended run stops before it. `merge.py --by-person` lifts only the merge mode and the per-tier setting. It still needs an approved stage, the commit review approved and any required human approval. A new commit voids the approval.
 - **Open questions, escalation after three rounds** (`blocked-requires-sme`), and anything under `needs_person`.
+
+**Merging in a team.** When several engineers merge into one shared main, use `merge.method: "pr"`. MACH fetches `origin/main` and re-tests each ticket against it, so it sees what the others merged. It reads `origin/main` again just before it merges and re-tests if it moved. If origin cannot be reached, MACH merges nothing. The `local` method, the default, suits one person: it merges on your machine only, after checking your main already has everything on `origin/main`, and you push main yourself. `/mach doctor` warns when more than one person can push to the GitHub repository and the method is still `local`. On GitHub, protect the main branch: require a pull request, require status checks to pass, and require branches to be up to date before merging. Then GitHub refuses a merge onto a main that moved in the last instant. `/mach doctor` warns when this is not set and says how to set it.
 
 The supervisor never: approves a high-risk change, answers an interview, merges unless you chose `--allow-merge` and the project's merge settings permit it, widens its own tools through its own commands, or retries a lost merge or cleanup. Its tool list has no `git push` or `gh`. Section 8 explains why that is not a hard barrier.
 

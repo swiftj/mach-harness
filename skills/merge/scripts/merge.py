@@ -14,8 +14,9 @@ that were each approved alone cannot break main together.
 Settings, in .factory/config.json under "merge":
     mode    "auto"   the line merges approved tickets itself
             "manual" (default) a person merges; this script still works when a person runs it
-    method  "local"  (default) merge into the main checkout with a merge commit
+    method  "local"  (default) merge into the main checkout with a merge commit; never pushed
             "pr"     push the branch and open a pull request, then merge it there
+With an origin remote, origin/<into> is fetched first (M20 A2; see "the shared main" below).
     into    the branch tickets land on (default: the remote's default branch, else main or master)
     auto    which risk tiers the line may merge on its own in auto mode,
             default {"low": true, "medium": true, "high": true}. A High ticket only reaches
@@ -208,6 +209,207 @@ def default_branch(project: Path) -> str:
     return git(project, "branch", "--show-current").stdout.strip() or "main"
 
 
+# ---- the shared main (M20 A2) ----
+#
+# When the repository has an `origin` remote, `run` fetches origin's <into> first (a fetch changes no checkout, as
+# `--fetch` and the supervisor's auto_sync never do); if origin cannot be reached, nothing is merged. Then:
+#   method pr:    every check before landing is made against origin/<into>, the main the pull request merges into.
+#   method local: the merge goes into this checkout, so checks are made against the local <into>, but only once it
+#                 provably contains origin/<into>; if the shared main has commits this checkout lacks, nothing is merged
+#                 and the engineer is told to pull. The local merge is never pushed; the result says it must be.
+# `plan` reads origin as last fetched and fetches nothing. With no remote, the local checkout's HEAD is the main.
+
+REMOTE_TIMEOUT = 120
+MAX_MAIN_MOVES = 2  # times one run re-validates because the shared main moved again before the merge; then it stops
+
+
+def remotes(project: Path) -> List[str]:
+    return [name for name in git(project, "remote").stdout.split() if name]
+
+
+def has_origin(project: Path) -> bool:
+    return "origin" in remotes(project)
+
+
+def git_remote(cwd: Path, *args: str) -> subprocess.CompletedProcess:
+    """git talking to the remote: bounded in time and never waiting for a password prompt."""
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    try:
+        return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, errors="replace", timeout=REMOTE_TIMEOUT,
+                              env=env, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(["git", *args], 124, "", f"no answer within {REMOTE_TIMEOUT} seconds")
+
+
+def fetch_shared(project: Path, main: str) -> str:
+    """Fetch origin's <main> into origin/<main> and return its commit. Refuses, plainly, when origin cannot be reached
+    or has no such branch: the merge is then not attempted."""
+    done = git_remote(project, "fetch", "--quiet", "--no-tags", "origin", f"+refs/heads/{main}:refs/remotes/origin/{main}")
+    if done.returncode != 0:
+        why = ((done.stderr or "").strip() or (done.stdout or "").strip() or "git fetch failed").splitlines()[-1]
+        if "couldn't find remote ref" in why.lower():
+            raise MergeError(f"The shared repository (origin) has no branch {main}, so there is nothing to test this ticket against. Nothing was merged. "
+                             f"Push {main} to origin, or set merge.into in .factory/config.json.", code="no-shared-main")
+        raise MergeError(f"MACH could not reach the shared repository (origin) to see what is on {main} now ({why}). Nothing was merged: "
+                         f"MACH merges only after testing against origin/{main} as it is at that moment. Try again when origin can be reached.",
+                         code="remote-unreachable")
+    tip = shared_tip(project, main)
+    if not tip:
+        raise MergeError(f"After fetching, origin/{main} could not be read. Nothing was merged.", code="remote-unreachable")
+    return tip
+
+
+def shared_tip(project: Path, main: str) -> str:
+    """origin/<main> as last fetched, or '' when this checkout has never seen it."""
+    done = git(project, "rev-parse", "--verify", "-q", f"refs/remotes/origin/{main}^{{commit}}")
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
+def main_tip(project: Path, main: str, method: str) -> Tuple[str, str]:
+    """(commit, name) of the main every check is made against: origin/<main> for a pull request when there is an
+    origin, else the main checkout's HEAD (the local method merges there)."""
+    if method == "pr" and has_origin(project):
+        return shared_tip(project, main), f"origin/{main}"
+    return git(project, "rev-parse", "HEAD").stdout.strip(), main
+
+
+def shared_ahead(project: Path, main: str) -> Optional[int]:
+    """How many commits origin/<main> (as last fetched) holds that the main checkout's HEAD does not; None if unknown."""
+    tip = shared_tip(project, main)
+    if not tip:
+        return None
+    done = git(project, "rev-list", "--count", f"HEAD..{tip}")
+    return int(done.stdout.strip()) if done.returncode == 0 and done.stdout.strip().isdigit() else None
+
+
+def remote_tip(project: Path, main: str) -> Optional[str]:
+    """<main>'s commit on origin right now, read without fetching; None when origin cannot be asked."""
+    done = git_remote(project, "ls-remote", "origin", f"refs/heads/{main}")
+    if done.returncode != 0:
+        return None
+    for line in done.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1] == f"refs/heads/{main}" and re.fullmatch(r"[0-9a-f]{40,64}", parts[0]):
+            return parts[0]
+    return None
+
+
+# ---- the shared main takes a slice once (M20 A1's backstop) ----
+#
+# Several engineers' Factories keep out of each other's way by a claim on the slice's issue, but a duplicate can still
+# be built (a take-over, a stale claim). The run skill's intake owns the rule (`intake.already_landed`, used by
+# `run.py next`); this station asks the same question after its fetch, and before it merges, pushes or opens anything.
+
+_INTAKE: List[Any] = []
+
+
+def intake_rules() -> Any:
+    """The run skill's intake module, loaded from the sibling skill folder whichever way MACH is installed, never copied."""
+    if not _INTAKE:
+        found = None
+        skills = Path(__file__).resolve().parent.parent.parent
+        for name in ("mach-run", "run"):
+            path = skills / name / "scripts" / "intake.py"
+            if path.is_file():
+                spec = importlib.util.spec_from_file_location("mach_intake_for_merge", path)
+                found = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(found)
+                break
+        _INTAKE.append(found)
+    if _INTAKE[0] is None:
+        raise MergeError("The run skill's intake.py could not be found next to this skill, so MACH cannot tell whether this slice already shipped. "
+                         "Nothing was merged. Reinstall MACH.", code="landed-unknown")
+    return _INTAKE[0]
+
+
+def landed_elsewhere(cell: Cell, main: str) -> Optional[str]:
+    """For a cell intake opened from a slice: the plain refusal when this slice revision's approved spec is already on the main
+    branch (local <main>, and origin/<main> as just fetched) and what landed is not this cell's own work; else None. Its own
+    work: a merge recorded in the cell, its branch's commit already on that branch, or (method pr) its own pull request merged.
+    An engineer's own ticket (no `product`) is not checked."""
+    product = cell.info.get("product") if isinstance(cell.info.get("product"), dict) else {}
+    slice_id, spec_sha256 = product.get("slice_id"), product.get("spec_sha256")
+    if not slice_id or not spec_sha256 or isinstance(cell.info.get("merged"), dict):
+        return None
+    refs = [ref for ref in (f"refs/heads/{main}", f"refs/remotes/origin/{main}") if git(cell.project, "rev-parse", "--verify", "-q", ref).returncode == 0]
+    rules = intake_rules()
+    landed = rules.already_landed(cell.project, str(slice_id), spec_sha256, refs)
+    if not landed:
+        return None
+    if git(cell.project, "merge-base", "--is-ancestor", cell.head(), landed["ref"]).returncode == 0:
+        return None  # this branch is what was merged
+    url = cell.info.get("pull_request")
+    if cell.method == "pr" and url:
+        view = load_text(gh(cell, "pr", "view", url, "--json", "state", timeout=GH_TIMEOUT).stdout)
+        if view.get("state") == "MERGED":
+            return None  # its own pull request, merged (squashed, perhaps, by a person)
+    message = rules.landed_message(str(slice_id), landed) + " Nothing was pushed or merged."
+    if cell.method == "pr" and url:
+        message += f" This copy's pull request ({url}) is left open: close it on GitHub once you no longer need it."
+    return message + (f" Put this copy aside: cleanup run {cell.ticket_id} --abandon \"{slice_id} was already shipped from another Factory\" "
+                      "archives the cell and keeps its branch's commits in the archive.")
+
+
+_CELL_MODULE: List[Any] = []
+
+
+def cell_rules() -> Any:
+    """The intent station's cell.py (its 0.20.0 rule for one slice on both sides of the hand-off), loaded by path, never copied."""
+    if not _CELL_MODULE:
+        found = None
+        skills = Path(__file__).resolve().parent.parent.parent
+        for name in ("mach-intent", "intent"):
+            path = skills / name / "scripts" / "cell.py"
+            if path.is_file():
+                if str(path.parent) not in sys.path:
+                    sys.path.insert(0, str(path.parent))
+                spec = importlib.util.spec_from_file_location("mach_cell_for_merge", path)
+                found = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(found)
+                break
+        _CELL_MODULE.append(found)
+    if _CELL_MODULE[0] is None:
+        raise MergeError("The intent skill's cell.py could not be found next to this skill. Nothing was merged. Reinstall MACH.", code="slice-id-unknown")
+    return _CELL_MODULE[0]
+
+
+SPEC_FILE_RE = re.compile(r"^(SLICE-[0-9]{3,})-[^/]*\.md$")
+
+
+def slice_id_taken(cell: Cell, main: str) -> Optional[str]:
+    """M20 A3: the plain refusal when a slice spec this branch adds has a slice ID that is already on the main branch (local
+    <main>, or origin/<main> as just fetched) under another file name, and that file is another slice: two engineers took one
+    number, and Git would see no conflict. The same slice under another name (a slice Product Studio handed this cell, by
+    cell.py's `handed_over`) is not refused. None when nothing is taken."""
+    refs = [ref for ref in (f"refs/heads/{main}", f"refs/remotes/origin/{main}") if git(cell.project, "rev-parse", "--verify", "-q", ref).returncode == 0]
+    if not refs:
+        return None
+    added = git(cell.work, "diff", "--name-only", "--diff-filter=A", f"{refs[-1]}...HEAD", "--", "specs/slices/").stdout.split()
+    ours = {match.group(1): path for path in added if path.count("/") == 2 for match in [SPEC_FILE_RE.match(path.rsplit("/", 1)[-1])] if match}
+    if not ours:
+        return None
+    same = set(cell_rules().handed_over(cell.info))
+    for ref in refs:
+        for path in git(cell.project, "ls-tree", "--name-only", ref, "--", "specs/slices/").stdout.split():
+            match = SPEC_FILE_RE.match(path.rsplit("/", 1)[-1])
+            if not match or match.group(1) not in ours or path == ours[match.group(1)] or match.group(1) in same:
+                continue
+            slice_id = match.group(1)
+            return (f"{slice_id} is already on {main} as {path}, which is another slice than this ticket's {ours[slice_id]}: two engineers took "
+                    f"one slice number. Nothing was pushed or merged. Give this ticket's slice a free number (cell.py next-id) on its branch, "
+                    f"renaming the spec and every mention of {slice_id} in it; the change is then verified and reviewed again.")
+    return None
+
+
+def refuse_duplicates(cell: Cell, main: str) -> None:
+    found = landed_elsewhere(cell, main)
+    if found:
+        raise MergeError(found, code="landed-elsewhere")
+    taken = slice_id_taken(cell, main)
+    if taken:
+        raise MergeError(taken, code="slice-id-taken")
+
+
 def dirty(folder: Path) -> List[str]:
     """Uncommitted project work, ignoring the factory's own files and what test runs leave behind."""
     names = [line[3:].strip().strip('"') for line in git(folder, "status", "--porcelain", "--untracked-files=all").stdout.splitlines() if line.strip()]
@@ -240,11 +442,12 @@ def survey(cell: Cell, by_person: bool) -> Dict[str, Any]:
     head = cell.head()
     risk = cell.info.get("risk") if cell.info.get("risk") in TIERS else "High"
     main = default_branch(cell.project)
-    main_head = git(cell.project, "rev-parse", "HEAD").stdout.strip()
+    main_head, compared_with = main_tip(cell.project, main, cell.method)
     plan: Dict[str, Any] = {
         "ticket_id": cell.ticket_id, "stage": stage, "branch": cell.branch, "into": main, "risk": risk, "mode": cell.mode, "method": cell.method,
         "approved_commit": cell.decision.get("head"), "branch_commit": head, "approval_valid": cell.decision.get("head") == head,
-        "behind_main": git(cell.work, "merge-base", "--is-ancestor", main_head, "HEAD").returncode != 0,
+        "compared_with": compared_with, "main_commit": main_head or None,
+        "behind_main": bool(main_head) and git(cell.work, "merge-base", "--is-ancestor", main_head, "HEAD").returncode != 0,
         "pull_request": cell.info.get("pull_request"),
     }
     if stage == "merged":
@@ -284,13 +487,23 @@ def survey(cell: Cell, by_person: bool) -> Dict[str, Any]:
     if cell.jira_problem:
         refusals.append(cell.jira_problem)
     plan["jira"] = cell.jira
+    if cell.method == "local" and has_origin(cell.project):
+        # M20 A2: a local merge is tested against the local main, so that main must already hold the shared main.
+        ahead = shared_ahead(cell.project, main)
+        plan["shared_main_ahead"] = ahead
+        if ahead:
+            refusals.append(f"The shared main (origin/{main}) has {ahead} commit{'s' if ahead != 1 else ''} this checkout's {main} does not have yet. "
+                            f"Pull {main}, then merge again. Nothing was merged.")
     if cell.method == "pr":
         if not git(cell.project, "remote", "get-url", "origin").stdout.strip():
             refusals.append("merge.method is 'pr' but the repository has no 'origin' remote.")
         if shutil.which("gh") is None:
             refusals.append("merge.method is 'pr' but the gh tool is not installed.")
     record = cell.info.get("change_record") if isinstance(cell.info.get("change_record"), dict) else None
-    plan["would"] = ([] if not plan["behind_main"] else [f"bring {cell.branch} up to date with {main} and rerun the test suite"]
+    plan["would"] = ([f"fetch {main} from origin and make every check below against origin/{main} (this plan reads it as last fetched)"]
+                     if compared_with != main else
+                     [f"fetch {main} from origin and merge only if this checkout's {main} already holds everything on origin/{main}"]
+                     if has_origin(cell.project) else []) + ([] if not plan["behind_main"] else [f"bring {cell.branch} up to date with {main} and rerun the test suite"]
                      + ([f"check what landed on {main} since approval: a file this ticket also changed, or a shipped rule this ticket's spec "
                          "relies on that a landed slice changed, sends it back to be verified and reviewed again"] if cell.revalidate_overlap else [])) + (
         [] if not cell.records["enabled"] or record_on_branch(cell, record)
@@ -598,9 +811,9 @@ def check_landed(cell: Cell, main: str, before: str, main_head: str) -> None:
                      f"(no judging round is used unless verification fails). Details: {path}.", code="landed-overlap")
 
 
-def revalidate(cell: Cell, main: str) -> Optional[Dict[str, Any]]:
-    """Merge-queue step: put the approved work on top of today's main and prove the suite still passes."""
-    main_head = git(cell.project, "rev-parse", "HEAD").stdout.strip()
+def revalidate(cell: Cell, main: str, main_head: str) -> Optional[Dict[str, Any]]:
+    """Merge-queue step: put the approved work on top of today's main and prove the suite still passes. main_head is
+    the main every check is made against: origin/<main> as just fetched when there is an origin, else the checkout's HEAD."""
     if git(cell.work, "merge-base", "--is-ancestor", main_head, "HEAD").returncode == 0:
         return None
     before = cell.head()
@@ -849,7 +1062,7 @@ def plain_path(value: Any) -> Optional[str]:
 def diff_lines(cell: Cell) -> Optional[Dict[str, Set[int]]]:
     """For each file, the right-side lines inside the pull request's diff: the branch against its merge base
     with the main branch, with Git's default three lines of context. None if Git cannot say."""
-    main_head = git(cell.project, "rev-parse", "HEAD").stdout.strip()
+    main_head = main_tip(cell.project, default_branch(cell.project), cell.method)[0]
     base = git(cell.work, "merge-base", main_head, "HEAD").stdout.strip() if main_head else ""
     if not re.fullmatch(r"[0-9a-f]{40,64}", base):
         return None
@@ -1052,7 +1265,12 @@ def post_findings(cell: Cell, url: str, head: str) -> Dict[str, Any]:
     return {"posted": False, "reason": reason + f" Attempt {entry['attempts']} of {MAX_POST_ATTEMPTS}; the merge went ahead."}
 
 
-def land_by_pr(cell: Cell, main: str, merge_now: bool) -> Dict[str, Any]:
+def land_by_pr(cell: Cell, main: str, merge_now: bool, tested_on: str) -> Dict[str, Any]:
+    """Push, open (once) and merge the pull request. tested_on is the origin/<main> commit the branch was re-validated
+    against. Immediately before merging, origin's <main> is read again; if it moved, nothing is merged and the result
+    says {"main_moved": <commit>} so the caller re-validates. GitHub's merge is bound to the head commit
+    (--match-head-commit); it has no such guard for the base, so after merging the merge commit's first parent is
+    compared with tested_on and any difference is reported."""
     head = cell.head()
     pushed = git(cell.work, "push", "-u", "origin", cell.branch)
     if pushed.returncode != 0:
@@ -1073,21 +1291,44 @@ def land_by_pr(cell: Cell, main: str, merge_now: bool) -> Dict[str, Any]:
         posted = {"posted": False, "reason": f"Posting the findings failed unexpectedly ({type(exc).__name__}); the merge went ahead."}
     state = gh(cell, "pr", "view", url, "--json", "state,mergeCommit,headRefOid")
     view = load_text(state.stdout)
+    merged_here = False
     if view.get("state") != "MERGED" and merge_now:
+        tip = remote_tip(cell.project, main)
+        if tip is None:
+            return {"merged": False, "pull_request": url, "findings_posted": posted,
+                    "note": f"The pull request is open, but MACH could not read origin's {main} once more just before merging, so it did not merge. Run this again."}
+        if tip != tested_on:
+            return {"merged": False, "pull_request": url, "findings_posted": posted, "main_moved": tip}
         done = gh(cell, "pr", "merge", url, "--merge", "--match-head-commit", head)
         if done.returncode != 0:
+            tip = remote_tip(cell.project, main)
+            if tip is not None and tip != tested_on:  # GitHub refused because the base moved (an up-to-date rule), or it moved meanwhile
+                return {"merged": False, "pull_request": url, "findings_posted": posted, "main_moved": tip}
             return {"merged": False, "pull_request": url, "findings_posted": posted,
                     "note": "The pull request is open but could not be merged yet: " + ((done.stderr.strip() or done.stdout.strip()).splitlines() or ["gh pr merge failed"])[-1]}
+        merged_here = True
         view = load_text(gh(cell, "pr", "view", url, "--json", "state,mergeCommit,headRefOid").stdout)
     if view.get("state") != "MERGED":
         return {"merged": False, "pull_request": url, "findings_posted": posted, "note": "The pull request is open and waiting to be merged."}
-    git(cell.project, "fetch", "origin")
+    git_remote(cell.project, "fetch", "--quiet", "origin")
+    untested = None
+    oid = (view.get("mergeCommit") or {}).get("oid") if isinstance(view.get("mergeCommit"), dict) else None
+    if merged_here and isinstance(oid, str) and re.fullmatch(r"[0-9a-f]{40,64}", oid) and git(cell.project, "cat-file", "-e", f"{oid}^{{commit}}").returncode == 0:
+        parents = git(cell.project, "rev-list", "--parents", "-n", "1", oid).stdout.split()[1:]
+        if parents and parents[0] != tested_on and parents[0] != head:
+            untested = parents[0]
     # Keep the main checkout level with the platform, so the next ticket starts from what just landed.
     synced = False
     if git(cell.project, "branch", "--show-current").stdout.strip() == main and not dirty(cell.project):
         synced = git(cell.project, "merge", "--ff-only", f"origin/{main}").returncode == 0
-    return {"merged": True, "pull_request": url, "merge_commit": (view.get("mergeCommit") or {}).get("oid"), "main_checkout_updated": synced,
-            "findings_posted": posted}
+    landed = {"merged": True, "pull_request": url, "merge_commit": (view.get("mergeCommit") or {}).get("oid"), "main_checkout_updated": synced,
+              "findings_posted": posted}
+    if untested:
+        landed["untested_base"] = untested
+        landed["warning"] = (f"origin/{main} moved in the moment between MACH's last check and GitHub's merge: GitHub merged onto {untested[:10]}, "
+                             f"which this ticket was not tested with (it was tested on {tested_on[:10]}). Run the test suite on {main} now. "
+                             f"Requiring branches to be up to date before merging, on GitHub, closes this gap.")
+    return landed
 
 
 def load_text(text: str) -> Dict[str, Any]:
@@ -1103,14 +1344,26 @@ def cmd_plan(cell: Cell, args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_run(cell: Cell, args: argparse.Namespace) -> int:
-    plan = survey(cell, args.by_person)
+def gate(cell: Cell, plan: Dict[str, Any]) -> None:
+    """Refuse on the survey's refusals; a void approval is recorded as void first."""
     if plan.get("approval_void"):
         void_approval(cell)
         raise MergeError(plan["refusals"][-1] if len(plan["refusals"]) == 1 else "\n- " + "\n- ".join(plan["refusals"]), code="approval-void")
     if plan["refusals"]:
         raise MergeError(plan["refusals"][0] if len(plan["refusals"]) == 1 else "\n- " + "\n- ".join(plan["refusals"]),
                          code="exception-expired" if plan.get("exception_expired") else "merge-refused")
+
+
+def cmd_run(cell: Cell, args: argparse.Namespace) -> int:
+    plan = survey(cell, args.by_person)
+    gate(cell, plan)
+    if has_origin(cell.project):
+        # M20 A2: see the shared main as it is now, then survey again against it. Unreachable: nothing is merged.
+        fetch_shared(cell.project, plan["into"])
+    refuse_duplicates(cell, plan["into"])  # M20: before anything is merged, pushed or opened
+    if has_origin(cell.project):
+        plan = survey(cell, args.by_person)
+        gate(cell, plan)
     telemetry(cell.root, "gate.evaluated", "merge", lambda: {"gate": "merge.run", "outcome": "pass", "reason_code": None, "overridden_by_reason": False,
                                                              "by_person": bool(args.by_person)})
     telemetry(cell.root, "station.entered", "merge", lambda: {"stage": plan["stage"], "method": cell.method, "behind_main": bool(plan["behind_main"])})
@@ -1125,13 +1378,37 @@ def cmd_run(cell: Cell, args: argparse.Namespace) -> int:
 
 def land(cell: Cell, args: argparse.Namespace, plan: Dict[str, Any]) -> int:
     main = plan["into"]
-    revalidated = revalidate(cell, main)
-    record = write_record(cell, revalidated) if cell.records["enabled"] else None
+    tested_on = plan["main_commit"]
+    if not tested_on:
+        raise MergeError(f"{plan['compared_with']} could not be read, so there is nothing to test this ticket against. Nothing was merged.", code="no-shared-main")
+    revalidated: Optional[Dict[str, Any]] = None
+    moves: List[str] = []
+    landed: Dict[str, Any] = {}
+    while True:
+        revalidated = revalidate(cell, main, tested_on) or revalidated
+        record = write_record(cell, revalidated) if cell.records["enabled"] else None
+        if cell.method == "local":
+            break
+        landed = land_by_pr(cell, main, cell.mode == "auto" or args.by_person, tested_on)
+        if not landed.get("main_moved"):
+            break
+        # The shared main moved after re-validation: re-validate against where it is now, a bounded number of times.
+        moves.append(f"origin/{main} moved again (now {landed['main_moved'][:10]}); re-validating.")
+        telemetry(cell.root, "gate.evaluated", "merge", lambda: {"gate": "merge.main_moved", "outcome": "refuse", "reason_code": "main-moved",
+                                                                 "overridden_by_reason": False, "times": len(moves)})
+        if len(moves) > MAX_MAIN_MOVES:
+            raise MergeError(f"origin/{main} moved {len(moves)} times while this ticket was being merged, each time after it had been tested. "
+                             f"Nothing was merged; the pull request stays open ({landed.get('pull_request')}). Run the merge again later.", code="main-moving")
+        tested_on = fetch_shared(cell.project, main)
+        refuse_duplicates(cell, main)  # what moved the shared main may be this slice, from another Factory
     head = cell.head()
     result: Dict[str, Any] = {"ticket_id": cell.ticket_id, "branch": cell.branch, "into": main, "method": cell.method,
                               "approved_commit": cell.decision.get("head"), "landed_commit": head, "revalidated": revalidated, "jira": cell.jira,
+                              "compared_with": plan["compared_with"], "tested_on": tested_on,
                               "change_record": {key: record.get(key) for key in ("path", "sha256", "commit", "written")} if record
                               else {"written": False, "reason": "records.enabled is false in .factory/config.json."}}
+    if moves:
+        result["main_moved_again"] = moves
     if cell.method == "local":
         title = cell.info.get("title") or cell.info.get("slice_id") or "change"
         message = (f"{cell.jira} " if cell.jira else "") + f"Merge {cell.ticket_id}: {title}"  # a checked Jira key first (M13)
@@ -1141,8 +1418,9 @@ def land(cell: Cell, args: argparse.Namespace, plan: Dict[str, Any]) -> int:
             raise MergeError("git could not merge the branch into the main checkout: " + ((merged.stderr.strip() or merged.stdout.strip()).splitlines() or ["merge failed"])[-1],
                              code="merge-failed")
         result.update({"status": "MERGED", "merge_commit": git(cell.project, "rev-parse", "HEAD").stdout.strip()})
+        if has_origin(cell.project):
+            result["note"] = (f"Merged on this machine only. Push {main} to origin for others to get it; MACH does not push.")
     else:
-        landed = land_by_pr(cell, main, merge_now=cell.mode == "auto" or args.by_person)
         result.update(landed)
         result["status"] = "MERGED" if landed["merged"] else "PR_OPEN"
     if result["status"] == "MERGED":
