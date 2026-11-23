@@ -1,0 +1,47 @@
+{
+  "exit_code": 0,
+  "data": {
+    "prd": {
+      "prd_id": "PRD-01",
+      "name": "team-space.md",
+      "format": "markdown",
+      "sha256": "583db8b59444029ca677edf8770e7166b67e64dadd0c177a3863a820c11d667f",
+      "line_count": 22,
+      "sections": 5,
+      "document_matches": true,
+      "mapped": false
+    },
+    "factory_authorized": false,
+    "map": null,
+    "sections": [
+      {
+        "n": 1,
+        "title": "Team Space PRD",
+        "lines": "1-4"
+      },
+      {
+        "n": 2,
+        "title": "Inviting",
+        "lines": "5-10"
+      },
+      {
+        "n": 3,
+        "title": "Removing",
+        "lines": "11-15"
+      },
+      {
+        "n": 4,
+        "title": "Billing",
+        "lines": "16-19"
+      },
+      {
+        "n": 5,
+        "title": "Later ideas",
+        "lines": "20-22"
+      }
+    ],
+    "note": "PRD-01 has no map yet. Ask Claude Code to propose one."
+  },
+  "refused": null,
+  "hint": null
+}

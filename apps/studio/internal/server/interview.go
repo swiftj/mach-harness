@@ -90,9 +90,18 @@ func (s *Server) interviewStart(w http.ResponseWriter, r *http.Request) {
 		Idea    string  `json:"idea"`
 		IdeaID  *string `json:"idea_id"`
 		Needs   *bool   `json:"needs"`
+		PrdID   *string `json:"prd_id"`
 	}
 	if err := engine.Decode(raw, &body); err != nil {
 		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, err.Error()))
+		return
+	}
+	if body.PrdID != nil {
+		if body.Needs != nil || body.IdeaID != nil || body.SliceID != "" || body.Idea != "" {
+			writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "Give prd_id alone, or slice_id, or idea_id, or needs: true."))
+			return
+		}
+		s.prdConversationStart(w, r, *body.PrdID)
 		return
 	}
 	if body.Needs != nil {
@@ -233,20 +242,74 @@ func (s *Server) needsConversationStart(w http.ResponseWriter, r *http.Request) 
 	writeEnvelope(w, http.StatusOK, engine.OKValue(started))
 }
 
-// subjectParam reads ?slice_id=, M16 ?idea_id= or M17 ?needs=true: exactly one, in its engine pattern.
+// prdConversationStart (M19): the engine says the PRD exists, its copy in the workspace still matches
+// what was imported, and no drafts have been made from it yet (its map is then kept as it was); then
+// the bridge starts the PRD conversation, whose rules let it record that PRD's map only
+// (interview.Paths). It needs no project: a map is recorded before the project is named.
+func (s *Server) prdConversationStart(w http.ResponseWriter, r *http.Request, prdID string) {
+	if len(prdID) > 32 || !engine.PRDIDPattern.MatchString(prdID) {
+		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "prd_id must be an ID such as PRD-01."))
+		return
+	}
+	if available, reason := s.opts.Bridge.Available(); !available {
+		writeEnvelope(w, http.StatusServiceUnavailable, engine.Fail(engine.KindUnavailable, reason))
+		return
+	}
+	check := s.opts.Engine.Transaction(r.Context(), func(tx *engine.Tx) engine.Envelope {
+		env := tx.Call(r.Context(), "prd.status", engine.PRDStatus(prdID))
+		if !env.OK {
+			return env
+		}
+		var view struct {
+			Prd *struct {
+				DocumentMatches *bool    `json:"document_matches"`
+				Applied         []string `json:"applied"`
+			} `json:"prd"`
+		}
+		if json.Unmarshal(env.Data, &view) != nil || view.Prd == nil || view.Prd.DocumentMatches == nil {
+			return engine.Fail(engine.KindInternal, "The product engine's answer about the PRD could not be read.")
+		}
+		if !*view.Prd.DocumentMatches {
+			return engine.Fail(engine.KindRefused, "The copy of "+prdID+" in your workspace no longer matches the document that was imported. Import the document again.")
+		}
+		if len(view.Prd.Applied) > 0 {
+			return engine.Fail(engine.KindRefused, "The drafts were made from "+prdID+", so its map stays as it was when they were made.")
+		}
+		return engine.OKValue(nil)
+	})
+	if !check.OK {
+		writeEnvelope(w, statusFor(check), check)
+		return
+	}
+	started, err := s.opts.Bridge.Start(r.Context(), interview.StartRequest{PrdID: prdID})
+	if err != nil {
+		s.interviewError(w, err)
+		return
+	}
+	writeEnvelope(w, http.StatusOK, engine.OKValue(started))
+}
+
+// subjectParam reads ?slice_id=, M16 ?idea_id=, M17 ?needs=true or M19 ?prd_id=: exactly one, in its engine pattern.
 func subjectParam(w http.ResponseWriter, r *http.Request) (string, bool) {
 	query := r.URL.Query()
 	slice, idea := query.Get("slice_id"), query.Get("idea_id")
 	given := 0
-	for _, name := range []string{"slice_id", "idea_id", "needs"} {
+	for _, name := range []string{"slice_id", "idea_id", "needs", "prd_id"} {
 		if query.Has(name) {
 			given++
 		}
 	}
 	switch {
 	case given > 1:
-		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "Give one of slice_id, idea_id or needs."))
+		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "Give one of slice_id, idea_id, needs or prd_id."))
 		return "", false
+	case query.Has("prd_id"):
+		prd := query.Get("prd_id")
+		if len(prd) > 32 || !engine.PRDIDPattern.MatchString(prd) {
+			writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "prd_id must be an ID such as PRD-01."))
+			return "", false
+		}
+		return prd, true
 	case query.Has("needs"):
 		if query.Get("needs") != "true" {
 			writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "needs must be true."))
@@ -298,6 +361,8 @@ func (s *Server) interviewHistory(w http.ResponseWriter, r *http.Request) {
 		answer = map[string]any{"needs": true}
 	case interview.IsIdea(id):
 		answer = map[string]any{"idea_id": id}
+	case interview.IsPrd(id):
+		answer = map[string]any{"prd_id": id}
 	default:
 		answer = map[string]any{"slice_id": id}
 	}

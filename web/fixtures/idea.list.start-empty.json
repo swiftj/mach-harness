@@ -1,0 +1,23 @@
+{
+  "exit_code": 0,
+  "data": {
+    "ideas": [],
+    "by_stage": {
+      "new": [],
+      "exploring": [],
+      "brief": [],
+      "decided": [],
+      "shaped": []
+    },
+    "counts": {
+      "new": 0,
+      "exploring": 0,
+      "brief": 0,
+      "decided": 0,
+      "shaped": 0
+    },
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

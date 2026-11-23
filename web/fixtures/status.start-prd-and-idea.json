@@ -1,0 +1,111 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": null,
+    "approvals_withdrawn": [],
+    "epics": [],
+    "slices": [],
+    "saved": {
+      "everything_saved": true,
+      "note": "Everything is saved.",
+      "not_saved": []
+    },
+    "order": [],
+    "github": {
+      "repository": "acme/team-space",
+      "form": null,
+      "last_read": "2026-11-23T16:21:35Z"
+    },
+    "current_slice": null,
+    "last_refreshed": "2026-11-23T16:21:35Z",
+    "prds": [
+      {
+        "prd_id": "PRD-01",
+        "name": "team-space.md",
+        "format": "markdown",
+        "sha256": "583db8b59444029ca677edf8770e7166b67e64dadd0c177a3863a820c11d667f",
+        "line_count": 22,
+        "sections": 5,
+        "document_matches": true,
+        "mapped": true,
+        "slices_mapped": 2,
+        "not_covered": [],
+        "applied": []
+      }
+    ],
+    "ideas": {
+      "ideas": [
+        {
+          "idea_id": "IDEA-001",
+          "title": "Let members renew a loan themselves",
+          "stage": "new",
+          "stage_words": "New",
+          "source": {
+            "kind": "typed"
+          },
+          "created": "2026-11-23T16:21:35Z",
+          "revision": 0,
+          "has_brief": false,
+          "brief_checked": false,
+          "brief_passes": false,
+          "has_case": false,
+          "verdict": null,
+          "route": null,
+          "made": null,
+          "github": {
+            "saved": null,
+            "unfinished": false,
+            "issue": null,
+            "url": null,
+            "state": null,
+            "up_to_date": false,
+            "changed_on_github": false,
+            "changed_after_verdict": false,
+            "verdict_on_github": null,
+            "number_taken": false,
+            "other_issues": [],
+            "last_read": null
+          },
+          "next": {
+            "kind": "explore",
+            "sentence": "Explore IDEA-001: open questions, one at a time."
+          }
+        }
+      ],
+      "by_stage": {
+        "new": [
+          "IDEA-001"
+        ],
+        "exploring": [],
+        "brief": [],
+        "decided": [],
+        "shaped": []
+      },
+      "counts": {
+        "new": 1,
+        "exploring": 0,
+        "brief": 0,
+        "decided": 0,
+        "shaped": 0
+      },
+      "note": "Shape: ideas, briefs and the case, before any epic. A person decides; scripts check."
+    },
+    "structurally_valid": null,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Define the project: its name, vision and outcomes (project init)."
+    ],
+    "next_actions": [
+      {
+        "kind": "define_project",
+        "target": null,
+        "title": "Define the project",
+        "reason": "Say what the product is for: its name, vision and outcomes.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

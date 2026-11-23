@@ -36,6 +36,8 @@ Then write the map to a JSON file in the workspace (beside the PRD is fine) and 
 }
 ```
 
+A PRD can be imported, mapped and settled before the project exists. If `status` shows no project yet, end the message that proposes the map with a suggested name, a one-sentence vision and one to three outcomes, in your own plain words and never copied from the PRD, and say they are the PM's to use, change or ignore. Defining the project stays the PM's act (the skill's **Project**), before the drafts are made. In the visual app the same proposal comes from the PRD conversation on the PRD's page, which may record only that PRD's map, from one file the host names; settling, naming the product and making the drafts are the page's buttons.
+
 `STUDIO prd map <PRD-ID> --from <file>`. Keys are short names (`E1`, `M1`), never IDs. `epics` lists only new epics; a slice's `epic` is a new epic's key or an existing `EPIC-NNN`. `depends_on` names slices of this map (listed earlier) or existing `SLICE-NNN`. List the slices in the order the builders should take them; within an epic, that is their order. The map is refused whole, recording nothing, if a citation names lines that do not exist, a dependency is unknown or goes round in a circle, or anything else is malformed: fix every problem it lists and record it again. Recording reserves no slice ID. Until it is applied, recording a new map replaces the old one.
 
 ## 3. Settle what no slice covers
@@ -48,7 +50,7 @@ A section settled as part of a slice adds its lines to that slice's citations.
 
 ## 4. Apply, on the PM's word
 
-When `prd status` shows `can_apply: true`, summarise the map (epics, slices in order, what was left out and why) and ask whether to make the drafts. Only on their yes: `STUDIO prd apply <PRD-ID>`. It makes each new epic and one draft slice per map slice through the same steps as `epic add` and `slice new`, with IDs from the shared allocator, dependencies carried and the map's order kept. Each draft records which PRD and lines it came from. Running it again makes nothing twice. Nothing is approved, sent or started.
+`prd apply` needs the project: without one it is refused ("No project yet"), so define it first, with the PM, as the skill's **Project** says. When `prd status` shows `can_apply: true`, summarise the map (epics, slices in order, what was left out and why) and ask whether to make the drafts. Only on their yes: `STUDIO prd apply <PRD-ID>`. It makes each new epic and one draft slice per map slice through the same steps as `epic add` and `slice new`, with IDs from the shared allocator, dependencies carried and the map's order kept. Each draft records which PRD and lines it came from. Running it again makes nothing twice. Nothing is approved, sent or started.
 
 ## 5. Confirm instead of interview, one slice at a time
 

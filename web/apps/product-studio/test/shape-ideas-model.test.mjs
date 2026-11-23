@@ -37,7 +37,9 @@ test("empty: status has no ideas field, and idea.list's empty board still gives 
   assert.ok(columns.every((c) => c.rows.length === 0));
   assert.deepEqual(elsewhere, []);
   // A status without Shape has no `ideas`: the screen shows its empty state.
-  const plain = readdirSync(folder).filter((f) => /^status\.[a-z-]+\.json$/.test(f) && !f.startsWith("status.ideas"));
+  // M19: the start fixtures where an idea was added before the project was named carry the board too.
+  const withAnIdea = new Set(["status.start-idea.json", "status.start-prd-and-idea.json", "status.start-prd-named.json", "status.start-made.json"]);
+  const plain = readdirSync(folder).filter((f) => /^status\.[a-z-]+\.json$/.test(f) && !f.startsWith("status.ideas") && !withAnIdea.has(f));
   assert.ok(plain.length > 0);
   for (const f of plain) assert.equal(data(f.slice(0, -5)).ideas, undefined, f);
 });

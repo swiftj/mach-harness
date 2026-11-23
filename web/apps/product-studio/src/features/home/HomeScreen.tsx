@@ -44,7 +44,7 @@ import { RenumberDialog } from "../../shared/RenumberDialog";
 import { AnswerQuestionDialog } from "../../shared/BuildersQuestion";
 import { SliceTimes } from "../../shared/SliceTimes";
 import { EpicSheet } from "../vision/EpicSheet";
-import { FirstRun } from "./FirstRun";
+import { StartScreen } from "./start/StartScreen";
 import { ShapeCarryOn } from "../shape/shell/ShapeCarryOn";
 import { Fold } from "../../shared/layout/Fold";
 import { ContextRow, OnePane, WorkScreen } from "../../shared/layout/WorkScreen";
@@ -75,7 +75,7 @@ export function HomeScreen() {
     );
   }
   const data = status.data as Status;
-  if (!data.project) return <FirstRun refreshing={refresh.loading} />;
+  if (!data.project) return <StartScreen status={data} />;
   return <ProjectHome status={data} />;
 }
 

@@ -5,10 +5,12 @@ import {
   createIdeaConversationClient,
   createInterviewClient,
   createNeedsConversationClient,
+  createPrdConversationClient,
   type EventSourceFactory,
   type IdeaConversationClient,
   type InterviewClient,
   type NeedsConversationClient,
+  type PrdConversationClient,
 } from "./interview";
 import { readOnlyOperations, type DraftRead, type DraftWriteResult, type OperationArgs, type OperationName, type OperationResult, type Session } from "./types";
 
@@ -68,6 +70,8 @@ export interface MachClient {
   ideaConversation: IdeaConversationClient;
   /** M17: the needs conversation for the product, on the same routes by `needs: true`. */
   needsConversation: NeedsConversationClient;
+  /** M19: the PRD conversation for one PRD, on the same routes by `prd_id`. */
+  prdConversation: PrdConversationClient;
   /**
    * Called after every successful request that may have changed the workspace (an operation not in
    * readOnlyOperations, a draft write). Apps reload their cached status here, so no screen shows
@@ -219,5 +223,6 @@ export function createClient(options: ClientOptions = {}): MachClient {
     interview,
     ideaConversation: createIdeaConversationClient(interviewDeps, interview),
     needsConversation: createNeedsConversationClient(interviewDeps, interview),
+    prdConversation: createPrdConversationClient(interviewDeps, interview),
   };
 }
