@@ -169,6 +169,14 @@ class NoGitTest(Base):
         self.assertEqual(Path(info["workdir"]), self.project)
         self.assertIn("not a git repository", info["note"])
 
+    def test_a_repository_git_cannot_read_stops_the_ticket(self):
+        """A .git that Git refuses (an ownership rule, a broken repository) is not "no Git": nothing works in the project root."""
+        (self.project / ".git").write_text("gitdir: /nowhere/that/exists\n")
+        code, _out, err = run("open", "LOCAL-001", "--title", "Invite teammates", project=self.project)
+        self.assertEqual(code, 2)
+        self.assertIn("no work happens in the project root", err)
+        self.assertFalse((self.project / ".factory" / "worktrees" / "LOCAL-001" / "cell.json").exists())
+
     def test_full_flow_without_git(self):
         self.groom()
         code, out, _ = run("finalize", "LOCAL-001", "--spec", f"specs/slices/{SPEC_NAME}", project=self.project)

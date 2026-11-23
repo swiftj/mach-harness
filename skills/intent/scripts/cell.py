@@ -425,6 +425,11 @@ def cmd_open(project: Path, args: argparse.Namespace) -> int:
     branch = f"feature/{ticket_id}"
     isolation, note = "none", ""
     inside = git(["rev-parse", "--is-inside-work-tree"], project)
+    if inside.returncode != 0 and any((folder / ".git").exists() for folder in (project, *project.parents)):
+        # Git is here but refused to answer (an ownership rule, a broken repository): never take that for "no Git"
+        # and work in the project root.
+        raise CellError(f"{ticket_id} was not opened, and no work happens in the project root instead. Git could not read this "
+                        f"repository: {(inside.stderr or '').strip()[:300] or 'it gave no reason'}. Fix what Git reports, then run this again.")
     if inside.returncode != 0:
         note = "The project is not a git repository, so the cell works in the project root."
     elif git(["rev-parse", "--verify", "-q", "HEAD"], project).returncode != 0:
