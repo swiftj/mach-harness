@@ -246,10 +246,12 @@ The contract engineer plans under the accepted ones and names each it relied on;
 
 **Starting from what the product needs.** When the product manager has published technical needs or a design, `/mach adr baseline` reads them as evidence beside the code, so a new project with no code is not six questions from nothing. A drafted decision names the needs it serves (`serves: TN-01@2`) and offers at least two options. A given is quoted with who said it and comes to you as a point to confirm. Neither a need nor a design decides anything: only an ADR you accept does. `/mach adr overview` writes `docs/architecture/overview.md`, a map of the decisions with two diagrams; the ADRs remain the authority.
 
+**Starting from your own technical documents.** If you already have an ARCHITECTURE.md, a design, stack or deployment notes, coding standards or ADRs in another format, name them (`/mach adr baseline --from <file or folder>...`, or answer when `/mach adr baseline` asks). They may be anywhere on your machine, as Markdown or plain text; PDFs are not read. MACH reads them all and drafts a proposed ADR for each required topic they decide, citing the document, its SHA-256 and its lines. It offers the other decisions they make as one list you take all, some or none of. Gaps and disagreements between documents, with the code or with a published need come to you as questions; a need stays the product manager's. MACH never edits or commits your documents, and it notices when one changes.
+
 ```
 /mach adr list                 every decision, its status and what it applies to, and which required topics are missing
 /mach adr new "<decision>"     a short interview, then the file is written as proposed for you to commit
-/mach adr baseline             draft the missing required decisions from the repository, then settle what it could not find with you, one question at a time
+/mach adr baseline             draft the missing required decisions from the repository and your technical documents, then settle what is open with you, one question at a time
 /mach adr overview             write a map of the decisions: the parts, how data moves, and the decisions by topic
 /mach adr accept <ADR-NNNN>... mark proposed files you have read as accepted; you commit them
 ```
@@ -439,7 +441,7 @@ A cost appears only where one was recorded, which today means work the superviso
 | `/mach adr new "<decision>"` | A short interview, then a new ADR written as proposed for you to commit by pull request |
 | `/mach adr except <ticket> <ADR-NNNN> "<why>"` | Let one ticket depart from an accepted ADR, with your reason |
 | `/mach adr accept <ticket> <ADR-NNNN>` | Accept the ADR a ticket proposes, on that ticket's branch |
-| `/mach adr baseline` | Draft the required basic decisions (language, framework, storage, testing, deployment, coding standards) from the repository |
+| `/mach adr baseline [--from <file or folder>...]` | Draft the required basic decisions (language, framework, storage, testing, deployment, coding standards) from the repository and the technical documents you name |
 | `/mach adr overview` | Write the architecture overview, a map of the decisions with two diagrams, for you to commit |
 | `/mach adr accept <ADR-NNNN>...` | Mark proposed ADRs in your working tree accepted; you commit them |
 | `/mach audit` | The repository's readiness tier |

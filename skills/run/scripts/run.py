@@ -40,8 +40,13 @@ and not by whoever is driving it.
     run.py adr baseline                  the required topics, what covers them, and evidence from the committed files (and the
                                          published technical needs and designs) for each still to draft; recorded once in .factory/adr-baseline.json
                                          (baseline.py)
+    run.py adr baseline --from PATH... | --show DOC-NN [--lines A-B] | --map JSON | --decline N... | --forget DOC-NN | --no-documents
+                                         the engineer's technical documents (documents.py): name them (recorded by path, SHA-256,
+                                         lines and sections; never edited), read one fenced as data, record the map of all of them
     run.py adr new ... --baseline TOPIC [--open-point P]...
                                          draft one of them as proposed, listing the recorded evidence; commits nothing
+    run.py adr new ... --document-decision N
+                                         draft another decision the technical documents make, citing them; commits nothing
     run.py adr settle ADR-NNNN --point N --answer A [--decision D] [--not-decided]
                                          record the engineer's answer to one open point of a proposed draft; commits nothing
     run.py adr accept ADR-NNNN... --by NAME
@@ -119,7 +124,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*$")
 HARDENING_LABEL = "repo-hardening"
@@ -1429,8 +1434,18 @@ def cmd_adr(project: Project, args: argparse.Namespace) -> int:
     if diagram.strip():
         checked_diagram(diagram, "--diagram")
     serves = served_needs(project, args.serves or [], args.option or [])
+    args.document_decision = getattr(args, "document_decision", None)
+    if args.baseline and args.document_decision is not None:
+        raise RunError("--baseline drafts a required topic and --document-decision another decision from the technical documents: give one; nothing was written.")
     evidence = baseline_evidence(project, args.baseline) if args.baseline else []
+    from_documents = documents_draft(project, topic=args.baseline, decision=args.document_decision) if (args.baseline or args.document_decision is not None) else None
+    open_points = list(args.open_point or [])
+    if from_documents:
+        evidence += from_documents["evidence"]
+        open_points += [point for point in from_documents["open_points"] if point not in open_points]
     given = list(args.applies_to or []) + ([f"topic:{args.baseline}"] if args.baseline and f"topic:{args.baseline}" not in (args.applies_to or []) else [])
+    if from_documents and from_documents.get("applies_to") and not given:
+        given = list(from_documents["applies_to"])
     applies, problems = A.check_applies(given) if given else ([], [])
     if problems:
         raise RunError("; ".join(problems))
@@ -1444,13 +1459,18 @@ def cmd_adr(project: Project, args: argparse.Namespace) -> int:
         raise RunError(f"{name} already exists; nothing was written.")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(A.render(title, applies_to=applies, context=context, options=args.option or [], decision=decision,
-                             consequences=args.consequence or [], evidence=evidence, open_points=args.open_point or [], diagram=diagram,
+                             consequences=args.consequence or [], evidence=evidence, open_points=open_points, diagram=diagram,
                              serves=serves), encoding="utf-8")
     if args.baseline:
         record_baseline_draft(project, args.baseline, f"ADR-{number:04d}", name)
+    if from_documents:
+        record_documents_draft(project, f"ADR-{number:04d}", name, from_documents)
     print(json.dumps({"status": "WRITTEN", "id": f"ADR-{number:04d}", "file": name, "adr_status": "proposed", "committed": False,
                       **({"serves": serves} if serves else {}),
-                      **({"baseline_topic": args.baseline, "evidence_files": evidence, "open_points": len(args.open_point or [])} if args.baseline else {}),
+                      **({"baseline_topic": args.baseline, "evidence_files": evidence, "open_points": len(open_points)} if args.baseline else {}),
+                      **({"document_decision": args.document_decision, "evidence_files": evidence, "open_points": len(open_points)}
+                         if args.document_decision is not None else {}),
+                      **({"open_points_from_documents": from_documents["open_points"]} if from_documents and from_documents["open_points"] else {}),
                       "next": "It is in the main checkout's working tree as proposed and binds nothing yet. Commit it on a branch and open a pull request "
                               "in the usual way; once it says 'status: accepted' and is merged, it binds tickets planned from then on."}, indent=2, ensure_ascii=False))
     return 0
@@ -1586,7 +1606,7 @@ def required_topics_view(project: Project, listing: Dict[str, Any]) -> Dict[str,
         row["not_binding_yet"] = [record["id"] for record in listing["adrs"] if f"topic:{row['topic']}" in (record.get("applies_to") or [])
                                   and record["id"] not in row["covered_by"]]
     return {"required": found["required"], "topics": found["topics"], "missing": found["missing"], "problems": found["problems"],
-            **({"next": f"No ticket is planned until each is covered. Draft them from the repository with {skill('run')} adr baseline."} if found["missing"] else {})}
+            **({"next": f"No ticket is planned until each is covered. Draft them with {skill('run')} adr baseline, from the repository and any technical documents the engineer already has."} if found["missing"] else {})}
 
 
 def baseline_module() -> Any:
@@ -1650,6 +1670,70 @@ def served_needs(project: Project, wanted: List[str], options: List[str]) -> Lis
     return out
 
 
+def documents_module() -> Any:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import documents
+    return documents
+
+
+def published_ids(project: Project, commit: Optional[str]) -> Tuple[Dict[str, int], Set[str]]:
+    """The active published technical needs (ID: revision) and the designs published without a problem, on the main branch."""
+    B = baseline_module()
+    published = B.published_needs(project.root, commit)
+    needs = {need["need_id"]: need["revision"] for need in B.active_needs(published)} if not published["problem"] else {}
+    designs = {design["design_id"] for design in B.published_designs(project.root, commit)["designs"]}
+    return needs, designs
+
+
+def documents_draft(project: Project, *, topic: Optional[str], decision: Optional[int]) -> Optional[Dict[str, Any]]:
+    """What `adr new --baseline <topic>` or `--document-decision <n>` takes from the engineer's technical documents: evidence
+    lines (each document's place, SHA-256 and lines) and open points (what is missing, each conflict). None when no document
+    is named. Refused, writing nothing, while the documents are named but not mapped as they are now, or for a decision
+    that is not in the map or is drafted already."""
+    D, B, A = documents_module(), baseline_module(), adrs()
+    record = B.load_record(project.root)
+    docs = D.block(record)
+    if not docs["items"]:
+        if decision is not None:
+            raise RunError("No technical document is named for this baseline, so there is no decision of theirs to draft; nothing was written.")
+        return None
+    topics, _ = A.required_topics(project.config)
+    fresh, why = D.map_fresh(docs, topics)
+    moved = [item["id"] for item in docs["items"] if D.state_of(item) != "ready"]
+    if moved:
+        raise RunError(f"The technical documents {', '.join(moved)} changed or are gone since they were named: name them again (or forget them) "
+                       "and map them again before drafting; nothing was written.")
+    if not fresh:
+        raise RunError(f"{why} Read each technical document and record the map (adr baseline --show, --map) before drafting; nothing was written.")
+    needs, _ = published_ids(project, A.head_of(project.root))
+    if topic is not None:
+        evidence, points = D.draft_parts(docs, topic=topic, needs=needs)
+        entry = docs["map"]["topics"].get(topic) or {}
+        return {"evidence": evidence, "open_points": points, "cites": entry.get("cites") or [], "topic": topic}
+    chosen = next((item for item in docs["map"]["other"] if item["n"] == decision), None)
+    if chosen is None:
+        raise RunError(f"The map of the technical documents has no other decision {decision} (it has 1 to {len(docs['map']['other'])}); nothing was written.")
+    existing = {record_["id"] for record_ in A.full_listing(project.root, project.config)["adrs"] if record_.get("id")}
+    if chosen.get("drafted") and chosen["drafted"].get("id") in existing:
+        raise RunError(f"Decision {decision} of the technical documents is drafted already as {chosen['drafted']['id']} ({chosen['drafted']['file']}); "
+                       "nothing was written.")
+    evidence, points = D.draft_parts(docs, decision=chosen, needs=needs)
+    return {"evidence": evidence, "open_points": points, "cites": chosen["cites"], "decision": decision, "applies_to": chosen["applies_to"]}
+
+
+def record_documents_draft(project: Project, ident: str, name: str, drafted: Dict[str, Any]) -> None:
+    D, B = documents_module(), baseline_module()
+    record = B.load_record(project.root)
+    docs = D.block(record)
+    D.note_draft(record, ident, drafted["cites"])
+    if drafted.get("decision") is not None and isinstance(docs.get("map"), dict):
+        for item in docs["map"]["other"]:
+            if item["n"] == drafted["decision"]:
+                item["drafted"] = {"id": ident, "file": name, "at": D.now()}
+                item.pop("declined", None)
+    B.save_record(project.root, record)
+
+
 def record_baseline_draft(project: Project, topic: str, ident: str, name: str) -> None:
     B = baseline_module()
     record = B.load_record(project.root)
@@ -1666,13 +1750,72 @@ def cmd_adr_baseline(project: Project, args: argparse.Namespace) -> int:
         raise RunError("Drafting the architecture decision baseline is an engineer's work, in conversation; a supervised execution does not do it.")
     sys.path.insert(0, str(sibling("ticket") / "scripts"))
     import issue_rules  # the ticket station's redaction, shared and never copied
+    A, B, D = adrs(), baseline_module(), documents_module()
+    topics, _ = A.required_topics(project.config)
+    done: Dict[str, Any] = {}
+    try:
+        if args.show:  # reads only
+            print(json.dumps({"reads_only": True, **D.show(project.root, B.load_record(project.root), args.show, args.lines, topics, A.describe_topic)},
+                             indent=2, ensure_ascii=False))
+            return 0
+        if args.lines:
+            raise RunError("--lines goes with --show.")
+        if args.sources or args.map or args.decline or args.forget or args.no_documents:
+            record = B.load_record(project.root)
+            if args.sources:
+                done["named"] = D.name(project.root, record, args.sources)
+            elif args.forget:
+                done.update(D.forget(record, args.forget))
+            elif args.no_documents:
+                if D.block(record)["items"]:
+                    raise RunError("Technical documents are named for this baseline; forget them first (--forget) if they are not to be used.")
+                D.block(record)["none_at"] = D.now()
+                done["no_documents"] = True
+            elif args.decline:
+                done.update(D.decline(record, args.decline, topics))
+            else:
+                commit = A.head_of(project.root)
+                needs, designs = published_ids(project, commit)
+                done["mapped"] = D.record_map(project.root, record, load_map_input(Path(args.map)), topics, {"needs": set(needs), "designs": designs},
+                                              D.committed_check(project.root, commit), A.check_applies)
+            B.save_record(project.root, record)
+    except D.DocumentError as exc:
+        raise RunError(str(exc))
     audit = load_json(project.root / ".factory" / "audit-report.json")
-    result = baseline_module().baseline(project.root, project.config, adrs(), issue_rules.redact, audit)
+    result = B.baseline(project.root, project.config, A, issue_rules.redact, audit)
+    if done:
+        result = {"done": done, **result}
+    listing = {record["id"]: record for record in A.full_listing(project.root, project.config)["adrs"] if record.get("id")}
+    record = B.load_record(project.root)
+    docs = D.block(record)
+    shown = D.report(project.root, record, topics, set(listing), {need["need_id"]: need["revision"] for need in result["needs"]})
+    result["documents"] = shown
+    fresh = bool(shown["map"] and shown["map"]["fresh"])
+    for item in result["to_draft"]:
+        found = D.topic_items(docs, item["topic"]) if fresh else []
+        code = [entry for entry in item["evidence"] if not str(entry.get("source") or "").startswith(("need:", "design:"))]
+        item["evidence"] += found
+        item["from_documents"] = bool(found) and not code
+        item["no_evidence"] = item["no_evidence"] and not found
+        if fresh:
+            item["document_state"] = ((docs["map"]["topics"].get(item["topic"]) or {}).get("state"))
+            item["open_points_from_documents"] = D.draft_parts(docs, topic=item["topic"], needs={n["need_id"]: n["revision"] for n in result["needs"]})[1]
     result["open_points_left"] = [{"topic": item["topic"], "id": adr["id"], "file": adr["file"], "open_points": [{"number": number, "text": text}
                                    for number, text in enumerate(adr["open_points"], 1)]} for item in result["waiting"] for adr in item["adrs"]
                                   if adr.get("status") == "proposed" and adr["open_points"]]
     result["ready_to_accept"] = [adr["id"] for item in result["waiting"] for adr in item["adrs"]
                                  if adr.get("status") == "proposed" and not adr["open_points"] and not adr["problems"]]
+    for decision in shown["decisions"]:  # the other decisions drafted from the documents are settled and accepted the same way
+        adr = listing.get(decision.get("adr") or "")
+        if adr is None or adr.get("status") != "proposed":
+            continue
+        points = A.open_points(adr.get("text"))
+        if points:
+            result["open_points_left"].append({"topic": None, "decision": decision["n"], "id": adr["id"], "file": adr["file"],
+                                               "open_points": [{"number": number, "text": text} for number, text in enumerate(points, 1)]})
+        elif not adr.get("problems"):
+            result["ready_to_accept"].append(adr["id"])
+    result["drafted_from_documents"] = [decision["adr"] for decision in shown["decisions"] if decision.get("adr")]
     result["tickets_waiting"] = tickets_waiting_for_baseline(project)
     result["landing"] = adrs().landing(project.config)
     result["write_with"] = ("For each topic in to_draft: run.py adr new --baseline <topic> --title ... --context ... --decision ... "
@@ -1680,12 +1823,39 @@ def cmd_adr_baseline(project: Project, args: argparse.Namespace) -> int:
                             "For a from_product topic, --serves each need drafted from and at least two --option entries. "
                             "It is written as proposed, commits nothing.")
     result["settle_with"] = "For each open point: run.py adr settle <ADR-NNNN> --point <n> --answer \"<the engineer's answer>\" [--decision \"...\"] [--not-decided]."
-    result["next"] = ("Draft each topic in to_draft, then settle every open point with the engineer, one question at a time." if result["to_draft"] else
+    to_offer = [decision["n"] for decision in shown["decisions"] if decision["state"] == "to-offer"]
+    result["documents_with"] = ("adr baseline --from <file or folder>... names technical documents; --show DOC-NN [--lines A-B] reads one; --map <json> "
+                                "records the map of all of them; --decline N... records the engineer's no to other decisions; --forget DOC-NN stops using "
+                                "one; --no-documents records that there are none. adr new --document-decision N drafts another decision from them.")
+    offer = ("offer the other decisions in documents.decisions marked to-offer, once, as one list: the engineer takes all, some or none; "
+             "draft each taken with adr new --document-decision <n>, and record the rest with --decline.")
+    result["next"] = ("Before drafting, ask the engineer once whether they have technical documents for this project (architecture notes, a design, "
+                      "stack, deployment or coding-standards notes, ADRs in another format; Markdown or text). Name them with --from, or record "
+                      "--no-documents." if shown["ask_for_documents"] and result["to_draft"] and not result["waiting"] else
+                      "Tell the engineer what changed in documents.changed; on their word, name each again (--from) or forget it (--forget)." if shown["changed"] else
+                      "Read every technical document whole (--show each DOC-NN; --lines for the rest when it is cut short), then record one map of all "
+                      "of them (--map) before drafting anything." if shown["map"] and not shown["map"]["fresh"] else
+                      "Draft each topic in to_draft." + (f" Then {offer}" if to_offer else "")
+                      + " Then settle every open point with the engineer, one question at a time." if result["to_draft"] else
+                      offer[0].upper() + offer[1:] + " Then settle every open point with the engineer, one question at a time." if to_offer else
                       "Settle the open points left with the engineer, one question at a time." if result["open_points_left"] else
                       "Every draft is settled: ask the engineer once whether to accept them (adr accept)." if result["ready_to_accept"] else
-                      "Nothing is left to draft or settle." + ("" if result["waiting"] else " Every required topic is covered."))
+                      "Nothing is left to draft or settle." + (
+                          " The decisions bind once they are committed on the main branch: offer to put them there the project's way (landing)."
+                          if result["waiting"] else " Every required topic is covered: tickets can be planned and built now."))
+    result["baseline_covered"] = not result["to_draft"] and not result["waiting"]
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
+
+
+def load_map_input(path: Path) -> Any:
+    """The map a model proposed, as a JSON file no larger than Product Studio's limit for one (prd.read_input)."""
+    D = documents_module()
+    P = D.prd()
+    try:
+        return P.read_input(path, "map")
+    except P.PrdError as exc:
+        raise RunError(str(exc))
 
 
 def open_points_view(A: Any, record: Dict[str, Any]) -> List[str]:
@@ -1916,12 +2086,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--consequence", action="append", default=[], help="a consequence, good or bad (repeatable)")
     p.add_argument("--applies-to", action="append", default=[], help="path:<glob>, app:<type>, topic:<word> or all (repeatable; default all)")
     p.add_argument("--baseline", metavar="TOPIC", help="a required topic adr baseline gathered evidence for: lists that evidence and records the draft")
+    p.add_argument("--document-decision", type=int, metavar="N",
+                   help="another decision the map of the technical documents found (its number): lists its documents and lines and records the draft")
     p.add_argument("--open-point", action="append", default=[], help="something the repository does not show, for an engineer to settle (repeatable)")
     p.add_argument("--diagram", help="Mermaid source drawn under the decision, only where the structure or the sequence is the decision; without the ``` lines")
     p.add_argument("--serves", action="append", default=[], metavar="TN-NN",
                    help="an active technical need published on the main branch that this decision serves (repeatable; needs two --option entries)")
     p.set_defaults(func=cmd_adr)
-    p = adr_parser.add_parser("baseline", help="the required topics, what covers them, and evidence from the repository for each to draft")
+    p = adr_parser.add_parser("baseline", help="the required topics, what covers them, and evidence from the repository (and the engineer's "
+                                               "technical documents) for each to draft")
+    group = p.add_mutually_exclusive_group()
+    group.add_argument("--from", dest="sources", nargs="+", metavar="PATH",
+                       help="name technical documents: Markdown or plain-text files, or folders of them; recorded, never edited")
+    group.add_argument("--show", metavar="DOC-NN", help="one named document, numbered, redacted and fenced as data; reads only")
+    group.add_argument("--map", metavar="JSON", help="record the map of all the named documents (a JSON file); refused whole when any claim is wrong")
+    group.add_argument("--decline", nargs="+", type=int, metavar="N", help="the engineer's no to other decisions in the map, by number")
+    group.add_argument("--forget", metavar="DOC-NN", help="stop using a named document; the file is left alone")
+    group.add_argument("--no-documents", action="store_true", help="the engineer has no technical documents for this baseline")
+    p.add_argument("--lines", help="with --show: only these lines, such as 40-80")
     p.set_defaults(func=cmd_adr_baseline)
     p = adr_parser.add_parser("overview", help="the architecture overview, a map of the ADRs: with no content reads only; with content writes it in the "
                                                "working tree; commits nothing")

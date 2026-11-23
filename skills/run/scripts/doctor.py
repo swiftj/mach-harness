@@ -308,7 +308,8 @@ def check_adr_baseline(project: Path, config: Any) -> List[Dict[str, str]]:
     if found["missing"]:
         return [check("adr.baseline", "Architecture decision baseline", "warn",
                       f"No accepted ADR on the main branch covers: {', '.join(found['missing'])}. No ticket is planned until each is covered.",
-                      f"Draft them from the repository with {adr.baseline_command()}, then accept and commit them by pull request.")]
+                      f"Draft them with {adr.baseline_command()}, from the repository and any technical documents you already have, "
+                      "then accept and commit them by pull request.")]
     return [check("adr.baseline", "Architecture decision baseline", "ok", f"Every required topic has an accepted ADR ({', '.join(found['required'])}).")]
 
 
