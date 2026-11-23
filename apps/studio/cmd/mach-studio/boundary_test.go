@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,15 +13,17 @@ import (
 // Nothing in this host may run or name the engineering line: Product Studio and that authority
 // stay separate (contract section 5). This scans every Go source file and the embedded web app.
 //
-// The only allowed mention of the tool folder is the draft workspace path and the project marker
-// used to find the project root; both are removed before the scan.
+// The only allowed mentions of the tool folder are the draft workspace path, the project marker
+// used to find the project root, and the host's own machine-local folder (its lock and the next
+// one-time link; it writes nothing else there and reads nothing it did not write); they are
+// removed before the scan.
 func TestTheHostNeverNamesTheEngineeringLine(t *testing.T) {
 	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
 	self, _ := filepath.Abs("boundary_test.go")
-	allowed := []string{`".factory/studio/draft"`, `".factory"`}
+	allowed := []string{`".factory/studio/draft"`, `".factory/local/studio"`, `".factory"`}
 	forbidden := []*regexp.Regexp{
 		regexp.MustCompile(`(?i)factory`),
 		regexp.MustCompile(`(?i)\brun\.py\b`),
@@ -71,13 +74,13 @@ func TestTheHostNeverNamesTheEngineeringLine(t *testing.T) {
 
 func TestFlags(t *testing.T) {
 	var out, errs strings.Builder
-	if err := run([]string{"--port", "x"}, &out, &errs); err == nil {
+	if err := run(context.Background(), []string{"--port", "x"}, &out, &errs); err == nil {
 		t.Fatal("a bad port was accepted")
 	}
-	if err := run([]string{"stray"}, &out, &errs); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
+	if err := run(context.Background(), []string{"stray"}, &out, &errs); err == nil || !strings.Contains(err.Error(), "unexpected argument") {
 		t.Fatalf("a stray argument: %v", err)
 	}
-	if err := run([]string{"--engine", filepath.Join(t.TempDir(), "missing.py"), "--no-open"}, &out, &errs); err == nil {
+	if err := run(context.Background(), []string{"--engine", filepath.Join(t.TempDir(), "missing.py"), "--no-open"}, &out, &errs); err == nil {
 		t.Fatal("a missing engine was accepted")
 	}
 }

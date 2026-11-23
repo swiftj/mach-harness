@@ -1,7 +1,7 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router";
-import { CircleAlert, FileText, Map as MapIcon } from "lucide-react";
-import { ArtifactId, Banner, Button, ConfirmDialog, EmptyState, ErrorState, Heading, LoadingState, SliceStatusPill, Text, plural, describeError, toast } from "@mach/ui";
+import { CircleAlert, FileText } from "lucide-react";
+import { ArtifactId, Banner, Button, ConfirmDialog, ErrorState, Heading, LoadingState, SliceStatusPill, Text, plural, describeError, toast } from "@mach/ui";
 import type { PrdApply, PrdCoverageRow, PrdMapSlice, PrdStatus } from "@mach/ui/api";
 import { useEngineAct } from "../../api/act";
 import { useStatus } from "../../api/store";
@@ -31,6 +31,10 @@ import {
 } from "./model";
 import { CoveragePill, DataNotice, PrdQuote, lineCount, linesLabel } from "./parts";
 import { SettleDialog } from "./SettleDialog";
+import { PrdConversation } from "./PrdConversation";
+import { usePrdConversation } from "./usePrdConversation";
+import { NameTheProduct } from "../home/start/NameTheProduct";
+import { prdNeedsTheProduct } from "../home/start/model";
 
 const about = "How its sections map to epics and slices, and what is left to settle.";
 
@@ -98,6 +102,15 @@ function PrdPage({ data, lines, truncated, reload }: { data: PrdStatus; lines: M
   const prd = data.prd;
   const step = journeyStep(data);
   const status = useStatus();
+  const conv = usePrdConversation(prd.prd_id);
+  // The conversation recorded a map: read the PRD's state again. Several writes arrive close together.
+  const changes = conv.model.draftChanges;
+  useEffect(() => {
+    if (!changes) return;
+    const timer = setTimeout(reload, 400);
+    return () => clearTimeout(timer);
+  }, [changes, reload]);
+  const needsProduct = prdNeedsTheProduct(data, status.data?.project);
   const [settling, setSettling] = useState<PrdCoverageRow | null>(null);
   const map = data.map;
   const plan = useMemo(() => (map ? applyPlan(map, (id) => status.data?.epics.find((e) => e.epic_id === id)?.title ?? null) : null), [map, status.data]);
@@ -124,13 +137,16 @@ function PrdPage({ data, lines, truncated, reload }: { data: PrdStatus; lines: M
               <ImportBody prdId={prd.prd_id} sections={sections} lines={lines} truncated={truncated} />
             </Part>
             <Part id="map" number={2} place={partPlace("map", step)} name={JOURNEY[1]?.label ?? "Map"} summary={mapSummary(data)}>
-              {map ? <MapBody prdId={prd.prd_id} map={map} lines={lines} /> : <NoMap prdId={prd.prd_id} />}
+              <div className="flex flex-col gap-8">
+                {map ? <MapBody prdId={prd.prd_id} map={map} lines={lines} /> : null}
+                {map?.applied || !prd.document_matches ? null : <PrdConversation prdId={prd.prd_id} conv={conv} hasMap={Boolean(map)} />}
+              </div>
             </Part>
             <Part id="settle" number={3} place={partPlace("settle", step)} name={JOURNEY[2]?.label ?? "Settle"} summary={map ? settleSummary(data.coverage) : "After the map"}>
               {map ? <CoverageBody data={data} lines={lines} onSettle={setSettling} /> : undefined}
             </Part>
-            <Part id="apply" number={4} place={partPlace("apply", step)} name={JOURNEY[3]?.label ?? "Make the drafts"} summary={applySummary(data, plan)}>
-              {map && plan ? <ApplyBody data={data} plan={plan} onDone={reload} /> : undefined}
+            <Part id="apply" number={4} place={partPlace("apply", step)} name={JOURNEY[3]?.label ?? "Make the drafts"} summary={applySummary(data, plan, needsProduct)}>
+              {map && plan ? <ApplyBody data={data} plan={plan} needsProduct={needsProduct} onDone={reload} /> : undefined}
             </Part>
           </Parts>
         </div>
@@ -246,25 +262,6 @@ function ImportBody({ prdId, sections, lines, truncated }: { prdId: string; sect
         </Fold>
       ) : null}
     </div>
-  );
-}
-
-/** Before a map: what the map is and how to get one. Nothing in the app proposes a map; it is never faked here. */
-function NoMap({ prdId }: { prdId: string }) {
-  return (
-    <EmptyState
-      className="max-w-reading"
-      icon={<MapIcon />}
-      headingLevel={3}
-      title="No map yet"
-      description={
-        <>
-          The map of epics and thin slices is proposed in a conversation in Claude Code, not on this page. Ask the product studio skill there to propose a map for {prdId}; it
-          reads the document, proposes the slices with the lines each rests on, and records the map once you agree. This page then shows it, with every section no slice
-          covers.
-        </>
-      }
-    />
   );
 }
 
@@ -467,7 +464,7 @@ function MapSliceItem({
  * Make the drafts (`prd.apply`): an explicit act, confirmed in a dialog naming exactly what it makes.
  * Repeating it makes nothing twice, and the page says what already exists.
  */
-function ApplyBody({ data, plan, onDone }: { data: PrdStatus; plan: ApplyPlan; onDone: () => void }) {
+function ApplyBody({ data, plan, needsProduct, onDone }: { data: PrdStatus; plan: ApplyPlan; needsProduct: boolean; onDone: () => void }) {
   const act = useEngineAct();
   const [open, setOpen] = useState(false);
   const [result, setResult] = useState<PrdApply | null>(null);
@@ -497,19 +494,27 @@ function ApplyBody({ data, plan, onDone }: { data: PrdStatus; plan: ApplyPlan; o
           {blocked}
         </p>
       ) : null}
-      <div>
-        <Button
-          variant={again ? "secondary" : "primary"}
-          disabled={blocked !== null}
-          aria-describedby={blocked ? "apply-blocked" : undefined}
-          onClick={() => {
-            act.reset();
-            setOpen(true);
-          }}
-        >
-          {again ? "Make the drafts again" : `Make ${what}`}
-        </Button>
-      </div>
+      {needsProduct ? (
+        // The one act here until the product is named; the button that makes the drafts follows once it is.
+        <NameTheProduct
+          level={4}
+          why={`Making the drafts needs the product to exist: its name, a one-sentence vision and the outcomes people should get. Name it here, then make ${what}. MACH's suggestion, if it made one, is in the conversation under Map.`}
+        />
+      ) : (
+        <div>
+          <Button
+            variant={again ? "secondary" : "primary"}
+            disabled={blocked !== null}
+            aria-describedby={blocked ? "apply-blocked" : undefined}
+            onClick={() => {
+              act.reset();
+              setOpen(true);
+            }}
+          >
+            {again ? "Make the drafts again" : `Make ${what}`}
+          </Button>
+        </div>
+      )}
       {result ? <ApplyResult result={result} /> : again ? <MadeBefore slices={data.map?.slices ?? []} /> : null}
       <ConfirmDialog
         open={open}

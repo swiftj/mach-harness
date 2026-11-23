@@ -20,6 +20,7 @@ import type { RequestItem, RequestOpName, RequestsBlock, RequestShown } from "..
 import { devParam } from "./devState";
 import { memoryRuns } from "./productMemoryFixtures";
 import { smallRuns } from "./smallFixtures";
+import { startRoute } from "./startTransport";
 
 const REPOSITORY = "team-space/app";
 const DATA_NOTE =
@@ -179,6 +180,13 @@ function find(name: string, number: number): RequestItem {
 
 export async function requestFixtureOp(name: RequestOpName, args: Record<string, unknown>): Promise<unknown> {
   await new Promise((resolve) => setTimeout(resolve, 150));
+  // M19: the start scenarios (?start=) answer from their own runs, in an empty project.
+  const start = startRoute(`/api/ops/${name}`, args);
+  if (start) {
+    const envelope = start.json as { ok: boolean; data?: unknown; error?: { kind: string; message: string } };
+    if (envelope.ok) return envelope.data;
+    throw new MachApiError("refused", envelope.error?.message ?? "Refused.", name, start.status);
+  }
   const number = typeof args.number === "number" ? args.number : 0;
   const refuse = devParam("refuse") === "1";
   switch (name) {

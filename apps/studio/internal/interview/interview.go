@@ -40,7 +40,9 @@ type StartRequest struct {
 	// of SliceID and IdeaID is set; EpicID, Idea and BuildersQuestion are for a slice only.
 	IdeaID string
 	// Needs (M17): the needs conversation for the product as a whole; nothing else is set with it.
-	Needs  bool
+	Needs bool
+	// PrdID (M19): the PRD conversation for one imported PRD; nothing else is set with it.
+	PrdID  string
 	EpicID string
 	Idea   string
 	// BuildersQuestion is the builders' question the engine reports on the slice (slice show). The
@@ -57,6 +59,9 @@ func (r StartRequest) Subject() string {
 	if r.IdeaID != "" {
 		return r.IdeaID
 	}
+	if r.PrdID != "" {
+		return r.PrdID
+	}
 	return r.SliceID
 }
 
@@ -66,6 +71,7 @@ type Started struct {
 	SliceID     string `json:"slice_id,omitempty"`
 	IdeaID      string `json:"idea_id,omitempty"`
 	Needs       bool   `json:"needs,omitempty"`
+	PrdID       string `json:"prd_id,omitempty"`
 	Resumed     bool   `json:"resumed"`
 }
 
@@ -84,7 +90,8 @@ type Current struct {
 	SliceID         string   `json:"slice_id,omitempty"`
 	IdeaID          string   `json:"idea_id,omitempty"` // M16: the Shape conversation's idea
 	Needs           bool     `json:"needs,omitempty"`   // M17: the needs conversation
-	Live            bool     `json:"live"`
+	PrdID           string   `json:"prd_id,omitempty"`  // M19: the PRD conversation's PRD
+	Live           bool     `json:"live"`
 	State           string   `json:"state"` // a state event's value, or "saved" when not live
 	TurnRunning     bool     `json:"turn_running"`
 	LockedElsewhere bool     `json:"locked_elsewhere"` // another host or terminal holds the slice
@@ -98,6 +105,8 @@ func (c *Current) setSubject(subject string) {
 		c.Needs = true
 	} else if IsIdea(subject) {
 		c.IdeaID = subject
+	} else if IsPrd(subject) {
+		c.PrdID = subject
 	} else {
 		c.SliceID = subject
 	}

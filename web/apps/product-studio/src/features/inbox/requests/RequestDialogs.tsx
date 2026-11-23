@@ -41,7 +41,7 @@ function useGeneration(open: boolean): number {
  * Pick up (or pick up as well): `request.pick` starts a draft slice in the chosen epic, with the
  * product manager's own title. The engine re-reads the request on GitHub first and may refuse.
  */
-export function PickUpDialog(props: DialogProps & { also: boolean; epics: StatusEpicRow[] }) {
+export function PickUpDialog(props: DialogProps & PickUpProps) {
   const generation = useGeneration(props.open);
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
@@ -50,7 +50,14 @@ export function PickUpDialog(props: DialogProps & { also: boolean; epics: Status
   );
 }
 
-function PickUpBody({ onOpenChange, item, onDone, also, epics }: DialogProps & { also: boolean; epics: StatusEpicRow[] }) {
+interface PickUpProps {
+  also: boolean;
+  epics: StatusEpicRow[];
+  /** M19: called with the new slice when the dialog closes on success (not when it goes on to show the questions to ask first). */
+  onPicked?: (sliceId: string) => void;
+}
+
+function PickUpBody({ onOpenChange, item, onDone, also, epics, onPicked }: DialogProps & PickUpProps) {
   const act = useRequestAct();
   const [epic, setEpic] = useState(epics[0]?.epic_id ?? "");
   const [title, setTitle] = useState("");
@@ -93,6 +100,7 @@ function PickUpBody({ onOpenChange, item, onDone, also, epics }: DialogProps & {
     }
     onOpenChange(false);
     onDone();
+    onPicked?.(result.slice.slice_id);
   };
 
   if (started) {

@@ -1,13 +1,12 @@
-import { useRef, useState, type ChangeEvent } from "react";
 import { Link } from "react-router";
 import { CircleAlert, FileText, FileUp, TriangleAlert } from "lucide-react";
-import { ArtifactId, Banner, Button, EmptyState, ErrorState, Heading, LoadingState, StatusPill, Text, describeError, plural, toast } from "@mach/ui";
-import { isMachApiError, uploadFile, uploadLimits, type PrdImport, type PrdSummary } from "@mach/ui/api";
-import { useEngineAct } from "../../api/act";
+import { ArtifactId, Banner, Button, EmptyState, ErrorState, Heading, LoadingState, StatusPill, Text, describeError, plural } from "@mach/ui";
+import { uploadLimits, type PrdImport, type PrdSummary } from "@mach/ui/api";
 import { useOperation } from "../../api/useOperation";
 import { ContextRow, OnePane, WorkScreen } from "../../shared/layout/WorkScreen";
 import { DataNotice } from "./parts";
 import { limitWords, sectionLines } from "./model";
+import { usePrdImport } from "./usePrdImport";
 
 /**
  * Start from a PRD: the PRDs imported so far, and a way to import one (`prd.list`, `prd.import`).
@@ -108,41 +107,10 @@ function PrdRow({ prd }: { prd: PrdSummary }) {
  * size the host would refuse, then the engine judges the content and answers in its own words.
  */
 function ImportPanel({ onImported, first }: { onImported: () => void; first: boolean }) {
-  const input = useRef<HTMLInputElement>(null);
-  const act = useEngineAct();
-  const [picking, setPicking] = useState(false);
-  const [tooEarly, setTooEarly] = useState<string | null>(null);
-  const [result, setResult] = useState<PrdImport | null>(null);
+  const importer = usePrdImport(() => onImported());
+  const { inputRef, onPicked, accept, choose, busy, act, result, tooEarly } = importer;
   const limit = uploadLimits.prd;
 
-  const choose = () => {
-    setTooEarly(null);
-    act.reset();
-    input.current?.click();
-  };
-
-  const picked = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    setPicking(true);
-    setResult(null);
-    try {
-      const upload = await uploadFile(file, limit, "prd.import");
-      const imported = await act.run("prd.import", { file: upload });
-      if (imported) {
-        setResult(imported);
-        toast({ tone: "success", title: imported.imported ? `Imported ${imported.prd.prd_id}` : `${imported.prd.prd_id} was already imported` });
-        onImported();
-      }
-    } catch (error) {
-      setTooEarly(isMachApiError(error) ? error.message : String(error));
-    } finally {
-      setPicking(false);
-    }
-  };
-
-  const busy = picking || act.pending;
   return (
     <section aria-labelledby="import-heading" className="flex max-w-reading flex-col gap-4 rounded-md border border-line bg-surface px-6 py-5">
       <div className="flex flex-col gap-1">
@@ -154,7 +122,7 @@ function ImportPanel({ onImported, first }: { onImported: () => void; first: boo
         </Text>
       </div>
       <div>
-        <input ref={input} type="file" accept={limit.extensions.join(",")} className="sr-only" tabIndex={-1} aria-hidden="true" onChange={(e) => void picked(e)} />
+        <input ref={inputRef} type="file" accept={accept} className="sr-only" tabIndex={-1} aria-hidden="true" onChange={(e) => void onPicked(e)} />
         <Button variant="primary" onClick={choose} loading={busy}>
           <FileUp aria-hidden="true" />
           Choose a file to import

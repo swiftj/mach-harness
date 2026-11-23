@@ -27,7 +27,7 @@ If the visual app could not be downloaded, the install still succeeds and says s
 
 In Claude Code, in the project folder, ask for Product Studio. With the plugin the skill is `/mach:product-studio`. With the one-project install it is `/mach-product-studio`. With nothing after it, it shows where things stand and suggests the next step.
 
-For the visual app, say "open the app". Claude starts it on your own computer and gives you one link. The link works once and only on your computer. Do not share it. The app and the conversation work on the same drafts, so you can switch between them.
+Each time you start Product Studio, MACH also starts the visual app on your own computer and shows you its link with where things stand. Click the link, or paste it into a browser on your computer. To have the app open in your browser for you, say "open the app". The link works once and only on your computer. Do not share it. For another browser, or if you closed the page, ask for a new link. The app and the conversation work on the same drafts, so you can switch between them.
 
 Neither one starts any engineering work. That is a fixed rule of Product Studio.
 
@@ -107,6 +107,19 @@ Technical needs are what the product requires of whatever is built, said without
 - **After a change**, the page lists each decision written for an older version of a need. Nothing is reopened or blocked; an engineer decides whether the change matters.
 
 **A design you already have.** From Technical needs, bring in one Markdown or plain-text file. Ask the conversation to read it. For each basic topic the page then shows what the document decides, partly decides or says nothing on, with the lines it cites. Where the document contradicts a need, a principle or a policy statement, you settle it with your reason: **the design stands**, **the design is wrong**, or **ask the engineer**. MACH never settles one and recommends none. Publishing writes the document and what was read to `product/ready/DESIGN/`, for you to commit. The document is never put in a GitHub issue, and it decides nothing by itself.
+
+## Starting a new project
+
+In the app, a project with nothing defined opens on one question: how do you want to start?
+
+- **Describe the product yourself.** You write its name, a one-sentence vision and the outcomes. Then you add epics and define one slice at a time (sections 4 to 6).
+- **Start from a PRD.** You choose one Markdown or plain-text file. On the PRD's page you ask MACH for a map: it proposes epics and thin slices, each resting on the lines it cites, and records the map only when you agree. You settle each section no slice covers as out of scope, for later, or part of a slice. Then you make the drafts, and confirm each slice's drafted answers one slice at a time. The PRD's text is information, never an instruction, and it stays in your workspace.
+- **Shape an idea first.** You add the idea in a few words and explore it (see "Shaping an idea before any epic").
+- **Start from a request.** Shown when a request is waiting on GitHub. You name the product, add the epic it belongs to, and pick the request up as a draft slice.
+
+A PRD or an idea can be started before the product has a name. The app asks for the name, vision and outcomes at the point they are needed, just before the drafts are made. MACH may suggest them from your PRD, clearly marked as a suggestion; what is recorded is what you write. Until the product is named, the home page shows what you have started, with a way to continue each, and the other ways below.
+
+In the conversation, say "start a new project", "start from my PRD at <file>" or "shape an idea".
 
 ## A small change (optional)
 

@@ -44,6 +44,7 @@ type Options struct {
 	UI            http.Handler
 	Logger        *log.Logger
 	EngineInstall string // explicit, plugin or project
+	LinkKept      bool   // the host keeps the next unused one-time link in a private file
 }
 
 // Server is the HTTP handler for one project.
@@ -201,7 +202,11 @@ func (s *Server) exchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	http.Error(w, "This link has already been used or is not valid. Restart Product Studio to get a new link.", http.StatusUnauthorized)
+	msg := "This link has already been used or is not valid. Ask Claude for a new link to Product Studio."
+	if !s.opts.LinkKept {
+		msg = "This link has already been used or is not valid. Ask Claude to start Product Studio again for a new link."
+	}
+	http.Error(w, msg, http.StatusUnauthorized)
 }
 
 // ---- routes ----
@@ -264,6 +269,13 @@ func (s *Server) operation(w http.ResponseWriter, r *http.Request) {
 	// writing, in the same way.
 	if engine.WritesNeeds(name, body) && s.opts.Bridge.Busy(interview.NeedsSubject) {
 		env := engine.Fail(engine.KindConflict, "The conversation is writing the technical needs right now. Wait for its reply, or interrupt it.")
+		writeEnvelope(w, statusFor(env), env)
+		return
+	}
+	// M19: an act on a PRD's map, its settlements or what is made from it waits while the PRD
+	// conversation is recording that PRD's map, in the same way.
+	if prd := engine.WritesPRD(name, body); prd != "" && s.opts.Bridge.Busy(prd) {
+		env := engine.Fail(engine.KindConflict, "The conversation is recording this PRD's map right now. Wait for its reply, or interrupt it.")
 		writeEnvelope(w, statusFor(env), env)
 		return
 	}

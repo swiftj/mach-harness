@@ -2,6 +2,7 @@
 import ast
 import builtins
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -101,6 +102,33 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(doctor.MIN_PYTHON, installer_constant("MIN_PYTHON"))
         self.assertEqual(doctor.DATA_DIRS, installer_constant("DATA_DIRS"))
         self.assertEqual(doctor.MANIFEST, installer_constant("MANIFEST"))
+        for prefix in installer_constant("OWN_PREFIXES"):
+            self.assertIn(prefix, doctor.OWN_PREFIXES)
+        for dest in installer_constant("OWN_FILES") | {installer_constant("STUDIO_DEST"), installer_constant("FLOOR_DEST")}:
+            self.assertTrue(dest.startswith(doctor.OWN_PREFIXES), dest)
+
+    def test_machs_files_from_different_versions_warn(self):
+        self.healthy()
+        skill = self.project / ".claude/skills/mach-ticket/scripts/issue_rules.py"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("NEW = 1\n")
+        files = {".claude/skills/mach-ticket/scripts/issue_rules.py": hashlib.sha256(b"NEW = 1\n").hexdigest(),
+                 ".claude/agents/mach-builder.md": hashlib.sha256(b"x").hexdigest(),
+                 "Makefile": hashlib.sha256(b"not MACH's own").hexdigest()}
+        (self.project / ".factory/.mach-manifest.json").write_text(json.dumps({"version": "0.19.1", "files": files}))
+        (self.project / ".claude/agents").mkdir()
+        (self.project / ".claude/agents/mach-builder.md").write_text("x")
+        _, checks, _, _ = self.checks()
+        self.assertEqual(checks["install.files"]["status"], "ok")
+        self.assertIn("All 2 of MACH's installed files match the record for MACH 0.19.1.", checks["install.files"]["detail"])
+        skill.write_text("OLD = 1\n")
+        (self.project / ".claude/agents/mach-builder.md").unlink()
+        code, checks, _, _ = self.checks()
+        self.assertEqual(code, 0)
+        found = checks["install.files"]
+        self.assertEqual(found["status"], "warn")
+        self.assertIn("do not all match the record for MACH 0.19.1 (1 changed, 1 missing;", found["detail"])
+        self.assertIn("Run the installer again", found["fix"])
 
     def test_healthy_project_passes(self):
         self.healthy()

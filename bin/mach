@@ -6,9 +6,17 @@
     mach uninstall  remove everything this tool installed and has not been changed since
     mach status     show what is installed and what has been changed
 
-It never overwrites a file it did not install, and never deletes a file that was changed after
-it was installed, unless --force is given, which backs the file up first. Tickets, specs, cells
-and archives are your project's data and are never touched. Standard library only.
+Install and update always bring MACH's own files to the version being installed: the skills,
+agents and workflow under .claude/skills/mach/, .claude/skills/mach-*, .claude/agents/mach-* and
+.claude/workflows/mach-*, and .factory/bin/mach, .factory/mach.mk and the two programs in
+.factory/bin/. MACH's scripts import each other across skills, so one old file among new ones
+stops MACH from running. A file there that was changed after it was installed, or that the
+install record does not list, is saved under .factory/mach-backup-<time>/ first and then replaced.
+Anywhere else, install never overwrites a file it did not install or that was changed after it
+was installed, unless --force is given, which backs the file up first. Uninstall never deletes a
+file that was changed after it was installed, unless --force is given, which backs it up first.
+Tickets, specs, cells and archives are your project's data and are never touched. Standard
+library only.
 """
 
 import argparse
@@ -42,6 +50,11 @@ SEEDS = {
     "AGENTS.md": "AGENTS.md",
 }
 MANAGED_TEMPLATES = {".factory/mach.mk": "mach.mk"}
+# MACH's own code: paths in a project that belong to MACH alone. A file here that differs from the version
+# being installed is saved to a backup folder and replaced, without --force (see the module's docstring).
+# .factory/mach.mk is MACH's: it says "reinstalling replaces this file", and a project's own targets go in its Makefile.
+OWN_PREFIXES = (".claude/skills/mach/", ".claude/skills/mach-", ".claude/agents/mach-", ".claude/workflows/mach-")
+OWN_FILES = {".factory/bin/mach", ".factory/mach.mk"}
 DATA_DIRS = (".factory/tickets", ".factory/inbox", ".factory/worktrees", ".factory/archive", "specs/slices")
 PLUGIN_ONLY_SKILLS = {"init"}
 SKIP_NAMES = {"__pycache__", ".DS_Store"}
@@ -97,6 +110,7 @@ STUDIO = Program("mach-studio", "The visual Product Studio app", STUDIO_DEST, "S
 FLOOR = Program("mach-observer", "The Factory Floor", FLOOR_DEST, "FLOOR_LOCAL_BUILD", "no_floor", "MACH_FLOOR", "MACH_FLOOR_URL",
                 "Everything else works without it; the Factory Floor only watches the Factory.", True)
 PROGRAMS = (STUDIO, FLOOR)
+OWN_FILES |= {program.dest for program in PROGRAMS}
 
 
 class Item(NamedTuple):
@@ -112,6 +126,35 @@ class Fail(Exception):
 
 def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def own_code(dest: str) -> bool:
+    """Whether a path in a project is MACH's own code, always brought to the installed version."""
+    return dest in OWN_FILES or dest.startswith(OWN_PREFIXES)
+
+
+def unrecorded_own(project: Path, files: Dict[str, str]) -> List[str]:
+    """Files in the skill folders MACH installed, and MACH's agents and workflows, that the install
+    record does not list (Python's compiled copies and .DS_Store aside)."""
+    found = set()
+    skills = {"/".join(dest.split("/")[:3]) for dest in files if dest.startswith(".claude/skills/") and own_code(dest)}
+    for pattern in ("skills/mach/**/*", "skills/mach-*/**/*", "agents/mach-*", "workflows/mach-*"):
+        for path in (project / ".claude").glob(pattern):
+            dest = path.relative_to(project).as_posix()
+            if dest.startswith(".claude/skills/") and "/".join(dest.split("/")[:3]) not in skills:
+                continue
+            if path.is_file() and dest not in files and not SKIP_NAMES & set(path.parts) and path.suffix != ".pyc":
+                found.add(dest)
+    return sorted(found)
+
+
+def mismatched_own(project: Path, manifest: Dict) -> Tuple[List[str], List[str], List[str]]:
+    """MACH's own files that do not match the install record: (changed, missing, not in the record)."""
+    files = manifest.get("files", {})
+    own = sorted(dest for dest in files if own_code(dest))
+    changed = [dest for dest in own if (project / dest).is_file() and sha((project / dest).read_bytes()) != files[dest]]
+    missing = [dest for dest in own if not (project / dest).is_file()]
+    return changed, missing, unrecorded_own(project, files)
 
 
 def source_root() -> Path:
@@ -438,6 +481,7 @@ def apply(project: Path, items: Sequence[Item], components: Sequence[str], versi
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log: List[str] = []
     conflicts: List[str] = []
+    saved: List[str] = []  # MACH's own files that had been changed: backed up, then replaced or removed
     wanted = {item.dest for item in items}
 
     for item in items:
@@ -459,8 +503,9 @@ def apply(project: Path, items: Sequence[Item], components: Sequence[str], versi
             continue
         if recorded.get(item.dest) == current:
             log.append(f"  update   {item.dest}")
-        elif args.force:
+        elif args.force or own_code(item.dest):
             log.append(f"  replace  {item.dest} (your version saved to {backup(project, item.dest, stamp, args.dry_run)})")
+            saved.append(item.dest)
         else:
             conflicts.append(item.dest)
             log.append(f"  SKIP     {item.dest} (changed since it was installed, or not installed by MACH)")
@@ -475,7 +520,12 @@ def apply(project: Path, items: Sequence[Item], components: Sequence[str], versi
         path = project / dest
         if not any(dest.startswith(scope) for scope in scopes) or dest in SEEDS:
             continue
-        if path.is_file() and sha(path.read_bytes()) != recorded[dest]:
+        if path.is_file() and sha(path.read_bytes()) != recorded[dest] and own_code(dest):
+            log.append(f"  remove   {dest} (no longer shipped; your version saved to {backup(project, dest, stamp, args.dry_run)})")
+            saved.append(dest)
+            if not args.dry_run:
+                path.unlink()
+        elif path.is_file() and sha(path.read_bytes()) != recorded[dest]:
             log.append(f"  keep     {dest} (no longer shipped, but you changed it)")
         else:
             log.append(f"  remove   {dest} (no longer shipped)")
@@ -522,6 +572,16 @@ def apply(project: Path, items: Sequence[Item], components: Sequence[str], versi
     title = "Would install" if args.dry_run else "Installed"
     print(f"{title} MACH {version} in {project}")
     print("\n".join(log) if log else "  Everything is already up to date.")
+    if saved:
+        folder = f".factory/mach-backup-{stamp}/"
+        one = len(saved) == 1
+        versions = "The changed version" if one else "The changed versions"
+        if args.dry_run:
+            print(f"\nMACH would replace {len(saved)} of its own files that had been changed in this project, so that all of MACH's files "
+                  f"come from version {version}. {versions} would be saved in {folder}")
+        else:
+            print(f"\nMACH replaced {len(saved)} of its own files that had been changed in this project, so that all of MACH's files "
+                  f"come from version {version}. {versions} {'is' if one else 'are'} saved in {folder}")
     if conflicts:
         print(f"\n{len(conflicts)} file(s) were skipped. Rerun with --force to replace them; your versions are backed up first.")
     if "scaffold" in components and "Makefile" not in recorded and not args.dry_run:
@@ -711,6 +771,14 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"    changed  {dest}")
     for dest in missing:
         print(f"    missing  {dest}")
+    own_changed, own_missing, unrecorded = mismatched_own(project, manifest)
+    if own_changed or own_missing or unrecorded:
+        counts = ", ".join(f"{len(part)} {what}" for part, what in ((own_changed, "changed"), (own_missing, "missing"), (unrecorded, "not in the record")) if part)
+        for dest in unrecorded:
+            print(f"    not in the record  {dest}")
+        print(f"  MACH's files here do not all match the record for MACH {manifest.get('version')} ({counts}), so they may come from "
+              "different versions and MACH may not run. To fix it, run the installer again: it brings every MACH file to one version "
+              "and saves any changed ones in .factory/mach-backup-<time>/ first.")
     for program in PROGRAMS:
         path = project / program.dest
         if program.dest not in files:
@@ -734,13 +802,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="mach", description="Install, update, inspect or remove the MACH software factory in a project.")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    def common(p: argparse.ArgumentParser, changes: bool = True) -> None:
+    install_force = ("also replace files outside MACH's own folders that you changed or MACH did not install, after backing them up "
+                     "(MACH's own files, in .claude/skills/mach*/, .claude/agents/mach-*, .claude/workflows/mach-*, .factory/bin/ "
+                     "and .factory/mach.mk, are always brought to this version, and a changed one is backed up first)")
+
+    def common(p: argparse.ArgumentParser, changes: bool = True, force: str = install_force) -> None:
         p.add_argument("--project", type=Path, default=Path.cwd(), help="the project folder (default: the current folder)")
         if changes:
             p.add_argument("--dry-run", action="store_true", help="show what would change without changing anything")
-            p.add_argument("--force", action="store_true", help="also replace or remove files you changed, after backing them up")
+            p.add_argument("--force", action="store_true", help=force)
 
-    p = sub.add_parser("install", help="install or update the skills, agents and factory files in a project")
+    p = sub.add_parser("install", help="install or update the skills, agents and factory files in a project; "
+                       "MACH's own files are always brought to this version, and a changed one is backed up first")
     common(p)
     p.add_argument("--no-scaffold", action="store_true", help="install only the skills and agents")
     p.add_argument("--no-studio", action="store_true", help="do not download the visual Product Studio app")
@@ -752,7 +825,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--no-floor", action="store_true", help="do not download the Factory Floor (the Factory's read-only observer)")
     p.set_defaults(func=cmd_scaffold)
     p = sub.add_parser("uninstall", help="remove what MACH installed; your tickets, specs and cells are kept")
-    common(p)
+    common(p, force="also remove files you changed after they were installed, after backing them up")
     p.set_defaults(func=cmd_uninstall)
     p = sub.add_parser("status", help="show what is installed, what you changed, and the open cells")
     common(p, changes=False)

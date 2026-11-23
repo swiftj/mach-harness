@@ -1,0 +1,9 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "No project yet. Define the project first.",
+  "hint": {
+    "kind": "define_project",
+    "target": null
+  }
+}

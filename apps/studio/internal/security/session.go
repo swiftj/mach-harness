@@ -20,16 +20,19 @@ const CookieName = "mach_studio_session"
 // CSRFHeader carries the session's CSRF token on every state-changing request.
 const CSRFHeader = "X-MACH-CSRF"
 
-// Guard owns the secrets for one running host. There is one session: the browser that exchanged
-// the start token.
+// Guard owns the secrets for one running host. There is one session for the life of the host.
+// A one-time start link trades for it once; each trade mints the next start link at once and hands
+// it to OnMint (the host keeps it in a private file, for a second browser or a page closed by
+// mistake). Every browser that traded a link holds the same session cookie and CSRF token: a later
+// link never makes a second session value, it lets one more browser into the one there is.
 type Guard struct {
 	port int
 
 	mu         sync.Mutex
-	startToken string
-	used       bool
+	startToken string // "" when no further link could be made
 	session    string
 	csrf       string
+	onMint     func(url string)
 }
 
 // NewGuard makes fresh random secrets for a host listening on port.
@@ -60,24 +63,53 @@ func equal(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
-// StartURL is printed and opened once at start-up.
+// StartURL is the current, unused one-time link; "" when none could be made.
 func (g *Guard) StartURL() string {
-	return "http://127.0.0.1:" + strconv.Itoa(g.port) + "/?t=" + g.startToken
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.urlFor(g.startToken)
+}
+
+func (g *Guard) urlFor(token string) string {
+	if token == "" {
+		return ""
+	}
+	return "http://127.0.0.1:" + strconv.Itoa(g.port) + "/?t=" + token
+}
+
+// OnMint registers fn to receive each new one-time link; it is called with the current one at once.
+// fn runs while the guard is locked, so the links reach it in the order they were made and a file
+// it writes always holds the newest; it must not call the guard.
+func (g *Guard) OnMint(fn func(url string)) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.onMint = fn
+	if url := g.urlFor(g.startToken); fn != nil && url != "" {
+		fn(url)
+	}
 }
 
 // CSRF is the token the app sends back in the X-MACH-CSRF header.
 func (g *Guard) CSRF() string { return g.csrf }
 
-// Exchange trades the start token for the session cookie, once. It returns true when it did.
-// A token that is wrong, or already used, is refused; it never issues a second session.
+// Exchange trades the current start token for the session cookie, once, and mints the next start
+// token, which it hands to OnMint. It returns true when it traded. A token that is wrong, or already
+// used, is refused. It never issues a second session value: every trade gives the same cookie.
 func (g *Guard) Exchange(token string) (cookie *http.Cookie, ok bool) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.used || token == "" || !equal(token, g.startToken) {
+	if token == "" || g.startToken == "" || !equal(token, g.startToken) {
+		g.mu.Unlock()
 		return nil, false
 	}
-	g.used = true
-	g.startToken = "" // nothing left to match
+	next, err := randomToken()
+	if err != nil {
+		next = "" // no further link until a restart; this trade still succeeds
+	}
+	g.startToken = next
+	if url := g.urlFor(next); g.onMint != nil && url != "" {
+		g.onMint(url)
+	}
+	g.mu.Unlock()
 	return &http.Cookie{
 		Name:     CookieName,
 		Value:    g.session,

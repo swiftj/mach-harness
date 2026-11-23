@@ -208,7 +208,7 @@ test("the four parts are the path: the part the path is at opens, the drafts sta
 
 test("each part's row says its state in words, from the engine's answer alone", () => {
   assert.equal(importSummary(uncovered.data.prd), "Markdown, 5 sections, 22 lines");
-  assert.equal(mapSummary(noMap.data), "No map yet: it is proposed in Claude Code");
+  assert.equal(mapSummary(noMap.data), "No map yet: MACH proposes it here");
   assert.equal(mapSummary(uncovered.data), "1 new epic and 2 thin slices in build order");
   assert.match(mapSummary(applied.data), /kept as it was when the drafts were made$/);
   assert.equal(settleSummary(uncovered.data.coverage), "3 sections still to settle: 1, 4, 5");

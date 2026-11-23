@@ -6,7 +6,7 @@ In the commands below, `RUN` means `python3 .claude/skills/mach/scripts/run.py -
 
 ## 1. Installation and repository requirements
 
-You need Claude Code, `git` and `python3` 3.8 or later. Install as a plugin (`/plugin marketplace add swiftj/mach-harness`, `/plugin install mach@mach-harness`, then `/mach:init` in each project) or with `install.sh` (script install, commands such as `/mach`). `--dry-run` shows what would change. Install again to update in place. `python3 .factory/bin/mach uninstall` removes only what the manifest lists, and keeps files you changed and everything under `.factory/` that is state.
+You need Claude Code, `git` and `python3` 3.8 or later. Install as a plugin (`/plugin marketplace add swiftj/mach-harness`, `/plugin install mach@mach-harness`, then `/mach:init` in each project) or with `install.sh` (script install, commands such as `/mach`). `--dry-run` shows what would change. Install again to update in place. An update brings every one of MACH's own files (`.claude/skills/mach*/`, `.claude/agents/mach-*`, `.claude/workflows/mach-*`, `.factory/bin/`, `.factory/mach.mk`) to the new version, because the scripts import each other across skills. One you changed is saved to `.factory/mach-backup-<time>/` first and then replaced, without `--force`. `python3 .factory/bin/mach status` and `/mach doctor` say when MACH's files do not match the installed version. `python3 .factory/bin/mach uninstall` removes only what the manifest lists, and keeps files you changed and everything under `.factory/` that is state.
 
 A missing Git or Python stops the installer with a message that names `xcode-select --install` on a Mac. Python 3.8 is the stated minimum. Only 3.9.6 and 3.15 were run.
 

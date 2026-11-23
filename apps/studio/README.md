@@ -53,7 +53,20 @@ bin/mach-studio --project ~/work/team-space --no-open
 | `--python <path>` | The interpreter. Default: `python3` on `PATH`. For tests. |
 | `--engine <path>` | `studio.py`. Default: found as below. For tests. |
 
-Start-up prints `Open: http://127.0.0.1:<port>/?t=<token>` and opens it. The link works once.
+Start-up prints `Open: http://127.0.0.1:<port>/?t=<token>` and opens it (not with `--no-open`,
+which is how the product-studio skill starts it). The link works once. In a project that has a
+`.factory/` folder the host also keeps the next unused link in `.factory/local/studio/link` (mode
+0600, in a folder private to the user with its own `.gitignore`; a symbolic link in place of either
+folder is refused), writes it at start, replaces it each time a link is used, and removes it on exit.
+Every link leads into the same single session: a later link lets one more browser in, it never makes
+a second session. A spent link opened in a browser without the session says to ask Claude for a new one.
+
+One host per project: the host holds an exclusive lock on `.factory/local/studio/lock` while it runs,
+and a second start for the same project stops at once with `another Product Studio is already
+running for this project` (exit status 1), before it clears or serves anything. The lock ends with
+the process, so after a crash the next start takes it and replaces the stale link file. A project
+with no `.factory/` keeps no file and holds no lock.
+
 Ctrl+C stops every running interview turn (its process group), ends each interview with
 `ended {reason: host_shutdown}`, then stops the server.
 

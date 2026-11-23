@@ -82,8 +82,27 @@ export interface NeedsConversationClient extends Pick<InterviewClient, "subscrib
   start(): Promise<StartResult>;
 }
 
+/**
+ * M19: the PRD conversation, for one imported PRD. The same routes, named by `prd_id`; once started, it is subscribed,
+ * replied to, interrupted and stopped by its interview ID as an interview is. Its rules let it read the PRD and record
+ * that PRD's map from one fixed file; it can never settle a section, make the drafts, define the project or confirm a
+ * slice's answers (apps/studio/internal/interview, the PRD mode). Every act on that PRD's map, its settlements or its
+ * drafts is refused with `conflict` while its turn runs. It needs no project.
+ */
+export interface PrdConversationClient extends Pick<InterviewClient, "subscribe" | "reply" | "interrupt" | "stop"> {
+  /** GET /api/interview?prd_id=. Null when the PRD has never had a conversation here. */
+  current(prdId: string, signal?: AbortSignal): Promise<InterviewSummary | null>;
+  /** GET /api/interview/history?prd_id=. */
+  history(prdId: string, signal?: AbortSignal): Promise<InterviewHistory>;
+  /** POST /api/interview {prd_id}. Refused once the drafts are made from it; `conflict` when another window holds it. */
+  start(prdId: string): Promise<StartResult>;
+}
+
 /** IDEA-NNN, checked before it is placed in a URL. */
 export const IDEA_ID = /^IDEA-\d{3,}$/;
+
+/** PRD-NN, checked before it is placed in a URL. */
+export const PRD_ID = /^PRD-\d{2,}$/;
 
 const INTERVIEW_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -244,6 +263,35 @@ export function createNeedsConversationClient(
     },
     start() {
       return deps.post("/api/interview", "conversation.start", { needs: true }) as Promise<StartResult>;
+    },
+    subscribe: interviews.subscribe,
+    reply: interviews.reply,
+    interrupt: interviews.interrupt,
+    stop: interviews.stop,
+  };
+}
+
+/** M19: the PRD conversation's client (PrdConversationClient). */
+export function createPrdConversationClient(
+  deps: Parameters<typeof createInterviewClient>[0],
+  interviews: InterviewClient = createInterviewClient(deps),
+): PrdConversationClient {
+  const check = (prdId: string, operation: string) => {
+    if (!PRD_ID.test(prdId)) throw new MachApiError("invalid", `"${prdId}" is not a PRD ID.`, operation);
+    return encodeURIComponent(prdId);
+  };
+  return {
+    async current(prdId, signal) {
+      const id = check(prdId, "conversation.current");
+      const data = (await deps.get(`/api/interview?prd_id=${id}`, "conversation.current", signal)) as { interview: InterviewSummary | null };
+      return data.interview;
+    },
+    async history(prdId, signal) {
+      return (await deps.get(`/api/interview/history?prd_id=${check(prdId, "conversation.history")}`, "conversation.history", signal)) as InterviewHistory;
+    },
+    start(prdId) {
+      if (!PRD_ID.test(prdId)) return Promise.reject(new MachApiError("invalid", `"${prdId}" is not a PRD ID.`, "conversation.start"));
+      return deps.post("/api/interview", "conversation.start", { prd_id: prdId }) as Promise<StartResult>;
     },
     subscribe: interviews.subscribe,
     reply: interviews.reply,

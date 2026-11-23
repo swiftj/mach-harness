@@ -14,6 +14,7 @@ command reads them and hands main() the check and its one-line offer (extra_chec
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -30,6 +31,9 @@ MIN_PYTHON = (3, 8)
 # Mirrors DATA_DIRS in bin/mach: the folders the installer scaffolds (tests hold the two equal).
 DATA_DIRS = (".factory/tickets", ".factory/inbox", ".factory/worktrees", ".factory/archive", "specs/slices")
 MANIFEST = ".factory/.mach-manifest.json"
+# MACH's own files in a project, which the installer always brings to the installed version: bin/mach's
+# OWN_PREFIXES and OWN_FILES (.factory/bin/ holds only MACH's programs). tests/test_doctor.py holds the two the same.
+OWN_PREFIXES = (".claude/skills/mach/", ".claude/skills/mach-", ".claude/agents/mach-", ".claude/workflows/mach-", ".factory/bin/", ".factory/mach.mk")
 CONFIG = ".factory/config.json"
 AUDIT_REPORT = ".factory/audit-report.json"
 RULE_FILES = ("CLAUDE.md", "AGENTS.md", "REVIEW.md")
@@ -195,6 +199,34 @@ def check_tracker(project: Path, config: Any, gh_state: Optional[Dict[str, Any]]
                   "Run 'gh auth login', then 'gh auth status' to confirm.")]
 
 
+def check_own_files(project: Path, manifest: Dict[str, Any]) -> Dict[str, str]:
+    """Whether MACH's own files match the install record for the installed version. MACH's scripts import each
+    other across skills, so files from two versions can stop MACH from running. Same rule as bin/mach's own_code."""
+    files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+    own = sorted(dest for dest in files if isinstance(dest, str) and isinstance(files[dest], str) and dest.startswith(OWN_PREFIXES))
+    changed, missing = [], []
+    for dest in own:
+        path = project / dest
+        if not path.is_file():
+            missing.append(dest)
+        else:
+            try:
+                same = hashlib.sha256(path.read_bytes()).hexdigest() == files[dest]
+            except OSError:
+                same = False
+            if not same:
+                changed.append(dest)
+    version = manifest.get("version") or "(version not recorded)"
+    if not changed and not missing:
+        return check("install.files", "MACH's files", "ok", f"All {len(own)} of MACH's installed files match the record for MACH {version}.")
+    counts = ", ".join(f"{len(part)} {what}" for part, what in ((changed, "changed"), (missing, "missing")) if part)
+    first = (changed + missing)[0]
+    return check("install.files", "MACH's files", "warn",
+                 f"MACH's files here do not all match the record for MACH {version} ({counts}; first: {first}), so they may come from "
+                 "different versions and MACH may not run.",
+                 "Run the installer again: it brings every MACH file to one version and saves any changed ones in .factory/mach-backup-<time>/ first.")
+
+
 def check_install(project: Path, fix: bool, created: List[str]) -> Tuple[List[Dict[str, str]], Any]:
     factory = project / ".factory"
     if not factory.is_dir():
@@ -222,6 +254,7 @@ def check_install(project: Path, fix: bool, created: List[str]) -> Tuple[List[Di
                                  "Run the installer again to rewrite its record."))
         else:
             results.append(check("install.manifest", "Install record", "ok", f"MACH {version or '(version not recorded)'} recorded in {MANIFEST}."))
+            results.append(check_own_files(project, manifest))
     else:
         results.append(check("install.manifest", "Install record", "warn",
                              f"{MANIFEST} is missing, so 'mach status' and 'mach uninstall' cannot tell what was installed.",

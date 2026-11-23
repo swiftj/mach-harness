@@ -63,27 +63,40 @@ Type:
 /mach-product-studio
 ```
 
-MACH tells you where things stand and suggests a next step. From here on you can simply type what you want in plain words.
+MACH tells you where things stand and suggests a next step. It also starts Product Studio's visual app on your computer and gives you a link to it. From here on you can simply type what you want in plain words.
 
 > If that command is not found, your engineer installed MACH as a plugin. Type `/mach:product-studio` instead. Everything else is the same.
 
-**Prefer a screen to a conversation?** Say:
+**Prefer a screen to a conversation?** Click the link, or paste it into a browser on your computer. Or say:
 
 ```
 open the app
 ```
 
-Product Studio opens in your browser, on your own computer. The app and the conversation work on the same drafts, so switch between them whenever you like.
+Product Studio opens in your browser, on your own computer. A link works once. For another browser, or if you closed the page, ask for a new link. The app and the conversation work on the same drafts, so switch between them whenever you like.
 
 ### Step 5. Tell MACH about the product
 
-If the project is new, say:
+A product has a name, a vision, and one or more outcomes. An outcome is a result for a person, such as "Invited members can open the campaigns they were invited to". It is not a list of features.
+
+**In the app**, a new project opens on one question: how do you want to start?
+
+| Way | What you need |
+|---|---|
+| **Describe the product yourself** | What you already know about it. |
+| **Start from a PRD** | One Markdown or plain-text file. |
+| **Shape an idea first** | A few words for the idea. |
+| **Start from a request** | Nothing: shown when someone has filed one on GitHub. |
+
+With a PRD or an idea you do not have to name the product first. The app asks for the name, vision and outcomes at the point it needs them, just before it makes the drafts.
+
+**In the conversation**, say:
 
 ```
 start a new project
 ```
 
-MACH asks for a name, a vision, and one or more outcomes. An outcome is a result for a person, such as "Invited members can open the campaigns they were invited to". It is not a list of features.
+MACH asks for the name, vision and outcomes.
 
 Now choose your path.
 
@@ -104,6 +117,8 @@ start from my PRD at ~/Documents/checkout-prd.md
 ```
 
 MACH gives it an ID (`PRD-01`) and tells you how many sections it found. Nothing is sent anywhere.
+
+In the app, choose **Start from a PRD** and pick the file. Every step below then happens on the PRD's page: ask MACH for a map, settle what was left out, name the product if it has no name yet, and make the drafts.
 
 ### Step 3. Read the proposed map
 
@@ -279,7 +294,7 @@ It fetches the newest release and checks it. Then restart Claude Code.
 
 Either way:
 
-- **Your work is kept.** Your drafts, your slices and your settings are not touched. Only MACH's own files are replaced.
+- **Your work is kept.** Your drafts, your slices and your settings are not touched. Only MACH's own files are replaced. If someone changed one of MACH's files, MACH first saves that version in a backup folder inside `.factory`, and says so at the end.
 - **Copy the `.factory` folder first** if work is in progress, so you have a spare.
 - **Check it worked.** Type `/mach doctor`.
 - **See what is new** in the [release notes](RELEASE_NOTES_DRAFT.md).

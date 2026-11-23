@@ -1759,7 +1759,9 @@ export interface InterviewEventMap {
     slice_id?: string;
     idea_id?: string;
     needs?: true;
-    what: Array<"spec" | "why" | "work_order" | "brief" | "case" | "lookups" | "idea" | "needs" | "design" | (string & {})>;
+    /** M19: the PRD conversation, with prd (the PRD's map). */
+    prd_id?: string;
+    what: Array<"spec" | "why" | "work_order" | "brief" | "case" | "lookups" | "idea" | "needs" | "design" | "prd" | (string & {})>;
   };
   turn: { outcome: TurnOutcome; seconds: number; cost_usd: number | null; session_cost_usd: number | null; refused: number | string[] | null };
   /** The product manager's own reply, first in the turn it starts. */
@@ -1790,6 +1792,8 @@ export interface InterviewSummary {
   idea_id?: string;
   /** M17: the needs conversation (one per project). */
   needs?: true;
+  /** M19: the PRD conversation for one PRD. */
+  prd_id?: string;
   /** A process holds this slice's interview now. False when only a saved session exists. */
   live: boolean;
   state: InterviewHostState | "saved";
@@ -1808,6 +1812,8 @@ export interface InterviewHistory {
   idea_id?: string;
   /** M17: the needs conversation's history. */
   needs?: true;
+  /** M19: the PRD conversation's history. */
+  prd_id?: string;
   events: Array<{ at: string; interview_id: string; event: InterviewEventName; data: unknown }>;
   /** The oldest events were dropped to keep the history small. */
   truncated: boolean;
@@ -1821,6 +1827,8 @@ export interface StartResult {
   idea_id?: string;
   /** M17: the needs conversation started. */
   needs?: true;
+  /** M19: the PRD conversation started for this PRD. */
+  prd_id?: string;
   resumed: boolean;
 }
 

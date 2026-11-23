@@ -2,7 +2,7 @@
 
 MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A product manager describes what is wanted; the factory turns each piece into a checked specification, builds it test-first in an isolated workspace, proves it works with captured evidence, has it reviewed by a panel of independent agents, and merges it. Every station hands the next one artifacts MACH has checked, not a claim that the work is done.
 
-> **Status: 0.19.1.** [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) is the full blueprint.
+> **Status: 0.20.0.** [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) is the full blueprint.
 
 ![The Factory Floor: an isometric drawing of the factory with three tickets being built, each in its own cell](docs/images/factory-floor-isometric.jpg)
 
@@ -83,10 +83,12 @@ curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh
 
 This installs the newest release, after checking it, and prints one `MACH source:` line saying what it verified. Restart Claude Code afterwards. Run it again later to update.
 
+Each install brings all of MACH's own files to the new version: its skills, agents and workflow in `.claude/`, and its files in `.factory/bin/` and `.factory/mach.mk`. MACH's scripts depend on each other, so they must all come from one version. If you or a Claude session changed one of those files, MACH saves your version in `.factory/mach-backup-<time>/` first and says so at the end. Your tickets, specs, settings and Product Studio drafts are never touched. `python3 .factory/bin/mach status` tells you if MACH's files do not match the installed version; running the installer again fixes that.
+
 If it says the newest release could not be found, GitHub's API did not answer from your network (it allows a limited number of unsigned requests an hour). Name the release yourself:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh | MACH_VERSION=0.19.1 bash
+curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh | MACH_VERSION=0.20.0 bash
 ```
 
 To install what is on the `main` branch ahead of the next release, use `MACH_REF=main` in place of `MACH_VERSION`; a branch install is not checksum-verified, and the installer says so.
@@ -144,9 +146,9 @@ Open Claude Code in the project folder and type:
 /mach-product-studio
 ```
 
-With nothing after it, it shows where things stand and suggests the next step. Say "open the app" to work in your browser instead; the app and the conversation share the same drafts.
+With nothing after it, it shows where things stand and suggests the next step. It also starts the visual app on your computer and shows its link: click it, or say "open the app", to work in your browser instead. The app and the conversation share the same drafts.
 
-1. **Describe the project.** A name, a vision, and the outcomes you want for people.
+1. **Describe the project.** A name, a vision, and the outcomes you want for people. In the app, a new project first asks how you want to start: describe the product, start from a PRD, shape an idea first, or start from a request waiting on GitHub.
 2. **Add an epic**, a larger capability that several slices of intent deliver. An epic needs no approval; each slice is approved on its own when you mark it ready.
 3. **Start a slice.** Claude interviews you one question at a time. Each question is a yes-or-no proposal with a recommended answer:
 
@@ -515,7 +517,7 @@ Plugin:
 /plugin uninstall mach@mach-harness
 ```
 
-Uninstall removes exactly the files MACH installed and you have not changed (and Python's compiled copies of those scripts, which it lists), and takes its section back out of `CLAUDE.md` and `.gitignore`. A file you edited is kept and reported; `--force` removes it after saving a backup. Your tickets, specs, cells and archives are your project's data and are never touched. An untouched project is left byte-for-byte as it was.
+Uninstall removes exactly the files MACH installed and you have not changed (and Python's compiled copies of those scripts, which it lists), and takes its section back out of `CLAUDE.md` and `.gitignore`. A file you edited is kept and reported; `--force` removes it after saving a backup in `.factory/mach-backup-<time>/`. Your tickets, specs, cells and archives are your project's data and are never touched. An untouched project is left byte-for-byte as it was.
 
 ## Developing MACH
 

@@ -261,6 +261,19 @@ class TakeTest(TakeBase):
         self.set_gh(me="ada-pm")
         self.assertTrue({r["slice_id"]: r for r in self.ok(self.a, "refresh")["github"]["slices"]}[slice_id]["newer_elsewhere"])
 
+    def test_taken_on_a_computer_where_the_factory_already_has_it(self):
+        (slice_id,) = self.ada_ready()
+        number = self.slice_issue(slice_id)[0]["number"]
+        # The Factory on this computer took the slice in: its copy, named from the spec's title, in a cell and on main.
+        for where in (f".factory/worktrees/{number}/repo/specs/slices", "specs/slices"):
+            folder = self.b / where
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / f"{slice_id}-invite-a-teammate-by-email.md").write_text(spec_for(slice_id))
+        taken = self.ok(self.b, "slice", "take", str(number))
+        self.assertEqual((taken["taken"], taken["issue"]), (True, number))
+        self.ok(self.b, "slice", "reopen", slice_id)
+        self.assertEqual([line for line in self.ok(self.b, "slice", "check", slice_id)["errors"] if "duplicate" in line], [])
+
     def test_by_slice_id_and_repeated(self):
         (slice_id,) = self.ada_ready()
         taken = self.ok(self.b, "slice", "take", slice_id)
