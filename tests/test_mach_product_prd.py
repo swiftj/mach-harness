@@ -375,7 +375,8 @@ class ConfirmTest(PrdBase):
 
 
 class NeverReachesGitHubTest(issues_tests.IssuesBase):
-    """With gh standing in on the PATH: the prd commands call it not at all, and marking a PRD-made slice
+    """With gh standing in on the PATH: the prd commands call it not at all, but for apply's read of the numbers
+    already in use (M20), and marking a PRD-made slice
     ready sends the issue its spec and why, which name the PRD by ID, hash and lines, never its text."""
 
     def test_the_prd_text_never_reaches_any_gh_command_or_issue(self):
@@ -395,7 +396,9 @@ class NeverReachesGitHubTest(issues_tests.IssuesBase):
         self.ok(self.a, "prd", "confirm", "SLICE-001", "--accept", "all")
         resumed = self.ok(self.a, "slice", "resume", "SLICE-001")["prd"]
         self.ok(self.a, "prd", "status", "PRD-01")
-        self.assertEqual(len(self.gh()["calls"]), calls_before)  # not one gh call
+        # Not one gh call but apply's reads of the numbers GitHub's issues hold (M20), which carry nothing of the PRD.
+        reads = [call[:2] for call in self.gh()["calls"][calls_before:]]
+        self.assertTrue(set(map(tuple, reads)) <= {("repo", "view"), ("issue", "list")}, reads)
         self.write_slice(self.a, "SLICE-001")
         why = self.draft(self.a, "product/intents/SLICE-001.md")
         why.write_text(why.read_text().replace("- **Status:**", resumed["why_line"] + "\n- **Status:**"))

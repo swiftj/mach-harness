@@ -184,7 +184,7 @@ Marking a slice ready is your act: it approves the slice and hands it to the bui
 
 ## 7. Refreshing, and keeping in step
 
-Product Studio refreshes at the start of a session. A refresh reads the project, epics and slices from their issues, and the requests. It never changes your drafts. For each slice it can tell you:
+Product Studio refreshes at the start of a session. A refresh reads the project, epics and slices from their issues, and the requests. It never changes a slice's text. For each slice it can tell you:
 
 - **Changed on GitHub:** the issue was edited after you approved it, so the builders will not take it. Mark it ready again to put your approved version back.
 - **Someone else saved a newer version:** choose yours or theirs, whole. Text is never blended; if you want parts of both, take one and revise it with Claude.
@@ -192,6 +192,15 @@ Product Studio refreshes at the start of a session. A refresh reads the project,
 - **A question from the builders:** see section 8.
 
 If GitHub could not be reached, it says so and carries on with what you have.
+
+### Working with other product managers
+
+Each product manager has a private workspace on their own computer. Your drafts stay yours until you mark a slice ready. A repository holds one project, and everyone shares its project issue and its epic issues.
+
+- **Starting the project.** If the repository already has a project on GitHub, MACH takes its name, vision and outcomes when you start, instead of making a second one. If it has more than one, MACH stops and names them. Ask whoever looks after the repository to close the one that should not be there.
+- **The same number at the same moment.** If you and someone else mark a slice ready at the same moment with the same number, the issue GitHub made first keeps it. If yours came second, MACH tells you at once who has the number and which issue. It closes your issue before the builders could see it, and your slice goes back to waiting for your approval. Give it a new number and mark it ready again. The same holds for an epic. A refresh on either computer reports it too, if the moment was missed.
+- **The project's and epics' text.** MACH never writes your copy of the project, or of an epic, over a version someone else saved. If someone else changed it and you had not, a refresh takes theirs into your workspace. If you both changed it, MACH says "someone else changed the project" (or the epic) and leaves GitHub as it is. You choose yours or theirs. If you keep yours, MACH writes it the next time you mark a slice ready.
+- **Starting from a PRD or an idea.** Before MACH numbers several new epics and slices at once, it reads which numbers are already in use on GitHub.
 
 ## 8. A question from the builders
 
