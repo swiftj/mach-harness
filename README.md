@@ -162,7 +162,7 @@ With nothing after it, it shows where things stand and suggests the next step. S
 4. **Mark the slice ready** once the spec passes its checks and no question is open. It is saved as a GitHub issue under its epic's issue, with your approval recorded on it; the builders take it from there. Without GitHub on your computer it is written to a folder you can hand to an engineer. Marking a slice ready starts no engineering work by itself.
 5. **Change a ready slice** by saying so: it is taken back from the builders, you revise it, and you mark it ready again. "Refresh" shows each slice's issue, whether the builders have it, and anything changed on GitHub after you approved it.
 
-Everything you write is a private draft on your computer until you mark a slice ready. Full guide: [Product Manager Guide](docs/guides/PRODUCT_MANAGER_GUIDE.md).
+Everything you write is a private draft on your computer until you mark a slice ready. New to MACH and Claude Code: [Quick start for product managers](docs/guides/PRODUCT_MANAGER_QUICK_START.md). Full guide: [Product Manager Guide](docs/guides/PRODUCT_MANAGER_GUIDE.md).
 
 ### Starting from a GitHub issue
 
@@ -493,6 +493,7 @@ A high-risk change always needs a person's approval in review unless you change 
 
 | Guide | For |
 |---|---|
+| [Quick start for product managers](docs/guides/PRODUCT_MANAGER_QUICK_START.md) | New to MACH and Claude Code: set up, then a first slice from a PRD or from an idea |
 | [Product Manager Guide](docs/guides/PRODUCT_MANAGER_GUIDE.md) | Product Studio from first project to recorded acceptance |
 | [Engineer Guide](docs/guides/ENGINEER_GUIDE.md) | Intake, the supervisor, human gates, recovery, release qualification |
 | [Station Reference](docs/guides/STATION_REFERENCE.md) | What each station does and what it refuses |
