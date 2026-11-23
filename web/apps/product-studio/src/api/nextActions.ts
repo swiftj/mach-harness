@@ -45,6 +45,9 @@ export function routeFor(action: NextAction): ActionRoute {
       return { type: "navigate", to: "/inbox", label: "Choose a version" };
     case "renumber_slice":
       return slice ? { type: "renumber", id: slice, label: "Give it a new number" } : { type: "navigate", to: "/inbox", label: "Open decisions" };
+    case "renumber_epic":
+      // M20: an epic's number taken at the same moment by someone else's epic: the same act, in place.
+      return kind === "epic" && id ? { type: "renumber", id, label: "Give it a new number" } : { type: "navigate", to: "/vision", label: "Open the epics" };
     default:
       return byTarget(id);
   }

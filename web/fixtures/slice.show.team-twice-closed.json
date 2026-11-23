@@ -683,7 +683,7 @@
       },
       "title": "Invite a teammate by email",
       "shipped": {
-        "commit": "e8cd421a72d42afc840a17d28846890b47cc8ff2",
+        "commit": "31cb4a157cd0510629cfbc7e6e205b6b57cc63fa",
         "branch": "main",
         "rules": 0,
         "notes": [
@@ -709,7 +709,9 @@
         "issue": 4,
         "holder": 3,
         "by": null,
-        "at": "2026-11-23T22:00:14Z"
+        "at": "2026-11-23T22:38:27Z",
+        "issue_url": "https://github.com/acme/team-space/issues/4",
+        "holder_url": "https://github.com/acme/team-space/issues/3"
       },
       "question": null,
       "question_note": null,

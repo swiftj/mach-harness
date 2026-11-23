@@ -19,7 +19,7 @@
         "artifact": "SLICE-001",
         "kind": "slice",
         "reason": "Someone else marked a slice ready with the same number at the same moment, so it needs a new number and your approval again.",
-        "at": "2026-11-23T21:59:57Z"
+        "at": "2026-11-23T22:38:23Z"
       }
     ],
     "epics": [
@@ -34,6 +34,7 @@
         "issue": 2,
         "url": "https://github.com/acme/team-space/issues/2",
         "changed_elsewhere": null,
+        "same_moment": null,
         "counts": {
           "total": 1,
           "by_progress": {
@@ -71,7 +72,9 @@
             "issue": 4,
             "holder": 3,
             "by": "ada-pm",
-            "at": "2026-11-23T21:59:57Z"
+            "at": "2026-11-23T22:38:23Z",
+            "issue_url": "https://github.com/acme/team-space/issues/4",
+            "holder_url": "https://github.com/acme/team-space/issues/3"
           },
           "question": null,
           "question_note": null,
@@ -135,6 +138,7 @@
       }
     ],
     "same_id_twice": [],
+    "project_on_github": null,
     "github": {
       "repository": "acme/team-space",
       "form": "sub_issues",

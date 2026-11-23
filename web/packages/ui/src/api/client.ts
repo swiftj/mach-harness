@@ -17,7 +17,7 @@ import { readOnlyOperations, type DraftRead, type DraftWriteResult, type Operati
 /** The envelope every host response uses (contract section 4). */
 export type Envelope<T> =
   | { ok: true; data: T }
-  | { ok: false; error: { kind: HostErrorKind; message: string; hint?: { kind: string; target: string | null } | null } };
+  | { ok: false; error: { kind: HostErrorKind; message: string; hint?: { kind: string; target: string | null; issues?: unknown } | null } };
 
 export interface TransportRequest {
   method: "GET" | "POST" | "PUT";
@@ -166,7 +166,8 @@ export function createClient(options: ClientOptions = {}): MachClient {
     // 401 means the session cookie is missing or expired: the window must be reopened from the link.
     // A 403 "unauthorized" is a refused CSRF or Origin check on one request, not a lost session.
     connection.set(envelope.error.kind === "unauthorized" && response.status === 401 ? "unauthorized" : "online");
-    const hint = envelope.error.hint && typeof envelope.error.hint.kind === "string" ? { kind: envelope.error.hint.kind, target: envelope.error.hint.target ?? null } : null;
+    const raw = envelope.error.hint;
+    const hint = raw && typeof raw.kind === "string" ? { kind: raw.kind, target: raw.target ?? null, ...hintIssues(raw.issues) } : null;
     throw new MachApiError(envelope.error.kind, envelope.error.message, operation, response.status, hint);
   }
 
@@ -225,4 +226,13 @@ export function createClient(options: ClientOptions = {}): MachClient {
     needsConversation: createNeedsConversationClient(interviewDeps, interview),
     prdConversation: createPrdConversationClient(interviewDeps, interview),
   };
+}
+
+/** M20: the issues a refusal names, each with the address the engine gave (`several_projects`); nothing when absent or malformed. */
+function hintIssues(value: unknown): { issues?: Array<{ issue: number; url: string | null }> } {
+  if (!Array.isArray(value)) return {};
+  const issues = value
+    .filter((item): item is { issue: number; url?: unknown } => typeof item === "object" && item !== null && Number.isInteger((item as { issue?: unknown }).issue))
+    .map((item) => ({ issue: item.issue, url: typeof item.url === "string" && item.url.startsWith("https://github.com/") ? item.url : null }));
+  return issues.length ? { issues } : {};
 }

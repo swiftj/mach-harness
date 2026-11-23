@@ -21,7 +21,9 @@
  *   ?team=project-unreadable#/vision         The other change is not in MACH's form: theirs cannot be shown or taken.
  *   ?team=epic-changed#/vision               Both changed EPIC-001's criteria: the choice under the epic (and on
  *                                            #/epics/EPIC-001/today).
- *   ?team=start-taken#/vision                No project yet; naming it takes the project already on GitHub (Ada's).
+ *   ?team=start-taken#/vision                No project yet; naming it takes the project already on GitHub (Ada's). Once
+ *                                            the home's refresh has read GitHub (#/), the start screen and the form say so
+ *                                            before anything is typed.
  *   ?team=start-not-checked#/vision          Naming it while GitHub cannot be read.
  *   ?team=start-several#/vision              Two project issues on GitHub: naming it is refused, naming both.
  *   ?team=prd-not-checked#/prds/PRD-01       Making a PRD's drafts while GitHub cannot be read.
@@ -58,7 +60,7 @@ function answer(name: string): TransportResponse {
 }
 
 /** What the person did on this page. */
-const done = { renumbered: false, epicRenumbered: false, ready: false, took: null as "mine" | "theirs" | null, named: false, applied: false };
+const done = { renumbered: false, epicRenumbered: false, ready: false, took: null as "mine" | "theirs" | null, named: false, applied: false, refreshed: false };
 
 export const teamScenario = (): string | null => devParam("team");
 
@@ -82,6 +84,7 @@ function statusFor(team: string): string | null {
     case "epic-changed":
       return done.took ? `status.team-epic-${done.took}` : "status.team-epic-changed";
     case "start-taken":
+      return done.named ? "status.team-taken" : done.refreshed ? "status.team-start-known" : "status.team-start";
     case "start-not-checked":
       // After naming it, start-not-checked borrows start-taken's status: the same words were given in both runs.
       return done.named ? "status.team-taken" : "status.team-start";
@@ -96,6 +99,8 @@ function statusFor(team: string): string | null {
 function refreshFor(team: string): string | null {
   switch (team) {
     case "start-taken":
+      done.refreshed = true;
+      return "refresh.team-start-taken";
     case "start-not-checked":
       return "refresh.start-empty";
     case "start-several":

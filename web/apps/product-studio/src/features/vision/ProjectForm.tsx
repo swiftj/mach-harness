@@ -6,6 +6,8 @@ import { useEngineAct } from "../../api/act";
 import { projectIdFrom } from "../home/start/model";
 import { rememberProjectStart } from "../../api/projectStart";
 import { projectStartNote } from "../../shared/team";
+import { ProjectOnGithubNotice } from "../../shared/ProjectStartNotice";
+import { useStatus } from "../../api/store";
 
 /* ── Outcomes ────────────────────────────────────────────────────────── */
 
@@ -73,6 +75,8 @@ export function ProjectCreator({
   doneVerb?: string;
 }) {
   const act = useEngineAct();
+  // M20: the repository's project already on GitHub, as last read; null when there is none or GitHub was not read.
+  const onGithub = useStatus().data?.project_on_github ?? null;
   const [name, setName] = useState("");
   const [vision, setVision] = useState("");
   const [outcomes, setOutcomes] = useState<string[]>([""]);
@@ -103,6 +107,8 @@ export function ProjectCreator({
 
   return (
     <form onSubmit={submit} noValidate aria-label="Name the product" className="flex max-w-[40rem] flex-col gap-6">
+      {/* M20: said before anything is typed. Without a reading of GitHub the form is the same, with the general note below. */}
+      <ProjectOnGithubNotice found={onGithub} />
       <Field label="Name" error={errors.name}>
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="For example, Team Space" />
       </Field>
@@ -130,9 +136,11 @@ export function ProjectCreator({
           <span className="whitespace-pre-line">{act.shown.message}</span>
         </Banner>
       ) : null}
-      <p className="max-w-reading text-body-sm text-ink-muted">
-        A repository holds one project. If this one already has a project on GitHub, MACH uses its name, vision and outcomes instead of these, and tells you.
-      </p>
+      {onGithub ? null : (
+        <p className="max-w-reading text-body-sm text-ink-muted">
+          A repository holds one project. If this one already has a project on GitHub, MACH uses its name, vision and outcomes instead of these, and tells you.
+        </p>
+      )}
       <div>
         <Button variant="primary" size="lg" type="submit" loading={act.pending}>
           {submitLabel}

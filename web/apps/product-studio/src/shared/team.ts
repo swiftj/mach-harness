@@ -36,6 +36,53 @@ export function numberTakenLine(github: Pick<SliceGithub, "same_moment">): strin
     : "needs a new number, because another slice on GitHub uses it.";
 }
 
+/* ── Issue numbers in a sentence, linked ───────────────────────────────── */
+
+/** Addresses the engine gave, by issue number. */
+export type IssueUrls = Record<string, string | null | undefined>;
+
+/** The addresses of the two issues of a number taken at the same moment: this person's, and the one that keeps it. */
+export function momentUrls(moment: SameMoment | null | undefined): IssueUrls {
+  if (!moment) return {};
+  return { [String(moment.issue)]: moment.issue_url ?? null, [String(moment.holder)]: moment.holder_url ?? null };
+}
+
+/** The addresses a refusal's hint gave for the issues it names (several project issues). */
+export function hintUrls(hint: { issues?: Array<{ issue: number; url: string | null }> } | null | undefined): IssueUrls {
+  return Object.fromEntries((hint?.issues ?? []).map((item) => [String(item.issue), item.url]));
+}
+
+export type IssuePart = string | { number: number; url: string };
+
+/**
+ * A sentence cut where it names an issue ("#3") that the engine gave an address for, so the issue can be shown linked in
+ * place. A number without an address stays plain text: no address is ever built here.
+ */
+export function issueParts(text: string, urls: IssueUrls): IssuePart[] {
+  const parts: IssuePart[] = [];
+  let at = 0;
+  for (const found of text.matchAll(/#(\d+)\b/g)) {
+    const url = urls[found[1] as string];
+    if (!url || found.index === undefined) continue;
+    if (found.index > at) parts.push(text.slice(at, found.index));
+    parts.push({ number: Number(found[1]), url });
+    at = found.index + found[0].length;
+  }
+  if (at < text.length) parts.push(text.slice(at));
+  return parts;
+}
+
+/* ── An epic's number taken at the same moment ─────────────────────────── */
+
+/** The notice on an epic whose number someone else's epic took at the same moment: what happened, then the one act. */
+export function epicNumberTakenWords(epicId: string, moment: SameMoment | null | undefined): { title: string; body: string } | null {
+  if (!moment) return null;
+  return {
+    title: `Someone else saved a different epic as ${epicId} at the same moment`,
+    body: `Their issue #${moment.holder} was made first and keeps the number. Your issue #${moment.issue} was closed, and none of your slices reached the builders. Your epic is unchanged: give it a new number, then mark its slice ready again.`,
+  };
+}
+
 /** Whether a refusal's hint asks for a new number, and for what: a slice or an epic. */
 export function renumberHint(hint: { kind: string; target: string | null } | null | undefined): { id: string; kind: "slice" | "epic" } | null {
   if (!hint?.target) return null;
@@ -51,6 +98,8 @@ export interface TeamNotice {
   text: string;
   /** The issue to link, when the engine gave its address. */
   link: { number: number; url: string | null } | null;
+  /** The addresses of the issues the text names, to link them in place. */
+  urls: IssueUrls;
 }
 
 /**
@@ -60,10 +109,10 @@ export interface TeamNotice {
 export function teamNotices(status: Status, refresh: Refresh | null): TeamNotice[] {
   const notices: TeamNotice[] = [];
   const clashes: SameIdTwice[] = refresh?.github.same_id_twice ?? status.same_id_twice ?? [];
-  for (const clash of clashes) notices.push({ key: `twice-${clash.kind}-${clash.id ?? clash.others.join("-")}`, text: clash.note, link: null });
+  for (const clash of clashes) notices.push({ key: `twice-${clash.kind}-${clash.id ?? clash.others.join("-")}`, text: clash.note, link: null, urls: clash.urls ?? {} });
   for (const note of refresh?.github.text_taken ?? []) {
     const link = note.issue ? { number: note.issue, url: issueUrl(status, note.target) } : null;
-    notices.push({ key: `taken-${note.target}`, text: takenWords(note, status), link });
+    notices.push({ key: `taken-${note.target}`, text: takenWords(note, status), link, urls: {} });
   }
   return notices;
 }
@@ -166,6 +215,24 @@ export function sharedTextAfterReady(notes: SharedTextNote[] | undefined): Array
 /* ── Starting a project ─────────────────────────────────────────────── */
 
 export type ProjectStartNote = { kind: "taken"; issue: number; url: string | null; note: string } | { kind: "not_checked"; note: string };
+
+/**
+ * Before the product is named: the repository's project already on GitHub, as last read. Said before the person types
+ * anything, since naming it takes that project's words instead of theirs. Null when GitHub held none or was not read.
+ */
+export function projectOnGithubWords(found: Status["project_on_github"]): { title: string; body: string } | null {
+  if (!found) return null;
+  if (found.readable && found.name) {
+    return {
+      title: `This repository already has a project: ${found.name}`,
+      body: `Its issue on GitHub is #${found.issue}. When you name the product, MACH takes its name, vision and outcomes from GitHub, and what you type is not used. A repository holds one project.`,
+    };
+  }
+  return {
+    title: "This repository already has a project on GitHub",
+    body: `Its issue is #${found.issue}, but its text is not in the form MACH writes, so MACH cannot take it. Ask the person who looks after the repository to check it before you name the product.`,
+  };
+}
 
 /** What naming the product leaves to say once the page has moved on: the project taken from GitHub, or GitHub not checked. */
 export function projectStartNote(result: { taken_from_github?: number; url?: string | null; github_not_checked?: string; note?: string }): ProjectStartNote | null {

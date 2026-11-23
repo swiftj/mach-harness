@@ -92,7 +92,8 @@ and in its own process group so a time limit stops the Git processes it started 
 Every response is `{ok: true, data}` or `{ok: false, error: {kind, message, hint?}}`. `hint` comes
 only with some `refused` errors: the engine's structured suggestion `{kind, target}` for the app
 action that would resolve it (`reopen_slice`, `renumber_slice`, `mark_ready`, …;
-`studio.NEXT_ACTION_KINDS` and `HINT_KINDS`). The host runs the engine with `--app`, so refusals
+`studio.NEXT_ACTION_KINDS` and `HINT_KINDS`; `several_projects` is not an act and also carries
+`issues`, each project issue with its address). The host passes a hint of at most 512 bytes as it is. The host runs the engine with `--app`, so refusals
 and reports carry no terminal commands or Git words; decisions and artifacts are the terminal's. Clients read the
 envelope; the HTTP status only follows it (refused 422, invalid 400 or 404/413/415, unauthorized
 401 without a session and 403 for Host/Origin/CSRF, conflict 409, unavailable 503, internal 500).

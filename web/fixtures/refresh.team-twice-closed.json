@@ -6,7 +6,7 @@
     "requests": {
       "repository": "acme/team-space",
       "refreshed": true,
-      "refreshed_at": "2026-11-23T22:00:13Z",
+      "refreshed_at": "2026-11-23T22:38:27Z",
       "problem": null,
       "truncated": false,
       "truncated_note": null,
@@ -20,7 +20,7 @@
       "repository": "acme/team-space",
       "refreshed": true,
       "problem": null,
-      "refreshed_at": "2026-11-23T22:00:14Z",
+      "refreshed_at": "2026-11-23T22:38:27Z",
       "form": "sub_issues",
       "project_issue": 1,
       "project_url": "https://github.com/acme/team-space/issues/1",
@@ -47,7 +47,9 @@
             "issue": 4,
             "holder": 3,
             "by": null,
-            "at": "2026-11-23T22:00:14Z"
+            "at": "2026-11-23T22:38:27Z",
+            "issue_url": "https://github.com/acme/team-space/issues/4",
+            "holder_url": "https://github.com/acme/team-space/issues/3"
           },
           "question": null,
           "question_note": null,
@@ -91,7 +93,7 @@
           "github_order": [
             "SLICE-001"
           ],
-          "github_read_at": "2026-11-23T22:00:15Z",
+          "github_read_at": "2026-11-23T22:38:27Z",
           "matches_github": true,
           "unfinished": false,
           "taken_from_github": false,
@@ -112,7 +114,7 @@
           "revision": null,
           "approved": null,
           "approved_by": null,
-          "read_at": "2026-11-23T22:00:15Z"
+          "read_at": "2026-11-23T22:38:27Z"
         },
         "newer_elsewhere": false,
         "changed_on_github": false
@@ -126,6 +128,10 @@
           "others": [
             4
           ],
+          "urls": {
+            "3": "https://github.com/acme/team-space/issues/3",
+            "4": "https://github.com/acme/team-space/issues/4"
+          },
           "yours": "closed"
         }
       ],
