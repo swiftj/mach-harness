@@ -13,6 +13,7 @@ import { OutcomesEditor, ProjectCreator, cleanList } from "./ProjectForm";
 import { NewSliceDialog } from "../roadmap/NewSliceDialog";
 import type { StartAs } from "../small-change/model";
 import { SharedTextChoice } from "../../shared/SharedTextChoice";
+import { EpicNumberTakenNotice } from "../../shared/NumberTakenNotice";
 import { ProjectStartNotice } from "../../shared/ProjectStartNotice";
 import { mineOf, sharedTextAnchor } from "../../shared/team";
 
@@ -289,6 +290,10 @@ function Epics({ status }: { status: Status }) {
                     </Fold>
                   ) : null}
                 </div>
+                {epic.same_moment ? (
+                  // M20: its number was taken at the same moment by someone else's epic; full width, under the epic, with its one act.
+                  <EpicNumberTakenNotice className="order-last col-span-2 mt-2" epicId={epic.epic_id} moment={epic.same_moment} />
+                ) : null}
                 {epic.changed_elsewhere ? (
                   // M20: the epic's title or criteria changed on GitHub by someone else and here too; full width, under the epic.
                   <SharedTextChoice

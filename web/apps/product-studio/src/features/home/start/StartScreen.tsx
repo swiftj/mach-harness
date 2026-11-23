@@ -5,7 +5,8 @@ import { ArtifactId, Banner, Button, Heading, Spinner, Text, cn } from "@mach/ui
 import { uploadLimits, type Status } from "@mach/ui/api";
 import { useRefresh } from "../../../api/store";
 import { useRequestList } from "../../../shared/useRequestList";
-import { IssueLink } from "../../../shared/IssueLink";
+import { IssueLink, IssueText } from "../../../shared/IssueLink";
+import { ProjectOnGithubNotice } from "../../../shared/ProjectStartNotice";
 import { ContextRow, OnePane, WorkScreen } from "../../../shared/layout/WorkScreen";
 import { usePrdImport } from "../../prd/usePrdImport";
 import { AddIdeaDialog } from "../../shape/ideas/AddIdeaDialog";
@@ -58,9 +59,12 @@ export function StartScreen({ status }: { status: Status }) {
           {several ? (
             // M20: naming the product would be refused until one of the project issues is closed; said before they try.
             <Banner tone="warning" title="This repository has more than one project on GitHub" className="max-w-reading">
-              {several.note}
+              <IssueText text={several.note} urls={several.urls ?? {}} />
             </Banner>
-          ) : null}
+          ) : (
+            // M20: one project already on GitHub; naming the product here takes its words. Said before anything is typed.
+            <ProjectOnGithubNotice found={status.project_on_github} className="max-w-reading" />
+          )}
           {started.length ? <WhereYouAre started={started} /> : null}
           <section aria-labelledby="ways-title" className="flex flex-col gap-4">
             <Heading level={2} size="title-3" id="ways-title" className={started.length ? undefined : "sr-only"}>

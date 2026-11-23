@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import { CircleAlert, GitCommitHorizontal, PackageOpen } from "lucide-react";
 import { ArtifactId, Badge, Banner, Button, DiagnosticList, EmptyState, ErrorState, Heading, Skeleton, SkeletonText, StateGlyph, Text, cn, describeError, plain, plural } from "@mach/ui";
 import type { EpicCurrent, EpicView, ShippedRule } from "@mach/ui/api";
@@ -7,6 +7,7 @@ import { useOperation } from "../../api/useOperation";
 import { useStatus } from "../../api/store";
 import { Fold } from "../../shared/layout/Fold";
 import { SharedTextChoice } from "../../shared/SharedTextChoice";
+import { EpicNumberTakenNotice } from "../../shared/NumberTakenNotice";
 import { mineOf } from "../../shared/team";
 import { SectionNav } from "../../shared/layout/SectionNav";
 import { ContextRow, OnePane, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
@@ -97,9 +98,21 @@ function TodaySkeleton() {
  */
 function EpicTextChoice({ epicId }: { epicId: string }) {
   const status = useStatus().data;
-  const changed = status?.epics.find((e) => e.epic_id === epicId)?.changed_elsewhere;
-  if (!status || !changed) return null;
-  return <SharedTextChoice className="max-w-[44rem]" changed={changed} mine={mineOf(status, changed)} />;
+  const navigate = useNavigate();
+  const row = status?.epics.find((e) => e.epic_id === epicId);
+  const changed = row?.changed_elsewhere;
+  return (
+    <>
+      {/* M20: this epic's number was taken at the same moment by someone else's epic. After a new number, the page follows it. */}
+      <EpicNumberTakenNotice
+        className="max-w-[44rem]"
+        epicId={epicId}
+        moment={row?.same_moment}
+        onRenumbered={({ to }) => void navigate(`/epics/${to}/today`, { replace: true })}
+      />
+      {status && changed ? <SharedTextChoice className="max-w-[44rem]" changed={changed} mine={mineOf(status, changed)} /> : null}
+    </>
+  );
 }
 
 /** MACH's note, once: which commit, and that it is this computer's copy of the main branch. */

@@ -18,8 +18,8 @@
       {
         "artifact": "SLICE-002",
         "kind": "slice",
-        "reason": "Someone else marked a slice ready with the same number at the same moment, so it needs a new number and your approval again.",
-        "at": "2026-11-23T22:00:33Z"
+        "reason": "Someone else saved a different epic as EPIC-001 at the same moment, so the epic needs a new number and this slice needs your approval again.",
+        "at": "2026-11-23T22:38:32Z"
       }
     ],
     "epics": [
@@ -34,6 +34,7 @@
         "issue": null,
         "url": null,
         "changed_elsewhere": null,
+        "same_moment": null,
         "counts": {
           "total": 1,
           "by_progress": {
@@ -98,7 +99,7 @@
           "revision": null,
           "approved": null,
           "approved_by": null,
-          "read_at": "2026-11-23T22:00:34Z"
+          "read_at": "2026-11-23T22:38:32Z"
         },
         "newer_elsewhere": false,
         "changed_on_github": false
@@ -135,13 +136,20 @@
       }
     ],
     "same_id_twice": [],
+    "project_on_github": {
+      "issue": 1,
+      "url": "https://github.com/acme/team-space/issues/1",
+      "name": "Team Space",
+      "readable": true,
+      "read_at": "2026-11-23T22:38:32Z"
+    },
     "github": {
       "repository": "acme/team-space",
       "form": null,
-      "last_read": "2026-11-23T22:00:34Z"
+      "last_read": "2026-11-23T22:38:32Z"
     },
     "current_slice": "SLICE-002",
-    "last_refreshed": "2026-11-23T22:00:34Z",
+    "last_refreshed": "2026-11-23T22:38:32Z",
     "structurally_valid": true,
     "structural_errors": [],
     "factory_authorized": false,

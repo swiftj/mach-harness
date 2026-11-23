@@ -39,7 +39,8 @@ import { useRequestList } from "../../shared/useRequestList";
 import { NewSliceDialog } from "../roadmap/NewSliceDialog";
 import { SmallChangeLabel } from "../small-change/SmallChangeLabel";
 import type { StartAs } from "../small-change/model";
-import { IssueLink, IssueNumber } from "../../shared/IssueLink";
+import { IssueLink, IssueNumber, IssueText } from "../../shared/IssueLink";
+import { EpicNumberTakenNotice } from "../../shared/NumberTakenNotice";
 import { RenumberDialog } from "../../shared/RenumberDialog";
 import { AnswerQuestionDialog } from "../../shared/BuildersQuestion";
 import { SliceTimes } from "../../shared/SliceTimes";
@@ -304,7 +305,7 @@ function Notices({ status, refresh, refreshError, onRetry }: { status: Status; r
         <ul className="flex flex-col gap-1">
           {team.map((notice) => (
             <li key={notice.key}>
-              {notice.text}
+              <IssueText text={notice.text} urls={notice.urls} />
               {notice.link ? (
                 <>
                   {" "}
@@ -383,6 +384,8 @@ function EpicBlock({ epic, status, onAddSlice }: { epic: StatusEpicRow; status: 
           Ready or further means {counts.ready_or_further_means}.
         </Text>
       ) : null}
+      {/* M20: this epic's number was taken at the same moment by someone else's epic: said on the epic itself, with its one act. */}
+      <EpicNumberTakenNotice epicId={epic.epic_id} moment={epic.same_moment} className="max-w-reading" />
       <div className="flex flex-wrap items-start gap-x-6 gap-y-2">
         <Link to={`/epics/${epic.epic_id}/today`} className="min-h-6 rounded-xs text-body-sm font-semibold text-accent-ink underline-offset-2 hover:underline">
           How {epic.title} works today

@@ -6,8 +6,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  epicNumberTakenWords,
+  hintUrls,
   holderWords,
+  issueParts,
   mineOf,
+  momentUrls,
+  projectOnGithubWords,
   numberTakenLine,
   numberTakenWords,
   projectStartNote,
@@ -40,8 +45,23 @@ test("a number taken at the same moment: who holds it, which issue, and one act"
   assert.match(refused.refused, /ada-pm's issue #3 was made first and keeps the number/);
 
   const show = run("slice.show.team-same-moment").data;
-  assert.deepEqual(show.github.same_moment, { issue: 4, holder: 3, by: "ada-pm", at: show.github.same_moment.at });
+  assert.deepEqual(show.github.same_moment, {
+    issue: 4,
+    holder: 3,
+    by: "ada-pm",
+    at: show.github.same_moment.at,
+    issue_url: "https://github.com/acme/team-space/issues/4",
+    holder_url: "https://github.com/acme/team-space/issues/3",
+  });
   const words = numberTakenWords("SLICE-001", show.github);
+  // Both issues are linked in place, from the addresses the engine gave.
+  assert.deepEqual(
+    issueParts(words.body, momentUrls(show.github.same_moment)).filter((part) => typeof part !== "string"),
+    [
+      { number: 3, url: "https://github.com/acme/team-space/issues/3" },
+      { number: 4, url: "https://github.com/acme/team-space/issues/4" },
+    ],
+  );
   assert.equal(words.title, "Someone else marked SLICE-001 ready at the same moment");
   assert.match(words.body, /^ada-pm's issue #3 was made first and keeps the number\. Your issue #4 was closed and never reached the builders\./);
   assert.match(words.body, /give it a new number, then mark it ready again\.$/);
@@ -83,6 +103,44 @@ test("an epic's number taken at the same moment: the epic is renumbered, and the
   assert.equal(renumberHint(null), null);
 });
 
+test("an epic's number taken at the same moment is remembered: on the epic, first to do, and gone once renumbered", () => {
+  const status = run("status.team-epic-same-moment").data;
+  const [epic] = status.epics;
+  assert.deepEqual({ ...epic.same_moment, at: null }, {
+    issue: 4,
+    holder: 2,
+    by: null,
+    at: null,
+    issue_url: "https://github.com/acme/team-space/issues/4",
+    holder_url: "https://github.com/acme/team-space/issues/2",
+  });
+  const [first] = status.next_actions;
+  assert.deepEqual([first.kind, first.target], ["renumber_epic", "EPIC-001"]);
+  assert.deepEqual(routeFor(first), { type: "renumber", id: "EPIC-001", label: "Give it a new number" });
+  const words = epicNumberTakenWords("EPIC-001", epic.same_moment);
+  assert.equal(words.title, "Someone else saved a different epic as EPIC-001 at the same moment");
+  assert.match(words.body, /^Their issue #2 was made first and keeps the number\. Your issue #4 was closed/);
+  assert.deepEqual(
+    issueParts(words.body, momentUrls(epic.same_moment)).filter((part) => typeof part !== "string").map((part) => part.number),
+    [2, 4],
+  );
+  plainWords(`${words.title} ${words.body} ${first.reason}`, "epic same moment");
+  // The approval withdrawn says it was the epic, not a slice, that clashed.
+  const [withdrawn] = status.approvals_withdrawn;
+  assert.match(withdrawn.reason, /^Someone else saved a different epic as EPIC-001 at the same moment/);
+  assert.doesNotMatch(withdrawn.reason, /marked a slice ready/);
+  const renumbered = run("status.team-epic-renumbered").data;
+  assert.ok(renumbered.epics.every((e) => e.same_moment === null));
+  assert.ok(!renumbered.next_actions.some((a) => a.kind === "renumber_epic"));
+  assert.equal(epicNumberTakenWords("EPIC-001", null), null);
+});
+
+test("issue numbers in a sentence are linked only where the engine gave an address", () => {
+  assert.deepEqual(issueParts("Held by #3 and #12.", { 3: "https://github.com/a/b/issues/3" }), ["Held by ", { number: 3, url: "https://github.com/a/b/issues/3" }, " and #12."]);
+  assert.deepEqual(issueParts("No issues here.", {}), ["No issues here."]);
+  assert.deepEqual(issueParts("#3", { 3: null }), ["#3"]);
+});
+
 test("a number held twice is a calm notice in the engine's words, for each side", () => {
   for (const [name, yours, says] of [
     ["twice-kept", "kept", /Yours is #3, which keeps the number\./],
@@ -100,6 +158,18 @@ test("a number held twice is a calm notice in the engine's words, for each side"
   }
   const several = teamNotices(run("status.team-several").data, run("refresh.team-several").data);
   assert.match(several[0].text, /more than one project issue on GitHub \(#1 and #4\)/);
+  assert.deepEqual(
+    issueParts(several[0].text, several[0].urls).filter((part) => typeof part !== "string").map((part) => part.number),
+    [1, 4],
+    "each project issue is linked",
+  );
+  const [kept] = teamNotices(run("status.team-twice-kept").data, null);
+  assert.deepEqual(Object.keys(kept.urls).sort(), ["3", "4"]);
+
+  // Marking ready refused for several projects carries both issues with their addresses.
+  const refused = run("slice.ready.team-several");
+  assert.equal(refused.hint.kind, "several_projects");
+  assert.deepEqual(hintUrls(refused.hint), { 1: "https://github.com/acme/team-space/issues/1", 4: "https://github.com/acme/team-space/issues/4" });
 });
 
 test("text MACH took in from someone else is said once, with the issue linked from the engine's address", () => {
@@ -190,6 +260,22 @@ test("naming the product: the project already on GitHub is taken and said; GitHu
   const several = run("project.init.team-several");
   assert.match(several.refused, /more than one project issue on GitHub \(#1 and #4\)\. A repository holds one project, so nothing was defined\./);
   for (const text of [taken.note, notChecked.note, several.refused]) plainWords(text, "project init");
+  assert.deepEqual(Object.keys(hintUrls(several.hint)), ["1", "4"]);
+});
+
+test("before the product is named, the project already on GitHub is said from the last reading, before anything is typed", () => {
+  assert.equal(run("status.team-start").data.project_on_github, null, "GitHub not read yet: nothing is said, and the form is as before");
+  assert.equal(projectOnGithubWords(null), null);
+  const found = run("status.team-start-known").data.project_on_github;
+  assert.deepEqual({ ...found, read_at: null }, { issue: 1, url: "https://github.com/acme/team-space/issues/1", name: "Team Space", readable: true, read_at: null });
+  const words = projectOnGithubWords(found);
+  assert.equal(words.title, "This repository already has a project: Team Space");
+  assert.match(words.body, /^Its issue on GitHub is #1\. When you name the product, MACH takes its name, vision and outcomes from GitHub, and what you type is not used\./);
+  plainWords(`${words.title} ${words.body}`, "project on GitHub");
+  const unreadable = projectOnGithubWords({ ...found, name: null, readable: false });
+  assert.match(unreadable.body, /not in the form MACH writes, so MACH cannot take it/);
+  // Several project issues: none is the one MACH would take; the start screen names them instead.
+  assert.equal(run("status.team-several-start").data.project_on_github, null);
 });
 
 test("drafts numbered without GitHub: the sentence stands apart from what was made", () => {

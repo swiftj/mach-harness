@@ -182,13 +182,18 @@ export interface SliceGithub {
   progress: SliceProgress | null;
 }
 
-/** `slices[].github.same_moment` (M20). The engine gives issue numbers only, no addresses. */
+/**
+ * `slices[].github.same_moment` and `epics[].same_moment` (M20): this person's issue (`issue`) and the one that keeps the
+ * number (`holder`), each with the address the engine built for it (null when it has none). An epic's `by` is always null.
+ */
 export interface SameMoment {
   issue: number;
   holder: number;
   by: string | null;
   /** ISO 8601. */
   at: string | null;
+  issue_url?: string | null;
+  holder_url?: string | null;
 }
 
 /**
@@ -206,6 +211,8 @@ export interface SameIdTwice {
   others: number[];
   yours: "kept" | "closed" | "taken_by_builders" | "not_closed" | "other" | (string & {}) | null;
   note: string;
+  /** Each issue's address by its number (`kept` and every one of `others`), as the engine built it. */
+  urls?: Record<string, string>;
 }
 
 /**
@@ -297,6 +304,11 @@ export interface StatusEpicRow {
   tracking?: Tracking;
   /** M20: someone else's change to this epic's title or criteria, waiting for a choice; null otherwise. */
   changed_elsewhere?: SharedTextChanged | null;
+  /**
+   * M20: this epic's issue was made at the same moment as someone else's, for a different epic with the same number, and
+   * closed. Theirs keeps the number; this draft needs a new one. Null otherwise.
+   */
+  same_moment?: SameMoment | null;
 }
 
 export interface StatusSliceRow {
@@ -338,11 +350,26 @@ export interface ApprovalWithdrawn {
   at: string | null;
 }
 
+/**
+ * `status.project_on_github` (M20): the repository's project issue as last read, before the product is named here. `name` is
+ * null and `readable` false when its text is not in the form MACH writes, so naming the product cannot take it.
+ */
+export interface ProjectOnGithub {
+  issue: number;
+  url: string | null;
+  name: string | null;
+  readable: boolean;
+  /** ISO 8601: when GitHub was read. */
+  read_at: string | null;
+}
+
 export interface Status {
   /** M20: `changed_elsewhere` is someone else's change to the project's name, vision or outcomes, waiting for a choice. */
   project: (Omit<Project, "schema_version"> & { issue: number | null; url: string | null; changed_elsewhere?: SharedTextChanged | null }) | null;
   /** M20: IDs more than one open issue held at the last refresh. */
   same_id_twice?: SameIdTwice[];
+  /** M20: the one project issue GitHub held at the last refresh, else null (none, several, or GitHub not read). */
+  project_on_github?: ProjectOnGithub | null;
   /** Approvals the engine withdrew (a reopen, a renumber, a version taken from GitHub), with the reason. */
   approvals_withdrawn: ApprovalWithdrawn[];
   epics: StatusEpicRow[];
@@ -402,8 +429,9 @@ export interface ErrorHint {
 export type HintKind =
   | NextActionKind
   | "reopen_slice"
-  | "renumber_epic"
   | "edit_project"
+  /** Not an act: the project issues a refusal names, with their addresses, for the app to link. */
+  | "several_projects"
   /** POST /api/interview for a slice this host already interviews: `target` is the live interview's ID. */
   | "open_interview";
 
@@ -418,6 +446,7 @@ export type NextActionKind =
   | "finish_ready"
   | "reconcile"
   | "renumber_slice"
+  | "renumber_epic"
   | (string & {});
 
 export interface Validate {

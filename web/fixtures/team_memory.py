@@ -199,6 +199,9 @@ def project_taken(s):
     s.ada_ships_first_slice()
     ben = s.ben()
     s.capture("status.team-start", "status", project=ben)
+    # Once the start screen's refresh has read GitHub, status says the repository already has a project, before anything is typed.
+    s.capture("refresh.team-start-taken", "refresh", project=ben)
+    s.capture("status.team-start-known", "status", project=ben)
     s.capture("project.init.team-taken", "project", "init", "--id", "teamspace", "--name", "Teamspace", "--vision", "Mine.",
               "--outcome", "Mine too", project=ben)
     s.capture("status.team-taken", "status", project=ben)

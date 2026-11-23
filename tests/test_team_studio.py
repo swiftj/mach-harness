@@ -20,10 +20,14 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT / "skills" / "product-studio" / "scripts"))
-from test_mach_product_issues import IssuesBase  # noqa: E402
+from test_mach_product_issues import REPO, IssuesBase  # noqa: E402
 import handoff  # noqa: E402
 import issue_rules  # noqa: E402
 import test_mach_product_prd as prd_tests  # noqa: E402
+
+
+def url(number):
+    return f"https://github.com/{REPO}/issues/{number}"
 
 
 class TwoProductManagers(IssuesBase):
@@ -134,6 +138,9 @@ class SliceNumberTest(TwoProductManagers):
         first = self.status(ben)["next_actions"][0]
         self.assertEqual((first["kind"], first["target"]), ("renumber_slice", "SLICE-001"))
         self.assertIn(f"issue #{ada_issue} was made first and keeps the number", first["reason"])
+        moment = next(row for row in self.status(ben)["slices"] if row["slice_id"] == "SLICE-001")["github"]["same_moment"]
+        self.assertEqual((moment["issue"], moment["holder"], moment["issue_url"], moment["holder_url"]),
+                         (ben_issue["number"], ada_issue, url(ben_issue["number"]), url(ada_issue)))
         self.assertNotIn("renumber_slice", [a["kind"] for a in self.status(self.ada())["next_actions"]])
         # The existing renumber moves every reference; marked ready again, it is saved under the free number.
         self.assertEqual(self.ok(self.ben(), "slice", "renumber", "SLICE-001")["renumbered"]["to"], "SLICE-002")
@@ -152,6 +159,7 @@ class SliceNumberTest(TwoProductManagers):
         self.assertEqual(len(self.slice_issues_for("SLICE-001")), 2)
         (clash,) = self.ok(self.ada(), "refresh")["github"]["same_id_twice"]
         self.assertEqual((clash["kind"], clash["id"], clash["kept"], clash["others"], clash["yours"]), ("slice", "SLICE-001", ada_issue, [ben_issue], "kept"))
+        self.assertEqual(clash["urls"], {str(ada_issue): url(ada_issue), str(ben_issue): url(ben_issue)})
         self.assertIn(f"SLICE-001 is held by more than one open issue on GitHub: #{ada_issue} was made first, then #{ben_issue}. Yours is #{ada_issue}", clash["note"])
         (clash,) = self.ok(self.ben(), "refresh")["github"]["same_id_twice"]
         self.assertEqual(clash["yours"], "closed")
@@ -206,9 +214,45 @@ class EpicNumberTest(TwoProductManagers):
         self.assertEqual((ben_epic["state"], self.labels_of(ben_epic["number"])), ("CLOSED", []))
         self.assertEqual(self.slice_issues_for("SLICE-002"), [])  # nothing was made under it
         self.assertEqual(self.ben_slice("SLICE-002")["status"], "ready_for_approval")
+        # Status remembers it without the network: on the epic, first among the next actions, and in the withdrawal's reason.
+        status = self.status(ben)
+        moment = status["epics"][0]["same_moment"]
+        self.assertEqual((moment["issue"], moment["holder"], moment["issue_url"], moment["holder_url"]),
+                         (ben_epic["number"], ada_epic, url(ben_epic["number"]), url(ada_epic)))
+        first = status["next_actions"][0]
+        self.assertEqual((first["kind"], first["target"]), ("renumber_epic", "EPIC-001"))
+        self.assertIn(f"their issue #{ada_epic} was made first and keeps the number", first["reason"])
+        self.assertIn("(epic renumber EPIC-001)", status["suggested_next"][0])
+        (withdrawn,) = status["approvals_withdrawn"]
+        self.assertEqual(withdrawn["reason"], "Someone else saved a different epic as EPIC-001 at the same moment, so the epic needs a new number "
+                                              "and this slice needs your approval again.")
+        self.assertIsNone(self.status(self.ada())["epics"][0]["same_moment"])
         self.assertEqual(self.ok(self.ben(), "epic", "renumber", "EPIC-001")["renumbered"]["to"], "EPIC-002")
+        status = self.status(ben)
+        self.assertEqual([e["same_moment"] for e in status["epics"]], [None])
+        self.assertNotIn("renumber_epic", [a["kind"] for a in status["next_actions"]])
         self.assertEqual(self.ready("SLICE-002", ben)["saved_to"], "github")
         self.assertEqual(sorted(i["title"] for i in self.issues("mach:epic")), ["Billing", "Team membership"])
+
+
+    def test_an_epic_refused_at_the_same_moment_is_forgotten_once_the_number_is_free(self):
+        """The clash is gone at a refresh (the other epic's issue was closed): the epic is no longer offered a new number."""
+        self.ada_ships_first_slice()
+        ada_epic = self.issues("mach:epic")[0]["number"]
+        ben = self.ben()
+        self.ok(ben, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "x", "--outcome", "y")
+        self.ok(ben, "epic", "add", "--title", "Billing", "--criterion", "Invoices are sent")
+        self.drafted(ben, title="Send an invoice")
+        self.ok(ben, "slice", "renumber", "SLICE-001")
+        with self.hidden({ada_epic}):
+            self.refused_app(ben, "slice", "ready", "SLICE-002")
+        self.ok(ben, "refresh")
+        self.assertIsNotNone(self.status(ben)["epics"][0]["same_moment"])  # still held by Ada's open issue
+        self.change_issue(ada_epic, state="CLOSED")
+        self.ok(ben, "refresh")
+        status = self.status(ben)
+        self.assertIsNone(status["epics"][0]["same_moment"])
+        self.assertNotIn("renumber_epic", [a["kind"] for a in status["next_actions"]])
 
 
 class SharedProjectAndEpicTest(TwoProductManagers):
@@ -323,6 +367,25 @@ class OneProjectTest(TwoProductManagers):
         self.assertEqual(len(self.slice_issues_for("SLICE-001")), 1)
         self.assertEqual(self.slice_issues_for("SLICE-001")[0]["number"], ada_issue)
 
+    def test_status_says_a_project_is_on_github_before_the_product_is_named(self):
+        """Before Ben names the product, status says (from his last refresh, without reading GitHub) that the repository already has
+        a project, with its issue, address and name. Before any refresh it says nothing."""
+        self.ada_ships_first_slice()
+        project_issue = self.issues("mach:project")[0]["number"]
+        ben = self.ben()
+        self.assertIsNone(self.status(ben)["project_on_github"])
+        self.ok(ben, "refresh")
+        calls = len(self.gh()["calls"])
+        found = self.status(ben)["project_on_github"]
+        self.assertEqual(len(self.gh()["calls"]), calls)  # status reads only the record
+        self.assertEqual({key: found[key] for key in ("issue", "url", "name", "readable")},
+                         {"issue": project_issue, "url": url(project_issue), "name": "Team Space", "readable": True})
+        marker = self.issue(project_issue)["body"].splitlines()[0]
+        self.change_issue(project_issue, body=marker + "\nEdited by hand.\n")  # still MACH's project issue, its text no longer in MACH's form
+        self.ok(ben, "refresh")
+        found = self.status(ben)["project_on_github"]
+        self.assertEqual((found["issue"], found["name"], found["readable"]), (project_issue, None, False))
+
     def test_several_project_issues_are_refused_and_named(self):
         """Two open project issues: project init and marking ready both refuse, naming both, and refresh reports them."""
         self.ada_ships_first_slice()
@@ -336,8 +399,14 @@ class OneProjectTest(TwoProductManagers):
         refused = self.refused(self.a, "slice", "ready", "SLICE-002")
         self.assertIn(f"more than one project issue on GitHub {named}. A repository holds one project, so nothing was saved.", refused)
         self.assertEqual(self.slice_issues_for("SLICE-002"), [])
-        clashes = self.ok(self.a, "refresh")["github"]["same_id_twice"]
-        self.assertIn({"kind": "project", "others": [first, second]}, [{key: c[key] for key in ("kind", "others")} for c in clashes])
+        # With --app, each refusal carries the issues with their addresses, for the app to link.
+        both = {"kind": "several_projects", "target": None, "issues": [{"issue": first, "url": url(first)}, {"issue": second, "url": url(second)}]}
+        self.assertEqual(self.refused_app(self.a, "slice", "ready", "SLICE-002")[1], both)
+        self.assertEqual(self.refused_app(self.ben(), "project", "init", "--id", "team-space", "--name", "x", "--vision", "y", "--outcome", "z")[1], both)
+        clashes = self.ok(self.ada(), "refresh")["github"]["same_id_twice"]
+        self.assertIn({"kind": "project", "others": [first, second], "urls": {str(first): url(first), str(second): url(second)}},
+                      [{key: c[key] for key in ("kind", "others", "urls")} for c in clashes])
+        self.assertIsNone(self.status(self.a)["project_on_github"])  # two: none is the project MACH would take
 
     def test_two_first_readies_at_once_leave_one_project_and_one_epic(self):
         """The first `project init` and ready done by two people at once: Ben's project and epic issues are made a moment after

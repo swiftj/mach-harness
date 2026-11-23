@@ -27,6 +27,7 @@
         "issue": 2,
         "url": "https://github.com/acme/team-space/issues/2",
         "changed_elsewhere": null,
+        "same_moment": null,
         "counts": {
           "total": 1,
           "by_progress": {
@@ -65,7 +66,7 @@
           "question_note": null,
           "shipped_issues": [],
           "times": {
-            "marked_ready": "2026-11-23T22:00:49Z",
+            "marked_ready": "2026-11-23T22:38:35Z",
             "building": null,
             "question": null,
             "shipped": null
@@ -103,6 +104,7 @@
       }
     ],
     "same_id_twice": [],
+    "project_on_github": null,
     "github": {
       "repository": "acme/team-space",
       "form": "sub_issues",

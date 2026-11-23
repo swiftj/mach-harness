@@ -16,6 +16,8 @@ export type ApiErrorKind = HostErrorKind | ClientErrorKind;
 export interface ApiErrorHint {
   kind: string;
   target: string | null;
+  /** M20, `several_projects`: the project issues the refusal names, each with the address the engine gave (null without one). */
+  issues?: Array<{ issue: number; url: string | null }>;
 }
 
 /**
