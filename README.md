@@ -2,7 +2,7 @@
 
 MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A product manager describes what is wanted; the factory turns each piece into a checked specification, builds it test-first in an isolated workspace, proves it works with captured evidence, has it reviewed by a panel of independent agents, and merges it. Every station hands the next one artifacts MACH has checked, not a claim that the work is done.
 
-> **Status: 0.20.0.** [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) is the full blueprint.
+> **Status: 0.21.0.** [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) is the full blueprint.
 
 ![The Factory Floor: an isometric drawing of the factory with three tickets being built, each in its own cell](docs/images/factory-floor-isometric.jpg)
 
@@ -88,7 +88,7 @@ Each install brings all of MACH's own files to the new version: its skills, agen
 If it says the newest release could not be found, GitHub's API did not answer from your network (it allows a limited number of unsigned requests an hour). Name the release yourself:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh | MACH_VERSION=0.20.0 bash
+curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh | MACH_VERSION=0.21.0 bash
 ```
 
 To install what is on the `main` branch ahead of the next release, use `MACH_REF=main` in place of `MACH_VERSION`; a branch install is not checksum-verified, and the installer says so.
@@ -318,6 +318,18 @@ MACH decides what may run together by fixed rules, and it only ever runs fewer t
 | `--sequential` | Run one at a time |
 
 Only you can raise a limit: in the settings, or by telling Claude Code to raise it for one run. `/mach` with no ticket still shows the status of every ticket and starts nothing.
+
+### Working as a team
+
+Several product managers and several engineers can use MACH on one repository at the same time, each on their own computer.
+
+- **No slice belongs to anyone in advance.** Any engineer's factory can build any slice. When a factory starts one it says so on the slice's issue, and `/mach pull` on another machine skips it and takes the next ready slice nobody is building.
+- **Nobody is locked out.** A slice is free again when its builder merges or abandons it, or goes quiet for three days (`intake.claim_stale_days`). An engineer can take one over at any time by saying so.
+- **The shared main takes a slice once.** A factory that built the same slice later is told it already shipped, and its copy is not merged.
+- **Merging checks the shared main.** Each ticket is tested against what is on the shared main at that moment. Use `merge.method: "pr"` for a team; `/mach doctor` says when the main branch should be protected.
+- **Product managers are told, never overwritten.** A slice number two people took at the same moment, or project and epic text that someone else changed, is reported with a way to settle it.
+
+More in the [Engineer Guide](docs/guides/ENGINEER_GUIDE.md) and the [Product Manager Guide](docs/guides/PRODUCT_MANAGER_GUIDE.md).
 
 ### Unattended, on a machine you choose
 

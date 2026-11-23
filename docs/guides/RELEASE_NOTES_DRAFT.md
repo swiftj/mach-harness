@@ -1,6 +1,32 @@
-# MACH release notes: 0.20.0
+# MACH release notes: 0.21.0
 
 What is new in each release, newest first, followed by supported platforms, what you need, upgrading and security notes.
+
+## What changed in 0.21.0
+
+MACH for a team: several product managers and several engineers on one repository at the same time. Also the basic decisions drafted from documents an engineer already has, and a ticket's workspace that holds no Claude Code configuration.
+
+| Change | What it is |
+| --- | --- |
+| Factories keep out of each other's way | No slice belongs to anyone in advance. When a factory starts a slice it says so on the slice's issue; `/mach pull` on another machine skips that slice, says who is building it, and takes the next ready slice nobody is building. |
+| Nobody is locked out | A slice is free again when its builder merges or abandons it, or after three days with no activity (`intake.claim_stale_days`). An engineer can take a slice over at any time by saying so; the issue records who did. |
+| The shared main takes a slice once | A factory that built the same slice later is told it already shipped. Its copy is not merged, and its work is kept. |
+| A slice built on another machine | Once it merges, every other factory reads it from the main branch, so slices that depend on it are no longer held. |
+| Merging checks the shared main | Each ticket is tested against what is on the shared main at that moment, and checked again if main moves before the merge. A local merge is refused only when the shared main has changes this checkout lacks, with the instruction to pull first. |
+| The doctor on team settings | `/mach doctor` says when the main branch does not require up-to-date branches and passing checks, and when a repository several people push to is still merging locally. |
+| A number two people took at the same moment | The later product manager is told at once who holds the number and that their own issue was closed before it was marked ready, and is offered a new number. A refresh on either computer says the same if the moment was missed. |
+| Shared text is never silently replaced | The project's vision and outcomes and each epic's criteria are rewritten only when nobody else changed them. If someone did, MACH takes theirs in, or shows both versions whole for you to keep yours or take theirs. |
+| One project per repository | Starting a project where one exists takes its name, vision and outcomes from GitHub. With several project issues, MACH saves nothing, names them, and the factory stops grooming until one is closed. |
+| Numbers across a team | Slice and ADR numbers now also count what is on GitHub and on the shared main. Two ADRs with one number name each other and the fix: `/mach adr renumber <file>`. |
+| The app, working beside others | Product Studio's app shows each of these with one clear act: "Give it a new number", "Keep mine" or "Take theirs". |
+| Decisions from your own documents | `/mach adr baseline` asks once for technical documents you already have: an ARCHITECTURE.md, a design, stack or deployment notes, coding standards, ADRs in another form. MACH reads them without changing them, drafts every decision it can, offers the other decisions they make as one list, and asks only about gaps and contradictions. Markdown and plain text. |
+| A workspace with no Claude Code configuration | A ticket's workspace never holds `.claude/` or `.mcp.json`, so a session's sandbox has nothing to refuse there. A plan that would change one of those files is refused: a person makes that change outside the factory. |
+| A workspace that cannot be made stops the ticket | MACH says what Git reported and what to do. It no longer carries on in the project's own folder. `/mach doctor` makes and removes a throwaway workspace to check. |
+| Files from different versions | Every MACH command now says plainly when MACH's files in a project are from different versions, with the fix: run the installer again. |
+
+**Needs Git 2.36 or later** for a ticket's workspace. `/mach doctor` checks it.
+
+**For a team,** set `merge.method` to `"pr"` and protect the main branch on GitHub so that branches must be up to date and checks must pass.
 
 ## What changed in 0.20.0
 
@@ -136,7 +162,7 @@ Every program is smoke-tested on a native machine of its kind before a release i
 
 ## What you need
 
-Claude Code, `git`, and `python3` 3.8 or later. The GitHub CLI (`gh`) is needed to save slices as GitHub issues and to verify build provenance. A missing Git or Python stops the installer with a plain message and, on a Mac, the `xcode-select --install` step.
+Claude Code, `git` 2.36 or later, and `python3` 3.8 or later. The GitHub CLI (`gh`) is needed to save slices as GitHub issues and to verify build provenance. A missing Git or Python stops the installer with a plain message and, on a Mac, the `xcode-select --install` step.
 
 ## What MACH includes
 
