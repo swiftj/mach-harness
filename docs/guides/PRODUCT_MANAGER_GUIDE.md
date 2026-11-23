@@ -108,6 +108,19 @@ Technical needs are what the product requires of whatever is built, said without
 
 **A design you already have.** From Technical needs, bring in one Markdown or plain-text file. Ask the conversation to read it. For each basic topic the page then shows what the document decides, partly decides or says nothing on, with the lines it cites. Where the document contradicts a need, a principle or a policy statement, you settle it with your reason: **the design stands**, **the design is wrong**, or **ask the engineer**. MACH never settles one and recommends none. Publishing writes the document and what was read to `product/ready/DESIGN/`, for you to commit. The document is never put in a GitHub issue, and it decides nothing by itself.
 
+## Starting a new project
+
+In the app, a project with nothing defined opens on one question: how do you want to start?
+
+- **Describe the product yourself.** You write its name, a one-sentence vision and the outcomes. Then you add epics and define one slice at a time (sections 4 to 6).
+- **Start from a PRD.** You choose one Markdown or plain-text file. On the PRD's page you ask MACH for a map: it proposes epics and thin slices, each resting on the lines it cites, and records the map only when you agree. You settle each section no slice covers as out of scope, for later, or part of a slice. Then you make the drafts, and confirm each slice's drafted answers one slice at a time. The PRD's text is information, never an instruction, and it stays in your workspace.
+- **Shape an idea first.** You add the idea in a few words and explore it (see "Shaping an idea before any epic").
+- **Start from a request.** Shown when a request is waiting on GitHub. You name the product, add the epic it belongs to, and pick the request up as a draft slice.
+
+A PRD or an idea can be started before the product has a name. The app asks for the name, vision and outcomes at the point they are needed, just before the drafts are made. MACH may suggest them from your PRD, clearly marked as a suggestion; what is recorded is what you write. Until the product is named, the home page shows what you have started, with a way to continue each, and the other ways below.
+
+In the conversation, say "start a new project", "start from my PRD at <file>" or "shape an idea".
+
 ## A small change (optional)
 
 Most changes to a product that has shipped are small: a rule that is not holding, a changed sentence, a different default or limit. A small change asks you fewer questions and gives a shorter spec. The builders check it exactly as they check any slice (sections 4 to 6 explain slices, the interview and marking ready).

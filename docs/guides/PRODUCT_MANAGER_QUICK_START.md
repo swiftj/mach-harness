@@ -77,13 +77,26 @@ Product Studio opens in your browser, on your own computer. A link works once. F
 
 ### Step 5. Tell MACH about the product
 
-If the project is new, say:
+A product has a name, a vision, and one or more outcomes. An outcome is a result for a person, such as "Invited members can open the campaigns they were invited to". It is not a list of features.
+
+**In the app**, a new project opens on one question: how do you want to start?
+
+| Way | What you need |
+|---|---|
+| **Describe the product yourself** | What you already know about it. |
+| **Start from a PRD** | One Markdown or plain-text file. |
+| **Shape an idea first** | A few words for the idea. |
+| **Start from a request** | Nothing: shown when someone has filed one on GitHub. |
+
+With a PRD or an idea you do not have to name the product first. The app asks for the name, vision and outcomes at the point it needs them, just before it makes the drafts.
+
+**In the conversation**, say:
 
 ```
 start a new project
 ```
 
-MACH asks for a name, a vision, and one or more outcomes. An outcome is a result for a person, such as "Invited members can open the campaigns they were invited to". It is not a list of features.
+MACH asks for the name, vision and outcomes.
 
 Now choose your path.
 
@@ -104,6 +117,8 @@ start from my PRD at ~/Documents/checkout-prd.md
 ```
 
 MACH gives it an ID (`PRD-01`) and tells you how many sections it found. Nothing is sent anywhere.
+
+In the app, choose **Start from a PRD** and pick the file. Every step below then happens on the PRD's page: ask MACH for a map, settle what was left out, name the product if it has no name yet, and make the drafts.
 
 ### Step 3. Read the proposed map
 

@@ -148,7 +148,7 @@ Open Claude Code in the project folder and type:
 
 With nothing after it, it shows where things stand and suggests the next step. It also starts the visual app on your computer and shows its link: click it, or say "open the app", to work in your browser instead. The app and the conversation share the same drafts.
 
-1. **Describe the project.** A name, a vision, and the outcomes you want for people.
+1. **Describe the project.** A name, a vision, and the outcomes you want for people. In the app, a new project first asks how you want to start: describe the product, start from a PRD, shape an idea first, or start from a request waiting on GitHub.
 2. **Add an epic**, a larger capability that several slices of intent deliver. An epic needs no approval; each slice is approved on its own when you mark it ready.
 3. **Start a slice.** Claude interviews you one question at a time. Each question is a yes-or-no proposal with a recommended answer:
 
