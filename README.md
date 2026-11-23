@@ -64,7 +64,7 @@ Some words used below:
 
 ## Install
 
-You need Claude Code, `git`, and `python3` 3.8 or later.
+You need Claude Code, `git` 2.36 or later, and `python3` 3.8 or later.
 
 **As a plugin, for every project.** In Claude Code:
 
