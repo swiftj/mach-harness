@@ -6,7 +6,7 @@ Read-only by default, but for one throwaway ticket workspace it makes and remove
 "not_checked", never "ok". With --fix it creates only the installer's standard data folders that
 are missing, and only when .factory/ already exists. It never writes a settings file, never enables
 or installs anything, starts no MACH station or agent, and never reads the machine-local Factory
-folder (.factory/local/). Its only network access is `gh` (`auth status`, and `label list` and two `api`
+folder (.factory/local/). Its only network access is `gh` (`auth status`, and `label list` and up to five `api`
 reads when origin is on github.com), whose output is never shown: only exit codes and parsed fields are used. Standard library only.
 
 MACH's own internal errors are recorded under .factory/local/, so this script never lists them itself: run.py's doctor
@@ -516,6 +516,123 @@ def check_requests(project: Path, config: Any, gh_state: Dict[str, Any]) -> List
     return results
 
 
+PROTECTION_FIX = ("On GitHub, protect {branch} (Settings, then Branches or Rules): require a pull request, require status checks to pass, "
+                  "and require branches to be up to date before merging. Then GitHub refuses a merge onto a {branch} that moved since the "
+                  "checks ran. The doctor changes no setting.")
+
+
+def integration_branch(project: Path, config: Any) -> str:
+    """The branch tickets land on, as the merge station reads it: merge.into, origin's default branch, else main."""
+    merge = config.get("merge") if isinstance(config, dict) else None
+    named = merge.get("into") if isinstance(merge, dict) else None
+    if isinstance(named, str) and re.match(r"^[A-Za-z0-9._/-]{1,200}$", named.strip()):
+        return named.strip()
+    program = shutil.which("git")
+    if program:
+        code, out, _ = run([program, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], project, GIT_TIMEOUT)
+        if code == 0 and out.strip().startswith("origin/"):
+            return out.strip().split("/", 1)[1]
+    return "main"
+
+
+def protection_from_rules(data: Any) -> Optional[Tuple[bool, bool]]:
+    """(up to date required, checks required) from the branch's active rules (rulesets), or None if not a list."""
+    if not isinstance(data, list):
+        return None
+    strict = checks = False
+    for rule in data:
+        if isinstance(rule, dict) and rule.get("type") == "required_status_checks":
+            params = rule.get("parameters") if isinstance(rule.get("parameters"), dict) else {}
+            strict = strict or params.get("strict_required_status_checks_policy") is True
+            checks = checks or bool(params.get("required_status_checks"))
+    return strict, checks
+
+
+def check_merge_protection(project: Path, config: Any, gh_state: Dict[str, Any]) -> List[Dict[str, str]]:
+    """M20 A2: whether GitHub refuses a merge onto an integration branch that moved since the checks ran. Read-only: two
+    `gh api` reads (the branch's active rules, then its classic protection). Runs only for a github.com origin."""
+    repo = github_repo(project)
+    if repo is None:
+        return []
+    branch = integration_branch(project, config)
+    title = f"Merge protection on {branch}"
+    fix = PROTECTION_FIX.format(branch=branch)
+    path = shutil.which("gh")
+    if not path:
+        return [check("merge.protection", title, "not_checked", f"The GitHub CLI ('gh') is not on PATH, so {repo}'s settings for {branch} cannot be read.", fix)]
+    if "auth" not in gh_state:
+        code, out, err = run([path, "auth", "status", "--hostname", GH_HOST], project, GH_TIMEOUT)
+        gh_state["auth"] = (code, (out + "\n" + err).lower())
+    if gh_state["auth"][0] != 0:
+        return [check("merge.protection", title, "not_checked", "Needs the GitHub CLI signed in first.", fix)]
+    code, out, _ = run([path, "api", f"repos/{repo}/rules/branches/{branch}"], project, GH_TIMEOUT)
+    try:
+        ruled = protection_from_rules(json.loads(out)) if code == 0 else None
+    except ValueError:
+        ruled = None
+    if ruled == (True, True):
+        return [check("merge.protection", title, "ok", f"{repo} requires {branch} to be up to date and its checks to pass before a merge (a ruleset).")]
+    code, out, err = run([path, "api", f"repos/{repo}/branches/{branch}/protection/required_status_checks"], project, GH_TIMEOUT)
+    if code is None:
+        return [check("merge.protection", title, "not_checked", f"'gh api' {err}.", fix)]
+    if code != 0:
+        if "branch not protected" in (out + "\n" + err).lower() or "required status checks not enabled" in (out + "\n" + err).lower():
+            missing = "is not protected" if "branch not protected" in (out + "\n" + err).lower() else "requires no status checks"
+            return [check("merge.protection", title, "warn",
+                          f"{branch} in {repo} {missing}, so GitHub can merge a pull request onto a {branch} that moved since its checks ran.", fix)]
+        return [check("merge.protection", title, "not_checked",
+                      f"{repo}'s protection for {branch} could not be read (reading it needs admin access to the repository).", fix)]
+    try:
+        data = json.loads(out)
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        return [check("merge.protection", title, "not_checked", f"{repo}'s protection for {branch} was not recognised.", fix)]
+    strict = data.get("strict") is True or bool(ruled and ruled[0])
+    checks = bool(data.get("contexts") or data.get("checks")) or bool(ruled and ruled[1])
+    if strict and checks:
+        return [check("merge.protection", title, "ok", f"{repo} requires {branch} to be up to date and its checks to pass before a merge.")]
+    lacking = " and ".join(([] if strict else ["branches to be up to date"]) + ([] if checks else ["any status check"]))
+    return [check("merge.protection", title, "warn",
+                  f"{branch} in {repo} does not require {lacking} before merging, so GitHub can merge a pull request onto a {branch} that moved since its checks ran.", fix)]
+
+
+LOCAL_METHOD_FIX = ("For a team, set merge.method to \"pr\" in .factory/config.json: MACH then tests each ticket against origin's "
+                    "{branch} and merges it through a pull request. A person working alone can keep \"local\".")
+
+
+def check_merge_method(project: Path, config: Any, gh_state: Dict[str, Any]) -> List[Dict[str, str]]:
+    """M20 A2: merge.method local (the default) merges on this machine and never pushes, which suits one person, not a
+    team. Whether others push cannot be seen from Git, so the signal is GitHub's: more than one collaborator with write
+    access. Read-only (`gh api .../collaborators`); runs only for a github.com origin and the local method."""
+    merge = config.get("merge") if isinstance(config, dict) else None
+    method = merge.get("method") if isinstance(merge, dict) else None
+    if method == "pr":
+        return []
+    repo = github_repo(project)
+    if repo is None:
+        return []
+    branch = integration_branch(project, config)
+    title = "Merge method for a team"
+    fix = LOCAL_METHOD_FIX.format(branch=branch)
+    path = shutil.which("gh")
+    if not path:
+        return [check("merge.method", title, "not_checked", f"merge.method is local; the GitHub CLI ('gh') is not on PATH, so who can push to {repo} cannot be read.", fix)]
+    if "auth" not in gh_state:
+        code, out, err = run([path, "auth", "status", "--hostname", GH_HOST], project, GH_TIMEOUT)
+        gh_state["auth"] = (code, (out + "\n" + err).lower())
+    if gh_state["auth"][0] != 0:
+        return [check("merge.method", title, "not_checked", "merge.method is local; needs the GitHub CLI signed in first to see who can push.", fix)]
+    code, out, _ = run([path, "api", f"repos/{repo}/collaborators?per_page=100", "--jq", "[.[] | select(.permissions.push)] | length"], project, GH_TIMEOUT)
+    writers = out.strip()
+    if code != 0 or not writers.isdigit():
+        return [check("merge.method", title, "not_checked", f"merge.method is local; who can push to {repo} could not be read.", fix)]
+    if int(writers) > 1:
+        return [check("merge.method", title, "warn",
+                      f"merge.method is local, and {writers} people can push to {repo}. A local merge lands on this machine only and is never pushed by MACH.", fix)]
+    return [check("merge.method", title, "ok", f"merge.method is local, and only one person can push to {repo}.")]
+
+
 # --- running and reporting --------------------------------------------------------------------
 
 def diagnose(project: Path, fix: bool = False) -> Dict[str, Any]:
@@ -535,6 +652,8 @@ def diagnose(project: Path, fix: bool = False) -> Dict[str, Any]:
     checks += check_hosts(project)
     checks += check_remote(project)
     checks += check_requests(project, config, gh_state)
+    checks += check_merge_protection(project, config, gh_state)
+    checks += check_merge_method(project, config, gh_state)
     summary = {status: sum(1 for c in checks if c["status"] == status) for status in STATUSES}
     return {"project": str(project), "checks": checks, "summary": summary, "created": created}
 
