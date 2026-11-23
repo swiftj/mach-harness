@@ -246,6 +246,8 @@ class TakeTest(order_tests.TakeBase):
 class MergeTest(merge_tests.PullRequestBase):
     def with_key(self, key="TEAM-42", browse_url=None, **merge):
         head = self.approved(**merge)
+        if merge.get("method") != "pr":
+            self.without_remote()  # the local method is for a repository with no remote (M20 A2)
         self.set_cell(product={"slice_id": "SLICE-001", "revision": 1, "jira": key})
         if browse_url is not None:
             config = json.loads((self.project / ".factory/config.json").read_text())

@@ -125,6 +125,8 @@ The scripts decide the order. These stay with a person:
 - **The merge.** By default an unattended run stops before it. `merge.py --by-person` lifts only the merge mode and the per-tier setting. It still needs an approved stage, the commit review approved and any required human approval. A new commit voids the approval.
 - **Open questions, escalation after three rounds** (`blocked-requires-sme`), and anything under `needs_person`.
 
+**Merging in a team.** When several engineers merge into one shared main, use `merge.method: "pr"`. MACH fetches `origin/main` and re-tests each ticket against it, so it sees what the others merged. It reads `origin/main` again just before it merges and re-tests if it moved. If origin cannot be reached, MACH merges nothing. The `local` method is for a repository with no remote; with a remote, MACH refuses it. On GitHub, protect the main branch: require a pull request, require status checks to pass, and require branches to be up to date before merging. Then GitHub refuses a merge onto a main that moved in the last instant. `/mach doctor` warns when this is not set and says how to set it.
+
 The supervisor never: approves a high-risk change, answers an interview, merges unless you chose `--allow-merge` and the project's merge settings permit it, widens its own tools through its own commands, or retries a lost merge or cleanup. Its tool list has no `git push` or `gh`. Section 8 explains why that is not a hard barrier.
 
 ### The security review rule

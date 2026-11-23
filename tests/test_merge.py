@@ -237,6 +237,11 @@ class PullRequestBase(Base):
     def calls(self):
         return [json.loads(line) for line in self.gh_log.read_text().splitlines()] if self.gh_log.exists() else []
 
+    def without_remote(self):
+        """The local merge method is for a repository with no remote (M20 A2): a test of it removes origin first."""
+        if "origin" in git(self.project, "remote").stdout.split():
+            git(self.project, "remote", "remove", "origin")
+
 
 class PullRequestTest(PullRequestBase):
     def test_pull_request_is_opened_and_merged_at_the_approved_commit(self):
@@ -483,6 +488,7 @@ class FindingsTest(PullRequestBase):
 
     def test_local_merges_post_nothing(self):
         self.approved(mode="auto")
+        self.without_remote()
         self.votes({"architecture": [self.note("On a changed line", "app/invite.py", 1)]})
         self.assertNotIn("findings_posted", self.m_ok("run", "LOCAL-001"))
         self.assertEqual(self.posts(), [])
