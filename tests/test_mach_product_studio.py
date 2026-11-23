@@ -340,6 +340,44 @@ class SliceIdTest(Base):
         self.assertIn(self.draft / "specs/slices", registries)
 
 
+class HandOffOnOneComputerTest(Base):
+    """The product manager and the Factory on one computer: once the Factory has its copy of a slice marked ready, under the
+    name intake gives it, the product manager's draft of that slice is the same slice, never a duplicate of it."""
+
+    FACTORY_NAME = "SLICE-001-invite-a-teammate-by-email.md"
+
+    def factory_copy(self, where):
+        folder = self.project / where
+        folder.mkdir(parents=True, exist_ok=True)
+        text = FIXTURE.read_text()
+        (folder / self.FACTORY_NAME).write_text(text.replace("\n", "\n\n> Epic: Team membership (EPIC-001, issue #1). Slice issue: #6.\n", 1))
+
+    def duplicate(self, result):
+        return [line for line in result["errors"] if "duplicate-slice-id" in line]
+
+    def check_after_reopening(self, where):
+        self.approved_slice()
+        self.factory_copy(where)
+        self.ok("slice", "reopen", "SLICE-001")  # the folder is taken back; the record that it was handed over stays
+        checked = self.ok("slice", "check", "SLICE-001", "--ready")
+        self.assertEqual(self.duplicate(checked), [])
+        self.assertEqual(self.ok("slice", "ready", "SLICE-001")["slice"]["status"], "approved_for_engineering")
+
+    def test_the_factorys_copy_in_a_cell(self):
+        self.check_after_reopening(".factory/worktrees/6/repo/specs/slices")
+
+    def test_the_factorys_copy_in_the_main_checkout(self):
+        self.check_after_reopening("specs/slices")
+
+    def test_a_slice_never_handed_over_still_meets_its_duplicate(self):
+        self.ready_slice()  # SLICE-001 is a draft here, never marked ready
+        self.factory_copy(".factory/worktrees/LOCAL-002/repo/specs/slices")  # an engineer's own slice with the same number
+        code, out, _ = self.run_studio("slice", "check", "SLICE-001")
+        checked = json.loads(out)
+        self.assertEqual((code, len(self.duplicate(checked))), (1, 1), checked["errors"])
+        self.assertIn(self.FACTORY_NAME, self.duplicate(checked)[0])
+
+
 class WorkspaceTest(Base):
     def snapshot(self):
         return (git(self.project, "status", "--porcelain").stdout, git(self.project, "rev-parse", "HEAD").stdout,

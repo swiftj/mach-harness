@@ -14,7 +14,7 @@ The interview and what it produces are described in the README. Two details:
 
 - The spec's structure, grammar, and traceability; that the decision matrix covers every combination with no two rules in conflict; that every outside dependency has a failure requirement and a scenario (`validate_slice.py`, 47 rule codes).
 - That no open question remains before contracts are written (`cell.py finalize`).
-- That slice IDs are unique across every ticket being groomed at once.
+- That slice IDs are unique across every ticket being groomed at once, the main checkout and Product Studio's draft workspace. A slice Product Studio handed over is one slice on both sides: the product manager's draft of it and the Factory's copy share its ID, even under different file names, and neither is called a duplicate of the other.
 - That the plan puts tests first, assigns every requirement and scenario, and lists only contracts that exist (`cell.py check-plan`).
 
 ### Headless grooming

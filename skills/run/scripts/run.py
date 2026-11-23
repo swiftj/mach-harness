@@ -403,6 +403,11 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
     head = git(work, "rev-parse", "HEAD").stdout.strip()
 
     if stage == "interview":
+        waiting = handed_over(project, ticket_id)
+        if waiting:  # intake opened this cell and its dispatch was cut short: the slice is never groomed again here
+            return step(ticket_id, stage, "stop", f"{waiting} was handed over by Product Studio and is not groomed again. Its dispatch was cut short "
+                        f"before its spec passed the intent station's gate; dispatching it again (pull, or product dispatch {waiting}) finishes it.",
+                        needs="dispatch")
         return step(ticket_id, stage, "groom", "Grooming has started but the spec is not written.", model=project.model("planning"), prompt=groom_prompt, interactive=not headless)
     if stage == "spec-open":
         waiting = cell.get("policy_concerns_open")

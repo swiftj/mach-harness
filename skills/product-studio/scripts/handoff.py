@@ -120,6 +120,13 @@ class Handoff:
         self.home.mkdir(parents=True, exist_ok=True)
         self._write(self.path, json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
 
+    def handed_over(self) -> List[str]:
+        """The slices this workspace has handed over: marked ready (to GitHub or the folder) or taken from GitHub, at any time
+        since, reopened or not. The Factory's copy of one of them, outside the draft workspace, is that same slice. Reads only."""
+        data = self.load()
+        return sorted(key for key, entry in data["slices"].items()
+                      if entry.get("number") or entry.get("ready_at") or entry.get("taken_at") or entry.get("saved"))
+
     @staticmethod
     def entry(data: Dict[str, Any], slice_id: str) -> Dict[str, Any]:
         found = data["slices"].setdefault(slice_id, {})

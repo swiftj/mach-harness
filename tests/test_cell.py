@@ -194,6 +194,68 @@ class SliceIdTest(Base):
         self.assertIn("[duplicate-slice-id]", out)
 
 
+class HandOffTest(Base):
+    """A slice Product Studio handed over is one slice on both sides of the hand-off: the product manager's draft of it in the
+    Studio workspace, under the name it was started with, is never a duplicate of the Factory's copy, wherever that is written."""
+
+    def studio_draft(self, name="SLICE-001-allow-list-access.md"):
+        folder = self.project / ".factory/studio/draft/specs/slices"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_text(SPEC, encoding="utf-8")
+
+    def finalize(self, *extra):
+        return run("finalize", "LOCAL-001", "--spec", f"specs/slices/{SPEC_NAME}", "--no-commit", *extra, project=self.project)
+
+    def test_the_draft_is_the_same_slice_as_the_one_handed_over(self):
+        self.studio_draft()
+        self.groom()
+        code, out, _ = self.finalize()
+        self.assertEqual(code, 1)  # without the hand-off on record, two files with one ID are two slices
+        self.assertIn("SLICE-001 is already used by SLICE-001-allow-list-access.md", out)
+        code, out, _ = self.finalize("--from-studio", "SLICE-001")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("duplicate-slice-id", out)
+        # Afterwards the cell's own record of where its slice came from says so, for every later check.
+        path = self.project / ".factory/worktrees/LOCAL-001/cell.json"
+        data = json.loads(path.read_text())
+        data["product"] = {"slice_id": "SLICE-001", "revision": 1}
+        path.write_text(json.dumps(data))
+        code, out, _ = run("validate", "LOCAL-001", project=self.project)
+        self.assertEqual(code, 0, out)
+
+    def test_another_slice_with_the_same_id_is_still_a_duplicate(self):
+        self.studio_draft()
+        self.groom()
+        code, out, _ = self.finalize("--from-studio", "SLICE-002")  # the hand-off was of another slice: this draft is not its twin
+        self.assertEqual(code, 1)
+        self.assertIn("[duplicate-slice-id]", out)
+        self.groom("LOCAL-002", name="SLICE-001-other-feature.md")  # an engineer's own slice with the same ID, in another cell
+        code, out, _ = self.finalize("--from-studio", "SLICE-001")
+        self.assertEqual(code, 1)
+        self.assertIn("SLICE-001 is already used by SLICE-001-other-feature.md", out)
+        self.assertNotIn("allow-list-access", out)
+
+    def test_the_id_space_is_still_one(self):
+        self.studio_draft()
+        code, out, _ = run("next-id", "--count", "1", project=self.project)
+        self.assertEqual(json.loads(out)["next"], ["SLICE-005"])  # the draft holds SLICE-001 and reserves 002 to 004
+
+    def test_a_bad_slice_id_is_refused(self):
+        self.groom()
+        code, _, err = self.finalize("--from-studio", "../x")
+        self.assertEqual(code, 2)
+        self.assertIn("not a slice ID", err)
+
+
+class HandOffWithoutGitTest(HandOffTest):
+    """The same, with the Factory's copy written in the main checkout (a cell that works in the project root)."""
+    with_git = False
+
+    def test_the_draft_is_the_same_slice_as_the_one_handed_over(self):
+        super().test_the_draft_is_the_same_slice_as_the_one_handed_over()
+        self.assertTrue((self.project / "specs/slices" / SPEC_NAME).is_file())
+
+
 class FinalizeTest(Base):
     def test_ready_spec_is_exported_and_committed(self):
         info = self.groom()
