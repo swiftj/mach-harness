@@ -107,6 +107,18 @@ class InstallTest(Base):
         for reference in set(re.findall(r"`((?:references|assets|scripts)/[\w./-]+)`", text)):
             self.assertTrue((self.project / ".claude/skills/mach-intent" / reference).is_file(), reference)
 
+    def test_product_studio_says_plainly_when_machs_files_are_mixed(self):
+        """An older sibling module that lacks what Product Studio needs is reported in one sentence, not as an AttributeError."""
+        self.mach("install")
+        studio = self.project / ".claude/skills/mach-product-studio/scripts/studio.py"
+        done = subprocess.run([sys.executable, str(studio), "--project", str(self.project), "--help"], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        rules = self.project / ".claude/skills/mach-ticket/scripts/issue_rules.py"
+        rules.write_text(rules.read_text() + "\ndel NEED_KINDS\n")
+        done = subprocess.run([sys.executable, str(studio), "--project", str(self.project), "--help"], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 1, done.stderr)
+        self.assertEqual(done.stderr.strip(), "refused: MACH's files in this project are from different versions; run the installer again.")
+
     def test_installed_idea_skill_finds_the_shared_rules(self):
         self.mach("install")
         skill = self.project / ".claude/skills/mach-idea"
@@ -181,25 +193,103 @@ class InstallTest(Base):
         self.assertIn("Would install", out)
         self.assertEqual(list(self.project.iterdir()), [])
 
-    def test_changed_skill_file_is_skipped_then_replaced_with_force(self):
+    def test_changed_skill_file_is_backed_up_and_replaced_without_force(self):
+        """MACH's own files are always brought to the installed version: its scripts import each other across
+        skills, so one skipped file left a project with old and new MACH files that did not run together."""
         self.mach("install")
         path = self.project / SKILL
+        shipped = path.read_bytes()
         path.write_text(path.read_text() + "\nMy local rule.\n")
         (self.project / ".claude/skills/mach-intent/assets/slice-template.md").write_text("old shipped content")
         manifest = json.loads((self.project / ".factory/.mach-manifest.json").read_text())
         manifest["files"][".claude/skills/mach-intent/assets/slice-template.md"] = mach.sha(b"old shipped content")
         (self.project / ".factory/.mach-manifest.json").write_text(json.dumps(manifest))
         code, out = self.mach("install")
-        self.assertEqual(code, 1)
-        self.assertIn(f"SKIP     {SKILL}", out)
-        self.assertIn("update   .claude/skills/mach-intent/assets/slice-template.md", out)
-        self.assertIn("My local rule.", path.read_text())
-        code, out = self.mach("install", "--force")
         self.assertEqual(code, 0, out)
-        self.assertNotIn("My local rule.", path.read_text())
         backups = list(self.project.glob(".factory/mach-backup-*/" + SKILL))
         self.assertEqual(len(backups), 1)
+        saved = backups[0].relative_to(self.project).as_posix()
+        self.assertIn(f"replace  {SKILL} (your version saved to {saved})", out)
+        self.assertIn("update   .claude/skills/mach-intent/assets/slice-template.md", out, "an unchanged older file is updated as before")
+        self.assertIn("MACH replaced 1 of its own files that had been changed in this project, so that all of MACH's files come from version", out)
+        self.assertIn(f"The changed version is saved in {saved[:-len(SKILL)]}", out)
+        self.assertNotIn("SKIP", out)
+        self.assertNotIn("--force", out)
+        self.assertEqual(path.read_bytes(), shipped)
         self.assertIn("My local rule.", backups[0].read_text())
+        manifest = json.loads((self.project / ".factory/.mach-manifest.json").read_text())
+        self.assertEqual(manifest["files"][SKILL], mach.sha(shipped))
+        code, out = self.mach("install")
+        self.assertEqual((code, len(list(self.project.glob(".factory/mach-backup-*")))), (0, 1), "a second install has nothing to replace")
+        self.assertIn("Everything is already up to date.", out)
+
+    def test_skill_file_not_in_the_record_is_backed_up_and_replaced(self):
+        """The reported case: the record named the new version, but a sibling skill's script was older and not recorded."""
+        self.mach("install")
+        rules = ".claude/skills/mach-ticket/scripts/issue_rules.py"
+        path = self.project / rules
+        shipped = path.read_bytes()
+        path.write_text("# an older issue_rules.py\n")
+        manifest = json.loads((self.project / ".factory/.mach-manifest.json").read_text())
+        del manifest["files"][rules]
+        (self.project / ".factory/.mach-manifest.json").write_text(json.dumps(manifest))
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"replace  " + re.escape(rules) + r" \(your version saved to \.factory/mach-backup-\w+/" + re.escape(rules) + r"\)")
+        self.assertEqual(path.read_bytes(), shipped)
+        self.assertEqual(json.loads((self.project / ".factory/.mach-manifest.json").read_text())["files"][rules], mach.sha(shipped))
+        self.assertEqual([p.read_text() for p in self.project.glob(".factory/mach-backup-*/" + rules)], ["# an older issue_rules.py\n"])
+
+    def test_changed_mach_file_no_longer_shipped_is_backed_up_and_removed(self):
+        self.mach("install")
+        old = ".claude/skills/mach-intent/scripts/retired.py"
+        (self.project / old).write_text("print('changed')\n")
+        manifest = json.loads((self.project / ".factory/.mach-manifest.json").read_text())
+        manifest["files"][old] = mach.sha(b"print('shipped')\n")
+        (self.project / ".factory/.mach-manifest.json").write_text(json.dumps(manifest))
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"remove   {old} (no longer shipped; your version saved to .factory/mach-backup-", out)
+        self.assertFalse((self.project / old).exists())
+        self.assertEqual(len(list(self.project.glob(".factory/mach-backup-*/" + old))), 1)
+
+    def test_changed_file_outside_machs_own_paths_is_still_skipped(self):
+        """Only MACH's own paths are replaced without --force. No managed file outside them ships today, so the
+        rule is held on apply() directly with one."""
+        theirs = self.project / "tools" / "shared.txt"
+        theirs.parent.mkdir()
+        theirs.write_text("mine\n")
+        args = mach.argparse.Namespace(dry_run=False, force=False)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = mach.apply(self.project, [mach.Item("tools/shared.txt", b"MACH's\n", "managed")], ["skills"], "9.9.9", args)
+        self.assertEqual(code, 1)
+        self.assertIn("SKIP     tools/shared.txt (changed since it was installed, or not installed by MACH)", out.getvalue())
+        self.assertIn("Rerun with --force", out.getvalue())
+        self.assertEqual(theirs.read_text(), "mine\n")
+        self.assertFalse(list(self.project.glob(".factory/mach-backup-*")))
+
+    def test_what_counts_as_machs_own_code(self):
+        for dest in (SKILL, ".claude/skills/mach/scripts/run.py", ".claude/agents/mach-builder.md", ".claude/workflows/mach-belt.js",
+                     ".factory/bin/mach", ".factory/mach.mk", mach.STUDIO_DEST, mach.FLOOR_DEST):
+            self.assertTrue(mach.own_code(dest), dest)
+        for dest in ("Makefile", ".factory/config.json", "REVIEW.md", "AGENTS.md", "CLAUDE.md", ".gitignore", ".claude/skills/other/SKILL.md",
+                     ".claude/agents/builder.md", ".claude/settings.json", "tools/shared.txt"):
+            self.assertFalse(mach.own_code(dest), dest)
+        self.assertTrue(all(mach.own_code(dest) for dest in mach.MANAGED_TEMPLATES), "every managed template is MACH's own code")
+        self.assertFalse(any(mach.own_code(dest) for dest in mach.SEEDS), "seeds are the project's")
+
+    def test_dry_run_reports_the_replacement_and_writes_nothing(self):
+        self.mach("install")
+        path = self.project / SKILL
+        path.write_text("my version\n")
+        before = snapshot(self.project)
+        code, out = self.mach("install", "--dry-run")
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"replace  " + re.escape(SKILL) + r" \(your version saved to \.factory/mach-backup-\w+/" + re.escape(SKILL) + r"\)")
+        self.assertIn("MACH would replace 1 of its own files that had been changed in this project", out)
+        self.assertIn("The changed version would be saved in .factory/mach-backup-", out)
+        self.assertEqual(snapshot(self.project), before)
 
     def test_install_refuses_the_mach_repository_itself(self):
         code, out = run("install", "--project", str(ROOT), "--dry-run")
@@ -272,6 +362,31 @@ class StatusTest(Base):
         self.assertEqual(code, 0)
         self.assertIn("/mach-intent", out)
         self.assertIn("changed  .factory/mach.mk", out)
+
+    def test_status_says_plainly_when_machs_files_are_mixed(self):
+        self.mach("install")
+        code, out = self.mach("status")
+        self.assertNotIn("do not all match", out, "a clean install is not reported as mixed")
+        rules = ".claude/skills/mach-ticket/scripts/issue_rules.py"
+        manifest = json.loads((self.project / ".factory/.mach-manifest.json").read_text())
+        del manifest["files"][rules]
+        (self.project / ".factory/.mach-manifest.json").write_text(json.dumps(manifest))
+        (self.project / SKILL).write_text("an older SKILL.md\n")
+        (self.project / ".claude/skills/mach-intent/scripts/cell.py").unlink()
+        (self.project / ".claude/skills/mach-ticket/scripts/__pycache__").mkdir(exist_ok=True)
+        (self.project / ".claude/skills/mach-ticket/scripts/__pycache__/issue_rules.cpython-312.pyc").write_bytes(b"x")
+        (self.project / ".claude/skills/someone-elses/SKILL.md").parent.mkdir(parents=True)
+        (self.project / ".claude/skills/someone-elses/SKILL.md").write_text("not MACH's")
+        code, out = self.mach("status")
+        self.assertEqual(code, 0)
+        version = manifest["version"]
+        self.assertIn(f"MACH's files here do not all match the record for MACH {version} (1 changed, 1 missing, 1 not in the record), "
+                      "so they may come from different versions and MACH may not run. To fix it, run the installer again", out)
+        self.assertIn(f"not in the record  {rules}", out)
+        self.assertNotIn("__pycache__", out)
+        self.assertNotIn("someone-elses", out)
+        self.mach("install")
+        self.assertNotIn("do not all match", self.mach("status")[1], "running the installer again fixes it")
 
 
 class StudioTest(Base):

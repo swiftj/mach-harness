@@ -279,7 +279,7 @@ It fetches the newest release and checks it. Then restart Claude Code.
 
 Either way:
 
-- **Your work is kept.** Your drafts, your slices and your settings are not touched. Only MACH's own files are replaced.
+- **Your work is kept.** Your drafts, your slices and your settings are not touched. Only MACH's own files are replaced. If someone changed one of MACH's files, MACH first saves that version in a backup folder inside `.factory`, and says so at the end.
 - **Copy the `.factory` folder first** if work is in progress, so you have a spare.
 - **Check it worked.** Type `/mach doctor`.
 - **See what is new** in the [release notes](RELEASE_NOTES_DRAFT.md).

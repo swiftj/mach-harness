@@ -2303,7 +2303,34 @@ def refuse(exc: Exception) -> int:
     return 1
 
 
+MIXED_VERSIONS = "MACH's files in this project are from different versions; run the installer again."
+
+
+def mixed_versions(exc: Exception) -> bool:
+    """Whether an AttributeError or ImportError was raised for one of MACH's own modules in a project where MACH
+    was installed by its installer (.claude/skills/mach-*): one MACH script asked another for something it does not
+    have, so the two come from different versions. A plugin's or this repository's files come from one version,
+    so there the error is left as it is."""
+    if not SKILL_DIR.name.startswith("mach-"):
+        return False
+    if isinstance(exc, ImportError):
+        path = exc.path or getattr(sys.modules.get(exc.name or ""), "__file__", None)
+    else:
+        found = re.match(r"module '([\w.]+)' has no attribute ", str(exc))
+        path = getattr(sys.modules.get(found.group(1)), "__file__", None) if found else None
+    return bool(path) and SKILL_DIR.parent in Path(path).resolve().parents
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    try:
+        return run_command(argv)
+    except (AttributeError, ImportError) as exc:
+        if mixed_versions(exc):
+            return refuse(StudioError(MIXED_VERSIONS))
+        raise
+
+
+def run_command(argv: Optional[Sequence[str]] = None) -> int:
     global APP
     args = build_parser().parse_args(argv)
     APP = bool(args.app)
