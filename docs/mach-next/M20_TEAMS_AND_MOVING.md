@@ -1,6 +1,6 @@
 # M20 design: teams, and moving a project
 
-Status: a proposal; A1 and A5 are built (section 4), and A3 and A4 in part (their notes). It rests on two investigations run against MACH 0.20.0 on 2026-11-23:
+Status: Part A is built, except A6 (qualifying a release across machines). Part B (moving a project) is a proposal; nothing of it is built. Also built alongside: a ticket's workspace that holds no `.claude/` files, and the basic decisions drafted from an engineer's own documents (both in `docs/BLUEPRINT.md`). It rests on two investigations run against MACH 0.20.0 on 2026-11-23:
 
 - a real GitHub issue transfer between two private throwaway repositories, with a real MACH project in the first;
 - an audit of what happens when several product managers and several engineers use MACH at once on one repository, with 15 reproduction tests (9 of them show a defect and are marked as expected failures).
@@ -104,7 +104,11 @@ For a dependency this Factory did not build, the plan reads the merged spec on m
 
 Run records and archives are published to a shared place (the hook `records.publish_command` exists), and qualification reads them. This is the largest item and can follow the others.
 
-### What a team should agree today, before any of this is built
+### What a team should still agree
+
+Written before Part A was built. With it built, the first, third, fourth and sixth points below are now MACH's own rules; the rest still hold.
+
+#### As written before the build
 
 - One Factory pulls and dispatches: one engineer's machine or one supervisor. Never two supervisors on one repository.
 - Merge by pull request, with GitHub set to require an up-to-date branch and passing checks.
