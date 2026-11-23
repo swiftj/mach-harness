@@ -144,7 +144,7 @@ Open Claude Code in the project folder and type:
 /mach-product-studio
 ```
 
-With nothing after it, it shows where things stand and suggests the next step. Say "open the app" to work in your browser instead; the app and the conversation share the same drafts.
+With nothing after it, it shows where things stand and suggests the next step. It also starts the visual app on your computer and shows its link: click it, or say "open the app", to work in your browser instead. The app and the conversation share the same drafts.
 
 1. **Describe the project.** A name, a vision, and the outcomes you want for people.
 2. **Add an epic**, a larger capability that several slices of intent deliver. An epic needs no approval; each slice is approved on its own when you mark it ready.

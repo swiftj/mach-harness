@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"mach/studio/internal/engine"
+	"mach/studio/internal/hostdir"
 	"mach/studio/internal/interview"
 	"mach/studio/internal/security"
 	"mach/studio/internal/server"
@@ -31,13 +32,17 @@ import (
 var version = "dev"
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	stop()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "mach-studio:", err)
 		os.Exit(1)
 	}
 }
 
-func run(args []string, stdout, stderr io.Writer) error {
+// run serves until ctx ends (main: Ctrl+C or SIGTERM), then shuts down.
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("mach-studio", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	projectFlag := flags.String("project", "", "the project folder (default: the nearest folder above the current one that holds the project's tool folder or .git)")
@@ -89,6 +94,20 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// One host per project: a second start stops here, before it touches anything the running one
+	// uses. The lock ends with the process, so a host that crashed does not block the next start.
+	// A project with no tool folder keeps no host folder, no lock and no link file.
+	hostDir, err := hostdir.Prepare(project)
+	if err != nil {
+		return fmt.Errorf("could not prepare Product Studio's own folder: %w", err)
+	}
+	if hostDir != nil {
+		held, err := hostDir.Acquire()
+		if err != nil {
+			return err
+		}
+		defer held.Release()
+	}
 	// A file staged for one engine call is removed after it; one left by a host that stopped in the
 	// middle of a call is removed here.
 	if err := security.ClearUploads(project); err != nil {
@@ -123,14 +142,30 @@ func run(args []string, stdout, stderr io.Writer) error {
 		listener.Close()
 		return err
 	}
+	// The next unused link is kept in a private file, replaced each time a link is used, so a
+	// second browser (or a page closed by mistake) can have one without a restart.
+	linkKept := false
+	if hostDir != nil {
+		guard.OnMint(func(url string) {
+			if err := hostDir.WriteLink(url); err != nil {
+				logger.Printf("could not keep the next one-time link: %v", err)
+			}
+		})
+		defer hostDir.RemoveLink()
+		linkKept = true
+	}
 	srv := server.New(server.Options{
 		Engine: eng, Guard: guard, Bridge: bridge, UI: webui.Handler(),
-		Logger: logger, EngineInstall: located.Install,
+		Logger: logger, EngineInstall: located.Install, LinkKept: linkKept,
 	}).HTTPServer()
 
 	fmt.Fprintf(stdout, "MACH Product Studio for %s\n", filepath.Base(project))
 	fmt.Fprintf(stdout, "Open: %s\n", guard.StartURL())
-	fmt.Fprintln(stdout, "The link works once. Press Ctrl+C to stop.")
+	if linkKept {
+		fmt.Fprintf(stdout, "The link works once. A fresh link for another browser is kept in %s/%s. Press Ctrl+C to stop.\n", hostdir.Rel, hostdir.LinkName)
+	} else {
+		fmt.Fprintln(stdout, "The link works once. Press Ctrl+C to stop.")
+	}
 	if f, ok := stdout.(*os.File); ok {
 		f.Sync()
 	}
@@ -140,8 +175,6 @@ func run(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(listener) }()
 	select {

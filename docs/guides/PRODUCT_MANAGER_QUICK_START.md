@@ -63,17 +63,17 @@ Type:
 /mach-product-studio
 ```
 
-MACH tells you where things stand and suggests a next step. From here on you can simply type what you want in plain words.
+MACH tells you where things stand and suggests a next step. It also starts Product Studio's visual app on your computer and gives you a link to it. From here on you can simply type what you want in plain words.
 
 > If that command is not found, your engineer installed MACH as a plugin. Type `/mach:product-studio` instead. Everything else is the same.
 
-**Prefer a screen to a conversation?** Say:
+**Prefer a screen to a conversation?** Click the link, or paste it into a browser on your computer. Or say:
 
 ```
 open the app
 ```
 
-Product Studio opens in your browser, on your own computer. The app and the conversation work on the same drafts, so switch between them whenever you like.
+Product Studio opens in your browser, on your own computer. A link works once. For another browser, or if you closed the page, ask for a new link. The app and the conversation work on the same drafts, so switch between them whenever you like.
 
 ### Step 5. Tell MACH about the product
 

@@ -197,3 +197,64 @@ func TestSymlinksAnywhereOnTheWayAreRefused(t *testing.T) {
 		})
 	}
 }
+
+// A second browser: each trade mints the next one-time link and hands it to OnMint (which the host
+// keeps in a private file). Every link leads into the same single session; none works twice.
+func TestEachLinkLeadsIntoTheOneSession(t *testing.T) {
+	g, err := NewGuard(4321)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var minted []string
+	g.OnMint(func(url string) { minted = append(minted, url) })
+	if len(minted) != 1 || minted[0] != g.StartURL() {
+		t.Fatalf("the current link was not handed over at once: %v", minted)
+	}
+	tokenOf := func(link string) string {
+		u, err := url.Parse(link)
+		if err != nil || u.Host != "127.0.0.1:4321" {
+			t.Fatalf("link %q", link)
+		}
+		return u.Query().Get("t")
+	}
+	first, ok := g.Exchange(tokenOf(minted[0]))
+	if !ok || len(minted) != 2 || minted[1] == minted[0] || g.StartURL() != minted[1] {
+		t.Fatalf("no fresh link after a trade: %v", minted)
+	}
+	if _, ok := g.Exchange(tokenOf(minted[0])); ok {
+		t.Fatal("a spent link worked again")
+	}
+	if len(minted) != 2 {
+		t.Fatalf("a refused trade minted a link: %v", minted)
+	}
+	second, ok := g.Exchange(tokenOf(minted[1]))
+	if !ok || len(minted) != 3 {
+		t.Fatalf("the next link was refused: ok=%v %v", ok, minted)
+	}
+	if first.Value != second.Value {
+		t.Fatal("a later link made a second session value")
+	}
+	r := httptest.NewRequest("GET", "/api/session", nil)
+	r.AddCookie(second)
+	if !g.Authenticated(r) {
+		t.Fatal("the shared session was refused")
+	}
+	for _, spent := range minted[:2] {
+		if _, ok := g.Exchange(tokenOf(spent)); ok {
+			t.Fatalf("spent link %q worked again", spent)
+		}
+	}
+}
+
+// Without OnMint the guard still mints the next link; StartURL always names the unused one.
+func TestStartURLNamesTheUnusedLink(t *testing.T) {
+	g, _ := NewGuard(4321)
+	before := g.StartURL()
+	u, _ := url.Parse(before)
+	if _, ok := g.Exchange(u.Query().Get("t")); !ok {
+		t.Fatal("the start link was refused")
+	}
+	if after := g.StartURL(); after == "" || after == before {
+		t.Fatalf("StartURL did not move on: %q", after)
+	}
+}

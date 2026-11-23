@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"testing"
 )
 
@@ -12,7 +13,7 @@ func TestVersionFlagPrintsTheStampedVersionAndExits(t *testing.T) {
 		previous := version
 		version = stamped
 		var out, errOut bytes.Buffer
-		err := run([]string{"--version"}, &out, &errOut)
+		err := run(context.Background(), []string{"--version"}, &out, &errOut)
 		version = previous
 		if err != nil {
 			t.Fatalf("--version returned %v (stderr %q)", err, errOut.String())

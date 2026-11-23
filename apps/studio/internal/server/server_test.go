@@ -60,6 +60,12 @@ func start(t *testing.T) *host { return startWith(t, nil) }
 // startWith runs the server with a bridge made for the project (nil: interviews unavailable).
 func startWith(t *testing.T, bridge func(project string) interview.Bridge) *host {
 	t.Helper()
+	return startOpts(t, bridge, false)
+}
+
+// startOpts: linkKept is whether the host keeps the next unused link in a file (main decides it).
+func startOpts(t *testing.T, bridge func(project string) interview.Bridge, linkKept bool) *host {
+	t.Helper()
 	project := testkit.NewProject(t)
 	var b interview.Bridge = interview.Unavailable{}
 	if bridge != nil {
@@ -77,7 +83,7 @@ func startWith(t *testing.T, bridge func(project string) interview.Bridge) *host
 	logs := &syncBuffer{}
 	srv := server.New(server.Options{
 		Engine: testkit.NewEngine(t, project), Guard: guard, Bridge: b, UI: webui.Handler(),
-		Logger: log.New(logs, "", 0), EngineInstall: "explicit",
+		Logger: log.New(logs, "", 0), EngineInstall: "explicit", LinkKept: linkKept,
 	}).HTTPServer()
 	go srv.Serve(listener)
 	t.Cleanup(func() {
@@ -203,11 +209,16 @@ func TestTheStartTokenIsNeededAndWorksOnce(t *testing.T) {
 	if wrong.StatusCode != 401 || len(wrong.Cookies()) != 0 {
 		t.Fatalf("a wrong token: %d %v", wrong.StatusCode, wrong.Cookies())
 	}
+	first := h.guard.StartURL()
 	h.login()
-	again, _ := noRedirect.Get(h.guard.StartURL()) // a second browser, or someone who copied the link
+	again, _ := noRedirect.Get(first) // a second browser, or someone who copied the link
+	body, _ := io.ReadAll(again.Body)
 	again.Body.Close()
 	if again.StatusCode != 401 || len(again.Cookies()) != 0 {
 		t.Fatalf("a reused token: %d %v", again.StatusCode, again.Cookies())
+	}
+	if !strings.Contains(string(body), "Ask Claude to start Product Studio again for a new link.") {
+		t.Fatalf("the refusal does not say what to do: %q", body)
 	}
 	forged := *h
 	// Change the first character to a different one. (Replacing the last character with a fixed letter made
@@ -688,5 +699,55 @@ func TestAnUnframedBodyDoesNotReachTheNextRequest(t *testing.T) {
 	}
 	if _, err := http.ReadResponse(reader, nil); err == nil {
 		t.Fatal("the connection stayed open, so the unframed bytes were read as a request")
+	}
+}
+
+// A host that keeps the next link: a second browser opens that one and joins the same session; a
+// spent link tells a browser without the session to ask Claude for a new one, and sends a browser
+// that has it to the app.
+func TestALaterLinkJoinsTheOneSession(t *testing.T) {
+	h := startOpts(t, nil, true)
+	first := h.guard.StartURL()
+	h.login()
+	next := h.guard.StartURL()
+	if next == "" || next == first {
+		t.Fatalf("no fresh link after the first was used: %q", next)
+	}
+	spent, _ := noRedirect.Get(first)
+	body, _ := io.ReadAll(spent.Body)
+	spent.Body.Close()
+	if spent.StatusCode != 401 || len(spent.Cookies()) != 0 {
+		t.Fatalf("a spent link: %d %v", spent.StatusCode, spent.Cookies())
+	}
+	if !strings.Contains(string(body), "Ask Claude for a new link to Product Studio.") || strings.Contains(string(body), "Restart") {
+		t.Fatalf("the refusal does not say what to do: %q", body)
+	}
+	resp, err := noRedirect.Get(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	var second *http.Cookie
+	for _, c := range resp.Cookies() {
+		if c.Name == security.CookieName {
+			second = c
+		}
+	}
+	if resp.StatusCode != http.StatusSeeOther || second == nil || second.Value != h.cookie.Value {
+		t.Fatalf("the second browser did not join the one session: %d %v", resp.StatusCode, second)
+	}
+	// The first browser opening a spent link again goes straight to the app.
+	req, _ := http.NewRequest("GET", first, nil)
+	req.AddCookie(h.cookie)
+	back, err := noRedirect.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back.Body.Close()
+	if back.StatusCode != http.StatusSeeOther || back.Header.Get("Location") != "/" {
+		t.Fatalf("a browser with the session: %d %s", back.StatusCode, back.Header.Get("Location"))
+	}
+	if status, env := h.call("GET", "/api/session", "", nil); status != 200 || !env.OK {
+		t.Fatalf("the first browser lost its session: %d %+v", status, env.Error)
 	}
 }

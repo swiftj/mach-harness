@@ -44,6 +44,7 @@ type Options struct {
 	UI            http.Handler
 	Logger        *log.Logger
 	EngineInstall string // explicit, plugin or project
+	LinkKept      bool   // the host keeps the next unused one-time link in a private file
 }
 
 // Server is the HTTP handler for one project.
@@ -201,7 +202,11 @@ func (s *Server) exchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	http.Error(w, "This link has already been used or is not valid. Restart Product Studio to get a new link.", http.StatusUnauthorized)
+	msg := "This link has already been used or is not valid. Ask Claude for a new link to Product Studio."
+	if !s.opts.LinkKept {
+		msg = "This link has already been used or is not valid. Ask Claude to start Product Studio again for a new link."
+	}
+	http.Error(w, msg, http.StatusUnauthorized)
 }
 
 // ---- routes ----
