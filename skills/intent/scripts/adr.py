@@ -921,7 +921,8 @@ def baseline_stop(project: Path, config: Any, labels: Iterable[str] = ()) -> Opt
     command = baseline_command()
     reason = (f"The project's basic technical decisions are not all written down as accepted ADRs on the main branch. Missing: {named}. "
               "No ticket is planned or built until they are, so the factory never guesses the stack. "
-              f"Draft them from the repository with {command}, then an engineer corrects, accepts and commits them by pull request.")
+              f"Draft them with {command}: MACH reads the repository and any technical documents the engineer already has, then an "
+              "engineer corrects, accepts and commits them by pull request.")
     return {"missing": found["missing"], "reason": reason, "command": command, "problems": found["problems"]}
 
 

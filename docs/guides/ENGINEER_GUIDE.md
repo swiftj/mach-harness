@@ -24,6 +24,16 @@ Autonomous work needs a repository that builds, tests and lints cleanly. `/mach-
 
 A build or test suite that fails, is missing or cannot be run is Bronze whatever the score. The report goes stale after `audit.max_age_days` and is bound to a commit. The secret-scanning check only looks for a scanner's name in configuration. It runs no scanner (2 of 100 points).
 
+### Starting from documents you already have
+
+MACH plans no ticket until the project's basic technical decisions are accepted ADRs on the main branch. You may already have them written down somewhere: an ARCHITECTURE.md, a high-level design, a stack or deployment note, coding standards, or ADRs in another format.
+
+Run `/mach adr baseline`. MACH asks whether you have such documents. Name the files or a folder, inside the repository or anywhere on your machine. MACH reads Markdown and plain text; it does not read PDFs. It never edits, moves or commits your documents. It keeps their path, SHA-256 and line count in `.factory/adr-baseline.json`, which Git ignores.
+
+MACH reads every document and works out, for each required topic, whether the documents decide it, decide part of it or say nothing. It drafts one proposed ADR per topic from the lines that decide it, and lists each document's path, SHA-256 and lines in the ADR. It also lists the other decisions the documents make, such as an ADR written in another format; you take all of them, some or none. Where your documents leave a gap, or two of them disagree, or one disagrees with the code, MACH asks you, one question at a time. Where one disagrees with a technical need the product manager published, MACH asks you which to follow and says the product manager owns the need; it never changes the need.
+
+When nothing is open, MACH asks once whether to accept the drafts, then offers to commit them your project's way. Once they are on the main branch, MACH plans and builds tickets. Change a document later and MACH says so the next time; it uses that document again only after you name it again.
+
 ## 2. Product intake, plan and dispatch
 
 **The one command: `/mach pull`** (`RUN pull [--limit n] [--sequential] [--dry-run]`). It takes in every slice marked ready, picks the next batch with the schedule's rules (dependencies merged first, the product manager's order within an epic, oldest ready first; never more than `factory.max_parallel`, at most `factory.max_parallel_high` High-risk, no two tickets whose plans touch the same file, a ticket another worker holds left to it), dispatches the slices it picked, and prints what starts now, what waits and why, what was not accepted, what waits for you, and the tickets to run. Tickets already in the line count against the limit and are carried on in the same run. The skill then runs them (the belt workflow for several, in the conversation for one) and walks you through what waits for you. `--dry-run` changes nothing. It is refused inside a supervised execution and enables nothing. The `product` commands below remain for looking and for doing one step.
