@@ -1,6 +1,6 @@
 # M20 design: teams, and moving a project
 
-Status: a proposal. Nothing here is built. It rests on two investigations run against MACH 0.20.0 on 2026-11-23:
+Status: a proposal; A1 and A5 are built (section 4). It rests on two investigations run against MACH 0.20.0 on 2026-11-23:
 
 - a real GitHub issue transfer between two private throwaway repositories, with a real MACH project in the first;
 - an audit of what happens when several product managers and several engineers use MACH at once on one repository, with 15 reproduction tests (9 of them show a defect and are marked as expected failures).
@@ -58,7 +58,7 @@ The design below fixes the claim first, then makes references travel by MACH's o
 
 Ordered by harm. Sizes: S is a day or two, M about a week, L more.
 
-### A1. One Factory builds a slice (T1, T3). M
+### A1. Factories keep out of each other's way (T1, T3). M
 
 - **Claim on GitHub at dispatch.** Just before a cell is opened, the Factory reads the issue again, posts a claim comment in a fixed template carrying a random value of its own, reads the comments again, and goes on only if its claim is the earliest for that revision. The loser opens nothing, withdraws its comment and reports "another Factory took SLICE-011 (claimed by @x at 14:02)".
 - **`mach:building` is respected.** Intake does not accept an issue that carries `mach:building` unless this Factory's own ledger holds that slice. That closes T3.
@@ -163,6 +163,11 @@ One decision is needed: one repository still means one project. Two products in 
 | 5 | B4 merging two projects | L |
 | 6 | A6 qualifying across machines | L |
 
+**A1. Built, after two decisions by the owner on 2026-11-23.** First: no slice is assigned in advance; every Factory must be able to build anything. Second: two Factories should not build the same slice at the same time, because that ends in a duplicate pull request. The first build (a claim that refused dispatch, with a release only by hand) was replaced on the first decision by a model with no claim at all, and that in turn was replaced on the second by what is built: `ticket.py slice-claim` (rules in `issue_rules`: `claim_token`, `claim_comment`, `claims`, `claim_holder`) is called by `intake.py` `_dispatch` for every slice from an issue not yet in the line, so an engineer's dispatch, `/mach pull` and the supervisor all go through it. A Factory is its random value in `.factory/local/factory.json`; a claim carries a token derived from it and the slice ID. The earliest live counting claim per revision holds, by comment ID; a claim counts only as the exact template, unedited, by a person with triage or above. A slice held elsewhere is taken in and skipped by the plan ("being built by @x since …"), so pull and the supervisor take the next; a Factory that loses a race withdraws its own claim and pull dispatches the next slice in its place. Released by its own Factory (abandoned work withdraws its claim), by going stale (no activity for `intake.claim_stale_days`, default 3), or by an engineer's explicit `product dispatch <slice> --take-over`, never unattended. Backstop: `intake.already_landed`, used by `run.py next`, stops a copy whose revision already landed; the merge station must check the same before merging or opening a pull request. Differs from the text above: a failed status write does not block dispatch; the claim comment is the claim. Tests: `tests/test_team_factory.py`.
+
+**A5. Built.** The plan treats a slice this Factory took in, and is not building, as completed when its approved spec, for that revision (SHA-256 without the header), is on the integration branch; a slice whose revision is on the integration branch counts as merged for its dependents. Nothing is written to the issue from this machine.
+
+
 Step 1 removes the three ways work is duplicated or merged untested without anyone being told. The nine failing reproduction tests become the acceptance tests: each must pass when its item is done.
 
 ## 5. Not in this design
@@ -176,3 +181,5 @@ Step 1 removes the three ways work is duplicated or merged untested without anyo
 1. Step 1 is built first, ahead of moving a project.
 2. One repository holds one project. A move is a team leaving an old repository for a new one. When the destination already holds a project, the incoming epics and slices join it as more epics, renumbered; MACH does not learn several projects in one repository.
 3. Several engineers each running `/mach pull`, or their own supervisor, on their own machines against one repository is the normal team case and must be safe. The claim in A1 is what makes it so: every Factory builds only what it claimed.
+4. No slice is assigned to a particular engineer's Factory in advance; every Factory must be able to build anything.
+5. Two Factories should not build the same slice at the same time, which would end in duplicate pull requests. A Factory takes a slice nobody is building; another skips it and takes the next; an engineer can take one over on their word. The shared main takes a slice revision once, as a backstop.

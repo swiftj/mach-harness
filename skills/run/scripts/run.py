@@ -406,6 +406,13 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
     stage = cell.get("stage")
     work = root / "repo" if cell.get("isolation") == "worktree" else project.root
     head = git(work, "rev-parse", "HEAD").stdout.strip()
+    landed = landed_from_another_factory(project, cell)
+    if landed:  # M20: the shared main takes a slice revision once; this copy is not merged
+        slice_id = cell["product"]["slice_id"]
+        branch = cell.get("branch") or f"feature/{ticket_id}"
+        return step(ticket_id, stage, "stop", landed + f" Put this copy aside: cleanup run {ticket_id} --abandon \"{slice_id} was already shipped from another "
+                    f"Factory\" archives the cell and keeps its branch's commits in the archive (branch.bundle). To keep the branch itself for comparison, "
+                    f"copy it first (git branch {branch}-copy {branch}).", needs="landed-elsewhere")
 
     if stage == "interview":
         waiting = handed_over(project, ticket_id)
@@ -533,6 +540,23 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
     if stage == "blocked":
         return step(ticket_id, stage, "stop", "The ticket failed its third round and was escalated.", needs="person-to-take-over")
     return step(ticket_id, stage, "stop", f"The cell is in an unknown stage ('{stage}').", needs="person-to-take-over")
+
+
+def landed_from_another_factory(project: Project, cell: Dict[str, Any]) -> Optional[str]:
+    """M20: for a cell intake opened from a slice, the plain sentence when this slice revision is already on the main branch (local,
+    or origin's as last fetched) and this cell's own work is not what landed; else None. Not asked before the spec is written, once
+    the cell is merged, or while a pull request is open (the merge station knows whether that pull request is its own)."""
+    product = cell.get("product") if isinstance(cell.get("product"), dict) else {}
+    if not product.get("slice_id") or not product.get("spec_sha256") or cell.get("stage") in ("interview", "merged", "pr-open"):
+        return None
+    if isinstance(cell.get("merged"), dict) or project.merged(cell.get("branch")):
+        return None  # its own merge
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import intake
+    default = project.default_branch()
+    refs = [ref for ref in (f"refs/heads/{default}", f"refs/remotes/origin/{default}") if git(project.root, "rev-parse", "--verify", "-q", ref).returncode == 0]
+    landed = intake.already_landed(project.root, str(product["slice_id"]), product.get("spec_sha256"), refs)
+    return intake.landed_message(str(product["slice_id"]), landed) if landed else None
 
 
 def exceptions_lapsed(decision: Dict[str, Any]) -> List[str]:
@@ -1214,7 +1238,12 @@ def cmd_product(project: Project, args: argparse.Namespace) -> int:
                 fetch(project)
             result = line.reconcile()
         elif args.action == "dispatch":
-            result = line.dispatch(args.slice_ids, all_ready=args.ready, limit=args.limit)
+            if args.take_over and (execution_scope(project) is not None or os.environ.get(EXECUTION_ENV)):
+                raise RunError("Taking a slice over from another Factory is an engineer's act, on their explicit word in conversation; "
+                               "a supervised execution never takes one over.")
+            if args.take_over and (args.ready or not args.slice_ids):
+                raise RunError("Name the slice to take over (its ID or issue number). --take-over is never used with --ready.")
+            result = line.dispatch(args.slice_ids, all_ready=args.ready, limit=args.limit, take_over=bool(args.take_over))
             result["workflow"] = "mach-belt" if PROJECT_INSTALL else "mach:belt"
             result["run_one"] = [f"{skill('run')} {ticket_id}" for ticket_id in result["tickets"]]
         else:
@@ -2063,6 +2092,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("slice_ids", nargs="*", help="slice IDs, or their issue numbers")
     p.add_argument("--ready", action="store_true", help="every slice the plan marks dispatchable")
     p.add_argument("--limit", type=int, help="dispatch at most this many")
+    p.add_argument("--take-over", action="store_true",
+                   help="on an engineer's explicit word: build the named slice although another Factory has claimed it; the issue says who took it over")
     p.set_defaults(func=cmd_product)
     p = product.add_parser("events", help="the intake ledger's transitions, in order")
     p.add_argument("--since", type=int, default=0, help="only events after this sequence number")

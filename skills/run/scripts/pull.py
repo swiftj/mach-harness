@@ -151,7 +151,11 @@ def choose(args: Any, root: Path, config: Dict[str, Any], line: Any, schedule: A
             waits.append({"ticket_id": public_ticket(rows, key, None), "slice_id": key, "rule": "ceiling", "why": rows[key]["reasons"][-1], "after": [],
                           "in_this_run": False, "then": "is dispatched by a later pull"})
     for key, row in rows.items():
-        if row["state"] == "blocked" and key not in person_slices:
+        if row.get("held") and key not in person_slices:  # M20: another Factory is building it: skipped, and left to that Factory
+            waits.append({"ticket_id": public_ticket(rows, key, None), "slice_id": key, "rule": "being-built-elsewhere", "why": row["held"].rstrip("."),
+                          "after": [], "in_this_run": False,
+                          "then": f"is left to that Factory (to build it here instead: product dispatch {key} --take-over, on your word)"})
+        elif row["state"] == "blocked" and key not in person_slices:
             waits.append({"ticket_id": public_ticket(rows, key, None), "slice_id": key, "rule": "blocked", "why": " ".join(row["reasons"]),
                           "after": [dep.get("slice_id") or dep.get("name") for dep in row.get("depends_on") or [] if not dep.get("integrated")],
                           "in_this_run": False, "then": "is dispatched by a later pull once nothing holds it"})
@@ -167,12 +171,34 @@ def choose(args: Any, root: Path, config: Dict[str, Any], line: Any, schedule: A
                 raise
             dispatched["problem"] = str(exc)
             sent = {"dispatched": [], "refused": []}
+        # M20: a slice another Factory claimed a moment before is skipped, and the next slice nobody is building is taken in its place.
+        tried = set(to_dispatch)
+        for _ in range(3):
+            lost = [item for item in sent["refused"] if item.get("state") == "being_built_elsewhere" and item["slice_id"] not in dispatched.get("replaced", [])]
+            if not lost or dispatch is None:
+                break
+            dispatched.setdefault("replaced", []).extend(item["slice_id"] for item in lost)
+            again = line.plan()
+            more = [key for key in again["dispatchable"] if key not in tried][:len(lost)]
+            if not more:
+                break
+            tried.update(more)
+            try:
+                extra = dispatch(more)
+            except Exception as exc:
+                if exc.__class__.__name__ != "IntakeError":
+                    raise
+                break
+            sent = {"dispatched": sent["dispatched"] + extra["dispatched"], "refused": sent["refused"] + extra["refused"]}
         dispatched.update(dispatched=sent["dispatched"], refused=sent["refused"])
         for item in sent["dispatched"]:
             start_now.append({"ticket_id": item["ticket_id"], "slice_id": item["slice_id"], "how": "dispatched", "until": "build"})
         for item in sent["refused"]:
-            waits.append({"ticket_id": public_ticket(rows, item["slice_id"], None), "slice_id": item["slice_id"], "rule": "dispatch-refused",
-                          "why": " ".join(item.get("why") or []), "after": [], "in_this_run": False, "then": "is dispatched by a later pull once nothing holds it"})
+            elsewhere = item.get("state") == "being_built_elsewhere"
+            waits.append({"ticket_id": public_ticket(rows, item["slice_id"], None), "slice_id": item["slice_id"],
+                          "rule": "being-built-elsewhere" if elsewhere else "dispatch-refused",
+                          "why": " ".join(item.get("why") or []).rstrip("."), "after": [], "in_this_run": False,
+                          "then": "is left to that Factory" if elsewhere else "is dispatched by a later pull once nothing holds it"})
         if dispatched["problem"]:
             for key in to_dispatch:
                 waits.append({"ticket_id": public_ticket(rows, key, None), "slice_id": key, "rule": "dispatch-refused", "why": dispatched["problem"],
@@ -194,6 +220,9 @@ def choose(args: Any, root: Path, config: Dict[str, Any], line: Any, schedule: A
         "run": run, "workflow": workflow, "workflow_args": workflow_args,
         "run_one": f"{run_one} {run[0]}" if len(run) == 1 else None,
         "nothing_to_run": not run and not start_now,
+        # M20: nothing starts, and what is ready is being built by other Factories.
+        "all_ready_built_elsewhere": not start_now and (bool(plan.get("all_ready_built_elsewhere"))
+                                                        or any(item["rule"] == "being-built-elsewhere" for item in waits)),
         "factory_started": False,
     }
     report["in_words"] = in_words(report)
@@ -244,6 +273,8 @@ def in_words(report: Dict[str, Any]) -> List[str]:
         lines.append(f"Waits for a person: {named(item)}: {item['why']}" + (" Its work goes on meanwhile." if item.get("still_moves") else ""))
     if report["dispatch"]["problem"]:
         lines.append(f"Nothing was dispatched: {report['dispatch']['problem']}")
+    if report.get("all_ready_built_elsewhere") and not report["start_now"]:
+        lines.append("Everything ready is being built by other Factories, so nothing new starts here.")
     if report["run"]:
         lines.append(f"{'Would run' if would else 'To run'}: {', '.join(report['run'])}.")
     if would and any(item["how"] == "would be dispatched" and not item["ticket_id"] for item in report["start_now"]):

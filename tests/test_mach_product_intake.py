@@ -572,9 +572,10 @@ class DispatchTest(Base):
         intent = (self.eng / ".factory/worktrees" / ticket / "intent.md").read_text()
         self.assertIn(f"- **Ticket:** {ticket} (github)", intent)
         self.assertIn("approved by ada-pm", intent)
-        # Status on the issue: building, and ready taken off; one comment from the fixed template.
+        # Status on the issue: building, and ready taken off; the claim (M20), then one comment from the fixed template.
         self.assertEqual(self.labels_of(number), ["mach:building", "mach:slice"])
-        self.assertEqual(len(self.comments_on(number)), 2)
+        self.assertEqual(len(self.comments_on(number)), 3)
+        self.assertTrue(self.comments_on(number)[1].startswith("The MACH Factory is taking SLICE-001 revision 1 to build it."))
         self.assertTrue(self.comments_on(number)[-1].startswith("The MACH Factory has started building SLICE-001 revision 1."))
         self.assertEqual(self.checkout(), before)
         self.assertEqual(git(self.eng, "branch", "--show-current").strip(), "main")
@@ -597,7 +598,7 @@ class DispatchTest(Base):
         self.assertEqual(self.cell(str(number))["risk"], "Medium")
         again = self.product("dispatch", "SLICE-001")
         self.assertEqual(again["dispatched"][0]["already_dispatched"], True)
-        self.assertEqual(len(self.comments_on(number)), 2)  # the building comment is not made twice
+        self.assertEqual(len(self.comments_on(number)), 3)  # approval, claim (M20), building: neither is made twice
 
     def test_only_ready_slices_and_only_when_asked(self):
         epic = self.epic()
@@ -645,14 +646,15 @@ class StatusTest(Base):
         self.assertEqual((self.gh()["issues"][str(number)]["state"], self.labels_of(number)), ("CLOSED", ["mach:shipped", "mach:slice"]))
         self.assertTrue(self.comments_on(number)[-1].startswith("SLICE-001 revision 1 is merged into the integration branch."))
         self.product("intake")
-        self.assertEqual(len(self.comments_on(number)), 3)  # once
+        self.assertEqual(len(self.comments_on(number)), 4)  # once (approval, claim, building, shipped)
 
     def test_status_comments_off_stops_comments_not_labels(self):
         (self.eng / ".factory/config.json").write_text(json.dumps({"tickets": {"provider": "local", "github": {"status_comments": False}}}))
         number = self.ready("SLICE-001")
         self.product("intake")
         self.product("dispatch", "SLICE-001")
-        self.assertEqual((self.labels_of(number), len(self.comments_on(number))), (["mach:building", "mach:slice"], 1))
+        # The claim (M20) is posted all the same: it is how Factories keep out of each other's way, not a status note.
+        self.assertEqual((self.labels_of(number), len(self.comments_on(number))), (["mach:building", "mach:slice"], 2))
 
     def test_a_blocked_cell_is_said_on_its_issue(self):
         number = self.ready("SLICE-001")
