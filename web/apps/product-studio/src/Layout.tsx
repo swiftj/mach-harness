@@ -69,6 +69,7 @@ function Breadcrumb({ projectName, path, status }: { projectName: string; path: 
   const slice = path.match(/^\/slices\/([^/]+)(\/[a-z]+)?$/);
   const epicPage = path.match(/^\/epics\/([^/]+)\/today$/);
   const prdPage = path.match(/^\/prds\/([^/]+)$/);
+  const requestStart = path.match(/^\/start\/requests\/(\d+)$/);
   const shape = shapeBreadcrumb(path, status);
   const needs = needsBreadcrumb(path, status?.designs);
   if (shape) {
@@ -88,6 +89,8 @@ function Breadcrumb({ projectName, path, status }: { projectName: string; path: 
     steps.push(epic?.title ?? epicPage[1] ?? "", "How it works today");
   } else if (prdPage) {
     steps.push("Start from a PRD", prdPage[1] ?? "");
+  } else if (requestStart) {
+    steps.push(`Start from request #${requestStart[1] ?? ""}`);
   } else {
     const destination = destinationFor(path);
     if (destination) steps.push(destination.label);

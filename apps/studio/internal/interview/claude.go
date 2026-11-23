@@ -176,11 +176,12 @@ func (c *Claude) ContinueCommand() string { return c.command }
 // ---- session state ----
 
 type record struct {
-	// One of the three: the slice's interview, (M16) the Shape conversation for an idea, or (M17)
-	// the needs conversation for the product.
+	// One of the four: the slice's interview, (M16) the Shape conversation for an idea, (M17) the
+	// needs conversation for the product, or (M19) the PRD conversation for one PRD.
 	SliceID        string   `json:"slice_id,omitempty"`
 	IdeaID         string   `json:"idea_id,omitempty"`
 	Needs          bool     `json:"needs,omitempty"`
+	PrdID          string   `json:"prd_id,omitempty"`
 	SessionID      string   `json:"session_id"`
 	Turns          int      `json:"turns"`
 	SessionCostUSD float64  `json:"session_cost_usd"`
@@ -199,6 +200,9 @@ func (r record) subject() string {
 	if r.IdeaID != "" {
 		return r.IdeaID
 	}
+	if r.PrdID != "" {
+		return r.PrdID
+	}
 	return r.SliceID
 }
 
@@ -209,6 +213,8 @@ func newRecord(subject string) *record {
 		r.Needs = true
 	case IsIdea(subject):
 		r.IdeaID = subject
+	case IsPrd(subject):
+		r.PrdID = subject
 	default:
 		r.SliceID = subject
 	}
@@ -300,7 +306,7 @@ func (c *Claude) loadRecord(sliceID string) *record {
 // subjects counts the subjects a saved record names: exactly one is valid.
 func subjects(r record) int {
 	n := 0
-	for _, named := range []bool{r.SliceID != "", r.IdeaID != "", r.Needs} {
+	for _, named := range []bool{r.SliceID != "", r.IdeaID != "", r.Needs, r.PrdID != ""} {
 		if named {
 			n++
 		}
@@ -455,6 +461,9 @@ func (c *Claude) Start(ctx context.Context, req StartRequest) (Started, error) {
 		} else if IsIdea(subject) {
 			// M16: the Shape conversation for one idea. Nothing the person typed is added here.
 			message = "/mach:product-studio explore " + subject + ". " + IdeaOpeningNote
+		} else if IsPrd(subject) {
+			// M19: the PRD conversation for one PRD. Nothing the person typed is added here.
+			message = "/mach:product-studio start from " + subject + ". " + PrdOpeningNote
 		} else if req.Idea != "" {
 			epic := req.EpicID
 			if epic == "" {
@@ -481,13 +490,15 @@ func (c *Claude) Start(ctx context.Context, req StartRequest) (Started, error) {
 }
 
 // subjectField is the field and value that name an interview's subject in its events and answers:
-// slice_id or idea_id with the ID, or (M17) needs: true.
+// slice_id or idea_id with the ID, (M17) needs: true, or (M19) prd_id with the ID.
 func subjectField(subject string) (string, any) {
 	switch {
 	case IsNeeds(subject):
 		return "needs", true
 	case IsIdea(subject):
 		return "idea_id", subject
+	case IsPrd(subject):
+		return "prd_id", subject
 	}
 	return "slice_id", subject
 }
@@ -499,6 +510,8 @@ func started(id, subject string, resumed bool) Started {
 		out.Needs = true
 	case IsIdea(subject):
 		out.IdeaID = subject
+	case IsPrd(subject):
+		out.PrdID = subject
 	default:
 		out.SliceID = subject
 	}

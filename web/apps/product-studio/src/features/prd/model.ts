@@ -212,7 +212,7 @@ export function importSummary(prd: Pick<PrdStatus["prd"], "format" | "sections" 
 /** The map in one line, from the engine's answer only. */
 export function mapSummary(status: Pick<PrdStatus, "map">): string {
   const map = status.map;
-  if (!map) return "No map yet: it is proposed in Claude Code";
+  if (!map) return "No map yet: MACH proposes it here";
   const what = [map.epics.length ? count(map.epics.length, "new epic") : null, `${count(map.slices.length, "thin slice")} in build order`].filter(Boolean).join(" and ");
   return map.applied ? `${what}, kept as it was when the drafts were made` : what;
 }
@@ -238,14 +238,31 @@ export function applyWhat(plan: ApplyPlan): string {
   return [plan.epics.length ? count(plan.epics.length, "epic") : null, count(plan.slices.length, "draft slice")].filter(Boolean).join(" and ");
 }
 
-/** Making the drafts in one line: made (and what), blocked (and by what), or ready (and what it makes). */
-export function applySummary(status: Pick<PrdStatus, "map" | "not_covered" | "prd">, plan: ApplyPlan | null): string {
+/**
+ * Making the drafts in one line: made (and what), blocked (and by what), or ready (and what it makes). With
+ * `needsProduct` (no project yet, M19) the product is named first, on the same part.
+ */
+export function applySummary(status: Pick<PrdStatus, "map" | "not_covered" | "prd">, plan: ApplyPlan | null, needsProduct = false): string {
   if (!status.map) return "After the map";
   if (status.map.applied) {
     const made = status.prd.applied ?? [];
     return made.length ? `Made: ${made.join(", ")}` : "The drafts were made";
   }
-  return applyBlocked(status) ?? (plan ? `Ready to make ${applyWhat(plan)}` : "Ready to make the drafts");
+  const blocked = applyBlocked(status);
+  if (blocked) return blocked;
+  const what = plan ? applyWhat(plan) : "the drafts";
+  return needsProduct ? `Name the product, then make ${what}` : `Ready to make ${what}`;
+}
+
+/**
+ * The command that has MACH propose a PRD's map in Claude Code, for the same install as the host's continue command
+ * ("/mach:product-studio continue" gives "/mach:product-studio start from PRD-01"). Null when the host reports none.
+ */
+export function prdCommand(continueCommand: string | null | undefined, prdId: string): string | null {
+  if (typeof continueCommand !== "string") return null;
+  const skill = continueCommand.trim().replace(/ continue$/, "");
+  if (!skill || skill === continueCommand.trim() || /\s/.test(skill)) return null;
+  return `${skill} start from ${prdId}`;
 }
 
 /** The document's sections by state, for the narrow pane. Before a map there is no coverage, so only the sections are counted. */

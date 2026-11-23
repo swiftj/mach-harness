@@ -1,0 +1,22 @@
+{
+  "exit_code": 0,
+  "data": {
+    "requests": {
+      "repository": "acme/team-space",
+      "refreshed": false,
+      "refreshed_at": "2026-11-23T16:21:35Z",
+      "problem": null,
+      "truncated": false,
+      "truncated_note": null,
+      "items": [],
+      "updates_waiting": 0,
+      "updates_waiting_note": null,
+      "could_not_update": [],
+      "could_not_update_note": null
+    },
+    "note": "Requests come from GitHub issues. Picking one up only starts a draft slice; nothing is approved, sent or started.",
+    "factory_authorized": false
+  },
+  "refused": null,
+  "hint": null
+}

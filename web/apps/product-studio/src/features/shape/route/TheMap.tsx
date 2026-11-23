@@ -29,6 +29,7 @@ import {
 } from "./model";
 import { BriefQuote, CoveragePill } from "./parts";
 import { SettleOutcomeDialog } from "./SettleOutcomeDialog";
+import { NameTheProduct } from "../../home/start/NameTheProduct";
 
 type MapData = NonNullable<ShapeMapStatus["map"]>;
 
@@ -309,6 +310,9 @@ function ApplyBody({ ideaId, status, map, made, onDone }: { ideaId: string; stat
   const again = map.applied;
   const blocked = applyBlocked(status);
   const what = applyWhat(plan);
+  // M19: an idea shaped before the product was named. The engine makes epics only in a project, so the product is
+  // named here first, on this page.
+  const needsProduct = !again && blocked.length === 0 && shared.data !== null && !shared.data.project;
 
   const confirm = async () => {
     const sent = applyArgs(ideaId, status, kind);
@@ -338,20 +342,28 @@ function ApplyBody({ ideaId, status, map, made, onDone }: { ideaId: string; stat
           ))}
         </ul>
       ) : null}
-      <div>
-        <Button
-          variant={again ? "secondary" : "primary"}
-          disabled={blocked.length > 0}
-          aria-describedby={blocked.length ? "apply-blocked" : undefined}
-          onClick={() => {
-            act.reset();
-            setMissing(null);
-            setOpen(true);
-          }}
-        >
-          {again ? "Make the drafts again" : `Make ${what}`}
-        </Button>
-      </div>
+      {needsProduct ? (
+        // The one act here until the product is named; the button that makes the drafts follows once it is.
+        <NameTheProduct
+          level={4}
+          why={`Making the drafts needs the product to exist: its name, a one-sentence vision and the outcomes people should get. Name it here, then make ${what}.`}
+        />
+      ) : (
+        <div>
+          <Button
+            variant={again ? "secondary" : "primary"}
+            disabled={blocked.length > 0}
+            aria-describedby={blocked.length ? "apply-blocked" : undefined}
+            onClick={() => {
+              act.reset();
+              setMissing(null);
+              setOpen(true);
+            }}
+          >
+            {again ? "Make the drafts again" : `Make ${what}`}
+          </Button>
+        </div>
+      )}
       {result ? <ApplyResult result={result} /> : again ? <MadeBefore map={map} made={made} /> : null}
       <ConfirmDialog
         open={open}

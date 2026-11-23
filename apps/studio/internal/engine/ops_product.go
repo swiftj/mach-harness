@@ -294,11 +294,38 @@ func (a *PRDImportArgs) Argv() ([]string, error) {
 	return []string{"prd", "import", path}, nil
 }
 
+// PRDTarget is implemented by the PRD operations that change one PRD's map, its settlements or what
+// is made from it (M19), so the server can refuse such an act while the PRD conversation is
+// recording that PRD's map, as it does for an idea (ShapeTarget).
+type PRDTarget interface {
+	PRDTarget() string
+}
+
+// WritesPRD names the PRD an operation that changes something acts on, or "" for any other
+// operation, a read, or a body that does not decode (Do refuses that one itself).
+func WritesPRD(name string, body []byte) string {
+	op, ok := Lookup(name)
+	if !ok || op.ReadOnly {
+		return ""
+	}
+	args := op.New()
+	target, ok := args.(PRDTarget)
+	if !ok || Decode(body, args) != nil || !PRDIDPattern.MatchString(target.PRDTarget()) {
+		return ""
+	}
+	return target.PRDTarget()
+}
+
+// PRDStatus is the arguments of prd.status, for the PRD conversation's start route (M19).
+func PRDStatus(prdID string) Args { return &PRDIDArgs{PRDID: prdID, verb: "status"} }
+
 // PRDIDArgs serves prd status and prd apply.
 type PRDIDArgs struct {
 	PRDID string `json:"prd_id"`
 	verb  string
 }
+
+func (a *PRDIDArgs) PRDTarget() string { return a.PRDID }
 
 func (a *PRDIDArgs) Argv() ([]string, error) {
 	if err := checkID("prd_id", a.PRDID, PRDIDPattern, "PRD-01"); err != nil {
@@ -333,6 +360,8 @@ type PRDMapArgs struct {
 	stagedPath
 }
 
+func (a *PRDMapArgs) PRDTarget() string { return a.PRDID }
+
 func (a *PRDMapArgs) Staged() (string, []byte, error) {
 	if err := checkID("prd_id", a.PRDID, PRDIDPattern, "PRD-01"); err != nil {
 		return "", nil, err
@@ -361,6 +390,8 @@ type PRDSettleArgs struct {
 	Slice   *string `json:"slice"`
 	Reason  *string `json:"reason"`
 }
+
+func (a *PRDSettleArgs) PRDTarget() string { return a.PRDID }
 
 func (a *PRDSettleArgs) Argv() ([]string, error) {
 	if err := checkID("prd_id", a.PRDID, PRDIDPattern, "PRD-01"); err != nil {

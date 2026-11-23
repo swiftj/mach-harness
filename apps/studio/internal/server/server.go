@@ -267,6 +267,13 @@ func (s *Server) operation(w http.ResponseWriter, r *http.Request) {
 		writeEnvelope(w, statusFor(env), env)
 		return
 	}
+	// M19: an act on a PRD's map, its settlements or what is made from it waits while the PRD
+	// conversation is recording that PRD's map, in the same way.
+	if prd := engine.WritesPRD(name, body); prd != "" && s.opts.Bridge.Busy(prd) {
+		env := engine.Fail(engine.KindConflict, "The conversation is recording this PRD's map right now. Wait for its reply, or interrupt it.")
+		writeEnvelope(w, statusFor(env), env)
+		return
+	}
 	env := s.opts.Engine.Do(r.Context(), name, body)
 	if env.OK && op.Download {
 		data, err := s.downloads.record(s.opts.Engine.Project(), env.Data)

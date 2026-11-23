@@ -69,7 +69,8 @@ class Scenario(IssuesBase):
 def main():
     import needs_memory  # noqa: E402  (beside this file)
     import small_memory  # noqa: E402  (beside this file)
-    only = {"needs": needs_memory, "small": small_memory}
+    import start_memory  # noqa: E402  (beside this file)
+    only = {"needs": needs_memory, "small": small_memory, "start": start_memory}
     if len(sys.argv) == 3 and sys.argv[1] == "--only" and sys.argv[2] in only:
         # M17 and M18: write only one milestone's fixtures, leaving the others as they are (a full run changes only times
         # and paths in them).
@@ -99,6 +100,8 @@ def main():
     needs_memory.generate(Scenario, OUT)
     # M18: a small change.
     small_memory.generate(Scenario, OUT)
+    # M19: starting a project from nothing.
+    start_memory.generate(Scenario, OUT)
     print("wrote", len(list(OUT.glob("*.json"))), "fixtures to", OUT)
 
 

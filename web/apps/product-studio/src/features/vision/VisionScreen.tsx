@@ -1,6 +1,6 @@
-import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useLocation } from "react-router";
-import { CircleAlert, Plus, X } from "lucide-react";
+import { CircleAlert, Plus } from "lucide-react";
 import { ArtifactId, Banner, Button, EpicStatusPill, ErrorState, Field, Heading, Input, Skeleton, SkeletonText, Text, Textarea, cn, describeError, plural, toast, type Status, type StatusEpicRow, HintAction } from "@mach/ui";
 import { useEngineAct } from "../../api/act";
 import { useStatus } from "../../api/store";
@@ -9,6 +9,7 @@ import { Fold } from "../../shared/layout/Fold";
 import { SectionNav } from "../../shared/layout/SectionNav";
 import { ContextRow, OnePane, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
 import { EpicSheet, knownCriteria } from "./EpicSheet";
+import { OutcomesEditor, ProjectCreator, cleanList } from "./ProjectForm";
 import { NewSliceDialog } from "../roadmap/NewSliceDialog";
 import type { StartAs } from "../small-change/model";
 
@@ -137,118 +138,6 @@ const projectGuidance = [
   { title: "No technology", body: "Engineering chooses how. The definition says what and why." },
 ];
 
-/* ── Outcomes ────────────────────────────────────────────────────────── */
-
-function OutcomesEditor({ outcomes, onChange, error, sectionId }: { outcomes: string[]; onChange: (next: string[]) => void; error?: string | null; sectionId?: string }) {
-  const id = useId();
-  return (
-    <fieldset id={sectionId} className="flex scroll-mt-6 flex-col gap-2" aria-describedby={`${id}-hint${error ? ` ${id}-error` : ""}`}>
-      <legend className="text-label text-ink">Intended outcomes</legend>
-      <p id={`${id}-hint`} className="-mt-0.5 text-body-sm text-ink-muted">
-        What people will be able to do, or what will be true, because of the product.
-      </p>
-      <ol className="flex flex-col gap-2">
-        {outcomes.map((outcome, index) => (
-          <li key={index} className="flex items-center gap-2">
-            <Input
-              aria-label={`Outcome ${index + 1}`}
-              value={outcome}
-              onChange={(e) => onChange(outcomes.map((o, i) => (i === index ? e.target.value : o)))}
-              placeholder={index === 0 ? "For example: Teams can work together" : "Another outcome"}
-            />
-            <Button
-              size="icon"
-              variant="ghost"
-              aria-label={`Remove outcome ${index + 1}`}
-              disabled={outcomes.length === 1}
-              onClick={() => onChange(outcomes.filter((_, i) => i !== index))}
-            >
-              <X aria-hidden="true" />
-            </Button>
-          </li>
-        ))}
-      </ol>
-      <Button size="sm" variant="ghost" className="self-start" onClick={() => onChange([...outcomes, ""])}>
-        <Plus aria-hidden="true" />
-        Add an outcome
-      </Button>
-      {error ? (
-        <p id={`${id}-error`} className="text-body-sm text-danger-ink">
-          {error}
-        </p>
-      ) : null}
-    </fieldset>
-  );
-}
-
-const clean = (list: string[]) => list.map((s) => s.trim()).filter(Boolean);
-
-/** A suggestion for the project ID from its name. The engine checks the ID; this only proposes one. */
-const slug = (name: string) =>
-  name
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-
-/* ── Create ──────────────────────────────────────────────────────────── */
-
-function ProjectCreator() {
-  const act = useEngineAct();
-  const [name, setName] = useState("");
-  const [vision, setVision] = useState("");
-  const [outcomes, setOutcomes] = useState<string[]>([""]);
-  const [id, setId] = useState("");
-  const [idTouched, setIdTouched] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const projectId = idTouched ? id : slug(name);
-
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    const next: Record<string, string> = {};
-    if (!name.trim()) next.name = "Give the product a name.";
-    if (!vision.trim()) next.vision = "Write the vision: one sentence about what the product is for.";
-    if (!clean(outcomes).length) next.outcomes = "Add at least one outcome.";
-    if (!projectId) next.id = "Give the project an ID: lowercase words joined by hyphens.";
-    setErrors(next);
-    if (Object.keys(next).length) return;
-    const result = await act.run("project.init", { id: projectId, name: name.trim(), vision: vision.trim(), outcome: clean(outcomes) });
-    if (result) toast({ tone: "success", title: `Created ${result.project.name}`, description: "It is a draft in your workspace. Add its epics next." });
-  };
-
-  return (
-    <form onSubmit={submit} noValidate aria-label="Define the project" className="flex max-w-[40rem] flex-col gap-6">
-      <Field label="Name" error={errors.name}>
-        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="For example, Team Space" />
-      </Field>
-      <Field label="Vision" hint="One sentence: what changes for people when this product exists." error={errors.vision}>
-        <Textarea editorial rows={3} value={vision} onChange={(e) => setVision(e.target.value)} placeholder="For example: Teams work together without friction." />
-      </Field>
-      <OutcomesEditor outcomes={outcomes} onChange={setOutcomes} error={errors.outcomes} />
-      <Field label="Project ID" hint="Used in file names and links. Proposed from the name; it cannot be changed later." error={errors.id}>
-        <Input
-          className="font-mono"
-          value={projectId}
-          onChange={(e) => {
-            setIdTouched(true);
-            setId(e.target.value);
-          }}
-        />
-      </Field>
-      {act.shown ? (
-        <Banner tone="danger" live="assertive" title={act.shown.title} actions={act.shown.hint ? <HintAction hint={act.shown.hint} /> : undefined}>
-          <span className="whitespace-pre-line">{act.shown.message}</span>
-        </Banner>
-      ) : null}
-      <div>
-        <Button variant="primary" size="lg" type="submit" loading={act.pending}>
-          Create the project
-        </Button>
-      </div>
-    </form>
-  );
-}
-
 /* ── Edit ────────────────────────────────────────────────────────────── */
 
 function ProjectEditor({ status }: { status: Status }) {
@@ -263,7 +152,7 @@ function ProjectEditor({ status }: { status: Status }) {
   const changed = {
     name: name.trim() !== project.name,
     vision: vision.trim() !== project.vision,
-    outcomes: JSON.stringify(clean(outcomes)) !== JSON.stringify(project.outcomes),
+    outcomes: JSON.stringify(cleanList(outcomes)) !== JSON.stringify(project.outcomes),
   };
   const dirty = changed.name || changed.vision || changed.outcomes;
 
@@ -272,13 +161,13 @@ function ProjectEditor({ status }: { status: Status }) {
     const next: Record<string, string> = {};
     if (!name.trim()) next.name = "The product needs a name.";
     if (!vision.trim()) next.vision = "The vision cannot be empty.";
-    if (!clean(outcomes).length) next.outcomes = "Keep at least one outcome.";
+    if (!cleanList(outcomes).length) next.outcomes = "Keep at least one outcome.";
     setErrors(next);
     if (Object.keys(next).length) return;
     const result = await act.run("project.set", {
       ...(changed.name ? { name: name.trim() } : {}),
       ...(changed.vision ? { vision: vision.trim() } : {}),
-      ...(changed.outcomes ? { outcome: clean(outcomes) } : {}),
+      ...(changed.outcomes ? { outcome: cleanList(outcomes) } : {}),
     });
     if (result) toast({ tone: "success", title: "Saved the project", description: "Your draft is updated. The project's issue on GitHub follows the next time you mark a slice ready." });
   };
