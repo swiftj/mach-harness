@@ -1,6 +1,24 @@
-# MACH release notes: 0.19.1
+# MACH release notes: 0.20.0
 
 What is new in each release, newest first, followed by supported platforms, what you need, upgrading and security notes.
+
+## What changed in 0.20.0
+
+Starting a project in the app, from a PRD or any other way; the app's link shown every time; and an update that always leaves MACH on one version.
+
+| Change | What it is |
+| --- | --- |
+| How do you want to start? | In the app, a project with nothing defined asks how to start: describe the product yourself, start from a PRD, shape an idea first, or start from a request waiting on GitHub. |
+| A PRD, from the first screen | Choose the file on the start screen. On the PRD's page MACH proposes the map of epics and thin slices in a conversation and records it only on your word; you settle what no slice covers and make the drafts there. |
+| Name the product when it is needed | A PRD or an idea can be started before the product has a name. The app asks for the name, vision and outcomes just before the drafts are made, or before a request is picked up. MACH may suggest them from a PRD, marked as a suggestion; what is recorded is what you write. |
+| Carry on where you left off | Until the product is named, the home page lists what you have started, with a way to continue each, and the other ways to start below. |
+| The app's link, every time | Every `/mach-product-studio` starts the app quietly on your computer and shows its link, to click or paste into a browser. A browser opens only when you say "open the app". A link works once; ask for a new link at any time, with no restart. One app runs for each project. |
+| An update leaves one version | Installing again always brings MACH's own files to the version being installed. A MACH file that was changed in the project is saved to `.factory/mach-backup-<time>/` first, and the installer says how many it replaced. |
+| A mixed install is named | `mach status`, `/mach doctor` and Product Studio say plainly when a project holds MACH files from different versions, with the fix: run the installer again. |
+| One slice on both sides of the hand-off | When Product Studio and the Factory run on the same computer, a slice's draft and the copy the Factory took in are one slice, not two with the same number. Two different slices with one number are still refused. |
+| Picking up after a refused intake | If taking a slice in stopped part way, the next `/mach pull` offers it again and finishes it, reusing what was already made. |
+
+**If Product Studio stopped starting after an earlier update,** or `/mach pull` refused a slice because its number was used twice, run the installer again to get 0.20.0, then run the command again.
 
 ## What changed in 0.19.1
 
