@@ -294,6 +294,122 @@ def remote_tip(project: Path, main: str) -> Optional[str]:
     return None
 
 
+# ---- the shared main takes a slice once (M20 A1's backstop) ----
+#
+# Several engineers' Factories keep out of each other's way by a claim on the slice's issue, but a duplicate can still
+# be built (a take-over, a stale claim). The run skill's intake owns the rule (`intake.already_landed`, used by
+# `run.py next`); this station asks the same question after its fetch, and before it merges, pushes or opens anything.
+
+_INTAKE: List[Any] = []
+
+
+def intake_rules() -> Any:
+    """The run skill's intake module, loaded from the sibling skill folder whichever way MACH is installed, never copied."""
+    if not _INTAKE:
+        found = None
+        skills = Path(__file__).resolve().parent.parent.parent
+        for name in ("mach-run", "run"):
+            path = skills / name / "scripts" / "intake.py"
+            if path.is_file():
+                spec = importlib.util.spec_from_file_location("mach_intake_for_merge", path)
+                found = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(found)
+                break
+        _INTAKE.append(found)
+    if _INTAKE[0] is None:
+        raise MergeError("The run skill's intake.py could not be found next to this skill, so MACH cannot tell whether this slice already shipped. "
+                         "Nothing was merged. Reinstall MACH.", code="landed-unknown")
+    return _INTAKE[0]
+
+
+def landed_elsewhere(cell: Cell, main: str) -> Optional[str]:
+    """For a cell intake opened from a slice: the plain refusal when this slice revision's approved spec is already on the main
+    branch (local <main>, and origin/<main> as just fetched) and what landed is not this cell's own work; else None. Its own
+    work: a merge recorded in the cell, its branch's commit already on that branch, or (method pr) its own pull request merged.
+    An engineer's own ticket (no `product`) is not checked."""
+    product = cell.info.get("product") if isinstance(cell.info.get("product"), dict) else {}
+    slice_id, spec_sha256 = product.get("slice_id"), product.get("spec_sha256")
+    if not slice_id or not spec_sha256 or isinstance(cell.info.get("merged"), dict):
+        return None
+    refs = [ref for ref in (f"refs/heads/{main}", f"refs/remotes/origin/{main}") if git(cell.project, "rev-parse", "--verify", "-q", ref).returncode == 0]
+    rules = intake_rules()
+    landed = rules.already_landed(cell.project, str(slice_id), spec_sha256, refs)
+    if not landed:
+        return None
+    if git(cell.project, "merge-base", "--is-ancestor", cell.head(), landed["ref"]).returncode == 0:
+        return None  # this branch is what was merged
+    url = cell.info.get("pull_request")
+    if cell.method == "pr" and url:
+        view = load_text(gh(cell, "pr", "view", url, "--json", "state", timeout=GH_TIMEOUT).stdout)
+        if view.get("state") == "MERGED":
+            return None  # its own pull request, merged (squashed, perhaps, by a person)
+    message = rules.landed_message(str(slice_id), landed) + " Nothing was pushed or merged."
+    if cell.method == "pr" and url:
+        message += f" This copy's pull request ({url}) is left open: close it on GitHub once you no longer need it."
+    return message + (f" Put this copy aside: cleanup run {cell.ticket_id} --abandon \"{slice_id} was already shipped from another Factory\" "
+                      "archives the cell and keeps its branch's commits in the archive.")
+
+
+_CELL_MODULE: List[Any] = []
+
+
+def cell_rules() -> Any:
+    """The intent station's cell.py (its 0.20.0 rule for one slice on both sides of the hand-off), loaded by path, never copied."""
+    if not _CELL_MODULE:
+        found = None
+        skills = Path(__file__).resolve().parent.parent.parent
+        for name in ("mach-intent", "intent"):
+            path = skills / name / "scripts" / "cell.py"
+            if path.is_file():
+                if str(path.parent) not in sys.path:
+                    sys.path.insert(0, str(path.parent))
+                spec = importlib.util.spec_from_file_location("mach_cell_for_merge", path)
+                found = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(found)
+                break
+        _CELL_MODULE.append(found)
+    if _CELL_MODULE[0] is None:
+        raise MergeError("The intent skill's cell.py could not be found next to this skill. Nothing was merged. Reinstall MACH.", code="slice-id-unknown")
+    return _CELL_MODULE[0]
+
+
+SPEC_FILE_RE = re.compile(r"^(SLICE-[0-9]{3,})-[^/]*\.md$")
+
+
+def slice_id_taken(cell: Cell, main: str) -> Optional[str]:
+    """M20 A3: the plain refusal when a slice spec this branch adds has a slice ID that is already on the main branch (local
+    <main>, or origin/<main> as just fetched) under another file name, and that file is another slice: two engineers took one
+    number, and Git would see no conflict. The same slice under another name (a slice Product Studio handed this cell, by
+    cell.py's `handed_over`) is not refused. None when nothing is taken."""
+    refs = [ref for ref in (f"refs/heads/{main}", f"refs/remotes/origin/{main}") if git(cell.project, "rev-parse", "--verify", "-q", ref).returncode == 0]
+    if not refs:
+        return None
+    added = git(cell.work, "diff", "--name-only", "--diff-filter=A", f"{refs[-1]}...HEAD", "--", "specs/slices/").stdout.split()
+    ours = {match.group(1): path for path in added if path.count("/") == 2 for match in [SPEC_FILE_RE.match(path.rsplit("/", 1)[-1])] if match}
+    if not ours:
+        return None
+    same = set(cell_rules().handed_over(cell.info))
+    for ref in refs:
+        for path in git(cell.project, "ls-tree", "--name-only", ref, "--", "specs/slices/").stdout.split():
+            match = SPEC_FILE_RE.match(path.rsplit("/", 1)[-1])
+            if not match or match.group(1) not in ours or path == ours[match.group(1)] or match.group(1) in same:
+                continue
+            slice_id = match.group(1)
+            return (f"{slice_id} is already on {main} as {path}, which is another slice than this ticket's {ours[slice_id]}: two engineers took "
+                    f"one slice number. Nothing was pushed or merged. Give this ticket's slice a free number (cell.py next-id) on its branch, "
+                    f"renaming the spec and every mention of {slice_id} in it; the change is then verified and reviewed again.")
+    return None
+
+
+def refuse_duplicates(cell: Cell, main: str) -> None:
+    found = landed_elsewhere(cell, main)
+    if found:
+        raise MergeError(found, code="landed-elsewhere")
+    taken = slice_id_taken(cell, main)
+    if taken:
+        raise MergeError(taken, code="slice-id-taken")
+
+
 def dirty(folder: Path) -> List[str]:
     """Uncommitted project work, ignoring the factory's own files and what test runs leave behind."""
     names = [line[3:].strip().strip('"') for line in git(folder, "status", "--porcelain", "--untracked-files=all").stdout.splitlines() if line.strip()]
@@ -1244,6 +1360,8 @@ def cmd_run(cell: Cell, args: argparse.Namespace) -> int:
     if has_origin(cell.project):
         # M20 A2: see the shared main as it is now, then survey again against it. Unreachable: nothing is merged.
         fetch_shared(cell.project, plan["into"])
+    refuse_duplicates(cell, plan["into"])  # M20: before anything is merged, pushed or opened
+    if has_origin(cell.project):
         plan = survey(cell, args.by_person)
         gate(cell, plan)
     telemetry(cell.root, "gate.evaluated", "merge", lambda: {"gate": "merge.run", "outcome": "pass", "reason_code": None, "overridden_by_reason": False,
@@ -1282,6 +1400,7 @@ def land(cell: Cell, args: argparse.Namespace, plan: Dict[str, Any]) -> int:
             raise MergeError(f"origin/{main} moved {len(moves)} times while this ticket was being merged, each time after it had been tested. "
                              f"Nothing was merged; the pull request stays open ({landed.get('pull_request')}). Run the merge again later.", code="main-moving")
         tested_on = fetch_shared(cell.project, main)
+        refuse_duplicates(cell, main)  # what moved the shared main may be this slice, from another Factory
     head = cell.head()
     result: Dict[str, Any] = {"ticket_id": cell.ticket_id, "branch": cell.branch, "into": main, "method": cell.method,
                               "approved_commit": cell.decision.get("head"), "landed_commit": head, "revalidated": revalidated, "jira": cell.jira,

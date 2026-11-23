@@ -440,6 +440,26 @@ class TicketCheckTest(IssuesBase):
         self.change_issue(number, body=issue_rules.project_issue_body("team-space", "Teams work together.", ["Teams can work together"]))
         self.assertEqual(self.check()["decision"]["state"], "none")
 
+    def test_several_project_issues_are_named(self):
+        """M20: the check names the issues, so the Factory can stop and say which."""
+        first = self.issues("mach:project")[0]["number"]
+        second = second_project_issue(self)
+        decision = self.check()["decision"]
+        self.assertEqual((decision["state"], decision["reason"], decision["project_issues"]),
+                         ("not_accepted", issue_rules.PRINCIPLES_NOT_ACCEPTED["several"], [first, second]))
+        self.assertNotIn("project_issues", self.check(str(first))["decision"], "an issue named by number is read as before")
+
+
+def second_project_issue(test):
+    """Someone made a second project issue by hand, beside the first."""
+    state = test.gh()
+    first = test.issues("mach:project")[0]
+    number = state.get("next_number", 1)
+    state["next_number"] = number + 1
+    state["issues"][str(number)] = {**json.loads(json.dumps(first)), "number": number, "id": 9000 + number, "comments": [], "events": [], "pinned": False}
+    test.gh_state.write_text(json.dumps(state))
+    return number
+
 
 class EngineerPathTest(IssuesBase):
     """cell.py principles: the engineer's ticket reads the published principles, and the spec is held to them."""
@@ -502,6 +522,33 @@ class EngineerPathTest(IssuesBase):
         code, out = self.cell_run("principles", "LOCAL-001")
         self.assertIsNone(json.loads(out)["principles"])
         self.assertIn("SHA-256 does not match", " ".join(json.loads(out)["tried"]))
+
+    def test_several_project_issues_stop_grooming_and_name_them(self):
+        """M20: with two open project issues, grooming stops with one sentence naming them, and the spec cannot be validated
+        as if there were no principles. Once a person closes one, grooming carries on with the principles."""
+        self.set_gh(me="ada-pm")
+        self.project_and_epic()
+        self.ok(self.a, "principle", "add", "--title", "Versions", "--statement", STATEMENT, "--reason", "Readers rely on it.")
+        self.ok(self.a, "principle", "publish")
+        first = self.issues("mach:project")[0]["number"]
+        second = second_project_issue(self)
+        self.set_gh(me="erin-eng")
+        code, out = self.cell_run("principles", "LOCAL-001")
+        self.assertEqual(code, 2, out)
+        sentence = (f"This repository has more than one open project issue (#{first} and #{second}), so MACH cannot tell which one holds the product "
+                    "principles, and grooming stops here rather than go on without them: a person closes the one that should not be there, then "
+                    "grooming carries on.")
+        self.assertIn(sentence, out)
+        self.assertFalse((Path(self.cell["cell_dir"]) / "principles.json").exists())
+        code, out = self.cell_run("validate", "LOCAL-001", "--spec", self.spec(FIXTURE))
+        self.assertEqual(code, 2, "never checked as if there were no principles")
+        self.assertIn(sentence, out)
+        self.change_issue(second, state="CLOSED")
+        code, out = self.cell_run("principles", "LOCAL-001")
+        self.assertEqual(code, 0, out)
+        self.assertEqual([item["id"] for item in json.loads(out)["principles"]["active"]], ["PP-01"])
+        code, out = self.cell_run("validate", "LOCAL-001", "--spec", self.spec(FIXTURE))
+        self.assertIn("[principle-unanswered]", out)
 
     def test_none_readable_means_no_section_said_once(self):
         code, out = self.cell_run("principles", "LOCAL-001")

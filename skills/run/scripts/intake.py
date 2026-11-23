@@ -733,7 +733,21 @@ class Factory:
         github["rows"], waiting = self.with_mocks(github["rows"], folders["mock_files"])  # M14 C: held until its pictures are on the branch
         result["not_accepted"] = github["not_accepted"] + waiting + folders["not_accepted"]
         seen: Dict[str, Dict[str, Any]] = {}
+        # M20 A3: in ready folders an epic has no shared record, so each product manager's computer numbers its own epics. A folder
+        # whose epic ID a slice taken in above already uses for an epic with another title is two epics under one ID: not accepted.
+        epics: Dict[str, Tuple[str, str]] = {}
         for row in github["rows"] + folders["rows"]:
+            epic = row.get("epic") if isinstance(row.get("epic"), dict) else {}
+            known = epics.get(str(epic.get("epic_id"))) if row["source"] == "folder" and row["slice_id"] not in seen else None
+            if known and known[0] != epic.get("title"):
+                result["not_accepted"].append({"folder": f"{READY_DIR}/{row['slice_id']}", "slice_id": row["slice_id"], "revision": row["revision"],
+                                               "reason": f"Not accepted: its epic is {epic.get('epic_id')} \"{epic.get('title')}\", but {known[1]}'s epic "
+                                                         f"{epic.get('epic_id')} is \"{known[0]}\". Two computers numbered two epics alike, or one epic has "
+                                                         "two titles. The product manager gives this slice's epic its own ID in Product Studio, or one "
+                                                         "title, and publishes it again."})
+                continue
+            if isinstance(epic.get("epic_id"), str) and isinstance(epic.get("title"), str) and row["slice_id"] not in seen:
+                epics.setdefault(epic["epic_id"], (epic["title"], row["slice_id"]))
             if row["slice_id"] in seen:
                 other = seen[row["slice_id"]]
                 result["not_accepted"].append({**({"issue": row["issue"]} if row["issue"] else {"folder": f"{READY_DIR}/{row['slice_id']}"}), "slice_id": row["slice_id"],

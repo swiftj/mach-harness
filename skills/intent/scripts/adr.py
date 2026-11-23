@@ -40,7 +40,7 @@ import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 DEFAULT_DIR = "docs/adr"
 FILE_RE = re.compile(r"^(\d{4})-([a-z0-9]+(?:-[a-z0-9]+)*)\.md$")
@@ -314,11 +314,13 @@ def parse(text: str, name: str) -> Dict[str, Any]:
     return record
 
 
-def read_folder(files: Dict[str, str], folder: str) -> Tuple[List[Dict[str, Any]], List[str]]:
+def read_folder(files: Dict[str, str], folder: str, arrived: Optional[Callable[[str], Any]] = None) -> Tuple[List[Dict[str, Any]], List[str]]:
     """Every ADR among `files` ({repository path: text}) directly inside `folder`, and the folder's problems.
 
     A Markdown file whose name starts with a digit is meant to be an ADR: a bad name is a problem. Other files
-    (a README, a template) are not ADRs. Two files with one number are a problem on both."""
+    (a README, a template) are not ADRs. Two files with one number are a problem on both; the problem names the
+    later one (by `arrived`, a sort key for when a file reached the branch; by name without it) and the command
+    that renumbers it."""
     records: List[Dict[str, Any]] = []
     for name in sorted(files):
         if not in_folder(name, folder) or "/" in name[len(folder.rstrip("/")) + 1:]:
@@ -333,9 +335,11 @@ def read_folder(files: Dict[str, str], folder: str) -> Tuple[List[Dict[str, Any]
             by_number.setdefault(record["number"], []).append(record)
     for same in by_number.values():
         if len(same) > 1:
+            later = sorted(same, key=lambda record: (arrived(record["file"]) if arrived else (0,), record["file"]))[1:]
             for record in same:
                 others = ", ".join(other["file"] for other in same if other is not record)
-                record["problems"].append(f"another file has the same number: {others}")
+                record["problems"].append(f"another file has the same number: {others}. Neither binds until the later one is renumbered: "
+                                          + "; ".join(f"{renumber_command(item['file'])}, then commit the change by pull request" for item in later))
                 record["binding"] = False
     ids = {record["id"] for record in records if record["id"]}
     for record in records:
@@ -376,6 +380,15 @@ def files_on_disk(root: Path, folder: str) -> Dict[str, str]:
     return found
 
 
+def arrival(root: Path, rev: str) -> Callable[[str], Any]:
+    """A sort key for when a file reached `rev`: the commit time of the commit that first added it there. Asked only for
+    files that share a number, so it costs nothing in the usual case."""
+    def key(name: str) -> Any:
+        added = git(root, "log", "--diff-filter=A", "--format=%ct", rev, "--", name).stdout.split()
+        return (int(added[-1]),) if added and added[-1].isdigit() else (float("inf"),)
+    return key
+
+
 def head_of(root: Path) -> Optional[str]:
     done = git(root, "rev-parse", "--verify", "-q", "HEAD")
     return done.stdout.strip() or None if done.returncode == 0 else None
@@ -393,7 +406,7 @@ def main_listing(project: Path, config: Any, commit: Optional[str] = None) -> Di
     if rev and key in _LISTINGS:
         return _LISTINGS[key]
     files = files_at(Path(project), rev, folder) if rev else files_on_disk(Path(project), folder)
-    records, problems = read_folder(files, folder)
+    records, problems = read_folder(files, folder, arrival(Path(project), rev) if rev else None)
     for record in records:
         record["origin"] = "main"
     listing = {"dir": folder, "source": "commit" if rev else "working-tree", "commit": rev, "adrs": records,
@@ -412,7 +425,9 @@ def full_listing(project: Path, config: Any) -> Dict[str, Any]:
     disk = files_on_disk(Path(project), folder)
     pending = {name: text for name, text in disk.items() if listing["source"] == "commit" and committed.get(name) != text}
     removed = sorted(name for name in committed if name not in disk) if listing["source"] == "commit" else []
-    records, problems = read_folder({**committed, **disk} if listing["source"] == "commit" else disk, folder)
+    on_main = arrival(Path(project), listing["commit"]) if listing["source"] == "commit" else None
+    records, problems = read_folder({**committed, **disk} if listing["source"] == "commit" else disk, folder,
+                                    (lambda name: on_main(name) if name in committed else (float("inf"),)) if on_main else None)
     for record in records:
         record["committed"] = listing["source"] == "commit" and record["file"] not in pending
         record["origin"] = "main"
@@ -668,11 +683,27 @@ def drift_text(flags: Sequence[Dict[str, Any]]) -> Optional[str]:
 
 # ---------------------------------------------------------------- writing a new ADR
 
+def shared_names(project: Path, folder: str) -> List[str]:
+    """The ADR file names on the shared repository as this checkout last fetched it: origin's branches (origin/<main> and
+    every other branch, open pull requests' among them) and any pull-request refs fetched (refs/pull/*). Reads refs only;
+    it never fetches, so it is as fresh as the last fetch."""
+    listed = git(Path(project), "for-each-ref", "--format=%(refname)", "refs/remotes/origin", "refs/pull")
+    names: List[str] = []
+    for ref in listed.stdout.split() if listed.returncode == 0 else []:
+        if ref.endswith("/HEAD"):
+            continue
+        found = git(Path(project), "ls-tree", "--name-only", f"{ref}:{folder}")
+        if found.returncode == 0:
+            names += [f"{folder}/{base}" for base in found.stdout.splitlines() if base.endswith(".md")]
+    return names
+
+
 def next_number(project: Path, config: Any) -> int:
-    """The next free ADR number: above every number on the main branch, in the main checkout's working tree, and on
-    every open cell's branch, so two proposals never take one number."""
+    """The next free ADR number: above every number on the main branch, in the main checkout's working tree, on every
+    open cell's branch, and on the shared repository as last fetched (origin's main and its other branches, where open
+    pull requests' ADRs are), so two proposals on one machine never take one number, and two engineers rarely do."""
     folder, _ = folder_of(config)
-    names = set(main_listing(project, config)["files"]) | set(files_on_disk(Path(project), folder))
+    names = set(main_listing(project, config)["files"]) | set(files_on_disk(Path(project), folder)) | set(shared_names(project, folder))
     worktrees = Path(project) / ".factory" / "worktrees"
     if worktrees.is_dir():
         for cell_folder in sorted(worktrees.iterdir()):
@@ -857,6 +888,73 @@ REQUIRED_TOPICS = {  # the default topics, each with the one line every script a
 }
 ADDED_TOPIC = "A topic this project added to adr.required_topics in .factory/config.json."
 BASELINE_EXEMPT_LABEL = "factory-tuning"
+
+
+def renumber_command(name: str) -> str:
+    """The run skill's command that gives an ADR the next free number, as MACH is installed."""
+    return ("/mach adr renumber " if Path(__file__).resolve().parent.parent.name.startswith("mach-") else "/mach:run adr renumber ") + name
+
+
+def renumber(project: Path, config: Any, name: str) -> Dict[str, Any]:
+    """Give the ADR file `name` (in the main checkout's working tree) the next free number: rename the file, change its own
+    ADR-NNNN mentions, and every reference to it in the other ADRs and the overview. Writes files only; never commits.
+
+    A reference by file name always means this file and is changed. A bare `ADR-NNNN` in another file is changed only when
+    no other ADR in the folder has that number; when one does, the reference cannot be told apart, so it is left and listed.
+    In the overview, the table row with this ADR's title and the marker entry with its digest are changed."""
+    folder, setting = folder_of(config)
+    if setting:
+        raise ADRError(setting)
+    name = name.strip()
+    if name.startswith("./"):
+        name = name[2:]
+    if "/" not in name:
+        name = f"{folder}/{name}"
+    base = name.rsplit("/", 1)[-1]
+    match = FILE_RE.match(base)
+    if not match or not in_folder(name, folder) or "/" in name[len(folder.rstrip("/")) + 1:]:
+        raise ADRError(f"{name} is not an ADR file directly in {folder} (NNNN-title.md). Nothing was changed.")
+    path = Path(project) / name
+    if not path.is_file() or path.is_symlink():
+        raise ADRError(f"{name} is not in this checkout. Pull the main branch, or switch to the branch that has it, then run this again. Nothing was changed.")
+    disk = files_on_disk(Path(project), folder)
+    number = next_number(project, config)
+    old_id, new_id = f"ADR-{int(match.group(1)):04d}", f"ADR-{number:04d}"
+    new_base = f"{number:04d}-{match.group(2)}.md"
+    new_name = f"{folder}/{new_base}"
+    if (Path(project) / new_name).exists():
+        raise ADRError(f"{new_name} already exists. Nothing was changed.")
+    shared = any(other != name and (FILE_RE.match(other.rsplit("/", 1)[-1]) or [None, None])[1] == match.group(1) for other in disk)
+    text = path.read_text(encoding="utf-8")
+    record = parse(text, name)
+    bare = re.compile(r"\b" + re.escape(old_id) + r"\b")
+    file_ref = re.compile(r"(?<![A-Za-z0-9_.-])" + re.escape(base) + r"(?![A-Za-z0-9_.-])")
+    others = {other: content for other, content in disk.items() if other != name}
+    overview_name, _ = overview_of(config)
+    overview_path = Path(project) / overview_name
+    if overview_path.is_file() and not overview_path.is_symlink():
+        others[overview_name] = overview_path.read_text(encoding="utf-8", errors="replace")
+    writes: Dict[str, str] = {}
+    left: List[str] = []
+    for other, content in sorted(others.items()):
+        updated = file_ref.sub(new_base, content)
+        if other == overview_name:
+            updated = updated.replace(f" {old_id}@{record['digest'][:16]}", f" {new_id}@{record['digest'][:16]}")
+            if record.get("title"):
+                row = re.compile(r"(\| )" + re.escape(old_id) + r"( \| " + re.escape(_cell(record["title"])) + r" \|)")
+                updated = row.sub(lambda found: found.group(1) + new_id + found.group(2), updated)
+        if not shared:
+            updated = bare.sub(new_id, updated)
+        elif bare.search(updated):
+            left.append(other)
+        if updated != content:
+            writes[other] = updated
+    (Path(project) / new_name).write_text(bare.sub(new_id, file_ref.sub(new_base, text)), encoding="utf-8")
+    path.unlink()
+    for other, content in writes.items():
+        (Path(project) / other).write_text(content, encoding="utf-8")
+    return {"status": "RENUMBERED", "from": {"id": old_id, "file": name}, "to": {"id": new_id, "file": new_name},
+            "references_changed": sorted(writes), "check_by_hand": left}
 
 
 def baseline_command() -> str:

@@ -1960,6 +1960,25 @@ def cmd_adr_accept(project: Project, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_adr_renumber(project: Project, args: argparse.Namespace) -> int:
+    """An engineer gives an ADR the next free number, when two engineers took one number: the file is renamed and its references
+    changed in the main checkout's working tree; nothing is committed."""
+    A = adrs()
+    if A.unattended() or execution_scope(project) is not None:
+        raise RunError("Renumbering an architecture decision is an engineer's act, in conversation; a supervised execution does not renumber one.")
+    try:
+        done = A.renumber(project.root, project.config, args.file)
+    except A.ADRError as exc:
+        raise RunError(str(exc))
+    done["committed"] = False
+    done["next"] = (f"{done['from']['file']} is now {done['to']['file']} ({done['to']['id']}) in the working tree. Commit the rename and the changed "
+                    "references on a branch and open a pull request; once it is merged, both ADRs bind again."
+                    + (f" These files name {done['from']['id']}, which both ADRs had; check whether each means the renumbered one: "
+                       + ", ".join(done["check_by_hand"]) + "." if done["check_by_hand"] else ""))
+    print(json.dumps(done, indent=2, ensure_ascii=False))
+    return 0
+
+
 def workflow_name() -> str:
     return "mach-belt" if PROJECT_INSTALL else "mach:belt"
 
@@ -2154,6 +2173,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("adr_ids", nargs="+", metavar="ADR-NNNN")
     p.add_argument("--by", required=True, help="the engineer who accepts them, in their own words")
     p.set_defaults(func=cmd_adr_accept)
+    p = adr_parser.add_parser("renumber", help="give an ADR the next free number, when two took one: renames it and changes its references in the "
+                                               "working tree; commits nothing")
+    p.add_argument("file", help="the ADR file to renumber, such as docs/adr/0007-use-sqlite.md")
+    p.set_defaults(func=cmd_adr_renumber)
 
     req = sub.add_parser("requests", help="issues filed by monitoring accounts: take them in; starts no agent").add_subparsers(dest="action", required=True)
     p = req.add_parser("monitor", help="take in the issues the project's monitoring accounts filed and labelled; reports, starts nothing")
