@@ -63,7 +63,7 @@ Ordered by harm. Sizes: S is a day or two, M about a week, L more.
 - **Claim on GitHub at dispatch.** Just before a cell is opened, the Factory reads the issue again, posts a claim comment in a fixed template carrying a random value of its own, reads the comments again, and goes on only if its claim is the earliest for that revision. The loser opens nothing, withdraws its comment and reports "another Factory took SLICE-011 (claimed by @x at 14:02)".
 - **`mach:building` is respected.** Intake does not accept an issue that carries `mach:building` unless this Factory's own ledger holds that slice. That closes T3.
 - **A status write that failed blocks dispatch** of that slice until it is sent, so the claim is never only local.
-- Supervisors use the same claim. Two supervisors on one repository become safe: each builds only what it claimed.
+- Supervisors use the same claim. Several engineers' Factories on one repository, attended or unattended, are the normal team case: each builds only what it claimed.
 
 This is a comment and two reads per dispatch. GitHub offers no atomic test-and-set on an issue, so the earliest-claim rule is the strongest available without a server of our own.
 
@@ -165,9 +165,8 @@ Step 1 removes the three ways work is duplicated or merged untested without anyo
 - Converting existing ADRs from another format, and bringing in several design documents or PDFs at once.
 - Windows and Intel Mac builds.
 
-## 6. Questions for the owner
+## 6. Decided by the owner (2026-11-23)
 
-1. Is step 1 the right first piece, ahead of moving a project?
-2. For a merge of two repositories: one project with more epics (assumed here), or several projects in one repository?
-3. Should two supervisors on one repository be supported once the claim exists, or stay "one supervisor" as a rule?
-4. Is anyone waiting to move a repository now? If so, the working answer today is: build or reopen every ready slice first, then move.
+1. Step 1 is built first, ahead of moving a project.
+2. One repository holds one project. A move is a team leaving an old repository for a new one. When the destination already holds a project, the incoming epics and slices join it as more epics, renumbered; MACH does not learn several projects in one repository.
+3. Several engineers each running `/mach pull`, or their own supervisor, on their own machines against one repository is the normal team case and must be safe. The claim in A1 is what makes it so: every Factory builds only what it claimed.
