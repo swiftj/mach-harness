@@ -120,7 +120,8 @@ def lending(project_id="lending", slices=4, extra=None, principles=True):
         "route": {"route": "epic", "counted": {"outcomes": 1, "high_risk_not_determined": []}, "why": "One outcome over EPIC-002.", "at": TIME,
                   "revision": 1, "brief_sha256": shape.sha(brief), "details": {"made_from": "EPIC-002"}},
         "made": {"epics": ["EPIC-002"], "slices": ["SLICE-003"]}, "lookback": None, "issue": None})
-    put("product/ideas/IDEA-001.map.json", {"schema_version": 1, "idea_id": "IDEA-001", "brief_sha256": shape.sha(brief), "route": "epic",
+    put("product/ideas/IDEA-001.map.json", {"schema_version": 1, "idea_id": "IDEA-001", "brief_sha256": shape.sha(brief), "route": "epic", "revision": 1,
+                                            "settled": {},
                                             "epics": [{"key": "E1", "title": "Bulk invites", "criteria": ["A whole team joins"]}],
                                             "slices": [{"key": "B1", "title": "Invite many", "scope": "Many", "epic": "E1", "depends_on": [],
                                                         "cites": [[1, 2]], "outcomes": ["O-1"]}],
@@ -129,7 +130,7 @@ def lending(project_id="lending", slices=4, extra=None, principles=True):
     put("product/prds/PRD-01/document.md", doc)
     put("product/prds/PRD-01/prd.json", {"schema_version": 1, "prd_id": "PRD-01", "name": "plan.md", "format": "markdown", "file": "document.md",
                                          "bytes": len(doc), "sha256": sha(doc), "line_count": 7, "sections": [], "imported_at": TIME})
-    put("product/prds/PRD-01/map.json", {"schema_version": 1, "prd_id": "PRD-01", "prd_sha256": sha(doc), "epics": [],
+    put("product/prds/PRD-01/map.json", {"schema_version": 1, "prd_id": "PRD-01", "prd_sha256": sha(doc), "revision": 1, "epics": [],
                                          "slices": [{"key": "M1", "title": "Invite", "scope": "One", "epic": "EPIC-001", "depends_on": [], "cites": [[1, 3]]}],
                                          "settled": {}, "applied": {"epics": {}, "slices": {"M1": "SLICE-002"}}})
     put("product/prds/PRD-01/answers/M1.json", {"schema_version": 1, "slice_id": "SLICE-002", "prd_id": "PRD-01", "prd_sha256": sha(doc), "map_slice": "M1",
@@ -500,7 +501,8 @@ class JoinTest(ImportBase):
         self.assertIn(("specs/slices/SLICE-014-invite-teammate.md", "SLICE-001"), coded)
         self.assertIn(("specs/slices/SLICE-014-invite-teammate.md", "EPIC-002"), coded)
         missing = [row for row in planned["not_in_archive"] if row["id"] == "SLICE-200"]
-        self.assertEqual(missing[0]["here"], "SLICE-200 is not used in this repository")
+        self.assertEqual(missing[0]["here"], "SLICE-200 is not used in this repository yet; whatever is given that number here will be a "
+                                             "different item from the one the text meant")
         self.assertIsInstance(missing[0]["line"], int)
 
 
@@ -633,7 +635,8 @@ class HalfWayTest(ImportBase):
         here = studio.Studio(self.b)
         waiting = project_import.unfinished(here)
         self.assertEqual(waiting["file"], "lending.zip")
-        self.assertEqual(waiting["text"], "Bringing in the project from lending.zip stopped part way. Run it again with the same file to finish.")
+        self.assertEqual(waiting["text"], "Bringing in the project from lending.zip stopped part way. Run it again with the same file to finish, "
+                                          "or set it aside.")
         self.assertIsNone(self.record(self.b, self.archive)["finished_at"])
         self.assertEqual(project_import.reserved_numbers(here, "SLICE"), [1, 2, 3, 4, 7])
         self.assertEqual(project_import.reserved_numbers(here, "IDEA"), [1])
@@ -643,8 +646,8 @@ class HalfWayTest(ImportBase):
         self.assertEqual(self.ok(self.b, "prd", "import", self.file("other.md", "# Other\n\nText.\n"))["prd"]["prd_id"], "PRD-02")
         # Another archive is refused while this one is unfinished.
         other = self.hand_archive("other.zip", project_id="other-project")
-        self.refused_import(self.b, other, "Bringing in lending.zip stopped part way. Finish it first: run the import again with that file. "
-                                           "Nothing was changed.")
+        self.refused_import(self.b, other, "Bringing in lending.zip stopped part way. Finish it first: run the import again with that file, "
+                                           "or set it aside. Nothing was changed.")
         self.set_gh(calls=[])
         result = self.finish(self.b)
         self.assertTrue(result["resumed"])
@@ -684,7 +687,8 @@ class HalfWayTest(ImportBase):
         self.check_whole()
 
     def test_a_file_placed_by_something_else_stops_the_import(self):
-        self.stopped(self.b, fail_at=lambda target: target.name == "SLICE-002.json")
+        """Nothing of SLICE-002 was placed yet: a work order of that number is another slice's, and renumbering it is the way on."""
+        self.stopped(self.b, fail_at=lambda target: target.name == "EPIC-002.json")
         self.write_json_in(self.b, "product/slices/SLICE-002.json", {
             "schema_version": 1, "slice_id": "SLICE-002", "project_id": "lending", "epic_id": "EPIC-001", "revision": 1, "title": "Someone else's",
             "status": "draft", "dependencies": [], "open_questions": [], "spec_path": None, "spec_sha256": None})
@@ -695,6 +699,21 @@ class HalfWayTest(ImportBase):
                                                 "then run the import again with the same file.")
         self.assertIsNotNone(project_import.unfinished(studio.Studio(self.b)), "the record stays")
 
+    def test_a_stray_file_of_one_of_the_import_s_own_slices_is_never_renumbering_advice(self):
+        """SLICE-002's spec and why were placed before the stop: SLICE-002 is the import's own, so a work order of that number that
+        is not the import's is a stray file to move, never a slice to renumber."""
+        self.stopped(self.b, fail_at=lambda target: target.name == "SLICE-002.json")
+        self.write_json_in(self.b, "product/slices/SLICE-002.json", {
+            "schema_version": 1, "slice_id": "SLICE-002", "project_id": "lending", "epic_id": "EPIC-001", "revision": 1, "title": "Someone else's",
+            "status": "draft", "dependencies": [], "open_questions": [], "spec_path": None, "spec_sha256": None})
+        with self.assertRaises(studio.StudioError) as caught:
+            self.bring(self.b, self.archive)
+        message = str(caught.exception)
+        self.assertEqual(message, "Bringing in stopped: product/slices/SLICE-002.json is in the workspace but is not the file this import brings "
+                                  "in for SLICE-002, which came with the project. Move that file out of the workspace, then run the import "
+                                  "again with the same file.")
+        self.assertNotIn("renumber", message)
+
     def test_another_spec_of_a_given_number_stops_it_too(self):
         self.stopped(self.b, fail_at=lambda target: target.name == "EPIC-001.json")
         self.draft(self.b, "specs/slices").mkdir(parents=True, exist_ok=True)
@@ -702,6 +721,82 @@ class HalfWayTest(ImportBase):
         with self.assertRaises(studio.StudioError) as caught:
             self.bring(self.b, self.archive)
         self.assertIn("SLICE-004 is now used by another slice here (specs/slices/SLICE-004-another.md)", str(caught.exception))
+
+    def test_a_file_you_changed_after_it_was_brought_in_is_kept(self):
+        """Point 1 of the review: the import stops after placing SLICE-001 (joining Ben's project, so it is SLICE-011); the person edits
+        it; the second run keeps their version, counts it as done, says so, and finishes."""
+        self.ben_project()
+        self.stopped(self.b, fail_at=lambda target: target.name == "SLICE-012.json")
+        path = self.draft(self.b, "product/slices/SLICE-011.json")
+        work = json.loads(path.read_text())
+        work.update(title="Edited by the PM while the import stood unfinished", revision=work["revision"] + 1)
+        path.write_text(studio.canonical(work))
+        spec = self.draft(self.b, "specs/slices/SLICE-012-invite-teammate.md")
+        spec.write_text(spec.read_text() + "\nAdded by the PM.\n")
+        result = self.finish(self.b)
+        self.assertTrue(result["imported"])
+        self.assertEqual(self.work(self.b, "SLICE-011")["title"], "Edited by the PM while the import stood unfinished")
+        self.assertTrue(self.text(self.b, "specs/slices/SLICE-012-invite-teammate.md").endswith("\nAdded by the PM.\n"))
+        self.assertEqual([(row["file"], row["how"]) for row in result["kept_yours"]],
+                         [("specs/slices/SLICE-012-invite-teammate.md", "yours"), ("product/slices/SLICE-011.json", "yours")])
+        self.assertIn("You changed SLICE-011's work order after it was brought in; your version was kept.", result["note"])
+        self.assertIn("You changed SLICE-012's spec after it was brought in; your version was kept.", result["note"])
+        self.assertIsNone(project_import.unfinished(studio.Studio(self.b)))
+        self.assertTrue(self.ok(self.b, "validate")["valid"])
+        record = self.record(self.b, self.archive)
+        self.assertIn("product/slices/SLICE-011.json", record["placed"])
+        self.assertEqual(record["kept_yours"], ["specs/slices/SLICE-012-invite-teammate.md", "product/slices/SLICE-011.json"])
+
+    def test_a_slice_renumbered_while_the_import_stood_is_not_brought_in_again(self):
+        """The earlier advice, followed: the PM renumbered one of the import's own slices. The import finishes and does not bring
+        the old number back."""
+        self.ben_project()
+        self.stopped(self.b, fail_at=lambda target: target.name == "SLICE-012.json")
+        self.ok(self.b, "slice", "renumber", "SLICE-011")
+        result = self.finish(self.b)
+        self.assertTrue(result["imported"])
+        self.assertFalse(self.draft(self.b, "product/slices/SLICE-011.json").exists())
+        gone = [row for row in result["kept_yours"] if row["how"] == "gone"]
+        self.assertIn("SLICE-011's work order was brought in, then moved or removed here; MACH did not bring it in again.",
+                      [row["words"] for row in gone])
+        self.assertIsNone(project_import.unfinished(studio.Studio(self.b)))
+
+    def test_an_unfinished_import_can_be_set_aside(self):
+        """What it placed stays exactly where it is and is listed; its numbers are free; staging, the log and the plan are gone; the
+        record is kept, renamed; a second setting aside finds nothing."""
+        self.ben_project()
+        self.plan(self.b, self.archive)
+        self.stopped(self.b, fail_at=lambda target: target.name == "SLICE-012.json")
+        here = studio.Studio(self.b)
+        before = draft_tree(self.b)
+        result = project_import.set_aside(studio, here, None)
+        self.assertEqual(draft_tree(self.b), before, "every file already placed stays exactly where it is")
+        ids = [row["id"] for row in result["brought_in"]]
+        for ident in ("EPIC-003", "EPIC-004", "SLICE-011", "SLICE-012", "IDEA-002", "PP-04", "TN-03", "PRD-01", "DES-01"):
+            self.assertIn(ident, ids)
+        partly = next(row for row in result["brought_in"] if row["id"] == "SLICE-013")
+        self.assertEqual(partly["files"], ["product/intents/SLICE-013.md", "specs/slices/SLICE-013-invite-teammate.md"], "its work order never came")
+        row = next(row for row in result["brought_in"] if row["id"] == "SLICE-011")
+        self.assertEqual(row["was"], "SLICE-001")
+        self.assertEqual(row["files"], ["product/intents/SLICE-011.md", "product/slices/SLICE-011.json", "specs/slices/SLICE-011-invite-teammate.md"])
+        self.assertTrue(result["note"].startswith("MACH stopped bringing in the project from lending.zip and set it aside. What it had already "
+                                                  "brought in stays where it is: "), result["note"])
+        self.assertTrue(result["note"].endswith("Keep them, or remove them if you do not want them. The numbers it was holding are free "
+                                                "again, and nothing else was changed."), result["note"])
+        self.assertIsNone(project_import.unfinished(here))
+        self.assertEqual(project_import.reserved_numbers(here, "SLICE"), [])
+        names = sorted(p.name for p in (self.b / ".factory/studio/imports").iterdir())
+        self.assertEqual(len(names), 1)
+        self.assertRegex(names[0], r"^[0-9a-f]{16}\.set-aside-[0-9]{8}T[0-9]{6}Z\.json$")
+        kept = json.loads((self.b / ".factory/studio/imports" / names[0]).read_text())
+        self.assertIsNotNone(kept["set_aside_at"])
+        self.assertIn("product/slices/SLICE-011.json", kept["placed"])
+        with self.assertRaises(studio.StudioError) as caught:
+            project_import.set_aside(studio, here, None)
+        self.assertEqual(str(caught.exception), "No project is part way through being brought in here, so there is nothing to set aside. "
+                                                "Nothing was changed.")
+        other = self.hand_archive("other.zip", project_id="other-project")
+        self.assertTrue(self.plan(self.b, other)["plan"], "another import is no longer blocked")
 
     def test_the_lookup_of_what_an_id_was_or_became(self):
         self.ben_project()
@@ -717,6 +812,261 @@ class HalfWayTest(ImportBase):
         self.assertEqual(listed["imports"][0]["counts"]["SLICE"], 5)
         with self.assertRaises(studio.StudioError):
             project_import.lookup(here, "not-an-id")
+
+
+# ---- what the review found: every record readable after import, links to what did not come, sets with answers beside items ----
+
+
+REAL_LOOKUPS = {"schema_version": 1, "idea_id": "IDEA-001", "recorded_at": TIME, "shipped_commit": "a" * 40,
+                "shipped_rules": [{"rule": "SLICE-001/FR-02", "in_force": True, "epic_id": "EPIC-001", "note": "The rule to change."}],
+                "similar": [{"request": 42, "note": "Asked for"}, {"idea": "IDEA-001", "note": "Itself"}],
+                "principles": [{"id": "PP-01", "status": "active", "note": "Versions stay"}],
+                "policies": [{"id": "POL-sec-01", "owner": "Security", "note": "Applies"}]}
+
+
+class ReadersTest(ImportBase):
+    """After an import, every reader in Studio can read every record it brought in; a record a reader could not handle is
+    refused before anything is placed."""
+    maxDiff = None
+
+    READS = (("status",), ("validate",), ("idea", "list"), ("idea", "show", "IDEA-001"), ("idea", "map-status", "IDEA-001"),
+             ("idea", "chain", "IDEA-001"), ("prd", "list"), ("prd", "show", "PRD-01"), ("prd", "status", "PRD-01"), ("design", "list"),
+             ("design", "show", "DES-01"), ("need", "list"), ("principle", "list"), ("slice", "show", "SLICE-001"),
+             ("slice", "show", "SLICE-003"), ("slice", "check", "SLICE-002"))
+
+    def read_everything(self, project, rename=None):
+        for argv in self.READS:
+            argv = tuple((rename or {}).get(word, word) for word in argv)
+            code, out, err = self.run_studio(project, *argv)
+            self.assertNotIn("Traceback", err, argv)
+            if argv[:2] != ("slice", "check"):
+                self.assertEqual(code, 0, f"{argv}: {err}{out}")
+            json.loads(out) if code == 0 and argv[:2] != ("slice", "check") else None
+
+    def test_a_real_export_brought_in_is_read_by_every_command(self):
+        archive = self.real_archive()
+        self.bring(self.b, archive)
+        self.read_everything(self.b)
+        prds = self.ok(self.b, "prd", "status", "PRD-01")
+        self.assertTrue(prds["coverage"])
+
+    def test_a_joined_project_is_read_by_every_command(self):
+        self.ben_project()
+        files, facts = lending(extra={"product/ideas/IDEA-001.lookups.json": REAL_LOOKUPS})
+        result = self.bring(self.b, write_archive(self.archives / "full.zip", files, facts))
+        self.read_everything(self.b, {"IDEA-001": "IDEA-002", "SLICE-001": "SLICE-011", "SLICE-002": "SLICE-012", "SLICE-003": "SLICE-013"})
+        self.assertEqual(self.pairs(result, "IDEA"), {"IDEA-001": "IDEA-002"})
+        lookups = self.artifact(self.b, "product/ideas/IDEA-002.lookups.json")
+        self.assertEqual(lookups["idea_id"], "IDEA-002", "the lookups' own idea is renumbered with the idea")
+        self.assertNotIn("shipped_commit", lookups, "a commit of the old repository never arrives")
+        self.assertEqual(lookups["shipped_rules"][0]["rule"], "SLICE-011/FR-02")
+        self.assertEqual(lookups["similar"], [{"idea": "IDEA-002", "note": "Itself"}])
+        self.assertEqual(self.ok(self.b, "idea", "show", "IDEA-002")["lookups"]["counts"],
+                         {"shipped_rules": 1, "similar": 1, "principles": 1, "policies": 1})
+
+    def test_a_prd_whose_sections_an_archive_made_up_is_read_from_its_document(self):
+        files, facts = lending()
+        meta = json.loads(files["workspace/product/prds/PRD-01/prd.json"])
+        meta["sections"] = [{"n": 1}]
+        files["workspace/product/prds/PRD-01/prd.json"] = canonical(meta)
+        self.bring(self.b, write_archive(self.archives / "sections.zip", files, facts))
+        sections = self.artifact(self.b, "product/prds/PRD-01/prd.json")["sections"]
+        self.assertEqual([s["title"] for s in sections], ["Plan", "Scope"])
+        self.assertEqual(self.ok(self.b, "prd", "status", "PRD-01")["prd"]["sections"], 2)
+        self.read_everything(self.b)
+
+    def refused_record(self, change, words):
+        files, facts = lending()
+        change(files)
+        message = self.refused_import(self.b, write_archive(self.archives / "odd.zip", files, facts), mock.ANY)
+        self.assertIn(words, message)
+        self.assertFalse(self.draft(self.b, "product").exists(), "nothing was placed")
+
+    def edit(self, member, update):
+        def change(files):
+            name = "workspace/" + member
+            record = json.loads(files[name])
+            update(record)
+            files[name] = canonical(record)
+        return change
+
+    def test_each_kind_a_reader_could_not_read_is_refused_before_anything_is_placed(self):
+        cases = {
+            "an idea": (self.edit("product/ideas/IDEA-001.json", lambda r: r.update(made={"epics": "EPIC-002", "slices": []})),
+                        "holds an idea that is not in the form Product Studio writes (IDEA-001: "),
+            "an idea's map": (self.edit("product/ideas/IDEA-001.map.json", lambda r: r["slices"][0].pop("cites")),
+                              "(IDEA-001: a slice of its map does not cite the lines it rests on)"),
+            "an idea's map's outcomes": (self.edit("product/ideas/IDEA-001.map.json", lambda r: r["slices"][0].pop("outcomes")),
+                                         "its outcomes are not the brief's outcomes"),
+            "lookups": (lambda files: files.update({"workspace/product/ideas/IDEA-001.lookups.json": canonical(
+                            {**REAL_LOOKUPS, "similar": [{"idea": "IDEA-001", "note": "x", "extra": {"a": 1}}]})}),
+                        "an entry of similar holds extra, which Shape never writes"),
+            "a PRD map": (self.edit("product/prds/PRD-01/map.json", lambda r: r["slices"][0].pop("cites")),
+                          "(PRD-01: a slice of its map does not cite the lines it rests on)"),
+            "a PRD map's settlement": (self.edit("product/prds/PRD-01/map.json", lambda r: r.update(settled={"2": {"as": "later", "by": "x"}})),
+                                       "the settlement of 2 holds fields Product Studio never writes"),
+            "a PRD map's section number": (self.edit("product/prds/PRD-01/map.json", lambda r: r.update(settled={"two": {"as": "later"}})),
+                                           "it settles 'two', which is not one of its document's parts"),
+            "a PRD's answers": (self.edit("product/prds/PRD-01/answers/M1.json",
+                                          lambda r: r.update(answers=[{"n": 1, "kind": "guess", "question": "Q?", "answer": None, "cites": [],
+                                                                       "state": "pending"}])),
+                                "its answers for M1 are not in the form Product Studio writes"),
+            "a design map": (self.edit("product/designs/DES-01/map.json", lambda r: r.update(topics={"storage": {"lines": [[1, 1]]}})),
+                             "its map's topic storage has no state Product Studio knows"),
+            "a design conflict": (self.edit("product/designs/DES-01/map.json", lambda r: r["conflicts"][0].pop("lines")),
+                                  "a conflict in its map is not in the form Product Studio writes"),
+            "a need": (self.edit("product/needs.json", lambda r: r["needs"][0].pop("statement")), "holds the technical needs that is not in the form"),
+            "a principle": (self.edit("product/principles.json", lambda r: r["principles"][0].update(id="PP-1")), "holds the principles that is not in the form"),
+            "a slice": (self.edit("product/slices/SLICE-003.json", lambda r: r.update(serves={"idea": "IDEA-001"})), "holds a slice that is not in the form"),
+            "an epic": (self.edit("product/epics/EPIC-001.json", lambda r: r.update(acceptance_criteria="SLICE-001 works")), "holds an epic that is not in the form"),
+        }
+        for name, (change, words) in cases.items():
+            with self.subTest(name):
+                self.refused_record(change, words)
+
+    def test_a_deeply_nested_value_is_refused_with_a_sentence(self):
+        deep = '{"a":' * 900 + "1" + "}" * 900
+        files, facts = lending()
+        files["workspace/product/ideas/IDEA-001.lookups.json"] = ('{"principles": [{"id": "PP-01", "note": ' + deep + "}]}").encode()
+        message = self.refused_import(self.b, write_archive(self.archives / "deep.zip", files, facts), mock.ANY, plan=True)
+        self.assertIn("(IDEA-001: it is nested more deeply than any record Product Studio writes)", message)
+        files, facts = lending()
+        files["workspace/product/ideas/IDEA-001.json"] = files["workspace/product/ideas/IDEA-001.json"].replace(
+            b'"route": {', b'"route": {"deep": ' + deep.encode() + b", ", 1)
+        message = self.refused_import(self.b, write_archive(self.archives / "deep2.zip", files, facts), mock.ANY)
+        self.assertIn("it is nested more deeply than any record Product Studio writes", message)
+
+    def test_the_archive_is_read_once_and_keyed_to_the_bytes_read(self):
+        archive = self.hand_archive()
+        original = archive.read_bytes()
+        real = project_archive.read_with_sha256
+
+        def read_then_change(path):
+            found = real(path)
+            Path(path).write_bytes(original + b"changed afterwards")  # the file changes once it has been read
+            return found
+
+        with mock.patch.object(project_archive, "read_with_sha256", side_effect=read_then_change) as reader:
+            result = self.bring(self.b, archive)
+        self.assertEqual(reader.call_count, 1)
+        self.assertEqual(result["archive"]["sha256"], sha(original))
+        self.assertTrue((self.b / ".factory/studio/imports" / f"{sha(original)[:16]}.json").is_file())
+        self.assertEqual(json.loads((self.b / ".factory/studio/imports" / f"{sha(original)[:16]}.json").read_text())["archive_sha256"], sha(original))
+
+
+class LinksTest(ImportBase):
+    """Links to IDs that are not in the archive (an --only-mine export, an item deleted at the source)."""
+    maxDiff = None
+
+    def dangling(self):
+        files, facts = lending()
+
+        def edit(member, update):
+            record = json.loads(files["workspace/" + member])
+            update(record)
+            files["workspace/" + member] = canonical(record)
+
+        edit("product/ideas/IDEA-001.json", lambda r: r["made"]["slices"].append("SLICE-009"))
+        edit("product/slices/SLICE-002.json", lambda r: r.update(serves={"idea": "IDEA-009", "outcomes": ["O-1"]},
+                                                                  source={"kind": "prd", "prd_id": "PRD-07", "sha256": "c" * 64,
+                                                                          "lines": [[1, 2]], "map_slice": "M9"}))
+        edit("product/epics/EPIC-001.json", lambda r: r.update(serves={"idea": "IDEA-009", "outcomes": ["O-1"]}))
+        edit("product/prds/PRD-01/map.json", lambda r: (r["applied"]["slices"].update(M2="SLICE-009"),
+                                                        r["slices"].append({"key": "M2", "title": "Two", "scope": "Two", "epic": "EPIC-001",
+                                                                            "depends_on": ["SLICE-009"], "cites": [[1, 2]]})))
+        files["workspace/product/ideas/IDEA-001.lookups.json"] = canonical({**REAL_LOOKUPS, "similar": [{"idea": "IDEA-009", "note": "Gone"}],
+                                                                           "principles": [{"id": "PP-09", "status": "active", "note": "Gone"}]})
+        name = "workspace/specs/slices/SLICE-002-invite-teammate.md"
+        files[name] = files[name] + b"\nSee SLICE-009 for the rest.\n"
+        return write_archive(self.archives / "dangling.zip", files, facts)
+
+    def test_joining_takes_out_links_to_what_did_not_come_and_lists_each(self):
+        self.ben_project()
+        result = self.bring(self.b, self.dangling())
+        idea = self.artifact(self.b, "product/ideas/IDEA-002.json")
+        self.assertEqual(idea["made"]["slices"], ["SLICE-013"], "Ben's SLICE-009 is not recorded as made by the idea")
+        work = self.work(self.b, "SLICE-012")
+        self.assertNotIn("serves", work)
+        self.assertNotIn("source", work)
+        self.assertNotIn("serves", self.artifact(self.b, "product/epics/EPIC-003.json"))
+        prd_map = self.artifact(self.b, "product/prds/PRD-01/map.json")
+        self.assertEqual(prd_map["applied"]["slices"], {"M1": "SLICE-012"})
+        self.assertEqual(prd_map["slices"][1]["depends_on"], [])
+        lookups = self.artifact(self.b, "product/ideas/IDEA-002.lookups.json")
+        self.assertEqual((lookups["similar"], lookups["principles"]), ([], []))
+        dropped = {(row["field"], row["id"], row["how"]) for row in result["links_dropped"]}
+        self.assertEqual(dropped, {("made.slices", "SLICE-009", "dropped"), ("serves", "IDEA-009", "cleared"), ("source", "PRD-07", "cleared"),
+                                   ("applied.slices", "SLICE-009", "dropped"), ("slice M2's depends_on", "SLICE-009", "dropped"),
+                                   ("similar", "IDEA-009", "dropped"), ("principles", "PP-09", "dropped")})
+        self.assertEqual([row["file"] for row in result["links_dropped"] if row["id"] == "IDEA-009" and row["field"] == "serves"],
+                         ["product/epics/EPIC-003.json", "product/slices/SLICE-012.json"])
+        self.assertTrue(any(line.startswith("8 links to things that did not come with the project") for line in result["after"]), result["after"])
+        text = next(row for row in result["not_in_archive"] if row["id"] == "SLICE-009")
+        self.assertEqual(text["here"], "SLICE-009 in this repository is \"Ben's slice 9\", a different item from the one the text meant")
+        self.assertTrue(any("now names whatever has that number here, a different item" in line for line in result["after"]), result["after"])
+        self.assertTrue(self.ok(self.b, "validate")["valid"])
+
+    def test_a_new_project_keeps_them_as_written_and_lists_them(self):
+        result = self.bring(self.b, self.dangling())
+        self.assertFalse(result["renumbered"])
+        self.assertEqual(result["links_dropped"], [])
+        self.assertIn("SLICE-009", self.artifact(self.b, "product/ideas/IDEA-001.json")["made"]["slices"])
+        self.assertEqual(self.work(self.b, "SLICE-002")["serves"]["idea"], "IDEA-009")
+        listed = {(row.get("field"), row["id"]) for row in result["not_in_archive"]}
+        self.assertTrue({("made.slices[1]", "SLICE-009"), ("serves.idea", "IDEA-009"), ("source.prd_id", "PRD-07"),
+                         ("applied.slices.M2", "SLICE-009"), ("similar[0].idea", "IDEA-009")} <= listed, listed)
+        self.assertEqual(next(row for row in result["not_in_archive"] if row["id"] == "SLICE-009" and not row.get("field"))["here"],
+                         "SLICE-009 is not used in this repository")
+
+    def test_a_link_a_record_cannot_do_without_refuses_before_github_is_read(self):
+        """A small change's shipped rule, a map slice's epic and a design conflict's principle cannot be cleared: refused, in
+        either mode, with nothing changed (not even Studio's cache of GitHub)."""
+        files, facts = lending()
+        work = json.loads(files["workspace/product/slices/SLICE-004.json"])
+        work["small"]["shipped_rule"] = "SLICE-009/FR-02"
+        files["workspace/product/slices/SLICE-004.json"] = canonical(work)
+        sentence = ("small.zip cannot be brought in as it is: SLICE-004 is a small change to SLICE-009/FR-02, and SLICE-009 did not come with "
+                    "the project, so that rule would be another slice's here. Export it again from the old repository with that item in the "
+                    "project. Nothing was changed.")
+        self.refused_import(self.b, write_archive(self.archives / "small.zip", files, facts), sentence)
+        self.ben_project()
+        self.refused_import(self.b, self.archives / "small.zip", sentence)
+        files, facts = lending()
+        design_map = json.loads(files["workspace/product/designs/DES-01/map.json"])
+        design_map["conflicts"][0]["against"] = "PP-09"
+        files["workspace/product/designs/DES-01/map.json"] = canonical(design_map)
+        message = self.refused_import(self.b, write_archive(self.archives / "against.zip", files, facts), mock.ANY)
+        self.assertIn("conflict 1 of DES-01 is against PP-09, which did not come with the project.", message)
+
+    def test_emphasis_and_joined_words_around_an_id_are_rewritten(self):
+        self.ben_project()
+        files, facts = lending()
+        files["workspace/product/intents/SLICE-002.md"] += b"\nThis waits for _SLICE-001_ and __EPIC-001__, see SLICE-001_notes and SLICE-001a.\n"
+        result = self.bring(self.b, write_archive(self.archives / "italic.zip", files, facts))
+        last = self.text(self.b, "product/intents/SLICE-012.md").splitlines()[-1]
+        self.assertEqual(last, "This waits for _SLICE-011_ and __EPIC-003__, see SLICE-011_notes and SLICE-001a.")
+        near = [row for row in result["check_by_hand"] if row["file"] == "product/intents/SLICE-012.md"]
+        self.assertEqual([(row["id"], row["why"]) for row in near],
+                         [("SLICE-001", "SLICE-001 with more letters or digits after it; left as written, though SLICE-001 is now SLICE-011")])
+
+
+class SetsTest(ImportBase):
+    def test_a_new_project_keeps_its_nothing_to_say_answers_on_needs(self):
+        files, facts = lending()
+        files["workspace/product/needs.json"] = canonical({"schema_version": 1, "project_id": "lending", "none": ["people", "never"], "needs": []})
+        self.bring(self.b, write_archive(self.archives / "none.zip", files, facts))
+        self.assertEqual(self.artifact(self.b, "product/needs.json"), {"schema_version": 1, "project_id": "lending", "none": ["people", "never"],
+                                                                       "needs": []})
+        kinds = {row["kind"]: row["nothing_to_say"] for row in self.ok(self.b, "need", "list")["kinds"]}
+        self.assertEqual((kinds["people"], kinds["never"], kinds["data"]), (True, True, False))
+
+    def test_joining_keeps_this_project_s_own_answers_and_says_so(self):
+        self.ben_project()
+        result = self.bring(self.b, self.hand_archive())
+        self.assertEqual(self.artifact(self.b, "product/needs.json")["none"], [])
+        self.assertEqual(result["needs_none_left_behind"], ["never"])
+        self.assertIn("The project's 'nothing to say' answers on technical needs (never) were not brought in: they answered for the other "
+                      "project, and this project's own answers stay as they are.", result["after"])
 
 
 # ---- section 7.2: every refusal, with its sentence; each changes nothing ----

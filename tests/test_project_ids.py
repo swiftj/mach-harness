@@ -110,10 +110,31 @@ class TokenRuleTest(unittest.TestCase):
         out, notes = rewrite_text("SLICE-001 SLICE-0011\n", mapping)
         self.assertEqual(out, "SLICE-031 SLICE-032\n")
         self.assertEqual(notes, [])
-        for untouched in ("XSLICE-001", "PRE-SLICE-001", "SLICE-001_x", "SLICE-001A", "x_SLICE-001", "éSLICE-001", "SLICE-001é",
-                          "SLICE-001٣", "9SLICE-001", "SLICE-01", "PP-1", "TN-1", "PRD-1", "DES-1", "slice-001", "EPIC_001"):
+        for untouched in ("XSLICE-001", "PRE-SLICE-001", "éSLICE-001", "9SLICE-001", "SLICE-01", "PP-1", "TN-1", "PRD-1", "DES-1",
+                          "slice-001", "EPIC_001"):
             self.assertEqual(rewrite_text(untouched, {"SLICE-001": "SLICE-031", "PP-01": "PP-04"}), (untouched, []), untouched)
             self.assertEqual(ids_in_text(untouched), [], untouched)
+
+    def test_an_underscore_is_a_boundary(self):
+        """Markdown emphasis and a word joiner: the ID next to an underscore is rewritten."""
+        mapping = {"SLICE-001": "SLICE-031", "EPIC-001": "EPIC-004"}
+        out, notes = rewrite_text("This waits for _SLICE-001_ and __EPIC-001__.\nSee SLICE-001_notes and x_SLICE-001.\n", mapping)
+        self.assertEqual(out, "This waits for _SLICE-031_ and __EPIC-004__.\nSee SLICE-031_notes and x_SLICE-031.\n")
+        self.assertEqual(notes, [])
+        self.assertEqual([ident for _, ident, _ in ids_in_text("_SLICE-001_ __EPIC-001__")], ["SLICE-001", "EPIC-001"])
+
+    def test_an_id_glued_to_more_letters_or_digits_is_left_and_listed(self):
+        """A different token is never rewritten; when the ID it starts with is one the map changes, it is listed for a person."""
+        mapping = {"SLICE-001": "SLICE-031", "PP-01": "PP-04"}
+        for glued in ("SLICE-001a", "SLICE-001A", "SLICE-001é", "SLICE-001٣", "PP-01b"):
+            out, notes = rewrite_text(f"See {glued}.\n", mapping)
+            self.assertEqual(out, f"See {glued}.\n", glued)
+            self.assertEqual(notes, [{"line": 1, "id": glued[:9] if glued.startswith("SLICE") else "PP-01", "why": "near_miss"}], glued)
+            self.assertEqual(ids_in_text(glued), [], glued)
+        self.assertEqual(rewrite_text("SLICE-002a\n", mapping), ("SLICE-002a\n", []), "an ID the map does not change needs no check")
+        self.assertEqual(rewrite_text("SLICE-001a\n", {"SLICE-001": "SLICE-001"}), ("SLICE-001a\n", []), "nor one it keeps")
+        out, notes = rewrite_text("SLICE-0011\n", mapping)
+        self.assertEqual((out, notes), ("SLICE-0011\n", [{"line": 1, "id": "SLICE-0011", "why": "not_in_archive"}]))
 
     def test_where_a_token_is_matched(self):
         mapping = {"SLICE-011": "SLICE-031", "PP-03": "PP-07", "EPIC-001": "EPIC-004", "IDEA-002": "IDEA-009"}
@@ -285,7 +306,7 @@ def idea():
 
 
 def lookups():
-    return {"shipped_rules": [{"rule": "SLICE-011/FR-02", "in_force": True, "epic_id": "EPIC-001", "note": "SLICE-011 rule"}],
+    return {"schema_version": 1, "idea_id": "IDEA-001", "recorded_at": TIME, "shipped_rules": [{"rule": "SLICE-011/FR-02", "in_force": True, "epic_id": "EPIC-001", "note": "SLICE-011 rule"}],
             "similar": [{"idea": "IDEA-001", "note": "Like IDEA-001"}, {"request": 42, "note": "#42 SLICE-002"}],
             "principles": [{"id": "PP-02", "status": "active", "note": "PP-02 and PP-01"}],
             "policies": [{"id": "POL-sec-01", "owner": "security", "note": "see TN-01"}]}
@@ -326,8 +347,10 @@ def design_meta():
 
 def design_map():
     return {"schema_version": 1, "design_id": "DES-01", "design_sha256": SHA, "required_topics": ["storage"], "revision": 1,
-            "topics": [{"topic": "storage", "state": "decided", "lines": [[1, 2]], "summary": "SLICE-001 store"}], "other": [],
-            "conflicts": [{"n": 1, "lines": [[1, 1]], "against": "PP-01", "note": "PP-01 says", "settled": None},
+            "topics": {"storage": {"state": "decided", "lines": [[1, 2]], "summary": "SLICE-001 store"}},
+            "other": [{"lines": [[1, 1]], "summary": "EPIC-001 too", "applies_to": ["topic:storage"]}],
+            "conflicts": [{"n": 1, "lines": [[1, 1]], "against": "PP-01", "note": "PP-01 says", "settled": "stands",
+                           "reason": "Kept, after SLICE-001", "by": "the product manager", "at": TIME},
                           {"n": 2, "lines": [[2, 2]], "against": "TN-01", "note": "", "settled": None},
                           {"n": 3, "lines": [[3, 3]], "against": "POL-sec-01", "note": "", "settled": None}],
             "mapped_at": TIME, "published": {"sha256": SHA}}
@@ -359,9 +382,8 @@ class RecordTest(unittest.TestCase):
     def test_project(self):
         out = self.rewritten("project", project(), "team-space")
         self.assertOnly(project(), out, {"project_id": "team-space", "vision": "Members borrow; see SLICE-013 and `SLICE-002`.",
-                                         "outcomes": ["EPIC-004 ships", "Nothing else"]})
+                                         "outcomes": ["EPIC-004 ships", "Nothing else"], "name": "Lending SLICE-013"})
         self.assertEqual(self.rewritten("project", project())["project_id"], "lending")
-        self.assertEqual(self.rewritten("project", project())["name"], "Lending SLICE-001")  # not a field 5.1 lists
 
     def test_epic(self):
         out = self.rewritten("epic", epic(), "team-space")
@@ -375,8 +397,8 @@ class RecordTest(unittest.TestCase):
             "slice_id": "SLICE-014", "project_id": "team-space", "epic_id": "EPIC-004", "dependencies": ["SLICE-013", "SLICE-015"],
             "spec_path": "specs/slices/SLICE-014-invite-member.md", "source.prd_id": "PRD-02", "serves.idea": "IDEA-002",
             "small.shipped_rule": "SLICE-015/FR-02", "title": "Invite after SLICE-013",
-            "open_questions": ["Does SLICE-015 cover it?", "`SLICE-001` as typed"], "widened.reason": "Grew past SLICE-015/INV-01"})
-        self.assertEqual(out["mocks"][0]["note"], "SLICE-001 screen")  # not listed: left exactly
+            "open_questions": ["Does SLICE-015 cover it?", "`SLICE-001` as typed"], "widened.reason": "Grew past SLICE-015/INV-01",
+            "mocks.0.note": "SLICE-013 screen"})
         _, notes = rewrite_record_noted("slice", work_order(), MAP, None)
         self.assertEqual(notes, [{"field": "open_questions[1]", "line": 1, "id": "SLICE-001", "why": "in_code"}])
 
@@ -451,7 +473,7 @@ class RecordTest(unittest.TestCase):
 
     def test_lookups(self):
         out = self.rewritten("lookups", lookups())
-        self.assertOnly(lookups(), out, {"shipped_rules.0.rule": "SLICE-015/FR-02", "shipped_rules.0.epic_id": "EPIC-004",
+        self.assertOnly(lookups(), out, {"idea_id": "IDEA-002", "shipped_rules.0.rule": "SLICE-015/FR-02", "shipped_rules.0.epic_id": "EPIC-004",
                                          "shipped_rules.0.note": "SLICE-015 rule", "similar.0.idea": "IDEA-002", "similar.0.note": "Like IDEA-002",
                                          "similar.1.note": "#42 SLICE-014", "principles.0.id": "PP-05", "principles.0.note": "PP-05 and PP-04",
                                          "policies.0.note": "see TN-03"})
@@ -478,12 +500,15 @@ class RecordTest(unittest.TestCase):
 
     def test_prd_meta_and_answers(self):
         self.assertOnly(prd_meta(), self.rewritten("prd_meta", prd_meta()), {"prd_id": "PRD-02"})
-        self.assertOnly(prd_answers(), self.rewritten("prd_answers", prd_answers()), {"slice_id": "SLICE-013", "prd_id": "PRD-02"})
+        self.assertOnly(prd_answers(), self.rewritten("prd_answers", prd_answers()),
+                        {"slice_id": "SLICE-013", "prd_id": "PRD-02", "answers.0.question": "SLICE-013?", "answers.0.answer": "SLICE-014"})
 
     def test_design_meta_and_map(self):
         self.assertOnly(design_meta(), self.rewritten("design_meta", design_meta()), {"design_id": "DES-03"})
         self.assertOnly(design_map(), self.rewritten("design_map", design_map()),
-                        {"design_id": "DES-03", "conflicts.0.against": "PP-04", "conflicts.1.against": "TN-03"})
+                        {"design_id": "DES-03", "conflicts.0.against": "PP-04", "conflicts.1.against": "TN-03",
+                         "conflicts.0.note": "PP-04 says", "conflicts.0.reason": "Kept, after SLICE-013",
+                         "topics.storage.summary": "SLICE-013 store", "other.0.summary": "EPIC-004 too"})
 
     def test_identity_map_returns_an_equal_record_for_every_kind(self):
         identity = {key: key for key in MAP}

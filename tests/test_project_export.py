@@ -11,8 +11,10 @@ import copy
 import hashlib
 import json
 import os
+import struct
 import sys
 import unittest
+import zlib
 from pathlib import Path
 from unittest import mock
 
@@ -41,13 +43,23 @@ IDEA = {"schema_version": 1, "idea_id": "IDEA-001", "title": "Let admins invite 
 FAULT_IDEA = {"schema_version": 1, "idea_id": "IDEA-002", "title": "Invitations fail at night", "stage": "new",
               "source": {"kind": "fault", "ticket": "AUTO-20261120T101500Z"}, "created": "2026-11-20T10:00:00Z", "revision": 0,
               "brief": None, "verdict": None, "route": None, "made": None, "lookback": None, "issue": None}
-LOOKUPS = {"shipped_rules": [], "similar": [{"request": 42, "note": "The same ask"}, {"idea": "IDEA-002", "note": "Close to it"}],
-           "principles": [], "policies": []}
-IDEA_MAP = {"schema_version": 1, "idea_id": "IDEA-001", "slices": [{"key": "B1", "title": "Invite many", "epic": "EPIC-002", "depends_on": []}],
-            "applied": {"epics": {}, "slices": {"B1": "SLICE-003"}}}
+# What the conversation looked up, as `idea lookups` is given it; build() records it through Shape's own command, so the saved
+# file is the real shape (schema_version, idea_id, recorded_at, shipped_commit and each entry as check_lookups writes it).
+LOOKUPS_GIVEN = {"similar": [{"request": 42, "note": "The same ask"}, {"idea": "IDEA-002", "note": "Close to it"}],
+                 "principles": [{"id": "PP-01", "note": "Versions must stay"}]}
+# The same shape, for the strip test: what Shape saves.
+LOOKUPS = {"schema_version": 1, "idea_id": "IDEA-001", "recorded_at": "2026-11-20T10:00:00Z", "shipped_commit": "f" * 40, "shipped_rules": [],
+           "similar": [{"request": 42, "note": "The same ask"}, {"idea": "IDEA-002", "note": "Close to it"}],
+           "principles": [{"id": "PP-01", "status": "active", "note": "Versions must stay"}], "policies": []}
+# An idea's map as shape_route.cmd_idea_map and cmd_idea_apply leave it.
+IDEA_MAP = {"schema_version": 1, "idea_id": "IDEA-001", "brief_sha256": SHA, "route": "epic", "revision": 1, "epics": [],
+            "slices": [{"key": "B1", "title": "Invite many", "scope": "A whole team at once", "epic": "EPIC-002", "depends_on": [],
+                        "cites": [[3, 5]], "outcomes": ["O-1"]}],
+            "settled": {}, "applied": {"epics": {}, "slices": {"B1": "SLICE-003"}}, "mapped_at": "2026-11-21T09:00:00Z"}
 ANSWERS = {"schema_version": 1, "slice_id": "SLICE-003", "prd_id": "PRD-01", "prd_sha256": "c" * 64, "map_slice": "M1", "revision": 1,
            "answers": [], "drafted_at": "2026-11-20T10:00:00Z", "confirmations": []}
-DESIGN_MAP = {"schema_version": 1, "design_id": "DES-01", "revision": 1, "topics": {}, "other": [], "conflicts": [],
+DESIGN_MAP = {"schema_version": 1, "design_id": "DES-01", "design_sha256": "d" * 64, "required_topics": [], "revision": 1, "topics": {},
+              "other": [], "conflicts": [], "mapped_at": "2026-11-21T09:00:00Z",
               "published": {"sha256": "d" * 64, "at": "2026-11-21T10:00:00Z", "revision": 1}}
 
 
@@ -102,7 +114,8 @@ class ExportBase(IssuesBase):
         self.ok(a, "need", "add", "--kind", "people", "--statement", "About forty teams use it in its first year.", "--why", "It sets the size.")
         self.write_json("product/ideas/IDEA-001.json", IDEA)
         self.write_json("product/ideas/IDEA-002.json", FAULT_IDEA)
-        self.write_json("product/ideas/IDEA-001.lookups.json", LOOKUPS)
+        self.requests_cache(42)
+        self.ok(a, "idea", "lookups", "IDEA-001", "--from", self.file("lookups.json", json.dumps(LOOKUPS_GIVEN)))
         self.write_json("product/ideas/IDEA-001.map.json", IDEA_MAP)
         self.draft(a, "product/briefs/IDEA-001.md").parent.mkdir(parents=True, exist_ok=True)
         self.draft(a, "product/briefs/IDEA-001.md").write_text(BRIEF)
@@ -113,6 +126,15 @@ class ExportBase(IssuesBase):
         self.write_json("product/designs/DES-01/map.json", DESIGN_MAP)
         self.ok(a, "refresh")
         self.assertTrue(self.ok(a, "validate")["valid"])
+
+    def requests_cache(self, number):
+        """The request cache as a refresh leaves it, holding one accepted request (test_mach_shape's form)."""
+        home = self.a / ".factory/studio"
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "requests.json").write_text(json.dumps({
+            "schema_version": 1, "repository": REPO, "nonce": "0" * 32, "picked": {}, "outbox": [],
+            "items": {str(number): {"number": number, "title": "Invite a whole team", "body": "Please.", "labels": ["mach:request"],
+                                    "decision": {"state": "accepted", "labelled_by": "ben-pm"}}}}))
 
     def export(self, project=None, out="default", only_mine=False):
         return project_export.export(studio, studio.Studio(project or self.a), self.out if out == "default" else out, only_mine)
@@ -180,7 +202,9 @@ class ExportTest(ExportBase):
                 elif member.endswith("IDEA-002.json"):
                     wanted = {**{k: v for k, v in record.items() if k != "issue"}, "source": {"kind": "moved"}}
                 elif member.endswith("IDEA-001.lookups.json"):
-                    wanted = {**record, "similar": [{"idea": "IDEA-002", "note": "Close to it"}]}
+                    self.assertEqual(set(record), {"schema_version", "idea_id", "recorded_at", "shipped_commit", "shipped_rules", "similar",
+                                                   "principles", "policies"}, "Shape's own lookups")
+                    wanted = {**{k: v for k, v in record.items() if k != "shipped_commit"}, "similar": [{"idea": "IDEA-002", "note": "Close to it"}]}
                 elif member.endswith("DES-01/map.json"):
                     wanted = {k: v for k, v in record.items() if k != "published"}
                 self.assertEqual(json.loads(data), wanted, member)
@@ -275,7 +299,8 @@ class StripTest(unittest.TestCase):
             self.assertEqual(project_export.STRIP["idea"]({**FAULT_IDEA, "source": source})["source"], {"kind": "moved"})
         for source in ({"kind": "typed"}, {"kind": "change", "rule": "SLICE-007/FR-01"}):
             self.check("idea", {**FAULT_IDEA, "source": source}, {**{k: v for k, v in FAULT_IDEA.items() if k != "issue"}, "source": source})
-        self.check("lookups", LOOKUPS, {**LOOKUPS, "similar": [{"idea": "IDEA-002", "note": "Close to it"}]})
+        self.check("lookups", LOOKUPS, {**{k: v for k, v in LOOKUPS.items() if k != "shipped_commit"},
+                                        "similar": [{"idea": "IDEA-002", "note": "Close to it"}]})
         self.check("design_map", DESIGN_MAP, {k: v for k, v in DESIGN_MAP.items() if k != "published"})
         for kind, record in (("project", {"project_id": "lending", "name": "Lending"}), ("principles", {"principles": [{"id": "PP-01"}]}),
                              ("needs", {"needs": [], "none": ["data"]}), ("idea_map", IDEA_MAP), ("prd_meta", {"prd_id": "PRD-01", "sha256": "c" * 64}),
@@ -350,6 +375,45 @@ class NothingNamedTest(ExportBase):
         self.draft(self.a, "product/briefs/IDEA-001.md").write_text(BRIEF + f"\nNotes in {Path.home()}/Desktop/notes.txt\n")
         self.refuses_with_nothing_written("IDEA-001's brief names a folder on this computer")
 
+    def test_a_mock_picture_whose_data_names_the_repository_or_an_account_is_refused(self):
+        """A PNG may carry text chunks (a comment, an author, the folder it was saved from); its bytes are read as Latin-1 text."""
+        self.build()
+        for text, found in ((b"Comment\x00Exported for acme/team-space", "naming this repository (acme/team-space)"),
+                            (b"Author\x00by ada-pm", "naming the GitHub account ada-pm"),
+                            (b"Source\x00" + str(Path.home()).encode() + b"/Desktop/form.png", "naming a folder on this computer")):
+            with self.subTest(found):
+                data = png(shade=3)
+                chunk = struct.pack(">I", len(text)) + b"tEXt" + text + struct.pack(">I", zlib.crc32(b"tEXt" + text) & 0xFFFFFFFF)
+                at = data.rindex(b"IEND") - 4
+                picture = data[:at] + chunk + data[at:]
+                added = self.ok(self.a, "slice", "mock", "add", "SLICE-003", self.file("leaky.png", picture))
+                digest = hashlib.sha256(picture).hexdigest()
+                message = self.refuses_with_nothing_written(f"SLICE-003's design mock {digest[:12]} holds text naming ")
+                self.assertIn(found, message)
+                self.assertIn("inside the picture file. The archive must not name", message)
+                self.ok(self.a, "slice", "mock", "remove", "SLICE-003", digest[:12])
+                self.assertTrue(added)
+
+    def test_a_login_that_is_an_ordinary_word_is_matched_only_where_it_reads_as_an_account(self):
+        self.build()
+        requests = self.a / ".factory/studio/requests.json"
+        data = json.loads(requests.read_text())
+        data["items"]["43"] = {"number": 43, "title": "Faster", "body": "Please.", "labels": ["mach:request"],
+                               "decision": {"state": "accepted", "labelled_by": "ux"}}
+        requests.write_text(json.dumps(data))
+        self.assertIn("ux", project_export.forbidden(studio, studio.Studio(self.a)))
+        brief = self.draft(self.a, "product/briefs/IDEA-001.md")
+        brief.write_text(BRIEF + "\nThe UX of the page and the ux review stay as they are.\n")
+        Path(self.export()["file"]).unlink()  # an ordinary word is not an account
+        for line, shown in (("Ask @ux before the launch.", "ux"), ("Approved by ux on Monday.", "ux"), ("See github.com/UX for more.", "UX")):
+            with self.subTest(line):
+                brief.write_text(BRIEF + "\n" + line + "\n")
+                self.refuses_with_nothing_written(f"IDEA-001's brief names the GitHub account {shown} on line 7.")
+        brief.write_text(BRIEF + "\nThe ben-pm team agrees.\n")  # a login with a hyphen is matched anywhere, as before
+        self.refuses_with_nothing_written("IDEA-001's brief names the GitHub account ben-pm on line 7.")
+        self.assertEqual([project_export.distinctive_login(login) for login in ("ux", "max", "design", "ada-pm", "dev42", "margaret")],
+                         [False, False, False, True, True, True])
+
     def test_a_resume_note_naming_an_account_is_refused_by_slice(self):
         self.build()
         self.ok(self.a, "slice", "pause", "SLICE-003", "--note", "Ask ben-pm about the limit.")
@@ -406,7 +470,8 @@ class RefusalTest(ExportBase):
         imports.mkdir()
         (imports / "0123456789abcdef.json").write_text(json.dumps({"schema_version": 1, "archive_sha256": "e" * 64, "started_at": "2026-11-24T10:00:00Z",
                                                                     "finished_at": None}))
-        self.refuses("Bringing in another project stopped part way here. Finish it first (run the import again with the same file), then export.")
+        self.refuses("Bringing in another project stopped part way here. Finish it first (run the import again with the same file), "
+                     "or set it aside, then export.")
         record = json.loads((imports / "0123456789abcdef.json").read_text())
         (imports / "0123456789abcdef.json").write_text(json.dumps({**record, "finished_at": "2026-11-24T10:05:00Z"}))
         self.export()

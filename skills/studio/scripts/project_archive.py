@@ -14,6 +14,7 @@ Standard library only.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import re
@@ -248,6 +249,13 @@ def _bomb(info: zipfile.ZipInfo) -> bool:
 def read(source: Path) -> Tuple[Dict[str, Any], Dict[str, bytes]]:
     """Check an archive someone handed over (every check of section 2.3 but content) and return its manifest and its
     members by name, the manifest not among them. Raises ArchiveError with the sentence of section 7.2."""
+    manifest, members, _ = read_with_sha256(source)
+    return manifest, members
+
+
+def read_with_sha256(source: Path) -> Tuple[Dict[str, Any], Dict[str, bytes], str]:
+    """read, and the SHA-256 of the very bytes it read: the file is read once, into memory, and every check and the hash
+    are of those bytes, so a file changed while it is being brought in can never be keyed to bytes that were not read."""
     source = Path(source)
     label = shown(source.name) or "The file"
     try:
@@ -265,18 +273,24 @@ def read(source: Path) -> Tuple[Dict[str, Any], Dict[str, bytes]]:
         with os.fdopen(os.open(str(source), flags), "rb") as handle:
             if os.fstat(handle.fileno()).st_size > LIMITS["archive"]:
                 raise _unsafe(label, f"it is larger than {words(LIMITS['archive'])}")
-            if not zipfile.is_zipfile(handle):
-                raise ArchiveError(f"{label} is not a project archive from MACH.")
-            handle.seek(0)
-            try:
-                with zipfile.ZipFile(handle, "r") as archive:
-                    return _read_open(archive, label)
-            except ArchiveError:
-                raise
-            except (zipfile.BadZipFile, zipfile.LargeZipFile, EOFError, NotImplementedError, RuntimeError, ValueError, OSError):
-                raise ArchiveError(f"{label} is not a project archive from MACH.") from None
+            raw = handle.read(LIMITS["archive"] + 1)
     except OSError:
         raise ArchiveError(f"There is no file at {shown(str(source))}.") from None
+    if len(raw) > LIMITS["archive"]:
+        raise _unsafe(label, f"it is larger than {words(LIMITS['archive'])}")
+    digest = sha256(raw)
+    data = io.BytesIO(raw)
+    if not zipfile.is_zipfile(data):
+        raise ArchiveError(f"{label} is not a project archive from MACH.")
+    data.seek(0)
+    try:
+        with zipfile.ZipFile(data, "r") as archive:
+            manifest, members = _read_open(archive, label)
+    except ArchiveError:
+        raise
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, EOFError, NotImplementedError, RuntimeError, ValueError, OSError):
+        raise ArchiveError(f"{label} is not a project archive from MACH.") from None
+    return manifest, members, digest
 
 
 def _unsafe(label: str, reason: str) -> ArchiveError:

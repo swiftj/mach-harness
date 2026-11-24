@@ -474,6 +474,23 @@ class ReadManifestListTest(Base):
         self.assertEqual(members, files)
         self.assertEqual(manifest["project_id"], "team-space")
 
+    def test_the_file_is_opened_once_and_its_hash_is_of_the_bytes_read(self):
+        files = sample()
+        self.hostile(files)
+        raw = self.path.read_bytes()
+        real_open = os.open
+        opened = []
+
+        def counting(path, *args, **kwargs):
+            opened.append(path)
+            return real_open(path, *args, **kwargs)
+
+        with mock.patch.object(pa.os, "open", side_effect=counting):
+            manifest, members, digest = pa.read_with_sha256(self.path)
+        self.assertEqual(opened, [str(self.path)])
+        self.assertEqual(digest, sha(raw))
+        self.assertEqual(members, files)
+
 
 class PatternsTest(unittest.TestCase):
     def test_every_pattern_has_a_limit_and_the_limits_match_studio(self):

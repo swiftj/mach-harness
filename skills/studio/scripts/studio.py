@@ -984,8 +984,8 @@ def import_not_saved(studio: Studio) -> List[Dict[str, Any]]:
         return []
     name = stopped.get("file") or "the archive"
     return [{"kind": "import_unfinished", "target": None,
-             "text": say(f"Bringing in the project from {name} stopped part way. Run it again with the same file to finish.",
-                         f"Bringing in the project from {name} stopped part way. Bring the same file in again to finish.")}]
+             "text": say(f"Bringing in the project from {name} stopped part way. Run it again with the same file to finish, or set it aside.",
+                         f"Bringing in the project from {name} stopped part way. Bring the same file in again to finish, or set it aside.")}]
 
 
 def cmd_project_export(studio: Studio, args: argparse.Namespace) -> int:
@@ -994,6 +994,13 @@ def cmd_project_export(studio: Studio, args: argparse.Namespace) -> int:
 
 def cmd_project_import(studio: Studio, args: argparse.Namespace) -> int:
     import project_import
+    if args.abandon:  # on the product manager's word: set aside the import that stopped part way; what it placed stays
+        if args.plan:
+            raise StudioError("Setting aside an import changes nothing to plan. Nothing was changed.")
+        return emit(project_import.set_aside(sys.modules[__name__], studio, args.archive))
+    if not args.archive:
+        raise StudioError(say("Name the archive file to bring in (project import <file>). Nothing was changed.",
+                              "Choose the archive file to bring in. Nothing was changed."))
     archive = Path(os.path.abspath(str(Path(args.archive).expanduser())))
     if args.plan:
         return emit(project_import.plan(sys.modules[__name__], studio, archive))
@@ -2373,8 +2380,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--only-mine", action="store_true", help="leave out this project's slices that are on GitHub but not in this workspace")
     p.set_defaults(func=cmd_project_export)
     p = project.add_parser("import", help="bring a project archive into this repository's workspace; every slice arrives as a draft")
-    p.add_argument("archive", help="the archive file that project export wrote")
+    p.add_argument("archive", nargs="?", help="the archive file that project export wrote (with --abandon: which unfinished import, if more than one)")
     p.add_argument("--plan", action="store_true", help="say what would be brought in and every new number; change nothing")
+    p.add_argument("--abandon", action="store_true",
+                   help="set aside the import that stopped part way: its numbers are freed, what it already brought in stays where it is")
     p.set_defaults(func=cmd_project_import)
     p = project.add_parser("imports", help="the projects brought in here, or what one of their IDs is called here (reads only)")
     p.add_argument("identifier", nargs="?", help="an ID from the project brought in, such as SLICE-007")
