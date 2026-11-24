@@ -3,7 +3,9 @@
 
 Read-only by default, but for one throwaway ticket workspace it makes and removes to prove one can be made
 (check_workspace), and one small file (or empty folder) it makes and removes in the usual cache folder of each package
-manager the project uses, to see whether it can be written from here (check_caches). It measures and reports; a check that could not be performed is
+manager the project uses, to see whether it can be written from here (check_caches). For a project that builds web, desktop
+or mobile apps it starts a headless browser (or the screen capture) for a moment, with a time limit, through the verify
+station's browser.py, to say whether verification will have screenshots (check_screen). It measures and reports; a check that could not be performed is
 "not_checked", never "ok". With --fix it creates only the installer's standard data folders that
 are missing, and only when .factory/ already exists. It never writes a settings file, never enables
 or installs anything, starts no MACH station or agent, and never reads the machine-local Factory
@@ -427,6 +429,60 @@ def check_caches(project: Path) -> List[Dict[str, str]]:
     return results
 
 
+# The verify station's browser.py, which really starts a browser for a moment (tests replace these two, so none is started).
+BROWSER_LAUNCH = None
+BROWSER_WHICH = None
+SCREEN_APP_TYPES = ("web", "desktop", "mobile")
+
+
+def project_app_types(project: Path, config: Any) -> List[str]:
+    """The app types this project builds, where they can be told: the setting, then the open tickets' plans."""
+    found = []
+    if isinstance(config, dict) and isinstance(config.get("app_type"), str):
+        found.append(config["app_type"])
+    folder = project / ".factory" / "worktrees"
+    for path in sorted(folder.glob("*/cell.json")) if folder.is_dir() else []:
+        cell, _ = read_json(path)
+        if isinstance(cell, dict) and isinstance(cell.get("app_type"), str):
+            found.append(cell["app_type"])
+    return sorted(set(found))
+
+
+def check_screen(project: Path, config: Any) -> List[Dict[str, str]]:
+    """For a project that builds web, desktop or mobile apps: whether a browser (or the screen) can be captured here, by the
+    verify station's own check. A note, never a failure. Nothing when the app type cannot be told."""
+    kinds = [kind for kind in project_app_types(project, config) if kind in SCREEN_APP_TYPES]
+    if not kinds:
+        return []
+    kind = "web" if "web" in kinds else kinds[0]
+    title = "Screenshots in verification"
+    verify = config.get("verify") if isinstance(config, dict) and isinstance(config.get("verify"), dict) else {}
+    if isinstance(verify.get("required_evidence"), dict) and isinstance(verify["required_evidence"].get(kind), list):
+        return [check("screen", title, "ok", f"verify.required_evidence in {CONFIG} names the evidence for {kind} changes; MACH does not try a browser.")]
+    if verify.get("screen_evidence") == "never":
+        return [check("screen", title, "ok", f"verify.screen_evidence is 'never' in {CONFIG}: {kind} changes are verified without screenshots.")]
+    try:
+        import importlib.util
+        skills = Path(__file__).resolve().parent.parent.parent
+        script = next(f / "scripts" / "browser.py" for f in (skills / "mach-verify", skills / "verify") if (f / "scripts" / "browser.py").is_file())
+        spec = importlib.util.spec_from_file_location("mach_browser_for_doctor", script)
+        browser = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(browser)
+        found = browser.check(kind, project, launch=BROWSER_LAUNCH, which=BROWSER_WHICH, timeout=15)
+    except Exception as exc:  # noqa: BLE001  (a check that cannot run says so)
+        return [check("screen", title, "not_checked", f"It could not be checked ({exc.__class__.__name__}).")]
+    if found["can_capture"]:
+        return [check("screen", title, "ok", f"A headless browser starts here, so {kind} changes are verified with screenshots."
+                      if kind == "web" else f"The screen can be captured here, so {kind} changes are verified with screenshots.")]
+    lead = "A browser cannot be started here" if kind == "web" else "The app's screen cannot be captured here"
+    required = verify.get("screen_evidence") == "require"
+    return [check("screen", title, "ok",
+                  f"{lead}; {kind} changes are verified without screenshots. ({found['words'][:1].upper()}{found['words'][1:]}.)"
+                  if not required else
+                  f"{lead} ({found['words']}), and verify.screen_evidence is 'require' in {CONFIG}, so {kind} changes wait for a person at "
+                  "verification. Set it to 'prefer' to verify them from logs and saved pages here.")]
+
+
 def check_hosts(project: Path) -> List[Dict[str, str]]:
     results = []
     for dest, what in HOSTS:
@@ -704,6 +760,7 @@ def diagnose(project: Path, fix: bool = False) -> Dict[str, Any]:
     checks += check_adr_baseline(project, config)
     checks += check_audit(project)
     checks += check_caches(project)
+    checks += check_screen(project, config)
     checks += check_hosts(project)
     checks += check_remote(project)
     checks += check_requests(project, config, gh_state)
