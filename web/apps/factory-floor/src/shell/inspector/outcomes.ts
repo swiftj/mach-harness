@@ -295,6 +295,7 @@ export const GATE_REASON_WORDS: Readonly<Record<string, string>> = {
   "builder-evidence": "the builder's own test run is not evidence",
   "mock-as-evidence": "the design mock was given as evidence",
   "mock-changed": "the approved design mock is missing or changed",
+  "no-screen-capture": "screenshots are required and no browser can start here, so a person decides",
   // more than one station
   "code-changed": "the code changed after it was built or verified",
   "uncommitted-changes": "the work has uncommitted changes",

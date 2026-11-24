@@ -178,6 +178,8 @@ Claude Code's sandbox lets a command write in the project and the temporary fold
 
   A command's own leading `VAR=value` wins over this setting, and the setting wins over your own environment and over what MACH would choose. The file is shared with the project, so never put a credential in it.
 
+A sandbox that does not let a browser start does not stop verification. For a web, desktop or mobile change, the verify station starts a browser for a moment first. When none can start, it verifies the change from logs and saved pages instead of screenshots, and the verdict, the review and the change record say so. You can run the app yourself to look at a change. To keep screenshots required, set `"verify": {"screen_evidence": "require"}` in `.factory/config.json`: such a change then waits for you at verification. `"never"` skips the browser. `/mach doctor` says which applies here.
+
 Never run `npm config set cache` or anything else that changes your own tool settings to get past the sandbox: MACH does not need it. When the network is the problem, the station's failure says so: a package download was refused or the registry could not be reached. The sandbox's network rules are set in Claude Code's own settings, which MACH does not change; allow the registry there, then run the step again.
 
 ### Issues filed by a monitoring system
