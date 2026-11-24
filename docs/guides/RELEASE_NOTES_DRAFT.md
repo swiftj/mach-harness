@@ -52,6 +52,7 @@ The first pull in a project says one plain line: agents now build here on their 
 | Change | What it is |
 | --- | --- |
 | The installer sets what a sandbox blocks | It turns on Git's per-worktree settings, so a ticket's workspace can be made under Claude Code's sandbox. |
+| Verification without a browser | Where no browser can start, as in a sandbox that forbids Playwright, verify proves a web change from logs, request and response dumps and saved pages, and says so to the reviewers and in the change record. Nothing goes back to the builder for a missing screenshot, and no settings file needs editing. `verify.screen_evidence` (`prefer`, `require`, `never`) changes it. |
 | Package caches inside the project | npm, pip and other tools keep their caches under `.factory/cache/`, where a sandbox allows writing. `commands.env` adds your own variables. |
 | MACH's own tickets go to GitHub | When the project's origin is GitHub, the installer says so and how to switch to local tickets. |
 | The audit is not run on every pull | A good audit stays good as the main branch moves, for 30 days (`audit.max_age_days`). |

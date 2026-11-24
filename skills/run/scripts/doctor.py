@@ -449,12 +449,12 @@ def project_app_types(project: Path, config: Any) -> List[str]:
 
 
 def check_screen(project: Path, config: Any) -> List[Dict[str, str]]:
-    """For a project that builds web, desktop or mobile apps: whether a browser (or the screen) can be captured here, by the
+    """For a project that builds web apps: whether a browser can be started here, by the
     verify station's own check. A note, never a failure. Nothing when the app type cannot be told."""
-    kinds = [kind for kind in project_app_types(project, config) if kind in SCREEN_APP_TYPES]
-    if not kinds:
+    # Only for web: the check for a desktop or mobile app takes a real picture of this screen or a device, which doctor never does.
+    if "web" not in project_app_types(project, config):
         return []
-    kind = "web" if "web" in kinds else kinds[0]
+    kind = "web"
     title = "Screenshots in verification"
     verify = config.get("verify") if isinstance(config, dict) and isinstance(config.get("verify"), dict) else {}
     if isinstance(verify.get("required_evidence"), dict) and isinstance(verify["required_evidence"].get(kind), list):
