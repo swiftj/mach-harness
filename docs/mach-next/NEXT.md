@@ -61,6 +61,12 @@ git clone https://github.com/swiftj/mach-harness.git
 
 Then, from the clone: `make check`; `go test ./...` in `apps/studio` and in `apps/observer`; in `web/`, `pnpm typecheck`, `pnpm lint`, `pnpm build`, `pnpm --filter @mach/product-studio test` and `pnpm --filter @mach/factory-floor test`.
 
+Two things found on a second machine (2026-11-23, macOS, Homebrew Python 3.15.2), neither yet fixed:
+
+- **The tests need Python 3.11 or later, and not Apple's.** With `/usr/bin/python3` (3.9.6), 7 classes fail: no `tomllib` (three in `test_adr_baseline`), a byte-code cache under `~/Library/Caches` (`test_installer.InstallTest`, `test_mach_factory_supervisor.ServiceTest`), and `capture ... -- <arguments>` refused by its `argparse` (`test_verify.CaptureTest`, `test_unattended_commands.InstructionsTest`). The last is MACH itself, not only its test: `verify.py capture` with arguments after `--` does not parse on 3.9.
+- **Run the tests with `PYTHONDONTWRITEBYTECODE=1`.** Without it two classes fail every time: `test_verify.CaptureTest` (finds `__pycache__` in the checkout) and `test_build.StepTest` (the build station's test run reads a stale `.pyc` after a source file is rewritten at the same size in the same second). The second is a weakness in the build station's own test runs, not only in the test. So here: `PYTHONDONTWRITEBYTECODE=1 PATH="/opt/homebrew/bin:$PATH" make check`.
+- A full run that crosses midnight UTC fails four classes in `test_security_exception` (the test's "today" is fixed when it starts). Run it again.
+
 An AI agent's saved notes and a person's own Claude Code settings do not travel with the repository. Section 4 holds what those notes said.
 
 ## 4. Working agreements with the owner
