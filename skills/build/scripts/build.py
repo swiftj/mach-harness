@@ -63,6 +63,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import platform
 import re
 import shlex
 import shutil
@@ -1221,7 +1222,7 @@ def green_already_done(cell: Cell, task: Dict[str, Any], files: Sequence[str], r
         raise BuildError(f"--already-done is for an [impl] task that has nothing left to change, but {task['id']} has uncommitted changes: "
                          f"{', '.join(files)}. Complete it with 'green' without the flag.", code="already-done-has-changes")
     ids = list(task.get("ids") or [])
-    if not ids and task.get("added_by") != "join":
+    if not ids and task.get("added_by") not in ("join", "set-commands"):
         raise BuildError(f"--already-done needs the plan to give {task['id']} the spec IDs it implements, so that their tests can be checked; "
                          "it gives none. Do the task's work, or report a plan defect.", code="already-done-no-ids")
     tests = committed_text(cell, cell.state.get("test_files", []))
@@ -1653,12 +1654,22 @@ def cmd_set_commands(cell: Cell, args: argparse.Namespace) -> int:
         except ValueError as exc:
             raise BuildError(f"--{kind}-cmd cannot be read as a command ({exc}): check its quotes. Nothing was changed.", code="command-unparsable")
     stage = cell.info.get("stage")
-    if stage != "building":
-        if stage == "built":
-            raise BuildError(f"{cell.ticket_id} is built: its build report records the commands it ran under, and verification and review judge "
-                             "that. Its commands change while it is building, which it is again in a revision round (build.py revise), when a "
-                             "round's findings send it back.", code="wrong-stage")
+    built = stage == "built"
+    if stage != "building" and not built:
         raise BuildError(f"{cell.ticket_id} is not building (stage: {stage}), so there is no build in progress to change.", code="wrong-stage")
+    if built:
+        judged = judged_since_built(cell)
+        if judged:
+            raise BuildError(f"{cell.ticket_id} is built and {judged} has already judged this build under the commands its report names, so "
+                             "changing them now would leave that judgement standing on a command it never ran. Its commands change while it is "
+                             "building, which it is again in a revision round (build.py revise), when a round's findings send it back.",
+                             code="wrong-stage")
+        dirty = changed_files(cell)
+        if dirty:
+            raise BuildError(f"{cell.ticket_id} is built, and its checkout has uncommitted changes ({', '.join(dirty[:5])}), so the suite cannot be "
+                             "run on exactly the code that was built. Nothing was changed. A person "
+                             + set_aside_hint(cell.work, cell.ticket_id, "after the build") + f"; then run build.py set-commands {cell.ticket_id} again.",
+                             code="uncommitted-changes")
     record = lane_record(cell)
     with (lanes_lock(cell) if record is not None else contextlib.ExitStack()):
         record = lane_record(cell)
@@ -1671,7 +1682,8 @@ def cmd_set_commands(cell: Cell, args: argparse.Namespace) -> int:
                 unchanged.append(kind)
                 continue
             cell.state[key] = new
-            during = f"revision round {cell.state.get('loop')}" if cell.state.get("loop") else (f"lanes {record.get('state')}" if record else "first build")
+            during = ("built, before verification" if built else f"revision round {cell.state.get('loop')}" if cell.state.get("loop")
+                      else (f"lanes {record.get('state')}" if record else "first build"))
             cell.deviation(None, f"{kind}-command-set",
                            f"The {kind} command was {'set' if not old else 'changed'} while building ({during}): "
                            f"{json.dumps(old)} -> {json.dumps(new)}. Reason: {reason}")
@@ -1697,26 +1709,143 @@ def cmd_set_commands(cell: Cell, args: argparse.Namespace) -> int:
                     cell.state["suite"] = "unknown"
                     suite = {"not_run": f"The new command cannot run yet ({exc}). That is fine for a build that installs its own test tool: each "
                                         "step that needs the tests runs them, and says so if they still cannot run."}
+        lint = None
+        if built and any(item["command"] == "lint" for item in changed) and cell.state.get("lint_cmd"):
+            try:
+                ran = run_command(cell, cell.state["lint_cmd"], 300)
+                lint = {"status": "pass" if ran["passed"] else "fail", "command": ran.get("command"), "exit_code": ran.get("exit_code"),
+                        "seconds": ran.get("seconds")}
+                if not ran["passed"]:
+                    lint["output_tail"] = ran["output_tail"][-800:]
+            except BuildError as exc:
+                lint = {"status": "unverified", "command": cell.state["lint_cmd"], "note": str(exc)}
+        fix_task = outcome = None
         if changed:
             cell.state.setdefault("command_changes", []).append({"at": at, "changed": changed, "reason": reason, "loop": cell.state.get("loop", 0)})
+            tests_pass = suite is None or suite.get("passed") is True
+            if built:
+                outcome = finish_with_new_commands(cell, changed, reason, at, suite, lint) if tests_pass and (lint or {}).get("status") != "fail" \
+                    else reopen_for_commands(cell, suite, lint)
+            lint_failed = (lint or {}).get("status") == "fail"
+            if not lanes_open and (lint_failed or (cell.state.get("suite") in ("red", "unknown") and any(item["command"] == "test" for item in changed))):
+                fix_task = add_command_task(cell, lint_failed)
             if record is not None:
                 save_shared(cell)
             else:
                 cell.save()
+            if outcome == "reopened":
+                cell.save_info()
     if changed:
         telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "build.set-commands", "outcome": "pass", "reason_code": "commands-set",
                                                                  "overridden_by_reason": True, "commands": [item["command"] for item in changed]})
-    nxt = (f"Carry on where the build is: each lane's builder from build.py next {cell.ticket_id} --lane <L>; the next step in every lane runs "
-           "the tests with the new command." if lanes_open else
-           f"Carry on from where the build is: build.py next {cell.ticket_id}. Nothing done is undone, and the next whole-suite run uses the new command.")
-    print(json.dumps({
+    if outcome == "reopened":
+        telemetry(cell.root, "station.entered", "build", lambda: {"stage": "building", "reopened": "commands-changed", "tasks": len(cell.state["tasks"])})
+    if fix_task:
+        what = "the linter does not pass with the new lint command" if cell.state.get("suite") == "green" else "the whole suite does not pass with the new command"
+        nxt = (f"Now {what}, and every task of the plan is done, so {fix_task} was added: make it pass, then complete it with build.py green "
+               f"{cell.ticket_id} {fix_task} (it may change any file; committed tests "
+               f"are frozen as always, and --amend-test \"<why>\" records a test that is truly wrong). If nothing needs to change once the command can "
+               f"run, complete it with build.py green {cell.ticket_id} {fix_task} --already-done \"<why>\". Then build.py finish {cell.ticket_id}.")
+    elif outcome == "stands":
+        nxt = f"The build's finish stands. Hand the cell to the verify station, which runs the new command: verify.py start {cell.ticket_id}."
+    else:
+        nxt = (f"Carry on where the build is: each lane's builder from build.py next {cell.ticket_id} --lane <L>; the next step in every lane runs "
+               "the tests with the new command." if lanes_open else
+               f"Carry on from where the build is: build.py next {cell.ticket_id}. Nothing done is undone, and the next whole-suite run uses the new command.")
+    answer = {
         "status": "COMMANDS_SET" if changed else "UNCHANGED", "ticket_id": cell.ticket_id,
         "test_cmd": cell.state.get("test_cmd"), "lint_cmd": cell.state.get("lint_cmd"), "changed": changed, "unchanged": unchanged,
         "recorded": "A deviation for the reviewers and the change record, with the old and the new command, the reason and when." if changed else
                     "Nothing was recorded: the command is already the one given.",
         "new_tests_run_alone": calibration, "suite": suite if changed else None, "next": nxt,
-    }, indent=2, ensure_ascii=False))
+    }
+    if built and changed:
+        answer["build"] = (BUILT_STANDS if outcome == "stands" else BUILT_REOPENED)
+        answer["stage"] = cell.info.get("stage")
+        if lint is not None:
+            answer["lint"] = lint
+    if fix_task:
+        answer["task_added"] = fix_task
+    print(json.dumps(answer, indent=2, ensure_ascii=False))
     return 0
+
+
+BUILT_STANDS = ("The build's finish stands: the whole suite passed with the new command on exactly the code that was built. Its report now "
+                "names the new command and the change, so verification runs the new command and review sees why it changed.")
+BUILT_REOPENED = ("The build's finish no longer stands: the new command does not pass on the code that was built, so the cell is back to building "
+                  "with the suite red (or not known, if the command cannot run yet), and its build report is marked reopened so nothing trusts "
+                  "it. Nothing is lost: every task and commit stays as it was. The builder carries on from build.py next, makes the whole suite "
+                  "pass with the new command, and finishes again. No review round is used.")
+
+
+def judged_since_built(cell: Cell) -> Optional[str]:
+    """Which later station has already judged this build (its report's head), or None: verification started on it (evidence/results.json)
+    or reached a verdict (evidence/summary.json). Review needs a passing verification, so it is covered by these."""
+    head = (load_json(cell.root / "build-report.json", {}) or {}).get("head")
+    for name, who in (("summary.json", "verification"), ("results.json", "verification")):
+        record = load_json(cell.root / "evidence" / name, {}) or {}
+        if isinstance(record, dict) and head and record.get("head") == head:
+            return who
+    return None
+
+
+def finish_with_new_commands(cell: Cell, changed: List[Dict[str, Any]], reason: str, at: str, suite: Optional[Dict[str, Any]],
+                             lint: Optional[Dict[str, Any]]) -> str:
+    """A built cell whose new commands pass on exactly the code that was built: the finish stands, and build-report.json is brought up to
+    date (tests, lint, deviations, command changes), so verification runs the new command and no claim made under the old one remains."""
+    path = cell.root / "build-report.json"
+    report = load_json(path, {}) or {}
+    if suite is not None and suite.get("passed"):
+        report["tests"] = {"command": suite.get("command"), "exit_code": suite.get("exit_code"), "passed": True, "seconds": suite.get("seconds"),
+                           "scope": "whole suite", "ran_on": git(cell.work, "rev-parse", "HEAD").stdout.strip(),
+                           "note": "Run when the command was changed after the tasks were done, on exactly the code that was built."}
+    if lint is not None:
+        report["lint"] = {key: value for key, value in lint.items() if key != "output_tail"}
+    report["deviations"] = cell.state.get("deviations", [])
+    report["command_changes"] = cell.state.get("command_changes") or []
+    report.setdefault("commands_changed_after_finish", []).append({"at": at, "changed": changed, "reason": reason, "outcome": "the finish stands"})
+    path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return "stands"
+
+
+def reopen_for_commands(cell: Cell, suite: Optional[Dict[str, Any]], lint: Optional[Dict[str, Any]]) -> str:
+    """A built cell whose new commands do not pass: back to building. The report is marked reopened (verification accepts only a BUILT
+    report, and the stage is building), so the old finish is never trusted; the next finish writes it anew."""
+    path = cell.root / "build-report.json"
+    report = load_json(path, {}) or {}
+    if report:
+        report["status"] = "REOPENED"
+        report["reopened"] = {"at": now(), "why": "The test or lint command was changed after the tasks were done, and the new one does not pass "
+                                                  "on the code that was built.",
+                              "tests_passed": (suite or {}).get("passed"), "lint": (lint or {}).get("status")}
+        path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    cell.info["stage"] = "building"
+    return "reopened"
+
+
+COMMAND_TASK_TEXT = "Make the whole suite pass with the new test command"
+LINT_TASK_TEXT = "Make the linter pass with the new lint command"
+
+
+def add_command_task(cell: Cell, lint_failed: bool = False) -> Optional[str]:
+    """When the new test command leaves the suite red (or not runnable) and every task is done, an [impl] task so the builder can make it
+    pass and commit that work: without one, nothing it changed could be committed and the finish would refuse the uncommitted files. It
+    names no file, so the scope gate leaves it free; committed tests stay frozen. Like the join's J-T01, it uses no review round."""
+    if cell.next_task() is not None:
+        return None  # a task is still to do: its own gates run the new command
+    count = sum(1 for task in cell.state["tasks"] if task.get("added_by") == "set-commands")
+    task_id = f"C-T{count + 1:02d}"
+    text = COMMAND_TASK_TEXT if cell.state.get("suite") != "green" else LINT_TASK_TEXT
+    cell.state["tasks"].append({"id": task_id, "kind": "impl", "text": text, "ids": [], "files": [], "status": "pending",
+                                "added_by": "set-commands", "loop": cell.state.get("loop", 0)})
+    plan = cell.root / "plan.md"
+    if plan.is_file():
+        body = plan.read_text(encoding="utf-8")
+        line = f"- [ ] {task_id} [impl] {text}"
+        marker = "\n## File touch map"
+        body = body.replace(marker, f"{line}\n{marker}", 1) if marker in body else body.rstrip("\n") + "\n" + line + "\n"
+        plan.write_text(body, encoding="utf-8")
+    return task_id
 
 
 # ---------------------------------------------------------------- lanes (M22)
@@ -2131,11 +2260,16 @@ def cmd_lanes_open(cell: Cell, args: argparse.Namespace) -> int:
             raise BuildError("--grant must be a whole number, 0 or more.", code="bad-grant")
         first = record.get("state") == "planned"
         if first:
-            if cell.state.get("suite") != "green":
-                raise BuildError(f"The cell's suite is {cell.state.get('suite')}, not green, so no lane could start from it. The tasks before the lanes "
-                                 f"end on a passing suite: build.py next {cell.ticket_id} names the step to run. If the suite is not known because the "
-                                 f"test command is missing or wrong: {set_commands_hint(cell.ticket_id)}, which runs the suite again.",
-                                 code="suite-red")
+            suite = cell.state.get("suite")
+            if suite != "green":
+                # Not a stop for a person: a builder can make a suite pass. Lanes need a passing fork point, so the plan is built one task
+                # at a time in the cell instead, where the next step's gates see the suite as it is. Recorded for the reviewers.
+                why = (f"The cell's suite is {suite} where the lanes would open, so no lane could start from a passing suite. The plan is "
+                       f"built one task at a time in the cell instead, as without lanes, and the cell's builder makes the suite pass on the way: "
+                       f"build.py next {cell.ticket_id} names the step."
+                       + (f" If the suite is not known because the test command is missing or wrong: {set_commands_hint(cell.ticket_id)}."
+                          if suite != "red" else ""))
+                return go_sequential(cell, record, why, 0, {"suite": suite})
             dirty = changed_files(cell)
             if dirty:
                 raise BuildError(f"The cell has uncommitted changes ({', '.join(dirty[:5])}), so the lanes cannot start from its last commit. Nothing "
@@ -2167,21 +2301,22 @@ def cmd_lanes_open(cell: Cell, args: argparse.Namespace) -> int:
         free = max_builders(cell.config) - used
         limits = [max_lanes(cell.config), free] + ([args.grant] if args.grant is not None else [])
         room = min(limits) - len(held)
+        limited_by = (f"build.max_lanes {max_lanes(cell.config)}; factory.max_builders {max_builders(cell.config)}, of which other tickets use {used}"
+                      + (f"; the line granted {args.grant}" if args.grant is not None else "")
+                      + (f"; {len(held)} of this ticket's lanes are at work for another holder" if held else ""))
+        # The ticket's own place: a ticket whose lanes are open always keeps one builder at work, though other tickets hold every place
+        # under factory.max_builders. So the machine runs at most one builder more than the cap, and only this ticket's own one.
+        own_place = room < 1 and not held
+        if own_place:
+            room = 1
         if first and min(room, len(candidates)) < 2:
-            why = (f"Only {max(room, 0)} builder(s) may run for this ticket now (build.max_lanes {max_lanes(cell.config)}; factory.max_builders "
-                   f"{max_builders(cell.config)}, of which other tickets use {used}" + (f"; the line granted {args.grant}" if args.grant is not None else "")
-                   + "), so its plan is built one task at a time in the cell, as without lanes.")
-            record.update({"state": "sequential", "why": why, "decided_at": now(), "free_places": free, "others": others})
-            for entry in record["lanes"]:
-                entry["status"] = "sequential"
-            save_shared(cell)
-            telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "build.lanes-open", "outcome": "refuse", "reason_code": "sequential",
-                                                                     "overridden_by_reason": False, "lanes": len(record["lanes"]), "granted": max(room, 0)})
-            print(json.dumps({"status": "SEQUENTIAL", "lanes": [], "why": why, "next": f"build.py next {cell.ticket_id}"}, indent=2))
-            return 0
+            why = (f"Only {max(room, 0)} builder(s) may run for this ticket now ({limited_by}), so its plan is built one task at a time in the "
+                   "cell, as without lanes.")
+            return go_sequential(cell, record, why, max(room, 0), {"free_places": free, "others": others})
         if room < 1:
-            raise BuildError(f"No place is free for another builder now (factory.max_builders {max_builders(cell.config)}, of which other tickets use "
-                             f"{used}, and {len(held)} of this ticket's lanes are live). Ask again when one is free.", code="no-free-place")
+            raise BuildError(f"Every lane left that may start now waits for a place, and this ticket already has builders at work: lane(s) "
+                             f"{', '.join(held)}, for another holder ({limited_by}). Nothing is lost. Ask again when one is done or a place is free.",
+                             code="no-free-place")
         chosen = candidates[:room]
         fork = record.get("fork") or git(cell.work, "rev-parse", "HEAD").stdout.strip()
         made: List[Tuple[Lane, str, bool]] = []
@@ -2259,9 +2394,34 @@ def cmd_lanes_open(cell: Cell, args: argparse.Namespace) -> int:
         "lanes": [{"lane": entry["lane"], "tasks": entry["tasks"], "workdir": str(lane.work), "branch": branch, "agent_type": AGENT_TYPE,
                    "model": model, "prompt": lane_prompt(cell, entry["lane"], lane.work, args.holder)} for entry, lane, branch, _ in handed],
         "why": f"{len(handed)} lane(s) to start now, at once; " + (f"{len(candidates) - len(handed)} more after them. " if len(candidates) > len(handed) else "")
+               + (fewer_words(len(handed), len(candidates), limited_by, own_place) if len(candidates) > len(handed) else "")
                + f"Each builder stops at LANE_DONE. When every lane is done: build.py join {cell.ticket_id}.",
         "fork": fork,
     }, indent=2))
+    return 0
+
+
+def fewer_words(started: int, left: int, limited_by: str, own_place: bool) -> str:
+    """Why fewer lanes were started now than are left to build."""
+    if own_place:
+        return (f"Only {started} started because every builder's place on this machine is in use ({limited_by}): this ticket keeps its own "
+                "place, so one lane runs now and the others follow as places come free. ")
+    return f"Only {started} of the {left} started now, because of the limits in force ({limited_by}); the others follow as places come free. "
+
+
+def go_sequential(cell: Cell, record: Dict[str, Any], why: str, granted: int, extra: Dict[str, Any]) -> int:
+    """The lanes are not opened: the plan is built one task at a time in the cell, as without lanes (design 7.1). Recorded under the
+    lanes' record and as a deviation for the reviewers; build.json is written under the lanes' lock (the caller holds it)."""
+    record.update({"state": "sequential", "why": why, "decided_at": now(), **extra})
+    for entry in record["lanes"]:
+        entry["status"] = "sequential"
+    cell.deviation(None, "lanes-sequential", why)
+    cell.state["deviations"][-1].update({"by": "build station", "lanes": len(record["lanes"]), "granted": granted})
+    save_shared(cell)
+    telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "build.lanes-open", "outcome": "refuse", "reason_code": "sequential",
+                                                             "overridden_by_reason": False, "lanes": len(record["lanes"]), "granted": granted})
+    print(json.dumps({"status": "SEQUENTIAL", "lanes": [], "why": why, "recorded": "A deviation for the reviewers, with this reason.",
+                      "next": f"build.py next {cell.ticket_id}"}, indent=2))
     return 0
 
 
@@ -2354,15 +2514,22 @@ def cmd_join(cell: Cell, args: argparse.Namespace) -> int:
             raise BuildError(f"Not every lane is done ({', '.join(unfinished)} still open), so the lanes cannot be joined yet. The line starts "
                              f"a builder for each again: build.py lanes-open {cell.ticket_id} --holder <holder>. A lane that cannot finish is handed "
                              f"back to the cell instead: build.py hand-back {cell.ticket_id} --lane <L> --reason \"<why>\".", code="lanes-not-done")
-        for name, lane in views.items():
-            stray = changed_files(lane) if lane.work.is_dir() else []
-            if stray:
-                raise BuildError(f"Lane {name} has uncommitted changes that no task holds ({', '.join(stray[:5])}). Nothing was joined, and nothing "
-                                 "was changed. The join lands only what the lane's tasks committed, and every task of this lane is done or handed "
-                                 "back, so no step of it is left to commit them (a commit no task recorded is not landed either). A person "
-                                 + set_aside_hint(lane.work, cell.ticket_id, f"lane {name}")
-                                 + f", then runs build.py join {cell.ticket_id} again. If a task needs them, they are brought back in the cell's own "
-                                 "checkout after the join, where the cell's builder carries on.", code="lane-dirty")
+        # The join starts here: every lane is done or handed back. The moment is recorded first, then said (design 13.2), so a reader can tell
+        # a join under way from one that is stuck. join_running names the process doing it; it is removed when the join has its result.
+        started_at = now()
+        record["join_started_at"] = started_at
+        record["join_running"] = {"since": started_at, "pid": os.getpid(), "host": platform.node()}
+        save_shared(cell)
+        telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "build.join", "outcome": "pass", "reason_code": "join-started",
+                                                                 "overridden_by_reason": False, "lanes": len(views)})
+        stray_saved: List[Dict[str, Any]] = []
+        try:
+            for name, lane in views.items():
+                stray = changed_files(lane) if lane.work.is_dir() else []
+                if stray:
+                    stray_saved.append(set_aside_lane_files(cell, landing, name, lane, stray))
+        except BuildError as exc:
+            return join_refused(cell, record, {"status": "REFUSED", "refused": {"code": exc.code, "reason": str(exc)}, "left": []})
         own = {t["id"]: t for lane in views.values() for t in lane.state.get("tasks") or []}
         # Every task of the lanes part, in plan order. A handed-back lane's unfinished task lands nothing (no commit): it is built
         # in the cell after the join. Its lane stays in the order, so a lane with nothing finished is still joined as a lane.
@@ -2375,7 +2542,6 @@ def cmd_join(cell: Cell, args: argparse.Namespace) -> int:
         def run_suite(folder: Path) -> Dict[str, Any]:
             return run_tests(Checkout(cell, Path(folder)))
 
-        started_at = now()
         result = landing.join_lanes(
             cell.project, cell.work, join_repo, f"mach-lane/{cell.ticket_id}/join", str(record.get("fork") or ""), tasks,
             {name: list(lane.state.get("test_files") or []) for name, lane in views.items()}, run_suite,
@@ -2383,24 +2549,51 @@ def cmd_join(cell: Cell, args: argparse.Namespace) -> int:
             lane_branches={entry["lane"]: entry.get("branch") or f"mach-lane/{cell.ticket_id}/{entry['lane']}" for entry in record["lanes"]},
             move_on_red=True)
         if result.get("status") == "REFUSED":
-            return join_refused(cell, record, result)
-        return join_record(cell, record, views, result, started_at)
+            return join_refused(cell, record, result, stray_saved)
+        return join_record(cell, record, views, result, started_at, stray_saved)
 
 
-def join_refused(cell: Cell, record: Dict[str, Any], result: Dict[str, Any]) -> int:
+def set_aside_lane_files(cell: Cell, landing: Any, name: str, lane: "Lane", stray: List[str]) -> Dict[str, Any]:
+    """A lane's uncommitted files that no task holds, saved by the station itself at the join and kept under a ref, never landed: the join lands
+    only what the lane's tasks committed. Recorded as a deviation with the ref and the exact command that brings a file back."""
+    prefix = f"refs/mach/lane-files/{cell.ticket_id}/{name}"
+    taken = git(lane.work, "for-each-ref", "--format=%(refname)", prefix + "/").stdout.split()
+    ref = f"{prefix}/{len(taken) + 1}"
+    try:
+        saved = landing.set_aside_files(lane.work, stray, ref, f"Uncommitted files in lane {name}, set aside at the join [{cell.ticket_id}]")
+    except landing.LandingError as exc:
+        raise BuildError(f"Lane {name} has uncommitted files no task holds ({', '.join(stray[:5])}), and the station could not save them, so the "
+                         f"join did not go on and nothing was changed: {exc}. Run build.py join {cell.ticket_id} again; if it fails the same way, "
+                         "the Git error is in the lane's checkout at " + str(lane.work) + ".", code="lane-files-not-saved")
+    where = f'git -C "{cell.work}"'
+    item = {"lane": name, "ref": saved["ref"], "commit": saved["commit"], "paths": saved["paths"],
+            "bring_back": f"{where} checkout {saved['ref']} -- <path>", "see": f"{where} show --stat {saved['ref']}"}
+    cell.deviation(None, "lane-files-set-aside",
+                   f"Lane {name} had uncommitted files that no task held ({', '.join(saved['paths'][:10])}"
+                   + (f" and {len(saved['paths']) - 10} more" if len(saved["paths"]) > 10 else "") + "). The station saved them under "
+                   f"{saved['ref']} (commit {saved['commit'][:10]}) and the join went on without them: they are not part of what landed. "
+                   f"To bring one back in the cell's checkout: {item['bring_back']}.")
+    cell.state["deviations"][-1].update({**item, "by": "build station"})
+    return item
+
+
+def join_refused(cell: Cell, record: Dict[str, Any], result: Dict[str, Any], stray_saved: Optional[List[Dict[str, Any]]] = None) -> int:
     refused = result.get("refused") or {}
     code = str(refused.get("code") or "landing-failed")
     record.setdefault("join_refusals", []).append({"at": now(), "reason": code, "why": refused.get("reason"), "commit": refused.get("commit"),
                                                    "left": result.get("left") or []})
+    record.pop("join_running", None)
     save_shared(cell)
     telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "build.join", "outcome": "refuse", "reason_code": code, "overridden_by_reason": False})
     print(json.dumps({"status": "REFUSED", "landed": 0, "set_aside": [], "suite": result.get("suite"), "refused": refused, "left": result.get("left") or [],
+                      "files_set_aside": stray_saved or [],
                       "next": f"Nothing was landed: the ticket's branch is where it was, and every lane and its work is kept. Put right what the "
                               f"reason names, then run build.py join {cell.ticket_id} again; the join starts over from the fork point."}, indent=2))
     return 1
 
 
-def join_record(cell: Cell, record: Dict[str, Any], views: Dict[str, "Lane"], result: Dict[str, Any], started_at: str) -> int:
+def join_record(cell: Cell, record: Dict[str, Any], views: Dict[str, "Lane"], result: Dict[str, Any], started_at: str,
+                stray_saved: Optional[List[Dict[str, Any]]] = None) -> int:
     """Design 8.1 step 5, from what landing returned: the tasks take their landed commits (keeping the lane commit), lane
     deviations are copied in with their lane, plan.md is ticked, the lanes are joined. A set-aside lane's tasks are pending
     again, to be built in the cell one at a time; on a joined suite that fails, J-T01 is added (design 8.2, 8.3)."""
@@ -2487,7 +2680,10 @@ def join_record(cell: Cell, record: Dict[str, Any], views: Dict[str, "Lane"], re
                       "suite": suite, "interaction": interaction, "removed": result.get("removed") or [], "left": result.get("left") or [],
                       "seconds": result.get("seconds") or {},
                       "landing_seconds": (result.get("seconds") or {}).get("land")}
+    if stray_saved:
+        record["join"]["files_set_aside"] = [{key: item[key] for key in ("lane", "ref", "commit", "paths")} for item in stray_saved]
     record["state"] = "joined"
+    record.pop("join_running", None)
     save_shared(cell)
     for name, item in aside.items():
         telemetry(cell.root, "gate.evaluated", "build", lambda name=name, item=item: {
@@ -2507,6 +2703,7 @@ def join_record(cell: Cell, record: Dict[str, Any], views: Dict[str, "Lane"], re
                          "files": (interaction or {}).get("fix_files"), "output_tail": str((interaction or {}).get("output_tail") or "")[-1200:]}
                         if not passed else None),
         "left": result.get("left") or [],
+        "files_set_aside": stray_saved or [],
         "next": (f"The ticket's build goes on in the cell: build.py next {cell.ticket_id}" if following else f"build.py finish {cell.ticket_id}"),
     }, indent=2))
     return 0

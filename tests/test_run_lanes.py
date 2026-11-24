@@ -274,9 +274,9 @@ class StationRefusalTest(Base):
             "lane-held": ("WAIT", "worker-in-cell", "wait"), "no-free-place": ("WAIT", "free-place", "wait"),
             "lanes-not-ready": ("REFUSED", None, "next"), "wrong-stage": ("REFUSED", None, "next"), "already-joined": ("REFUSED", None, "next"),
             "lanes-not-open": ("REFUSED", None, "next"), "lanes-not-done": ("REFUSED", None, "lanes-start"),
-            "suite-red": ("REFUSED", "lanes-blocked", "person"), "uncommitted-changes": ("REFUSED", "lanes-blocked", "person"),
+            "uncommitted-changes": ("REFUSED", "lanes-blocked", "person"),
             "lane-folder-unknown": ("REFUSED", "lanes-blocked", "person"), "worktree-failed": ("REFUSED", "lanes-blocked", "person"),
-            "lane-dirty": ("REFUSED", "lanes-blocked", "person"), "bad-holder": ("REFUSED", "lanes-blocked", "person"),
+            "bad-holder": ("REFUSED", "lanes-blocked", "person"),
             "bad-grant": ("REFUSED", "lanes-blocked", "person"),
         }
         for code, (status, needs, then) in expected.items():
@@ -307,14 +307,16 @@ class StationRefusalTest(Base):
         (self.work / "app/stray.py").unlink()
         self.assertEqual(self.lanes_start()["status"], "OPEN")
 
-    def test_a_red_suite_at_the_lanes_is_for_a_person(self):
+    def test_a_red_suite_at_the_lanes_is_not_for_a_person_the_plan_is_built_in_order(self):
         self.ready_lanes()
         self.ok("start", TICKET)
         state = self.state()
         state["suite"] = "red"
         (self.cellroot / "build.json").write_text(json.dumps(state))
         answer = self.lanes_start()
-        self.assertEqual((answer["code"], answer["needs"], answer["then"]), ("suite-red", "lanes-blocked", "person"))
+        self.assertEqual((answer["status"], answer.get("needs"), answer["then"]), ("SEQUENTIAL", None, "next"))
+        self.assertIn("The cell's suite is red where the lanes would open", answer["reason"])
+        self.assertEqual(self.next_step("--holder", HOLDER)["action"], "build", "the cell's builder carries on")
 
     def test_a_folder_in_a_lanes_place_is_for_a_person_and_then_it_carries_on(self):
         self.ready_lanes()
@@ -327,19 +329,17 @@ class StationRefusalTest(Base):
         shutil.move(str(self.lane_work("L2")), str(Path(self.tmp.name) / "aside"))
         self.assertEqual([item["lane"] for item in self.lanes_start()["lanes"]], ["L1", "L2"])
 
-    def test_no_free_place_for_the_next_batch_is_a_wait(self):
+    def test_with_no_free_place_for_the_next_batch_the_tickets_own_place_runs_a_lane(self):
         self.ready_lanes(plan=THREE_LANES, settings={"factory": {"max_builders": 2}})
         self.ok("start", TICKET)
         self.assertEqual([item["lane"] for item in self.lanes_start()["lanes"]], ["L1", "L2"])
         self.build_lane("L1", L1)
         self.build_lane("L2", L2)
-        others = [self.other_building("OTHER-1"), self.other_building("OTHER-2")]
+        self.other_building("OTHER-1")
+        self.other_building("OTHER-2")
         answer = self.lanes_start()
-        self.assertEqual((answer["status"], answer["code"], answer["needs"], answer["then"], answer["grant"]), ("WAIT", "no-free-place", "free-place", "wait", 0))
-        self.assertIn("Nothing is lost", answer["next"])
-        for folder in others:
-            shutil.rmtree(folder)
-        self.assertEqual([item["lane"] for item in self.lanes_start()["lanes"]], ["L3"])
+        self.assertEqual((answer["status"], answer["then"], answer["grant"], answer["free_places"], answer["own_place_only"]), ("OPEN", "lanes-start", 1, 0, True))
+        self.assertEqual([item["lane"] for item in answer["lanes"]], ["L3"], "never waiting with nothing running")
 
 
 class JoinTest(Base):
@@ -410,13 +410,15 @@ class JoinTest(Base):
         self.assertIn("run build.py join LOCAL-001 again", joined["next"])
         self.assertEqual(self.next_step("--holder", HOLDER)["action"], "build-lanes", "the ticket stays at its lanes, to be joined again")
 
-    def test_uncommitted_work_in_a_lane_is_for_a_person(self):
+    def test_stray_files_in_a_lane_are_not_for_a_person(self):
         self.built()
         self.build_lane("L1", L1)
         self.build_lane("L2", L2)
         self.put(self.lane_work("L2"), {"app/stray.py": "X = 1\n"})
         joined = self.lanes_join()
-        self.assertEqual((joined["code"], joined["needs"], joined["then"]), ("lane-dirty", "lanes-blocked", "person"))
+        self.assertEqual((joined["status"], joined["needs"], joined["then"], joined["landed"]), ("JOINED", None, "next", 4))
+        self.assertIn("lane L2's uncommitted files (app/stray.py) were set aside under refs/mach/lane-files/LOCAL-001/L2/1, not landed", joined["reason"])
+        self.assertEqual(joined["files_set_aside"][0]["ref"], "refs/mach/lane-files/LOCAL-001/L2/1")
 
 
 class HandBackTest(Base):

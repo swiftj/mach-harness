@@ -1460,9 +1460,10 @@ def cmd_lanes_start(project: Project, args: argparse.Namespace) -> int:
         minutes = B.claim_limit(project.config)
         used, others = B.others_using(cell, minutes)
         free = B.max_builders(project.config) - used
-        grant = max(0, min(B.max_lanes(project.config), free))
+        # The ticket's own place counts: with every other place taken, its lanes still get one builder, never none (build.py lanes-open).
+        grant = max(1, min(B.max_lanes(project.config), free))
         room = {"grant": grant, "free_places": max(free, 0), "max_lanes": B.max_lanes(project.config), "max_builders": B.max_builders(project.config),
-                "other_tickets": others}
+                "other_tickets": others, "own_place_only": free < 1}
         argv = ["lanes-open", args.ticket_id, "--holder", holder, "--grant", str(grant)] + (["--take-over"] if args.take_over else [])
         said, refusal = station_answer(project, args.ticket_id, *argv)
         if refusal is not None:
@@ -1576,7 +1577,12 @@ def lanes_joined(ticket_id: str, said: Dict[str, Any]) -> Dict[str, Any]:
                      f"{interaction.get('task') or 'J-T01'}, was added for the cell's builder")
     else:
         words.append("the whole suite passed on the joined result")
+    saved = [item for item in said.get("files_set_aside") or [] if isinstance(item, dict)]
+    for item in saved:
+        words.append(f"lane {item.get('lane')}'s uncommitted files ({', '.join(str(p) for p in (item.get('paths') or [])[:5])}) were set aside under "
+                     f"{item.get('ref')}, not landed; nothing is lost, and {item.get('bring_back')} brings one back")
     return {"ticket_id": ticket_id, "status": status, "needs": None, "reason": "; ".join(words) + ".", "then": "next", "next": LANE_THEN["next"],
+            "files_set_aside": saved,
             "landed": said.get("landed", 0), "set_aside": [{"lane": item.get("lane"), "tasks": item.get("tasks")} for item in aside],
             "fix_task": (interaction.get("task") or "J-T01") if interaction else None,
             "failing": (interaction.get("failing") or []) if interaction else [], "suite": said.get("suite"), "left": said.get("left") or []}

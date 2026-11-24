@@ -385,7 +385,10 @@ class TwoLanesTest(LaneBase):
         self.assertEqual(lane_commits["T02"], state["tasks"][1]["lane_commit"][:12], "the commit made at that moment: the lane commit")
         gates = [(r["data"]["gate"], r["data"]["outcome"], r["data"]["reason_code"]) for r in records if r["type"] == "gate.evaluated"
                  and r["data"]["gate"] in ("build.lanes-open", "build.join")]
-        self.assertEqual(gates, [("build.lanes-open", "pass", None), ("build.join", "refuse", "lanes-not-done"), ("build.join", "pass", None)])
+        self.assertEqual(gates, [("build.lanes-open", "pass", None), ("build.join", "refuse", "lanes-not-done"), ("build.join", "pass", "join-started"),
+                                 ("build.join", "pass", None)], "the join's start is said when it really starts, never for a join refused at the door")
+        self.assertEqual(state["lanes"]["join_started_at"], state["lanes"]["join"]["started_at"])
+        self.assertNotIn("join_running", state["lanes"], "gone once the join has its result")
         self.assertEqual({r["type"] for r in records}, {"gate.evaluated", "station.entered", "station.exited", "build.task_completed"})
 
     def test_a_finish_straight_after_the_join_reuses_its_run_and_nothing_else(self):
@@ -547,7 +550,7 @@ class SharedFileTest(LaneBase):
         self.assertEqual(steps, {"T01": "L1", "T02": "L1", "T03": None, "T04": None, "T05": None})
         events = [(r["data"]["gate"], r["data"]["reason_code"], r["data"].get("lane")) for r in self.lifecycle() if r["type"] == "gate.evaluated"
                   and r["data"]["gate"] == "build.join"]
-        self.assertEqual(events, [("build.join", "lane-set-aside", "L2"), ("build.join", None, None)])
+        self.assertEqual(events, [("build.join", "join-started", None), ("build.join", "lane-set-aside", "L2"), ("build.join", None, None)])
 
 
 class FrozenAcrossLanesTest(LaneBase):
@@ -613,7 +616,7 @@ class InteractionTest(LaneBase):
         self.assertTrue(self.log()[1].startswith("feat(SLICE-001): J-T01 Make the lanes pass together"))
         gates = [(r["data"]["gate"], r["data"]["outcome"], r["data"]["reason_code"]) for r in self.lifecycle() if r["type"] == "gate.evaluated"
                  and r["data"]["gate"] == "build.join"]
-        self.assertEqual(gates, [("build.join", "refuse", "lanes-interaction")])
+        self.assertEqual(gates, [("build.join", "pass", "join-started"), ("build.join", "refuse", "lanes-interaction")])
 
 
 NEW_CMD = test_build.NEW_CMD
@@ -865,20 +868,60 @@ class ResumeTest(LaneBase):
         self.assertEqual(int(git(self.work, "rev-list", "--count", f"{fork}..HEAD").stdout), 4)
         self.assertEqual((self.branches(), self.worktrees()), ([], []))
 
-    def test_uncommitted_work_in_a_lane_is_never_thrown_away(self):
+    def test_stray_files_in_a_lane_are_set_aside_by_the_station_and_the_join_goes_on(self):
         self.ready_lanes()
         self.ok("start", TICKET)
         self.open_lanes()
         self.build_lane("L1", L1)
         self.build_lane("L2", L2)
-        self.put(self.lane_work("L2"), {"app/stray.py": "X = 1\n"})
-        refusal = self.refused("join", TICKET)
-        self.assertIn("Lane L2 has uncommitted changes that no task holds (app/stray.py)", refusal)
-        self.assertIn(f'git -C "{self.lane_work("L2")}" stash push --include-untracked', refusal)
-        self.assertIn("nothing is lost", refusal)
-        self.assertNotIn("delete", refusal)
-        self.assertTrue((self.lane_work("L2") / "app/stray.py").is_file())
-        self.assertEqual(len(self.worktrees()), 2)
+        self.put(self.lane_work("L2"), {"app/stray.py": "X = 1\n", "app/release.py": RELEASE + "# half a thought\n"})
+        joined = self.ok("join", TICKET)
+        self.assertEqual((joined["status"], joined["landed"]), ("JOINED", 4))
+        ref = "refs/mach/lane-files/LOCAL-001/L2/1"
+        where = f'git -C "{self.work}"'
+        self.assertEqual([(item["lane"], item["ref"], item["paths"], item["bring_back"]) for item in joined["files_set_aside"]],
+                         [("L2", ref, ["app/release.py", "app/stray.py"], f"{where} checkout {ref} -- <path>")])
+        self.assertFalse((self.work / "app/stray.py").exists(), "a lane's stray files are never part of what lands")
+        self.assertEqual((self.work / "app/release.py").read_text(), RELEASE)
+        self.assertEqual((self.branches(), self.worktrees()), ([], []), "the lane's worktree is removed as after any join")
+        self.assertEqual(git(self.work, "show", f"{ref}:app/stray.py").stdout, "X = 1\n", "nothing is lost: the ref keeps every file")
+        deviation = [d for d in self.state()["deviations"] if d["type"] == "lane-files-set-aside"]
+        self.assertEqual([(d["lane"], d["ref"], d["by"]) for d in deviation], [("L2", ref, "build station")])
+        self.assertIn(f"To bring one back in the cell's checkout: {where} checkout {ref} -- <path>.", deviation[0]["detail"])
+        self.assertEqual(self.state()["lanes"]["join"]["files_set_aside"][0]["ref"], ref)
+        # The command it names works as written.
+        done = subprocess.run(["git", "-C", str(self.work), "checkout", ref, "--", "app/stray.py"], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual((self.work / "app/stray.py").read_text(), "X = 1\n")
+
+    def test_a_join_that_never_finished_leaves_its_start_and_runs_again(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.open_lanes()
+        self.build_lane("L1", L1)
+        self.build_lane("L2", L2)
+        from unittest import mock
+        with mock.patch.object(landing(), "join_lanes", side_effect=RuntimeError("the process was stopped")):
+            with self.assertRaises(RuntimeError):
+                self.run_build("join", TICKET)
+        lanes = self.state()["lanes"]
+        self.assertEqual(lanes["state"], "open")
+        self.assertEqual(lanes["join_running"]["since"], lanes["join_started_at"])
+        self.assertEqual((lanes["join_running"]["pid"], lanes["join_running"]["host"]), (os.getpid(), build.platform.node()))
+        started = [r for r in self.lifecycle() if r["type"] == "gate.evaluated" and r["data"]["reason_code"] == "join-started"]
+        self.assertEqual(len(started), 1)
+        joined = self.ok("join", TICKET)
+        self.assertEqual(joined["status"], "JOINED")
+        self.assertNotIn("join_running", self.state()["lanes"])
+        self.assertEqual(len([r for r in self.lifecycle() if r["type"] == "gate.evaluated" and r["data"]["reason_code"] == "join-started"]), 2)
+
+    def test_a_join_refused_at_the_door_never_says_it_started(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.open_lanes()
+        self.refused("join", TICKET)
+        self.assertNotIn("join_started_at", self.state()["lanes"])
+        self.assertFalse([r for r in self.lifecycle() if r["type"] == "gate.evaluated" and r["data"]["reason_code"] == "join-started"])
 
 
 class JoinRefusedTest(LaneBase):
@@ -981,6 +1024,95 @@ class CapTest(LaneBase):
         self.ready_lanes(plan=THREE_LANES, settings={"build": {"max_lanes": 2}})
         self.ok("start", TICKET)
         self.assertEqual(len(self.ok("lanes-open", TICKET, "--holder", HOLDER)["lanes"]), 2)
+
+
+class NoStallTest(LaneBase):
+    """No state without a way forward: a red suite where the lanes would open, and a ticket whose lanes are open while other tickets
+    hold every builder's place."""
+
+    other_building = CapTest.other_building
+    build_through_in_cell = CapTest.build_through_in_cell
+
+    def test_a_red_suite_where_the_lanes_would_open_builds_the_plan_in_order_and_records_why(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        state = self.state()
+        state["suite"] = "red"
+        (self.cellroot / "build.json").write_text(json.dumps(state))
+        opened = self.ok("lanes-open", TICKET, "--holder", HOLDER)
+        self.assertEqual(opened["status"], "SEQUENTIAL")
+        self.assertIn("The cell's suite is red where the lanes would open, so no lane could start from a passing suite.", opened["why"])
+        self.assertIn("the cell's builder makes the suite pass on the way: build.py next LOCAL-001 names the step", opened["why"])
+        self.assertEqual(opened["recorded"], "A deviation for the reviewers, with this reason.")
+        self.assertFalse((self.cellroot / "lanes/L1").exists(), "no lane worktree is made")
+        state = self.state()
+        self.assertEqual((state["lanes"]["state"], state["lanes"]["suite"]), ("sequential", "red"))
+        self.assertEqual([(d["type"], d["detail"], d["by"]) for d in state["deviations"]], [("lanes-sequential", opened["why"], "build station")])
+        self.assertEqual(self.ok("next", TICKET)["task"], "T01", "the cell's builder carries on, one task at a time")
+        self.assertEqual(self.ok("lanes-open", TICKET, "--holder", HOLDER)["status"], "SEQUENTIAL", "asked again, the same answer")
+        gates = [(r["data"]["gate"], r["data"]["outcome"], r["data"]["reason_code"]) for r in self.lifecycle() if r["type"] == "gate.evaluated"
+                 and r["data"]["gate"] == "build.lanes-open"]
+        self.assertEqual(gates, [("build.lanes-open", "refuse", "sequential")])
+        self.build_through_in_cell()
+        report = json.loads((self.cellroot / "build-report.json").read_text())
+        self.assertIn("lanes-sequential", [d["type"] for d in report["deviations"]])
+
+    def test_a_suite_not_known_names_the_command_that_gives_one(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        state = self.state()
+        state["suite"] = "unknown"
+        (self.cellroot / "build.json").write_text(json.dumps(state))
+        opened = self.ok("lanes-open", TICKET, "--holder", HOLDER)
+        self.assertEqual(opened["status"], "SEQUENTIAL")
+        self.assertIn('build.py set-commands LOCAL-001 --test-cmd "<command>" --reason "<why>"', opened["why"])
+
+    def test_open_lanes_keep_one_builder_when_other_tickets_hold_every_place(self):
+        self.ready_lanes(plan=THREE_LANES, settings={"factory": {"max_builders": 2}})
+        self.ok("start", TICKET)
+        self.assertEqual([lane["lane"] for lane in self.open_lanes()["lanes"]], ["L1", "L2"])
+        self.build_lane("L1", L1)
+        self.build_lane("L2", L2)
+        self.other_building("OTHER-1")
+        self.other_building("OTHER-2")
+        again = self.ok("lanes-open", TICKET, "--holder", HOLDER, "--grant", "0")
+        self.assertEqual((again["status"], [lane["lane"] for lane in again["lanes"]]), ("OPEN", ["L3"]), "the ticket's own place runs a lane")
+        self.assertEqual(self.state()["lanes"]["batches"][-1]["granted"], 1)
+
+    def test_with_two_lanes_left_and_no_place_one_runs_and_the_answer_says_why(self):
+        self.ready_lanes(plan=THREE_LANES, settings={"factory": {"max_builders": 1}})
+        self.ok("start", TICKET)
+        # The first time, one place is too few for lanes: built one task at a time. So open the lanes with room, then take the places.
+        self.put(self.project, {".factory/config.json": json.dumps({"factory": {"max_builders": 3}})})
+        self.assertEqual([lane["lane"] for lane in self.ok("lanes-open", TICKET, "--holder", HOLDER, "--grant", "2")["lanes"]], ["L1", "L2"])
+        self.put(self.project, {".factory/config.json": json.dumps({"factory": {"max_builders": 1}})})
+        self.other_building("OTHER-1")
+        # L1 and L2 are this holder's own: handed again (their builders stopped), but only one place: L1 runs, and the answer says why.
+        again = self.ok("lanes-open", TICKET, "--holder", HOLDER)
+        self.assertEqual([lane["lane"] for lane in again["lanes"]], ["L1"])
+        self.assertIn("2 more after them", again["why"])
+        self.assertIn("Only 1 started because every builder's place on this machine is in use (build.max_lanes 3; factory.max_builders 1, "
+                      "of which other tickets use 1): this ticket keeps its own place, so one lane runs now and the others follow as places "
+                      "come free.", again["why"])
+
+    def test_fewer_lanes_than_are_left_says_which_limit(self):
+        self.ready_lanes(plan=THREE_LANES, settings={"factory": {"max_builders": 3}})
+        self.other_building("OTHER-1")
+        self.ok("start", TICKET)
+        opened = self.ok("lanes-open", TICKET, "--holder", HOLDER)
+        self.assertEqual([lane["lane"] for lane in opened["lanes"]], ["L1", "L2"])
+        self.assertIn("Only 2 of the 3 started now, because of the limits in force (build.max_lanes 3; factory.max_builders 3, of which other "
+                      "tickets use 1); the others follow as places come free.", opened["why"])
+
+    def test_another_holders_builders_at_work_and_no_place_is_a_wait_with_nothing_lost(self):
+        self.ready_lanes(plan=THREE_LANES, settings={"factory": {"max_builders": 2}})
+        self.ok("start", TICKET)
+        self.open_lanes()
+        self.ok("next", TICKET, "--lane", "L1")
+        self.other_building("OTHER-1")
+        refusal = self.refused("lanes-open", TICKET, "--holder", OTHER)
+        self.assertIn("this ticket already has builders at work: lane(s) L1", refusal)
+        self.assertIn("Nothing is lost.", refusal)
 
 
 class WhenLanesDoNotApplyTest(LaneBase):

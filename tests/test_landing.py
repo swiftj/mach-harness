@@ -628,6 +628,56 @@ class RemoveTest(Base):
         self.assertEqual(landing.remove(self.project, [self.cellroot / "lanes" / "L9" / "repo"], [f"mach-lane/{TICKET}/L9"]), [])
 
 
+class SetAsideFilesTest(unittest.TestCase):
+    """A lane's stray files at the join: saved under a ref, the worktree put back to its HEAD for them, nothing else touched."""
+
+    def test_saved_under_the_ref_and_the_worktree_back_to_its_head(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            git(repo, "init", "-q", "-b", "main")
+            (repo / "kept.py").write_text("A = 1\n")
+            (repo / "gone.py").write_text("B = 1\n")
+            (repo / "other.py").write_text("C = 1\n")
+            git(repo, "add", "-A")
+            git(repo, "commit", "-qm", "base")
+            head = git(repo, "rev-parse", "HEAD").stdout.strip()
+            (repo / "kept.py").write_text("A = 2\n")
+            (repo / "gone.py").unlink()
+            (repo / "new.py").write_text("D = 1\n")
+            (repo / "staged.py").write_text("E = 1\n")
+            git(repo, "add", "staged.py")
+            (repo / "other.py").write_text("C = 2\n")  # not named: left exactly as it is
+            saved = landing.set_aside_files(repo, ["gone.py", "kept.py", "new.py", "staged.py"], "refs/mach/lane-files/T/L1/1", "saved [T]")
+            self.assertEqual((saved["ref"], saved["paths"]), ("refs/mach/lane-files/T/L1/1", ["gone.py", "kept.py", "new.py", "staged.py"]))
+            self.assertEqual(git(repo, "rev-parse", "refs/mach/lane-files/T/L1/1").stdout.strip(), saved["commit"])
+            self.assertEqual(git(repo, "rev-parse", f"{saved['commit']}^").stdout.strip(), head)
+            self.assertEqual(git(repo, "show", f"{saved['commit']}:kept.py").stdout, "A = 2\n")
+            self.assertEqual(git(repo, "show", f"{saved['commit']}:new.py").stdout, "D = 1\n")
+            self.assertEqual(git(repo, "show", f"{saved['commit']}:staged.py").stdout, "E = 1\n")
+            self.assertNotEqual(git(repo, "cat-file", "-e", f"{saved['commit']}:gone.py").returncode, 0, "the deletion is saved too")
+            self.assertEqual(git(repo, "rev-parse", "HEAD").stdout.strip(), head, "nothing is committed on the branch")
+            self.assertEqual(git(repo, "status", "--porcelain").stdout, " M other.py\n", "only the files not named are left changed")
+            self.assertEqual(((repo / "kept.py").read_text(), (repo / "gone.py").read_text()), ("A = 1\n", "B = 1\n"))
+            self.assertFalse((repo / "new.py").exists() or (repo / "staged.py").exists())
+            git(repo, "checkout", "refs/mach/lane-files/T/L1/1", "--", "new.py")
+            self.assertEqual((repo / "new.py").read_text(), "D = 1\n", "a file comes back with the command the station names")
+
+    def test_a_save_that_fails_changes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            git(repo, "init", "-q", "-b", "main")
+            (repo / "a.py").write_text("A = 1\n")
+            git(repo, "add", "-A")
+            git(repo, "commit", "-qm", "base")
+            (repo / "a.py").write_text("A = 2\n")
+            with self.assertRaises(landing.LandingError) as caught:
+                landing.set_aside_files(repo, ["a.py"], "refs/mach/bad..ref", "saved [T]")
+            self.assertEqual(caught.exception.code, "set-aside-failed")
+            self.assertEqual((repo / "a.py").read_text(), "A = 2\n")
+
+
 class HelpersTest(unittest.TestCase):
     def test_failing_tests_from_unittest_and_pytest(self):
         out = ("FAIL: test_a (tests.test_x.T)\n----\nERROR: test_b (tests.test_y.U)\n"
