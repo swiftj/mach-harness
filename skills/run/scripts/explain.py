@@ -10,6 +10,7 @@ Sources, all inside .factory/worktrees/<ticket>/ (written by the stations, never
                                     the lanes, any lane set aside, lanes that failed only together, and the fix task
     lanes/<L>/lane.json             how far each lane has got, while the lanes are open
     evidence/summary.json           the verification verdict: failed checks (AC-NN, RN, H-...), suite, contracts, unproven items
+                                    and, for a change verified without screenshots, the station's words saying so and why
     review/decision.json            the latest review decision; rejected_by marks a send-back by the merge station or by a person;
                                     exceptions[] a person's exceptions to security blockers (who, why, expiry)
     review/round-N/votes/*.json     each seat's findings: blocker, rule cited, file, line, class and impact
@@ -525,6 +526,10 @@ def explain(root: Path, ticket_id: str, next_info: Dict[str, Any], config: Optio
     lanes = lanes_facts(cellroot)  # M22: nothing for a build without lanes
     if lanes:
         base["lanes"] = lanes
+    mode = summary.get("evidence_mode")
+    if isinstance(mode, dict) and mode.get("mode") == "headless":  # verified without screenshots: said so, and why
+        base["verification_evidence"] = {"mode": "headless", "said": clean(mode.get("said"), 300), "why": clean(mode.get("why"), 300),
+                                         "source_file": "evidence/summary.json"}
     return base, 0
 
 
@@ -742,6 +747,9 @@ def human(report: Dict[str, Any]) -> str:
         lines.append(f"- [policy] {held['not_checked']}")
     for line in digest.get("rules_changed") or []:
         lines.append(f"- [older rules] {line}")
+    headless = report.get("verification_evidence") or {}
+    if headless:
+        lines.append(f"- [verification] {headless.get('said') or ''} {headless.get('why') or ''}".rstrip())
     lanes = report.get("lanes") or {}
     if lanes:  # M22: only for a build in lanes
         if digest.get("lanes") != lanes.get("summary"):

@@ -455,6 +455,9 @@ def verification_section(t: Text, root: Path) -> List[str]:
         lines += [f"### Run {number} of {len(runs)}: {t.one(summary.get('status'), 40)}", "",
                   f"Review loop {t.one(summary.get('review_loop'), 10)}, at commit {sha(summary.get('head'))}, recorded {t.one(summary.get('timestamp'), 40)}. "
                   f"Test suite rerun by the verifier: {'passed' if suite.get('passed') is True else 'failed' if suite.get('passed') is False else 'not recorded'}.", ""]
+        headless = headless_mode(summary)
+        if headless:  # a web, desktop or mobile change verified without screenshots: said once, where the evidence is listed
+            lines += [f"Evidence without screenshots: {t.one(headless.get('said'), NOTE_LIMIT)} {t.one(headless.get('why'), NOTE_LIMIT)}", ""]
         checks = summary.get("checks") if isinstance(summary.get("checks"), dict) else {}
         shown, cited = [], set()
         for check_id in sorted(checks, key=natural)[:MAX_CHECKS]:
@@ -482,6 +485,12 @@ def verification_section(t: Text, root: Path) -> List[str]:
             lines += capped([f"- {evidence_line(t, prefix, name, hashes[name])}" for name in others[:MAX_FILES]], len(others), MAX_FILES, "files")
         lines.append("")
     return lines
+
+
+def headless_mode(summary: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The verification's evidence mode when it was headless (no screenshots, nothing could capture the screen); None otherwise."""
+    mode = summary.get("evidence_mode")
+    return mode if isinstance(mode, dict) and mode.get("mode") == "headless" else None
 
 
 def mock_lines(t: Text, mocks: Any) -> List[str]:
@@ -887,6 +896,8 @@ def facts(root: Path, info: Dict[str, Any], ticket_id: str, commits: Dict[str, O
             "evidence_files": sorted(({"file": entry["file"], "sha256": entry.get("sha256") if SHA256_RE.match(str(entry.get("sha256"))) else None}
                                       for entry in summary.get("evidence_files") or [] if isinstance(entry, dict) and isinstance(entry.get("file"), str)),
                                      key=lambda entry: entry["file"])[:MAX_FILES * 4],
+            **({"evidence_mode": {"mode": "headless", "reason": words(headless_mode(summary).get("reason"), 40),
+                                  "why": words(headless_mode(summary).get("why"), NOTE_LIMIT)}} if headless_mode(summary) else {}),
         },
         "review": {
             "outcome": decision.get("outcome") if isinstance(decision.get("outcome"), str) else None, "round": decision.get("round"),
