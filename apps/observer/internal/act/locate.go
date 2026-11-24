@@ -12,14 +12,14 @@ import (
 // Where MACH's run.py lives, relative to a folder, in each way MACH is installed (bin/mach: the run
 // skill is installed into a project as .claude/skills/mach/).
 var scriptLayouts = []struct{ Install, Relative string }{
-	{"plugin", filepath.Join("skills", "run", "scripts", "run.py")},              // the plugin, or MACH's own repository
+	{"mach", filepath.Join("skills", "run", "scripts", "run.py")},                // the plugin, or MACH's own repository
 	{"project", filepath.Join(".claude", "skills", "mach", "scripts", "run.py")}, // installed into a project
 }
 
 // Located says where run.py was found and how.
 type Located struct {
 	Script  string
-	Install string // explicit, plugin or project
+	Install string // explicit, mach (the plugin or MACH's repository) or project
 }
 
 // LocateScript resolves run.py once, at start-up:

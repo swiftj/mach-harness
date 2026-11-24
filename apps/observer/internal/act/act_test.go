@@ -330,7 +330,7 @@ func TestLocate(t *testing.T) {
 	own := filepath.Join(repo, "skills", "run", "scripts", "run.py")
 	os.MkdirAll(filepath.Dir(own), 0o755)
 	os.WriteFile(own, nil, 0o644)
-	if got, err := LocateScript("", bin, project); err != nil || got.Script != own || got.Install != "plugin" {
+	if got, err := LocateScript("", bin, project); err != nil || got.Script != own || got.Install != "mach" {
 		t.Fatalf("beside the binary: %+v %v", got, err)
 	}
 	projBin := filepath.Join(project, ".factory", "bin", "mach-observer")

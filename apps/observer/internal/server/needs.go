@@ -55,7 +55,7 @@ const (
 var writeRoute = regexp.MustCompile(`^/api/v1/(needs/[^/]+/[^/]+|factory/stop)$`)
 
 // unavailableWords: what the page is told when run.py was not found.
-const unavailableWords = "MACH's run.py was not found beside the observer or in this project, so the Factory Floor cannot record decisions here. The commands to run in Claude Code are shown instead."
+const unavailableWords = "MACH was not found beside the observer or in this project, so the Factory Floor cannot record decisions here. The commands to run in Claude Code are shown instead."
 
 // needsCache is the last "Needs you" read and the decisions it offered.
 type needsCache struct {
@@ -183,7 +183,7 @@ func shapeNeeds(raw []byte, root string) (map[string]any, map[string]map[string]
 		"nothing_waiting": len(tickets) == 0,
 		"data_fields":     orEmpty(top["data_fields"]),
 		"data_note":       top["data_note"],
-		"by":              "MACH's decide list (run.py decide --json), read now; it reads only",
+		"by":              "MACH's own list of what waits for a person, read now; reading it changes nothing",
 	}
 	return out, offered
 }

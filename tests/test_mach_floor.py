@@ -1,9 +1,11 @@
-"""The Factory Floor is wired in as a watcher only.
+"""The Factory Floor watches, and a person can decide and stop there (M23), through MACH's own run.py.
 
 Its observer, mach-observer, is fetched by the installer and started by a step in the run skill when a
 person asks for it. Nothing in the line may depend on it: no station script, agent or workflow invokes
-it or reads its files, and the observer itself can start nothing and never reaches for the Factory's
-switch. The release and installer sides are tested in test_installer.py.
+it or reads its files. The observer runs nothing but MACH's run.py, from one package (internal/act),
+with fixed commands (decide --json, decide do ... --via=floor, factory status, factory stop), and never
+reaches for the Factory's switch: it never enables, starts or dispatches work. The release and installer
+sides are tested in test_installer.py.
 """
 
 import re
@@ -53,36 +55,51 @@ class NothingInTheLineDependsOnTheObserverTest(unittest.TestCase):
             self.assertNotIn(word, parser)
 
 
-class TheObserverCannotActTest(unittest.TestCase):
-    """A source-level guard from outside the observer's own tests: it starts no process and never
-    reaches for the Factory's switch. Its Go tests hold the rest (TestSourceBoundary)."""
+class TheObserverActsOnlyThroughRunPyTest(unittest.TestCase):
+    """A source-level guard from outside the observer's own tests: only internal/act starts a process, it starts
+    only MACH's run.py, and nothing reaches for the Factory's switch. Its Go tests hold the rest (TestSourceBoundary,
+    act.TestFixedVectors, server.TestWritesNeedTheSessionOriginAndCSRF)."""
 
     SCRIPTS = ("run.py", "policy.py", "supervisor.py", "executor.py", "service.py", "activation.py", "intake.py")
+    ACT = OBSERVER / "internal" / "act"
 
     def sources(self):
         files = sorted(p for p in OBSERVER.rglob("*.go") if not p.name.endswith("_test.go"))
         self.assertTrue(files, "no observer source found")
         return files
 
-    def test_it_can_start_no_process(self):
-        found = []
+    def test_only_internal_act_can_start_a_process(self):
+        found, act = [], []
         for path in self.sources():
             text = path.read_text(encoding="utf-8")
-            found += [f"{path.relative_to(ROOT)}: {word}" for word in ('"os/exec"', "os.StartProcess", "syscall.Exec", "syscall.ForkExec", '"plugin"')
-                      if word in text]
+            if '"os/exec"' in text:
+                (act if path.parent == self.ACT else found).append(str(path.relative_to(ROOT)))
+            found += [f"{path.relative_to(ROOT)}: {word}" for word in ("os.StartProcess", "syscall.Exec", "syscall.ForkExec", '"plugin"') if word in text]
         self.assertEqual(found, [])
+        self.assertIn("apps/observer/internal/act/act.go", act)
+
+    def test_it_runs_four_fixed_commands_of_run_py(self):
+        """Each argument vector is a fixed list of words; a person's values are only ever appended as --name=value."""
+        code = "\n".join(line.split("//", 1)[0] for path in sorted(self.ACT.glob("*.go")) if not path.name.endswith("_test.go")
+                         for line in path.read_text(encoding="utf-8").splitlines())
+        for vector in ('[]string{"decide", "--json"}', '[]string{"factory", "status"}', '[]string{"factory", "stop"}',
+                       '[]string{"decide", "do", d.Ticket, d.Option}', '"--via=floor", "--json"', '"-I", "-B", r.cfg.Script, "--project=" + r.cfg.Project'):
+            self.assertIn(vector, code)
+        self.assertEqual(sorted(set(re.findall(r'\bflag\("([a-z-]+)"', code))), ["adr", "answers-file", "by", "reason", "test-cmd"])
 
     def test_it_never_names_the_factory_switch(self):
         found = []
         for path in self.sources():
             text = path.read_text(encoding="utf-8")
-            found += [f"{path.relative_to(ROOT)}: {word}" for word in ("factory enable", '"enable"', "--confirm", "--include-backlog", "runner.json.tmp")
+            found += [f"{path.relative_to(ROOT)}: {word}" for word in ("factory enable", "factory start", "--persistent", '"enable"', "--confirm", "--include-backlog", "runner.json.tmp")
                       if word in text]
+            if path.parent == self.ACT:  # the one package that runs anything names no other command of run.py
+                found += [f"{path.relative_to(ROOT)}: {word}" for word in ('"start"', '"dispatch"', '"pull"', '"resume"', '"pause"', '"serve"', '"tick"') if word in text]
         self.assertEqual(found, [])
 
-    def test_mach_scripts_are_named_only_in_comments_notes_and_the_redaction_allowlist(self):
-        """run.py and the supervisor's modules may be named to explain or to keep a script's name
-        in redacted text, never anywhere a program could be started from."""
+    def test_mach_scripts_are_named_only_in_comments_notes_the_redaction_allowlist_and_internal_act(self):
+        """run.py and the supervisor's modules may be named to explain or to keep a script's name in redacted text;
+        only internal/act names run.py where a program is started from, and no other script anywhere."""
         allowlist = OBSERVER / "internal" / "redact" / "allow.go"
         found = []
         for path in self.sources():
@@ -90,7 +107,10 @@ class TheObserverCannotActTest(unittest.TestCase):
                 continue
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 code = line.split("//", 1)[0]
-                if any(script in code for script in self.SCRIPTS) and '"note":' not in code:
+                named = [script for script in self.SCRIPTS if script in code]
+                if path.parent == self.ACT:
+                    named = [script for script in named if script != "run.py"]
+                if named and '"note":' not in code:
                     found.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()}")
         self.assertEqual(found, [])
 
@@ -112,9 +132,11 @@ class TheSkillStepTest(unittest.TestCase):
         self.assertIn("apps/observer/build.sh", self.step)
         self.assertIn("Open: http://127.0.0.1:", self.step)
 
-    def test_it_says_what_the_floor_cannot_do(self):
-        for words in ("read-only", "Live Factory", "Simulation", "never affects the Factory", "enable", "approve", "merge"):
+    def test_it_says_what_the_floor_does_and_cannot_do(self):
+        """M23: a person decides and stops in the Floor, through MACH; it never enables, starts or dispatches work."""
+        for words in ("Live Factory", "Simulation", "never affects the Factory", "Needs you", "Stop", "decide do", "never enables, starts or dispatches"):
             self.assertIn(words, self.step, words)
+        self.assertNotIn("read-only", self.step)
 
     def test_the_flags_it_names_exist(self):
         main = (OBSERVER / "cmd" / "mach-observer" / "main.go").read_text(encoding="utf-8")

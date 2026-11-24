@@ -95,8 +95,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	port := flags.Int("port", 0, "the loopback port to listen on (default: a free one)")
 	memory := flags.Int("memory-events", store.DefaultMaxMemory, "how many recent events to hold in memory and serve by cursor")
 	showVersion := flags.Bool("version", false, "print the MACH release this program was built for, and exit")
-	machRun := flags.String("mach-run", "", "MACH's run.py, for decisions and the stop in the Factory Floor (default: beside this program's MACH, then the project's install)")
-	python := flags.String("python", "", "the Python interpreter that runs run.py (default: python3 on PATH)")
+	machRun := flags.String("mach-run", "", "the run skill's main script of MACH, for decisions and the stop in the Factory Floor (default: beside this program's MACH, then the project's install)")
+	python := flags.String("python", "", "the Python interpreter that runs MACH (default: python3 on PATH)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -248,7 +248,7 @@ func actor(root, indexDir, explicit, python string) (*act.Runner, string) {
 	exe, _ := os.Executable()
 	found, err := act.LocateScript(explicit, exe, root)
 	if err != nil {
-		return nil, "MACH's run.py was not found"
+		return nil, "MACH was not found beside this program or in the project"
 	}
 	interpreter, err := act.LocatePython(python)
 	if err != nil {
