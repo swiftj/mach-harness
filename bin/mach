@@ -686,7 +686,7 @@ def worktree_settings(project: Path, dry: bool) -> None:
         print(f"  git      could not set {WORKTREE_SETTING} ({exc.__class__.__name__}). Run in the project: {command}")
 
 
-# The shared remote on GitHub, read as Product Studio reads it (skills/studio/scripts/collab.py): the address as it is
+# The shared remote on GitHub, read as Product Studio reads it: the address as it is
 # configured, never one rewritten by url.<base>.insteadOf. Only OWNER/REPO is ever printed, never the address.
 GITHUB_REMOTE_RE = re.compile(r"^(?:https://(?:[^/@\s]+@)?github\.com/|ssh://git@github\.com/|git@github\.com:)"
                               r"([A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}?)(?:\.git)?/?$")

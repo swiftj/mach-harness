@@ -119,6 +119,7 @@ export const GATE_REASON_WORDS: Readonly<Record<string, string>> = {
   "spec-wrong-folder": "the spec is not in the slices folder",
   "ticket-id-invalid": "that is not a ticket ID",
   "ticket-missing": "the local ticket does not exist",
+  "ticket-not-filed": "the ticket could not be filed",
   "ticket-unreadable": "the local ticket could not be read",
   "title-missing": "the architecture decision has no usable title",
   "uncommitted-unsaved": "uncommitted work could not be saved",

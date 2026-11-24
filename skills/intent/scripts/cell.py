@@ -2567,7 +2567,7 @@ def ticket_new_in_tracker(project: Path, args: argparse.Namespace, provider: str
         made = None
     if not isinstance(made, dict) or not made.get("ticket_id"):
         said = (done.stderr.strip() or done.stdout.strip() or "the ticket station printed nothing").splitlines()[-1]
-        raise CellError("The ticket could not be filed: " + (said[len("error: "):] if said.startswith("error: ") else said))
+        raise CellError("The ticket could not be filed: " + (said[len("error: "):] if said.startswith("error: ") else said), code="ticket-not-filed")
     return {key: made[key] for key in ("ticket_id", "provider", "path", "url", "note") if made.get(key)}
 
 
