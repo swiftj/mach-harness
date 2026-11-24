@@ -34,6 +34,7 @@ type Lifecycle struct {
 	decided  map[int64]int64  // round -> review.decided records read (a later start of that round is its repeat)
 	stage    string           // the stage the log implies (the last record that carried one)
 	lastLine int64
+	inVisit  string // the station whose visit the log's latest station.entered opened, until it exits
 }
 
 type visit struct {
@@ -50,6 +51,11 @@ func NewLifecycle(ticket, gen, root string, identity *Identity) *Lifecycle {
 
 // Key is the partition key.
 func (l *Lifecycle) Key() string { return l.key }
+
+// InVisit is the station whose visit is open at the end of the log (the latest station.entered,
+// not yet followed by its station.exited), or "". Inside its visit a station writes its own files
+// before its exit record, so cell.json may be ahead of the log for as long as the visit lasts.
+func (l *Lifecycle) InVisit() string { return l.inVisit }
 
 // ImpliedStage is the stage the log implies, and the last line read.
 func (l *Lifecycle) ImpliedStage() (string, int64) { return l.stage, l.lastLine }
@@ -205,6 +211,12 @@ func (l *Lifecycle) Line(line []byte, r Read) []*event.Event {
 	}
 	if s, ok := ev.Data["stage"].(string); ok && (typ == "station.entered" || typ == "station.exited") {
 		l.stage = s
+	}
+	switch {
+	case typ == "station.entered":
+		l.inVisit = station
+	case typ == "station.exited" && station == l.inVisit:
+		l.inVisit = ""
 	}
 	out = append(out, ev)
 	out = append(out, l.reconstruct(ev, data, r)...)

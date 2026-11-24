@@ -188,9 +188,22 @@ const CELL_PLACEHOLDERS = ["title", "summary", "risk", "appType"] as const;
  * its ticket (slice.materialized), so the link does not depend on which arrived first (D5). Agents
  * met before their cell (stray) are adopted when it opens.
  */
-function ensureCell(s: Scene, e: AnyV3Event, definitions: ProductDefinitions): Scene {
+function ensureCell(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Scene {
   const ticket = e.ids.ticket_id;
-  if (!ticket || s.cells[ticket]) return s;
+  if (!ticket) return input;
+  let s = input;
+  const known = s.cells[ticket];
+  if (known) {
+    // The same ticket opened again after its earlier run finished (a reissued slice keeps its
+    // ticket; the observer names the new run cell:<ticket>~2): a record of another cell instance
+    // after the earlier run's archive or run record starts this run's cell. The earlier run's
+    // records all come before its own cleanup, so they never reach here.
+    const another = e.ids.cell_instance && known.cellInstance && e.ids.cell_instance !== known.cellInstance;
+    if (!another || (known.archived === null && known.runRecord === null)) return s;
+    const cells = { ...s.cells };
+    delete (cells as Record<string, CellState>)[ticket];
+    s = { ...s, cells };
+  }
   const named = e.ids.slice_id && !labelled(e, "slice_id") ? e.ids.slice_id : "";
   const sliceId = named || (Object.values(s.slices).find((x) => x.ticketId === ticket)?.id ?? "");
   const def = sliceId ? definitions.slices[sliceId] : undefined;

@@ -259,6 +259,7 @@ export const GATE_REASON_WORDS: Readonly<Record<string, string>> = {
   "main-conflict": "bringing the branch up to date with main conflicts",
   "audit-missing": "there is no audit report",
   "audit-stale": "the audit report is out of date",
+  "audit-helper-missing": "the build station could not read the audit report: a helper it needs is not installed beside it",
   "audit-bronze": "the repository's readiness tier is Bronze",
   "no-test-command": "no test command is known for the build",
   "command-missing": "the command is not installed",
