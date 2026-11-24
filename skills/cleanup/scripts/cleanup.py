@@ -62,7 +62,7 @@ def is_byproduct(name: str) -> bool:
 class CleanupError(Exception):
     """A gate refused. Printed without a traceback; exit code 1. `code` names the gate's reason for the lifecycle log."""
 
-    def __init__(self, message: str = "", code: str = "refused") -> None:
+    def __init__(self, message: str = "", code: str = "not-recorded") -> None:
         super().__init__(message)
         self.code = code
 
@@ -123,15 +123,15 @@ def relative(project: Path, path: Path) -> str:
 def locked_cell_path(project: Path, ticket_id: str) -> Path:
     """The one folder this script may delete for a ticket, or a refusal."""
     if not TICKET_ID_RE.match(ticket_id):
-        raise CleanupError(f"'{ticket_id}' is not a usable ticket ID.")
+        raise CleanupError(f"'{ticket_id}' is not a usable ticket ID.", code="bad-ticket-id")
     base = project / ".factory" / "worktrees"
     root = base / ticket_id
     if root.is_symlink():
-        raise CleanupError(f"{root} is a symbolic link. Cleanup only removes real cell folders; look at where it points and remove the link yourself.")
+        raise CleanupError(f"{root} is a symbolic link. Cleanup only removes real cell folders; look at where it points and remove the link yourself.", code="cell-folder-symlink")
     if base.resolve() != project.resolve() / ".factory" / "worktrees" or root.resolve().parent != base.resolve():
-        raise CleanupError(f"{root} does not resolve to a folder inside {project / '.factory' / 'worktrees'}. Nothing was touched.")
+        raise CleanupError(f"{root} does not resolve to a folder inside {project / '.factory' / 'worktrees'}. Nothing was touched.", code="cell-folder-outside")
     if (root / "repo").is_symlink():
-        raise CleanupError(f"{root / 'repo'} is a symbolic link, not the cell's worktree. Nothing was touched.")
+        raise CleanupError(f"{root / 'repo'} is a symbolic link, not the cell's worktree. Nothing was touched.", code="cell-worktree-symlink")
     return root
 
 
@@ -143,8 +143,8 @@ class Cell:
         self.info = load_json(self.root / "cell.json")
         if not isinstance(self.info, dict):
             if self.root.is_dir():
-                raise CleanupError(f"The cell folder for {ticket_id} has no readable cell.json, so nothing about it can be checked. Inspect {self.root} yourself.")
-            raise CleanupError(f"No cell for {ticket_id}.")
+                raise CleanupError(f"The cell folder for {ticket_id} has no readable cell.json, so nothing about it can be checked. Inspect {self.root} yourself.", code="cell-json-unreadable")
+            raise CleanupError(f"No cell for {ticket_id}.", code="no-cell")
         self.repo = self.root / "repo"
         self.build = load_dict(self.root / "build-report.json")
 
@@ -317,10 +317,10 @@ def bundle_lanes(project: Path, refs: List[str], excludes: List[str], path: Path
     """Save the commits only the lane branches hold as a git bundle, and check git can read it back."""
     done = git(project, "bundle", "create", str(path), *refs, *(["--not", *excludes] if excludes else []))
     if done.returncode != 0 or not path.is_file() or path.stat().st_size == 0:
-        raise CleanupError(f"git could not bundle the lane branches {', '.join(refs)}: {done.stderr.strip()}")
+        raise CleanupError(f"git could not bundle the lane branches {', '.join(refs)}: {done.stderr.strip()}", code="lanes-bundle-failed")
     check = git(project, "bundle", "verify", str(path))
     if check.returncode != 0:
-        raise CleanupError(f"The bundle of the lane branches does not verify: {check.stderr.strip()}")
+        raise CleanupError(f"The bundle of the lane branches does not verify: {check.stderr.strip()}", code="lanes-bundle-unverified")
 
 
 def save_uncommitted(tar: tarfile.TarFile, repo: Path, prefix: str) -> List[str]:
@@ -329,7 +329,7 @@ def save_uncommitted(tar: tarfile.TarFile, repo: Path, prefix: str) -> List[str]
     written: List[str] = []
     patch = subprocess.run(["git", "diff", "HEAD", "--binary"], cwd=str(repo), capture_output=True)
     if patch.returncode != 0:
-        raise CleanupError(f"git could not write the uncommitted changes of {repo} as a patch: " + patch.stderr.decode("utf-8", "replace").strip())
+        raise CleanupError(f"git could not write the uncommitted changes of {repo} as a patch: " + patch.stderr.decode("utf-8", "replace").strip(), code="lane-patch-failed")
     if patch.stdout:
         add_bytes(tar, f"{prefix}/uncommitted.patch", patch.stdout)
         written.append(f"{prefix}/uncommitted.patch")
@@ -422,15 +422,22 @@ def unmerged_commits(project: Path, branch: str, refs: List[str]) -> int:
     return int(done.stdout.strip()) if done.returncode == 0 and done.stdout.strip().isdigit() else 0
 
 
+def kept_prefixes(ticket_id: str) -> Tuple[str, ...]:
+    """Where MACH keeps work it set aside for a ticket, never dropped: a re-plan's old tips and lanes (cell.py replan), a lane's
+    uncommitted files (build.py, at the join or when a lane is made fresh), and a set-aside lane's tip (build.py)."""
+    return (f"refs/mach/replan/{ticket_id}/", f"refs/mach/lane-files/{ticket_id}/", f"refs/mach/lanes-set-aside/{ticket_id}/")
+
+
 def replan_refs(project: Path, ticket_id: str) -> List[Tuple[str, str]]:
-    """The old branch tips a re-plan saved for this ticket (cell.py replan): every ref under exactly
-    refs/mach/replan/<ticket_id>/, with the commit it points at. Another ticket's refs are never listed."""
-    prefix = f"refs/mach/replan/{ticket_id}/"
+    """Every ref MACH kept for this ticket (kept_prefixes): the old branch tips and lanes a re-plan saved under
+    refs/mach/replan/<ticket_id>/, a lane's set-aside files under refs/mach/lane-files/<ticket_id>/ and a set-aside lane's tip
+    under refs/mach/lanes-set-aside/<ticket_id>/, each with the commit it points at. Another ticket's refs are never listed."""
     found = []
-    for line in git(project, "for-each-ref", "--format=%(refname) %(objectname)", prefix).stdout.splitlines():
-        name, _, sha = line.partition(" ")
-        if name.startswith(prefix) and len(name) > len(prefix) and sha.strip():
-            found.append((name, sha.strip()))
+    for prefix in kept_prefixes(ticket_id):
+        for line in git(project, "for-each-ref", "--format=%(refname) %(objectname)", prefix).stdout.splitlines():
+            name, _, sha = line.partition(" ")
+            if name.startswith(prefix) and len(name) > len(prefix) and sha.strip():
+                found.append((name, sha.strip()))
     return found
 
 
@@ -758,7 +765,7 @@ def survey(cell: Cell, abandon: Optional[str], merged_as: Optional[str] = None) 
     if bundle:
         members.append(f"{ticket_id}/branch.bundle (the {unmerged} commit(s) of {branch} that are not on {name or 'any other branch'})")
     if replan_unkept:
-        members.append(f"{ticket_id}/replans.bundle (the {replan_unkept} commit(s) the re-plans set aside, under {', '.join(replans)})")
+        members.append(f"{ticket_id}/replans.bundle (the {replan_unkept} commit(s) of the refs MACH kept for this ticket: re-plans, set-aside lanes and lane files, under {', '.join(replans)})")
     if dirty:
         members.append(f"{ticket_id}/uncommitted.patch and {ticket_id}/untracked/ (the uncommitted work)")
     lanes = lane_survey(cell, refs)  # M22: None for a ticket without lanes, which leaves everything below as before
@@ -808,20 +815,20 @@ def bundle_branch(cell: Cell, refs: List[str], path: Path) -> None:
     if done is None or done.returncode != 0:
         done = git(project, "bundle", "create", str(path), ref)
     if done.returncode != 0 or not path.is_file() or path.stat().st_size == 0:
-        raise CleanupError(f"git could not bundle the branch {cell.branch}: {done.stderr.strip()}")
+        raise CleanupError(f"git could not bundle the branch {cell.branch}: {done.stderr.strip()}", code="branch-bundle-failed")
     check = git(project, "bundle", "verify", str(path))
     if check.returncode != 0:
-        raise CleanupError(f"The bundle of {cell.branch} does not verify: {check.stderr.strip()}")
+        raise CleanupError(f"The bundle of {cell.branch} does not verify: {check.stderr.strip()}", code="branch-bundle-unverified")
 
 
 def bundle_replans(project: Path, refs: List[str], excludes: List[str], path: Path) -> None:
     """Save the commits a re-plan set aside (the refs under refs/mach/replan/<ticket>/) as a git bundle, and check git can read it back."""
     done = git(project, "bundle", "create", str(path), *refs, *(["--not", *excludes] if excludes else []))
     if done.returncode != 0 or not path.is_file() or path.stat().st_size == 0:
-        raise CleanupError(f"git could not bundle the re-plan refs {', '.join(refs)}: {done.stderr.strip()}")
+        raise CleanupError(f"git could not bundle the re-plan refs {', '.join(refs)}: {done.stderr.strip()}", code="kept-refs-bundle-failed")
     check = git(project, "bundle", "verify", str(path))
     if check.returncode != 0:
-        raise CleanupError(f"The bundle of the re-plan refs does not verify: {check.stderr.strip()}")
+        raise CleanupError(f"The bundle of the re-plan refs does not verify: {check.stderr.strip()}", code="kept-refs-bundle-unverified")
 
 
 def write_archive(cell: Cell, target: Path, dirty: List[str], bundle_refs: Optional[List[str]] = None, merged_as: Optional[str] = None,
@@ -871,7 +878,7 @@ def write_archive(cell: Cell, target: Path, dirty: List[str], bundle_refs: Optio
             if dirty:
                 patch = subprocess.run(["git", "diff", "HEAD", "--binary"], cwd=str(cell.repo), capture_output=True)
                 if patch.returncode != 0:
-                    raise CleanupError("git could not write the uncommitted changes as a patch: " + patch.stderr.decode("utf-8", "replace").strip())
+                    raise CleanupError("git could not write the uncommitted changes as a patch: " + patch.stderr.decode("utf-8", "replace").strip(), code="patch-failed")
                 if patch.stdout:
                     add_bytes(tar, f"{prefix}/uncommitted.patch", patch.stdout)
                     expected.append(f"{prefix}/uncommitted.patch")
@@ -891,13 +898,13 @@ def write_archive(cell: Cell, target: Path, dirty: List[str], bundle_refs: Optio
             names = set(tar.getnames())
         missing = [name for name in expected if name not in names]
         if partial.stat().st_size == 0 or missing or f"{prefix}/cell.json" not in names:
-            raise CleanupError(f"The archive did not come out complete (missing: {', '.join(missing[:5]) or 'cell.json'}).")
+            raise CleanupError(f"The archive did not come out complete (missing: {', '.join(missing[:5]) or 'cell.json'}).", code="archive-incomplete")
         if any(name == f"{prefix}/repo" or name.startswith(f"{prefix}/repo/") for name in names):
-            raise CleanupError("The archive unexpectedly contains the worktree.")
+            raise CleanupError("The archive unexpectedly contains the worktree.", code="archive-holds-worktree")
         if any(is_lane_tree(name.split("/")[1:]) for name in names):
-            raise CleanupError("The archive unexpectedly contains a lane's worktree.")
+            raise CleanupError("The archive unexpectedly contains a lane's worktree.", code="archive-holds-lane-worktree")
         if target.exists():
-            raise CleanupError(f"{target} appeared while archiving; refusing to overwrite it.")
+            raise CleanupError(f"{target} appeared while archiving; refusing to overwrite it.", code="archive-exists")
         partial.replace(target)
     except (OSError, tarfile.TarError, CleanupError) as exc:
         if partial.exists():
@@ -908,8 +915,26 @@ def write_archive(cell: Cell, target: Path, dirty: List[str], bundle_refs: Optio
             if leftover.exists():
                 leftover.unlink()
     if not target.is_file() or target.stat().st_size == 0:
-        raise CleanupError(f"The archive {target} is missing or empty after writing, so nothing was deleted.")
+        raise CleanupError(f"The archive {target} is missing or empty after writing, so nothing was deleted.", code="archive-missing")
     return sorted(names)
+
+
+def kept_refs_result(ticket_id: str, archive: str, plan: Dict[str, Any], bundled: bool) -> Optional[Dict[str, Any]]:
+    """Where the work MACH kept for this ticket under refs/mach/ is after cleanup, and the exact command that brings it back."""
+    refs = list(plan.get("replan_refs") or [])
+    if not refs:
+        return None
+    member = f"{ticket_id}/replans.bundle"
+    if bundled:
+        branch = plan.get("branch")
+        first = f"{ticket_id}/branch.bundle" if plan["would"].get("bundle_branch") else None  # what replans.bundle builds on, when it was bundled too
+        return {"refs": refs, "bundle": member,
+                "where": f"Every ref MACH kept for {ticket_id} ({len(refs)}) is in the archive {archive}, in {member}, under its own name.",
+                "bring_back": (f"tar -xzf {archive} {first} {member} && git fetch {first} {branch}:{branch} && " if first else f"tar -xzf {archive} {member} && ")
+                              + f"git fetch {member} 'refs/mach/*:refs/mach/*'"}
+    return {"refs": refs, "bundle": None,
+            "where": f"Every commit the refs MACH kept for {ticket_id} held is already on {plan.get('default_branch') or 'the default branch'}, so none needed the archive.",
+            "bring_back": None}
 
 
 def cmd_plan(project: Path, args: argparse.Namespace) -> int:
@@ -955,7 +980,7 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
         if cell.repo.exists():
             done = git(project, "worktree", "remove", "--force", str(cell.repo))
             if done.returncode != 0 or cell.repo.exists():
-                raise CleanupError(f"git could not remove the worktree {cell.repo}: {done.stderr.strip() or done.stdout.strip()} {kept}")
+                raise CleanupError(f"git could not remove the worktree {cell.repo}: {done.stderr.strip() or done.stdout.strip()} {kept}", code="cell-worktree-not-removed")
             removed.append(relative(project, cell.repo))
         else:
             git(project, "worktree", "prune")  # the folder is already gone; drop git's stale record so the branch is free
@@ -964,7 +989,7 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
     try:
         shutil.rmtree(str(root))
     except OSError as exc:
-        raise CleanupError(f"Could not remove {root}: {exc}. {kept}")
+        raise CleanupError(f"Could not remove {root}: {exc}. {kept}", code="cell-folder-not-removed")
     removed.append(relative(project, root))
     lanes_done = finish_lanes(cell, lanes) if lanes is not None else None
 
@@ -980,7 +1005,7 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
     replans_deleted, replan_note = [], None
     for ref in plan["would"]["delete_replan_refs"]:
         sha = planned.get(ref)
-        if sha and ref.startswith(f"refs/mach/replan/{cell.ticket_id}/") and git(project, "update-ref", "-d", ref, sha).returncode == 0:
+        if sha and ref.startswith(kept_prefixes(cell.ticket_id)) and git(project, "update-ref", "-d", ref, sha).returncode == 0:
             replans_deleted.append(ref)
     kept_refs = [ref for ref in plan["would"]["delete_replan_refs"] if ref not in replans_deleted]
     if kept_refs:
@@ -997,6 +1022,7 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
                     f"git fetch {cell.ticket_id}/branch.bundle {cell.branch}:{cell.branch}") if bundled else None,
         "removed": removed, "branch": cell.branch, "branch_deleted": branch_deleted, "branch_note": note,
         "replans_bundle": f"{cell.ticket_id}/replans.bundle" if replans else None, "replan_refs_deleted": replans_deleted, "replan_note": replan_note,
+        "kept_refs": kept_refs_result(cell.ticket_id, archive, plan, bool(replans)),
         "record": record, "run_log": relative(project, target.parent / RUN_LOG), "published": published,
         "observe_due": observe["due"], "finished_since_last_observe_pass": observe["finished_since_last_pass"],
         "next": f"Set the ticket {cell.ticket_id} to {state}, using the ticket skill."
@@ -1053,7 +1079,7 @@ def cmd_orphans(project: Path, args: argparse.Namespace) -> int:
     if args.prune:
         done = git(project, "worktree", "prune")
         if done.returncode != 0:
-            raise CleanupError("git worktree prune failed: " + done.stderr.strip())
+            raise CleanupError("git worktree prune failed: " + done.stderr.strip(), code="prune-failed")
         result["pruned"] = True
         result["prunable_worktrees_left"] = prunable_worktrees(project)
     result["note"] = "Nothing was removed." + (" 'git worktree prune' dropped git's stale records; no files were touched." if args.prune else "")

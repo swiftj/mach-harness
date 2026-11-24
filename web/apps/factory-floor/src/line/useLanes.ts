@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ObserverClient } from "../live/observer";
 import type { CellState } from "../sim";
-import { readLanesReply, type LanesReply } from "./lanesModel";
+import { readCellBuild, type CellBuild } from "./lanesModel";
 
 /** What a ticket's events have recorded so far: when it changes, the lanes are read again. */
 export function lanesKey(cell: Pick<CellState, "tasks" | "gateLog" | "visits"> | undefined): string {
@@ -16,11 +16,12 @@ export function lanesKey(cell: Pick<CellState, "tasks" | "gateLog" | "visits"> |
 }
 
 /**
- * The lanes of each wanted ticket (ticket -> what its events have recorded so far). A ticket is in
- * the map once the observer answered for it: its reply, or null for a build not in lanes.
+ * The lanes of each wanted ticket (ticket -> what its events have recorded so far), and its changed
+ * commands. A ticket is in the map once the observer answered for it: its lanes (null for a build
+ * not in lanes) and its command changes (empty when none).
  */
-export function useCellLanes(client: ObserverClient | null | undefined, wanted: ReadonlyMap<string, string>): ReadonlyMap<string, LanesReply | null> {
-  const [replies, setReplies] = useState<ReadonlyMap<string, LanesReply | null>>(() => new Map());
+export function useCellLanes(client: ObserverClient | null | undefined, wanted: ReadonlyMap<string, string>): ReadonlyMap<string, CellBuild> {
+  const [replies, setReplies] = useState<ReadonlyMap<string, CellBuild>>(() => new Map());
   const asked = useRef(new Map<string, string>());
   const signature = [...wanted].map(([t, k]) => `${t}=${k}`).join("|");
   useEffect(() => {
@@ -33,7 +34,7 @@ export function useCellLanes(client: ObserverClient | null | undefined, wanted: 
       for (const [ticket, key] of due) {
         if (ctl.signal.aborted) return;
         try {
-          const reply = readLanesReply(await read(ticket, ctl.signal));
+          const reply = readCellBuild(await read(ticket, ctl.signal));
           if (ctl.signal.aborted) return;
           asked.current.set(ticket, key);
           setReplies((m) => new Map(m).set(ticket, reply));

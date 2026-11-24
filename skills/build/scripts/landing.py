@@ -21,9 +21,14 @@ anything fails, the ticket's branch is where it was. A join stopped at any point
 the fork point in a fresh join worktree (discarding only an earlier attempt's copies of lane commits), and if the
 ticket's branch was already moved it recognises the landed commits and finishes, so no commit is ever landed twice.
 
-When the plan's independence was false (two lanes changed one file, or a lane changed a test file another lane holds),
-the later lane in plan order is set aside, never the earlier; nothing of it lands, and the result says which lane,
-which file, which earlier lane and why, so the station can hand its tasks back to be redone in the cell. When every
+When the plan's independence was false (two lanes changed one file, a lane changed a test file another lane holds, two
+lanes' file names differ only by letter case, or one lane's file is another's folder), the later lane in plan order is set
+aside, never the earlier; nothing of it lands, and the result says which lane, which file, which earlier lane and why, so
+the station can have its tasks built again in the cell. A lane is set aside the same way, never a reason to stop, when its
+commits are not one chain from the fork point, when its branch holds commits no task recorded, when one of its commits does
+not apply on the landed work, or when a commit made on the ticket's branch while the lanes were open changed its files. A
+set-aside lane's tip is kept under a ref the station names before its branch is removed. A ticket's branch that moved while
+the lanes were open is never undone: the lanes land on its head. When every
 lane passed but the joined suite fails, landing does not guess: it reports the suite's output, the failing tests, the
 lanes whose files they name and the files a fix may change, and leaves the ticket's branch where it was.
 
@@ -51,6 +56,12 @@ except Exception:  # noqa: BLE001
 LANE_BRANCH_PREFIX = "mach-lane/"
 SAME_FILE = "same-file"
 FROZEN_TEST = "frozen-test"
+CASE_CLASH = "case-clash"  # two lanes' file names differ only by letter case
+FILE_FOLDER = "file-folder"  # one lane's file is another lane's folder
+BRANCH_MOVED = "branch-moved"  # a commit made on the ticket's branch while the lanes were open changed the lane's file
+DID_NOT_APPLY = "did-not-apply"  # a lane commit did not apply on the landed work, or did not land as exactly itself
+UNRECORDED = "unrecorded-commits"  # the lane's branch holds commits no task recorded
+LANE_HISTORY = "lane-history"  # the lane's recorded commits are not one chain from the fork point
 # Files that running a build or a test suite leaves behind (build.py's BYPRODUCT_RE): never work that has not landed.
 BYPRODUCT_RE = re.compile(
     r"(^|/)(__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.tox|\.nox|htmlcov|\.hypothesis|node_modules|\.gradle|\.next|\.turbo|coverage)(/|$)"
@@ -222,10 +233,29 @@ def overlaps(repo: Path, fork: str, lanes: Dict[str, List[str]], test_files: Dic
             for name in sorted((changed[lane] & changed[other]) | (changed[lane] & other_tests) | (changed[other] & own_tests)):
                 why = FROZEN_TEST if name in own_tests or name in other_tests else SAME_FILE
                 clashes.append({"lane": lane, "other": other, "file": name, "why": why})
+            for name, why in unrepresentable(changed[lane], changed[other]):
+                clashes.append({"lane": lane, "other": other, "file": name, "why": why})
         if clashes:
             found.extend(clashes)
         else:
             kept.append(lane)
+    return found
+
+
+def unrepresentable(mine: Set[str], theirs: Set[str]) -> List[Tuple[str, str]]:
+    """Clashes Git can hold but a checkout cannot, between two sets of changed files: two names that differ only by letter
+    case (one file on a case-insensitive disk), and a file of one set that is a folder of the other. Each as (path, why)."""
+    found: List[Tuple[str, str]] = []
+    folded: Dict[str, Set[str]] = {}
+    for name in theirs:
+        folded.setdefault(name.lower(), set()).add(name)
+    for name in sorted(mine):
+        if any(other != name for other in folded.get(name.lower(), ())):
+            found.append((name, CASE_CLASH))
+    def folders(names: Set[str]) -> Set[str]:
+        return {"/".join(name.split("/")[:index]) for name in names for index in range(1, name.count("/") + 1)}
+    for name in sorted((mine & folders(theirs)) | (theirs & folders(mine))):
+        found.append((name, FILE_FOLDER))
     return found
 
 
@@ -464,18 +494,24 @@ def remove(project: Path, folders: List[Path], branches: List[str], *, landed_on
 
 # ---------------------------------------------------------------- the whole join, section 8.1
 
-def already_landed(cell_repo: Path, fork: str, commits_in_order: List[str], *, git: Optional[Runner] = None) -> Optional[List[Dict[str, Any]]]:
-    """When the ticket's branch was already fast-forwarded by an earlier join that stopped before it finished: the landed
-    commits (one per lane commit, in order, same change and message, no merge), else None."""
+def already_landed(cell_repo: Path, fork: str, commits_in_order: List[str], *, git: Optional[Runner] = None) -> Optional[Dict[str, Any]]:
+    """When the ticket's branch was already fast-forwarded by an earlier join that stopped before it finished: its last
+    commits are one copy of each lane commit, in order (same change and message, one parent each), on the fork point or on
+    a commit after it (an earlier join that landed on a branch that had moved). Returns {"landed", "base"}, else None."""
     git = git or run_git
-    fork = _commit(git, cell_repo, fork)
-    if git(["merge-base", "--is-ancestor", fork, "HEAD"], cell_repo).returncode != 0:
+    if not commits_in_order:
         return None
-    since = _ok(git, ["rev-list", "--reverse", f"{fork}..HEAD"], cell_repo, "git-failed", "Git could not read the ticket's branch").split()
-    if not commits_in_order or len(since) != len(commits_in_order):
+    since = list(reversed(_ok(git, ["rev-list", "--first-parent", "-n", str(len(commits_in_order)), "HEAD"], cell_repo, "git-failed",
+                              "Git could not read the ticket's branch").split()))
+    if len(since) != len(commits_in_order):
+        return None
+    first = _parents(git, cell_repo, since[0])
+    if len(first) != 1:
+        return None
+    base = previous = first[0]
+    if fork and base != _commit(git, cell_repo, fork) and git(["merge-base", "--is-ancestor", fork, base], cell_repo).returncode != 0:
         return None
     landed = []
-    previous = fork
     for new, rev in zip(since, commits_in_order):
         sha = _commit(git, cell_repo, rev)
         if _parents(git, cell_repo, new) != [previous]:
@@ -485,7 +521,23 @@ def already_landed(cell_repo: Path, fork: str, commits_in_order: List[str], *, g
             return None
         landed.append({"lane_commit": sha, "commit": new, "patch_id": pid})
         previous = new
-    return landed
+    return {"landed": landed, "base": base}
+
+
+def trailing_copies(cell_repo: Path, commits: List[str], *, git: Optional[Runner] = None) -> int:
+    """How many of the branch's last commits are copies of lane commits (same change and message): what an earlier join
+    landed on top of a branch that had moved. Only the commits below them are the ones made on the branch some other way."""
+    git = git or run_git
+    wanted = {(patch_id(cell_repo, sha, git), _subject_and_body(git, cell_repo, sha)) for sha in commits}
+    count, rev = 0, "HEAD"
+    while count < len(commits):
+        sha = git(["rev-parse", "--verify", "-q", rev + "^{commit}"], cell_repo).stdout.strip()
+        if not sha or len(_parents(git, cell_repo, sha)) != 1 \
+                or (patch_id(cell_repo, sha, git), _subject_and_body(git, cell_repo, sha)) not in wanted:
+            break
+        count += 1
+        rev = sha + "^"
+    return count
 
 
 def failing_tests(output: str) -> List[str]:
@@ -518,7 +570,7 @@ def join_lanes(project: Path, cell_repo: Path, join_repo: Path, join_branch: str
                tasks: Sequence[Dict[str, Any]], test_files: Dict[str, List[str]],
                run_suite: Callable[[Path], Dict[str, Any]],
                *, lane_folders: Optional[Dict[str, Path]] = None, lane_branches: Optional[Dict[str, str]] = None,
-               move_on_red: bool = False, git: Optional[Runner] = None,
+               move_on_red: bool = False, keep_ref: Optional[Callable[[str], str]] = None, git: Optional[Runner] = None,
                clock: Callable[[], float] = time.monotonic) -> Dict[str, Any]:
     """Bring the lanes together, section 8.1: check, land in the join worktree, run the whole suite there, move the
     ticket's branch, clean up.
@@ -528,6 +580,17 @@ def join_lanes(project: Path, cell_repo: Path, join_repo: Path, join_branch: str
     files. `run_suite(folder)` runs the whole test suite in `folder` and returns at least {"passed", "exit_code",
     "seconds", "output_tail"} (and "command"). `lane_folders` and `lane_branches`: each lane's worktree and branch,
     checked (a lane branch must end at its last listed commit) and removed after a finished landing.
+
+    A lane that cannot land as it is never stops the join: it is set aside, its tasks to be built again in the cell one at a
+    time, and its work is kept. A lane is set aside when it clashes with an earlier lane (the same file, a test file of the
+    other, two file names that differ only by letter case, a file that is the other's folder), when its recorded commits
+    are not one chain from the fork point or its branch holds commits no task recorded, when a commit made on the ticket's
+    branch while the lanes were open changed one of its files, or when one of its commits does not apply on the landed work.
+    `keep_ref(lane)` names a ref of the station's own under which a set-aside lane's tip is kept before its branch is
+    removed (`kept_as` in the result); without it, or when the ref cannot be made, the lane's branch is kept instead.
+
+    A ticket's branch that moved while the lanes were open (a person committed in the cell) is not undone: the lanes land on
+    its head, and `moved_branch` names the commits and files that were there.
 
     `move_on_red`: False (the default) leaves the ticket's branch where it was when the joined suite fails, and keeps the
     join worktree for the fix; True moves it to the landed tip anyway, as the design's section 8.3 words it.
@@ -548,12 +611,15 @@ def join_lanes(project: Path, cell_repo: Path, join_repo: Path, join_branch: str
         if item.get("lane_commit"):
             by_lane[lane].append(str(item["lane_commit"]))
     seconds: Dict[str, float] = {}
-    result: Dict[str, Any] = {"status": "REFUSED", "fork": fork, "tip": None, "branch_moved": False, "ticket_head": None,
+    result: Dict[str, Any] = {"status": "REFUSED", "fork": fork, "base": None, "tip": None, "branch_moved": False, "ticket_head": None,
                               "lanes": order, "landed": [], "set_aside": [], "tasks_without_commit": [], "suite": None,
-                              "interaction": None, "refused": None, "resumed": False, "removed": [], "left": [], "seconds": seconds}
+                              "interaction": None, "refused": None, "resumed": False, "moved_branch": None, "removed": [], "left": [],
+                              "seconds": seconds}
+    aside: Dict[str, Dict[str, Any]] = {}
+    tips: Dict[str, Optional[str]] = {}  # each lane's branch tip, where it has a branch
 
     def refuse(code: str, reason: str, commit: Optional[str] = None, left: Optional[List[str]] = None) -> Dict[str, Any]:
-        result.update({"status": "REFUSED", "refused": {"code": code, "reason": reason, "commit": commit}})
+        result.update({"status": "REFUSED", "refused": {"code": code, "reason": reason, "commit": commit}, "set_aside": []})
         result["left"] = list(left or []) + result["left"]
         head = git(["rev-parse", "HEAD"], cell_repo)
         result["ticket_head"] = head.stdout.strip() if head.returncode == 0 else None
@@ -562,6 +628,16 @@ def join_lanes(project: Path, cell_repo: Path, join_repo: Path, join_branch: str
     def timed(name: str, started: float) -> None:
         seconds[name] = round(clock() - started, 1)
 
+    def set_aside(lane: str, because: List[Dict[str, Any]]) -> None:
+        if lane in aside:
+            aside[lane]["because"] += because
+            return
+        aside[lane] = {"lane": lane, "tasks": [str(t.get("task")) for t in tasks if t.get("lane") == lane],
+                       "lane_commits": list(by_lane[lane]), "because": because}
+
+    def kept() -> List[str]:
+        return [lane for lane in order if lane not in aside]
+
     try:
         fork = _commit(git, project, fork)
         result["fork"] = fork
@@ -569,53 +645,100 @@ def join_lanes(project: Path, cell_repo: Path, join_repo: Path, join_branch: str
             return refuse("one-lane", "Lanes are joined only when two or more were opened and every task names its lane; "
                                       "with one lane the build stays in order in the cell, and there is nothing to land.")
         started = clock()
-        for lane in order:  # each lane's commits are a chain from the fork point, in its tasks' order, with nothing else on its branch
-            previous = fork
+        # Each lane's commits must be a chain from the fork point, in its tasks' order, with nothing else on its branch. A lane that
+        # is not is set aside (its work kept), never a reason to stop: its tasks are built again in the cell.
+        for lane in order:
+            previous: Optional[str] = fork
+            problem: Optional[Dict[str, Any]] = None
             for rev in by_lane[lane]:
-                sha = _commit(git, project, rev)
+                done = git(["rev-parse", "--verify", "-q", rev + "^{commit}"], project)
+                sha = done.stdout.strip()
+                if done.returncode != 0 or not SHA_RE.match(sha):
+                    problem = {"why": LANE_HISTORY, "commit": rev, "detail": f"{rev[:10]} is not a commit in this repository"}
+                    break
                 if _parents(git, project, sha) != [previous]:
-                    return refuse("lane-history", f"Lane {lane}'s commits are not one chain from the fork point in its tasks' order "
-                                                  f"({sha[:10]} does not follow {previous[:10]}). Nothing was landed.", commit=sha)
+                    problem = {"why": LANE_HISTORY, "commit": sha, "detail": f"{sha[:10]} does not follow {str(previous)[:10]}"}
+                    break
                 previous = sha
             branch = lane_branches.get(lane)
-            if branch:
-                tip = git(["rev-parse", "--verify", "-q", f"refs/heads/{branch}"], project).stdout.strip()
-                if tip and tip != previous:
-                    return refuse("lane-unrecorded-commits", f"Lane {lane}'s branch {branch} is at {tip[:10]}, not at its last task's commit "
-                                                             f"{previous[:10]}: it holds work no task recorded. Nothing was landed.")
-        clashes = overlaps(project, fork, {lane: by_lane[lane] for lane in order}, test_files, git=git)
-        aside = list(dict.fromkeys(item["lane"] for item in clashes))
-        for lane in aside:
-            result["set_aside"].append({"lane": lane, "tasks": [str(t.get("task")) for t in tasks if t.get("lane") == lane],
-                                        "lane_commits": list(by_lane[lane]),
-                                        "because": [{k: item[k] for k in ("other", "file", "why")} for item in clashes if item["lane"] == lane]})
-        landing_tasks = [t for t in tasks if t.get("lane") not in aside]
-        result["tasks_without_commit"] = [str(t.get("task")) for t in landing_tasks if not t.get("lane_commit")]
-        commits = [_commit(git, project, str(t["lane_commit"])) for t in landing_tasks if t.get("lane_commit")]
+            tip = git(["rev-parse", "--verify", "-q", f"refs/heads/{branch}"], project).stdout.strip() if branch else ""
+            tips[lane] = tip or None
+            if problem is None and tip and tip != previous:
+                unrecorded = git(["rev-list", f"{previous}..{tip}"], project).stdout.split()
+                problem = {"why": UNRECORDED, "commits": unrecorded,
+                           "detail": f"its branch {branch} is at {tip[:10]}, not at its last task's commit {str(previous)[:10]}"}
+            if problem is not None:
+                set_aside(lane, [problem])
         timed("check", started)
 
         head = _commit(git, cell_repo, "HEAD")
-        earlier = None if head == fork else already_landed(cell_repo, fork, commits, git=git)
-        if head != fork and earlier is None:
-            return refuse("branch-moved", f"The ticket's branch is at {head[:10]}, not at the fork point {fork[:10]} nor at the lanes' "
-                                          "landed work, so it moved some other way while the lanes were open. Nothing was landed.")
         if _dirty(git, cell_repo, untracked=False):
-            return refuse("cell-dirty", "The cell's own checkout has uncommitted changes, so nothing was landed.")
+            return refuse("cell-dirty", "The cell's own checkout has uncommitted changes to tracked files, so nothing was landed.")
 
-        task_of = {_commit(git, project, str(t["lane_commit"])): t for t in landing_tasks if t.get("lane_commit")}
+        def landing_order() -> List[str]:
+            clashes = overlaps(project, fork, {lane: by_lane[lane] for lane in kept()}, test_files, git=git)
+            for item in clashes:
+                set_aside(item["lane"], [{key: item[key] for key in ("other", "file", "why")}])
+            return [_commit(git, project, str(t["lane_commit"])) for t in tasks if t.get("lane") not in aside and t.get("lane_commit")]
+
+        earlier = None
+        base = fork
+        if head != fork:
+            # An earlier join that moved the branch and stopped before it finished, on the fork point or on a moved branch.
+            candidates = landing_order()
+            earlier = already_landed(cell_repo, fork, candidates, git=git)
+            if earlier is None:
+                copies = trailing_copies(cell_repo, candidates, git=git) if candidates else 0
+                base = _commit(git, cell_repo, f"HEAD~{copies}") if copies else head
+                moved_files = sorted(name for name in _ok(git, ["diff", "--name-only", "--no-renames", fork, base], cell_repo, "git-failed",
+                                                          "Git could not compare the ticket's branch with the fork point").splitlines() if name)
+                moved_commits = _ok(git, ["rev-list", "--reverse", f"{fork}..{base}"], cell_repo, "git-failed",
+                                    "Git could not read the ticket's branch").split()
+                if base != fork:
+                    result["moved_branch"] = {"from": fork, "to": base, "commits": moved_commits, "files": moved_files}
+                    moved = set(moved_files)
+                    for lane in kept():
+                        files: Set[str] = set()
+                        for rev in by_lane[lane]:
+                            files.update(changed_by(git, project, rev))
+                        hit = sorted(files & moved)
+                        hit += [name for name, _ in unrepresentable(files, moved)]
+                        if hit:
+                            set_aside(lane, [{"why": BRANCH_MOVED, "file": name, "commits": moved_commits} for name in sorted(set(hit))])
+                if copies:
+                    earlier = already_landed(cell_repo, fork, landing_order(), git=git)
+                    if earlier is None:  # the copies on top are not exactly this join's: land on the head, as on any moved branch
+                        base = head
+                        result["moved_branch"] = dict(result["moved_branch"] or {}, to=head)
+        commits = landing_order()
+        result["tasks_without_commit"] = [str(t.get("task")) for t in tasks if t.get("lane") not in aside and not t.get("lane_commit")]
+        task_of = {_commit(git, project, str(t["lane_commit"])): t for t in tasks if t.get("lane_commit") and t.get("lane") not in aside}
         if earlier is not None:  # an earlier join moved the branch and stopped before it finished: finish it
             result["resumed"] = True
-            landed, tip, where = earlier, head, cell_repo
+            landed, tip, where, base = earlier["landed"], head, cell_repo, earlier["base"]
         else:
             started = clock()
-            made = land(project, join_repo, join_branch, fork, commits, git=git)
+            while True:
+                try:
+                    made = land(project, join_repo, join_branch, base, commits, git=git)
+                    break
+                except LandingError as exc:
+                    # A lane commit that does not apply, or does not land as exactly itself: that lane is set aside, and the others land.
+                    lane = str((task_of.get(exc.commit or "") or {}).get("lane") or "")
+                    if exc.code not in ("cherry-pick-failed", "patch-id-mismatch") or not lane or exc.left:
+                        raise
+                    set_aside(lane, [{"why": DID_NOT_APPLY, "commit": exc.commit, "detail": str(exc)[:600]}])
+                    commits = [sha for sha in commits if (task_of.get(sha) or {}).get("lane") not in aside]
             timed("land", started)
             landed, tip, where = made["landed"], made["tip"], join_repo
+        result["base"] = base
         result["tip"] = tip
         result["landed"] = [{"task": str(task_of[item["lane_commit"]].get("task")), "lane": str(task_of[item["lane_commit"]].get("lane")), **item}
                             for item in landed]
+        result["tasks_without_commit"] = [str(t.get("task")) for t in tasks if t.get("lane") not in aside and not t.get("lane_commit")]
     except LandingError as exc:
         return refuse(exc.code, str(exc), commit=exc.commit, left=exc.left)
+    result["set_aside"] = [aside[lane] for lane in order if lane in aside]
 
     # 8.1 step 3: the whole suite on the landed tip. Anything that stops here leaves the ticket's branch where it was.
     try:
@@ -632,7 +755,7 @@ def join_lanes(project: Path, cell_repo: Path, join_repo: Path, join_branch: str
                                               "result is not a run of the landed work. Nothing was landed.", left=left)
         if not run.get("passed"):
             result["status"] = "INTERACTION"
-            result["interaction"] = _interaction(git, where, run, result["landed"], [lane for lane in order if lane not in aside], order, test_files)
+            result["interaction"] = _interaction(git, where, run, result["landed"], kept(), order, test_files)
             if not move_on_red:
                 result["ticket_head"] = head
                 result["branch_moved"] = head == tip and bool(landed)
@@ -651,19 +774,35 @@ def join_lanes(project: Path, cell_repo: Path, join_repo: Path, join_branch: str
         result["status"] = "JOINED"
 
     # Clean up, only now that every landed commit is on the ticket's branch. A landed lane's worktree or branch that still
-    # holds anything that has not landed stays, and is listed; a set-aside lane is removed as it is (8.2: its commits are named
-    # in the result and not kept).
+    # holds anything that has not landed stays, and is listed. A set-aside lane's tip is kept first under the station's own ref,
+    # so that removing its branch loses nothing; where that ref cannot be made, its branch is kept instead.
     started = clock()
-    landed_lanes = [lane for lane in order if lane not in aside]
+    landed_lanes = kept()
+    left: List[str] = []
+    removable_aside: List[str] = []
+    for item in result["set_aside"]:
+        lane = item["lane"]
+        tip_of = tips.get(lane) or next((sha for sha in reversed(item["lane_commits"])
+                                        if git(["cat-file", "-e", f"{sha}^{{commit}}"], project).returncode == 0), None)
+        item["tip"] = tip_of
+        item["kept_as"] = None
+        if not tip_of:
+            removable_aside.append(lane)
+            continue
+        ref = keep_ref(lane) if keep_ref is not None else None
+        if ref and ref.startswith("refs/mach/") and git(["update-ref", ref, tip_of], project).returncode == 0:
+            item["kept_as"] = ref
+            removable_aside.append(lane)
+        elif lane in lane_branches:
+            left.append(f"the branch {lane_branches[lane]} (lane {lane} was set aside; its work is kept on it)")
     folders = [Path(lane_folders[lane]) for lane in order if lane in lane_folders]
     branches = [lane_branches[lane] for lane in order if lane in lane_branches]
-    left: List[str] = []
     try:
         left += remove(project, [join_repo], [join_branch], git=git)
         left += remove(project, [Path(lane_folders[lane]) for lane in landed_lanes if lane in lane_folders],
                        [lane_branches[lane] for lane in landed_lanes if lane in lane_branches], landed_on=tip, git=git)
-        left += remove(project, [Path(lane_folders[lane]) for lane in aside if lane in lane_folders],
-                       [lane_branches[lane] for lane in aside if lane in lane_branches], git=git)
+        left += remove(project, [Path(lane_folders[lane]) for lane in removable_aside if lane in lane_folders],
+                       [lane_branches[lane] for lane in removable_aside if lane in lane_branches], git=git)
     except LandingError as exc:
         left.append(f"cleanup stopped: {exc}")
     timed("cleanup", started)

@@ -156,7 +156,7 @@ class ChangeRecordTest(Built):
         self.assertIn(f"The build station added J-T01, which made them pass together, at commit `{fix['commit']}`.", text)
         self.assertNotIn("Every lane passed its own suite, but", text.split("Overrides the builder recorded")[0],
                          "the record's own words claim only what was recorded: no lane's own suite is recorded at its end")
-        self.assertIn("- J-T01, lanes-interaction, recorded by the build station: Every lane passed its own suite", text, "the station's words, as recorded")
+        self.assertIn("- J-T01, lanes-interaction, recorded by the build station: Every landed lane's own suite was passing at its end", text, "the station's words, as recorded")
 
     def handed_back_then_joined(self):
         self.ready_lanes()
@@ -348,7 +348,7 @@ class ExplainTest(Built):
         facts = self.explain()["lanes"]
         self.assertIn("; 1 lane set aside;", facts["summary"])
         self.assertEqual(facts["set_aside"][0]["text"], "Lane L2 was set aside at the join: it and lane L1 both changed app/util.py. Its commits were not "
-                                                        "landed; its tasks (T03, T04) are built again in the cell, one at a time: 2 of 2 done.")
+                                                        "landed; they are kept under refs/mach/lanes-set-aside/LOCAL-001/L2/1; its tasks (T03, T04) are built again in the cell, one at a time: 2 of 2 done.")
         self.assertIn("- [lanes] Lane L2 was set aside at the join", explain.human({**self.explain(), "digest": {}}))
 
     def test_lanes_that_fail_together_and_the_fix_task(self):
@@ -356,7 +356,7 @@ class ExplainTest(Built):
         facts = self.explain()["lanes"]
         self.assertIn("the whole suite failed on the joined result.", facts["summary"])
         self.assertEqual(facts["interaction"]["task"], "J-T01")
-        self.assertIn("Every lane passed its own suite, but the whole suite failed on the joined result (test_release.S.test_release", facts["interaction"]["text"])
+        self.assertIn("Every landed lane's own suite was passing at its end, but the whole suite failed on the joined result (test_release.S.test_release", facts["interaction"]["text"])
         self.assertTrue(facts["interaction"]["text"].endswith("J-T01 was added to make them pass together; it is still to do."))
         self.put(self.work, {"app/invite.py": IMPL})
         self.ok("green", TICKET, "J-T01")

@@ -91,10 +91,10 @@ test("a recorded reason code reads in plain words", () => {
 });
 
 test("a code the table does not know is shown as recorded, never dropped or guessed at", () => {
-  assert.deepEqual(O.gateReasonOf("lane-merge-commit"), { words: "lane-merge-commit", code: "lane-merge-commit", known: false });
-  assert.equal(O.gatePositionWords({ state: "failed", reasonCode: "lane-merge-commit" }), "Refused: lane-merge-commit");
-  const decision = O.gateDecisionOf(sim.recordedGate("LOCAL-001", "LOCAL-001/build.join", [evaluation({ gate: "build.join", reasonCode: "lane-merge-commit" })]), null);
-  assert.deepEqual(decision.reason, { words: "lane-merge-commit", code: "lane-merge-commit", known: false });
+  assert.deepEqual(O.gateReasonOf("lane-code-not-written-yet"), { words: "lane-code-not-written-yet", code: "lane-code-not-written-yet", known: false });
+  assert.equal(O.gatePositionWords({ state: "failed", reasonCode: "lane-code-not-written-yet" }), "Refused: lane-code-not-written-yet");
+  const decision = O.gateDecisionOf(sim.recordedGate("LOCAL-001", "LOCAL-001/build.join", [evaluation({ gate: "build.join", reasonCode: "lane-code-not-written-yet" })]), null);
+  assert.deepEqual(decision.reason, { words: "lane-code-not-written-yet", code: "lane-code-not-written-yet", known: false });
 });
 
 test("no reason recorded: the verdict once, and 'No reason was recorded', never 'Refused: refused'", () => {
@@ -159,6 +159,20 @@ test("every reason code a station writes into its gate record has words", () => 
     if (code === "refused") assert.equal(O.gateReasonOf(code), null, "only the verdict");
     else assert.ok(O.gateReasonOf(code)?.known, `${code} has words`);
   }
+  // The build station records every refusal's own code with its gate (build.py main: `build.<command>`
+  // refused with the BuildError's code), and the join's refusal with landing's code: each has words too.
+  const build = join(skills.pathname, "build", "scripts");
+  const refusals = new Set();
+  for (const f of readdirSync(build).filter((f) => f.endsWith(".py"))) {
+    for (const m of readFileSync(join(build, f), "utf8").matchAll(/\bcode="([a-z0-9-]+)"/g)) refusals.add(m[1]);
+  }
+  assert.ok(refusals.size >= 40, `found ${refusals.size}`);
+  for (const code of refusals) assert.ok(O.gateReasonOf(code)?.known, `the build station's ${code} has words`);
+  // The cleanup station records its refusal's own code with cleanup.run (cleanup.py main).
+  const cleanups = new Set();
+  for (const m of readFileSync(join(skills.pathname, "cleanup", "scripts", "cleanup.py"), "utf8").matchAll(/\bcode="([a-z0-9-]+)"/g)) cleanups.add(m[1]);
+  assert.ok(cleanups.size >= 20, `found ${cleanups.size}`);
+  for (const code of cleanups) assert.ok(O.gateReasonOf(code)?.known, `the cleanup station's ${code} has words`);
   // Codes written from a value: the audit tier, the verification status, the re-plan's and the join's.
   for (const code of ["gold", "silver", "bronze", "INCOMPLETE_EVIDENCE", "FAIL_WITH_EVIDENCE", "replanned", "lanes-interaction", "landing-failed", "branch-moved"]) assert.ok(O.gateReasonOf(code)?.known, code);
   assert.equal(O.gateReasonOf("PASS"), null, "a pass that only says it passed");

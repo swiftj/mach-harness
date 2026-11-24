@@ -138,7 +138,7 @@ def is_byproduct(name: str) -> bool:
 class BuildError(Exception):
     """A gate refused. Printed without a traceback; exit code 1. `code` names the gate's reason for the lifecycle log."""
 
-    def __init__(self, message: str = "", code: str = "refused") -> None:
+    def __init__(self, message: str = "", code: str = "not-recorded") -> None:
         super().__init__(message)
         self.code = code
 
@@ -274,6 +274,7 @@ class Cell:
         self.state_path.write_text(json.dumps(self.state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
     lane: Optional[str] = None  # the lane a Lane works in; None for the cell's own checkout
+    recovered: Optional[Dict[str, Any]] = None  # a task an interrupted step committed, recorded when this lane was opened
 
     def tick(self, task_id: str) -> None:
         """Mark the task done in plan.md. A lane never writes plan.md: the join ticks its tasks once."""
@@ -750,12 +751,107 @@ def take(cell: Cell, task_id: str, step: str) -> Dict[str, Any]:
     return task
 
 
-def complete(cell: Cell, task: Dict[str, Any], files: Sequence[str], result: Optional[Dict[str, Any]], note: str) -> None:
+def task_message(cell: Cell, task: Dict[str, Any]) -> str:
+    """The commit message this station gives a task's commit."""
     # Drop the trailing ID list, with any `after Tnn` mark in it.
     summary = re.sub(r"\s*\((?:(?:(?:FR|INV|AC)-\d+|(?i:after)\s+(?:R\d+-)?T\d+)[,\s]*)+\)\s*$", "", task["text"].replace("`", ""))
     summary = " ".join(summary.split())[:64].rstrip(" —-,;:")
     scope = cell.info.get("slice_id") or cell.ticket_id
-    sha = commit(cell, files, f"{COMMIT_PREFIX[task['kind']]}({scope}): {task['id']} {summary} [{cell.ticket_id}]")
+    return f"{COMMIT_PREFIX[task['kind']]}({scope}): {task['id']} {summary} [{cell.ticket_id}]"
+
+
+def recorded_commits(cell: Cell) -> Tuple[set, Optional[str]]:
+    """The commits this checkout's chain is recorded at: every commit a task, a merge of main or the join recorded, and the
+    starting point; and, for a lane, the one its chain ends at now (its last task's commit, or its fork point)."""
+    found = {cell.state.get("baseline"), cell.state.get("fork")}
+    last = cell.state.get("fork") if cell.lane else None
+    for task in cell.state.get("tasks") or []:
+        for key in ("commit", "lane_commit"):
+            if task.get(key):
+                found.add(task[key])
+        if cell.lane and task.get("status") == "done" and task.get("commit"):
+            last = task["commit"]
+    for item in cell.state.get("main_merges") or []:
+        if isinstance(item, dict):
+            found.add(item.get("merge_commit"))
+    join = ((cell.state.get("lanes") or {}).get("join") or {}) if isinstance(cell.state.get("lanes"), dict) else {}
+    found |= {join.get("tip"), join.get("base"), join.get("fork")}
+    found.discard(None)
+    return found, last
+
+
+def recover_interrupted(cell: Cell, step: str = "next") -> Optional[Dict[str, Any]]:
+    """A step killed after its commit and before its state was written left the commit on the branch and the task pending: no
+    gate could then go on (the task changed no files) and the join would find a commit no task recorded. When the checkout's
+    HEAD is exactly one commit past the chain recorded, and that commit is this station's own commit for the next task (its
+    message is the one the station gives it, and every file it changed is that task's), the task is recorded as done at that
+    commit, with a deviation saying it was recovered after an interrupted step. Anything else is left as it is. The caller
+    holds the lanes' lock for a lane. Returns the task recovered, or None."""
+    if not cell.state.get("tasks") or not cell.work.is_dir():
+        return None
+    task = cell.next_task()
+    if task is None:
+        return None
+    head = git(cell.work, "rev-parse", "--verify", "-q", "HEAD").stdout.strip()
+    known, last = recorded_commits(cell)
+    if not head or head in known:
+        return None
+    parents = git(cell.work, "rev-list", "--parents", "-n", "1", head).stdout.split()[1:]
+    if len(parents) != 1 or (parents[0] != last if cell.lane else parents[0] not in known):
+        return None
+    if git(cell.work, "log", "-1", "--format=%B", head).stdout.strip() != task_message(cell, task):
+        return None
+    files = sorted(name for name in git(cell.work, "diff-tree", "--no-commit-id", "--name-only", "-r", "--no-renames", head).stdout.splitlines() if name)
+    allowed = set(task.get("files") or [])
+    foreign = set(cell.foreign_files()) if cell.lane else set()
+    if not files or (allowed and not set(files) <= allowed) or set(files) & foreign:
+        return None
+    at = now()
+    task.update({"status": "done", "commit": head, "files_changed": files, "at": at, "loop": cell.state.get("loop", 0),
+                 "note": "Recovered: the step committed this task's work and stopped before recording it; recorded at that commit.",
+                 "recovered": {"at": at, "commit": head}})
+    if cell.lane:
+        task.update({"lane": cell.lane, "lane_commit": head, "ran_on": head})
+    if task["kind"] == "test":
+        cell.state["test_files"] = sorted(set(cell.state.get("test_files") or []) | set(files))
+        cell.state["suite"] = "red"
+    elif task["kind"] == "impl":
+        cell.state["suite"] = "green"
+    cell.deviation(task["id"], "step-recovered",
+                   f"{task['id']} was committed ({head[:10]}) by a step that stopped before it recorded the task; the station found its own "
+                   f"commit, one past the recorded chain, with this task's message and only this task's files, and recorded the task as "
+                   f"done at it. Its test run was not recorded.")
+    cell.state["deviations"][-1].update({"commit": head, "by": "build station", **({"lane": cell.lane} if cell.lane else {})})
+    cell.tick(task["id"])
+    cell.save()
+    telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": f"build.{step}", "outcome": "pass", "reason_code": "step-recovered",
+                                                             "overridden_by_reason": False, "task": task["id"],
+                                                             **({"lane": cell.lane} if cell.lane else {})})
+    telemetry(cell.root, "build.task_completed", "build", lambda: task_completed(cell, task, STEP_FOR[task["kind"]], None, lifecycle.short(head)))
+    return task
+
+
+def reached_by_recovery(cell: Cell, task_id: str, step: str) -> Optional[Dict[str, Any]]:
+    """Before a step: recover an interrupted earlier step (a lane did so when it was opened for this command). The task, when it is
+    the one this step was asked for; the step then has nothing left to do."""
+    if isinstance(cell, Lane):
+        found = cell.recovered
+    else:
+        found = recover_interrupted(cell, step) if cell.state.get("tasks") and cell.info.get("stage") == "building" else None
+    return found if found is not None and found.get("id") == task_id else None
+
+
+def recovered_answer(cell: Cell, task: Dict[str, Any]) -> int:
+    """The answer to a step run again on a task its interrupted run had already committed: done, recovered."""
+    following = cell.next_task()
+    print(json.dumps({"status": "DONE", "task": task["id"], "commit": str(task.get("commit"))[:10], "recovered": True, "note": task.get("note"),
+                      "suite": cell.state.get("suite"),
+                      "next": f"{following['id']} [{following['kind']}]" if following else cell.all_done_hint()}, indent=2))
+    return 0
+
+
+def complete(cell: Cell, task: Dict[str, Any], files: Sequence[str], result: Optional[Dict[str, Any]], note: str) -> None:
+    sha = commit(cell, files, task_message(cell, task))
     task.update({"status": "done", "commit": sha, "files_changed": list(files), "note": note, "at": now(), "loop": cell.state.get("loop", 0)})
     if result:
         task["test_run"] = {"exit_code": result["exit_code"], "seconds": result["seconds"], "scope": result.get("scope", "whole suite"),
@@ -1060,6 +1156,8 @@ def cmd_next(cell: Cell, args: argparse.Namespace) -> int:
     record = lane_record(cell)
     if record is not None and record.get("state") == "open":
         raise BuildError(lanes_open_refusal(cell, record), code="lanes-open")
+    if cell.info.get("stage") == "building":
+        recover_interrupted(cell)
     task = cell.next_task()
     if record is not None and record.get("state") == "planned" and task is not None and lane_of(cell, task["id"]):
         print(json.dumps({"status": "LANES", "lanes": [entry["lane"] for entry in record["lanes"]], "next": LANES_NEXT}, indent=2))
@@ -1086,7 +1184,10 @@ def failure_excerpt(output: str, stems: Sequence[str]) -> str:
 
 
 def cmd_red(cell: Cell, args: argparse.Namespace) -> int:
-    cell = route(cell, args.task, getattr(args, "holder", None))
+    cell = route(cell, args.task, getattr(args, "holder", None), "red")
+    recovered = reached_by_recovery(cell, args.task, "red")
+    if recovered is not None:
+        return recovered_answer(cell, recovered)
     task = take(cell, args.task, "red")
     files = changed_files(cell)
     if args.written_early:
@@ -1251,7 +1352,10 @@ def green_already_done(cell: Cell, task: Dict[str, Any], files: Sequence[str], r
 
 
 def cmd_green(cell: Cell, args: argparse.Namespace) -> int:
-    cell = route(cell, args.task, getattr(args, "holder", None))
+    cell = route(cell, args.task, getattr(args, "holder", None), "green")
+    recovered = reached_by_recovery(cell, args.task, "green")
+    if recovered is not None:
+        return recovered_answer(cell, recovered)
     task = take(cell, args.task, "green")
     files = changed_files(cell)
     if args.already_done:
@@ -1267,7 +1371,10 @@ def cmd_green(cell: Cell, args: argparse.Namespace) -> int:
 
 
 def cmd_done(cell: Cell, args: argparse.Namespace) -> int:
-    cell = route(cell, args.task, getattr(args, "holder", None))
+    cell = route(cell, args.task, getattr(args, "holder", None), "done")
+    recovered = reached_by_recovery(cell, args.task, "done")
+    if recovered is not None:
+        return recovered_answer(cell, recovered)
     task = take(cell, args.task, "done")
     files = changed_files(cell)
     check_scope(cell, task, files, args)
@@ -1933,20 +2040,92 @@ def write_json(path: Path, data: Any) -> None:
         raise
 
 
+_HELD: Dict[str, int] = {}  # the lock files this process holds now, and how deep: a lock taken again inside itself is not taken twice
+
+
 @contextlib.contextmanager
-def lanes_lock(cell: Cell) -> Any:
-    """The one writer of build.json while lanes exist: lanes-open and join hold this lock, and read build.json again under it."""
-    folder = cell.root / "lanes"
-    folder.mkdir(exist_ok=True)
-    with open(str(folder / ".lock"), "a", encoding="utf-8") as handle:
-        if fcntl is not None:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+def file_lock(path: Path) -> Any:
+    """An exclusive lock on one lock file, for this process's whole stay inside; re-entered freely by the same process."""
+    key = str(path)
+    if _HELD.get(key):
+        _HELD[key] += 1
         try:
-            cell.state = load_json(cell.state_path, {}) or {}
             yield
         finally:
+            _HELD[key] -= 1
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(key, "a", encoding="utf-8") as handle:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        _HELD[key] = 1
+        try:
+            yield
+        finally:
+            _HELD.pop(key, None)
             if fcntl is not None:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def lanes_lock_path(root: Path) -> Path:
+    return root / "lanes" / ".lock"
+
+
+@contextlib.contextmanager
+def lanes_lock(cell: Cell) -> Any:
+    """The lanes' lock. Every write of build.json while lanes exist and every write of a lane's lane.json happens under it, each
+    after reading the file again: lanes-open, join, hand-back and set-commands read build.json again on taking it."""
+    path = lanes_lock_path(cell.root)
+    outermost = not _HELD.get(str(path))
+    with file_lock(path):
+        if outermost:
+            cell.state = load_json(cell.state_path, {}) or {}
+        yield
+
+
+@contextlib.contextmanager
+def builders_lock(project: Path) -> Any:
+    """One lock for the whole project, across tickets: counting the builders' places other tickets use and recording this
+    ticket's grant (its lanes handed out) are one step under it, so two tickets opening lanes at once never both take the
+    last place."""
+    with file_lock(project / ".factory" / "worktrees" / ".builders.lock"):
+        yield
+
+
+# What only lanes-open writes in a lane's state file (the handing out); a lane's own command keeps what is on disk for these.
+HANDOUT_KEYS = ("holder", "handed_at", "earlier_holders", "branch", "worktree_seconds", "restarted", "remade", "opened_at", "build", "made_at")
+
+
+def merge_lane_state(mine: Dict[str, Any], disk: Dict[str, Any]) -> Dict[str, Any]:
+    """What a lane command writes, merged with what is on disk now: another command may have written the file since this one
+    read it (lanes-open handing the lane to another holder, or a second step of the lane). The handing out is disk's; a task
+    done on either side stays done; deviations and test files are the union; nothing another command recorded is dropped.
+    A lane made fresh since (another `made_at`) keeps disk's state whole: this command's is of an earlier lane."""
+    if not disk:
+        return mine
+    if disk.get("made_at") != mine.get("made_at"):
+        return disk
+    merged = dict(mine)
+    for key in HANDOUT_KEYS:
+        if key in disk:
+            merged[key] = disk[key]
+        else:
+            merged.pop(key, None)
+    theirs = {task.get("id"): task for task in disk.get("tasks") or [] if isinstance(task, dict)}
+    tasks = []
+    for task in mine.get("tasks") or []:
+        other = theirs.get(task.get("id")) or {}
+        tasks.append(other if other.get("status") == "done" and task.get("status") != "done" else task)
+    merged["tasks"] = tasks
+    seen = {json.dumps(item, sort_keys=True) for item in mine.get("deviations") or []}
+    merged["deviations"] = list(mine.get("deviations") or []) + [item for item in disk.get("deviations") or []
+                                                                 if json.dumps(item, sort_keys=True) not in seen]
+    merged["test_files"] = sorted(set(mine.get("test_files") or []) | set(disk.get("test_files") or []))
+    for key in ("last_step_at", "started_at"):
+        values = [value for value in (mine.get(key), disk.get(key)) if value]
+        if values:
+            merged[key] = max(values) if key == "last_step_at" else min(values)
+    return merged
 
 
 def save_shared(cell: Cell) -> None:
@@ -2010,12 +2189,18 @@ class Lane(Cell):
         return self.folder / "repo"
 
     def save(self) -> None:
-        self.state["updated_at"] = now()
-        tasks = self.state.get("tasks") or []
-        if self.state.get("status") == "open" and tasks and all(task.get("status") == "done" for task in tasks):
-            self.state["status"] = "done"
-            self.state["finished_at"] = now()
-        write_json(self.state_path, self.state)
+        """Write lane.json under the lanes' lock, merged with what is on disk now (merge_lane_state), so a command that started
+        before a take-over, or finished a task while lanes-open was writing, never puts back what another command changed."""
+        with file_lock(lanes_lock_path(self.root)):
+            self.state = merge_lane_state(self.state, load_json(self.state_path, {}) or {})
+            self.state["updated_at"] = now()
+            tasks = self.state.get("tasks") or []
+            if self.state.get("status") == "open" and tasks and all(task.get("status") == "done" for task in tasks):
+                self.state["status"] = "done"
+                self.state["finished_at"] = now()
+                # The lane's own suite as its last step left it, recorded: what the join may say about the lanes' own suites.
+                self.state["final_suite"] = self.state.get("suite")
+            write_json(self.state_path, self.state)
 
     def save_info(self) -> None:
         raise BuildError("A lane never writes cell.json.", code="lane-state")
@@ -2062,7 +2247,7 @@ def check_holder(cell: Cell, lane: "Lane", holder: Optional[str]) -> None:
                          f"the new holder's builder carries on from build.py next {cell.ticket_id} --lane {lane.lane}.", code="lane-taken-over")
 
 
-def open_lane(cell: Cell, name: str, holder: Optional[str] = None) -> Lane:
+def open_lane(cell: Cell, name: str, holder: Optional[str] = None, step: str = "next") -> Lane:
     """The lane a builder works in, refused unless it is open and handed out (to `holder`, when the call names one); records the call."""
     record = lane_record(cell)
     if record is None:
@@ -2082,11 +2267,14 @@ def open_lane(cell: Cell, name: str, holder: Optional[str] = None) -> Lane:
     if not lane.state.get("tasks") or not lane.work.is_dir():
         raise BuildError(f"Lane {name} of {cell.ticket_id} has no worktree; the line makes it again with build.py lanes-open.", code="lane-not-open")
     check_holder(cell, lane, holder)
-    lane.touch()
+    with file_lock(lanes_lock_path(cell.root)):
+        lane.state = merge_lane_state(lane.state, load_json(lane.state_path, {}) or {})
+        lane.recovered = recover_interrupted(lane, step)
+        lane.touch()
     return lane
 
 
-def route(cell: Cell, task_id: str, holder: Optional[str] = None) -> Cell:
+def route(cell: Cell, task_id: str, holder: Optional[str] = None, step: str = "next") -> Cell:
     """Where red, green and done work on a task: its lane's worktree and lane.json while the lanes are open, else the cell.
     A builder cannot work a task in the wrong lane, nor any task in the cell's checkout while lanes are open."""
     if isinstance(cell, Lane):
@@ -2100,7 +2288,7 @@ def route(cell: Cell, task_id: str, holder: Optional[str] = None) -> Cell:
             if not any(task["id"] == task_id for task in cell.state.get("tasks") or []):
                 return cell  # an unknown task is refused as before
             raise BuildError(lanes_open_refusal(cell, record), code="lanes-open")
-        return open_lane(cell, name, holder)
+        return open_lane(cell, name, holder, step)
     if record.get("state") == "planned" and name is not None:
         first = cell.next_task()
         if first is not None and first["id"] == task_id:
@@ -2240,9 +2428,166 @@ def lane_status(cell: Cell, entry: Dict[str, Any]) -> str:
     return str(entry.get("status"))
 
 
+def next_ref(cell: Cell, prefix: str) -> str:
+    """The next free numbered ref under `prefix` (no trailing slash): <prefix>/1, <prefix>/2, ..."""
+    taken = git(cell.project, "for-each-ref", "--format=%(refname)", prefix + "/").stdout.split()
+    number = len(taken) + 1
+    while f"{prefix}/{number}" in taken:
+        number += 1
+    return f"{prefix}/{number}"
+
+
+def set_aside_ref(cell: Cell, lane: str) -> str:
+    """Where a set-aside lane's tip is kept: refs/mach/lanes-set-aside/<ticket>/<L>/<n>, a sibling of the lane-files refs."""
+    return next_ref(cell, f"refs/mach/lanes-set-aside/{cell.ticket_id}/{lane}")
+
+
+def bring_back_words(cell: Cell, ref: str, commits: Sequence[str]) -> str:
+    """The exact commands that show what a kept ref holds and bring one of its commits back into the cell's checkout."""
+    where = f'git -C "{cell.work}"'
+    shown = ", ".join(str(sha)[:10] for sha in commits[:10]) + (f" and {len(commits) - 10} more" if len(commits) > 10 else "")
+    return (f"{where} log {ref} shows them" + (f" ({shown})" if shown else "") + f"; {where} cherry-pick <commit> brings one back")
+
+
+def not_this_build(cell: Cell, lane: "Lane", entry: Dict[str, Any], fork: str, branch: str) -> Optional[str]:
+    """Why a lane's folder, branch or lane.json belongs to another build of this ticket (an earlier plan, or an earlier start),
+    or None when it is this build's own (or there is nothing there)."""
+    state = lane.state
+    if state:
+        if state.get("build") and state.get("build") != cell.state.get("started_at"):
+            return f"its record was made for a build of {cell.ticket_id} started at {state.get('build')}, not this one ({cell.state.get('started_at')})"
+        if state.get("fork") and state.get("fork") != fork:
+            return f"its record starts from {str(state.get('fork'))[:10]}, not from this build's fork point {fork[:10]}"
+        ids = [task.get("id") for task in state.get("tasks") or []]
+        if ids and ids != list(entry.get("tasks") or []):
+            return f"its record holds the tasks {', '.join(map(str, ids))}, not this build's {', '.join(entry.get('tasks') or [])}"
+        planned = {task["id"]: task for task in cell.state.get("tasks") or []}
+        for task in state.get("tasks") or []:
+            mine = planned.get(task.get("id")) or {}
+            if mine and (mine.get("text") != task.get("text") or sorted(mine.get("files") or []) != sorted(task.get("files") or [])):
+                return f"its task {task.get('id')} is not the task of that name in this build's plan"
+        return None
+    tip = git(cell.project, "rev-parse", "--verify", "-q", f"refs/heads/{branch}").stdout.strip()
+    if tip and tip != fork:
+        return f"its branch {branch} is at {tip[:10]}, but this build has not handed the lane out yet and starts it from {fork[:10]}"
+    return None
+
+
+def make_lane_fresh(cell: Cell, landing: Any, lane: "Lane", entry: Dict[str, Any], branch: str, why: str) -> None:
+    """A lane whose folder, branch or lane.json belongs to another build is never reused and never refused: what is there is set
+    aside where it can be brought back, and the lane starts fresh for this build. Its uncommitted files go under a lane-files ref,
+    its branch tip under refs/mach/lanes-set-aside/<ticket>/<L>/<n>, and its lane.json to lanes/<L>/set-aside/<n>/lane.json.
+    Recorded on the lane's entry (`made_fresh`) and as a deviation, with the commands that bring it back."""
+    name = entry["lane"]
+    files_ref = None
+    if lane.work.is_dir() and registered_worktree(cell, lane.work, branch):
+        stray = changed_files(lane)
+        if stray:
+            saved = landing.set_aside_files(lane.work, stray, next_ref(cell, f"refs/mach/lane-files/{cell.ticket_id}/{name}"),
+                                            f"Uncommitted files in lane {name}, set aside when the lane was made fresh [{cell.ticket_id}]")
+            files_ref = saved["ref"]
+    tip = git(cell.project, "rev-parse", "--verify", "-q", f"refs/heads/{branch}").stdout.strip()
+    commits = git(cell.work, "rev-list", "--reverse", tip, "--not", "HEAD").stdout.split() if tip else []  # what the ticket's branch lacks
+    ref = None
+    if tip and commits:
+        ref = set_aside_ref(cell, name)
+        if git(cell.project, "update-ref", ref, tip).returncode != 0:
+            raise BuildError(f"Lane {name}'s branch {branch} belongs to another build, and the station could not keep its tip {tip[:10]} under "
+                             f"{ref}, so nothing was changed. Run build.py lanes-open {cell.ticket_id} again; if it fails the same way, the Git error "
+                             "is in the project's repository.", code="lane-not-kept")
+    # Only the lane's own registered worktree is removed; a folder Git does not know as it is left for lanes-open's refusal to name.
+    ours = lane.work.exists() and registered_worktree(cell, lane.work, branch)
+    left = landing.remove(cell.project, [lane.work] if ours else [], [branch] if tip else [])
+    if left:
+        raise BuildError(f"Lane {name} belongs to another build and could not be cleared for this one: {'; '.join(left)}. Its work is kept"
+                         + (f" under {ref}" if ref else "") + f". Run build.py lanes-open {cell.ticket_id} again once that is put right.",
+                         code="lane-not-cleared")
+    state_file = None
+    if lane.state_path.is_file():
+        folder = lane.folder / "set-aside"
+        number = 1
+        while (folder / str(number)).exists():
+            number += 1
+        (folder / str(number)).mkdir(parents=True)
+        target = folder / str(number) / "lane.json"
+        os.replace(str(lane.state_path), str(target))
+        state_file = str(target.relative_to(cell.root))
+    lane.state = {}
+    at = now()
+    record = {"at": at, "why": "another-build", "detail": why, "ref": ref, "files_ref": files_ref, "state_file": state_file, "commits": commits}
+    entry.setdefault("made_fresh", []).append(record)
+    kept = []
+    if ref:
+        kept.append(f"its {len(commits)} commit(s) are kept under {ref}: {bring_back_words(cell, ref, commits)}")
+    if files_ref:
+        kept.append(f'its uncommitted files are kept under {files_ref}: git -C "{cell.work}" checkout {files_ref} -- <path> brings one back')
+    if state_file:
+        kept.append(f"its earlier record is kept at {state_file}")
+    cell.deviation(None, "lane-made-fresh", f"Lane {name} was made fresh for this build, because {why}. Nothing was lost: "
+                   + ("; ".join(kept) if kept else "there was nothing of its own to keep") + ".")
+    cell.state["deviations"][-1].update({"lane": name, "ref": ref, "files_ref": files_ref, "state_file": state_file, "commits": commits,
+                                         "by": "build station"})
+    telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "build.lanes-open", "outcome": "pass", "reason_code": "lane-made-fresh",
+                                                             "overridden_by_reason": False, "lane": name})
+
+
+def checked_out_elsewhere(cell: Cell, branch: str, repo: Path) -> Optional[str]:
+    """The folder of another worktree that has `branch` checked out, or None."""
+    path = None
+    for line in git(cell.project, "worktree", "list", "--porcelain").stdout.splitlines():
+        if line.startswith("worktree "):
+            path = line[len("worktree "):]
+        elif line == f"branch refs/heads/{branch}" and path and Path(path).resolve() != repo.resolve():
+            return path
+    return None
+
+
+def remake_worktree(cell: Cell, lane: "Lane", entry: Dict[str, Any], branch: str, fork: str) -> Tuple[str, bool]:
+    """Make a lane's missing worktree again (its folder deleted or moved by hand), at its last recorded commit. Git's record of
+    the old folder is dropped first (`git worktree prune`), so the folder can be made again. A lane branch that is checked out
+    in another worktree (a person's) is left to it: the lane goes on, on a new branch made at its last recorded commit, recorded
+    as a deviation. Returns (the branch, whether this call made it)."""
+    git(cell.project, "worktree", "prune")
+    name = entry["lane"]
+    committed = [t["commit"] for t in lane.state.get("tasks") or [] if t.get("status") == "done" and t.get("commit")]
+    has_branch = git(cell.project, "show-ref", "--verify", "-q", f"refs/heads/{branch}").returncode == 0
+    elsewhere = checked_out_elsewhere(cell, branch, lane.work) if has_branch else None
+    if elsewhere:
+        start = committed[-1] if committed else fork
+        base, number = f"mach-lane/{cell.ticket_id}/{name}", 2
+        while git(cell.project, "show-ref", "--verify", "-q", f"refs/heads/{base}-{number}").returncode == 0:
+            number += 1
+        old, branch = branch, f"{base}-{number}"
+        if git(cell.project, "branch", branch, start).returncode != 0:
+            raise BuildError(f"Lane {name}'s branch {old} is checked out in {elsewhere}, and Git could not make a new branch for the lane, so "
+                             f"nothing was changed. Run build.py lanes-open {cell.ticket_id} again.", code="lane-branch-failed")
+        entry["branch"] = branch
+        lane.state["branch"] = branch
+        lane.state.setdefault("remade", []).append({"at": now(), "branch": branch, "old_branch": old, "why": "checked-out-elsewhere"})
+        cell.deviation(None, "lane-worktree-remade", f"Lane {name}'s worktree was missing and its branch {old} is checked out in {elsewhere}, which "
+                       f"is left as it is. The lane goes on on a new branch, {branch}, made at its last recorded commit {start[:10]}; anything "
+                       f"committed on {old} since is kept there.")
+        cell.state["deviations"][-1].update({"lane": name, "branch": branch, "old_branch": old, "by": "build station"})
+        return branch, True
+    if committed and not has_branch:
+        # The branch is gone but the lane recorded its commits: put the branch back at the last one, so no work is lost.
+        if git(cell.project, "cat-file", "-e", f"{committed[-1]}^{{commit}}").returncode == 0 \
+                and git(cell.project, "branch", branch, committed[-1]).returncode == 0:
+            has_branch = True
+        else:  # the commits themselves are gone: the lane starts again from the fork point, and says so
+            lane.state["restarted"] = {"at": now(), "why": f"its branch {branch} and its commits were gone"}
+            for task in lane.state.get("tasks") or []:
+                for key in [k for k in task if k not in ("id", "kind", "text", "ids", "files")]:
+                    task.pop(key)
+                task["status"] = "pending"
+            lane.state.update({"status": "open", "deviations": [], "test_files": list(cell.state.get("test_files") or []), "suite": "green"})
+    return branch, not has_branch
+
+
 def cmd_lanes_open(cell: Cell, args: argparse.Namespace) -> int:
     """Make any missing lane worktree and say which lanes to start now (design 6.2, 7.1, 7.5)."""
     cell.require_started()
+    landing = None
     with lanes_lock(cell):
         record = lane_record(cell)
         if record is None:
@@ -2267,6 +2612,7 @@ def cmd_lanes_open(cell: Cell, args: argparse.Namespace) -> int:
             raise BuildError("--grant must be a whole number, 0 or more.", code="bad-grant")
         first = record.get("state") == "planned"
         if first:
+            recover_interrupted(cell, "lanes-open")  # a task before the lanes whose step stopped before it was recorded
             suite = cell.state.get("suite")
             if suite != "green":
                 # Not a stop for a person: a builder can make a suite pass. Lanes need a passing fork point, so the plan is built one task
@@ -2276,19 +2622,29 @@ def cmd_lanes_open(cell: Cell, args: argparse.Namespace) -> int:
                        f"build.py next {cell.ticket_id} names the step."
                        + (f" If the suite is not known because the test command is missing or wrong: {set_commands_hint(cell.ticket_id)}."
                           if suite != "red" else ""))
-                return go_sequential(cell, record, why, 0, {"suite": suite})
+                return go_sequential(cell, record, why, 0, {"suite": suite, "cause": "suite-not-green"})
             dirty = changed_files(cell)
             if dirty:
                 raise BuildError(f"The cell has uncommitted changes ({', '.join(dirty[:5])}), so the lanes cannot start from its last commit. Nothing "
                                  "was opened. Every change belongs to a task: if a task before the lanes needs them, run its step "
                                  f"(build.py next {cell.ticket_id}); otherwise a person " + set_aside_hint(cell.work, cell.ticket_id, "before the lanes")
                                  + ".", code="uncommitted-changes")
+        fork = record.get("fork") or git(cell.work, "rev-parse", "HEAD").stdout.strip()
         minutes = claim_limit(cell.config)
-        held, candidates, done = [], [], []
+        held, candidates, done, made_fresh = [], [], [], []
         for entry in record["lanes"]:
             if entry.get("status") in ("joined", "set-aside", "handed-back"):
                 continue
             lane = Lane(cell, entry["lane"])
+            branch = entry.get("branch") or f"mach-lane/{cell.ticket_id}/{entry['lane']}"
+            stale = not_this_build(cell, lane, entry, fork, branch)
+            if stale:
+                landing = landing or sibling("landing")
+                make_lane_fresh(cell, landing, lane, entry, branch, stale)
+                made_fresh.append(entry["lane"])
+            elif lane.state.get("tasks") and lane.work.is_dir():
+                with file_lock(lanes_lock_path(cell.root)):
+                    recover_interrupted(lane, "lanes-open")
             if lane.state.get("status") == "done":
                 done.append(entry["lane"])
             elif (lane.state and lane.state.get("holder") != args.holder and not args.take_over
@@ -2302,101 +2658,98 @@ def cmd_lanes_open(cell: Cell, args: argparse.Namespace) -> int:
                 raise BuildError(f"Every lane left ({', '.join(held)}) is being built by another holder, whose builder called the station less "
                                  f"than factory.claim_minutes ({minutes}) ago. Wait for it, or a person takes it over with --take-over.",
                                  code="lane-held")
+            save_shared(cell)
             print(json.dumps({"status": "NONE_LEFT", "lanes": [], "why": f"Every lane is done ({', '.join(done)}).",
                               "next": f"build.py join {cell.ticket_id}"}, indent=2))
             return 0
-        used, others = others_using(cell, minutes)
-        free = max_builders(cell.config) - used
-        limits = [max_lanes(cell.config), free] + ([args.grant] if args.grant is not None else [])
-        room = min(limits) - len(held)
-        limited_by = (f"build.max_lanes {max_lanes(cell.config)}; factory.max_builders {max_builders(cell.config)}, of which other tickets use {used}"
-                      + (f"; the line granted {args.grant}" if args.grant is not None else "")
-                      + (f"; {len(held)} of this ticket's lanes are at work for another holder" if held else ""))
-        # The ticket's own place: a ticket whose lanes are open always keeps one builder at work, though other tickets hold every place
-        # under factory.max_builders. So the machine runs at most one builder more than the cap, and only this ticket's own one.
-        own_place = room < 1 and not held
-        if own_place:
-            room = 1
-        if first and min(room, len(candidates)) < 2:
-            why = (f"Only {max(room, 0)} builder(s) may run for this ticket now ({limited_by}), so its plan is built one task at a time in the "
-                   "cell, as without lanes.")
-            return go_sequential(cell, record, why, max(room, 0), {"free_places": free, "others": others})
-        if room < 1:
-            raise BuildError(f"Every lane left that may start now waits for a place, and this ticket already has builders at work: lane(s) "
-                             f"{', '.join(held)}, for another holder ({limited_by}). Nothing is lost. Ask again when one is done or a place is free.",
-                             code="no-free-place")
-        chosen = candidates[:room]
-        fork = record.get("fork") or git(cell.work, "rev-parse", "HEAD").stdout.strip()
-        made: List[Tuple[Lane, str, bool]] = []
-        handed = []
-        for entry in chosen:
-            lane = Lane(cell, entry["lane"])
-            branch = entry.get("branch") or f"mach-lane/{cell.ticket_id}/{entry['lane']}"
-            seconds = None
-            if lane.work.exists():
-                if not registered_worktree(cell, lane.work, branch):
-                    raise BuildError(f"{lane.work} exists but is not this lane's worktree on {branch}. Nothing was changed. Move that folder aside "
-                                     f"(nothing in it is touched by the station), then run build.py lanes-open {cell.ticket_id} again: the lane's "
-                                     "worktree is made again on its committed work.",
-                                     code="lane-folder-unknown")
-            else:
-                has_branch = git(cell.project, "show-ref", "--verify", "-q", f"refs/heads/{branch}").returncode == 0
-                committed = [t["commit"] for t in lane.state.get("tasks") or [] if t.get("commit")]
-                if committed and not has_branch:
-                    # The branch is gone but the lane recorded its commits: put the branch back at the last one, so no work is lost.
-                    if git(cell.project, "cat-file", "-e", f"{committed[-1]}^{{commit}}").returncode == 0 \
-                            and git(cell.project, "branch", branch, committed[-1]).returncode == 0:
-                        has_branch = True
-                    else:  # the commits themselves are gone: the lane starts again from the fork point, and says so
-                        lane.state["restarted"] = {"at": now(), "why": f"its branch {branch} and its commits were gone"}
-                        for task in lane.state.get("tasks") or []:
-                            for key in [k for k in task if k not in ("id", "kind", "text", "ids", "files")]:
-                                task.pop(key)
-                            task["status"] = "pending"
-                        lane.state.update({"status": "open", "deviations": [], "test_files": list(cell.state.get("test_files") or []), "suite": "green"})
-                if workspace is None:
-                    raise BuildError("The intent station's workspace.py is not installed beside this skill, so a lane's worktree cannot be made.",
-                                     code="worktree-failed")
-                lane.folder.mkdir(parents=True, exist_ok=True)
-                started = time.monotonic()
-                try:  # sparse like the cell's own: never .claude/ or .mcp.json
-                    workspace.create(cell.project, lane.work, branch, start=fork)
-                except workspace.WorkspaceError as exc:
-                    for other, other_branch, new in made:  # only what this call made
-                        workspace._undo(cell.project, other.work, other_branch, new)  # noqa: SLF001
-                    raise BuildError(f"Lane {entry['lane']}'s worktree could not be made, so no lane was opened. {exc}", code="worktree-failed")
-                seconds = round(time.monotonic() - started, 1)
-                made.append((lane, branch, not has_branch))
-            handed.append((entry, lane, branch, seconds))
-        at = now()
-        for entry, lane, branch, seconds in handed:
-            if not lane.state.get("tasks"):
-                wanted = set(entry["tasks"])
-                lane.state = {
-                    "ticket_id": cell.ticket_id, "lane": entry["lane"], "branch": branch, "fork": fork, "status": "open",
-                    "opened_at": at, "loop": 0, "hardening": False, "baseline": fork,
-                    "test_cmd": cell.state.get("test_cmd"), "lint_cmd": cell.state.get("lint_cmd"),
-                    **{key: cell.state[key] for key in ("test_file_cmd", "test_one", "test_file_check") if key in cell.state},
-                    "suite": "green", "test_files": list(cell.state.get("test_files") or []), "deviations": [],
-                    "tasks": [copy.deepcopy(t) for t in cell.state["tasks"] if t["id"] in wanted],
-                    "worktree_seconds": seconds, "started_at": None, "last_step_at": None,
-                }
-            elif seconds is not None:
-                lane.state["worktree_seconds"] = round((lane.state.get("worktree_seconds") or 0) + seconds, 1)
-            if lane.state.get("holder") and lane.state.get("holder") != args.holder:
-                # Taken over: the earlier holder's builder is refused from now on when it names its holder (check_holder).
-                earlier = {"holder": lane.state.get("holder"), "until": at}
-                if lane.state.get("holder") in (getattr(args, "carry_on_from", None) or []):
-                    earlier["why"] = "carried on from a run known to have ended"
-                lane.state.setdefault("earlier_holders", []).append(earlier)
-            lane.state.update({"holder": args.holder, "handed_at": at, "status": "done" if lane.state.get("status") == "done" else "open"})
-            write_json(lane.state_path, lane.state)
-            entry["status"] = "open"
-        if first:
-            record.update({"state": "open", "fork": fork, "opened_at": at})
-        record.setdefault("batches", []).append({"at": at, "lanes": [entry["lane"] for entry, _, _, _ in handed], "granted": room,
-                                                 "free_places": free, "others": others})
-        save_shared(cell)
+        # Counting the places other tickets use and recording this ticket's grant (its lanes handed out, which is what other tickets
+        # count) are one step under one lock for the whole project, so two tickets opening lanes at once never exceed the cap.
+        with builders_lock(cell.project):
+            used, others = others_using(cell, minutes)
+            free = max_builders(cell.config) - used
+            limits = [max_lanes(cell.config), free] + ([args.grant] if args.grant is not None else [])
+            room = min(limits) - len(held)
+            limited_by = (f"build.max_lanes {max_lanes(cell.config)}; factory.max_builders {max_builders(cell.config)}, of which other tickets use {used}"
+                          + (f"; the line granted {args.grant}" if args.grant is not None else "")
+                          + (f"; {len(held)} of this ticket's lanes are at work for another holder" if held else ""))
+            # The ticket's own place: a ticket whose lanes are open always keeps one builder at work, though other tickets hold every place
+            # under factory.max_builders. So the machine runs at most one builder more than the cap, and only this ticket's own one.
+            own_place = room < 1 and not held
+            if own_place:
+                room = 1
+            if first and min(room, len(candidates)) < 2:
+                why = (f"Only {max(room, 0)} builder(s) may run for this ticket now ({limited_by}), so its plan is built one task at a time in the "
+                       "cell, as without lanes.")
+                return go_sequential(cell, record, why, max(room, 0), {"free_places": free, "others": others, "cause": "no-free-places"})
+            if room < 1:
+                save_shared(cell)
+                raise BuildError(f"Every lane left that may start now waits for a place, and this ticket already has builders at work: lane(s) "
+                                 f"{', '.join(held)}, for another holder ({limited_by}). Nothing is lost. Ask again when one is done or a place is free.",
+                                 code="no-free-place")
+            chosen = candidates[:room]
+            made: List[Tuple[Lane, str, bool]] = []
+            handed = []
+            for entry in chosen:
+                lane = Lane(cell, entry["lane"])
+                branch = entry.get("branch") or f"mach-lane/{cell.ticket_id}/{entry['lane']}"
+                seconds = None
+                if lane.work.exists():
+                    if not registered_worktree(cell, lane.work, branch):
+                        raise BuildError(f"{lane.work} exists but is not this lane's worktree on {branch}. Nothing was changed. Move that folder aside "
+                                         f"(nothing in it is touched by the station), then run build.py lanes-open {cell.ticket_id} again: the lane's "
+                                         "worktree is made again on its committed work.",
+                                         code="lane-folder-unknown")
+                else:
+                    if workspace is None:
+                        raise BuildError("The intent station's workspace.py is not installed beside this skill, so a lane's worktree cannot be made.",
+                                         code="worktree-failed")
+                    branch, new_branch = remake_worktree(cell, lane, entry, branch, fork)
+                    lane.folder.mkdir(parents=True, exist_ok=True)
+                    started = time.monotonic()
+                    try:  # sparse like the cell's own: never .claude/ or .mcp.json
+                        workspace.create(cell.project, lane.work, branch, start=fork)
+                    except workspace.WorkspaceError as exc:
+                        for other, other_branch, new in made:  # only what this call made
+                            workspace._undo(cell.project, other.work, other_branch, new)  # noqa: SLF001
+                        raise BuildError(f"Lane {entry['lane']}'s worktree could not be made, so no lane was opened. {exc}", code="worktree-failed")
+                    seconds = round(time.monotonic() - started, 1)
+                    made.append((lane, branch, new_branch))
+                    if lane.state.get("tasks"):
+                        with file_lock(lanes_lock_path(cell.root)):
+                            recover_interrupted(lane, "lanes-open")  # its branch may hold a step's commit its record lacks
+                handed.append((entry, lane, branch, seconds))
+            at = now()
+            for entry, lane, branch, seconds in handed:
+                if not lane.state.get("tasks"):
+                    wanted = set(entry["tasks"])
+                    lane.state = {
+                        "ticket_id": cell.ticket_id, "lane": entry["lane"], "branch": branch, "fork": fork, "status": "open",
+                        "opened_at": at, "made_at": at, "build": cell.state.get("started_at"), "loop": 0, "hardening": False, "baseline": fork,
+                        "test_cmd": cell.state.get("test_cmd"), "lint_cmd": cell.state.get("lint_cmd"),
+                        **{key: cell.state[key] for key in ("test_file_cmd", "test_one", "test_file_check") if key in cell.state},
+                        "suite": "green", "test_files": list(cell.state.get("test_files") or []), "deviations": [],
+                        "tasks": [copy.deepcopy(t) for t in cell.state["tasks"] if t["id"] in wanted],
+                        "worktree_seconds": seconds, "started_at": None, "last_step_at": None,
+                    }
+                elif seconds is not None:
+                    lane.state["worktree_seconds"] = round((lane.state.get("worktree_seconds") or 0) + seconds, 1)
+                if lane.state.get("holder") and lane.state.get("holder") != args.holder:
+                    # Taken over: the earlier holder's builder is refused from now on when it names its holder (check_holder).
+                    earlier = {"holder": lane.state.get("holder"), "until": at}
+                    if lane.state.get("holder") in (getattr(args, "carry_on_from", None) or []):
+                        earlier["why"] = "carried on from a run known to have ended"
+                    lane.state.setdefault("earlier_holders", []).append(earlier)
+                lane.state.update({"holder": args.holder, "handed_at": at, "branch": branch,
+                                   "status": "done" if lane.state.get("status") == "done" else "open"})
+                # Under the lanes' lock, held here: a lane command saving now waits, and merges onto this (merge_lane_state).
+                write_json(lane.state_path, lane.state)
+                entry["status"] = "open"
+                entry["branch"] = branch
+            if first:
+                record.update({"state": "open", "fork": fork, "opened_at": at})
+            record.setdefault("batches", []).append({"at": at, "lanes": [entry["lane"] for entry, _, _, _ in handed], "granted": room,
+                                                     "free_places": free, "others": others})
+            save_shared(cell)
     telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "build.lanes-open", "outcome": "pass", "reason_code": None, "overridden_by_reason": False,
                                                              "lanes": [entry["lane"] for entry, _, _, _ in handed], "granted": room, "first": first})
     model = cell.section("models").get("build") if isinstance(cell.section("models").get("build"), str) and cell.section("models").get("build") else "sonnet"
@@ -2408,6 +2761,7 @@ def cmd_lanes_open(cell: Cell, args: argparse.Namespace) -> int:
                + (fewer_words(len(handed), len(candidates), limited_by, own_place) if len(candidates) > len(handed) else "")
                + f"Each builder stops at LANE_DONE. When every lane is done: build.py join {cell.ticket_id}.",
         "fork": fork,
+        **({"made_fresh": made_fresh} if made_fresh else {}),
     }, indent=2))
     return 0
 
@@ -2427,7 +2781,7 @@ def go_sequential(cell: Cell, record: Dict[str, Any], why: str, granted: int, ex
     for entry in record["lanes"]:
         entry["status"] = "sequential"
     cell.deviation(None, "lanes-sequential", why)
-    cell.state["deviations"][-1].update({"by": "build station", "lanes": len(record["lanes"]), "granted": granted})
+    cell.state["deviations"][-1].update({"by": "build station", "lanes": len(record["lanes"]), "granted": granted, "cause": extra.get("cause")})
     save_shared(cell)
     telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "build.lanes-open", "outcome": "refuse", "reason_code": "sequential",
                                                              "overridden_by_reason": False, "lanes": len(record["lanes"]), "granted": granted})
@@ -2483,7 +2837,8 @@ def cmd_hand_back(cell: Cell, args: argparse.Namespace) -> int:
                              f"lane is done: build.py join {cell.ticket_id}", code="lane-done")
         at = now()
         entry["status"] = "handed-back"
-        entry["handed_back"] = {"at": at, "reason": reason, "holder": args.holder, "finished_then": finished, "unfinished_then": unfinished}
+        entry["handed_back"] = {"at": at, "reason": reason, "holder": args.holder, "finished_then": finished, "unfinished_then": unfinished,
+                                "suite_then": lane.state.get("suite")}  # the lane's own suite when it was handed back, as its last step left it
         cell.deviation(None, "lane-handed-back", f"Lane {name} handed its remaining tasks ({', '.join(unfinished)}) back to the cell, to be built one "
                        f"at a time after the join: {reason}" + (f". Its finished tasks ({', '.join(finished)}) land at the join." if finished else "."))
         cell.state["deviations"][-1].update({"lane": name, "tasks": unfinished, "finished": finished, "reason": reason, "holder": args.holder})
@@ -2525,6 +2880,13 @@ def cmd_join(cell: Cell, args: argparse.Namespace) -> int:
             raise BuildError(f"Not every lane is done ({', '.join(unfinished)} still open), so the lanes cannot be joined yet. The line starts "
                              f"a builder for each again: build.py lanes-open {cell.ticket_id} --holder <holder>. A lane that cannot finish is handed "
                              f"back to the cell instead: build.py hand-back {cell.ticket_id} --lane <L> --reason \"<why>\".", code="lanes-not-done")
+        edited = [name for name in git(cell.work, "diff", "--name-only", "HEAD").stdout.splitlines() if name.strip() and not is_byproduct(name)]
+        if edited:
+            raise BuildError(f"The cell's own checkout has uncommitted changes to tracked files ({', '.join(edited[:5])}), so the ticket's branch "
+                             "cannot be moved to the landed work. Nothing was landed, and every lane's work is kept. A person either commits them "
+                             f"on {cell.info.get('branch') or 'the cell branch'} in {cell.work} (the join then lands the lanes on top of that commit, "
+                             "and sets aside any lane that changed the same file) or " + set_aside_hint(cell.work, cell.ticket_id, "before the join")
+                             + f"; then run build.py join {cell.ticket_id} again.", code="cell-dirty")
         # The join starts here: every lane is done or handed back. The moment is recorded first, then said (design 13.2), so a reader can tell
         # a join under way from one that is stuck. join_running names the process doing it; it is removed when the join has its result.
         started_at = now()
@@ -2558,7 +2920,7 @@ def cmd_join(cell: Cell, args: argparse.Namespace) -> int:
             {name: list(lane.state.get("test_files") or []) for name, lane in views.items()}, run_suite,
             lane_folders={name: lane.work for name, lane in views.items()},
             lane_branches={entry["lane"]: entry.get("branch") or f"mach-lane/{cell.ticket_id}/{entry['lane']}" for entry in record["lanes"]},
-            move_on_red=True)
+            move_on_red=True, keep_ref=lambda name: set_aside_ref(cell, name))
         if result.get("status") == "REFUSED":
             return join_refused(cell, record, result, stray_saved)
         return join_record(cell, record, views, result, started_at, stray_saved)
@@ -2650,11 +3012,33 @@ def join_record(cell: Cell, record: Dict[str, Any], views: Dict[str, "Lane"], re
                       "commits": [{"task": t["id"], "lane_commit": t.get("commit"), "files": t.get("files_changed") or []} for t in state.get("tasks") or []]})
     for name, item in aside.items():
         because = item.get("because") or []
-        words = "; ".join(f"it and lane {b.get('other')} both changed {b.get('file')} ({b.get('why')})" for b in because) or "it broke independence"
-        cell.deviation(None, "lane-set-aside", f"Lane {name} was set aside: {words}, so the plan's claim that the lanes are independent was false "
-                       f"for it. Its tasks ({', '.join(item.get('tasks') or [])}) are built again in the cell, one at a time, where every gate sees "
-                       f"the landed work. Its lane commits, not kept: {', '.join(str(c)[:10] for c in item.get('lane_commits') or [])}.")
-        cell.state["deviations"][-1].update({"lane": name, "because": because, "by": "build station"})
+        words = "; ".join(dict.fromkeys(aside_words(b) for b in because)) or "it could not land as it was"
+        commits = list(item.get("lane_commits") or [])
+        if item.get("kept_as"):
+            kept = (f"Nothing is lost: its work is kept under {item['kept_as']} (at {str(item.get('tip'))[:10]}); "
+                    + bring_back_words(cell, item["kept_as"], commits or [item.get("tip")]) + ".")
+            item["bring_back"] = f'git -C "{cell.work}" cherry-pick <commit>'
+        elif item.get("tip"):
+            kept = f"Nothing is lost: its branch {lane_record_of(record, name).get('branch')} is kept as it is, at {str(item.get('tip'))[:10]}."
+        else:
+            kept = "It had no commits to keep."
+        cell.deviation(None, "lane-set-aside", f"Lane {name} was set aside: {words}. Its tasks ({', '.join(item.get('tasks') or [])}) are built "
+                       f"again in the cell, one at a time, on top of what landed, where every gate sees it. {kept}")
+        cell.state["deviations"][-1].update({"lane": name, "because": because, "kept_as": item.get("kept_as"), "tip": item.get("tip"),
+                                             "lane_commits": commits, "by": "build station"})
+    moved = result.get("moved_branch") if isinstance(result.get("moved_branch"), dict) else None
+    if moved:
+        hit = sorted(name for name, item in aside.items() if any(b.get("why") == "branch-moved" for b in item.get("because") or []))
+        shas = list(moved.get("commits") or [])
+        cell.deviation(None, "lanes-landed-on-moved-branch",
+                       f"The ticket's branch moved while the lanes were open: {len(shas)} commit(s) were made on it ({', '.join(s[:10] for s in shas[:10])}"
+                       + (f" and {len(shas) - 10} more" if len(shas) > 10 else "") + "), changing "
+                       + (", ".join(list(moved.get("files") or [])[:10]) or "no file") + ". They are kept as they are, and the lanes landed on top "
+                       "of them, on " + str(moved.get("to"))[:10] + "; the whole suite ran on the result."
+                       + (f" Lane(s) {', '.join(hit)} changed a file those commits changed, so they were set aside and their tasks are built "
+                          "again in the cell, on top of those commits." if hit else " No lane changed a file those commits changed."))
+        cell.state["deviations"][-1].update({"commits": shas, "files": list(moved.get("files") or []), "from": moved.get("from"),
+                                             "to": moved.get("to"), "lanes_set_aside": hit, "by": "build station"})
     for name, ids in handed.items():
         entry = lane_record_of(record, name)
         entry.setdefault("handed_back", {})["built_in_cell"] = ids
@@ -2674,16 +3058,20 @@ def join_record(cell: Cell, record: Dict[str, Any], views: Dict[str, "Lane"], re
         add_join_task(cell, record, files)
         failing = list((interaction or {}).get("failing") or [])
         waiting = [task_id for ids in handed.values() for task_id in ids]
-        cell.deviation(JOIN_TASK, "lanes-interaction", ("The lanes' finished work landed, but the whole suite fails on the joined result"
-                                                        if waiting else "Every lane passed its own suite, but the whole suite fails on the joined result")
+        landed_lanes = [entry["lane"] for entry in record["lanes"] if entry["lane"] not in aside]
+        alone = lanes_passed_alone(views, record, landed_lanes)
+        opening = ("Every landed lane's own suite was passing at its end, but the whole suite fails on the joined result" if alone and not waiting
+                   else "The lanes' finished work landed, but the whole suite fails on the joined result")
+        cell.deviation(JOIN_TASK, "lanes-interaction", opening
                        + (f": {', '.join(failing[:10])}" if failing else "") + f". Lanes involved: {', '.join(involved) or 'not named by the output'}. "
                        + (f"Tasks handed back to the cell ({', '.join(waiting)}) come before {JOIN_TASK} and may be what is missing; if {JOIN_TASK} has "
                           f"nothing left to change when it is reached, complete it with build.py green {cell.ticket_id} {JOIN_TASK} --already-done "
                           "\"<which task made the suite pass>\". " if waiting else "")
                        + f"{JOIN_TASK} makes them pass together; every test is committed and frozen.")
-        cell.state["deviations"][-1].update({"failing": failing, "lanes": involved, "lanes_named": named,
+        cell.state["deviations"][-1].update({"failing": failing, "lanes": involved, "lanes_named": named, "lanes_passed_alone": alone,
                                              "output_tail": str((interaction or {}).get("output_tail") or "")[-800:], "by": "build station"})
     record["join"] = {"state": "joined", "started_at": started_at, "finished_at": now(), "status": result.get("status"), "fork": result.get("fork"),
+                      "base": result.get("base"), "moved_branch": result.get("moved_branch"),
                       "tip": result.get("tip"), "branch_moved": result.get("branch_moved"), "resumed": result.get("resumed"),
                       "order": [item["task"] for item in result.get("landed") or []], "landed": result.get("landed") or [],
                       "tasks_without_commit": [t for t in result.get("tasks_without_commit") or [] if t not in {i for ids in handed.values() for i in ids}],
@@ -2700,6 +3088,9 @@ def join_record(cell: Cell, record: Dict[str, Any], views: Dict[str, "Lane"], re
         telemetry(cell.root, "gate.evaluated", "build", lambda name=name, item=item: {
             "gate": "build.join", "outcome": "refuse", "reason_code": "lane-set-aside", "overridden_by_reason": False, "lane": name,
             "why": ((item.get("because") or [{}])[0]).get("why")})
+    if moved:
+        telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "build.join", "outcome": "pass", "reason_code": "landed-on-moved-branch",
+                                                                 "overridden_by_reason": False, "commits": len(moved.get("commits") or [])})
     passed = result.get("status") == "JOINED"
     telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "build.join", "outcome": "pass" if passed else "refuse",
                                                              "reason_code": None if passed else "lanes-interaction", "overridden_by_reason": False,
@@ -2707,7 +3098,10 @@ def join_record(cell: Cell, record: Dict[str, Any], views: Dict[str, "Lane"], re
     following = cell.next_task()
     print(json.dumps({
         "status": "JOINED" if passed else "INTERACTION", "landed": len(result.get("landed") or []),
-        "set_aside": [{"lane": name, "tasks": item.get("tasks"), "because": item.get("because")} for name, item in aside.items()],
+        "set_aside": [{"lane": name, "tasks": item.get("tasks"), "because": item.get("because"),
+                       **({"kept_as": item["kept_as"], "lane_commits": item.get("lane_commits") or [], "tip": item.get("tip"),
+                           "bring_back": item.get("bring_back")} if item.get("kept_as") else {})} for name, item in aside.items()],
+        **({"moved_branch": moved} if moved else {}),
         "handed_back": [{"lane": name, "tasks": ids} for name, ids in handed.items()],
         "suite": {key: suite.get(key) for key in ("passed", "exit_code", "seconds", "command", "ran_on")},
         "interaction": ({"failing": (interaction or {}).get("failing"), "lanes_named": (interaction or {}).get("lanes_named"), "task": JOIN_TASK,
@@ -2718,6 +3112,44 @@ def join_record(cell: Cell, record: Dict[str, Any], views: Dict[str, "Lane"], re
         "next": (f"The ticket's build goes on in the cell: build.py next {cell.ticket_id}" if following else f"build.py finish {cell.ticket_id}"),
     }, indent=2))
     return 0
+
+
+def aside_words(because: Dict[str, Any]) -> str:
+    """Why a lane was set aside, in words, from one of landing's reasons."""
+    why, other, name = because.get("why"), because.get("other"), because.get("file")
+    if why == "same-file":
+        return f"it and lane {other} both changed {name}, so the plan's claim that they are independent was false"
+    if why == "frozen-test":
+        return f"it and lane {other} both touched {name}, a test file one of them holds, so the plan's claim that they are independent was false"
+    if why == "case-clash":
+        return f"its file {name} and a file of lane {other} differ only by letter case, which one checkout cannot hold"
+    if why == "file-folder":
+        return f"{name} is a file in one of it and lane {other} and a folder in the other, which one checkout cannot hold"
+    if why == "branch-moved":
+        commits = because.get("commits") or []
+        return (f"a commit made on the ticket's branch while the lanes were open ({', '.join(str(c)[:10] for c in commits[:5])}) also changed "
+                f"{name}, and that commit is kept")
+    if why == "did-not-apply":
+        return f"its commit {str(because.get('commit'))[:10]} did not apply on the landed work as exactly itself"
+    if why == "unrecorded-commits":
+        return f"its branch held commits no task recorded ({', '.join(str(c)[:10] for c in (because.get('commits') or [])[:5])})"
+    if why == "lane-history":
+        return f"its recorded commits were not one chain from the fork point ({because.get('detail')})"
+    return str(because.get("detail") or why or "it could not land as it was")
+
+
+def lanes_passed_alone(views: Dict[str, "Lane"], record: Dict[str, Any], landed_lanes: Sequence[str]) -> Optional[bool]:
+    """Whether each landed lane's own suite was recorded passing at its end (lane.json final_suite, or the suite when it was handed
+    back): True when every one was, False when one was not, None when that was not recorded for every lane."""
+    states = []
+    for name in landed_lanes:
+        entry = lane_record_of(record, name)
+        own = views[name].state if name in views else {}
+        state = (entry.get("handed_back") or {}).get("suite_then") if entry.get("status") == "handed-back" else own.get("final_suite")
+        states.append(state)
+    if any(state is None for state in states):
+        return None
+    return all(state == "green" for state in states)
 
 
 def add_join_task(cell: Cell, record: Dict[str, Any], files: List[str]) -> None:

@@ -310,7 +310,7 @@ func TestLanesSetAside(t *testing.T) {
 	}
 	item := sa[0].(map[string]any)
 	if item["lane"] != "L2" || !reflect.DeepEqual(item["tasks"], []any{"T04", "T05"}) ||
-		!reflect.DeepEqual(item["because"], []any{map[string]any{"other": "L1", "why": "same-file"}}) {
+		!reflect.DeepEqual(item["because"], []any{map[string]any{"other": "L1", "why": "same-file", "commits": nil, "commit": nil}}) || item["kept_as"] != nil {
 		t.Errorf("set aside: %v", item)
 	}
 	if t4 := taskByID(t, l, "T04"); t4["set_aside"] != true || t4["status"] != "pending" || t4["lane_commit"] != lc3 || t4["commit"] != nil {

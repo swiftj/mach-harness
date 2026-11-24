@@ -15,8 +15,8 @@ import { LINE_STATIONS, sentBackWords, smallChangeWords, timesWords, type LineRo
 import { StatePill } from "./Marks";
 import { costWords, modelWords } from "./words";
 import { EpicName, issueWords } from "./Epic";
-import { LanesPart } from "./Lanes";
-import type { LanesPanel } from "./lanesModel";
+import { CommandsPart, LanesPart } from "./Lanes";
+import type { CommandsPanel, LanesPanel } from "./lanesModel";
 
 function Back({ onBack }: { onBack: () => void }) {
   return (
@@ -76,7 +76,23 @@ function TimeBars({ times }: { times: readonly StationTime[] }) {
   );
 }
 
-export function TicketPanel({ row, now, lanes, onBack, onRecord, onFloor }: { row: LineRow; now: number; lanes?: LanesPanel | null; onBack: () => void; onRecord: () => void; onFloor: () => void }) {
+export function TicketPanel({
+  row,
+  now,
+  lanes,
+  commands,
+  onBack,
+  onRecord,
+  onFloor,
+}: {
+  row: LineRow;
+  now: number;
+  lanes?: LanesPanel | null;
+  commands?: CommandsPanel | null;
+  onBack: () => void;
+  onRecord: () => void;
+  onFloor: () => void;
+}) {
   const station = LINE_STATIONS[row.column]!.name;
   return (
     <div data-line-panel="ticket" data-ticket={row.ticketId}>
@@ -119,6 +135,11 @@ export function TicketPanel({ row, now, lanes, onBack, onRecord, onFloor }: { ro
       {lanes ? (
         <Part title="Lanes">
           <LanesPart panel={lanes} />
+        </Part>
+      ) : null}
+      {commands ? (
+        <Part title="Its commands">
+          <CommandsPart panel={commands} />
         </Part>
       ) : null}
       <Part title="Facts">
