@@ -217,7 +217,7 @@ A slice made this way names the outcome it serves, so the record reads from the 
 /mach audit      is the repository ready for agents?
 ```
 
-The audit runs your build, tests and linter and gives a tier. **Gold** allows full autonomy. **Silver** builds, with a person approving each change. **Bronze**, which includes any failing build or test suite, blocks autonomous work until the repository is hardened.
+The audit runs your build, tests and linter and gives a tier. **Gold** allows full autonomy. **Silver** builds, with a person approving each change. **Bronze**, which includes any failing build or test suite, blocks autonomous work until the repository is hardened. A Gold or Silver audit stays good as tickets merge; it runs again after `audit.max_age_days` (30 days by default), after a build finds the tests failing before any change, or when you ask. A Bronze audit runs again once the main branch moves.
 
 ### Secrets and new dependencies
 

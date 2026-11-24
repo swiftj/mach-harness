@@ -62,8 +62,10 @@ A script does the measuring and the scoring. `AUDIT` below means `python3 "${CLA
 
 ## For other stations
 
-`AUDIT gate` reads the last report and prints whether work may proceed, with exit code `0` (allowed) or `1`. It refuses when there is no report, when the report is for a different commit than the main checkout or older than `audit.max_age_days` (7 by default), or when the tier is Bronze. On Silver it sets `human_review_required`. A station that gets a refusal for a stale or missing report runs the audit again; it never proceeds on an old result.
+`AUDIT gate` reads the last report and prints whether work may proceed, with exit code `0` (allowed) or `1`. It refuses when there is no report, when the report must run again, or when the tier is Bronze. On Silver it sets `human_review_required`. A station that gets a refusal for a missing report, or one that must run again, runs the audit again; it never proceeds on such a result.
+
+When the audit must run again is one rule, shared with the routing sheet and the build's start. A Gold or Silver report stays good when the main branch moves, since every build runs the tests in its own cell before it starts. It must run again when it is older than `audit.max_age_days` (30 days by default), or when a build's tests failed before any change since it ran. A Bronze report must run again as soon as the main branch has moved past the commit it ran at. A person asking for the audit always runs it. The refusal's `reason` says which.
 
 ## Settings
 
-In `.factory/config.json` under `audit`: `gold` and `silver` (the tier thresholds, 90 and 70), `commands.build`, `commands.test`, `commands.lint`, `timeouts` (seconds, per command; tests are limited to 300), and `max_age_days`.
+In `.factory/config.json` under `audit`: `gold` and `silver` (the tier thresholds, 90 and 70), `commands.build`, `commands.test`, `commands.lint`, `timeouts` (seconds, per command; tests are limited to 300), and `max_age_days` (30).

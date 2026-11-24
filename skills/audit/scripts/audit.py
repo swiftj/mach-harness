@@ -479,6 +479,12 @@ try:
 except Exception:  # noqa: BLE001
     lifecycle = None
 
+# Whether a report must be run again: the one rule the routing sheet and the build's start use too.
+try:
+    import audit_state  # noqa: E402
+except Exception:  # noqa: BLE001
+    audit_state = None
+
 
 def adr_notes(repo: Repo) -> List[str]:
     """Notes about the project's architecture decisions (ADRs). A note never changes the score or the tier, and is never a blocker."""
@@ -604,23 +610,26 @@ def cmd_gate(project: Path, args: argparse.Namespace) -> int:
         result["reason"] = "No readable audit report. Run the audit first."
         print(json.dumps(result, indent=2))
         return 1
+    if audit_state is None:
+        raise AuditError("The intent station's audit_state.py is not installed beside this skill, so the report cannot be judged.")
     repo = Repo(project)
-    maximum = args.max_age_days if args.max_age_days is not None else repo.audit_config.get("max_age_days", 7)
+    due = None
     try:
-        age = (datetime.now(timezone.utc) - datetime.fromisoformat(report["timestamp"])).total_seconds() / 86400
-    except (KeyError, ValueError):
-        age = float("inf")
-    tier = report.get("readiness_tier")
-    result.update({"tier": tier, "score": report.get("readiness_score"), "human_review_required": tier == "Silver"})
-    if report.get("head") != repo.head:
-        result["reason"] = "The audit report is for a different commit than the one checked out. Run the audit again."
-    elif age > maximum:
-        result["reason"] = f"The audit report is {int(age)} days old (limit {maximum}). Run the audit again."
-    elif tier not in ("Gold", "Silver"):
+        due = json.loads((project / audit_state.DUE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    judged = audit_state.judge(report, repo.head, due, audit_state.max_age_days(repo.config, args.max_age_days))
+    tier = report.get("readiness_tier") if isinstance(report, dict) else None
+    result.update({"tier": tier, "score": report.get("readiness_score") if isinstance(report, dict) else None, "human_review_required": tier == "Silver"})
+    if judged["state"] in ("stale", "missing"):
+        result["reason"] = judged["reason"]
+    elif judged["state"] == "bronze":
         result["reason"] = "The repository is Bronze: autonomous work is blocked until it is hardened. " + " ".join(report.get("blockers") or [])
     else:
         result["allowed"] = True
         result["reason"] = "Full autonomy." if tier == "Gold" else "Autonomous build is allowed, but a person must review before merge."
+        if judged.get("note"):
+            result["note"] = judged["note"]
     print(json.dumps(result, indent=2))
     return 0 if result["allowed"] else 1
 
@@ -638,7 +647,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument(f"--{kind}-cmd", help=f"the {kind} command to use instead of the detected one")
     p.set_defaults(func=cmd_run)
     p = sub.add_parser("gate", help="say whether autonomous work may proceed, from the last report")
-    p.add_argument("--max-age-days", type=int, help="oldest acceptable report (default: audit.max_age_days in config, else 7)")
+    p.add_argument("--max-age-days", type=int, help="oldest acceptable report (default: audit.max_age_days in config, else 30)")
     p.set_defaults(func=cmd_gate)
     return parser
 
