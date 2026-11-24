@@ -98,6 +98,13 @@ const (
 // an entry changes a folder's time on every file system the Factory runs on).
 const relistEvery = 10 * time.Second
 
+// openVisitGrace: while a station's visit is open in a cell's log, cell.json ahead of the log is
+// that station at work (it saves its own state before it records its exit: the merge station
+// saves "pr-open", then talks to GitHub for seconds or, when the shared main moves, runs the suite
+// again). Only when cell.json has stayed ahead this long is it taken for lost records
+// (state-mismatch, contract 6.5). With no visit open the comparison is made as before.
+const openVisitGrace = 15 * time.Minute
+
 // Options configure the loop.
 type Options struct {
 	Root    string // absolute project root
@@ -1056,7 +1063,8 @@ func (o *Observer) pollCell(t *tickCtx, src *source) {
 	// Lost lifecycle writes leave no gap; compare the stage the log implies with cell.json's
 	// once the log has been quiet for the settle window and cell.json is newer (contract 6.5).
 	if life != nil && n == 0 && src.cellStage != "" && t.now.Sub(src.lastLine) > o.opts.Settle {
-		if src.tailer.Size >= 0 && src.cellMTime > src.tailer.ModNS {
+		atWork := life.InVisit() != "" && time.Since(time.Unix(0, src.cellMTime)) < openVisitGrace
+		if src.tailer.Size >= 0 && src.cellMTime > src.tailer.ModNS && !atWork {
 			if ev := life.StateMismatch(src.cellStage, t.read(cp.LineNo, true)); ev != nil && !src.mismatch[ev.ID] {
 				src.mismatch[ev.ID] = true
 				o.emit(t, []*event.Event{ev}, false)
