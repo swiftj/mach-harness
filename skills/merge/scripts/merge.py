@@ -1361,7 +1361,18 @@ def load_text(text: str) -> Dict[str, Any]:
 
 
 def cmd_plan(cell: Cell, args: argparse.Namespace) -> int:
-    print(json.dumps(survey(cell, args.by_person), indent=2, ensure_ascii=False))
+    plan = survey(cell, args.by_person)
+    # M20: what `run` would refuse after its fetch, said here too, against the main branch as last fetched: this slice already
+    # shipped from another Factory, or its slice number is another slice's on main. Reads only.
+    for check in (landed_elsewhere, slice_id_taken):
+        try:
+            found = check(cell, plan["into"])
+        except MergeError as exc:
+            found = str(exc)
+        if found:
+            plan["refusals"].append(found)
+            plan["allowed"] = False
+    print(json.dumps(plan, indent=2, ensure_ascii=False))
     return 0
 
 
