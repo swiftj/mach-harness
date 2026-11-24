@@ -4,7 +4,7 @@ Read only the section for the cell's `app_type`. Each says how to run the slice 
 
 In every type:
 
-- **One plain command per call (a Factory run is unattended).** Only the station scripts and Python may run. Write the driver as a Python script in `evidence_dir` with the Write tool and run it with `verify.py capture <ticket> <driver.py> --out <file>`, which saves its transcript as evidence. Never chain commands, never redirect (`>`, a heredoc), never `cd`, and never set shell variables. A tool this section names that is refused there (a browser, a terminal recorder, `curl`) is a gap to report: let `verify.py finish` say the evidence is incomplete, and do not route the tool through the driver.
+- **One plain command per call (a Factory run is unattended).** Only the station scripts and Python may run. Write the driver as a Python script in `evidence_dir` with the Write tool and run it with `verify.py capture <ticket> <driver.py> --out <file>`, which saves its transcript as evidence. Never chain commands, never redirect (`>`, a heredoc), never `cd`, and never set shell variables. A tool this section names that is refused there (a browser, a terminal recorder, `curl`) is a gap to report: let `verify.py finish` say the evidence is incomplete, and do not route the tool through the driver. A browser or screen capture is the exception: `verify.py start` checks itself whether one can start here, and when none can it asks for evidence that needs no screen (`capture_instead`; see "Without a screen" below).
 
 - Name files so a reviewer can find a check without opening them: `ac-03-email-failure.png`, `r2-invalid-email.log`.
 - Driver scripts you write (a browser script, a terminal tape, a request collection) are evidence too: save them next to what they produced.
@@ -21,6 +21,10 @@ In every type:
   - If video recording fails because Playwright's video encoder is not installed, record a trace instead (`trace: 'on'`): the `trace.zip` it writes holds a screenshot and DOM snapshot for every action, and counts as the recording of the flow. Say in your report that it is a trace, not a video.
   - Keep your config, test scripts and output folder inside `evidence_dir`, and let Playwright start and stop the app (`webServer` in the config) so nothing is left running.
 - **Also check, and note in the record:** the exact visible text of every message; that controls are reachable by keyboard and labelled; that the page works at a phone width; that a refusal leaves the displayed state unchanged.
+
+### Without a screen (web, desktop, mobile)
+
+When `verify.py start` says `evidence_mode: headless`, no screen can be captured here. Do not try a browser. Drive the running app with a Python driver through `verify.py capture`: for web, HTTP requests with the standard library (`urllib.request`) against the app on its own port, or the framework's own test client; for desktop and mobile, the app's own test harness or command line. Save each request and response, the page's HTML as served (`.html`) and what the driver printed (`.log`, `.txt`, `.json`), named by check (`ac-03-invalid-email.html`). Check the exact text of every message in the saved HTML or response. Say in your report that there are no screenshots, in the station's words.
 
 ## cli
 
@@ -41,6 +45,7 @@ In every type:
 - **Run it:** build and launch the app from the `workdir` in a simulator, emulator or a scratch user profile; never a real user's data.
 - **Drive it:** the platform's automation: the iOS Simulator tools (`xcrun simctl`), Android `adb`, or OS-level input tools such as `cliclick` or `xdotool`.
 - **Capture:** a screenshot (`.png`) of the window or screen at each Then step, and a recording (`.mp4`, `.mov`) of each flow. `xcrun simctl io` and `adb shell screenrecord` can record; on macOS `screencapture` can capture a window.
+- **Without a screen:** when `verify.py start` says `evidence_mode: headless`, follow "Without a screen" in the web section.
 
 ## library
 

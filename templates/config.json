@@ -29,7 +29,8 @@
     "small_change": { "requirements": 3, "scenarios": 4, "questions": 5, "changed_shipped_rules": 1 }
   },
   "verify": {
-    "neighbours": 2
+    "neighbours": 2,
+    "screen_evidence": "prefer"
   },
   "audit": {
     "gold": 90,
