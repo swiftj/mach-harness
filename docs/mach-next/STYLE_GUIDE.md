@@ -1441,7 +1441,7 @@ Plain, specific, calm and honest. Say what happened, what it means and what the 
 - Empty states: "No slices yet." · "No epics yet. An epic is a larger capability, such as "Team membership", that several slices deliver." · "No ticket has started yet" / "The simulated run is starting: its tickets appear here in a moment." · "No tickets on the line yet" / "Connected and waiting: each ticket appears here as the Factory records it."
 - Banners: "Could not check GitHub" · "GitHub could not be read" · "3 things need your answer" · "Some of your drafts no longer fit together" · "Updates to GitHub".
 - Waiting items: "Someone else saved a newer version of Renew a loan: choose theirs or keep yours." · "The builders have a question about Show overdue fines at checkout."
-- Notices: "The Factory is not enabled on this machine" / "The observer shows what is recorded, but no Factory Supervisor runs work here. Enabling it is an engineer's decision taken outside the Factory Floor, which has no control to start, pause, schedule or approve anything."
+- Notices: the chip "Unattended runs: off", opening "Unattended runs: off on this machine" / "MACH is installed and working: an engineer runs its work by hand, and the Factory Floor shows what is recorded. Only the Factory Supervisor, which runs work unattended, is off, as it is on every machine until an engineer turns it on. That is an engineer's decision, made outside the Factory Floor, which only reads: it cannot start, pause, schedule or approve anything."
 - Reading-only notes: "This page only reads. To change anything, copy the command it shows and run it in Claude Code." · "The Factory Floor only reads. It cannot start, pause, schedule or approve anything."
 - Source: "Live Factory" (Real execution, as the observer reads it from this project's Factory files, arriving as it happens.) · "Simulation" (A recorded scenario of invented work, running on its own. It reads no Factory state and is never real execution.). The page title says "Simulation (not real execution) · MACH Factory Floor".
 
@@ -2155,7 +2155,7 @@ The Factory flavour's default workspace: stations as columns, a row for each tic
 - The workspace switch (`nav` "Workspaces"): Line (chosen: `surface`, semibold, `shadow-1`), Floor, Analytics; keys 1, 2, 3.
 - A 1×20px `line` divider.
 - The run's identity: the project's name as `h1` in `body-lg` bold, leading none, truncated (at most 45% of the space), then wave IDs in mono `caption` `ink-subtle`, then "History held from 12 Nov 2026, 14:00:00 UTC" in `caption` `ink-subtle` from 1360px.
-- Badges: the source badge "Live Factory" (live ink and tint, bold, with its glyph and a chevron, opening the source menu); the connection badge "Live" (round, live ink border); the completeness badge only when history is incomplete; the Factory state chip ("Factory not enabled", info) only when relevant; the places chip ("3 of 4 places working").
+- Badges: the source badge "Live Factory" (live ink and tint, bold, with its glyph and a chevron, opening the source menu); the connection badge "Live" (round, live ink border); the completeness badge only when history is incomplete; the Factory state chip ("Unattended runs: off", info) only when relevant; the places chip ("3 of 4 places working").
 - Icon buttons: keyboard shortcuts (`CircleHelp`, "?"), then the icon-only theme choice.
 
 **Stage** (`main` named "Line (Live Factory)", `factory-ground`). The Line workspace is a column on `surface`:
