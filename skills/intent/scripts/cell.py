@@ -1196,10 +1196,16 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     telemetry(root, "gate.evaluated", "groom", lambda: {"gate": "groom.finalize", "outcome": "pass", "reason_code": None, "overridden_by_reason": False})
     telemetry(root, "station.exited", "groom", lambda: {"outcome": "spec-ready", "stage": "spec-ready", "slice_id": cell["slice_id"], "risk": cell["risk"], **counts,
                                                        **kind_facts(cell)})
+    work = workdir(project, cell)
+    head_before = git(["rev-parse", "HEAD"], work).stdout.strip() if cell.get("isolation") == "worktree" else ""
     report(commit(project, cell, [cell["spec_path"]], f"spec({cell['slice_id']}): {cell['title']} [{cell['ticket_id']}]", args.no_commit))
     if cell.get("isolation") == "worktree":
-        # The branch as it stands at spec-ready: where a re-plan returns it to (cell.py replan).
-        cell["spec_commit"] = git(["rev-parse", "HEAD"], workdir(project, cell)).stdout.strip() or None
+        # The branch as it stands at spec-ready: where a re-plan returns it to (cell.py replan). Moved only by a spec commit:
+        # finalizing an unchanged spec again leaves it where it was, below any contract or task commit made since.
+        head = git(["rev-parse", "HEAD"], work).stdout.strip() or None
+        recorded = cell.get("spec_commit")
+        if head != head_before or not recorded or git(["merge-base", "--is-ancestor", recorded, "HEAD"], work).returncode != 0:
+            cell["spec_commit"] = head
         write_cell(project, cell)
     print(json.dumps({"status": "READY", "slice_id": cell["slice_id"], "risk": cell["risk"], **counts, **({"replanned": replanned} if replanned else {}),
                       **({"risk_floor": floored} if floored else {}),
@@ -1726,45 +1732,133 @@ def keep_adr_copies(root: Path, copies: Dict[str, str]) -> None:
 REPLAN_STAGES = ("planned", "building")
 
 
-def replan_commits(project: Path, cell: Dict[str, Any], state: Dict[str, Any], work: Path) -> Tuple[str, str]:
-    """The commit the branch had at spec-ready and its tip now; refuses when resetting would discard work that must be kept."""
-    spec_commit = cell.get("spec_commit")
-    if not spec_commit:  # a cell finalized before spec_commit was recorded: its last spec commit
-        found = git(["log", "-1", "--format=%H", "--fixed-strings", f"--grep=spec({cell.get('slice_id')}): ", "HEAD"], work).stdout.strip()
-        spec_commit = found or None
-    if not spec_commit or git(["merge-base", "--is-ancestor", spec_commit, "HEAD"], work).returncode != 0:
-        raise CellError("The commit this cell had at spec-ready cannot be found on its branch, so it cannot be returned there. Abandon the ticket instead.")
+def is_spec_commit(cell: Dict[str, Any], subject: str) -> bool:
+    """A commit of this slice's spec, as cell.py finalize words it (and a person committing the spec by hand after it)."""
+    return bool(cell.get("slice_id")) and subject.startswith(f"spec({cell.get('slice_id')}): ")
+
+
+def replan_point(project: Path, cell: Dict[str, Any], work: Path, tip: str) -> Dict[str, Any]:
+    """Where a re-plan returns the branch: the slice's newest spec commit on the branch at or after the recorded spec_commit,
+    so the spec finalized last is never left behind; the recorded commit when no spec commit follows it. A cell with no
+    recorded commit, or one no longer on the branch, returns to its newest spec commit not on the main branch, else to
+    where the branch left the main branch. {"point", "recorded", "kept"}: `kept` are the commits between the recorded
+    commit and the point, which stay on the branch below the newer spec."""
+    recorded = cell.get("spec_commit") or None
+    main_head = git(["rev-parse", "HEAD"], project).stdout.strip()
+    valid = bool(recorded) and git(["merge-base", "--is-ancestor", recorded, tip], work).returncode == 0
+    span = [f"{recorded}..{tip}"] if valid else ([tip, f"^{main_head}"] if main_head else [tip])
+    newest = next((line.split(" ", 1)[0] for line in git(["log", "--first-parent", "--format=%H %s", *span], work).stdout.splitlines()
+                   if is_spec_commit(cell, line.split(" ", 1)[1] if " " in line else "")), None)
+    point = newest or (recorded if valid else None)
+    if point is None and main_head:
+        point = git(["merge-base", tip, main_head], work).stdout.strip() or None
+    kept = git(["rev-list", f"{recorded}..{point}"], work).stdout.split() if valid and point and point != recorded else []
+    return {"point": point, "recorded": recorded, "kept": kept}
+
+
+def replan_commits(project: Path, cell: Dict[str, Any], state: Dict[str, Any], work: Path) -> Dict[str, Any]:
+    """What a re-plan does to the branch: the point it returns to and every commit above it, each named for what it is.
+    Nothing is refused for a commit MACH does not recognise: the saved ref keeps every commit, and the result names those
+    commits with the command that brings each back. It refuses only when work of this ticket is already on the main branch."""
     tip = git(["rev-parse", "HEAD"], work).stdout.strip()
+    found = replan_point(project, cell, work, tip)
+    point = found["point"]
     main_head = git(["rev-parse", "HEAD"], project).stdout.strip()
     tasks = {task.get("commit"): task.get("id") for task in state.get("tasks") or [] if isinstance(task, dict) and task.get("commit")}
 
     def on_main(sha: str) -> bool:
         return bool(main_head) and git(["merge-base", "--is-ancestor", sha, main_head], work).returncode == 0
 
-    keep, merged = [], []
-    for sha in git(["rev-list", f"{spec_commit}..{tip}"], work).stdout.split():
-        message = git(["log", "-1", "--format=%s", sha], work).stdout.strip()
+    def named(sha: str) -> Dict[str, Any]:
+        subject = git(["log", "-1", "--format=%s", sha], work).stdout.strip()
         parents = git(["log", "-1", "--format=%P", sha], work).stdout.split()
         task = next((task_id for commit_sha, task_id in tasks.items() if sha.startswith(commit_sha) or commit_sha.startswith(sha)), None)
         if task:
-            if on_main(sha):
-                merged.append(task)
+            kind = f"task {task}"
         elif on_main(sha):
-            continue  # main's own history, brought in by the build station's sync
+            kind = "main"  # main's own history, brought in by the build station's sync: it stays on the main branch
         elif len(parents) > 1 and all(on_main(parent) for parent in parents[1:]):
-            continue  # the build station's merge of main into the branch
-        elif message.startswith(f"contract({cell.get('slice_id')}): "):
-            continue  # the plan's own contracts, which the next plan writes again
-        elif message.startswith("adr(ADR-") and message.endswith(f" [{cell.get('ticket_id')}]"):
-            continue  # a person's acceptance of this plan's own proposed ADR; the saved tip keeps it
+            kind = "merge of main"
+        elif subject.startswith(f"contract({cell.get('slice_id')}): "):
+            kind = "contracts"
+        elif subject.startswith("adr(ADR-") and subject.endswith(f" [{cell.get('ticket_id')}]"):
+            kind = "adr acceptance"
+        elif is_spec_commit(cell, subject):
+            kind = "spec"
         else:
-            keep.append(f"{sha[:12]} {message[:60]}")
+            kind = "not recognised"
+        return {"commit": sha, "subject": subject[:120], "as": kind, "task": task}
+
+    above = [named(sha) for sha in (git(["rev-list", f"{point}..{tip}"], work).stdout.split() if point else [])]
+    merged = [item["task"] for item in above if item["task"] and on_main(item["commit"])]
     if merged:
-        raise CellError(f"Work of this ticket is already on the main branch ({', '.join(merged)}), so it cannot be re-planned. Finish it, or abandon it.")
-    if keep:
-        raise CellError("The branch has commits that are not this plan's tasks or contracts, and a re-plan never discards them: "
-                        + "; ".join(keep) + ". Abandon the ticket instead (cleanup --abandon keeps the branch in a bundle).")
-    return spec_commit, tip
+        raise CellError(f"Work of this ticket is already on the main branch ({', '.join(merged)}): returning the branch to its spec would take back "
+                        "work that has landed, so it cannot be re-planned, and nothing was changed. The build can carry on under this plan from "
+                        "where it is; what is still to do can go in a new ticket.")
+    kept = [named(sha) for sha in found["kept"]]
+    return {"tip": tip, "point": point, "recorded": found["recorded"],
+            "kept": [{key: item[key] for key in ("commit", "subject", "as")} for item in kept if item["as"] not in ("main", "spec")],
+            "set_aside": [{key: item[key] for key in ("commit", "subject", "as")} for item in above if item["as"] != "main"]}
+
+
+def save_uncommitted(work: Path, tip: str, ticket_id: str) -> Optional[Dict[str, Any]]:
+    """Every uncommitted change in the cell's checkout (tracked and untracked, not ignored), as one commit on top of the tip,
+    made through a separate index so the checkout and its own index are not touched. None when the checkout is clean."""
+    listed = git(["status", "--porcelain", "-z", "--untracked-files=all"], work).stdout.split("\0")
+    paths, skip = [], False
+    for entry in listed:
+        if skip:
+            skip = False
+            continue
+        if len(entry) > 3:
+            paths.append(entry[3:])
+            skip = entry[0] in "RC"
+    if not paths:
+        return None
+    index = Path(git(["rev-parse", "--git-path", "index"], work).stdout.strip())
+    index = index if index.is_absolute() else work / index
+    scratch = index.with_name(index.name + ".mach-replan")
+    env = dict(os.environ, GIT_INDEX_FILE=str(scratch))
+    if git(["var", "GIT_COMMITTER_IDENT"], work).returncode != 0:
+        env.update({"GIT_AUTHOR_NAME": "MACH", "GIT_AUTHOR_EMAIL": "mach@localhost", "GIT_COMMITTER_NAME": "MACH", "GIT_COMMITTER_EMAIL": "mach@localhost"})
+
+    def run_git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *args], cwd=str(work), capture_output=True, text=True, env=env)
+
+    try:
+        if index.is_file():
+            shutil.copyfile(str(index), str(scratch))
+        added = run_git("add", "-A", "--sparse")
+        tree = run_git("write-tree") if added.returncode == 0 else added
+        made = run_git("commit-tree", tree.stdout.strip(), "-p", tip, "-m", f"Uncommitted work in the cell's checkout, saved by a re-plan [{ticket_id}]") \
+            if tree.returncode == 0 else tree
+    finally:
+        if scratch.exists():
+            scratch.unlink()
+    if made.returncode != 0:
+        raise CellError("The cell's checkout has uncommitted changes and they could not be saved, so nothing was changed: "
+                        + (made.stderr.strip() or made.stdout.strip())[:300] + ". Commit them on the cell's branch and re-plan again.")
+    return {"commit": made.stdout.strip(), "paths": sorted(paths)}
+
+
+def restore_spec(project: Path, cell: Dict[str, Any], root: Path, work: Path) -> Optional[Dict[str, Any]]:
+    """After the reset: when the branch does not hold the spec as it was finalized last (it was never committed, or was
+    committed under another message), write the cell's copy of it back and commit it as finalize does."""
+    copy_path, spec_path = root / "spec.md", cell.get("spec_path")
+    if not spec_path or not copy_path.is_file():
+        return None
+    text = copy_path.read_text(encoding="utf-8")
+    if hashlib.sha256(text.encode("utf-8")).hexdigest() != cell.get("spec_sha256"):
+        return None
+    target = work / spec_path
+    if target.is_file() and target.read_text(encoding="utf-8-sig") == text:
+        return None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+    before = git(["rev-parse", "HEAD"], work).stdout.strip()
+    said = commit(project, cell, [spec_path], f"spec({cell.get('slice_id')}): {cell.get('title') or ''} [{cell['ticket_id']}]".replace(":  [", ": ["), False)
+    after = git(["rev-parse", "HEAD"], work).stdout.strip()
+    return {"path": spec_path, "commit": after if after != before else None, **({"note": said} if said and after == before else {})}
 
 
 def cmd_replan(project: Path, args: argparse.Namespace) -> int:
@@ -1782,20 +1876,37 @@ def cmd_replan(project: Path, args: argparse.Namespace) -> int:
     build_json = root / "build.json"
     state = json.loads(build_json.read_text(encoding="utf-8")) if build_json.is_file() else {}
     if int(state.get("loop") or 0) > 0 or (root / "review").exists() or (root / "evidence" / "summary.json").exists():
-        raise CellError("This ticket has been through a judging round. Its rounds must stand, so it cannot be re-planned; abandon it, or let it escalate.")
-    spec_commit = tip = None
+        raise CellError("This ticket has been through a judging round, and its rounds must stand, so it cannot be re-planned; nothing was changed. "
+                        "The build carries on in its current round, answering the judges' findings, and a person can settle the ticket in the "
+                        "walkthrough (/mach decide).")
     work = workdir(project, cell)
-    if cell.get("isolation") == "worktree":
-        dirty = [line for line in git(["status", "--porcelain"], work).stdout.splitlines() if line.strip()]
-        if dirty:
-            raise CellError(f"The cell has uncommitted changes ({len(dirty)} path(s)). A re-plan never discards work: commit or remove them, or abandon the ticket.")
-        spec_commit, tip = replan_commits(project, cell, state, work)
+    found = replan_commits(project, cell, state, work) if cell.get("isolation") == "worktree" else None
     history = root / "plan-history"
     number = 1 + max([int(path.name) for path in history.glob("*") if path.name.isdigit()] or [0])
     keep = history / str(number)
     ref = f"refs/mach/replan/{args.ticket_id}/{number}"
+    # The branch first, so a Git failure leaves the plan files where they were. Uncommitted files are saved as a commit on
+    # top of the old tip, and the ref keeps that commit, so a reset never loses a file the build wrote and did not commit.
+    reset = uncommitted = restored = None
+    spec_commit = None
+    if found is not None:
+        uncommitted = save_uncommitted(work, found["tip"], args.ticket_id)
+        saved = uncommitted["commit"] if uncommitted else found["tip"]
+        point = found["point"] or found["tip"]
+        if saved != point:
+            if git(["update-ref", ref, saved], work).returncode != 0:
+                raise CellError(f"Could not save the branch's old tip as {ref}, so nothing was changed. Run the re-plan again; if it fails the same way, "
+                                "the Git error is in the checkout at " + str(work) + ".")
+            if git(["reset", "-q", "--hard", point], work).returncode != 0 or (
+                    uncommitted and git(["clean", "-q", "-f", "-d", "-e", ".claude/", "-e", ".mcp.json"], work).returncode != 0):
+                raise CellError(f"The old tip is saved as {ref}, but the branch could not be reset to {point[:12]}; the plan files were not moved. "
+                                f"Run the re-plan again: the saved ref keeps everything, and a second re-plan saves its own.")
+            reset = {"from": found["tip"], "to": point, "saved_as": ref}
+        restored = restore_spec(project, cell, root, work)
+        spec_commit = git(["rev-parse", "HEAD"], work).stdout.strip() or None
+        cell["spec_commit"] = spec_commit
     telemetry(root, "gate.evaluated", "plan", lambda: {"gate": "plan.replan", "outcome": "pass", "reason_code": "replanned", "overridden_by_reason": False,
-                                                       "from_stage": stage, "replan": number, "reset": bool(tip and tip != spec_commit)})
+                                                       "from_stage": stage, "replan": number, "reset": bool(reset)})
     if stage == "building":
         telemetry(root, "station.exited", "build", lambda: {"outcome": "replanned", "stage": "spec-ready"})
     keep.mkdir(parents=True)
@@ -1804,18 +1915,35 @@ def cmd_replan(project: Path, args: argparse.Namespace) -> int:
         if (root / name).is_file():
             (root / name).replace(keep / name)
             moved.append(name)
-    reset = None
-    if tip and tip != spec_commit:
-        if git(["update-ref", ref, tip], work).returncode != 0 or git(["reset", "-q", "--hard", spec_commit], work).returncode != 0:
-            raise CellError(f"Could not save the old tip as {ref} and reset the branch; the old plan is kept in {keep}. Nothing else changed.")
-        reset = {"from": tip, "to": spec_commit, "saved_as": ref}
-    (keep / "replan.json").write_text(json.dumps({"replan": number, "at": now(), "reason": reason, "from_stage": stage, "kept": moved, "reset": reset},
-                                                 indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    branch: Dict[str, Any] = {}
+    if found is not None:
+        where = f'git -C "{work}"'
+        not_recognised = [dict(item, bring_back=f"{where} cherry-pick {item['commit']}") for item in found["set_aside"] if item["as"] == "not recognised"]
+        branch = {
+            "spec_commit": {"was": found["recorded"], "now": spec_commit},
+            "kept_on_branch": found["kept"],
+            "set_aside": found["set_aside"] if reset else [],
+            "not_recognised": not_recognised if reset else [],
+            "uncommitted": dict(uncommitted, saved_as=ref, bring_back=f"{where} checkout {ref} -- <path>") if uncommitted else None,
+            "spec_restored": restored,
+        }
+    (keep / "replan.json").write_text(json.dumps({"replan": number, "at": now(), "reason": reason, "from_stage": stage, "kept": moved, "reset": reset,
+                                                 **branch}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     cell["stage"] = "spec-ready"
     cell["replans"] = number
     write_cell(project, cell)
-    print(json.dumps({"status": "REPLANNED", "ticket_id": args.ticket_id, "stage": "spec-ready", "kept_in": str(keep), "reset": reset,
-                      "next": "plan: the contract engineer writes a new plan.md and 'cell.py check-plan' checks it"}, indent=2))
+    told = ["plan: the contract engineer writes a new plan.md and 'cell.py check-plan' checks it."]
+    if reset and reset["from"] != reset["to"]:
+        told.append(f"Everything above {reset['to'][:12]} is set aside, not lost: {ref} keeps it.")
+    if branch.get("not_recognised"):
+        told.append("Commits MACH did not recognise are set aside with the rest and listed under not_recognised; to bring one back onto the "
+                    "branch, run its bring_back command: " + "; ".join(item["bring_back"] for item in branch["not_recognised"]) + ".")
+    if uncommitted:
+        told.append(f"Files that were not committed are saved in {ref}; to bring one back, run: git -C \"{work}\" checkout {ref} -- <path>.")
+    if restored and not restored.get("commit"):
+        told.append(f"The spec as finalized last is written back to {restored['path']} but not committed: {restored.get('note') or 'git.auto_commit is false'}.")
+    print(json.dumps({"status": "REPLANNED", "ticket_id": args.ticket_id, "stage": "spec-ready", "kept_in": str(keep), "reset": reset, **branch,
+                      "next": " ".join(told)}, indent=2))
     return 0
 
 
