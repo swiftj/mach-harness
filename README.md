@@ -501,6 +501,7 @@ Settings are in `.factory/config.json`. The ones people change most:
 | `factory.notifications` | not set | `false` forbids notifications for this project on every machine. Nothing in this file can turn them on |
 | `merge.pr.inline_findings` | `true` | With `merge.method` `pr`, post the review panel's findings on the pull request |
 | `build.commands.test_file` | worked out | How to run only some test files, with `{files}` where their paths go, for example `pytest {files}`. The build station uses it to see a new test fail in seconds. It is worked out for Python's unittest and pytest; set it for other test runners. It is used only if a committed test passes when run this way |
+| `commands.env` | not set | Extra environment variables for every project command MACH's stations run, as a map of names to values. `{cache}` is MACH's cache folder (`.factory/cache`) and `{project}` the project's folder, for example `"CARGO_HOME": "{cache}/cargo"`. A command's own leading `VAR=value` wins over it; it wins over your environment and over MACH's own choice. Never put a credential here |
 | `models.*` | `fable`, `opus`, `sonnet`, `haiku` | The model tier for planning, contracts, building and utility work |
 | `tickets.github.request_label` | `mach:request` | The label a person with write access applies to turn an issue into a request |
 | `tickets.github.status_comments` | `true` | `false` stops MACH's comments on request issues; its labels are still set |

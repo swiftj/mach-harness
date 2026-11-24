@@ -2,7 +2,8 @@
 """MACH doctor: checks that this workstation and project are ready for the MACH line.
 
 Read-only by default, but for one throwaway ticket workspace it makes and removes to prove one can be made
-(check_workspace). It measures and reports; a check that could not be performed is
+(check_workspace), and one small file (or empty folder) it makes and removes in the usual cache folder of each package
+manager the project uses, to see whether it can be written from here (check_caches). It measures and reports; a check that could not be performed is
 "not_checked", never "ok". With --fix it creates only the installer's standard data folders that
 are missing, and only when .factory/ already exists. It never writes a settings file, never enables
 or installs anything, starts no MACH station or agent, and never reads the machine-local Factory
@@ -377,6 +378,55 @@ def check_audit(project: Path) -> List[Dict[str, str]]:
     return [check("audit", "Readiness audit", "warn", f"{AUDIT_REPORT} records no tier.", "Run the audit station (/mach-audit) again.")]
 
 
+def check_caches(project: Path) -> List[Dict[str, str]]:
+    """For each package manager the project uses: whether its usual cache can be written from here, and where MACH points it
+    for the commands its stations run when it cannot (command_env.py); then the extra variables of commands.env."""
+    title = "Package caches"
+    try:
+        import importlib.util
+        skills = Path(__file__).resolve().parent.parent.parent
+        script = next(f / "scripts" / "command_env.py" for f in (skills / "mach-intent", skills / "intent") if (f / "scripts" / "command_env.py").is_file())
+        spec = importlib.util.spec_from_file_location("mach_command_env_for_doctor", script)
+        command_env = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(command_env)
+        rows = command_env.plan(project)
+        given, problems = command_env.read_setting(project)
+    except Exception as exc:  # noqa: BLE001  (a check that cannot run says so)
+        return [check("caches", title, "not_checked", f"It could not be checked ({exc.__class__.__name__}).")]
+    results = []
+    for row in rows:
+        name, variable = row["tool"], row["variable"]
+        usual = command_env.shown(row["usual"], project) if row["usual"] is not None else None
+        id_ = f"caches.{row['key']}"
+        if row["action"] == "yours":
+            results.append(check(id_, f"{name} cache", "ok", f"You set {variable or 'its location'} yourself; MACH leaves it as it is."))
+        elif row["action"] == "setting":
+            results.append(check(id_, f"{name} cache", "ok", f"{command_env.SETTING} in {CONFIG} sets it for MACH's commands."))
+        elif row["writable"] is None:
+            results.append(check(id_, f"{name} cache", "ok", f"{usual} is there already and is used as it is."))
+        elif row["writable"]:
+            results.append(check(id_, f"{name} cache", "ok", f"{usual} can be written from here; MACH sets nothing for it."))
+        elif row["action"] == "moved":
+            results.append(check(id_, f"{name} cache", "ok",
+                                 f"{usual} cannot be written from here, {command_env.WHY}. For the commands its stations run, MACH sets "
+                                 f"{variable} to {command_env.shown(row['to'], project)}; your own settings are not changed."
+                                 + (f" {row['note']}" if row["note"] else "")))
+        else:
+            results.append(check(id_, f"{name} cache", "warn", f"{usual} cannot be written from here, {command_env.WHY}, and MACH does not move it.",
+                                 row["suggest"]))
+    if given:
+        shown = ", ".join(f"{name}=" + ("(not shown)" if command_env.CREDENTIAL_NAME_RE.search(name) else value) for name, value in sorted(given.items()))
+        notes = command_env.setting_notes(given)
+        results.append(check("caches.setting", f"Extra variables ({command_env.SETTING})", "ok",
+                             f"Given to every command MACH's stations run. A command's own leading VAR=value wins over them, and they win "
+                             f"over your own environment and over what MACH would choose: {shown}."
+                             + (" " + " ".join(notes) if notes else "")))
+    if problems:
+        results.append(check("caches.setting.problems", f"Extra variables ({command_env.SETTING})", "warn", " ".join(problems),
+                             f"Correct {command_env.SETTING} in {CONFIG}: a map of variable names to text values."))
+    return results
+
+
 def check_hosts(project: Path) -> List[Dict[str, str]]:
     results = []
     for dest, what in HOSTS:
@@ -653,6 +703,7 @@ def diagnose(project: Path, fix: bool = False) -> Dict[str, Any]:
     checks += check_rules(project)
     checks += check_adr_baseline(project, config)
     checks += check_audit(project)
+    checks += check_caches(project)
     checks += check_hosts(project)
     checks += check_remote(project)
     checks += check_requests(project, config, gh_state)

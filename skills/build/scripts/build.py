@@ -184,6 +184,20 @@ try:
 except Exception:  # noqa: BLE001
     workspace = None
 
+# The environment of the project's commands (command_env.py): shared with the intent station, and with the audit, verify
+# and merge stations, which run commands by the same rule.
+try:
+    import command_env  # noqa: E402
+except Exception:  # noqa: BLE001
+    command_env = None
+
+
+def command_env_module() -> Any:
+    if command_env is None:
+        raise BuildError("The intent station's command_env.py is not installed beside this skill, so the project's commands cannot be run.",
+                         code="command-env-missing")
+    return command_env
+
 SECRET_REMEDY = ("Never commit a credential. Read it at run time from the environment or a secret store; in a test, build a fake one at run time "
                  "(for example by joining two strings) so that no file holds it. If what was found is not a secret at all, rerun with "
                  "--not-a-secret \"<why>\"; the reason and the places (never the value) go to the reviewers. Never use it for a real credential.")
@@ -436,14 +450,10 @@ def run_command(cell: Cell, command: str, timeout: int) -> Dict[str, Any]:
         argv = shlex.split(command)
     except ValueError as exc:
         raise BuildError(f"Cannot parse the command '{command}': {exc}", code="command-unparsable")
-    env = dict(os.environ)
-    # The project's own commands never leave Python byte code in the checkout: a cached file can outlive the source it was
-    # made from (rewritten at the same size within the same second), and a later run would then test the old code. A command
-    # that needs byte code written says so itself, with a leading PYTHONDONTWRITEBYTECODE= of its own.
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    while argv and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0]):  # leading VAR=value, as in a shell
-        key, value = argv.pop(0).split("=", 1)
-        env[key] = value
+    # One rule for every station's project commands (command_env.py): no Python byte code left in the checkout, a package
+    # cache that cannot be written pointed into the project's .factory/cache/ (one for the cell and every lane), commands.env,
+    # and a leading VAR=value of the command's own.
+    env, argv = command_env_module().environment(cell.project, cell.work, argv)
     if not argv or (shutil.which(argv[0]) is None and not (cell.work / argv[0]).is_file()):
         raise BuildError(f"'{argv[0] if argv else command}' is not installed or not on PATH, so '{command}' cannot run in the cell.", code="command-missing")
     started = time.monotonic()
@@ -452,7 +462,11 @@ def run_command(cell: Cell, command: str, timeout: int) -> Dict[str, Any]:
         code, out = done.returncode, done.stdout + ("\n" + done.stderr if done.stderr else "")
     except subprocess.TimeoutExpired:
         code, out = 124, f"Still running after {timeout} seconds; stopped."
-    return {"command": command, "exit_code": code, "passed": code == 0, "seconds": round(time.monotonic() - started, 1), "output_tail": out.strip()[-3000:], "output": out}
+    tail = out.strip()[-3000:]
+    hint = command_env_module().network_hint(out) if code not in (0, 124) else None
+    if hint:  # added to the failure output, which every caller shows from its end; no gate's outcome changes
+        tail = tail[-(2998 - len(hint)):] + "\n\n" + hint
+    return {"command": command, "exit_code": code, "passed": code == 0, "seconds": round(time.monotonic() - started, 1), "output_tail": tail, "output": out}
 
 
 def run_tests(cell: Cell) -> Dict[str, Any]:
@@ -1150,6 +1164,8 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
                            "before": planned["plan"]["before"], "after": planned["plan"]["after"],
                            "note": "Do the tasks before the lanes here, in order. When 'next' answers LANES, stop and report: the line starts "
                                    "one builder per lane and joins them."}
+    if command_env is not None and command_env.notices(cell.project):  # said once, and only when a cache was pointed elsewhere
+        answer["caches"] = command_env.notices(cell.project)
     print(json.dumps(answer, indent=2))
     return 0
 

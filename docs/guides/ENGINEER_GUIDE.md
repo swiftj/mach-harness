@@ -151,6 +151,22 @@ python3 .claude/skills/mach-build/scripts/build.py set-commands <ticket> --test-
 
 With the plugin it is the same script, in the `mach:build` skill's `scripts` folder. Nothing done is undone: done tasks stay done, and the build carries on where it was. Each change is recorded with the old and the new command, the reason and when, and the reviewers, `/mach explain` and the change record show it. A missing or wrong test command never means starting the ticket over.
 
+### Running Claude Code in a sandbox
+
+Claude Code's sandbox lets a command write in the project and the temporary folder, not in your home folder, so a package manager whose cache is there (npm's `~/.npm`, pip's, Gradle's `~/.gradle` ...) fails on every install. MACH handles this by itself, for the commands its stations run (the audit, the build, verification, the merge and release qualification):
+
+- For each package manager the project uses, MACH tests whether its usual cache can be written from here. When it can, nothing changes. When it cannot, MACH points the tool's own variable (for npm, `npm_config_cache`) at `.factory/cache/<tool>/` in the project, for those commands only. Your settings files are never changed, and a variable you set yourself is never overridden. The folder stays between runs, so only the first install downloads everything; every ticket and every lane of the project share it, and it is never committed.
+- The audit report, the build's start, the verification's start and the merge's result say which tool was pointed where, and why. `/mach doctor` lists each tool's cache and what MACH will do about it.
+- For any other tool, add its variable to `commands.env` in `.factory/config.json`. `{cache}` is MACH's cache folder and `{project}` the project's folder:
+
+  ```json
+  "commands": { "env": { "CARGO_HOME": "{cache}/cargo" } }
+  ```
+
+  A command's own leading `VAR=value` wins over this setting, and the setting wins over your own environment and over what MACH would choose. The file is shared with the project, so never put a credential in it.
+
+Never run `npm config set cache` or anything else that changes your own tool settings to get past the sandbox: MACH does not need it. When the network is the problem, the station's failure says so: a package download was refused or the registry could not be reached. The sandbox's network rules are set in Claude Code's own settings, which MACH does not change; allow the registry there, then run the step again.
+
 ### Issues filed by a monitoring system
 
 List the monitoring accounts in `.factory/config.json` as `tickets.github.monitor_accounts`, each with its `login` and its numeric `id` (`gh api users/<login> --jq .id`). An account is matched on the id, never on the login alone.

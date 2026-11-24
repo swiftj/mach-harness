@@ -29,6 +29,8 @@ A script does the measuring and the scoring. `AUDIT` below means `python3 "${CLA
 
 3. **If a check is marked `??`**, it could not be verified here, usually because a tool is not installed. It scores zero, and an unverified build or test run is also a blocker. Say which checks these are and what would verify them, such as installing the tool and running the audit again; do not describe them as defects in the repository.
 
+   **If an install or a download fails**, report what the station printed, its notes included, and nothing more. Never run `npm config set cache` or any other command that changes a person's own tool settings, and never suggest one: MACH already points a cache that cannot be written into `.factory/cache/` for the commands it runs, and says so in a note. When a note says a package download was refused or the network could not be reached, pass it on as it is: the network rules are the person's, in Claude Code's own settings.
+
 4. Report to the user, briefly:
    - the score, the tier, and what the tier means (below);
    - any blocker, first and plainly;
