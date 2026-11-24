@@ -500,7 +500,7 @@ func freeTextPolicy() map[string]any {
 		"catalog_fields": append([]map[string]any{
 			{"route": "/api/v1/cells/{ticket}/evidence", "path": "checks[].mock.note", "from": "results.json mock_records.<id>.note", "max": redact.MaxText},
 			{"route": "/api/v1/cells/{ticket}/evidence", "path": "checks[].mock.differences[]", "from": "results.json mock_records.<id>.differences[]", "max": redact.MaxText},
-		}, decisionFreeText...),
+		}, append(append([]map[string]any(nil), decisionFreeText...), needsFreeText...)...),
 		"render": "text only; never markup",
 	}
 }

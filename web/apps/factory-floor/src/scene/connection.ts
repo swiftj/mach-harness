@@ -97,7 +97,8 @@ export const INITIAL_CONNECTION: ConnectionStatus = {
 /**
  * The Factory's state on this machine, as the observer reads it from the Factory's own files
  * (`GET /api/v1/factory/status`, apps/observer/README.md). Read tolerantly: anything not reported is
- * null. The Factory Floor only reads it; nothing here can enable, pause or schedule anything.
+ * null. Nothing here can enable, start, pause or schedule anything; the Floor's one control over the
+ * Factory itself is the stop (src/needs).
  */
 /** A Claude Code runtime's state as the observer judges its stream records (observer M6.2). */
 export type RuntimeState = "proven" | "compatible-unproven" | "incompatible" | "unknown";
@@ -171,6 +172,17 @@ export interface FactoryStatus {
   readonly delivery: { readonly lastHoldMs: number | null; readonly p95HoldMs: number | null } | null;
   /** When the observer read the files (Unix ms). */
   readonly readAt: number | null;
+  /**
+   * Whether a Factory runs here, as MACH's own `factory status` says (`running`, observer M23): how it was
+   * started (`session`: with a Claude Code session; `background`), since when, how many executions run.
+   * Null or absent: not said (no run.py beside the observer, or an older observer).
+   */
+  readonly running?: {
+    readonly running: boolean | null;
+    readonly lifetime: "session" | "background" | null;
+    readonly since: number | null;
+    readonly executions: number | null;
+  } | null;
 }
 
 /** Whether what the scene shows as executing may have changed unseen. */

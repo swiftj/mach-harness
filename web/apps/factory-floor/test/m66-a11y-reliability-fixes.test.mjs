@@ -123,8 +123,11 @@ test("unattended runs off reads as a setting, not a fault: MACH works, only the 
   assert.equal(chip.key, "disabled");
   assert.equal(chip.chip, "Unattended runs: off");
   assert.ok(chip.title.startsWith(chip.chip), "the chip's accessible name starts with its visible words");
-  assert.match(chip.body, /^MACH is installed and working: an engineer runs its work by hand/);
+  assert.match(chip.body, /^MACH is installed and working/);
   assert.match(chip.body, /Only the Factory Supervisor, which runs work unattended, is off/);
-  assert.match(chip.body, /outside the Factory Floor, which only reads/);
+  // M23: the Floor decides and stops, never starts work; /mach pull carries the work on.
+  assert.match(chip.body, /\/mach pull in Claude Code/);
+  assert.match(chip.body, /the Factory Floor never starts work itself/);
+  assert.doesNotMatch(chip.body, /only reads/);
   assert.doesNotMatch(`${chip.chip} ${chip.title} ${chip.body}`, /not enabled/i);
 });

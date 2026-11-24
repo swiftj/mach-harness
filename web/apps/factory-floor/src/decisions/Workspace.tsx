@@ -1,8 +1,8 @@
 /**
  * Decisions in force (key 4, `#decisions`): the project's architecture decisions (ADRs) for an
  * engineer. The list, the required baseline, what waits on a person, and one decision's page
- * (`#decisions?adr=ADR-0007`). Read-only, like the whole Factory Floor: nothing here accepts, changes
- * or excepts a decision; the page says where that is done.
+ * (`#decisions?adr=ADR-0007`). Nothing here accepts, changes or excepts a decision; the page says where
+ * that is done (a ticket's proposal or conflict can be decided in "Needs you" on the Line, M23).
  *
  * Live: read from the observer (`/api/v1/decisions`, `/api/v1/decisions/{adr}`) when the workspace
  * opens and on "Read again"; it does not follow the stream. Simulation: the sample in fixture.ts,

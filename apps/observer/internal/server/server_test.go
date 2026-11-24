@@ -61,6 +61,7 @@ type config struct {
 	maxStreams   int
 	batch        int
 	events       []map[string]any
+	act          Actor // MACH's run.py for the Floor's decisions and stop; none when nil
 }
 
 func start(t *testing.T, c config) *harness {
@@ -84,7 +85,7 @@ func start(t *testing.T, c config) *harness {
 	fac := &fakeFactory{st: FactoryState{Present: true, Report: map[string]any{"policy": map[string]any{"effective": "supervised"}}, Effective: "supervised",
 		Enabled: true, Autonomy: "supervised", PolicyUsable: true, LeasePresent: true, LeaseLive: true, LeaseAgeSec: ptr(2.0), ReadAt: time.Now()}}
 	s := New(Options{Root: root, Guard: guard, Log: mem, Projector: proj, Catalog: artifact.New(root), Ingest: in, Factory: fac, UI: webui.Handler(),
-		Done: done, Heartbeat: c.heartbeat, WriteTimeout: c.writeTimeout, MaxStreams: c.maxStreams, StreamBatch: c.batch, LinkFile: ".factory/local/observer/link"})
+		Done: done, Heartbeat: c.heartbeat, WriteTimeout: c.writeTimeout, MaxStreams: c.maxStreams, StreamBatch: c.batch, LinkFile: ".factory/local/observer/link", Act: c.act})
 	hs := s.HTTPServer()
 	go hs.Serve(l)
 	go proj.Run(done)
@@ -170,9 +171,13 @@ func routes() []string {
 
 // ---- security ----
 
+// POST reaches the two write routes and nothing else; they answer POST only, every other route GET
+// only. Nothing is run for a refused method.
 func TestEveryOtherMethodIsRefused(t *testing.T) {
-	h := start(t, config{events: feedtest.Scenario()})
-	paths := append(routes(), "/api/v1/stream", "/api/v1/artifacts/a000000000000000000000000/content", "/api/v1/nope", "/", "/?t=x")
+	actor := &fakeActor{}
+	h := start(t, config{events: feedtest.Scenario(), act: actor})
+	paths := append(routes(), "/api/v1/needs", "/api/v1/stream", "/api/v1/artifacts/a000000000000000000000000/content", "/api/v1/nope", "/", "/?t=x",
+		"/api/v1/factory/status", "/api/v1/needs/T-1", "/api/v1/needs/T-1/approve/x", "/api/v1/factory/stop/now", "/api/v1/factory")
 	for _, method := range []string{"POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "PROPFIND"} {
 		for _, path := range paths {
 			resp, _, _ := h.do(t, method, path, nil)
@@ -181,6 +186,18 @@ func TestEveryOtherMethodIsRefused(t *testing.T) {
 				t.Fatalf("%s %s: %d", method, path, resp.StatusCode)
 			}
 		}
+	}
+	for _, method := range []string{"GET", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"} {
+		for _, path := range []string{"/api/v1/needs/T-1/approve", "/api/v1/factory/stop"} {
+			resp, _, _ := h.do(t, method, path, nil)
+			checkCSP(t, resp)
+			if resp.StatusCode != http.StatusMethodNotAllowed || resp.Header.Get("Allow") != "POST" {
+				t.Fatalf("%s %s: %d", method, path, resp.StatusCode)
+			}
+		}
+	}
+	if actor.count() != 0 {
+		t.Fatalf("run.py was run %d times for a refused method", actor.count())
 	}
 }
 
@@ -661,22 +678,31 @@ func TestHistoryWindowInOrder(t *testing.T) {
 	}
 }
 
-// The observer offers no Factory capability: it says so, it reports the event revision it serves,
-// and its session lists nothing that starts, stops or changes work.
-func TestSessionOffersNoFactoryCapability(t *testing.T) {
+// The session offers exactly two Factory capabilities (M23): decisions and stop, true only when
+// MACH's run.py was found. Execution stays false, read_only is gone, it reports the event revision
+// it serves, and nothing in it starts, enables, pauses or dispatches work.
+func TestSessionCapabilities(t *testing.T) {
 	h := start(t, config{events: feedtest.Scenario()})
 	s := h.get(t, "/api/v1/session")
 	caps := s["capabilities"].(map[string]any)
 	ev := s["versions"].(map[string]any)["event"].(map[string]any)
-	if s["read_only"] != true || caps["execution"] != false || ev["revision"].(float64) != feed.SchemaRevision || ev["schema"].(float64) != 3 {
+	if _, has := s["read_only"]; has || caps["execution"] != false || caps["decisions"] != false || caps["stop"] != false ||
+		ev["revision"].(float64) != feed.SchemaRevision || ev["schema"].(float64) != 3 {
 		t.Fatalf("session %v", s)
 	}
+	if token, _ := s["csrf_token"].(string); len(token) < 40 {
+		t.Fatalf("no CSRF token: %v", s["csrf_token"])
+	}
 	for k := range caps {
-		for _, verb := range []string{"dispatch", "enable", "start", "stop", "pause", "approve", "merge", "write"} {
+		for _, verb := range []string{"dispatch", "enable", "start", "pause", "resume", "approve", "merge", "write"} {
 			if strings.Contains(k, verb) {
 				t.Fatalf("a capability named %q", k)
 			}
 		}
+	}
+	caps = start(t, config{act: &fakeActor{}}).get(t, "/api/v1/session")["capabilities"].(map[string]any)
+	if caps["decisions"] != true || caps["stop"] != true || caps["execution"] != false {
+		t.Fatalf("with run.py: %v", caps)
 	}
 }
 

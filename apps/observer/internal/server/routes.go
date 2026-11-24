@@ -98,9 +98,14 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 		"project":        map[string]any{"folder": projectFolder(s.opts.Root)},
 		"versions":       map[string]any{"observer": Version, "api": APIVersion, "event": map[string]any{"schema": feed.SchemaVersion, "revision": feed.SchemaRevision, "kinds": Kinds}},
 		"generation":     s.opts.Log.Epoch(),
-		"read_only":      true,
 		"display_policy": map[string]any{"people": "role", "free_text": freeTextPolicy()},
-		"capabilities": map[string]any{"execution": false, "snapshot": true, "artifacts": true, "analytics": true,
+		// The token a write must carry in X-MACH-CSRF; derived from this browser's own session.
+		"csrf_token": s.opts.Guard.CSRF(r),
+		// decisions: a person's decision on a ticket in "Needs you" is recorded through MACH's run.py
+		// (decide do); stop: the Factory's running work can be stopped (factory stop). Both false when
+		// run.py was not found. execution stays false: the Floor never starts, enables or dispatches work.
+		"capabilities": map[string]any{"decisions": s.opts.Act != nil, "stop": s.opts.Act != nil, "execution": false,
+			"snapshot": true, "artifacts": true, "analytics": true,
 			"evidence_media": set.EvidenceMedia, "evidence_media_setting": `.factory/config.json "floor": {"evidence_media": true}`,
 			"stream_observations": streamObs},
 		"limits": map[string]any{"page_default": DefaultPage, "page_max": MaxPage, "scan_cap": ScanCap, "spans_max": MaxSpans, "history_max": MaxHistory,
@@ -218,8 +223,11 @@ func (s *Server) factoryStatus(w http.ResponseWriter, r *http.Request) {
 			"note": "a reading of the machine-local policy; run.py decides whether execution is authorized"},
 		"supervisor":    map[string]any{"lease_present": fs.LeasePresent, "heartbeat_fresh": leaseFresh, "heartbeat_age_seconds": fs.LeaseAgeSec, "lease_expired": fs.LeaseExpired},
 		"recorded_mode": recorded,
-		"read_at":       ms(fs.ReadAt),
-		"freshness":     fresh,
+		// running: whether a Factory supervisor runs here and how it was started, as MACH's own
+		// `factory status` says (act.ParseStatus); null when run.py was not found or has not answered.
+		"running":   s.running(r.Context()),
+		"read_at":   ms(fs.ReadAt),
+		"freshness": fresh,
 	}))
 }
 

@@ -18,7 +18,7 @@ import { EpicName, issueWords } from "./Epic";
 import { CommandsPart, LanesPart } from "./Lanes";
 import type { CommandsPanel, LanesPanel } from "./lanesModel";
 
-function Back({ onBack }: { onBack: () => void }) {
+export function Back({ onBack }: { onBack: () => void }) {
   return (
     <button type="button" onClick={onBack} className="inline-flex items-center gap-1 text-body-sm font-semibold text-accent-ink underline decoration-1 underline-offset-[3px] hover:decoration-2">
       <ArrowLeft aria-hidden="true" className="size-3.5" />
@@ -84,6 +84,7 @@ export function TicketPanel({
   onBack,
   onRecord,
   onFloor,
+  decide,
 }: {
   row: LineRow;
   now: number;
@@ -92,6 +93,8 @@ export function TicketPanel({
   onBack: () => void;
   onRecord: () => void;
   onFloor: () => void;
+  /** M23: where the person can decide here, the decision part (src/needs/Decide.tsx) in place of the command to copy. */
+  decide?: ReactNode;
 }) {
   const station = LINE_STATIONS[row.column]!.name;
   return (
@@ -119,6 +122,9 @@ export function TicketPanel({
         ) : null}
         {row.since !== null && row.state !== "working" ? <p className="mt-1 text-caption text-ink-muted">Since {timecode(row.since, false)}, {duration(Math.max(0, now - row.since))} ago.</p> : null}
       </Part>
+      {decide ? (
+        <div className="mt-5">{decide}</div>
+      ) : (
       <Part title="What it needs from you">
         <p className="text-body-sm text-ink">{row.needs}</p>
         <CommandLine className="mt-2" command={row.command} purpose={`for ${row.ticketId}`} />
@@ -129,6 +135,7 @@ export function TicketPanel({
         ) : null}
         {row.stop === "policy-owner" ? <p className="mt-1.5 text-caption text-ink-muted">Fill in the policy's ID and the owner's own words; only the owner accepts a concern.</p> : null}
       </Part>
+      )}
       <Part title="Where the time went">
         <TimeBars times={row.times} />
       </Part>

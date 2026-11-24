@@ -1,6 +1,8 @@
 /**
- * The observer's read-only HTTP API (`/api/v1`, docs/mach-next/M6_1_OBSERVER_DESIGN.md section 12,
- * contract section 14), as the Factory Floor reads it. `fetch` is injected so tests run against an
+ * The observer's HTTP API (`/api/v1`, docs/mach-next/M6_1_OBSERVER_DESIGN.md section 12,
+ * contract section 14), as the Factory Floor reads it, and its two writes (M23 4.1): a person's
+ * decision on a ticket in "Needs you" and the Factory's stop, each sent with this session's CSRF
+ * token (`X-MACH-CSRF`, from `/session`) and run by the observer through MACH's own run.py. `fetch` is injected so tests run against an
  * in-memory fake; the browser passes its own (same origin, cookie credentials).
  *
  * Every response is M5's envelope: `{ok: true, data}` or `{ok: false, error: {kind, message, ...}}`.
@@ -23,10 +25,10 @@ export interface FetchResponseLike {
 }
 export type FetchLike = (
   url: string,
-  init?: { readonly headers?: Readonly<Record<string, string>>; readonly credentials?: "same-origin"; /** M6.3: lets a superseded request be cancelled (a fetch that ignores it is still safe: the answer is discarded). */ readonly signal?: AbortSignal },
+  init?: { readonly method?: "GET" | "POST"; readonly body?: string; readonly headers?: Readonly<Record<string, string>>; readonly credentials?: "same-origin"; /** M6.3: lets a superseded request be cancelled (a fetch that ignores it is still safe: the answer is discarded). */ readonly signal?: AbortSignal },
 ) => Promise<FetchResponseLike>;
 
-export type ObserverErrorKind = "invalid" | "unauthorized" | "not_found" | "cursor_reset" | "cursor_expired" | "unavailable" | "internal" | "network" | "protocol";
+export type ObserverErrorKind = "invalid" | "unauthorized" | "not_found" | "cursor_reset" | "cursor_expired" | "unavailable" | "internal" | "network" | "protocol" | "refused" | "conflict";
 
 export class ObserverError extends Error {
   readonly kind: ObserverErrorKind;
@@ -68,6 +70,21 @@ export interface ObserverSession {
   readonly nowMs: number | null;
   /** `capabilities.evidence_media` (M6.4): screenshots and recordings are served; null when the session does not say. */
   readonly evidenceMedia?: boolean | null;
+  /** `capabilities.decisions` (M23): a person's decision can be recorded here (MACH's run.py was found). */
+  readonly decisions?: boolean;
+  /** `capabilities.stop` (M23): the Factory's running work can be stopped here. */
+  readonly stop?: boolean;
+}
+
+/** A decision's inputs as the observer takes them (`POST /needs/{ticket}/{option}`); each only where the option asks for it. */
+export interface DecisionBody {
+  /** The person's name; left out, MACH records Git's user name. */
+  readonly by?: string;
+  /** The person's reason, in their own words. */
+  readonly reason?: string;
+  readonly adrs?: readonly string[];
+  readonly test_cmd?: string;
+  readonly answers?: readonly ({ readonly n: number; readonly answer: string } | { readonly n: number; readonly leave_open: true })[];
 }
 
 export interface EventsPage {
@@ -483,6 +500,13 @@ export interface ObserverClient {
   decisions?(signal?: AbortSignal): Promise<Readonly<Record<string, unknown>>>;
   /** `GET /api/v1/decisions/{adr}`: one decision's page. */
   decision?(id: string, signal?: AbortSignal): Promise<Readonly<Record<string, unknown>>>;
+  // ---- M23: "Needs you" and the stop. Each returns the reply's `data` unparsed (src/needs/model.ts reads it).
+  /** `GET /api/v1/needs`: MACH's own list of what waits for a person (run.py decide --json). */
+  needs?(signal?: AbortSignal): Promise<Readonly<Record<string, unknown>>>;
+  /** `POST /api/v1/needs/{ticket}/{option}`: one person's decision; a refusal throws with kind `refused` and MACH's sentence. */
+  decide?(ticket: string, option: string, body: DecisionBody): Promise<Readonly<Record<string, unknown>>>;
+  /** `POST /api/v1/factory/stop`: the Factory's running work on this computer stops. */
+  stopFactory?(): Promise<Readonly<Record<string, unknown>>>;
 }
 
 /** The filters every analytics route reads (M6_5_DESIGN.md 3); a route that cannot honour one answers 400. Values are identifiers or codes, never prose. */
@@ -579,10 +603,23 @@ export function readFactoryStatus(data: unknown): FactoryStatus {
     ingest: { stale: bool(ingest.stale), watermark: timeOf(ingest.watermark_ms), catchingUp: bool(ingest.catching_up) },
     delivery: ingest.delivery && typeof ingest.delivery === "object" ? { lastHoldMs: num(obj(ingest.delivery).last_hold_ms), p95HoldMs: num(obj(ingest.delivery).hold_ms_p95) } : null,
     readAt: timeOf(d.read_at),
+    running: readRunning(d.running),
     // `/factory/status` carries neither; `/health` does (merged by the live source).
     runtime: null,
     history: null,
   };
+}
+
+/**
+ * `/factory/status` `running` (M23): whether a Factory supervisor runs here, as MACH's `factory status` says, and
+ * how it was started. Null when the observer does not say (no run.py, an older observer); each part null when unknown.
+ */
+function readRunning(value: unknown): FactoryStatus["running"] {
+  if (!value || typeof value !== "object") return null;
+  const r = obj(value);
+  if (r.known !== true) return null;
+  const lifetime = r.lifetime === "session" || r.lifetime === "background" ? r.lifetime : null;
+  return { running: bool(r.running), lifetime, since: timeOf(r.since), executions: num(r.executions) };
 }
 
 /** A cell source's `cell {ticket_id, folder, lifecycle_log, cell_json, first_seen_ms}`, or null when absent or not in that shape. */
@@ -764,11 +801,38 @@ const KINDS: Readonly<Record<string, ObserverErrorKind>> = {
   cursor_expired: "cursor_expired",
   unavailable: "unavailable",
   internal: "internal",
+  refused: "refused",
+  conflict: "conflict",
 };
 
 export function createObserverClient(options: { readonly fetch: FetchLike; readonly base?: string; /** How a Retry-After is waited out (the browser's timer from the shell; tests pass their own). Without it the retry is at once. */ readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void> }): ObserverClient {
   const base = options.base ?? "/api/v1";
   const sleep = options.sleep ?? defaultSleep;
+  // This browser session's token for writes, from the last `/session` read.
+  let csrf: string | null = null;
+  const post = async (path: string, body: unknown): Promise<Record<string, unknown>> => {
+    if (!csrf) await get("/session").then((d) => (csrf = str(d.csrf_token)));
+    let response: FetchResponseLike;
+    try {
+      response = await options.fetch(`${base}${path}`, {
+        method: "POST",
+        body: JSON.stringify(body ?? {}),
+        headers: { "Content-Type": "application/json", Accept: "application/json", "X-MACH-CSRF": csrf ?? "", "X-MACH-Event-Schema": String(EVENT_SCHEMA) },
+        credentials: "same-origin",
+      });
+    } catch (error) {
+      throw new ObserverError("network", error instanceof Error ? error.message : "The observer could not be reached.", 0);
+    }
+    let reply: Record<string, unknown>;
+    try {
+      reply = obj(await response.json());
+    } catch {
+      throw new ObserverError("protocol", "The observer's response was not JSON.", response.status);
+    }
+    if (reply.ok === true) return obj(reply.data);
+    const error = obj(reply.error);
+    throw new ObserverError(KINDS[str(error.kind) ?? ""] ?? "protocol", str(error.message) ?? `The observer answered ${response.status}.`, response.status, error);
+  };
   const getOnce = async (path: string, signal?: AbortSignal): Promise<Record<string, unknown>> => {
     const aborted = (): never => {
       throw signal?.reason ?? new DOMException("The request was superseded.", "AbortError");
@@ -848,6 +912,7 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
   return {
     async session() {
       const d = await get("/session");
+      csrf = str(d.csrf_token) ?? csrf;
       const versions = obj(d.versions);
       const event = obj(versions.event);
       const capabilities = obj(d.capabilities);
@@ -873,6 +938,8 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
         project: str(obj(d.project).folder),
         nowMs: num(d.now_ms) ?? (typeof d.now === "string" && Number.isFinite(Date.parse(d.now)) ? Date.parse(d.now) : null),
         evidenceMedia: bool(capabilities.evidence_media),
+        decisions: capabilities.decisions === true,
+        stop: capabilities.stop === true,
       };
     },
     async events(after, limit = 1000) {
@@ -1057,6 +1124,18 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
     async decision(id, signal) {
       if (!/^ADR-[0-9]{4}$/.test(id)) throw new ObserverError("invalid", "An architecture decision is named by its ID, such as ADR-0007.", 0);
       return get(`/decisions/${id}`, signal);
+    },
+    async needs(signal) {
+      return get("/needs", signal);
+    },
+    async decide(ticket, option, body) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*$/.test(ticket) || !/^[a-z][a-z-]{0,31}$/.test(option)) {
+        throw new ObserverError("invalid", "That is not a ticket and an option MACH offers.", 0);
+      }
+      return post(`/needs/${encodeURIComponent(ticket)}/${encodeURIComponent(option)}`, body);
+    },
+    async stopFactory() {
+      return post("/factory/stop", {});
     },
   };
 }

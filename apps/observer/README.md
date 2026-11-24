@@ -1,9 +1,12 @@
 # mach-observer
 
-The read-only local observer behind the MACH Factory Floor. It
+The local observer behind the MACH Factory Floor. It
 follows the Factory's own files, keeps a redacted index under `.factory/local/observer/`, projects
-it into the Factory's state, and serves a versioned GET-only API, a server-sent event stream and the
-embedded Factory Floor on `127.0.0.1`. Design: `docs/mach-next/M6_1_OBSERVER_DESIGN.md`; events:
+it into the Factory's state, and serves a versioned API (GET everywhere, POST on two routes only), a
+server-sent event stream and the embedded Factory Floor on `127.0.0.1`. Since M23 it also runs
+MACH's own `run.py`, through `internal/act` and nothing else, for what a person does in the Floor:
+the "Needs you" list, a decision on one ticket in it, and the Factory's stop
+(`docs/mach-next/M23_ONE_PULL.md` section 4.1). Design: `docs/mach-next/M6_1_OBSERVER_DESIGN.md`; events:
 `docs/mach-next/M6_1_EVENT_CONTRACT.md`; Timeline, Evidence and Analytics data:
 `docs/mach-next/M6_1_SHARED_CONTRACTS.md`.
 
@@ -12,9 +15,12 @@ embedded Factory Floor on `127.0.0.1`. Design: `docs/mach-next/M6_1_OBSERVER_DES
     make build       # bin/mach-observer with the Factory Floor embedded (build.sh)
     make smoke       # start it on a throwaway project and check it (smoke.sh)
     bin/mach-observer --project <path>   # prints a one-time link; started by a skill, not a MACH command
+        [--mach-run <run.py>] [--python <python3>]   # where MACH's run.py and Python are, when not found
 
-Standard library only. It writes nothing outside its own folder, takes no MACH lock, runs no MACH
-command, starts no process and connects to nothing: see [What it never does](#what-it-never-does).
+Standard library only. It writes nothing outside its own folder, takes no MACH lock and connects to
+nothing. The only process it starts is MACH's `run.py` with one of four fixed argument vectors
+([Decisions and the stop](#decisions-and-the-stop)); it never enables, starts or dispatches work:
+see [What it never does](#what-it-never-does).
 
 ## Layout
 
@@ -25,7 +31,8 @@ command, starts no process and connects to nothing: see [What it never does](#wh
 | `internal/project` | serving | the projection (state at a cursor), checkpoints, snapshots, spans, views |
 | `internal/metrics` | serving | the analytics catalog and mergeable aggregates |
 | `internal/artifact` | serving | the evidence catalog and the guarded content reader |
-| `internal/server`, `security`, `webui` | serving | HTTP, sessions, headers, the embedded app |
+| `internal/server`, `security`, `webui` | serving | HTTP, sessions, CSRF, headers, the embedded app |
+| `internal/act` | serving | the one package that starts a process: MACH's `run.py`, four fixed vectors |
 | `cmd/mach-observer/adapt.go` | both | the one file where the serving side meets the store, ingest loop and factory reader |
 
 ## Restarts: the same page keeps working
@@ -64,7 +71,8 @@ reading the printed link. A project with no `.factory/` has no such file: restar
 
 ## API (`/api/v1`)
 
-Every route is GET only (anything else: 405 with `Allow: GET`), needs the session cookie (401),
+Every route is GET only (anything else: 405 with `Allow: GET`) except the two write routes, which
+are POST only (405 with `Allow: POST`; [below](#decisions-and-the-stop)). Every route needs the session cookie (401),
 `Host` `127.0.0.1:<port>` or `localhost:<port>` (403), no foreign `Origin` or `Sec-Fetch-Site`
 (403), and a plain path (no `..`, `//`, `%2f`, `%2e`, `%5c`, `%00`: 400). Every reply is
 `{"ok":true,"data":…}` or `{"ok":false,"error":{"kind","message",…}}` with `Cache-Control: no-store`
@@ -74,9 +82,10 @@ means 3; any other value is 400 `invalid` with `supported: [3]`. Cursors are `<g
 
 | Route | Purpose | Limits and notes |
 |---|---|---|
-| `session` | versions (event schema 3, revision 2, the 54 kinds), generation, `display_policy {people: "role", free_text {checked_for_names: false, note, artifact_field, artifact_header, event_fields[{kind, path, max}], projection_fields[{route, path, from}], render}}`, capabilities (`execution: false`, snapshot, artifacts, analytics, `evidence_media`, `stream_observations {policy: "structural", state, proven_versions, versions[{version, state, executions, records_refused}], ok, claude_code_version, reason}`), every limit below, session count, where the next link is kept | `state`: `proven`, `compatible-unproven`, `incompatible` or `unknown`, the worst over every stream ([Stream records](#stream-records-by-shape)) |
+| `session` | versions (event schema 3, revision 2, the 54 kinds), generation, `display_policy {people: "role", free_text {checked_for_names: false, note, artifact_field, artifact_header, event_fields[{kind, path, max}], projection_fields[{route, path, from}], render}}`, `csrf_token` (this browser session's token for `X-MACH-CSRF`), capabilities (`decisions` and `stop`: true when MACH's `run.py` was found; `execution: false`, snapshot, artifacts, analytics, `evidence_media`, `stream_observations {policy: "structural", state, proven_versions, versions[{version, state, executions, records_refused}], ok, claude_code_version, reason}`), every limit below, session count, where the next link is kept | `state`: `proven`, `compatible-unproven`, `incompatible` or `unknown`, the worst over every stream ([Stream records](#stream-records-by-shape)) |
 | `health` | `ok`/`degraded`, observer time, index head and floor, projection (position, lag, partial, `history` completeness by gap class), ingest (ticks, errors, `catching_up`, `late` and `backfill` counts, `runtime` (the streams' runtime summary), `delivery {settle_max_ms, adaptive, hold_ms_p50, hold_ms_p95, last_hold_ms, samples, released_by_bound}`), freshness (below), streams, sessions | degraded while the last tick erred, ingest has not ticked for 5 s, or the projection errs |
-| `factory/status` | the Factory's files and how fresh they are; the exact shape is [below](#factorystatus) | files read at most once a second |
+| `factory/status` | the Factory's files and how fresh they are, and `running` (below); the exact shape is [below](#factorystatus) | files read at most once a second; `running` from `run.py factory status` at most every 10 s |
+| `needs` | "Needs you": MACH's own list, `run.py decide --json` (reads only), with every text scrubbed as a document; `{tickets, order, nothing_waiting, data_fields, data_note, by, read_at}` | read again when a new record is indexed, else after 20 s; 503 `unavailable` without `run.py` |
 | `events` | v3 events after a cursor, in delivery order (`pos`) | `after`, `limit` 1–1000 (200), filters `ticket`, `execution`, `station`, `type` (prefix), `entity` (ref), `authority`; at most 10,000 events examined per request (`scanned`, then page on from `next`); 409 `cursor_reset`, 410 `cursor_expired`, 400 |
 | `history` | a window of history in ORDER (the `order` key), for replay and the Timeline (contract 14): late events appear where they belong; `{events, from_order, to_order, next_from_order, more, complete, capped, head, floor, watermark_ms, catching_up, limits}`. Example: `/api/v1/history?ticket=T-1&from_ms=1794454140000&limit=500` | `from_order`/`to_order` (an order key or its first 15 digits; `[from, to)`) or `from_ms`/`to_ms`; `entities` (up to 32 refs, comma-separated), `ticket`, `execution`, `type` (prefix); `limit` 1–5000 (1000); page on with `from_order=next_from_order` (a page never splits events sharing an order key). Reads the memory window through its order index and, for what has left it, the index's segments on disk through a per-minute chunk index; a page reads at most 10,000 lines from disk and may stop short of `limit` with `capped: true` (and `more: true`): page on. `complete: false` when retention may have dropped part of the window |
 | `series` | event counts per time bucket, by kind and authority, placed by `order_ms`, for drawing a long timeline without fetching every event: `{from_ms, to_ms, bucket_ms, buckets[{from_ms, count, kinds, authorities}], total, kinds, authorities, complete, source, head, floor, watermark_ms}`; empty buckets left out | `from_ms`, `to_ms` (default: everything counted), `bucket_ms` (a whole number of seconds; default the smallest clock step, 1 s to 1 day, that keeps the range within 500 buckets; at most 2,000 buckets, 400 beyond), `ticket`, `execution`. Whole-minute buckets with no filter come from counts kept per minute for everything indexed (`source: "minutes"`, rebuilt from the segments on a restart); whole-minute buckets with one filter (a `ticket` or an `execution`) come from per-ticket and per-execution minutes kept for the whole index (`source: "minutes"`); finer buckets or both filters are counted from the memory window (`source: "memory-window"`, `complete: false` when it no longer holds the whole range). Example: `/api/v1/series?ticket=T-1&bucket_ms=60000` |
@@ -257,6 +266,38 @@ is no top-level `lease`. `report.policy` omits `reason` when the policy is usabl
 `enabled_by`, the machine, tools or paths; `report.lease` never carries the host or PID. A project
 with no `.factory/` answers `factory_present: false` and the same keys.
 
+`running` (M23), from `run.py factory status`, or `null` when `run.py` was not found or has not answered:
+`{"known": true, "running": true, "lifetime": "session" | "background" | null, "since": "<time>" | null, "executions": 2 | null, "mode": "supervised" | null, "read_at": "<time>"}`.
+Every field is read defensively (`internal/act/status.go`): one missing or not of a known value is `null`. The supervisor's pid is never passed on.
+
+## Decisions and the stop
+
+| Route | Runs | Reply |
+|---|---|---|
+| `POST needs/{ticket}/{option}` | `python3 -I -B <run.py> --project=<root> decide do <ticket> <option> [--by=…] [--reason=…] [--adr=…]… [--test-cmd=…] [--answers-file=…] --via=floor --json` | `{ticket_id, option, done, in_conversation, now, command, why, note, supervisor, unparked}`; the person's name is never sent back (run.py's sentences say "your" in its place) |
+| `POST factory/stop` | `python3 -I -B <run.py> --project=<root> factory stop` | `{stopped, supervisor_stopped, note}` (counts and run.py's sentence only) |
+
+A write needs everything a read does, plus `Origin: http://<the Host>` and `X-MACH-CSRF` with this
+session's token (403), `Content-Type: application/json` (415) and a body of at most 256 KB (413). A
+decision's body is `{"by", "reason", "adrs", "test_cmd", "answers": [{"n", "answer"} | {"n", "leave_open": true}]}`,
+every field optional, unknown fields refused (400). The ticket must be a ticket ID, the option one
+of `approve`, `send-back`, `merge`, `accept`, `exception`, `replan`, `set-test-command`, `retry`,
+`run`, `revise`, `answers`, `abandon`, or another the last `needs` list offered for that ticket
+with `do: true` (`wait`); names at most 120 characters on one line, reasons and answers at most
+4,000, no control characters (400). Whether the option is on offer now, and which inputs it needs,
+`run.py` decides: its refusal comes back as `409 refused` with its own sentence; a second decision
+or stop while one runs is `409 conflict`. Answers go to `run.py` in a private file in this folder
+(`answers-<random>.json`, mode 0600), removed once it has run.
+
+`internal/act` finds `run.py` beside the binary's MACH (`skills/run/scripts/run.py` in MACH's
+repository or plugin, `.claude/skills/mach/scripts/run.py` in a project install), then in the
+project's install, and `python3` on `PATH`. Each run: its own process group, killed whole on its
+time limit (90 s for reads, 3 min for a decision, 20 min for `approve`, `merge`,
+`set-test-command` and `abandon`, which can run the project's tests, 2 min for the stop), stdout
+capped at 4 MB and stderr at 64 KB, no stdin, the project as its folder, and the environment
+without `GIT_*` and `MACH_EXECUTION_ID`. A decision that has started runs to its end even if the
+browser goes away.
+
 ### Artifact content
 
 - **Roots:** a cell's `evidence/` (and `evidence/previous-N/`): `results.json`, `summary.json`,
@@ -388,12 +429,12 @@ Each line is held by the tests named after it (`cmd/mach-observer` unless anothe
 
 | Never | Proved by |
 |---|---|
-| Writes outside `.factory/local/observer/`, or anything at all in a project that had no `.factory/` when it started | `TestIndexFolderLinkIsRefused` and `store.TestOpenRefusesALinkedFolder` (an index folder that is a link is refused before anything is written, and the store's files are opened without following links), `TestReadOnlyOverAFactoryTree` (every path's type, mode, size, mtime and contents hashed before and after a full run, every endpoint, a stream and a restart), `TestNoFactoryMeansNoWrites`, `TestNoGitRepositoryAndAFactoryThatAppearsLater`, `TestKilledMidReadLeavesTheFactoryAlone`, and `TestSourceBoundary` (file-system writes only in `internal/store`, `internal/lock`, `internal/project/persist.go` and `main.go`; the files that open MACH's read read-only) |
-| Starts or signals a process | `TestSourceBoundary`: no `os/exec`, `plugin`, `unsafe`; no `os.StartProcess`, `os.FindProcess`, `syscall.Exec`/`ForkExec`; `syscall.Kill` only as `kill(pid, 0)` (a liveness check that delivers nothing) |
+| Writes outside `.factory/local/observer/` with no decision made, or anything at all in a project that had no `.factory/` when it started | `TestIndexFolderLinkIsRefused` and `store.TestOpenRefusesALinkedFolder` (an index folder that is a link is refused before anything is written, and the store's files are opened without following links), `TestNothingChangesOverAFactoryTreeWithNoDecision` (every path's type, mode, size, mtime and contents hashed before and after a full run, every endpoint, "Needs you" and the running Factory read through the project's `run.py`, a stream and a restart), `TestNoFactoryMeansNoWrites`, `TestNoGitRepositoryAndAFactoryThatAppearsLater`, `TestKilledMidReadLeavesTheFactoryAlone`, and `TestSourceBoundary` (file-system writes only in `internal/store`, `internal/lock`, `internal/project/persist.go`, `internal/act/answers.go` (the answers file, in this folder) and `main.go`; the files that open MACH's read read-only). A decision is recorded by MACH's stations, under their own locks, never by the observer |
+| Runs anything but MACH's `run.py`, or any command of it but four | `TestSourceBoundary`: `os/exec` only in `internal/act`; no `plugin`, `unsafe`, `os.StartProcess`, `os.FindProcess`, `syscall.Exec`/`ForkExec`; `syscall.Kill` with a signal only in `internal/act/exec_unix.go` (its own process group, on a time limit), elsewhere only `kill(pid, 0)`; the only script named in `internal/act` is `run.py`, its argument vectors are built from `decide`, `do`, `--json`, `factory`, `status`, `stop`, `--via=floor` and `--name=value` only; no file names `factory enable`, `factory start` or `--persistent`, and `internal/act` no word such as `dispatch`, `pull`, `enable`, `start`, `resume` or `pause`. `act.TestFixedVectors` (each vector exactly, values as `--name=value`, in the project, without `GIT_*` or `MACH_EXECUTION_ID`), `act.TestTimeoutKillsTheGroup`, `act.TestOneDecisionAtATime`, `act.TestDecisionChecks` |
 | Connects out | `TestSourceBoundary`: no `net.Dial*`, `net.Dialer`, resolver lookups, `tls.Dial`, `http.Client`, `http.Get`/`Post`/`Head`, `http.NewRequest`, default client or transport; `security.TestListenRefusesEverythingButLoopback` (it listens on `127.0.0.1` only, refusing every other address including the machine's real interfaces) |
 | Takes or holds a lock on a MACH file, or holds one open between polls | `TestNoLockOnMACHFiles` (while it runs, every MACH file, `.factory/intake/lock` included, can be locked exclusively by someone else; its own lock file, the control, cannot), `TestNothingHeldOpenBetweenPolls` (its open files sampled every 20 ms: no MACH file stays open), `TestSourceBoundary` (`syscall.Flock` only in `internal/lock`) |
-| Has a route that changes anything | `server.TestEveryOtherMethodIsRefused` (every method but GET on every route: 405 `Allow: GET`), every route registered as `GET /api/v1/...`; `TestReadOnlyOverAFactoryTree` reads every route and finds nothing changed |
-| Offers a Factory capability | `server.TestSessionOffersNoFactoryCapability` (`read_only: true`, `capabilities.execution: false`, no capability that starts, stops, approves or changes work), plus the lines above: with no process, no write outside its folder and no non-GET route there is nothing to act with; `runner.json` and `supervisor.json` are read and summarised, never written (`TestReadOnlyOverAFactoryTree`) |
+| Has a route that changes anything but a person's decision and the stop | `server.TestEveryOtherMethodIsRefused` (POST on every other route, and every other method anywhere: 405; the write routes answer POST only), `server.TestWritesNeedTheSessionOriginAndCSRF` (no cookie, a forged one, no or another Origin, another site or host, no, a guessed or another session's CSRF token, a token in the query, a form or text body, a body too large: refused, and `run.py` never runs), `server.TestDecisionBodyAndReply` (the body checked before `run.py`; the name never sent back) |
+| Offers a Factory capability that starts work | `server.TestSessionCapabilities` (`decisions` and `stop` only, true only with `run.py`; `execution: false`; no `read_only`; no capability that dispatches, enables, starts, pauses or resumes); `runner.json` and `supervisor.json` are read and summarised, never written (`TestNothingChangesOverAFactoryTreeWithNoDecision`) |
 | Forwards a secret of a recognised shape, a path outside the project, a tool's input or output, or a person's name that a record or git identity gives (a name only in free text is labelled, not withheld: [People](#people)) | `ingest.TestRedactionCoverage` (an adversarial corpus planted in every source and in served evidence: zero leaks in stored events, the index on disk and served content), `TestPeopleNeverReachTheBrowser` (14 names and e-mails planted in a decision's approval, findings, results, a vote, a build report, the intake log, `runner.json`, `.git/config`, a reflog and a run record: zero in events, history, snapshot, cells, runs, series, the artifact catalog and every served content, the stream, and the index on disk), `redact.TestScrubRecordByKind`, `ingest.Fuzz*` (any line: no panic, schema-valid output, no planted secret, the next line still read) |
 
 ## Times and the access log
