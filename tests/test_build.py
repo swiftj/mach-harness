@@ -832,7 +832,11 @@ class SetCommandsTest(Base):
         self.assertEqual(self.state()["tasks"][-1]["test_run"]["command"], NEW_CMD, "the next whole-suite run is the new command's")
         self.assertEqual(self.ok("set-commands", "LOCAL-001", "--test-cmd", NEW_CMD, "--reason", "same again")["status"], "UNCHANGED")
         self.assertEqual(len([d for d in self.state()["deviations"] if d["type"] == "test-command-set"]), 1, "an unchanged command records nothing")
-        self.ok("set-commands", "LOCAL-001", "--test-cmd", TEST_CMD, "--reason", "back to the audit's command")
+        self.ok("set-commands", "LOCAL-001", "--test-cmd", TEST_CMD, "--reason", "back to the audit's command", "--by=Dana Smith", "--via=floor")
+        person, builder = [d for d in self.state()["deviations"] if d["type"] == "test-command-set"][::-1]
+        self.assertEqual((person["by"], person["recorded_by"]), ("Dana Smith", "a person, in the Factory Floor"))
+        self.assertNotIn("by", builder, "the builder's own choice names no person")
+        self.assertEqual(self.state()["command_changes"][-1]["by"], "Dana Smith")
         self.ok("finish", "LOCAL-001")
         report = json.loads((self.cellroot / "build-report.json").read_text())
         self.assertNotIn("reused_from", report["tests"], "T05's run was under the old command, so it is run again")

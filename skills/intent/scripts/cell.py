@@ -101,6 +101,8 @@ PLAN_FIELDS = ("App type", "Risk tier", "Contracts", "ADRs")
 PLAN_SECTIONS = ("Contracts", "Tasks", "File touch map", "Engineering decisions")
 APP_TYPES = ("web", "cli", "api", "grpc", "rest", "desktop", "mobile", "library")
 RISK_TIERS = ("High", "Medium", "Low")
+# Where a person's decision was made (--via): in conversation an agent records it on their word; in the Factory Floor they record it themselves.
+RECORDED_VIA = {"terminal": "an agent, on the person's instruction in conversation", "floor": "a person, in the Factory Floor"}
 STAGES = ("interview", "spec-open", "spec-ready", "planned")
 EXCLUDE_LINE = ".factory/worktrees/"
 TUNING_LABEL = "factory-tuning"
@@ -2478,7 +2480,7 @@ def cmd_adr_exception(project: Path, args: argparse.Namespace) -> int:
     if any(item.get("adr") == record["id"] for item in adr.exceptions(cell)):
         raise CellError(f"An exception to {record['id']} is already recorded for {args.ticket_id}.", code="exception-exists")
     cell.setdefault("adr_exceptions", []).append({"adr": record["id"], "digest": record["digest"], "title": adr.bounded(record["title"], 200), "by": name,
-                                                  "reason": reason[:2000], "at": now(), "recorded_by": "an agent, on the person's instruction in conversation"})
+                                                  "reason": reason[:2000], "at": now(), "recorded_by": RECORDED_VIA[getattr(args, "via", None) or "terminal"]})
     conflict = cell.get("adr_conflict")
     cleared = isinstance(conflict, dict) and conflict.get("adr") == record["id"]
     if cleared:
@@ -2530,7 +2532,7 @@ def cmd_adr_accept(project: Path, args: argparse.Namespace) -> int:
             raise CellError(f"{record['id']} was set to accepted but not committed on the ticket's branch" + (f": {message}" if message else
                             " (git.auto_commit is false); commit it on the branch yourself") + ".", code="adr-not-committed")
         item = {"id": record["id"], "digest": adr.digest(text), "by": name, "note": (args.note or "").strip() or None, "at": now(),
-                "recorded_by": "an agent, on the person's instruction in conversation"}
+                "recorded_by": RECORDED_VIA[getattr(args, "via", None) or "terminal"]}
         cell.setdefault("adr_acceptances", []).append(item)
         planned_under = cell.setdefault("adrs", {}).setdefault("planned_under", [])
         planned_under.append({"id": record["id"], "digest": item["digest"], "title": adr.bounded(record["title"], 200), "file": record["file"], "origin": "ticket",
@@ -2824,6 +2826,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--adr", required=True, help="the ADR's ID, such as ADR-0007")
     p.add_argument("--by", required=True, help="the name of the person who decided")
     p.add_argument("--reason", required=True, help="why this ticket may depart from it, in the person's own words")
+    p.add_argument("--via", choices=sorted(RECORDED_VIA), default="terminal", help="where the person decided: in conversation (default) or in the Factory Floor")
     p.set_defaults(func=cmd_adr_exception)
 
     p = sub.add_parser("adr-accept", help="a person accepts an ADR this ticket proposes, on its branch; only on their explicit word")
@@ -2831,6 +2834,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--adr", required=True, action="append", help="the proposed ADR's ID (repeatable)")
     p.add_argument("--by", required=True, help="the name of the person who accepted it")
     p.add_argument("--note")
+    p.add_argument("--via", choices=sorted(RECORDED_VIA), default="terminal", help="where the person decided: in conversation (default) or in the Factory Floor")
     p.set_defaults(func=cmd_adr_accept)
 
     p = sub.add_parser("status", help="show one cell, or list all cells")

@@ -491,6 +491,13 @@ class HumanApprovalTest(Base):
         self.assertIn(waiting, self.r_refused("approve-human", TICKET, "--by", "Dana Smith"))
         self.assertIsNone(json.loads((self.cellroot / "review/decision.json").read_text())["human_approval"])
 
+    def test_an_approval_made_in_the_factory_floor_says_so(self):
+        self.awaiting()
+        done = self.r_ok("approve-human", TICKET, "--by=Dana Smith", "--via=floor")
+        self.assertEqual(done["outcome"], "APPROVED")
+        approval = json.loads((self.cellroot / "review/decision.json").read_text())["human_approval"]
+        self.assertEqual((approval["by"], approval["recorded_by"]), ("Dana Smith", "a person, in the Factory Floor"))
+
     def test_a_person_can_send_it_back_with_their_reason(self):
         self.verified()
         self.assertIn("not waiting for a person's approval", self.r_refused("send-back", TICKET, "--by", "Dana Smith", "--reason", "The error text is wrong."))
@@ -508,6 +515,7 @@ class HumanApprovalTest(Base):
         self.assertEqual(decision, json.loads((self.round / "decision.json").read_text()))
         self.assertEqual((decision["outcome"], decision["rejected_by"], decision["human_approval"]), ("REJECTED", "a person", None))
         self.assertEqual((decision["human_send_back"]["by"], decision["human_send_back"]["reason"]), ("Dana Smith", "The error text must name the field."))
+        self.assertEqual(decision["human_send_back"]["recorded_by"], "an agent, on the person's instruction in conversation", "--via terminal is the default")
         findings = Path(decision["findings"]).read_text()
         self.assertIn("The error text must name the field.", findings)
         self.assertIn(decision["panel_findings"], findings, "the builder is pointed at the panel's own findings too")

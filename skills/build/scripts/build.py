@@ -88,6 +88,8 @@ KINDS = ("test", "impl", "contract", "refactor", "docs")
 COMMIT_PREFIX = {"test": "test", "impl": "feat", "contract": "chore", "refactor": "refactor", "docs": "docs"}
 STEP_FOR = {"test": "red", "impl": "green", "contract": "done", "refactor": "done", "docs": "done"}
 HARDENING_LABEL = "repo-hardening"
+# set-commands --by: where the person who named the command decided (--via).
+SET_BY_VIA = {"terminal": "an agent, on the person's instruction in conversation", "floor": "a person, in the Factory Floor"}
 # Lifecycle log: the gate each recorded override passes.
 OVERRIDDEN_GATE = {"test-amended": "frozen-tests", "files-outside-plan": "scope", "test-passed-first-run": "red-before-green",
                    "red-not-attributed": "red-attribution", "test-written-early": "red-before-green", "no-baseline": "baseline",
@@ -1785,6 +1787,12 @@ def cmd_set_commands(cell: Cell, args: argparse.Namespace) -> int:
     if not reason:
         raise BuildError("--reason is required: say truly why the build needs this command (where it comes from, or why the one recorded is wrong). "
                          "It goes to the reviewers.", code="no-reason")
+    # A person may name the command (run.py decide do, or the run skill on their word): their name and where they decided are
+    # recorded with it. Without --by it is the builder's own choice, recorded as before.
+    person = " ".join((getattr(args, "by", None) or "").split())
+    if getattr(args, "by", None) is not None and len(person) < 2:
+        raise BuildError("--by must name the person who gave the command.", code="person-missing")
+    decided = {"by": person, "recorded_by": SET_BY_VIA[getattr(args, "via", None) or "terminal"]} if person else {}
     given = {kind: value for kind, value in (("test", args.test_cmd), ("lint", args.lint_cmd)) if value is not None}
     if not given:
         raise BuildError(f"Name the command to set: --test-cmd \"<command>\", --lint-cmd \"<command>\", or both. {set_commands_hint(cell.ticket_id)}",
@@ -1830,7 +1838,7 @@ def cmd_set_commands(cell: Cell, args: argparse.Namespace) -> int:
             cell.deviation(None, f"{kind}-command-set",
                            f"The {kind} command was {'set' if not old else 'changed'} while building ({during}): "
                            f"{json.dumps(old)} -> {json.dumps(new)}. Reason: {reason}")
-            cell.state["deviations"][-1].update({"command": kind, "old": old, "new": new, "reason": reason, "during": during, "at": at})
+            cell.state["deviations"][-1].update({"command": kind, "old": old, "new": new, "reason": reason, "during": during, "at": at, **decided})
             changed.append({"command": kind, "old": old, "new": new})
         calibration = suite = None
         if any(item["command"] == "test" for item in changed):
@@ -1864,7 +1872,7 @@ def cmd_set_commands(cell: Cell, args: argparse.Namespace) -> int:
                 lint = {"status": "unverified", "command": cell.state["lint_cmd"], "note": str(exc)}
         fix_task = outcome = None
         if changed:
-            cell.state.setdefault("command_changes", []).append({"at": at, "changed": changed, "reason": reason, "loop": cell.state.get("loop", 0)})
+            cell.state.setdefault("command_changes", []).append({"at": at, "changed": changed, "reason": reason, "loop": cell.state.get("loop", 0), **decided})
             tests_pass = suite is None or suite.get("passed") is True
             if built:
                 outcome = finish_with_new_commands(cell, changed, reason, at, suite, lint) if tests_pass and (lint or {}).get("status") != "fail" \
@@ -3334,6 +3342,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--test-cmd", help="the test command the build runs from now on (free text)")
     p.add_argument("--lint-cmd", help="the lint command the finish runs from now on (free text)")
     p.add_argument("--reason", required=True, metavar="WHY", help="why: where the command comes from, or why the one recorded is wrong; recorded for review")
+    p.add_argument("--by", help="the person who gave the command, when a person did (recorded with it)")
+    p.add_argument("--via", choices=sorted(SET_BY_VIA), default="terminal", help="with --by: where the person decided, in conversation (default) or in the Factory Floor")
     p.set_defaults(func=cmd_set_commands)
 
     p = sub.add_parser("hand-back", help="a lane that cannot finish hands its remaining tasks back to the cell, built one at a time after the join")
