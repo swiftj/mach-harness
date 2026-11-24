@@ -52,6 +52,9 @@ def account(login):
     return accounts.get(login) or {"id": 5000 + sum(ord(c) for c in login), "role": "write"}
 def tick():
     state["clock"] = state.get("clock", 0) + 1
+    if "clock_offset" in state:  # M20: a test that lets days pass reads this machine's clock, moved on by that many seconds
+        import time
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + state["clock_offset"]))
     return "2026-11-17T%02d:%02d:%02dZ" % (10 + state["clock"] // 3600, (state["clock"] // 60) % 60, state["clock"] % 60)
 def event(i, kind, name):
     me = state["me"]

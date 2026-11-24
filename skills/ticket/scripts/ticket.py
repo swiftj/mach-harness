@@ -1744,6 +1744,91 @@ def cmd_slice_claim(ctx: Context, args: argparse.Namespace) -> int:
         return answer("pending", "other")
 
 
+def cmd_slice_alive(ctx: Context, args: argparse.Namespace) -> int:
+    """Post a sign of life on slice issue N for this Factory's claim (issue_rules' alive_comment), so a slow build keeps it.
+    Safe to call often: nothing is posted unless this Factory's claim holds the slice by the same rule every Factory uses
+    (staleness included), its last activity on the issue is before --due-before, no sign of life of it was posted since
+    --due-before, and --moved-at (when its work last moved, read on this machine) is later than that last activity.
+
+    status: done (posted), skipped (nothing was due: `kind` says why; `active_at` is the claim's last activity as read), refused
+    (the issue is not this slice revision any more), or pending (GitHub did not answer)."""
+    number = int(args.number) if str(args.number).isdigit() else 0
+    if not issue_rules.is_issue_number(number):
+        raise TicketError(f"'{args.number}' is not an issue number.")
+    if not issue_rules.is_repository(args.repository):
+        raise TicketError("Name the slice's repository as OWNER/REPO (--repository).")
+    try:
+        body = issue_rules.alive_comment(args.slice_id, args.revision, args.token, args.moved_at)
+    except ValueError as exc:
+        raise TicketError(f"The sign of life cannot be written: {exc}.")
+    for name in ("due_before", "stale_before", "branch_active_at"):
+        value = getattr(args, name)
+        if value is not None and not issue_rules.ALIVE_TIME_RE.fullmatch(value):
+            raise TicketError(f"--{name.replace('_', '-')} is a UTC time (YYYY-MM-DDTHH:MM:SSZ).")
+    result: Dict[str, Any] = {"issue": number, "slice_id": args.slice_id, "revision": args.revision, "status": "pending", "kind": None,
+                              "posted": False, "moved_at": args.moved_at, "active_at": None, "alive_posted_at": None}
+
+    def answer(status: str, kind: Optional[str] = None) -> int:
+        result.update(status=status, kind=kind)
+        print(json.dumps(result, indent=2))
+        return {"done": 0, "skipped": 0, "refused": 0}.get(status, EXIT_PENDING)
+
+    remote = origin_repository(ctx.project)
+    if remote is not None and remote.lower() != args.repository.lower():
+        raise TicketError(f"{args.repository} is not this project's origin repository ({remote}). A sign of life is written only there.")
+    repository, failure = here(ctx)
+    if repository is None:
+        return answer("pending", (failure or {}).get("kind") or "other")
+    if repository != args.repository:
+        raise TicketError(f"{args.repository} is not this project's origin repository ({repository}). A sign of life is written only there.")
+    try:
+        if not issue_is_here(ctx.project, repository, number):
+            return answer("refused", "moved")
+        issue, failure = read_issue(ctx, repository, number)
+        if issue is None:
+            return answer("pending", (failure or {}).get("kind") or "other")
+        parsed = issue_rules.parse_slice_body(issue.get("body"))
+        if str(issue.get("state") or "").lower() != "open" or issue_rules.SLICE_LABEL not in issue["labels"]:
+            return answer("refused", "not_open")
+        if not parsed or parsed["slice_id"] != args.slice_id or parsed["revision"] != args.revision:
+            return answer("refused", "changed")
+        out = gh_call(ctx.project, "api", "--paginate", *GH_API_HEADERS, COMMENTS_PATH.format(repository=repository, number=number), "--jq", COMMENTS_JQ)
+        found = issue_rules.claims(issue_rules.issue_comments(json_lines(out)))
+        roles: Dict[str, bool] = {}
+
+        def counts(login: str) -> bool:
+            if login not in roles:
+                answer_, failed = read_permission(ctx, repository, login)
+                if failed:
+                    raise GhFailed(failed.get("kind") or "other")
+                roles[login] = issue_rules.role_counts(answer_)
+            return roles[login]
+
+        # The same rule another Factory reads: this Factory's own claim is not exempt from going stale here.
+        holder = issue_rules.claim_holder(found, args.slice_id, args.revision, issue_rules.BUILDING_LABEL in issue["labels"], counts,
+                                          args.stale_before, args.branch_active_at)
+        if holder is None or holder["token"] != args.token or holder["revision"] != args.revision:
+            return answer("skipped", "not_held")  # a stale or lost claim is not revived: nothing is posted
+        last = max(holder.get("active_at") or "", args.branch_active_at or "")
+        result.update(active_at=last or None, alive_posted_at=holder.get("alive_posted_at"))
+        if (args.due_before and last >= args.due_before) or (args.due_before and (holder.get("alive_posted_at") or "") >= args.due_before):
+            return answer("skipped", "not_due")
+        if args.moved_at <= last:
+            return answer("skipped", "no_progress")
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as handle:
+            handle.write(body)
+        try:
+            gh_call(ctx.project, "issue", "comment", str(number), "--repo", repository, "--body-file", handle.name)
+        finally:
+            os.unlink(handle.name)
+        result["posted"] = True
+        return answer("done")
+    except GhFailed as failed:
+        return answer("pending", failed.kind)
+    except ValueError:
+        return answer("pending", "other")
+
+
 # M13 part C: the one comment on an epic's issue that holds how the epic works today.
 EPIC_VIEW_COMMENTS_JQ = ".[] | {comment_id: .id, login: .user.login, body: .body}"
 EPIC_VIEW_COMMENT_PATH = "repos/{repository}/issues/comments/{comment_id}"
@@ -2003,6 +2088,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--branch-active-at", help="the slice branch's last commit time on GitHub, as activity of the claim that holds it")
     p.add_argument("--take-over", action="store_true", help="on a person's explicit word: take the slice over from the Factory that holds it")
     p.set_defaults(func=cmd_slice_claim)
+    p = sub.add_parser("slice-alive", help="post a sign of life for this Factory's claim on slice issue N when its work moved and one is due (called by intake)")
+    p.add_argument("number")
+    p.add_argument("--repository", required=True, help="OWNER/REPO: must be the origin remote's repository")
+    p.add_argument("--slice", required=True, dest="slice_id")
+    p.add_argument("--revision", required=True, type=int)
+    p.add_argument("--token", required=True, help="this Factory's claim token for the slice (16 hexadecimal characters)")
+    p.add_argument("--moved-at", required=True, help="when the slice's work last moved on this machine (UTC, YYYY-MM-DDTHH:MM:SSZ)")
+    p.add_argument("--due-before", required=True, help="post only when the claim's last activity, and its last sign of life, are before this time")
+    p.add_argument("--stale-before", help="a claim with no activity since this time is stale: it holds nothing and is not revived")
+    p.add_argument("--branch-active-at", help="the slice branch's last commit time on GitHub, as activity of the claim that holds it")
+    p.set_defaults(func=cmd_slice_alive)
     p = sub.add_parser("epic-view", help="create or replace the one comment on an epic's issue holding how it works today (called by intake)")
     p.add_argument("number")
     p.add_argument("--repository", required=True, help="OWNER/REPO: must be the origin remote's repository")
