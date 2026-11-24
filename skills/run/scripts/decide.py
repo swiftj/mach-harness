@@ -235,7 +235,7 @@ def run_again(ticket: str, does: str, label: str = "Run it again") -> Dict[str, 
 
 def replan_allowed(cellroot: Path, stage: Optional[str]) -> bool:
     """What cell.py replan checks from the cell's files: a planned or building cell that has had no judging round.
-    It also checks the branch when it runs, and refuses if a reset would discard work."""
+    It also checks the branch when it runs, and refuses only if this ticket's task work is already on the main branch."""
     if stage not in REPLAN_STAGES:
         return False
     build = load_json(cellroot / "build.json", {}) or {}
@@ -247,7 +247,7 @@ def replan_allowed(cellroot: Path, stage: Optional[str]) -> bool:
 
 def replan(ticket: str) -> Dict[str, Any]:
     return option("replan", "Plan it again",
-                  "The intent station returns the cell to spec-ready, keeping the old plan and branch tip, and the contract engineer writes a new plan.",
+                  "The intent station returns the cell to spec-ready, keeping the old plan, branch tip and any uncommitted files, and the contract engineer writes a new plan.",
                   f'replan {ticket} "<why>"', needs_reason=True)
 
 
