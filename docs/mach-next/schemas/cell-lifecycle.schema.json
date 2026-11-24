@@ -53,7 +53,7 @@
        "overridden_by_reason": {"type": "boolean"}}}}}},
     {"if": {"properties": {"type": {"const": "build.task_completed"}}},
      "then": {"properties": {"station": {"const": "build"}, "data": {"required": ["task", "kind", "step", "commit"], "properties": {
-       "task": {"type": "string", "pattern": "^(?:R\\d+-)?T\\d+$"}, "kind": {"enum": ["test", "impl", "contract", "refactor", "docs"]},
+       "task": {"type": "string", "pattern": "^(?:(?:R\\d+|J|C)-)?T\\d+$"}, "kind": {"enum": ["test", "impl", "contract", "refactor", "docs"]},
        "step": {"enum": ["red", "green", "done"]}, "first_run": {"enum": ["pass", "fail", "not-run", null]},
        "commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,12}$"}}}}}},
     {"if": {"properties": {"type": {"const": "verify.check_recorded"}}},

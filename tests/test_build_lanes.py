@@ -525,7 +525,19 @@ class SharedFileTest(LaneBase):
         joined = self.ok("join", TICKET)
         self.assertEqual(joined["status"], "JOINED")
         self.assertEqual(joined["landed"], 2)
-        self.assertEqual(joined["set_aside"], [{"lane": "L2", "tasks": ["T03", "T04"], "because": [{"other": "L1", "file": "app/util.py", "why": "same-file"}]}])
+        kept = "refs/mach/lanes-set-aside/LOCAL-001/L2/1"
+        lane_commits = [t["commit"] for t in self.lane_state("L2")["tasks"]]
+        self.assertEqual(joined["set_aside"], [{"lane": "L2", "tasks": ["T03", "T04"], "because": [{"other": "L1", "file": "app/util.py", "why": "same-file"}],
+                                                "kept_as": kept, "lane_commits": lane_commits, "tip": lane_commits[-1],
+                                                "bring_back": f'git -C "{self.work}" cherry-pick <commit>'}])
+        self.assertEqual(git(self.work, "rev-parse", kept).stdout.strip(), lane_commits[-1], "nothing set aside is lost")
+        aside_detail = [d for d in self.state()["deviations"] if d["type"] == "lane-set-aside"][0]["detail"]
+        self.assertIn(f"Nothing is lost: its work is kept under {kept}", aside_detail)
+        self.assertIn(f'git -C "{self.work}" cherry-pick <commit> brings one back', aside_detail)
+        # The command it names works as written.
+        picked = subprocess.run(["git", "-C", str(self.work), "cherry-pick", "--no-commit", lane_commits[0]], capture_output=True, text=True)
+        self.assertEqual(picked.returncode, 0, picked.stderr)
+        git(self.work, "reset", "-q", "--hard", "HEAD")
         state = self.state()
         self.assertEqual([(t["id"], t["status"]) for t in state["tasks"]], [("T01", "done"), ("T02", "done"), ("T03", "pending"), ("T04", "pending"), ("T05", "pending")])
         self.assertEqual([lane["status"] for lane in state["lanes"]["lanes"]], ["joined", "set-aside"])
@@ -595,6 +607,9 @@ class InteractionTest(LaneBase):
         recorded = [d for d in self.state()["deviations"] if d["type"] == "lanes-interaction"][0]
         self.assertEqual(recorded["lanes"], named or ["L1", "L2"], "where the output names no lane's file, every lane is involved")
         self.assertEqual(recorded["failing"], joined["interaction"]["failing"])
+        self.assertEqual([self.lane_state(name)["final_suite"] for name in ("L1", "L2")], ["green", "green"], "each lane's own suite, recorded")
+        self.assertTrue(recorded["lanes_passed_alone"])
+        self.assertTrue(recorded["detail"].startswith("Every landed lane's own suite was passing at its end, but the whole suite fails"))
         state = self.state()
         self.assertEqual(state["suite"], "red")
         self.assertEqual([t["id"] for t in state["tasks"]], ["T01", "T02", "T03", "T04", "J-T01", "T05"])
@@ -659,7 +674,10 @@ class HandBackTest(LaneBase):
         self.assertEqual([lane["status"] for lane in state["lanes"]["lanes"]], ["joined", "handed-back"])
         handed_back = [d for d in state["deviations"] if d["type"] == "lane-handed-back"][0]
         self.assertEqual((handed_back["lane"], handed_back["tasks"], handed_back["finished"], handed_back["holder"]), ("L2", ["T04"], ["T03"], HOLDER))
-        self.assertIn("--already-done", [d for d in state["deviations"] if d["type"] == "lanes-interaction"][0]["detail"])
+        interaction = [d for d in state["deviations"] if d["type"] == "lanes-interaction"][0]
+        self.assertIn("--already-done", interaction["detail"])
+        self.assertTrue(interaction["detail"].startswith("The lanes' finished work landed, but"), "L2 was red when handed back: no claim it passed")
+        self.assertEqual(state["lanes"]["lanes"][1]["handed_back"]["suite_then"], "red")
         self.assertEqual((self.branches(), self.worktrees()), ([], []), "the handed-back lane's finished work landed, so nothing of it is left")
         self.assertEqual(self.ok("next", TICKET)["task"], "T04")
         self.put(self.work, {"app/release.py": RELEASE})
@@ -933,7 +951,7 @@ class JoinRefusedTest(LaneBase):
         self.build_lane("L2", L2)
         return self.state()["lanes"]["fork"]
 
-    def test_a_lane_commit_that_does_not_apply_stops_the_join(self):
+    def test_a_lane_whose_record_does_not_match_its_commits_is_set_aside(self):
         """Design 15, scenario 5."""
         fork = self.lanes_built()
         side = self.project / ".factory/side"
@@ -947,16 +965,242 @@ class JoinRefusedTest(LaneBase):
         data = json.loads(path.read_text())
         data["tasks"][1]["commit"] = stray
         path.write_text(json.dumps(data))
-        code, out, _ = self.run_build("join", TICKET)
-        self.assertEqual(code, 1)
-        answer = json.loads(out)
-        self.assertEqual(answer["status"], "REFUSED")
-        self.assertIn("Nothing was landed", answer["refused"]["reason"])
-        self.assertEqual(git(self.work, "rev-parse", "HEAD").stdout.strip(), fork, "the ticket's branch is unchanged")
-        self.assertFalse((self.cellroot / "lanes/join/repo").exists(), "the join's worktree is removed")
-        self.assertEqual(len(self.worktrees()), 2, "every lane is kept")
-        self.assertEqual(self.state()["lanes"]["state"], "open")
-        self.assertEqual(self.lifecycle()[-1]["data"]["reason_code"], answer["refused"]["code"])
+        answer = self.ok("join", TICKET)
+        self.assertEqual(answer["status"], "JOINED", "a lane whose record does not match its commits is set aside; the join never stops for it")
+        self.assertEqual([(item["lane"], item["because"][0]["why"]) for item in answer["set_aside"]], [("L2", "lane-history")])
+        self.assertEqual(answer["landed"], 2)
+        kept = answer["set_aside"][0]["kept_as"]
+        self.assertEqual(git(self.work, "show", f"{kept}:app/release.py").stdout, RELEASE, "the lane's real work is kept under its ref")
+        self.assertEqual(self.ok("next", TICKET)["task"], "T03", "its tasks are built one at a time in the cell")
+        self.assertNotEqual(fork, git(self.work, "rev-parse", "HEAD").stdout.strip())
+
+
+class Killed(BaseException):
+    """The process dying at this point."""
+
+
+class NoDeadEndTest(LaneBase):
+    """The review's dead ends: each now has a way on, and nothing is lost."""
+
+    def kill_lane_save_after(self, task_id):
+        real = build.Lane.save
+
+        def dying(lane_self):
+            if any(t.get("id") == task_id and t.get("status") == "done" for t in lane_self.state.get("tasks") or []):
+                raise Killed("killed after the commit, before lane.json")
+            return real(lane_self)
+        return dying
+
+    def test_a_builder_killed_between_its_commit_and_its_record_is_recovered(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.open_lanes()
+        self.build_lane("L1", L1[:1])
+        self.put(self.lane_work("L1"), L1[1][2])
+        from unittest import mock
+        with mock.patch.object(build.Lane, "save", self.kill_lane_save_after("T02")):
+            with self.assertRaises(Killed):
+                self.run_build("green", TICKET, "T02")
+        self.assertEqual([t["status"] for t in self.lane_state("L1")["tasks"]], ["done", "pending"], "the record lacks the commit")
+        tip = git(self.lane_work("L1"), "rev-parse", "HEAD").stdout.strip()
+        again = self.ok("green", TICKET, "T02")
+        self.assertEqual((again["status"], again["task"], again["recovered"]), ("DONE", "T02", True))
+        state = self.lane_state("L1")
+        self.assertEqual((state["status"], state["tasks"][1]["commit"], state["tasks"][1]["recovered"]["commit"]), ("done", tip, tip))
+        self.assertEqual([(d["type"], d["task"], d["commit"]) for d in state["deviations"]], [("step-recovered", "T02", tip)])
+        self.assertEqual(self.ok("next", TICKET, "--lane", "L1")["status"], "LANE_DONE")
+        self.build_lane("L2", L2)
+        joined = self.ok("join", TICKET)
+        self.assertEqual((joined["status"], joined["landed"], joined["set_aside"]), ("JOINED", 4, []))
+        self.assertIn(("step-recovered", "L1"), [(d["type"], d.get("lane")) for d in self.state()["deviations"]])
+        self.assertIn(("build.green", "pass", "step-recovered"),
+                      [(r["data"]["gate"], r["data"]["outcome"], r["data"]["reason_code"]) for r in self.lifecycle() if r["type"] == "gate.evaluated"])
+
+    def test_the_next_step_or_the_line_recovers_it_too(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.open_lanes()
+        self.build_lane("L1", L1[:1])
+        self.put(self.lane_work("L1"), L1[1][2])
+        from unittest import mock
+        with mock.patch.object(build.Lane, "save", self.kill_lane_save_after("T02")):
+            with self.assertRaises(Killed):
+                self.run_build("green", TICKET, "T02")
+        self.open_lanes()  # the line asks again: the lane is opened, and its step recovered
+        self.assertEqual(self.lane_state("L1")["status"], "done")
+
+    def test_a_commit_that_is_not_the_stations_is_never_recorded_for_a_task_but_never_blocks(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.open_lanes()
+        self.build_lane("L1", L1[:1])
+        self.put(self.lane_work("L1"), L1[1][2])
+        git(self.lane_work("L1"), "add", "-A")
+        git(self.lane_work("L1"), "commit", "-qm", "by hand")
+        self.assertEqual(self.ok("next", TICKET, "--lane", "L1")["task"], "T02", "not the station's own commit: not recorded")
+        self.ok("hand-back", TICKET, "--lane", "L1", "--reason", "its builder committed by hand")
+        self.build_lane("L2", L2)
+        joined = self.ok("join", TICKET)
+        self.assertEqual([(item["lane"], item["because"][0]["why"]) for item in joined["set_aside"]], [("L1", "unrecorded-commits")])
+        self.assertEqual(git(self.work, "log", "-1", "--format=%s", joined["set_aside"][0]["kept_as"]).stdout.strip(), "by hand", "kept")
+        self.assertEqual(self.ok("next", TICKET)["task"], "T01", "its tasks are built one at a time in the cell")
+
+    def test_a_build_one_task_at_a_time_killed_between_its_commit_and_its_record(self):
+        self.ready(plan=PLAN)
+        self.ok("start", TICKET)
+        self.put(self.work, {"tests/test_invite.py": RED_TEST})
+        self.ok("red", TICKET, "T01")
+        self.put(self.work, {"app/invite.py": IMPL})
+        real = build.Cell.save
+
+        def dying(cell_self):
+            if any(t.get("id") == "T02" and t.get("status") == "done" for t in cell_self.state.get("tasks") or []):
+                raise Killed("killed")
+            return real(cell_self)
+        from unittest import mock
+        with mock.patch.object(build.Cell, "save", dying):
+            with self.assertRaises(Killed):
+                self.run_build("green", TICKET, "T02")
+        self.assertEqual(self.ok("next", TICKET)["task"], "T03")
+        state = self.state()
+        self.assertEqual((state["tasks"][1]["status"], state["tasks"][1]["commit"]), ("done", git(self.work, "rev-parse", "HEAD").stdout.strip()))
+        self.assertEqual([d["type"] for d in state["deviations"]], ["step-recovered"])
+
+    def test_a_lane_folder_deleted_by_hand_is_made_again(self):
+        import shutil
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.open_lanes()
+        self.build_lane("L1", L1[:1])
+        shutil.rmtree(self.lane_work("L1"))
+        self.assertIn("has no worktree", self.refused("next", TICKET, "--lane", "L1"))
+        self.open_lanes()
+        self.assertEqual(git(self.lane_work("L1"), "log", "-1", "--format=%s").stdout.strip(),
+                         "test(SLICE-001): T01 Table-driven test of rules R1 to R5 — tests/test_invite.py [LOCAL-001]")
+        self.build_lane("L1", L1[1:])
+        self.build_lane("L2", L2)
+        self.assertEqual(self.ok("join", TICKET)["landed"], 4)
+
+    def test_a_lane_branch_checked_out_elsewhere_goes_on_on_a_new_branch(self):
+        import shutil
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.open_lanes()
+        self.build_lane("L1", L1[:1])
+        shutil.rmtree(self.lane_work("L1"))
+        git(self.project, "worktree", "prune")
+        elsewhere = self.project / ".factory" / "someone"
+        git(self.project, "worktree", "add", "-q", str(elsewhere), "mach-lane/LOCAL-001/L1")
+        self.open_lanes()
+        self.assertEqual(git(self.lane_work("L1"), "symbolic-ref", "--short", "HEAD").stdout.strip(), "mach-lane/LOCAL-001/L1-2")
+        self.assertTrue((self.lane_work("L1") / "tests/test_invite.py").is_file(), "at its last recorded commit")
+        remade = [d for d in self.state()["deviations"] if d["type"] == "lane-worktree-remade"]
+        self.assertEqual((remade[0]["lane"], remade[0]["branch"], remade[0]["old_branch"]), ("L1", "mach-lane/LOCAL-001/L1-2", "mach-lane/LOCAL-001/L1"))
+        self.build_lane("L1", L1[1:])
+        self.build_lane("L2", L2)
+        self.assertEqual(self.ok("join", TICKET)["landed"], 4)
+        self.assertTrue(elsewhere.is_dir(), "the other checkout is left as it is")
+
+    def test_a_commit_made_in_the_cell_while_the_lanes_were_open_is_kept_and_the_lanes_land_on_it(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.open_lanes()
+        self.build_lane("L1", L1)
+        self.build_lane("L2", L2)
+        self.put(self.work, {"NOTES.md": "x\n"})
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-qm", "person's note")
+        person = git(self.work, "rev-parse", "HEAD").stdout.strip()
+        joined = self.ok("join", TICKET)
+        self.assertEqual((joined["status"], joined["landed"], joined["set_aside"]), ("JOINED", 4, []))
+        self.assertEqual((joined["moved_branch"]["commits"], joined["moved_branch"]["files"]), ([person], ["NOTES.md"]))
+        self.assertIn("person's note", self.log())
+        moved = [d for d in self.state()["deviations"] if d["type"] == "lanes-landed-on-moved-branch"]
+        self.assertEqual(moved[0]["commits"], [person])
+        self.assertEqual(self.state()["lanes"]["join"]["base"], person)
+        self.assertIn(("build.join", "pass", "landed-on-moved-branch"),
+                      [(r["data"]["gate"], r["data"]["outcome"], r["data"]["reason_code"]) for r in self.lifecycle() if r["type"] == "gate.evaluated"])
+
+    def test_a_cell_commit_touching_a_lanes_file_sets_that_lane_aside_and_it_is_built_on_top(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.open_lanes()
+        self.build_lane("L1", L1)
+        self.build_lane("L2", L2)
+        self.put(self.work, {"app/release.py": "def release():\n    return 'mine'\n"})
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-qm", "person's release")
+        joined = self.ok("join", TICKET)
+        self.assertEqual([(item["lane"], item["because"][0]["why"], item["because"][0]["file"]) for item in joined["set_aside"]],
+                         [("L2", "branch-moved", "app/release.py")])
+        self.assertEqual((self.work / "app/release.py").read_text(), "def release():\n    return 'mine'\n", "the person's commit is never undone")
+        self.assertEqual(self.ok("next", TICKET)["task"], "T03")
+        self.assertIn("a commit made on the ticket's branch while the lanes were open",
+                      [d for d in self.state()["deviations"] if d["type"] == "lane-set-aside"][0]["detail"])
+
+    def test_uncommitted_changes_in_the_cell_name_both_ways_on(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.open_lanes()
+        self.build_lane("L1", L1)
+        self.build_lane("L2", L2)
+        self.put(self.work, {"README.md": "# Changed by hand\n"})
+        refusal = self.refused("join", TICKET)
+        self.assertIn("commits them on feature/LOCAL-001", refusal)
+        self.assertIn("stash push --include-untracked", refusal)
+
+    def test_a_lane_left_by_another_build_is_made_fresh_and_kept(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.open_lanes()
+        self.build_lane("L1", L1[:1])
+        old_commit = self.lane_state("L1")["tasks"][0]["commit"]
+        path = self.cellroot / "lanes/L1/lane.json"
+        data = json.loads(path.read_text())
+        data["build"] = "2026-01-01T00:00:00+00:00"  # what a lane of an earlier build of this ticket holds
+        path.write_text(json.dumps(data))
+        opened = self.open_lanes()
+        self.assertEqual(opened["made_fresh"], ["L1"])
+        state = self.lane_state("L1")
+        self.assertEqual([t["status"] for t in state["tasks"]], ["pending", "pending"])
+        self.assertEqual(state["build"], self.state()["started_at"])
+        entry = self.state()["lanes"]["lanes"][0]["made_fresh"][0]
+        self.assertEqual(git(self.work, "rev-parse", entry["ref"]).stdout.strip(), old_commit, "its commits are kept")
+        self.assertTrue((self.cellroot / entry["state_file"]).is_file(), "its earlier record is kept")
+        deviation = [d for d in self.state()["deviations"] if d["type"] == "lane-made-fresh"][0]
+        self.assertIn("Nothing was lost", deviation["detail"])
+        self.assertIn(f'git -C "{self.work}" cherry-pick <commit> brings one back', deviation["detail"])
+        self.assertEqual(git(self.lane_work("L1"), "rev-parse", "HEAD").stdout.strip(), self.state()["lanes"]["fork"], "fresh from the fork point")
+        self.build_lane("L1", L1)
+        self.build_lane("L2", L2)
+        self.assertEqual(self.ok("join", TICKET)["landed"], 4)
+
+    def test_a_command_from_before_a_take_over_never_puts_the_old_holder_back(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.open_lanes()
+        early = build.Lane(build.Cell(self.project, TICKET), "L1")  # a lane command loaded its state before the take-over
+        self.ok("lanes-open", TICKET, "--holder", OTHER, "--take-over")
+        early.state["last_step_at"] = build.now()
+        early.state["tasks"][0].update({"status": "done", "commit": None})
+        early.save()
+        state = self.lane_state("L1")
+        self.assertEqual((state["holder"], [item["holder"] for item in state["earlier_holders"]]), (OTHER, [HOLDER]))
+        self.assertEqual(state["tasks"][0]["status"], "done", "what the earlier command did is still recorded")
+
+    def test_counting_places_and_recording_the_grant_are_one_step(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        seen = []
+        real = build.others_using
+
+        def counting(cell, minutes):
+            seen.append(bool(build._HELD.get(str(self.project / ".factory/worktrees/.builders.lock"))))
+            return real(cell, minutes)
+        from unittest import mock
+        with mock.patch.object(build, "others_using", counting):
+            self.open_lanes()
+        self.assertEqual(seen, [True])
 
 
 class CapTest(LaneBase):

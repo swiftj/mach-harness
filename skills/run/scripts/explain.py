@@ -541,6 +541,18 @@ def _set_aside_words(because: Dict[str, Any]) -> str:
         return f"it and lane {other} both changed {file}"
     if why == "frozen-test":
         return f"one of it and lane {other} changed {file}, a test file the other holds"
+    if why == "case-clash":
+        return f"its file {file} and a file of lane {other} differ only by letter case"
+    if why == "file-folder":
+        return f"{file} is a file in one of it and lane {other} and a folder in the other"
+    if why == "branch-moved":
+        return f"a commit made on the ticket's branch while the lanes were open also changed {file}"
+    if why == "did-not-apply":
+        return f"its commit {clean(because.get('commit'), 10)} did not apply on the landed work"
+    if why == "unrecorded-commits":
+        return "its branch held commits no task recorded"
+    if why == "lane-history":
+        return "its recorded commits were not one chain from the fork point"
     return f"{clean(why, 40)}: {file}, with lane {other}"
 
 
@@ -589,7 +601,8 @@ def lanes_facts(cellroot: Path) -> Optional[Dict[str, Any]]:
             done = sum(1 for ident in held if (tasks.get(ident) or {}).get("status") == "done")
             aside.append({"lane": name, "tasks": held, "done": done if tasks else None,
                           "text": f"Lane {name} was set aside at the join: " + ("; ".join(_set_aside_words(b) for b in because[:10]) or "why was not recorded")
-                                  + f". Its commits were not landed; its tasks ({', '.join(held) or 'not recorded'}) are built again in the cell, one at a time"
+                                  + ". Its commits were not landed" + (f"; they are kept under {clean(item.get('kept_as'), 120)}" if item.get("kept_as") else "")
+                                  + f"; its tasks ({', '.join(held) or 'not recorded'}) are built again in the cell, one at a time"
                                   + (f": {done} of {len(held)} done." if tasks and held else "."),
                           "detail": clean(item.get("detail"))})
         elif kind == INTERACTION:
@@ -598,7 +611,9 @@ def lanes_facts(cellroot: Path) -> Optional[Dict[str, Any]]:
             failing = [clean(name, 200) for name in item.get("failing") or [] if isinstance(name, str)][:10]
             involved = _ids(item.get("lanes"))
             interaction = {"task": fix, "status": clean(status, 20), "failing": failing, "lanes": involved,
-                           "text": "Every lane passed its own suite, but the whole suite failed on the joined result"
+                           # Only what was recorded: each landed lane's own suite at its end (the station records lanes_passed_alone).
+                           "text": ("Every landed lane's own suite was passing at its end, but the whole suite failed on the joined result"
+                                    if item.get("lanes_passed_alone") is True else "The lanes' work landed, but the whole suite failed on the joined result")
                                    + (f" ({', '.join(failing)})" if failing else "") + (f"; lanes involved: {', '.join(involved)}" if involved else "")
                                    + f". {fix} was added to make them pass together; " + ("it is done." if status == "done" else "it is still to do." if status else "its state is not recorded."),
                            "detail": clean(item.get("detail"))}

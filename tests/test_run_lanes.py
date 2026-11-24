@@ -386,12 +386,12 @@ class JoinTest(Base):
         self.put(self.lane_work("L2"), {"app/release.py": RELEASE, "app/util.py": "def tidy(x):\n    return x.strip()\n"})
         self.ok("green", TICKET, "T04", "--allow-extra", "a helper")
         joined = self.lanes_join()
-        self.assertEqual(joined["set_aside"], [{"lane": "L2", "tasks": ["T03", "T04"]}])
+        self.assertEqual(joined["set_aside"], [{"lane": "L2", "tasks": ["T03", "T04"], "kept_as": "refs/mach/lanes-set-aside/LOCAL-001/L2/1"}])
         self.assertIn("lane L2 was set aside: it changed a file another lane changed, so its tasks (T03, T04) are built again in the cell", joined["reason"])
         self.assertEqual(self.next_step("--holder", HOLDER)["action"], "build")
         self.assertEqual(self.ok("next", TICKET)["task"], "T03")
 
-    def test_a_landing_that_cannot_be_done_is_for_a_person(self):
+    def test_a_lane_whose_record_does_not_match_its_commits_is_not_for_a_person(self):
         self.built()
         self.build_lane("L1", L1)
         self.build_lane("L2", L2)
@@ -406,10 +406,12 @@ class JoinTest(Base):
         data["tasks"][1]["commit"] = git(side, "rev-parse", "HEAD").stdout.strip()
         self.lane_file("L2").write_text(json.dumps(data))
         joined = self.lanes_join()
-        self.assertEqual((joined["status"], joined["needs"], joined["then"], joined["landed"]), ("REFUSED", "lanes-blocked", "person", 0))
-        self.assertIn("Nothing was landed", joined["reason"])
-        self.assertIn("run build.py join LOCAL-001 again", joined["next"])
-        self.assertEqual(self.next_step("--holder", HOLDER)["action"], "build-lanes", "the ticket stays at its lanes, to be joined again")
+        self.assertEqual((joined["status"], joined["needs"], joined["then"], joined["landed"]), ("JOINED", None, "next", 2))
+        self.assertIn("lane L2 was set aside: its recorded commits were not one chain from the fork point, so its tasks (T03, T04) are built "
+                      "again in the cell, one at a time; nothing is lost: its commits are kept under refs/mach/lanes-set-aside/LOCAL-001/L2/1",
+                      joined["reason"])
+        self.assertEqual(joined["set_aside"], [{"lane": "L2", "tasks": ["T03", "T04"], "kept_as": "refs/mach/lanes-set-aside/LOCAL-001/L2/1"}])
+        self.assertEqual(self.next_step("--holder", HOLDER)["action"], "build", "the ticket goes on in the cell")
 
     def test_stray_files_in_a_lane_are_not_for_a_person(self):
         self.built()

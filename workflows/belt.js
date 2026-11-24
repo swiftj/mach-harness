@@ -119,8 +119,11 @@ function cleanHolder(value) {
 // A relay copies run.py lanes-start's answer, and a model's copy is not trusted. The whole answer is refused, and no builder
 // is started, when it names a status or a next command this line does not know, lanes with any status but OPEN, an OPEN
 // with no lane or with more lanes than `most`, a lane twice or by an unusable name, an agent type that is not the builder,
-// an empty prompt, or a workdir that is not that lane's own folder in this ticket's cell (or a prompt that does not name it).
-function cleanLanes(answer, most, ticket) {
+// an empty prompt, a workdir that is not exactly <project>/.factory/worktrees/<ticket>/lanes/<lane>/repo for this run's own
+// project folder (`projects`: the folder the run started in, and the one run.py where reported for it, which may be the same
+// folder with its links resolved), or a prompt that is not exactly the build station's own words for this ticket, lane, workdir
+// and holder (build.py lane_prompt): a prompt that merely mentions the folder is refused.
+function cleanLanes(answer, most, ticket, projects, holder) {
   const clean = value => (typeof value === 'string' ? value.trim().replace(/^["'`\s]+|["'`\s]+$/g, '') : '')
   if (!answer || typeof answer !== 'object') return { error: 'run.py lanes-start returned nothing usable' }
   const status = clean(answer.status).toUpperCase()
@@ -134,7 +137,11 @@ function cleanLanes(answer, most, ticket) {
   if (status !== 'OPEN') return lanes.length ? { error: `run.py lanes-start listed lanes to start with the status ${status}` } : { answer: out }
   if (!lanes.length) return { error: 'run.py lanes-start answered OPEN with no lane to start' }
   if (lanes.length > most) return { error: `run.py lanes-start listed ${lanes.length} lanes, more than the ${most} this line starts at once` }
-  const suffix = `/.factory/worktrees/${clean(ticket)}/lanes/`
+  const roots = (Array.isArray(projects) ? projects : []).map(clean).filter(root => root.startsWith('/') && !/\/\.\.?(\/|$)/.test(root))
+    .map(root => root.replace(/\/+$/, ''))
+  const owner = clean(holder)
+  if (!roots.length) return { error: 'this run does not know its own project folder, so no lane can be checked' }
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(owner)) return { error: 'this run has no usable holder for the lanes, so no lane prompt can be checked' }
   const seen = new Set()
   for (const item of lanes) {
     if (!item || typeof item !== 'object') return { error: 'run.py lanes-start listed a lane that cannot be read' }
@@ -144,12 +151,16 @@ function cleanLanes(answer, most, ticket) {
     const agentType = clean(item.agent_type)
     if (!['mach:builder', 'mach-builder'].includes(agentType)) return { error: `lane ${lane} names the agent type '${agentType.slice(0, 40)}', not the builder` }
     const workdir = clean(item.workdir)
-    if (!clean(ticket) || !workdir.startsWith('/') || !workdir.endsWith(`${suffix}${lane}/repo`) || /\/\.\.?(\/|$)/.test(workdir)) {
-      return { error: `lane ${lane}'s workdir is not its own folder in ${clean(ticket) || 'this ticket'}'s cell` }
+    if (!clean(ticket) || !roots.some(root => workdir === `${root}/.factory/worktrees/${clean(ticket)}/lanes/${lane}/repo`)) {
+      return { error: `lane ${lane}'s workdir is not its own folder in ${clean(ticket) || 'this ticket'}'s cell in this project` }
     }
     const prompt = typeof item.prompt === 'string' ? item.prompt.trim() : ''
     if (!prompt) return { error: `lane ${lane} has no prompt` }
-    if (!prompt.includes(workdir)) return { error: `lane ${lane}'s prompt does not name its own workdir` }
+    const t = clean(ticket)
+    const expected = `Build lane ${lane} of MACH ticket ${t}. Follow the build skill's section 'Building one lane': run ` +
+      `build.py next ${t} --lane ${lane} --holder ${owner}, give the same --holder ${owner} to red, green, done and ` +
+      `hand-back, work only in ${workdir}, and stop when it answers LANE_DONE.`
+    if (prompt !== expected) return { error: `lane ${lane}'s prompt is not the build station's own prompt for that lane` }
     const done = Number.isInteger(item.done) && item.done >= 0 ? item.done : 0
     const tasks = (Array.isArray(item.tasks) ? item.tasks : []).map(clean).filter(Boolean).slice(0, 60)
     out.lanes.push({ lane, agent_type: agentType, model: clean(item.model), prompt, workdir, tasks, done })
@@ -309,7 +320,7 @@ async function buildLanes(ticket) {
   const holder = () => (HOLDER || !own ? '' : ' --holder ' + own)
   for (let round = 0; round < MAX_LANE_ROUNDS; round++) {
     const asked = await clerk(`lanes-start ${ticket}${HOLDER ? '' : ' --holder ' + (own || 'new')}`, LANES, `${ticket}: which lanes now?`, 'Build')
-    const read = cleanLanes(asked, MAX_LANES_AT_ONCE, ticket)
+    const read = cleanLanes(asked, MAX_LANES_AT_ONCE, ticket, PROJECTS, HOLDER || own || cleanHolder(asked && asked.holder))
     if (read.error) return { outcome: 'error', reason: `the lanes could not be read: ${read.error}` }
     const answer = read.answer
     if (!HOLDER && !own) own = cleanHolder(answer.holder)
@@ -415,6 +426,8 @@ const check = await clerk('where', CHECK, 'check the project', 'Preflight')
 if (!check || check.is_mach_project !== true) {
   return { error: `${where.project} is not a MACH project (no .factory folder), so nothing was started. Run the workflow from the project's folder.` }
 }
+// This run's own project folder, as the run started in it and as run.py names it (its links resolved): a lane's workdir must be in it.
+const PROJECTS = [where.project, check.project].filter(value => typeof value === 'string' && value.trim())
 
 // The audit measures the whole repository, so refresh it once here rather than once per ticket.
 const status = await clerk('status --headless', STATUS, 'read the status', 'Preflight')

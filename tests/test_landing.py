@@ -23,6 +23,7 @@ import workspace  # noqa: E402  (put on the path by landing, as build.py puts it
 
 TICKET = "LOCAL-001"
 JOIN_BRANCH = f"mach-lane/{TICKET}/join"
+KEPT = f"refs/mach/lanes-set-aside/{TICKET}"
 PREFIX = {"test": "test", "impl": "feat", "docs": "docs"}
 SUITE = [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-t", "."]
 
@@ -165,6 +166,7 @@ class Base(unittest.TestCase):
     def join(self, tasks, test_files, **kwargs):
         kwargs.setdefault("lane_folders", self.folders)
         kwargs.setdefault("lane_branches", self.branches)
+        kwargs.setdefault("keep_ref", lambda lane: f"{KEPT}/{lane}/1")
         return landing.join_lanes(self.project, self.cell, self.join_repo, JOIN_BRANCH, self.fork, tasks, test_files,
                                   kwargs.pop("run_suite", run_suite), **kwargs)
 
@@ -294,7 +296,9 @@ class SetAsideTest(Base):
         result = self.join(tasks, self.lane_tests(plan))
         self.assertEqual(result["status"], "JOINED", result)
         self.assertEqual(result["set_aside"], [{"lane": "L2", "tasks": ["T02", "T04"], "lane_commits": [tasks[1]["lane_commit"], tasks[3]["lane_commit"]],
-                                                "because": [{"other": "L1", "file": "app/util.py", "why": "same-file"}]}])
+                                                "because": [{"other": "L1", "file": "app/util.py", "why": "same-file"}],
+                                                "tip": tasks[3]["lane_commit"], "kept_as": f"{KEPT}/L2/1"}])
+        self.assertEqual(self.head(self.project, f"{KEPT}/L2/1"), tasks[3]["lane_commit"], "nothing set aside is lost: its tip is kept")
         self.assertEqual([item["task"] for item in result["landed"]], ["T01", "T03"])
         self.assertEqual(self.history(self.cell), self.sequential(plan, skip=("T02", "T04")))
         self.assertEqual(git(self.cell, "show", "HEAD:app/util.py").stdout, "X = 1\n")
@@ -350,6 +354,26 @@ class SetAsideTest(Base):
         tasks = self.build_lanes(plan)
         test_files = {lane: ["tests/test_base.py", *files] for lane, files in self.lane_tests(plan).items()}
         self.assertEqual(self.join(tasks, test_files)["set_aside"], [])
+
+    def test_two_names_that_differ_only_by_case_set_the_later_lane_aside(self):
+        plan = TWO[:3] + [("T04", "L2", "impl", "Beta", {"app/beta.py": impl_of("beta", "b"), "app/Alpha.py": "X = 2\n"})]
+        tasks = self.build_lanes(plan)
+        result = self.join(tasks, self.lane_tests(plan))
+        self.assertEqual(result["status"], "JOINED", result)
+        self.assertEqual([(item["lane"], item["because"]) for item in result["set_aside"]],
+                         [("L2", [{"other": "L1", "file": "app/Alpha.py", "why": "case-clash"}])])
+
+    def test_a_file_that_is_another_lanes_folder_sets_the_later_lane_aside(self):
+        plan = TWO[:3] + [("T04", "L2", "impl", "Beta", {"app/beta.py": impl_of("beta", "b"), "app/alpha.py/extra.py": "X = 2\n"})]
+        tasks = self.build_lanes(plan)
+        result = self.join(tasks, self.lane_tests(plan))
+        self.assertEqual(result["status"], "JOINED", result)
+        self.assertEqual([(item["lane"], item["because"]) for item in result["set_aside"]],
+                         [("L2", [{"other": "L1", "file": "app/alpha.py", "why": "file-folder"}])])
+
+    def test_unrepresentable_names(self):
+        self.assertEqual(landing.unrepresentable({"a/B.py", "c"}, {"a/b.py", "c/d.py", "e"}), [("a/B.py", "case-clash"), ("c", "file-folder")])
+        self.assertEqual(landing.unrepresentable({"a/b.py"}, {"a/b.py", "a/c.py"}), [])
 
     def test_overlaps_is_read_only(self):
         tasks = self.build_lanes(TWO)
@@ -436,15 +460,13 @@ class RefusalTest(Base):
                 return subprocess.CompletedProcess(args, 1, "", "error: could not apply")
             return landing.run_git(args, cwd, env=env, input=input)
         result = self.join(tasks, self.lane_tests(TWO), git=runner)
-        self.assertEqual(result["status"], "REFUSED")
-        self.assertEqual(result["refused"]["code"], "cherry-pick-failed")
-        self.assertEqual(result["refused"]["commit"], bad)
-        self.assertUntouched()
-        self.assertFalse(self.join_repo.exists())
-        self.assertNotIn(JOIN_BRANCH, self.branch_list())
-        for folder in self.folders.values():  # the lanes' work is untouched, for a person
-            self.assertTrue(folder.exists())
-        self.assertEqual(self.join(tasks, self.lane_tests(TWO))["status"], "JOINED")
+        self.assertEqual(result["status"], "JOINED", "a commit that does not apply sets its lane aside; it never stops the join")
+        self.assertEqual([(item["lane"], [(b["why"], b["commit"]) for b in item["because"]], item["kept_as"]) for item in result["set_aside"]],
+                         [("L1", [("did-not-apply", bad)], f"{KEPT}/L1/1")])
+        self.assertEqual([item["task"] for item in result["landed"]], ["T02", "T04"])
+        self.assertEqual(self.head(self.project, f"{KEPT}/L1/1"), bad, "the set-aside lane's commits are kept")
+        self.assertEqual(self.history(self.cell), self.sequential(TWO, skip=("T01", "T03")))
+        self.assertClean()
 
     def test_a_landed_copy_whose_change_differs_is_refused(self):
         """Scenario 13: a commit edited in the join worktree after it landed (patch ID differs): refused, nothing moves."""
@@ -458,30 +480,63 @@ class RefusalTest(Base):
                 landing.run_git(["commit", "-q", "--amend", "--no-edit"], cwd)
             return done
         result = self.join(tasks, self.lane_tests(TWO), git=runner)
-        self.assertEqual(result["refused"]["code"], "patch-id-mismatch")
-        self.assertEqual(result["refused"]["commit"], tasks[1]["lane_commit"])
-        self.assertUntouched()
-        self.assertFalse(self.join_repo.exists())
+        self.assertEqual(result["status"], "JOINED")
+        self.assertEqual([(item["lane"], item["because"][0]["why"], item["because"][0]["commit"]) for item in result["set_aside"]],
+                         [("L2", "did-not-apply", tasks[1]["lane_commit"])])
+        self.assertEqual([item["task"] for item in result["landed"]], ["T01", "T03"])
+        self.assertNotEqual(git(self.cell, "cat-file", "-e", "HEAD:app/smuggled.py").returncode, 0, "no line no gate scanned lands")
+        self.assertClean()
 
     def test_a_lane_branch_with_a_commit_no_task_recorded(self):
         tasks = self.build_lanes(TWO)
-        self.commit_task(self.folders["L2"], "T99", "docs", "By hand", {"docs/hand.md": "x\n"})
+        extra = self.commit_task(self.folders["L2"], "T99", "docs", "By hand", {"docs/hand.md": "x\n"})
         result = self.join(tasks, self.lane_tests(TWO))
-        self.assertEqual(result["refused"]["code"], "lane-unrecorded-commits")
-        self.assertUntouched()
+        self.assertEqual(result["status"], "JOINED")
+        aside = result["set_aside"][0]
+        self.assertEqual((aside["lane"], aside["because"][0]["why"], aside["because"][0]["commits"], aside["tip"], aside["kept_as"]),
+                         ("L2", "unrecorded-commits", [extra], extra, f"{KEPT}/L2/1"))
+        self.assertEqual(git(self.project, "show", f"{KEPT}/L2/1:docs/hand.md").stdout, "x\n", "the unrecorded work is kept")
+        self.assertEqual([item["task"] for item in result["landed"]], ["T01", "T03"])
+        self.assertClean()
 
     def test_lane_commits_out_of_their_own_order(self):
         tasks = self.build_lanes(TWO)
         tasks[0]["lane_commit"], tasks[2]["lane_commit"] = tasks[2]["lane_commit"], tasks[0]["lane_commit"]
-        self.assertEqual(self.join(tasks, self.lane_tests(TWO))["refused"]["code"], "lane-history")
-        self.assertUntouched()
-
-    def test_a_ticket_branch_that_moved_some_other_way(self):
-        tasks = self.build_lanes(TWO)
-        self.commit_task(self.cell, "T00", "docs", "In the cell", {"docs/cell.md": "x\n"})
         result = self.join(tasks, self.lane_tests(TWO))
-        self.assertEqual(result["refused"]["code"], "branch-moved")
-        self.assertFalse(self.join_repo.exists())
+        self.assertEqual([(item["lane"], item["because"][0]["why"]) for item in result["set_aside"]], [("L1", "lane-history")])
+        self.assertEqual([item["task"] for item in result["landed"]], ["T02", "T04"])
+
+    def test_a_ticket_branch_that_moved_lands_on_its_head(self):
+        tasks = self.build_lanes(TWO)
+        person = self.commit_task(self.cell, "T00", "docs", "In the cell", {"docs/cell.md": "x\n"})
+        result = self.join(tasks, self.lane_tests(TWO))
+        self.assertEqual(result["status"], "JOINED", result)
+        self.assertEqual(result["moved_branch"], {"from": self.fork, "to": person, "commits": [person], "files": ["docs/cell.md"]})
+        self.assertEqual((result["base"], result["set_aside"]), (person, []))
+        self.assertEqual([(m, n) for m, _, n in self.history(self.cell, since=person)], [(m, n) for m, _, n in self.sequential(TWO)], "the lanes land on top of the person's commit")
+        self.assertEqual(git(self.cell, "rev-list", "--count", f"{self.fork}..HEAD").stdout.strip(), "5", "the person's commit is kept")
+        self.assertClean()
+
+    def test_a_moved_branch_touching_a_lanes_file_sets_that_lane_aside(self):
+        tasks = self.build_lanes(TWO)
+        person = self.commit_task(self.cell, "T00", "docs", "In the cell", {"app/beta.py": "def beta():\n    return 'mine'\n"})
+        result = self.join(tasks, self.lane_tests(TWO))
+        self.assertEqual(result["status"], "JOINED", result)
+        self.assertEqual([(item["lane"], item["because"]) for item in result["set_aside"]],
+                         [("L2", [{"why": "branch-moved", "file": "app/beta.py", "commits": [person]}])])
+        self.assertEqual([item["task"] for item in result["landed"]], ["T01", "T03"])
+        self.assertEqual(git(self.cell, "show", "HEAD:app/beta.py").stdout, "def beta():\n    return 'mine'\n", "never undone")
+        self.assertEqual(self.head(self.project, f"{KEPT}/L2/1"), tasks[3]["lane_commit"])
+
+    def test_a_join_that_stopped_after_landing_on_a_moved_branch_finishes(self):
+        tasks = self.build_lanes(TWO)
+        person = self.commit_task(self.cell, "T00", "docs", "In the cell", {"docs/cell.md": "x\n"})
+        with self.assertRaises(Crash):
+            self.join(tasks, self.lane_tests(TWO), git=crashing(lambda a, n: "after" if a[:2] == ["merge", "--ff-only"] else None))
+        self.assertNotEqual(self.head(self.cell), person)
+        result = self.join(tasks, self.lane_tests(TWO))
+        self.assertEqual((result["status"], result["resumed"], result["base"]), ("JOINED", True, person))
+        self.assertEqual([(m, n) for m, _, n in self.history(self.cell, since=person)], [(m, n) for m, _, n in self.sequential(TWO)])
 
     def test_a_dirty_cell(self):
         tasks = self.build_lanes(TWO)

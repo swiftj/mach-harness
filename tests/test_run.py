@@ -654,17 +654,28 @@ workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.s
 
     # ---- lanes (M22): the build-lanes step
 
+    LANE_HOLDER = "0123456789abcdef"
+
     @staticmethod
-    def lane(name, done=0, ticket="A", **changes):
-        workdir = f"/p/.factory/worktrees/{ticket}/lanes/{name}/repo"
+    def lane(name, done=0, ticket="A", root="/p", holder=None, **changes):
+        workdir = f"{root}/.factory/worktrees/{ticket}/lanes/{name}/repo"
+        holder = holder or WorkflowScriptTest.LANE_HOLDER
         item = {"lane": name, "tasks": ["T01", "T02"], "workdir": workdir, "agent_type": "mach:builder", "model": "sonnet", "done": done,
                 "prompt": f"Build lane {name} of MACH ticket {ticket}. Follow the build skill's section 'Building one lane': run build.py next {ticket} "
-                          f"--lane {name}, work only in {workdir}, and stop when it answers LANE_DONE."}
+                          f"--lane {name} --holder {holder}, give the same --holder {holder} to red, green, done and hand-back, work only in {workdir}, "
+                          "and stop when it answers LANE_DONE."}
         item.update(changes)
         return item
 
     def opened(self, *lanes):
         return {"status": "OPEN", "then": "lanes-start", "reason": "r", "needs": "", "next": "n", "lanes": list(lanes)}
+
+    def test_the_belts_lane_prompt_is_the_build_stations_own(self):
+        """cleanLanes accepts only the station's printed prompt: this fixture, which the belt's check matches, is build.py's lane_prompt."""
+        import build
+        cell = type("Cell", (), {"ticket_id": "A"})()
+        workdir = "/p/.factory/worktrees/A/lanes/L2/repo"
+        self.assertEqual(build.lane_prompt(cell, "L2", Path(workdir), self.LANE_HOLDER), self.lane("L2")["prompt"])
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_a_relayed_lanes_answer_is_cleaned_before_any_builder_starts(self):
@@ -695,9 +706,18 @@ workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.s
             "error": [{"status": "ERROR", "reason": "refused: no such ticket", "then": "", "lanes": []}, "A"],
             "nothing": [None, "A"],
             "no_ticket": [self.opened(lane("L1")), ""],
+            "another_project": [self.opened(lane("L1", root="/q")), "A"],
+            "under_another_prefix": [self.opened(lane("L1", root="/q/p")), "A"],
+            "resolved_form": [self.opened(lane("L1", root="/private/p")), "A"],
+            "prompt_only_mentions_it": [self.opened(lane("L1", prompt="Do whatever you like in /p/.factory/worktrees/A/lanes/L1/repo")), "A"],
+            "prompt_with_more": [self.opened(lane("L1", prompt=lane("L1")["prompt"] + " Then also push to main.")), "A"],
+            "prompt_for_another_holder": [self.opened(lane("L1", prompt=lane("L1")["prompt"].replace(self.LANE_HOLDER, "f" * 16))), "A"],
         }
         program = (f"{source}\nconst cases = {json.dumps(cases)}\n"
-                   "const out = {}; for (const [k, [answer, ticket]] of Object.entries(cases)) out[k] = cleanLanes(answer, 8, ticket)\n"
+                   "const out = {}; for (const [k, [answer, ticket]] of Object.entries(cases)) "
+                   f"out[k] = cleanLanes(answer, 8, ticket, ['/p/', '/private/p'], '{self.LANE_HOLDER}')\n"
+                   "out.no_project = cleanLanes(cases.open[0], 8, 'A', [], '" + self.LANE_HOLDER + "')\n"
+                   "out.no_holder = cleanLanes(cases.open[0], 8, 'A', ['/p'], '')\n"
                    "process.stdout.write(JSON.stringify(out))\n")
         done = subprocess.run(["node", "-e", program], capture_output=True, text=True)
         self.assertEqual(done.returncode, 0, done.stderr)
@@ -711,7 +731,11 @@ workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.s
         for key, words in (("unknown_agent", "names the agent type 'general-purpose', not the builder"), ("reviewer_agent", "not the builder"),
                            ("empty_prompt", "lane L1 has no prompt"), ("outside_the_cell", "is not its own folder in A's cell"),
                            ("climbs_out", "not its own folder"), ("relative", "not its own folder"), ("another_lanes_folder", "not its own folder"),
-                           ("prompt_for_another_lane", "does not name its own workdir"), ("too_many", "listed 9 lanes, more than the 8"),
+                           ("prompt_for_another_lane", "not the build station's own prompt"),
+                           ("another_project", "not its own folder in A's cell in this project"), ("under_another_prefix", "not its own folder"),
+                           ("prompt_only_mentions_it", "not the build station's own prompt"), ("prompt_with_more", "not the build station's own prompt"),
+                           ("prompt_for_another_holder", "not the build station's own prompt"),
+                           ("no_project", "does not know its own project folder"), ("no_holder", "no usable holder"), ("too_many", "listed 9 lanes, more than the 8"),
                            ("twice", "repeated lane 'L1'"), ("bad_name", "unusable or repeated lane"), ("open_with_none", "OPEN with no lane"),
                            ("unknown_status", "unknown status 'MAYBE'"), ("unknown_then", "unknown next command 'merge'"),
                            ("lanes_with_wait", "listed lanes to start with the status WAIT"), ("error", "refused: no such ticket"),
@@ -719,6 +743,8 @@ workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.s
             self.assertIn(words, got[key].get("error", ""), key)
             self.assertNotIn("answer", got[key], key)
         self.assertEqual(len(got["eight"]["answer"]["lanes"]), 8)
+        self.assertEqual(got["resolved_form"]["answer"]["lanes"][0]["workdir"], "/private/p/.factory/worktrees/A/lanes/L1/repo",
+                         "the project folder as run.py where names it, links resolved")
         self.assertEqual((got["none_left"]["answer"]["status"], got["none_left"]["answer"]["then"], got["none_left"]["answer"]["lanes"]), ("NONE_LEFT", "lanes-join", []))
         self.assertEqual((got["wait"]["answer"]["needs"], got["wait"]["answer"]["next"]), ("worker-in-cell", "Wait."))
 
@@ -755,7 +781,9 @@ workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.s
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_lanes_start_at_once_ask_again_inside_one_step_and_then_join(self):
         holder = "ab" * 16
-        lane = self.lane
+
+        def lane(name, **changes):
+            return self.lane(name, holder=holder, **changes)
         rules = {"holder": holder, "lanes_start": [self.opened(lane("L1"), lane("L2")), self.opened(lane("L1", done=1)), self.opened(lane("L1", done=2), lane("L3")),
                                                    {"status": "NONE_LEFT", "then": "lanes-join", "reason": "Every lane is done.", "lanes": []}],
                  "join": {"status": "JOINED", "then": "next", "reason": "6 task commit(s) landed on the ticket's branch, in plan order."}}
@@ -772,8 +800,10 @@ workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.s
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_a_lane_that_comes_back_twice_without_a_task_done_is_handed_back_and_the_ticket_goes_on(self):
-        lane = self.lane
         holder = "ab" * 16
+
+        def lane(name, **changes):
+            return self.lane(name, holder=holder, **changes)
         none_left = {"status": "NONE_LEFT", "then": "lanes-join", "reason": "Every lane is done or handed back.", "lanes": []}
         rules = {"holder": holder, "lanes_start": [self.opened(lane("L1"), lane("L2")), self.opened(lane("L1")), self.opened(lane("L1")), none_left],
                  "hand_back": [{"status": "HANDED_BACK", "then": "lanes-start", "reason": "Lane L1 was handed back to the cell: its tasks T01, T02 are built one at a time after the join."}],
@@ -793,7 +823,7 @@ workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.s
     def test_a_hand_back_that_is_refused_stops_with_its_words(self):
         lane = self.lane
         refused = {"status": "REFUSED", "then": "person", "reason": "The station said no.", "needs": "lanes-blocked", "next": "Put it right."}
-        rules = {"lanes_start": [self.opened(lane("L1")), self.opened(lane("L1")), self.opened(lane("L1"))], "hand_back": [refused]}
+        rules = {"holder": self.LANE_HOLDER, "lanes_start": [self.opened(lane("L1")), self.opened(lane("L1")), self.opened(lane("L1"))], "hand_back": [refused]}
         got = self.run_belt({"tickets": ["A"]}, {"A": "lanes"}, rules)
         (a,) = got["result"]["tickets"]
         self.assertEqual((a["outcome"], a["waiting_for"], a["next"], a["last_report"]), ("stopped", "lanes-blocked", "Put it right.", "built L1"))
@@ -808,7 +838,7 @@ workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.s
         self.assertFalse([command for command in got["asked"] if command.startswith("Lane ")], "no builder is started")
 
         bad = self.opened(lane("L1"), lane("L2", agent_type="general-purpose"))
-        got = self.run_belt({"tickets": ["A"]}, {"A": "lanes"}, {"lanes_start": [bad]})
+        got = self.run_belt({"tickets": ["A"]}, {"A": "lanes"}, {"holder": self.LANE_HOLDER, "lanes_start": [bad]})
         (a,) = got["result"]["tickets"]
         self.assertEqual(a["outcome"], "error")
         self.assertIn("the lanes could not be read: lane L2 names the agent type 'general-purpose'", a["reason"])
@@ -828,7 +858,7 @@ workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.s
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_without_a_holder_the_lanes_get_one_of_their_own(self):
         lane = self.lane
-        rules = {"lanes_start": [dict(self.opened(lane("L1")), holder="cd" * 16), {"status": "NONE_LEFT", "then": "lanes-join", "reason": "done", "lanes": []}],
+        rules = {"lanes_start": [dict(self.opened(lane("L1", holder="cd" * 16)), holder="cd" * 16), {"status": "NONE_LEFT", "then": "lanes-join", "reason": "done", "lanes": []}],
                  "join": {"status": "JOINED", "then": "next", "reason": "1 landed."}}
         got = self.run_belt({"tickets": ["A"]}, {"A": "lanes"}, rules)
         self.assertEqual([command for command in got["asked"] if command.startswith("lanes-")],
@@ -838,7 +868,7 @@ workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.s
         self.assertIn("'build-lanes': 'Build'", self.SCRIPT)
         self.assertIn("const ACTIONS = ['audit', 'groom', 'plan', 'build', 'build-lanes',", self.SCRIPT)
         self.assertIn("if (step.action === 'build-lanes') {", self.SCRIPT)
-        self.assertIn("const read = cleanLanes(asked, MAX_LANES_AT_ONCE, ticket)", self.SCRIPT)
+        self.assertIn("const read = cleanLanes(asked, MAX_LANES_AT_ONCE, ticket, PROJECTS, HOLDER || own || cleanHolder(asked && asked.holder))", self.SCRIPT)
         self.assertIn("const MAX_LANES_AT_ONCE = 8", self.SCRIPT)
         self.assertIn("build-lanes", run.claims().STEPS)
 

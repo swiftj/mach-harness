@@ -1551,7 +1551,7 @@
                                             "additionalProperties": false,
                                             "required": ["task_id", "kind", "step", "first_run", "suite", "commit"],
                                             "properties": {
-                                                            "task_id": {"type": "string", "pattern": "^(?:(?:R\\d+|J)-)?T\\d+$", "description": "Revision 9 (M22) also takes J-T01, the task the join adds when lanes fail together."},
+                                                            "task_id": {"type": "string", "pattern": "^(?:(?:R\\d+|J|C)-)?T\\d+$", "description": "Revision 9 (M22) also takes J-T01, the task the join adds when lanes fail together."},
                                                             "kind": {"enum": ["test", "impl", "contract", "refactor", "docs"]},
                                                             "step": {"enum": ["red", "green", "done"]},
                                                             "first_run": {"enum": ["pass", "fail", "not-run", null]},

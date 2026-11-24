@@ -1438,7 +1438,7 @@ def station_answer(project: Project, ticket_id: str, *argv: str) -> Tuple[Option
 
 
 def lanes_refused(ticket_id: str, refusal: Any, extra: Dict[str, Any]) -> Dict[str, Any]:
-    code = str(getattr(refusal, "code", "") or "refused")
+    code = str(getattr(refusal, "code", "") or "not-recorded")
     needs, then = LANE_REFUSALS.get(code, ("lanes-blocked", "person"))
     status = "WAIT" if then == "wait" else "REFUSED"
     return {"ticket_id": ticket_id, "status": status, "code": code, "needs": needs, "reason": str(refusal), "then": then,
@@ -1571,7 +1571,7 @@ def cmd_lanes_hand_back(project: Project, args: argparse.Namespace) -> int:
         argv = ["hand-back", args.ticket_id, "--lane", args.lane, "--reason", args.reason] + (["--holder", args.holder] if args.holder else [])
         said, refusal = station_answer(project, args.ticket_id, *argv)
         if refusal is not None:
-            code = str(getattr(refusal, "code", "") or "refused")
+            code = str(getattr(refusal, "code", "") or "not-recorded")
             then = HAND_BACK_REFUSALS.get(code, "person")
             answer = {"ticket_id": args.ticket_id, "status": "WAIT" if then == "wait" else "REFUSED", "code": code,
                       "needs": "lanes-blocked" if then == "person" else ("worker-in-cell" if then == "wait" else None),
@@ -1588,6 +1588,18 @@ def cmd_lanes_hand_back(project: Project, args: argparse.Namespace) -> int:
     return 0
 
 
+ASIDE_WHY = {  # why the join set a lane aside (landing's reasons), in a few words
+    "same-file": "it changed a file another lane changed",
+    "frozen-test": "it touched a test file another lane holds",
+    "case-clash": "one of its file names differs from another lane's only by letter case",
+    "file-folder": "one of its files is another lane's folder, or the other way round",
+    "branch-moved": "a commit made on the ticket's branch while the lanes were open changed one of its files",
+    "did-not-apply": "one of its commits did not apply on the landed work",
+    "unrecorded-commits": "its branch held commits no task recorded",
+    "lane-history": "its recorded commits were not one chain from the fork point",
+}
+
+
 def lanes_joined(ticket_id: str, said: Dict[str, Any]) -> Dict[str, Any]:
     status = said.get("status")
     aside = [item for item in said.get("set_aside") or [] if isinstance(item, dict)]
@@ -1601,8 +1613,16 @@ def lanes_joined(ticket_id: str, said: Dict[str, Any]) -> Dict[str, Any]:
         raise RunError(f"The build station gave join an answer this line does not know ({str(status)[:40]}).")
     words = [f"{said.get('landed', 0)} task commit(s) landed on the ticket's branch, in plan order"]
     for item in aside:
-        words.append(f"lane {item.get('lane')} was set aside: it changed a file another lane changed, so its tasks "
-                     f"({', '.join(str(t) for t in item.get('tasks') or [])}) are built again in the cell, one at a time")
+        because = [b for b in item.get("because") or [] if isinstance(b, dict)]
+        why = "; ".join(dict.fromkeys(ASIDE_WHY.get(str(b.get("why")), "it could not land as it was") for b in because)) or "it could not land as it was"
+        words.append(f"lane {item.get('lane')} was set aside: {why}, so its tasks "
+                     f"({', '.join(str(t) for t in item.get('tasks') or [])}) are built again in the cell, one at a time"
+                     + (f"; nothing is lost: its commits are kept under {item.get('kept_as')}, and {item.get('bring_back')} brings one back"
+                        if item.get("kept_as") else ""))
+    moved = said.get("moved_branch") if isinstance(said.get("moved_branch"), dict) else None
+    if moved:
+        words.append(f"the ticket's branch had moved while the lanes were open ({len(moved.get('commits') or [])} commit(s) made on it, kept as "
+                     "they are): the lanes landed on top of them")
     if interaction:
         failing = [str(name) for name in interaction.get("failing") or []][:5]
         words.append(f"the lanes do not pass together ({', '.join(failing) or 'the whole suite fails'}), so a fix task, "
@@ -1615,7 +1635,9 @@ def lanes_joined(ticket_id: str, said: Dict[str, Any]) -> Dict[str, Any]:
                      f"{item.get('ref')}, not landed; nothing is lost, and {item.get('bring_back')} brings one back")
     return {"ticket_id": ticket_id, "status": status, "needs": None, "reason": "; ".join(words) + ".", "then": "next", "next": LANE_THEN["next"],
             "files_set_aside": saved,
-            "landed": said.get("landed", 0), "set_aside": [{"lane": item.get("lane"), "tasks": item.get("tasks")} for item in aside],
+            "landed": said.get("landed", 0),
+            "set_aside": [{"lane": item.get("lane"), "tasks": item.get("tasks"), **({"kept_as": item["kept_as"]} if item.get("kept_as") else {})}
+                          for item in aside],
             "fix_task": (interaction.get("task") or "J-T01") if interaction else None,
             "failing": (interaction.get("failing") or []) if interaction else [], "suite": said.get("suite"), "left": said.get("left") or []}
 

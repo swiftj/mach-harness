@@ -168,6 +168,11 @@ test("every reason code a station writes into its gate record has words", () => 
   }
   assert.ok(refusals.size >= 40, `found ${refusals.size}`);
   for (const code of refusals) assert.ok(O.gateReasonOf(code)?.known, `the build station's ${code} has words`);
+  // The cleanup station records its refusal's own code with cleanup.run (cleanup.py main).
+  const cleanups = new Set();
+  for (const m of readFileSync(join(skills.pathname, "cleanup", "scripts", "cleanup.py"), "utf8").matchAll(/\bcode="([a-z0-9-]+)"/g)) cleanups.add(m[1]);
+  assert.ok(cleanups.size >= 20, `found ${cleanups.size}`);
+  for (const code of cleanups) assert.ok(O.gateReasonOf(code)?.known, `the cleanup station's ${code} has words`);
   // Codes written from a value: the audit tier, the verification status, the re-plan's and the join's.
   for (const code of ["gold", "silver", "bronze", "INCOMPLETE_EVIDENCE", "FAIL_WITH_EVIDENCE", "replanned", "lanes-interaction", "landing-failed", "branch-moved"]) assert.ok(O.gateReasonOf(code)?.known, code);
   assert.equal(O.gateReasonOf("PASS"), null, "a pass that only says it passed");
