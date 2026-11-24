@@ -1,6 +1,6 @@
 # M21 design: moving a project by archive (`project export`, `project import`)
 
-Status: a proposal. Nothing of it is built. It is section B5 of `M20_TEAMS_AND_MOVING.md`, made concrete, and it follows the owner's decision of 2026-11-23 there (section 6, point 2): one repository holds one project, and a project that arrives where one already exists joins it as more epics, renumbered.
+Status: built through `/mach-studio`, without the app's export button (piece F); see **As built** at the end. It is section B5 of `M20_TEAMS_AND_MOVING.md`, made concrete, and it follows the owner's decision of 2026-11-23 there (section 6, point 2): one repository holds one project, and a project that arrives where one already exists joins it as more epics, renumbered.
 
 A product manager wants to bring a whole Product Studio project, its slices above all, from one repository into another, across organisations where GitHub's own issue transfer is not allowed. Two commands of the Product Studio engine (`skills/studio/scripts/studio.py`), reached through the `/mach-studio` skill, never a new command line:
 
@@ -578,3 +578,14 @@ Six pieces. A to C can start at once; D starts once A's and B's interfaces are w
 - **Text is free.** Nothing structural stops a PM from typing the repository's address into a why; the guarantee in 2.4 rests on a scan and a refusal.
 - **`downloads.go` serves only Jira's two file names** from one folder; the app's export needs it generalised, carefully.
 - **Join changes the destination's own slices**: incoming principles make every existing slice "answered under older principles" until reviewed, and `slice ready` waits for the principles to be published.
+
+## As built
+
+Pieces A to E are built; piece F is not. Where the code differs from the sections above, the code is right.
+
+- **No export button and no upload in the app.** Piece F is not built: there is no `project.export` operation, `downloads.go` still serves only the Jira export, and the app shows no "Download this project". Export and import are done through `/mach-studio` only (`skills/studio/SKILL.md`, "Moving the project to another repository"). A half-finished import still shows in the app's "not saved" rows, because that row comes from `saved_state`.
+- **The interview's command filter (8.1) needed no change.** `apps/studio/internal/interview/command.go` already denies the whole `project` group in the slice, Shape and needs conversations (`deniedOps`, `deniedIdeaOps`, `deniedNeedsOps`, as `Bash(project *)`), so `project export`, `project import` and `project imports` are denied there with no new line.
+- **The archive (A).** Besides the limits of 2.3, a member's name is at most 255 characters, and names are compared for the case clash after Unicode normalisation and case folding (NFD, casefold, NFC), not only by case. `ArchiveError` carries the sentence; `studio.py` adds "Nothing was changed." when it prints one.
+- **The rewriter (B).** The token boundary is wider than 5.2's: a token is not preceded by any word character (a letter or digit of any script, or `_`) or `-`, and not followed by any word character, not only a digit. So `SLICE-001x` and `SLICE-001é` are not tokens. `rewrite_record_noted` is added beside `rewrite_record`, returning the notes of a record's text and ID fields.
+- **Export (C).** The repository is read from `git config --get remote.origin.url` (local), not `git remote get-url origin`; any host's URL or scp form gives its `owner/repo`. A text naming a folder on this computer and a resume note are refused with sentences of their own ("SLICE-004's resume note names ... Save the note again without it"). The refusal about slices only on GitHub says, in the app, "Open each here first, or export without them." with no command. The default export folder is refused when it is a symbolic link, like `--out`.
+- **The commands (E).** `studio.py project export [--out] [--only-mine]`, `project import <archive> [--plan]` and `project imports [<ID>]`. `Studio.next_id` (slices and epics) and `next_principle_id` skip `project_import.reserved_numbers`; `saved_state` adds `import_unfinished`: "Bringing in the project from <file> stopped part way. Run it again with the same file to finish." (in the app: "... Bring the same file in again to finish."). `project_import` is imported inside the functions that use it.
