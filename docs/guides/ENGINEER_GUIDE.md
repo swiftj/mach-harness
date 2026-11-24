@@ -125,9 +125,13 @@ With the plugin, ask Claude Code to run `lanes.py measure --project .` from the 
 **When a lane does not work out.** Nothing stops the ticket, and nothing is lost:
 
 - **A lane that cannot finish** (it truly needs a file the plan gives another lane, or its builder stopped twice with nothing more done) is handed back to the cell, by its builder or by the line. Its finished tasks land at the join; its other tasks are built in the cell, one at a time, after it.
-- **A lane that proves not independent** (two lanes changed one file, or one changed a test file another lane holds) is set aside at the join, by MACH, the later one in plan order. Its tasks are built again in the cell, one at a time, where they see the landed work.
-- **Lanes that pass alone but fail together**: the joined result is kept, and MACH adds one task, `J-T01`, for the builder to make them pass together. Every test is then frozen, so the fix is in the code.
+- **A lane that proves not independent** (two lanes changed one file, one changed a test file another lane holds, two file names differ only by letter case, or one lane's file is another's folder) is set aside at the join, by MACH, the later one in plan order. So is a lane whose branch holds a commit no task recorded, or one of whose commits does not apply. Its tasks are built again in the cell, one at a time, where they see the landed work, and its commits are kept under `refs/mach/lanes-set-aside/<ticket>/<L>/<n>`: `git log <ref>` shows them and `git cherry-pick <commit>` brings one back.
+- **You committed in the cell while the lanes were open**: your commit stays. The lanes land on top of it; a lane that changed a file your commit changed is set aside as above and its tasks are built on top of your work. Uncommitted edits in the cell's checkout hold the join until you commit them or set them aside.
+- **A builder stopped mid-step**: if its commit was made but not recorded, the next step (or the line opening the lanes again) finds it and records the task as done. A lane folder you deleted is made again at its last recorded commit; a lane folder or branch left by an earlier build of the ticket is set aside, kept, and the lane starts fresh.
+- **Lanes that fail together**: the whole suite fails on the joined result (each lane's own suite at its end is recorded, and only when every one was passing is that said). The joined result is kept, and MACH adds one task, `J-T01`, for the builder to make them pass together. Every test is then frozen, so the fix is in the code.
 - **A join that cannot land** changes nothing on the ticket's branch and keeps every lane; run the ticket again and the join starts over.
+
+Cleanup keeps every ref MACH made for the ticket (set-aside lanes, a lane's set-aside files, a re-plan's old work) in the ticket's archive, and says the command that brings them back.
 
 Each of these is recorded with its reason and shown to the reviewers, in `/mach explain` and in the change record.
 

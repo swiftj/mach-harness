@@ -209,7 +209,7 @@ type MovedBranch struct {
 	Files   int      `json:"files"`
 }
 
-// Interaction is a whole suite that failed on the joined lanes though every lane passed alone.
+// Interaction is a whole suite that failed on the joined result of the lanes.
 type Interaction struct {
 	Failing    int      `json:"failing"`     // how many failing tests the output named
 	LanesNamed []string `json:"lanes_named"` // the lanes whose files the failing tests name
