@@ -30,7 +30,7 @@ from typing import Any, Dict, Optional
 
 FILE = "claim.json"
 DEFAULT_MINUTES = 90
-STEPS = ("audit", "groom", "plan", "build", "revise", "verify", "review", "merge", "cleanup")
+STEPS = ("audit", "groom", "plan", "build", "build-lanes", "revise", "verify", "review", "merge", "cleanup")
 HOLDER_RE = re.compile(r"^[0-9a-f]{8,64}$")
 SKEW = timedelta(minutes=1)  # a time further ahead than this is not believed
 

@@ -33,10 +33,10 @@ const USABLE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*$/
 const MAX_AT_ONCE = 8 // the belt's own fixed maximum, whatever a relay reports
 
 const MAX_STEPS = 16 // three judging rounds need at most 11 steps; this is a backstop
-const PHASE = { audit: 'Preflight', groom: 'Groom', plan: 'Groom', build: 'Build', revise: 'Build', verify: 'Verify', review: 'Review', merge: 'Wrap up', cleanup: 'Wrap up' }
+const PHASE = { audit: 'Preflight', groom: 'Groom', plan: 'Groom', build: 'Build', 'build-lanes': 'Build', revise: 'Build', verify: 'Verify', review: 'Review', merge: 'Wrap up', cleanup: 'Wrap up' }
 const text = { type: 'string' }
 // The fixed set of steps run.py names and of workers the factory ships, under both install forms (plugin, project).
-const ACTIONS = ['audit', 'groom', 'plan', 'build', 'revise', 'verify', 'review', 'merge', 'cleanup', 'stop', 'ERROR']
+const ACTIONS = ['audit', 'groom', 'plan', 'build', 'build-lanes', 'revise', 'verify', 'review', 'merge', 'cleanup', 'stop', 'ERROR']
 const AGENT_TYPES = ['builder', 'contract-engineer', 'verifier', 'reviewer'].flatMap(name => [`mach:${name}`, `mach-${name}`])
 const STEP = {
   type: 'object',
@@ -51,13 +51,14 @@ const STEP = {
 // BEGIN cleanStep: a pure function, evaluated on its own by tests/test_run.py.
 // A relay copies run.py's step, and a model's copy is not trusted: a blank, whitespace-only or quote-only value is
 // absent, an agent type outside AGENT_TYPES falls back to the default worker with a note, and a step that names no
-// known action, or work with no prompt, is refused so that no agent is started with empty fields.
+// known action, or work with no prompt, is refused so that no agent is started with empty fields. Review and build-lanes
+// have no prompt: their workers' prompts come from review-start and lanes-start.
 function cleanStep(step, agentTypes) {
   const clean = value => (typeof value === 'string' ? value.trim().replace(/^["'`\s]+|["'`\s]+$/g, '') : '')
   if (!step || typeof step !== 'object') return { error: 'run.py next returned nothing usable' }
   const action = clean(step.action)
   if (!action || action === 'ERROR') return { error: clean(step.reason) || 'run.py next failed' }
-  if (!['audit', 'groom', 'plan', 'build', 'revise', 'verify', 'review', 'merge', 'cleanup', 'stop'].includes(action)) {
+  if (!['audit', 'groom', 'plan', 'build', 'build-lanes', 'revise', 'verify', 'review', 'merge', 'cleanup', 'stop'].includes(action)) {
     return { error: `run.py next named an unknown step '${action.slice(0, 40)}'` }
   }
   const out = { action, stop: step.stop === true || action === 'stop', reason: clean(step.reason), stage: clean(step.stage), needs: clean(step.needs),
@@ -67,7 +68,7 @@ function cleanStep(step, agentTypes) {
     note = `unknown agent type '${out.agent_type.slice(0, 40)}' ignored; the default worker runs this step`
     out.agent_type = ''
   }
-  if (!out.stop && out.action !== 'review' && !out.prompt) return { error: `run.py next gave the ${action} step no prompt` }
+  if (!out.stop && out.action !== 'review' && out.action !== 'build-lanes' && !out.prompt) return { error: `run.py next gave the ${action} step no prompt` }
   return { step: out, note }
 }
 // END cleanStep
@@ -114,6 +115,65 @@ function cleanHolder(value) {
   return /^[0-9a-f]{8,64}$/.test(read) ? read : ''
 }
 // END cleanHolder
+// BEGIN cleanLanes: a pure function, evaluated on its own by tests/test_run.py.
+// A relay copies run.py lanes-start's answer, and a model's copy is not trusted. The whole answer is refused, and no builder
+// is started, when it names a status or a next command this line does not know, lanes with any status but OPEN, an OPEN
+// with no lane or with more lanes than `most`, a lane twice or by an unusable name, an agent type that is not the builder,
+// an empty prompt, or a workdir that is not that lane's own folder in this ticket's cell (or a prompt that does not name it).
+function cleanLanes(answer, most, ticket) {
+  const clean = value => (typeof value === 'string' ? value.trim().replace(/^["'`\s]+|["'`\s]+$/g, '') : '')
+  if (!answer || typeof answer !== 'object') return { error: 'run.py lanes-start returned nothing usable' }
+  const status = clean(answer.status).toUpperCase()
+  const reason = clean(answer.reason).slice(0, 600)
+  if (!status || status === 'ERROR') return { error: reason || 'run.py lanes-start failed' }
+  if (!['OPEN', 'SEQUENTIAL', 'NONE_LEFT', 'WAIT', 'REFUSED'].includes(status)) return { error: `run.py lanes-start answered an unknown status '${status.slice(0, 40)}'` }
+  const then = clean(answer.then)
+  if (!['lanes-start', 'lanes-join', 'next', 'wait', 'person'].includes(then)) return { error: `run.py lanes-start named an unknown next command '${then.slice(0, 40)}'` }
+  const out = { status, then, reason, needs: clean(answer.needs).slice(0, 60), next: clean(answer.next).slice(0, 600), holder: clean(answer.holder), lanes: [] }
+  const lanes = Array.isArray(answer.lanes) ? answer.lanes : []
+  if (status !== 'OPEN') return lanes.length ? { error: `run.py lanes-start listed lanes to start with the status ${status}` } : { answer: out }
+  if (!lanes.length) return { error: 'run.py lanes-start answered OPEN with no lane to start' }
+  if (lanes.length > most) return { error: `run.py lanes-start listed ${lanes.length} lanes, more than the ${most} this line starts at once` }
+  const suffix = `/.factory/worktrees/${clean(ticket)}/lanes/`
+  const seen = new Set()
+  for (const item of lanes) {
+    if (!item || typeof item !== 'object') return { error: 'run.py lanes-start listed a lane that cannot be read' }
+    const lane = clean(item.lane)
+    if (!/^L[0-9]{1,3}$/.test(lane) || seen.has(lane)) return { error: `run.py lanes-start listed an unusable or repeated lane '${lane.slice(0, 20)}'` }
+    seen.add(lane)
+    const agentType = clean(item.agent_type)
+    if (!['mach:builder', 'mach-builder'].includes(agentType)) return { error: `lane ${lane} names the agent type '${agentType.slice(0, 40)}', not the builder` }
+    const workdir = clean(item.workdir)
+    if (!clean(ticket) || !workdir.startsWith('/') || !workdir.endsWith(`${suffix}${lane}/repo`) || /\/\.\.?(\/|$)/.test(workdir)) {
+      return { error: `lane ${lane}'s workdir is not its own folder in ${clean(ticket) || 'this ticket'}'s cell` }
+    }
+    const prompt = typeof item.prompt === 'string' ? item.prompt.trim() : ''
+    if (!prompt) return { error: `lane ${lane} has no prompt` }
+    if (!prompt.includes(workdir)) return { error: `lane ${lane}'s prompt does not name its own workdir` }
+    const done = Number.isInteger(item.done) && item.done >= 0 ? item.done : 0
+    const tasks = (Array.isArray(item.tasks) ? item.tasks : []).map(clean).filter(Boolean).slice(0, 60)
+    out.lanes.push({ lane, agent_type: agentType, model: clean(item.model), prompt, workdir, tasks, done })
+  }
+  return { answer: out }
+}
+// END cleanLanes
+// BEGIN cleanJoin: a pure function, evaluated on its own by tests/test_run.py.
+// The relay's copy of run.py lanes-join's (or lanes-hand-back's) answer. An unknown status or next command is refused; what
+// the station did is kept only as plain, bounded text, for the log and the ticket's result.
+function cleanJoin(answer) {
+  const clean = value => (typeof value === 'string' ? value.trim().replace(/^["'`\s]+|["'`\s]+$/g, '') : '')
+  if (!answer || typeof answer !== 'object') return { error: 'run.py lanes-join returned nothing usable' }
+  const status = clean(answer.status).toUpperCase()
+  const reason = clean(answer.reason).slice(0, 600)
+  if (!status || status === 'ERROR') return { error: reason || 'run.py lanes-join failed' }
+  if (!['JOINED', 'INTERACTION', 'HANDED_BACK', 'REFUSED', 'WAIT'].includes(status)) return { error: `run.py lanes-join answered an unknown status '${status.slice(0, 40)}'` }
+  const then = clean(answer.then)
+  if (!['lanes-start', 'next', 'wait', 'person'].includes(then)) return { error: `run.py lanes-join named an unknown next command '${then.slice(0, 40)}'` }
+  if ((status === 'JOINED' || status === 'INTERACTION') && then !== 'next') return { error: `run.py lanes-join answered ${status} but not to go on in the cell` }
+  if (status === 'HANDED_BACK' && then !== 'lanes-start') return { error: 'run.py lanes-hand-back answered HANDED_BACK but not to ask for the lanes again' }
+  return { status, then, reason, needs: clean(answer.needs).slice(0, 60), next: clean(answer.next).slice(0, 600) }
+}
+// END cleanJoin
 const STATUS = {
   type: 'object',
   properties: {
@@ -138,6 +198,31 @@ const TALLY = {
   type: 'object',
   properties: { outcome: { type: 'string', description: 'the "outcome" field, or "ERROR" if the command refused' }, detail: text },
   required: ['outcome'],
+}
+
+const LANES = {
+  type: 'object',
+  properties: {
+    status: { type: 'string', description: 'the "status" field exactly (OPEN, SEQUENTIAL, NONE_LEFT, WAIT or REFUSED); "ERROR" only if the command printed no JSON' },
+    then: text, reason: text, needs: text, next: text, holder: text,
+    lanes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { lane: text, tasks: { type: 'array', items: text }, workdir: text, agent_type: text, model: text, prompt: text, done: { type: 'number' } },
+        required: ['lane', 'workdir', 'agent_type', 'model', 'prompt'],
+      },
+    },
+  },
+  required: ['status', 'then', 'reason', 'lanes'],
+}
+const JOIN = {
+  type: 'object',
+  properties: {
+    status: { type: 'string', description: 'the "status" field exactly (JOINED, INTERACTION, REFUSED or WAIT); "ERROR" only if the command printed no JSON' },
+    then: text, reason: text, needs: text, next: text,
+  },
+  required: ['status', 'then', 'reason'],
 }
 
 const SCHEDULE = {
@@ -190,7 +275,7 @@ if (!HOLDER) log('No usable holder came back from run.py where, so this run clai
 function clerk(command, schema, label, phase) {
   return agent(
     'Run exactly the one command in the code block below, complete and unchanged, including its last words, and nothing else:\n\n' +
-      '```bash\n' + `${RUN} ${command}${HOLDER && /^(next|schedule) /.test(command) ? ' --holder ' + HOLDER : ''}` + '\n```\n\n' +
+      '```bash\n' + `${RUN} ${command}${HOLDER && /^(next|schedule|lanes-start|lanes-join|lanes-hand-back) /.test(command) ? ' --holder ' + HOLDER : ''}` + '\n```\n\n' +
       'Report the fields of the JSON it prints, copied exactly; use an empty string where a field is null or absent. ' +
       'If the command prints no JSON or fails, set "action" (or "outcome", or "refused") to "ERROR", set any true/false field to false, and put its error text in "reason" (or "detail"). ' +
       'Do not run any other command, load any skill, or try another way.',
@@ -207,6 +292,72 @@ async function review(ticket) {
   const tally = await clerk(`review-tally ${ticket}`, TALLY, `${ticket}: tally`, 'Review')
   log(`${ticket}: review ${tally ? tally.outcome : 'could not be tallied'}`)
   return null
+}
+
+// A plan the build station builds in lanes: one builder per lane, all at once, each with exactly the agent type, model and
+// prompt the station printed, passed on unchanged. Lanes that come in batches (more lanes than free places), and a lane given
+// back to the same holder because its builder stopped part way, are all asked for inside this one step, so the guard against
+// a station repeating sees one step. A lane whose builder comes back twice without another task done is handed back to the
+// cell (its finished tasks land at the join, the rest are built one at a time after it), and the ticket carries on to the join.
+const MAX_LANES_AT_ONCE = 8 // the belt's own fixed maximum, whatever a relay reports
+const MAX_LANE_ROUNDS = 24 // a backstop: each round starts or hands back at least one lane, and a lane that does not move is handed back
+async function buildLanes(ticket) {
+  const last = {} // each lane's tasks done when it was last started
+  const stalls = {} // how many times a lane came back with no more tasks done
+  const said = {} // what each lane's builder last reported
+  let own = '' // the lanes' holder when this run has none of its own: the first answer makes one
+  const holder = () => (HOLDER || !own ? '' : ' --holder ' + own)
+  for (let round = 0; round < MAX_LANE_ROUNDS; round++) {
+    const asked = await clerk(`lanes-start ${ticket}${HOLDER ? '' : ' --holder ' + (own || 'new')}`, LANES, `${ticket}: which lanes now?`, 'Build')
+    const read = cleanLanes(asked, MAX_LANES_AT_ONCE, ticket)
+    if (read.error) return { outcome: 'error', reason: `the lanes could not be read: ${read.error}` }
+    const answer = read.answer
+    if (!HOLDER && !own) own = cleanHolder(answer.holder)
+    if (answer.status === 'OPEN') {
+      const stuck = answer.lanes.filter(lane => lane.lane in last && lane.done <= last[lane.lane] && (stalls[lane.lane] || 0) >= 1)
+      if (stuck.length) {
+        // The reason is fixed words: a builder's own report is never put on a command line.
+        for (const lane of stuck) {
+          const handed = cleanJoin(await clerk(`lanes-hand-back ${ticket} --lane ${lane.lane} --reason "its builder stopped twice without finishing another task"${holder()}`,
+            JOIN, `${ticket}: hand lane ${lane.lane} back`, 'Build'))
+          if (handed.error) return { outcome: 'error', reason: `the hand-back could not be read: ${handed.error}` }
+          log(`${ticket}: ${handed.status === 'HANDED_BACK' ? '' : `lane ${lane.lane} not handed back: `}${handed.reason}`)
+          if (handed.then !== 'lanes-start') {
+            return { outcome: 'stopped', stage: 'building', waiting_for: handed.needs || 'a person', reason: handed.reason, next: handed.next, last_report: said[lane.lane] || '' }
+          }
+        }
+        continue
+      }
+      for (const lane of answer.lanes) {
+        if (lane.lane in last) stalls[lane.lane] = lane.done > last[lane.lane] ? 0 : (stalls[lane.lane] || 0) + 1
+        last[lane.lane] = lane.done
+      }
+      log(`${ticket}: ${answer.lanes.length} lane builder${answer.lanes.length > 1 ? 's' : ''} at work at once (${answer.lanes.map(lane => `${lane.lane}: ${lane.tasks.join(', ')}`).join('; ')})`)
+      const reports = await parallel(answer.lanes.map(lane => () => {
+        const opts = { agentType: lane.agent_type, label: `${ticket}: lane ${lane.lane}`, phase: 'Build' }
+        if (lane.model) opts.model = lane.model
+        return agent(lane.prompt, opts)
+      }))
+      answer.lanes.forEach((lane, index) => { said[lane.lane] = typeof (reports || [])[index] === 'string' ? reports[index].slice(0, 1500) : '' })
+      continue
+    }
+    if (answer.then === 'lanes-join') {
+      const joined = cleanJoin(await clerk(`lanes-join ${ticket}${holder()}`, JOIN, `${ticket}: join the lanes`, 'Build'))
+      if (joined.error) return { outcome: 'error', reason: `the join could not be read: ${joined.error}` }
+      log(`${ticket}: ${joined.status === 'JOINED' ? 'lanes joined' : joined.status === 'INTERACTION' ? 'lanes joined; they do not pass together yet' : 'lanes not joined'}: ${joined.reason}`)
+      if (joined.then === 'next') return null
+      if (joined.then === 'lanes-start') continue
+      return { outcome: 'stopped', stage: 'building', waiting_for: joined.needs || 'a person', reason: joined.reason, next: joined.next }
+    }
+    if (answer.then === 'next') {
+      if (answer.status === 'SEQUENTIAL') log(`${ticket}: no lanes now, built one task at a time: ${answer.reason}`)
+      return null
+    }
+    if (answer.then === 'lanes-start') continue
+    return { outcome: 'stopped', stage: 'building', waiting_for: answer.needs || 'a person', reason: answer.reason, next: answer.next }
+  }
+  return { outcome: 'stuck', stage: 'building', reason: `the lanes were still not all built after ${MAX_LANE_ROUNDS} rounds`,
+    next: 'Everything is kept. Run the ticket again and every lane carries on where it stopped.' }
 }
 
 // `prepare` is "build" when the schedule starts a ticket that has no plan yet: it goes as far as the build station
@@ -243,6 +394,11 @@ async function runTicket(ticket, prepare) {
     if (step.action === 'review') {
       const problem = await review(ticket)
       if (problem) return { ticket, outcome: 'error', reason: problem, stations: done }
+      continue
+    }
+    if (step.action === 'build-lanes') {
+      const stopped = await buildLanes(ticket)
+      if (stopped) return { ticket, ...stopped, stations: done }
       continue
     }
     const opts = { label: `${ticket}: ${step.action}`, phase: PHASE[step.action] || 'Build' }

@@ -21,6 +21,14 @@ and not by whoever is driving it.
                                          which tickets may start now and why the others wait; reads only (schedule.py)
     run.py review-start <ticket>         start the review round; prints one ready prompt per reviewer seat
     run.py review-tally <ticket>         count the review votes
+    run.py lanes-start <ticket> --holder H|new [--take-over]
+                                         the lanes to start now, each with a ready builder prompt, the grant filled in
+                                         from the free places (the build station's lanes-open); ask again until NONE_LEFT
+    run.py lanes-join <ticket> [--holder H]
+                                         join the built lanes (the build station's join): JOINED, INTERACTION or REFUSED
+    run.py lanes-hand-back <ticket> --lane L --reason WHY [--holder H]
+                                         a lane that cannot finish goes back to the cell (the build station's hand-back);
+                                         its finished tasks land at the join, the rest are built one at a time after it
     run.py where                         where this script and the project are (used by the workflow)
     run.py product status                slices marked ready (issues and folders) against what was taken in
     run.py product intake [--dry-run]    take ready slices in: each revision once; an issue is its own ticket
@@ -87,7 +95,7 @@ saying so (never inside a supervised execution, never when report.enabled is fal
 `next <ticket> --headless` that stops for a person sends one message on each channel on for this machine (notify.py),
 once per wait, and never inside a supervised execution. No other command here sends or reads the address.
 
-A step is either work ("action": audit, groom, plan, build, revise, verify, review, merge, cleanup)
+A step is either work ("action": audit, groom, plan, build, build-lanes, revise, verify, review, merge, cleanup)
 or a stop ("action": "stop") with the reason and what it is waiting for: a person's answers, a
 person's approval, a merge, or a person to take over an escalated ticket; or an engineer's decision
 about an architecture decision record (ADR): a plan that cannot follow one (adr-decision), a High-risk
@@ -110,18 +118,26 @@ station's scripts), and answers `stop` with `needs: "worker-in-cell"` while anot
 Without a holder it writes nothing and is refused the same way. A stop is never claimed. `where` prints a new
 holder each time. `--take-over` replaces a fresh claim, only on a person's explicit word.
 
-Standard library only. It reads; the only commands it runs are git queries and the review
-station's own script. The product commands are the exception and live in intake.py: on an
+`build-lanes` is named when the build station's records put a ticket's build at its lanes (M22): lanes open, or planned
+and the cell's next task a lane's. The driver runs `lanes-start` and starts every lane it lists at once, asks again until
+NONE_LEFT (lanes that come in batches loop inside the one step), then runs `lanes-join`; the build then goes on in the cell.
+A lane whose builder called the build station less than factory.claim_minutes ago answers `next` with `worker-in-cell` for
+any other holder, whatever claim.json says.
+
+Standard library only. It reads; the only commands it runs are git queries, the review station's own script, and the
+build station's lanes-open and join, which lanes-start and lanes-join run in this process. The product commands are the exception and live in intake.py: on an
 engineer's explicit command they file tickets and open cells through the ticket and intent
 stations' own scripts. Nothing here starts an agent, and nothing runs in the background.
 """
 
 import argparse
+import io
 import json
 import os
 import re
 import subprocess
 import sys
+from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -480,14 +496,21 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
         if audit["state"] == "bronze" and HARDENING_LABEL not in project.ticket_labels(ticket_id):
             return step(ticket_id, stage, "stop", "The repository's readiness tier is Bronze: " + " ".join(audit["blockers"])
                         + f" Only tickets labelled '{HARDENING_LABEL}' may be built until it is hardened.", needs="repository-hardening")
-        return step(ticket_id, stage, "build", "Groomed and cleared to build.", agent_type=agent_type("builder"), prompt=f"Build MACH ticket {ticket_id}.")
+        note = test_command_note(root, ticket_id, started=False)
+        return step(ticket_id, stage, "build", "Groomed and cleared to build." + (" " + note[0] if note else ""), agent_type=agent_type("builder"),
+                    prompt=f"Build MACH ticket {ticket_id}." + (" " + note[1] if note else ""))
     if stage == "building":
         state = load_json(root / "build.json", {}) or {}
+        lanes = lanes_step(project, ticket_id, root, state)
+        if lanes:
+            return lanes
         loop = int(state.get("loop") or 0)
         note = f"The build is in progress (revision {loop})." if loop else "The build is in progress."
-        return step(ticket_id, stage, "build", note, agent_type=agent_type("builder"),
+        missing = test_command_note(root, ticket_id, started=True)
+        return step(ticket_id, stage, "build", note + (" " + missing[0] if missing else ""), agent_type=agent_type("builder"),
                     prompt=f"Continue building MACH ticket {ticket_id}. Building has already started: continue from the next task."
-                    + (f" This is revision {loop}; the findings to address are in the cell's review-findings-{loop}.md." if loop else ""))
+                    + (f" This is revision {loop}; the findings to address are in the cell's review-findings-{loop}.md." if loop else "")
+                    + (" " + missing[1] if missing else ""))
 
     if stage == "built":
         decision = load_json(root / "review" / "decision.json", {}) or {}
@@ -540,6 +563,124 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
     if stage == "blocked":
         return step(ticket_id, stage, "stop", "The ticket failed its third round and was escalated.", needs="person-to-take-over")
     return step(ticket_id, stage, "stop", f"The cell is in an unknown stage ('{stage}').", needs="person-to-take-over")
+
+
+def test_command_note(root: Path, ticket_id: str, started: bool) -> Optional[Tuple[str, str]]:
+    """When the build station's last word on this ticket was that no test command is known (code no-test-command): the reason's
+    sentence and the builder's instruction. Never a stop: the builder, or a person, gives the build a test command and it
+    carries on from where it is, with nothing undone. None otherwise."""
+    last = None
+    try:
+        lines = (root / "lifecycle.jsonl").read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict) and record.get("station") == "build" and isinstance(record.get("data"), dict):
+            last = record
+            break
+    if not last or last.get("type") != "gate.evaluated" or last["data"].get("reason_code") != "no-test-command":
+        return None
+    command = (f'build.py set-commands {ticket_id} --test-cmd "<command>" --reason "<why>"' if started
+               else f'build.py start {ticket_id} --test-cmd "<command>"')
+    return ("No test command is known for it yet; the builder sets one and the build carries on.",
+            f"The build station knows no test command for this ticket yet. Choose the command that runs this project's tests (the one the plan or "
+            f"the project documents, or one you choose) and give it: {command}. Then carry on; nothing done is undone.")
+
+
+# ---------------------------------------------------------------- lanes (M22)
+#
+# A plan whose author divided its tasks into parts is built in lanes: the build station decides which tasks, and records it
+# under "lanes" in build.json; each lane keeps its own state in lanes/<L>/lane.json. This script only reads those files to
+# route, and asks the build station (lanes-open, join) through lanes-start and lanes-join. It starts no agent: the driver
+# (the belt workflow, or the run skill in a conversation) starts one builder per lane, all at once.
+
+
+def lane_view(root: Path, entry: Dict[str, Any]) -> Dict[str, Any]:
+    """One lane as the routing sheet shows it: its tasks, its status and how many tasks are done, from its own lane.json."""
+    name = str(entry.get("lane"))
+    own = load_json(root / "lanes" / name / "lane.json", {}) or {}
+    own = own if isinstance(own, dict) else {}
+    tasks = [task for task in own.get("tasks") or [] if isinstance(task, dict)]
+    status = own.get("status") if entry.get("status") == "open" and own.get("status") in ("open", "done") else entry.get("status")
+    listed = [str(task) for task in entry.get("tasks") or []]
+    return {"lane": name, "tasks": listed, "status": status, "done": sum(1 for task in tasks if task.get("status") == "done"), "of": len(listed)}
+
+
+def lanes_step(project: Project, ticket_id: str, root: Path, state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The build-lanes step, when the build station's own records put the build at its lanes; else None (the build goes on
+    in the cell as before). Lanes are at hand when they are open, or planned and the cell's next task is a lane's: exactly
+    when `build.py next` answers LANES. Never in a revision round."""
+    record = state.get("lanes")
+    if not isinstance(record, dict) or not isinstance(record.get("lanes"), list) or int(state.get("loop") or 0):
+        return None
+    entries = [entry for entry in record["lanes"] if isinstance(entry, dict) and entry.get("lane")]
+    views = [lane_view(root, entry) for entry in entries]
+    plan = "; ".join(f"{view['lane']}: {', '.join(view['tasks'])}" for view in views)
+    if record.get("state") == "planned":
+        pending = next((task for task in state.get("tasks") or [] if isinstance(task, dict) and task.get("status") != "done"), None)
+        if pending is None or not any(pending.get("id") in (entry.get("tasks") or []) for entry in entries):
+            return None
+        reason = (f"The tasks before the lanes are done. The next tasks are built in {len(views)} lanes at the same time, each by its own "
+                  f"builder ({plan}); then the lanes are joined and the build goes on in the cell.")
+    elif record.get("state") == "open":
+        left = [view["lane"] for view in views if view["status"] not in ("done", "joined", "set-aside", "handed-back")]
+        back = [view["lane"] for view in views if view["status"] == "handed-back"]
+        later = (f" Handed back to the cell, to be built one task at a time after the join: {', '.join(back)}." if back else "")
+        reason = ("Every lane is built" + (" or handed back" if back else "") + "; the lanes are joined next, then the build goes on in the cell." + later
+                  if not left else
+                  f"{len(views) - len(left)} of {len(views)} lanes are built; {', '.join(left)} still to build, each from where it stopped. "
+                  "Then the lanes are joined." + later)
+    else:
+        return None
+    return step(ticket_id, "building", "build-lanes", reason, lanes=views)
+
+
+_BUILD: List[Any] = []
+
+
+def build_station() -> Any:
+    """The build station's script, loaded once, whichever way MACH is installed: lanes-start and lanes-join ask it in this
+    process, so that its refusal codes (not only its words) decide what the line does next."""
+    if not _BUILD:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("mach_build_station", sibling("build") / "scripts" / "build.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _BUILD.append(module)
+    return _BUILD[0]
+
+
+def live_lanes(project: Project, ticket_id: str) -> List[Dict[str, Any]]:
+    """The lanes of a ticket whose builder is at work: open, and handed out or at a build station step less than
+    factory.claim_minutes ago, by the build station's own rule. Reads only; empty for a build without lanes."""
+    folder = project.cell_dir(ticket_id) / "lanes"
+    if not folder.is_dir():
+        return []
+    B = build_station()
+    minutes = B.claim_limit(project.config)
+    found = []
+    for path in sorted(folder.glob("L*/lane.json")):
+        data = load_json(path, {})
+        if not isinstance(data, dict) or data.get("status") != "open":
+            continue
+        last = data.get("last_step_at") or data.get("handed_at")
+        if B.fresh(last, minutes):
+            found.append({"lane": path.parent.name, "holder": data.get("holder"), "handed_at": data.get("handed_at"), "last_step_at": last,
+                          "lapses_at": claims().lapses_at({"at": last}, minutes)})
+    return found
+
+
+def lanes_in_words(lanes: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """What anyone may be shown about lanes another worker is building: which, since when, until when. Never the holder."""
+    started = min(str(lane.get("handed_at") or lane["last_step_at"]) for lane in lanes)
+    last = max(str(lane["last_step_at"]) for lane in lanes)
+    lapses = max(str(lane["lapses_at"]) for lane in lanes)
+    return {"step": "build-lanes", "stage": "building", "at": started, "renewed_at": last, "lapses_at": lapses,
+            "lanes": [lane["lane"] for lane in lanes]}
 
 
 def landed_from_another_factory(project: Project, cell: Dict[str, Any]) -> Optional[str]:
@@ -735,7 +876,23 @@ def digest(project: Project, info: Dict[str, Any]) -> Dict[str, Any]:
     older = rules_changed(project, ticket_id) if isinstance(ticket_id, str) and TICKET_ID_RE.match(ticket_id) else []
     if older:
         shown["rules_changed"] = older
+    line = lanes_line(project, ticket_id) if isinstance(ticket_id, str) and TICKET_ID_RE.match(ticket_id) else None
+    if line:
+        shown["lanes"] = line  # M22: one sentence about the build's lanes, only for a build that has them
     return shown
+
+
+def lanes_line(project: Project, ticket_id: str) -> Optional[str]:
+    """explain.py's one sentence about a ticket's lanes, or None for a build without lanes. A line is advice: it never stops
+    the routing sheet, and a failure to read it is said."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import explain
+        return explain.lanes_line(project.cell_dir(ticket_id))
+    except Exception as exc:  # noqa: BLE001
+        if not (project.cell_dir(ticket_id) / "lanes").is_dir():
+            return None  # a build without lanes shows exactly what it showed before
+        return f"How this ticket's lanes stand could not be read ({exc.__class__.__name__})."
 
 
 def rules_changed(project: Project, ticket_id: str, cache: Optional[Dict[str, Any]] = None) -> List[str]:
@@ -935,6 +1092,19 @@ def claim_step(project: Project, found: Dict[str, Any], holder: Optional[str], t
         return step(ticket_id, found.get("stage"), "stop", C.in_words(other, limit) + " Do not start another worker on it. A person can say to take over this step.",
                     needs="worker-in-cell", other_claim=C.public(other, limit))
 
+    # A lane whose builder is at work belongs to the driver that started it, whatever claim.json says (design 6.3): a second
+    # driver never seats builders in it. It stops counting when the lane is done, or when its builder has not called the
+    # build station for factory.claim_minutes; then the next driver takes the lane over and it resumes where it stopped.
+    working = [lane for lane in live_lanes(project, ticket_id) if holder is None or lane.get("holder") != holder]
+    if working and not take_over:
+        shown = lanes_in_words(working)
+        return step(ticket_id, found.get("stage"), "stop",
+                    f"Another worker is building lane{'s' if len(working) > 1 else ''} {', '.join(shown['lanes'])} of this ticket, since {shown['at']}; "
+                    f"its builders last worked at {shown['renewed_at']}. They count as at work until {shown['lapses_at']}, or until their lanes are done; "
+                    "after that the next driver takes them over and they carry on where they stopped. Do not start another worker on it. "
+                    "A person can say to take over this step.",
+                    needs="worker-in-cell", other_claim=shown)
+
     if holder is None:
         other = C.current(root, limit)
         return refused(other) if other else found
@@ -1127,8 +1297,11 @@ def cmd_status(project: Project, args: argparse.Namespace) -> int:
         info = next_step(project, ticket_id, args.headless)
         row = {key: info[key] for key in ("ticket_id", "stage", "action", "needs", "reason")}
         held = C.current(project.cell_dir(ticket_id), limit)
+        working = live_lanes(project, ticket_id) if not held else []
         if held:
             row["claim"] = C.public(held, limit)  # someone is working on it: the step and since when, never the holder
+        elif working:
+            row["claim"] = lanes_in_words(working)  # lane builders at work, whatever claim.json says
         note = adr_note(project, ticket_id)
         if note:
             row["adrs"] = note  # decided after it was planned: flagged, never restarted or blocked
@@ -1192,6 +1365,221 @@ def cmd_review_tally(project: Project, args: argparse.Namespace) -> int:
         raise RunError(done.stderr.strip().replace("refused: ", "", 1) or "The review station could not tally.")
     print(done.stdout.rstrip())
     return 0
+
+
+# What the line does after each refusal of lanes-open or join, by the build station's own code: who acts ("needs": None when the
+# line itself carries on, "worker-in-cell" or "free-place" to wait, "lanes-blocked" for a person) and the driver's next command.
+LANE_REFUSALS = {
+    "lane-held": ("worker-in-cell", "wait"),
+    "no-free-place": ("free-place", "wait"),
+    "lanes-not-ready": (None, "next"),
+    "wrong-stage": (None, "next"),
+    "already-joined": (None, "next"),
+    "lanes-not-open": (None, "next"),
+    "lanes-not-done": (None, "lanes-start"),
+}
+LANE_THEN = {
+    "lanes-start": "Run lanes-start again: it hands back every lane that is not done, each from where it stopped.",
+    "lanes-join": "Run lanes-join: every lane is built.",
+    "next": "Check the routing sheet (next): the build goes on in the cell.",
+    "wait": "Nothing is lost: everything is on disk. Run this ticket again later and the lanes carry on where they stopped.",
+    "person": "Once a person has put right what the reason names, run this ticket again: the lanes carry on where they stopped.",
+}
+
+
+def station_answer(project: Project, ticket_id: str, *argv: str) -> Tuple[Optional[Dict[str, Any]], Optional[Any]]:
+    """Run one build station command in this process: (what it printed, as JSON, or None; its refusal, or None). A refusal is
+    recorded in the cell's lifecycle log as the station's own command line records it."""
+    B = build_station()
+    args = B.build_parser().parse_args(["--project", str(project.root), *argv])
+    out = io.StringIO()
+    try:
+        with redirect_stdout(out):
+            args.func(B.Cell(project.root, ticket_id), args)
+    except B.BuildError as exc:
+        B.telemetry(project.cell_dir(ticket_id), "gate.evaluated", "build", lambda: {
+            "gate": f"build.{args.command}", "outcome": "refuse", "reason_code": exc.code, "overridden_by_reason": False, "task": None})
+        return None, exc
+    try:
+        answer = json.loads(out.getvalue())
+    except ValueError:
+        raise RunError(f"The build station printed no answer to {args.command} for {ticket_id}.")
+    return (answer if isinstance(answer, dict) else None), None
+
+
+def lanes_refused(ticket_id: str, refusal: Any, extra: Dict[str, Any]) -> Dict[str, Any]:
+    code = str(getattr(refusal, "code", "") or "refused")
+    needs, then = LANE_REFUSALS.get(code, ("lanes-blocked", "person"))
+    status = "WAIT" if then == "wait" else "REFUSED"
+    return {"ticket_id": ticket_id, "status": status, "code": code, "needs": needs, "reason": str(refusal), "then": then,
+            "next": LANE_THEN[then], "lanes": [], **extra}
+
+
+def lanes_claim(project: Project, ticket_id: str, holder: Optional[str], take_over: bool) -> Optional[Dict[str, Any]]:
+    """Claim (or renew) the build-lanes step for the driver; the answer to print when another worker has it, else None."""
+    claimed = claim_step(project, step(ticket_id, "building", "build-lanes", "The lanes are built."), holder, take_over)
+    if not claimed.get("stop"):
+        return None
+    return {"ticket_id": ticket_id, "status": "WAIT", "code": "worker-in-cell", "needs": "worker-in-cell", "reason": claimed["reason"],
+            "other_claim": claimed.get("other_claim"), "then": "wait",
+            "next": "Do not start a builder. Wait for the other worker, or a person says to take over (--take-over).", "lanes": []}
+
+
+def lanes_ready(project: Project, ticket_id: str) -> Optional[Dict[str, Any]]:
+    """Refuse lanes for a ticket that is not building: the routing sheet says what comes instead."""
+    cell = load_json(project.cell_dir(ticket_id) / "cell.json")
+    if isinstance(cell, dict) and cell.get("stage") == "building":
+        return None
+    stage = cell.get("stage") if isinstance(cell, dict) else None
+    return {"ticket_id": ticket_id, "status": "REFUSED", "code": "wrong-stage", "needs": None, "then": "next", "next": LANE_THEN["next"], "lanes": [],
+            "reason": f"{ticket_id} is not being built ({'stage ' + str(stage) if stage else 'no cell'}), so it has no lanes to start or join."}
+
+
+def cmd_lanes_start(project: Project, args: argparse.Namespace) -> int:
+    """Hand the driver the lanes to start now (build.py lanes-open), with the grant filled in from the free places (design 7.5).
+
+    Always one JSON answer: status OPEN (start every lane listed at once, then ask again), SEQUENTIAL (the plan is built one
+    task at a time in the cell), NONE_LEFT (then lanes-join, or next), WAIT (another worker, or no free place) or REFUSED
+    (code, reason and what comes next). "then" names the driver's next command."""
+    refused = out_of_scope(project, args.ticket_id)
+    if refused:
+        raise RunError(refused["reason"])
+    holder, made = args.holder, False
+    if holder == "new":
+        holder, made = claims().new_holder(), True
+    elif not claims().valid_holder(holder):
+        raise RunError("--holder takes 'new' or the holder token run.py next or where printed (hex). The lanes belong to the driver that starts them.")
+    extra = {"holder": holder} if made else {}
+    answer = lanes_ready(project, args.ticket_id) or lanes_claim(project, args.ticket_id, holder, args.take_over)
+    if answer is None:
+        B = build_station()
+        try:
+            cell = B.Cell(project.root, args.ticket_id)
+        except B.BuildError as exc:
+            raise RunError(str(exc))
+        minutes = B.claim_limit(project.config)
+        used, others = B.others_using(cell, minutes)
+        free = B.max_builders(project.config) - used
+        grant = max(0, min(B.max_lanes(project.config), free))
+        room = {"grant": grant, "free_places": max(free, 0), "max_lanes": B.max_lanes(project.config), "max_builders": B.max_builders(project.config),
+                "other_tickets": others}
+        argv = ["lanes-open", args.ticket_id, "--holder", holder, "--grant", str(grant)] + (["--take-over"] if args.take_over else [])
+        said, refusal = station_answer(project, args.ticket_id, *argv)
+        if refusal is not None:
+            answer = lanes_refused(args.ticket_id, refusal, room)
+        else:
+            answer = lanes_opened(project, args.ticket_id, said or {}, room)
+    answer.update(extra)
+    print(json.dumps(answer, indent=2, ensure_ascii=False))
+    return 0
+
+
+def lanes_opened(project: Project, ticket_id: str, said: Dict[str, Any], room: Dict[str, Any]) -> Dict[str, Any]:
+    status = said.get("status")
+    root = project.cell_dir(ticket_id)
+    if status == "OPEN":
+        lanes = []
+        for lane in said.get("lanes") or []:
+            own = load_json(root / "lanes" / str(lane.get("lane")) / "lane.json", {}) or {}
+            tasks = [task for task in own.get("tasks") or [] if isinstance(task, dict)] if isinstance(own, dict) else []
+            lanes.append({**lane, "done": sum(1 for task in tasks if task.get("status") == "done"), "of": len(lane.get("tasks") or [])})
+        then = "lanes-start"
+        nxt = ("Start every lane listed at once, each a fresh sub-agent of its agent_type on its model with exactly its prompt, and wait for all. "
+               "Then run lanes-start again: more lanes may follow, or a lane that stopped part way is handed back. When it answers NONE_LEFT, run lanes-join.")
+    elif status == "SEQUENTIAL":
+        lanes, then, nxt = [], "next", "The plan is built one task at a time in the cell, as without lanes: " + LANE_THEN["next"]
+    elif status == "NONE_LEFT":
+        lanes = []
+        then = "lanes-join" if "join" in str(said.get("next") or "") else "next"
+        nxt = LANE_THEN[then]
+    else:
+        raise RunError(f"The build station gave lanes-open an answer this line does not know ({str(status)[:40]}).")
+    return {"ticket_id": ticket_id, "status": status, "lanes": lanes, "reason": said.get("why"), "then": then, "next": nxt,
+            "fork": said.get("fork"), **room}
+
+
+def cmd_lanes_join(project: Project, args: argparse.Namespace) -> int:
+    """Join the lanes (build.py join) and say what came of it: JOINED, INTERACTION (a fix task J-T01 was added and the suite is
+    red), REFUSED (code, reason, next) or WAIT. After JOINED or INTERACTION the build goes on in the cell (then: next)."""
+    refused = out_of_scope(project, args.ticket_id)
+    if refused:
+        raise RunError(refused["reason"])
+    if args.holder is not None and not claims().valid_holder(args.holder):
+        raise RunError("--holder takes the holder token run.py next or where printed (hex).")
+    # With a holder, the driver's claim is renewed and another worker's refuses. Without one nothing is claimed: the join
+    # itself refuses while any lane is not done, and it runs under the build station's lock, so two joins never interleave.
+    answer = lanes_ready(project, args.ticket_id) or (lanes_claim(project, args.ticket_id, args.holder, False) if args.holder else None)
+    if answer is None:
+        said, refusal = station_answer(project, args.ticket_id, "join", args.ticket_id)
+        if refusal is not None:
+            answer = lanes_refused(args.ticket_id, refusal, {})
+        else:
+            answer = lanes_joined(args.ticket_id, said or {})
+    print(json.dumps(answer, indent=2, ensure_ascii=False))
+    return 0
+
+
+HAND_BACK_REFUSALS = {"already-handed-back": "lanes-start", "lane-done": "lanes-start", "already-joined": "next", "no-lanes": "next",
+                      "lanes-not-open": "lanes-start", "lane-taken-over": "wait"}
+
+
+def cmd_lanes_hand_back(project: Project, args: argparse.Namespace) -> int:
+    """Hand a lane that cannot finish back to the cell (build.py hand-back): its finished tasks land at the join, and its unfinished
+    ones are built one at a time in the cell after it. For a lane builder that cannot go on, or a driver whose lane builder came
+    back stuck: never a reason to stop the ticket. Always one JSON answer: HANDED_BACK (then: lanes-start, which says when to
+    join), or REFUSED/WAIT with code, reason and what comes next."""
+    refused = out_of_scope(project, args.ticket_id)
+    if refused:
+        raise RunError(refused["reason"])
+    if args.holder is not None and not claims().valid_holder(args.holder):
+        raise RunError("--holder takes the holder token run.py next or where printed (hex).")
+    answer = lanes_ready(project, args.ticket_id) or (lanes_claim(project, args.ticket_id, args.holder, False) if args.holder else None)
+    if answer is None:
+        argv = ["hand-back", args.ticket_id, "--lane", args.lane, "--reason", args.reason] + (["--holder", args.holder] if args.holder else [])
+        said, refusal = station_answer(project, args.ticket_id, *argv)
+        if refusal is not None:
+            code = str(getattr(refusal, "code", "") or "refused")
+            then = HAND_BACK_REFUSALS.get(code, "person")
+            answer = {"ticket_id": args.ticket_id, "status": "WAIT" if then == "wait" else "REFUSED", "code": code,
+                      "needs": "lanes-blocked" if then == "person" else ("worker-in-cell" if then == "wait" else None),
+                      "reason": str(refusal), "then": then, "next": LANE_THEN[then]}
+        else:
+            said = said or {}
+            answer = {"ticket_id": args.ticket_id, "status": "HANDED_BACK", "lane": said.get("lane"), "finished": said.get("finished") or [],
+                      "handed_back": said.get("handed_back") or [], "needs": None, "then": "lanes-start",
+                      "reason": (f"Lane {said.get('lane')} was handed back to the cell: its tasks {', '.join(said.get('handed_back') or [])} are built "
+                                 "one at a time after the join" + (f", and its finished tasks {', '.join(said.get('finished'))} land at the join."
+                                                                   if said.get("finished") else ".")),
+                      "next": LANE_THEN["lanes-start"], "station_next": said.get("next")}
+    print(json.dumps(answer, indent=2, ensure_ascii=False))
+    return 0
+
+
+def lanes_joined(ticket_id: str, said: Dict[str, Any]) -> Dict[str, Any]:
+    status = said.get("status")
+    aside = [item for item in said.get("set_aside") or [] if isinstance(item, dict)]
+    interaction = said.get("interaction") if isinstance(said.get("interaction"), dict) else None
+    if status == "REFUSED":
+        refusal = said.get("refused") if isinstance(said.get("refused"), dict) else {}
+        return {"ticket_id": ticket_id, "status": "REFUSED", "code": str(refusal.get("code") or "landing-failed"), "needs": "lanes-blocked",
+                "reason": str(refusal.get("reason") or "The lanes could not be landed."), "then": "person",
+                "next": str(said.get("next") or LANE_THEN["person"]), "landed": 0, "set_aside": [], "left": said.get("left") or []}
+    if status not in ("JOINED", "INTERACTION"):
+        raise RunError(f"The build station gave join an answer this line does not know ({str(status)[:40]}).")
+    words = [f"{said.get('landed', 0)} task commit(s) landed on the ticket's branch, in plan order"]
+    for item in aside:
+        words.append(f"lane {item.get('lane')} was set aside: it changed a file another lane changed, so its tasks "
+                     f"({', '.join(str(t) for t in item.get('tasks') or [])}) are built again in the cell, one at a time")
+    if interaction:
+        failing = [str(name) for name in interaction.get("failing") or []][:5]
+        words.append(f"the lanes do not pass together ({', '.join(failing) or 'the whole suite fails'}), so a fix task, "
+                     f"{interaction.get('task') or 'J-T01'}, was added for the cell's builder")
+    else:
+        words.append("the whole suite passed on the joined result")
+    return {"ticket_id": ticket_id, "status": status, "needs": None, "reason": "; ".join(words) + ".", "then": "next", "next": LANE_THEN["next"],
+            "landed": said.get("landed", 0), "set_aside": [{"lane": item.get("lane"), "tasks": item.get("tasks")} for item in aside],
+            "fix_task": (interaction.get("task") or "J-T01") if interaction else None,
+            "failing": (interaction.get("failing") or []) if interaction else [], "suite": said.get("suite"), "left": said.get("left") or []}
 
 
 def factory(project: Project):
@@ -2093,6 +2481,21 @@ def build_parser() -> argparse.ArgumentParser:
         p = sub.add_parser(name, help=text)
         p.add_argument("ticket_id")
         p.set_defaults(func=func)
+    p = sub.add_parser("lanes-start", help="the lanes to start now, one builder each, with the grant from the free places (build.py lanes-open)")
+    p.add_argument("ticket_id")
+    p.add_argument("--holder", required=True, metavar="H", help="the driver's holder token, or 'new'; the lanes belong to the driver that starts them")
+    p.add_argument("--take-over", action="store_true", help="hand over lanes and the step another worker holds; only on a person's explicit word")
+    p.set_defaults(func=cmd_lanes_start)
+    p = sub.add_parser("lanes-join", help="join the built lanes on the ticket's branch and run the whole suite (build.py join)")
+    p.add_argument("ticket_id")
+    p.add_argument("--holder", metavar="H", help="the driver's holder token: its claim on the step is renewed, and another worker's refuses")
+    p.set_defaults(func=cmd_lanes_join)
+    p = sub.add_parser("lanes-hand-back", help="hand a lane that cannot finish back to the cell (build.py hand-back); nothing is lost")
+    p.add_argument("ticket_id")
+    p.add_argument("--lane", required=True, metavar="L")
+    p.add_argument("--reason", required=True, metavar="WHY", help="why the lane cannot finish; recorded for the reviewers")
+    p.add_argument("--holder", metavar="H", help="the driver's holder token: its claim on the step is renewed, and another worker's refuses")
+    p.set_defaults(func=cmd_lanes_hand_back)
     product = sub.add_parser("product", help="slices Product Studio marked ready: take them in, plan them, dispatch them").add_subparsers(dest="action", required=True)
     product.add_parser("status", help="ready slice issues and folders against the intake ledger, and what is not accepted; reads only").set_defaults(func=cmd_product)
     p = product.add_parser("intake", help="take ready slices in: a slice issue is its own ticket; a ready folder gets a local ticket")
