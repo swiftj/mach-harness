@@ -458,7 +458,19 @@ def failing_tests(output: str) -> List[str]:
 def _named_in(name: str, haystack: str) -> bool:
     stem = name[:-3] if name.endswith(".py") else name
     dotted = stem.replace("/", ".")
-    return name in haystack or (dotted != stem and dotted in haystack) or (dotted == stem and re.search(r"(?<![\w.])" + re.escape(stem) + r"(?![\w])", haystack) is not None)
+    if name in haystack or (dotted != stem and dotted in haystack) or (dotted == stem and re.search(r"(?<![\w.])" + re.escape(stem) + r"(?![\w])", haystack) is not None):
+        return True
+    # A test module run from inside its folder (`unittest discover -s tests`, or pytest's rootdir in it) is named without
+    # the folder: tests/test_x.py fails as "test_x.T.test_a". Match the module by the end of its dotted path, only for a test
+    # module's name, so that an ordinary word in the output never names a lane's file.
+    parts = dotted.split(".")
+    if not name.endswith(".py") or not (parts[-1].startswith("test") or parts[-1].endswith("_test")):
+        return False
+    for index in range(1, len(parts)):
+        suffix = ".".join(parts[index:])
+        if re.search(r"(?<![\w.])" + re.escape(suffix) + r"(?=\.|::|\s|$)", haystack, re.M):
+            return True
+    return False
 
 
 def join_lanes(project: Path, cell_repo: Path, join_repo: Path, join_branch: str, fork: str,

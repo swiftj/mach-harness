@@ -34,10 +34,13 @@ import (
 // verify.check_recorded's target_kind gains "design mock", slice.materialized and run.recorded gain
 // jira, and merge.completed and run.recorded gain change_record (path and SHA-256). Revision 8 (M18) is
 // additive: the groom station's station.exited gains kind ("small"), widened and widened_rule (a rule's
-// code), only for a small change.
+// code), only for a small change. Revision 9 (M22) is additive: build.task_completed gains lane (the
+// lane a task was built in; its commit is then the lane's own commit), gate.evaluated gains lane on a
+// build gate about one lane (build.join's lane-set-aside), and task_id also takes J-T01, the task the
+// join adds when lanes fail together.
 const (
 	Version  = 3
-	Revision = 8
+	Revision = 9
 )
 
 // Gap classes (history.gap data.class, revision 2): what a gap means for the history a reader

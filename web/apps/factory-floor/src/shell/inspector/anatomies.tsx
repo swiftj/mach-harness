@@ -67,6 +67,9 @@ import { EventWords, FreeText, FreeTextLabel } from "./FreeText";
 import { gatePositionWords, outcomeStateWords, outcomeWordsOf, visitStateWords } from "./outcomes";
 import { OpenEvidence } from "../../evidence/OpenEvidence";
 import { checkCitingPath } from "../../evidence/model";
+import { useSource } from "../source/context";
+import { landedCommitOf, type CommitLink } from "../../line/lanesModel";
+import { lanesKey, useCellLanes } from "../../line/useLanes";
 import { historyEndedAt, useSceneStore } from "../../scene";
 import { isStale, type FactoryStatus } from "../../scene/connection";
 
@@ -673,8 +676,34 @@ export function ToolAnatomy({ call }: { call: ToolCallState }) {
 
 // ---------------------------------------------------------------- artifact
 
+/**
+ * M22: a commit a task made in a lane. Once the lanes are joined it no longer exists on any branch:
+ * the join landed a copy under another id. The observer's lanes record links the two; that link is
+ * followed here, so the lane commit reads as landed (or set aside), never as missing.
+ */
+function useLaneCommit(artifact: ArtifactState, cell: CellState | null): CommitLink | null | undefined {
+  const { client } = useSource();
+  const commit = artifact.record?.commit ?? null;
+  // A ticket built in lanes: a task named its lane, or a lanes gate was evaluated.
+  const inLanes = Boolean(commit && cell && (cell.tasks.some((t) => t.lane) || cell.gateLog.some((g) => g.gate === "build.lanes-open" || g.gate === "build.join")));
+  // This very commit is one an event named as a lane's.
+  const known = Boolean(commit && cell?.tasks.some((t) => t.lane && t.commit && (t.commit.startsWith(commit) || commit.startsWith(t.commit))));
+  const wanted = useMemo(() => (inLanes && cell ? new Map([[cell.ticketId, lanesKey(cell)]]) : new Map<string, string>()), [inLanes, cell]);
+  const replies = useCellLanes(inLanes ? client : null, wanted);
+  if (!inLanes || !commit) return undefined;
+  const link = landedCommitOf(replies.get(artifact.ticketId) ?? null, commit);
+  return link ?? (known ? null : undefined);
+}
+
+const LANE_COMMIT_WORDS: Readonly<Record<CommitLink["state"], string>> = {
+  landed: "made in a lane; the join landed it on the ticket's branch as",
+  "set-aside": "made in a lane that was set aside: not landed; its task is built again in the cell",
+  "not-joined": "made in a lane; on the lane's branch until the lanes are joined",
+};
+
 export function ArtifactAnatomy({ artifact }: { artifact: ArtifactState }) {
   const cell = useScene((s) => s.cells[artifact.ticketId] ?? null);
+  const laneCommit = useLaneCommit(artifact, cell);
   const freeText = useFreeTextLabel(artifact);
   const writer = artifact.writer.agentId && cell ? (cell.agents[artifact.writer.agentId] ?? null) : null;
   const base = artifact.path.split("/").pop() ?? artifact.path;
@@ -709,6 +738,18 @@ export function ArtifactAnatomy({ artifact }: { artifact: ArtifactState }) {
             artifact.round ? ["Round", artifact.round] : null,
             ["Written by", writer ? <span key="w">{ROLE_WORDS[writer.role]} (<FreeText field="agentLabel" text={writer.label} />)</span> : artifact.writer.script ? <Mono key="w">{artifact.writer.script}</Mono> : <NotRecorded key="w" />],
             artifact.record ? ["Integrity", `${artifact.record.integrity}, ${artifact.record.nature}${artifact.record.bytes !== null ? `, ${artifact.record.bytes.toLocaleString("en-GB")} bytes` : ""}`] : null,
+            laneCommit !== undefined
+              ? [
+                  "Lane",
+                  laneCommit === null ? (
+                    "made in a lane; what happened to it is not recorded yet"
+                  ) : (
+                    <span key="lc">
+                      {LANE_COMMIT_WORDS[laneCommit.state]} {laneCommit.state === "landed" && laneCommit.landed ? <Mono>{laneCommit.landed.slice(0, 10)}</Mono> : null}
+                    </span>
+                  ),
+                ]
+              : null,
             freeText ? ["Content", <FreeTextNote key="ft" label={freeText} block />] : null,
           ]}
         />

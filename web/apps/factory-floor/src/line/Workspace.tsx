@@ -18,6 +18,9 @@ import { feedOf, LINE_STATIONS, lineModel, needVerb, rowOfCell, stationStats, ST
 import { StateShape, STATE_TONE } from "./Marks";
 import { Feed, StationPanel, TicketPanel } from "./Panels";
 import { TicketRecord } from "./Record";
+import { useSource } from "../shell/source/context";
+import { laneLine, lanesPanel, withLaneMarker, type LaneLine } from "./lanesModel";
+import { lanesKey, useCellLanes } from "./useLanes";
 import "./line.css";
 
 /**
@@ -98,6 +101,30 @@ export function LineWorkspace() {
       ),
     [selection, model.rows, scene, now],
   );
+  // M22: the lanes of each ticket at Build, and of the ticket in the side panel, read from the observer
+  // and read again as their events arrive. The Simulation has no observer and shows no lanes.
+  const { client } = useSource();
+  const live = source !== "simulation";
+  const buildColumn = LINE_STATIONS.findIndex((s) => s.key === "build");
+  const wanted = useMemo(() => {
+    const m = new Map<string, string>();
+    if (!live) return m;
+    for (const r of model.rows) if (r.column === buildColumn && scene.cells[r.ticketId]) m.set(r.ticketId, lanesKey(scene.cells[r.ticketId]));
+    if (row && scene.cells[row.ticketId]) m.set(row.ticketId, lanesKey(scene.cells[row.ticketId]));
+    return m;
+  }, [live, model.rows, row, scene, buildColumn]);
+  const replies = useCellLanes(live ? client : null, wanted);
+  const lineLanes = useMemo(() => {
+    const m = new Map<string, LaneLine>();
+    for (const r of model.rows) {
+      const line = r.column === buildColumn ? laneLine(replies.get(r.ticketId) ?? null, scene.cells[r.ticketId] ?? null) : null;
+      if (line) m.set(r.ticketId, line);
+    }
+    return m;
+  }, [model.rows, replies, scene, buildColumn]);
+  const boardRows = useMemo(() => model.rows.map((r) => withLaneMarker(r, lineLanes.get(r.ticketId) ?? null)), [model.rows, lineLanes]);
+  const panelLanes = useMemo(() => (row ? lanesPanel(replies.get(row.ticketId) ?? null, scene.cells[row.ticketId] ?? null) : null), [row, replies, scene]);
+
   const pickRow = useCallback((r: LineRow) => store.select(r.sliceId && !scene.cells[r.ticketId] ? (`slice:${r.sliceId}` as EntityRef) : (`cell:${r.ticketId}` as EntityRef), { focus: false }), [store, scene]);
   const pickStation = useCallback((c: number) => store.select(`station:${LINE_STATIONS[c]!.key}` as EntityRef, { focus: false }), [store]);
   const back = useCallback(() => store.select(null), [store]);
@@ -116,7 +143,8 @@ export function LineWorkspace() {
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_360px] max-[899px]:grid-cols-1 max-[899px]:grid-rows-[minmax(0,1fr)_minmax(0,45%)]">
         <div className="flex min-h-0 min-w-0 flex-col" data-line-home="" tabIndex={-1}>
           <Board
-            rows={model.rows}
+            rows={boardRows}
+            lanes={lineLanes}
             stats={stats}
             now={now}
             landedHidden={model.landedHidden}
@@ -134,6 +162,7 @@ export function LineWorkspace() {
               key={row.ticketId}
               row={row}
               now={now}
+              lanes={panelLanes}
               onBack={back}
               onRecord={() => setRecord(row.ticketId)}
               onFloor={() => showOnFloor(store, { ref: `cell:${row.ticketId}` as EntityRef })}
