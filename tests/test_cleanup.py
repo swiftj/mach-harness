@@ -25,6 +25,8 @@ RECORD_KEYS = {
     "tests_passing_on_first_run", "created_at", "closed_at", "archive", "notes",
     # record_version 2: what landed and where, and the product slice a ticket came from
     "record_version", "integration", "product",
+    # what cleanup kept: whether a person decided something on the ticket (codes), and whether the archive was kept and why
+    "raised_to_person", "archive_kept",
 }
 INTEGRATION_KEYS = {"branch", "into", "method", "approved_commit", "landed_commit", "merge_commit", "pull_request", "merged_at"}
 

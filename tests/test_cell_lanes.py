@@ -11,10 +11,16 @@ import io
 import json
 import shutil
 import sys
+import threading
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - not POSIX
+    fcntl = None
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
@@ -425,6 +431,38 @@ class ReplanWithLanesTest(built_in_lanes.LaneBase):
         self.assertTrue((self.work / "tests/test_invite_rules.py").is_file())
         self.assertFalse((self.work / "tests/test_invite.py").exists(), "the old plan's test never lands")
         self.assertFalse((self.work / "notes.txt").exists())
+
+    @unittest.skipIf(fcntl is None, "the lanes' lock needs fcntl, as in the build station")
+    def test_a_replan_waits_for_the_lanes_lock_before_it_touches_the_lanes(self):
+        """A lane's builder writes its lane.json under <cell>/lanes/.lock; a re-plan takes the same lock before it reads the lanes'
+        state, so it never moves or removes a lane while that builder is writing."""
+        self.lanes_open_with_work()
+        lock = self.cellroot / "lanes" / ".lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        answers = []
+        with open(str(lock), "a", encoding="utf-8") as held:
+            fcntl.flock(held.fileno(), fcntl.LOCK_EX)  # a lane's builder, writing
+            worker = threading.Thread(target=lambda: answers.append(self.run_cell("replan", LANE_TICKET, "--reason", "the plan was wrong")))
+            worker.start()
+            worker.join(1.5)
+            self.assertTrue(worker.is_alive(), "the re-plan waits for the lock")
+            self.assertTrue(self.lane_work("L1").is_dir() and (self.cellroot / "lanes" / "L1" / "lane.json").is_file(), "nothing of the lanes was touched yet")
+            self.assertFalse((self.cellroot / "plan-history").exists())
+            fcntl.flock(held.fileno(), fcntl.LOCK_UN)
+        worker.join(60)
+        self.assertFalse(worker.is_alive())
+        code, out = answers[0]
+        self.assertEqual(code, 0, out)
+        self.assertFalse(self.lane_work("L1").exists())
+        self.assertTrue((self.cellroot / "plan-history" / "1" / "lanes" / "L1" / "lane.json").is_file())
+        self.assertEqual(json.loads((self.cellroot / "plan-history" / "1" / "replan.json").read_text())["by"], "a person")
+
+    def test_without_fcntl_a_replan_runs_without_the_lock(self):
+        self.lanes_open_with_work()
+        with mock.patch.object(built_in_lanes.test_build.cell_script, "fcntl", None):
+            code, out = self.run_cell("replan", LANE_TICKET, "--reason", "the plan was wrong")
+        self.assertEqual(code, 0, out)
+        self.assertFalse(self.lane_work("L1").exists())
 
     def test_a_folder_that_is_not_a_lane_worktree_stops_the_replan_with_nothing_changed(self):
         self.lanes_open_with_work()

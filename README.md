@@ -450,7 +450,7 @@ A cost appears only where one was recorded, which today means work the superviso
 | `/mach except <ticket> <round>/<seat>/<n> "<why>"` | Accept a security blocker that vetoed a round, for the commit reviewed, with your reason; never offered unprompted, never unattended |
 | `/mach merge <ticket>` | Merge an approved ticket yourself |
 | `/mach replan <ticket> "<why>"` | Start a ticket's plan over, before any review round; the old plan is kept |
-| `/mach abandon <ticket> "<why>"` | Drop a ticket; its work is archived first |
+| `/mach abandon <ticket> "<why>"` | Drop a ticket; its work is kept first (in its archive, or in Git) |
 | `/mach adr list` | Every architecture decision: ID, title, status, what it applies to, problems |
 | `/mach adr new "<decision>"` | A short interview, then a new ADR written as proposed for you to commit by pull request |
 | `/mach adr except <ticket> <ADR-NNNN> "<why>"` | Let one ticket depart from an accepted ADR, with your reason |
@@ -468,7 +468,7 @@ A cost appears only where one was recorded, which today means work the superviso
 | `/mach-verify <ticket>` | Prove the built slice with captured evidence |
 | `/mach-review <ticket>` | The review panel; `approve --by <name>` records a person's approval |
 | `/mach-merge <ticket>` | Land exactly the approved commit; `--by-person` to merge it yourself |
-| `/mach-cleanup <ticket>` | Archive and remove a finished cell; `--abandon "<why>"` to drop one |
+| `/mach-cleanup <ticket>` | Remove a finished cell, keeping its archive when `cleanup.archive` says to; `--abandon "<why>"` to drop one; `forget` to clear what was kept |
 | `/mach-observe` | Scorecard of finished tickets and proposed rule changes |
 | `/mach-audit` | The repository's readiness tier |
 | `/mach-ticket list\|view\|create\|update\|comment\|ingest-telemetry` | The ticket queue, and crash reports turned into tickets |
@@ -495,6 +495,7 @@ Settings are in `.factory/config.json`. The ones people change most:
 | `factory.max_parallel_high` | `1` | How many High-risk tickets may run at once |
 | `factory.max_builders` | `factory.max_parallel` | How many builders may run on this machine across every ticket. Lanes use only the places other tickets leave free |
 | `build.max_lanes` | `3` | How many parts of one ticket's plan may be built at the same time, in lanes. Only a plan written for it (in parts, or with `after` marks) is built this way. `1` builds one task at a time |
+| `cleanup.archive` | `raised` | Whether cleanup keeps a finished ticket's archive (its records and evidence files) in `.factory/archive/`: `none`, `raised` (only for a ticket a person decided something on) or `all`. With none, what you might want back stays in Git; `cleanup.py forget` clears what was kept |
 | `factory.claim_minutes` | `90` | How long a worker's claim on a ticket holds without news of it, before another worker may take the ticket |
 | `factory.notifications` | not set | `false` forbids notifications for this project on every machine. Nothing in this file can turn them on |
 | `merge.pr.inline_findings` | `true` | With `merge.method` `pr`, post the review panel's findings on the pull request |
@@ -554,7 +555,7 @@ To try the plugin from a clone without installing it: `claude --plugin-dir /path
 | `skills/verify/` | The verify skill: `SKILL.md`, `verify.py` (evidence records and verdict) and the per-app-type runner guide. |
 | `skills/review/` | The review skill: `SKILL.md`, `review.py` (panel, votes, tally), the reviewer brief and one checklist per seat. |
 | `skills/merge/` | The merge skill: `SKILL.md` and `merge.py` (commit-bound approval, revalidation, local or pull-request merge). |
-| `skills/cleanup/` | The cleanup skill: `SKILL.md` and `cleanup.py` (archive, teardown, run record). |
+| `skills/cleanup/` | The cleanup skill: `SKILL.md` and `cleanup.py` (what is kept, teardown, run record, forget). |
 | `skills/observe/` | The observe skill: `SKILL.md` and `observe.py` (scorecard, patterns, report check). |
 | `skills/run/` | The orchestrator: `SKILL.md` and `run.py` (what happens next to a ticket). |
 | `workflows/belt.js` | The Dynamic Workflow that runs several tickets in parallel. |

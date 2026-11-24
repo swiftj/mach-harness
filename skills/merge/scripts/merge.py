@@ -347,7 +347,7 @@ def landed_elsewhere(cell: Cell, main: str) -> Optional[str]:
     if cell.method == "pr" and url:
         message += f" This copy's pull request ({url}) is left open: close it on GitHub once you no longer need it."
     return message + (f" Put this copy aside: cleanup run {cell.ticket_id} --abandon \"{slice_id} was already shipped from another Factory\" "
-                      "archives the cell and keeps its branch's commits in the archive.")
+                      "removes the cell and keeps its branch's commits (in its archive, or as the branch where no archive is kept).")
 
 
 _CELL_MODULE: List[Any] = []
@@ -966,7 +966,7 @@ def pr_body(cell: Cell) -> str:
         f"{inert(cell.build.get('diff', ''), 400)}. Tests seen failing before their code was written: {inert(cell.build.get('tests_seen_failing_first', 0))}. "
         f"Gate overrides recorded: {len(cell.build.get('deviations') or [])}.",
         "",
-        f"Approved commit: `{inert(cell.decision.get('head'), 64)}`. Evidence ({len(evidence)} files) and the reviewers' findings are kept with the ticket's cell and archived on cleanup.",
+        f"Approved commit: `{inert(cell.decision.get('head'), 64)}`. Evidence ({len(evidence)} files) and the reviewers' findings are kept with the ticket's cell until cleanup, which keeps them in an archive when the project does (cleanup.archive).",
         "",
         *record_section(cell),
         "Opened by the MACH merge station.",
@@ -988,7 +988,7 @@ def record_section(cell: Cell) -> List[str]:
     repository = origin_repository(cell.project)
     where = f"[`{path}`](https://github.com/{repository}/blob/{commit}/{path})" if repository and commit else f"`{path}`"
     return [f"Change record: {where}, added to this branch by the merge station. It lists every verification check and review round, "
-            "with the SHA-256 of each evidence file kept in the local archive.", ""]
+            "with the SHA-256 of each evidence file.", ""]
 
 
 def exceptions_section(cell: Cell) -> List[str]:
@@ -1456,7 +1456,9 @@ def land(cell: Cell, args: argparse.Namespace, plan: Dict[str, Any]) -> int:
         result.update(landed)
         result["status"] = "MERGED" if landed["merged"] else "PR_OPEN"
     if result["status"] == "MERGED":
-        cell.info.update({"stage": "merged", "merged": {"commit": result.get("merge_commit"), "at": now(), "method": cell.method, "landed_commit": head}})
+        # A person's merge (--by-person) is recorded: cleanup keeps the archive of a ticket a person decided on (cleanup.archive).
+        cell.info.update({"stage": "merged", "merged": {"commit": result.get("merge_commit"), "at": now(), "method": cell.method, "landed_commit": head,
+                                                        **({"by_person": True} if args.by_person else {})}})
         cell.save_info()
         telemetry(cell.root, "merge.completed", "merge", lambda: {
             "method": cell.method, "approved_commit": lifecycle.short(result["approved_commit"]), "landed_commit": lifecycle.short(head),

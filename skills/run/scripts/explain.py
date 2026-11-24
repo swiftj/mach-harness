@@ -21,7 +21,8 @@ Sources, all inside .factory/worktrees/<ticket>/ (written by the stations, never
 
 Reviewer, verifier and merge text is untrusted data. It appears only in the fields named `detail`, `rule`
 and `file`, with control and format characters removed and cut to 400 characters. It is never interpreted.
-An archived ticket (.factory/archive/<ticket>.tar.gz) is reported as archived; the archive is never opened.
+An archived ticket (the archive its run record names) is reported as archived; the archive is never opened. A finished ticket
+whose archive was not kept (cleanup.archive) is reported as finished, with `evidence` saying so and why.
 
 Standard library only.
 """
@@ -386,10 +387,17 @@ def no_cell(root: Path, ticket_id: str, next_info: Dict[str, Any]) -> Tuple[Dict
         written = record.get("change_record") if isinstance(record.get("change_record"), dict) else {}
         if isinstance(written.get("path"), str):  # M13: where the merge station's change record landed
             facts["change_record"] = clean(written["path"], 200)
-    if archive.is_file():
+        if "archive" in record:  # the archive the run record names, or none kept (cleanup.archive); never an older life's by its name
+            named = record.get("archive")
+            archive = root / named if isinstance(named, str) and named.startswith(".factory/archive/") and ".." not in named else None
+    if archive is not None and archive.is_file():
         return {"headline_code": "archived", "archive": str(archive.relative_to(root)), "run_record": facts or None}, 0
     if record:
-        return {"headline_code": "finished", "archive": None, "run_record": facts}, 0
+        kept = record.get("archive_kept") if isinstance(record.get("archive_kept"), dict) else {}
+        evidence = "The evidence files were not kept after cleanup (cleanup.archive)." if "archive" in record else None
+        if evidence and isinstance(kept.get("reason"), str):
+            evidence += " " + clean(kept["reason"], 300)
+        return {"headline_code": "finished", "archive": None, "run_record": facts, **({"evidence": evidence} if evidence else {})}, 0
     known = (factory / "tickets" / f"{ticket_id}.md").is_file() or (factory / "inbox" / f"{ticket_id}.json").is_file()
     if known:
         return {"headline_code": "not_started"}, 0
@@ -749,6 +757,8 @@ def human(report: Dict[str, Any]) -> str:
             lines.append(f"- [lanes] {lanes['interaction']['text']}")
         for item in lanes.get("recorded") or []:
             lines.append(f"- [lanes] {item['text']}")
+    if report.get("evidence"):  # a finished ticket whose archive was not kept: said plainly, not as something missing
+        lines.append(report["evidence"])
     if report.get("headline_code") not in ("unknown_ticket", "archived", "finished"):
         lines.append(f"Rounds: {report['rounds_used']} of {report['max_rounds']} used, {report['rounds_left']} left.")
     nxt = report.get("next") or {}

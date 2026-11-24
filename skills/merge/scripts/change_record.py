@@ -6,7 +6,7 @@ the product principles, policy packs and effects on shipped behaviour the spec a
 that section), the plan's tasks and the architecture decisions in force, every verification run with the SHA-256 of each evidence file,
 every review round (votes, findings, a person's approval or send-back, security exceptions and the scan's answers), the
 builder's recorded overrides (and, for a build in lanes, M22, the lanes, any lane set aside, any failure only the joined result
-showed with its fix task, and the recorded times), and the commits. The evidence files themselves stay in the local archive, which can be
+showed with its fix task, and the recorded times), and the commits. The evidence files themselves stay in the local archive only when cleanup keeps one (cleanup.archive); a kept file can be
 checked against the hashes here.
 
 Version 2 ends the record with a block for MACH to read (`facts()`, `read_facts()`): the facts release qualification
@@ -179,7 +179,7 @@ class Text:
         text, cut = self.rules.bound_text(value, limit)
         lines = [("> " + _inert(line)).rstrip() for line in text.strip("\n").splitlines()]
         if cut:
-            lines += [">", f"> (Cut at {limit} characters; the full text is in the archive.)"]
+            lines += [">", f"> (Cut at {limit} characters; {KEPT_TEXT}.)"]
         return lines
 
 
@@ -221,10 +221,18 @@ def numbered(folders: Sequence[Path], prefix: str) -> List[Path]:
 
 
 def capped(lines: List[str], items: int, limit: int, what: str) -> List[str]:
-    return lines + ([f"- {items - limit} more {what} not listed here; every one is in the archive."] if items > limit else [])
+    return lines + ([f"- {items - limit} more {what} not listed here; the ticket's archive holds every one when one is kept."] if items > limit else [])
 
 
 # ---------------------------------------------------------------- the record
+
+# What the record says about the evidence files. It is written at merge, before cleanup decides whether the ticket's archive is
+# kept (cleanup.archive), so it says what is true whatever is decided then.
+EVIDENCE_WORDS = ("Each evidence file is named here with its SHA-256. The files themselves are kept after cleanup, in the project's local archive "
+                  "(`.factory/archive/`), only when the project keeps archives or a person decided something on this ticket; a file that was kept "
+                  "can be checked against its hash here.")
+KEPT_TEXT = "the ticket's archive holds the full text when one is kept"
+
 
 def render(root: Path, info: Dict[str, Any], ticket_id: str, commits: Dict[str, Optional[str]], rules: Any, jira_url: Optional[str] = None,
            spec_sha256: Optional[str] = None) -> str:
@@ -236,8 +244,7 @@ def render(root: Path, info: Dict[str, Any], ticket_id: str, commits: Dict[str, 
         "",
         "Written by the MACH merge station when this change landed: how it was specified, planned, built, verified and reviewed. "
         "It is text taken from the ticket's working files, with likely secrets masked, mentions and issue references broken, and long text cut. "
-        "The evidence files themselves are kept in the project's local archive (`.factory/archive/`); each one is named here with its SHA-256, "
-        "so the archive can be checked against this record.",
+        + EVIDENCE_WORDS,
         "",
     ]
     lines += ticket_section(t, info, ticket_id, rules, jira_url)

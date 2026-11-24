@@ -141,8 +141,30 @@ class ContentTest(Base):
         self.put(self.cellroot, {"intent.md": "# Intent\n\n" + ("A reason. " * 1200)})
         self.m_ok("run", "LOCAL-001")
         text = self.record_text()
-        self.assertIn(f"> (Cut at {change_record.INTENT_LIMIT} characters; the full text is in the archive.)", text)
+        self.assertIn(f"> (Cut at {change_record.INTENT_LIMIT} characters; the ticket's archive holds the full text when one is kept.)", text)
         self.assertLess(len(text), 20000)
+
+    def test_the_record_says_what_is_true_of_the_evidence_whatever_cleanup_decides(self):
+        """Written at merge, before cleanup decides whether the archive is kept: it names each file by its SHA-256 and says
+        when the files are kept, never that they are."""
+        head = self.approved(mode="auto")
+        self.rounds(head)
+        self.m_ok("run", "LOCAL-001")
+        text = self.record_text()
+        opening = text.split("\n\n")[1]
+        self.assertTrue(opening.endswith(
+            "Each evidence file is named here with its SHA-256. The files themselves are kept after cleanup, in the project's local archive "
+            "(`.factory/archive/`), only when the project keeps archives or a person decided something on this ticket; a file that was kept "
+            "can be checked against its hash here."), opening)
+        self.assertNotIn("are kept in the project's local archive", text)
+        self.assertNotIn("so the archive can be checked", text)
+        cell = merge.Cell(self.project, "LOCAL-001")
+        commits = {"approved": head, "base": head}
+        self.assertEqual(change_record.render(cell.root, cell.info, "LOCAL-001", commits, merge.issue_rules()),
+                         change_record.render(cell.root, cell.info, "LOCAL-001", commits, merge.issue_rules()), "the same inputs give the same text")
+        facts = change_record.read_facts(text)
+        self.assertEqual(sorted(facts), sorted(change_record.read_facts(text)), "the facts block keeps its shape")
+        self.assertTrue(text.rstrip().endswith("```"), "the facts are still the record's last section")
 
 
 class InertTest(Base):
@@ -591,6 +613,10 @@ class CleanupTest(Base):
 
     def test_the_archive_can_be_checked_against_the_record(self):
         self.merged()
+        # A ticket merged by the line with no person's part keeps no archive by default (cleanup.archive "raised"); a project
+        # that keeps every archive can check each kept file against the record.
+        config = json.loads((self.project / ".factory/config.json").read_text())
+        (self.project / ".factory/config.json").write_text(json.dumps({**config, "cleanup": {"archive": "all"}}))
         self.clean()
         text = (self.project / "docs/changes/LOCAL-001.md").read_text()
         with tarfile.open(str(self.project / ".factory/archive/LOCAL-001.tar.gz")) as tar:

@@ -9,6 +9,7 @@ this change, loaded from the repository's history.
 import importlib.util
 import io
 import json
+import shlex
 import subprocess
 import sys
 import tarfile
@@ -62,6 +63,20 @@ def before(name):
 def render(module, cellroot, head="a" * 40):
     info = json.loads((cellroot / "cell.json").read_text())
     return module.render(cellroot, info, TICKET, {"approved": head, "base": head}, merge.issue_rules())
+
+
+# The one deliberate change since lanes: the record no longer says the evidence files are always kept in the local archive
+# (cleanup.archive decides that after the merge). The record from before is compared with those words brought up to date.
+OLD_WORDS = (("The evidence files themselves are kept in the project's local archive (`.factory/archive/`); each one is named here with its SHA-256, "
+              "so the archive can be checked against this record.", change_record.EVIDENCE_WORDS),
+             ("; the full text is in the archive.)", f"; {change_record.KEPT_TEXT}.)"),
+             ("; every one is in the archive.", "; the ticket's archive holds every one when one is kept."))
+
+
+def as_now(text):
+    for old, new in OLD_WORDS:
+        text = text.replace(old, new)
+    return text
 
 
 class Built(LaneBase):
@@ -282,12 +297,12 @@ class RecordWithoutLanesTest(test_change_record.Base):
         commits = {"approved": head, "base": head}
         rules = merge.issue_rules()
         self.assertEqual(change_record.render(cell.root, cell.info, "LOCAL-001", commits, rules, None, "b" * 64),
-                         old.render(cell.root, cell.info, "LOCAL-001", commits, rules, None, "b" * 64))
+                         as_now(old.render(cell.root, cell.info, "LOCAL-001", commits, rules, None, "b" * 64)))
         report = json.loads((cell.root / "build-report.json").read_text())
         report["deviations"].append({"type": "test-amended", "task": "T03", "detail": "Fixed a typo in the test's name."})
         (cell.root / "build-report.json").write_text(json.dumps(report))
         self.assertEqual(change_record.render(cell.root, cell.info, "LOCAL-001", commits, rules),
-                         old.render(cell.root, cell.info, "LOCAL-001", commits, rules))
+                         as_now(old.render(cell.root, cell.info, "LOCAL-001", commits, rules)))
 
 
 class RecordOfAPlainBuildTest(test_build.Base):
@@ -303,7 +318,7 @@ class RecordOfAPlainBuildTest(test_build.Base):
             self.put(self.work, files)
             self.ok(step, TICKET, task)
         self.ok("finish", TICKET)
-        self.assertEqual(render(change_record, self.cellroot), render(old, self.cellroot))
+        self.assertEqual(render(change_record, self.cellroot), as_now(render(old, self.cellroot)))
 
 
 # ---------------------------------------------------------------- the explanation
@@ -490,6 +505,41 @@ class CleanupTest(Built):
         self.assertEqual((lane / "README.md").read_text(), "# Sample, changed in L2\n")
         self.assertEqual((out / "LOCAL-001/lanes-saved/L2/untracked/app/release.py").read_text(), "def release():\n    return 'half done'\n")
         self.assertIn("T04", self.member("LOCAL-001/lanes/L2/lane.json").decode(), "the lane's state is kept")
+
+    def test_with_no_archive_the_lanes_work_stays_in_git(self):
+        """cleanup.archive "none": a lane's unjoined commits and its uncommitted files are kept under MACH's own refs, the lanes'
+        worktrees and branches still go, and the printed commands bring the work back; no tarball is written."""
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.open_lanes()
+        self.build_lane("L1", L1)
+        self.build_lane("L2", L2[:1])
+        tips = {name: git(self.lane_work(name), "rev-parse", "HEAD").stdout.strip() for name in ("L1", "L2")}
+        self.put(self.lane_work("L2"), {"app/release.py": "def release():\n    return 'half done'\n", "README.md": "# Sample, changed in L2\n"})
+        self.put(self.project, {".factory/config.json": json.dumps({"cleanup": {"archive": "none"}})})
+        done = self.c_ok("run", TICKET, "--abandon", WHY)
+        self.assertIsNone(done["archive"])
+        self.assertEqual(list((self.project / ".factory/archive").glob("*.tar.gz")), [])
+        self.assertEqual(self.all_worktrees(), [f"worktree {self.project}"])
+        self.assertEqual(git(self.project, "branch", "--list", "mach-lane/*").stdout, "", "the lane branches are removed as before")
+        self.assertIn("feature/LOCAL-001", git(self.project, "branch", "--format=%(refname:short)").stdout.split(), "the abandoned ticket's branch is kept")
+        listed = {item["name"]: item for item in done["kept_in_git"]}
+        for lane in ("L1", "L2"):
+            ref = f"refs/mach/lanes-set-aside/{TICKET}/{lane}/1"
+            self.assertEqual(listed[ref]["commit"], tips[lane])
+            shown = subprocess.run(shlex.split(listed[ref]["show"]), capture_output=True, text=True)
+            self.assertEqual(shown.returncode, 0, shown.stderr)
+            brought = subprocess.run(shlex.split(listed[ref]["bring_back"]), capture_output=True, text=True)
+            self.assertEqual(brought.returncode, 0, brought.stderr)
+            self.assertEqual(git(self.project, "rev-parse", f"recovered/lanes-set-aside/{TICKET}/{lane}/1").stdout.strip(), tips[lane])
+        files = listed[f"refs/mach/lane-files/{TICKET}/L2/1"]
+        self.assertEqual(git(self.project, "rev-parse", f"{files['name']}^").stdout.strip(), tips["L2"], "the files sit on the lane's last commit")
+        self.assertEqual(subprocess.run(shlex.split(files["bring_back"]), capture_output=True).returncode, 0)
+        self.assertEqual(git(self.project, "show", f"recovered/lane-files/{TICKET}/L2/1:README.md").stdout, "# Sample, changed in L2\n")
+        self.assertEqual(git(self.project, "show", f"recovered/lane-files/{TICKET}/L2/1:app/release.py").stdout, "def release():\n    return 'half done'\n")
+        self.assertIsNone(done["lanes"]["bundle"])
+        self.assertTrue(done["lanes"]["restore"])
+        self.assertIn("kept in Git under refs/mach/", done["lanes"]["note"])
 
     def test_a_half_made_join_is_removed_too(self):
         self.ready_lanes()

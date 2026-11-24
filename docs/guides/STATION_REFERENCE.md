@@ -133,10 +133,11 @@ Who merges is a setting, by risk tier:
 /mach-cleanup LOCAL-001
 ```
 
-Once the approved branch is merged, by the merge station or by you, cleanup archives the cell's artifacts to `.factory/archive/LOCAL-001.tar.gz`, removes the cell's worktree, folder and local branch, and appends a one-line record of how the ticket went to `.factory/archive/runs.jsonl`. It shows you a plan first, archives before it deletes, and deletes nothing if the archive fails.
+Once the approved branch is merged, by the merge station or by you, cleanup removes the cell's worktree, folder and local branch, and appends a one-line record of how the ticket went to `.factory/archive/runs.jsonl`. It keeps the cell's artifacts in `.factory/archive/LOCAL-001.tar.gz` only when `cleanup.archive` says to: by default, when a person decided something on the ticket (an approval, a send-back, an exception, a merge by hand, an abandon and the like); `"all"` keeps every one, `"none"` none, and `--keep-archive` or `--no-archive` decides for one cleanup. It shows you a plan first, archives before it deletes, and deletes nothing if the archive fails.
 
 - If you squash-merge or rebase, tell it the commit: `/mach-cleanup LOCAL-001 --merged-as <commit>`.
-- To drop a ticket that will not be finished: `/mach-cleanup LOCAL-001 --abandon "<why>"`. Uncommitted work and a git bundle of the branch are saved in the archive first.
+- To drop a ticket that will not be finished: `/mach-cleanup LOCAL-001 --abandon "<why>"`. Uncommitted work and a git bundle of the branch are saved in the archive first; with no archive kept, the branch stays and the uncommitted work is kept under `refs/mach/cell-files/LOCAL-001/`, and the result gives the commands that show and bring back each.
+- `/mach-cleanup forget LOCAL-001` lists what was kept for a finished ticket (refs, a kept branch, archives); add `--confirm` to delete it.
 - `/mach-cleanup orphans` lists cells that look finished or broken.
 
 It never merges, pushes, or deletes anything on a remote.

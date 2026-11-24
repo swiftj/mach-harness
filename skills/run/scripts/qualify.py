@@ -25,8 +25,9 @@ approved (or that commit brought up to date and tested again); that commit came 
 never as a commit made on the integration branch itself; and the spec on its branch, and the spec
 at the release commit, both have the SHA-256 the record names. A record edited or replaced after it
 landed is not bound, and its slice is blocked. The evidence files stay in the archive of the machine
-that built the ticket: where this machine holds one, it is checked against the recorded SHA-256;
-where it does not, the recorded hash stands, and run.json says how many were held elsewhere.
+that built the ticket, when its cleanup kept one (cleanup.archive): where this machine holds one, it is
+checked against the recorded SHA-256; where it does not, the recorded hash stands, and run.json says how
+many were held on another machine and how many were built here with no archive kept.
 
 What it reuses, and never reimplements: intake's spec header, its validators and, for work still in
 the line here, its ledger and its rule for what is integrated; the merge station's change record and
@@ -233,12 +234,15 @@ class Release:
         record["bound"] = {"added": added if COMMIT_RE.match(added) else None, "landed_in": merge, "problem": problem}
         return record["bound"]
 
-    def held_here(self, ticket_id: Optional[str], commits: Dict[str, Any]) -> Dict[str, bytes]:
-        """The files of this ticket's archive when this machine built it: the run record that names the same approved commit."""
+    def held_here(self, ticket_id: Optional[str], commits: Dict[str, Any]) -> Tuple[Dict[str, bytes], str]:
+        """The files of this ticket's archive when this machine built it (the run record that names the same approved commit), and
+        where its evidence is: "here" (its archive is read), "not_kept" (this machine built it and cleanup kept no archive,
+        cleanup.archive) or "elsewhere" (another machine built it)."""
         for record in reversed(self.line.run_records(ticket_id) if ticket_id else []):
             if ((record.get("integration") or {}).get("approved_commit")) == commits.get("approved"):
-                return self.archive_of(record)
-        return {}
+                files = self.archive_of(record)
+                return (files, "here") if files or isinstance(record.get("archive"), str) else (files, "not_kept")
+        return {}, "elsewhere"
 
     def exceptions(self, release_id: str) -> List[Dict[str, Any]]:
         path = self.home / release_id / "exceptions.jsonl"
@@ -452,7 +456,7 @@ class Release:
         slices_out, scenarios_out, approvals, open_blockers = [], [], [], []
         shared: Dict[str, List[Dict[str, Any]]] = {}
         in_scope_records: set = set()
-        evidence_held, evidence_elsewhere = 0, 0
+        evidence_held, evidence_elsewhere, evidence_not_kept = 0, 0, 0
 
         for slice_id in scope["slices"]:
             entry = entries.get(slice_id) or {}
@@ -587,7 +591,7 @@ class Release:
                 ids = [s.get("id") for s in model.get("scenarios") or [] if isinstance(s, dict) and AC_RE.match(str(s.get("id")))]
             if not ids:
                 check(f"scenario.{slice_id}", "scenario", "missing", "No acceptance scenarios could be read from the spec at this commit.")
-            files = self.held_here(ticket_id, facts.get("commits") or {}) if facts else {}
+            files, kept = self.held_here(ticket_id, facts.get("commits") or {}) if facts else ({}, "elsewhere")
             hashes = {e.get("file"): e.get("sha256") for e in verification.get("evidence_files") or [] if isinstance(e, dict)}
             for scenario_id in ids:
                 recorded = (verification.get("checks") or {}).get(scenario_id) if isinstance(verification.get("checks"), dict) else None
@@ -595,7 +599,9 @@ class Release:
                 for name in (recorded or {}).get("evidence") or []:
                     data = files.get(f"evidence/{name}")
                     evidence.append({"file": f"evidence/{name}", "sha256": hashes.get(name)})
-                    if data is None:
+                    if data is None and kept == "not_kept":
+                        evidence_not_kept += 1  # built here; cleanup kept no archive (cleanup.archive): the recorded hash stands
+                    elif data is None:
                         evidence_elsewhere += 1
                     else:
                         evidence_held += 1
@@ -726,11 +732,11 @@ class Release:
         write_atomic(folder / "readiness.json", text)
         write_atomic(folder / "run.json", canonical({"release_id": release_id, "commit": commit, "evaluated_at": now(), "readiness_sha256": sha(text.encode("utf-8")),
                                                      "seconds": {key: value.get("seconds") for key, value in commands.items()},
-                                                     "evidence_files": {"checked_in_this_machines_archive": evidence_held, "held_on_another_machine": evidence_elsewhere},
+                                                     "evidence_files": {"checked_in_this_machines_archive": evidence_held, "held_on_another_machine": evidence_elsewhere, "built_here_not_kept": evidence_not_kept},
                                                      "logs": sorted(p.relative_to(folder).as_posix() for p in logs.glob("*.log"))}))
         return {"release_id": release_id, "commit": commit, "outcome": outcome, "outcome_summary": summary_line, "not_assessed": unassessed, "readiness": str(folder / "readiness.json"),
                 "unresolved_blockers": blocking, "incomplete": incomplete, "exceptions": excepted,
-                "evidence_files": {"checked_in_this_machines_archive": evidence_held, "held_on_another_machine": evidence_elsewhere},
+                "evidence_files": {"checked_in_this_machines_archive": evidence_held, "held_on_another_machine": evidence_elsewhere, "built_here_not_kept": evidence_not_kept},
                 "product_acceptance": body["product_acceptance"]["decision"], "released": False}
 
     def reviewed_change(self, name: str, approved: Optional[str], landed: Optional[str]) -> Tuple[Optional[bytes], bool]:

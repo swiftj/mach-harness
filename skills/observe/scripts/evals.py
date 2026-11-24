@@ -256,7 +256,8 @@ class Evals:
         candidates = []
         if isinstance(named, str) and named:
             candidates.append(Path(named) if Path(named).is_absolute() else self.root / named)
-        candidates.append(folder / f"{record['ticket_id']}.tar.gz")
+        if "archive" not in record:  # an old record naming none; a null archive was not kept, and an older life's is not this one
+            candidates.append(folder / f"{record['ticket_id']}.tar.gz")
         for path in candidates:
             if path.is_file() and not path.is_symlink() and inside(path, folder):
                 return path
@@ -350,6 +351,9 @@ class Evals:
     def case_from_archive(self, record: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, str]]:
         ticket_id = record["ticket_id"]
         path = self.archive_path(record)
+        if path is None and "archive" in record and record.get("archive") is None:
+            raise EvalError(f"{ticket_id}'s archive was not kept after cleanup (cleanup.archive), so no case can be made from it. "
+                            "To keep the next one's, set cleanup.archive to \"all\" or clean it up with cleanup.py run --keep-archive.")
         if path is None:
             raise EvalError(f"{ticket_id} has no archive in .factory/archive, so no case can be made from it.")
         members = self.read_archive(path, ticket_id)

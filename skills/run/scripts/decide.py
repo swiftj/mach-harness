@@ -225,7 +225,8 @@ def option(key: str, label: str, does: str, route: Optional[str], needs_reason: 
 
 def abandon(ticket: str, extra: str = "") -> Dict[str, Any]:
     return option("abandon", "Abandon the ticket",
-                  "The cleanup station archives the cell, keeping its unmerged commits in a bundle, removes it and closes the ticket as abandoned" + extra + ".",
+                  "The cleanup station removes the cell, keeping its unmerged commits (in its archive, or as its branch where no archive is kept) and "
+                  "closes the ticket as abandoned" + extra + ".",
                   f'abandon {ticket} "<why>"', needs_reason=True)
 
 

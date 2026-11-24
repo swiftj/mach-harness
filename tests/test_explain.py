@@ -195,6 +195,21 @@ class RecordsTest(unittest.TestCase):
         self.assertEqual((report["headline_code"], report["archive"], report["run_record"]), ("archived", ".factory/archive/LOCAL-007.tar.gz", {"outcome": "merged", "rounds": 1}))
         self.assertNotIn("tarfile", (ROOT / "skills/run/scripts/explain.py").read_text())
 
+    def test_a_finished_ticket_with_no_archive_kept_says_so_plainly(self):
+        archive = self.project / ".factory" / "archive"
+        archive.mkdir(parents=True)
+        (archive / "LOCAL-007.tar.gz").write_bytes(b"an earlier life's archive")  # never taken for this record's
+        reason = "The evidence files were not kept after cleanup: cleanup.archive is \"raised\" and no person decided anything on this ticket."
+        (archive / "runs.jsonl").write_text(json.dumps({"ticket_id": "LOCAL-007", "outcome": "merged", "rounds": 1, "archive": None,
+                                                        "archive_kept": {"kept": False, "setting": "raised", "chosen_by": "setting", "reason": reason}}) + "\n")
+        report = self.explain("LOCAL-007")
+        self.assertEqual((report["headline_code"], report["archive"]), ("finished", None))
+        self.assertEqual(report["evidence"], "The evidence files were not kept after cleanup (cleanup.archive). " + reason)
+        code, text, _ = run_explain(self.project, "LOCAL-007")
+        self.assertEqual(code, 0)
+        self.assertIn("LOCAL-007: The ticket is finished.", text)
+        self.assertIn("The evidence files were not kept after cleanup (cleanup.archive).", text)
+
     def test_hostile_reviewer_text_is_cut_short_and_inert(self):
         self.write("review/round-1/findings.md", "x")
         self.write("review/round-1/votes/security.json", {"reviewer": "security", "vote": "REJECT", "findings": [

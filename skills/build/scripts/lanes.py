@@ -25,6 +25,8 @@ This module takes the build station's parse_plan output and never imports build.
 from build.py beside it by path, as schedule.py does. `measure` reads a ticket's plan.md and build-report.json from a
 live cell (.factory/worktrees/<ticket>/) or from cleanup's archive (.factory/archive/<ticket>.tar.gz, read in memory,
 never extracted), and prints what the build took and what lanes would have given, as estimates from recorded numbers.
+A finished ticket whose archive cleanup did not keep (cleanup.archive; its run record names none) cannot be read: it is
+listed with that reason and counted, so the measure says it covers the open tickets and the archives that were kept.
 It reads only. Standard library only.
 """
 
@@ -633,10 +635,21 @@ def project_sources(project: Path, tickets: Sequence[str]) -> List[Tuple[str, Op
         found = sorted(held.get(ticket) or [])
         return found[-1][2] if found else None
 
+    # Finished tickets whose archive cleanup did not keep (cleanup.archive): their last run record names none.
+    not_kept: Dict[str, bool] = {}
+    runs = archives / "runs.jsonl"
+    for line in runs.read_text(encoding="utf-8", errors="replace").splitlines() if runs.is_file() else []:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict) and isinstance(record.get("ticket_id"), str) and TICKET_RE.match(record["ticket_id"]):
+            not_kept[record["ticket_id"]] = "archive" in record and record.get("archive") is None
+
     out: List[Tuple[str, Optional[Path], Optional[str]]] = []
     wanted = list(tickets)
     if not wanted:
-        names = set(held)
+        names = set(held) | {ticket for ticket, gone in not_kept.items() if gone}
         if cells.is_dir():
             names |= {p.name for p in cells.iterdir() if TICKET_RE.match(p.name) and cell_of(p.name)}
         wanted = sorted(names)
@@ -646,8 +659,11 @@ def project_sources(project: Path, tickets: Sequence[str]) -> List[Tuple[str, Op
             out.append((ticket, None, "not a ticket ID"))
             continue
         source = cell_of(ticket) or archive_of(ticket)
-        out.append((ticket, source, None if source else "no cell and no archive"))
+        out.append((ticket, source, None if source else NOT_KEPT if not_kept.get(ticket) else "no cell and no archive"))
     return out
+
+
+NOT_KEPT = "finished, and its archive was not kept after cleanup (cleanup.archive), so its plan and build report cannot be read"
 
 
 def measure_one(source: Path, parse_plan: Callable[[str], Any], *, worktree_seconds: Optional[float] = None,
@@ -898,13 +914,19 @@ def main(argv: Optional[Sequence[str]] = None, parse_plan: Optional[Callable[[st
         if args.project:
             record["ticket"] = ticket
         records.append(record)
+    unread = sum(1 for _, why in failures if why == NOT_KEPT)
+    covers = (f"{unread} finished ticket(s) could not be read: their archives were not kept after cleanup (cleanup.archive). "
+              "This covers the open tickets and the finished ones whose archive was kept.") if unread else None
     if args.json:
-        print(json.dumps({"label": PREDICTION, "builds": records, "not_read": [{"ticket": t, "why": w} for t, w in failures]}, indent=2))
+        print(json.dumps({"label": PREDICTION, "builds": records, "not_read": [{"ticket": t, "why": w} for t, w in failures],
+                          **({"not_kept": unread, "covers": covers} if unread else {})}, indent=2))
         return 0
     out: List[str] = []
     for record in records:
         out += describe(record) + [""]
     out += table(records, failures)
+    if covers:
+        out += ["", covers]
     print("\n".join(out))
     return 0
 

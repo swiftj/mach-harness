@@ -50,7 +50,7 @@ If `enough_data` is false, write the report (step 4) with the scorecard under "A
 
 For every entry in `patterns`:
 
-- Read what actually happened in the tickets it names. Each run in `runs.jsonl` has an `archive` path to a `.tar.gz` of the finished cell; list its members and read the review reports, findings and build report that concern this pattern. Do not extract archives into the project, and do not modify them.
+- Read what actually happened in the tickets it names. A run in `runs.jsonl` whose `archive` is a path names a `.tar.gz` of the finished cell; list its members and read the review reports, findings and build report that concern this pattern. Do not extract archives into the project, and do not modify them. A run whose `archive` is null kept none (`cleanup.archive`; `archive_kept.reason` says why): work from its run record alone and say that the archive was not kept.
 - Decide the likely cause: an instruction that is missing, one that is ambiguous, or one that exists and was not followed.
 - Decide which file a rule would belong in, and read its current text:
 
