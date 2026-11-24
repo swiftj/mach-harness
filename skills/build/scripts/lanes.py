@@ -17,7 +17,9 @@ The lanes are the connected groups this makes, numbered L1, L2, ... by the plan 
 inside a lane, tasks keep plan order. The same plan always gives the same lanes. Nothing here is decided by an agent.
 
 The plan may divide its task list with the sub-headings `### Before the lanes`, `### Lanes` and `### After the lanes`
-inside `## Tasks`. With none, the whole list is the lanes part.
+inside `## Tasks`. With none, the whole list is the lanes part. That is the calculator's reading, which `show` and
+`measure` give for any plan; the build station builds a plan in lanes only when it uses a part heading or an `after`
+mark (uses_additions), and a plan with neither one task at a time.
 
 This module takes the build station's parse_plan output and never imports build.py; its command line loads parse_plan
 from build.py beside it by path, as schedule.py does. `measure` reads a ticket's plan.md and build-report.json from a
@@ -56,22 +58,41 @@ MAX_MEMBERS = 100000
 
 # ---------------------------------------------------------------- reading the plan's additions
 
-def _task_lines(text: str) -> Tuple[List[Tuple[str, str, Optional[str]]], List[str]]:
-    """Each task line in the Tasks section as (task id, body, phase heading key or None), and the sub-headings in order.
+FENCE_RE = re.compile(r"^\s*(```|~~~)")
 
-    The section is found exactly as parse_plan finds it: a line `## <name>` starts a section, and `###` does not."""
-    found: List[Tuple[str, str, Optional[str]]] = []
+
+def task_walk(text: str) -> Tuple[List[Tuple[str, str, str, Optional[str]]], List[str]]:
+    """The one reading of the Tasks section that every reader of the plan's lanes additions shares: each task line as
+    (task id, kind, body, part heading key or None, meaning above every part heading), and the sub-headings in order.
+
+    The rules, the same in cell.py's lane_parts (a test compares the two on every case where they could differ):
+    - The section is found exactly as the build station's parse_plan finds it: a line `## <name>` starts a section, its
+      name read in any letter case, whether or not it sits in a fenced block; `###` does not start one.
+    - A task line is one parse_plan reads as a task, inside a fenced block or not: parse_plan does not look at fences,
+      and the build builds every task it reads, so a task the lanes did not place would be built nowhere.
+    - A `###` line inside a fenced block is not a sub-heading. A block opens on a line starting with ``` or ~~~ and
+      closes on the next line starting with the same character; one left open runs to the end of the section."""
+    found: List[Tuple[str, str, str, Optional[str]]] = []
     headings: List[str] = []
     section = ""
+    fence: Optional[str] = None
     current: Optional[str] = None
     for line in text.splitlines():
         heading = SECTION_RE.match(line)
         if heading:
             section = heading.group(1).lower()
+            fence = None
             continue
         if section != "tasks":
             continue
-        sub = SUBHEADING_RE.match(line)
+        opened = FENCE_RE.match(line)
+        if opened:
+            if fence is None:
+                fence = opened.group(1)[0]
+            elif opened.group(1)[0] == fence:
+                fence = None
+            continue
+        sub = None if fence is not None else SUBHEADING_RE.match(line)
         if sub:
             headings.append(sub.group(1))
             key = _heading_key(sub.group(1))
@@ -80,8 +101,15 @@ def _task_lines(text: str) -> Tuple[List[Tuple[str, str, Optional[str]]], List[s
             continue
         match = TASK_RE.match(line)
         if match:
-            found.append((match.group(2), match.group(4), current))
+            found.append((match.group(2), match.group(3), match.group(4), current))
     return found, headings
+
+
+def _task_lines(text: str) -> Tuple[List[Tuple[str, str, Optional[str]]], List[str]]:
+    """Each task line in the Tasks section as (task id, body, phase heading key or None), and the sub-headings in order,
+    as task_walk reads them."""
+    found, headings = task_walk(text)
+    return [(task_id, body, phase) for task_id, _, body, phase in found], headings
 
 
 def _heading_key(title: str) -> Optional[str]:
@@ -105,36 +133,15 @@ def _after_of(body: str) -> List[str]:
     return seen
 
 
-FENCE_RE = re.compile(r"^\s*(```|~~~)")
-
-
 def uses_additions(text: str) -> bool:
     """Whether the plan's author used either addition: a part heading (`### Before the lanes`, `### Lanes`, `### After
     the lanes`, any letter case and spacing) under `## Tasks`, or an `after Tnn` mark in a task's trailing brackets.
 
     A plan without them is built one task at a time whatever the lane rule would compute: its author never claimed that
-    its parts are independent. Read as cell.py's check-plan reads the Tasks section (lane_parts over markdown_sections):
-    `## Tasks` exactly, and nothing inside a fenced block counts. Other sub-headings (`### Backend`) are not additions."""
-    section = ""
-    fenced = False
-    for line in text.splitlines():
-        if FENCE_RE.match(line):
-            fenced = not fenced
-        heading = None if fenced else SECTION_RE.match(line)
-        if heading:
-            section = heading.group(1)
-            continue
-        if section != "Tasks":
-            continue
-        sub = None if fenced else SUBHEADING_RE.match(line)
-        if sub:
-            if _heading_key(sub.group(1)) is not None:
-                return True
-            continue
-        match = TASK_RE.match(line)
-        if match and _after_of(match.group(4)):
-            return True
-    return False
+    its parts are independent. Read by task_walk, as cell.py's check-plan reads it (lane_parts): a heading inside a
+    fenced block does not count. Other sub-headings (`### Backend`) are not additions."""
+    found, headings = task_walk(text)
+    return any(_heading_key(title) is not None for title in headings) or any(_after_of(body) for _, _, body, _ in found)
 
 
 def annotate(text: str, tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -284,13 +291,17 @@ def _unreachable(sequence: Sequence[Dict[str, Any]]) -> List[str]:
 
 def problems(text: str, tasks: List[Dict[str, Any]], touch: Dict[str, List[str]]) -> List[str]:
     """What is wrong with the plan's lanes additions, as sentences for check-plan. An empty list when nothing is.
-    A plan without sub-headings or `after` gives none. Being one lane is never a problem."""
+    A plan without the additions has no problem with them: other sub-headings alone (`### Backend`) are a plan written the
+    old way, as check-plan reads it. Being one lane is never a problem."""
     found: List[str] = []
     lines, headings = _task_lines(text)
+    used = uses_additions(text)
     seen: List[str] = []
     for title in headings:
         key = _heading_key(title)
         if key is None:
+            if not used:
+                continue
             found.append(f"The Tasks section has the sub-heading '### {title}'. The only sub-headings it may have are "
                          + ", ".join(f"'### {HEADINGS[k]}'" for k in PHASES) + ", in that order.")
             continue

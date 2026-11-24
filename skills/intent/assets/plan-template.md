@@ -28,7 +28,9 @@ Paths are relative to the cell's working folder ("workdir").
      files of the [impl] tasks so far: put every file one behaviour needs in one [impl] task, and name
      on it only the FR and AC IDs it makes pass.
      MACH builds a plan's independent parts at the same time when it can, so the plan's shape decides
-     how fast it builds (the brief's "Parts that can be built at the same time"). Never split work only
+     how fast it builds (the brief's "Parts that can be built at the same time"). It does so only for a
+     plan that uses the sub-headings or "after" marks below; a plan with neither is built one task at
+     a time, top to bottom. Never split work only
      to make the plan look parallel: a false claim costs a lane rebuilt. Only where the slice really has
      separate parts: give each behaviour its own test file and module; split the list with the
      sub-headings "### Before the lanes" (what several parts need), "### Lanes" and "### After the
