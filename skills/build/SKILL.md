@@ -15,7 +15,7 @@ You are the factory's builder: a software engineer who implements one ticket ins
 
 ## Rules
 
-1. **Work only in the cell.** Every file you create or change is under the `workdir` that `BUILD start` prints (`.factory/worktrees/<ticket>/repo/`). Never edit the main checkout, and never run git commands that commit, stage, reset, stash, rebase or switch branches: `BUILD` makes the commits.
+1. **Work only in the cell.** Every file you create or change is under the `workdir` that `BUILD start` or `BUILD next` prints (`.factory/worktrees/<ticket>/repo/`, or a lane's own `.factory/worktrees/<ticket>/lanes/<L>/repo/`). Never edit the main checkout, and never run git commands that commit, stage, reset, stash, rebase or switch branches: `BUILD` makes the commits.
 2. **Test first, and see it fail.** For a `[test]` task, write only the test. `BUILD red` must see the suite fail because of it before you write the code. Never write implementation and its test in the same step.
 3. **One task, one task's worth.** Write only what the current task names: its test, its scenario, its cases. Do not write later tasks' tests early, even when they belong in the same file and you can see them coming. A task that does the next task's work leaves that task with nothing to commit, and the line stops.
 4. **Make the code fit the tests, never the reverse.** Once a test is committed it is frozen. If it fails, the code is wrong. Do not edit, skip, weaken or delete it, and do not write code that detects the test and special-cases it.
@@ -62,7 +62,7 @@ For anything a user sees (a web, desktop or mobile slice), also find the design 
 
 Repeat until `BUILD next <ticket>` says all tasks are done:
 
-1. Run `BUILD next <ticket>`. It prints the task, the files it may change, and the exact spec text it must satisfy. Work from that, not from memory.
+1. Run `BUILD next <ticket>`. It prints the task, the files it may change, and the exact spec text it must satisfy. Work from that, not from memory. If it answers `LANES`, the plan's next tasks are built in lanes, each by its own builder: stop here and report that the tasks before the lanes are done. You do not start the lanes, build them or join them; the line does (see Lanes below). If it refuses because the lanes are open, stop and report that too.
 2. Do the task, then complete it with the command it names:
 
 | Task | You write | Complete with | The gate requires |
@@ -103,9 +103,33 @@ On `BUILT` it writes `build-report.json` in the cell. Report, briefly and withou
 
 Record the same on the ticket with the ticket skill if it is installed, setting its state to `needs_review`.
 
+## Lanes
+
+A plan whose author divided its tasks into parts (`### Before the lanes`, `### Lanes`, `### After the lanes`) or marked a task `after Tnn` may be built in lanes: chains of tasks that share no file and no requirement, each built at the same time by its own builder in its own worktree, from the same starting commit. The station decides the lanes from the plan; no builder changes them. `BUILD start` lists them under `lanes`. A plan without the parts or marks is built one task at a time, as above, whatever the settings say.
+
+- The cell's builder does the tasks before the lanes as usual. When `BUILD next <ticket>` answers `LANES`, it stops and reports.
+- The line then starts one builder per lane, all at once, and joins the lanes when every one is done. After the join, `BUILD next <ticket>` carries on in the cell with the tasks after the lanes, any task of a lane the join set aside, and any fix task it added (`J-T01`), then `BUILD finish` as usual.
+- `BUILD join` may add `J-T01 [impl] Make the lanes pass together` when every lane passed its own suite but the joined result does not. Work it like any `[impl]` task with `BUILD green <ticket> J-T01`: every test is committed and frozen, so fix the code, never a test. Its files are every non-test file the lanes changed; if the fix truly needs another file, use `--allow-extra "<why>"` as for any task.
+
+### Building one lane
+
+Your prompt names one lane (`Build lane L2 of MACH ticket <ticket>`). Everything in Rules and step 3 holds, in the lane's own worktree:
+
+1. Run `BUILD next <ticket> --lane <L>`. It prints the lane's next task and the lane's `workdir`: write only there, never in the cell's own checkout or another lane's.
+2. Complete the task with `BUILD red`, `BUILD green` or `BUILD done` as usual; the station knows the task's lane and works in its worktree and its state.
+3. Repeat until `BUILD next <ticket> --lane <L>` answers `LANE_DONE`. Then report what the station recorded and stop.
+
+In a lane:
+
+- Learn the ground as in step 2, once, for your lane's tasks.
+- Your lane's tests run on the starting commit plus your lane's own work; other lanes' work is not in your worktree. If your code cannot pass without a file another lane owns, that is a **plan defect**: stop and report it. The station refuses any change to a file the plan gives another lane, and no override allows it, `--allow-extra` and `--amend-test` included.
+- The other gates are the same: test first and seen failing, committed tests frozen, the plan's files only, the whole suite after each `[impl]` task, the secrets scan before each commit.
+- Never run `BUILD lanes-open`, `BUILD join` or `BUILD finish`, and never work a task of another lane. The line opens and joins the lanes; you never judge whether they fit together.
+- If you stop part way, your lane's state stays on disk; the next builder for the lane carries on from `BUILD next <ticket> --lane <L>`.
+
 ## Revision rounds
 
-When review or verification sends a built ticket back, run `BUILD revise <ticket> --findings <file>`. It counts the failed round. A ticket gets three rounds of verification and review in all: two revisions, and the third failure is escalated.
+A revision round is never built in lanes: its tasks are done in the cell, one at a time. When review or verification sends a built ticket back, run `BUILD revise <ticket> --findings <file>`. It counts the failed round. A ticket gets three rounds of verification and review in all: two revisions, and the third failure is escalated.
 
 - `REVISING`: read the findings. For each one, add a task with `BUILD add-task <ticket> --kind <kind> --text "<what to fix> (<spec IDs>)" --file <path>`. A finding about wrong behavior gets a `[test]` task that reproduces it first, then an `[impl]` task. Then work the tasks as in step 3 and finish again. Address every finding; do not argue with one in code.
 - `ESCALATE`: this was the third failed round. Do not build. Label the ticket `blocked-requires-sme`, set its state to `blocked`, and report to a person with the findings that remain.
