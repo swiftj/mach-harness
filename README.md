@@ -2,7 +2,7 @@
 
 MACH (Multi-Agent Construction Harness) is a software factory for Claude Code. A product manager describes what is wanted; the factory turns each piece into a checked specification, builds it test-first in an isolated workspace, proves it works with captured evidence, has it reviewed by a panel of independent agents, and merges it. Every station hands the next one artifacts MACH has checked, not a claim that the work is done.
 
-> **Status: 0.21.0.** [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) is the full blueprint.
+> **Status: 0.22.0.** [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) is the full blueprint.
 
 ![The Factory Floor: an isometric drawing of the factory with three tickets being built, each in its own cell](docs/images/factory-floor-isometric.jpg)
 
@@ -88,7 +88,7 @@ Each install brings all of MACH's own files to the new version: its skills, agen
 If it says the newest release could not be found, GitHub's API did not answer from your network (it allows a limited number of unsigned requests an hour). Name the release yourself:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh | MACH_VERSION=0.21.0 bash
+curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh | MACH_VERSION=0.22.0 bash
 ```
 
 To install what is on the `main` branch ahead of the next release, use `MACH_REF=main` in place of `MACH_VERSION`; a branch install is not checksum-verified, and the installer says so.
@@ -351,7 +351,7 @@ Run `/mach floor`, or say "open the Factory Floor". It opens a read-only view in
 /mach release qualify --epic EPIC-001
 ```
 
-It checks, at one exact commit, that every slice of the epic (or of a list of slices you name) is merged, verified and reviewed, reruns the tests, and writes a readiness snapshot. The product manager records acceptance as a comment on the epic's issue. It never tags or deploys.
+It checks, at one exact commit, that every slice of the epic (or of a list of slices you name) is merged, verified and reviewed, reruns the tests, and writes a readiness snapshot. It works on any machine with the main branch, including one that built none of the slices: MACH reads each slice from the change record merged with it. The product manager records acceptance as a comment on the epic's issue. It never tags or deploys.
 
 Full guide: [Engineer Guide](docs/guides/ENGINEER_GUIDE.md).
 

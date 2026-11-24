@@ -1,14 +1,15 @@
 # Where the work stands, and what is next
 
-Written on 2026-11-23, after MACH 0.21.0 was published, and brought up to date the same day when A6 was built, for whoever picks the work up next: a person, or an AI coding agent starting a new session on another machine. Read this first, then `docs/mach-next/M20_TEAMS_AND_MOVING.md`.
+Written on 2026-11-23, after MACH 0.21.0 was published, and brought up to date the same day when 0.22.0 was published, for whoever picks the work up next: a person, or an AI coding agent starting a new session on another machine. Read this first, then `docs/mach-next/M20_TEAMS_AND_MOVING.md`.
 
 Keep this file current: when a piece below is finished or the plan changes, change it here in the same commit.
 
 ## 1. State
 
-- **Released:** 0.21.0, tag `v0.21.0`, on `main`. Merged to `main` since, not pushed and not released: qualifying a release across machines (section 2.1).
+- **Released:** 0.22.0, tag `v0.22.0`, on `main`. Nothing is unmerged.
+- **What 0.22.0 added:** qualifying a release on any machine, from each slice's committed change record (A6 of the M20 design).
 - **What 0.21.0 added:** MACH for a team (Part A of the M20 design, except A6), the basic decisions drafted from an engineer's own documents, a ticket's workspace that holds no `.claude/` files, and a plain message when MACH's files are from different versions. The release notes are `docs/guides/RELEASE_NOTES_DRAFT.md`.
-- **Checks at release:** `make check` (2,149 tests, 1 skipped), `go test ./...` in both apps, and the web typecheck, lint, build and unit tests (347 and 396) all passed on the release commit.
+- **Checks at release:** `make check` (2,160 tests, 1 skipped), `go test ./...` in both apps, and the web typecheck, lint, build and unit tests (347 and 396) all passed on the release commit.
 
 ## 2. What is next, in order
 
@@ -16,13 +17,13 @@ The owner decided this order on 2026-11-23.
 
 ### 2.1 Qualifying a release across machines (A6 in the M20 design)
 
-**Built and merged to `main` on 2026-11-23; not pushed and not released.** What it does and its limits are in section A6 of `docs/mach-next/M20_TEAMS_AND_MOVING.md` and the release section of `docs/BLUEPRINT.md`. The owner decided on 2026-11-23 that an evidence file's SHA-256 in the committed change record is enough on a machine that does not hold the file, so no shared place for evidence was built.
+**Built, and released in 0.22.0 on 2026-11-23.** What it does and its limits are in section A6 of `docs/mach-next/M20_TEAMS_AND_MOVING.md` and the release section of `docs/BLUEPRINT.md`. The owner decided on 2026-11-23 that an evidence file's SHA-256 in the committed change record is enough on a machine that does not hold the file, so no shared place for evidence was built.
 
 The four conditions, as tested: a third clone that built nothing reaches the same outcome, check for check, as the two that built the slices; a record edited, replaced or put back by hand, or a spec changed after it, blocks the slice; `acceptance record` works from the third clone's snapshot and is read back there; `AcrossMachinesTest` errors on 0.21.0's qualification and passes now.
 
 Left open by it:
 
-- **A release of it.** The change record is version 2 and the readiness snapshot is schema version 3. Every slice merged before this shows as `missing` when qualified, so an epic part-built on 0.21.0 needs an exception per slice or a rebuild.
+- **Slices merged before 0.22.0.** The change record is version 2 and the readiness snapshot is schema version 3. Every slice merged before this shows as `missing` when qualified, so an epic part-built on 0.21.0 needs an exception per slice or a rebuild.
 - **Never run for real:** only simulated station records in clones on one machine; no real Factory run, no real second machine, no real pull request merged on GitHub (a squashed one is not bound).
 - **The product approval in `human_approvals`** comes from this machine's ledger, so that list can differ between machines. Putting who approved the slice into the change record would close it.
 - **A newer approved revision not yet built** is known only to a Factory that took it in.

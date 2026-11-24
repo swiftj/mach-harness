@@ -1,6 +1,20 @@
-# MACH release notes: 0.21.0
+# MACH release notes: 0.22.0
 
 What is new in each release, newest first, followed by supported platforms, what you need, upgrading and security notes.
+
+## What changed in 0.22.0
+
+Qualifying a release on any machine. On a team, the slices of one epic are built by different factories; any of them, or a machine that built none, can now qualify the epic.
+
+| Change | What it is |
+| --- | --- |
+| Qualify an epic anywhere | `/mach release qualify --epic <epic>` gives the same outcome, check for check, on every machine that has the main branch. It no longer needs the machine that built the slices. |
+| The change record carries the facts | The record MACH merges with each ticket (`docs/changes/`) now ends with a section for MACH: the approved spec's SHA-256, the contracts, the slices depended on, the verification verdict with each evidence file's SHA-256, the review decision and whether a person's approval was required. |
+| A record is bound to its merge | MACH counts a record only as it was merged with its ticket, for the spec it names. A record edited or replaced afterwards blocks its slice, and the check says why. |
+| Evidence stays where it was made | Evidence files stay in the archive of the machine that built the ticket. Where the qualifying machine holds a file, MACH checks it against the recorded SHA-256; the result counts the files checked here and those held on another machine. |
+| Acceptance from any machine's snapshot | The readiness snapshot names the change records, nothing that one machine alone holds, and the product manager records acceptance from it as before. |
+
+**Slices merged by 0.21.0 or earlier** have no such section in their record, so they show as `missing` when an epic is qualified; record an exception for them or qualify the slices merged since.
 
 ## What changed in 0.21.0
 
@@ -180,6 +194,7 @@ Claude Code, `git` 2.36 or later, and `python3` 3.8 or later. The GitHub CLI (`g
 
 - Run the installer again. It installs the newest full release; choose a specific one with `MACH_VERSION=<x.y.z>`.
 - Your work is kept: Product Studio drafts, tickets in progress, the archive and run records, `.factory/config.json` and a customised `REVIEW.md` are not touched.
+- After upgrading to 0.22.0, release qualification reads the change records merged from then on. Keep `records.enabled` on (the default) for a slice to qualify.
 - A draft made by 0.13.0 with an epic marked `proposed` needs `epic set <EPIC-ID> --status open` once.
 - If you enabled supervised running before 0.13.0, enable it again after upgrading.
 - Back up `.factory/` before moving to an older version.
