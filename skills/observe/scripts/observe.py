@@ -572,14 +572,16 @@ def cmd_file_ticket(project: Path, args: argparse.Namespace) -> int:
     done = subprocess.run([sys.executable, str(script), "--project", str(project), "create", "--title", f"Tune the factory's rules ({report.stem})",
                            "--label", TUNING_LABEL, "--body", "-"], input=body, capture_output=True, text=True)
     try:
-        ticket_id = json.loads(done.stdout)["ticket_id"]
-    except (ValueError, KeyError):
+        made = json.loads(done.stdout)
+        ticket_id = made["ticket_id"]
+    except (ValueError, KeyError, TypeError):
         raise ObserveError("The ticket could not be filed: " + (done.stderr.strip() or done.stdout.strip() or "the ticket script printed nothing"))
     filed[report.name] = ticket_id
     filed_path.write_text(json.dumps(filed, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({
         "status": "FILED", "ticket_id": ticket_id, "label": TUNING_LABEL, "report": str(report), "changes": len(proposals),
         "targets": sorted({proposal["target"] for proposal in proposals}),
+        **({"note": made["note"]} if made.get("note") else {}),  # kept on this computer: the tracker could not take it
         "next": f"The ticket goes through the line like any other: groom it headless, build, verify, and review. A ticket labelled '{TUNING_LABEL}' "
                 "is decided by a unanimous review panel, with no person's approval, as long as it changes only the factory's rule files.",
     }, indent=2))

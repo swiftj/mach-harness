@@ -58,7 +58,7 @@ A script does the measuring and the scoring. `AUDIT` below means `python3 "${CLA
 
    Never give only a tier and a number. Never say a repository "scored" or "came back" a tier.
 
-6. **On Bronze, propose hardening; do not start it.** List the failed checks, most points first, as the work that would lift the tier. If the user asks you to file it, or the input has `--fix`, file one ticket titled "Harden repository for autonomous work" with the label `repo-hardening`, listing each failed check and its fix as an acceptance criterion. Use the ticket skill if it is installed. Hardening tickets are the one kind of work allowed in a Bronze repository, and a person reviews each before it merges.
+6. **On Bronze, propose hardening; do not start it.** List the failed checks, most points first, as the work that would lift the tier. If the user asks you to file it, or the input has `--fix`, file one ticket titled "Harden repository for autonomous work" with the label `repo-hardening`, listing each failed check and its fix as an acceptance criterion. Use the ticket skill if it is installed: it files the ticket where `tickets.provider` says (on GitHub, an issue whose number is the ticket), or on this computer with the reason when the tracker cannot take it; pass its note on. Hardening tickets are the one kind of work allowed in a Bronze repository, and a person reviews each before it merges.
 
 ## For other stations
 

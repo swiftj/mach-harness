@@ -183,10 +183,11 @@ elif args[:2] == ["pr", "list"]:
 elif args[:2] == ["label", "list"]:
     print(json.dumps([{"name": n} for n in labels]))
 elif args[:2] == ["label", "create"]:
-    if args[2] in labels:
+    if args[2] in labels and "--force" not in args:  # as gh does: --force updates a label that is already there
         print("label with name \"%s\" already exists; use `--force` to update its color and description" % args[2], file=sys.stderr)
         done(1)
-    labels.append(args[2])
+    if args[2] not in labels:
+        labels.append(args[2])
 elif args[0] == "api":
     p = [a for a in args if a.startswith("repos/")][0]
     parts = p.split("?")[0].split("/")

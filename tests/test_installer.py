@@ -323,6 +323,130 @@ class InstallTest(Base):
         self.assertIn("MACH repository itself", out)
 
 
+class TicketHomeTest(Base):
+    """Where MACH's own tickets go by default: GitHub issues when the project is on GitHub, else .factory/tickets/."""
+
+    TO_LOCAL = '           To keep them on this computer instead, set "tickets.provider" to "local" in .factory/config.json.'
+
+    def git(self, *argv, cwd=None):
+        return subprocess.run(["git", *argv], cwd=str(cwd or self.project), capture_output=True, text=True, check=True)
+
+    def provider(self):
+        return json.loads((self.project / ".factory/config.json").read_text())["tickets"]["provider"]
+
+    def ticket_lines(self, out):
+        return [line for line in out.splitlines() if line.startswith("  tickets  ") or line.startswith("           ")]
+
+    def test_a_project_on_github_files_machs_own_tickets_as_issues_and_says_how_to_keep_them_here(self):
+        self.git("init", "-q", "-b", "main")
+        self.git("remote", "add", "origin", "git@github.com:acme/widgets.git")
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.provider(), "github")
+        self.assertEqual(self.ticket_lines(out), ["  tickets  MACH's own tickets will be GitHub issues in acme/widgets, the repository's origin remote", self.TO_LOCAL])
+        template = (ROOT / "templates/config.json").read_text()
+        self.assertEqual((self.project / ".factory/config.json").read_text(), template.replace('"provider": "local"', '"provider": "github"', 1),
+                         "only the one setting differs from the template; its layout is kept")
+        code, out = self.mach("install")
+        self.assertEqual((code, self.ticket_lines(out)), (0, []), "an update of a project that already chose says nothing about it")
+
+    def test_every_github_address_form_counts_and_the_address_is_never_printed(self):
+        for address, name in (("https://github.com/acme/widgets.git", "acme/widgets"), ("https://x-access-token:secret@github.com/acme/w", "acme/w"),
+                              ("ssh://git@github.com/acme/w.git", "acme/w")):
+            with self.subTest(address=address):
+                shutil.rmtree(self.project)
+                self.project.mkdir()
+                self.git("init", "-q", "-b", "main")
+                self.git("remote", "add", "origin", address)
+                code, out = self.mach("install")
+                self.assertEqual((code, self.provider()), (0, "github"), out)
+                self.assertIn(f"GitHub issues in {name},", out)
+                self.assertNotIn("secret", out)
+
+    def test_the_configured_address_counts_not_one_rewritten_by_insteadof(self):
+        self.git("init", "-q", "-b", "main")
+        self.git("remote", "add", "origin", "gh:acme/widgets")
+        self.git("config", "url.git@github.com:.insteadOf", "gh:")
+        code, out = self.mach("install")
+        self.assertEqual((code, self.provider()), (0, "local"), out)
+        self.assertEqual(self.ticket_lines(out), ["  tickets  MACH's own tickets will be kept in .factory/tickets/ (this Git repository's origin remote is not on GitHub)"])
+
+    def test_a_repository_with_no_remote_or_another_host_keeps_them_here_and_says_why(self):
+        self.git("init", "-q", "-b", "main")
+        code, out = self.mach("install")
+        self.assertEqual((code, self.provider()), (0, "local"), out)
+        self.assertEqual(self.ticket_lines(out), ["  tickets  MACH's own tickets will be kept in .factory/tickets/ (this Git repository has no origin remote)"])
+        (self.project / ".factory/config.json").unlink()
+        self.git("remote", "add", "origin", "https://gitlab.com/acme/widgets.git")
+        code, out = self.mach("install")
+        self.assertEqual((code, self.provider()), (0, "local"), out)
+        self.assertEqual(self.ticket_lines(out), ["  tickets  MACH's own tickets will be kept in .factory/tickets/ (this Git repository's origin remote is not on GitHub)"])
+
+    def test_a_folder_that_is_no_repository_keeps_them_here(self):
+        code, out = self.mach("install")
+        self.assertEqual((code, self.provider()), (0, "local"), out)
+        self.assertEqual(self.ticket_lines(out), ["  tickets  MACH's own tickets will be kept in .factory/tickets/"])
+
+    def test_a_folder_inside_a_repository_on_github_keeps_them_here(self):
+        self.git("init", "-q", "-b", "main")
+        self.git("remote", "add", "origin", "git@github.com:acme/widgets.git")
+        inner = self.project / "packages" / "app"
+        inner.mkdir(parents=True)
+        code, out = run("install", "--project", str(inner))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads((inner / ".factory/config.json").read_text())["tickets"]["provider"], "local")
+        self.assertIn("(this folder is inside a Git repository but is not its top folder)", out)
+
+    def test_an_existing_configuration_is_never_changed_whatever_it_says(self):
+        self.git("init", "-q", "-b", "main")
+        self.git("remote", "add", "origin", "git@github.com:acme/widgets.git")
+        (self.project / ".factory").mkdir()
+        for provider in ("jira", "github", None):
+            with self.subTest(provider=provider):
+                text = json.dumps({"tickets": {"provider": provider}} if provider else {"version": 1}) + "\n"
+                (self.project / ".factory/config.json").write_text(text)
+                code, out = self.mach("install")
+                self.assertEqual(code, 0, out)
+                self.assertEqual((self.project / ".factory/config.json").read_text(), text)
+                if provider:
+                    self.assertEqual(self.ticket_lines(out), [])
+
+    def test_an_update_that_still_keeps_them_here_is_left_alone_and_told_how_to_switch_once(self):
+        """A project installed before this default came keeps local tickets; one line, once, says how to switch."""
+        code, out = self.mach("install")  # installed when it was no repository: local
+        self.assertEqual((code, self.provider()), (0, "local"), out)
+        self.git("init", "-q", "-b", "main")
+        self.git("remote", "add", "origin", "git@github.com:acme/widgets.git")
+        before = (self.project / ".factory/config.json").read_bytes()
+        code, out = self.mach("install", "--dry-run")
+        line = ("  tickets  MACH's own tickets stay in .factory/tickets/, as .factory/config.json says. "
+                'To file them as GitHub issues in acme/widgets, set "tickets.provider" to "github" in .factory/config.json.')
+        self.assertEqual((code, self.ticket_lines(out)), (0, [line]), out)
+        code, out = self.mach("install")
+        self.assertEqual((code, self.ticket_lines(out)), (0, [line]), out)
+        self.assertEqual((self.project / ".factory/config.json").read_bytes(), before)
+        code, out = self.mach("install")
+        self.assertEqual((code, self.ticket_lines(out)), (0, []), "said once, then never again")
+        self.assertIn("tickets.provider", json.loads((self.project / ".factory/.mach-manifest.json").read_text())["said"])
+
+    def test_dry_run_says_what_it_would_choose_and_writes_nothing(self):
+        self.git("init", "-q", "-b", "main")
+        self.git("remote", "add", "origin", "git@github.com:acme/widgets.git")
+        code, out = self.mach("install", "--dry-run")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.ticket_lines(out), ["  tickets  MACH's own tickets would be GitHub issues in acme/widgets, the repository's origin remote", self.TO_LOCAL])
+        self.assertFalse((self.project / ".factory").exists())
+
+    def test_scaffold_chooses_the_same_way_and_no_scaffold_says_nothing(self):
+        self.git("init", "-q", "-b", "main")
+        self.git("remote", "add", "origin", "git@github.com:acme/widgets.git")
+        code, out = self.mach("install", "--no-scaffold")
+        self.assertEqual((code, self.ticket_lines(out)), (0, []), out)
+        code, out = self.mach("scaffold")
+        self.assertEqual((code, self.provider()), (0, "github"), out)
+        self.assertIn("GitHub issues in acme/widgets", out)
+
+
 class ScaffoldTest(Base):
     def test_scaffold_creates_factory_files_but_no_skills(self):
         code, out = self.mach("scaffold")

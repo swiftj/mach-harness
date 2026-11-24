@@ -26,6 +26,8 @@ Autonomous work needs a repository that builds, tests and lints cleanly. `/mach-
 
 A build or test suite that fails, is missing or cannot be run is Bronze whatever the score. The report goes stale after `audit.max_age_days` and is bound to a commit. The secret-scanning check only looks for a scanner's name in configuration. It runs no scanner (2 of 100 points).
 
+On Bronze, MACH offers to file one ticket labelled `repo-hardening` with the failed checks as its acceptance criteria. Like every ticket MACH files itself (the observe station's tuning ticket, your own ticket started from a description), it goes where `tickets.provider` says: in a project on GitHub it is an issue, named by its number (`/mach 12`), and its labels are read from the issue. If GitHub cannot take it (no `gh`, not signed in, no network, no permission), MACH files it in `.factory/tickets/` as `LOCAL-NNN`, says why, and carries on with it there.
+
 ### Starting from documents you already have
 
 MACH plans no ticket until the project's basic technical decisions are accepted ADRs on the main branch. You may already have them written down somewhere: an ARCHITECTURE.md, a high-level design, a stack or deployment note, coding standards, or ADRs in another format.

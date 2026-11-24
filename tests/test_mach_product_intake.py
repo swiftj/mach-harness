@@ -927,6 +927,17 @@ class FolderTest(Base):
         self.assertEqual(self.cell("LOCAL-001")["product"]["source"], "folder")
         self.assertNotIn("issue", self.cell("LOCAL-001")["product"])
 
+    def test_a_folder_slice_keeps_a_local_ticket_when_the_project_files_tickets_on_github(self):
+        """The folder route exists for when GitHub cannot be used, so its ticket stays on this computer whatever tickets.provider says."""
+        (self.eng / ".factory/config.json").write_text(json.dumps({"tickets": {"provider": "github"}, "factory": {"max_parallel": 3}}))
+        self.first()
+        taken = self.product("intake")
+        self.assertEqual([c["ticket_id"] for c in taken["created"]], ["LOCAL-001"])
+        self.assertEqual(self.tickets(), ["LOCAL-001"])
+        self.assertFalse(any(call[:2] == ["issue", "create"] for call in self.gh()["calls"]), "no GitHub issue is filed for it")
+        self.product("dispatch", "SLICE-001")
+        self.assertIn('"groomed"', self.ticket_text("LOCAL-001"), "its updates stay local too")
+
     def test_a_folder_slice_is_reissued_only_while_its_folder_is_on_the_branch(self):
         self.first()
         self.product("intake")
