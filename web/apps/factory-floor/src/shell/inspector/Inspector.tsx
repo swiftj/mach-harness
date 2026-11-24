@@ -1,7 +1,8 @@
 /**
- * The contextual inspector (spec f.9): follows the store's selection. A header (glyph, name, ID,
- * state now), why it looks like this, one anatomy per entity type, the evidence behind it, and links
- * to related entities. With nothing selected: the run now.
+ * The contextual inspector (spec f.9): follows the store's selection. A header (glyph, name, ID with
+ * a link back to the ticket that owns it, state now), why it looks like this, one anatomy per entity
+ * type (each linking what it relates to where that reads naturally), the record behind it and its
+ * evidence. With nothing selected: the run now.
  */
 import { Crosshair, X } from "lucide-react";
 import { type ReactNode } from "react";
@@ -55,7 +56,8 @@ import {
   WorkflowAnatomy,
 } from "./anatomies";
 import { identityOf, parseStation, pickedVisitOf, selectEntity } from "./entity";
-import { AuthorityBadge, Evidence, precisionWords, StationHistoryLink, useEntityEvents } from "./parts";
+import { ownerOfId, ownerRefOf } from "./owner";
+import { AuthorityBadge, EntityLink, Evidence, StationHistoryLink, timeCaveatWords, useEntityEvents } from "./parts";
 import { analyticsStationOf } from "../../scene/analytics";
 import { Provenance } from "./Provenance";
 import { stationAcrossWords } from "./words";
@@ -129,7 +131,8 @@ function lookOf(entity: AnyRef, value: unknown, historyEnd: number | null = null
     case "gate": {
       const g = value as GateState;
       const state = gateState(g.state);
-      return { glyph: <GateGlyphSmall kind={gateOf(g.gate)} size={28} state={state} />, state, word: gatePositionWords(g), phase: g.decidedAt === null ? "running" : "finished", since: g.decidedAt ?? g.openedAt };
+      // The verdict alone: the Decision section below says the reason, once.
+      return { glyph: <GateGlyphSmall kind={gateOf(g.gate)} size={28} state={state} />, state, word: gatePositionWords({ ...g, reasonCode: null }), phase: g.decidedAt === null ? "running" : "finished", since: g.decidedAt ?? g.openedAt };
     }
     case "dependency": {
       const d = value as DependencyState;
@@ -222,6 +225,31 @@ function GlobalStation({ id }: { id: string }) {
   );
 }
 
+/**
+ * The entity's id under its name. An id that starts with the ticket owning it ("LOCAL-001/groom.finalize",
+ * "LOCAL-001:evidence/run.log") makes that ticket a link back to it (its cell, or its slice before it
+ * has one), so a person who followed a gate or a file can return and pick another; the rest stays text.
+ */
+function IdLine({ entity, id }: { entity: AnyRef; id: string }) {
+  const owner = useScene((s) => ownerRefOf(s, entity));
+  const parts = owner ? ownerOfId(entity) : null;
+  return (
+    // Wrapped, never cut off: a cut-off line would also clip the link's focus ring.
+    <p className="mt-0.5 font-mono text-[12px] text-ink-muted [overflow-wrap:anywhere]" title={id} data-inspector-id="">
+      {parts && owner ? (
+        <>
+          <EntityLink to={owner} label={`Back to ${parts.ticketId}`}>
+            {parts.ticketId}
+          </EntityLink>
+          {parts.rest}
+        </>
+      ) : (
+        id
+      )}
+    </p>
+  );
+}
+
 /** Where the entity stands now: not seen yet, in progress, or finished. */
 function TimeStatus({ look }: { look: Look | null }) {
   if (!look) {
@@ -263,7 +291,7 @@ function Why({ entity }: { entity: AnyRef }) {
           {latest.event.type}, {timecode(latest.t)}
         </span>
         {latest.event.schema_version === 3 ? <AuthorityBadge authority={latest.authority} /> : null}
-        {latest.event.schema_version === 3 ? <span className="text-caption text-ink-subtle">{precisionWords(latest.precision)}</span> : null}
+        {latest.event.schema_version === 3 && timeCaveatWords(latest.precision) ? <span className="text-caption text-ink-subtle">{timeCaveatWords(latest.precision)}</span> : null}
       </div>
     </div>
   );
@@ -301,9 +329,7 @@ function Selected({ entity }: { entity: AnyRef }) {
               {/* An agent is named by its label (agent.started data.label): prose, contained. */}
               {proseName(kindOf(entity)) && !identity.name.endsWith(refId(entity)) ? <FreeText field={proseName(kindOf(entity))!} text={identity.name} /> : identity.name}
             </h2>
-            <p className="mt-0.5 truncate font-mono text-[12px] text-ink-muted" title={identity.id}>
-              {identity.id}
-            </p>
+            <IdLine entity={entity} id={identity.id} />
           </div>
           <div className="-mr-2 -mt-1 flex shrink-0 items-center">
             {focusable ? (

@@ -105,7 +105,8 @@ export function describeV3(event: AnyV3Event | UnknownV3Event): string {
     case "station.exited":
       return `${who} left ${e.data.station}: ${e.data.outcome}.`;
     case "gate.evaluated":
-      return `${who}: gate ${e.data.gate} ${e.data.verdict}${e.data.reason_code ? ` (${e.data.reason_code})` : ""}.`;
+      // A code that only repeats the verdict (the intent station's `refused`) is not a reason: never "refused (refused)".
+      return `${who}: gate ${e.data.gate} ${e.data.verdict}${e.data.reason_code && !/^(refused?|pass(ed)?|overridden|override)$/i.test(e.data.reason_code) ? ` (${e.data.reason_code})` : ""}.`;
     case "build.task_completed":
       return `${who}: task ${e.data.task_id} ${e.data.step}.`;
     case "verify.check_recorded":

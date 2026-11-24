@@ -2,7 +2,7 @@
  * The stations' own outcome words in plain words, for the inspector and the Line. The raw word is
  * still shown where the record is quoted ("The station said").
  */
-import { gateStateWords, visitStatusOf, type GateState, type StationVisit } from "../../sim";
+import { gateStateWords, visitStatusOf, type GateEvaluation, type GateState, type StationVisit } from "../../sim";
 
 /** The stations' own outcome words (review.py, verify.py) in plain words; the raw word stays beside them. */
 const STATION_OUTCOME_WORDS: Readonly<Record<string, string>> = {
@@ -48,13 +48,175 @@ export function visitStateWords(visit: Pick<StationVisit, "station" | "leftAt" |
 }
 
 /**
- * A gate's position in words (gateStateWords), with a reason that is a station's own outcome code in
- * plain words: "Refused: failed, with evidence", never "Refused: FAIL_WITH_EVIDENCE". Other reason
- * codes (findings-invalid, wrong-stage) are left as recorded.
+ * The reason codes the stations record with `gate.evaluated` (skills/<station>/scripts: the codes
+ * written in the record itself and the `code` of each refusal the station raises), in plain words.
+ * Each is read from the station's own message for that code; a code not listed here is shown as
+ * recorded, never guessed at.
  */
-export function gatePositionWords(gate: Pick<GateState, "state" | "reasonCode">): string {
-  const code = gate.reasonCode;
-  if (!code || (gate.state !== "overridden" && gate.state !== "failed")) return gateStateWords(gate);
-  const { own, words } = outcomeWordsOf(code);
-  return own ? gateStateWords({ ...gate, reasonCode: words }) : gateStateWords(gate);
+export const GATE_REASON_WORDS: Readonly<Record<string, string>> = {
+  // intent station: groom and plan (cell.py)
+  "spec-invalid": "the slice's spec did not pass its check",
+  "open-questions": "the spec still has open questions",
+  "plan-invalid": "the plan did not pass its check",
+  "spec-question": "the plan raised a question about the spec for the product manager",
+  "spec-changed": "the slice's spec changed",
+  replanned: "the ticket was planned again",
+  "policy-accepted": "a person accepted the policy concern",
+  "adr-changed": "an architecture decision changed",
+  "adr-conflict": "the plan cannot follow an architecture decision, and an engineer has not decided yet",
+  "adr-exception": "an engineer recorded an exception to an architecture decision",
+  "adr-accepted": "an engineer accepted the architecture decision the plan proposes",
+  "adr-not-accepted": "the plan proposes an architecture decision no engineer has accepted yet",
+  // audit station: the readiness tier (audit.py)
+  gold: "readiness tier Gold",
+  silver: "readiness tier Silver",
+  bronze: "readiness tier Bronze",
+  // build station: what a recorded override let through (build.py OVERRIDDEN_GATE)
+  "test-amended": "a committed test was changed",
+  "files-outside-plan": "files outside the plan were changed",
+  "test-passed-first-run": "a new test passed before any code was written",
+  "red-not-attributed": "the failing run did not name the new test",
+  "test-written-early": "the test was written in an earlier task",
+  "no-baseline": "the project has no test suite yet",
+  "impl-already-done": "the work was already done",
+  "not-a-secret": "what looked like a secret is not one",
+  // build station: its own records and refusals (build.py, landing.py)
+  "not-finished": "not every task is finished, or a spec ID has no test",
+  "round-limit": "the ticket has used every round it is allowed",
+  "commands-set": "the build's commands were set",
+  sequential: "too few builders were free, so the plan is built one task at a time",
+  "lane-handed-back": "a lane was handed back to the cell",
+  "lane-set-aside": "a lane was set aside; its tasks are built again in the cell",
+  "lanes-interaction": "the lanes' tests fail only when their work is joined",
+  "landing-failed": "the lanes' work could not be landed",
+  "branch-moved": "the ticket's branch moved, so nothing was landed",
+  "red-before-green": "the new tests already pass before any code is written",
+  "red-attribution": "the suite fails, but its output never mentions the new test",
+  "red-ids-not-named": "no test names the spec IDs the plan gives the task",
+  "suite-broken": "the change broke a suite that was passing",
+  "suite-red": "the suite does not pass",
+  "frozen-tests": "the task changes tests that are already committed",
+  scope: "the task changed files the plan did not give it",
+  "lane-scope": "the task changed files the plan gives another lane",
+  "changed-no-files": "the task changed no files",
+  "secret-candidate": "what was about to be committed looks like it holds a secret",
+  "claude-config": "the task writes Claude Code configuration",
+  "adr-files": "the task changes architecture decision records, which only people change",
+  "baseline-red": "the tests already failed before any change",
+  "baseline-red-after-main": "the tests fail once the latest main is merged in",
+  "main-conflict": "bringing the branch up to date with main conflicts",
+  "audit-missing": "there is no audit report",
+  "audit-stale": "the audit report is out of date",
+  "audit-bronze": "the repository's readiness tier is Bronze",
+  "no-test-command": "no test command is known for the build",
+  "command-missing": "the command is not installed",
+  "plan-order": "tasks are done in plan order, and this was not the next one",
+  "wrong-step": "the task was completed with the wrong step",
+  "task-already-done": "the task is already done",
+  "lanes-not-done": "not every lane is done",
+  "lanes-not-ready": "the tasks before the lanes are not done yet",
+  "no-free-place": "no place is free for another builder",
+  // merge station (merge.py)
+  "landed-overlap": "what landed on main since approval touches the same ground",
+  "main-moved": "main moved on since the ticket was tested",
+  "main-moving": "main kept moving while the ticket was being merged",
+  "revalidation-conflict": "main moved on since approval, and bringing the branch up to date conflicts",
+  "sent-back": "with the latest main merged in the tests fail, so the ticket went back to the build station",
+  "approval-void": "the approval no longer stands",
+  "exception-expired": "a security exception expired",
+  "merge-failed": "git could not merge the branch",
+  "remote-unreachable": "the shared repository could not be reached",
+  "no-shared-main": "the shared repository has no main branch to test against",
+  // review station (review.py)
+  "no-passing-verification": "there is no passing verification",
+  "evidence-missing": "evidence the verification lists is missing",
+  "votes-missing": "not every seat has voted",
+  "scan-unanswered": "the security scan has items no one answered",
+  "still-rejected": "the round would still be rejected",
+  "not-awaiting-human": "the ticket is not waiting for a person's approval",
+  // verify station (verify.py)
+  "incomplete-evidence": "the evidence is incomplete",
+  "not-built": "nothing is recorded as built yet",
+  "stale-evidence": "evidence is older than this verification run",
+  "builder-evidence": "the builder's own test run is not evidence",
+  "mock-as-evidence": "the design mock was given as evidence",
+  "mock-changed": "the approved design mock is missing or changed",
+  // more than one station
+  "code-changed": "the code changed after it was built or verified",
+  "uncommitted-changes": "the work has uncommitted changes",
+  "cell-dirty": "the work has uncommitted changes",
+  "wrong-stage": "the ticket is not at the stage this step needs",
+  "not-started": "the station's work has not started",
+  "already-started": "the station's work had already started",
+  "no-cell": "the ticket has no workspace yet",
+  "unknown-task": "the plan has no such task",
+};
+
+/**
+ * A code that only repeats the verdict: the intent station records `refused` when a command stops
+ * without a code of its own, so "Refused: refused" says nothing. Read as no reason.
+ */
+const VERDICT_ONLY = new Set(["refused", "refuse", "passed", "pass", "overridden", "override"]);
+
+/** A recorded reason code in words, or null when none was recorded (or the code only repeats the verdict). */
+export function gateReasonOf(code: string | null | undefined): { readonly words: string; readonly code: string; readonly known: boolean } | null {
+  const c = code?.trim();
+  if (!c || VERDICT_ONLY.has(c.toLowerCase())) return null;
+  const words = GATE_REASON_WORDS[c] ?? STATION_OUTCOME_WORDS[c];
+  return words ? { words, code: c, known: true } : { words: c, code: c, known: false };
+}
+
+/** What a gate's panel says when a refusal or an override recorded no reason. */
+export const NO_REASON_WORDS = "No reason was recorded";
+
+/**
+ * A gate's position in words (gateStateWords), with its recorded reason in plain words: "Refused: the
+ * plan did not pass its check", "Refused: failed, with evidence", never "Refused: FAIL_WITH_EVIDENCE".
+ * A code not in the table is shown as recorded. No reason (or one that only repeats the verdict)
+ * leaves the verdict alone ("Refused"), never "Refused: refused".
+ */
+export function gatePositionWords(gate: Pick<GateState, "state" | "reasonCode"> & { readonly gate?: GateState["gate"] }): string {
+  if (gate.state !== "overridden" && gate.state !== "failed") return gateStateWords(gate);
+  const reason = gateReasonOf(gate.reasonCode);
+  return gateStateWords({ ...gate, reasonCode: reason ? reason.words : null });
+}
+
+type Verdict = GateEvaluation["verdict"];
+const VERDICT_WORDS: Readonly<Record<Verdict, string>> = { passed: "Passed", refused: "Refused", overridden: "Overridden" };
+
+/** One evaluation of a gate, in words: "Refused for T2: the suite does not pass". */
+export function evaluationWords(e: Pick<GateEvaluation, "verdict" | "reasonCode" | "subject">): string {
+  const reason = gateReasonOf(e.reasonCode);
+  return `${VERDICT_WORDS[e.verdict]}${e.subject ? ` for ${e.subject}` : ""}${reason ? `: ${reason.words}` : e.verdict === "passed" ? "" : `: ${NO_REASON_WORDS.toLowerCase()}`}`;
+}
+
+/** What a gate's Decision section says beyond its position (which the panel's header shows). */
+export interface GateDecision {
+  /** The recorded reason; `none` when a refusal or an override recorded none; null when there is nothing to say. */
+  readonly reason: { readonly words: string; readonly code: string; readonly known: boolean } | "none" | null;
+  /** The task, check or seat the evaluation names, when it names one. */
+  readonly subject: string | null;
+  /** The gate's own sentence, only where it adds to the position and the reason. */
+  readonly detail: string | null;
+  /** Every evaluation of a gate evaluated more than once, oldest first. */
+  readonly evaluations: readonly Pick<GateEvaluation, "verdict" | "reasonCode" | "subject" | "at">[];
+}
+
+/**
+ * The Decision section of a gate. `evaluation` is the latest lifecycle evaluation that set this gate
+ * state (from the cell's gate log), or null when the gate was set otherwise (a review's tally, a
+ * person, the simulation). A gate set by an evaluation is described by its verdict and reason: its
+ * sentence ("Refused: plan-invalid.") only repeats them, so it is left out. "No reason was recorded"
+ * is said only of a refusal or an override an evaluation recorded without a reason.
+ */
+export function gateDecisionOf(gate: Pick<GateState, "state" | "reasonCode" | "detail" | "recorded" | "gate">, evaluation: Pick<GateEvaluation, "verdict" | "reasonCode" | "subject" | "at"> | null): GateDecision {
+  const evaluations = gate.recorded?.evaluations ?? [];
+  const latest = evaluations.length ? evaluations[evaluations.length - 1]! : evaluation;
+  const fromRecord = latest !== null;
+  const stopped = gate.state === "failed" || gate.state === "overridden";
+  // The latest evaluation's own code: a gate state keeps an earlier code when a later record has none.
+  const found = gateReasonOf(latest ? latest.reasonCode : stopped ? gate.reasonCode : null);
+  const reason = found ?? (fromRecord && stopped ? "none" : null);
+  const detail = gate.recorded || (fromRecord && (stopped || found)) ? null : gate.detail.trim() || null;
+  return { reason, subject: latest?.subject ?? null, detail, evaluations: evaluations.length > 1 ? evaluations : [] };
 }
