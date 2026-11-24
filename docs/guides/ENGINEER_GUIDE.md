@@ -200,6 +200,8 @@ The line itself is driven by what stations recorded, so running `RUN <ticket>` a
 
 `RUN release status` lists snapshots. `RUN release qualify --epic <EPIC-ID or issue number> | <SLICE-ID>... [--release <id>] [--commit <sha>]` evaluates an epic, or the slices you name, on the integration branch at one commit and writes `.factory/release/<id>/readiness.json`. It reruns the project's test suite on a clean tree, which runs the repository's own code. `RUN release show <id>` prints the checks.
 
+Qualify on any machine that has the integration branch. MACH reads each slice's ticket, verdicts, contracts and evidence hashes from the change record merged with it (`docs/changes/`), so a Factory that built none of an epic's slices reaches the same outcome as the Factories that built them. Evidence files stay on the machine that built the ticket: where this machine holds one, MACH checks it against the SHA-256 in the record, and the result's `evidence_files` counts those checked here and those held on another machine. Never edit a change record after it merges: MACH then stops counting it and the slice is blocked. A slice merged by MACH 0.21.0 or earlier has no such facts in its record and shows as `missing`.
+
 Four outcomes:
 
 1. **blocked**: a check failed, or a review blocker is open, with no exception.
