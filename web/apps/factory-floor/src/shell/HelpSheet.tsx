@@ -140,7 +140,7 @@ export function HelpSheet({ open, onOpenChange, opener }: { open: boolean; onOpe
               <li className="flex items-center gap-2">
                 <AuthorityBadge authority="simulated" /> Invented by the simulation
               </li>
-              <li>Times: measured to the millisecond or the second, an arrival time, bounded between other records, or unknown. A value no record says reads "Not recorded".</li>
+              <li>Times are shown as recorded. A time that is not what it looks like says so: an arrival time, one bounded between other records, or one the observer placed. A value no record says reads "Not recorded".</li>
               <li>A workflow agent's tool calls are a count and its last tool's name: each call is not observable, so none is drawn.</li>
               <li className="flex items-center gap-2">
                 <TelemetryBadge telemetry="exists" /> Simulation: MACH emits this event today

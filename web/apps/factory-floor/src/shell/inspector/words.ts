@@ -3,7 +3,7 @@
  * D8, D13, D14, D17), as plain functions over the scene's own state, so they are tested
  * (test/m62-acceptance.test.mjs) rather than left inside JSX. No React here.
  */
-import { GAP_CLASS_WORDS, MODELS, type Completeness, type PlanFacts, type StationVisit, type StreamObservationState, type VisitStatus } from "../../sim";
+import { GAP_CLASS_WORDS, MODELS, type Completeness, type EntityMeta, type PlanFacts, type StationVisit, type StreamObservationState, type VisitStatus } from "../../sim";
 import type { ConnectionStatus, RuntimeSummary } from "../../scene/connection";
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n.toLocaleString("en-GB")} ${n === 1 ? one : many}`;
@@ -115,6 +115,23 @@ export function completenessWords(c: Completeness): { state: "partial" | "recons
   if (c.state === "partial") return { state: "partial", why: parts.join(" ") || "Some history is missing." };
   if (notInterpreted) return { state: "not-interpreted", why: parts.join(" ") };
   return null;
+}
+
+/**
+ * The Record section's one line about an entity's start and end times, or null when both were
+ * recorded. The times themselves are shown where they belong (the header, the anatomy's facts, each
+ * record in the evidence); a recorded time needs no note on how it was measured. Only a time that
+ * was not recorded, or that the observer placed, is said.
+ */
+export function recordTimesWords(meta: Pick<EntityMeta, "start" | "end">): string | null {
+  const parts: string[] = [];
+  if (meta.start === "unknown") parts.push("start not recorded");
+  else if (meta.start === "inferred") parts.push("start placed by the observer, not measured");
+  if (meta.end === "unknown") parts.push("end not recorded, or still open");
+  else if (meta.end === "inferred") parts.push("end placed by the observer, not measured");
+  if (!parts.length) return null;
+  const text = parts.join("; ");
+  return `${text[0]!.toUpperCase()}${text.slice(1)}`;
 }
 
 /** What each gap class means, for people (kept with the gap's type, in sim/provenance.ts). */
