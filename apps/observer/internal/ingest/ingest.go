@@ -1319,11 +1319,29 @@ func (o *Observer) catchUp(t *tickCtx, ticket string, a *archive) bool {
 	}
 	gen := event.Hash8([]byte(strings.TrimRight(string(first), "\r")))
 	suppress := int64(0)
-	if live != nil && live.tailer.CP.Epoch == gen {
-		if !live.gone {
-			return false
+	if live != nil {
+		// Where the live log was read to. After a restart the source is only resumed (its
+		// tailer has not opened the file, which cleanup removed while the observer was down): the
+		// committed checkpoint it was resumed from says it. Without this every line was read
+		// again and compared with what was stored (item 5: the "conflict" gaps after a restart).
+		epoch, line := live.tailer.CP.Epoch, live.tailer.CP.LineNo
+		if epoch == "" && live.saved != "" {
+			epoch, line = live.saved, live.suppress
 		}
-		suppress = live.tailer.CP.LineNo
+		if epoch == gen {
+			if !live.gone {
+				return false
+			}
+			suppress = line
+		}
+	}
+	if live == nil || live.gone {
+		// The ticket's slice and epic, as the live cell's cell.json gave them: the records read
+		// from the archive name the same slice as the same records read live, so a record read
+		// again agrees with the stored one and cleanup's own records name the slice too.
+		if info := normalize.ParseCell(a.files.Bytes["cell.json"]); info.Present {
+			o.identity.LearnProduct(ticket, info.Product)
+		}
 	}
 	o.people.cell("archive:"+ticket, a.files, int64(len(a.lifecycle)))
 	l := normalize.NewLifecycle(ticket, gen, o.opts.Root, o.identity)

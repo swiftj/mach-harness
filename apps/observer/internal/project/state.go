@@ -396,6 +396,46 @@ type Cell struct {
 	Change      string `json:"change,omitempty"`
 	Widened     bool   `json:"widened,omitempty"`
 	WidenedRule string `json:"widened_rule,omitempty"`
+	// A ticket used again for a new run (a slice reissued after its work was abandoned keeps its
+	// ticket; its new cell folder is a new cell instance). RunStarted is when the run the cell's
+	// state describes began (its first record); RunFrom is where that run's entries begin in the
+	// lists above, which keep every run's entries for the metrics keyed by ticket. EarlierRuns are
+	// the runs before it, oldest first. RunRecordsUnattributed counts run records that could not
+	// be told to belong to one run.
+	RunStarted *Stamp `json:"run_started,omitempty"`
+	ClosedAt   *Stamp `json:"closed_at,omitempty"` // when cleanup's record or the run record closed the run
+
+	RunFrom                RunFrom       `json:"run_from"`
+	EarlierRuns            []*EarlierRun `json:"earlier_runs,omitempty"`
+	RunRecordsUnattributed int64         `json:"run_records_unattributed,omitempty"`
+	// RunRecords counts the run records of the run at work (cleanup writes one as it closes a run).
+	RunRecords int `json:"run_records,omitempty"`
+}
+
+// RunFrom: where the current run's entries begin in a cell's lists.
+type RunFrom struct {
+	Visits    int `json:"visits"`
+	Gates     int `json:"gates"`
+	Tasks     int `json:"tasks"`
+	Checks    int `json:"checks"`
+	Reviews   int `json:"reviews"`
+	Findings  int `json:"findings"`
+	Approvals int `json:"approvals"`
+}
+
+// EarlierRun is one finished run of a ticket used again: its cell instance, when its records
+// begin and end, and how it ended as its own records say. Outcome is "" when no record of it says.
+type EarlierRun struct {
+	CellInstance string `json:"cell_instance"`
+	Started      *Stamp `json:"started"`
+	Ended        *Stamp `json:"ended"`
+	Stage        string `json:"stage,omitempty"`
+	Outcome      string `json:"outcome,omitempty"`
+	Merged       bool   `json:"merged"`
+	Abandoned    bool   `json:"abandoned"`
+	Archived     bool   `json:"archived"`
+	Visits       int    `json:"visits"`
+	RunRecords   int    `json:"run_records"`
 }
 
 // ArtifactCounts counts artifact.recorded events by nature and integrity.
