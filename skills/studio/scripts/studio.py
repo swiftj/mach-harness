@@ -970,27 +970,16 @@ def cmd_project_set(studio: Studio, args: argparse.Namespace) -> int:
 # numbering: it reaches Product Studio through this module.
 
 
-def import_module() -> Any:
-    """project_import, or None where this copy of MACH does not have it yet."""
-    try:
-        import project_import
-    except ModuleNotFoundError as exc:
-        if exc.name != "project_import":
-            raise
-        return None
-    return project_import
-
-
 def import_reserved(studio: Studio, prefix: str) -> List[int]:
     """The numbers of one kind (SLICE, EPIC, PP) that an unfinished import holds: every allocator skips them."""
-    found = import_module()
-    return [int(number) for number in found.reserved_numbers(studio, prefix)] if found else []
+    import project_import
+    return [int(number) for number in project_import.reserved_numbers(studio, prefix)]
 
 
 def import_not_saved(studio: Studio) -> List[Dict[str, Any]]:
     """The `saved` row for an import that stopped part way, or none."""
-    found = import_module()
-    stopped = found.unfinished(studio) if found else None
+    import project_import
+    stopped = project_import.unfinished(studio)
     if not stopped:
         return []
     name = stopped.get("file") or "the archive"
@@ -1004,18 +993,16 @@ def cmd_project_export(studio: Studio, args: argparse.Namespace) -> int:
 
 
 def cmd_project_import(studio: Studio, args: argparse.Namespace) -> int:
-    found = import_module()
-    if found is None:
-        raise StudioError("This copy of MACH cannot bring a project in yet. Nothing was changed.")
+    import project_import
     archive = Path(os.path.abspath(str(Path(args.archive).expanduser())))
-    return emit((found.plan if args.plan else found.run)(sys.modules[__name__], studio, archive))
+    if args.plan:
+        return emit(project_import.plan(sys.modules[__name__], studio, archive))
+    return emit(project_import.run(sys.modules[__name__], studio, archive))
 
 
 def cmd_project_imports(studio: Studio, args: argparse.Namespace) -> int:
-    found = import_module()
-    if found is None:
-        raise StudioError("This copy of MACH cannot bring a project in yet. Nothing was changed.")
-    return emit(found.lookup(studio, args.identifier))
+    import project_import
+    return emit(project_import.lookup(studio, args.identifier))
 
 
 def add_epic(studio: Studio, title: str, criteria: Sequence[str], serves: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

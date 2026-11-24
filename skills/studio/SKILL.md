@@ -323,7 +323,7 @@ A PM can take the whole project from one repository to another, for example into
    - what will need doing afterwards (`after`): publishing the principles, answering again the sections about shipped behaviour that name the old repository's rules, linking Jira again;
    - any line under `check_by_hand` (an ID inside quoted code, left as written) or `not_in_archive` (an ID the file does not hold), with the file and line.
    Then ask whether to bring it in. Do not bring it in without their yes to this plan.
-3. On their yes, run `STUDIO project import <path>`. If its report says "The numbers moved since the plan", read both and ask again before going on. Then read out the report's important parts:
+3. On their yes, run `STUDIO project import <path>`. If its report says "The numbers moved since the plan" (`numbers_moved`), read both and ask again before going on. Then read out the report's important parts:
    - its `note`;
    - the slices that were ready to build, being built or shipped in the old repository and are drafts here, each by its new ID;
    - IDs left as written inside code, to check by hand (`check_by_hand`), with file and line;

@@ -17,7 +17,7 @@ export type OutcomeResult = "met" | "not-met" | "too-early";
 export type AssumptionResult = "confirmed" | "wrong" | "unknown";
 export type LookbackResult = OutcomeResult | AssumptionResult;
 /** typed by the PM, an idea-template issue, a request issue, a fault from production, or a change to a shipped rule. */
-export type IdeaSourceKind = "typed" | "idea" | "request" | "fault" | "change";
+export type IdeaSourceKind = "typed" | "idea" | "request" | "fault" | "change" | "moved";
 
 /**
  * What the engine says to do next for one idea (`next.kind`). The engine has no next-action kind for Shape in

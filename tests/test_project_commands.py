@@ -6,7 +6,6 @@ command or flag names), the numbers an unfinished import holds skipped by Studio
 `import_unfinished` row of `saved`. The skill's `STUDIO project ...` commands are checked against the parser.
 
 Uses the GitHub stand-in of test_mach_product_issues (IssuesBase): the clones `a` (Ada) and `b` (Ben) of acme/team-space.
-The import half runs once project_import.py (M21 D) is in this copy of MACH, and is skipped before.
 Design: docs/mach-next/M21_EXPORT_IMPORT.md, sections 3, 4.4, 4.6, 4.7, 7 and 10 E.
 """
 
@@ -27,12 +26,7 @@ import project_archive  # noqa: E402
 import project_export  # noqa: E402
 import studio  # noqa: E402
 
-try:
-    import project_import  # noqa: E402
-except ModuleNotFoundError:  # M21 D not in this copy yet
-    project_import = None
-
-NEEDS_IMPORT = unittest.skipIf(project_import is None, "project_import.py (M21 D) is not in this copy of MACH")
+import project_import  # noqa: E402
 # What a person reads in the app names no command, flag or engine file.
 BANNED = re.compile(r"studio\.py|--[a-z]|\bproject (export|import|imports)\b|\bslice take\b")
 NOTHING_CHANGED = "Nothing was changed."
@@ -160,14 +154,7 @@ class ExportCommandTest(IssuesBase):
         self.assertIn("Bringing in another project stopped part way here.", err)
         self.assertIsNone(BANNED.search(err), err)
 
-    def test_import_and_imports_need_the_import_module(self):
-        if project_import is not None:
-            self.skipTest("project_import.py is here")
-        self.assertIn("cannot bring a project in yet", self.refused(self.a, "project", "import", "x.zip", "--plan"))
-        self.assertIn("cannot bring a project in yet", self.refused(self.a, "project", "imports"))
 
-
-@NEEDS_IMPORT
 class ImportCommandTest(IssuesBase):
     """Ada exports her project; Ben, in a clone of the same repository standing in for another one, brings it in."""
 
@@ -234,6 +221,38 @@ class ImportCommandTest(IssuesBase):
         self.assertTrue(err.strip().endswith(NOTHING_CHANGED), err)
         err = self.refused(self.b, "--app", "project", "import", str(self.root / "missing.zip"))
         self.assertTrue(err.strip().endswith(NOTHING_CHANGED), err)
+
+    def test_an_import_stopped_part_way_holds_its_numbers_and_shows_in_saved(self):
+        """A real stop while placing Ada's second slice: status shows the row, Studio's own allocators skip the map's numbers,
+        export refuses, and running the import again through main finishes it."""
+        archive = self.exported()
+        self.own_project()
+        real = project_import._place
+
+        def place(source, target):
+            if target.name == "SLICE-004.json":
+                raise OSError(28, "No space left on device")
+            real(source, target)
+
+        with mock.patch.object(project_import, "_place", place):
+            err = self.refused(self.b, "project", "import", archive)
+        self.assertIn("Bringing in stopped part way: no space left on device.", err)
+        name = Path(archive).name
+        saved = self.ok(self.b, "status")["saved"]
+        row = next(row for row in saved["not_saved"] if row["kind"] == "import_unfinished")
+        self.assertEqual(row["text"], f"Bringing in the project from {name} stopped part way. Run it again with the same file to finish.")
+        app_row = next(row for row in self.ok(self.b, "--app", "status")["saved"]["not_saved"] if row["kind"] == "import_unfinished")
+        self.assertIsNone(BANNED.search(app_row["text"]), app_row["text"])
+        here = studio.Studio(self.b)
+        self.assertEqual(project_import.reserved_numbers(here, "SLICE"), [3, 4])
+        self.assertEqual(here.next_id("slice"), "SLICE-005")
+        self.assertEqual(here.next_id("epic"), "EPIC-003")
+        self.assertIn("Bringing in another project stopped part way here.", self.refused(self.b, "project", "export"))
+        result = self.ok(self.b, "project", "import", archive)
+        self.assertTrue(result["imported"])
+        self.assertTrue(self.ok(self.b, "status")["saved"]["everything_saved"])
+        self.assertEqual(here.next_id("slice"), "SLICE-005")
+        self.assertEqual(self.writes(), [])
 
     # ---- the numbers an unfinished import holds, and the row in `saved` (studio.py's own wiring) ----
 
