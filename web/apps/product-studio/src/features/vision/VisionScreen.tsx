@@ -7,7 +7,7 @@ import { useStatus } from "../../api/store";
 import { IssueNumber } from "../../shared/IssueLink";
 import { Fold } from "../../shared/layout/Fold";
 import { SectionNav } from "../../shared/layout/SectionNav";
-import { ContextRow, OnePane, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
+import { ContextActs, ContextRow, OnePane, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
 import { EpicSheet, knownCriteria } from "./EpicSheet";
 import { OutcomesEditor, ProjectCreator, cleanList } from "./ProjectForm";
 import { NewSliceDialog } from "../roadmap/NewSliceDialog";
@@ -194,6 +194,12 @@ function ProjectEditor({ status }: { status: Status }) {
 
   return (
     <form id="vision-section-vision" onSubmit={save} noValidate aria-label="The project" className="flex scroll-mt-6 flex-col gap-6">
+      {/* A save that did not go through is said at the top of the form, under the acts that tried it. */}
+      {act.shown ? (
+        <Banner tone="danger" live="assertive" title={act.shown.title} actions={act.shown.hint ? <HintAction hint={act.shown.hint} /> : undefined}>
+          <span className="whitespace-pre-line">{act.shown.message}</span>
+        </Banner>
+      ) : null}
       <Field label="Name" error={errors.name}>
         <Input value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
@@ -201,22 +207,19 @@ function ProjectEditor({ status }: { status: Status }) {
         <Textarea editorial rows={3} value={vision} onChange={(e) => setVision(e.target.value)} />
       </Field>
       <OutcomesEditor sectionId="vision-section-outcomes" outcomes={outcomes} onChange={setOutcomes} error={errors.outcomes} />
-      {act.shown ? (
-        <Banner tone="danger" live="assertive" title={act.shown.title} actions={act.shown.hint ? <HintAction hint={act.shown.hint} /> : undefined}>
-          <span className="whitespace-pre-line">{act.shown.message}</span>
-        </Banner>
-      ) : null}
-      <div className="flex flex-wrap items-center gap-3">
-        <Button variant="primary" type="submit" loading={act.pending} disabled={!dirty}>
-          Save changes
-        </Button>
-        <Button variant="ghost" onClick={discard} disabled={!dirty || act.pending}>
-          Discard changes
-        </Button>
+      {/* The form's acts are the page's acts (M16 rule 2.3): in the context row, so they stay in view however many
+          outcomes there are. The submit button belongs to this form by its id. */}
+      <ContextActs>
         <Text as="span" size="body-sm" tone="muted" aria-live="polite">
           {dirty ? `Unsaved: ${[changed.name && "name", changed.vision && "vision", changed.outcomes && "outcomes"].filter(Boolean).join(", ")}` : `Revision ${project.revision}`}
         </Text>
-      </div>
+        <Button variant="ghost" onClick={discard} disabled={!dirty || act.pending}>
+          Discard changes
+        </Button>
+        <Button variant="primary" type="submit" form="vision-section-vision" loading={act.pending} disabled={!dirty}>
+          Save changes
+        </Button>
+      </ContextActs>
     </form>
   );
 }

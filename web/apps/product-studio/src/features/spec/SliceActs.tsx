@@ -146,7 +146,8 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
         <DialogContent
           width="lg"
           title={`${id} is ready to build`}
-          description={saved.note}
+          // A short description of its own; MACH's note, which can run long, is the body's last line.
+          description={saved.saved_to === "github" ? "Saved to GitHub and marked ready for the builders." : "Approved and written to a folder, not to GitHub."}
           footer={
             <DialogClose asChild>
               {/* The confirming button is gone; focus moves to the one way out (the dialog stays open, so autoFocus alone does not). */}
@@ -157,7 +158,14 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
             </DialogClose>
           }
         >
-          <SavedPlace result={saved} />
+          <div className="flex flex-col gap-4">
+            <SavedPlace result={saved} />
+            {saved.note ? (
+              <Text size="body-sm" tone="muted" className="max-w-reading">
+                {saved.note}
+              </Text>
+            ) : null}
+          </div>
         </DialogContent>
       ) : (
         <DialogContent

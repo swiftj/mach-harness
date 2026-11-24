@@ -175,7 +175,7 @@ function FromPrd({ sliceId, slice, prd, problems, onConfirmed }: { sliceId: stri
               {prd.truncated ? <Text size="body-sm" tone="muted">Only the first part of these lines is shown.</Text> : null}
             </section>
 
-            <Answers sliceId={sliceId} prd={prd} lines={lines} groups={groups} toDiscuss={toDiscuss} setToDiscuss={setToDiscuss} total={answers.length} />
+            <Answers sliceId={sliceId} prd={prd} lines={lines} groups={groups} toDiscuss={toDiscuss} setToDiscuss={setToDiscuss} total={answers.length} actLabel={confirmLabel(acceptN, discussN)} />
 
             {prd.why_line ? (
               <Fold boxed label="The line its why must carry">
@@ -284,7 +284,10 @@ function Answers({
   toDiscuss,
   setToDiscuss,
   total,
+  actLabel,
 }: {
+  /** The words of the page's act in the context row, which accepts the waiting answers not ticked. */
+  actLabel: string;
   sliceId: string;
   prd: PrdForSlice;
   lines: Map<number, string> | null;
@@ -315,7 +318,8 @@ function Answers({
             Waiting for your word
           </Heading>
           <Text size="body-sm" tone="muted">
-            These are accepted as a group, with the button at the top of the page. Tick any you would rather discuss in the interview instead.
+            Tick any you would rather discuss in the interview instead. The rest are accepted together with “{actLabel}”, the button at the top of
+            the page beside the slice's name; its words change as you tick.
           </Text>
           <ol className="flex flex-col gap-3">
             {groups.waiting.map((a) => (
