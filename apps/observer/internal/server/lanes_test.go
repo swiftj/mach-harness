@@ -69,7 +69,7 @@ func buildJSON(state string, lanes []map[string]any, tasks []map[string]any, joi
 	if join != nil {
 		rec["join"] = join
 	}
-	return map[string]any{"ticket_id": "T-3", "suite": "green", "test_cmd": prose, "deviations": []map[string]any{{"type": "lane-set-aside", "detail": prose}},
+	return map[string]any{"ticket_id": "T-3", "suite": "green", "started_at": "2026-11-24T10:00:00+00:00", "test_cmd": prose, "deviations": []map[string]any{{"type": "lane-set-aside", "detail": prose}},
 		"tasks": tasks, "lanes": rec}
 }
 
@@ -166,7 +166,7 @@ func TestLanesOpen(t *testing.T) {
 	d, body := cellWith(t, h, "T-3")
 	noProse(t, body)
 	l := lanesOfReply(t, d)
-	if l["state"] != "open" || l["source"] != "cell" || l["fork"] != forkC || l["setting"] != float64(3) || l["opened_at"] != "2026-11-24T10:05:00Z" {
+	if l["state"] != "open" || l["source"] != "cell" || l["fork"] != forkC || l["setting"] != float64(3) || l["opened_at"] != "2026-11-24T10:05:00Z" || l["build_started_at"] != "2026-11-24T10:00:00Z" {
 		t.Fatalf("lanes: %v", l)
 	}
 	if !reflect.DeepEqual(l["before"], []any{"T01"}) || !reflect.DeepEqual(l["after"], []any{"T07"}) {

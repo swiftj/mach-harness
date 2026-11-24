@@ -199,7 +199,9 @@ test("in the side panel: the tasks grouped by lane, each with its time, or not r
   // T02: handed at 10:05, done at 10:09; T04 likewise, then T05 from T04's moment.
   assert.deepEqual([t("T02").seconds, t("T02").basis], [240, "recorded"]);
   assert.deepEqual([t("T04").seconds, t("T05").seconds], [180, 300]);
-  assert.equal(t("T01").seconds, null, "the first task before the lanes has no recorded start here");
+  assert.equal(t("T01").seconds, null, "the first task before the lanes, with no recorded start of the build");
+  const started = M.lanesPanel(M.readLanesReply(openReply({ build_started_at: at(1) })), null);
+  assert.equal(started.groups[0].tasks[0].seconds, 180, "timed from the build's recorded start");
   assert.equal(t("T03").status, "not done yet");
   assert.equal(t("T02").commitWords, "lane commit 1111111111, on its lane's branch until the join");
   assert.match(panel.summary, /Built in 3 lanes at the same time.*1 lane waits for a free place/);

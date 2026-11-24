@@ -104,6 +104,8 @@ export interface LanesReply {
   readonly buildReport: FileRead;
   readonly setting: number | null;
   readonly openedAt: number | null;
+  /** When the build started (build.json `started_at`): the first task before the lanes is timed from it. */
+  readonly buildStartedAt: number | null;
   readonly before: readonly string[];
   readonly after: readonly string[];
   readonly lanes: readonly LaneRecord[];
@@ -197,6 +199,7 @@ export function readLanesReply(raw: unknown): LanesReply | null {
     buildReport: fileRead(d.build_report),
     setting: whole(d.setting),
     openedAt: time(d.opened_at),
+    buildStartedAt: time(d.build_started_at),
     before: ids(d.before, taskId),
     after: ids(d.after, taskId),
     lanes,
@@ -435,9 +438,9 @@ function taskTimes(reply: LanesReply): ReadonlyMap<string, { seconds: number | n
       previous = done ?? previous;
     }
   }
-  // The cell's own chain: tasks before the lanes from one to the next (the first has no recorded start
-  // here); after the join, from the join's end.
-  let previous: number | null = null;
+  // The cell's own chain: tasks before the lanes from the build's start, then one to the next; after
+  // the join, from the join's end.
+  let previous: number | null = reply.buildStartedAt;
   for (const id of reply.before) {
     const done = at.get(id) ?? null;
     out.set(id, { seconds: between(previous, done), basis: between(previous, done) === null ? null : "recorded" });

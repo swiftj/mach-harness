@@ -183,7 +183,8 @@ type Lanes struct {
 	Source   string        `json:"source"` // "cell" or "archive"
 	Build    FileRead      `json:"build_json"`
 	Report   FileRead      `json:"build_report"`
-	Setting  *int          `json:"setting"` // build.max_lanes when the lanes were planned
+	Setting  *int          `json:"setting"`          // build.max_lanes when the lanes were planned
+	Started  *string       `json:"build_started_at"` // when the build started (build.py start)
 	Fork     *string       `json:"fork"`
 	OpenedAt *string       `json:"opened_at"`
 	Before   []string      `json:"before"`
@@ -227,8 +228,9 @@ type rawLaneEntry struct {
 }
 
 type rawBuild struct {
-	Tasks []rawTask `json:"tasks"`
-	Lanes *struct {
+	StartedAt any       `json:"started_at"`
+	Tasks     []rawTask `json:"tasks"`
+	Lanes     *struct {
 		State    any `json:"state"`
 		Setting  any `json:"setting"`
 		Fork     any `json:"fork"`
@@ -564,7 +566,7 @@ func ReadLanes(root, ticket string, expected bool) *Lanes {
 	if s := optEnum(rec.State, "planned", "open", "sequential", "joined"); s != nil {
 		out.State = *s
 	}
-	out.Setting, out.Fork, out.OpenedAt = optInt(rec.Setting), optCommit(rec.Fork), optTime(rec.OpenedAt)
+	out.Setting, out.Fork, out.OpenedAt, out.Started = optInt(rec.Setting), optCommit(rec.Fork), optTime(rec.OpenedAt), optTime(b.StartedAt)
 	if rec.Plan != nil {
 		out.Before, out.After = taskList(rec.Plan.Before), taskList(rec.Plan.After)
 	}
