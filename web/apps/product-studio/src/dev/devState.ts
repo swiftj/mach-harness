@@ -10,6 +10,8 @@ export const devState = {
   reopened: new Set<string>(),
   /** How many times slice.ready was asked, for ?ready=refused-once. */
   readyAsked: 0,
+  /** What a Shape act answered in this page's life (a verdict recorded, a route found), by idea, for the board's row. */
+  ideaActs: new Map<string, { stage?: string; verdict?: unknown; route?: string }>(),
 };
 
 /** Query parameters before the hash: http://127.0.0.1:5173/?show=errors#/slices/SLICE-002 */

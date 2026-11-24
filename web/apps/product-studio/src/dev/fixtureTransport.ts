@@ -26,7 +26,7 @@
 import type { EngineRun, SliceCheck, SliceShow, Transport, TransportResponse } from "@mach/ui/api";
 import { devParam, devState } from "./devState";
 import { memoryRoute, memoryShow } from "./memoryTransport";
-import { shapeRoute, shapeShow } from "./shapeTransport";
+import { alignStatusIdeas, shapeRoute, shapeShow } from "./shapeTransport";
 import { needsRoute } from "./needsTransport";
 import { smallRoute, smallShow } from "./smallTransport";
 import { startRoute } from "./startTransport";
@@ -211,6 +211,7 @@ export const fixtureTransport: Transport = async ({ path, method, body }) => {
   const name = chosen ?? (op ? defaults[op] : undefined);
   const run = name ? await load<unknown>(name) : null;
   if (!run) return fail("invalid", `No fixture answers ${path}.`, 400);
-  if (run.data !== null) return ok(run.data);
+  // The board's row for the idea in view comes from the same run as the page's idea.show, so the two agree.
+  if (run.data !== null) return ok(op === "status" ? alignStatusIdeas(clone(run.data)) : run.data);
   return fail("refused", run.refused ?? "Refused.", 422, run.hint ?? null);
 };
