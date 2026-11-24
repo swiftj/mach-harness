@@ -1,6 +1,6 @@
 {
   "exit_code": 1,
   "data": null,
-  "refused": "SLICE-005 is already a full slice (2026-11-22T12:34:35Z): It should also change the reminder email, which is a second message.",
+  "refused": "SLICE-005 is already a full slice (2026-11-24T13:29:21Z): It should also change the reminder email, which is a second message.",
   "hint": null
 }

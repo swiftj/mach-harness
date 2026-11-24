@@ -12,7 +12,8 @@
         "Admins stay in control of who has access"
       ],
       "issue": 1,
-      "url": "https://github.com/acme/team-space/issues/1"
+      "url": "https://github.com/acme/team-space/issues/1",
+      "changed_elsewhere": null
     },
     "approvals_withdrawn": [],
     "epics": [
@@ -27,6 +28,8 @@
         ],
         "issue": 2,
         "url": "https://github.com/acme/team-space/issues/2",
+        "changed_elsewhere": null,
+        "same_moment": null,
         "counts": {
           "total": 1,
           "by_progress": {
@@ -60,11 +63,12 @@
           "changed_on_github": false,
           "newer_elsewhere": false,
           "number_taken": false,
+          "same_moment": null,
           "question": null,
           "question_note": null,
           "shipped_issues": [],
           "times": {
-            "marked_ready": "2026-11-22T12:33:40Z",
+            "marked_ready": "2026-11-24T13:28:19Z",
             "building": null,
             "question": null,
             "shipped": null
@@ -76,7 +80,8 @@
     "saved": {
       "everything_saved": true,
       "note": "Everything is saved.",
-      "not_saved": []
+      "not_saved": [],
+      "github_check": null
     },
     "order": [
       {
@@ -101,6 +106,8 @@
         "note": null
       }
     ],
+    "same_id_twice": [],
+    "project_on_github": null,
     "github": {
       "repository": "acme/team-space",
       "form": "sub_issues",

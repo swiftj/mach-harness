@@ -73,12 +73,12 @@ The app follows the same guardrails as this skill: marking ready and choosing be
 
 ## Project
 
-A project has an ID, a name, a vision and one or more outcomes. If `status` shows no project:
+A project has a name, a vision and one or more outcomes; MACH makes its ID from the name. If `status` shows no project:
 
 - Ask for the vision and the outcomes one question at a time, each a yes-or-no proposal with your recommendation, drawn from what the PM has already said and from product documents in the project (look them up; do not ask for what you can read).
 - An outcome is a result for a person, such as "Invited members can open the campaigns they were invited to", never a feature list or a technology.
-- Propose the project ID yourself: lowercase words joined by hyphens.
-- Run `STUDIO project init --id <id> --name "<name>" --vision "<vision>" --outcome "<outcome>"`, repeating `--outcome`.
+- Do not ask the PM for a project ID and do not propose one: MACH makes it from the name.
+- Run `STUDIO project init --name "<name>" --vision "<vision>" --outcome "<outcome>"`, repeating `--outcome`. Pass `--id <id>` only when the PM asks for an ID of their own (lowercase letters, digits and hyphens, starting with a letter).
 
 Change it later with `STUDIO project set` (`--name`, `--vision`, `--outcome` repeated to replace the list, `--status`).
 
@@ -294,7 +294,8 @@ A slice someone else saved on GitHub shows in refresh under `github.slices` with
 
 - **Per slice** (`slices[].github`): `progress`, one word for where it is (`draft`, `interviewing`, `ready_for_approval`, `approved`, `ready_to_build`, `being_built`, `question`, `shipped`), and `times`: when this version was marked ready (its approval comment), taken by the builders, asked about and shipped (the Factory's status comments), as GitHub dated them at the last refresh. A moment that is not known is `null`; never guess one.
 - **Per epic** (`epics[].counts`): how many slices are at each place, and `ready_or_further` with what it means (`ready_or_further_means`: marked ready to build, being built, or shipped). Say it as "2 of 4 slices ready or further".
-- **`saved`**: `everything_saved`, a `note` ("Everything is saved." or how many things are not), and each thing in `not_saved` with its words: a save to GitHub that stopped part way, a slice changed since it was marked ready (the builders still have the approved version), a check of GitHub that did not finish, updates to requests not yet made. Read them to the PM as written.
+- **`saved`**: `everything_saved`, a `note` ("Everything is saved." or how many things are not), and each thing in `not_saved` with its words: a save to GitHub that stopped part way, a slice changed since it was marked ready (the builders still have the approved version), updates to requests not yet made. Read them to the PM as written.
+- **`saved.github_check`**: `null` while the last check of GitHub worked. When it failed: `failed_at`, `last_worked_at`, `problem` and `text`. A failed check is not something unsaved: nothing of the PM's is lost, and it is never in `not_saved` or the count. Say it as the `text` says it, in one line, and offer to refresh, which checks GitHub again.
 
 ## Product acceptance of a release
 

@@ -11,7 +11,8 @@
         "Teams can work together"
       ],
       "issue": null,
-      "url": null
+      "url": null,
+      "changed_elsewhere": null
     },
     "approvals_withdrawn": [],
     "epics": [],
@@ -19,16 +20,19 @@
     "saved": {
       "everything_saved": true,
       "note": "Everything is saved.",
-      "not_saved": []
+      "not_saved": [],
+      "github_check": null
     },
     "order": [],
+    "same_id_twice": [],
+    "project_on_github": null,
     "github": {
       "repository": "acme/team-space",
       "form": null,
-      "last_read": "2026-11-23T16:21:37Z"
+      "last_read": "2026-11-24T13:29:26Z"
     },
     "current_slice": null,
-    "last_refreshed": "2026-11-23T16:21:37Z",
+    "last_refreshed": "2026-11-24T13:29:26Z",
     "structurally_valid": true,
     "structural_errors": [],
     "factory_authorized": false,

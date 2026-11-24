@@ -19,7 +19,7 @@
         "artifact": "SLICE-002",
         "kind": "slice",
         "reason": "Someone else saved a different epic as EPIC-001 at the same moment, so the epic needs a new number and this slice needs your approval again.",
-        "at": "2026-11-23T22:38:32Z"
+        "at": "2026-11-24T13:29:36Z"
       }
     ],
     "epics": [
@@ -38,7 +38,7 @@
           "issue": 4,
           "holder": 2,
           "by": null,
-          "at": "2026-11-23T22:38:32Z",
+          "at": "2026-11-24T13:29:36Z",
           "issue_url": "https://github.com/acme/team-space/issues/4",
           "holder_url": "https://github.com/acme/team-space/issues/2"
         },
@@ -112,7 +112,8 @@
     "saved": {
       "everything_saved": true,
       "note": "Everything is saved.",
-      "not_saved": []
+      "not_saved": [],
+      "github_check": null
     },
     "order": [
       {

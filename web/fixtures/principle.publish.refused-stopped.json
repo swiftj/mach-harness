@@ -1,6 +1,6 @@
 {
   "exit_code": 1,
   "data": null,
-  "refused": "Publishing the principles to GitHub stopped part way. GitHub did not answer as expected. GitHub said: \"Post https://api.github.com/graphql: net/http: request canceled (Client.Timeout exceeded)\" Publish them again to finish; nothing will be made twice.",
+  "refused": "Publishing the principles to GitHub stopped part way. GitHub did not answer as expected. GitHub said: \"Post https://api.github.com/graphql: net/http: request canceled (Client.Timeout exceeded)\". Publish them again to finish; nothing will be made twice.",
   "hint": null
 }

@@ -1,7 +1,8 @@
+import { useEffect, useRef } from "react";
 import { Link, Outlet, useLocation } from "react-router";
 import { AppShell, Badge, ConnectionIndicator, HintProvider, MachMark, NavMenu, NavMenuItem, ThemeSwitch, TopBar, savedState, useConnectionState, type Status } from "@mach/ui";
 import { client, usingFixtures } from "./api/client";
-import { useSession, useStatus } from "./api/store";
+import { useRefresh, useSession, useStatus } from "./api/store";
 import { destinationFor, destinations } from "./features/registry";
 import { AppHint } from "./shared/AppHint";
 import { sliceSectionLabel } from "./shared/SliceSections";
@@ -18,6 +19,8 @@ export function Layout() {
   const host = useConnectionState(client.connection);
   const session = useSession();
   const status = useStatus();
+  const refresh = useRefresh();
+  useGithubRecheck(Boolean(status.data?.saved.github_check), refresh.loading, refresh.run);
   const projectName = status.data?.project?.name ?? session.data?.project.name ?? session.data?.project.folder ?? "Project";
   const here = location.pathname;
   const atHome = here === "/";
@@ -38,7 +41,12 @@ export function Layout() {
           status={
             <>
               {usingFixtures ? <Badge tone="warning">Fixture data</Badge> : null}
-              <ConnectionIndicator host={host} saved={status.data ? savedState(status.data.saved) : undefined} />
+              <ConnectionIndicator
+                host={host}
+                saved={status.data ? savedState(status.data.saved) : undefined}
+                onCheckAgain={() => void refresh.run()}
+                checking={refresh.loading}
+              />
             </>
           }
           actions={
@@ -120,4 +128,43 @@ function Breadcrumb({ projectName, path, status }: { projectName: string; path: 
       </ol>
     </nav>
   );
+}
+
+/** The app's own checks of GitHub after one failed: the first after a moment, then one, two, four ... up to fifteen minutes apart. */
+const FIRST_RECHECK_MS = 5_000;
+const RECHECK_MS = 60_000;
+const RECHECK_MAX_MS = 15 * 60_000;
+
+/**
+ * A failed check of GitHub is tried again without being asked: shortly after the app shows the failure, then when the
+ * window is looked at, the computer is back on a network, or the wait is over. Each check that fails again doubles the
+ * wait, so a long outage does not keep the project busy; a check that works ends it. The indicator's "Check GitHub
+ * again" does the same on a person's word.
+ */
+function useGithubRecheck(failed: boolean, checking: boolean, check: () => Promise<void>) {
+  const state = useRef({ last: 0, wait: FIRST_RECHECK_MS, since: 0 });
+  useEffect(() => {
+    if (!failed) {
+      state.current = { last: 0, wait: FIRST_RECHECK_MS, since: 0 };
+      return;
+    }
+    if (!state.current.since) state.current.since = Date.now();
+    const again = () => {
+      const s = state.current;
+      if (checking || document.visibilityState === "hidden" || Date.now() - Math.max(s.last, s.since) < s.wait) return;
+      s.last = Date.now();
+      s.wait = s.wait < RECHECK_MS ? RECHECK_MS : Math.min(s.wait * 2, RECHECK_MAX_MS);
+      void check();
+    };
+    const timer = window.setInterval(again, FIRST_RECHECK_MS);
+    window.addEventListener("focus", again);
+    window.addEventListener("online", again);
+    document.addEventListener("visibilitychange", again);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", again);
+      window.removeEventListener("online", again);
+      document.removeEventListener("visibilitychange", again);
+    };
+  }, [failed, checking, check]);
 }

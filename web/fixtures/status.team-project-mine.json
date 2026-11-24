@@ -66,7 +66,7 @@
           "question_note": null,
           "shipped_issues": [],
           "times": {
-            "marked_ready": "2026-11-23T22:38:40Z",
+            "marked_ready": "2026-11-24T13:29:44Z",
             "building": null,
             "question": null,
             "shipped": null
@@ -78,7 +78,8 @@
     "saved": {
       "everything_saved": true,
       "note": "Everything is saved.",
-      "not_saved": []
+      "not_saved": [],
+      "github_check": null
     },
     "order": [
       {
@@ -104,7 +105,7 @@
         "github_order": [
           "SLICE-001"
         ],
-        "github_read_at": "2026-11-23T22:38:40Z",
+        "github_read_at": "2026-11-24T13:29:43Z",
         "matches_github": true,
         "unfinished": false,
         "taken_from_github": false,
@@ -118,15 +119,15 @@
       "url": "https://github.com/acme/team-space/issues/1",
       "name": "Team Space",
       "readable": true,
-      "read_at": "2026-11-23T22:38:40Z"
+      "read_at": "2026-11-24T13:29:43Z"
     },
     "github": {
       "repository": "acme/team-space",
       "form": "sub_issues",
-      "last_read": "2026-11-23T22:38:40Z"
+      "last_read": "2026-11-24T13:29:43Z"
     },
     "current_slice": "SLICE-002",
-    "last_refreshed": "2026-11-23T22:38:40Z",
+    "last_refreshed": "2026-11-24T13:29:43Z",
     "structurally_valid": true,
     "structural_errors": [],
     "factory_authorized": false,

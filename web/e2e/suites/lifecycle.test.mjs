@@ -71,7 +71,7 @@ test("lifecycle: from nothing to a slice ready to build, through the UI only", a
     await main().getByRole("textbox", { name: "Outcome 1" }).fill("Teams can work together");
     await main().getByRole("button", { name: "Add an outcome" }).click();
     await main().getByRole("textbox", { name: "Outcome 2" }).fill("Admins stay in control of who has access");
-    assert.equal(await main().getByRole("textbox", { name: "Project ID" }).inputValue(), "team-space");
+    assert.equal(await main().getByRole("textbox", { name: "Project ID" }).count(), 0, "MACH makes the project's ID; the form does not ask");
     await main().getByRole("button", { name: "Create the project" }).click();
     await main().getByRole("heading", { level: 1, name: "Vision" }).waitFor();
     await main().getByText("Revision 1").waitFor();

@@ -8,9 +8,12 @@
     "saved": {
       "everything_saved": true,
       "note": "Everything is saved.",
-      "not_saved": []
+      "not_saved": [],
+      "github_check": null
     },
     "order": [],
+    "same_id_twice": [],
+    "project_on_github": null,
     "github": {
       "repository": null,
       "form": null,
@@ -28,7 +31,7 @@
           "source": {
             "kind": "typed"
           },
-          "created": "2026-11-23T16:21:36Z",
+          "created": "2026-11-24T13:29:25Z",
           "revision": 0,
           "has_brief": false,
           "brief_checked": false,

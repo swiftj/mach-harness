@@ -6,7 +6,7 @@
     "requests": {
       "repository": "acme/team-space",
       "refreshed": true,
-      "refreshed_at": "2026-11-22T12:33:56Z",
+      "refreshed_at": "2026-11-24T13:28:35Z",
       "problem": null,
       "truncated": false,
       "truncated_note": null,
@@ -20,7 +20,7 @@
       "repository": "acme/team-space",
       "refreshed": true,
       "problem": null,
-      "refreshed_at": "2026-11-22T12:33:56Z",
+      "refreshed_at": "2026-11-24T13:28:35Z",
       "form": null,
       "project_issue": null,
       "project_url": null,
@@ -77,16 +77,19 @@
           "revision": null,
           "approved": null,
           "approved_by": null,
-          "read_at": "2026-11-22T12:33:56Z"
+          "read_at": "2026-11-24T13:28:35Z"
         },
         "newer_elsewhere": false,
         "changed_on_github": false
-      }
+      },
+      "same_id_twice": [],
+      "changed_elsewhere": [],
+      "text_taken": []
     },
     "shipped_moved": {
       "SLICE-004": {
-        "checked_at": "81e5b5f8d6c4f8108557d5dc86944c4d48e5f6f1",
-        "now": "cd8a21f7d9793f20d23b2297bc4d4552b045dbd2",
+        "checked_at": "62634a1bc62655718a7c88b4bc4f0c8571c0f034",
+        "now": "de33238bbddb202608c72980b2eb7736a1414a63",
         "problems": [
           {
             "line": 87,

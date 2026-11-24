@@ -1,6 +1,18 @@
-# MACH release notes: 0.23.1
+# MACH release notes: 0.23.2
 
 What is new in each release, newest first, followed by supported platforms, what you need, upgrading and security notes.
+
+## What changed in 0.23.2
+
+Product Studio says what really happened when it cannot check GitHub, and naming a product no longer asks for a project ID.
+
+| Change | What it is |
+| --- | --- |
+| No project ID to type | Naming the product asks for its name, vision and outcomes. MACH makes the project's ID from the name. |
+| A check of GitHub that fails says why | MACH names what went wrong: no network, GitHub limiting how often the account may ask, GitHub not answering, something on your computer stopping the GitHub tool (a proxy, or a sandbox the session runs in), the sign-in, or a refusal. Each comes with the GitHub tool's own words. |
+| One dropped connection is not a failure | A read of GitHub is tried twice more, a few seconds apart, before MACH reports it. |
+| "GitHub not checked" is its own notice | The app's top bar shows it beside the saved state, with when the check failed and when the last one worked. It is no longer counted in "things not saved yet": a failed check loses nothing of yours. |
+| The app checks again by itself | After a failed check the app tries again shortly, then at widening intervals up to fifteen minutes, and stops when a check works. "Check GitHub again" does it at once. |
 
 ## What changed in 0.23.1
 

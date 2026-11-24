@@ -13,8 +13,8 @@
       ]
     },
     "path": "/project/.factory/studio/draft/product/project.json",
-    "github_not_checked": "GitHub could not be reached.",
-    "note": "MACH could not check GitHub for a project already there. GitHub could not be reached. It checks again when you mark a slice ready."
+    "github_not_checked": "GitHub could not be reached. The GitHub tool (gh) said: \"error connecting to api.github.com\".",
+    "note": "MACH could not check GitHub for a project already there. GitHub could not be reached. The GitHub tool (gh) said: \"error connecting to api.github.com\". It checks again when you mark a slice ready."
   },
   "refused": null,
   "hint": null

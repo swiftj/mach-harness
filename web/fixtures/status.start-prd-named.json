@@ -12,7 +12,8 @@
         "Admins stay in control of who has access"
       ],
       "issue": null,
-      "url": null
+      "url": null,
+      "changed_elsewhere": null
     },
     "approvals_withdrawn": [],
     "epics": [],
@@ -20,16 +21,19 @@
     "saved": {
       "everything_saved": true,
       "note": "Everything is saved.",
-      "not_saved": []
+      "not_saved": [],
+      "github_check": null
     },
     "order": [],
+    "same_id_twice": [],
+    "project_on_github": null,
     "github": {
       "repository": "acme/team-space",
       "form": null,
-      "last_read": "2026-11-23T16:21:35Z"
+      "last_read": "2026-11-24T13:29:24Z"
     },
     "current_slice": null,
-    "last_refreshed": "2026-11-23T16:21:35Z",
+    "last_refreshed": "2026-11-24T13:29:24Z",
     "prds": [
       {
         "prd_id": "PRD-01",
@@ -55,7 +59,7 @@
           "source": {
             "kind": "typed"
           },
-          "created": "2026-11-23T16:21:35Z",
+          "created": "2026-11-24T13:29:24Z",
           "revision": 0,
           "has_brief": false,
           "brief_checked": false,

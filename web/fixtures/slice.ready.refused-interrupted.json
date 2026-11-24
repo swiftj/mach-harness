@@ -1,7 +1,7 @@
 {
   "exit_code": 1,
   "data": null,
-  "refused": "SLICE-009 is approved, but saving it to GitHub stopped part way. GitHub did not answer as expected. GitHub said: \"Post https://api.github.com/graphql: net/http: request canceled (Client.Timeout exceeded)\" Mark it ready again to finish; nothing will be made twice.",
+  "refused": "SLICE-009 is approved, but saving it to GitHub stopped part way. GitHub did not answer as expected. GitHub said: \"Post https://api.github.com/graphql: net/http: request canceled (Client.Timeout exceeded)\". Mark it ready again to finish; nothing will be made twice.",
   "hint": {
     "kind": "finish_ready",
     "target": "SLICE-009"

@@ -1,4 +1,4 @@
-import { CircleCheck, CloudOff, Link2, Link2Off, LockKeyhole } from "lucide-react";
+import { CircleCheck, CloudOff, Link2, Link2Off, LockKeyhole, RefreshCwOff } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ConnectionState } from "../api/connection";
 import type { SavedReport } from "../api/types";
@@ -13,11 +13,18 @@ export interface SavedState {
   note: string;
   /** Each thing not saved yet, as the engine words it. */
   items: string[];
+  /** The last check of GitHub failed: the engine's words for what happened and how old what is shown is. Null when it worked. */
+  check: string | null;
 }
 
 /** The indicator's form of the engine's `status.saved`. */
 export function savedState(report: SavedReport): SavedState {
-  return { everythingSaved: report.everything_saved, note: report.note, items: report.not_saved.map((item) => item.text) };
+  return {
+    everythingSaved: report.everything_saved,
+    note: report.note,
+    items: report.not_saved.map((item) => item.text),
+    check: report.github_check?.text ?? null,
+  };
 }
 
 export interface ConnectionIndicatorProps {
@@ -25,6 +32,10 @@ export interface ConnectionIndicatorProps {
   host: ConnectionState;
   /** Whether everything is saved (Product Studio only). */
   saved?: SavedState;
+  /** Checks GitHub again; shown with the notice of a failed check. */
+  onCheckAgain?: () => void;
+  /** A check is running now. */
+  checking?: boolean;
   className?: string;
 }
 
@@ -50,7 +61,7 @@ const hostView: Record<ConnectionState, { label: string; detail: string; icon: R
  * everything is saved. Each has an icon and words, so neither relies on colour. Changes are
  * announced politely. The trigger opens a popover with the full explanation.
  */
-export function ConnectionIndicator({ host, saved, className }: ConnectionIndicatorProps) {
+export function ConnectionIndicator({ host, saved, onCheckAgain, checking, className }: ConnectionIndicatorProps) {
   const h = hostView[host];
   const savedLabel = saved ? saved.note.replace(/\.$/, "") : null;
   const savedTone = saved && !saved.everythingSaved ? "text-warning-ink" : "text-ink-muted";
@@ -61,6 +72,7 @@ export function ConnectionIndicator({ host, saved, className }: ConnectionIndica
       <span role="status" aria-live="polite" className="sr-only">
         {h.label}
         {saved && !saved.everythingSaved ? `. ${saved.note}` : ""}
+        {saved?.check ? ". GitHub not checked." : ""}
       </span>
       <PopoverTrigger
         className={cn(
@@ -82,6 +94,15 @@ export function ConnectionIndicator({ host, saved, className }: ConnectionIndica
             </span>
           </>
         ) : null}
+        {saved?.check ? (
+          <>
+            <span aria-hidden="true" className="h-4 w-px bg-line-strong" />
+            <span className="inline-flex items-center gap-1.5 text-warning-ink">
+              <RefreshCwOff aria-hidden="true" />
+              <span>GitHub not checked</span>
+            </span>
+          </>
+        ) : null}
       </PopoverTrigger>
       <PopoverContent align="end" className="flex w-80 flex-col gap-3">
         <div className="flex flex-col gap-0.5">
@@ -100,6 +121,22 @@ export function ConnectionIndicator({ host, saved, className }: ConnectionIndica
             ) : (
               <p className="text-body-sm text-ink-muted">Your drafts are kept on this computer; what you marked ready is on GitHub.</p>
             )}
+          </div>
+        ) : null}
+        {saved?.check ? (
+          <div className="flex flex-col gap-2 border-t border-line pt-3">
+            <p className="text-label text-warning-ink">GitHub not checked</p>
+            <p className="text-body-sm text-ink-muted">{saved.check}</p>
+            {onCheckAgain ? (
+              <button
+                type="button"
+                onClick={checking ? undefined : onCheckAgain}
+                aria-disabled={checking || undefined}
+                className="self-start rounded-sm border border-line-strong px-2 py-1 text-body-sm font-semibold text-ink hover:bg-surface-sunken aria-disabled:opacity-60"
+              >
+                {checking ? "Checking GitHub…" : "Check GitHub again"}
+              </button>
+            ) : null}
           </div>
         ) : null}
       </PopoverContent>

@@ -732,7 +732,7 @@ Sizes in use:
 | 18px | Navigation items, banner and toast icons |
 | 20px | Empty-state and error-state icons |
 
-Icons used and what they mean: `Info` (info), `CircleCheck` (success; everything saved), `TriangleAlert` (warning; attention on a graph node), `CircleAlert` (danger; field errors; refusals), `Check` (checked, selected option, copied, accept), `Minus` (indeterminate), `Copy`, `X` (close, dismiss, remove filter), `ChevronRight` (disclosure), `ChevronDown` (select, menu), `PanelLeftClose`/`PanelLeftOpen` (rail), `PanelRight`/`PanelRightClose` (inspector), `Link2` (connected), `Link2Off` (host not responding), `LockKeyhole` (session ended), `CloudOff` (not saved yet), `WifiOff` (stream lost), `Sun`/`Moon`/`Monitor` (theme), `ArrowLeft` (back), `ArrowRight` (go on to a page), `Plus` (add), `Send` (send an answer), `HelpCircle`/`CircleHelp` (explain, keyboard help), `TvMinimalPlay` (theater mode), `Rows3`, `ChartColumn`, `Table2`.
+Icons used and what they mean: `Info` (info), `CircleCheck` (success; everything saved), `TriangleAlert` (warning; attention on a graph node), `CircleAlert` (danger; field errors; refusals), `Check` (checked, selected option, copied, accept), `Minus` (indeterminate), `Copy`, `X` (close, dismiss, remove filter), `ChevronRight` (disclosure), `ChevronDown` (select, menu), `PanelLeftClose`/`PanelLeftOpen` (rail), `PanelRight`/`PanelRightClose` (inspector), `Link2` (connected), `Link2Off` (host not responding), `LockKeyhole` (session ended), `CloudOff` (not saved yet), `RefreshCwOff` (GitHub not checked), `WifiOff` (stream lost), `Sun`/`Moon`/`Monitor` (theme), `ArrowLeft` (back), `ArrowRight` (go on to a page), `Plus` (add), `Send` (send an answer), `HelpCircle`/`CircleHelp` (explain, keyboard help), `TvMinimalPlay` (theater mode), `Rows3`, `ChartColumn`, `Table2`.
 
 ### 6.2 Stroke rules for drawn glyphs
 
@@ -1153,7 +1153,7 @@ Charts are hand-drawn SVG, read-only, built on these rules:
 
 ### 7.14 Connection and saved indicators
 
-**Product Studio** (`ConnectionIndicator`): one popover trigger in the top bar, 32px tall, radius 5px, padding 0 8px, 12px gap, `body-sm`, hover `surface-sunken`, 16px icons. It shows two facts, each an icon and words:
+**Product Studio** (`ConnectionIndicator`): one popover trigger in the top bar, 32px tall, radius 5px, padding 0 8px, 12px gap, `body-sm`, hover `surface-sunken`, 16px icons. It shows two facts, and a third while a check of GitHub has failed, each an icon and words:
 
 | Fact | State | Icon | Words | Tone |
 |------|-------|------|-------|------|
@@ -1163,8 +1163,9 @@ Charts are hand-drawn SVG, read-only, built on these rules:
 | | unauthorized | `LockKeyhole` | Session ended | `warning-ink` |
 | Saved | everything saved | `CircleCheck` | Everything is saved | `ink-muted` |
 | | not saved | `CloudOff` | "2 things are not saved yet" | `warning-ink` |
+| GitHub check | failed (`saved.github_check` set) | `RefreshCwOff` | GitHub not checked | `warning-ink` |
 
-The host word is semibold; a 1×16px `line-strong` divider separates the two. A hidden prefix "Connection: " names the trigger. The popover (320px, aligned to the end, 12px gaps) explains each fact in a `label` line and a `body-sm` `ink-muted` sentence ("The local host may have stopped. Start Product Studio again from Claude Code, then reload.") and lists what is not saved. Changes are announced through a polite, visually hidden live region.
+The host word is semibold; a 1×16px `line-strong` divider separates each fact from the next. The GitHub check shows only while the last check failed, after the saved fact; it is never counted in "not saved yet". A hidden prefix "Connection: " names the trigger. The popover (320px, aligned to the end, 12px gaps) explains each fact in a `label` line and a `body-sm` `ink-muted` sentence ("The local host may have stopped. Start Product Studio again from Claude Code, then reload.") and lists what is not saved. While a check failed it ends with a section below a 1px `line` top border (12px padding, 8px gaps): the `label` "GitHub not checked" in `warning-ink`, the engine's `text` in `body-sm` `ink-muted` (when the check failed, why, and how old what is shown is), and a button "Check GitHub again" (radius 5px, 1px `line-strong` border, padding 4px 8px, `body-sm` semibold `ink`, hover `surface-sunken`, at the start) that refreshes; while the check runs it reads "Checking GitHub…" and is `aria-disabled`, so it keeps keyboard focus. While a failed check is shown the app also checks again by itself (a few seconds after showing it, then on a timer, on focus, on becoming visible and on coming back online, with the wait doubling from one minute up to fifteen after each check that fails), and stops when a check works. Changes are announced through a polite, visually hidden live region, which adds "GitHub not checked." while a check failed.
 
 **Factory Floor**: the source badge, connection badge, completeness badge and state chip (7.6); the connection popover (384px) holds a definition list of facts ("Connection", "Last confirmed", "Delivery lag", "Received") with terms in `ink-subtle`, and ends with "The Factory Floor only reads. It cannot start, pause, schedule or approve anything."
 
@@ -1275,7 +1276,7 @@ See 8.9 for the pattern and 12.2 for exact measurements.
 ### 8.5 Forms and validation
 
 - Label above, hint under the label, control, error under the control (7.3).
-- Errors say what to do: "Use lowercase words joined by hyphens, such as team-space."
+- Errors say what to do: "Write the vision: one sentence about what the product is for."
 - An invalid control has `aria-invalid="true"` and its error linked by `aria-describedby`; the error has an icon as well as colour.
 - Optional fields are marked "optional"; required fields are not marked.
 - Product writing (a vision, a why) uses the editorial text area at the reading size.
@@ -1380,7 +1381,7 @@ Plain, specific, calm and honest. Say what happened, what it means and what the 
 
 ### 9.4 Errors and refusals
 
-- Say specifically what went wrong and what to do: "Use lowercase words joined by hyphens, such as team-space."
+- Say specifically what went wrong and what to do: "Write the vision: one sentence about what the product is for."
 - A refusal from the back end is shown in its own words, unedited, with the action that would resolve it.
 - Error titles in the interface's voice, by kind:
 

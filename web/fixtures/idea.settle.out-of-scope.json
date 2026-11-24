@@ -4,7 +4,7 @@
     "idea_id": "IDEA-002",
     "stage": "decided",
     "route": {
-      "at": "2026-11-22T12:34:16Z",
+      "at": "2026-11-24T13:28:58Z",
       "brief_sha256": "ad173594db1a29145e2b916ec92437f4c548af68777e1c6fa34e6b5b4ab387a7",
       "counted": {
         "capabilities": 1,
@@ -83,7 +83,7 @@
         }
       ],
       "applied": false,
-      "mapped_at": "2026-11-22T12:34:16Z"
+      "mapped_at": "2026-11-24T13:28:58Z"
     },
     "coverage": [
       {
@@ -100,7 +100,7 @@
         "state": "settled",
         "settled": {
           "as": "out-of-scope",
-          "at": "2026-11-22T12:34:16Z",
+          "at": "2026-11-24T13:28:59Z",
           "reason": "Refusals are explained by the desk for now."
         }
       }
@@ -111,7 +111,7 @@
     "note": "Every outcome of IDEA-002 is carried or settled.",
     "settled": {
       "outcome": "O-2",
-      "at": "2026-11-22T12:34:16Z",
+      "at": "2026-11-24T13:28:59Z",
       "as": "out-of-scope",
       "reason": "Refusals are explained by the desk for now."
     }

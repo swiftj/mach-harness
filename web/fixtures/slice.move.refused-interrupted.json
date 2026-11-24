@@ -1,6 +1,6 @@
 {
   "exit_code": 1,
   "data": null,
-  "refused": "The new order of EPIC-001 is saved here, but putting it in place on GitHub stopped part way. GitHub did not answer as expected. GitHub said: \"Post https://api.github.com/graphql: net/http: request canceled (Client.Timeout exceeded)\" Move it again to finish; nothing is moved twice.",
+  "refused": "The new order of EPIC-001 is saved here, but putting it in place on GitHub stopped part way. GitHub did not answer as expected. GitHub said: \"Post https://api.github.com/graphql: net/http: request canceled (Client.Timeout exceeded)\". Move it again to finish; nothing is moved twice.",
   "hint": null
 }

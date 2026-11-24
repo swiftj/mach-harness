@@ -315,6 +315,7 @@ class Base(unittest.TestCase):
         self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
         os.environ["PATH"] = str(fake_bin) + os.pathsep + os.environ["PATH"]
         os.environ["FAKE_GH_STATE"] = str(self.gh_state)
+        os.environ["MACH_GH_RETRY_WAITS"] = ""  # these tests set one failure and expect it reported; RetryTest covers the further tries
 
     def repositories(self):
         """The shared remote and the three clones; files only."""
@@ -930,7 +931,7 @@ class FinishingTest(IssuesBase):
     def test_everything_is_saved_or_it_says_what_is_not(self):
         self.project_and_epic()
         self.drafted()
-        self.assertEqual(self.ok(self.a, "status")["saved"], {"everything_saved": True, "note": "Everything is saved.", "not_saved": []})
+        self.assertEqual(self.ok(self.a, "status")["saved"], {"everything_saved": True, "note": "Everything is saved.", "not_saved": [], "github_check": None})
         self.lose("issue comment")
         self.refused(self.a, "slice", "ready", "SLICE-001")
         saved = self.ok(self.a, "status")["saved"]
@@ -947,13 +948,93 @@ class FinishingTest(IssuesBase):
         # A read of GitHub that failed is kept until one succeeds.
         self.gh_fails("issue list", once=False)
         self.ok(self.a, "refresh")
-        kinds = [w["kind"] for w in self.ok(self.a, "status")["saved"]["not_saved"]]
-        self.assertEqual(kinds, ["changed_since_ready", "refresh_failed"])
+        saved = self.ok(self.a, "status")["saved"]
+        # It is said on its own, with what happened and when, and never counted as something not saved.
+        self.assertEqual(([w["kind"] for w in saved["not_saved"]], saved["note"]), (["changed_since_ready"], "1 thing is not saved yet."))
+        check = saved["github_check"]
+        self.assertRegex(check["text"], r"^MACH could not check GitHub at \d{4}-\d\d-\d\d \d\d:\d\d UTC: GitHub could not be reached\.")
+        self.assertIn("MACH has not yet read this project from GitHub on this computer.", check["text"])  # no refresh has worked here so far
+        self.assertTrue(check["text"].endswith("Nothing of yours is lost; MACH checks again when you refresh."))
+        self.assertTrue(check["failed_at"] and check["last_worked_at"] is None)
         state = self.gh()
         state["fail"] = {}
         self.gh_state.write_text(json.dumps(state))
         self.ok(self.a, "refresh")
-        self.assertEqual([w["kind"] for w in self.ok(self.a, "status")["saved"]["not_saved"]], ["changed_since_ready"])
+        saved = self.ok(self.a, "status")["saved"]
+        self.assertEqual(([w["kind"] for w in saved["not_saved"]], saved["github_check"]), (["changed_since_ready"], None))
+        # A later failure says how old what is shown is.
+        self.gh_fails("issue list", once=False)
+        self.ok(self.a, "refresh")
+        again = self.ok(self.a, "status")["saved"]["github_check"]
+        self.assertRegex(again["text"], r"What you see is from the last check that worked, at \d{4}-\d\d-\d\d \d\d:\d\d UTC\.")
+        self.assertTrue(again["last_worked_at"])
+
+
+class RetryTest(IssuesBase):
+    """A read of GitHub that fails for the network is tried again before it is reported, and a report says what happened."""
+
+    def setUp(self):
+        super().setUp()
+        self.set_gh(me="ada-pm")
+        self.project_and_epic()
+        self.drafted()
+        self.ready()
+        os.environ["MACH_GH_RETRY_WAITS"] = "0,0"  # two further tries, without waiting
+        self.addCleanup(os.environ.__setitem__, "MACH_GH_RETRY_WAITS", "")
+
+    def test_one_dropped_connection_is_not_reported(self):
+        self.gh_fails("issue list")  # the next call fails once, as when a computer has just woken
+        block = self.ok(self.a, "refresh")
+        saved = self.ok(self.a, "status")["saved"]
+        self.assertEqual((saved["github_check"], saved["everything_saved"]), (None, True), block)
+
+    def test_a_failure_that_lasts_says_how_often_it_was_tried_and_what_the_tool_said(self):
+        self.before = len(self.gh()["calls"])
+        self.gh_fails("issue list", once=False)
+        self.ok(self.a, "refresh")
+        saved = self.ok(self.a, "status")["saved"]
+        self.assertTrue(saved["everything_saved"], "a failed check is not something unsaved")
+        self.assertEqual(saved["note"], "Everything is saved.")
+        self.assertIn(f'GitHub could not be reached. The GitHub tool (gh) said: "{NETWORK_DOWN}".', saved["github_check"]["problem"])
+        # The first read that failed was tried three times; after that the command stops trying again, so it never waits long.
+        listed = [json.dumps(call) for call in self.gh()["calls"][self.before:] if call[:2] == ["issue", "list"]]
+        self.assertEqual(max(listed.count(call) for call in listed), 3)
+        self.assertEqual(sorted(listed.count(call) for call in set(listed)).count(3), 1, "only the first failing read is tried again")
+
+    def test_a_failure_is_named_as_what_it_is(self):
+        import collab
+        import handoff
+        import subprocess
+
+        def said(text):
+            failure = collab.classify(subprocess.CompletedProcess(["gh"], 1, "", text))
+            return failure["kind"], handoff.explain(failure)
+
+        for text, kind, words in (
+                ("error connecting to api.github.com", "network", "GitHub could not be reached."),
+                ("HTTP 403: API rate limit exceeded for user ID 1.", "rate_limit", "GitHub is limiting how often this account may ask just now."),
+                ("HTTP 502: Bad Gateway (https://api.github.com/graphql)", "unavailable", "GitHub is not answering properly just now."),
+                ('Post "https://api.github.com/graphql": dial tcp 140.82.112.6:443: connect: operation not permitted', "blocked", "Something on this computer stopped the GitHub tool"),
+                ('Post "https://api.github.com/graphql": proxyconnect tcp: dial tcp 127.0.0.1:9: connect: connection refused', "blocked", "Something on this computer stopped the GitHub tool"),
+                ("HTTP 401: Bad credentials (https://api.github.com/graphql)", "auth", "GitHub did not accept your sign-in on this computer."),
+                ("HTTP 403: Resource not accessible by integration", "rule", "GitHub refused this for your account.")):
+            got_kind, got_words = said(text)
+            self.assertEqual(got_kind, kind, text)
+            self.assertTrue(got_words.startswith(words), (text, got_words))
+            self.assertIn(text[:40], got_words, "the tool's own words are quoted")
+        self.assertEqual(handoff.explain(None), "GitHub did not answer as expected.", "nothing MACH can name is never said as a network failure")
+        for bad in ("nan", "inf", "x", "1,nan"):
+            os.environ["MACH_GH_RETRY_WAITS"] = bad
+            self.assertEqual(collab.retry_waits(), collab.DEFAULT_RETRY_WAITS, bad)
+        os.environ["MACH_GH_RETRY_WAITS"] = "0,0"
+
+    def test_a_refusal_is_never_tried_again(self):
+        before = len(self.gh()["calls"])
+        self.gh_fails("issue list", "HTTP 401: Bad credentials (https://api.github.com/graphql)", once=False)
+        self.ok(self.a, "refresh")
+        listed = [call for call in self.gh()["calls"][before:] if call[:2] == ["issue", "list"]]
+        self.assertEqual(len(listed), len({json.dumps(call) for call in listed}), "only a network failure is tried again: no call was made twice")
+        self.assertIn("did not accept your sign-in", self.ok(self.a, "status")["saved"]["github_check"]["problem"])
 
 
 class WithoutGhTest(IssuesBase):

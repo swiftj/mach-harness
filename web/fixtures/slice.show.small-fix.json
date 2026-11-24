@@ -238,7 +238,7 @@
       },
       "title": "Clearer expired invitation message",
       "shipped": {
-        "commit": "b1b8b38df74c0bf56fc309f8fe6cc1ad922cee4a",
+        "commit": "ed77418656445638a3bd1226f278d8a09182825f",
         "branch": "main",
         "rules": 5,
         "notes": []
@@ -272,6 +272,7 @@
       "changed_on_github": false,
       "newer_elsewhere": false,
       "number_taken": false,
+      "same_moment": null,
       "question": null,
       "question_note": null,
       "shipped_issues": [],

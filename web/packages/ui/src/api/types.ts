@@ -274,7 +274,6 @@ export interface SavedReport {
     kind:
       | "unfinished"
       | "changed_since_ready"
-      | "refresh_failed"
       | "request_updates"
       | "principles_unpublished"
       | "principles_unfinished"
@@ -288,6 +287,11 @@ export interface SavedReport {
     target: string | null;
     text: string;
   }>;
+  /**
+   * Null while the last check of GitHub worked. When it failed: what happened, when, and how old what is shown is, in the
+   * engine's words. A failed check loses nothing, so it is never counted in `not_saved`. Absent from an older engine.
+   */
+  github_check?: { failed_at: string | null; last_worked_at: string | null; problem: string; text: string } | null;
 }
 
 export interface StatusEpicRow {
@@ -915,7 +919,7 @@ export interface Operations {
   status: { args: Record<string, never>; result: Status };
   validate: { args: Record<string, never>; result: Validate };
   refresh: { args: Record<string, never>; result: Refresh };
-  "project.init": { args: { id: string; name: string; vision: string; outcome: string[] }; result: ProjectInit };
+  "project.init": { args: { id?: string; name: string; vision: string; outcome: string[] }; result: ProjectInit };
   "project.set": {
     args: { name?: string; vision?: string; outcome?: string[]; status?: ProjectStatus };
     result: { project: Project };

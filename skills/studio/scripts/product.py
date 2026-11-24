@@ -15,10 +15,23 @@ import hashlib
 import json
 import re
 import sys
+import unicodedata
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
+
+
+def project_id_from(name: Any) -> str:
+    """The project's ID, made from the product's name and always one PROJECT_RE accepts: the name's letters and digits in
+    lower case, joined by hyphens. A name that starts with a digit, is one character long or has no letters or digits at all
+    gets "project" in front, and a long one is cut. It names files and marks the project's issue; a person never types it."""
+    text = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode("ascii").lower()
+    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+    if len(text) < 2 or not text[0].isalpha():
+        text = f"project-{text}".rstrip("-")
+    text = text[:64].rstrip("-")
+    return text if PROJECT_RE.fullmatch(text) else "project"
 EPIC_RE = re.compile(r"^EPIC-[0-9]{3,}$")
 SLICE_RE = re.compile(r"^SLICE-[0-9]{3,}$")
 HEX_RE = re.compile(r"^[a-f0-9]{64}$")

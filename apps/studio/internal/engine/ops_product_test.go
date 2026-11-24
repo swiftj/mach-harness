@@ -181,3 +181,17 @@ func TestUploadsAreStagedInsideTheWorkspaceAndRemoved(t *testing.T) {
 		t.Fatal("a cancelled request ran")
 	}
 }
+
+// MACH makes the project's ID from its name: the app sends none, and one a caller does send is still checked.
+func TestProjectInitNeedsNoID(t *testing.T) {
+	argv, err := (&engine.ProjectInitArgs{Name: "3D Planner", Vision: "v", Outcome: []string{"o"}}).Argv()
+	if err != nil {
+		t.Fatalf("no id was refused: %v", err)
+	}
+	if got := strings.Join(argv, " "); strings.Contains(got, "--id") || !strings.HasPrefix(got, "project init --name=3D Planner") {
+		t.Fatalf("argv = %q", got)
+	}
+	if _, err := (&engine.ProjectInitArgs{ID: "3d-planner", Name: "n", Vision: "v", Outcome: []string{"o"}}).Argv(); err == nil {
+		t.Fatal("an unusable id a caller sent was accepted")
+	}
+}

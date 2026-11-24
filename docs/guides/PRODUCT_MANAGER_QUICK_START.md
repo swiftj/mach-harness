@@ -314,6 +314,7 @@ Either way:
 | You do not know what to do next | Type `/mach-studio`. It always suggests a next step. |
 | You closed everything mid-interview | Open the project again and say "continue SLICE-004". Your progress was saved. |
 | "The shared repository could not be reached" | You are offline. Your drafts are unchanged. Reconnect and try again. |
+| "GitHub not checked" in the app's top bar | MACH could not check GitHub, even after trying again. Nothing of yours is lost. Open it to see why and press **Check GitHub again**; the app also checks again by itself every minute or so. |
 | "GitHub did not accept your sign-in" | Your GitHub sign-in has expired. Ask an engineer to help you sign in again. |
 | "The shared project's rules refused this" | Do not retry. Ask an engineer or the repository's owner. |
 | Something in this guide is missing from your MACH | You may be on an older version. See Part 6. |

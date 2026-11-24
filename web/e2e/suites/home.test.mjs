@@ -159,10 +159,12 @@ test("the top bar says everything is saved, or what is not, in the engine's word
   try {
     await home(page).waitFor();
     const top = page.getByRole("banner");
-    await top.getByText("2 things are not saved yet", { exact: true }).waitFor();
+    await top.getByText("1 thing is not saved yet", { exact: true }).waitFor();
+    await top.getByText("GitHub not checked", { exact: true }).waitFor();
     await top.getByRole("button", { name: /Connection/ }).click();
     await page.getByText("Saving SLICE-009 to GitHub stopped part way. Mark it ready again to finish.", { exact: true }).waitFor();
-    await page.getByText("The last check of GitHub did not finish: GitHub could not be reached.", { exact: true }).waitFor();
+    await page.getByText(/^MACH could not check GitHub at .* Nothing of yours is lost; MACH checks again when you refresh\.$/).waitFor();
+    await page.getByRole("button", { name: "Check GitHub again" }).waitFor();
     await clean(unsaved);
   } finally {
     await unsaved.context.close();

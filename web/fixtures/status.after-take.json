@@ -10,8 +10,9 @@
       "outcomes": [
         "Teams can work together"
       ],
-      "issue": null,
-      "url": null
+      "issue": 1,
+      "url": "https://github.com/acme/team-space/issues/1",
+      "changed_elsewhere": null
     },
     "approvals_withdrawn": [],
     "epics": [
@@ -25,6 +26,8 @@
         ],
         "issue": 2,
         "url": "https://github.com/acme/team-space/issues/2",
+        "changed_elsewhere": null,
+        "same_moment": null,
         "counts": {
           "total": 1,
           "by_progress": {
@@ -58,6 +61,7 @@
           "changed_on_github": false,
           "newer_elsewhere": false,
           "number_taken": false,
+          "same_moment": null,
           "question": null,
           "question_note": null,
           "shipped_issues": [],
@@ -74,7 +78,8 @@
     "saved": {
       "everything_saved": true,
       "note": "Everything is saved.",
-      "not_saved": []
+      "not_saved": [],
+      "github_check": null
     },
     "order": [
       {
@@ -93,7 +98,7 @@
         "github_order": [
           "SLICE-001"
         ],
-        "github_read_at": "2026-11-22T12:33:50Z",
+        "github_read_at": "2026-11-24T13:28:28Z",
         "matches_github": true,
         "unfinished": false,
         "taken_from_github": false,
@@ -101,13 +106,21 @@
         "note": null
       }
     ],
+    "same_id_twice": [],
+    "project_on_github": {
+      "issue": 1,
+      "url": "https://github.com/acme/team-space/issues/1",
+      "name": "Team Space",
+      "readable": true,
+      "read_at": "2026-11-24T13:28:28Z"
+    },
     "github": {
       "repository": "acme/team-space",
       "form": null,
-      "last_read": "2026-11-22T12:33:50Z"
+      "last_read": "2026-11-24T13:28:28Z"
     },
     "current_slice": null,
-    "last_refreshed": "2026-11-22T12:33:50Z",
+    "last_refreshed": "2026-11-24T13:28:28Z",
     "structurally_valid": true,
     "structural_errors": [],
     "factory_authorized": false,
