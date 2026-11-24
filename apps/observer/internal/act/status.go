@@ -28,7 +28,7 @@ import (
 //	note | in_words            run.py's sentence for a person
 //
 // decide do (act.py): ticket_id, option, done, now, in_conversation, command, why, supervisor,
-// unparked, note, by (the person's name: used only to take it out of `now`, never passed on).
+// unparked, note, why_not, by (the person's name: used only to take it out of `now`, never passed on).
 
 // Running is whether a Factory supervisor runs for this project, as `factory status` says.
 type Running struct {
@@ -129,6 +129,7 @@ type Decided struct {
 	Why            *string `json:"why"`
 	Note           *string `json:"note"`
 	Supervisor     *string `json:"supervisor"` // "started" | "woken" | "none"
+	WhyNot         *string `json:"why_not"`    // why no Factory carries it on now (run.py's sentence)
 	Unparked       *bool   `json:"unparked"`
 }
 
@@ -154,6 +155,7 @@ func ParseDecided(data []byte) Decided {
 	out.Now = sentenceOf(top["now"], name)
 	out.Why = sentenceOf(top["why"], name)
 	out.Note = sentenceOf(top["note"], name)
+	out.WhyNot = sentenceOf(top["why_not"], name)
 	if s, ok := top["command"].(string); ok && len(s) <= 200 && plain(s) {
 		out.Command = &s
 	}
