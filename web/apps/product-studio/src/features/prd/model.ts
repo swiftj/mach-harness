@@ -256,7 +256,7 @@ export function applySummary(status: Pick<PrdStatus, "map" | "not_covered" | "pr
 
 /**
  * The command that has MACH propose a PRD's map in Claude Code, for the same install as the host's continue command
- * ("/mach:product-studio continue" gives "/mach:product-studio start from PRD-01"). Null when the host reports none.
+ * ("/mach:studio continue" gives "/mach:studio start from PRD-01"). Null when the host reports none.
  */
 export function prdCommand(continueCommand: string | null | undefined, prdId: string): string | null {
   if (typeof continueCommand !== "string") return null;

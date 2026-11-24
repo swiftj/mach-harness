@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-for folder in ("skills/ticket/scripts", "skills/product-studio/scripts"):
+for folder in ("skills/ticket/scripts", "skills/studio/scripts"):
     sys.path.insert(0, str(ROOT / folder))
 
 import collab  # noqa: E402
@@ -26,7 +26,7 @@ class LoginRuleTest(unittest.TestCase):
 
     def test_product_studio_keeps_no_copy_of_the_rule(self):
         for name in ("collab.py", "issues.py", "handoff.py", "studio.py", "requests_in.py", "shape.py"):
-            text = (ROOT / "skills/product-studio/scripts" / name).read_text()
+            text = (ROOT / "skills/studio/scripts" / name).read_text()
             self.assertNotIn("{0,38})\", login", text, name)
             self.assertNotIn("[A-Za-z0-9-]{0,38})\"", text, name)
 

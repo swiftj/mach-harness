@@ -276,7 +276,7 @@ test("the conversation is the needs conversation, with the host's own command wh
   assert.match(screen, /conv\.model\.draftChanges/, "a need the conversation records is read again");
   const conversation = source("NeedsConversation.tsx");
   assert.match(conversation, /session\.capabilities\.needs_command/);
-  assert.equal(needsCommand("/mach:product-studio needs"), "/mach:product-studio needs");
+  assert.equal(needsCommand("/mach:studio needs"), "/mach:studio needs");
   assert.equal(needsCommand("  "), null);
   assert.equal(needsCommand(undefined), null);
   assert.doesNotMatch(said(conversation), /recommend/i, "no recommended answer is offered");

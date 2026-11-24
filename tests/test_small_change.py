@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
-for folder in ("ticket", "intent", "product-studio"):
+for folder in ("ticket", "intent", "studio"):
     sys.path.insert(0, str(ROOT / "skills" / folder / "scripts"))
 import product  # noqa: E402
 import small  # noqa: E402
@@ -611,7 +611,7 @@ class DocumentsTest(unittest.TestCase):
         self.assertNotIn("—", text)
         for words in ("fix", "adjustment", "yes-or-no", "recommend", "confirm", "never trim", "slice widen"):
             self.assertIn(words, text.lower())
-        studio_skill = (ROOT / "skills/product-studio/SKILL.md").read_text()
+        studio_skill = (ROOT / "skills/studio/SKILL.md").read_text()
         self.assertIn("small-change.md", studio_skill)
         self.assertIn("slice widen", studio_skill)
 

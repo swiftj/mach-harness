@@ -120,9 +120,9 @@ test("the project ID is proposed from the name; the engine checks it", () => {
 });
 
 test("the command that proposes a PRD's map in Claude Code follows the install", () => {
-  assert.equal(prdCommand("/mach:product-studio continue", "PRD-01"), "/mach:product-studio start from PRD-01");
-  assert.equal(prdCommand("/mach-product-studio continue", "PRD-02"), "/mach-product-studio start from PRD-02");
-  assert.equal(prdCommand("/mach:product-studio", "PRD-01"), null);
+  assert.equal(prdCommand("/mach:studio continue", "PRD-01"), "/mach:studio start from PRD-01");
+  assert.equal(prdCommand("/mach-studio continue", "PRD-02"), "/mach-studio start from PRD-02");
+  assert.equal(prdCommand("/mach:studio", "PRD-01"), null);
   assert.equal(prdCommand("two words continue", "PRD-01"), null);
   assert.equal(prdCommand(null, "PRD-01"), null);
 });

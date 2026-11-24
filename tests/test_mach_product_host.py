@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 from test_mach_product_studio import FIXTURE, INTENT_TEXT, SPEC, git  # noqa: E402
 
 APP = ROOT / "apps" / "studio"
-STUDIO = ROOT / "skills" / "product-studio" / "scripts" / "studio.py"
+STUDIO = ROOT / "skills" / "studio" / "scripts" / "studio.py"
 GO = shutil.which("go")
 
 
@@ -158,7 +158,7 @@ class HostConformanceTest(unittest.TestCase):
         session = self.login()
         self.assertIs(session["capabilities"]["interview"], False)
         self.assertIn("not installed", session["capabilities"]["interview_reason"])
-        self.assertEqual(session["capabilities"]["continue_command"], "/mach:product-studio continue")
+        self.assertEqual(session["capabilities"]["continue_command"], "/mach:studio continue")
         self.assertEqual(session["project"]["folder"], "via-host")
         self.op("project.init", id="team-space", name="Team Space", vision="Teams work together.", outcome=["Teams can work together"])
         self.op("epic.add", title="Team membership", criterion=["Only invited people can join"])

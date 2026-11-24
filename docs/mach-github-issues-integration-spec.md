@@ -26,7 +26,7 @@ feature or weakening a gate.
 | GitHub as a ticket tracker | `view`, `list`, `create`, `update`, `comment` through `gh`; states carried as `mach:<state>` labels; `ISSUE_PROVIDER` and `tickets.provider` | `skills/ticket/scripts/ticket.py` |
 | Crash ingestion | Sentry, PostHog, Datadog and logs to an `AUTO-` ticket; redaction; one ticket per fault | `ticket.py ingest-telemetry` |
 | The interview | One yes-or-no question at a time with a recommended answer; headless mode with strict defaults | `skills/intent/` |
-| Product Studio | Drafts, approval bound by SHA-256, waves, `send`, the browser app with question cards and a live spec preview | `skills/product-studio/`, `apps/studio`, `web/apps/product-studio` |
+| Product Studio | Drafts, approval bound by SHA-256, waves, `send`, the browser app with question cards and a live spec preview | `skills/studio/`, `apps/studio`, `web/apps/product-studio` |
 | Intake and scheduling | Merged waves to tickets; dependencies checked in Git; `factory.max_parallel` | `skills/run/scripts/intake.py` |
 | Merge by pull request | Push, open the pull request, merge only the approved commit (`--match-head-commit`) | `skills/merge/scripts/merge.py` |
 | Resume after an interruption | The next step is read from what is on disk | `run.py next` |

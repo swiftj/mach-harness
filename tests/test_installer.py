@@ -110,7 +110,7 @@ class InstallTest(Base):
     def test_product_studio_says_plainly_when_machs_files_are_mixed(self):
         """An older sibling module that lacks what Product Studio needs is reported in one sentence, not as an AttributeError."""
         self.mach("install")
-        studio = self.project / ".claude/skills/mach-product-studio/scripts/studio.py"
+        studio = self.project / ".claude/skills/mach-studio/scripts/studio.py"
         done = subprocess.run([sys.executable, str(studio), "--project", str(self.project), "--help"], capture_output=True, text=True)
         self.assertEqual(done.returncode, 0, done.stderr)
         rules = self.project / ".claude/skills/mach-ticket/scripts/issue_rules.py"
@@ -133,14 +133,14 @@ class InstallTest(Base):
 
     def test_installed_product_studio_finds_the_intent_skill(self):
         self.mach("install")
-        script = self.project / ".claude/skills/mach-product-studio/scripts/studio.py"
+        script = self.project / ".claude/skills/mach-studio/scripts/studio.py"
         done = subprocess.run([sys.executable, str(script), "--project", str(self.project), "where"], capture_output=True, text=True)
         self.assertEqual(done.returncode, 0, done.stderr)
         where = json.loads(done.stdout)
         self.assertEqual(Path(where["interview_method"]), self.project / ".claude/skills/mach-intent/references/interview-method.md")
         for key in ("interview_method", "slice_template", "intent_template"):
             self.assertTrue(Path(where[key]).is_file(), key)
-        self.assertIn(b"\nname: mach-product-studio\n", (self.project / ".claude/skills/mach-product-studio/SKILL.md").read_bytes())
+        self.assertIn(b"\nname: mach-studio\n", (self.project / ".claude/skills/mach-studio/SKILL.md").read_bytes())
         ignore = (self.project / ".gitignore").read_text()
         self.assertIn(".factory/studio/", ignore)
         self.assertIn(".factory/local/", ignore)
@@ -148,7 +148,7 @@ class InstallTest(Base):
         self.assertEqual(json.loads((self.project / ".factory/config.json").read_text())["factory"], {"max_parallel": 3, "max_parallel_high": 1})
         done = subprocess.run([sys.executable, str(self.project / ".claude/skills/mach/scripts/run.py"), "--project", str(self.project), "product", "status"],
                               capture_output=True, text=True)
-        self.assertEqual(done.returncode, 0, done.stderr)  # the installed run skill finds the installed product-studio and intent skills
+        self.assertEqual(done.returncode, 0, done.stderr)  # the installed run skill finds the installed studio and intent skills
         self.assertEqual(json.loads(done.stdout)["factory_started"], False)
         # Running an installed script leaves no untracked file behind.
         git = lambda *args: subprocess.run(["git", *args], cwd=str(self.project), capture_output=True, text=True)
@@ -879,7 +879,7 @@ class PrerequisiteTest(Base):
 
     def test_product_studio_without_git_gives_the_same_plain_message(self):
         self.mach("install")
-        script = self.project / ".claude/skills/mach-product-studio/scripts/studio.py"
+        script = self.project / ".claude/skills/mach-studio/scripts/studio.py"
         done = subprocess.run([sys.executable, str(script), "--project", str(self.project), "status"], capture_output=True, text=True,
                               env={**os.environ, "PATH": str(self.bin)})
         self.assertEqual(done.returncode, 1, done.stderr)

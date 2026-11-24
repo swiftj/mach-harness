@@ -196,8 +196,8 @@ export function openQuestion(text: string): OpenQuestion | null {
 }
 
 /**
- * The terminal command that explores this idea, from the host's continue command (`/mach:product-studio continue`
- * or `/mach-product-studio continue`): the same skill, with `explore`, as the host's own opening is. Null when the host
+ * The terminal command that explores this idea, from the host's continue command (`/mach:studio continue`
+ * or `/mach-studio continue`): the same skill, with `explore`, as the host's own opening is. Null when the host
  * did not report a command in that form.
  */
 export function exploreCommand(exploreCommandPrefix: string | null | undefined, ideaId: string): string | null {

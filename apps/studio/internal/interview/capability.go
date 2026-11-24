@@ -85,14 +85,14 @@ func CheckClaude(ctx context.Context, claude, dir string, env []string) Capabili
 
 // ContinueCommandFor is the Claude Code command for this install, without the slice ID.
 func ContinueCommandFor(script string) string {
-	if strings.Contains(script, "/.claude/skills/mach-product-studio/") {
-		return "/mach-product-studio continue"
+	if strings.Contains(script, "/.claude/skills/mach-studio/") {
+		return "/mach-studio continue"
 	}
-	return "/mach:product-studio continue"
+	return "/mach:studio continue"
 }
 
 // ExploreCommandOf is the Claude Code command that explores an idea, without the idea ID, for the
-// same install as a continue command: "/mach:product-studio explore" or "/mach-product-studio explore"
+// same install as a continue command: "/mach:studio explore" or "/mach-studio explore"
 // (M16 clean-up). Empty when the continue command is not one this host reports.
 func ExploreCommandOf(continueCommand string) string {
 	skill, found := strings.CutSuffix(continueCommand, " continue")
@@ -103,7 +103,7 @@ func ExploreCommandOf(continueCommand string) string {
 }
 
 // NeedsCommandOf is the Claude Code command that talks through the product's technical needs, for
-// the same install as a continue command: "/mach:product-studio needs" or "/mach-product-studio needs"
+// the same install as a continue command: "/mach:studio needs" or "/mach-studio needs"
 // (M17). Empty when the continue command is not one this host reports.
 func NeedsCommandOf(continueCommand string) string {
 	skill, found := strings.CutSuffix(continueCommand, " continue")

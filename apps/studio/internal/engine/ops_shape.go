@@ -8,7 +8,7 @@ import (
 
 // The operations M16 added to the engine, for the Shape screens: ideas, the brief and the case, the
 // verdict, sizing and routing, the map and apply, change what exists, look back and the chain
-// (skills/product-studio/scripts/shape.py and shape_route.py). Each is one engine command with a
+// (skills/studio/scripts/shape.py and shape_route.py). Each is one engine command with a
 // fixed argument vector, as every other operation is.
 
 // The engine's own patterns for Shape's identifiers (shape.py).

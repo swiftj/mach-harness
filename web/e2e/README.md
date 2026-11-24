@@ -1,7 +1,7 @@
 # Product Studio end-to-end suites
 
 The real app in a real Chromium, the real Go host (`apps/studio`) and the real engine
-(`skills/product-studio/scripts/studio.py`), driven together. Fixtures are not used, except by the two request suites (below).
+(`skills/studio/scripts/studio.py`), driven together. Fixtures are not used, except by the two request suites (below).
 
 Every run builds the host with the app embedded in a scratch folder (the app's own `dist/` and the
 committed placeholder in `apps/studio/internal/webui/dist` are never touched), then for each suite

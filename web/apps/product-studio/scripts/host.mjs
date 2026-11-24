@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 export const app = resolve(here, "..");
 export const repo = resolve(app, "../../..");
-export const engine = join(repo, "skills/product-studio/scripts/studio.py");
+export const engine = join(repo, "skills/studio/scripts/studio.py");
 
 /** Copies apps/studio to a scratch folder, puts dist/ in, builds, returns the binary path. */
 export function buildHost() {

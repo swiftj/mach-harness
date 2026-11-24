@@ -76,7 +76,7 @@ func New(cfg Config) (*Claude, error) {
 	}
 	home := filepath.Join(cfg.Project, ".factory", "studio", "interviews")
 	plugin := filepath.Join(home, "plugin")
-	link := filepath.Join(plugin, "skills", "product-studio", "scripts", "studio.py")
+	link := filepath.Join(plugin, "skills", "studio", "scripts", "studio.py")
 	p := Paths{
 		Project:    cfg.Project,
 		Draft:      filepath.Join(cfg.Project, ".factory", "studio", "draft"),
@@ -349,7 +349,7 @@ func (c *Claude) prepare() error {
 			return err
 		}
 	}
-	link := filepath.Join(c.paths.PluginDir, "skills", "product-studio")
+	link := filepath.Join(c.paths.PluginDir, "skills", "studio")
 	info, err := os.Lstat(link)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -454,16 +454,16 @@ func (c *Claude) Start(ctx context.Context, req StartRequest) (Started, error) {
 	message := "I'm back. Let's continue."
 	if rec.Turns == 0 {
 		// Inside the interviewer the one-skill plugin is always named mach, whatever the install.
-		message = "/mach:product-studio continue " + subject
+		message = "/mach:studio continue " + subject
 		if IsNeeds(subject) {
 			// M17: the needs conversation for the product. Nothing the person typed is added here.
-			message = "/mach:product-studio needs. " + NeedsOpeningNote
+			message = "/mach:studio needs. " + NeedsOpeningNote
 		} else if IsIdea(subject) {
 			// M16: the Shape conversation for one idea. Nothing the person typed is added here.
-			message = "/mach:product-studio explore " + subject + ". " + IdeaOpeningNote
+			message = "/mach:studio explore " + subject + ". " + IdeaOpeningNote
 		} else if IsPrd(subject) {
 			// M19: the PRD conversation for one PRD. Nothing the person typed is added here.
-			message = "/mach:product-studio start from " + subject + ". " + PrdOpeningNote
+			message = "/mach:studio start from " + subject + ". " + PrdOpeningNote
 		} else if req.Idea != "" {
 			epic := req.EpicID
 			if epic == "" {

@@ -938,7 +938,7 @@ class BoundaryTest(unittest.TestCase):
 
     def test_the_named_readers_never_name_the_setting_or_the_module(self):
         files = [SCRIPTS / name for name in ("intake.py", "qualify.py", "doctor.py", "explain.py", "decide.py")]
-        files += sorted((ROOT / "skills" / "product-studio").rglob("*.py"))
+        files += sorted((ROOT / "skills" / "studio").rglob("*.py"))
         files += sorted((ROOT / "apps" / "observer").rglob("*.go"))
         self.assertTrue(any(path.suffix == ".go" for path in files))
         found = [f"{path.relative_to(ROOT)}: {word}" for path in files for word in self.WORDS if word in path.read_text(encoding="utf-8", errors="ignore")]

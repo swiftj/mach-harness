@@ -60,12 +60,12 @@ It checks your computer and lists anything missing, with what to do about each. 
 Type:
 
 ```
-/mach-product-studio
+/mach-studio
 ```
 
 MACH tells you where things stand and suggests a next step. It also starts Product Studio's visual app on your computer and gives you a link to it. From here on you can simply type what you want in plain words.
 
-> If that command is not found, your engineer installed MACH as a plugin. Type `/mach:product-studio` instead. Everything else is the same.
+> If that command is not found, your engineer installed MACH as a plugin. Type `/mach:studio` instead. Everything else is the same.
 
 **Prefer a screen to a conversation?** Click the link, or paste it into a browser on your computer. Or say:
 
@@ -237,11 +237,11 @@ The slice is now a GitHub issue under its epic's issue, with your approval recor
 
 ### Step 5. Do the next slice
 
-Say "continue SLICE-002", or just `/mach-product-studio` to see what is next.
+Say "continue SLICE-002", or just `/mach-studio` to see what is next.
 
 ## Part 4. While the builders work
 
-Start each session with `/mach-product-studio`. It refreshes and tells you where every slice stands: ready, being built, a question from the builders, or shipped.
+Start each session with `/mach-studio`. It refreshes and tells you where every slice stands: ready, being built, a question from the builders, or shipped.
 
 | What you see | What to do |
 |---|---|
@@ -278,7 +278,7 @@ New versions of MACH come out as numbered releases. You get one by installing MA
 
 **If you installed MACH yourself**, how you update depends on which commands you type.
 
-**You type `/mach-product-studio`.** Open Terminal, go to the project's folder, and run the install line again:
+**You type `/mach-studio`.** Open Terminal, go to the project's folder, and run the install line again:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh | bash
@@ -286,7 +286,7 @@ curl -fsSL https://raw.githubusercontent.com/swiftj/mach-harness/main/install.sh
 
 It fetches the newest release and checks it. Then restart Claude Code.
 
-**You type `/mach:product-studio`.** MACH is installed as a plugin:
+**You type `/mach:studio`.** MACH is installed as a plugin:
 
 1. In Claude Code, type `/plugin`. Refresh the `mach-harness` marketplace, then update the `mach` plugin.
 2. Restart Claude Code.
@@ -311,7 +311,7 @@ Either way:
 
 | What happened | What to do |
 |---|---|
-| You do not know what to do next | Type `/mach-product-studio`. It always suggests a next step. |
+| You do not know what to do next | Type `/mach-studio`. It always suggests a next step. |
 | You closed everything mid-interview | Open the project again and say "continue SLICE-004". Your progress was saved. |
 | "The shared repository could not be reached" | You are offline. Your drafts are unchanged. Reconnect and try again. |
 | "GitHub did not accept your sign-in" | Your GitHub sign-in has expired. Ask an engineer to help you sign in again. |
@@ -324,7 +324,7 @@ Either way:
 1. Install Claude Code and sign in.
 2. Get the project folder, with MACH installed.
 3. `/mach doctor`
-4. `/mach-product-studio`
+4. `/mach-studio`
 5. Describe the project: name, vision, outcomes.
 6. **With a PRD:** "start from my PRD at ...", settle the map, say yes to make the drafts. **With an idea:** "shape an idea", or add an epic and start a slice.
 7. Answer the interview: `yes`, your own answer, `I don't know`, `you decide`.

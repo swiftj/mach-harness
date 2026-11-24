@@ -175,7 +175,7 @@ func TestAnIdeaConversationRunsWithItsOwnRulesAndRecords(t *testing.T) {
 	p := r.bridge.Paths()
 	first := calls[0].Argv
 	session := first[indexOf(first, "--session-id")+1]
-	want := p.Args("IDEA-001", interview.TurnOptions{BudgetUSD: 2, SessionID: session}, "/mach:product-studio explore IDEA-001. "+interview.IdeaOpeningNote)
+	want := p.Args("IDEA-001", interview.TurnOptions{BudgetUSD: 2, SessionID: session}, "/mach:studio explore IDEA-001. "+interview.IdeaOpeningNote)
 	if strings.Join(first, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("argv\n got %q\nwant %q", first, want)
 	}

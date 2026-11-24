@@ -15,7 +15,7 @@ export const web = resolve(e2e, "..");
 export const repo = resolve(web, "..");
 export const appDir = join(web, "apps/product-studio");
 export const hostSource = join(repo, "apps/studio");
-export const engine = join(repo, "skills/product-studio/scripts/studio.py");
+export const engine = join(repo, "skills/studio/scripts/studio.py");
 export const machCli = join(repo, "bin/mach");
 export const screenshots = join(e2e, "screenshots");
 

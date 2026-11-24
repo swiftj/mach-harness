@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "skills" / "product-studio" / "scripts" / "product.py"
+SCRIPT = ROOT / "skills" / "studio" / "scripts" / "product.py"
 sys.path.insert(0, str(SCRIPT.parent))
 import product as validate  # noqa: E402
 from product import read_local_policy, validate_workspace  # noqa: E402

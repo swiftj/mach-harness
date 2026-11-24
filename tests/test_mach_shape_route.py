@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
-for folder in ("ticket", "intent", "product-studio"):
+for folder in ("ticket", "intent", "studio"):
     sys.path.insert(0, str(ROOT / "skills" / folder / "scripts"))
 sys.path.insert(0, str(ROOT / "skills" / "run" / "scripts"))
 import collab  # noqa: E402
@@ -551,7 +551,7 @@ class AppAndInstructionsTest(RouteBase):
             return found[0].choices if found else None
 
         top = choices(parser)
-        text = (ROOT / "skills" / "product-studio" / "references" / "shape.md").read_text()
+        text = (ROOT / "skills" / "studio" / "references" / "shape.md").read_text()
         named = re.findall(r"`STUDIO ([^`]+)`", text)
         self.assertGreater(len(named), 20)
         for command in named:

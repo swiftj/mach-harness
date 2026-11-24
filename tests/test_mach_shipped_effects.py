@@ -422,7 +422,7 @@ class InstructionsTest(unittest.TestCase):
         self.assertIn("A `kept` row may be decided without a PM", headless)
         self.assertRegex(headless, r"change, replace or retire is a conflict between rules")
         self.assertIn("CELL shipped", (ROOT / "skills/intent/SKILL.md").read_text())
-        self.assertIn("shipped_rules", (ROOT / "skills/product-studio/SKILL.md").read_text())
+        self.assertIn("shipped_rules", (ROOT / "skills/studio/SKILL.md").read_text())
         self.assertIn("earlier slice's tests", (ROOT / "skills/intent/references/contracts-and-plan.md").read_text())
         self.assertIn("earlier slice's tests", (ROOT / "agents/contract-engineer.md").read_text())
         self.assertIn("`kept` row", (ROOT / "skills/review/references/product.md").read_text())

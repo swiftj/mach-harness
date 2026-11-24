@@ -14,7 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
-for folder in ("ticket", "intent", "product-studio"):
+for folder in ("ticket", "intent", "studio"):
     sys.path.insert(0, str(ROOT / "skills" / folder / "scripts"))
 from test_mach_policy_packs import OWNER, pack_text  # noqa: E402
 from test_mach_product_issues import git, spec_for  # noqa: E402

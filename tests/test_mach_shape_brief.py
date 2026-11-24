@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-for folder in ("ticket", "intent", "product-studio"):
+for folder in ("ticket", "intent", "studio"):
     sys.path.insert(0, str(ROOT / "skills" / folder / "scripts"))
 import issue_rules  # noqa: E402
 import issues  # noqa: E402
@@ -220,11 +220,11 @@ class BriefTest(unittest.TestCase):
             target.write_text(BRIEF)
             shipped = Path(folder) / "shipped.json"
             shipped.write_text(json.dumps({"rules": SHIPPED}))
-            done = subprocess.run([sys.executable, str(ROOT / "skills/product-studio/scripts/validate_brief.py"), "brief", str(target), "--shipped", str(shipped)],
+            done = subprocess.run([sys.executable, str(ROOT / "skills/studio/scripts/validate_brief.py"), "brief", str(target), "--shipped", str(shipped)],
                                   capture_output=True, text=True)
             self.assertEqual(done.returncode, 0, done.stderr)
             self.assertTrue(json.loads(done.stdout)["valid"])
-            done = subprocess.run([sys.executable, str(ROOT / "skills/product-studio/scripts/validate_brief.py"), "brief", str(target), "--removed", "O-1"],
+            done = subprocess.run([sys.executable, str(ROOT / "skills/studio/scripts/validate_brief.py"), "brief", str(target), "--removed", "O-1"],
                                   capture_output=True, text=True)
             self.assertEqual(done.returncode, 1)
             self.assertEqual(sorted(Path(folder).iterdir()), sorted([target, shipped]))

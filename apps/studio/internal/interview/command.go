@@ -201,7 +201,7 @@ type Paths struct {
 	Draft      string   // the draft workspace
 	Home       string   // the interviews folder next to it
 	PluginDir  string   // <Home>/plugin, stable per project
-	SkillDir   string   // the installed product-studio skill folder (real path)
+	SkillDir   string   // the installed studio skill folder (real path)
 	Scripts    []string // studio.py through the plugin link, and its real path
 	Pythons    []string // "python3" and the absolute interpreters it resolves to
 	LinkScript string

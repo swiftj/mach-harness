@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
-for folder in ("ticket", "intent", "run", "product-studio"):
+for folder in ("ticket", "intent", "run", "studio"):
     sys.path.insert(0, str(ROOT / "skills" / folder / "scripts"))
 import design  # noqa: E402
 import prd  # noqa: E402
@@ -295,7 +295,7 @@ class SettleAndPublishTest(DesignBase):
         self.ok("design", "settle", "DES-01", "--conflict", "1", "--as", "stands", "--reason", "R.")
         (self.draft / "product/designs/DES-01/design.md").write_text("changed\n")
         self.assertIn("no longer matches", self.refused("design", "publish", "DES-01"))
-        source = (ROOT / "skills/product-studio/scripts/design.py").read_text()
+        source = (ROOT / "skills/studio/scripts/design.py").read_text()
         for word in ("collab", "issues.", "handoff", "requests_in", "subprocess", "urllib", "socket", "shutil", "gh("):
             self.assertNotIn(word, source, word)
 

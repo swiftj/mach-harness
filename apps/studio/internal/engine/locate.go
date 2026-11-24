@@ -11,8 +11,8 @@ import (
 
 // Where studio.py lives, relative to a folder, in each way MACH is installed.
 var scriptLayouts = []struct{ Install, Relative string }{
-	{"plugin", filepath.Join("skills", "product-studio", "scripts", "studio.py")},                  // the plugin, or this repository
-	{"project", filepath.Join(".claude", "skills", "mach-product-studio", "scripts", "studio.py")}, // a script install into a project
+	{"plugin", filepath.Join("skills", "studio", "scripts", "studio.py")},                  // the plugin, or this repository
+	{"project", filepath.Join(".claude", "skills", "mach-studio", "scripts", "studio.py")}, // a script install into a project
 }
 
 // Located says where the engine script was found and how.
@@ -25,9 +25,9 @@ type Located struct {
 //
 //  1. an explicit path (the --engine flag), used as given;
 //  2. next to the binary: the binary's folder and each folder above it (up to eight levels) is
-//     tried for skills/product-studio/scripts/studio.py (plugin or repository layout), then
-//     .claude/skills/mach-product-studio/scripts/studio.py (project install);
-//  3. the project itself: <project>/.claude/skills/mach-product-studio/scripts/studio.py.
+//     tried for skills/studio/scripts/studio.py (plugin or repository layout), then
+//     .claude/skills/mach-studio/scripts/studio.py (project install);
+//  3. the project itself: <project>/.claude/skills/mach-studio/scripts/studio.py.
 //
 // The binary is checked before the project so the host and engine come from the same install.
 func LocateScript(explicit, executable, project string) (Located, error) {

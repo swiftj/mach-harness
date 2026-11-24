@@ -7,14 +7,14 @@ export interface InterviewCapability {
   /** Why the interview cannot run here, in plain words. */
   reason: string | null;
   /**
-   * The command prefix the host reports (`capabilities.continue_command`): "/mach:product-studio
-   * continue" for a plugin install, "/mach-product-studio continue" for a project install. The app
+   * The command prefix the host reports (`capabilities.continue_command`): "/mach:studio
+   * continue" for a plugin install, "/mach-studio continue" for a project install. The app
    * appends the slice ID. Null when the host does not say.
    */
   continueCommand: string | null;
   /**
-   * The command that explores an idea (`capabilities.explore_command`): "/mach:product-studio explore" or
-   * "/mach-product-studio explore". The app appends the idea's ID. Null when the host does not say.
+   * The command that explores an idea (`capabilities.explore_command`): "/mach:studio explore" or
+   * "/mach-studio explore". The app appends the idea's ID. Null when the host does not say.
    */
   exploreCommand: string | null;
 }

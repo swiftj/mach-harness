@@ -15,7 +15,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 git init -q "$WORK/project"
-"$BIN" --project "$WORK/project" --engine "$ROOT/skills/product-studio/scripts/studio.py" --no-open >"$WORK/log" 2>&1 &
+"$BIN" --project "$WORK/project" --engine "$ROOT/skills/studio/scripts/studio.py" --no-open >"$WORK/log" 2>&1 &
 PID=$!
 LINK=""
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
