@@ -348,6 +348,9 @@ func (s *Server) running(ctx context.Context) *act.Running {
 
 func (s *Server) forgetRunning() {
 	s.runningCache.mu.Lock()
+	if !s.runningCache.reading {
+		s.runningCache.data = nil // the next read waits for run.py: what the page shows next is after the act
+	}
 	s.runningCache.at = time.Time{}
 	s.runningCache.mu.Unlock()
 }

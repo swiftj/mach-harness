@@ -71,7 +71,7 @@ export function fakeObserver({ generation = "6b1f0e9a2c4d8e10", snapshot = false
   const route = (url) => {
     const u = new URL(url, "http://127.0.0.1");
     const path = u.pathname.replace(/^\/api\/v1/, "");
-    if (path === "/session") return ok({ project: { folder: "team-space" }, generation: server.generation, versions: { event: { schema: 3, revision: 0, kinds: [] } }, read_only: true, capabilities: { snapshot: server.snapshotCapability, stream_observations: { ok: true, reason: null } }, display_policy: { people: "role" } });
+    if (path === "/session") return ok({ project: { folder: "team-space" }, generation: server.generation, versions: { event: { schema: 3, revision: 0, kinds: [] } }, capabilities: { snapshot: server.snapshotCapability, stream_observations: { ok: true, reason: null } }, display_policy: { people: "role" } });
     if (path === "/events") {
       const after = u.searchParams.get("after") ?? `${server.generation}.0`;
       const limit = Number(u.searchParams.get("limit") ?? 1000);

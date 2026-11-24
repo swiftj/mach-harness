@@ -354,7 +354,7 @@ export const COMMANDS = {
 
 /** The one sentence on every page about where changes happen. */
 export const WHERE_CHANGED =
-  "This page only reads. A decision is accepted, changed or superseded by a pull request for its ADR file, and a ticket's exception or a proposal's acceptance is recorded with /mach adr in Claude Code.";
+  "Nothing on this page changes a decision. A decision is accepted, changed or superseded by a pull request for its ADR file, and a ticket's exception or a proposal's acceptance is recorded with /mach adr in Claude Code, or in \"Needs you\" on the Line.";
 
 /** The command for a stop: what a person runs next. */
 export function stopCommand(s: Pick<Stop, "ticket" | "needs" | "adr" | "adrs">): { readonly command: string; readonly purpose: string } {

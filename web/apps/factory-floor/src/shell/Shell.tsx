@@ -11,6 +11,9 @@
  * (heldStore), so it does no work and returns exactly as it was. The Line and Analytics are mounted
  * only while shown. Everything shows the present: there is no playhead.
  *
+ * "Needs you" (M23) is provided here for every workspace: the count and a running Factory's Stop in the
+ * top bar, the list and the decisions on the Line (src/needs).
+ *
  * Owned here: the inspector's open state, the help sheet. Everything about the factory (selection,
  * focus, workspace, Theater Mode) is the store's.
  */
@@ -40,6 +43,8 @@ import { FollowState } from "./FollowState";
 import { IconButton } from "./IconButton";
 import "./shell.css";
 import { FreeTextLabel } from "./inspector/FreeText";
+import { NeedsProvider } from "../needs/context";
+import { FactoryRunning, NeedsCount } from "../needs/TopBar";
 
 const TOP = 48;
 /** The inspector is a column on wide windows, an overlay drawer below 1280 px. */
@@ -162,6 +167,8 @@ function TopBar({ inspectorOpen, onInspector, onHelp, sourceOpen, onSource }: { 
         <RunIdentity />
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+        <NeedsCount />
+        <FactoryRunning />
         <SourceBadge open={sourceOpen} onOpenChange={onSource} />
         <ConnectionBadge />
         <RecordAge />
@@ -294,6 +301,7 @@ export function Shell() {
   const selectionWord = selection ? refKind(selection) : null;
 
   return (
+    <NeedsProvider>
     <div className="mach-frame text-ink" style={{ gridTemplateRows: rows, gridTemplateColumns: cols }} data-theater={theater ? "" : undefined} data-scene-ready={mountedOnce && sceneApplied ? "" : undefined} data-workspace-shown={workspace}>
       <a
         href="#stage"
@@ -389,5 +397,6 @@ export function Shell() {
       <HelpSheet open={help} onOpenChange={setHelp} opener={helpOpener} />
       <EvidencePlayer />
     </div>
+    </NeedsProvider>
   );
 }

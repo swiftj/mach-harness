@@ -254,7 +254,7 @@ export function ConnectionBadge() {
       <PopoverContent className="w-96" aria-label="Connection">
         <p className="mb-2 text-label text-ink">The observer connection</p>
         <ConnectionFacts connection={connection} />
-        <p className="mt-3 text-caption text-ink-subtle">The Factory Floor only reads. It cannot start, pause, schedule or approve anything.</p>
+        <p className="mt-3 text-caption text-ink-subtle">The Factory Floor never starts, pauses or schedules work. A decision made in "Needs you", and the Stop, are carried out by MACH, as in Claude Code.</p>
       </PopoverContent>
     </Popover>
   );

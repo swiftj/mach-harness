@@ -9,7 +9,7 @@
  *
  * The question asked of the page is only ever "does an observer answer here?". The answer decides the
  * source; nothing the person sets can make a simulation read as real, or real history as simulated.
- * Reads only: no route here writes anything (the observer serves GET only).
+ * Asking changes nothing: the probe is a GET of the session.
  */
 import { createLiveFactory, createObserverClient, ObserverError, type EventSourceLike, type FetchLike, type LiveSource, type ObserverClient, type ObserverSession } from "../../live";
 import { browserClock, type SceneStore } from "../../scene";
@@ -34,7 +34,7 @@ export function urlFor(choice: SourceChoice, location: Pick<Location, "pathname"
 
 export const browserFetch: FetchLike = async (url, init) => {
   // The signal is forwarded so a superseded request (a view the person has already left) is really aborted.
-  const response = await fetch(url, { headers: init?.headers, credentials: "same-origin", cache: "no-store", signal: init?.signal });
+  const response = await fetch(url, { method: init?.method ?? "GET", body: init?.body, headers: init?.headers, credentials: "same-origin", cache: "no-store", signal: init?.signal });
   // Headers and text for the content route (M6.4): a served text is read as text, never parsed; its headers say whether it was cut short or holds free text.
   return { status: response.status, json: () => response.json(), headers: response.headers, text: () => response.text() };
 };
