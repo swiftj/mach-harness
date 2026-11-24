@@ -13,6 +13,8 @@ and the verdict.
     verify.py record <ticket> --from FILE    record several checks from a JSON list, all or none
     verify.py finish <ticket>    verdict: PASS, FAIL_WITH_EVIDENCE or INCOMPLETE_EVIDENCE
     verify.py status <ticket>
+    verify.py browser-check <ticket>
+                                 check again, during a run, whether a browser can start here; record the answer
 
 Every form is one plain command: no shell redirect, pipe, heredoc or change of directory is ever
 needed, so the station works inside the Factory's restricted tool list (M4 known issue 9, D22).
@@ -25,6 +27,12 @@ What must be proven: every scenario (AC-NN) in spec.json with the scenario's own
 decision matrix rule (RN) with data the verifier chooses, and any holdout check a person left
 in .factory/holdouts/<ticket>/. Matrix rules carry no example data in the spec, so the
 verifier's own data is a holdout the builder never saw.
+
+No screen here (browser.py): for a web, desktop or mobile slice, start really starts a browser (or the app type's screen
+capture) for a moment. When nothing can, and verify.screen_evidence is "prefer" (the default), the slice is verified from what
+works without a screen (FALLBACK_EVIDENCE): every other check is unchanged, and nothing goes back to the builder for it.
+"require" keeps screenshots required and the ticket waits for a person; "never" tries no browser. verify.required_evidence
+still wins over all of it.
 
 Neighbours (M15, neighbours.py): up to verify.neighbours (default 2, 0 switches it off) scenarios that shipped
 with other slices of the same epic, chosen by rule at start and proven again on the built result as NEIGHBOUR-N.
@@ -65,6 +73,18 @@ REQUIRED_EVIDENCE: Dict[str, List[Dict[str, Any]]] = {
     "mobile": [{"kind": "screenshot", "match": IMAGE}, {"kind": "recording of the interaction", "match": VIDEO}],
     "library": [{"kind": "transcript of calling the library as a consumer", "match": ["*.log", "*.txt", "*.json"]}],
 }
+# When nothing here can capture a screen (browser.py found that out by really starting one), a web, desktop or mobile
+# slice is verified from what works without one: at least one such file, captured in this run, beside every other check.
+HEADLESS_WEB = ["*.log", "*.txt", "*.html", "*.htm", "*.json", "*.har", "*.http", "*.xml"]
+FALLBACK_EVIDENCE: Dict[str, List[Dict[str, Any]]] = {
+    "web": [{"kind": "record of driving the app without a browser (a request and response dump, the page's HTML saved as text, "
+                     "a transcript from curl or the framework's own test client, or a DOM or accessibility snapshot)", "match": HEADLESS_WEB}],
+    "desktop": [{"kind": "record of driving the app without a screen (a transcript of its own test harness or command line, "
+                         "a log of the interaction, or an accessibility snapshot)", "match": ["*.log", "*.txt", "*.json", "*.xml"]}],
+    "mobile": [{"kind": "record of driving the app without a screen (a transcript of its own test harness, a log of the interaction, "
+                        "or a view hierarchy dump)", "match": ["*.log", "*.txt", "*.json", "*.xml"]}],
+}
+SCREEN_SETTINGS = ("prefer", "require", "never")  # verify.screen_evidence; anything else reads as "prefer"
 TOOLS = ("playwright", "cypress", "vhs", "asciinema", "ffmpeg", "curl", "grpcurl", "k6", "protoc", "buf", "xcrun", "adb", "cliclick", "xdotool", "screencapture", "node", "npx")
 # M14 C: the product manager's approved pictures, in the cell's mocks/ (written by intake). For these app types each needs a
 # side-by-side record against a capture of the built screen from this run. A copy goes to evidence/mocks/, which is never evidence.
@@ -106,6 +126,15 @@ try:
     import neighbours  # noqa: E402
 except Exception:  # noqa: BLE001
     neighbours = None
+
+# Whether a screen can be captured here, found by really starting one (browser.py, beside this script). Without it nothing
+# is tried, and a web, desktop or mobile slice needs screenshots as before. The two hooks let tests fake the start.
+try:
+    import browser  # noqa: E402
+except Exception:  # noqa: BLE001
+    browser = None
+BROWSER_LAUNCH = None
+BROWSER_WHICH = None
 
 # M6.1 station telemetry. The shared helper lives with the intent station. It is observational only: if it
 # cannot be loaded, nothing is recorded and this station behaves exactly as before.
@@ -163,6 +192,12 @@ def load_json(path: Path, default: Any = None) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return default
+
+
+def sentence(text: Any) -> str:
+    """A clause from browser.py as a sentence: capital first letter, full stop."""
+    text = str(text or "").strip()
+    return f"{text[:1].upper()}{text[1:]}." if text else ""
 
 
 def sha(path: Path) -> str:
@@ -241,11 +276,63 @@ class Cell:
                                      "the scenario's own data and capture what happens: it must still hold."})
         return targets
 
-    def required_evidence(self) -> List[Dict[str, Any]]:
-        override = self.section("verify").get("required_evidence")
+    def override(self) -> Optional[List[str]]:
+        """verify.required_evidence for this app type, when the project sets it. It wins over everything else."""
+        setting = self.section("verify").get("required_evidence")
         app_type = str(self.info.get("app_type") or "")
-        if isinstance(override, dict) and isinstance(override.get(app_type), list):
-            return [{"kind": pattern, "match": [pattern]} for pattern in override[app_type] if isinstance(pattern, str)]
+        if isinstance(setting, dict) and isinstance(setting.get(app_type), list):
+            return [pattern for pattern in setting[app_type] if isinstance(pattern, str)]
+        return None
+
+    def screen_setting(self) -> str:
+        """verify.screen_evidence: prefer (the default: fall back when no screen can be captured), require or never."""
+        value = self.section("verify").get("screen_evidence")
+        return value if value in SCREEN_SETTINGS else "prefer"
+
+    def evidence_mode(self) -> Optional[Dict[str, Any]]:
+        """For a web, desktop or mobile slice: screen (screenshots and a recording) or headless (what works without a screen), and
+        why. None for other app types, whose evidence never needed a screen."""
+        app_type = str(self.info.get("app_type") or "")
+        if app_type not in FALLBACK_EVIDENCE:
+            return None
+        override = self.override()
+        if override is not None:
+            pictures = any(fnmatch.fnmatch(f"screen{ext}", pattern.lower()) for pattern in override for ext in (".png", ".jpg", ".jpeg"))
+            if pictures:
+                return {"mode": "screen", "reason": "setting", "why": f"verify.required_evidence in .factory/config.json names the evidence for {app_type} changes."}
+            return {"mode": "headless", "reason": "setting",
+                    "why": f"verify.required_evidence in .factory/config.json names the evidence for {app_type} changes, and it asks for no screenshot.",
+                    "said": f"The project's settings name the evidence for {app_type} changes and ask for no screenshots; "
+                            "this was verified from the files they name."}
+        setting = self.screen_setting()
+        if setting == "never":
+            return {"mode": "headless", "reason": "never",
+                    "why": "verify.screen_evidence is 'never' in .factory/config.json, so MACH did not try to capture the screen.",
+                    "said": "The project's settings say not to capture the screen, so there are no screenshots; "
+                            "this was verified from logs and saved pages." if app_type == "web" else
+                            "The project's settings say not to capture the screen, so there are no screenshots; this was verified from logs and transcripts."}
+        check = self.results.get("browser_check")
+        if isinstance(check, dict) and check.get("can_capture") is False and setting == "prefer":
+            return {"mode": "headless", "reason": "no-capture", "why": sentence(check.get("words")),
+                    "tool_said": check.get("why"),
+                    "said": browser.headless_sentence(app_type) if browser else "Nothing here could capture the screen, so there are no screenshots."}
+        if isinstance(check, dict) and check.get("can_capture") is False:
+            return {"mode": "screen", "reason": "require", "why": "verify.screen_evidence is 'require' in .factory/config.json, and "
+                    f"{check.get('words')}.", "tool_said": check.get("why")}
+        return {"mode": "screen", "reason": "capture" if isinstance(check, dict) else "default",
+                "why": sentence(check.get("words")) if isinstance(check, dict) else "Screenshots and a recording are the default."}
+
+    def headless(self) -> bool:
+        mode = self.evidence_mode()
+        return bool(mode and mode["mode"] == "headless")
+
+    def required_evidence(self) -> List[Dict[str, Any]]:
+        override = self.override()
+        app_type = str(self.info.get("app_type") or "")
+        if override is not None:
+            return [{"kind": pattern, "match": [pattern]} for pattern in override]
+        if self.headless():
+            return FALLBACK_EVIDENCE[app_type]
         return REQUIRED_EVIDENCE.get(app_type, [])
 
     def evidence_files(self) -> List[str]:
@@ -353,6 +440,56 @@ def changed_files(cell: Cell) -> List[str]:
     return [name for name in names if not is_byproduct(name)]
 
 
+def screen_check(cell: Cell) -> Optional[Dict[str, Any]]:
+    """Really start a browser (or the app type's screen capture) briefly, in the environment this station captures in, and
+    return what happened (browser.py). None when it is not tried: another app type, verify.required_evidence set for this app
+    type, verify.screen_evidence 'never', or browser.py not installed."""
+    app_type = str(cell.info.get("app_type") or "")
+    if browser is None or app_type not in FALLBACK_EVIDENCE or cell.override() is not None or cell.screen_setting() == "never":
+        return None
+    env = command_env.environment(cell.project, cell.work, ["node"])[0] if command_env is not None else None
+    return browser.check(app_type, cell.work, env=env, network_re=getattr(command_env, "NETWORK_RE", None), launch=BROWSER_LAUNCH, which=BROWSER_WHICH)
+
+
+def capture_instead(cell: Cell) -> str:
+    """What the verifier captures when the slice is verified without a screen."""
+    kinds = "; ".join(f"{item['kind']} ({', '.join(item['match'])})" for item in cell.required_evidence())
+    return (f"{cell.evidence_mode()['why']} Do not try to start a browser or capture the screen again. Capture instead, from outside, in this run: "
+            f"{kinds}. Drive the running app with a Python driver through 'capture' (HTTP requests with the standard library, or the "
+            "framework's own test client) and save what it shows as text. At least one such file is required. Every scenario is still "
+            "proven and recorded, exactly as with screenshots.")
+
+
+def require_stop(cell: Cell, check: Dict[str, Any]) -> str:
+    return (f"No screenshot can be captured here: {check.get('words')} (the tool said: \"{check.get('why')}\"). verify.screen_evidence is "
+            "'require' in .factory/config.json, so this change is not verified without screenshots. Nothing in the code can fix this, so the "
+            "ticket is not sent back to the builder: it waits for a person. Either run verification where a browser can start, or set "
+            "verify.screen_evidence to 'prefer' and MACH verifies it from logs and saved pages.")
+
+
+def cmd_browser_check(cell: Cell, args: argparse.Namespace) -> int:
+    """Check again, during a run, whether a screen can be captured here, and record the answer in the results."""
+    cell.require_started()
+    check = screen_check(cell)
+    if check is None:
+        mode = cell.evidence_mode()
+        print(json.dumps({"status": "NOT_TRIED", "app_type": cell.info.get("app_type"),
+                          "why": mode["why"] if mode else "This app type is verified without a screen; nothing to check.",
+                          "required_evidence": [item["kind"] + " (" + ", ".join(item["match"]) + ")" for item in cell.required_evidence()]}, indent=2))
+        return 0
+    cell.results["browser_check"] = check
+    cell.save()
+    if not check["can_capture"] and cell.screen_setting() == "require":
+        raise VerifyError(require_stop(cell, check), code="no-screen-capture")
+    headless = cell.headless()
+    print(json.dumps({"status": "CAN_CAPTURE" if check["can_capture"] else "NO_SCREEN", "browser_check": check,
+                      "evidence_mode": "headless" if headless else "screen",
+                      "required_evidence": [item["kind"] + " (" + ", ".join(item["match"]) + ")" for item in cell.required_evidence()],
+                      **({"capture_instead": capture_instead(cell)} if headless else {}),
+                      "next": capture_instead(cell) if headless else "Capture the screenshots and the recording, then record each check."}, indent=2, ensure_ascii=False))
+    return 0
+
+
 def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     stage = cell.info.get("stage")
     if stage not in ("built", "verified"):
@@ -371,6 +508,9 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
     command = test_command(cell)
     if not command:
         raise VerifyError("No test command is recorded for this cell.")
+    check = screen_check(cell)  # None unless a screen is wanted and may be tried
+    if check is not None and not check["can_capture"] and cell.screen_setting() == "require":
+        raise VerifyError(require_stop(cell, check), code="no-screen-capture")
 
     cell.evidence.mkdir(exist_ok=True)
     stale = [p for p in cell.evidence.iterdir() if not p.name.startswith("previous-")]
@@ -395,7 +535,11 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         "review_loop": cell.build.get("review_loop", 0), "started_at": now(), "started_epoch": started,
         "suite": suite, "contracts": contracts, "records": {},
         **({"neighbours": near} if near.get("chosen") else {}),
+        **({"browser_check": check} if check is not None else {}),
     }
+    mode = cell.evidence_mode()
+    if mode:
+        cell.results["evidence_mode"] = mode
     mocks = prepare_mocks(cell, app_type)  # M14 C: {} for a slice without mocks, and then nothing below changes
     if mocks:
         cell.results.update(mocks=mocks, mock_records={})
@@ -408,6 +552,9 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         "status": "STARTED", "ticket_id": cell.ticket_id, "app_type": app_type, "workdir": str(cell.work), "evidence_dir": str(cell.evidence),
         "suite": suite, "contracts": contracts,
         "required_evidence": [item["kind"] + " (" + ", ".join(item["match"]) + ")" for item in cell.required_evidence()],
+        **({"evidence_mode": mode["mode"], "evidence_mode_why": mode["why"]} if mode else {}),
+        **({"browser_check": check} if check is not None else {}),
+        **({"capture_instead": capture_instead(cell)} if mode and mode["mode"] == "headless" else {}),
         "tools_available": tools,
         "builder_notes": {"deviations": cell.build.get("deviations", []), "tests_passing_on_first_run": cell.build.get("tests_passing_on_first_run", [])},
         "prove": targets,
@@ -421,7 +568,10 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         **({"caches": command_env.notices(cell.project)} if command_env is not None and command_env.notices(cell.project) else {}),
         "records_file": str(cell.root / RECORDS_FILE),
         "next": "Prove each item yourself: write a driver into evidence_dir, run it with 'capture', and record each item with 'record' "
-                "(or all at once with 'record --from' and the records_file).",
+                "(or all at once with 'record --from' and the records_file)."
+                + (" This run is verified without a screen: see capture_instead." if mode and mode["mode"] == "headless" else
+                   f" If the browser stops starting during the run, run 'verify.py browser-check {cell.ticket_id}' once; MACH then says what to capture instead."
+                   if check is not None else ""),
     }, indent=2, ensure_ascii=False))
     return 0
 
@@ -679,6 +829,9 @@ def mock_verdict(cell: Cell) -> Any:
             continue
         if record["result"] == "differs" and not mock["binding"]:
             findings.append(f"{what} differs: " + "; ".join(record["differences"]))
+        elif record["result"] == "cannot compare" and mock["binding"] and cell.headless():
+            # Nothing here can capture the built screen, so no mock can be compared: the product seat sees it, a person can look.
+            findings.append(f"{what} could not be compared, because this change was verified without a screen: {record['note']}")
         elif record["result"] == "cannot compare" and mock["binding"]:
             # A binding mock is part of what must be proven: one that could not be compared is unproven, never a pass.
             incomplete.append(f"{what} could not be compared ({record['note']}), and it is binding, so it is not proven.")
@@ -701,11 +854,30 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
         incomplete.append(f"Not proven yet: {', '.join(missing)}.")
     files = cell.evidence_files()
     captured = [name for name in files if name not in AUTO_FILES and not (cell.results.get("mocks") and name.split("/")[0] == MOCKS_DIR)]
+    def lacking(items: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return [item for item in items if not any(fnmatch.fnmatch(Path(name).name.lower(), pattern.lower()) for name in captured for pattern in item["match"])]
+
+    # A screen was wanted and is missing: check again whether one can be captured here now (the browser may have stopped
+    # starting during the run). When it cannot, the slice is verified without one, by the same rule as at start.
+    mode = cell.evidence_mode()
+    if mode and mode["mode"] == "screen" and lacking(cell.required_evidence()) and (cell.results.get("browser_check") or {}).get("can_capture") is not False:
+        check = screen_check(cell)
+        if check is not None:
+            cell.results["browser_check"] = check
+            mode = cell.evidence_mode()
+    if mode:
+        cell.results["evidence_mode"] = mode
+        cell.save()
     mock_incomplete, mock_summary = mock_verdict(cell)  # M14 C: both empty for a slice without mocks
     incomplete += mock_incomplete
-    for item in cell.required_evidence():
-        if not any(fnmatch.fnmatch(Path(name).name.lower(), pattern.lower()) for name in captured for pattern in item["match"]):
-            incomplete.append(f"No {item['kind']} was captured (expected a file like {', '.join(item['match'])}).")
+    missing_kinds = lacking(cell.required_evidence())
+    for item in missing_kinds:
+        incomplete.append(f"No {item['kind']} was captured (expected a file like {', '.join(item['match'])}).")
+    if missing_kinds and mode and mode["mode"] == "headless":
+        incomplete.append(f"{mode['why']} Capture it without a screen, from outside, then run finish again. This is the verifier's own next step; "
+                          "nothing goes back to the builder.")
+    elif missing_kinds and mode and mode["reason"] == "require":
+        incomplete.append(require_stop(cell, cell.results["browser_check"]))
     if cell.results["app_type"] == "cli":
         incomplete += check_exit_codes(cell, targets)
     for target_id, record in records.items():
@@ -743,10 +915,15 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
                            for item in cell.required_evidence()},
         "tools_available": cell.results.get("tools_available", []),
         "failures": failures, "timestamp": now(), **mock_summary, **neighbour_summary(cell, records),
+        **({"evidence_mode": mode} if mode else {}),
+        **({"browser_check": cell.results["browser_check"]} if cell.results.get("browser_check") else {}),
     }
+    said = mode.get("said") if mode and mode["mode"] == "headless" else None
     if failures:
         findings = [f"# Verification findings for {cell.ticket_id} (review loop {cell.results['review_loop']})", "",
                     "Each item is a behavior that does not match the spec. Evidence is in the cell's evidence/ folder.", ""]
+        if said:
+            findings += [said, ""]
         findings += [f"{index}. {failure}" for index, failure in enumerate(failures, start=1)]
         if summary.get("neighbour_failures"):
             findings += ["", "## A shipped scenario no longer holds", "", NEIGHBOUR_FINDINGS]
@@ -765,6 +942,7 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
     print(json.dumps({
         "status": status, "summary": str(cell.evidence / "summary.json"), "checks_passed": passed, "checks_failed": len(records) - passed,
         "evidence_files": len(summary["evidence_files"]), "failures": failures,
+        **({"evidence_mode": "headless", "evidence": said} if said else {}),
         "next": "Ready for the review station." if status == "PASS"
         else f"Return the ticket to the build station: build revise {cell.ticket_id} --findings {cell.evidence / 'findings.md'}",
     }, indent=2, ensure_ascii=False))
@@ -774,6 +952,7 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
 def cmd_status(cell: Cell, args: argparse.Namespace) -> int:
     targets = cell.targets()
     records = cell.results.get("records") or {}
+    mode = cell.evidence_mode() if cell.results.get("started_at") else None
     print(json.dumps({
         "ticket_id": cell.ticket_id, "stage": cell.info.get("stage"), "verification": cell.info.get("verification"),
         "started": bool(cell.results.get("started_at")) and cell.results.get("head") == cell.head(),
@@ -781,6 +960,9 @@ def cmd_status(cell: Cell, args: argparse.Namespace) -> int:
         "failed": [t["id"] for t in targets if records.get(t["id"], {}).get("result") == "fail"],
         "remaining": [t["id"] for t in targets if t["id"] not in records],
         **({"mocks_remaining": [key for key in cell.results["mocks"] if key not in (cell.results.get("mock_records") or {})]} if cell.results.get("mocks") else {}),
+        **({"evidence_mode": mode["mode"], "evidence_mode_why": mode["why"],
+            "required_evidence": [item["kind"] + " (" + ", ".join(item["match"]) + ")" for item in cell.required_evidence()]} if mode else {}),
+        **({"capture_instead": capture_instead(cell)} if mode and mode["mode"] == "headless" else {}),
     }, indent=2))
     return 0
 
@@ -790,7 +972,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--project", type=Path, help="project root (default: nearest folder with .factory/ or .git)")
     sub = parser.add_subparsers(dest="command", required=True)
     for name, func, text in (("start", cmd_start, "check the gates and print what must be proven"), ("finish", cmd_finish, "give the verdict and write summary.json"),
-                             ("status", cmd_status, "show what is proven, failed and remaining")):
+                             ("status", cmd_status, "show what is proven, failed and remaining"),
+                             ("browser-check", cmd_browser_check, "check again whether a browser (or the screen) can be captured here, and record it")):
         p = sub.add_parser(name, help=text)
         p.add_argument("ticket_id")
         p.set_defaults(func=func)

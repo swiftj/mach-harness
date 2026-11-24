@@ -362,6 +362,17 @@ class VerifyTest(verify_tests.Base):
         self.assertIn("INCOMPLETE_EVIDENCE", out)
         self.assertIn("it is binding, so it is not proven", out)
 
+    def test_without_a_screen_a_binding_mock_goes_to_the_product_seat(self):
+        self.browser(verify_tests.fake_start(1, verify_tests.SANDBOX))
+        self.assertEqual(self.with_mocks((png(), "AC-01", True))["evidence_mode"], "headless")
+        for target in verify_tests.TARGETS:
+            self.record(target)
+        self.v_ok("compare", "LOCAL-001", "MOCK-1", "--result", "cannot-compare", "--note", "No browser could start here, so the screen cannot be captured.")
+        done = self.v_ok("finish", "LOCAL-001")
+        self.assertEqual(done["status"], "PASS")
+        summary = json.loads((self.evidence / "summary.json").read_text())
+        self.assertIn("could not be compared, because this change was verified without a screen", summary["mock_findings"][0])
+
     def test_a_changed_mock_in_the_cell_stops_verification(self):
         cell = self.cell_json()
         cell["app_type"] = "web"
