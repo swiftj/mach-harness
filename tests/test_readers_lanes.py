@@ -151,9 +151,81 @@ class ChangeRecordTest(Built):
         text = render(change_record, self.cellroot)
         fix = next(task for task in self.report()["tasks"] if task["id"] == "J-T01")
         self.assertIn("- The whole test suite on the joined result: failed.", text)
-        self.assertIn("- Every lane passed its own suite, but the joined result failed: test_release.S.test_release", text)
+        self.assertIn("- The whole suite failed on the joined result: test_release.S.test_release", text)
+        self.assertIn(". It held the work of lanes L1 and L2. ", text)
         self.assertIn(f"The build station added J-T01, which made them pass together, at commit `{fix['commit']}`.", text)
-        self.assertIn("- J-T01, lanes-interaction, recorded by the build station: Every lane passed its own suite", text)
+        self.assertNotIn("Every lane passed its own suite, but", text.split("Overrides the builder recorded")[0],
+                         "the record's own words claim only what was recorded: no lane's own suite is recorded at its end")
+        self.assertIn("- J-T01, lanes-interaction, recorded by the build station: Every lane passed its own suite", text, "the station's words, as recorded")
+
+    def handed_back_then_joined(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.open_lanes()
+        self.build_lane("L1", L1)
+        self.build_lane("L2", L2[:1])
+        self.ok("hand-back", TICKET, "--lane", "L2", "--reason", "T04 needs app/invite.py, which L1 owns")
+        self.assertEqual(self.ok("join", TICKET)["status"], "INTERACTION")
+
+    def finished_after_a_hand_back(self):
+        self.handed_back_then_joined()
+        self.put(self.work, {"app/release.py": RELEASE})
+        self.ok("green", TICKET, "T04")
+        self.ok("green", TICKET, "J-T01", "--already-done", "T04 made the whole suite pass")
+        self.put(self.work, {"README.md": README})
+        self.ok("done", TICKET, "T05")
+        self.ok("finish", TICKET)
+
+    def test_a_lane_handed_back_is_named_with_its_reason_and_where_each_task_was_built(self):
+        self.finished_after_a_hand_back()
+        text = render(change_record, self.cellroot)
+        self.assertIn("- Lane L2 held T03, T04. It was handed back to the cell before it finished, because \"T04 needs app/invite.py, which L1 owns\": "
+                      "T03 landed from the lane at the join, and T04 was then built in the cell, one at a time, after the join.", text)
+        self.assertIn("- Lane L1 held T01, T02.\n", text)
+        self.assertIn("- The whole suite failed on the joined result: ", text)
+        self.assertIn(". It held the work of lane L1 and what lane L2 finished before it was handed back (T03). ", text)
+        self.assertNotIn("Every lane passed its own suite", text, "a lane was handed back, and neither the record nor the station says otherwise")
+        self.assertIn("- no task (lane L2), lane-handed-back:", text, "the hand-back is listed with the other deviations too")
+
+    def test_a_handed_back_task_not_built_is_said_so_and_old_reports_are_read_from_the_deviations(self):
+        self.finished_after_a_hand_back()
+
+        def change(report):
+            for task in report["tasks"]:
+                if task["id"] == "T04":
+                    task["status"] = "pending"
+            for lane in report["lanes"]["lanes"]:
+                lane.pop("handed_back", None)  # only the deviations say it now
+        self.edit_report(change)
+        text = render(change_record, self.cellroot)
+        self.assertIn("It was handed back to the cell before it finished, because \"T04 needs app/invite.py, which L1 owns\": T03 landed from the "
+                      "lane at the join, and T04 is to be built in the cell after the join; it is pending.", text)
+
+    def test_a_command_set_during_the_build_is_named_with_old_new_reason_and_when(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        old = self.state()["test_cmd"]
+        new = old + " -b"
+        self.ok("set-commands", TICKET, "--test-cmd", new, "--reason", "the project's tests say more with -b")
+        self.open_lanes()
+        self.build_lane("L1", L1)
+        self.build_lane("L2", L2)
+        self.ok("join", TICKET)
+        self.put(self.work, {"README.md": README})
+        self.ok("done", TICKET, "T05")
+        self.ok("finish", TICKET)
+        self.edit_report(lambda report: report["deviations"].append(
+            {"task": None, "type": "lint-command-set", "detail": "The lint command was set while building (first build): null -> \"ruff check\". Reason: lint",
+             "command": "lint", "old": None, "new": "ruff check", "reason": "the project lints with ruff", "during": "first build", "at": "2026-11-24T10:00:00Z"}))
+        text = render(change_record, self.cellroot)
+        at = next(d for d in self.report()["deviations"] if d["type"] == "test-command-set")["at"]
+        self.assertIn("Commands set or changed during the build, as recorded:\n\n", text)
+        inert = lambda command: command.replace("@", "@\u200b")  # a mention is broken, as in all of the record's text
+        self.assertIn(f"- The test command was changed at {at} (lanes planned): it was \"{inert(old)}\", and is now \"{inert(new)}\". "
+                      "Reason: the project's tests say more with -b.", text)
+        self.assertIn("- The lint command was set at 2026-11-24T10:00:00Z (first build): there was none before, and it is now \"ruff check\". "
+                      "Reason: the project lints with ruff.", text)
+        self.assertLess(text.index("Commands set or changed"), text.index("Overrides the builder recorded"))
 
     def test_a_fix_task_not_done_is_said_so(self):
         self.joined_with_an_interaction()

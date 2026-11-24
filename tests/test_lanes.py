@@ -289,7 +289,7 @@ class GrammarTest(unittest.TestCase):
 
     def test_heading_errors(self):
         cases = {
-            "unknown": (["### Later", "- [ ] T01 [docs] A — `a.md`"], "'### Later'"),
+            "unknown": (["### Lanes", "### Later", "- [ ] T01 [docs] A — `a.md`"], "'### Later'"),
             "repeated": (["### Lanes", "- [ ] T01 [docs] A — `a.md`", "### Lanes", "- [ ] T02 [docs] B — `b.md`"], "more than once"),
             "out of order": (["### Lanes", "- [ ] T01 [docs] A — `a.md`", "### Before the lanes", "- [ ] T02 [docs] B — `b.md`"],
                              "comes after '### Lanes'"),
@@ -299,6 +299,25 @@ class GrammarTest(unittest.TestCase):
             with self.subTest(case=name):
                 found = problems_of(make_plan(lines))
                 self.assertTrue(any(words in sentence for sentence in found), found)
+
+    def test_other_sub_headings_alone_are_a_plan_written_the_old_way(self):
+        # As check-plan reads it: no problem, and nothing in it is read as a part.
+        text = make_plan(["### Backend", "- [ ] T01 [docs] A — `a.md`", "### Frontend", "- [ ] T02 [docs] B — `b.md`"])
+        self.assertFalse(lanes.uses_additions(text))
+        self.assertEqual(problems_of(text), [])
+        self.assertEqual((lanes_of(text)["before"], lanes_of(text)["after"]), ([], []))
+
+    def test_a_fenced_block_hides_headings_but_never_tasks(self):
+        # The build's parse_plan reads a task line inside a fence as a task, so the lanes read it too; a heading inside a
+        # fence is an example, not a part (the review's e4: check-plan and the lane calculator read such a plan alike).
+        text = make_plan(["### Lanes", "- [ ] T01 [docs] A — `a.md`", "```markdown", "### After the lanes", "- [ ] T02 [docs] B — `b.md`", "```",
+                          "- [ ] T03 [docs] C — `c.md`"])
+        tasks, _ = parse_plan(text)
+        self.assertEqual([t["id"] for t in tasks], ["T01", "T02", "T03"])
+        self.assertEqual([t["phase"] for t in lanes.annotate(text, tasks)], ["lanes", "lanes", "lanes"])
+        self.assertEqual(lanes_of(text)["after"], [])
+        self.assertEqual(problems_of(text), [])
+        self.assertFalse(lanes.uses_additions(make_plan(["~~~", "### Lanes", "~~~", "- [ ] T01 [docs] A — `a.md`"])))
 
     def test_a_task_above_the_first_heading_counts_as_before(self):
         text = make_plan(["- [ ] T01 [docs] A — `a.md`", "### Lanes", "- [ ] T02 [docs] B — `b.md`"])

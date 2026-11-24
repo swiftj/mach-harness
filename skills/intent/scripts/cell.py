@@ -63,6 +63,7 @@ PLAN_TASK_RE = re.compile(r"^\s*[-*+]\s+\[[ xX]\]\s+((?:R\d+-)?T\d+)\s+\[(test|i
 # and 'after Tnn' beside a task's IDs in its trailing brackets. A plan with neither is read exactly as before.
 LANE_PARTS = (("before", "Before the lanes"), ("lanes", "Lanes"), ("after", "After the lanes"))
 SUBHEADING_RE = re.compile(r"^###\s+(.+?)\s*$")
+PLAN_SECTION_RE = re.compile(r"^##\s+(.+?)\s*$")  # a section as the build station's parse_plan finds one
 TRAILING_BRACKETS_RE = re.compile(r"\(([^()]*)\)\s*$")
 AFTER_MARK_RE = re.compile(r"\bafter\s+((?:R\d+-)?T\d+)\b", re.IGNORECASE)
 # build.max_lanes when a project does not set it: MACH builds a plan's independent parts at the same time, up to this many,
@@ -1144,6 +1145,7 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     corrected = bool(spec_before) and spec_before != hashlib.sha256(text.encode("utf-8")).hexdigest() and building_started(root, stage_before)
     if corrected and cell.get("isolation") == "worktree":
         replan_commits(project, cell, build_state(root), workdir(project, cell))
+        lanes_survey(project, root, cell)
     (root / "spec.md").write_text(text, encoding="utf-8")
     cell["spec_path"] = str(spec.resolve().relative_to(workdir(project, cell).resolve()))
     cell["slice_id"] = model.get("slice_id")
@@ -1278,18 +1280,48 @@ def unreachable_green(task_lines: Sequence[str]) -> List[str]:
     return problems
 
 
+def plan_task_lines(text: str) -> List[str]:
+    """The lines of the plan's Tasks section as the build station's parse_plan finds it, for lane_parts: a line `## <name>`
+    starts a section, its name in any letter case, fenced or not. Each '## Tasks' line is kept, so lane_parts closes an
+    open fence where a section starts, as parse_plan's reading does."""
+    lines: List[str] = []
+    inside = False
+    for line in text.splitlines():
+        heading = PLAN_SECTION_RE.match(line)
+        if heading:
+            inside = heading.group(1).lower() == "tasks"
+            if inside:
+                lines.append(line)
+        elif inside:
+            lines.append(line)
+    return lines
+
+
 def lane_parts(task_section: Sequence[str]) -> Dict[str, Any]:
     """The plan's parts and 'after' marks (M22), read from the lines of '## Tasks'. `used` is False for a plan written
     without them: nothing else here applies to it, and it is checked and built exactly as before. With no part heading,
-    every task is in the lanes part; with headings, a task above the first one has no part (None)."""
+    every task is in the lanes part; with headings, a task above the first one has no part (None).
+
+    Read by the rules of the build station's lanes.task_walk, which a test holds this to: every task line parse_plan reads
+    is a task, inside a fenced block or not (the build builds it); a '###' line inside a fenced block is not a heading. A
+    block opens on a line starting with ``` or ~~~ and closes on the next line starting with the same character; a
+    '## ' line closes it."""
     headings: List[str] = []
     tasks: List[Dict[str, Any]] = []
     part: Optional[str] = None
-    fenced = False
+    fence: Optional[str] = None
     for line in task_section:
-        if validate_slice.FENCE_RE.match(line):
-            fenced = not fenced
-        heading = None if fenced else SUBHEADING_RE.match(line)
+        if PLAN_SECTION_RE.match(line):
+            fence = None
+            continue
+        opened = validate_slice.FENCE_RE.match(line)
+        if opened:
+            if fence is None:
+                fence = opened.group(1)[0]
+            elif opened.group(1)[0] == fence:
+                fence = None
+            continue
+        heading = None if fence is not None else SUBHEADING_RE.match(line)
         if heading:
             headings.append(heading.group(1))
             part = part_of(heading.group(1)) or part
@@ -1481,7 +1513,7 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
         problems.append("the first task must be a [test] task: tests are written before implementation")
     stranded = unreachable_green(task_lines)
     problems.extend(stranded)
-    lane_plan = plan_lanes(project, text, sections.get("Tasks", []), problems, check_lanes=not stranded)
+    lane_plan = plan_lanes(project, text, plan_task_lines(text), problems, check_lanes=not stranded)
     problems.extend(claude_config_problems(plan_files(text) + contracts))
     decisions = plan_adrs(project, root, cell, header, text, app_type, problems)
 
@@ -1826,9 +1858,9 @@ def replan_commits(project: Path, cell: Dict[str, Any], state: Dict[str, Any], w
             "set_aside": [{key: item[key] for key in ("commit", "subject", "as")} for item in above if item["as"] != "main"]}
 
 
-def save_uncommitted(work: Path, tip: str, ticket_id: str) -> Optional[Dict[str, Any]]:
-    """Every uncommitted change in the cell's checkout (tracked and untracked, not ignored), as one commit on top of the tip,
-    made through a separate index so the checkout and its own index are not touched. None when the checkout is clean."""
+def save_uncommitted(work: Path, tip: str, ticket_id: str, message: str = "Uncommitted work in the cell's checkout, saved by a re-plan") -> Optional[Dict[str, Any]]:
+    """Every uncommitted change in a checkout (the cell's, or a lane's), tracked and untracked, not ignored, as one commit on
+    top of the tip, made through a separate index so the checkout and its own index are not touched. None when it is clean."""
     listed = git(["status", "--porcelain", "-z", "--untracked-files=all"], work).stdout.split("\0")
     paths, skip = [], False
     for entry in listed:
@@ -1855,14 +1887,14 @@ def save_uncommitted(work: Path, tip: str, ticket_id: str) -> Optional[Dict[str,
             shutil.copyfile(str(index), str(scratch))
         added = run_git("add", "-A", "--sparse")
         tree = run_git("write-tree") if added.returncode == 0 else added
-        made = run_git("commit-tree", tree.stdout.strip(), "-p", tip, "-m", f"Uncommitted work in the cell's checkout, saved by a re-plan [{ticket_id}]") \
+        made = run_git("commit-tree", tree.stdout.strip(), "-p", tip, "-m", f"{message} [{ticket_id}]") \
             if tree.returncode == 0 else tree
     finally:
         if scratch.exists():
             scratch.unlink()
     if made.returncode != 0:
-        raise CellError("The cell's checkout has uncommitted changes and they could not be saved, so nothing was changed: "
-                        + (made.stderr.strip() or made.stdout.strip())[:300] + ". Commit them on the cell's branch and re-plan again.")
+        raise CellError(f"The checkout at {work} has uncommitted changes and they could not be saved, so nothing was changed: "
+                        + (made.stderr.strip() or made.stdout.strip())[:300] + ". Commit them on its branch and re-plan again.")
     return {"commit": made.stdout.strip(), "paths": sorted(paths)}
 
 
@@ -1922,17 +1954,244 @@ def build_state(root: Path) -> Dict[str, Any]:
     return state if isinstance(state, dict) else {}
 
 
+LANE_BRANCH_PREFIX = "mach-lane/"
+LANE_NAME_RE = re.compile(r"^(?:L\d{1,3}|join)$")
+
+
+def registered_worktrees(project: Path) -> List[Tuple[Path, Optional[str]]]:
+    """Git's worktree records: each worktree's path and the branch it has checked out (None when detached)."""
+    found: List[Tuple[Path, Optional[str]]] = []
+    path: Optional[Path] = None
+    branch: Optional[str] = None
+    for line in git(["worktree", "list", "--porcelain"], project).stdout.splitlines() + [""]:
+        if line.startswith("worktree "):
+            path, branch = Path(line[len("worktree "):]), None
+        elif line.startswith("branch refs/heads/"):
+            branch = line[len("branch refs/heads/"):]
+        elif not line.strip() and path is not None:
+            found.append((path, branch))
+            path = None
+    return found
+
+
+def same_path(one: Path, other: Path) -> bool:
+    try:
+        return one.resolve() == other.resolve()
+    except (OSError, RuntimeError):
+        return False
+
+
+def lanes_survey(project: Path, root: Path, cell: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """What a build in lanes left in the cell (M22): every lane and join worktree under lanes/ with Git's record of it, every
+    branch under mach-lane/<ticket>/, and the lanes' state files. Reads only. None for a cell that never had lanes, so a
+    re-plan of any other build says and does what it always did. Raises, with nothing changed, for a folder under lanes/
+    that is not one of this ticket's lane worktrees: what is in it is held nowhere else, so a person moves it first."""
+    ticket_id = cell["ticket_id"]
+    folder = root / "lanes"
+    prefix = f"refs/heads/{LANE_BRANCH_PREFIX}{ticket_id}/"
+    branches: Dict[str, str] = {}
+    for line in git(["for-each-ref", "--format=%(refname) %(objectname)", prefix], project).stdout.splitlines():
+        name, _, sha = line.partition(" ")
+        if name.startswith(prefix) and len(name) > len(prefix) and sha.strip():
+            branches[name[len(prefix):]] = sha.strip()
+    base = str(folder.resolve()) + os.sep if folder.exists() else str(folder) + os.sep
+    records = [(path, branch) for path, branch in registered_worktrees(project) if str(path.resolve()).startswith(base) or str(path).startswith(base)]
+    if not folder.is_dir() and not branches and not records:
+        return None
+    if folder.is_symlink():
+        raise CellError(f"{folder} is a symbolic link, not the cell's own lanes folder, so the build cannot be set aside safely. Nothing was changed. "
+                        f"Move it out of {root} to keep what it points at, then re-plan again.")
+    trees: Dict[str, Dict[str, Any]] = {}
+    for lane in sorted(folder.iterdir()) if folder.is_dir() else []:
+        repo = lane / "repo"
+        if not (repo.exists() or repo.is_symlink()):
+            continue
+        record = next((item for item in records if same_path(item[0], repo)), None)
+        expected = f"{LANE_BRANCH_PREFIX}{ticket_id}/{lane.name}"
+        top = git(["rev-parse", "--show-toplevel"], repo) if repo.is_dir() and not repo.is_symlink() else None
+        if (not LANE_NAME_RE.match(lane.name) or record is None or record[1] not in (None, expected) or top is None or top.returncode != 0
+                or not same_path(Path(top.stdout.strip()), repo)):
+            raise CellError(f"{repo} is not one of this ticket's lane worktrees, so what is in it is held nowhere else, and the build cannot be set "
+                            f"aside without it. Nothing was changed. Move that folder out of {root} to keep what it holds, then re-plan again.")
+        head = git(["rev-parse", "--verify", "-q", "HEAD"], repo).stdout.strip() or None
+        trees[lane.name] = {"repo": repo, "head": head, "branch": record[1]}
+    known = [tree["repo"] for tree in trees.values()]
+    stale = [path for path, _ in records if not any(same_path(path, repo) for repo in known)]
+    files: List[str] = []
+
+    def walk(at: Path) -> None:
+        for child in sorted(at.iterdir()):
+            parts = child.relative_to(root).parts
+            if len(parts) >= 3 and parts[2] == "repo":
+                continue  # a lane's checked-out tree: its work is saved as commits, never copied as files
+            if child.is_dir() and not child.is_symlink():
+                walk(child)
+            else:
+                files.append("/".join(parts))
+    if folder.is_dir():
+        walk(folder)
+    return {"folder": folder, "branches": branches, "trees": trees, "stale": stale, "files": files}
+
+
+def lanes_ref(ticket_id: str, number: int, lane: str) -> str:
+    """Where a re-plan keeps a lane's work. Beside the cell's own ref, refs/mach/replan/<ticket>/<n>, not under it: Git cannot
+    hold a ref both as a name and as a folder of names. Under refs/mach/replan/<ticket>/, which cleanup bundles and removes."""
+    return f"refs/mach/replan/{ticket_id}/{number}-lanes/{lane}"
+
+
+def keep_ref(project: Path, ref: str, sha: str) -> Tuple[str, bool]:
+    """Make `ref` point at `sha` without moving a ref that already holds something else (an earlier re-plan attempt that
+    stopped part way may have made it): such a ref is kept and the next free name, <ref>-2, -3, ..., is used. Returns the
+    ref and whether this call made it; raises CellError with Git's words when Git refuses."""
+    candidate, number = ref, 1
+    while True:
+        held = git(["rev-parse", "--verify", "-q", candidate], project).stdout.strip()
+        if held == sha:
+            return candidate, False
+        if not held:
+            done = git(["update-ref", candidate, sha, ""], project)
+            if done.returncode != 0:
+                raise CellError((done.stderr or done.stdout).strip()[:200] or "git update-ref failed")
+            return candidate, True
+        number += 1
+        candidate = f"{ref}-{number}"
+
+
+def save_lanes(project: Path, cell: Dict[str, Any], state: Dict[str, Any], survey: Dict[str, Any], number: int, work: Path) -> Dict[str, Any]:
+    """The Git half of setting a build's lanes aside (M22), done before the cell's own branch moves: each lane's branch tip
+    (the join branch's too), with the lane worktree's uncommitted and untracked files saved as one commit on top as the
+    cell's own are, is kept under lanes_ref(); then the lane and join worktrees are removed with Git's records of them and
+    the mach-lane/<ticket>/ branches are deleted. Every ref is made before anything is removed: if Git refuses one, the refs
+    this call made are taken back and nothing is changed. The state files move later, with the plan (move_lane_files)."""
+    ticket_id = cell["ticket_id"]
+    record = state.get("lanes") if isinstance(state.get("lanes"), dict) else {}
+    fork = record.get("fork") or None
+    main_head = git(["rev-parse", "HEAD"], project).stdout.strip()
+    where = f'git -C "{work}"'
+    names = sorted(set(survey["trees"]) | set(survey["branches"]), key=lambda name: (name == "join", len(name), name))
+
+    def commits_on(tip: str) -> List[Dict[str, Any]]:
+        since = [fork] if fork and git(["merge-base", "--is-ancestor", fork, tip], project).returncode == 0 else [x for x in (main_head,) if x]
+        found = []
+        for line in git(["log", "--reverse", "--format=%H %s", tip, *[f"^{base}" for base in since]], project).stdout.splitlines():
+            sha, _, subject = line.partition(" ")
+            found.append({"commit": sha, "subject": subject[:120], "bring_back": f"{where} cherry-pick {sha}"})
+        return found
+
+    saved: List[Dict[str, Any]] = []
+    for name in names:
+        tree = survey["trees"].get(name)
+        tip = (tree or {}).get("head") or survey["branches"].get(name)
+        if not tip:
+            continue
+        uncommitted = save_uncommitted(tree["repo"], tip, ticket_id, f"Uncommitted work in lane {name}, saved by a re-plan") if tree else None
+        entry = {"lane": name, "branch": f"{LANE_BRANCH_PREFIX}{ticket_id}/{name}" if name in survey["branches"] else None,
+                 "saved_as": lanes_ref(ticket_id, number, name), "tip": uncommitted["commit"] if uncommitted else tip, "commits": commits_on(tip),
+                 "uncommitted": uncommitted}
+        branch_tip = survey["branches"].get(name)
+        if branch_tip and branch_tip != tip and git(["merge-base", "--is-ancestor", branch_tip, entry["tip"]], project).returncode != 0:
+            entry["branch_tip"] = {"commit": branch_tip, "saved_as": entry["saved_as"] + "-branch"}  # the branch moved away from its worktree
+        saved.append(entry)
+    made: List[str] = []
+    for entry in saved:
+        targets = [(entry, "saved_as", entry["tip"])] + ([(entry["branch_tip"], "saved_as", entry["branch_tip"]["commit"])] if entry.get("branch_tip") else [])
+        for holder, key, sha in targets:
+            try:
+                holder[key], new = keep_ref(project, holder[key], sha)
+            except CellError as refused:
+                for back in made:
+                    git(["update-ref", "-d", back], project)
+                raise CellError(f"Could not keep lane {entry['lane']}'s work as {holder[key]} ({refused}), so nothing was changed: the lanes, the "
+                                f"plan and the build are where they were. Run the re-plan again; if Git refuses the same way, the error above is "
+                                f"Git's, from the repository at {project}.")
+            if new:
+                made.append(holder[key])
+        if entry["uncommitted"]:
+            entry["uncommitted"] = dict(entry["uncommitted"], bring_back=f"{where} checkout {entry['saved_as']} -- <path>")
+    # A ref kept by an earlier attempt of this re-plan that stopped part way, for a lane that is gone now: named too.
+    ours = {entry["saved_as"] for entry in saved} | {entry["branch_tip"]["saved_as"] for entry in saved if entry.get("branch_tip")}
+    prefix = lanes_ref(ticket_id, number, "")
+    for line in git(["for-each-ref", "--format=%(refname) %(objectname)", prefix], project).stdout.splitlines():
+        ref, _, sha = line.partition(" ")
+        if ref.startswith(prefix) and ref not in ours and sha.strip():
+            saved.append({"lane": ref[len(prefix):], "branch": None, "saved_as": ref, "tip": sha.strip(), "commits": commits_on(sha.strip()),
+                          "uncommitted": None, "saved_earlier": True})
+    removed, left = [], []
+    for name in names:
+        tree = survey["trees"].get(name)
+        if tree is None:
+            continue
+        done = git(["worktree", "remove", "--force", "--force", str(tree["repo"])], project)
+        if done.returncode != 0 and tree["repo"].exists():
+            left.append(f"{tree['repo']} ({(done.stderr or done.stdout).strip()[:200]})")
+        else:
+            removed.append(str(tree["repo"]))
+    git(["worktree", "prune"], project)
+    if left:
+        raise CellError("Every lane's work is kept (" + ", ".join(sorted(ours)) + "), but Git would not remove the lane worktree " + "; ".join(left)
+                        + ". The plan, the build and the cell's branch were not changed" + (f"; these lane worktrees were removed: {', '.join(removed)}" if removed else "")
+                        + ". Close anything that has a file open in that folder and re-plan again: what was kept stays kept, and the re-plan names it.")
+    deleted, kept = [], []
+    for name, sha in sorted(survey["branches"].items()):
+        branch = f"{LANE_BRANCH_PREFIX}{ticket_id}/{name}"
+        (deleted if git(["update-ref", "-d", f"refs/heads/{branch}", sha], project).returncode == 0 else kept).append(branch)
+    return {"kept_in": None, "state_files": survey["files"], "saved": saved, "worktrees_removed": removed,
+            "worktree_records_dropped": [str(path) for path in survey["stale"]], "branches_deleted": deleted, "branches_kept": kept}
+
+
+def move_lane_files(root: Path, keep: Path, survey: Dict[str, Any], lanes: Dict[str, Any]) -> None:
+    """The file half: the lanes' state files (never a checked-out tree) move to plan-history/<n>/lanes/, and the emptied
+    lanes/ folder goes, so the new plan's build finds no lane of the old one."""
+    for name in survey["files"]:
+        source = root / name
+        if source.exists() or source.is_symlink():
+            destination = keep / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            source.replace(destination)
+    folder = survey["folder"]
+    if folder.is_dir() and not folder.is_symlink():
+        for path in sorted((p for p in folder.rglob("*") if p.is_dir() and not p.is_symlink()), key=lambda p: len(p.parts), reverse=True):
+            if not any(path.iterdir()):
+                path.rmdir()
+        if not any(folder.iterdir()):
+            folder.rmdir()
+    lanes["kept_in"] = str(keep / "lanes")
+
+
+def lanes_told(lanes: Dict[str, Any]) -> List[str]:
+    """What a re-plan's `next` says about the lanes it set aside."""
+    told = [f"The build's lanes are set aside too, not lost: their state files are in {lanes['kept_in']}, and their worktrees and "
+            f"branches are removed, so the new plan's lanes start afresh."]
+    for entry in lanes["saved"]:
+        said = f"Lane {entry['lane']}'s work is kept as {entry['saved_as']}"
+        if entry["commits"]:
+            said += "; to bring a commit back onto the branch, run: " + "; ".join(item["bring_back"] for item in entry["commits"])
+        if entry["uncommitted"]:
+            said += f"; its files that were not committed ({', '.join(entry['uncommitted']['paths'][:5])}" + (", ..." if len(entry["uncommitted"]["paths"]) > 5 else "") \
+                    + f") come back with: {entry['uncommitted']['bring_back']}"
+        if entry.get("branch_tip"):
+            said += f"; its branch had moved away from its worktree and is kept as {entry['branch_tip']['saved_as']}"
+        told.append(said + ".")
+    if lanes["branches_kept"]:
+        told.append(f"The branch(es) {', '.join(lanes['branches_kept'])} moved after the re-plan kept their work, so Git was not asked to delete "
+                    "them and nothing on them is lost; a person looks at them with git log and deletes them with git branch -D.")
+    return told
+
+
 def set_aside_build(project: Path, root: Path, cell: Dict[str, Any], reason: str, stage: Optional[str], reason_code: str,
                     extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Set a cell's plan and build aside so that it is planned again, losing nothing: the branch's tip, with any uncommitted
     files saved as one commit on top of it, is kept under refs/mach/replan/<ticket>/<n>; the branch returns to the spec as
-    finalized last; plan.md, build.json and build-report.json move to plan-history/<n>/. Used by a re-plan (on a person's
+    finalized last; plan.md, build.json and build-report.json move to plan-history/<n>/. A build in lanes (M22) has its lanes
+    set aside too: each lane's work is kept under refs/mach/replan/<ticket>/<n>-lanes/<L>, its worktree and branch are
+    removed, and its state files move to plan-history/<n>/lanes/ (save_lanes, move_lane_files). Used by a re-plan (on a person's
     word) and by finalize when the spec was corrected after building started. The caller sets the stage and writes cell.json.
     Returns {"number", "keep", "ref", "reset", "branch", "told"}."""
     ticket_id = cell["ticket_id"]
     state = build_state(root)
     work = workdir(project, cell)
     found = replan_commits(project, cell, state, work) if cell.get("isolation") == "worktree" else None
+    survey = lanes_survey(project, root, cell) if cell.get("isolation") == "worktree" else None  # M22: None for a build without lanes
     history = root / "plan-history"
     number = 1 + max([int(path.name) for path in history.glob("*") if path.name.isdigit()] or [0])
     keep = history / str(number)
@@ -1941,6 +2200,9 @@ def set_aside_build(project: Path, root: Path, cell: Dict[str, Any], reason: str
     # top of the old tip, and the ref keeps that commit, so a reset never loses a file the build wrote and did not commit.
     reset = uncommitted = restored = None
     spec_commit = None
+    # The lanes before the cell's own branch: their work is kept under refs first, then their worktrees and branches go, so the
+    # new plan's build never finds a lane of the old one. A refusal here leaves the cell's branch and the plan where they were.
+    lanes = save_lanes(project, cell, state, survey, number, work) if survey is not None else None
     if found is not None:
         uncommitted = save_uncommitted(work, found["tip"], ticket_id)
         saved = uncommitted["commit"] if uncommitted else found["tip"]
@@ -1967,6 +2229,8 @@ def set_aside_build(project: Path, root: Path, cell: Dict[str, Any], reason: str
         if (root / name).is_file():
             (root / name).replace(keep / name)
             moved.append(name)
+    if lanes is not None:
+        move_lane_files(root, keep, survey, lanes)
     branch: Dict[str, Any] = {}
     if found is not None:
         where = f'git -C "{work}"'
@@ -1978,6 +2242,7 @@ def set_aside_build(project: Path, root: Path, cell: Dict[str, Any], reason: str
             "not_recognised": not_recognised if reset else [],
             "uncommitted": dict(uncommitted, saved_as=ref, bring_back=f"{where} checkout {ref} -- <path>") if uncommitted else None,
             "spec_restored": restored,
+            **({"lanes": lanes} if lanes is not None else {}),
         }
     (keep / "replan.json").write_text(json.dumps({"replan": number, "at": now(), "reason": reason, "from_stage": stage, "kept": moved, "reset": reset,
                                                  **branch, **(extra or {})}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -1992,6 +2257,8 @@ def set_aside_build(project: Path, root: Path, cell: Dict[str, Any], reason: str
         told.append(f"Files that were not committed are saved in {ref}; to bring one back, run: git -C \"{work}\" checkout {ref} -- <path>.")
     if restored and not restored.get("commit"):
         told.append(f"The spec as finalized last is written back to {restored['path']} but not committed: {restored.get('note') or 'git.auto_commit is false'}.")
+    if lanes is not None:
+        told.extend(lanes_told(lanes))
     return {"number": number, "keep": keep, "ref": ref, "reset": reset, "branch": branch, "told": told, "moved": moved}
 
 
