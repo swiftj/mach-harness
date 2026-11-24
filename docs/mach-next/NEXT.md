@@ -6,10 +6,11 @@ Keep this file current: when a piece below is finished or the plan changes, chan
 
 ## 1. State
 
-- **Released:** 0.22.0, tag `v0.22.0`, on `main`. Unmerged: `fix/open-items` (section 2.3), waiting for the owner's word.
+- **Released:** 0.22.1, tag `v0.22.1`, on `main`. Nothing is unmerged.
+- **What 0.22.1 added:** a sign of life for slow builds, the merge plan's two refusals, the "Unattended runs: off" label, five layout items and four defect fixes (section 2.3).
 - **What 0.22.0 added:** qualifying a release on any machine, from each slice's committed change record (A6 of the M20 design).
 - **What 0.21.0 added:** MACH for a team (Part A of the M20 design, except A6), the basic decisions drafted from an engineer's own documents, a ticket's workspace that holds no `.claude/` files, and a plain message when MACH's files are from different versions. The release notes are `docs/guides/RELEASE_NOTES_DRAFT.md`.
-- **Checks at release:** `make check` (2,160 tests, 1 skipped), `go test ./...` in both apps, and the web typecheck, lint, build and unit tests (347 and 396) all passed on the release commit.
+- **Checks at release:** `make check` (2,166 tests, 1 skipped), `go test ./...` in both apps, and the web typecheck, lint, build and unit tests (352 and 397) all passed on the release commit.
 
 ## 2. What is next, in order
 
@@ -36,7 +37,7 @@ Facts from the real transfer test are in section 1.2 of the design. One open poi
 
 ### 2.3 Smaller things left open
 
-Built on the branch `fix/open-items` on 2026-11-23, after 0.22.0, not merged and not released:
+Built on 2026-11-23 and released in 0.22.1:
 
 - The four defects section 3 used to list: stations run the project's commands with `PYTHONDONTWRITEBYTECODE=1`; `verify.py capture` takes its driver's arguments after `--` on every Python; the tests no longer depend on the date they started on, on where a Python keeps its byte code, or on `tomllib`.
 - `merge.py plan` lists the two refusals (already shipped; slice number already on main).

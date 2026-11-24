@@ -1,6 +1,19 @@
-# MACH release notes: 0.22.0
+# MACH release notes: 0.22.1
 
 What is new in each release, newest first, followed by supported platforms, what you need, upgrading and security notes.
+
+## What changed in 0.22.1
+
+A slow build keeps its slice, the merge plan says more before you run it, and fixes.
+
+| Change | What it is |
+| --- | --- |
+| A slow build keeps its slice | A factory whose work on a slice has moved says so on the slice's issue, at most once every day and a half by default, so another factory does not take a slice that is still being built. A build that has not moved for three days (`intake.claim_stale_days`) is free again, as before. |
+| The merge plan says what the merge would refuse | `/mach merge`'s plan now says, before anything runs, when the slice already shipped from another factory or its slice number belongs to another slice on main. |
+| "Unattended runs: off" | The Factory Floor's top bar says "Unattended runs: off" where it said "Factory not enabled": MACH is installed and working, and only the supervisor that runs work unattended is off. |
+| No byte code in a ticket's workspace | MACH runs your build, test and lint commands so that Python leaves no cached byte code in the ticket's workspace, and a test run always tests the code as it is now. |
+| Arguments for a verification driver | `capture ... -- <arguments>` passes the arguments to the driver on every supported Python. |
+| Product Studio's layout | The "More below" mark sits under a pane and no longer covers its last line. On Vision and outcomes, "Save changes" stays in view at the top. The "ready to build" dialog opens with one short sentence. On a slice's "From the PRD" page the hint names the button it means. |
 
 ## What changed in 0.22.0
 
