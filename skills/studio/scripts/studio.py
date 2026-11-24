@@ -42,6 +42,8 @@ import mocks  # noqa: E402
 import needs  # noqa: E402
 import prd  # noqa: E402
 import product  # noqa: E402
+import project_archive  # noqa: E402  M21 A: the project archive (its refusals)
+import project_export  # noqa: E402  M21 C: project export
 import requests_in  # noqa: E402
 import shape  # noqa: E402
 import shape_route  # noqa: E402
@@ -314,9 +316,10 @@ class Studio:
         if kind == "slice":
             used, reserved = self.cell.slice_ids(self.project)
             on_github = self.handoff().taken_ids()  # slice IDs GitHub's issues hold, as last read
-            return f"SLICE-{max([0, *used, *reserved, *on_github]) + 1:03d}"
+            moving = import_reserved(self, "SLICE")  # M21: numbers a project being brought in holds until it is finished
+            return f"SLICE-{max([0, *used, *reserved, *on_github, *moving]) + 1:03d}"
         folder, prefix, rule, _ = KINDS[kind]
-        numbers = [0]
+        numbers = [0, *import_reserved(self, prefix)]  # M21: numbers a project being brought in holds until it is finished
         numbers += [int(number) for number in self.handoff().epic_numbers()] if kind == "epic" else []
         for root in (self.project, self.draft):
             for path in (root / "product" / folder).glob(f"{prefix}-*.json"):
@@ -765,6 +768,7 @@ def saved_state(studio: Studio, ledger: Dict[str, Any], slices: Dict[str, Dict[s
                             "text": "The product principles have changes that are not published. Publish them so the builders get them."})
     waiting += needs.not_saved(sys.modules[__name__], studio, ledger)  # M17 A: technical needs not published, or a publish unfinished
     waiting += shape.not_saved(sys.modules[__name__], studio)  # M16 A: an idea's save to GitHub unfinished, or changed since
+    waiting += import_not_saved(studio)  # M21: bringing in a project stopped part way
     notes = github_updates_waiting(studio)
     for key in ("github_updates_note", "github_updates_not_made_note"):
         if notes.get(key):
@@ -959,6 +963,53 @@ def cmd_project_set(studio: Studio, args: argparse.Namespace) -> int:
         data["status"] = args.status
     studio.commit_or_restore([("project", data)], "Changing the project")
     return emit({"project": studio.load("project")})
+
+
+# ---- M21: moving a project by archive (project_export.py, project_import.py; docs/mach-next/M21_EXPORT_IMPORT.md) ----
+# project_import is imported inside the functions that use it, as shape.py, needs.py and prd.py import it for their own
+# numbering: it reaches Product Studio through this module.
+
+
+def import_reserved(studio: Studio, prefix: str) -> List[int]:
+    """The numbers of one kind (SLICE, EPIC, PP) that an unfinished import holds: every allocator skips them."""
+    import project_import
+    return [int(number) for number in project_import.reserved_numbers(studio, prefix)]
+
+
+def import_not_saved(studio: Studio) -> List[Dict[str, Any]]:
+    """The `saved` row for an import that stopped part way, or none."""
+    import project_import
+    stopped = project_import.unfinished(studio)
+    if not stopped:
+        return []
+    name = stopped.get("file") or "the archive"
+    return [{"kind": "import_unfinished", "target": None,
+             "text": say(f"Bringing in the project from {name} stopped part way. Run it again with the same file to finish, or set it aside.",
+                         f"Bringing in the project from {name} stopped part way. Bring the same file in again to finish, or set it aside.")}]
+
+
+def cmd_project_export(studio: Studio, args: argparse.Namespace) -> int:
+    return emit(project_export.export(sys.modules[__name__], studio, args.out and Path(args.out), args.only_mine))
+
+
+def cmd_project_import(studio: Studio, args: argparse.Namespace) -> int:
+    import project_import
+    if args.abandon:  # on the product manager's word: set aside the import that stopped part way; what it placed stays
+        if args.plan:
+            raise StudioError("Setting aside an import changes nothing to plan. Nothing was changed.")
+        return emit(project_import.set_aside(sys.modules[__name__], studio, args.archive))
+    if not args.archive:
+        raise StudioError(say("Name the archive file to bring in (project import <file>). Nothing was changed.",
+                              "Choose the archive file to bring in. Nothing was changed."))
+    archive = Path(os.path.abspath(str(Path(args.archive).expanduser())))
+    if args.plan:
+        return emit(project_import.plan(sys.modules[__name__], studio, archive))
+    return emit(project_import.run(sys.modules[__name__], studio, archive))
+
+
+def cmd_project_imports(studio: Studio, args: argparse.Namespace) -> int:
+    import project_import
+    return emit(project_import.lookup(studio, args.identifier))
 
 
 def add_epic(studio: Studio, title: str, criteria: Sequence[str], serves: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -1859,7 +1910,8 @@ def next_principle_id(studio: Studio, items: Sequence[Dict[str, Any]]) -> str:
     ledger = studio.handoff().load()
     used = [item["id"] for item in items] + [item["id"] for item in (ledger.get("principles") or {}).get("published") or []]
     used += [item["id"] for item in ((ledger.get("seen") or {}).get("principles") or {}).get("principles") or []]
-    return f"PP-{max([0, *(int(ident.split('-')[1]) for ident in used)]) + 1:02d}"
+    moving = import_reserved(studio, "PP")  # M21: numbers a project being brought in holds until it is finished
+    return f"PP-{max([0, *moving, *(int(ident.split('-')[1]) for ident in used)]) + 1:02d}"
 
 
 def find_principle(items: List[Dict[str, Any]], ident: str) -> Dict[str, Any]:
@@ -2309,7 +2361,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--take", required=True, choices=("mine", "theirs"), help="keep your draft, or take the version on GitHub whole")
     p.set_defaults(func=cmd_reconcile)
 
-    project = sub.add_parser("project", help="the project's name, vision and outcomes").add_subparsers(dest="action", required=True)
+    project = sub.add_parser("project", help="the project's name, vision and outcomes; moving it to another repository").add_subparsers(dest="action", required=True)
     p = project.add_parser("init")
     p.add_argument("--id", help="the project's ID; left out, MACH makes it from the name")
     p.add_argument("--name", required=True)
@@ -2322,6 +2374,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--outcome", action="append", help="repeat for each outcome; replaces the list")
     p.add_argument("--status", choices=product.ENUMS["project"]["status"])
     p.set_defaults(func=cmd_project_set)
+    # M21: moving the project to another repository in one archive file (only on the product manager's word)
+    p = project.add_parser("export", help="write the whole project to one archive file that names no repository")
+    p.add_argument("--out", help="the folder to write it in; left out, .factory/studio/export/")
+    p.add_argument("--only-mine", action="store_true", help="leave out this project's slices that are on GitHub but not in this workspace")
+    p.set_defaults(func=cmd_project_export)
+    p = project.add_parser("import", help="bring a project archive into this repository's workspace; every slice arrives as a draft")
+    p.add_argument("archive", nargs="?", help="the archive file that project export wrote (with --abandon: which unfinished import, if more than one)")
+    p.add_argument("--plan", action="store_true", help="say what would be brought in and every new number; change nothing")
+    p.add_argument("--abandon", action="store_true",
+                   help="set aside the import that stopped part way: its numbers are freed, what it already brought in stays where it is")
+    p.set_defaults(func=cmd_project_import)
+    p = project.add_parser("imports", help="the projects brought in here, or what one of their IDs is called here (reads only)")
+    p.add_argument("identifier", nargs="?", help="an ID from the project brought in, such as SLICE-007")
+    p.set_defaults(func=cmd_project_imports)
 
     epic = sub.add_parser("epic", help="epics").add_subparsers(dest="action", required=True)
     p = epic.add_parser("add")
@@ -2530,6 +2596,9 @@ def run_command(argv: Optional[Sequence[str]] = None) -> int:
         return args.func(Studio(project), args)
     except (StudioError, requests_in.RequestError, handoff.HandoffError) as exc:
         return refuse(exc)
+    except project_archive.ArchiveError as exc:  # M21: an archive that cannot be read safely; its sentence carries no ending
+        message = str(exc)
+        return refuse(StudioError(message if "Nothing was changed." in message else f"{message} Nothing was changed."))
     except FileNotFoundError as exc:
         if exc.filename == "git":  # Git is not installed: say so plainly, not as a traceback
             return refuse(StudioError(GIT_MISSING))

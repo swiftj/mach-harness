@@ -61,7 +61,8 @@ POLICY_RE = re.compile(r"^POL-[a-z][a-z0-9]*(?:-[a-z][a-z0-9]*)*(?:-[0-9]{2,})?$
 
 SCHEMA_VERSION = 1
 STAGES = ("new", "exploring", "brief", "decided", "shaped")
-SOURCE_KINDS = ("typed", "idea", "request", "fault", "change")  # change: Part B's `idea change`, from one shipped rule
+SOURCE_KINDS = ("typed", "idea", "request", "fault", "change", "moved")  # change: Part B's `idea change`, from one shipped rule;
+# moved (M21): brought in from another repository, its source not kept here (the import record keeps what it was)
 VERDICTS = ("go", "not-now", "no")
 ROUTES = ("small-change", "one-slice", "epic", "several-epics")
 OUTCOME_RESULTS = ("met", "not-met", "too-early")
@@ -112,7 +113,7 @@ def source_problems(source: Any, rules: Any) -> List[str]:
         return ["source is {kind: typed|idea|request|fault, ...}"]
     kind = source["kind"]
     allowed = {"typed": {"kind"}, "idea": {"kind", "repository", "number"}, "request": {"kind", "repository", "number"},
-               "fault": {"kind", "ticket"}, "change": {"kind", "rule"}}[kind]
+               "fault": {"kind", "ticket"}, "change": {"kind", "rule"}, "moved": {"kind"}}[kind]
     problems = [f"source has an unexpected field {key}" for key in sorted(set(source) - allowed)]
     if kind in ("idea", "request"):
         if type(source.get("number")) is not int or not 1 <= source["number"] < 10 ** 9:
@@ -336,7 +337,8 @@ class Ideas:
 
     def next_id(self) -> str:
         """The next free IDEA-NNN, skipping every draft and the numbers GitHub's idea issues held at the last read."""
-        numbers = [0] + [int(name.split("-")[1]) for name in self.ids()]
+        import project_import  # noqa: E402  M21: here, not above, to keep the two modules from importing each other
+        numbers = [0] + [int(name.split("-")[1]) for name in self.ids()] + project_import.reserved_numbers(self.studio, "IDEA")
         numbers += [int(row["idea_id"].split("-")[1]) for row in (self.load_ledger()["seen"].get("issues") or {}).values()
                     if isinstance(row, dict) and IDEA_RE.fullmatch(str(row.get("idea_id") or ""))]
         return f"IDEA-{max(numbers) + 1:03d}"
@@ -593,7 +595,8 @@ def source_view(ideas: Ideas, source: Dict[str, Any]) -> Dict[str, Any]:
     kind = source.get("kind")
     view: Dict[str, Any] = {"kind": kind, "words": {"typed": "Typed by the product manager", "idea": "Filed in the idea template",
                                                       "request": "From a request", "fault": "A fault from production",
-                                                      "change": "A change to a rule that has shipped"}.get(kind, kind)}
+                                                      "change": "A change to a rule that has shipped",
+                                                      "moved": "Came from another repository; its source is not kept here."}.get(kind, kind)}
     if kind == "change":
         view["rule"] = source["rule"]
         return view
@@ -868,7 +871,7 @@ def publish(ideas: Ideas, idea_id: str) -> Dict[str, Any]:
         verdict = record.get("verdict") or {}
         holds = verdict_holds(record, check["sha256"])
         label = rules.shape_state_label(record["stage"], verdict.get("decision"), holds)
-        body = rules.shape_issue_body(idea_id, record["revision"], brief, record["source"])
+        body = rules.shape_issue_body(idea_id, record["revision"], brief, None if record["source"].get("kind") == "moved" else record["source"])
         body_sha = sha(body)
         wanted_verdict = {"decision": verdict["decision"], "brief_sha256": verdict.get("brief_sha256"), "by": verdict.get("by")} if holds else None
     with ideas.ledger_held():
