@@ -634,6 +634,15 @@ class HelpersTest(unittest.TestCase):
                "FAILED tests/test_z.py::T::test_c - AssertionError\nERROR tests/test_w.py\n")
         self.assertEqual(landing.failing_tests(out), ["tests.test_x.T.test_a", "tests.test_y.U.test_b", "tests/test_z.py::T::test_c", "tests/test_w.py"])
 
+    def test_a_test_module_run_from_inside_its_folder_is_matched(self):
+        """`unittest discover -s tests` names tests/test_release.py as test_release: its lane is named all the same."""
+        failing = landing.failing_tests("FAIL: test_release (test_release.S.test_release)\nERROR: test_x (unit.test_deep.T)\n")
+        haystack = "\n".join(failing)
+        self.assertTrue(landing._named_in("tests/test_release.py", haystack))  # noqa: SLF001
+        self.assertTrue(landing._named_in("tests/unit/test_deep.py", haystack))  # noqa: SLF001
+        self.assertFalse(landing._named_in("app/release.py", haystack), "only a test module is matched by the end of its path")  # noqa: SLF001
+        self.assertFalse(landing._named_in("tests/test_rel.py", haystack))  # noqa: SLF001
+
     def test_the_python_3_11_unittest_header_is_read_the_same(self):
         self.assertEqual(landing.failing_tests("FAIL: test_a (tests.test_x.T.test_a)\n"), ["tests.test_x.T.test_a"])
 

@@ -616,6 +616,151 @@ class InteractionTest(LaneBase):
         self.assertEqual(gates, [("build.join", "refuse", "lanes-interaction")])
 
 
+NEW_CMD = test_build.NEW_CMD
+
+
+class HandBackTest(LaneBase):
+    """A lane that cannot finish is not a dead end: its finished tasks land, the rest are built in the cell after the join."""
+
+    def test_a_lane_needing_another_lanes_file_hands_its_tasks_back_and_nothing_is_lost(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.open_lanes()
+        self.build_lane("L1", L1)
+        self.build_lane("L2", L2[:1])
+        self.put(self.lane_work("L2"), {"app/release.py": RELEASE, "app/invite.py": IMPL})
+        refusal = self.refused("green", TICKET, "T04")
+        self.assertIn('build.py hand-back LOCAL-001 --lane L2 --reason "<which file, and why>"', refusal)
+        self.assertIn("This lane's committed work is kept and lands at the join", refusal)
+        for name in ("app/release.py", "app/invite.py"):
+            (self.lane_work("L2") / name).unlink()
+        self.assertIn("--reason is required", self.refused("hand-back", TICKET, "--lane", "L2", "--reason", " "))
+        handed = self.ok("hand-back", TICKET, "--lane", "L2", "--reason", "T04 needs app/invite.py, which L1 owns", "--holder", HOLDER)
+        self.assertEqual((handed["status"], handed["finished"], handed["handed_back"]), ("HANDED_BACK", ["T03"], ["T04"]))
+        self.assertIn("build.py join LOCAL-001", handed["next"])
+        self.assertIn("already handed back", self.refused("hand-back", TICKET, "--lane", "L2", "--reason", "again"))
+        self.assertIn("was handed back to the cell (T04 needs app/invite.py, which L1 owns)", self.refused("next", TICKET, "--lane", "L2"))
+        self.put(self.lane_work("L2"), {"app/release.py": RELEASE})
+        self.assertIn("was handed back", self.refused("green", TICKET, "T04"))
+        (self.lane_work("L2") / "app/release.py").unlink()
+        self.assertEqual(self.ok("lanes", TICKET)["next"], "build.py join LOCAL-001")
+        self.assertEqual(self.ok("lanes-open", TICKET, "--holder", HOLDER)["status"], "NONE_LEFT", "a handed-back lane is never handed out again")
+
+        joined = self.ok("join", TICKET)
+        self.assertEqual((joined["landed"], joined["handed_back"]), (3, [{"lane": "L2", "tasks": ["T04"]}]))
+        self.assertEqual(joined["status"], "INTERACTION", "T03's test waits for T04's code")
+        state = self.state()
+        self.assertEqual([(t["id"], t["status"], bool(t.get("handed_back"))) for t in state["tasks"]],
+                         [("T01", "done", False), ("T02", "done", False), ("T03", "done", False), ("T04", "pending", True), ("J-T01", "pending", False),
+                          ("T05", "pending", False)])
+        self.assertEqual([lane["status"] for lane in state["lanes"]["lanes"]], ["joined", "handed-back"])
+        handed_back = [d for d in state["deviations"] if d["type"] == "lane-handed-back"][0]
+        self.assertEqual((handed_back["lane"], handed_back["tasks"], handed_back["finished"], handed_back["holder"]), ("L2", ["T04"], ["T03"], HOLDER))
+        self.assertIn("--already-done", [d for d in state["deviations"] if d["type"] == "lanes-interaction"][0]["detail"])
+        self.assertEqual((self.branches(), self.worktrees()), ([], []), "the handed-back lane's finished work landed, so nothing of it is left")
+        self.assertEqual(self.ok("next", TICKET)["task"], "T04")
+        self.put(self.work, {"app/release.py": RELEASE})
+        self.ok("green", TICKET, "T04")
+        self.assertIn("changed no files", self.refused("green", TICKET, "J-T01"))
+        self.ok("green", TICKET, "J-T01", "--already-done", "T04 made the whole suite pass")
+        self.put(self.work, {"README.md": README})
+        self.ok("done", TICKET, "T05")
+        self.assertEqual(self.ok("finish", TICKET)["status"], "BUILT")
+        report = json.loads((self.cellroot / "build-report.json").read_text())
+        self.assertEqual([(t["id"], t.get("lane"), t.get("handed_back")) for t in report["tasks"]][:4],
+                         [("T01", "L1", False), ("T02", "L1", False), ("T03", "L2", False), ("T04", "L2", True)])
+        self.assertEqual({s["task"]: s.get("lane") for s in report["timing"]["steps"]}["T04"], None, "T04 was built in the cell")
+        self.assertEqual(report["lanes"]["join"]["handed_back"], {"L2": ["T04"]})
+        self.assertIn(("build.hand-back", "pass", "lane-handed-back"),
+                      [(r["data"]["gate"], r["data"]["outcome"], r["data"]["reason_code"]) for r in self.lifecycle() if r["type"] == "gate.evaluated"])
+
+    def test_a_lane_with_nothing_finished_is_handed_back_whole(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.open_lanes()
+        self.build_lane("L1", L1)
+        self.assertIn("Lane L1 of LOCAL-001 is done", self.refused("hand-back", TICKET, "--lane", "L1", "--reason", "x"))
+        handed = self.ok("hand-back", TICKET, "--lane", "L2", "--reason", "the driver could not start a builder for it")
+        self.assertEqual((handed["finished"], handed["handed_back"]), ([], ["T03", "T04"]))
+        joined = self.ok("join", TICKET)
+        self.assertEqual((joined["status"], joined["landed"]), ("JOINED", 2))
+        self.assertEqual(self.ok("next", TICKET)["task"], "T03")
+        self.put(self.work, {"tests/test_release.py": RELEASE_TEST})
+        self.ok("red", TICKET, "T03")
+        self.put(self.work, {"app/release.py": RELEASE})
+        self.ok("green", TICKET, "T04")
+        self.put(self.work, {"README.md": README})
+        self.ok("done", TICKET, "T05")
+        self.assertEqual(self.ok("finish", TICKET)["status"], "BUILT")
+        self.assertIn("already joined", self.refused("hand-back", TICKET, "--lane", "L2", "--reason", "x"))
+
+    def test_before_the_lanes_open_the_refusal_names_the_way_to_build_in_order(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        refusal = self.refused("hand-back", TICKET, "--lane", "L2", "--reason", "x")
+        self.assertIn("--grant 1", refusal)
+        self.assertEqual(self.ok("lanes-open", TICKET, "--holder", HOLDER, "--grant", "1")["status"], "SEQUENTIAL")
+
+
+class TakeOverTest(LaneBase):
+    def test_a_lane_taken_over_refuses_its_earlier_holder_plainly(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        opened = self.open_lanes()
+        self.assertIn(f"--holder {HOLDER}", opened["lanes"][0]["prompt"])
+        self.assertEqual(self.ok("next", TICKET, "--lane", "L1", "--holder", HOLDER)["task"], "T01")
+        self.ok("lanes-open", TICKET, "--holder", OTHER, "--take-over")
+        refusal = self.refused("next", TICKET, "--lane", "L1", "--holder", HOLDER)
+        self.assertIn("Lane L1 of LOCAL-001 has been taken over", refusal)
+        self.assertIn("Stop and report", refusal)
+        self.assertIn("build.py next LOCAL-001 --lane L1", refusal)
+        self.put(self.lane_work("L1"), {"tests/test_invite.py": RED_TEST})
+        self.assertIn("has been taken over", self.refused("red", TICKET, "T01", "--holder", HOLDER))
+        self.assertIn("has been taken over", self.refused("hand-back", TICKET, "--lane", "L1", "--reason", "x", "--holder", HOLDER))
+        self.assertEqual(self.lane_state("L1")["tasks"][0]["status"], "pending", "a refused step changes nothing")
+        self.ok("red", TICKET, "T01", "--holder", OTHER)
+        self.assertEqual([item["holder"] for item in self.lane_state("L1")["earlier_holders"]], [HOLDER])
+
+
+class SetCommandsInLanesTest(LaneBase):
+    def test_with_lanes_open_every_lane_takes_the_new_command_from_its_next_step(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.open_lanes()
+        self.build_lane("L1", L1[:1])
+        before = (self.cellroot / "lanes/L1/lane.json").read_bytes()
+        done = self.ok("set-commands", TICKET, "--test-cmd", NEW_CMD, "--reason", "the project names its test files test_*.py")
+        self.assertIn("lanes are open", done["suite"]["not_run"])
+        self.assertIn("--lane <L>", done["next"])
+        self.assertEqual((self.cellroot / "lanes/L1/lane.json").read_bytes(), before, "no lane's state file is written by anyone but its lane")
+        self.assertEqual([d["during"] for d in self.state()["deviations"] if d["type"] == "test-command-set"], ["lanes open"])
+        self.build_lane("L1", L1[1:])
+        self.build_lane("L2", L2)
+        for name in ("L1", "L2"):
+            state = self.lane_state(name)
+            self.assertEqual(state["test_cmd"], NEW_CMD)
+            self.assertEqual(state["tasks"][-1]["test_run"]["command"], NEW_CMD)
+        self.assertEqual(self.lane_state("L1")["tasks"][0]["test_run"].get("scope"), "new tests only", "T01 ran before the change, and keeps its record")
+        joined = self.ok("join", TICKET)
+        self.assertEqual((joined["status"], joined["suite"]["command"]), ("JOINED", NEW_CMD))
+        self.put(self.work, {"README.md": README})
+        self.ok("done", TICKET, "T05")
+        self.ok("finish", TICKET)
+        report = json.loads((self.cellroot / "build-report.json").read_text())
+        self.assertEqual(report["tests"]["command"], NEW_CMD)
+        self.assertIn("test-command-set", [d["type"] for d in report["deviations"]])
+
+    def test_after_the_join(self):
+        self.through_lanes()
+        done = self.ok("set-commands", TICKET, "--test-cmd", NEW_CMD, "--reason", "the joined suite should name test files")
+        self.assertEqual((done["suite"]["passed"], self.state()["suite"]), (True, "green"))
+        self.assertEqual([d["during"] for d in self.state()["deviations"] if d["type"] == "test-command-set"], ["lanes joined"])
+        self.put(self.work, {"README.md": README})
+        self.ok("done", TICKET, "T05")
+        self.ok("finish", TICKET)
+        self.assertEqual(json.loads((self.cellroot / "build-report.json").read_text())["tests"]["command"], NEW_CMD)
+
+
 class ResumeTest(LaneBase):
     """Design 15, scenarios 8 and 9: a builder killed mid-lane, and a join stopped part way."""
 
@@ -727,7 +872,11 @@ class ResumeTest(LaneBase):
         self.build_lane("L1", L1)
         self.build_lane("L2", L2)
         self.put(self.lane_work("L2"), {"app/stray.py": "X = 1\n"})
-        self.assertIn("Lane L2 has uncommitted changes that no task holds (app/stray.py)", self.refused("join", TICKET))
+        refusal = self.refused("join", TICKET)
+        self.assertIn("Lane L2 has uncommitted changes that no task holds (app/stray.py)", refusal)
+        self.assertIn(f'git -C "{self.lane_work("L2")}" stash push --include-untracked', refusal)
+        self.assertIn("nothing is lost", refusal)
+        self.assertNotIn("delete", refusal)
         self.assertTrue((self.lane_work("L2") / "app/stray.py").is_file())
         self.assertEqual(len(self.worktrees()), 2)
 

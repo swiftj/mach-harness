@@ -1081,6 +1081,15 @@ def set_aside_plan(root: Path, cell: Dict[str, Any], reason: str) -> Optional[Di
 
 
 SPEC_CHANGED = "The spec changed after the plan was written."
+SPEC_CORRECTED = "The spec was corrected after building started, so its plan and build were made for a spec that no longer exists."
+BUILD_ASIDE_LINE = ("Building had started under the old spec, so its plan and build are set aside as a re-plan sets them aside, and nothing is lost: "
+                    "plan.md, build.json and any build report are kept in {kept}. {branch} The contract engineer writes a new plan for the corrected spec: "
+                    "go to stage 2.")
+
+
+def building_started(root: Path, stage: Optional[str]) -> bool:
+    """Whether the build station has started on this cell: it is building or built, or build.json records tasks."""
+    return stage in ("building", "built") or bool(build_state(root).get("tasks"))
 
 
 def hold_risk_floor(project: Path, cell: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -1129,6 +1138,12 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
         return 1
 
     text = spec.read_text(encoding="utf-8-sig")
+    # A spec corrected after building started: the plan and the build were made for a spec that no longer exists, so they
+    # are set aside exactly as a re-plan sets them aside (set_aside_build), and nothing stale is built on. Checked here first,
+    # read-only, so a refusal changes nothing.
+    corrected = bool(spec_before) and spec_before != hashlib.sha256(text.encode("utf-8")).hexdigest() and building_started(root, stage_before)
+    if corrected and cell.get("isolation") == "worktree":
+        replan_commits(project, cell, build_state(root), workdir(project, cell))
     (root / "spec.md").write_text(text, encoding="utf-8")
     cell["spec_path"] = str(spec.resolve().relative_to(workdir(project, cell).resolve()))
     cell["slice_id"] = model.get("slice_id")
@@ -1139,6 +1154,13 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     # What the spec's effects were checked against (M13): the integration branch's commit, for the timing flag in status.
     cell["shipped"] = {"commit": found["commit"], "branch": found.get("branch"), "rules": len(found["rules"]), "checked_at": now()}
     record_policies(project, root, cell, text, packs)
+    build_aside = None
+    if corrected:
+        loop = int(build_state(root).get("loop") or 0)
+        aside = set_aside_build(project, root, cell, SPEC_CORRECTED, stage_before, "spec-changed",
+                                {"automatic": True, "judging_rounds_before": loop} if loop else {"automatic": True})
+        build_aside = {"replan": aside["number"], "kept_in": str(aside["keep"]), "reason": SPEC_CORRECTED, "moved": aside["moved"],
+                       "reset": aside["reset"], **aside["branch"], "next": " ".join(aside["told"]) or None}
     spec_json = root / "spec.json"
     counts = {
         "invariants": len(model.get("invariants") or []),
@@ -1173,7 +1195,9 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
         telemetry(root, "station.exited", "groom", lambda: {"outcome": "spec-open", "stage": "spec-open", "slice_id": cell["slice_id"], **kind_facts(cell)})
         report(commit(project, cell, [cell["spec_path"]], f"spec({cell['slice_id']}): save draft with open questions [{cell['ticket_id']}]", args.no_commit))
         print(json.dumps({"status": "WIDENED" if widened_now and not open_items else "SAVED_NOT_READY", "slice_id": cell["slice_id"], **counts,
-                          **({"widened": widened_now} if widened_now else {})}, indent=2))
+                          **({"widened": widened_now} if widened_now else {}), **({"build_set_aside": build_aside} if build_aside else {})}, indent=2))
+        if build_aside:
+            print(BUILD_ASIDE_LINE.format(kept=build_aside["kept_in"], branch=build_aside["next"] or "The branch held nothing above the spec, so it was not moved."))
         if open_items:
             print("SAVED: the spec is valid but open questions remain, so it is not ready for contracts or building."
                   + (" An open policy concern waits for its owner: only they accept it (policy accept), or the spec changes so the statement is met."
@@ -1208,11 +1232,12 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
             cell["spec_commit"] = head
         write_cell(project, cell)
     print(json.dumps({"status": "READY", "slice_id": cell["slice_id"], "risk": cell["risk"], **counts, **({"replanned": replanned} if replanned else {}),
-                      **({"risk_floor": floored} if floored else {}),
+                      **({"build_set_aside": build_aside} if build_aside else {}), **({"risk_floor": floored} if floored else {}),
                       **({"spec_question": stopped, "next": "Stop: this ticket waits for the product manager. The question goes on the slice's issue."}
                          if stopped else {})}, indent=2))
     print(f"READY: wrote {root / 'spec.md'} and {spec_json}." + (" The spec changed after its plan was written, so the old plan is kept on record and "
-                                                                "the contract engineer writes a new one: go to stage 2." if replanned else ""))
+                                                                "the contract engineer writes a new one: go to stage 2." if replanned else "")
+          + (" " + BUILD_ASIDE_LINE.format(kept=build_aside["kept_in"], branch=build_aside["next"] or "The branch held nothing above the spec, so it was not moved.") if build_aside else ""))
     return 0
 
 
@@ -1873,24 +1898,51 @@ def cmd_replan(project: Path, args: argparse.Namespace) -> int:
         return replan_after_adr(project, root, cell, reason)
     if stage not in REPLAN_STAGES:
         raise CellError(f"Only a planned or building cell can be re-planned; {args.ticket_id} is '{stage}'.")
-    build_json = root / "build.json"
-    state = json.loads(build_json.read_text(encoding="utf-8")) if build_json.is_file() else {}
+    state = build_state(root)
     if int(state.get("loop") or 0) > 0 or (root / "review").exists() or (root / "evidence" / "summary.json").exists():
         raise CellError("This ticket has been through a judging round, and its rounds must stand, so it cannot be re-planned; nothing was changed. "
                         "The build carries on in its current round, answering the judges' findings, and a person can settle the ticket in the "
                         "walkthrough (/mach decide).")
+    done = set_aside_build(project, root, cell, reason, stage, "replanned")
+    cell["stage"] = "spec-ready"
+    write_cell(project, cell)
+    told = ["plan: the contract engineer writes a new plan.md and 'cell.py check-plan' checks it.", *done["told"]]
+    print(json.dumps({"status": "REPLANNED", "ticket_id": args.ticket_id, "stage": "spec-ready", "kept_in": str(done["keep"]), "reset": done["reset"],
+                      **done["branch"], "next": " ".join(told)}, indent=2))
+    return 0
+
+
+def build_state(root: Path) -> Dict[str, Any]:
+    """The cell's build.json, or {} when building never started."""
+    path = root / "build.json"
+    try:
+        state = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except ValueError:
+        state = {}
+    return state if isinstance(state, dict) else {}
+
+
+def set_aside_build(project: Path, root: Path, cell: Dict[str, Any], reason: str, stage: Optional[str], reason_code: str,
+                    extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Set a cell's plan and build aside so that it is planned again, losing nothing: the branch's tip, with any uncommitted
+    files saved as one commit on top of it, is kept under refs/mach/replan/<ticket>/<n>; the branch returns to the spec as
+    finalized last; plan.md, build.json and build-report.json move to plan-history/<n>/. Used by a re-plan (on a person's
+    word) and by finalize when the spec was corrected after building started. The caller sets the stage and writes cell.json.
+    Returns {"number", "keep", "ref", "reset", "branch", "told"}."""
+    ticket_id = cell["ticket_id"]
+    state = build_state(root)
     work = workdir(project, cell)
     found = replan_commits(project, cell, state, work) if cell.get("isolation") == "worktree" else None
     history = root / "plan-history"
     number = 1 + max([int(path.name) for path in history.glob("*") if path.name.isdigit()] or [0])
     keep = history / str(number)
-    ref = f"refs/mach/replan/{args.ticket_id}/{number}"
+    ref = f"refs/mach/replan/{ticket_id}/{number}"
     # The branch first, so a Git failure leaves the plan files where they were. Uncommitted files are saved as a commit on
     # top of the old tip, and the ref keeps that commit, so a reset never loses a file the build wrote and did not commit.
     reset = uncommitted = restored = None
     spec_commit = None
     if found is not None:
-        uncommitted = save_uncommitted(work, found["tip"], args.ticket_id)
+        uncommitted = save_uncommitted(work, found["tip"], ticket_id)
         saved = uncommitted["commit"] if uncommitted else found["tip"]
         point = found["point"] or found["tip"]
         if saved != point:
@@ -1905,7 +1957,7 @@ def cmd_replan(project: Path, args: argparse.Namespace) -> int:
         restored = restore_spec(project, cell, root, work)
         spec_commit = git(["rev-parse", "HEAD"], work).stdout.strip() or None
         cell["spec_commit"] = spec_commit
-    telemetry(root, "gate.evaluated", "plan", lambda: {"gate": "plan.replan", "outcome": "pass", "reason_code": "replanned", "overridden_by_reason": False,
+    telemetry(root, "gate.evaluated", "plan", lambda: {"gate": "plan.replan", "outcome": "pass", "reason_code": reason_code, "overridden_by_reason": False,
                                                        "from_stage": stage, "replan": number, "reset": bool(reset)})
     if stage == "building":
         telemetry(root, "station.exited", "build", lambda: {"outcome": "replanned", "stage": "spec-ready"})
@@ -1928,11 +1980,9 @@ def cmd_replan(project: Path, args: argparse.Namespace) -> int:
             "spec_restored": restored,
         }
     (keep / "replan.json").write_text(json.dumps({"replan": number, "at": now(), "reason": reason, "from_stage": stage, "kept": moved, "reset": reset,
-                                                 **branch}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    cell["stage"] = "spec-ready"
+                                                 **branch, **(extra or {})}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     cell["replans"] = number
-    write_cell(project, cell)
-    told = ["plan: the contract engineer writes a new plan.md and 'cell.py check-plan' checks it."]
+    told: List[str] = []
     if reset and reset["from"] != reset["to"]:
         told.append(f"Everything above {reset['to'][:12]} is set aside, not lost: {ref} keeps it.")
     if branch.get("not_recognised"):
@@ -1942,9 +1992,7 @@ def cmd_replan(project: Path, args: argparse.Namespace) -> int:
         told.append(f"Files that were not committed are saved in {ref}; to bring one back, run: git -C \"{work}\" checkout {ref} -- <path>.")
     if restored and not restored.get("commit"):
         told.append(f"The spec as finalized last is written back to {restored['path']} but not committed: {restored.get('note') or 'git.auto_commit is false'}.")
-    print(json.dumps({"status": "REPLANNED", "ticket_id": args.ticket_id, "stage": "spec-ready", "kept_in": str(keep), "reset": reset, **branch,
-                      "next": " ".join(told)}, indent=2))
-    return 0
+    return {"number": number, "keep": keep, "ref": ref, "reset": reset, "branch": branch, "told": told, "moved": moved}
 
 
 def binding_record(project: Path, root: Path, cell: Dict[str, Any], ident: str) -> Dict[str, Any]:
