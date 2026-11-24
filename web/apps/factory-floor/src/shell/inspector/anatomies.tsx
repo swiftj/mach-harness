@@ -696,13 +696,13 @@ function useLaneCommit(artifact: ArtifactState, cell: CellState | null): CommitL
   const { client } = useSource();
   const commit = artifact.record?.commit ?? null;
   // A ticket built in lanes: a task named its lane, or a lanes gate was evaluated.
-  const inLanes = Boolean(commit && cell && (cell.tasks.some((t) => t.lane) || cell.gateLog.some((g) => g.gate === "build.lanes-open" || g.gate === "build.join")));
+  const inLanes = Boolean(commit && cell && (cell.tasks.some((t) => t.lane) || cell.gateLog.some((g) => g.gate === "build.lanes-open" || g.gate === "build.join" || g.gate === "build.hand-back")));
   // This very commit is one an event named as a lane's.
   const known = Boolean(commit && cell?.tasks.some((t) => t.lane && t.commit && (t.commit.startsWith(commit) || commit.startsWith(t.commit))));
   const wanted = useMemo(() => (inLanes && cell ? new Map([[cell.ticketId, lanesKey(cell)]]) : new Map<string, string>()), [inLanes, cell]);
   const replies = useCellLanes(inLanes ? client : null, wanted);
   if (!inLanes || !commit) return undefined;
-  const link = landedCommitOf(replies.get(artifact.ticketId) ?? null, commit);
+  const link = landedCommitOf(replies.get(artifact.ticketId)?.lanes ?? null, commit);
   return link ?? (known ? null : undefined);
 }
 

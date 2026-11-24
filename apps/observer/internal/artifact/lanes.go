@@ -21,10 +21,14 @@ import (
 // archive.
 //
 // Only identifiers, codes, commits, times and numbers are served, each checked again here: lane
-// names, task IDs, statuses, reason codes, commit IDs, timestamps and seconds. The files also hold
-// prose (task text, notes, deviation details, the failing suite's output, file paths, the holder's
-// token); none of it is decoded, so none of it can be served. A file that cannot be read is named
-// with why, never left out silently.
+// names, task IDs, statuses, reason codes, commit IDs, timestamps, seconds and counts, and the refs
+// the station keeps work under (refs/mach/lanes-set-aside/<ticket>/<L>/<n>, refs/mach/lane-files/...),
+// which are names it makes from the ticket, the lane and a number. The files also hold prose (task
+// text, notes, deviation details, a hand-back's reason, the failing suite's output, file paths,
+// branch names, the holder's token, and the test and lint commands with the reason they changed,
+// which a builder chooses freely); none of it is decoded, so none of it can be served. Of a changed
+// command only which one changed (test or lint) and when are served. A file that cannot be read is
+// named with why, never left out silently.
 
 const (
 	maxBuildJSON  = 8 << 20
@@ -36,8 +40,11 @@ const (
 
 var (
 	laneNameRe = regexp.MustCompile(`^L[1-9][0-9]{0,2}$`)
-	taskIDRe   = regexp.MustCompile(`^(?:(?:R[0-9]+|J)-)?T[0-9]{1,5}$`)
-	wordRe     = regexp.MustCompile(`^[a-z][a-z-]{0,23}$`)
+	// T01; R1-T01 (a revision round's); J-T01 (the join's, when lanes fail together); C-T01 (added when
+	// a changed test or lint command leaves the suite or the linter failing).
+	taskIDRe  = regexp.MustCompile(`^(?:(?:R[0-9]+|J|C)-)?T[0-9]{1,5}$`)
+	keptRefRe = regexp.MustCompile(`^refs/mach/(?:lanes-set-aside|lane-files)/([A-Za-z0-9][A-Za-z0-9_.-]{0,127})/(L[1-9][0-9]{0,2})/[1-9][0-9]{0,5}$`)
+	wordRe    = regexp.MustCompile(`^[a-z][a-z-]{0,23}$`)
 )
 
 // FileRead says whether one recorded file was read: "read", "absent" or "unreadable" with why (a
@@ -65,6 +72,68 @@ type LaneView struct {
 	Current      *string  `json:"current"` // the first task not done; null when every one is, or unknown
 	TestSeconds  *float64 `json:"test_seconds"`
 	WorktreeSecs *float64 `json:"worktree_seconds"`
+	// HandedBack is a lane handed back to the cell (status "handed-back"): which tasks it had finished
+	// and which not then, and, after the join, which are built in the cell. Its reason is not served.
+	HandedBack *HandedBack `json:"handed_back"`
+	// MadeFresh lists each time the lane was made fresh because its folder, branch or record belonged
+	// to another build, with the ref its earlier work is kept under.
+	MadeFresh []MadeFresh `json:"made_fresh"`
+	// Recovered lists the tasks of the lane whose step was interrupted and whose commit the station
+	// found and recorded afterwards.
+	Recovered []Recovered `json:"recovered"`
+}
+
+// HandedBack is a lane's hand-back to the cell.
+type HandedBack struct {
+	At          *string  `json:"at"`
+	Finished    []string `json:"finished_then"`
+	Unfinished  []string `json:"unfinished_then"`
+	BuiltInCell []string `json:"built_in_cell"` // after the join: the tasks built in the cell, one at a time
+}
+
+// MadeFresh is one making-fresh of a lane. Why is the station's code when it is one; the ref is
+// where the earlier work is kept (null when there was none to keep); StateFileKept says whether
+// the earlier record was kept beside it in the cell (its path is not served).
+type MadeFresh struct {
+	At            *string `json:"at"`
+	Why           *string `json:"why"`
+	Ref           *string `json:"ref"`
+	StateFileKept bool    `json:"state_file_kept"`
+}
+
+// Recovered is a task whose interrupted step the station recovered: its commit was found and recorded.
+type Recovered struct {
+	Task   string  `json:"task"`
+	At     *string `json:"at"`
+	Commit *string `json:"commit"`
+}
+
+// Deviation is one recorded deviation of the build about its lanes, its commands or a recovered
+// step: its type, and the identifiers it names. Its detail (prose) is not served.
+type Deviation struct {
+	Type   string  `json:"type"`
+	Lane   *string `json:"lane"`
+	Task   *string `json:"task"`
+	At     *string `json:"at"`
+	Ref    *string `json:"ref"`
+	Commit *string `json:"commit"`
+	// Command is "test" or "lint" on a test-command-set or lint-command-set; the command itself is not served.
+	Command *string `json:"command"`
+}
+
+// deviationTypes are the deviations served: the ones about lanes, changed commands and recovered steps.
+var deviationTypes = map[string]bool{
+	"lanes-sequential": true, "lane-files-set-aside": true, "lane-handed-back": true, "lane-handed-back-joined": true,
+	"lane-set-aside": true, "lanes-interaction": true, "test-command-set": true, "lint-command-set": true,
+	"step-recovered": true, "lane-made-fresh": true, "lane-worktree-remade": true, "lanes-landed-on-moved-branch": true,
+}
+
+// CommandChange is one change of the build's test or lint command (build.json command_changes): when,
+// which commands, and in which round. The commands and the reason are a builder's own words: not served.
+type CommandChange struct {
+	At       *string  `json:"at"`
+	Commands []string `json:"commands"`
+	Loop     *int     `json:"loop"`
 }
 
 // TaskView is one task of the plan, as build.json and, while its lane is open, the lane's own
@@ -72,17 +141,22 @@ type LaneView struct {
 type TaskView struct {
 	Task string  `json:"task"`
 	Kind *string `json:"kind"`
-	// Part: "before" or "after" the lanes, "lane", or "join" (J-T01); null for a task the lane plan
-	// does not place (one a revision round added).
-	Part        *string  `json:"part"`
-	Lane        *string  `json:"lane"`
-	Status      *string  `json:"status"`
-	SetAside    bool     `json:"set_aside"`
-	Commit      *string  `json:"commit"`      // the task's commit on the ticket's branch: the landed copy for a lane task
-	LaneCommit  *string  `json:"lane_commit"` // the commit its lane made; it no longer exists once landed
-	RanOn       *string  `json:"ran_on"`
-	At          *string  `json:"at"` // when it was done
-	TestSeconds *float64 `json:"test_seconds"`
+	// Part: "before" or "after" the lanes, "lane", "join" (J-T01), or "commands" (C-T01, added when a
+	// changed command left the suite or the linter failing); null for a task the lane plan does not
+	// place (one a revision round added).
+	Part     *string `json:"part"`
+	Lane     *string `json:"lane"`
+	Status   *string `json:"status"`
+	SetAside bool    `json:"set_aside"`
+	// HandedBack: a task of a lane handed back unfinished, built in the cell after the join.
+	HandedBack bool `json:"handed_back"`
+	// Recovered: its step was interrupted, and the station found its commit and recorded it afterwards.
+	Recovered   *Recovered `json:"recovered"`
+	Commit      *string    `json:"commit"`      // the task's commit on the ticket's branch: the landed copy for a lane task
+	LaneCommit  *string    `json:"lane_commit"` // the commit its lane made; it no longer exists once landed
+	RanOn       *string    `json:"ran_on"`
+	At          *string    `json:"at"` // when it was done
+	TestSeconds *float64   `json:"test_seconds"`
 }
 
 // CommitLink follows a lane commit to the commit that landed in its place.
@@ -109,13 +183,30 @@ type SetAside struct {
 	Lane    string     `json:"lane"`
 	Tasks   []string   `json:"tasks"`
 	Because []AsideWhy `json:"because"`
+	// KeptAs is the ref its commits are kept under, so nothing is lost; null when none was recorded.
+	KeptAs *string `json:"kept_as"`
 }
 
-// AsideWhy is one reason a lane was set aside: the earlier lane it clashed with and the code
-// ("same-file", "frozen-test"). The file is not served.
+// AsideWhys are the codes of why a lane was set aside at the join.
+var AsideWhys = []string{"same-file", "frozen-test", "case-clash", "file-folder", "branch-moved", "did-not-apply", "unrecorded-commits", "lane-history"}
+
+// AsideWhy is one reason a lane was set aside: the code, the earlier lane it clashed with when it
+// names one, how many commits made on the ticket's branch changed its file (branch-moved), and the
+// commit that did not apply (did-not-apply). The file is not served.
 type AsideWhy struct {
-	Other *string `json:"other"`
-	Why   *string `json:"why"`
+	Other   *string `json:"other"`
+	Why     *string `json:"why"`
+	Commits *int    `json:"commits"`
+	Commit  *string `json:"commit"`
+}
+
+// MovedBranch is the ticket's branch moving while the lanes were open: the lanes landed on its new
+// head. The commits made there are served by ID; their files only as a count.
+type MovedBranch struct {
+	From    *string  `json:"from"`
+	To      *string  `json:"to"`
+	Commits []string `json:"commits"`
+	Files   int      `json:"files"`
 }
 
 // Interaction is a whole suite that failed on the joined lanes though every lane passed alone.
@@ -138,6 +229,7 @@ type JoinView struct {
 	LandingSecs *float64     `json:"landing_seconds"`
 	SetAside    []SetAside   `json:"set_aside"`
 	Interaction *Interaction `json:"interaction"`
+	MovedBranch *MovedBranch `json:"moved_branch"`
 }
 
 // JoinRefusal is a join that stopped and landed nothing, with landing's own code.
@@ -204,6 +296,15 @@ type Lanes struct {
 	Tasks   []TaskView    `json:"tasks"`
 	Commits []CommitLink  `json:"commits"`
 	Timing  *ReportTiming `json:"report_timing"`
+	// SequentialBecause, for a build decided to be built one task at a time: "free-places" (too few
+	// builders' places were free) or "suite" (the cell's suite was not passing where the lanes would
+	// open, SequentialSuite says how: "red" or "unknown"); null otherwise or when not recorded.
+	SequentialBecause *string `json:"sequential_because"`
+	SequentialSuite   *string `json:"sequential_suite"`
+	// Deviations about the lanes, changed commands and recovered steps: build.json's, in its order,
+	// then, while the lanes are not joined, each lane's own (the join copies them into build.json).
+	Deviations     []Deviation     `json:"deviations"`
+	CommandChanges []CommandChange `json:"command_changes"`
 }
 
 // ---- what is decoded: typed, so nothing else in the files is ever looked at ----
@@ -219,7 +320,12 @@ type rawTask struct {
 	SetAside   any `json:"set_aside"`
 	At         any `json:"at"`
 	AddedBy    any `json:"added_by"`
-	TestRun    *struct {
+	HandedBack any `json:"handed_back"`
+	Recovered  *struct {
+		At     any `json:"at"`
+		Commit any `json:"commit"`
+	} `json:"recovered"`
+	TestRun *struct {
 		Seconds any `json:"seconds"`
 	} `json:"test_run"`
 }
@@ -233,17 +339,50 @@ type rawLaneEntry struct {
 	FinishedAt      any   `json:"finished_at"`
 	TestSeconds     any   `json:"test_seconds"`
 	WorktreeSeconds any   `json:"worktree_seconds"`
+	HandedBack      *struct {
+		At             any   `json:"at"`
+		FinishedThen   []any `json:"finished_then"`
+		UnfinishedThen []any `json:"unfinished_then"`
+		BuiltInCell    []any `json:"built_in_cell"`
+	} `json:"handed_back"`
+	MadeFresh []struct {
+		At        any `json:"at"`
+		Why       any `json:"why"`
+		Ref       any `json:"ref"`
+		StateFile any `json:"state_file"`
+	} `json:"made_fresh"`
+}
+
+// rawDeviation is a deviation's identifiers; its detail, reason and the commands are never decoded.
+type rawDeviation struct {
+	Type    any `json:"type"`
+	Task    any `json:"task"`
+	Lane    any `json:"lane"`
+	At      any `json:"at"`
+	Ref     any `json:"ref"`
+	Commit  any `json:"commit"`
+	Command any `json:"command"`
 }
 
 type rawBuild struct {
-	StartedAt any       `json:"started_at"`
-	Tasks     []rawTask `json:"tasks"`
-	Lanes     *struct {
-		State    any `json:"state"`
-		Setting  any `json:"setting"`
-		Fork     any `json:"fork"`
-		OpenedAt any `json:"opened_at"`
-		Plan     *struct {
+	StartedAt      any            `json:"started_at"`
+	Tasks          []rawTask      `json:"tasks"`
+	Deviations     []rawDeviation `json:"deviations"`
+	CommandChanges []struct {
+		At      any `json:"at"`
+		Changed []struct {
+			Command any `json:"command"`
+		} `json:"changed"`
+		Loop any `json:"loop"`
+	} `json:"command_changes"`
+	Lanes *struct {
+		State      any `json:"state"`
+		Setting    any `json:"setting"`
+		Fork       any `json:"fork"`
+		OpenedAt   any `json:"opened_at"`
+		Suite      any `json:"suite"`       // go_sequential: the suite was not green where the lanes would open
+		FreePlaces any `json:"free_places"` // go_sequential: too few builders' places were free
+		Plan       *struct {
 			Before []any `json:"before"`
 			After  []any `json:"after"`
 		} `json:"plan"`
@@ -266,11 +405,20 @@ type rawBuild struct {
 			SetAside []struct {
 				Lane    any   `json:"lane"`
 				Tasks   []any `json:"tasks"`
+				KeptAs  any   `json:"kept_as"`
 				Because []struct {
-					Other any `json:"other"`
-					Why   any `json:"why"`
+					Other   any   `json:"other"`
+					Why     any   `json:"why"`
+					Commits []any `json:"commits"`
+					Commit  any   `json:"commit"`
 				} `json:"because"`
 			} `json:"set_aside"`
+			MovedBranch *struct {
+				From    any   `json:"from"`
+				To      any   `json:"to"`
+				Commits []any `json:"commits"`
+				Files   []any `json:"files"`
+			} `json:"moved_branch"`
 			Suite *struct {
 				Passed  any `json:"passed"`
 				Seconds any `json:"seconds"`
@@ -297,13 +445,14 @@ type rawBuild struct {
 }
 
 type rawLane struct {
-	Status     any       `json:"status"`
-	HandedAt   any       `json:"handed_at"`
-	StartedAt  any       `json:"started_at"`
-	LastStepAt any       `json:"last_step_at"`
-	FinishedAt any       `json:"finished_at"`
-	Tasks      []rawTask `json:"tasks"`
-	Worktree   any       `json:"worktree_seconds"`
+	Status     any            `json:"status"`
+	HandedAt   any            `json:"handed_at"`
+	StartedAt  any            `json:"started_at"`
+	LastStepAt any            `json:"last_step_at"`
+	FinishedAt any            `json:"finished_at"`
+	Tasks      []rawTask      `json:"tasks"`
+	Worktree   any            `json:"worktree_seconds"`
+	Deviations []rawDeviation `json:"deviations"`
 }
 
 type rawReport struct {
@@ -429,6 +578,70 @@ func optBool(v any) *bool {
 	return &b
 }
 
+// optRef is a ref the station keeps a lane's work under, for this ticket only.
+func optRef(v any, ticket string) *string {
+	s, ok := v.(string)
+	if !ok {
+		return nil
+	}
+	if m := keptRefRe.FindStringSubmatch(s); m != nil && m[1] == ticket {
+		return &s
+	}
+	return nil
+}
+
+func recoveredOf(id string, t rawTask) *Recovered {
+	if t.Recovered == nil {
+		return nil
+	}
+	return &Recovered{Task: id, At: optTime(t.Recovered.At), Commit: optCommit(t.Recovered.Commit)}
+}
+
+// deviationsOf keeps the served deviations' identifiers; lane names the lane whose own record they
+// come from ("" for build.json's, which name their lane themselves).
+func deviationsOf(list []rawDeviation, lane, ticket string) []Deviation {
+	out := []Deviation{}
+	for i, d := range list {
+		if i >= 1000 {
+			break
+		}
+		typ, _ := d.Type.(string)
+		if !deviationTypes[typ] {
+			continue
+		}
+		item := Deviation{Type: typ, Lane: optLane(d.Lane), Task: optTask(d.Task), At: optTime(d.At), Ref: optRef(d.Ref, ticket), Commit: optCommit(d.Commit)}
+		if lane != "" {
+			item.Lane = str(lane)
+		}
+		if typ == "test-command-set" || typ == "lint-command-set" {
+			item.Command = optEnum(d.Command, "test", "lint")
+			item.Ref, item.Commit = nil, nil
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func commandChangesOf(b *rawBuild) []CommandChange {
+	out := []CommandChange{}
+	for i, c := range b.CommandChanges {
+		if i >= 200 {
+			break
+		}
+		cmds := []string{}
+		for _, ch := range c.Changed {
+			if k := optEnum(ch.Command, "test", "lint"); k != nil {
+				cmds = append(cmds, *k)
+			}
+		}
+		if len(cmds) == 0 {
+			continue
+		}
+		out = append(out, CommandChange{At: optTime(c.At), Commands: cmds, Loop: optInt(c.Loop)})
+	}
+	return out
+}
+
 func taskList(list []any) []string {
 	out := []string{}
 	for _, v := range list {
@@ -523,12 +736,21 @@ func decode(src cellFiles, rel string, max int64, into any) FileRead {
 // expected is false. expected says the ticket's events show a build in lanes: then a build.json
 // that cannot be read is reported (state "unreadable") instead of the lanes being left out.
 func ReadLanes(root, ticket string, expected bool) *Lanes {
+	ln, _ := ReadBuild(root, ticket, expected, false)
+	return ln
+}
+
+// ReadBuild reads a ticket's build.json once for both its lanes (as ReadLanes) and its command
+// changes (build.json command_changes: which command changed and when, for any build, in lanes or
+// not; empty when none). commandsExpected says the ticket's events show a command changed: then
+// the cell's archive is read for it too.
+func ReadBuild(root, ticket string, expected, commandsExpected bool) (*Lanes, []CommandChange) {
 	if !ticketRe.MatchString(ticket) || len(ticket) > 128 {
-		return nil
+		return nil, nil
 	}
 	r, err := os.OpenRoot(root)
 	if err != nil {
-		return unreadable("", readOf(err), expected)
+		return unreadable("", readOf(err), expected), nil
 	}
 	defer r.Close()
 	var src cellFiles
@@ -536,8 +758,8 @@ func ReadLanes(root, ticket string, expected bool) *Lanes {
 	if isDir(r, ".factory/worktrees/"+ticket) {
 		src = liveCell{root: r, prefix: ".factory/worktrees/" + ticket + "/"}
 	} else {
-		if !expected {
-			return nil // an archive is read only for a build its events show in lanes: it is a large read
+		if !expected && !commandsExpected {
+			return nil, nil // an archive is read only for a build its events show in lanes or with a changed command: it is a large read
 		}
 		members, bad := map[string][]byte{}, map[string]error{}
 		err := walkArchive(r, ".factory/archive/"+ticket+".tar.gz", ticket, func(name string, hdr *tar.Header, rd io.Reader) error {
@@ -560,24 +782,35 @@ func ReadLanes(root, ticket string, expected bool) *Lanes {
 			return nil
 		})
 		if err != nil {
-			return unreadable("archive", readOf(err), expected)
+			return unreadable("archive", readOf(err), expected), nil
 		}
 		src, source = archivedCell{members: members, bad: bad}, "archive"
 	}
 	var b rawBuild
 	read := decode(src, "build.json", maxBuildJSON, &b)
+	var commands []CommandChange
+	if read.Read == "read" {
+		commands = commandChangesOf(&b)
+	}
 	if read.Read != "read" || b.Lanes == nil || b.Lanes.Lanes == nil {
 		if read.Read == "read" {
-			return nil // a build without lanes: its reply is unchanged
+			return nil, commands // a build without lanes: its reply is unchanged
 		}
-		return unreadable(source, read, expected)
+		return unreadable(source, read, expected), nil
 	}
 	out := &Lanes{Source: source, Build: read, Before: []string{}, After: []string{}, Lanes: []LaneView{}, Batches: []Batch{},
-		Refusals: []JoinRefusal{}, Tasks: []TaskView{}, Commits: []CommitLink{}}
+		Refusals: []JoinRefusal{}, Tasks: []TaskView{}, Commits: []CommitLink{}, Deviations: deviationsOf(b.Deviations, "", ticket), CommandChanges: commands}
 	rec := b.Lanes
 	out.State = "unreadable"
 	if s := optEnum(rec.State, "planned", "open", "sequential", "joined"); s != nil {
 		out.State = *s
+	}
+	if out.State == "sequential" {
+		if s := optEnum(rec.Suite, "red", "unknown"); s != nil {
+			out.SequentialBecause, out.SequentialSuite = str("suite"), s
+		} else if rec.FreePlaces != nil {
+			out.SequentialBecause = str("free-places")
+		}
 	}
 	out.Setting, out.Fork, out.OpenedAt, out.Started = optInt(rec.Setting), optCommit(rec.Fork), optTime(rec.OpenedAt), optTime(b.StartedAt)
 	if rec.Plan != nil {
@@ -597,10 +830,23 @@ func ReadLanes(root, ticket string, expected bool) *Lanes {
 		if !ok || i >= maxLanes {
 			continue
 		}
-		v := LaneView{Lane: name, Tasks: taskList(e.Tasks), Status: optEnum(e.Status, "planned", "open", "done", "joined", "set-aside", "sequential"),
+		v := LaneView{Lane: name, Tasks: taskList(e.Tasks), Status: optEnum(e.Status, "planned", "open", "done", "joined", "set-aside", "sequential", "handed-back"),
 			HandedAt: optTime(e.HandedAt), StartedAt: optTime(e.StartedAt), FinishedAt: optTime(e.FinishedAt),
-			TestSeconds: optSeconds(e.TestSeconds), WorktreeSecs: optSeconds(e.WorktreeSeconds)}
+			TestSeconds: optSeconds(e.TestSeconds), WorktreeSecs: optSeconds(e.WorktreeSeconds), MadeFresh: []MadeFresh{}, Recovered: []Recovered{}}
 		v.Total = len(v.Tasks)
+		if hb := e.HandedBack; hb != nil {
+			v.HandedBack = &HandedBack{At: optTime(hb.At), Finished: taskList(hb.FinishedThen), Unfinished: taskList(hb.UnfinishedThen), BuiltInCell: taskList(hb.BuiltInCell)}
+		}
+		for j, mf := range e.MadeFresh {
+			if j >= 50 {
+				break
+			}
+			kept := false
+			if s, ok := mf.StateFile.(string); ok && s != "" {
+				kept = true
+			}
+			v.MadeFresh = append(v.MadeFresh, MadeFresh{At: optTime(mf.At), Why: optWord(mf.Why), Ref: optRef(mf.Ref, ticket), StateFileKept: kept})
+		}
 		for _, t := range v.Tasks {
 			laneOfTask[t], part[t] = name, "lane"
 		}
@@ -639,6 +885,13 @@ func ReadLanes(root, ticket string, expected bool) *Lanes {
 				if s, _ := t.Status.(string); s == "done" {
 					status[id] = "done"
 				}
+				if rv := recoveredOf(id, t); rv != nil && len(v.Recovered) < maxTasks {
+					v.Recovered = append(v.Recovered, *rv)
+				}
+			}
+			// A lane's own deviations (a recovered step) are copied into build.json at the join, with the lane.
+			if out.State != "joined" {
+				out.Deviations = append(out.Deviations, deviationsOf(l.Deviations, name, ticket)...)
 			}
 			for _, t := range v.Tasks {
 				if status[t] == "done" {
@@ -693,11 +946,28 @@ func ReadLanes(root, ticket string, expected bool) *Lanes {
 				continue
 			}
 			aside[name] = true
-			item := SetAside{Lane: name, Tasks: taskList(sa.Tasks), Because: []AsideWhy{}}
-			for _, why := range sa.Because {
-				item.Because = append(item.Because, AsideWhy{Other: optLane(why.Other), Why: optEnum(why.Why, "same-file", "frozen-test")})
+			item := SetAside{Lane: name, Tasks: taskList(sa.Tasks), Because: []AsideWhy{}, KeptAs: optRef(sa.KeptAs, ticket)}
+			for k, why := range sa.Because {
+				if k >= 50 {
+					break
+				}
+				w := AsideWhy{Other: optLane(why.Other), Why: optEnum(why.Why, AsideWhys...), Commit: optCommit(why.Commit)}
+				if why.Commits != nil {
+					n := len(why.Commits)
+					w.Commits = &n
+				}
+				item.Because = append(item.Because, w)
 			}
 			jv.SetAside = append(jv.SetAside, item)
+		}
+		if mb := j.MovedBranch; mb != nil {
+			m := &MovedBranch{From: optCommit(mb.From), To: optCommit(mb.To), Commits: []string{}, Files: len(mb.Files)}
+			for _, c := range mb.Commits {
+				if s := optCommit(c); s != nil && len(m.Commits) < 200 {
+					m.Commits = append(m.Commits, *s)
+				}
+			}
+			jv.MovedBranch = m
 		}
 		if in := j.Interaction; in != nil && jv.Status != nil && *jv.Status == "INTERACTION" {
 			named := []string{}
@@ -717,7 +987,7 @@ func ReadLanes(root, ticket string, expected bool) *Lanes {
 		}
 		v := TaskView{Task: id, Kind: optEnum(t.Kind, "test", "impl", "contract", "refactor", "docs"), Status: optWord(t.Status),
 			Commit: optCommit(t.Commit), LaneCommit: optCommit(t.LaneCommit), RanOn: optCommit(t.RanOn), At: optTime(t.At),
-			Lane: optLane(t.Lane), SetAside: t.SetAside == true}
+			Lane: optLane(t.Lane), SetAside: t.SetAside == true, HandedBack: t.HandedBack == true, Recovered: recoveredOf(id, t)}
 		if t.TestRun != nil {
 			v.TestSeconds = optSeconds(t.TestRun.Seconds)
 		}
@@ -728,6 +998,8 @@ func ReadLanes(root, ticket string, expected bool) *Lanes {
 			if out.Join != nil && out.Join.Interaction != nil {
 				out.Join.Interaction.Task = str(id)
 			}
+		} else if a == "set-commands" {
+			v.Part = str("commands")
 		}
 		if name, ok := laneOfTask[id]; ok {
 			v.Lane = str(name)
@@ -741,7 +1013,7 @@ func ReadLanes(root, ticket string, expected bool) *Lanes {
 			// how far it got. Its commit there is the lane commit; nothing has landed yet.
 			if has && out.State != "joined" {
 				v.Status, v.At, v.LaneCommit, v.Commit = optWord(l.Status), optTime(l.At), optCommit(l.Commit), nil
-				v.RanOn = optCommit(l.RanOn)
+				v.RanOn, v.Recovered = optCommit(l.RanOn), recoveredOf(id, l)
 				if l.TestRun != nil {
 					v.TestSeconds = optSeconds(l.TestRun.Seconds)
 				}
@@ -786,7 +1058,7 @@ func ReadLanes(root, ticket string, expected bool) *Lanes {
 		}
 		out.Timing = tv
 	}
-	return out
+	return out, commands
 }
 
 func firstOf(a, b *string) *string {
@@ -807,5 +1079,6 @@ func unreadable(source string, read FileRead, expected bool) *Lanes {
 		read = FileRead{Read: "absent", Why: &why}
 	}
 	return &Lanes{State: "unreadable", Source: source, Build: read, Report: FileRead{Read: "absent"}, Before: []string{}, After: []string{},
-		Lanes: []LaneView{}, Batches: []Batch{}, Refusals: []JoinRefusal{}, Tasks: []TaskView{}, Commits: []CommitLink{}}
+		Lanes: []LaneView{}, Batches: []Batch{}, Refusals: []JoinRefusal{}, Tasks: []TaskView{}, Commits: []CommitLink{},
+		Deviations: []Deviation{}, CommandChanges: []CommandChange{}}
 }

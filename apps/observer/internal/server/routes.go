@@ -403,7 +403,7 @@ func (s *Server) cell(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, fail(KindInvalid, "That is not a ticket identifier."))
 		return
 	}
-	lanes := s.cellLanes(t)
+	lanes, commands := s.cellLanes(t)
 	s.view(w, func(st *project.State) (int, Envelope) {
 		c := st.Cells[t]
 		if c == nil {
@@ -412,6 +412,9 @@ func (s *Server) cell(w http.ResponseWriter, r *http.Request) {
 		v := project.CellDetail(st, c)
 		if lanes != nil { // M22: only for a build in lanes; any other cell's reply is as before
 			v["lanes"] = lanesOf(lanes, c)
+		}
+		if len(commands) > 0 { // only for a build whose test or lint command changed: which one and when
+			v["command_changes"] = commands
 		}
 		v["cursor"] = s.cursor(st.Pos)
 		return http.StatusOK, ok(v)

@@ -5,7 +5,7 @@
  */
 import { cn } from "@mach/ui";
 import { duration } from "../shell/time";
-import type { LaneChip, LaneLine, LanesPanel, PanelTask } from "./lanesModel";
+import type { CommandsPanel, LaneChip, LaneLine, LanesPanel, PanelTask } from "./lanesModel";
 import { STATE_TONE, StateShape } from "./Marks";
 import type { LineState } from "./model";
 
@@ -70,6 +70,11 @@ export function LanesPart({ panel }: { panel: LanesPanel }) {
           {p}
         </p>
       ))}
+      {panel.notes.map((n) => (
+        <p key={n} className="mt-1 text-body-sm text-ink" data-lanes-note="">
+          {n}
+        </p>
+      ))}
       {timing ? (
         <dl className="mt-2 grid grid-cols-[120px_minmax(0,1fr)] gap-x-3 gap-y-1 text-body-sm" data-lanes-timing={timing.basis ?? "not-recorded"}>
           <dt className="text-ink-muted">Lanes, wall time</dt>
@@ -113,6 +118,20 @@ export function LanesPart({ panel }: { panel: LanesPanel }) {
           </ul>
         </section>
       ))}
+    </div>
+  );
+}
+
+/** The side panel's part for a build whose test or lint command changed: which one and when, and where the rest is recorded. */
+export function CommandsPart({ panel }: { panel: CommandsPanel }) {
+  return (
+    <div data-commands-panel="">
+      {panel.lines.map((l, i) => (
+        <p key={`${i}:${l}`} className="text-body-sm text-ink" data-commands-change="">
+          {l}
+        </p>
+      ))}
+      <p className="mt-1 text-caption text-ink-muted">{panel.note}</p>
     </div>
   );
 }

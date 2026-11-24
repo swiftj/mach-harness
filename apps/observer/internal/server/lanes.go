@@ -6,11 +6,19 @@ import (
 )
 
 // Lanes (M22): GET /api/v1/cells/{ticket} gains "lanes" for a build in lanes, read from the cell's
-// own files (artifact.ReadLanes) and joined with the build gates the lifecycle log recorded about
+// own files (artifact.ReadBuild) and joined with the build gates the lifecycle log recorded about
 // them. A cell whose build has no lanes gets no "lanes" key: its reply is exactly as before.
+//
+// It also gains "command_changes" for a build whose test or lint command was changed while it was
+// building (build.json command_changes, in lanes or not): which command changed and when. The
+// commands and the reason are a builder's own words, so they are never served.
 
-// lanesGateNames are the build gates about lanes (build.py lanes-open and join).
-var lanesGateNames = map[string]bool{"build.lanes-open": true, "build.join": true}
+// lanesGateNames are the build gates about lanes (build.py lanes-open, hand-back and join). Any other
+// build gate that names a lane (a step recovered in a lane) is served with them too.
+var lanesGateNames = map[string]bool{"build.lanes-open": true, "build.join": true, "build.hand-back": true}
+
+// commandsGate is the gate build.py set-commands records.
+const commandsGate = "build.set-commands"
 
 // maxLanesGates bounds the gates served with the lanes (the latest are kept).
 const maxLanesGates = 50
@@ -25,6 +33,16 @@ func lanesExpected(c *project.Cell) bool {
 	}
 	for _, g := range c.Gates {
 		if lanesGateNames[g.Gate] {
+			return true
+		}
+	}
+	return false
+}
+
+// commandsExpected reports whether a cell's events show its build's command changed.
+func commandsExpected(c *project.Cell) bool {
+	for _, g := range c.Gates {
+		if g.Gate == commandsGate {
 			return true
 		}
 	}
@@ -52,7 +70,7 @@ func lanesOf(ln *artifact.Lanes, c *project.Cell) lanesReply {
 		return out
 	}
 	for _, g := range c.Gates {
-		if !lanesGateNames[g.Gate] {
+		if !lanesGateNames[g.Gate] && g.Lane == "" {
 			continue
 		}
 		item := lanesGate{Gate: g.Gate, Verdict: g.Verdict, At: project.TV(g.At)}
@@ -72,17 +90,17 @@ func lanesOf(ln *artifact.Lanes, c *project.Cell) lanesReply {
 	return out
 }
 
-// cellLanes reads a ticket's lanes outside the projection's lock: the files are read first, the
-// reply is put together under the lock.
-func (s *Server) cellLanes(ticket string) *artifact.Lanes {
-	expected := false
+// cellLanes reads a ticket's lanes and command changes outside the projection's lock: the files are
+// read first, the reply is put together under the lock.
+func (s *Server) cellLanes(ticket string) (*artifact.Lanes, []artifact.CommandChange) {
+	expected, commands := false, false
 	s.opts.Projector.View(func(st *project.State) {
 		if c := st.Cells[ticket]; c != nil {
-			expected = lanesExpected(c)
+			expected, commands = lanesExpected(c), commandsExpected(c)
 		}
 	})
 	if s.opts.Root == "" {
-		return nil
+		return nil, nil
 	}
-	return artifact.ReadLanes(s.opts.Root, ticket, expected)
+	return artifact.ReadBuild(s.opts.Root, ticket, expected, commands)
 }

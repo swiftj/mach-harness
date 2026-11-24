@@ -19,7 +19,7 @@ import { StateShape, STATE_TONE } from "./Marks";
 import { Feed, StationPanel, TicketPanel } from "./Panels";
 import { TicketRecord } from "./Record";
 import { useSource } from "../shell/source/context";
-import { laneLine, lanesPanel, withLaneMarker, type LaneLine } from "./lanesModel";
+import { commandsPanel, laneLine, lanesPanel, withLaneMarker, type LaneLine } from "./lanesModel";
 import { lanesKey, useCellLanes } from "./useLanes";
 import "./line.css";
 
@@ -117,13 +117,14 @@ export function LineWorkspace() {
   const lineLanes = useMemo(() => {
     const m = new Map<string, LaneLine>();
     for (const r of model.rows) {
-      const line = r.column === buildColumn ? laneLine(replies.get(r.ticketId) ?? null, scene.cells[r.ticketId] ?? null) : null;
+      const line = r.column === buildColumn ? laneLine(replies.get(r.ticketId)?.lanes ?? null, scene.cells[r.ticketId] ?? null) : null;
       if (line) m.set(r.ticketId, line);
     }
     return m;
   }, [model.rows, replies, scene, buildColumn]);
   const boardRows = useMemo(() => model.rows.map((r) => withLaneMarker(r, lineLanes.get(r.ticketId) ?? null)), [model.rows, lineLanes]);
-  const panelLanes = useMemo(() => (row ? lanesPanel(replies.get(row.ticketId) ?? null, scene.cells[row.ticketId] ?? null) : null), [row, replies, scene]);
+  const panelLanes = useMemo(() => (row ? lanesPanel(replies.get(row.ticketId)?.lanes ?? null, scene.cells[row.ticketId] ?? null) : null), [row, replies, scene]);
+  const panelCommands = useMemo(() => (row ? commandsPanel(replies.get(row.ticketId)?.commands) : null), [row, replies]);
 
   const pickRow = useCallback((r: LineRow) => store.select(r.sliceId && !scene.cells[r.ticketId] ? (`slice:${r.sliceId}` as EntityRef) : (`cell:${r.ticketId}` as EntityRef), { focus: false }), [store, scene]);
   const pickStation = useCallback((c: number) => store.select(`station:${LINE_STATIONS[c]!.key}` as EntityRef, { focus: false }), [store]);
@@ -163,6 +164,7 @@ export function LineWorkspace() {
               row={row}
               now={now}
               lanes={panelLanes}
+              commands={panelCommands}
               onBack={back}
               onRecord={() => setRecord(row.ticketId)}
               onFloor={() => showOnFloor(store, { ref: `cell:${row.ticketId}` as EntityRef })}

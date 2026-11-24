@@ -414,9 +414,10 @@ export interface ObserverClient {
   /** `/cells/{ticket}/evidence`: the cell's checks, each with its files linked to the catalog. */
   cellEvidence?(ticket: string, signal?: AbortSignal): Promise<CellEvidence>;
   /**
-   * M22: `/cells/{ticket}`'s `lanes`, unparsed (src/line/lanes.ts reads it): a build in lanes as the
-   * cell's files record it. Null when the reply has none: a build not in lanes, or an observer from
-   * before lanes.
+   * M22: `/cells/{ticket}`'s `lanes` and `command_changes`, unparsed, as `{ lanes, command_changes }`
+   * (src/line/lanesModel.ts readCellBuild reads it): a build in lanes as the cell's files record it,
+   * and which of its commands changed when. Each is null when the reply has none: a build not in
+   * lanes, one whose commands never changed, or an observer from before them.
    */
   cellLanes?(ticket: string, signal?: AbortSignal): Promise<unknown>;
   /**
@@ -871,7 +872,10 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
     },
     async cellLanes(ticket, signal) {
       const d = await get(`/cells/${encodeURIComponent(ticket)}`, signal);
-      return d.lanes && typeof d.lanes === "object" ? d.lanes : null;
+      return {
+        lanes: d.lanes && typeof d.lanes === "object" ? d.lanes : null,
+        command_changes: Array.isArray(d.command_changes) ? d.command_changes : null,
+      };
     },
     async artifactText(id, signal) {
       const url = artifactContentUrl(id, base);

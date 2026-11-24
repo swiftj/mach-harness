@@ -57,7 +57,7 @@ func (l *Lifecycle) ImpliedStage() (string, int64) { return l.stage, l.lastLine 
 var (
 	visitRe        = regexp.MustCompile(`^(groom|plan|audit|build|verify|review|human-approval|merge|cleanup)#([1-9][0-9]{0,5})$`)
 	gateRe         = regexp.MustCompile(`^[a-z][a-z-]*(?:\.[a-z][a-z_-]*)?$`) // revision 7: an underscore after the dot (merge.landed_overlap, M13)
-	taskRe         = regexp.MustCompile(`^(?:(?:R\d+|J)-)?T\d+$`)             // revision 9: J-T01, the task the join adds when lanes fail together (M22)
+	taskRe         = regexp.MustCompile(`^(?:(?:R\d+|J|C)-)?T\d+$`)           // revision 9: J-T01, the task the join adds when lanes fail together (M22); C-T01, the task set-commands adds when a changed command leaves the suite or linter failing
 	laneRe         = regexp.MustCompile(`^L[1-9][0-9]{0,2}$`)                 // revision 9: a lane of a build (M22): L1, L2, ...
 	ruleIDRe       = regexp.MustCompile(`\b(?:(?:FR|INV|AC)-\d{2,}|R\d{1,3})\b`)
 	mockIDRe       = regexp.MustCompile(`^MOCK-[1-9][0-9]{0,2}$`)
