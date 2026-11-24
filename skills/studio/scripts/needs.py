@@ -130,7 +130,8 @@ def next_id(studio: Any, items: Sequence[Dict[str, Any]]) -> str:
     ledger = studio.handoff().load()
     used = [item["need_id"] for item in items] + [item["need_id"] for item in (ledger.get("needs") or {}).get("published") or []]
     used += [item["need_id"] for item in ((ledger.get("seen") or {}).get("needs") or {}).get("needs") or []]
-    return f"TN-{max([0, *(int(ident.split('-')[1]) for ident in used)]) + 1:02d}"
+    import project_import  # noqa: E402  M21: numbers an unfinished import holds; imported here to keep the modules apart
+    return f"TN-{max([0, *(int(ident.split('-')[1]) for ident in used), *project_import.reserved_numbers(studio, 'TN')]) + 1:02d}"
 
 
 def find(host: Any, items: List[Dict[str, Any]], ident: str) -> Dict[str, Any]:

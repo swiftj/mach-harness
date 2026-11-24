@@ -342,6 +342,9 @@ def _idea(p: _Pass, r: Dict[str, Any], project_id: Optional[str]) -> None:
     route = r.get("route")
     if isinstance(route, dict):
         p.at(route, "details", p.anything, "route.details")
+        counted = route.get("counted")
+        if isinstance(counted, dict):  # shipped rules, rewritten as route.details is, so the two never disagree
+            p.at(counted, "high_risk_not_determined", p.anything, "route.counted.high_risk_not_determined")
         p.at(route, "why", p.text, "route.why")
     p.at(r, "title", p.text)
     if isinstance(r.get("verdict"), dict):
@@ -371,10 +374,14 @@ def _lookups(p: _Pass, r: Dict[str, Any], project_id: Optional[str]) -> None:
 
 def _map(id_key: str, id_kind: str) -> Callable[[_Pass, Dict[str, Any], Optional[str]], None]:
     """An idea's map or a PRD's map: the owner's ID, each map slice's epic and dependencies where they are IDs (a map key
-    is not an ID and stays), what apply made, and the settlements' reasons and map slices' title and scope."""
+    is not an ID and stays), what apply made, and the people's words: settlements' reasons, map epics' title and criteria,
+    map slices' title and scope."""
 
     def rewrite(p: _Pass, r: Dict[str, Any], project_id: Optional[str]) -> None:
         p.at(r, id_key, p.ids((id_kind,)))
+        for n, item in enumerate(_dicts(r.get("epics"))):
+            p.at(item, "title", p.text, f"epics[{n}].title")
+            p.each(item, "criteria", p.text, f"epics[{n}].criteria")
         for n, item in enumerate(_dicts(r.get("slices"))):
             where = f"slices[{n}]"
             p.at(item, "epic", p.ids(("EPIC",)), f"{where}.epic")
