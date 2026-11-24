@@ -6,7 +6,7 @@ Keep this file current: when a piece below is finished or the plan changes, chan
 
 ## 1. State
 
-- **Released:** 0.22.0, tag `v0.22.0`, on `main`. Nothing is unmerged.
+- **Released:** 0.22.0, tag `v0.22.0`, on `main`. Unmerged: `fix/open-items` (section 2.3), waiting for the owner's word.
 - **What 0.22.0 added:** qualifying a release on any machine, from each slice's committed change record (A6 of the M20 design).
 - **What 0.21.0 added:** MACH for a team (Part A of the M20 design, except A6), the basic decisions drafted from an engineer's own documents, a ticket's workspace that holds no `.claude/` files, and a plain message when MACH's files are from different versions. The release notes are `docs/guides/RELEASE_NOTES_DRAFT.md`.
 - **Checks at release:** `make check` (2,160 tests, 1 skipped), `go test ./...` in both apps, and the web typecheck, lint, build and unit tests (347 and 396) all passed on the release commit.
@@ -36,14 +36,22 @@ Facts from the real transfer test are in section 1.2 of the design. One open poi
 
 ### 2.3 Smaller things left open
 
-- **Never run for real:** the team rules (a real second person and machine), the workspace change under Claude Code's real sandbox, the documents route in a live session (the mapping step), the app's team screens against the live host.
-- **`merge.py plan`** does not show the two new refusals (already shipped; slice number already on main); only `run` does.
-- **A long, quiet build** looks stale after `intake.claim_stale_days` (3); there is no heartbeat.
-- **An engineer's page in the browser** for architecture decisions: raised, left open by the owner.
-- **Parked layout items** in Product Studio and the Factory Floor: the list is in `docs/mach-next/M16_LAYOUT.md`.
-- **The Factory Floor's "Factory not enabled" label** confused the owner; "Unattended runs: off" was suggested and not decided.
-- **A fourth film** (Jira, bringing in a PRD) is pinned: do not start until the owner says.
-- **On GitHub:** the defect report `swiftj/mach-harness#1` is fixed by 0.21.0 and still open; the two private repositories `mach-transfer-test-src` and `mach-transfer-test-dst` are throwaways for the owner to delete.
+Built on the branch `fix/open-items` on 2026-11-23, after 0.22.0, not merged and not released:
+
+- The four defects section 3 used to list: stations run the project's commands with `PYTHONDONTWRITEBYTECODE=1`; `verify.py capture` takes its driver's arguments after `--` on every Python; the tests no longer depend on the date they started on, on where a Python keeps its byte code, or on `tomllib`.
+- `merge.py plan` lists the two refusals (already shipped; slice number already on main).
+- A slow build that keeps moving keeps its claim: a sign of life on the slice's issue (`ticket.py slice-alive`, called from intake's recorded plan). It is posted from intake, dispatch, reconcile, `/mach pull` and the supervisor, not from `run.py next` alone or from the read-only `product plan` and `product status`.
+- The Factory Floor's chip reads "Unattended runs: off".
+- Five of the open layout items in `docs/mach-next/M16_LAYOUT.md` section 6; what is left there is left on purpose, each with its reason.
+
+Still open:
+
+- **Never run for real:** the team rules (a real second person and machine), the workspace change under Claude Code's real sandbox, the documents route in a live session (the mapping step), the app's team screens against the live host, the sign of life against real GitHub. The owner is doing these.
+- **Not looked at on a screen:** the layout changes and the new chip were checked by typecheck, lint, build and unit tests only. The screens to look at are listed in what the lead told the owner on 2026-11-23: the Factory Floor's top bar with unattended running off; any long Product Studio pane for the "More below" line; Vision and outcomes; a slice's "From the PRD" page; the "ready to build" dialog; Shape pages opened with `?idea=` or `?map-status=`.
+- **An engineer's page in the browser** for architecture decisions: the owner asked for a design first. A proposal was given on 2026-11-23 (a read-only page on the Factory Floor); nothing is built until the owner says.
+- **A fourth film** (Jira, bringing in a PRD) is pinned: the owner said "not yet" again on 2026-11-23.
+
+Done on GitHub: the defect report `swiftj/mach-harness#1` is closed, and the owner deleted the two throwaway transfer-test repositories.
 
 ## 3. Setting up a new machine
 
@@ -55,11 +63,7 @@ git clone https://github.com/swiftj/mach-harness.git
 
 Then, from the clone: `make check`; `go test ./...` in `apps/studio` and in `apps/observer`; in `web/`, `pnpm typecheck`, `pnpm lint`, `pnpm build`, `pnpm --filter @mach/product-studio test` and `pnpm --filter @mach/factory-floor test`.
 
-Two things found on a second machine (2026-11-23, macOS, Homebrew Python 3.15.2), neither yet fixed:
-
-- **The tests need Python 3.11 or later, and not Apple's.** With `/usr/bin/python3` (3.9.6), 7 classes fail: no `tomllib` (three in `test_adr_baseline`), a byte-code cache under `~/Library/Caches` (`test_installer.InstallTest`, `test_mach_factory_supervisor.ServiceTest`), and `capture ... -- <arguments>` refused by its `argparse` (`test_verify.CaptureTest`, `test_unattended_commands.InstructionsTest`). The last is MACH itself, not only its test: `verify.py capture` with arguments after `--` does not parse on 3.9.
-- **Run the tests with `PYTHONDONTWRITEBYTECODE=1`.** Without it two classes fail every time: `test_verify.CaptureTest` (finds `__pycache__` in the checkout) and `test_build.StepTest` (the build station's test run reads a stale `.pyc` after a source file is rewritten at the same size in the same second). The second is a weakness in the build station's own test runs, not only in the test. So here: `PYTHONDONTWRITEBYTECODE=1 PATH="/opt/homebrew/bin:$PATH" make check`.
-- A full run that crosses midnight UTC fails four classes in `test_security_exception` (the test's "today" is fixed when it starts). Run it again.
+On macOS, `python3` is Apple's 3.9 unless another is first on the PATH. The Python tests pass on both (checked on 3.9.6 and Homebrew's 3.15.2), with no environment variable needed; on a Python before 3.11 three tests that read TOML manifests are skipped, because MACH lists those files without reading them there.
 
 An AI agent's saved notes and a person's own Claude Code settings do not travel with the repository. Section 4 holds what those notes said.
 
