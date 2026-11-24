@@ -43,9 +43,10 @@ BLOCKS = {
     "CLAUDE.md": ("<!-- ", " -->", "claude-block.md"),
     ".gitignore": ("# ", "", "gitignore-block"),
 }
+CONFIG = ".factory/config.json"
 SEEDS = {
     # project file -> template; created only when absent, never overwritten
-    ".factory/config.json": "config.json",
+    CONFIG: "config.json",
     "REVIEW.md": "REVIEW.md",
     "AGENTS.md": "AGENTS.md",
 }
@@ -411,11 +412,14 @@ def program_items(root: Path, project: Path, version: str, args: argparse.Namesp
     return items, "\n".join(notes), records
 
 
-def scaffold_items(root: Path, project: Path) -> List[Item]:
+def scaffold_items(root: Path, project: Path, provider: str = "local") -> List[Item]:
+    """MACH's scaffold files. `provider` goes into the configuration as tickets.provider: it is used only when the
+    configuration is created, since a seed is never written over (ticket_home, ticket_settings)."""
     templates = root / "templates"
     items = [Item(".factory/bin/mach", Path(__file__).resolve().read_bytes(), "managed", True)]
     items += [Item(dest, (templates / name).read_bytes(), "managed") for dest, name in MANAGED_TEMPLATES.items()]
-    items += [Item(dest, (templates / name).read_bytes(), "seed") for dest, name in SEEDS.items()]
+    items += [Item(dest, config_seed((templates / name).read_bytes(), provider) if dest == CONFIG else (templates / name).read_bytes(), "seed")
+              for dest, name in SEEDS.items()]
     if not any((project / name).exists() for name in MAKEFILE_NAMES):
         items.append(Item("Makefile", (templates / "Makefile").read_bytes(), "seed"))
     return items
@@ -552,6 +556,7 @@ def apply(project: Path, items: Sequence[Item], components: Sequence[str], versi
                     (project / folder).mkdir(parents=True)
 
     earlier_programs = manifest.get("programs", {})
+    earlier = manifest
     manifest = {
         "version": version,
         "installed_at": manifest.get("installed_at") or datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -561,6 +566,8 @@ def apply(project: Path, items: Sequence[Item], components: Sequence[str], versi
         "blocks": blocks,
     }
     manifest["source"] = install_source()
+    if isinstance(earlier.get(SAID), list):
+        manifest[SAID] = earlier[SAID]
     # Which release each prebuilt program came from: a copy kept from an earlier install keeps its record.
     installed = {dest: info for dest, info in {**earlier_programs, **(programs or {})}.items() if dest in recorded}
     if installed:
@@ -626,14 +633,136 @@ def cmd_install(args: argparse.Namespace) -> int:
     components = ["skills"]
     note = ""
     records: Dict[str, Dict[str, str]] = {}
+    home = ticket_home(project)
+    fresh = not (project / CONFIG).exists()
     if not args.no_scaffold:
-        items += scaffold_items(root, project)
+        items += scaffold_items(root, project, home[0])
         components.append("scaffold")
         programs, note, records = program_items(root, project, version, args)
         items += programs
     code = apply(project, items, components, version, args, records)
+    worktree_settings(project, args.dry_run)
+    if not args.no_scaffold:
+        ticket_settings(project, home, fresh, args.dry_run)
     print(f"\n{note}" if note else "", end="\n" if note else "")
     return code
+
+
+WORKTREE_SETTING = "extensions.worktreeConfig"
+
+
+def worktree_settings(project: Path, dry: bool) -> None:
+    """Turn on Git's per-worktree settings in the project's repository (git config extensions.worktreeConfig true).
+
+    Every ticket's workspace is a worktree with settings of its own, and Git needs this one setting in the repository
+    before it can make one. Git turns it on itself the first time, but not when Claude Code runs in a sandbox, which
+    protects the repository's Git settings: the installer runs in a person's terminal, so it does it here, once. Only the
+    repository this project is the top of, never one above it; not a bare repository or one with core.worktree set, where
+    Git moves those settings itself. A problem here never fails the install: it is said, with the command to run."""
+    def git(*argv: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *argv], cwd=str(project), capture_output=True, text=True, errors="replace", timeout=60, check=False)
+
+    command = f"git config {WORKTREE_SETTING} true"
+    try:
+        top = git("rev-parse", "--show-toplevel")
+        if top.returncode != 0 or not top.stdout.strip() or Path(top.stdout.strip()).resolve() != project:
+            print(f"  git      not set: {project} is not the top folder of a Git repository. Once it is one, run the installer again "
+                  f"(or: {command}), so a ticket's workspace can be made when Claude Code runs in a sandbox.")
+            return
+        if git("config", "--type=bool", "--get", WORKTREE_SETTING).stdout.strip() == "true":
+            return
+        if git("config", "--type=bool", "--get", "core.bare").stdout.strip() == "true" or git("config", "--get", "core.worktree").stdout.strip():
+            return
+        if dry:
+            print(f"  git      would set {WORKTREE_SETTING} = true (a ticket's workspace needs it)")
+            return
+        done = git("config", WORKTREE_SETTING, "true")
+        if done.returncode == 0:
+            print(f"  git      set {WORKTREE_SETTING} = true (a ticket's workspace needs it; Claude Code's sandbox cannot set it later)")
+        else:
+            said = " ".join((done.stderr or done.stdout).split())[:200]
+            print(f"  git      could not set {WORKTREE_SETTING} ({said}). Run in the project: {command}")
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"  git      could not set {WORKTREE_SETTING} ({exc.__class__.__name__}). Run in the project: {command}")
+
+
+# The shared remote on GitHub, read as Product Studio reads it (skills/studio/scripts/collab.py): the address as it is
+# configured, never one rewritten by url.<base>.insteadOf. Only OWNER/REPO is ever printed, never the address.
+GITHUB_REMOTE_RE = re.compile(r"^(?:https://(?:[^/@\s]+@)?github\.com/|ssh://git@github\.com/|git@github\.com:)"
+                              r"([A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}?)(?:\.git)?/?$")
+TO_LOCAL = 'To keep them on this computer instead, set "tickets.provider" to "local" in .factory/config.json.'
+TO_GITHUB = 'To file them as GitHub issues in {repository}, set "tickets.provider" to "github" in .factory/config.json.'
+SAID = "said"  # in the manifest: the one-time notes this installer has already given in this project
+
+
+def ticket_home(project: Path) -> Tuple[str, str]:
+    """Where MACH's own tickets go by default, decided from the repository alone, with no network: ("github",
+    "OWNER/REPO") when the project is the top of a Git repository whose `origin` remote is on GitHub, else ("local",
+    why), where why is empty when the project is not in a Git repository at all. A .git folder alone is not enough:
+    a repository with no remote on GitHub cannot hold GitHub issues."""
+    def git(*argv: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *argv], cwd=str(project), capture_output=True, text=True, errors="replace", timeout=60, check=False)
+
+    try:
+        top = git("rev-parse", "--show-toplevel")
+        if top.returncode != 0 or not top.stdout.strip():
+            return "local", ""
+        if Path(top.stdout.strip()).resolve() != project:
+            return "local", "this folder is inside a Git repository but is not its top folder"
+        address = git("config", "--get", "remote.origin.url").stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return "local", ""
+    named = GITHUB_REMOTE_RE.fullmatch(address)
+    if named:
+        return "github", named.group(1)
+    return "local", ("this Git repository's origin remote is not on GitHub" if address else "this Git repository has no origin remote")
+
+
+def config_seed(data: bytes, provider: str) -> bytes:
+    """The configuration template with tickets.provider set to `provider`, laid out otherwise as it is written."""
+    if provider == "local":
+        return data
+    text = data.decode("utf-8")
+    changed = re.sub(r'("tickets":\s*\{\s*"provider":\s*)"local"', lambda found: found.group(1) + json.dumps(provider), text, count=1)
+    try:
+        if json.loads(changed)["tickets"]["provider"] == provider:
+            return changed.encode("utf-8")
+    except (ValueError, KeyError, TypeError):
+        pass
+    config = json.loads(text)
+    config.setdefault("tickets", {})["provider"] = provider
+    return (json.dumps(config, indent=2) + "\n").encode("utf-8")
+
+
+def ticket_settings(project: Path, home: Tuple[str, str], fresh: bool, dry: bool) -> None:
+    """Say where MACH's own tickets will be kept. A configuration written by this run has the default the repository
+    implies (ticket_home); one that was already there is never changed, whatever it says. When it still keeps tickets
+    here although the project is on GitHub, one line says how to switch, once in the project's life."""
+    where, detail = home
+    will = "would be" if dry else "will be"
+    if fresh:
+        if where == "github":
+            print(f"  tickets  MACH's own tickets {will} GitHub issues in {detail}, the repository's origin remote")
+            print(f"           {TO_LOCAL}")
+        else:
+            print(f"  tickets  MACH's own tickets {will} kept in .factory/tickets/" + (f" ({detail})" if detail else ""))
+        return
+    if where != "github":
+        return
+    try:
+        config = json.loads((project / CONFIG).read_text(encoding="utf-8"))
+        tickets = config.get("tickets") if isinstance(config, dict) else None
+        provider = (tickets.get("provider") if isinstance(tickets, dict) else None) or "local"
+        manifest = load_manifest(project)
+    except (OSError, ValueError, Fail):
+        return
+    said = manifest.get(SAID) if isinstance(manifest.get(SAID), list) else []
+    if provider != "local" or "tickets.provider" in said:
+        return
+    print(f"  tickets  MACH's own tickets stay in .factory/tickets/, as .factory/config.json says. {TO_GITHUB.format(repository=detail)}")
+    if not dry and manifest:
+        manifest[SAID] = sorted({*said, "tickets.provider"})
+        (project / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
 def cmd_scaffold(args: argparse.Namespace) -> int:
@@ -643,8 +772,11 @@ def cmd_scaffold(args: argparse.Namespace) -> int:
     project = args.project.resolve()
     if not project.is_dir():
         raise Fail(f"{project} is not a folder.")
+    home = ticket_home(project)
+    fresh = not (project / CONFIG).exists()
     programs, note, records = program_items(root, project, version, args)
-    code = apply(project, scaffold_items(root, project) + programs, ["scaffold"], version, args, records)
+    code = apply(project, scaffold_items(root, project, home[0]) + programs, ["scaffold"], version, args, records)
+    ticket_settings(project, home, fresh, args.dry_run)
     print(f"\n{note}")
     return code
 

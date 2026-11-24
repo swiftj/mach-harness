@@ -85,6 +85,8 @@ This installs the newest release, after checking it, and prints one `MACH source
 
 Each install brings all of MACH's own files to the new version: its skills, agents and workflow in `.claude/`, and its files in `.factory/bin/` and `.factory/mach.mk`. MACH's scripts depend on each other, so they must all come from one version. If you or a Claude session changed one of those files, MACH saves your version in `.factory/mach-backup-<time>/` first and says so at the end. Your tickets, specs, settings and Product Studio drafts are never touched. `python3 .factory/bin/mach status` tells you if MACH's files do not match the installed version; running the installer again fixes that.
 
+**Where MACH's own tickets go.** The first install chooses, and says which in a `tickets` line. In a Git repository whose `origin` remote is on GitHub, tickets MACH files itself, such as the hardening ticket a weak first audit asks for, are GitHub issues in that repository, named by their numbers (`/mach 12`). Anywhere else they are Markdown files in `.factory/tickets/`. To change it, set `"tickets.provider"` in `.factory/config.json` to `"local"` or `"github"`; an install never changes that setting once the file exists. If GitHub cannot take a ticket (no `gh`, not signed in, no network), MACH keeps it in `.factory/tickets/` and says why.
+
 If it says the newest release could not be found, GitHub's API did not answer from your network (it allows a limited number of unsigned requests an hour). Name the release yourself:
 
 ```bash
@@ -484,7 +486,7 @@ Settings are in `.factory/config.json`. The ones people change most:
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `tickets.provider` | `local` | Where tickets live: Markdown files in `.factory/tickets/`, or `github`, `gitea-cli`, `jira`, `fossil` |
+| `tickets.provider` | `github` when the project's `origin` remote is on GitHub, otherwise `local` (set by the installer) | Where tickets live, MACH's own included: `local` (Markdown files in `.factory/tickets/`), `github`, `gitea-cli`, `jira`, `fossil`. A ticket the tracker cannot take is kept in `.factory/tickets/`, and MACH says why |
 | `merge.mode` | `auto` | `auto` lets the line merge approved tickets; `manual` leaves every merge to you |
 | `merge.method` | `local` | `local` makes a merge commit; `pr` opens a pull request that refers to the request's issue, and merges the approved commit |
 | `merge.auto.<tier>` | `true` | Set a risk tier to `false` to keep its merges for a person |

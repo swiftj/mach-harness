@@ -2550,7 +2550,35 @@ def local_ticket_path(project: Path, ticket_id: str) -> Path:
     return project / ".factory" / "tickets" / f"{check_ticket_id(ticket_id)}.md"
 
 
+def ticket_new_in_tracker(project: Path, args: argparse.Namespace, provider: str) -> Optional[Dict[str, Any]]:
+    """File an engineer's own ticket where tickets.provider says, through the ticket station: a GitHub issue, whose
+    number is the ticket, or a ticket in another tracker. When the tracker cannot take it, the station keeps it on this
+    computer and says why (its `note`). None when the ticket station is not installed: the ticket is then made here."""
+    script = ticket_script()
+    if script is None:
+        return None
+    argv = [sys.executable, str(script), "--project", str(project), "--provider", provider, "create", "--title", args.title, "--body", "-"]
+    for label in args.label:
+        argv += ["--label", label]
+    done = subprocess.run(argv, input=args.body or "", capture_output=True, text=True)
+    try:
+        made = json.loads(done.stdout) if done.returncode == 0 else None
+    except ValueError:
+        made = None
+    if not isinstance(made, dict) or not made.get("ticket_id"):
+        said = (done.stderr.strip() or done.stdout.strip() or "the ticket station printed nothing").splitlines()[-1]
+        raise CellError("The ticket could not be filed: " + (said[len("error: "):] if said.startswith("error: ") else said))
+    return {key: made[key] for key in ("ticket_id", "provider", "path", "url", "note") if made.get(key)}
+
+
 def cmd_ticket_new(project: Path, args: argparse.Namespace) -> int:
+    tickets = load_config(project).get("tickets")
+    provider = os.environ.get("ISSUE_PROVIDER") or (tickets.get("provider") if isinstance(tickets, dict) else None) or "local"
+    if provider != "local":
+        made = ticket_new_in_tracker(project, args, str(provider))
+        if made is not None:
+            print(json.dumps(made, indent=2))
+            return 0
     folder = project / ".factory" / "tickets"
     folder.mkdir(parents=True, exist_ok=True)
     prefix = str(load_config(project).get("tickets", {}).get("local_prefix") or "LOCAL")
@@ -2770,7 +2798,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("ticket_id", nargs="?")
     p.set_defaults(func=cmd_status)
 
-    p = sub.add_parser("ticket-new", help="create a local Markdown ticket in .factory/tickets/")
+    p = sub.add_parser("ticket-new", help="create a ticket where tickets.provider says (a local Markdown ticket in .factory/tickets/ by default)")
     p.add_argument("--title", required=True)
     p.add_argument("--body")
     p.add_argument("--label", action="append", default=[])

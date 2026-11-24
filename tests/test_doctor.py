@@ -210,10 +210,19 @@ class DoctorTest(unittest.TestCase):
         code, checks, _, out = self.checks()
         self.assertEqual(code, 1)
         self.assertEqual(checks["tracker"]["status"], "fail")
+        self.assertEqual(checks["tracker"]["detail"], "GitHub tracker (from tickets.provider in .factory/config.json); the GitHub CLI is not signed in. "
+                                                      "Until it is, MACH's own tickets are kept on this computer, in .factory/tickets/.")
         self.assertNotIn(SECRET, out)
         _, text = self.run_doctor()
         self.assertNotIn(SECRET, text)
         self.assertNotIn("gho_", text)
+
+    def test_github_without_gh_says_where_machs_own_tickets_go_until_it_is_there(self):
+        self.healthy({"tickets": {"provider": "github"}})
+        _, checks, _, _ = self.checks()
+        self.assertEqual(checks["tracker"]["status"], "fail")
+        self.assertEqual(checks["tracker"]["detail"], "The github tracker (from tickets.provider in .factory/config.json) needs 'gh', which is not on PATH. "
+                                                      "Until it is, MACH's own tickets are kept on this computer, in .factory/tickets/.")
 
     def test_github_signed_in_is_ok(self):
         self.healthy({"tickets": {"provider": "github"}})

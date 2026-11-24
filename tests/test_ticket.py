@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -268,6 +269,98 @@ class GitHubTest(Base):
         code, _, err = run("view", "9", project=self.project)
         self.assertEqual(code, 2)
         self.assertIn("failed", err)
+
+
+class KeptHereTest(Base):
+    """When GitHub cannot take a ticket, it is filed on this computer instead, said plainly with the reason, and
+    every later view and update of it works here: MACH never waits on GitHub and never loses the ticket."""
+    provider = "github"
+
+    def setUp(self):
+        super().setUp()
+        # Only the fakes, Git and Python on the PATH: a real gh on this computer is never run.
+        tools = Path(self.tmp.name) / "tools"
+        tools.mkdir()
+        (tools / "git").symlink_to(shutil.which("git"))
+        (tools / "python3").symlink_to(sys.executable)  # the fakes' interpreter
+        os.environ["PATH"] = f"{self.bin}{os.pathsep}{tools}"
+
+    def kept(self, made, kind, reason):
+        self.assertEqual((made["ticket_id"], made["provider"]), ("LOCAL-001", "local"))
+        self.assertEqual(made["kept_here"], {"wanted": "github", "kind": kind, "reason": reason})
+        self.assertEqual(made["note"], f"Filed on this computer as LOCAL-001 in .factory/tickets/, not as a GitHub issue: {reason}. MACH carries on with it here.")
+        self.assertTrue((self.project / ".factory/tickets/LOCAL-001.md").is_file())
+
+    def test_no_gh(self):
+        made = self.ok("create", "--title", "Harden repository for autonomous work", "--label", "repo-hardening", "--body", "- [ ] Tests pass")
+        self.kept(made, "no_gh", "the GitHub CLI (gh) is not installed on this computer")
+        self.assertIn('"repo-hardening"', (self.project / ".factory/tickets/LOCAL-001.md").read_text())
+
+    def test_not_signed_in(self):
+        self.fake("gh")
+        self.respond((["label", "create"], "To get started with GitHub CLI, please run:  gh auth login\n", 4))
+        self.kept(self.ok("create", "--title", "Harden", "--label", "repo-hardening"), "auth", "the GitHub CLI is not signed in to GitHub on this computer")
+
+    def test_the_call_fails(self):
+        self.fake("gh")
+        for output, kind, reason in (("error connecting to api.github.com\n", "network", "GitHub could not be reached"),
+                                     ("HTTP 403: Resource not accessible by integration\n", "refused", "GitHub refused it (this account's permission, or a limit)"),
+                                     ("something odd\n", "other", "GitHub did not accept it")):
+            with self.subTest(kind=kind):
+                for folder in ("tickets", "inbox"):
+                    shutil.rmtree(self.project / ".factory" / folder, ignore_errors=True)
+                self.respond((["issue", "create"], output, 1))
+                self.kept(self.ok("create", "--title", "Tune the factory's rules"), kind, reason)
+                self.assertNotIn(output.strip(), json.dumps(self.ok("view", "LOCAL-001")), "gh's own words are never relayed")
+
+    def test_a_ticket_kept_here_is_viewed_and_updated_here_while_the_setting_says_github(self):
+        self.ok("create", "--title", "Harden", "--label", "repo-hardening")
+        self.fake("gh")  # gh is back now: the ticket is still the one on this computer
+        self.assertEqual(self.ok("update", "LOCAL-001", "--state", "in_progress", "--comment", "Started.")["provider"], "local")
+        seen = self.ok("view", "LOCAL-001")
+        self.assertEqual((seen["provider"], seen["state"], seen["labels"]), ("local", "in_progress", ["repo-hardening"]))
+        self.assertEqual(self.calls(), [], "gh is never asked about a ticket kept here")
+        self.respond((["issue", "create"], "https://github.com/acme/app/issues/5\n", 0))
+        self.assertEqual(self.ok("create", "--title", "Next")["ticket_id"], "5", "the next ticket goes to GitHub again")
+
+    def test_a_created_issue_whose_number_cannot_be_read_is_not_filed_twice(self):
+        self.fake("gh")
+        self.respond((["issue", "create"], "done\n", 0))
+        code, _, err = run("create", "--title", "x", project=self.project)
+        self.assertEqual(code, 2)
+        self.assertIn("could not be read", err)
+        self.assertFalse((self.project / ".factory/tickets").exists())
+
+    def test_a_github_issue_carries_its_labels_in_the_inbox_until_it_is_viewed(self):
+        self.fake("gh")
+        self.respond((["issue", "create"], "https://github.com/acme/app/issues/12\n", 0))
+        self.ok("create", "--title", "Harden", "--label", "repo-hardening", "--body", "## Acceptance criteria\n- Tests pass")
+        record = json.loads((self.project / ".factory/inbox/12.json").read_text())
+        self.assertEqual((record["ticket_id"], record["provider"], record["labels"], record["acceptance_criteria"]), ("12", "github", ["repo-hardening"], ["Tests pass"]))
+
+    def test_telemetry_is_kept_here_too(self):
+        made = self.ok("ingest-telemetry", "sentry", self.payload("s.json", SENTRY))
+        record = json.loads((self.project / ".factory/inbox" / f"{made['ticket_id']}.json").read_text())
+        self.assertEqual(record["tracker_provider"], "local")
+        self.assertEqual(made["tracker"]["kept_here"]["kind"], "no_gh")
+        self.assertTrue((self.project / ".factory/tickets" / f"{made['ticket_id']}.md").is_file())
+
+    def test_an_engineers_own_ticket_follows_the_setting(self):
+        self.fake("gh")
+        self.respond((["issue", "create"], "https://github.com/acme/app/issues/31\n", 0))
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(cell.main(["--project", str(self.project), "ticket-new", "--title", "Invite teammates", "--body", "Admins want this.", "--label", "feature"]), 0)
+        made = json.loads(out.getvalue())
+        self.assertEqual((made["ticket_id"], made["provider"], made["url"]), ("31", "github", "https://github.com/acme/app/issues/31"))
+        self.assertEqual(self.calls()[-1], ["gh", "issue", "create", "--title", "Invite teammates", "--body", "Admins want this.", "--label", "feature"])
+        (self.bin / "gh").unlink()
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(cell.main(["--project", str(self.project), "ticket-new", "--title", "Second"]), 0)
+        made = json.loads(out.getvalue())
+        self.assertEqual((made["ticket_id"], made["provider"]), ("LOCAL-001", "local"))
+        self.assertIn("not as a GitHub issue: the GitHub CLI (gh) is not installed on this computer", made["note"])
 
 
 class GenericProviderTest(Base):

@@ -11,7 +11,7 @@ Input: $ARGUMENTS
 
 You are the factory's ticket clerk. One script does the work for every tracker; you choose the action, pass the arguments through, and report the result in a line or two. `TICKET` below means `python3 "${CLAUDE_SKILL_DIR}/scripts/ticket.py"`. Run it from the project.
 
-The tracker comes from `.factory/config.json` (`tickets.provider`, `local` by default) or the `ISSUE_PROVIDER` environment variable. Do not pass `--provider` unless the user names a tracker.
+The tracker comes from `.factory/config.json` (`tickets.provider`: the installer sets `github` in a project whose `origin` remote is on GitHub, else `local`) or the `ISSUE_PROVIDER` environment variable. Do not pass `--provider` unless the user names a tracker. On GitHub a ticket's ID is its issue number. A ticket that has a file in `.factory/tickets/` is always read and changed there, whatever the setting.
 
 ## Rules
 
@@ -97,5 +97,7 @@ These are how the run skill's intake reads slices Product Studio marked ready an
 The Factory writes nothing to a request's issue (`mach:request`): Product Studio tells it when a slice made from it is marked ready, with a link to the slice's issue.
 
 ## Errors
+
+**Kept on this computer.** When `create` cannot file the ticket in the tracker (on GitHub: `gh` missing, not signed in, GitHub unreachable or refusing), it files it in `.factory/tickets/` instead, exits 0, and prints `kept_here` with the reason and a `note`. Give the caller the note as it is, and carry on with the local ID it printed. Do not try GitHub again yourself.
 
 The script exits `2` with a one-line reason: the tracker's tool is not installed, the ticket does not exist, or the tracker refused the change. Report that reason as it is. If a provider has no command for an action, it names the `tickets.commands.<action>` setting to add in `.factory/config.json`; tell the user, and do not edit the config yourself unless asked.

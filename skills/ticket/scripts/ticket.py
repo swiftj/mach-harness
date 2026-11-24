@@ -189,13 +189,24 @@ def fill(part: str, values: Dict[str, str]) -> str:
     return pattern.sub(lambda match: values[match.group(0)[1:-1]], part)
 
 
+class TrackerFailed(TicketError):
+    """The tracker's tool is missing or did not do what was asked. `missing` says it is not installed; `output`
+    keeps all it said, so a GitHub failure can be told by its kind (gh_failure_kind) without relaying its words."""
+
+    def __init__(self, message: str, missing: bool = False, output: str = "") -> None:
+        super().__init__(message)
+        self.missing = missing
+        self.output = output
+
+
 def run(argv: Sequence[str], cwd: Path) -> str:
     if shutil.which(argv[0]) is None:
-        raise TicketError(f"'{argv[0]}' is not installed or not on PATH, so the ticket tracker cannot be reached.")
+        raise TrackerFailed(f"'{argv[0]}' is not installed or not on PATH, so the ticket tracker cannot be reached.", missing=True)
     done = subprocess.run(list(argv), cwd=str(cwd), capture_output=True, text=True)
     if done.returncode != 0:
         detail = (done.stderr.strip() or done.stdout.strip()).splitlines()
-        raise TicketError(f"'{' '.join(argv[:3])} ...' failed: {detail[-1] if detail else 'exit ' + str(done.returncode)}")
+        raise TrackerFailed(f"'{' '.join(argv[:3])} ...' failed: {detail[-1] if detail else 'exit ' + str(done.returncode)}",
+                            output=done.stderr + "\n" + done.stdout)
     return done.stdout
 
 
@@ -494,21 +505,53 @@ def generic_update(ctx: Context, ticket_id: str, state: Optional[str], add: Sequ
     return changes
 
 
+# Why a ticket meant for GitHub was kept on this computer, by the kind gh_failure_kind gives (the same kinds the
+# slice commands report); gh's own words are never relayed.
+KEPT_HERE_WHY = {
+    "no_gh": "the GitHub CLI (gh) is not installed on this computer",
+    "auth": "the GitHub CLI is not signed in to GitHub on this computer",
+    "network": "GitHub could not be reached",
+    "refused": "GitHub refused it (this account's permission, or a limit)",
+    "not_found": "GitHub did not find this project's repository",
+    "other": "GitHub did not accept it",
+}
+
+
+def kept_here(ctx: Context, failure: TicketError, title: str, body: str, labels: Sequence[str], ticket_id: Optional[str]) -> Dict[str, Any]:
+    """File the ticket on this computer when its tracker cannot take it, so nothing is lost and nothing waits: say so,
+    with the reason, and carry on. Every later view and update of it finds it here (provider_for)."""
+    if ctx.provider == "github":
+        kind = "no_gh" if getattr(failure, "missing", False) else gh_failure_kind(getattr(failure, "output", "") or str(failure))
+        why = KEPT_HERE_WHY.get(kind, KEPT_HERE_WHY["other"])
+    else:
+        kind, why = ("missing" if getattr(failure, "missing", False) else "failed"), str(failure).rstrip(".")
+    new = local_create(ctx, title, body, labels, ticket_id)
+    where = "a GitHub issue" if ctx.provider == "github" else f"a {ctx.provider} ticket"
+    return {
+        "ticket_id": new, "provider": "local", "path": str(local_path(ctx, new)),
+        "kept_here": {"wanted": ctx.provider, "kind": kind, "reason": why},
+        "note": f"Filed on this computer as {new} in .factory/tickets/, not as {where}: {why}. MACH carries on with it here.",
+    }
+
+
 def create(ctx: Context, title: str, body: str, labels: Sequence[str], ticket_id: Optional[str] = None) -> Dict[str, Any]:
     if ctx.provider == "local":
         new = local_create(ctx, title, body, labels, ticket_id)
         return {"ticket_id": new, "provider": "local", "path": str(local_path(ctx, new))}
-    argv = ctx.argv("create", title=title, body=body)
-    extra = ctx.template("create_label")
     unlabeled = list(labels)
-    if extra:
-        if ctx.provider == "github":
+    try:  # until the tracker has the ticket, a failure keeps it on this computer instead (kept_here)
+        argv = ctx.argv("create", title=title, body=body)
+        extra = ctx.template("create_label")
+        if extra:
+            if ctx.provider == "github":
+                for label in labels:
+                    run(ctx.argv("ensure_label", label=label), ctx.project)
             for label in labels:
-                run(ctx.argv("ensure_label", label=label), ctx.project)
-        for label in labels:
-            argv += [fill(part, {"label": label}) for part in extra]
-        unlabeled = []
-    out = strip_ansi(run(argv, ctx.project)).strip()
+                argv += [fill(part, {"label": label}) for part in extra]
+            unlabeled = []
+        out = strip_ansi(run(argv, ctx.project)).strip()
+    except TicketError as failure:
+        return kept_here(ctx, failure, title, body, labels, ticket_id)
     match = re.search(r"/issues/(\d+)", out) or re.search(r"\b([A-Z][A-Z0-9]+-\d+)\b", out) or re.search(r"#(\d+)", out) or re.search(r"\b([0-9a-f]{10,40})\b", out)
     if not match:
         raise TicketError(f"The ticket was created, but its ID could not be read from the tracker's output: {out[-200:]}")
@@ -517,13 +560,27 @@ def create(ctx: Context, title: str, body: str, labels: Sequence[str], ticket_id
     for label in unlabeled:
         if ctx.template("add_label"):
             run(ctx.argv("add_label", id=tracker, label=label), ctx.project)
+    if ctx.provider == "github" and ticket_id is None:
+        # The issue number is the ticket: its inbox record carries the labels (repo-hardening, factory-tuning) the
+        # stations read to decide how it is treated, as a local ticket's front matter does, until it is next viewed.
+        write_inbox(ctx, normalized(tracker, "github", title, body, list(labels), "open", url=url, tracker_id=tracker), None)
     return {"ticket_id": ticket_id or tracker, "provider": ctx.provider, "tracker_id": tracker, "url": url}
 
 
 # ---------------------------------------------------------------- commands
 
+def holding(ctx: Context, ticket_id: str) -> Context:
+    """The tracker that holds this ticket. A ticket kept on this computer (a file in .factory/tickets/) is read and
+    changed there whatever tickets.provider says: one filed here when the tracker could not take it, or one handed
+    over by folder, is never looked for in the tracker."""
+    if ctx.provider != "local" and local_path(ctx, ticket_id).is_file():
+        return Context(ctx.project, "local")
+    return ctx
+
+
 def cmd_view(ctx: Context, args: argparse.Namespace) -> int:
     ticket_id = check_id(args.ticket_id)
+    ctx = holding(ctx, ticket_id)
     if ctx.provider == "local":
         ticket, raw = local_ticket(ctx, ticket_id)
     elif ctx.provider == "github":
@@ -622,7 +679,8 @@ def cmd_update(ctx: Context, args: argparse.Namespace) -> int:
     comment = sys.stdin.read() if args.comment == "-" else args.comment
     if not (args.state or args.label or args.remove_label or comment):
         raise TicketError("Nothing to change. Pass --state, --label, --remove-label or --comment.")
-    update = {"local": local_update, "github": github_update}.get(ctx.provider, generic_update)
+    ctx = holding(ctx, ticket_id)
+    update ={"local": local_update, "github": github_update}.get(ctx.provider, generic_update)
     changes = update(ctx, ticket_id, args.state, args.label, args.remove_label, comment)
     print(json.dumps({"ticket_id": ticket_id, "provider": ctx.provider, "changes": changes or ["Nothing changed; the ticket already matched."]}, indent=2))
     return 0
@@ -883,7 +941,7 @@ def cmd_ingest(ctx: Context, args: argparse.Namespace) -> int:
     tracker: Dict[str, Any] = {}
     if not args.no_sync:
         tracker = create(ctx, title, body, ticket["labels"], ticket_id)
-        ticket["tracker_provider"] = ctx.provider
+        ticket["tracker_provider"] = tracker.get("provider") or ctx.provider
         for key in ("tracker_id", "url"):
             if tracker.get(key):
                 ticket[key] = tracker[key]
@@ -1034,7 +1092,7 @@ def cmd_ingest_scan(ctx: Context, args: argparse.Namespace) -> int:
         tracker: Dict[str, Any] = {}
         if not args.no_sync:
             tracker = create(ctx, title, body, labels, ticket_id)
-            ticket["tracker_provider"] = ctx.provider
+            ticket["tracker_provider"] = tracker.get("provider") or ctx.provider
             for key in ("tracker_id", "url"):
                 if tracker.get(key):
                     ticket[key] = tracker[key]

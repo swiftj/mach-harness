@@ -193,6 +193,10 @@ def check_claude(project: Path) -> List[Dict[str, str]]:
     return [check("claude", title, "ok", f"Claude Code {first}".rstrip() + ".")]
 
 
+# What the ticket station does when the tracker cannot take a ticket (ticket.py kept_here): said, never a refusal.
+KEPT_HERE = "Until {until}, MACH's own tickets are kept on this computer, in .factory/tickets/."
+
+
 def resolve_provider(config: Any) -> Tuple[str, str, Dict[str, Any]]:
     tickets = config.get("tickets") if isinstance(config, dict) else None
     tickets = tickets if isinstance(tickets, dict) else {}
@@ -222,7 +226,7 @@ def check_tracker(project: Path, config: Any, gh_state: Optional[Dict[str, Any]]
     path = shutil.which(program)
     if not path:
         status = "fail" if provider == "github" else "warn"
-        return [check("tracker", title, status, f"The {provider} tracker (from {source}) needs '{program}', which is not on PATH.",
+        return [check("tracker", title, status, f"The {provider} tracker (from {source}) needs '{program}', which is not on PATH. " + KEPT_HERE.format(until="it is"),
                       f"Install '{program}' or change tickets.provider in .factory/config.json.")]
     if provider != "github" or program != "gh":
         return [check("tracker", title, "ok", f"The {provider} tracker (from {source}); '{program}' is on PATH. Sign-in was not checked.")]
@@ -238,7 +242,7 @@ def check_tracker(project: Path, config: Any, gh_state: Optional[Dict[str, Any]]
     if any(word in lowered for word in NETWORK_WORDS):
         return [check("tracker", title, "not_checked", f"GitHub tracker (from {source}); GitHub could not be reached to check the sign-in.",
                       "Run 'gh auth status' yourself when the network is available.")]
-    return [check("tracker", title, "fail", f"GitHub tracker (from {source}); the GitHub CLI is not signed in.",
+    return [check("tracker", title, "fail", f"GitHub tracker (from {source}); the GitHub CLI is not signed in. " + KEPT_HERE.format(until="it is"),
                   "Run 'gh auth login', then 'gh auth status' to confirm.")]
 
 

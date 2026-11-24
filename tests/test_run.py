@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -15,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "skills" / "run" / "scripts"))
 sys.path.insert(0, str(ROOT / "tests"))
 import run  # noqa: E402
-from test_build import git  # noqa: E402
+from test_build import build, git  # noqa: E402
 from test_verify import Base as VerifyBase, NOTE, TARGETS  # noqa: E402
 import class_template  # noqa: E402  (a step taken from the same starting folder is run once per class)
 
@@ -360,6 +361,90 @@ class BareNumberTest(Base):
         self.assertEqual((code, out), (1, ""))
         self.assertIn("JIRA-4, LOCAL-004", err)
         self.assertIn("nothing was done", err)
+
+
+class GitHubHardeningTest(Base):
+    """A project on GitHub: the hardening ticket MACH files is a GitHub issue (here the stand-in for gh), its ID is the
+    bare issue number, and the line builds it like a local one: its repo-hardening label read from the issue."""
+
+    def setUp(self):
+        super().setUp()
+        from test_mach_product_issues import FAKE_GH  # the stand-in for gh: issues and labels kept in a JSON file
+        bin_dir = Path(self.tmp.name).resolve() / "gh-bin"
+        bin_dir.mkdir(exist_ok=True)
+        gh = bin_dir / "gh"
+        gh.write_text(FAKE_GH.replace("#!/usr/bin/env python3", "#!" + sys.executable, 1))
+        gh.chmod(0o755)
+        self.gh_state = Path(self.tmp.name).resolve() / "gh.json"
+        self.gh_state.write_text(json.dumps({"repo": "acme/app", "me": "erin-eng", "issues": {}, "labels": [], "fail": {}, "calls": []}))
+        patcher = mock.patch.dict("os.environ", {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "FAKE_GH_STATE": str(self.gh_state)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop("ISSUE_PROVIDER", None)
+        git(self.project, "remote", "add", "origin", "git@github.com:acme/app.git")
+        self.put(self.project, {".factory/config.json": json.dumps({"tickets": {"provider": "github"}})})
+
+    def ticket(self, *argv):
+        done = subprocess.run([sys.executable, str(ROOT / "skills/ticket/scripts/ticket.py"), "--project", str(self.project), *argv],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def issue(self, number):
+        return json.loads(self.gh_state.read_text())["issues"][str(number)]
+
+    def test_the_hardening_ticket_is_a_github_issue_and_is_built_by_its_number(self):
+        from test_build import IMPL, IMPL2, INTENT, PLAN, RED_TEST, SCENARIO_TEST, SPEC, SPEC_NAME
+        made = self.ticket("create", "--title", "Harden repository for autonomous work", "--label", "repo-hardening",
+                           "--body", "## Acceptance criteria\n\n- [ ] The baseline tests pass.")
+        self.assertEqual((made["ticket_id"], made["provider"], made["url"]), ("1", "github", "https://github.com/acme/app/issues/1"))
+        self.assertNotIn("kept_here", made)
+        self.assertEqual([label["name"] for label in self.issue(1)["labels"]], ["repo-hardening"])
+        self.assertFalse((self.project / ".factory/tickets").is_dir() and list((self.project / ".factory/tickets").iterdir()), "nothing kept here")
+
+        step = self.next(ticket="1")
+        self.assertEqual((step["ticket_id"], step["action"]), ("1", "groom"))
+        info = json.loads(self.cell_cmd("open", "1"))
+        cellroot = self.project / ".factory/worktrees/1"
+        work = Path(info["workdir"])
+        self.assertEqual(work, cellroot / "repo")
+        self.assertEqual(git(work, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip(), "feature/1")
+        self.put(work, {f"specs/slices/{SPEC_NAME}": SPEC})
+        self.put(cellroot, {"intent.md": INTENT.replace("LOCAL-001 (local)", "1 (github)").replace("LOCAL-001", "1")})
+        self.cell_cmd("finalize", "1", "--spec", f"specs/slices/{SPEC_NAME}")
+        self.put(cellroot, {"plan.md": PLAN})
+        self.cell_cmd("check-plan", "1")
+
+        self.audit_report("Bronze")
+        self.assertEqual(self.next(ticket="1")["action"], "build", "Bronze builds a ticket whose issue carries repo-hardening")
+        (self.project / ".factory/inbox/1.json").unlink()
+        stopped = self.next(ticket="1")
+        self.assertEqual((stopped["action"], stopped["needs"]), ("stop", "repository-hardening"), "without its labels it is like any other ticket")
+        self.assertEqual(self.ticket("view", "1")["labels"], ["repo-hardening"], "the labels are read from the issue itself")
+        self.assertEqual(self.next(ticket="1")["action"], "build")
+
+        started = self.b_ok("start", "1")
+        self.assertTrue(started["audit"]["human_review_required"], "a person reviews every hardening ticket")
+        for task, kind, files in (("T01", "red", {"tests/test_invite.py": RED_TEST}), ("T02", "green", {"app/invite.py": IMPL}),
+                                  ("T03", "red", {"tests/test_scenarios.py": SCENARIO_TEST}), ("T04", "green", {"app/invite.py": IMPL2}),
+                                  ("T05", "done", {"README.md": "# Sample\n\nAdmins can invite teammates.\n"})):
+            self.put(work, files)
+            self.b_ok(kind, "1", task)
+        self.b_ok("finish", "1")
+        step = self.next(ticket="1")
+        self.assertEqual((step["action"], step["prompt"]), ("verify", "Verify MACH ticket 1."))
+
+        self.ticket("update", "1", "--state", "in_progress", "--comment", "Building.")
+        self.assertIn("mach:in_progress", [label["name"] for label in self.issue(1)["labels"]])
+        self.ticket("update", "1", "--state", "closed")
+        self.assertEqual(self.issue(1)["state"], "CLOSED")
+
+    def b_ok(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = build.main(["--project", str(self.project), *argv])
+        self.assertEqual(code, 0, err.getvalue() + out.getvalue())
+        return json.loads(out.getvalue())
 
 
 class DoctorTest(Base):

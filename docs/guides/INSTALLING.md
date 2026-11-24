@@ -1,6 +1,21 @@
 # Installing MACH: the programs and what is verified
 
-The [README](../../README.md) has the two install commands. This page covers the two optional browser programs and exactly what the installer checks.
+The [README](../../README.md) has the two install commands. This page covers where MACH's own tickets go, the two optional browser programs, and exactly what the installer checks.
+
+## Where MACH's own tickets go
+
+The first install writes `.factory/config.json` and sets `tickets.provider` in it. When the project is the top of a Git repository whose `origin` remote is on GitHub, it is `github`: tickets MACH files itself, such as the hardening ticket a weak first audit asks for, are GitHub issues in that repository, and their IDs are the issue numbers. Otherwise it is `local`: they are Markdown files in `.factory/tickets/`. A `.git` folder alone is not enough; the remote must be on GitHub. The installer reads only the repository's own settings, not the network, and says which it chose:
+
+```
+  tickets  MACH's own tickets will be GitHub issues in acme/widgets, the repository's origin remote
+           To keep them on this computer instead, set "tickets.provider" to "local" in .factory/config.json.
+```
+
+or `MACH's own tickets will be kept in .factory/tickets/`, with the reason when the repository has no GitHub remote. `--dry-run` says what it would choose.
+
+An install never changes `tickets.provider` once the file exists. A project installed before this that keeps its tickets locally, though it is on GitHub, stays local; the next update says once how to switch.
+
+When GitHub cannot take a ticket (no `gh`, not signed in, no network, no permission), MACH files it in `.factory/tickets/` instead, says why, and carries on. `/mach doctor` says which tracker is set and, when `gh` is missing or not signed in, that MACH's own tickets are kept on this computer until it is.
 
 ## The visual Product Studio app
 

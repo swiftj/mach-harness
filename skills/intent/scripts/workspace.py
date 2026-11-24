@@ -18,6 +18,11 @@ Skip-worktree entries are not reported by `git status` or `git diff`, so the fil
 
 Needs Git 2.36 or later (`sparse-checkout set --no-cone`, and Git setting up per-worktree configuration itself).
 
+Per-worktree settings need `extensions.worktreeConfig` in the repository's own Git settings. Claude Code's sandbox
+protects those settings too, so inside it Git cannot turn the extension on and the workspace cannot be made. MACH's
+installer turns it on when it installs (bin/mach, outside any sandbox); `create` turns it on when it can, and when it
+cannot it says so before anything is made, with the one command a person runs in a terminal.
+
 Shared by cell.py (open), build.py (a cell groomed before the repository had history, and each lane of a build), landing.py
 (the join's worktree) and the doctor (a throwaway
 worktree made the same way). Standard library only.
@@ -32,6 +37,8 @@ from typing import List, Optional, Sequence, Tuple
 MIN_GIT = (2, 36)
 PATTERNS = ("/*", "!.claude/", "!.mcp.json")
 LEFT_OUT = "the .claude folder and .mcp.json"
+SETTING = "extensions.worktreeConfig"
+TURN_ON = f"git config {SETTING} true"
 
 
 class WorkspaceError(Exception):
@@ -116,6 +123,30 @@ def _undo(project: Path, repo: Path, branch: Optional[str], made_branch: bool) -
     return left
 
 
+def setting_on(project: Path) -> bool:
+    """Whether the repository already keeps settings per worktree (extensions.worktreeConfig)."""
+    return git(["config", "--type=bool", "--get", SETTING], project).stdout.strip() == "true"
+
+
+def git_moves_settings(project: Path) -> bool:
+    """A bare repository, or one with core.worktree set: Git moves those settings itself when it turns the extension on,
+    so MACH leaves turning it on to Git."""
+    return (git(["config", "--type=bool", "--get", "core.bare"], project).stdout.strip() == "true"
+            or bool(git(["config", "--get", "core.worktree"], project).stdout.strip()))
+
+
+def turn_on_setting(project: Path) -> Optional[str]:
+    """Turn per-worktree settings on in the repository. None when they are on (already, or now), or when it is Git's to do;
+    otherwise what Git said, which is what a sandbox protecting the repository's Git settings produces."""
+    if setting_on(project) or git_moves_settings(project):
+        return None
+    try:
+        done = git(["config", SETTING, "true"], project)
+    except OSError as exc:
+        return str(exc)
+    return None if done.returncode == 0 and setting_on(project) else (_said(done) or "the setting did not take")
+
+
 def create(project: Path, repo: Path, branch: Optional[str], start: Optional[str] = None) -> None:
     """Make the cell's worktree at `repo` on `branch` (made from `start`, or from HEAD, when it does not exist yet; detached
     at `start` or HEAD when `branch` is None), the sparse way. A branch that exists is used at its own tip, whatever
@@ -129,6 +160,12 @@ def create(project: Path, repo: Path, branch: Optional[str], start: Optional[str
     if repo.exists():
         raise WorkspaceError(f"{repo} already exists, so Git cannot make the workspace there. Nothing was changed. "
                              "Move that folder aside (or finish its ticket with cleanup), then run this again.")
+    refused = turn_on_setting(project)
+    if refused:
+        raise WorkspaceError(f"A ticket's workspace needs one Git setting in this repository ({SETTING}), and it could not be turned on from "
+                             f"here: Git said: {refused}. This happens when Claude Code runs in a sandbox, which protects the repository's Git "
+                             f"settings. Nothing was made. Run this once in the project, in a terminal outside Claude Code: {TURN_ON} "
+                             "(running MACH's installer again does the same), then run this again.")
     made_branch = False
     if start is not None and (not start or start.startswith("-")):
         raise WorkspaceError(f"'{start}' is not a commit to make the workspace from. Nothing was made.")
