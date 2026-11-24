@@ -290,10 +290,12 @@ def open_questions(spec: Path) -> List[Dict[str, Any]]:
 
 
 def answers_pending(cellroot: Path, cell: Dict[str, Any]) -> bool:
-    """Whether a person's answers (answers.json, written by `decide do ... answers`) wait to be folded into this spec: they
-    were given for the spec as it is now. Once grooming saves the spec again, they have been read and this is false."""
-    answers = load_json(cellroot / "answers.json")
-    return isinstance(answers, dict) and isinstance(cell, dict) and bool(cell.get("spec_sha256")) and answers.get("spec_sha256") == cell.get("spec_sha256")
+    """Whether a person's answers (.factory/local/answers/<ticket>.json, written by `decide do ... answers`, its hash in the
+    intake ledger) wait to be folded into this spec: they were given for the spec as it is now. Once grooming saves the spec
+    again, they have been read and this is false."""
+    import act
+    root = cellroot.parent.parent.parent
+    return isinstance(cell, dict) and act.trusted_answers(root, cellroot.name, cell.get("spec_sha256")) is not None
 
 
 def abandon(ticket: str, extra: str = "") -> Dict[str, Any]:

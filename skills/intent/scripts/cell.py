@@ -1964,8 +1964,10 @@ def cmd_replan(project: Path, args: argparse.Namespace) -> int:
     cell = read_cell(project, args.ticket_id)
     root = cell_dir(project, args.ticket_id)
     stage = cell.get("stage")
+    who = {"by": " ".join((getattr(args, "by", None) or "").split()) or "a person",
+           "recorded_by": RECORDED_VIA[getattr(args, "via", None) or "terminal"]}  # who decided, and where (M23 3.1)
     if stage == "spec-ready" and isinstance(cell.get("adr_conflict"), dict):
-        return replan_after_adr(project, root, cell, reason)
+        return replan_after_adr(project, root, cell, reason, who)
     if stage not in REPLAN_STAGES:
         raise CellError(f"Only a planned or building cell can be re-planned; {args.ticket_id} is '{stage}'.", code="wrong-stage")
     state = build_state(root)
@@ -1973,7 +1975,7 @@ def cmd_replan(project: Path, args: argparse.Namespace) -> int:
         raise CellError("This ticket has been through a judging round, and its rounds must stand, so it cannot be re-planned; nothing was changed. "
                         "The build carries on in its current round, answering the judges' findings, and a person can settle the ticket in the "
                         "walkthrough (/mach decide).", code="judged")
-    done = set_aside_build(project, root, cell, reason, stage, "replanned", {"by": "a person"})  # cleanup reads it (cleanup.archive)
+    done = set_aside_build(project, root, cell, reason, stage, "replanned", who)  # cleanup reads it (cleanup.archive)
     cell["stage"] = "spec-ready"
     write_cell(project, cell)
     # The plan station has the ticket again (its next check-plan belongs to this visit): the log carries the stage
@@ -2325,7 +2327,7 @@ def binding_record(project: Path, root: Path, cell: Dict[str, Any], ident: str) 
     return record
 
 
-def replan_after_adr(project: Path, root: Path, cell: Dict[str, Any], reason: str) -> int:
+def replan_after_adr(project: Path, root: Path, cell: Dict[str, Any], reason: str, who: Optional[Dict[str, Any]] = None) -> int:
     """A plan stopped because it cannot follow an ADR, and an engineer has since superseded or changed that ADR by pull
     request: clear the stop so the contract engineer plans again under the ADRs as they are now. Only on a person's word."""
     conflict = cell["adr_conflict"]
@@ -2336,7 +2338,7 @@ def replan_after_adr(project: Path, root: Path, cell: Dict[str, Any], reason: st
                         "An engineer supersedes or changes it by pull request first, or a person records an exception (cell.py adr-exception).", code="adr-unchanged")
     now_is = "no longer exists" if record is None else ("changed" if record["binding"] else f"now {record.get('status') or 'unreadable'}")
     cell.pop("adr_conflict")
-    cell.setdefault("adr_replans", []).append({"adr": conflict.get("adr"), "was": conflict.get("digest"), "now": now_is, "reason": reason, "at": now()})
+    cell.setdefault("adr_replans", []).append({"adr": conflict.get("adr"), "was": conflict.get("digest"), "now": now_is, "reason": reason, "at": now(), **(who or {})})
     write_cell(project, cell)
     telemetry(root, "gate.evaluated", "plan", lambda: {"gate": "plan.adr", "outcome": "pass", "reason_code": "adr-changed", "overridden_by_reason": False,
                                                        "item": conflict.get("adr")})
@@ -2785,6 +2787,8 @@ def build_parser() -> argparse.ArgumentParser:
                        "engineer has since superseded; only on a person's instruction")
     p.add_argument("ticket_id")
     p.add_argument("--reason", required=True, help="why the plan is wrong")
+    p.add_argument("--by", help="the name of the person who decided (recorded with the re-plan)")
+    p.add_argument("--via", choices=sorted(RECORDED_VIA), default="terminal", help="where the person decided: in conversation (default) or in the Factory Floor")
     p.set_defaults(func=cmd_replan)
     p = sub.add_parser("check-plan", help="gate stage 2: check plan.md and contracts against spec.json")
     p.add_argument("ticket_id")

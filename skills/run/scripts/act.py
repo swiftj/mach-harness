@@ -12,7 +12,7 @@ option that list offers, through the station that owns it, with that station's o
     merge              merge.py run --by-person         accept         cell.py adr-accept (a ticket's proposed ADRs)
     exception          cell.py adr-exception (an ADR)   replan         cell.py replan
     set-test-command   build.py set-commands            abandon        cleanup.py plan, then run, then the ticket is closed
-    retry, run, revise nothing is recorded              answers        answers.json in the cell (design 3.2)
+    retry, run, revise nothing is recorded              answers        .factory/local/answers/<ticket>.json, its hash in the ledger (3.2)
     wait               nothing changes
 
 An option that needs an agent or a conversation (`do: false` in the list) is answered with the command to run, and
@@ -36,9 +36,13 @@ name are passed on exactly as given: never written, shortened or improved here.
 Standard library only.
 """
 
+import contextlib
+import hashlib
 import json
 import os
 import re
+import stat
+import time
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -185,12 +189,19 @@ def read_answers(path: Path, questions: List[Dict[str, Any]]) -> List[Dict[str, 
     """The person's answers, one per question, exactly as written. Refused, with what to change, unless every question is
     answered or left open and at least one is answered."""
     try:
-        if path.stat().st_size > ANSWERS_FILE_LIMIT:
+        info = path.stat()
+        if not stat.S_ISREG(info.st_mode):  # a FIFO or a device would hang the read, or never end
+            raise ActError("The answers file is not a regular file. Give the path of a JSON file with --answers-file. Nothing was recorded.")
+        if info.st_size > ANSWERS_FILE_LIMIT:
             raise ActError(f"The answers file is larger than {ANSWERS_FILE_LIMIT // 1024} KB; keep each answer to the point. Nothing was recorded.")
-        data = json.loads(path.read_text(encoding="utf-8"))
+        with path.open("rb") as handle:
+            raw = handle.read(ANSWERS_FILE_LIMIT + 1)
+        if len(raw) > ANSWERS_FILE_LIMIT:
+            raise ActError(f"The answers file is larger than {ANSWERS_FILE_LIMIT // 1024} KB; keep each answer to the point. Nothing was recorded.")
+        data = json.loads(raw.decode("utf-8"))
     except OSError as exc:
         raise ActError(f"The answers file cannot be read ({exc.strerror or exc}). Give the path of a JSON file with --answers-file. Nothing was recorded.")
-    except ValueError:
+    except (ValueError, UnicodeError):
         raise ActError("The answers file is not JSON. It holds [{\"n\": 1, \"answer\": \"...\"}, {\"n\": 2, \"leave_open\": true}]. Nothing was recorded.")
     if isinstance(data, dict):
         data = data.get("answers")
@@ -223,14 +234,58 @@ def read_answers(path: Path, questions: List[Dict[str, Any]]) -> List[Dict[str, 
     return [given[number] for number in sorted(given)]
 
 
-def write_answers(cellroot: Path, ticket: str, answers: List[Dict[str, Any]], by: str, via: str, moment: Optional[datetime]) -> Path:
+def answers_path(root: Path, ticket: str) -> Path:
+    """Where a person's answers for a ticket are kept: the Factory's machine-local state, which no run may edit (executor.protected)."""
+    return Path(root) / ".factory" / "local" / "answers" / f"{ticket}.json"
+
+
+def recorded_answers_hash(root: Path, ticket: str) -> Optional[str]:
+    ledger = load_json(Path(root) / ".factory" / "intake" / "ledger.json", {}) or {}
+    entry = ((ledger.get("decisions") or {}).get("answers") or {}).get(ticket) if isinstance(ledger, dict) else None
+    return entry.get("sha256") if isinstance(entry, dict) and isinstance(entry.get("sha256"), str) else None
+
+
+def trusted_answers(root: Path, ticket: str, spec_sha256: Optional[str]) -> Optional[Dict[str, Any]]:
+    """A person's answers waiting to be folded into the spec as it is now, or None. Trusted only when the file is a regular file
+    whose SHA-256 is the one `decide do` recorded in the intake ledger when it wrote it: a file put there any other way is ignored."""
+    path = answers_path(root, ticket)
+    try:
+        if path.is_symlink() or not path.is_file():
+            return None
+        with path.open("rb") as handle:
+            raw = handle.read(ANSWERS_FILE_LIMIT * 2 + 1)
+    except OSError:
+        return None
+    if len(raw) > ANSWERS_FILE_LIMIT * 2 or hashlib.sha256(raw).hexdigest() != recorded_answers_hash(root, ticket):
+        return None
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, ValueError):
+        return None
+    if not isinstance(data, dict) or not spec_sha256 or data.get("spec_sha256") != spec_sha256:
+        return None
+    return data
+
+
+def write_answers(root: Path, cellroot: Path, ticket: str, answers: List[Dict[str, Any]], by: str, via: str, moment: Optional[datetime],
+                  line: Callable[[], Any]) -> Path:
+    """Write the answers privately under .factory/local/answers/, then record their SHA-256 in the intake ledger under its lock."""
+    import policy  # write_private: this user only, atomically, as the authorization is written
     cell = load_json(cellroot / "cell.json", {}) or {}
-    path = cellroot / "answers.json"
+    path = answers_path(root, ticket)
     record = {"ticket_id": ticket, "by": by, "via": via, "at": now_text(moment), "spec_sha256": cell.get("spec_sha256"), "answers": answers,
               "note": "A person's answers to the spec's open questions. Data for the next grooming: each is that person's answer to its question."}
-    temporary = path.with_name(f".answers.{os.getpid()}.tmp")
-    temporary.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    os.replace(temporary, path)
+    text = json.dumps(record, indent=2, ensure_ascii=False) + "\n"
+    for folder in (Path(root) / ".factory", Path(root) / ".factory" / "local", path.parent):
+        if folder.is_symlink():
+            raise ActError(f"{folder} is a symbolic link, so the answers were not written through it. Nothing was recorded.")
+    policy.write_private(path, text)
+    intake = line()
+    with intake.lock("decide"):
+        ledger = intake.ledger()
+        ledger.setdefault("decisions", {}).setdefault("answers", {})[ticket] = {
+            "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "by": by, "via": via, "at": record["at"]}
+        intake.save(ledger)
     return path
 
 
@@ -296,7 +351,13 @@ def carry(carry_on: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - the decision is recorded; starting the supervisor is said, never undone
         return {"supervisor": "none", "pid": None, "why_not": str(exc) or exc.__class__.__name__}
     state = found.get("supervisor") if found.get("supervisor") in ("started", "woken", "none") else "none"
-    return {"supervisor": state, "pid": found.get("pid") if type(found.get("pid")) is int else None, "why_not": found.get("why_not")}
+    lifetime = found.get("lifetime") or (found.get("already_running") or {}).get("lifetime")
+    going = {"supervisor": state, "pid": found.get("pid") if type(found.get("pid")) is int else None, "why_not": found.get("why_not"),
+             "lifetime": lifetime if state != "none" else None}
+    for field in ("given", "not_given", "already_running"):
+        if field in found:
+            going[field] = found[field]
+    return going
 
 
 def sentence(text: Any) -> str:
@@ -305,8 +366,14 @@ def sentence(text: Any) -> str:
 
 
 def carried(ticket: str, run_skill: str, going: Dict[str, Any], what: str) -> str:
-    if going["supervisor"] in ("started", "woken"):
-        return f"The Factory carries it on in the background: {what}."
+    """What happens to the ticket now, as it really is: the Factory's (and how long it runs), kept where it is driven, or nobody's yet."""
+    kept = next((entry for entry in going.get("not_given") or [] if entry.get("ticket_id") == ticket), None)
+    if kept:
+        return f"It is not given to the Factory: {sentence(kept.get('why'))} Next: {what}."
+    given = going.get("given")
+    if going["supervisor"] in ("started", "woken") and (given is None or ticket in given):
+        while_open = "while Claude Code is open" if going.get("lifetime") == "session" else "in the background"
+        return f"The Factory carries it on {while_open}: {what}."
     why = sentence(going.get("why_not")) or "No Factory supervisor runs here."
     return f"{why} {run_skill} {ticket} carries it on in a conversation: {what}."
 
@@ -317,11 +384,69 @@ def in_conversation(ticket: str, key: str, item: Dict[str, Any], run_skill: str)
             "why": IN_CONVERSATION.get(key, "This needs a conversation.") + f" Nothing was changed; run {command} in Claude Code."}
 
 
+LOCK_WAIT_SECONDS = 10.0
+
+
+@contextlib.contextmanager
+def deciding(root: Path, wait: float = LOCK_WAIT_SECONDS):
+    """One decision at a time on this project: an exclusive lock on .factory/local/decide.lock, held from reading what is on
+    offer until the station has answered. Not the intake lock, which the stations take themselves. Yields True when held;
+    False when another decision held it for longer than `wait`."""
+    try:
+        import fcntl
+    except ImportError:  # not POSIX: one decider is not enforced; the stations' own checks still hold
+        yield True
+        return
+    path = Path(root) / ".factory" / "local" / "decide.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = os.open(str(path), os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    yield False
+                    return
+                time.sleep(0.1)
+        try:
+            yield True
+        finally:
+            with contextlib.suppress(OSError):
+                fcntl.flock(handle, fcntl.LOCK_UN)
+    finally:
+        os.close(handle)
+
+
 def main(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[str, Any]], by: Optional[str], reason: Optional[str] = None,
          adrs: Optional[List[str]] = None, test_cmd: Optional[str] = None, answers_file: Optional[Path] = None, via: str = "terminal",
          station: Callable[[str, Sequence[str]], Tuple[int, str, str]], line: Callable[[], Any], carry_on: Callable[[], Dict[str, Any]],
          run_skill: str = "/mach", now: Optional[datetime] = None) -> Dict[str, Any]:
+    """Record one decision under the decision lock, then carry the ticket on (outside the lock: starting a supervisor may take a moment)."""
     root = Path(root)
+    with deciding(root, LOCK_WAIT_SECONDS) as held:
+        if not held:
+            item = find(report(ticket), ticket, run_skill)
+            raise ActError(f"Another decision on this project is being recorded right now, so nothing was recorded for {ticket}. "
+                           f"On offer now: {on_offer(item)}. {run_skill} decide {ticket} shows each one; decide again in a moment.")
+        result, after = record(ticket, key, root, report=report, by=by, reason=reason, adrs=adrs, test_cmd=test_cmd, answers_file=answers_file,
+                               via=via, station=station, line=line, run_skill=run_skill, now=now)
+    if after is None:
+        return result
+    done, what = after
+    going = carry(carry_on)
+    result.update(going)
+    result["now"] = f"{done} {carried(ticket, run_skill, going, what)}"
+    return result
+
+
+def record(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[str, Any]], by: Optional[str], reason: Optional[str] = None,
+         adrs: Optional[List[str]] = None, test_cmd: Optional[str] = None, answers_file: Optional[Path] = None, via: str = "terminal",
+         station: Callable[[str, Sequence[str]], Tuple[int, str, str]], line: Callable[[], Any],
+         run_skill: str = "/mach", now: Optional[datetime] = None) -> Tuple[Dict[str, Any], Optional[Tuple[str, str]]]:
+    """The decision itself: (the result, (what was done, what happens next)), or (the result, None) when nothing is left to carry on."""
     if via not in VIA:
         raise ActError(f"--via is terminal or floor, not '{via}'.")
     adrs = list(dict.fromkeys(adrs or []))
@@ -335,7 +460,7 @@ def main(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[str,
                        f"{run_skill} decide {ticket} shows each one.")
     choice = offered[key]
     if not choice.get("do"):
-        return in_conversation(ticket, key, item, run_skill)
+        return in_conversation(ticket, key, item, run_skill), None
     targets = option_adrs(item, key)
     check_inputs(choice, key, by, reason, adrs, test_cmd, answers_file, targets)
     name = " ".join((by or "").split())
@@ -343,7 +468,7 @@ def main(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[str,
     if key == "wait":
         result.update({"unparked": False, "supervisor": "none", "pid": None, "why_not": None,
                        "now": f"Nothing changed: {ticket} waits as it is."})
-        return result
+        return result, None
 
     cellroot = root / ".factory" / "worktrees" / ticket
     cell = load_json(cellroot / "cell.json", {}) or {}
@@ -376,7 +501,7 @@ def main(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[str,
         result["station"] = run_station(station, key, [ticket, f"--adr={targets[0]}", f"--by={name}", f"--reason={reason}", f"--via={via}"])
         done, what = f"{name}'s exception to {targets[0]} is recorded for {ticket}.", "the contract engineer plans it with the exception"
     elif key == "replan":
-        result["station"] = run_station(station, key, [ticket, f"--reason={reason}"])
+        result["station"] = run_station(station, key, [ticket, f"--reason={reason}", f"--by={name}", f"--via={via}"])
         done, what = f"{ticket} goes back to be planned again, with {name}'s reason.", "the contract engineer writes a new plan"
     elif key == "set-test-command":
         result["station"] = run_station(station, key, [ticket, f"--test-cmd={test_cmd}", f"--reason={reason}", f"--by={name}", f"--via={via}"])
@@ -385,7 +510,7 @@ def main(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[str,
         done, what = f"{ticket} is released to run again.", "it runs from where it stopped"
     elif key == "answers":
         answers = read_answers(answers_file, item.get("questions") or [])
-        path = write_answers(cellroot, ticket, answers, name, via, now)
+        path = write_answers(root, cellroot, ticket, answers, name, via, now, line)
         result["answers_file"] = str(path.relative_to(root))
         answered = sum(1 for entry in answers if not entry.get("leave_open"))
         done, what = (f"{name}'s answers to {answered} of {len(answers)} open question{'s' if len(answers) != 1 else ''} on {ticket} are recorded.",
@@ -416,11 +541,8 @@ def main(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[str,
     escalated = key == "send-back" and (result["station"]["answer"] or {}).get("outcome") == "ESCALATE"
     if key == "abandon" or escalated:  # nothing is left for the Factory to run
         result.update({"supervisor": "none", "pid": None, "why_not": None, "now": done})
-        return result
-    going = carry(carry_on)
-    result.update(going)
-    result["now"] = f"{done} {carried(ticket, run_skill, going, what)}"
-    return result
+        return result, None
+    return result, (done, what)
 
 
 def human(result: Dict[str, Any]) -> str:
