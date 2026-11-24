@@ -439,6 +439,7 @@ type Gate struct {
 	Subject    string `json:"subject,omitempty"`
 	Status     string `json:"status,omitempty"`
 	AuditTier  string `json:"audit_tier,omitempty"`
+	Lane       string `json:"lane,omitempty"` // revision 9 (M22): the lane a build gate names
 	VisitID    string `json:"visit_id,omitempty"`
 	Round      *int64 `json:"round"`
 	At         *Stamp `json:"at"`
@@ -452,6 +453,7 @@ type Task struct {
 	FirstRun string `json:"first_run,omitempty"`
 	Suite    string `json:"suite,omitempty"`
 	Commit   string `json:"commit,omitempty"`
+	Lane     string `json:"lane,omitempty"` // revision 9 (M22): built in this lane; Commit is then the lane's own commit
 	VisitID  string `json:"visit_id,omitempty"`
 	Round    *int64 `json:"round"`
 	At       *Stamp `json:"at"`

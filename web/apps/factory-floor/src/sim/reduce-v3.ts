@@ -627,8 +627,11 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       const d = e.data;
       s = withCell(s, ticket, (cell) => {
         const existing = cell.tasks.find((k) => k.id === d.task_id);
+        // M22: a task built in a lane says so (revision 9); one built again in the cell after its lane was set aside does not.
+        const named = typeof d.lane === "string" && /^L[1-9]\d{0,2}$/.test(d.lane) ? d.lane : null;
+        const lane = named ? { lane: named } : existing?.lane ? { lane: null } : {};
         const task: TaskState = existing
-          ? { ...existing, status: d.step, doneAt: at, commit: d.commit, meta: touch(existing.meta, e, { end: timeQualityOf(e.time.precision) }) }
+          ? { ...existing, status: d.step, doneAt: at, commit: d.commit, ...lane, meta: touch(existing.meta, e, { end: timeQualityOf(e.time.precision) }) }
           : {
               id: d.task_id,
               kind: d.kind,
@@ -640,6 +643,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
               startedAt: at,
               doneAt: at,
               commit: d.commit,
+              ...lane,
               meta: metaOf(e, { unknown: ["startedAt", "text", "files", "ids"], start: "unknown", end: timeQualityOf(e.time.precision) }),
             };
         const tasks = existing ? cell.tasks.map((k) => (k.id === d.task_id ? task : k)) : [...cell.tasks, task];
@@ -1233,7 +1237,8 @@ function gateEvaluated(input: Scene, e: E<"gate.evaluated">, at: number): Scene 
   // The observer names the evaluation with its own gate ref (`gate:<cell>/<gate>[#<round>]`, contract
   // 5.2); kept so that ref resolves to this evaluation (and to the gate state it set), never parsed.
   const ownRef = e.entities.find((x) => x.startsWith("gate:")) ?? `gate:${ticket}/${d.gate}${round ? `#${round}` : ""}`;
-  s = withCell(s, ticket, (c) => ({ ...c, gateLog: [...c.gateLog, { gate: d.gate, verdict: d.verdict, reasonCode: d.reason_code, subject: d.subject, round, at, eventId: e.id, late: e.late === true, gateId: matched, ref: ownRef, counts: d.counts ?? {} }] }));
+  const lane = typeof d.lane === "string" && /^L[1-9]\d{0,2}$/.test(d.lane) ? { lane: d.lane } : {}; // M22, revision 9
+  s = withCell(s, ticket, (c) => ({ ...c, gateLog: [...c.gateLog, { gate: d.gate, verdict: d.verdict, reasonCode: d.reason_code, subject: d.subject, round, at, eventId: e.id, late: e.late === true, gateId: matched, ref: ownRef, counts: d.counts ?? {}, ...lane }] }));
   const meta = metaOf(e);
   switch (d.gate) {
     case "audit.readiness":

@@ -177,8 +177,10 @@ export interface V3DataMap {
   "station.exited": { station: StationId; outcome: string; stage: Stage | null; duration_ms: number | null; closed_by: "cleanup" | null; head: string | null; counts: Counts; app_type?: string | null; risk?: Risk | null;
     /** Revision 8 (M18), on the groom exit of a small change only: the kind, whether it became a full slice, and the rule's code. */
     kind?: "small" | null; widened?: boolean | null; widened_rule?: string | null };
-  "gate.evaluated": { gate: string; verdict: "passed" | "refused" | "overridden"; reason_code: string | null; subject: string | null; status: "PASS" | "FAIL_WITH_EVIDENCE" | "INCOMPLETE_EVIDENCE" | null; audit_tier: string | null; counts: Counts };
-  "build.task_completed": { task_id: string; kind: "test" | "impl" | "contract" | "refactor" | "docs"; step: "red" | "green" | "done"; first_run: "pass" | "fail" | "not-run" | null; suite: "unknown" | "red" | "green" | null; commit: string | null };
+  /** Revision 9 (M22): `lane` on a build gate about one lane (build.join's lane-set-aside) only. */
+  "gate.evaluated": { gate: string; verdict: "passed" | "refused" | "overridden"; reason_code: string | null; subject: string | null; status: "PASS" | "FAIL_WITH_EVIDENCE" | "INCOMPLETE_EVIDENCE" | null; audit_tier: string | null; counts: Counts; lane?: string | null };
+  /** Revision 9 (M22): `lane` on a task built in a lane only (its commit is then the lane's own commit); `task_id` may be J-T01, the join's task. */
+  "build.task_completed": { task_id: string; kind: "test" | "impl" | "contract" | "refactor" | "docs"; step: "red" | "green" | "done"; first_run: "pass" | "fail" | "not-run" | null; suite: "unknown" | "red" | "green" | null; commit: string | null; lane?: string | null };
   "verify.check_recorded": { target_id: string; target_kind: "scenario" | "matrix rule" | "holdout" | "design mock"; result: "pass" | "fail"; evidence: Array<{ file: string; sha256: string | null; bytes?: number | null }>; rerecorded: boolean };
   "review.round_started": { risk: Risk; max_rounds: number; tuning: boolean; approvals_needed: number; human_approval_required: boolean; panel: Array<{ seat: ReviewSeat; model: string | null }>; delta: boolean; restarted: boolean; /** Revision 7: k for the k-th repeat of a judging round (round-N.k, after a voided approval); 0 otherwise. */ repeat?: number };
   "review.verdict_submitted": { seat: ReviewSeat; vote: "APPROVE" | "REJECT"; blockers: number; notes: number; rules: string[]; model: string | null };

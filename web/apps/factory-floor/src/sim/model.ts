@@ -367,6 +367,8 @@ export interface TaskState {
   readonly startedAt: number;
   readonly doneAt: number | null;
   readonly commit: string | null;
+  /** M22 (event revision 9): the lane the task was built in, when it was; `commit` is then the lane's own commit. Absent otherwise. */
+  readonly lane?: string | null;
   /** Live: no record says when a task started (contract 11, `task.started` has no source); `startedAt` is then its completion and `meta.unknown` lists it. */
   readonly meta: EntityMeta;
 }
@@ -647,6 +649,8 @@ export interface GateEvaluation {
   readonly late: boolean;
   /** The record's counts (whole numbers and flags), as recorded; absent in scenes built before M15. */
   readonly counts?: Readonly<Record<string, number | boolean>>;
+  /** M22 (event revision 9): the lane a build gate names (build.join's lane-set-aside). Absent otherwise. */
+  readonly lane?: string | null;
   /**
    * The gate state this evaluation set (`scene.gates` id), or null when no gate state stands for it
    * (a refused `build.start`, `verify.start`, `merge.run`, the round limit...): such an evaluation is

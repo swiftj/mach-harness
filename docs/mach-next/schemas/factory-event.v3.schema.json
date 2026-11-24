@@ -32,7 +32,7 @@
                   "schema_revision": {
                                        "type": "integer",
                                        "minimum": 0,
-                                       "description": "Additive revisions within version 3. Consumers ignore fields and kinds they do not know. Revision 1: execution.usage gains cost_complete and cost_incomplete_reasons. Revision 2: history.gap gains class and history_lost (and the reasons unexpected-shape and evicted); origin gains runtime_state on execution-stream events. Revision 3: execution.started gains source_commit, provenance (the snapshot the supervisor took at start, or null) and provenance_reason. Revision 4 (M11) is not additive, as MACH has no users yet: ids.wave_id is replaced by ids.epic_id, ids.issue is added, wave.discovered is removed, and slice.materialized gains epic_title. Revision 5 (M12) is additive: the cell-lifecycle kind review.exception_recorded, a person's exception to a security blocker. Revision 6 (M12) is additive: the cell-lifecycle kind review.scan_recorded, what the security scan flagged in a review round and how it was answered, as counts. Revision 7 (M15) is additive: human.required and execution.completed gain needs (a stop code of the routing sheet, only when known), intake.refused gains waiting (mocks), review.round_started gains repeat, verify.check_recorded's target_kind gains design mock, slice.materialized and run.recorded gain jira, merge.completed and run.recorded gain change_record, and inferred gains the rules fixed-phrase, decided-before and cell-file. Revision 8 (M18) is additive: the groom station's station.exited gains kind (small), widened and widened_rule (a rule's code), only for a small change."
+                                       "description": "Additive revisions within version 3. Consumers ignore fields and kinds they do not know. Revision 1: execution.usage gains cost_complete and cost_incomplete_reasons. Revision 2: history.gap gains class and history_lost (and the reasons unexpected-shape and evicted); origin gains runtime_state on execution-stream events. Revision 3: execution.started gains source_commit, provenance (the snapshot the supervisor took at start, or null) and provenance_reason. Revision 4 (M11) is not additive, as MACH has no users yet: ids.wave_id is replaced by ids.epic_id, ids.issue is added, wave.discovered is removed, and slice.materialized gains epic_title. Revision 5 (M12) is additive: the cell-lifecycle kind review.exception_recorded, a person's exception to a security blocker. Revision 6 (M12) is additive: the cell-lifecycle kind review.scan_recorded, what the security scan flagged in a review round and how it was answered, as counts. Revision 7 (M15) is additive: human.required and execution.completed gain needs (a stop code of the routing sheet, only when known), intake.refused gains waiting (mocks), review.round_started gains repeat, verify.check_recorded's target_kind gains design mock, slice.materialized and run.recorded gain jira, merge.completed and run.recorded gain change_record, and inferred gains the rules fixed-phrase, decided-before and cell-file. Revision 8 (M18) is additive: the groom station's station.exited gains kind (small), widened and widened_rule (a rule's code), only for a small change. Revision 9 (M22) is additive: build.task_completed gains lane (a task built in a lane; its commit is then the lane's own commit), gate.evaluated gains lane on a build gate about one lane, and build.task_completed's task_id also takes J-T01."
                                      },
                   "id": {
                           "type": "string",
@@ -1542,7 +1542,8 @@
                                                                   "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,39}$"},
                                                                   "additionalProperties": {"type": ["integer", "boolean"]},
                                                                   "description": "Integer and boolean facts the station recorded (tasks, items, errors, problems). Never strings."
-                                                                }
+                                                                },
+                                                      "lane": {"type": ["string", "null"], "pattern": "^L[1-9][0-9]{0,2}$", "description": "Revision 9 (M22). On a build gate about one lane only (build.join refused with lane-set-aside): the lane it names. Absent on every other evaluation."}
                                                     }
                                     },
              "data_build_task_completed": {
@@ -1550,12 +1551,13 @@
                                             "additionalProperties": false,
                                             "required": ["task_id", "kind", "step", "first_run", "suite", "commit"],
                                             "properties": {
-                                                            "task_id": {"type": "string", "pattern": "^(?:R\\d+-)?T\\d+$"},
+                                                            "task_id": {"type": "string", "pattern": "^(?:(?:R\\d+|J)-)?T\\d+$", "description": "Revision 9 (M22) also takes J-T01, the task the join adds when lanes fail together."},
                                                             "kind": {"enum": ["test", "impl", "contract", "refactor", "docs"]},
                                                             "step": {"enum": ["red", "green", "done"]},
                                                             "first_run": {"enum": ["pass", "fail", "not-run", null]},
                                                             "suite": {"enum": ["unknown", "red", "green", null]},
-                                                            "commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"}
+                                                            "commit": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"},
+                                                            "lane": {"type": ["string", "null"], "pattern": "^L[1-9][0-9]{0,2}$", "description": "Revision 9 (M22). For a task built in a lane only: the lane. Its commit is then the lane's own commit, made at that moment; the join lands a copy under another id, which build.json records as the task's commit beside lane_commit. Absent for a task built in the cell."}
                                                           }
                                           },
              "data_verify_check_recorded": {
