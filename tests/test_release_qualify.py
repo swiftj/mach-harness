@@ -556,7 +556,7 @@ class RecordTest(Base):
         archive = self.eng / ".factory/archive/LOCAL-001.tar.gz"
         with tempfile.TemporaryDirectory() as folder:
             with tarfile.open(str(archive)) as tar:
-                tar.extractall(folder, filter="data")
+                tar.extractall(folder, **({"filter": "data"} if hasattr(tarfile, "data_filter") else {}))
             (Path(folder) / "LOCAL-001/evidence/ac-2.log").write_text("something else\n")
             with tarfile.open(str(archive), "w:gz") as tar:
                 tar.add(str(Path(folder) / "LOCAL-001"), arcname="LOCAL-001")
