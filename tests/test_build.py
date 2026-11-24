@@ -400,7 +400,7 @@ class StepTest(Base):
         self.assertEqual((timing["new_tests_only_runs"], timing["whole_suite_runs"], timing["test_runs"]), (2, 4, 6))  # two code tasks, the docs task and the baseline; the final run is the docs task's, not run again
         self.assertTrue(all(isinstance(s["test_seconds"], (int, float)) for s in timing["steps"]))
         self.assertTrue(all(isinstance(s["seconds_since_previous_step"], (int, float)) for s in timing["steps"]))
-        self.assertGreaterEqual(timing["test_seconds_total"], sum(s["test_seconds"] for s in timing["steps"]))
+        self.assertGreaterEqual(timing["test_seconds_total"], round(sum(s["test_seconds"] for s in timing["steps"]), 1))  # both to a tenth of a second
         self.assertTrue(timing["new_tests_run_alone"]["trusted"])
         self.assertEqual((timing["final_run_reused_from"], timing["final_test_seconds"]), ("T05", None))
         report = json.loads((self.cellroot / "build-report.json").read_text())

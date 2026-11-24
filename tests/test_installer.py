@@ -158,7 +158,10 @@ class InstallTest(Base):
         writing = {key: value for key, value in os.environ.items() if key not in ("PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX")}
         subprocess.run([sys.executable, str(script), "--project", str(self.project), "status"], capture_output=True, text=True, env=writing)
         subprocess.run([sys.executable, str(self.project / ".factory/bin/mach"), "status", "--project", str(self.project)], capture_output=True, env=writing)
-        self.assertTrue(list((self.project / ".claude/skills").rglob("__pycache__")))
+        beside = subprocess.run([sys.executable, "-c", "import sys; print(sys.pycache_prefix is None and not sys.dont_write_bytecode)"],
+                                capture_output=True, text=True, env=writing).stdout.strip() == "True"
+        if beside:  # a Python that keeps byte code elsewhere, or writes none, leaves nothing here to ignore
+            self.assertTrue(list((self.project / ".claude/skills").rglob("__pycache__")))
         self.assertEqual(git("status", "--porcelain").stdout, "")
 
     def test_second_install_changes_nothing(self):

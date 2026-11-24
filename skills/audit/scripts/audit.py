@@ -270,6 +270,10 @@ def execute(repo: Repo, kind: str, command: Optional[str], timeouts: Dict[str, i
     except ValueError as exc:
         return {**result, "status": "fail", "output_tail": f"Cannot parse the command: {exc}"}
     env = dict(os.environ)
+    # The project's own commands never leave Python byte code in the checkout: a cached file can outlive the source it was
+    # made from (rewritten at the same size within the same second), and a later run would then test the old code. A command
+    # that needs byte code written says so itself, with a leading PYTHONDONTWRITEBYTECODE= of its own.
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     while argv and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0]):  # leading VAR=value, as in a shell
         key, value = argv.pop(0).split("=", 1)
         env[key] = value

@@ -265,6 +265,7 @@ NODE_REPO = {
 
 
 class EvidenceTest(Repository):
+    @unittest.skipUnless(baseline.tomllib, "MACH reads TOML manifests on Python 3.11 or later; on an earlier one it lists them without reading them")
     def test_a_python_repository(self):
         self.make(PYTHON_REPO)
         result = self.baseline()
@@ -573,6 +574,7 @@ class NeedsEvidenceTest(NeedsRepository):
         self.assertTrue(self.row(result, "language")["no_evidence"], "a topic no need informs is unchanged")
         self.assertFalse(self.row(result, "language")["from_product"])
 
+    @unittest.skipUnless(baseline.tomllib, "MACH reads TOML manifests on Python 3.11 or later; on an earlier one it lists them without reading them")
     def test_with_code_evidence_a_topic_is_not_from_product(self):
         self.make(PYTHON_REPO)
         self.publish(needs_json(ALL_KINDS))
@@ -757,6 +759,7 @@ class DesignEvidenceTest(DesignRepository):
         self.assertIn("brought-in design", result["data_note"])
         self.assertEqual(adr.coverage(self.project, {})["missing"], DEFAULTS, "a design never covers a topic")
 
+    @unittest.skipUnless(baseline.tomllib, "MACH reads TOML manifests on Python 3.11 or later; on an earlier one it lists them without reading them")
     def test_with_code_evidence_a_topic_is_not_from_product_and_needs_and_designs_join(self):
         self.make(PYTHON_REPO)
         self.publish(needs_json(ALL_KINDS))

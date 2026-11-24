@@ -256,6 +256,10 @@ def test_command(cell: Cell) -> Optional[str]:
 def run_logged(cell: Cell, command: str, log: Path, timeout: int = 600) -> Dict[str, Any]:
     argv = shlex.split(command)
     env = dict(os.environ)
+    # The project's own commands never leave Python byte code in the checkout: a cached file can outlive the source it was
+    # made from (rewritten at the same size within the same second), and a later run would then test the old code. A command
+    # that needs byte code written says so itself, with a leading PYTHONDONTWRITEBYTECODE= of its own.
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     while argv and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0]):
         key, value = argv.pop(0).split("=", 1)
         env[key] = value
@@ -551,8 +555,6 @@ def cmd_capture(cell: Cell, args: argparse.Namespace) -> int:
         if not stdin.is_file():
             raise VerifyError(f"Input file '{args.input}' does not exist in the evidence folder.", code="no-input")
     passed = list(args.args or [])
-    if passed and passed[0] == "--":
-        passed = passed[1:]
     argv = [sys.executable, "-B", str(driver), *passed]
     env = dict(os.environ)
     env.update({"PYTHONDONTWRITEBYTECODE": "1", "MACH_VERIFY_WORKDIR": str(cell.work), "MACH_VERIFY_EVIDENCE": str(cell.evidence),
@@ -796,8 +798,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True, help="the transcript file to write, relative to the evidence folder, such as consumer-run.log")
     p.add_argument("--input", help="a file in the evidence folder to feed the driver as its standard input")
     p.add_argument("--timeout", type=int, default=CAPTURE_TIMEOUT, help="seconds before the driver is stopped")
-    p.add_argument("args", nargs="*", help="after --: arguments passed to the driver")
-    p.set_defaults(func=cmd_capture)
+    p.set_defaults(func=cmd_capture, args=[])
+    p.usage = "%(prog)s [-h] --out OUT [--input INPUT] [--timeout TIMEOUT] ticket_id driver [-- driver arguments ...]"
+    p.epilog = "Everything after -- is passed to the driver as its arguments."
     p = sub.add_parser("compare", help="M14 C: record a design mock side by side with a capture of the built screen from this run")
     p.add_argument("ticket_id")
     p.add_argument("mock", help="the mock's ID from start, such as MOCK-1")
@@ -809,8 +812,23 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def parse(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    """The command line, read. Everything after "--" belongs to capture's driver; it is taken off before the options are
+    read, so a command parses the same on every Python (before 3.11 the standard parser refuses options followed by "--"
+    and more arguments)."""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    cut = argv.index("--") if "--" in argv else len(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv[:cut])
+    if cut < len(argv):
+        if args.command != "capture":
+            parser.error(f"'--' and what follows it are only for capture, which passes them to its driver; {args.command} takes none")
+        args.args = argv[cut + 1:]
+    return args
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
+    args = parse(argv)
     project = None
     try:
         project = args.project.resolve() if args.project else find_project(Path.cwd())

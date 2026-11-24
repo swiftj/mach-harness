@@ -422,6 +422,10 @@ def run_suite(cell: Cell) -> Dict[str, Any]:
         raise MergeError("The build report records no test command, so the merged result cannot be checked.")
     argv = shlex.split(command)
     env = dict(os.environ)
+    # The project's own commands never leave Python byte code in the checkout: a cached file can outlive the source it was
+    # made from (rewritten at the same size within the same second), and a later run would then test the old code. A command
+    # that needs byte code written says so itself, with a leading PYTHONDONTWRITEBYTECODE= of its own.
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     while argv and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0]):
         key, value = argv.pop(0).split("=", 1)
         env[key] = value
