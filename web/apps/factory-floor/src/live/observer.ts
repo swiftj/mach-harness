@@ -414,6 +414,12 @@ export interface ObserverClient {
   /** `/cells/{ticket}/evidence`: the cell's checks, each with its files linked to the catalog. */
   cellEvidence?(ticket: string, signal?: AbortSignal): Promise<CellEvidence>;
   /**
+   * M22: `/cells/{ticket}`'s `lanes`, unparsed (src/line/lanes.ts reads it): a build in lanes as the
+   * cell's files record it. Null when the reply has none: a build not in lanes, or an observer from
+   * before lanes.
+   */
+  cellLanes?(ticket: string, signal?: AbortSignal): Promise<unknown>;
+  /**
    * One served text by catalog id, with its headers; a refusal is a value with its reason code, never
    * thrown. A 503 ("too many reads at once") is asked again once after its Retry-After, then given up.
    */
@@ -862,6 +868,10 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
     async cellEvidence(ticket, signal) {
       const d = await get(`/cells/${encodeURIComponent(ticket)}/evidence`, signal);
       return readCellEvidence(d, ticket);
+    },
+    async cellLanes(ticket, signal) {
+      const d = await get(`/cells/${encodeURIComponent(ticket)}`, signal);
+      return d.lanes && typeof d.lanes === "object" ? d.lanes : null;
     },
     async artifactText(id, signal) {
       const url = artifactContentUrl(id, base);

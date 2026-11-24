@@ -15,6 +15,8 @@ import { LINE_STATIONS, sentBackWords, smallChangeWords, timesWords, type LineRo
 import { StatePill } from "./Marks";
 import { costWords, modelWords } from "./words";
 import { EpicName, issueWords } from "./Epic";
+import { LanesPart } from "./Lanes";
+import type { LanesPanel } from "./lanesModel";
 
 function Back({ onBack }: { onBack: () => void }) {
   return (
@@ -74,7 +76,7 @@ function TimeBars({ times }: { times: readonly StationTime[] }) {
   );
 }
 
-export function TicketPanel({ row, now, onBack, onRecord, onFloor }: { row: LineRow; now: number; onBack: () => void; onRecord: () => void; onFloor: () => void }) {
+export function TicketPanel({ row, now, lanes, onBack, onRecord, onFloor }: { row: LineRow; now: number; lanes?: LanesPanel | null; onBack: () => void; onRecord: () => void; onFloor: () => void }) {
   const station = LINE_STATIONS[row.column]!.name;
   return (
     <div data-line-panel="ticket" data-ticket={row.ticketId}>
@@ -114,6 +116,11 @@ export function TicketPanel({ row, now, onBack, onRecord, onFloor }: { row: Line
       <Part title="Where the time went">
         <TimeBars times={row.times} />
       </Part>
+      {lanes ? (
+        <Part title="Lanes">
+          <LanesPart panel={lanes} />
+        </Part>
+      ) : null}
       <Part title="Facts">
         <Facts
           rows={[
