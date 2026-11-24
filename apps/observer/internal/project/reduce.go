@@ -1174,12 +1174,13 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 			Subject    *string `json:"subject"`
 			Status     *string `json:"status"`
 			AuditTier  *string `json:"audit_tier"`
+			Lane       *string `json:"lane"` // revision 9 (M22)
 		}
 		e.DataAs(&d)
 		verdictBefore := d.Gate == "verify.verdict" && round != nil && *round == 1 && hasVerdict(c, 1)
 		if len(c.Gates) < maxGatesPerCell {
 			c.Gates = append(c.Gates, &Gate{Gate: d.Gate, Verdict: d.Verdict, ReasonCode: feed.Str(d.ReasonCode), Subject: feed.Str(d.Subject),
-				Status: feed.Str(d.Status), AuditTier: feed.Str(d.AuditTier), VisitID: visitID, Round: round, At: st})
+				Status: feed.Str(d.Status), AuditTier: feed.Str(d.AuditTier), Lane: feed.Str(d.Lane), VisitID: visitID, Round: round, At: st})
 		} else {
 			c.GatesDropped++
 		}
@@ -1205,11 +1206,12 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 			FirstRun *string `json:"first_run"`
 			Suite    *string `json:"suite"`
 			Commit   *string `json:"commit"`
+			Lane     *string `json:"lane"` // revision 9 (M22)
 		}
 		e.DataAs(&d)
 		if len(c.Tasks) < maxListPerCell {
 			c.Tasks = append(c.Tasks, &Task{TaskID: d.TaskID, Kind: d.Kind, Step: d.Step, FirstRun: feed.Str(d.FirstRun), Suite: feed.Str(d.Suite),
-				Commit: feed.Str(d.Commit), VisitID: visitID, Round: round, At: st})
+				Commit: feed.Str(d.Commit), Lane: feed.Str(d.Lane), VisitID: visitID, Round: round, At: st})
 		} else {
 			c.Dropped++
 		}
