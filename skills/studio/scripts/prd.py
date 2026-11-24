@@ -607,7 +607,8 @@ class Imported:
             meta = self.meta(existing)
             if meta.get("sha256") == digest:
                 return meta, False
-        number = max([0] + [int(name.split("-")[1]) for name in self.ids()]) + 1
+        import project_import  # noqa: E402  M21: numbers an unfinished import holds; imported here to keep the modules apart
+        number = max([0] + [int(name.split("-")[1]) for name in self.ids()] + project_import.reserved_numbers(self.studio, self.PREFIX)) + 1
         ident = f"{self.PREFIX}-{number:02d}"
         folder = self.folder(ident)
         sections = sections_of(lines, self.one_line)

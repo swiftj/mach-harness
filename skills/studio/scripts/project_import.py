@@ -38,8 +38,6 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 import design
 import handoff
 import issues
-import mocks
-import needs as needs_module
 import prd
 import product
 import project_archive
@@ -191,8 +189,9 @@ def _records(studio: Any) -> List[Tuple[Path, Dict[str, Any]]]:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, RecursionError):
             continue
-        if isinstance(data, dict) and data.get("schema_version") == SCHEMA_VERSION and isinstance(data.get("map"), dict) \
-                and isinstance(data.get("archive_sha256"), str) and path.name == f"{data['archive_sha256'][:16]}.json":
+        if isinstance(data, dict) and isinstance(data.get("archive_sha256"), str) and "finished_at" in data:
+            if not isinstance(data.get("map"), dict):  # a record this MACH cannot read still counts as unfinished, reserving nothing
+                data = {**data, "map": {}}
             found.append((path, data))
     found.sort(key=lambda item: (str(item[1].get("started_at") or ""), item[0].name))
     return found
@@ -661,7 +660,11 @@ class Content:
             if epic_id in self.found.epics and jira:
                 facts["epics"][epic_id] = {"jira": jira}
         for idea_id, entry in mapping("ideas").items():
-            was = entry.get("was_source") if isinstance(entry, dict) else None
+            if not isinstance(entry, dict):
+                raise self.bad("the archive's facts", where, f"{idea_id} is not in the form MACH writes")
+            was = entry.get("was_source")
+            if was is None:  # typed here, or a change to a shipped rule: nothing elsewhere to remember
+                continue
             if not isinstance(was, dict) or was.get("kind") not in ("idea", "request", "fault"):
                 raise self.bad("the archive's facts", where, f"what {idea_id}'s source was is not in the form MACH writes")
             kept = {"kind": was["kind"]}
@@ -1272,8 +1275,7 @@ def summary(host: Any, studio: Any, found: Incoming, mapping: Dict[str, str], mo
     needs_in = [item["need_id"] for item in built.needs]
     after: List[str] = []
     if principles_in:
-        after.append(f"Publish the principles before any slice can be marked ready: {plural(len(principles_in), 'came', 'came')} with the project."
-                     .replace("1 came", "1 came").replace(f"{len(principles_in)} came", f"{len(principles_in)} came"))
+        after.append(f"Publish the principles before any slice can be marked ready: {len(principles_in)} came with the project.")
     if needs_in:
         after.append(f"Publish the technical needs: {len(needs_in)} came with the project.")
     effects = sorted({row["of"] for row in built.shipped_rules if row["where"] == "effects"}, key=number)
@@ -1333,7 +1335,8 @@ def shipped_here(studio: Any) -> Optional[Set[str]]:
 
 def same_principles(studio: Any, incoming: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Incoming principles that say the same as one here (5.4): listed, never merged."""
-    mine = _items_of(studio.draft / PRINCIPLES_REL, "principles")
+    coming = {item.get("id") for item in incoming}
+    mine = [item for item in _items_of(studio.draft / PRINCIPLES_REL, "principles") if item.get("id") not in coming]
     found = []
     clean = lambda value: re.sub(r"\s+", " ", str(value or "")).strip().lower()  # noqa: E731
     for item in incoming:
@@ -1379,6 +1382,9 @@ def prepare(host: Any, studio: Any, archive: Path) -> Dict[str, Any]:
     if existing is not None and existing.get("finished_at"):
         return {"found": found, "finished": existing}
     if existing is not None:
+        if not existing["map"] or not isinstance(existing.get("targets"), dict):
+            raise host.StudioError(f"Bringing in stopped part way, and its record ({path.name}) is not one this MACH can read. "
+                                   "Run it again with the MACH that started it.")
         mapping = {str(k): str(v) for k, v in existing["map"].items()}
         mode, into = existing["mode"], existing["into_project"]
         built = build(host, studio, found, mapping, mode, into)
@@ -1443,10 +1449,6 @@ def planned_map(studio: Any, archive_sha256: str) -> Optional[Dict[str, str]]:
 # ---- run (4.5 to 4.7) ----
 
 
-class Stopped(Exception):
-    pass
-
-
 def run(host: Any, studio: Any, archive: Path) -> Dict[str, Any]:
     """`project import <archive>`: every check, the numbers, the rewrite; then the record, the staging and the placing."""
     work = prepare(host, studio, archive)
@@ -1482,7 +1484,7 @@ def run(host: Any, studio: Any, archive: Path) -> Dict[str, Any]:
             if (studio.draft / rel).is_file() and not (studio.draft / rel).is_symlink():
                 continue  # already placed by an earlier run; placing checks its bytes
             target.parent.mkdir(parents=True, exist_ok=True)
-            host.write(target, data.decode("utf-8")) if False else write_bytes(target, data)
+            write_bytes(target, data)
     except OSError as exc:
         raise host.StudioError(stopped_os(exc))
 
@@ -1511,8 +1513,7 @@ def run(host: Any, studio: Any, archive: Path) -> Dict[str, Any]:
 
     # 4. Finished: the check once more, the record kept, staging removed.
     after = product.validate_workspace(studio.draft)
-    introduced = [error for error in after["errors"] if error not in before and not (error.startswith(f"{PROJECT_REL}:") and mode == "new"
-                                                                                       and not (studio.draft / PROJECT_REL).is_file())]
+    introduced = [error for error in after["errors"] if error not in before]
     record = dict(record)
     record["finished_at"] = host.now(None)
     record["structural_errors"] = introduced
