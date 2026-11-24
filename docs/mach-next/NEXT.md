@@ -6,7 +6,7 @@ Keep this file current: when a piece below is finished or the plan changes, chan
 
 ## 1. State
 
-- **Released:** 0.22.1, tag `v0.22.1`, on `main`. Nothing is unmerged.
+- **Released:** 0.22.1, tag `v0.22.1`, on `main`. Unmerged: `feature/decisions-page` (section 2.3), waiting for the owner's word.
 - **What 0.22.1 added:** a sign of life for slow builds, the merge plan's two refusals, the "Unattended runs: off" label, five layout items and four defect fixes (section 2.3).
 - **What 0.22.0 added:** qualifying a release on any machine, from each slice's committed change record (A6 of the M20 design).
 - **What 0.21.0 added:** MACH for a team (Part A of the M20 design, except A6), the basic decisions drafted from an engineer's own documents, a ticket's workspace that holds no `.claude/` files, and a plain message when MACH's files are from different versions. The release notes are `docs/guides/RELEASE_NOTES_DRAFT.md`.
@@ -49,7 +49,7 @@ Still open:
 
 - **Never run for real:** the team rules (a real second person and machine), the workspace change under Claude Code's real sandbox, the documents route in a live session (the mapping step), the app's team screens against the live host, the sign of life against real GitHub. The owner is doing these.
 - **Not looked at on a screen:** the layout changes and the new chip were checked by typecheck, lint, build and unit tests only. The screens to look at are listed in what the lead told the owner on 2026-11-23: the Factory Floor's top bar with unattended running off; any long Product Studio pane for the "More below" line; Vision and outcomes; a slice's "From the PRD" page; the "ready to build" dialog; Shape pages opened with `?idea=` or `?map-status=`.
-- **An engineer's page in the browser** for architecture decisions: the owner asked for a design first. A proposal was given on 2026-11-23 (a read-only page on the Factory Floor); nothing is built until the owner says.
+- **Decisions in force** (the engineer's page in the browser for architecture decisions): built on the branch `feature/decisions-page` on 2026-11-23 as a fourth workspace on the Factory Floor (key `4`), read-only, waiting for the owner's word to merge. It reads the ADR folder as it is on disk in the main checkout (the observer reads no Git history), shows live tickets only, and says "a person" where a name was recorded. Not looked at on a screen. What it does is in the blueprint's Factory Floor section and the style guide's section 12.3.
 - **A fourth film** (Jira, bringing in a PRD) is pinned: the owner said "not yet" again on 2026-11-23.
 
 Done on GitHub: the defect report `swiftj/mach-harness#1` is closed, and the owner deleted the two throwaway transfer-test repositories.
