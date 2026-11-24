@@ -211,9 +211,9 @@ Examples: a packet travelling from build to verify is the `station.entered` (ver
 | `useNowEffect(fn, deps)` | Calls `fn` with the state whenever `now` moves, without a React render (for a running time written straight to the DOM). |
 | `SceneStoreProvider` | Give a subtree its own store (tests, previews, the held Floor). |
 
-State (`SceneStoreState`): `source` (`"live"` or `"simulation"`), `log`, `logVersion`, `extent`, `connection` and `factoryStatus` (live only), `fixture`, `now` (the moment shown, factory ms; it only moves forward), `cursor`, `selection`, `focus` (`{ target: EntityRef | "overview", reason, nonce }`), `hovered`, `highlighted`, `workspace` (`"line"`, `"floor"` or `"analytics"`), `analytics` (Analytics' interface state), `theater`, `evidence` (the evidence player, when open), `reducedMotion`, `follow` (camera follow).
+State (`SceneStoreState`): `source` (`"live"` or `"simulation"`), `log`, `logVersion`, `extent`, `connection` and `factoryStatus` (live only), `fixture`, `now` (the moment shown, factory ms; it only moves forward), `cursor`, `selection`, `focus` (`{ target: EntityRef | "overview", reason, nonce }`), `hovered`, `highlighted`, `workspace` (`"line"`, `"floor"`, `"analytics"` or `"decisions"`), `decision` (the ADR whose page Decisions shows, or null), `analytics` (Analytics' interface state), `theater`, `evidence` (the evidence player, when open), `reducedMotion`, `follow` (camera follow).
 
-Actions: `select(ref | null, { focus? })` (selecting also requests focus unless `focus: false`), `focusOn(ref | "overview", reason?)`, `hover(ref | null)`, `setWorkspace(w)`, `setAnalyticsView(patch)`, `setTheater(on)` (the Floor only), `openEvidence(ticket, options?)`, `setEvidenceCheck(id)`, `closeEvidence()`, `setReducedMotion(on)`, `setFollow(on)`, `dispose()`. The live source alone calls `logChanged()`, `setLiveEdge(t)`, `observeClock(ms)`, `setConnection(status)` and `setFactoryStatus(status)`. Helpers: `showOnLine(store, ref?)`, `showOnFloor(store, { ref }?)`, `showInAnalytics(store, target?)`, `heldStore(store)` (the Floor's view of the store, held still while another workspace is up).
+Actions: `select(ref | null, { focus? })` (selecting also requests focus unless `focus: false`), `focusOn(ref | "overview", reason?)`, `hover(ref | null)`, `setWorkspace(w)`, `setAnalyticsView(patch)`, `setDecision(id | null)`, `setTheater(on)` (the Floor only), `openEvidence(ticket, options?)`, `setEvidenceCheck(id)`, `closeEvidence()`, `setReducedMotion(on)`, `setFollow(on)`, `dispose()`. The live source alone calls `logChanged()`, `setLiveEdge(t)`, `observeClock(ms)`, `setConnection(status)` and `setFactoryStatus(status)`. Helpers: `showOnLine(store, ref?)`, `showOnFloor(store, { ref }?)`, `showInAnalytics(store, target?)`, `showDecisions(store, id?)`, `heldStore(store)` (the Floor's view of the store, held still while another workspace is up).
 
 Time: the Simulation runs forward on its own while anything subscribes to the store, at `PLAYBACK_BASE_RATE` (10) factory seconds per wall second, so the 55:50 run takes about 5.5 minutes. It stops at its last moment. The clock is driven by `requestAnimationFrame` through an injectable `Clock` (`browserClock()`, or `manualClock()` for tests and capture). A frame gap is capped at 250 ms so a background tab does not leap. Live, `now` is the live edge (see `../live/README.md`). `timeScaleOf(state)` is 10 for the Simulation and 1 live: motion lasts the same on screen in both.
 
@@ -238,7 +238,7 @@ sim.state();            // { now, cursor, workspace, theater, selection, follow,
                         //   clock: "live" | "manual" | "fixed" }
 sim.select("cell:131");   // or null; also frames it (and releases camera follow)
 sim.focus("gate:132/human-approval");  // or "overview"
-sim.setWorkspace("floor");      // "line", "floor" or "analytics"
+sim.setWorkspace("floor");      // "line", "floor", "analytics" or "decisions"
 sim.setTheater(true);
 sim.setFollow(true);
 // Rendering frame by frame

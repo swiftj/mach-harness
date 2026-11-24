@@ -59,8 +59,8 @@ const SELS = [null, "cell:131", "station:131/build", "gate:131/review#2", "execu
 
 // ---------------------------------------------------------------- the store's slice
 
-test("workspaces: three, the Line by default; 'analytics' is accepted, anything else ignored", () => {
-  assert.deepEqual([...WORKSPACES], ["line", "floor", "analytics"]);
+test("workspaces: four, the Line by default; 'analytics' is accepted, anything else ignored", () => {
+  assert.deepEqual([...WORKSPACES], ["line", "floor", "analytics", "decisions"]);
   const store = make();
   assert.equal(store.getState().workspace, "line");
   assert.deepEqual(store.getState().analytics, A.INITIAL_ANALYTICS_VIEW);

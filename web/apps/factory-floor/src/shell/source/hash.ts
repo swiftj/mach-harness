@@ -4,7 +4,10 @@
  *   #line?sel=<ref>
  *   #floor?sel=<ref>&theater=1
  *   #analytics?area=<area>&win=<preset>|<fromMs>-<toMs>&risk=&app=&model=&station=&sel=<ref>&cmp=<cohort>~<cohort>&focus=<metric>[,<dim>:<value>]&pick=<dim>:<value>
+ *   #decisions?adr=<ADR-NNNN>&sel=<ref>
  *
+ * `#decisions` is the Decisions workspace (the architecture decisions in force); `adr` names the one
+ * decision whose page is open, by ID only (`ADR-0007`; anything else is dropped).
  * `#line` is the Line workspace (the default); `#floor` the Floor (the Factory Atlas). The address
  * never names a moment: the Factory Floor shows only the present.
  * - `sel` uses the store's ref grammar (`<kind>:<id>`); anything else is ignored.
@@ -51,7 +54,10 @@ import {
   type AnalyticsWindow,
 } from "../../scene/analytics";
 
-export type HashRoute = "line" | "floor" | "analytics";
+export type HashRoute = "line" | "floor" | "analytics" | "decisions";
+
+/** An ADR ID, the only thing `adr=` may hold. */
+const ADR_ID = /^ADR-[0-9]{4}$/;
 
 export interface HashState {
   /** Null when the hash names no known route (the app keeps what it has). */
@@ -62,6 +68,8 @@ export interface HashState {
   readonly analytics: AnalyticsViewState | null;
   /** The evidence player (M6.4): a ticket and, optionally, a check. Null when the address names none. */
   readonly evidence: HashEvidence | null;
+  /** The decision whose page is open (route `decisions` only); null for the list. */
+  readonly decision: string | null;
 }
 
 export interface HashEvidence {
@@ -107,16 +115,18 @@ export function parseHash(hash: string): HashState {
   const q = raw.indexOf("?");
   const head = q < 0 ? raw : raw.slice(0, q);
   const query = q < 0 ? "" : raw.slice(q + 1);
-  const route: HashRoute | null = head === "line" || head === "floor" || head === "analytics" ? head : null;
+  const route: HashRoute | null = head === "line" || head === "floor" || head === "analytics" || head === "decisions" ? head : null;
   const p = params(query);
   const selRaw = p.get("sel") ?? null;
   const sel = selRaw && REF.test(selRaw) && selRaw.length <= MAX_ID ? (selRaw as EntityRef) : null;
+  const adr = p.get("adr") ?? null;
   return {
     route,
     sel,
     theater: route === "floor" && p.get("theater") === "1",
     analytics: route === "analytics" ? parseAnalytics(p) : null,
     evidence: parseEvidence(p.get("evidence"), p.get("check")),
+    decision: route === "decisions" && adr !== null && ADR_ID.test(adr) ? adr : null,
   };
 }
 
@@ -260,6 +270,8 @@ export interface HashWrite {
   readonly analytics?: AnalyticsViewState;
   /** The evidence player, when open: written last, identifiers only. */
   readonly evidence?: HashEvidence | null;
+  /** Written when the route is `decisions`: the decision whose page is open. */
+  readonly decision?: string | null;
 }
 
 /** The hash for a state. Parameters in a fixed order. */
@@ -267,6 +279,7 @@ export function formatHash(w: HashWrite): string {
   const parts: string[] = [];
   const analytics = w.route === "analytics" ? (w.analytics ?? INITIAL_ANALYTICS_VIEW) : null;
   if (analytics) parts.push(...formatAnalyticsHead(analytics));
+  if (w.route === "decisions" && w.decision && ADR_ID.test(w.decision)) parts.push(`adr=${w.decision}`);
   if (w.sel) parts.push(`sel=${encodeURIComponent(w.sel)}`);
   if (analytics) parts.push(...formatAnalyticsTail(analytics));
   const ev = w.evidence ? parseEvidence(w.evidence.ticket, w.evidence.check) : null;

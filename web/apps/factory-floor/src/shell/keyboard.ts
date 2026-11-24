@@ -7,7 +7,7 @@
  * element that owns it (src/line, src/atlas), which prevents the default so this map skips the event.
  */
 import { useEffect } from "react";
-import { showInAnalytics, showOnFloor, showOnLine, useStore, type SceneStore, type Workspace } from "../scene";
+import { showDecisions, showInAnalytics, showOnFloor, showOnLine, useStore, type SceneStore, type Workspace } from "../scene";
 
 export interface ShellCommands {
   toggleInspector(): void;
@@ -41,6 +41,7 @@ export const KEYMAP: KeyBinding[] = [
   { keys: ["1"], action: "Line: the stations left to right, a row for each ticket", group: "Workspaces" },
   { keys: ["2"], action: "Floor: the Factory Atlas, keeping the selection", group: "Workspaces" },
   { keys: ["3"], action: "Analytics, keeping the selection", group: "Workspaces" },
+  { keys: ["4"], action: "Decisions: the architecture decisions in force", group: "Workspaces" },
   { keys: ["Escape"], action: "Clear the highlight, then the selection, then leave Theater Mode", group: "Workspaces" },
   { keys: ["I"], action: "Show or hide the inspector (Floor and Analytics)", group: "Panels", workspace: WITH_INSPECTOR },
   { keys: ["?"], action: "This list", group: "Panels" },
@@ -48,6 +49,7 @@ export const KEYMAP: KeyBinding[] = [
   // M6.4: the evidence player's own keys, handled inside its panel (which owns the keyboard while open).
   { keys: [",", "."], action: "Evidence player: previous / next file", group: "Panels", view: true },
   { keys: ["[", "]"], action: "Evidence player: previous / next check", group: "Panels", view: true },
+  { keys: ["Escape"], action: "Decisions: from one decision back to the list", group: "Panels", view: true, workspace: "decisions" },
   { keys: ["↑", "↓"], action: "Previous / next ticket", group: "Line", view: true },
   { keys: ["Space"], action: "Show the focused ticket or station in the side panel", group: "Line", view: true },
   { keys: ["Enter"], action: "Open the focused ticket's full record (double-click does the same)", group: "Line", view: true },
@@ -86,6 +88,9 @@ export function shellKeyHandler(store: SceneStore, commands: ShellCommands): (e:
         break;
       case "3":
         showInAnalytics(store);
+        break;
+      case "4":
+        showDecisions(store);
         break;
       case "t":
         // Theater Mode is the Floor's; elsewhere the key does nothing (and says so in the help).
@@ -143,6 +148,9 @@ export function useShellKeys(commands: ShellCommands): void {
  */
 export function activeCanvas(): HTMLElement | null {
   for (const el of document.querySelectorAll<HTMLElement>("[data-analytics-workspace] [data-analytics-home], [data-analytics-workspace]")) {
+    if (!el.closest("[inert]")) return el;
+  }
+  for (const el of document.querySelectorAll<HTMLElement>("[data-decisions-home]")) {
     if (!el.closest("[inert]")) return el;
   }
   for (const el of document.querySelectorAll<HTMLElement>("[data-line-home], [data-stage-active] [tabindex='0']")) {

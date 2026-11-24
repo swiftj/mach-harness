@@ -100,6 +100,7 @@ const WORKSPACE_CHOICES: Array<{ value: Workspace; label: string; keys: string; 
   { value: "line", label: "Line", keys: "1", hint: "Line: the stations left to right, a row for each ticket" },
   { value: "floor", label: "Floor", keys: "2", hint: "Floor: the Factory Atlas, the factory drawn in space" },
   { value: "analytics", label: "Analytics", keys: "3", hint: "Factory Analytics: what the recorded history measures, with its sample, coverage and source" },
+  { value: "decisions", label: "Decisions", keys: "4", hint: "Decisions: the architecture decisions in force, the required baseline, and what waits on a person" },
 ];
 
 function WorkspaceIcon({ workspace }: { workspace: Workspace }) {
@@ -117,6 +118,13 @@ function WorkspaceIcon({ workspace }: { workspace: Workspace }) {
           <circle cx="9" cy="7" r="1.6" style={{ fill: "currentColor" }} />
           <circle cx="12.5" cy="10.5" r="1.6" style={{ fill: "currentColor" }} />
         </>
+      ) : workspace === "decisions" ? (
+        <>
+          {/* A ruled sheet with a mark: a decision written down. */}
+          <path d="M3 1.5H10.5L13 4V12.5H3Z" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.2, strokeLinejoin: "round" }} />
+          <path d="M5.5 6.5H10.5M5.5 9H9" style={{ stroke: "currentColor", strokeWidth: 1.1 }} />
+          <circle cx="5.5" cy="3.8" r="0.9" style={{ fill: "currentColor" }} />
+        </>
       ) : (
         <>
           <path d="M3.5 12V7.5M8 12V3M12.5 12V9" style={{ stroke: "currentColor", strokeWidth: 2, strokeLinecap: "butt" }} />
@@ -128,7 +136,7 @@ function WorkspaceIcon({ workspace }: { workspace: Workspace }) {
 }
 
 /**
- * The primary navigation: the workspace (Line, Floor, Analytics), as a radio group, so arrow keys
+ * The primary navigation: the workspace (Line, Floor, Analytics, Decisions), as a radio group, so arrow keys
  * move between them and the choice is announced.
  */
 export function WorkspaceSwitch({ value, onChange }: { value: Workspace; onChange: (w: Workspace) => void }) {
