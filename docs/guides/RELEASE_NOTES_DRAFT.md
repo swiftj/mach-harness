@@ -1,6 +1,16 @@
-# MACH release notes: 0.23.0
+# MACH release notes: 0.23.1
 
 What is new in each release, newest first, followed by supported platforms, what you need, upgrading and security notes.
+
+## What changed in 0.23.1
+
+A shorter command for Product Studio.
+
+| Change | What it is |
+| --- | --- |
+| `/mach-studio` | Product Studio's command is now `/mach-studio`, in place of `/mach-product-studio`. With the plugin it is `/mach:studio`. It is still MACH Product Studio, and everything it does is the same. |
+
+**After updating, type `/mach-studio`.** The old command is gone: updating removes it from the project.
 
 ## What changed in 0.23.0
 
@@ -220,6 +230,7 @@ Claude Code, `git` 2.36 or later, and `python3` 3.8 or later. The GitHub CLI (`g
 - Run the installer again. It installs the newest full release; choose a specific one with `MACH_VERSION=<x.y.z>`.
 - Your work is kept: Product Studio drafts, tickets in progress, the archive and run records, `.factory/config.json` and a customised `REVIEW.md` are not touched.
 - After upgrading to 0.22.0, release qualification reads the change records merged from then on. Keep `records.enabled` on (the default) for a slice to qualify.
+- From 0.23.1 Product Studio's command is `/mach-studio` (plugin: `/mach:studio`); `/mach-product-studio` no longer exists after an update.
 - A draft made by 0.13.0 with an epic marked `proposed` needs `epic set <EPIC-ID> --status open` once.
 - If you enabled supervised running before 0.13.0, enable it again after upgrading.
 - Back up `.factory/` before moving to an older version.

@@ -303,8 +303,8 @@ class BoundariesTest(unittest.TestCase):
         # intent station and Product Studio; Studio's `epic current` and intake's comment on the epic's issue load it too.
         # M15: the verify station's neighbours.py reads the shipped specs through shipped.py, which loads it; read only.
         self.assertEqual(callers, ["skills/intent/references/spec-structure.md", "skills/intent/scripts/effects.py", "skills/intent/scripts/shipped.py",
-                                   "skills/intent/scripts/validate_slice.py", "skills/studio/scripts/studio.py", "skills/run/SKILL.md",
-                                   "skills/run/scripts/current.py", "skills/run/scripts/intake.py", "skills/run/scripts/run.py",
+                                   "skills/intent/scripts/validate_slice.py", "skills/run/SKILL.md",
+                                   "skills/run/scripts/current.py", "skills/run/scripts/intake.py", "skills/run/scripts/run.py", "skills/studio/scripts/studio.py",
                                    "skills/verify/scripts/neighbours.py"])
 
 
