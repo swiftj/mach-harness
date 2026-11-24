@@ -109,7 +109,7 @@ Result: `{"ticket_id", "option", "done": true, "station": {...the station's own 
 
 ### 3.2 Answering open questions
 
-A spec saved by grooming without a person lists `## Open questions`. `decide --json` gives them for an `answers` wait as `questions: [{"n", "text", "follow_up"}]`. `decide do <ticket> answers --answers-file f.json` (`[{"n", "answer"}]`, every question answered or marked "leave open") writes `.factory/cells/<ticket>/answers.json` with who and when, and un-parks the ticket. The next headless grooming run is given that file as data, folds each answer into the spec as a person's answer, and finalizes or asks what is still open. A conversation remains the other way to answer (`/mach decide`).
+A spec saved by grooming without a person lists `## Open questions`. `decide --json` gives them for an `answers` wait as `questions: [{"n", "text", "follow_up"}]`. `decide do <ticket> answers --answers-file f.json` (`[{"n", "answer"}]`, every question answered or marked "leave open") writes `.factory/local/answers/<ticket>.json` (private to this machine, its hash recorded in the intake ledger) with who and when, and un-parks the ticket. The next headless grooming run is given that file as data, folds each answer into the spec as a person's answer, and finalizes or asks what is still open. A conversation remains the other way to answer (`/mach decide`).
 
 ### 3.3 Being told
 
