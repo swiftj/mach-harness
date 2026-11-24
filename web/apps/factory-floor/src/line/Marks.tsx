@@ -12,11 +12,13 @@ export const STATE_TONE: Readonly<Record<LineState, string>> = {
   person: "border-factory-human bg-factory-human-soft text-factory-human",
   stopped: "border-factory-fail bg-factory-fail-soft text-factory-fail",
   landed: "border-factory-pass bg-factory-pass-soft text-factory-pass",
+  // Finished without a merge: quiet, neither a pass nor a failure.
+  closed: "border-line-strong bg-surface-sunken text-ink-muted",
 };
 
 /**
  * The state's own glyph: a filled dot (working), two bars (held), a diamond (a person), a square
- * stop (stopped), a tick (landed). Drawn in the current colour.
+ * stop (stopped), a tick (landed), a ring with a bar across (closed: abandoned). Drawn in the current colour.
  */
 export function StateShape({ state, size = 12, className }: { state: LineState; size?: number; className?: string }) {
   return (
@@ -32,6 +34,11 @@ export function StateShape({ state, size = 12, className }: { state: LineState; 
         <path d="M6 1L11 6L6 11L1 6Z" style={{ fill: "currentColor" }} />
       ) : state === "stopped" ? (
         <rect x="1.5" y="1.5" width="9" height="9" style={{ fill: "currentColor" }} />
+      ) : state === "closed" ? (
+        <>
+          <circle cx="6" cy="6" r="4.4" style={{ fill: "none", stroke: "currentColor", strokeWidth: 1.4 }} />
+          <path d="M3.4 6H8.6" style={{ stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round" }} />
+        </>
       ) : (
         <>
           <circle cx="6" cy="6" r="5" style={{ fill: "currentColor" }} />

@@ -81,7 +81,7 @@ const Regions = memo(function Regions({ layout: L, lod, captions, active }: Omit
       <RegionPlate box={regionBox(R.intake)} kind="intake" caption={captions.intake} lod={lod} active={active.intake}>
         {lod !== "far" ? (
           <>
-            <text x={136} y={L.bays[0] ? L.bays[0].pad.y - 34 : 0} style={{ fill: "var(--mach-ink-subtle)", fontSize: 8.5, fontFamily: "var(--mach-font-mono)" }} className="notranslate">
+            <text x={136} y={L.floor.firstPadY - 34} style={{ fill: "var(--mach-ink-subtle)", fontSize: 8.5, fontFamily: "var(--mach-font-mono)" }} className="notranslate">
               HOLDING PADS
             </text>
             <text x={24} y={L.mid - 116} style={{ fill: "var(--mach-ink-subtle)", fontSize: 8.5, fontFamily: "var(--mach-font-mono)" }} className="notranslate">
@@ -207,7 +207,7 @@ function Ruler({ y, x0, x1 }: { y: number; x0: number; x1: number }) {
 export function conduitPath(L: PlantLayout): Vec3[] {
   const s = L.intake.supervisor;
   const z = PLATE_Z + 1;
-  const lastRow = L.bays.length ? Math.max(...L.bays.map((b) => b.origin.y + 10)) : 34;
+  const lastRow = L.floor.lastRowY + 10;
   return [
     { x: s.x + 14, y: s.y, z },
     { x: s.x + 14, y: 7, z },

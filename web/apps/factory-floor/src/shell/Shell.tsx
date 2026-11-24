@@ -25,6 +25,8 @@ import { LineWorkspace } from "../line/Workspace";
 import { Announcer } from "./Announcer";
 import { Brand, PlacesChip, RunIdentity, WorkspaceSwitch } from "./chrome";
 import { CompletenessBadge, ConnectionBadge, FactoryStateChip, SOURCE_WORDS, SourceBadge, StageNotice } from "./SourceBadge";
+import { RecordAge } from "./RecordAge";
+import { OnDiskNotice } from "./OnDiskNotice";
 import { useSource } from "./source/context";
 import { parseHash } from "./source/hash";
 import { applyHash, browserHashHost, createHashSync } from "./source/hashSync";
@@ -162,6 +164,7 @@ function TopBar({ inspectorOpen, onInspector, onHelp, sourceOpen, onSource }: { 
       <div className="flex shrink-0 flex-wrap items-center gap-1.5">
         <SourceBadge open={sourceOpen} onOpenChange={onSource} />
         <ConnectionBadge />
+        <RecordAge />
         <CompletenessBadge />
         <FactoryStateChip />
         <PlacesChip />
@@ -314,6 +317,7 @@ export function Shell() {
             setHelp(true);
           }}
         />
+        <OnDiskNotice />
       </header>
 
       <main id="stage" tabIndex={-1} aria-label={`${stageLabel} (${SOURCE_WORDS[source].label})`} className="relative min-h-0 min-w-0 overflow-clip bg-factory-ground outline-none [grid-area:stage]">

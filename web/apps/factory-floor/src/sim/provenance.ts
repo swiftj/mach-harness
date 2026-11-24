@@ -108,6 +108,22 @@ export interface HistoryGapState {
    * interpreted) and `conflict` (the first record was kept): those never make a scene partial.
    */
   readonly lost: boolean;
+  /** When the observer noticed it (the gap record's `observed_at`, Unix ms); null for the page's own markers or when not recorded. */
+  readonly noticedAt?: number | null;
+}
+
+/** One range of history the observer lost, as its health reply lists it (`projection.history.lost_ranges`). */
+export interface LostRange {
+  readonly eventId: string;
+  /** The partition key: `c:<ticket>:<generation>`, `i:...`, `r:...`, `s:...`. */
+  readonly sourceKey: string;
+  readonly fromSeq: number | null;
+  readonly toSeq: number | null;
+  readonly reason: string;
+  readonly class: string;
+  /** Where in history it sits, and when the observer noticed it (Unix ms); null when not recorded. */
+  readonly atMs: number | null;
+  readonly noticedMs: number | null;
 }
 
 /** What each gap class means, for people. */
@@ -169,6 +185,8 @@ export interface ObserverHistory {
   readonly classes: Readonly<Record<string, number>>;
   /** The projection's own reason when history before a position is no longer held (else null). */
   readonly partial: string | null;
+  /** The latest ranges it lost, oldest first (`lost_ranges`); absent from an older observer. */
+  readonly lostRanges?: readonly LostRange[];
 }
 
 export const COMPLETE: Completeness = Object.freeze({ state: "complete", since: null, gaps: Object.freeze([]) as readonly HistoryGapState[], began: Object.freeze({}), notInterpreted: Object.freeze({}), observer: null });
