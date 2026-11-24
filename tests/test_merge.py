@@ -154,6 +154,22 @@ class ApprovalTest(Base):
         self.assertEqual(json.loads((self.cellroot / "review/decision.json").read_text())["outcome"], "VOID")
         self.assertEqual(self.next()["action"], "verify", "it is verified and reviewed again")
 
+    def test_voiding_records_the_stage_it_leaves_the_ticket_at(self):
+        """The lifecycle log carries the stage cell.json now holds, so the Factory Floor sees no missing records."""
+        self.approved(mode="auto")
+        self.put(self.work, {"app/extra.py": "SNEAKY = True\n"})
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-q", "-m", "added after review")
+        self.m_refused("run", "LOCAL-001")
+        records = [json.loads(line) for line in (self.cellroot / "lifecycle.jsonl").read_text().splitlines() if line.strip()]
+        merge_records = [(item["type"], item["visit"]) for item in records if item["station"] == "merge"]
+        self.assertEqual(merge_records, [("station.entered", "merge#1"), ("gate.evaluated", "merge#1"), ("station.exited", "merge#1")])
+        staged = [item["data"]["stage"] for item in records if item["type"] in ("station.entered", "station.exited") and "stage" in item["data"]]
+        self.assertEqual(staged[-1], self.cell_json()["stage"])
+        self.assertEqual(staged[-1], "built")
+        exited = [item for item in records if item["type"] == "station.exited" and item["station"] == "merge"][-1]
+        self.assertEqual(exited["data"]["outcome"], "approval-void")
+
     def test_voiding_keeps_the_rounds_own_record_with_the_persons_approval(self):
         """M7 D3, in the shape of the real records: round-2/decision.json and the latest copy, with a person's sign-off."""
         head = self.approved(mode="auto")

@@ -1387,7 +1387,16 @@ def gate(cell: Cell, plan: Dict[str, Any]) -> None:
     """Refuse on the survey's refusals; a void approval is recorded as void first."""
     if plan.get("approval_void"):
         void_approval(cell)
-        raise MergeError(plan["refusals"][-1] if len(plan["refusals"]) == 1 else "\n- " + "\n- ".join(plan["refusals"]), code="approval-void")
+        # The merge station had the ticket and sent it back to be verified again: its visit carries the stage cell.json now
+        # holds ("built"), as a refusal inside land() does, so the log and cell.json agree.
+        telemetry(cell.root, "station.entered", "merge", lambda: {"stage": plan["stage"], "method": cell.method, "behind_main": bool(plan["behind_main"])},
+                  once=True)
+        telemetry(cell.root, "gate.evaluated", "merge", lambda: {"gate": "merge.run", "outcome": "refuse", "reason_code": "approval-void",
+                                                                 "overridden_by_reason": False})
+        telemetry(cell.root, "station.exited", "merge", lambda: {"outcome": "approval-void", "stage": cell.info.get("stage")})
+        exc = MergeError(plan["refusals"][-1] if len(plan["refusals"]) == 1 else "\n- " + "\n- ".join(plan["refusals"]), code="approval-void")
+        exc.recorded = True
+        raise exc
     if plan["refusals"]:
         raise MergeError(plan["refusals"][0] if len(plan["refusals"]) == 1 else "\n- " + "\n- ".join(plan["refusals"]),
                          code="exception-expired" if plan.get("exception_expired") else "merge-refused")
