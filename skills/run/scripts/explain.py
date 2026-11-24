@@ -6,7 +6,9 @@ station, starts nothing and records nothing in the lifecycle log. The skill's mo
 
 Sources, all inside .factory/worktrees/<ticket>/ (written by the stations, never by this script):
     cell.json                       stage and risk
-    build.json, build-report.json   the revision loop, and every gate override with its reason
+    build.json, build-report.json   the revision loop, and every gate override with its reason; for a build in lanes (M22)
+                                    the lanes, any lane set aside, lanes that failed only together, and the fix task
+    lanes/<L>/lane.json             how far each lane has got, while the lanes are open
     evidence/summary.json           the verification verdict: failed checks (AC-NN, RN, H-...), suite, contracts, unproven items
     review/decision.json            the latest review decision; rejected_by marks a send-back by the merge station or by a person;
                                     exceptions[] a person's exceptions to security blockers (who, why, expiry)
@@ -512,14 +514,142 @@ def explain(root: Path, ticket_id: str, next_info: Dict[str, Any], config: Optio
     held = policy_facts(cellroot, cell)
     if held:
         base["policies"] = held
+    lanes = lanes_facts(cellroot)  # M22: nothing for a build without lanes
+    if lanes:
+        base["lanes"] = lanes
     return base, 0
+
+
+# ---------------------------------------------------------------- a build in lanes (M22)
+
+LANE_RE = re.compile(r"^L\d{1,3}$")
+STATION = "build station"
+SET_ASIDE, INTERACTION = "lane-set-aside", "lanes-interaction"
+# The builder's own overrides (build.py). One of these made in a lane is an override like any other, said with the rest; a
+# deviation of any other type recorded in a lane, or by the build station, is said here with its recorded words.
+BUILDER_OVERRIDES = ("no-baseline", "test-amended", "files-outside-plan", "not-a-secret", "test-written-early", "test-passed-first-run",
+                     "red-not-attributed", "impl-already-done")
+
+
+def _ids(value: Any) -> List[str]:
+    return [clean(item, 20) or "" for item in value if isinstance(item, str)][:50] if isinstance(value, list) else []
+
+
+def _set_aside_words(because: Dict[str, Any]) -> str:
+    other, file, why = clean(because.get("other"), 10), clean(because.get("file"), 200), because.get("why")
+    if why == "same-file":
+        return f"it and lane {other} both changed {file}"
+    if why == "frozen-test":
+        return f"one of it and lane {other} changed {file}, a test file the other holds"
+    return f"{clean(why, 40)}: {file}, with lane {other}"
+
+
+def lanes_facts(cellroot: Path) -> Optional[Dict[str, Any]]:
+    """What the build station recorded of a build in lanes, in plain words: that it ran in lanes, or is at its lanes now
+    with how far each has got; a lane set aside and what was done; lanes that failed only together and the fix task; and
+    any other deviation the station or a lane recorded, with its recorded words. None for a build without lanes, so a
+    ticket built one task at a time is explained exactly as before. Reads build.json, each lanes/<L>/lane.json and
+    build-report.json; nothing is inferred: a number not recorded is said to be so."""
+    build = load_json(cellroot / "build.json", {}) or {}
+    report = load_json(cellroot / "build-report.json", {}) or {}
+    record = build.get("lanes") if isinstance(build, dict) and isinstance(build.get("lanes"), dict) else None
+    if record is None and isinstance(report, dict) and isinstance(report.get("lanes"), dict):
+        record = report["lanes"]
+    if record is None or not isinstance(record.get("lanes"), list):
+        return None
+    state = record.get("state") if record.get("state") in ("planned", "open", "joined", "sequential") else None
+    tasks = {t.get("id"): t for t in (build.get("tasks") if isinstance(build.get("tasks"), list) else []) if isinstance(t, dict)}
+    deviations = [d for d in (build.get("deviations") if isinstance(build.get("deviations"), list) else report.get("deviations") or []) if isinstance(d, dict)]
+    lanes = []
+    for entry in record["lanes"]:
+        if not isinstance(entry, dict) or not isinstance(entry.get("lane"), str) or not LANE_RE.match(entry["lane"]):
+            continue
+        item = {"lane": entry["lane"], "tasks": _ids(entry.get("tasks")), "status": clean(entry.get("status"), 20), "done": None, "of": None, "last_step_at": None}
+        own = load_json(cellroot / "lanes" / entry["lane"] / "lane.json", {}) if state == "open" else None
+        if isinstance(own, dict) and isinstance(own.get("tasks"), list):
+            item.update({"status": clean(own.get("status"), 20) or item["status"], "of": len(own["tasks"]),
+                         "done": sum(1 for t in own["tasks"] if isinstance(t, dict) and t.get("status") == "done"),
+                         "last_step_at": clean(own.get("last_step_at"), 40)})
+        elif state == "open":
+            item["of"] = len(item["tasks"])
+        lanes.append(item)
+    facts: Dict[str, Any] = {"state": state, "count": len(lanes), "lanes": lanes, "source_file": "build.json"}
+    join = record.get("join") if isinstance(record.get("join"), dict) else {}
+    if state == "joined":
+        facts["joined_at"] = clean(join.get("tip"), 64)
+        facts["joined_suite_passed"] = (join.get("suite") or {}).get("passed") if isinstance(join.get("suite"), dict) else None
+    aside, recorded = [], []
+    interaction = None
+    for item in deviations:
+        kind = item.get("type")
+        if kind == SET_ASIDE:
+            name = clean(item.get("lane"), 10)
+            held = next((lane["tasks"] for lane in lanes if lane["lane"] == item.get("lane")), [])
+            because = [b for b in item.get("because") or [] if isinstance(b, dict)]
+            done = sum(1 for ident in held if (tasks.get(ident) or {}).get("status") == "done")
+            aside.append({"lane": name, "tasks": held, "done": done if tasks else None,
+                          "text": f"Lane {name} was set aside at the join: " + ("; ".join(_set_aside_words(b) for b in because[:10]) or "why was not recorded")
+                                  + f". Its commits were not landed; its tasks ({', '.join(held) or 'not recorded'}) are built again in the cell, one at a time"
+                                  + (f": {done} of {len(held)} done." if tasks and held else "."),
+                          "detail": clean(item.get("detail"))})
+        elif kind == INTERACTION:
+            fix = clean(item.get("task"), 20) or "J-T01"
+            status = (tasks.get(item.get("task")) or {}).get("status")
+            failing = [clean(name, 200) for name in item.get("failing") or [] if isinstance(name, str)][:10]
+            involved = _ids(item.get("lanes"))
+            interaction = {"task": fix, "status": clean(status, 20), "failing": failing, "lanes": involved,
+                           "text": "Every lane passed its own suite, but the whole suite failed on the joined result"
+                                   + (f" ({', '.join(failing)})" if failing else "") + (f"; lanes involved: {', '.join(involved)}" if involved else "")
+                                   + f". {fix} was added to make them pass together; " + ("it is done." if status == "done" else "it is still to do." if status else "its state is not recorded."),
+                           "detail": clean(item.get("detail"))}
+        elif item.get("by") == STATION or (item.get("lane") and kind not in BUILDER_OVERRIDES):
+            who = "The build station" if item.get("by") == STATION else f"Lane {clean(item.get('lane'), 10)}"
+            recorded.append({"task": clean(item.get("task"), 20), "lane": clean(item.get("lane"), 10), "type": clean(kind, 60), "detail": clean(item.get("detail")),
+                             "text": f"{who} recorded {clean(kind, 60) or 'a deviation'}" + (f" for {clean(item.get('task'), 20)}" if item.get("task") else "")
+                                     + f": {clean(item.get('detail')) or '(no words recorded)'}"})
+    if aside:
+        facts["set_aside"] = aside
+    if interaction:
+        facts["interaction"] = interaction
+    if recorded:
+        facts["recorded"] = recorded
+    facts["summary"] = lanes_summary(facts, record)
+    return facts
+
+
+def lanes_summary(facts: Dict[str, Any], record: Dict[str, Any]) -> str:
+    """One plain sentence on where a build in lanes stands."""
+    lanes, count = facts["lanes"], facts["count"]
+    state = facts["state"]
+    if state == "open":
+        each = ", ".join(f"{lane['lane']} {lane['done'] if lane['done'] is not None else 'not recorded'} of {lane['of']} done"
+                         + (" (finished)" if lane["status"] == "done" else "") for lane in lanes)
+        return f"The build is at its lanes: {count} lanes, built at the same time ({each}). When every lane is done the line joins them."
+    if state == "planned":
+        return (f"The build is planned in {count} lanes (" + "; ".join(f"{lane['lane']}: {', '.join(lane['tasks'])}" for lane in lanes)
+                + "). The line opens them once the tasks before the lanes are done.")
+    if state == "sequential":
+        return f"Lanes were planned for this build but did not run: {clean(record.get('why')) or 'why was not recorded'}"
+    if state == "joined":
+        passed = facts.get("joined_suite_passed")
+        return (f"The build ran in {count} lanes, joined at commit {facts.get('joined_at') or '(not recorded)'}"
+                + (f"; {len(facts['set_aside'])} lane{'s' if len(facts['set_aside']) != 1 else ''} set aside" if facts.get("set_aside") else "")
+                + ("; the whole suite passed on the joined result." if passed is True else "; the whole suite failed on the joined result." if passed is False
+                   else "; whether the whole suite passed on the joined result is not recorded."))
+    return f"The build has {count} lanes; their state is not recorded."
+
+
+def lanes_line(cellroot: Path) -> Optional[str]:
+    """The one sentence for a ticket's digest (run.py's `digest`), or None for a build without lanes."""
+    facts = lanes_facts(cellroot)
+    return facts["summary"] if facts else None
 
 
 def human(report: Dict[str, Any]) -> str:
     """A short plain list. Quoted text came from a reviewer, the verifier or a test run and is shown as data."""
     lines = []
     digest = report.get("digest") or {}
-    for key, label in (("where", "Where"), ("needs_person", "A person must decide"), ("time_and_cost", "Time and cost")):
+    for key, label in (("where", "Where"), ("needs_person", "A person must decide"), ("time_and_cost", "Time and cost"), ("lanes", "Lanes")):
         if digest.get(key):
             lines.append(f"{label}: {digest[key]}")
     if lines:
@@ -589,6 +719,21 @@ def human(report: Dict[str, Any]) -> str:
         lines.append(f"- [policy] {held['not_checked']}")
     for line in digest.get("rules_changed") or []:
         lines.append(f"- [older rules] {line}")
+    lanes = report.get("lanes") or {}
+    if lanes:  # M22: only for a build in lanes
+        if digest.get("lanes") != lanes.get("summary"):
+            lines.append(f"- [lanes] {lanes.get('summary')}")
+        if lanes.get("state") == "open":
+            for lane in lanes.get("lanes") or []:
+                lines.append(f"- [lanes] {lane['lane']} ({', '.join(lane.get('tasks') or [])}): "
+                             f"{lane['done'] if lane.get('done') is not None else 'not recorded'} of {lane.get('of')} done, {lane.get('status') or 'status not recorded'}"
+                             + (f", last step at {lane['last_step_at']}" if lane.get("last_step_at") else ""))
+        for item in lanes.get("set_aside") or []:
+            lines.append(f"- [lanes] {item['text']}")
+        if lanes.get("interaction"):
+            lines.append(f"- [lanes] {lanes['interaction']['text']}")
+        for item in lanes.get("recorded") or []:
+            lines.append(f"- [lanes] {item['text']}")
     if report.get("headline_code") not in ("unknown_ticket", "archived", "finished"):
         lines.append(f"Rounds: {report['rounds_used']} of {report['max_rounds']} used, {report['rounds_left']} left.")
     nxt = report.get("next") or {}

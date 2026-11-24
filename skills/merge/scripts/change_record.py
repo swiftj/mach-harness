@@ -5,7 +5,8 @@ alone, so it arrives in the same pull request or merge commit as the change. It 
 the product principles, policy packs and effects on shipped behaviour the spec answered (M15, each only when the spec has
 that section), the plan's tasks and the architecture decisions in force, every verification run with the SHA-256 of each evidence file,
 every review round (votes, findings, a person's approval or send-back, security exceptions and the scan's answers), the
-builder's recorded overrides, and the commits. The evidence files themselves stay in the local archive, which can be
+builder's recorded overrides (and, for a build in lanes, M22, the lanes, any lane set aside, any failure only the joined result
+showed with its fix task, and the recorded times), and the commits. The evidence files themselves stay in the local archive, which can be
 checked against the hashes here.
 
 Version 2 ends the record with a block for MACH to read (`facts()`, `read_facts()`): the facts release qualification
@@ -615,10 +616,111 @@ def build_section(t: Text, root: Path) -> List[str]:
         return lines + ["No build report was recorded.", ""]
     seen = report.get("tests_seen_failing_first")
     lines += [f"Revision {t.one(report.get('review_loop'), 10)} was the last build. Tests seen failing before their code was written: "
-              f"{seen if type(seen) is int else '(not recorded)'}.", "", "Overrides the builder recorded, each with its reason:", ""]
+              f"{seen if type(seen) is int else '(not recorded)'}.", ""]
     deviations = [item for item in report.get("deviations") or [] if isinstance(item, dict)]
-    lines += capped([f"- {t.one(item.get('task'), 20, 'no task')}, {t.one(item.get('type'), 40)}: {t.one(item.get('detail'), REASON_LIMIT)}" for item in deviations[:MAX_ITEMS]],
-                    len(deviations), MAX_ITEMS, "overrides") or ["- None."]
+    lines += lanes_lines(t, report, deviations)  # M22: nothing for a build without lanes, so its record is as before
+    by_station = any(item.get("by") == STATION for item in deviations)
+    lines += ["Overrides the builder recorded, and what the build station recorded itself, each with its reason:" if by_station
+              else "Overrides the builder recorded, each with its reason:", ""]
+    lines += capped([deviation_line(t, item) for item in deviations[:MAX_ITEMS]], len(deviations), MAX_ITEMS, "overrides") or ["- None."]
+    return lines + [""]
+
+
+# M22: a build in lanes. The build station records what it did itself (a lane set aside, lanes that fail only together) as
+# deviations marked with this `by`; a lane builder's own overrides carry the lane they were made in.
+STATION = "build station"
+LANE_RE = re.compile(r"^L\d{1,3}$")
+
+
+def set_aside_words(t: Text, because: Dict[str, Any]) -> str:
+    """Why the join set a lane aside, from what landing recorded: the other lane, the file, and the reason's code."""
+    other, file, why = t.one(because.get("other"), 10), t.one(because.get("file"), 200), because.get("why")
+    if why == "same-file":
+        return f"it and lane {other} both changed {file}"
+    if why == "frozen-test":
+        return f"one of it and lane {other} changed {file}, a test file the other holds"
+    return f"{t.one(why, 40)}: {file}, with lane {other}"
+
+
+def deviation_line(t: Text, item: Dict[str, Any]) -> str:
+    """One recorded deviation, whatever its type, with its recorded words. One without a lane or the station's mark (every
+    deviation of a build without lanes) reads exactly as before."""
+    task = t.one(item.get("task"), 20, "no task")
+    if isinstance(item.get("lane"), str) and item.get("lane") and item.get("by") != STATION:
+        task += f" (lane {t.one(item.get('lane'), 10)})"
+    kind = t.one(item.get("type"), 40) + (", recorded by the build station" if item.get("by") == STATION else "")
+    return f"- {task}, {kind}: {t.one(item.get('detail'), REASON_LIMIT)}"
+
+
+def duration(value: Any) -> str:
+    """A recorded number of seconds in words, or "not recorded"."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+        return "not recorded"
+    text = f"{float(value):.1f} seconds"
+    return text + (f" (about {round(value / 60)} min)" if value >= 90 else "")
+
+
+def task_list(t: Text, ids: Any) -> str:
+    items = [t.one(item, 20) for item in ids or [] if isinstance(item, str)] if isinstance(ids, list) else []
+    return ", ".join(items[:MAX_TASKS]) if items else "no task"
+
+
+def lanes_lines(t: Text, report: Dict[str, Any], deviations: List[Dict[str, Any]]) -> List[str]:
+    """M22, design 13.3: when the build was planned in lanes, what was recorded of them. How many lanes and which tasks each
+    held; any lane set aside, why, and that its tasks were then built one at a time; a failure only the joined result showed
+    and the fix task that answered it; the lanes' wall time against their summed time and the build's against its tasks'.
+    Every number is a recorded one; one that was not recorded is said to be so. Nothing for a build without lanes."""
+    lanes = report.get("lanes")
+    if not isinstance(lanes, dict):
+        return []
+    if lanes.get("state") != "joined":
+        return [f"Lanes were planned for this build but did not run: {t.one(lanes.get('why'), REASON_LIMIT)} "
+                "It was built one task at a time in the cell.", ""]
+    plan = lanes.get("plan") if isinstance(lanes.get("plan"), dict) else {}
+    planned = [item for item in plan.get("lanes") or [] if isinstance(item, dict)] or [item for item in lanes.get("lanes") or [] if isinstance(item, dict)]
+    join = lanes.get("join") if isinstance(lanes.get("join"), dict) else {}
+    aside = {item.get("lane"): item for item in join.get("set_aside") or [] if isinstance(item, dict)}
+    lines = [f"Built in {len(planned)} lanes at the same time, each in its own worktree from commit {sha(lanes.get('fork'))}, then joined "
+             f"onto the ticket's branch, one commit per task in the plan's order, ending at commit {sha(join.get('tip'))}.", ""]
+    if plan.get("before"):
+        lines.append(f"- Before the lanes, in the cell: {task_list(t, plan.get('before'))}.")
+    for item in planned[:MAX_ITEMS]:
+        name = item.get("lane")
+        line = f"- Lane {t.one(name, 10)} held {task_list(t, item.get('tasks'))}."
+        if name in aside:
+            because = [b for b in aside[name].get("because") or [] if isinstance(b, dict)]
+            words = "; ".join(set_aside_words(t, b) for b in because[:MAX_ITEMS]) or "why was not recorded"
+            line += (f" It was set aside at the join ({words}), so its commits were not landed; its tasks were then built again "
+                     "one at a time in the cell, after the join.")
+        lines.append(line)
+    if plan.get("after"):
+        lines.append(f"- After the lanes, in the cell: {task_list(t, plan.get('after'))}.")
+    suite = join.get("suite") if isinstance(join.get("suite"), dict) else {}
+    passed = suite.get("passed")
+    lines.append("- The whole test suite on the joined result: " + ("passed." if passed is True else "failed." if passed is False else "not recorded."))
+    interaction = next((item for item in deviations if item.get("type") == "lanes-interaction"), None)
+    if passed is False or interaction is not None:
+        fix_id = (interaction or {}).get("task") or "J-T01"
+        fix = next((task for task in report.get("tasks") or [] if isinstance(task, dict) and task.get("id") == fix_id), {})
+        failing = [item for item in (interaction or {}).get("failing") or [] if isinstance(item, str)]
+        involved = [item for item in (interaction or {}).get("lanes") or [] if isinstance(item, str)]
+        line = ("- Every lane passed its own suite, but the joined result failed" + (f": {', '.join(t.one(item, 200) for item in failing[:20])}" if failing else "")
+                + (f" (lanes involved: {', '.join(t.one(item, 10) for item in involved)})" if involved else "") + ". ")
+        if fix.get("status") == "done":
+            line += f"The build station added {t.one(fix_id, 20)}, which made them pass together, at commit {sha(fix.get('commit'))}."
+        else:
+            line += f"The build station added {t.one(fix_id, 20)} to make them pass together; it is {t.one(fix.get('status'), 20, 'not recorded')}."
+        lines.append(line)
+    timing = report.get("timing") if isinstance(report.get("timing"), dict) else {}
+    part = timing.get("lanes") if isinstance(timing.get("lanes"), dict) else {}
+    steps = [step.get("seconds_since_previous_step") for step in timing.get("steps") or [] if isinstance(step, dict)]
+    counted = [value for value in steps if isinstance(value, (int, float)) and not isinstance(value, bool)]
+    summed = round(sum(counted), 1) if counted else None
+    missing = len(steps) - len(counted)
+    lines.append(f"- Time: the lanes took {duration(part.get('wall_seconds'))} of wall time, and their own times add up to {duration(part.get('summed_lane_seconds'))}. "
+                 f"The whole build took {duration(timing.get('elapsed_seconds'))} from start to finish, and its tasks' recorded times add up to "
+                 f"{duration(summed)}" + (f" ({missing} task{'s' if missing != 1 else ''} with no time recorded)" if counted and missing else "") + ". "
+                 "A summed time is not what a build one task at a time would have taken; that build was not run.")
     return lines + [""]
 
 
