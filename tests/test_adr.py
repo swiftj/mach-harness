@@ -366,9 +366,10 @@ class ProposalTest(Project):
         self.assertIn("Inside a supervised Factory execution nobody is here to decide", err)
         code, _, err = self.cell_run("adr-accept", TICKET, "--adr", "ADR-0001", "--by", "Dana")
         self.assertIn("ADR-0001 is not an ADR this ticket's plan proposes", err)
-        code, out, err = self.cell_run("adr-accept", TICKET, "--adr", "ADR-0002", "--by", "Dana Smith")
+        code, out, err = self.cell_run("adr-accept", TICKET, "--adr", "ADR-0002", "--by", "Dana Smith", "--via=floor")
         self.assertEqual(code, 0, err)
         self.assertEqual(json.loads(out)["accepted"], ["ADR-0002"])
+        self.assertEqual(self.cell_json()["adr_acceptances"][0]["recorded_by"], "a person, in the Factory Floor")
         shown = git(self.work, "show", "HEAD:docs/adr/0002-store-invitations-in-sqlite.md").stdout
         self.assertIn("status: accepted", shown)
         self.assertEqual(git(self.work, "log", "-1", "--format=%s").stdout.strip(), "adr(ADR-0002): accepted by Dana Smith [LOCAL-001]")
@@ -434,6 +435,7 @@ class ConflictTest(Project):
         code, out, err = self.cell_run(*argv)
         self.assertEqual(code, 0, err)
         self.assertTrue(json.loads(out)["conflict_cleared"])
+        self.assertEqual(self.cell_json()["adr_exceptions"][0]["recorded_by"], "an agent, on the person's instruction in conversation")
         self.assertEqual(self.next()["action"], "plan")
         code, out, err = self.check(PLAN)  # the touch map falls under ADR-0001's globs; the exception carries it
         self.assertEqual(code, 0, err + out)
