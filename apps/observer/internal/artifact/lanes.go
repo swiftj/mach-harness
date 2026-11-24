@@ -271,8 +271,11 @@ type ReportTiming struct {
 type Lanes struct {
 	// State: build.json's (planned, open, sequential, joined), or "unreadable" when build.json could
 	// not be read.
-	State    string        `json:"state"`
-	Source   string        `json:"source"` // "cell" or "archive"
+	State  string `json:"state"`
+	Source string `json:"source"` // "cell" or "archive"; "none" with state "not-kept"
+	// NotKept, with state "not-kept": the cell folder is gone and cleanup kept no archive of it, so
+	// the lanes' files cannot be read; why, from the ticket's run record. Absent otherwise.
+	NotKept  *NotKept      `json:"not_kept,omitempty"`
 	Build    FileRead      `json:"build_json"`
 	Report   FileRead      `json:"build_report"`
 	Setting  *int          `json:"setting"`          // build.max_lanes when the lanes were planned
@@ -761,6 +764,9 @@ func ReadBuild(root, ticket string, expected, commandsExpected bool) (*Lanes, []
 		if !expected && !commandsExpected {
 			return nil, nil // an archive is read only for a build its events show in lanes or with a changed command: it is a large read
 		}
+		if nk := ArchiveNotKept(r, ticket); nk != nil {
+			return notKept(nk, expected), nil // no archive was kept: said plainly, not as a file that cannot be read
+		}
 		members, bad := map[string][]byte{}, map[string]error{}
 		err := walkArchive(r, ".factory/archive/"+ticket+".tar.gz", ticket, func(name string, hdr *tar.Header, rd io.Reader) error {
 			if !laneFileWanted(name) {
@@ -1066,6 +1072,17 @@ func firstOf(a, b *string) *string {
 		return a
 	}
 	return b
+}
+
+// notKept is the reply for a build in lanes whose cell folder is gone with no archive kept.
+func notKept(nk *NotKept, expected bool) *Lanes {
+	if !expected {
+		return nil
+	}
+	why := nk.Reason
+	ln := unreadable("none", FileRead{Read: "absent"}, true)
+	ln.State, ln.NotKept, ln.Build = "not-kept", nk, FileRead{Read: "absent", Why: &why}
+	return ln
 }
 
 // unreadable is the reply when build.json could not be read: only for a build the events show in

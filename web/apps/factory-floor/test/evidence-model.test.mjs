@@ -279,7 +279,10 @@ test("integrity is always said; a file that does not match its recorded hash say
   assert.ok(M.INTEGRITY_WORDS.missing.banner);
   for (const k of ["match", "mismatch", "missing", "unchecked", "simulated"]) assert.ok(M.INTEGRITY_WORDS[k].fact, k);
   const player = readFileSync(new URL("../src/evidence/EvidencePlayer.tsx", import.meta.url), "utf8");
-  assert.match(player, /const banner = INTEGRITY_WORDS\[file\.integrity\]\.banner;/);
+  // The banner is the integrity's, except for a file not kept after cleanup (cleanup.archive), which says that instead of "not there".
+  assert.match(player, /const banner = fileBanner\(file\);/);
+  for (const k of ["match", "mismatch", "missing", "unchecked", "simulated"]) assert.equal(M.fileBanner({ integrity: k, reason: null }), M.INTEGRITY_WORDS[k].banner, k);
+  assert.equal(M.fileBanner({ integrity: "mismatch", reason: "missing" }), M.INTEGRITY_WORDS.mismatch.banner);
   assert.match(player, /\["Integrity", INTEGRITY_WORDS\[file\.integrity\]\.fact\]/);
 });
 

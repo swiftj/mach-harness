@@ -96,7 +96,9 @@ var rules = map[RecordKind]recordRules{
 		"first_pass", "human_approval", "integration", "branch", "into", "method", "approved_commit", "landed_commit", "merge_commit",
 		"pull_request", "merged_at", "mode", "notes", "outcome", "product", "record_version", "review_rejections", "risk", "rounds",
 		"slice_id", "tests_passing_on_first_run", "tests_seen_failing_first", "ticket_id", "title", "verify_failures", "verify_findings",
-		"rule", "count", "seat", "type", "kind", "epic_id", "issue", "number", "revision")},
+		"rule", "count", "seat", "type", "kind", "epic_id", "issue", "number", "revision",
+		// What cleanup kept (cleanup.archive): the codes of a person's part, and why the archive was or was not kept.
+		"raised_to_person", "archive_kept", "kept", "setting", "chosen_by", "published", "reason")},
 }
 
 // seatNames are what a vote's "reviewer" holds when a model, not a person, reviewed.

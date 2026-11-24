@@ -260,6 +260,18 @@ with no `.factory/` answers `factory_present: false` and the same keys.
   `decision.json`; the same members of `.factory/archive/<ticket>.tar.gz` once the cell folder is
   gone. Never `repo/`, `.factory/local/`, an execution stream, `packet.json`, `diff.patch`,
   `test-suite.log` or `contract-check.log`.
+- **No archive kept:** cleanup keeps a ticket's archive only as `cleanup.archive` says (by default, only
+  for a ticket a person decided something on). Once the cell folder is gone and the ticket's latest run
+  record names no archive (`"archive": null`), or names one that is not in `.factory/archive/`,
+  `cells/{ticket}/evidence` answers 200 with no artifacts and `not_kept`: `{reason, setting, chosen_by,
+  published, raised_to_person, archive, outcome}`. `reason` is the run record's `archive_kept.reason`
+  (MACH's own sentence; one that holds a control character or a path outside the project is not served),
+  else "The evidence files were not kept after cleanup (cleanup.archive)."; for an archive named but
+  gone it says so and `archive` names it. `setting` is `none`, `raised` or `all`, `chosen_by` is
+  `setting` or `flag`, each null when the record does not say; `raised_to_person` keeps only the codes'
+  form (lower-case words and hyphens). `not_kept` is null wherever the files are there, and for a
+  ticket with no run record. The lanes of such a build (`cells/{ticket}`, `lanes`) are served with
+  `state: "not-kept"`, `source: "none"`, the same `not_kept`, and `build_json.why` holding the reason.
 - **By id:** the client sends a catalog id (`a` + 24 hex, specific to this project, path and
   content); no route takes a path. Unknown ids are 404.
 - **Guards:** every path is resolved under an `os.Root` at the project folder; no component may be a
