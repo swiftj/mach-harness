@@ -580,28 +580,241 @@ class ReplanTest(Base):
             (self.cell / "build.json").write_text(json.dumps({"loop": 1, "tasks": []}))
         refused("has been through a judging round", judged)
 
-        def stray():
-            self.task_commit()
-            (self.work / "notes.txt").write_text("by hand\n")
-            git(self.work, "add", "-A")
-            git(self.work, "commit", "-q", "-m", "a person's own commit")
-        refused("not this plan's tasks or contracts", stray)
-
-        def dirty():
-            git(self.work, "reset", "-q", "--hard", "HEAD~1")
-            (self.work / "wip.txt").write_text("unsaved\n")
-        refused("uncommitted changes", dirty)
-
         def merged():
-            (self.work / "wip.txt").unlink()
+            (self.cell / "build.json").write_text(json.dumps({"loop": 0, "tasks": [{"id": "T01", "commit": git(self.work, "rev-parse", "HEAD").stdout.strip()}]}))
             git(self.project, "merge", "-q", "--no-edit", "feature/LOCAL-001")
         refused("already on the main branch", merged)
+        _, _, err = self.replan()
+        self.assertNotIn("bandon", err, "the refusal names what can be done next, not abandoning the work")
+        self.assertIn("carry on", err)
 
         def wrong_stage():
             state = json.loads((self.cell / "cell.json").read_text())
             state["stage"] = "verified"
             (self.cell / "cell.json").write_text(json.dumps(state))
         refused("Only a planned or building cell can be re-planned", wrong_stage)
+
+    # The branch's spec commits and what a re-plan does with every commit and file it finds.
+
+    def finalize(self, *extra):
+        return run("finalize", "LOCAL-001", "--spec", f"specs/slices/{SPEC_NAME}", *extra, project=self.project)
+
+    def state(self):
+        return json.loads((self.cell / "cell.json").read_text())
+
+    def head(self):
+        return git(self.work, "rev-parse", "HEAD").stdout.strip()
+
+    def subject(self, rev="HEAD"):
+        return git(self.work, "log", "-1", "--format=%s", rev).stdout.strip()
+
+    def stuck_building(self):
+        """A build started and then stuck: build.json written, no task committed (the reported state)."""
+        (self.cell / "build.json").write_text(json.dumps({"loop": 0, "tasks": [{"id": "T01", "kind": "test", "status": "pending"}]}))
+        state = self.state()
+        state["stage"] = "building"
+        (self.cell / "cell.json").write_text(json.dumps(state))
+
+    def plan_again(self):
+        (self.cell / "plan.md").write_text(PLAN)
+        contract = self.work / "proto/openapi/members.yaml"
+        contract.parent.mkdir(parents=True, exist_ok=True)
+        contract.write_text("openapi: 3.1.0\n")
+        code, out, _ = self.check()
+        self.assertEqual(code, 0, out)
+
+    def test_the_reported_case_a_branch_holding_only_its_spec_commit_after_the_recorded_point(self):
+        # finalize could not commit the spec (here a pre-commit hook refused it), so the cell recorded the commit before it;
+        # the spec was then committed by hand with finalize's own message. The build started, stuck, and committed nothing.
+        info = self.groom()
+        self.work, self.cell = Path(info["workdir"]), Path(info["cell_dir"])
+        hooks = self.cell / "hooks"
+        hooks.mkdir()
+        (hooks / "pre-commit").write_text("#!/bin/sh\nexit 1\n")
+        (hooks / "pre-commit").chmod(0o755)
+        git(self.work, "config", "core.hooksPath", str(hooks))
+        base = self.head()
+        code, out, _ = self.finalize()
+        self.assertEqual(code, 0, out)
+        self.assertIn("git commit failed", out)
+        self.assertEqual(self.state()["spec_commit"], base)
+        git(self.work, "config", "--unset", "core.hooksPath")
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-q", "-m", "spec(SLICE-001): Invite a teammate by email [LOCAL-001]")
+        spec = self.head()
+        (self.cell / "plan.md").write_text(PLAN)
+        self.stuck_building()
+        code, out, err = self.replan("the hardening ticket has no test command")
+        self.assertEqual(code, 0, err)
+        result = json.loads(out)
+        self.assertEqual(result["stage"], "spec-ready")
+        self.assertIsNone(result["reset"], "the newest spec is the branch's tip: nothing to set aside")
+        self.assertEqual(result["spec_commit"], {"was": base, "now": spec})
+        self.assertEqual((result["set_aside"], result["not_recognised"], result["kept_on_branch"], result["uncommitted"]), ([], [], [], None))
+        self.assertEqual(self.head(), spec, "the spec finalized last is what the branch holds")
+        self.assertEqual(self.state()["spec_commit"], spec)
+        self.assertFalse((self.cell / "build.json").exists())
+        self.assertTrue((self.cell / "plan-history/1/build.json").is_file())
+        self.plan_again()  # planned again, with nothing in its way
+        self.assertEqual(self.state()["stage"], "planned")
+
+    def test_files_a_stuck_build_wrote_without_committing_are_saved_and_can_be_brought_back(self):
+        self.planned()
+        self.task_commit()
+        tip = self.head()
+        (self.work / "README.md").write_text("changed by the builder\n")
+        (self.work / "src").mkdir()
+        (self.work / "src/invite.ts").write_text("export const invite = 1;\n")
+        code, out, err = self.replan()
+        self.assertEqual(code, 0, err)
+        result = json.loads(out)
+        saved = result["uncommitted"]
+        self.assertEqual(sorted(saved["paths"]), ["README.md", "src/invite.ts"])
+        ref = "refs/mach/replan/LOCAL-001/1"
+        self.assertEqual(result["reset"]["saved_as"], ref)
+        self.assertEqual(git(self.work, "rev-parse", ref).stdout.strip(), saved["commit"], "the saved ref holds the uncommitted files")
+        self.assertEqual(git(self.work, "rev-parse", f"{ref}~1").stdout.strip(), tip, "on top of the branch's old tip")
+        self.assertEqual(git(self.work, "status", "--porcelain").stdout, "", "the checkout is left clean for the new plan")
+        self.assertFalse((self.work / "src/invite.ts").exists())
+        self.assertEqual((self.work / "README.md").read_text(), "demo\n")
+        self.assertIn(f"checkout {ref} --", saved["bring_back"])
+        git(self.work, "checkout", ref, "--", "src/invite.ts", "README.md")
+        self.assertEqual((self.work / "src/invite.ts").read_text(), "export const invite = 1;\n")
+        self.assertEqual((self.work / "README.md").read_text(), "changed by the builder\n")
+        replan = json.loads((self.cell / "plan-history/1/replan.json").read_text())
+        self.assertEqual(replan["uncommitted"]["commit"], saved["commit"])
+
+    def test_a_commit_mach_does_not_recognise_is_set_aside_and_can_be_brought_back(self):
+        self.planned()
+        spec_commit = self.state()["spec_commit"]
+        task = self.task_commit()
+        (self.work / "notes.txt").write_text("by hand\n")
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-q", "-m", "a person's own commit")
+        own = self.head()
+        code, out, err = self.replan()
+        self.assertEqual(code, 0, err)
+        result = json.loads(out)
+        self.assertEqual(self.head(), spec_commit)
+        self.assertEqual([item["commit"] for item in result["not_recognised"]], [own])
+        self.assertEqual(result["not_recognised"][0]["bring_back"], f'git -C "{self.work}" cherry-pick {own}')
+        self.assertEqual([(item["commit"], item["as"]) for item in result["set_aside"]],
+                         [(own, "not recognised"), (task, "task T01"), (git(self.work, "rev-parse", "refs/mach/replan/LOCAL-001/1~2").stdout.strip(), "contracts")])
+        self.assertIn("cherry-pick", result["next"])
+        self.assertEqual(git(self.work, "cherry-pick", own).returncode, 0)
+        self.assertEqual((self.work / "notes.txt").read_text(), "by hand\n")
+
+    def test_a_draft_then_a_ready_spec_records_the_ready_commit(self):
+        info = self.groom(spec=OPEN_SPEC)
+        self.work, self.cell = Path(info["workdir"]), Path(info["cell_dir"])
+        self.assertEqual(self.finalize("--allow-open")[0], 0)
+        draft = self.head()
+        (Path(info["specs_dir"]) / SPEC_NAME).write_text(SPEC)
+        self.assertEqual(self.finalize()[0], 0)
+        self.assertNotEqual(self.head(), draft)
+        self.assertEqual(self.state()["spec_commit"], self.head())
+
+    def test_a_slice_handed_over_records_its_spec_commit(self):
+        self.groom()
+        self.work, self.cell = Path(self.project / ".factory/worktrees/LOCAL-001/repo"), self.project / ".factory/worktrees/LOCAL-001"
+        code, out, _ = self.finalize("--from-studio", "SLICE-001")
+        self.assertEqual(code, 0, out)
+        self.assertTrue(self.subject().startswith("spec(SLICE-001): "))
+        self.assertEqual(self.state()["spec_commit"], self.head())
+
+    def test_a_small_change_records_its_spec_commit(self):
+        code, out, _ = run("open", "LOCAL-001", "--small", project=self.project)
+        self.assertEqual(code, 0, out)
+        info = self.groom()
+        self.work, self.cell = Path(info["workdir"]), Path(info["cell_dir"])
+        for _ in range(2):  # a spec the rules say is not small is saved as a draft first, then finalized in full
+            self.finalize("--allow-open")
+            if self.state()["stage"] == "spec-ready":
+                break
+        self.assertEqual(self.state()["stage"], "spec-ready")
+        self.assertTrue(self.subject().startswith("spec(SLICE-001): "))
+        self.assertEqual(self.state()["spec_commit"], self.head())
+
+    def test_finalizing_an_unchanged_spec_again_keeps_the_recorded_spec_commit(self):
+        self.planned()
+        spec_commit = self.state()["spec_commit"]
+        self.assertTrue(self.subject().startswith("contract("))
+        self.assertEqual(self.finalize()[0], 0)
+        self.assertEqual(self.state()["spec_commit"], spec_commit, "the contract commit is the plan's, not the spec's")
+        self.plan_again()
+        self.task_commit()
+        code, _, err = self.replan()
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.head(), spec_commit)
+        self.assertFalse((self.work / "proto/openapi/members.yaml").exists(), "the old plan's contract is set aside with it")
+
+    def test_a_spec_finalized_without_a_commit_is_restored_on_the_branch(self):
+        info = self.groom()
+        self.work, self.cell = Path(info["workdir"]), Path(info["cell_dir"])
+        base = self.head()
+        self.assertEqual(self.finalize("--no-commit")[0], 0)
+        self.assertEqual(self.state()["spec_commit"], base)
+        self.plan_again()  # the contracts are committed; the spec is still not
+        self.stuck_building()
+        code, out, err = self.replan()
+        self.assertEqual(code, 0, err)
+        result = json.loads(out)
+        self.assertIn(f"specs/slices/{SPEC_NAME}", result["uncommitted"]["paths"])
+        self.assertEqual((self.work / "specs/slices" / SPEC_NAME).read_text(), SPEC)
+        self.assertEqual(self.subject(), "spec(SLICE-001): Invite a teammate by email [LOCAL-001]")
+        self.assertEqual(git(self.work, "rev-parse", "HEAD~1").stdout.strip(), base)
+        self.assertEqual(result["spec_restored"]["commit"], self.head())
+        self.assertEqual(result["spec_commit"], {"was": base, "now": self.head()})
+        self.assertEqual(git(self.work, "status", "--porcelain").stdout, "")
+        self.plan_again()
+
+    def test_a_cell_without_a_recorded_spec_commit_returns_to_its_newest_spec(self):
+        self.planned()
+        newest = self.state()["spec_commit"]
+        state = self.state()
+        state.pop("spec_commit")
+        (self.cell / "cell.json").write_text(json.dumps(state))
+        self.task_commit()
+        code, out, err = self.replan()
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.head(), newest)
+        self.assertEqual(json.loads(out)["spec_commit"], {"was": None, "now": newest})
+
+    def test_a_recorded_spec_commit_no_longer_on_the_branch_is_not_a_dead_end(self):
+        self.planned()
+        spec_commit = self.state()["spec_commit"]
+        state = self.state()
+        state["spec_commit"] = "0" * 40
+        (self.cell / "cell.json").write_text(json.dumps(state))
+        self.task_commit()
+        code, out, err = self.replan()
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.head(), spec_commit)
+
+    def test_a_newer_spec_after_the_plan_is_kept_and_the_work_after_it_is_set_aside(self):
+        # spec S1 (recorded), the plan's contract C, then a corrected spec S2 committed outside finalize, then a task T:
+        # the branch returns to S2. C stays below it on the branch and is named under "kept"; T is set aside.
+        info = self.planned()
+        first = self.state()["spec_commit"]
+        contract = self.head()
+        corrected = SPEC.replace("7 days", "14 days")
+        (Path(info["specs_dir"]) / SPEC_NAME).write_text(corrected)
+        self.assertEqual(self.finalize("--no-commit")[0], 0)  # the plan is set aside; the commit is made by hand
+        self.assertEqual(self.state()["spec_commit"], first)
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-q", "-m", "spec(SLICE-001): Invite a teammate by email [LOCAL-001]")
+        second = self.head()
+        self.plan_again()
+        task = self.task_commit()
+        code, out, err = self.replan()
+        self.assertEqual(code, 0, err)
+        result = json.loads(out)
+        self.assertEqual(self.head(), second)
+        self.assertEqual((self.work / "specs/slices" / SPEC_NAME).read_text(), corrected, "the spec finalized last, never the older one")
+        self.assertEqual(result["spec_commit"], {"was": first, "now": second})
+        self.assertEqual([(item["commit"], item["as"]) for item in result["kept_on_branch"]], [(contract, "contracts")])
+        self.assertEqual([(item["commit"], item["as"]) for item in result["set_aside"]], [(task, "task T01")])
+        self.assertEqual(self.state()["spec_commit"], second)
 
 
 if __name__ == "__main__":
