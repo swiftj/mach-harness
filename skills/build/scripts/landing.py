@@ -135,6 +135,47 @@ def patch_id(repo: Path, sha: str, git: Optional[Runner] = None) -> Optional[str
     return out.split()[0] if out.split() else None
 
 
+def set_aside_files(repo: Path, paths: List[str], ref: str, message: str, *, git: Optional[Runner] = None) -> Dict[str, Any]:
+    """Save a worktree's uncommitted files (tracked changes and untracked files, among `paths`) as one commit on top of its HEAD, kept under
+    `ref`, then return the worktree to its HEAD for those paths. Done as the intent station's re-plan saves a cell's files
+    (cell.py save_uncommitted): through a separate index, so the worktree's own index is not touched while saving. Nothing is lost: the ref
+    keeps every file, and `git checkout <ref> -- <path>` in any worktree of the repository brings one back. Returns {"commit", "ref",
+    "paths"}; raises LandingError with nothing changed when the files could not be saved."""
+    git = git or run_git
+    head = _commit(git, repo, "HEAD")
+    index = Path(_ok(git, ["rev-parse", "--git-path", "index"], repo, "set-aside-failed", "Git could not find the worktree's index").strip())
+    index = index if index.is_absolute() else repo / index
+    scratch = index.with_name(index.name + ".mach-lane")
+    env = dict(os.environ, GIT_INDEX_FILE=str(scratch))
+    if git(["var", "GIT_COMMITTER_IDENT"], repo).returncode != 0:
+        env.update({"GIT_AUTHOR_NAME": "MACH", "GIT_AUTHOR_EMAIL": "mach@localhost", "GIT_COMMITTER_NAME": "MACH", "GIT_COMMITTER_EMAIL": "mach@localhost"})
+    try:
+        if index.is_file():
+            shutil.copyfile(str(index), str(scratch))
+        _ok(git, ["add", "-A", "--sparse", "--", *paths], repo, "set-aside-failed", "Git could not take the uncommitted files", env=env)
+        tree = _ok(git, ["write-tree"], repo, "set-aside-failed", "Git could not record the uncommitted files", env=env).strip()
+        commit = _ok(git, ["commit-tree", tree, "-p", head, "-m", message], repo, "set-aside-failed", "Git could not save the uncommitted files",
+                     env=env).strip()
+    finally:
+        if scratch.exists():
+            scratch.unlink()
+    _ok(git, ["update-ref", ref, commit], repo, "set-aside-failed", f"Git could not keep the saved files as {ref}")
+    # Saved: now the worktree is put back to its HEAD for those paths, so the lane holds only what its tasks committed.
+    git(["reset", "-q", "--", *paths], repo)  # anything staged goes back to HEAD's entry, or out of the index
+    tracked = [name for name in paths if git(["cat-file", "-e", f"HEAD:{name}"], repo).returncode == 0]
+    if tracked:
+        git(["checkout", "-q", "HEAD", "--", *tracked], repo)
+    for name in paths:
+        if name in tracked:
+            continue
+        target = repo / name
+        if target.is_symlink() or target.is_file():
+            target.unlink()
+        elif target.is_dir():
+            shutil.rmtree(str(target), ignore_errors=True)
+    return {"commit": commit, "ref": ref, "paths": sorted(paths)}
+
+
 def _subject_and_body(git: Runner, repo: Path, sha: str) -> str:
     return _ok(git, ["log", "-1", "--format=%B", sha], repo, "git-failed", f"Git could not read {sha[:10]}'s message")
 

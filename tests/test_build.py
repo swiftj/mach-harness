@@ -853,8 +853,10 @@ class SetCommandsTest(Base):
     def test_in_a_revision_round(self):
         self.build_through("T05")
         self.ok("finish", "LOCAL-001")
+        head = git(self.work, "rev-parse", "HEAD").stdout.strip()
+        self.put(self.cellroot, {"evidence/results.json": json.dumps({"head": head, "started_at": "2026-11-24T10:00:00+00:00"})})
         built = self.refused("set-commands", "LOCAL-001", "--test-cmd", NEW_CMD, "--reason", "x")
-        self.assertIn("is built", built)
+        self.assertIn("is built and verification has already judged this build", built)
         self.assertIn("build.py revise", built)
         self.ok("revise", "LOCAL-001")
         self.ok("set-commands", "LOCAL-001", "--test-cmd", NEW_CMD, "--reason", "review found the suite skipped files")
@@ -864,6 +866,77 @@ class SetCommandsTest(Base):
         self.put(self.work, {"README.md": "# Sample\n\nRound 1.\n"})
         self.assertEqual(self.ok("done", "LOCAL-001", "R1-T01")["suite"], "green")
         self.assertEqual(self.ok("finish", "LOCAL-001")["status"], "BUILT")
+
+    def test_on_a_built_cell_before_verification_a_passing_command_leaves_the_finish_standing(self):
+        self.build_through("T05")
+        self.ok("finish", "LOCAL-001")
+        commits = self.log()
+        done = self.ok("set-commands", "LOCAL-001", "--test-cmd", NEW_CMD, "--reason", "the project names its test files test_*.py")
+        self.assertEqual((done["status"], done["stage"], done["build"], done["suite"]["passed"]), ("COMMANDS_SET", "built", build.BUILT_STANDS, True))
+        self.assertIn("verify.py start LOCAL-001", done["next"])
+        self.assertEqual(self.log(), commits, "nothing is committed or undone")
+        self.assertEqual(json.loads((self.cellroot / "cell.json").read_text())["stage"], "built")
+        report = json.loads((self.cellroot / "build-report.json").read_text())
+        head = git(self.work, "rev-parse", "HEAD").stdout.strip()
+        self.assertEqual((report["status"], report["head"], report["tests"]["command"], report["tests"]["passed"], report["tests"]["ran_on"]),
+                         ("BUILT", head, NEW_CMD, True, head), "verification runs the command the report names: the new one")
+        self.assertEqual([(d["during"], d["old"], d["new"]) for d in report["deviations"] if d["type"] == "test-command-set"],
+                         [("built, before verification", TEST_CMD, NEW_CMD)])
+        self.assertEqual(report["command_changes"][0]["changed"], [{"command": "test", "old": TEST_CMD, "new": NEW_CMD}])
+        self.assertEqual(report["commands_changed_after_finish"][0]["outcome"], "the finish stands")
+
+    def test_on_a_built_cell_a_failing_command_reopens_the_build_and_nothing_is_lost(self):
+        self.build_through("T05")
+        self.ok("finish", "LOCAL-001")
+        commits = self.log()
+        failing = f"{sys.executable} -c 'import sys; sys.exit(1)'"
+        done = self.ok("set-commands", "LOCAL-001", "--test-cmd", failing, "--reason", "the suite should also run the slow checks")
+        self.assertEqual((done["status"], done["stage"], done["build"], done["suite"]["passed"], done["task_added"]),
+                         ("COMMANDS_SET", "building", build.BUILT_REOPENED, False, "C-T01"))
+        self.assertIn("build.py green LOCAL-001 C-T01", done["next"])
+        self.assertIn("--already-done", done["next"])
+        self.assertEqual(self.log(), commits, "every commit stays")
+        self.assertEqual(json.loads((self.cellroot / "cell.json").read_text())["stage"], "building")
+        report = json.loads((self.cellroot / "build-report.json").read_text())
+        self.assertEqual(report["status"], "REOPENED", "the old finish is never trusted again")
+        state = self.state()
+        self.assertEqual(([t["status"] for t in state["tasks"]], state["suite"]), (["done"] * 5 + ["pending"], "red"))
+        self.assertIn("- [ ] C-T01 [impl] Make the whole suite pass with the new test command", (self.cellroot / "plan.md").read_text())
+        self.assertEqual(self.ok("next", "LOCAL-001")["task"], "C-T01")
+        self.assertIn("does not pass", self.refused("green", "LOCAL-001", "C-T01", "--already-done", "x"))
+        # The builder finds the command was the problem: it changes it again, and completes the task with nothing to change.
+        self.ok("set-commands", "LOCAL-001", "--test-cmd", TEST_CMD, "--reason", "the slow checks are not part of this project's suite")
+        self.ok("green", "LOCAL-001", "C-T01", "--already-done", "the suite passes with the project's command; nothing to change")
+        self.assertEqual(self.ok("finish", "LOCAL-001")["status"], "BUILT")
+        report = json.loads((self.cellroot / "build-report.json").read_text())
+        self.assertEqual((report["status"], report["tests"]["command"]), ("BUILT", TEST_CMD))
+        self.assertEqual([d["during"] for d in report["deviations"] if d["type"] == "test-command-set"], ["built, before verification", "first build"])
+        entered = [r["data"] for r in self.lifecycle() if r["type"] == "station.entered" and r["station"] == "build"]
+        self.assertEqual(entered[-1]["reopened"], "commands-changed")
+
+    def test_on_a_built_cell_a_fix_can_be_committed_under_the_added_task(self):
+        self.build_through("T05")
+        self.ok("finish", "LOCAL-001")
+        strict = f"{sys.executable} -m unittest discover -s tests -p 'test_*.py' && {sys.executable} -c \"import pathlib, sys; sys.exit(0 if 'teammates' in pathlib.Path('NOTES.md').read_text() else 1)\""
+        strict = f"sh -c {build.shlex.quote(strict)}"
+        done = self.ok("set-commands", "LOCAL-001", "--test-cmd", strict, "--reason", "the suite checks the notes too")
+        self.assertEqual(done["task_added"], "C-T01")
+        self.put(self.work, {"NOTES.md": "Invite teammates.\n"})
+        self.ok("green", "LOCAL-001", "C-T01")
+        self.assertEqual(self.ok("finish", "LOCAL-001")["status"], "BUILT")
+        self.assertIn("NOTES.md", json.loads((self.cellroot / "build-report.json").read_text())["files_changed"])
+
+    def test_on_a_built_cell_uncommitted_files_are_set_aside_by_a_person_first(self):
+        self.build_through("T05")
+        self.ok("finish", "LOCAL-001")
+        self.put(self.work, {"scratch.txt": "x\n"})
+        refusal = self.refused("set-commands", "LOCAL-001", "--test-cmd", NEW_CMD, "--reason", "x")
+        self.assertIn("uncommitted changes (scratch.txt)", refusal)
+        self.assertIn("stash push --include-untracked", refusal)
+        self.assertIn("then run build.py set-commands LOCAL-001 again", refusal)
+
+    def lifecycle(self):
+        return [json.loads(line) for line in (self.cellroot / "lifecycle.jsonl").read_text().splitlines()]
 
     def test_refusals_say_what_to_do(self):
         self.assertIn("--reason is required", self.refused("set-commands", "LOCAL-001", "--test-cmd", NEW_CMD, "--reason", "  "))

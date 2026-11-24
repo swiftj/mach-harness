@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import unittest
+from unittest import mock
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -274,9 +275,9 @@ class StationRefusalTest(Base):
             "lane-held": ("WAIT", "worker-in-cell", "wait"), "no-free-place": ("WAIT", "free-place", "wait"),
             "lanes-not-ready": ("REFUSED", None, "next"), "wrong-stage": ("REFUSED", None, "next"), "already-joined": ("REFUSED", None, "next"),
             "lanes-not-open": ("REFUSED", None, "next"), "lanes-not-done": ("REFUSED", None, "lanes-start"),
-            "suite-red": ("REFUSED", "lanes-blocked", "person"), "uncommitted-changes": ("REFUSED", "lanes-blocked", "person"),
+            "uncommitted-changes": ("REFUSED", "lanes-blocked", "person"),
             "lane-folder-unknown": ("REFUSED", "lanes-blocked", "person"), "worktree-failed": ("REFUSED", "lanes-blocked", "person"),
-            "lane-dirty": ("REFUSED", "lanes-blocked", "person"), "bad-holder": ("REFUSED", "lanes-blocked", "person"),
+            "bad-holder": ("REFUSED", "lanes-blocked", "person"),
             "bad-grant": ("REFUSED", "lanes-blocked", "person"),
         }
         for code, (status, needs, then) in expected.items():
@@ -307,14 +308,16 @@ class StationRefusalTest(Base):
         (self.work / "app/stray.py").unlink()
         self.assertEqual(self.lanes_start()["status"], "OPEN")
 
-    def test_a_red_suite_at_the_lanes_is_for_a_person(self):
+    def test_a_red_suite_at_the_lanes_is_not_for_a_person_the_plan_is_built_in_order(self):
         self.ready_lanes()
         self.ok("start", TICKET)
         state = self.state()
         state["suite"] = "red"
         (self.cellroot / "build.json").write_text(json.dumps(state))
         answer = self.lanes_start()
-        self.assertEqual((answer["code"], answer["needs"], answer["then"]), ("suite-red", "lanes-blocked", "person"))
+        self.assertEqual((answer["status"], answer.get("needs"), answer["then"]), ("SEQUENTIAL", None, "next"))
+        self.assertIn("The cell's suite is red where the lanes would open", answer["reason"])
+        self.assertEqual(self.next_step("--holder", HOLDER)["action"], "build", "the cell's builder carries on")
 
     def test_a_folder_in_a_lanes_place_is_for_a_person_and_then_it_carries_on(self):
         self.ready_lanes()
@@ -327,19 +330,17 @@ class StationRefusalTest(Base):
         shutil.move(str(self.lane_work("L2")), str(Path(self.tmp.name) / "aside"))
         self.assertEqual([item["lane"] for item in self.lanes_start()["lanes"]], ["L1", "L2"])
 
-    def test_no_free_place_for_the_next_batch_is_a_wait(self):
+    def test_with_no_free_place_for_the_next_batch_the_tickets_own_place_runs_a_lane(self):
         self.ready_lanes(plan=THREE_LANES, settings={"factory": {"max_builders": 2}})
         self.ok("start", TICKET)
         self.assertEqual([item["lane"] for item in self.lanes_start()["lanes"]], ["L1", "L2"])
         self.build_lane("L1", L1)
         self.build_lane("L2", L2)
-        others = [self.other_building("OTHER-1"), self.other_building("OTHER-2")]
+        self.other_building("OTHER-1")
+        self.other_building("OTHER-2")
         answer = self.lanes_start()
-        self.assertEqual((answer["status"], answer["code"], answer["needs"], answer["then"], answer["grant"]), ("WAIT", "no-free-place", "free-place", "wait", 0))
-        self.assertIn("Nothing is lost", answer["next"])
-        for folder in others:
-            shutil.rmtree(folder)
-        self.assertEqual([item["lane"] for item in self.lanes_start()["lanes"]], ["L3"])
+        self.assertEqual((answer["status"], answer["then"], answer["grant"], answer["free_places"], answer["own_place_only"]), ("OPEN", "lanes-start", 1, 0, True))
+        self.assertEqual([item["lane"] for item in answer["lanes"]], ["L3"], "never waiting with nothing running")
 
 
 class JoinTest(Base):
@@ -410,13 +411,15 @@ class JoinTest(Base):
         self.assertIn("run build.py join LOCAL-001 again", joined["next"])
         self.assertEqual(self.next_step("--holder", HOLDER)["action"], "build-lanes", "the ticket stays at its lanes, to be joined again")
 
-    def test_uncommitted_work_in_a_lane_is_for_a_person(self):
+    def test_stray_files_in_a_lane_are_not_for_a_person(self):
         self.built()
         self.build_lane("L1", L1)
         self.build_lane("L2", L2)
         self.put(self.lane_work("L2"), {"app/stray.py": "X = 1\n"})
         joined = self.lanes_join()
-        self.assertEqual((joined["code"], joined["needs"], joined["then"]), ("lane-dirty", "lanes-blocked", "person"))
+        self.assertEqual((joined["status"], joined["needs"], joined["then"], joined["landed"]), ("JOINED", None, "next", 4))
+        self.assertIn("lane L2's uncommitted files (app/stray.py) were set aside under refs/mach/lane-files/LOCAL-001/L2/1, not landed", joined["reason"])
+        self.assertEqual(joined["files_set_aside"][0]["ref"], "refs/mach/lane-files/LOCAL-001/L2/1")
 
 
 class HandBackTest(Base):
@@ -534,6 +537,64 @@ class TwoDriversTest(Base):
         self.assertEqual([item["lane"] for item in answer["lanes"]], ["L1", "L2"])
         self.assertEqual(json.loads(self.lane_file("L2").read_text())["holder"], OTHER)
         self.assertEqual(self.next_step("--holder", HOLDER)["needs"], "worker-in-cell", "the first driver is now the other one")
+
+    def test_the_schedule_holds_a_ticket_whose_lanes_another_driver_holds_by_the_same_rule_as_next(self):
+        self.opened()
+        self.age(self.cellroot / "claim.json")  # only the live lanes hold it now
+        held = self.run_json("schedule", TICKET, "--holder", OTHER)
+        self.assertEqual(held["start"], [])
+        (item,) = held["held"]
+        self.assertEqual((item["ticket_id"], item["rule"]), (TICKET, "claimed"))
+        self.assertIn("another worker is building its lane(s) L1, L2, since", item["why"])
+        self.assertNotIn(HOLDER, json.dumps(held), "never the holder")
+        self.assertEqual(self.next_step("--holder", OTHER)["needs"], "worker-in-cell", "the routing sheet agrees")
+        self.assertEqual([item["ticket_id"] for item in self.run_json("schedule", TICKET, "--holder", HOLDER)["start"]], [TICKET],
+                         "the driver whose lanes they are is not held by them")
+        self.assertEqual(self.run_json("schedule", TICKET)["held"][0]["rule"], "claimed", "without a holder, any live lane holds it")
+        self.age(self.lane_file("L1"), self.lane_file("L2"))
+        self.assertEqual([item["ticket_id"] for item in self.run_json("schedule", TICKET, "--holder", OTHER)["start"]], [TICKET],
+                         "lanes idle past factory.claim_minutes hold nothing")
+
+    def supervised(self, mine, earlier_state, runner="r-1"):
+        """A ledger with two supervised executions of this ticket: an earlier one (in `earlier_state`) and this one (`mine`)."""
+        ledger = {"supervisor": {"executions": {
+            "x111111111111": {"ticket_id": TICKET, "state": earlier_state, "runner_id": runner},
+            mine: {"ticket_id": TICKET, "state": "started", "runner_id": "r-1"}}}}
+        self.put(self.project, {".factory/intake/ledger.json": json.dumps(ledger)})
+        return mock.patch.dict(os.environ, {run.EXECUTION_ENV: mine})
+
+    def test_a_new_execution_carries_on_its_ended_predecessors_lanes_at_once(self):
+        earlier = run.execution_holder("x111111111111")
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        with self.supervised("x111111111111", "started"):
+            self.assertEqual(self.run_json("where")["holder"], earlier, "an execution's holder is its own, the same each time")
+            self.lanes_start(earlier)
+        self.build_lane("L1", L1[:1])  # then the execution was killed mid-lanes; the ledger records it as ended
+        with self.supervised("x222222222222", "unknown"):
+            mine = self.run_json("where")["holder"]
+            self.assertEqual(mine, run.execution_holder("x222222222222"))
+            found = self.next_step("--holder", mine)
+            self.assertEqual(found["action"], "build-lanes", "no worker-in-cell: its predecessor is known to have ended")
+            self.assertIn("Carried on from this ticket's earlier Factory execution, which has ended", found["reason"])
+            answer = self.lanes_start(mine)
+            self.assertEqual([(item["lane"], item["done"]) for item in answer["lanes"]], [("L1", 1), ("L2", 0)], "each from where it stopped")
+            self.assertEqual(json.loads(self.lane_file("L1").read_text())["earlier_holders"],
+                             [{"holder": earlier, "until": json.loads(self.lane_file("L1").read_text())["handed_at"],
+                               "why": "carried on from a run known to have ended"}])
+
+    def test_an_execution_never_carries_on_from_one_still_running_or_another_machines(self):
+        earlier = run.execution_holder("x111111111111")
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        with self.supervised("x111111111111", "started"):
+            self.lanes_start(earlier)
+        for state, runner in (("started", "r-1"), ("finished", "r-2")):
+            with self.supervised("x222222222222", state, runner=runner):
+                mine = self.run_json("where")["holder"]
+                self.assertEqual(self.next_step("--holder", mine)["needs"], "worker-in-cell", (state, runner))
+                self.assertEqual(self.lanes_start(mine)["code"], "worker-in-cell")
+        self.assertEqual(json.loads(self.lane_file("L1").read_text())["holder"], earlier)
 
     def test_an_interrupted_conversation_carries_on_with_its_own_lanes(self):
         self.opened()

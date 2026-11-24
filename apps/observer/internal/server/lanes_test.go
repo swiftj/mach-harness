@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -450,5 +451,68 @@ func TestLanesReadFromTheArchive(t *testing.T) {
 	d, _ = cellWith(t, h, "T-3")
 	if l := lanesOfReply(t, d); l["state"] != "unreadable" || l["build_json"].(map[string]any)["read"] != "unreadable" && l["build_json"].(map[string]any)["read"] != "absent" {
 		t.Fatalf("no files: %v", l)
+	}
+}
+
+// joiningCell writes T-3 with every lane done and a join that started at 10:30 and has no result yet,
+// done by the process pid on host.
+func joiningCell(t *testing.T, root string, pid int, host string) {
+	cell := filepath.Join(root, ".factory/worktrees/T-3")
+	pending := func(id, kind string) map[string]any { return task(id, kind, "pending", nil) }
+	b := buildJSON("open", []map[string]any{laneEntry("L1", "open", "T02", "T03"), laneEntry("L2", "open", "T04", "T05")},
+		[]map[string]any{task("T01", "contract", "done", map[string]any{"commit": "abcdef1234"}), pending("T02", "test"), pending("T03", "impl"),
+			pending("T04", "test"), pending("T05", "impl"), pending("T07", "docs")}, nil)
+	rec := b["lanes"].(map[string]any)
+	rec["join_started_at"] = "2026-11-24T10:30:00+00:00"
+	rec["join_running"] = map[string]any{"since": "2026-11-24T10:30:00+00:00", "pid": pid, "host": host}
+	writeJSONFile(t, filepath.Join(cell, "build.json"), b)
+	writeJSONFile(t, filepath.Join(cell, "lanes/L1/lane.json"), laneJSON("L1", "done", task("T02", "test", "done", map[string]any{"commit": lc1}), task("T03", "impl", "done", map[string]any{"commit": lc2})))
+	writeJSONFile(t, filepath.Join(cell, "lanes/L2/lane.json"), laneJSON("L2", "done", task("T04", "test", "done", map[string]any{"commit": lc3}), task("T05", "impl", "done", map[string]any{"commit": lc4})))
+}
+
+func TestTheJoinsMomentIsServedFromTheRecordedStart(t *testing.T) {
+	host, err := os.Hostname()
+	if err != nil {
+		t.Skip("no host name here")
+	}
+	h := start(t, config{events: laneEvents(laneGate(30000, "build.join", "passed", "join-started", nil))})
+	// Under way: the process doing it is alive (this test's own).
+	joiningCell(t, h.root, os.Getpid(), host)
+	d, body := cellWith(t, h, "T-3")
+	noProse(t, body)
+	l := lanesOfReply(t, d)
+	if l["join_started_at"] != "2026-11-24T10:30:00Z" || l["joining"] != "running" || l["join"] != nil {
+		t.Fatalf("being joined: started %v, joining %v, join %v", l["join_started_at"], l["joining"], l["join"])
+	}
+	for _, s := range []string{"join_running", `"pid"`, host} {
+		if bytes.Contains(body, []byte(s)) {
+			t.Fatalf("the join's process is checked, never served (%q): %s", s, body)
+		}
+	}
+	gates := l["gates"].([]any)
+	if g := gates[len(gates)-1].(map[string]any); g["gate"] != "build.join" || g["verdict"] != "passed" || g["reason_code"] != "join-started" {
+		t.Errorf("the start's gate: %v", g)
+	}
+	// Interrupted: the process that started it is gone.
+	gone := exec.Command("true")
+	if err := gone.Run(); err != nil {
+		t.Skip("cannot run a process here")
+	}
+	joiningCell(t, h.root, gone.Process.Pid, host)
+	d, _ = cellWith(t, h, "T-3")
+	if l = lanesOfReply(t, d); l["joining"] != "interrupted" || l["join_started_at"] != "2026-11-24T10:30:00Z" {
+		t.Fatalf("interrupted: %v %v", l["joining"], l["join_started_at"])
+	}
+	// Another machine's process cannot be checked from here.
+	joiningCell(t, h.root, os.Getpid(), host+"-elsewhere")
+	d, _ = cellWith(t, h, "T-3")
+	if l = lanesOfReply(t, d); l["joining"] != "unknown" {
+		t.Fatalf("elsewhere: %v", l["joining"])
+	}
+	// No join under way: no moment, as before.
+	openLanesCell(t, h.root)
+	d, _ = cellWith(t, h, "T-3")
+	if l = lanesOfReply(t, d); l["joining"] != nil || l["join_started_at"] != nil {
+		t.Fatalf("no join: %v %v", l["joining"], l["join_started_at"])
 	}
 }
