@@ -6,8 +6,8 @@ Keep this file current: when a piece below is finished or the plan changes, chan
 
 ## 1. State
 
-- **Released:** 0.23.1, tag `v0.23.1`, on `main`. Nothing is unmerged.
-- **On the branch `fix/studio-github-and-project-id`, built 2026-11-24, not merged:** two faults the owner met in Product Studio's app.
+- **Released:** 0.23.2, tag `v0.23.2`, on `main`. Nothing is unmerged.
+- **What 0.23.2 added:** fixes for two faults the owner met in Product Studio's app.
   - *Naming the product* asked for a Project ID, proposed one from the name, and could then refuse its own proposal. The form no longer has the field: MACH makes the ID from the name (`product.project_id_from`), and `project init --id` is optional.
   - *The check of GitHub* was tried once, said only "GitHub could not be reached", was counted as something "not saved", and stayed until a manual refresh. Now a read is tried again (with a budget, so a command stays inside the host's time limit); a failure is named as what it is (no network, GitHub's limit, GitHub not answering, something on the computer blocking the tool, the sign-in, a refusal) with the GitHub tool's own words; it is its own notice (`saved.github_check`, "GitHub not checked" in the top bar) and never counted as unsaved; and the app checks again by itself, backing off from one minute to fifteen.
   - *Not known:* what actually failed on the owner's machine (repository `cof-sandbox/...`, a last good read at 08:01 and failures after it). The old message hid the tool's words. With this change the notice quotes them; a corporate proxy or a Claude Code sandbox around the app's host are the likely causes to check first.
@@ -17,7 +17,7 @@ Keep this file current: when a piece below is finished or the plan changes, chan
 - **What 0.22.1 added:** a sign of life for slow builds, the merge plan's two refusals, the "Unattended runs: off" label, five layout items and four defect fixes (section 2.3).
 - **What 0.22.0 added:** qualifying a release on any machine, from each slice's committed change record (A6 of the M20 design).
 - **What 0.21.0 added:** MACH for a team (Part A of the M20 design, except A6), the basic decisions drafted from an engineer's own documents, a ticket's workspace that holds no `.claude/` files, and a plain message when MACH's files are from different versions. The release notes are `docs/guides/RELEASE_NOTES_DRAFT.md`.
-- **Checks at release:** `make check` (2,169 tests, 1 skipped), `go test ./...` in both apps, and the web typecheck, lint, build and unit tests (352 and 409) all passed on the release commit.
+- **Checks at release:** `make check` (2,174 tests, 1 skipped), `go test ./...` in both apps, and the web typecheck, lint, build and unit tests (352 and 409) all passed on the release commit.
 
 ## 2. What is next, in order
 
