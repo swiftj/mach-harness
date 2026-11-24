@@ -1,6 +1,18 @@
-# MACH release notes: 0.22.1
+# MACH release notes: 0.23.0
 
 What is new in each release, newest first, followed by supported platforms, what you need, upgrading and security notes.
+
+## What changed in 0.23.0
+
+Decisions in force: an engineer's page on the Factory Floor for the project's architecture decisions.
+
+| Change | What it is |
+| --- | --- |
+| Decisions in force | A fourth workspace on the Factory Floor (key `4`). It lists every architecture decision with its number, title, status, what supersedes it and the topics it covers. A file MACH cannot read is listed with the reason. |
+| The baseline at a glance | Each required topic is shown as covered, and by which decision, or missing. When one is missing the page says that no ticket is planned or built until it is covered. |
+| What waits on a person | Proposals not yet accepted, and tickets stopped because a plan cannot follow a decision, each with the command that settles it. |
+| One decision's page | Its text, the tickets planned under it, and any exception recorded against it, with when and why. |
+| It only reads | Like the rest of the Factory Floor, the page changes nothing. Accepting, changing or excepting a decision stays with `/mach adr` in the terminal and a pull request for the file. It shows the decisions as they are in your main checkout, and reads again when you ask. |
 
 ## What changed in 0.22.1
 
