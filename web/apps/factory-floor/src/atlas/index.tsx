@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { FactoryScene, StateMark, factoryTokens, lodForZoom, screenBounds, type Lod, type RegionKind } from "@mach/ui";
 import { isStale, timeScaleOf, useScene, useSceneActions, useSceneStore, useStore } from "../scene";
-import { bayOrder, epicsInArrivalOrder, refKind, type EntityRef, type Scene } from "../sim";
+import { bayPlaces, baysAt, baysKey, epicsInArrivalOrder, isFinishedAt, refKind, type EntityRef, type Scene } from "../sim";
 import { AtlasContext, useHighlight, type AtlasContextValue } from "./context";
 import { createCamera, frame, visibleRect, zoomAt, type Camera, type ScreenRect } from "./camera";
 import { PLATE_Z, plantLayout, type PlantLayout } from "./layout";
@@ -29,6 +29,7 @@ import { locateScreen } from "./locate";
 import { nearestInDirection, type Direction } from "./spatial";
 import { activeMembers, followDecision, withGrace } from "./follow";
 import { Sheet } from "./Sheet";
+import { FinishedList } from "./Finished";
 import "./atlas.css";
 
 export interface AtlasViewProps {
@@ -39,15 +40,17 @@ export interface AtlasViewProps {
 const Z = factoryTokens.zoom;
 const SVG_PAD = 120;
 
-function captionsOf(scene: Scene, stale: boolean): { captions: Partial<Record<RegionKind, string>>; active: Partial<Record<RegionKind, boolean>> } {
-  const cells = Object.values(scene.cells);
+function captionsOf(scene: Scene, stale: boolean, t: number): { captions: Partial<Record<RegionKind, string>>; active: Partial<Record<RegionKind, boolean>> } {
+  // The working floor holds the tickets in the line; a finished one is on the Finished shelf.
+  const all = Object.values(scene.cells);
+  const cells = all.filter((c) => !isFinishedAt(c, t));
+  const finishedCount = all.length - cells.length;
   // On a stale connection nothing is said to be working: the floor is "as last seen".
   const working = stale ? [] : cells.filter((c) => c.station && ["plan", "groom", "build", "verify", "audit"].includes(c.station) && c.activeAgentIds.length > 0);
   const waiting = Object.values(scene.slices).filter((s) => s.scheduler === "waiting-on-dependency").length;
   const epics = epicsInArrivalOrder(scene);
   const sliceCount = Object.keys(scene.slices).length;
-  const merged = cells.filter((c) => c.merged).length;
-  const archived = cells.filter((c) => c.archived).length;
+  const merged = all.filter((c) => c.merged).length;
   const reviewing = cells.find((c) => c.station === "review");
   const lastDecided = cells
     .flatMap((c) => c.reviews.filter((r) => r.decidedAt !== null).map((r) => ({ c, r })))
@@ -56,11 +59,11 @@ function captionsOf(scene: Scene, stale: boolean): { captions: Partial<Record<Re
   return {
     captions: {
       intake: sliceCount ? `${epics.length > 1 ? `${epics.length} epics, latest ${epics.at(-1)}` : (epics[0] ?? "no epic recorded")} · ${sliceCount} slice${sliceCount === 1 ? "" : "s"} · ${waiting} waiting` : "Waiting for a slice marked ready",
-      floor: `${cells.length} cell${cells.length === 1 ? "" : "s"} · ${stale ? "as last seen" : `${working.length} working`}`,
+      floor: `${cells.length} ticket${cells.length === 1 ? "" : "s"} in the line · ${stale ? "as last seen" : `${working.length} working`}`,
       review: reviewing ? `${reviewing.ticketId} under review` : lastDecided ? `Last: ${lastDecided.c.ticketId} ${lastDecided.r.outcome?.toLowerCase().replace("_", " ")}` : "No panel sitting yet",
       human: human ? `${human.ticketId} held` : "Clear",
       integration: `main · ${merged} merged`,
-      archive: `${archived} archived`,
+      archive: `${finishedCount} finished`,
     },
     active: {
       floor: working.length > 0,
@@ -76,7 +79,8 @@ function captionsOf(scene: Scene, stale: boolean): { captions: Partial<Record<Re
 function PlantLayer({ layout, lod, stale }: { layout: PlantLayout; lod: Lod; stale: boolean }) {
   const scene = useScene();
   const highlight = useHighlight();
-  const { captions, active } = captionsOf(scene, stale);
+  // The scene is the one at the moment shown, so every finish it holds has happened by then.
+  const { captions, active } = captionsOf(scene, stale, Infinity);
   const key = JSON.stringify([captions, active]);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the caption text, not object identity
   const stable = useMemo(() => ({ captions, active }), [key]);
@@ -107,14 +111,16 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
   // What the stale stamp says: the connection's state and the last confirmed moment (factory time).
   const staleSince = useSceneStore((s) => (isStale(s.connection) ? `${s.connection!.state}|${s.connection!.staleSince ?? s.now}` : null));
   const provenanceLabel = log.provenance.label;
-  // The plant from what is known so far, never from the end of a run: the bays from the log's
-  // assignment table (bayOrder), in which a bay index never changes once given, late slices included.
-  // plantLayout returns the same object while the bays known are the same.
+  // The plant from what is known so far, never from the end of a run: the working floor at the moment
+  // shown (bayPlaces: each ticket's place is given once and never changes while it is at work; a
+  // finished ticket leaves for the Finished shelf). The key changes only when a ticket arrives or
+  // leaves, so plantLayout returns the same object in between.
+  const floorKey = useSceneStore((s) => baysKey(bayPlaces(s.log), s.now));
   const layout = useMemo(() => {
-    const order = bayOrder(log);
-    return plantLayout(order.slots);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- logVersion is the log's change signal
-  }, [log, logVersion]);
+    const places = bayPlaces(log);
+    return plantLayout(baysAt(places, store.getState().now), places.capacity);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- floorKey and logVersion are the change signals
+  }, [log, logVersion, floorKey]);
   const mode = useMemo<ViewMode>(() => ({ live: source !== "simulation", stale }), [source, stale]);
   const { select, hover, focusOn } = useSceneActions();
 
@@ -496,7 +502,7 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
     const [x0 = 0, y0 = 0, x1 = 0, y1 = 0, z1000 = 1000] = viewKey.split(",").map(Number);
     const z = z1000 / 1000;
     const m = 28 / z;
-    return { x0: x0 + m, y0: y0 + m, x1: x1 - m, y1: y1 - m, controls: theater ? null : { x0: x1 - 250 / z, y0: y1 - 64 / z, x1, y1 } };
+    return { x0: x0 + m, y0: y0 + m, x1: x1 - m, y1: y1 - m, controls: theater ? null : { x0: x1 - 340 / z, y0: y1 - 64 / z, x1, y1 } };
   }, [viewKey, theater]);
 
   return (
@@ -560,6 +566,7 @@ export function AtlasView({ meter }: AtlasViewProps = {}) {
         <Sheet width={viewportSize.width} height={viewportSize.height} lod={lod} titled={atFit && !theater} />
         {theater ? null : (
         <div className="atlas-controls" role="toolbar" aria-label="Atlas camera">
+          <FinishedList />
           <button type="button" aria-label="Zoom out" onClick={(e) => (e.stopPropagation(), zoomBy(1 / Z.step))} onPointerDown={(e) => e.stopPropagation()}>
             −
           </button>

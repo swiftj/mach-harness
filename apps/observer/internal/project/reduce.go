@@ -2,6 +2,7 @@ package project
 
 import (
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -332,10 +333,41 @@ func (s *State) cell(e *feed.Event, st *Stamp) *Cell {
 	}
 	c := s.Cells[t]
 	if c == nil {
-		c = &Cell{TicketID: t, FirstSeen: st}
+		c = &Cell{TicketID: t, FirstSeen: st, RunStarted: st}
 		s.Cells[t] = c
 	}
 	s.touch(entCell, t)
+	if v := feed.Str(e.IDs.CellInstance); v != "" && v != c.CellInstance {
+		if er := c.earlierRun(v); er != nil {
+			// A record of a run that has ended, read after the run at work began (an archive read
+			// late): it is that run's, never the state of the run at work.
+			er.note(e, st)
+			return nil
+		}
+		closed := c.ClosedAt
+		if closed == nil {
+			closed = c.RunStarted
+		}
+		switch {
+		case c.finished() && !stampBefore(st, closed):
+			// The ticket used again for a new run after its earlier run finished (or a run whose
+			// only record so far was its run record, read before the new run's cell).
+			c.startRun(v, st)
+		case c.CellInstance != "" && stampBefore(st, c.RunStarted):
+			// A record of an older run than the one at work, read after it (backfill can read the
+			// live cell before the archive): kept as that run's.
+			er := &EarlierRun{CellInstance: v, Started: st}
+			at := 0
+			for at < len(c.EarlierRuns) && c.EarlierRuns[at].Started != nil && stampBefore(c.EarlierRuns[at].Started, st) {
+				at++
+			}
+			c.EarlierRuns = slices.Insert(c.EarlierRuns, at, er)
+			er.note(e, st)
+			return nil
+		}
+	} else if v != "" && stampBefore(st, c.RunStarted) {
+		c.RunStarted = st // the run at work's records, read out of order
+	}
 	c.Updated = st
 	if v := feed.Str(e.IDs.CellInstance); v != "" {
 		c.CellInstance = v
@@ -1029,8 +1061,9 @@ func firstNonNil(a, b *int64) *int64 {
 
 // ---- cell lifecycle ----
 
+// visit finds a visit of the run at work (a ticket used again numbers its visits from 1 again).
 func (c *Cell) visit(id string) *Visit {
-	for i := len(c.Visits) - 1; i >= 0; i-- {
+	for i := len(c.Visits) - 1; i >= fromOf(c.RunFrom.Visits, len(c.Visits)); i-- {
 		if c.Visits[i].VisitID == id {
 			return c.Visits[i]
 		}
@@ -1038,8 +1071,124 @@ func (c *Cell) visit(id string) *Visit {
 	return nil
 }
 
+// fromOf is where a run's entries begin in a list of n, never past its end (a cut of the history
+// as of an earlier moment holds fewer).
+func fromOf(from, n int) int {
+	return max(0, min(from, n))
+}
+
+// finished: the run's work is over, as cleanup's records or the run record say.
+func (c *Cell) finished() bool { return c.Archived || c.Abandoned != nil }
+
+// stampBefore: a is strictly earlier than b (false when either is unknown).
+func stampBefore(a, b *Stamp) bool { return a != nil && b != nil && stampMS(a) < stampMS(b) }
+
+func (c *Cell) earlierRun(instance string) *EarlierRun {
+	for _, er := range c.EarlierRuns {
+		if er.CellInstance == instance {
+			return er
+		}
+	}
+	return nil
+}
+
+// startRun keeps the finished run as an earlier run and begins a new one: the state that describes
+// one run (stage, visit, plan facts, merge, cleanup, whether it is archived or abandoned) starts
+// empty; every list keeps its entries (the metrics, keyed by ticket, measured each of them), and
+// the new run's entries begin where they end now.
+func (c *Cell) startRun(instance string, st *Stamp) {
+	er := &EarlierRun{CellInstance: c.CellInstance, Started: c.RunStarted, Ended: c.Updated, Stage: c.Stage,
+		Merged: c.Merge != nil, Abandoned: c.Abandoned != nil, Archived: c.Archived, Visits: len(c.Visits) - fromOf(c.RunFrom.Visits, len(c.Visits))}
+	switch {
+	case c.Cleanup != nil && c.Cleanup.Outcome != "":
+		er.Outcome = c.Cleanup.Outcome
+	case c.Abandoned != nil:
+		er.Outcome = "abandoned"
+	case c.Merge != nil:
+		er.Outcome = "merged"
+	}
+	if er.Started == nil {
+		er.Started = c.FirstSeen
+	}
+	er.RunRecords = c.RunRecords
+	c.RunRecords = 0
+	c.EarlierRuns = append(c.EarlierRuns, er)
+	c.RunFrom = RunFrom{Visits: len(c.Visits), Gates: len(c.Gates), Tasks: len(c.Tasks), Checks: len(c.Checks), Reviews: len(c.Reviews),
+		Findings: len(c.Findings), Approvals: len(c.Approvals)}
+	c.RunStarted, c.CellInstance = st, instance
+	c.Stage, c.StageSource, c.CurrentVisit, c.Round = "", "", "", nil
+	c.Risk, c.AppType, c.AppTypeSource, c.Contracts, c.TasksPlanned = "", "", "", nil, nil
+	c.Merge, c.Cleanup, c.Archived, c.Abandoned, c.ClosedAt, c.ReissuedAs, c.Began = nil, nil, false, nil, nil, "", nil
+	c.Change, c.Widened, c.WidenedRule = "", false, ""
+}
+
+// note keeps what a record of an earlier run says about how that run went.
+func (er *EarlierRun) note(e *feed.Event, st *Stamp) {
+	if er.Started == nil || stampBefore(st, er.Started) {
+		er.Started = st
+	}
+	if er.Ended == nil || stampBefore(er.Ended, st) {
+		er.Ended = st
+	}
+	switch e.Type {
+	case "station.entered":
+		er.Visits++
+	case "merge.completed":
+		er.Merged = true
+		if er.Outcome == "" {
+			er.Outcome = "merged"
+		}
+	case "cleanup.completed":
+		var d struct {
+			Outcome string `json:"outcome"`
+		}
+		e.DataAs(&d)
+		er.Archived = true
+		if d.Outcome != "" {
+			er.Outcome = d.Outcome
+		}
+	}
+	var d struct {
+		Stage string `json:"stage"`
+	}
+	if e.Origin.Stream == "cell-lifecycle" && e.DataAs(&d) && d.Stage != "" {
+		er.Stage = d.Stage
+	}
+}
+
+// runOf is the run a run record belongs to, by when it was written: a record written before the
+// run at work began is an earlier run's (the latest that began before it); nil for the run at work.
+// ok is false when the record cannot be told to belong to one run.
+func (c *Cell) runOf(st *Stamp) (er *EarlierRun, ok bool) {
+	if st == nil || stampMS(st) <= 0 {
+		return nil, len(c.EarlierRuns) == 0
+	}
+	if !stampBefore(st, c.RunStarted) {
+		return nil, true
+	}
+	// Cleanup writes one run record as it closes a run: the latest run begun before the record
+	// that has none yet is the one it closes. With none (its records were not kept, or not read
+	// yet), the record is the only trace of a run before: kept as a run whose cell instance is not
+	// recorded.
+	at := len(c.EarlierRuns)
+	for i := len(c.EarlierRuns) - 1; i >= 0; i-- {
+		r := c.EarlierRuns[i]
+		if r.Started != nil && stampBefore(st, r.Started) {
+			at = i
+			continue
+		}
+		if r.RunRecords == 0 {
+			return r, true
+		}
+		break
+	}
+	er = &EarlierRun{Ended: st}
+	c.EarlierRuns = slices.Insert(c.EarlierRuns, at, er)
+	return er, true
+}
+
 func (c *Cell) review(round *int64) *ReviewRound {
-	for i := len(c.Reviews) - 1; i >= 0; i-- {
+	for i := len(c.Reviews) - 1; i >= fromOf(c.RunFrom.Reviews, len(c.Reviews)); i-- {
 		if sameRev(c.Reviews[i].Round, round) {
 			return c.Reviews[i]
 		}
@@ -1397,7 +1546,7 @@ func (s *State) applyLifecycle(e *feed.Event, st *Stamp) {
 		}
 		e.DataAs(&d)
 		c.Cleanup = &Cleanup{Outcome: d.Outcome, Archive: feed.Str(d.Archive), Bundle: d.Bundle, At: st}
-		c.Archived = true
+		c.Archived, c.ClosedAt = true, st
 	}
 }
 
@@ -1473,8 +1622,39 @@ func (s *State) applyRun(e *feed.Event, st *Stamp) {
 		TestsPassingOnFirstRun: d.TestsPassingOnFirstRun, Risk: d.Risk, AppType: d.AppType, MergeMethod: d.MergeMethod, MergeCommit: d.MergeCommit,
 		ClosedAt: st, EventID: e.ID}
 	s.Runs = append(s.Runs, r)
-	if c := s.cell(e, st); c != nil {
+	current, earlierMerged := true, false
+	if c := s.Cells[e.Ticket()]; c != nil {
+		// A ticket used again: a run record written before the run at work began is an earlier
+		// run's, and never closes the run at work. One that cannot be told to belong to one run
+		// is counted as such, never added to either run.
+		switch er, ok := c.runOf(st); {
+		case !ok:
+			c.RunRecordsUnattributed++
+			current = false
+		case er != nil:
+			earlierMerged = er.Merged
+			er.RunRecords++
+			er.Archived = true
+			if er.Outcome == "" || d.Outcome == "abandoned" {
+				er.Outcome = d.Outcome
+			}
+			er.Abandoned = er.Abandoned || d.Outcome == "abandoned"
+			current = false
+		}
+		if !current {
+			s.touch(entCell, c.TicketID)
+		}
+	}
+	var c *Cell
+	if current {
+		c = s.cell(e, st)
+	}
+	if c != nil {
+		c.RunRecords++
 		c.Archived = true
+		if c.ClosedAt == nil {
+			c.ClosedAt = st
+		}
 		if d.Outcome == "abandoned" && c.Abandoned == nil {
 			c.Abandoned = st
 			s.closeAbandoned(c.TicketID, st)
@@ -1494,7 +1674,8 @@ func (s *State) applyRun(e *feed.Event, st *Stamp) {
 	}
 	// T1 counts merges written in lifecycle logs; a ticket the run record says merged with no merge
 	// in its log is disclosed in T1's coverage, never added to the count.
-	if c := s.Cells[r.TicketID]; c != nil && d.Outcome == "merged" && c.Merge == nil && c.MT1Day == "" {
+	// A record of an earlier run is held to that run's own merge.
+	if c := s.Cells[r.TicketID]; c != nil && d.Outcome == "merged" && (current && c.Merge == nil || !current && !earlierMerged) && c.MT1Day == "" {
 		c.MT1Day = orDefault(day(st), "-")
 		s.Metrics.Exclude("T1", s.cdims(c.TicketID), dayKey(c.MT1Day), exT1NoMerge, 1)
 	}
@@ -1876,8 +2057,12 @@ func (s *State) applyObserver(e *feed.Event, st *Stamp) {
 		}
 		s.GapCounts[d.Reason]++
 		s.GapClasses[class]++
-		s.Gaps = append(s.Gaps, Gap{SourceKey: d.SourceKey, FromSeq: d.FromSeq, ToSeq: d.ToSeq, Reason: d.Reason, Class: class, Lost: lost,
-			Count: d.Count, EventID: e.ID, Pos: e.Pos, At: st})
+		g := Gap{SourceKey: d.SourceKey, FromSeq: d.FromSeq, ToSeq: d.ToSeq, Reason: d.Reason, Class: class, Lost: lost,
+			Count: d.Count, EventID: e.ID, Pos: e.Pos, At: st}
+		if ms, ok := feed.ParseMS(&e.Time.ObservedAt); ok {
+			g.NoticedMS = &ms
+		}
+		s.Gaps = append(s.Gaps, g)
 		if len(s.Gaps) > maxGapsKept {
 			s.Gaps = append([]Gap(nil), s.Gaps[len(s.Gaps)-maxGapsKept:]...)
 		}

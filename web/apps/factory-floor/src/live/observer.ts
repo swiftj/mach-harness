@@ -9,7 +9,7 @@
  */
 
 import type { FactoryStatus, RuntimeState, RuntimeSummary } from "../scene/connection";
-import type { ObserverHistory } from "../sim/provenance";
+import type { LostRange, ObserverHistory } from "../sim/provenance";
 import type { ObserverSnapshotState } from "../sim/v3";
 
 export type { FactoryStatus, RuntimeState, RuntimeSummary };
@@ -572,7 +572,9 @@ export function readFactoryStatus(data: unknown): FactoryStatus {
     },
     sources: list(freshness.sources).map((x) => {
       const src = obj(x);
-      return { key: str(src.key) ?? "", state: str(src.state), lagBytes: num(src.lag_bytes), lastReadAgeMs: num(src.last_read_age_ms), runtime: readRuntime(src.runtime) };
+      const cell = readCellFolder(src.cell);
+      // A cell's source says what its folder holds (`cell`); every other source has no such part.
+      return { key: str(src.key) ?? "", state: str(src.state), lagBytes: num(src.lag_bytes), lastReadAgeMs: num(src.last_read_age_ms), runtime: readRuntime(src.runtime), ...(cell ? { cell } : {}) };
     }),
     ingest: { stale: bool(ingest.stale), watermark: timeOf(ingest.watermark_ms), catchingUp: bool(ingest.catching_up) },
     delivery: ingest.delivery && typeof ingest.delivery === "object" ? { lastHoldMs: num(obj(ingest.delivery).last_hold_ms), p95HoldMs: num(obj(ingest.delivery).hold_ms_p95) } : null,
@@ -581,6 +583,32 @@ export function readFactoryStatus(data: unknown): FactoryStatus {
     runtime: null,
     history: null,
   };
+}
+
+/** A cell source's `cell {ticket_id, folder, lifecycle_log, cell_json, first_seen_ms}`, or null when absent or not in that shape. */
+function readCellFolder(value: unknown): FactoryStatus["sources"][number]["cell"] {
+  if (!value || typeof value !== "object") return null;
+  const c = obj(value);
+  const ticketId = str(c.ticket_id);
+  if (!ticketId || typeof c.folder !== "boolean") return null;
+  return { ticketId, folder: c.folder, lifecycleLog: c.lifecycle_log === true, cellJson: c.cell_json === true, firstSeenMs: num(c.first_seen_ms) };
+}
+
+/** The observer's lost ranges (`history.lost_ranges`), read tolerantly: identifiers, numbers, codes and times only. */
+function readLostRanges(value: unknown): LostRange[] {
+  return list(value)
+    .map((x) => obj(x))
+    .filter((r) => typeof r.source_key === "string" && typeof r.reason === "string")
+    .map((r) => ({
+      eventId: str(r.event_id) ?? `${str(r.source_key)}:${num(r.from_seq) ?? ""}-${num(r.to_seq) ?? ""}:${str(r.reason)}`,
+      sourceKey: str(r.source_key) ?? "",
+      fromSeq: num(r.from_seq),
+      toSeq: num(r.to_seq),
+      reason: str(r.reason) ?? "",
+      class: str(r.class) ?? "",
+      atMs: num(r.at_ms),
+      noticedMs: num(r.noticed_ms),
+    }));
 }
 
 const RUNTIME_STATES = ["proven", "compatible-unproven", "incompatible", "unknown"] as const;
@@ -626,7 +654,7 @@ export function readObserverHistory(value: unknown): ObserverHistory | null {
   const h = obj(value);
   const lost = counts(h.lost);
   const completeness = h.completeness === "partial" || h.completeness === "complete" ? h.completeness : Object.values(lost).some((n) => n > 0) ? "partial" : "complete";
-  return { completeness, lost, notInterpreted: counts(h.not_interpreted), classes: counts(h.classes), partial: str(h.partial) || null };
+  return { completeness, lost, notInterpreted: counts(h.not_interpreted), classes: counts(h.classes), partial: str(h.partial) || null, lostRanges: readLostRanges(h.lost_ranges) };
 }
 
 const planOf = (value: unknown): ObserverPlanFacts | null => {

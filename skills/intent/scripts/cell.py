@@ -1730,6 +1730,8 @@ def small_after_plan(project: Path, root: Path, cell: Dict[str, Any], work: Path
     if spec_json.exists():
         spec_json.unlink()
     write_cell(project, cell)
+    # The ticket leaves the plan station for the interview: the log says so, with the stage cell.json now holds.
+    telemetry(root, "station.exited", "plan", lambda: {"outcome": "widened", "stage": "spec-open"})
     print(json.dumps({"status": "WIDENED", "ticket_id": cell["ticket_id"], "stage": "spec-open", "widened": widened, "high_risk": found["high_risk"],
                       "plan_kept": kept, "next": f"{found['sentence']} It is no longer a small change, so it goes back to the interview in full "
                                                  "(references/interview-method.md), with every answer kept; nothing has been built. Then the spec is "
@@ -1972,7 +1974,10 @@ def cmd_replan(project: Path, args: argparse.Namespace) -> int:
     done = set_aside_build(project, root, cell, reason, stage, "replanned", {"by": "a person"})  # cleanup reads it (cleanup.archive)
     cell["stage"] = "spec-ready"
     write_cell(project, cell)
-    told = ["plan: the contract engineer writes a new plan.md and 'cell.py check-plan' checks it.", *done["told"]]
+    # The plan station has the ticket again (its next check-plan belongs to this visit): the log carries the stage
+    # cell.json now holds, which a re-plan of a planned cell otherwise left at "planned".
+    telemetry(root, "station.entered", "plan", lambda: {"stage": "spec-ready", "replanned": True}, once=True)
+    told =["plan: the contract engineer writes a new plan.md and 'cell.py check-plan' checks it.", *done["told"]]
     print(json.dumps({"status": "REPLANNED", "ticket_id": args.ticket_id, "stage": "spec-ready", "kept_in": str(done["keep"]), "reset": done["reset"],
                       **done["branch"], "next": " ".join(told)}, indent=2))
     return 0

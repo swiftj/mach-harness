@@ -145,6 +145,18 @@ export interface FactoryStatus {
     readonly lastReadAgeMs: number | null;
     /** Execution streams (`stream/<execution>`): the runtime version's state (observer M6.2, `runtime {name, version, state, reason, records_accepted, records_refused}`). Null: not reported. */
     readonly runtime: SourceRuntimeStatus | null;
+    /**
+     * A cell's source (`cell/<ticket>`): whether the ticket's folder under `.factory/worktrees/` is
+     * there and holds its lifecycle log and cell.json, and when the observer first saw it
+     * (`cell {ticket_id, folder, lifecycle_log, cell_json, first_seen_ms}`). Absent: not reported.
+     */
+    readonly cell?: {
+      readonly ticketId: string;
+      readonly folder: boolean;
+      readonly lifecycleLog: boolean;
+      readonly cellJson: boolean;
+      readonly firstSeenMs: number | null;
+    } | null;
   }[];
   /**
    * The streams' runtimes summed (`/health` `ingest.runtime`, observer M6.2): the worst state over

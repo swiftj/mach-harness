@@ -2,15 +2,16 @@
  * The plant's layout: where every region, bay, machine, gate, pad and track stands, in plan units
  * (M6_0_VISUAL_SPEC.md b.2 and b.3). Pure; no React.
  *
- * Laid out from what is known so far, never from the end of the run (M6.2): the bays are the slices
- * received (in the order they arrived), then any cell opened whose slice is not known. A bay's place is a function of its index alone, so a bay
- * keeps its place as more arrive (spatial memory): the first nine fill columns of three, the next
- * ones a fourth row across the three columns. The floor is always at least three rows deep, so the
- * intake's centre line does not move as the first slices arrive. What grows when slices arrive is
- * the floor's width (a new column) or depth (the fourth row), and with it the regions downstream.
- *
- * The simulation's head scene holds all its slices from the start, so its plant is the same as when
- * it was laid out from the fixture's definitions.
+ * Laid out from what is known so far, never from the end of the run (M6.2). The working floor holds
+ * the tickets in the line at the moment shown, each in its place (sim/places.ts: a place is assigned
+ * once and never changes while its ticket is at work; a finished ticket leaves the floor for the
+ * Finished shelf in the archive, and its place stays free until the next ticket takes it). A bay's
+ * position is a function of its place alone (spatial memory): the first nine fill columns of three,
+ * the next ones a fourth row across the three columns. The floor's size is the number of places
+ * (the most tickets at work at once over the history), never the number of tickets now, so nothing
+ * downstream moves when one leaves. It is always at least three rows deep, so the intake's centre
+ * line does not move as the first slices arrive. What grows is the floor's width (a new column) or
+ * depth (the fourth row), and with it the regions downstream.
  */
 import { cellAnatomy, factoryTokens, type PlanBox, type Vec3 } from "@mach/ui";
 
@@ -61,7 +62,9 @@ export interface PlantLayout {
   regions: { intake: Rect; floor: Rect; review: Rect; human: Rect; integration: Rect; archive: Rect };
   dock: Rect;
   bays: readonly BaySlot[];
-  /** Bay slots on the floor no slice uses (the floor is laid out in whole columns). */
+  /** The places on the floor (sim/places.ts capacity): bays in use and free ones. */
+  places: number;
+  /** Bay slots on the floor no ticket uses now: free places, and the rest of the last column. */
   freeBays: readonly { x: number; y: number; index: number }[];
   bayByTicket: ReadonlyMap<string, BaySlot>;
   bayBySlice: ReadonlyMap<string, BaySlot>;
@@ -75,7 +78,8 @@ export interface PlantLayout {
     audit: Vec3;
     auditGate: Vec3;
   };
-  floor: { spineX: number; transferY: number; riserX: number; conduitX: number };
+  /** lastRowY: the plan y of the deepest row of places (in use or free); firstPadY: the first holding pad's, so lettering placed by them never moves as tickets come and go. */
+  floor: { spineX: number; transferY: number; riserX: number; conduitX: number; lastRowY: number; firstPadY: number };
   review: { entry: Vec3; seats: Record<"architecture" | "security" | "product", Vec3>; gate: Vec3; exit: Vec3; packetTable: Vec3 };
   human: { gate: Vec3; booth: Vec3; parked: Vec3 };
   /** The yard: revalidation gate and merge machine on the column; the main line runs along x across the plant's front. */
@@ -89,15 +93,16 @@ export interface PlantLayout {
   extent: Rect;
 }
 
-/** One bay's claim: the slice it is for and the ticket its cell has (the slice's ID until one is known). */
+/** One bay's claim: the slice it is for, the ticket its cell has (the slice's ID until one is known) and its place. */
 export interface PlantSlot {
   sliceId: string;
   ticketId: string;
+  index: number;
 }
 
 /** A key that changes exactly when the plant's layout would. */
-export function slotsKey(slots: readonly PlantSlot[]): string {
-  return slots.map((s) => `${s.sliceId}=${s.ticketId}`).join("|");
+export function slotsKey(slots: readonly PlantSlot[], places: number): string {
+  return `${places}|${slots.map((s) => `${s.index}:${s.sliceId}=${s.ticketId}`).join("|")}`;
 }
 
 /** A bay's column and row from its index alone (spec b.2, made stable under growth). */
@@ -115,11 +120,11 @@ const cache = new Map<string, PlantLayout>();
  * approval gatehouse into the integration yard, whose main line runs back along -x across the front
  * to the archive. Any plan rectangle projects to about 2:1, so a near-square plan fills the stage.
  */
-export function plantLayout(list: readonly PlantSlot[]): PlantLayout {
-  const key = slotsKey(list);
+export function plantLayout(list: readonly PlantSlot[], places: number = list.length): PlantLayout {
+  const n = Math.max(1, places, ...list.map((s) => s.index + 1));
+  const key = slotsKey(list, n);
   const hit = cache.get(key);
   if (hit) return hit;
-  const n = Math.max(1, list.length);
   // Columns of three (up to nine bays), then a fourth row across three columns, and so on; at least
   // three rows, so nothing upstream moves while the first slices arrive.
   const rows = n <= 9 ? 3 : 3 + Math.ceil((n - 9) / 3);
@@ -146,14 +151,16 @@ export function plantLayout(list: readonly PlantSlot[]): PlantLayout {
   const conduitX = floor.x + 4;
 
   const padY = (i: number) => mid + (i - (n - 1) / 2) * 56;
-  const bays: BaySlot[] = list.map((s, index) => {
+  const bays: BaySlot[] = list.map((s) => {
+    const index = s.index;
     const { col, row } = bayCell(index);
     const origin = { x: floor.x + 24 + col * (C.x + SIZE.aisle), y: 24 + row * (C.y + SIZE.cellGap) };
     const a = cellAnatomy(origin, PLATE_Z);
     const railY = origin.y + 58;
     const aisleX = col < cols - 1 ? origin.x + C.x + SIZE.aisle / 2 : riserX;
     return {
-      ...s,
+      sliceId: s.sliceId,
+      ticketId: s.ticketId,
       index,
       col,
       row,
@@ -186,9 +193,11 @@ export function plantLayout(list: readonly PlantSlot[]): PlantLayout {
   tracks.inbound = [P(dock.x + 6, mid), P(hopper.x - 22, mid)];
   tracks.outbound = [P(186, mid), P(floor.x + 12, mid)];
   tracks.collector = [P(186, padY(0)), P(186, padY(n - 1))];
-  const firstRail = bays[0]?.railY ?? mid;
-  const col0 = bays.filter((b) => b.col === 0);
-  const lastRail = col0[col0.length - 1]?.railY ?? mid;
+  // The spine and aisles run to every place, in use or free, so a ticket leaving or arriving moves no track.
+  const railOf = (index: number) => 24 + bayCell(index).row * (C.y + SIZE.cellGap) + 58;
+  const placeList = Array.from({ length: n }, (_, i) => i);
+  const firstRail = railOf(0);
+  const lastRail = Math.max(...placeList.filter((i) => bayCell(i).col === 0).map(railOf));
   tracks.spine = [P(spineX, Math.min(firstRail, mid)), P(spineX, Math.max(lastRail, mid))];
   for (const b of bays) {
     if (b.col === 0) tracks[`spur:${b.ticketId}`] = [P(spineX, b.railY), P(b.entrance.x, b.railY)];
@@ -198,9 +207,10 @@ export function plantLayout(list: readonly PlantSlot[]): PlantLayout {
     }
     tracks[`exit:${b.ticketId}`] = [P(b.door.x, b.railY), P(b.aisleX, b.railY)];
   }
-  const aisles = [...new Set(bays.map((b) => b.aisleX))];
+  const aisleOf = (col: number) => (col < cols - 1 ? floor.x + 24 + col * (C.x + SIZE.aisle) + C.x + SIZE.aisle / 2 : riserX);
+  const aisles =[...new Set(placeList.map((i) => aisleOf(bayCell(i).col)))];
   for (const x of aisles) {
-    const top = Math.min(...bays.filter((b) => b.aisleX === x).map((b) => b.railY));
+    const top = Math.min(...placeList.filter((i) => aisleOf(bayCell(i).col) === x).map(railOf));
     tracks[`aisle:${x}`] = [P(x, top), P(x, transferY)];
   }
   // No bays yet (a live plant before its first slice): the transfer starts at the riser, never at Math.min() of nothing.
@@ -232,11 +242,13 @@ export function plantLayout(list: readonly PlantSlot[]): PlantLayout {
     regions: { intake, floor, review, human, integration, archive },
     dock,
     bays,
-    freeBays: Array.from({ length: rows * cols - list.length }, (_, k) => {
-      const index = list.length + k;
-      const { col, row } = bayCell(index);
-      return { x: floor.x + 24 + col * (C.x + SIZE.aisle), y: 24 + row * (C.y + SIZE.cellGap), index };
-    }),
+    places: n,
+    freeBays: Array.from({ length: rows * cols }, (_, index) => index)
+      .filter((index) => !bays.some((b) => b.index === index))
+      .map((index) => {
+        const { col, row } = bayCell(index);
+        return { x: floor.x + 24 + col * (C.x + SIZE.aisle), y: 24 + row * (C.y + SIZE.cellGap), index };
+      }),
     bayByTicket: new Map(bays.map((b) => [b.ticketId, b])),
     bayBySlice: new Map(bays.map((b) => [b.sliceId, b])),
     intake: {
@@ -249,7 +261,7 @@ export function plantLayout(list: readonly PlantSlot[]): PlantLayout {
       audit: P(170, mid - 90),
       auditGate,
     },
-    floor: { spineX, transferY, riserX, conduitX },
+    floor: { spineX, transferY, riserX, conduitX, lastRowY: 24 + Math.max(...placeList.map((i) => bayCell(i).row)) * (C.y + SIZE.cellGap), firstPadY: padY(0) },
     review: {
       entry,
       // Spec b.2: the seats in a row on one screen line, S + k·(30, −30) for k = −1, 0, 1, S = entry + (96, 0).
@@ -269,6 +281,14 @@ export function plantLayout(list: readonly PlantSlot[]): PlantLayout {
   if (cache.size > 64) cache.delete(cache.keys().next().value as string);
   cache.set(key, layout);
   return layout;
+}
+
+/** How many finished tickets the Finished shelf in the archive draws; the Floor's Finished list holds every one. */
+export const SHELF_SLOTS = 5;
+
+/** Slot i of the Finished shelf (0: the latest finished). */
+export function shelfAt(L: Pick<PlantLayout, "regions" | "archive">, i: number): Vec3 {
+  return { x: L.regions.archive.x + 26 + i * 30, y: L.archive.stack.y, z: PLATE_Z };
 }
 
 /** Plan box for a point thing of a given footprint and height (for framing and brackets). */

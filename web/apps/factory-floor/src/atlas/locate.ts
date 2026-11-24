@@ -3,9 +3,9 @@
  * framing. Pure, from the layout and the scene at the moment shown.
  */
 import { factoryTokens, screenBounds, type PlanBox } from "@mach/ui";
-import { entityAt, findAgent, findArtifact, findToolCall, ref, refId, refKind, type EntityRef, type Scene } from "../sim";
+import { entityAt, findAgent, findArtifact, findToolCall, finishedCells, isFinishedAt, ref, refId, refKind, type EntityRef, type Scene } from "../sim";
 import { SIM_MODE, chamberOccupant, placeAgents, type ViewMode } from "./derive";
-import { FLOOR_Z, PLATE_Z, boxAt, type BaySlot, type PlantLayout } from "./layout";
+import { FLOOR_Z, PLATE_Z, SHELF_SLOTS, boxAt, shelfAt, type BaySlot, type PlantLayout } from "./layout";
 import type { ScreenRect } from "./camera";
 
 const CELL = factoryTokens.size.cell;
@@ -37,7 +37,13 @@ export function locate(L: PlantLayout, scene: Scene, t: number, entity: EntityRe
     case "execution": {
       const ticket = refKind(entity) === "cell" ? id : scene.executions[id]?.ticketId;
       const bay = ticket ? L.bayByTicket.get(ticket) : undefined;
-      return bay ? [bayBox(bay)] : [];
+      if (bay) return [bayBox(bay)];
+      // A finished ticket has left the working floor: it is on the Finished shelf (its slot when it is
+      // among the latest there, else the shelf as a whole).
+      const finished = ticket && scene.cells[ticket] && isFinishedAt(scene.cells[ticket], t) ? finishedCells(scene, t) : null;
+      if (!finished || !ticket) return [];
+      const slot = finished.findIndex((c) => c.ticketId === ticket);
+      return slot >= 0 && slot < SHELF_SLOTS ? [boxAt(shelfAt(L, slot), 20, 12, 14)] : [{ x: L.regions.archive.x + 10, y: L.archive.stack.y - 12, w: SHELF_SLOTS * 30 + 10, d: 24, z: PLATE_Z, h: 14 }];
     }
     case "station": {
       const [ticket, station] = id.includes("/") ? id.split("/") : [null, id];

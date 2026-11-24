@@ -924,5 +924,68 @@ class RefusalReasonCodeTest(Base):
                 self.assertNotIn(value, ("refused", "refuse", cell.NO_REASON_CODE))
 
 
+def log_stage(cell_dir):
+    """The stage the cell's lifecycle log says the ticket is at, as the Factory Floor's observer reads it: the stage of
+    the last station.entered or station.exited record. The observer compares it with cell.json's and reports
+    "records probably missing" when they differ."""
+    stage = None
+    for line in (Path(cell_dir) / "lifecycle.jsonl").read_text().splitlines():
+        record = json.loads(line)
+        if record["type"] in ("station.entered", "station.exited") and isinstance(record["data"].get("stage"), str):
+            stage = record["data"]["stage"]
+    return stage
+
+
+class StageRecordedTest(Base):
+    """Every stage cell.py writes to cell.json is carried by a lifecycle record written at the same moment, so the log
+    and cell.json agree and the Factory Floor never says records are missing when none are."""
+
+    def test_a_replan_of_a_planned_cell_records_that_the_plan_station_has_it_again(self):
+        replan = ReplanTest(methodName="replan")
+        replan.project, replan.assertEqual = self.project, self.assertEqual
+        info = ReplanTest.planned(replan)
+        cell_dir = Path(info["cell_dir"])
+        self.assertEqual(log_stage(cell_dir), "planned")
+        code, out, err = run("replan", "LOCAL-001", "--reason", "The plan missed the reminder", project=self.project)
+        self.assertEqual(code, 0, err)
+        state = json.loads((cell_dir / "cell.json").read_text())
+        self.assertEqual(state["stage"], "spec-ready")
+        self.assertEqual(log_stage(cell_dir), "spec-ready", "the log carries the stage cell.json now holds")
+        log = [json.loads(line) for line in (cell_dir / "lifecycle.jsonl").read_text().splitlines()]
+        entered = [e for e in log if e["type"] == "station.entered" and e["station"] == "plan"]
+        self.assertEqual([e["visit"] for e in entered], ["plan#1", "plan#2"], "the plan station takes the ticket again")
+        self.assertTrue(entered[-1]["data"].get("replanned"))
+        # The next plan check belongs to that visit: no second entry.
+        Path(info["plan_path"]).write_text(PLAN, encoding="utf-8")
+        (Path(info["workdir"]) / "proto/openapi").mkdir(parents=True, exist_ok=True)
+        (Path(info["workdir"]) / "proto/openapi/members.yaml").write_text("openapi: 3.1.0\n")
+        code, out, _ = run("check-plan", "LOCAL-001", project=self.project)
+        self.assertEqual(code, 0, out)
+        log = [json.loads(line) for line in (cell_dir / "lifecycle.jsonl").read_text().splitlines()]
+        self.assertEqual(len([e for e in log if e["type"] == "station.entered" and e["station"] == "plan"]), 2)
+        self.assertEqual(log_stage(cell_dir), "planned")
+
+    def test_a_small_change_widened_by_its_plan_records_that_it_left_the_plan_station(self):
+        import test_small_change_factory as factory  # imports this module; loaded here, not at the top
+        from test_small_change import spec_as
+        code, out, err = run("open", "LOCAL-001", "--small", project=self.project)
+        self.assertEqual(code, 0, err)
+        info = json.loads(out)
+        Path(info["specs_dir"]).mkdir(parents=True, exist_ok=True)
+        (Path(info["specs_dir"]) / factory.NAME).write_text(spec_as(), encoding="utf-8")
+        Path(info["intent_path"]).write_text(factory.CELL_INTENT.format(ticket="LOCAL-001", tier="Low"), encoding="utf-8")
+        self.assertEqual(run("finalize", "LOCAL-001", "--spec", f"specs/slices/{factory.NAME}", "--allow-open", project=self.project)[0], 0)
+        Path(info["plan_path"]).write_text(factory.plan(factory.HIGH_RISK), encoding="utf-8")
+        code, out, err = run("check-plan", "LOCAL-001", project=self.project)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["status"], "WIDENED")
+        cell_dir = Path(info["cell_dir"])
+        self.assertEqual(json.loads((cell_dir / "cell.json").read_text())["stage"], "spec-open")
+        self.assertEqual(log_stage(cell_dir), "spec-open", "the log carries the stage cell.json now holds")
+        log = [json.loads(line) for line in (cell_dir / "lifecycle.jsonl").read_text().splitlines()]
+        exit_ = log[-1]
+        self.assertEqual((exit_["type"], exit_["station"], exit_["visit"], exit_["data"]["outcome"]), ("station.exited", "plan", "plan#1", "widened"))
+
+
 if __name__ == "__main__":
     unittest.main()

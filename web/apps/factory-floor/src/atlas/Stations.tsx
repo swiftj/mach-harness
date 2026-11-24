@@ -30,11 +30,11 @@ import {
 } from "@mach/ui";
 import { chamberGate } from "./consensus";
 import { FloorLettering } from "@mach/ui";
-import { PANELS, capacityWaitOf, capacityWaits, epicsInArrivalOrder, eventsInWindow, sliceHoldOf, type CapacityWaitState, type SliceHold, ref, type Risk, type CellState, type EntityRef, type GateState, type LogEntry, type Scene, type SceneLog, type SliceState } from "../sim";
+import { PANELS, finishedAt, finishedCells, finishedOutcomeWords, capacityWaitOf, capacityWaits, epicsInArrivalOrder, eventsInWindow, sliceHoldOf, type CapacityWaitState, type SliceHold, ref, type Risk, type CellState, type EntityRef, type GateState, type LogEntry, type Scene, type SceneLog, type SliceState } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { Hit, isDimmed, useAtlas, useHighlight, useNowKeyed } from "./context";
 import { AFTERGLOW, RATE, agentsElapsedKey, animating, anim, chamberOccupant, gateView, gateWord, latestGate, panelsSitting, placeAgents, q, ticketOfRef, type PlacedAgent } from "./derive";
-import { PLATE_Z, type BaySlot, type PlantLayout } from "./layout";
+import { PLATE_Z, SHELF_SLOTS, shelfAt, type BaySlot, type PlantLayout } from "./layout";
 import { AgentFigure, AgentPost, agentLabel, onShelf } from "./Bay";
 import { Card } from "./reduced";
 
@@ -465,30 +465,34 @@ export function IntegrationWorks() {
   const merging = Object.values(scene.cells).filter((c) => c.station === "merge");
   const lastMerge = Object.values(scene.cells).reduce((m, c) => Math.max(m, c.merged?.at ?? -1), -1);
   const state: FactoryState = merging.length ? "active" : lastMerge >= 0 && t - lastMerge < AFTERGLOW ? "succeeded" : lastMerge >= 0 ? "succeeded" : "idle";
-  const merged = Object.values(scene.cells).filter((c) => c.merged).sort((a, b) => (a.merged!.at - b.merged!.at));
+  // Merged tickets still on the working floor (merged, waiting for cleanup) stand at their place's
+  // berth; once cleanup closes them they leave for the Finished shelf with their bay.
+  const merged = Object.values(scene.cells).filter((c) => c.merged && L.bayByTicket.has(c.ticketId)).sort((a, b) => (a.merged!.at - b.merged!.at));
   const slicesKnown = Object.keys(scene.slices).length > 0;
   const berth = (index: number): Vec3 => ({ x: I.merge.x - 130 - index * 120, y: I.trunkY, z: PLATE_Z });
+  const places = Array.from({ length: L.places }, (_, i) => i);
+  const atPlace = new Map(L.bays.map((b) => [b.index, b]));
   return (
     <g>
-      {/* Berths on the main line, one per slice received (the merges this history expects), drawn
-          dashed until their merge commit lands; lettered only once intake knows the slices. */}
+      {/* Berths on the main line, one per place on the working floor, drawn dashed until the
+          ticket in that place lands its merge commit; lettered only once intake knows the slices. */}
       <g aria-hidden="true">
         <g transform={planeTransform(PLATE_Z)}>
           {/* A dense plant draws every open berth as one path (the element budget); otherwise one rect each. */}
-          <DashedRects merge={L.bays.length > 6} rects={L.bays.filter((b) => !scene.cells[b.ticketId]?.merged).map((b) => ({ x: berth(b.index).x - 11, y: berth(b.index).y - 9, w: 22, h: 18, r: 1.5 }))} dash="3 2.5" />
+          <DashedRects merge={L.places > 6} rects={places.filter((i) => !scene.cells[atPlace.get(i)?.ticketId ?? ""]?.merged).map((i) => ({ x: berth(i).x - 11, y: berth(i).y - 9, w: 22, h: 18, r: 1.5 }))} dash="3 2.5" />
         </g>
         {lod !== "far"
-          ? L.bays.map((b) => {
-              const at = berth(b.index);
-              const known = Boolean(scene.slices[b.sliceId]);
-              const cell = scene.cells[b.ticketId];
-              if (cell?.merged) return null;
-              return <FloorLettering key={b.ticketId} at={{ x: at.x - 10, y: at.y + 18, z: PLATE_Z }} text={known ? `${b.ticketId} · berth` : `Berth ${b.index + 1}`} size={7.5} font={known ? "mono" : "sans"} tone="subtle" weight={500} decorative />;
+          ? places.map((i) => {
+              const at = berth(i);
+              const b = atPlace.get(i);
+              const known = Boolean(b && scene.slices[b.sliceId]);
+              if (b && scene.cells[b.ticketId]?.merged) return null;
+              return <FloorLettering key={i} at={{ x: at.x - 10, y: at.y + 18, z: PLATE_Z }} text={b && known ? `${b.ticketId} · berth` : `Berth ${i + 1}`} size={7.5} font={b && known ? "mono" : "sans"} tone="subtle" weight={500} decorative />;
             })
           : null}
         {lod !== "far" && slicesKnown ? (
           // Behind the main line, clear of the berths' lettering in front of it.
-          <PlanDimension from={{ ...berth(L.bays.length - 1), x: berth(L.bays.length - 1).x - 11, y: I.trunkY - 14 }} to={{ ...berth(0), x: berth(0).x + 11, y: I.trunkY - 14 }} offset={8} label={`${L.bays.length} berths · one per slice received`} />
+          <PlanDimension from={{ ...berth(L.places - 1), x: berth(L.places - 1).x - 11, y: I.trunkY - 14 }} to={{ ...berth(0), x: berth(0).x + 11, y: I.trunkY - 14 }} offset={8} label={`${L.places} berth${L.places === 1 ? "" : "s"} · one per place on the floor`} />
         ) : null}
       </g>
       <Hit entity={gate ? `gate:${gate.id}` : "gate:merge-revalidation"} label={`${revalText}: merge revalidation gate${gate ? `, ${gate.ticketId}` : ""}: ${revalWord}`}>
@@ -527,40 +531,51 @@ export function IntegrationWorks() {
 // ---------------------------------------------------------------- archive and observe
 
 export function ArchiveWorks() {
-  const { lod, layout: L, visibleBays } = useAtlas();
+  const { lod, layout: L } = useAtlas();
   const { t, reduced, scene } = useFrame((f, now) => (animating(f, now, has("cleanup.completed", "run.recorded", "artifact.written", "artifact.recorded", "station.entered")) ? now : "settled"));
   const A = L.archive;
-  const archived = Object.values(scene.cells).filter((c) => c.archived).sort((a, b) => a.archived!.at - b.archived!.at);
+  // The Finished shelf: tickets cleanup has closed (merged or abandoned) leave the working floor and
+  // are kept here, the latest first; the Floor's Finished list holds every one of them.
+  const finished = finishedCells(scene, t);
   const cleaning = Object.values(scene.cells).some((c) => c.station === "cleanup");
-  const shelfAt = (i: number): Vec3 => ({ x: L.regions.archive.x + 26 + i * 30, y: A.stack.y, z: PLATE_Z });
+  const shelf = (i: number): Vec3 => shelfAt(L, i);
+  const shown = finished.slice(0, SHELF_SLOTS);
+  const older = finished.length - shown.length;
   return (
     <g>
-      <Hit entity={ref.station("cleanup")} label={`Cleanup: ${cleaning ? "archiving" : `${archived.length} cells archived`}`}>
-        <StationMachine nameplate showLabel={false} kind="cleanup" state={cleaning ? "active" : archived.length ? "succeeded" : "idle"} at={A.cleanup} lod={lod} planned={!cleaning && archived.length === 0} />
+      <Hit entity={ref.station("cleanup")} label={`Cleanup: ${cleaning ? "closing a ticket" : `${finished.length} ticket${finished.length === 1 ? "" : "s"} finished`}`}>
+        <StationMachine nameplate showLabel={false} kind="cleanup" state={cleaning ? "active" : finished.length ? "succeeded" : "idle"} at={A.cleanup} lod={lod} planned={!cleaning && finished.length === 0} />
       </Hit>
-      <Hit entity={ref.station("observe")} label={`Observe: next pass after 5 finished tickets, ${archived.length} of 5`}>
+      <Hit entity={ref.station("observe")} label={`Observe: next pass after 5 finished tickets, ${Math.min(finished.length, 5)} of 5`}>
         <StationMachine nameplate showLabel={false} kind="observe" state="idle" at={A.observe} lod={lod} planned />
       </Hit>
       {lod !== "far" ? (
-        <FloorLettering at={{ x: A.observe.x - 40, y: A.observe.y - 28, z: PLATE_Z }} text={`Observe pass after 5 finished · ${archived.length} of 5`} size={7.5} font="sans" tone="subtle" weight={500} decorative />
+        <FloorLettering at={{ x: A.observe.x - 40, y: A.observe.y - 28, z: PLATE_Z }} text={`Observe pass after 5 finished · ${Math.min(finished.length, 5)} of 5`} size={7.5} font="sans" tone="subtle" weight={500} decorative />
       ) : null}
-      {/* The runs.jsonl shelf: one slot per slice received, dashed until that ticket's run is archived. */}
+      {/* The shelf's free slots, dashed until a finished ticket fills them. */}
       <g aria-hidden="true" transform={planeTransform(PLATE_Z)}>
-        <DashedRects merge={L.bays.length > 6} rects={L.bays.filter((b) => !scene.cells[b.ticketId]?.archived).map((b) => ({ x: shelfAt(b.index).x - 8, y: shelfAt(b.index).y - 2, w: 16, h: 4, r: 0 }))} dash="2 2" />
+        <DashedRects merge={false} rects={Array.from({ length: SHELF_SLOTS - shown.length }, (_, k) => shelf(shown.length + k)).map((p) => ({ x: p.x - 8, y: p.y - 2, w: 16, h: 4, r: 0 }))} dash="2 2" />
       </g>
       {lod !== "far" ? (
-        <FloorLettering at={{ x: shelfAt(0).x - 8, y: shelfAt(0).y - 10, z: PLATE_Z }} text={`runs.jsonl · ${archived.length} of ${L.bays.length} recorded`} size={7.5} font="mono" tone="subtle" weight={500} decorative />
+        <FloorLettering
+          at={{ x: shelf(0).x - 8, y: shelf(0).y - 10, z: PLATE_Z }}
+          text={`Finished · ${finished.length}${older > 0 ? ` (${older} more in the list)` : ""}`}
+          size={7.5}
+          font="sans"
+          tone="subtle"
+          weight={500}
+          decorative
+        />
       ) : null}
-      {/* Archives are artifacts: at far zoom only their count, in the region's caption (spec b.7). */}
-      {(lod === "far" ? [] : archived).map((c) => {
-        const art = c.artifacts.find((a) => a.kind === "archive");
-        const p = q(anim("artifactMaterialise", t - c.archived!.at, reduced));
-        const at = shelfAt(L.bayByTicket.get(c.ticketId)?.index ?? 0);
-        return art ? (
-          <Hit key={c.ticketId} entity={ref.artifact(art.id)} label={`Archive ${art.label}`} alias={onShelf(L, visibleBays, lod, c, art.id)}>
-            <Card reduced={reduced} kind="archive" progress={p} at={at} lod={lod} showLabel={false} />
+      {/* Each finished ticket is drawn here, not on the floor: select it to read its history. At far
+          zoom only the count, in the region's caption (spec b.7). */}
+      {(lod === "far" ? [] : shown).map((c, i) => {
+        const p = q(anim("artifactMaterialise", t - (finishedAt(c) ?? t), reduced));
+        return (
+          <Hit key={c.ticketId} entity={ref.cell(c.ticketId)} label={`${c.ticketId}: finished, ${finishedOutcomeWords(c)}. On the Finished shelf`}>
+            <Card reduced={reduced} kind="archive" progress={p} at={shelf(i)} lod={lod} showLabel={false} />
           </Hit>
-        ) : null;
+        );
       })}
     </g>
   );

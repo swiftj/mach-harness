@@ -89,6 +89,8 @@ type SourceState struct {
 	Oversized  int64     `json:"oversized"`
 	Resets     int64     `json:"resets"`
 	Runtime    any       `json:"runtime,omitempty"` // execution streams: the runtime's version and state
+	// Cell: a cell's source only: whether its folder, lifecycle log and cell.json are there.
+	Cell any `json:"cell,omitempty"`
 }
 
 // IngestSource reports the ingest loop's state.

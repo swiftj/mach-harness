@@ -40,7 +40,7 @@ import {
   type Vec3,
 } from "@mach/ui";
 import { AgentHead, FloorLettering, PlanDimension, StationSymbol, TaskBoard as TaskBoardMark, cellAnatomy, cellStages, factoryTokens, lampPool, markLook, useFactoryIds, type MarkState, type StationKind, type TaskCell } from "@mach/ui";
-import { BELT_PHASES, activityLabel, activityOf, capacityWaitOf, type CapacityWaitState, type GateRefusal, type ActivityState, agentTimingAt, isKnown, ref, visitTimingAt, type CellState, type EntityRef, type ExecutionState, type GateState, type SceneLog, type StationId } from "../sim";
+import { BELT_PHASES, WAITING_FOR_CLEANUP, waitingForCleanup, activityLabel, activityOf, capacityWaitOf, type CapacityWaitState, type GateRefusal, type ActivityState, agentTimingAt, isKnown, ref, visitTimingAt, type CellState, type EntityRef, type ExecutionState, type GateState, type SceneLog, type StationId } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { Hit, isDimmed, useAtlas, useHighlight, useNowKeyed } from "./context";
 import { activityMark, activityWord, visitMark, visitWord, animating, anim, callsOf, countedToolsOf, fmtElapsed, idOf, secondOf, lampLevel, gateView, gateWord, latestGate, placeAgents, q, toolFamily, uiArtifact, uiRole, uiTier, type PadName, type PlacedAgent, type ViewMode } from "./derive";
@@ -136,7 +136,9 @@ function SummaryBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; vis
   const reduced = useSceneStore((s) => s.reducedMotion);
   const activity = useScene((s) => (mode.live ? activityOf(s, ref.cell(ticket), { stale: mode.stale }).state : null));
   // Its words: the activity's own label when the state alone says too little (R6: idle, outcome not recorded yet).
-  const activityText = useScene((s) => (mode.live ? activityLabel(activityOf(s, ref.cell(ticket), { stale: mode.stale }), activityWord) : null));
+  // Merged and not yet closed by cleanup: unfinished business, said plainly; the double ring is for finished work.
+  const awaitingCleanup = waitingForCleanup(cell);
+  const activityText = useScene((s) => (awaitingCleanup ? WAITING_FOR_CLEANUP : mode.live ? activityLabel(activityOf(s, ref.cell(ticket), { stale: mode.stale }), activityWord) : null));
   const vgate = useScene((s) => latestGate(s, "verification", ticket));
   const { x, y } = bay.origin;
   const a = cellAnatomy(bay.origin, PLATE_Z);
@@ -144,8 +146,8 @@ function SummaryBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; vis
   const lamp = q(lampLevel(cell, t, reduced));
   const completion = cell.merged ? q(anim("cellComplete", t - cell.merged.at, reduced)) : 0;
   const stage = cellStages[uiStage(cell.stage)];
-  const mastState: MarkState = activity && !(activity === "completed" && cell.merged) ? activityMark(activity) : stage.state;
-  const mastMark = activity && !(activity === "completed" && cell.merged) ? undefined : stage.mark;
+  const mastState: MarkState = awaitingCleanup ? "succeeded" : activity && !(activity === "completed" && cell.merged) ? activityMark(activity) : stage.state;
+  const mastMark = awaitingCleanup || (activity && !(activity === "completed" && cell.merged)) ? undefined : stage.mark;
   const floor = prismFaces({ x, y, w: CELL_W, d: CELL_D, z: PLATE_Z, h: 4 });
   const wallZ = FLOOR_Z + factoryTokens.elevation.cellRim;
   const walls = [project({ x, y: y + CELL_D, z: wallZ }), project({ x, y, z: wallZ }), project({ x: x + CELL_W, y, z: wallZ })];
@@ -334,7 +336,8 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
   // Live and replay: what is known about the cell's activity (the nine states; stale on a stale connection).
   const activity = useScene((s) => (mode.live ? activityOf(s, ref.cell(ticket), { stale: mode.stale }).state : null));
   // Its words: the activity's own label when the state alone says too little (R6: idle, outcome not recorded yet).
-  const activityText = useScene((s) => (mode.live ? activityLabel(activityOf(s, ref.cell(ticket), { stale: mode.stale }), activityWord) : null));
+  const awaitingCleanup = waitingForCleanup(cell);
+  const activityText = useScene((s) => (awaitingCleanup ? WAITING_FOR_CLEANUP : mode.live ? activityLabel(activityOf(s, ref.cell(ticket), { stale: mode.stale }), activityWord) : null));
   const queued = useScene((s) => (mode.live && cell.executionId ? Object.values(s.executions[cell.executionId]?.queued ?? {}).length : 0));
   const log = useSceneStore((s) => s.log);
   // Recorded facts no gate state or stage stands for: a wait for an execution place, and gate
@@ -354,8 +357,8 @@ function LiveBay({ bay, cell, visible }: { bay: BaySlot; cell: CellState; visibl
   const completion = cell.merged ? q(anim("cellComplete", t - cell.merged.at, reduced)) : 0;
   const agents = placeAgents(L, cell, t, reduced, mode);
   const inBay = agents.filter((a) => a.at.z === FLOOR_Z).sort((a, b) => depthOf(a.at) - depthOf(b.at));
-  // The mast shows what is known about the cell's activity (live, replay); a merged cell keeps its double ring.
-  const mast = activity && !(activity === "completed" && cell.merged) ? { state: activityMark(activity), label: activityText ?? activityWord(activity) } : undefined;
+  // The mast shows what is known about the cell's activity (live, replay); a merged cell cleanup has not closed yet says so (once closed, it leaves for the Finished shelf).
+  const mast = awaitingCleanup ? { state: "succeeded" as MarkState, label: WAITING_FOR_CLEANUP } : activity && !(activity === "completed" && cell.merged) ? { state: activityMark(activity), label: activityText ?? activityWord(activity) } : undefined;
 
   if (!visible) {
     return <CellPlate origin={bay.origin} ticket={cell.ticketId} stage={uiStage(cell.stage)} activity={mast} lampIntensity={lamp} completion={completion} lod={lod} dimmed={dimCell} />;

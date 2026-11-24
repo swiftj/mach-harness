@@ -951,6 +951,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
         count: e.data.count,
         class: cls,
         lost,
+        noticedAt: Number.isFinite(Date.parse(e.time.observed_at)) ? Date.parse(e.time.observed_at) : null,
       };
       const c = s.completeness;
       // Records received and not interpreted (unknown-type) lose no history: counted, never partial (D8).

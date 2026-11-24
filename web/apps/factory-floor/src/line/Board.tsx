@@ -50,7 +50,10 @@ export function underWords(row: LineRow, now: number): string | null {
     case "stopped":
       return `${row.roundsUsed} round${row.roundsUsed === 1 ? "" : "s"} used`;
     case "landed":
-      return since ? `${since} ago` : null;
+      if (!row.finished) return "merged, waiting for cleanup";
+      return since ? `finished ${since} ago` : "finished";
+    case "closed":
+      return since ? `finished ${since} ago` : "finished";
   }
 }
 
@@ -222,7 +225,7 @@ export function Board({ rows, stats, now, landedHidden, selectedTicket, selected
         </ol>
         {landedHidden > 0 ? (
           <p className="relative col-span-full pl-2 pt-2 text-caption text-ink-muted" data-landed-hidden={landedHidden}>
-            And {landedHidden} more landed earlier; Analytics lists every finished ticket.
+            And {landedHidden} more finished earlier; Analytics lists every finished ticket.
           </p>
         ) : null}
       </div>

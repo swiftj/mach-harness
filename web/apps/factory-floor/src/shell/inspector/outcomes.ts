@@ -260,6 +260,7 @@ export const GATE_REASON_WORDS: Readonly<Record<string, string>> = {
   "audit-missing": "there is no audit report",
   "audit-stale": "the audit report is out of date",
   "audit-helper-missing": "the build station could not read the audit report: a helper it needs is not installed beside it",
+  "command-env-missing": "the project's commands could not be run: the helper that prepares their environment is not installed beside the station",
   "audit-bronze": "the repository's readiness tier is Bronze",
   "no-test-command": "no test command is known for the build",
   "command-missing": "the command is not installed",
