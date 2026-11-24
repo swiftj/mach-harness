@@ -164,6 +164,29 @@ class RoutingTest(Base):
         self.assertIn("revision 1", found["prompt"])
 
 
+class DigestTest(Base):
+    """The digest that opens next, status and explain says how the lanes stand, and only for a build that has them."""
+
+    def test_a_build_without_lanes_shows_the_digest_as_before(self):
+        self.ready_lanes(settings={"build": {"max_lanes": 1}})
+        self.ok("start", TICKET)
+        digest = self.next_step()["digest"]
+        self.assertEqual(set(digest), {"where", "needs_person", "time_and_cost", "elapsed_seconds", "cost_usd"}, "no lanes key at all")
+        code, out, err = self.run_cmd("explain", TICKET)
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("Lanes:", out)
+
+    def test_a_build_in_lanes_says_how_they_stand(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.assertIn("planned in 2 lanes", self.next_step()["digest"]["lanes"])
+        self.lanes_start()
+        self.assertIn("The build is at its lanes: 2 lanes", self.next_step("--holder", HOLDER)["digest"]["lanes"])
+        code, out, err = self.run_cmd("explain", TICKET)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out.count("Lanes: The build is at its lanes"), 1, "explain prints it once")
+
+
 class LanesStartTest(Base):
     def test_the_lanes_to_start_with_the_grant_from_the_free_places(self):
         self.ready_lanes()

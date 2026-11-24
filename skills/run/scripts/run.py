@@ -840,7 +840,23 @@ def digest(project: Project, info: Dict[str, Any]) -> Dict[str, Any]:
     older = rules_changed(project, ticket_id) if isinstance(ticket_id, str) and TICKET_ID_RE.match(ticket_id) else []
     if older:
         shown["rules_changed"] = older
+    line = lanes_line(project, ticket_id) if isinstance(ticket_id, str) and TICKET_ID_RE.match(ticket_id) else None
+    if line:
+        shown["lanes"] = line  # M22: one sentence about the build's lanes, only for a build that has them
     return shown
+
+
+def lanes_line(project: Project, ticket_id: str) -> Optional[str]:
+    """explain.py's one sentence about a ticket's lanes, or None for a build without lanes. A line is advice: it never stops
+    the routing sheet, and a failure to read it is said."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import explain
+        return explain.lanes_line(project.cell_dir(ticket_id))
+    except Exception as exc:  # noqa: BLE001
+        if not (project.cell_dir(ticket_id) / "lanes").is_dir():
+            return None  # a build without lanes shows exactly what it showed before
+        return f"How this ticket's lanes stand could not be read ({exc.__class__.__name__})."
 
 
 def rules_changed(project: Project, ticket_id: str, cache: Optional[Dict[str, Any]] = None) -> List[str]:
