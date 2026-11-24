@@ -325,6 +325,7 @@ def prepare(root: Path, execution_id: str, argv: Sequence[str], timeout_minutes:
 
 
 SESSION_ENDED = "session-ended"  # how an execution ended when the Claude Code session its supervisor belonged to ended
+READY_SECONDS = 10  # how long a stop waits for a wrapper that has just been started to say it is ready
 SESSION_MARK = "session-ended"   # the file a supervisor leaves in an execution's folder before it stops it for that reason
 STOPPED_BY_PERSON = "stopped-by-person"  # how an execution ended when a person stopped the Factory (/mach stop)
 STOP_MARK = "stopped-by-person"          # the file factory stop leaves in an execution's folder before it stops it
@@ -434,10 +435,16 @@ def alive(pid: Any, execution_id: str) -> bool:
     return type(pid) is int and pid > 0 and execution_id in command_of(pid)
 
 
-def stop(pid: Any, execution_id: str) -> bool:
-    """Ask a running execution to stop. The wrapper ends its Claude process and records the interruption."""
+def stop(pid: Any, execution_id: str, root: Optional[Path] = None) -> bool:
+    """Ask a running execution to stop. The wrapper ends its Claude process and records the interruption.
+    A wrapper that has only just been started has not yet said it is ready (started.json): a signal then would end it
+    before it could record anything, so it is given a few seconds to get there first."""
     if not alive(pid, execution_id):
         return False
+    if root is not None:
+        ready, deadline = folder(root, execution_id) / "started.json", time.time() + READY_SECONDS
+        while not ready.exists() and time.time() < deadline and alive(pid, execution_id):
+            time.sleep(0.1)
     try:
         os.kill(pid, signal.SIGTERM)
     except OSError:
@@ -461,7 +468,7 @@ def marked_stop(root: Path, pid: Any, execution_id: str, mark: str) -> bool:
         (folder(root, execution_id) / mark).write_text(now() + "\n", encoding="utf-8")
     except OSError:
         pass
-    return stop(pid, execution_id)
+    return stop(pid, execution_id, root)
 
 
 def paused_how(root: Path, execution_id: str) -> Optional[str]:

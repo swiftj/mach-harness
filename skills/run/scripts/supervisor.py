@@ -846,7 +846,7 @@ class Supervisor:
                 record["stop_requested_at"] = stamp()
                 if only:
                     # One run stopped while the Factory goes on: held for a person, or the supervisor would start it again at once.
-                    signalled = executor.stop(record.get("wrapper_pid"), execution_id)
+                    signalled = executor.stop(record.get("wrapper_pid"), execution_id, self.root)
                     self.park(ledger, record["ticket_id"], "Its execution was stopped by a person. What it had done by then is not known; check the ticket before resuming.",
                               {"ticket_id": record["ticket_id"], "slice_id": record.get("slice_id"), "execution_id": execution_id}, code=None)
                 else:
