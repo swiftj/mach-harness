@@ -8,6 +8,12 @@ every review round (votes, findings, a person's approval or send-back, security 
 builder's recorded overrides, and the commits. The evidence files themselves stay in the local archive, which can be
 checked against the hashes here.
 
+Version 2 ends the record with a block for MACH to read (`facts()`, `read_facts()`): the facts release qualification
+needs on a machine that did not build the ticket. They are the slice, its revision and the approved spec's SHA-256, the
+contracts the plan named, the slices it depends on, the last verification's verdict with each scenario's evidence
+hashes, the approving review decision with whether a person's approval was required, the blockers of that round and
+the commits. Qualification reads that block from the integration branch and never parses the prose above it.
+
 Every piece of free text taken from the cell is redacted and bounded by the ticket station's shared rules
 (issue_rules.bound_text, handed in by the caller, never copied), and made inert: no mention, no issue link, no closing
 keyword, no HTML, no Markdown link or image. The whole text is then read with the security scan's shapes (scan.py, the
@@ -28,7 +34,7 @@ import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
-VERSION = 1
+VERSION = 2  # 2: the record ends with a block of facts for release qualification
 DEFAULT_DIR = "docs/changes"
 DEFAULT_ADR_DIR = "docs/adr"
 
@@ -60,6 +66,11 @@ TAG_RE = re.compile(r"<(?=[A-Za-z!/?])")
 LINK_RE = re.compile(r"\]\(")
 BREAK = "​"
 MASK = "[masked]"
+# The block of facts: this heading, this marker line, then one fenced JSON document. Free text elsewhere in the record
+# cannot make the marker line: every "<" taken from the cell is written as "&lt;".
+FACTS_HEADING = "## For MACH"
+FACTS_MARK = f"<!-- mach:change-record version={VERSION} -->"
+FACTS_LIMIT = 400_000  # characters of JSON read back; a larger block is not a record
 
 
 class RecordError(Exception):
@@ -214,8 +225,10 @@ def capped(lines: List[str], items: int, limit: int, what: str) -> List[str]:
 
 # ---------------------------------------------------------------- the record
 
-def render(root: Path, info: Dict[str, Any], ticket_id: str, commits: Dict[str, Optional[str]], rules: Any, jira_url: Optional[str] = None) -> str:
-    """The record's text for the cell at `root`. Deterministic for the same files and commits."""
+def render(root: Path, info: Dict[str, Any], ticket_id: str, commits: Dict[str, Optional[str]], rules: Any, jira_url: Optional[str] = None,
+           spec_sha256: Optional[str] = None) -> str:
+    """The record's text for the cell at `root`. Deterministic for the same files and commits.
+    `spec_sha256` is the approved spec's SHA-256 as intake takes it (the spec's text without MACH's header line)."""
     t = Text(rules)
     lines = [
         f"# Change record: {t.one(ticket_id, 80)}",
@@ -237,6 +250,7 @@ def render(root: Path, info: Dict[str, Any], ticket_id: str, commits: Dict[str, 
     lines += review_section(t, root)
     lines += build_section(t, root)
     lines += commits_section(commits)
+    lines += facts_section(facts(root, info, ticket_id, commits, rules, spec_sha256))
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -618,6 +632,108 @@ def commits_section(commits: Dict[str, Optional[str]]) -> List[str]:
     return lines
 
 
+# ---------------------------------------------------------------- the facts, for MACH
+
+def facts(root: Path, info: Dict[str, Any], ticket_id: str, commits: Dict[str, Optional[str]], rules: Any, spec_sha256: Optional[str]) -> Dict[str, Any]:
+    """What release qualification needs to know of this ticket, as data. Identifiers, verdicts, hashes and commits are
+    kept as recorded; a title, reason or note is redacted, bounded and made inert like the text above it, the same way
+    on a blocker and on the exception that names it, so the two still match."""
+    t = Text(rules)
+
+    def words(value: Any, limit: int) -> Optional[str]:
+        return _inert(rules.bound_text(value, limit, one_line=True)[0]) if isinstance(value, str) and value.strip() else None
+
+    def commit(value: Any) -> Optional[str]:
+        return value if isinstance(value, str) and SHA_RE.match(value) else None
+
+    product = info.get("product") if isinstance(info.get("product"), dict) else {}
+    issue = product.get("issue") if isinstance(product.get("issue"), dict) else {}
+    summary = load_dict(root / "evidence" / "summary.json")
+    checks = summary.get("checks") if isinstance(summary.get("checks"), dict) else {}
+    decision = load_dict(root / "review" / "decision.json")
+    rounds = numbered(list((root / "review").glob("round-*")) if (root / "review").is_dir() else [], "round")
+    blockers: List[Dict[str, Any]] = []
+    votes = rounds[-1] / "votes" if rounds else None
+    for path in sorted(votes.glob("*.json")) if votes is not None and votes.is_dir() else []:
+        vote = load_dict(path)
+        for finding in vote.get("findings") if isinstance(vote.get("findings"), list) else []:
+            if isinstance(finding, dict) and finding.get("severity") == "blocker":
+                blockers.append({"round": decision.get("round"), "reviewer": words(str(vote.get("reviewer") or path.stem), 40), "rule": words(finding.get("rule"), LINE_LIMIT),
+                                 "title": words(finding.get("title"), TITLE_LIMIT) or "", "file": words(finding.get("file"), 200),
+                                 "class": finding.get("class") if finding.get("class") == "security" else None})
+    human = decision.get("human_approval") if isinstance(decision.get("human_approval"), dict) else None
+    return {
+        "version": VERSION,
+        "ticket_id": ticket_id,
+        "slice_id": product.get("slice_id") or info.get("slice_id"),
+        "revision": product.get("revision") if type(product.get("revision")) is int else None,
+        "epic_id": product.get("epic_id"),
+        "issue": issue.get("number") if type(issue.get("number")) is int else None,
+        "depends_on": sorted((item for item in product.get("depends_on") or [] if isinstance(item, str)), key=natural),
+        "spec": {"path": info.get("spec_path") if isinstance(info.get("spec_path"), str) else None,
+                 "sha256": spec_sha256 if isinstance(spec_sha256, str) and SHA256_RE.match(spec_sha256) else None},
+        "contracts": sorted(item for item in info.get("contracts") or [] if isinstance(item, str)),
+        "commits": {key: commit(commits.get(key)) for key in ("approved", "revalidated", "base")},
+        "verification": {
+            "status": summary.get("status") if isinstance(summary.get("status"), str) else None, "head": commit(summary.get("head")),
+            "checks": {str(key): {"result": check.get("result") if check.get("result") in ("pass", "fail") else None, "note": words(check.get("note"), NOTE_LIMIT),
+                                  "evidence": sorted(name for name in check.get("evidence") or [] if isinstance(name, str))[:20]}
+                       for key, check in sorted(checks.items(), key=lambda pair: natural(pair[0]))[:MAX_CHECKS] if isinstance(check, dict)},
+            "checks_recorded": len(checks),
+            "evidence_files": sorted(({"file": entry["file"], "sha256": entry.get("sha256") if SHA256_RE.match(str(entry.get("sha256"))) else None}
+                                      for entry in summary.get("evidence_files") or [] if isinstance(entry, dict) and isinstance(entry.get("file"), str)),
+                                     key=lambda entry: entry["file"])[:MAX_FILES * 4],
+        },
+        "review": {
+            "outcome": decision.get("outcome") if isinstance(decision.get("outcome"), str) else None, "round": decision.get("round"),
+            "risk": decision.get("risk") if isinstance(decision.get("risk"), str) else None, "head": commit(decision.get("head")),
+            "blockers": decision.get("blockers") if type(decision.get("blockers")) is int else None,
+            "human_approval_required": decision.get("human_approval_required") is True,
+            "human_approval": {"by": t.one(human.get("by"), 80), "recorded_at": words(human.get("recorded_at"), 40)} if human else None,
+            "exceptions": [{"round": item.get("round"), "seat": words(item.get("seat"), 40), "index": item.get("index"), "title": words(item.get("title"), TITLE_LIMIT) or "",
+                            "rule": words(item.get("rule"), LINE_LIMIT), "file": words(item.get("file"), 200), "by": words(item.get("by"), 80),
+                            "reason": words(item.get("reason"), REASON_LIMIT), "recorded_at": words(item.get("recorded_at"), 40), "head": commit(item.get("head")),
+                            "expires": words(item.get("expires"), 12)}
+                           for item in (decision.get("exceptions") if isinstance(decision.get("exceptions"), list) else [])[:MAX_ITEMS] if isinstance(item, dict)],
+        },
+        "blockers": blockers[:MAX_FINDINGS],
+        "blockers_recorded": len(blockers),
+    }
+
+
+def facts_section(data: Dict[str, Any]) -> List[str]:
+    """The block as the record's last section. One JSON value per line, so a fence mark inside a string can never close the fence."""
+    return [FACTS_HEADING, "", "Facts for release qualification, read by MACH from the main branch. Do not edit: a record changed after it landed no longer counts.", "",
+            FACTS_MARK, "```json", *json.dumps(data, indent=1, sort_keys=True, ensure_ascii=True).split("\n"), "```", ""]
+
+
+def read_facts(text: Any) -> Optional[Dict[str, Any]]:
+    """The facts a version 2 record carries, or None: no block, more than one, a block that is not the record's last
+    section, or JSON that is not this version's. An earlier record (version 1) has none and is never parsed."""
+    if not isinstance(text, str):
+        return None
+    lines = text.split("\n")
+    marks = [index for index, line in enumerate(lines) if line == FACTS_MARK]
+    if len(marks) != 1 or len(lines) < marks[0] + 3 or lines[marks[0] + 1] != "```json":
+        return None
+    start = marks[0] + 2
+    end = next((index for index in range(start, len(lines)) if lines[index] == "```"), None)
+    if end is None or any(line.strip() for line in lines[end + 1:]):
+        return None
+    body = "\n".join(lines[start:end])
+    if len(body) > FACTS_LIMIT:
+        return None
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or data.get("version") != VERSION:
+        return None
+    shaped = all(isinstance(data.get(key), dict) for key in ("spec", "commits", "verification", "review")) and \
+        all(isinstance(data.get(key), list) for key in ("contracts", "depends_on", "blockers"))
+    return data if shaped else None
+
+
 # ---------------------------------------------------------------- secrets
 
 def mask(text: str, path: str, scan: Any) -> str:
@@ -637,6 +753,9 @@ def mask(text: str, path: str, scan: Any) -> str:
     if left:
         raise RecordError(f"The change record would still carry something shaped like a secret ({', '.join(sorted(set(left)))}) after masking, "
                           "so it was not written and nothing was merged. Look at the cell's files for the value.")
+    if FACTS_MARK in text and read_facts(masked) is None:
+        raise RecordError("Masking a likely secret left the change record's facts for MACH unreadable, so it was not written and nothing was merged. "
+                          "Look at the cell's files for the value.")
     return masked
 
 

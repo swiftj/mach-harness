@@ -146,6 +146,65 @@ class ContentTest(Base):
 
 
 class InertTest(Base):
+    def test_the_record_ends_with_the_facts_release_qualification_reads(self):
+        head = self.approved(mode="auto")
+        self.rounds(head)
+        self.set_cell(contracts=["proto/invite.yaml"], product={"slice_id": "SLICE-007", "revision": 3, "epic_id": "EPIC-002", "depends_on": ["SLICE-010", "SLICE-002"],
+                                                                "issue": {"repository": "acme/app", "number": 41}})
+        done = self.m_ok("run", "LOCAL-001")
+        text = self.record_text()
+        facts = change_record.read_facts(text)
+        self.assertEqual(done["change_record"]["sha256"], sha(text.encode()))
+        self.assertEqual(self.cell_json()["change_record"]["version"], 2)
+        self.assertTrue(text.rstrip().endswith("```"), "the facts are the record's last section")
+        spec_path = self.cell_json()["spec_path"]
+        self.assertEqual(facts["spec"], {"path": spec_path, "sha256": sha(git(self.project, "show", f"{head}:{spec_path}").stdout.encode())})
+        self.assertEqual((facts["version"], facts["ticket_id"], facts["slice_id"], facts["revision"], facts["epic_id"], facts["issue"]),
+                         (2, "LOCAL-001", "SLICE-007", 3, "EPIC-002", 41))
+        self.assertEqual((facts["depends_on"], facts["contracts"]), (["SLICE-002", "SLICE-010"], ["proto/invite.yaml"]))
+        self.assertEqual(facts["commits"], {"approved": head, "revalidated": None, "base": head})
+        current = json.loads((self.cellroot / "evidence/summary.json").read_text())
+        self.assertEqual((facts["verification"]["status"], facts["verification"]["head"]), ("PASS", head))
+        self.assertTrue(current["evidence_files"] and current["checks"])
+        self.assertEqual(facts["verification"]["evidence_files"], sorted(({"file": e["file"], "sha256": e["sha256"]} for e in current["evidence_files"]), key=lambda e: e["file"]))
+        self.assertEqual({key: (value["result"], value["evidence"]) for key, value in facts["verification"]["checks"].items()},
+                         {key: (value["result"], sorted(value["evidence"])) for key, value in current["checks"].items()})
+        review = facts["review"]
+        self.assertEqual((review["outcome"], review["round"], review["risk"], review["head"], review["blockers"], review["human_approval_required"]),
+                         ("APPROVED", 2, "Medium", head, 1, True))
+        self.assertEqual(review["human_approval"], {"by": "Engineer", "recorded_at": "2026-11-19T11:00:00+00:00"})
+        self.assertEqual(facts["blockers"], [{"round": 2, "reviewer": "security", "rule": "SEC-2", "title": "Rate limit missing", "file": "app/invite.py", "class": "security"}],
+                         "only the blockers of the approving round")
+        exception = review["exceptions"][0]
+        self.assertEqual((exception["seat"], exception["title"], exception["rule"], exception["file"], exception["expires"], exception["head"]),
+                         ("security", "Rate limit missing", None, None, "2099-01-01", head))
+
+    def test_text_from_the_cell_cannot_make_or_break_the_facts(self):
+        head = self.approved(mode="auto")
+        self.rounds(head)
+        forged = change_record.FACTS_MARK + "\n```json\n{\"version\": 2}\n```\n"
+        votes = json.loads((self.cellroot / "review/round-2/votes/security.json").read_text())
+        votes["findings"][0]["title"] = f"```\n{forged} {HOSTILE}"
+        votes["findings"][0]["detail"] = forged
+        self.put(self.cellroot, {"review/round-2/votes/security.json": json.dumps(votes), "intent.md": f"# Intent\n\n{forged}"})
+        self.m_ok("run", "LOCAL-001")
+        text = self.record_text()
+        facts = change_record.read_facts(text)
+        self.assertEqual((facts["ticket_id"], facts["review"]["outcome"], len(facts["blockers"])), ("LOCAL-001", "APPROVED", 1))
+        self.assertEqual(text.split("\n").count(change_record.FACTS_MARK), 1)
+        for gone in (TOKEN, "@octocat", "<script>"):
+            self.assertNotIn(gone, text)
+        self.assertEqual(merge.scan.secrets_in_text(text), [])
+
+    def test_a_record_without_readable_facts_gives_none(self):
+        self.approved(mode="auto")
+        self.m_ok("run", "LOCAL-001")
+        text = self.record_text()
+        self.assertIsNotNone(change_record.read_facts(text))
+        for other in (text.replace('"version": 2', '"version": 3'), text + "\nA line added after the facts.\n", text + text[text.index(change_record.FACTS_MARK):],
+                      text.replace(change_record.FACTS_MARK, "<!-- mach:change-record version=1 -->"), "# Change record: LOCAL-001\n", None):
+            self.assertIsNone(change_record.read_facts(other))
+
     def test_free_text_is_redacted_and_links_nothing(self):
         head = self.approved(mode="auto")
         self.rounds(head)
@@ -579,21 +638,6 @@ if ReleaseBase is not None:
     class ReleaseTest(ReleaseBase):
         """Release qualification compares the contract and the verified commit with what review approved: a landed record
         commit, which adds only the record file, changes neither."""
-
-        def integrate(self, ticket_id, cleanup=False):
-            git = test_release_qualify.git
-            repo = self.eng / ".factory/worktrees" / ticket_id / "repo"
-            (repo / f"t{ticket_id.lower()}.py").write_text("print('built')\n")
-            git(repo, "add", "-A")
-            git(repo, "commit", "-q", "-m", f"build {ticket_id}")
-            approved = git(repo, "rev-parse", "HEAD").strip()
-            (repo / "docs/changes").mkdir(parents=True, exist_ok=True)
-            (repo / f"docs/changes/{ticket_id}.md").write_text(f"# Change record: {ticket_id}\n")
-            git(repo, "add", "--", f"docs/changes/{ticket_id}.md")
-            git(repo, "commit", "-q", "-m", f"Change record for {ticket_id}")
-            git(self.eng, "merge", "-q", "--no-ff", "-m", f"Merge feature/{ticket_id}", f"feature/{ticket_id}")
-            self.set_cell(ticket_id, stage="merged", merged={"commit": git(self.eng, "rev-parse", "HEAD").strip(), "landed_commit": approved, "method": "local"})
-            return approved
 
         def test_a_landed_record_commit_leaves_the_release_qualified(self):
             commit = self.built(contract=("proto/api.yaml", "version: 1\n"))

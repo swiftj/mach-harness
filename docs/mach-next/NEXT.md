@@ -1,12 +1,12 @@
 # Where the work stands, and what is next
 
-Written on 2026-11-23, after MACH 0.21.0 was published, for whoever picks the work up next: a person, or an AI coding agent starting a new session on another machine. Read this first, then `docs/mach-next/M20_TEAMS_AND_MOVING.md`.
+Written on 2026-11-23, after MACH 0.21.0 was published, and brought up to date the same day when A6 was built, for whoever picks the work up next: a person, or an AI coding agent starting a new session on another machine. Read this first, then `docs/mach-next/M20_TEAMS_AND_MOVING.md`.
 
 Keep this file current: when a piece below is finished or the plan changes, change it here in the same commit.
 
 ## 1. State
 
-- **Released:** 0.21.0, tag `v0.21.0`, on `main`. Nothing is unmerged; every other branch is merged or abandoned.
+- **Released:** 0.21.0, tag `v0.21.0`, on `main`. Unmerged: `feature/a6-qualify-across-machines` (section 2.1), built and waiting for the owner's word to merge.
 - **What 0.21.0 added:** MACH for a team (Part A of the M20 design, except A6), the basic decisions drafted from an engineer's own documents, a ticket's workspace that holds no `.claude/` files, and a plain message when MACH's files are from different versions. The release notes are `docs/guides/RELEASE_NOTES_DRAFT.md`.
 - **Checks at release:** `make check` (2,149 tests, 1 skipped), `go test ./...` in both apps, and the web typecheck, lint, build and unit tests (347 and 396) all passed on the release commit.
 
@@ -16,23 +16,16 @@ The owner decided this order on 2026-11-23.
 
 ### 2.1 Qualifying a release across machines (A6 in the M20 design)
 
-**Why it is first.** With 0.21.0 any engineer's Factory builds any slice, so the slices of one epic are normally built on different machines. Release qualification reads each slice's run record and evidence from the local archive of the machine that built it. On any one machine the others show as "This Factory never took the slice in", and the epic cannot be qualified or accepted without an exception per check.
+**Built on the branch `feature/a6-qualify-across-machines`, not merged and not released.** What it does and its limits are in section A6 of `docs/mach-next/M20_TEAMS_AND_MOVING.md` and the release section of `docs/BLUEPRINT.md`. The owner decided on 2026-11-23 that an evidence file's SHA-256 in the committed change record is enough on a machine that does not hold the file, so no shared place for evidence was built.
 
-**Start by answering one question.** How much of what qualification needs is already in the change record that the merge station commits with every ticket? Read:
+The four conditions, as tested: a third clone that built nothing reaches the same outcome, check for check, as the two that built the slices; a record edited, replaced or put back by hand, or a spec changed after it, blocks the slice; `acceptance record` works from the third clone's snapshot and is read back there; `AcrossMachinesTest` errors on 0.21.0's qualification and passes now.
 
-- `skills/run/scripts/qualify.py`: around lines 390 to 470 (where a slice is "missing") and around 718 to 740 (how records are read);
-- `skills/merge/scripts/merge.py`, `write_record`, and `skills/merge/scripts/change_record.py`: what the committed record holds;
-- `skills/cleanup/scripts/cleanup.py`: what the local archive holds that the change record does not;
-- the setting `records.publish_command` and the release section of `docs/BLUEPRINT.md`.
+Left open by it:
 
-If the change record carries the verdicts and the scenario-to-evidence map, this is a medium piece: qualification reads the committed record for a slice this machine did not build, and checks it against the merged commit. If the evidence itself (screenshots, recordings) must be read, it also needs a shared place for evidence, which is larger.
-
-**What done looks like.**
-
-1. On a machine that built none of an epic's slices, `/mach release qualify --epic <epic>` reaches the same outcome as it would on a machine that built all of them.
-2. A record cannot be swapped or edited without qualification noticing: it is bound to the merged commit and to the approved spec's SHA-256.
-3. Product acceptance (`acceptance record`) works from that qualification.
-4. A reproduction test that fails today passes: one epic, two slices, built in two separate clones, qualified from a third.
+- **A release of it.** The change record is version 2 and the readiness snapshot is schema version 3. Every slice merged before this shows as `missing` when qualified, so an epic part-built on 0.21.0 needs an exception per slice or a rebuild.
+- **Never run for real:** only simulated station records in clones on one machine; no real Factory run, no real second machine, no real pull request merged on GitHub (a squashed one is not bound).
+- **The product approval in `human_approvals`** comes from this machine's ledger, so that list can differ between machines. Putting who approved the slice into the change record would close it.
+- **A newer approved revision not yet built** is known only to a Factory that took it in.
 
 ### 2.2 Moving a project to another repository (Part B of the M20 design)
 

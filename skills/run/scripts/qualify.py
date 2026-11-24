@@ -17,11 +17,21 @@ The snapshot is deterministic: the same inputs give the same bytes (sorted keys,
 inside it). When the run happened, how long it took and the suite's output sit beside it in
 run.json and the logs, outside the decision.
 
-What it reuses, and never reimplements: intake's ledger (which revision of each slice was taken in,
-by which ticket), its spec header, its validators and its rule for what is integrated (a commit on
-the branch, checked in Git); the cleanup station's run records and archives; the verification and
-review stations' recorded verdicts; the audit station's detection and running of the test command;
-the ticket station's read of an epic's issue.
+What a slice's execution is read from: the change record the merge station committed with the ticket
+(version 2, change_record.py), on the integration branch at the release commit. So a machine that
+built none of the slices reads what the machines that built them recorded. A record counts only
+when it is bound: the last commit to touch it adds only the record, on top of the commit review
+approved (or that commit brought up to date and tested again); that commit came in through a merge,
+never as a commit made on the integration branch itself; and the spec on its branch, and the spec
+at the release commit, both have the SHA-256 the record names. A record edited or replaced after it
+landed is not bound, and its slice is blocked. The evidence files stay in the archive of the machine
+that built the ticket: where this machine holds one, it is checked against the recorded SHA-256;
+where it does not, the recorded hash stands, and run.json says how many were held elsewhere.
+
+What it reuses, and never reimplements: intake's spec header, its validators and, for work still in
+the line here, its ledger and its rule for what is integrated; the merge station's change record and
+its rule for the record commit; the cleanup station's archives; the audit station's detection and
+running of the test command; the ticket station's read of an epic's issue.
 
 What it never does: land, publish or label a commit, change any checkout, write to GitHub, start a
 station, an agent or a workflow, or read the machine-local Factory settings. Product acceptance is
@@ -45,7 +55,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 SCHEMA = "mach.release-readiness"
-SCHEMA_VERSION = 2  # 2: an epic or a named list of slices instead of waves; acceptance per epic
+SCHEMA_VERSION = 3  # 3: each slice read from its committed change record; 2: an epic or a named list of slices, acceptance per epic
 OUTCOMES = ("qualified", "qualified_with_exceptions", "blocked", "incomplete")
 INCOMPLETE = ("missing", "not_run", "not_configured")  # a required check in one of these states was not shown to pass
 RELEASE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
@@ -155,19 +165,6 @@ class Release:
             return source, resolved
         return source, head
 
-    def run_records(self) -> Dict[str, Dict[str, Any]]:
-        """The newest run record per ticket, as the cleanup station wrote it."""
-        found: Dict[str, Dict[str, Any]] = {}
-        path = self.root / ".factory" / "archive" / "runs.jsonl"
-        for line in path.read_text(encoding="utf-8").splitlines() if path.is_file() else []:
-            try:
-                record = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(record, dict) and isinstance(record.get("ticket_id"), str):
-                found[record["ticket_id"]] = record
-        return found
-
     @staticmethod
     def archive_file(path: Path, ticket_id: str) -> Dict[str, bytes]:
         """Every file in a cleaned-up ticket's archive, by its path inside the cell folder."""
@@ -184,13 +181,64 @@ class Release:
             pass
         return files
 
-    @staticmethod
-    def json_in(files: Dict[str, bytes], name: str) -> Dict[str, Any]:
-        try:
-            data = json.loads(files[name].decode("utf-8"))
-        except (KeyError, ValueError, UnicodeDecodeError):
-            return {}
-        return data if isinstance(data, dict) else {}
+    # ---- change records, read from the integration branch ----
+
+    def record_module(self):
+        scripts = str(self.sibling("merge") / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        import change_record  # the merge station: the record's facts and the rule for the record commit
+        return change_record
+
+    def committed_records(self, commit: str) -> List[Dict[str, Any]]:
+        """Every version 2 change record in the records folder at the commit, with the facts it carries. A file that
+        is not one (an earlier version, a person's note) is passed over, never parsed."""
+        module = self.record_module()
+        folder = module.settings(self.config)["dir"]
+        found = []
+        for path in sorted(self._git("ls-tree", "--name-only", commit, "--", folder + "/").stdout.splitlines()):
+            data = self.file_at(commit, path) if module.PATH_RE.match(path) else None
+            facts = module.read_facts(data.decode("utf-8", errors="replace")) if data is not None else None
+            if facts is not None:
+                found.append({"path": path, "sha256": sha(data), "facts": facts})
+        return found
+
+    def bind(self, record: Dict[str, Any], commit: str) -> Dict[str, Any]:
+        """Whether a record at the release commit is the one the merge station landed, unchanged: `problem` says why not.
+        `added` is its record commit and `landed_in` the commit on the integration branch that brought it in."""
+        if "bound" in record:
+            return record["bound"]
+        module = self.record_module()
+        facts, path = record["facts"], record["path"]
+        commits, spec = facts["commits"], facts["spec"]
+        base, approved = commits.get("base"), commits.get("approved")
+        added = self._git("log", "-1", "--format=%H", commit, "--", path).stdout.strip()
+        merge, problem = None, None
+        if not COMMIT_RE.match(added) or not isinstance(base, str) or not isinstance(approved, str):
+            problem = "it does not name the commits it was written for"
+        elif base not in (approved, commits.get("revalidated")):
+            problem = "it was not written on top of the commit review approved, or of that commit brought up to date and tested again"
+        elif not module.holds(lambda work, *args: self._git(*args), self.root, {"commit": added, "parent": base, "path": path}, added, [base]):
+            problem = (f"the last commit to touch it ({added[:12]}) is not the merge station's record commit, which adds only the record on top of "
+                       f"{base[:12]}: the record was changed after it landed, or did not land with its ticket")
+        else:
+            # The commit on the integration branch's own line that first held the record commit: the merge of the ticket.
+            line = self._git("rev-list", "--first-parent", "--ancestry-path", f"{added}..{commit}").stdout.split()
+            merge = line[-1] if line else None
+            then = self.file_at(added, spec["path"]) if isinstance(spec.get("path"), str) else None
+            if merge is None or self._git("merge-base", "--is-ancestor", added, f"{merge}^1").returncode == 0:
+                merge, problem = None, "its commit was made on the integration branch itself, not merged in with a ticket's branch"
+            elif then is None or sha(self.line_module().without_header(then.decode("utf-8-sig", errors="replace"))[0].encode("utf-8")) != spec.get("sha256"):
+                problem = "the spec on its branch is not the spec whose SHA-256 it names"
+        record["bound"] = {"added": added if COMMIT_RE.match(added) else None, "landed_in": merge, "problem": problem}
+        return record["bound"]
+
+    def held_here(self, ticket_id: Optional[str], commits: Dict[str, Any]) -> Dict[str, bytes]:
+        """The files of this ticket's archive when this machine built it: the run record that names the same approved commit."""
+        for record in reversed(self.line.run_records(ticket_id) if ticket_id else []):
+            if ((record.get("integration") or {}).get("approved_commit")) == commits.get("approved"):
+                return self.archive_of(record)
+        return {}
 
     def exceptions(self, release_id: str) -> List[Dict[str, Any]]:
         path = self.home / release_id / "exceptions.jsonl"
@@ -306,8 +354,8 @@ class Release:
         return intake
 
     def scope(self, epic: Optional[str], slice_ids: Sequence[str], specs: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-        """Which slices the release holds. An epic's are every slice this Factory took in for it, every spec at the commit whose
-        header names it, and, when GitHub can be read, every slice its issue lists; a named list is just that list."""
+        """Which slices the release holds. An epic's are every spec at the commit whose header names it, every slice this
+        Factory took in for it, and, when GitHub can be read, every slice its issue lists; a named list is just that list."""
         entries = self.line.ledger()["slices"]
         if epic is None:
             names = sorted(dict.fromkeys(slice_ids), key=number)
@@ -358,11 +406,6 @@ class Release:
 
     # ---- the evaluation ----
 
-    def record_of(self, ticket_id: Optional[str], earlier_runs: int) -> Dict[str, Any]:
-        """The run record of one life of a ticket (records before `earlier_runs` belong to an earlier one)."""
-        records = self.line.run_records(ticket_id)[int(earlier_runs or 0):] if ticket_id else []
-        return records[-1] if records else {}
-
     def archive_of(self, record: Dict[str, Any]) -> Dict[str, bytes]:
         relative = record.get("archive") if isinstance(record.get("archive"), str) else None
         if not relative:
@@ -404,86 +447,98 @@ class Release:
 
         ledger = self.line.ledger()
         entries = ledger["slices"]
-        records_by_ticket: Dict[str, Dict[str, Any]] = {}
+        committed = self.committed_records(commit)
         integrated: Dict[str, bool] = {}
         slices_out, scenarios_out, approvals, open_blockers = [], [], [], []
         shared: Dict[str, List[Dict[str, Any]]] = {}
+        in_scope_records: set = set()
+        evidence_held, evidence_elsewhere = 0, 0
 
         for slice_id in scope["slices"]:
             entry = entries.get(slice_id) or {}
             spec = specs.get(slice_id)
+            # The change record written for the spec at this commit, among those the branch holds for the slice.
+            written = [item for item in committed if item["facts"].get("slice_id") == slice_id]
+            record = next((item for item in reversed(written) if spec and item["facts"]["spec"].get("sha256") == spec["spec_sha256"]), None)
+            bound = self.bind(record, commit) if record else {"added": None, "landed_in": None, "problem": None}
+            facts = record["facts"] if record and not bound["problem"] else {}
+            ticket_id = (record["facts"].get("ticket_id") if record else None)
+            if record:
+                in_scope_records.add(record["path"])
+            # What this Factory's own ledger knows of the slice: a newer approved revision, who approved it, work still in the line.
             lives = [entry] + [item for item in reversed(entry.get("history") or []) if isinstance(item, dict)] if entry else []
-            match = next((item for item in lives if spec and item.get("spec_sha256") == spec["spec_sha256"] and item.get("ticket_id")), None)
-            if match is None and spec:  # a life recorded before its spec hash was kept: by its revision's ticket
-                match = next((item for item in lives if item.get("ticket_id") and item.get("integrated")), None) if not any(i.get("spec_sha256") for i in lives) else None
-            ticket_id = (match or {}).get("ticket_id")
-            row: Dict[str, Any] = {"slice_id": slice_id, "issue": (match or entry or {}).get("issue"), "epic_id": (entry.get("epic") or {}).get("epic_id") or (spec or {}).get("epic_id"),
-                                   "revision": (match or {}).get("revision"), "spec_path": (spec or {}).get("path"), "spec_sha256": (spec or {}).get("spec_sha256"),
-                                   "ticket_id": ticket_id, "dependencies": [dep.get("slice_id") or f"#{dep.get('issue')}" for dep in entry.get("depends") or []]}
+            life = next((item for item in lives if spec and item.get("spec_sha256") == spec["spec_sha256"]), None)
+            dependencies = list(facts.get("depends_on") or []) if facts else [dep.get("slice_id") or f"#{dep.get('issue')}" for dep in entry.get("depends") or []]
+            row: Dict[str, Any] = {"slice_id": slice_id, "issue": (spec or {}).get("issue") or (record["facts"].get("issue") if record else None),
+                                   "epic_id": (spec or {}).get("epic_id") or (record["facts"].get("epic_id") if record else None) or (entry.get("epic") or {}).get("epic_id"),
+                                   "revision": record["facts"].get("revision") if record else None, "spec_path": (spec or {}).get("path"),
+                                   "spec_sha256": (spec or {}).get("spec_sha256"), "ticket_id": ticket_id, "dependencies": dependencies,
+                                   "change_record": {"path": record["path"], "sha256": record["sha256"], "commit": bound["added"]} if record else None}
             if spec is None:
                 check(f"slice.{slice_id}.spec", "slice", "fail" if entry.get("dispatched_at") else "missing", "Its spec is not on the integration branch at this commit.")
             else:
                 findings, model = self.line.validate_slice.analyze(spec["text"], Path(spec["path"]).name, [], ready=True)
                 problems = [f"{f.message} [{f.rule}]" for f in findings if f.severity == "error"]
                 check(f"slice.{slice_id}.spec", "slice", "fail" if problems else "pass", "; ".join(problems[:5]) or "Its spec at this commit passes the intent station's gates.")
-            if not entry:
-                check(f"slice.{slice_id}.ticket", "slice", "missing", "This Factory never took the slice in (no intake ledger entry), so no execution of it is known.")
-            elif not match:
-                check(f"slice.{slice_id}.ticket", "slice", "fail", f"The spec at this commit is not a revision this Factory built (it took in revision {entry.get('revision')}).")
+            if record:
+                check(f"slice.{slice_id}.ticket", "slice", "pass", f"Ticket {ticket_id} built revision {record['facts'].get('revision')}; its change record is {record['path']}.")
+            elif written and spec:
+                check(f"slice.{slice_id}.ticket", "slice", "fail", "The spec at this commit is not the one a change record on the branch was written for "
+                      f"({written[-1]['path']}, revision {written[-1]['facts'].get('revision')}).")
             else:
-                check(f"slice.{slice_id}.ticket", "slice", "pass", f"Ticket {ticket_id} built revision {match.get('revision')}.")
-            newer = entry.get("product_pending") or (entry if match is not None and match is not entry and entry.get("revision") != match.get("revision") else None)
+                check(f"slice.{slice_id}.ticket", "slice", "missing", "No change record for this slice is on the integration branch at this commit, so no execution of it is known.")
+            newer = entry.get("product_pending") or (entry if life is not None and life is not entry and entry.get("revision") != life.get("revision") else None)
             if newer and not (newer is entry and entry.get("integrated") and self.contains((entry.get("integrated") or {}).get("commit"), commit)):
                 check(f"slice.{slice_id}.current", "slice", "fail", f"A newer revision ({newer.get('revision')}) was approved and is not part of this release.")
             else:
                 check(f"slice.{slice_id}.current", "slice", "pass", "No newer approved revision supersedes this one.")
 
-            earlier_runs = int((match or {}).get("earlier_runs") or 0)
-            # With no spec at this commit to match a life against, a slice already dispatched is still its ledger ticket's
-            # work: whether that work is on the branch is a fact to check, never "unticketed".
-            worked = ticket_id or (entry.get("ticket_id") if spec is None and entry.get("dispatched_at") else None)
-            if worked and not ticket_id:
-                earlier_runs = int(entry.get("earlier_runs") or 0)
-            facts = self.line.work(worked, commit, earlier_runs) if worked else {"status": "unticketed"}
-            integrated[slice_id] = facts.get("status") == "integrated"
-            record = self.record_of(ticket_id, earlier_runs)
-            records_by_ticket[str(ticket_id)] = record
-            row["integration"] = {"status": facts.get("status"), "commit": facts.get("commit"),
-                                  "established_by": f"git merge-base --is-ancestor {facts.get('commit')} {commit}" if integrated[slice_id] else None,
-                                  "recorded_in": "run record (integration)" if record.get("integration") else "the cell's merge record" if integrated[slice_id] else None}
-            check(f"slice.{slice_id}.integrated", "slice", "pass" if integrated[slice_id] else "missing" if not worked else "fail",
-                  f"Its commit {str(facts.get('commit'))[:12]} is an ancestor of the release commit." if integrated[slice_id]
-                  else f"Its work is not on the integration branch at this commit (now {facts.get('status')}).")
+            integrated[slice_id] = bool(record) and not bound["problem"]
+            landed = bound["landed_in"] if integrated[slice_id] else None
+            row["integration"] = {"status": "integrated" if integrated[slice_id] else "not integrated", "commit": landed,
+                                  "established_by": f"git merge-base --is-ancestor {bound['added']} {commit}" if integrated[slice_id] else None,
+                                  "recorded_in": record["path"] if integrated[slice_id] else None}
+            if integrated[slice_id]:
+                check(f"slice.{slice_id}.integrated", "slice", "pass", f"Its change record was added by {bound['added'][:12]} and merged in {landed[:12]}, "
+                      "and is unchanged at the release commit.")
+            elif record:
+                check(f"slice.{slice_id}.integrated", "slice", "fail", f"Its change record {record['path']} does not count: {bound['problem']}.")
+            else:
+                # Work still in the line on this machine is a fact to say, never "unticketed".
+                worked = entry.get("ticket_id") if entry.get("dispatched_at") else None
+                state = self.line.work(worked, commit, int(entry.get("earlier_runs") or 0)).get("status") if worked else None
+                check(f"slice.{slice_id}.integrated", "slice", "fail" if worked else "missing",
+                      f"Its work is not on the integration branch with a change record at this commit (here it is {state})." if worked
+                      else "No change record binds its work to the integration branch at this commit.")
 
-            files = self.archive_of(record) if record else {}
-            cell = self.json_in(files, "cell.json")
-            summary = self.json_in(files, "evidence/summary.json")
-            decision = self.json_in(files, "review/decision.json")
-            approved = ((record.get("integration") or {}).get("approved_commit")) or decision.get("head")
-            where = record.get("archive") if files else None
-            row["verification"] = {"verdict": summary.get("status"), "head": summary.get("head"), "source": where and f"{where}:evidence/summary.json"}
+            verification = facts.get("verification") or {}
+            decision = facts.get("review") or {}
+            approved = (facts.get("commits") or {}).get("approved")
+            where = record["path"] if facts else None
+            row["verification"] = {"verdict": verification.get("status"), "head": verification.get("head"), "source": where}
             row["review"] = {"decision": decision.get("outcome"), "risk": decision.get("risk"), "round": decision.get("round"), "approved_commit": approved,
-                             "human_approval_required": decision.get("human_approval_required"), "source": where and f"{where}:review/decision.json"}
-            if not record:
-                note = "No archived run record: the ticket has not been through cleanup, so its verdicts are not on record."
+                             "human_approval_required": decision.get("human_approval_required"), "source": where}
+            if not facts:
+                note = ("Its change record does not count, so its verdicts are not shown." if record
+                        else "No change record on the integration branch: its verdicts are not on record.")
                 for part in ("verification", "review"):
                     check(f"slice.{slice_id}.{part}", "slice", "missing", note)
             else:
-                if record.get("outcome") != "merged":
-                    check(f"slice.{slice_id}.run", "slice", "fail", f"The run record says the ticket was {record.get('outcome')}, not merged.")
-                verdict = summary.get("status")
-                if not summary:
-                    check(f"slice.{slice_id}.verification", "slice", "missing", "The archive holds no verification summary.")
+                verdict = verification.get("status")
+                if not verdict:
+                    check(f"slice.{slice_id}.verification", "slice", "missing", "The change record holds no verification verdict.")
                 elif verdict != "PASS":
                     check(f"slice.{slice_id}.verification", "slice", "fail", f"The last verification verdict is {verdict}.")
-                elif approved and summary.get("head") != approved:
-                    check(f"slice.{slice_id}.verification", "slice", "fail", f"Verification passed {str(summary.get('head'))[:12]}, but review approved {str(approved)[:12]}.")
+                elif verification.get("head") != approved:
+                    check(f"slice.{slice_id}.verification", "slice", "fail", f"Verification passed {str(verification.get('head'))[:12]}, but review approved {str(approved)[:12]}.")
                 else:
-                    check(f"slice.{slice_id}.verification", "slice", "pass", f"PASS at {str(summary.get('head'))[:12]}.")
-                if not decision:
-                    check(f"slice.{slice_id}.review", "slice", "missing", "The archive holds no review decision.")
+                    check(f"slice.{slice_id}.verification", "slice", "pass", f"PASS at {str(verification.get('head'))[:12]}.")
+                if not decision.get("outcome"):
+                    check(f"slice.{slice_id}.review", "slice", "missing", "The change record holds no review decision.")
                 elif decision.get("outcome") != "APPROVED":
                     check(f"slice.{slice_id}.review", "slice", "fail", f"The last review decision is {decision.get('outcome')}.")
+                elif decision.get("head") != approved:
+                    check(f"slice.{slice_id}.review", "slice", "fail", f"Review decided on {str(decision.get('head'))[:12]}, but the record was written for {str(approved)[:12]}.")
                 elif decision.get("human_approval_required") and not decision.get("human_approval"):
                     check(f"slice.{slice_id}.review", "slice", "fail", "Review required a person's approval and none is recorded.")
                 else:
@@ -491,21 +546,21 @@ class Release:
                 human = decision.get("human_approval")
                 if isinstance(human, dict):
                     approvals.append({"kind": "review.human_approval", "subject": f"{slice_id} ({ticket_id})", "by": human.get("by"), "at": human.get("recorded_at"),
-                                      "source": f"{where}:review/decision.json"})
+                                      "source": where})
                 final_round = decision.get("round")
-                stood = [b for b in record.get("blockers") or [] if isinstance(b, dict) and b.get("round") == final_round]
+                stood = [b for b in facts.get("blockers") or [] if isinstance(b, dict)]
                 if decision.get("outcome") == "APPROVED" and decision.get("blockers") and not stood:
-                    stood = [{"round": final_round, "reviewer": None, "rule": None, "title": f"{decision.get('blockers')} blocker(s) outvoted; details not in the run record", "file": None}]
+                    stood = [{"round": final_round, "reviewer": None, "rule": None, "title": f"{decision.get('blockers')} blocker(s) outvoted; details not in the change record", "file": None}]
                 excepted = review_exceptions(decision)
                 for index, blocker in enumerate(stood, start=1):
                     blocker_id = f"blocker.{slice_id}.r{final_round}.{index}"
                     security = blocker.get("reviewer") == "security" or blocker.get("class") == "security"
                     given = next((item for item in excepted if item.get("seat") == blocker.get("reviewer") and item.get("title") == blocker.get("title")
                                   and item.get("rule") == blocker.get("rule") and item.get("file") == blocker.get("file")), None)
-                    entry = {"check": blocker_id, "slice_id": slice_id, "ticket_id": ticket_id, "security": security, **blocker}
+                    found = {"check": blocker_id, "slice_id": slice_id, "ticket_id": ticket_id, "security": security, **blocker}
                     what = f"{blocker.get('title')} ({blocker.get('reviewer')}; breaks {blocker.get('rule')})"
                     if given is None:
-                        open_blockers.append(entry)
+                        open_blockers.append(found)
                         check(blocker_id, "security" if security else "review", "fail", f"Outvoted, still open: {what}.")
                         continue
                     # A person's exception from review: listed with who and why, and counted as an exception (a gap a person accepted),
@@ -513,63 +568,74 @@ class Release:
                     exception = {"source": "review", "finding": f"{given.get('round')}/{given.get('seat')}/{given.get('index')}", "by": given.get("by"),
                                  "reason": given.get("reason"), "recorded_at": given.get("recorded_at"), "commit": given.get("head"), "expires": given.get("expires")}
                     if lapsed(given):
-                        open_blockers.append({**entry, "exception_expired": exception})
+                        open_blockers.append({**found, "exception_expired": exception})
                         check(blocker_id, "security" if security else "review", "fail",
                               f"Still open: {what}. A person excepted it in review until {given.get('expires')}, and that has passed.")
                     else:
-                        open_blockers.append({**entry, "excepted": exception})
+                        open_blockers.append({**found, "excepted": exception})
                         check(blocker_id, "security" if security else "review", "fail",
                               f"Excepted in review by a person, still open: {what}.", exception=exception)
-            if match is not None and match.get("approved_by"):
-                approvals.append({"kind": "product.slice_approval", "subject": f"{slice_id} revision {match.get('revision')}", "by": match.get("approved_by"),
-                                  "at": match.get("ready_at"), "source": f"the approval comment on issue #{match.get('issue')}" if match.get("issue") else "the ready folder"})
+            if life is not None and life.get("approved_by"):
+                approvals.append({"kind": "product.slice_approval", "subject": f"{slice_id} revision {life.get('revision')}", "by": life.get("approved_by"),
+                                  "at": life.get("ready_at"), "source": f"the approval comment on issue #{life.get('issue')}" if life.get("issue") else "the ready folder"})
 
-            # Required acceptance scenarios: every AC of the spec at this commit, with its recorded evidence.
+            # Required acceptance scenarios: every AC of the spec at this commit, with its recorded evidence. The record names each
+            # evidence file with its SHA-256; a file this machine holds is checked against it.
             ids: List[str] = []
             if spec is not None:
                 _, model = self.line.validate_slice.analyze(spec["text"], Path(spec["path"]).name, [], ready=False)
                 ids = [s.get("id") for s in model.get("scenarios") or [] if isinstance(s, dict) and AC_RE.match(str(s.get("id")))]
             if not ids:
                 check(f"scenario.{slice_id}", "scenario", "missing", "No acceptance scenarios could be read from the spec at this commit.")
-            hashes = {e.get("file"): e.get("sha256") for e in summary.get("evidence_files") or [] if isinstance(e, dict)}
+            files = self.held_here(ticket_id, facts.get("commits") or {}) if facts else {}
+            hashes = {e.get("file"): e.get("sha256") for e in verification.get("evidence_files") or [] if isinstance(e, dict)}
             for scenario_id in ids:
-                recorded = (summary.get("checks") or {}).get(scenario_id) if isinstance(summary.get("checks"), dict) else None
-                evidence = []
+                recorded = (verification.get("checks") or {}).get(scenario_id) if isinstance(verification.get("checks"), dict) else None
+                evidence, differs = [], []
                 for name in (recorded or {}).get("evidence") or []:
                     data = files.get(f"evidence/{name}")
-                    evidence.append({"file": f"evidence/{name}", "sha256": sha(data) if data is not None else None,
-                                     "matches_summary": data is not None and sha(data) == hashes.get(name)})
+                    evidence.append({"file": f"evidence/{name}", "sha256": hashes.get(name)})
+                    if data is None:
+                        evidence_elsewhere += 1
+                    else:
+                        evidence_held += 1
+                        if sha(data) != hashes.get(name):
+                            differs.append(name)
                 if not recorded or not evidence:
                     status, detail = "missing", "No recorded evidence for this scenario."
                 elif recorded.get("result") != "pass":
                     status, detail = "fail", f"Recorded as {recorded.get('result')}: {recorded.get('note')}"
-                elif not all(e["matches_summary"] for e in evidence):
-                    status, detail = "missing", "Its evidence file is missing from the archive or differs from the hash verification recorded."
+                elif not all(e["sha256"] for e in evidence):
+                    status, detail = "missing", "The change record names an evidence file without its SHA-256."
+                elif differs:
+                    status, detail = "missing", f"An evidence file in this machine's archive differs from the SHA-256 the change record names ({', '.join(differs)})."
                 else:
-                    status, detail = "pass", "Proven by the verifier with the evidence listed."
+                    status, detail = "pass", "Proven by the verifier, with the evidence the change record names by SHA-256."
                 scenarios_out.append({"slice_id": slice_id, "scenario_id": scenario_id, "status": status, "evidence": evidence})
                 check(f"scenario.{slice_id}.{scenario_id}", "scenario", status, detail)
 
             # Contracts: gathered here, judged across the release below (a contract can be shared by slices).
             row["contracts"] = []
-            for name in cell.get("contracts") or [] if isinstance(cell.get("contracts"), list) else []:
-                shared.setdefault(str(name), []).append({"slice_id": slice_id, "ticket_id": ticket_id, "approved": approved,
-                                                         "landed": facts.get("commit") if integrated[slice_id] else None, "row": row})
+            for name in facts.get("contracts") or []:
+                shared.setdefault(str(name), []).append({"slice_id": slice_id, "ticket_id": ticket_id, "approved": approved, "landed": landed, "row": row})
             slices_out.append(row)
 
-        records = self.run_records()
+        outside = [item for item in committed if item["path"] not in in_scope_records]
         for name in sorted(shared):
-            self.judge_contract(name, shared[name], commit, records, {row["ticket_id"] for row in slices_out}, check)
+            self.judge_contract(name, shared[name], commit, outside, check)
 
         for row in slices_out:
             entry = entries.get(row["slice_id"]) or {}
-            for dep in entry.get("depends") or []:
+            # The slices a change record says its ticket depended on; for a slice with no record that counts, what this Factory's ledger says.
+            depends = [{"slice_id": name} for name in row["dependencies"]] if row["integration"]["commit"] else list(entry.get("depends") or [])
+            for dep in depends:
                 label, found = self.line.resolve_dep(dep, entries)
+                found = found or dep.get("slice_id")
                 if found in integrated:
                     ok = integrated[found]
                     detail = f"{label} is integrated at this commit." if ok else f"{label} is not integrated at this commit."
                 else:
-                    ok = self.dependency_integrated(dep, found, entries, specs, commit)
+                    ok = self.dependency_integrated(dep, found, committed, specs, commit)
                     detail = f"{label} is outside this release; whether it is integrated was checked the same way."
                 check(f"dependency.{row['slice_id']}.{found or label.lstrip('#')}", "dependency", "pass" if ok else "fail", detail)
         # Commands at exactly this commit, on a clean tree from Git's objects.
@@ -660,9 +726,11 @@ class Release:
         write_atomic(folder / "readiness.json", text)
         write_atomic(folder / "run.json", canonical({"release_id": release_id, "commit": commit, "evaluated_at": now(), "readiness_sha256": sha(text.encode("utf-8")),
                                                      "seconds": {key: value.get("seconds") for key, value in commands.items()},
+                                                     "evidence_files": {"checked_in_this_machines_archive": evidence_held, "held_on_another_machine": evidence_elsewhere},
                                                      "logs": sorted(p.relative_to(folder).as_posix() for p in logs.glob("*.log"))}))
         return {"release_id": release_id, "commit": commit, "outcome": outcome, "outcome_summary": summary_line, "not_assessed": unassessed, "readiness": str(folder / "readiness.json"),
                 "unresolved_blockers": blocking, "incomplete": incomplete, "exceptions": excepted,
+                "evidence_files": {"checked_in_this_machines_archive": evidence_held, "held_on_another_machine": evidence_elsewhere},
                 "product_acceptance": body["product_acceptance"]["decision"], "released": False}
 
     def reviewed_change(self, name: str, approved: Optional[str], landed: Optional[str]) -> Tuple[Optional[bytes], bool]:
@@ -674,8 +742,8 @@ class Release:
         base = self._git("merge-base", approved, f"{landed}^1").stdout.strip()
         return then, (self.file_at(base, name) if base else None) != then
 
-    def judge_contract(self, name: str, users: List[Dict[str, Any]], commit: str, records: Dict[str, Dict[str, Any]],
-                       in_scope_tickets: set, check: Callable[..., None]) -> None:
+    def judge_contract(self, name: str, users: List[Dict[str, Any]], commit: str, outside_records: List[Dict[str, Any]],
+                       check: Callable[..., None]) -> None:
         """A contract shared by slices must be, at the release, the version approved by the latest integrated
         review that changed it. An earlier slice's version is then superseded, not failed. It fails when no
         reviewed version matches (changed outside review); it is incomplete when the latest change came from a
@@ -688,7 +756,7 @@ class Release:
         for user in touchers:
             if latest is None or self.contains(latest["landed"], user["landed"]):
                 latest = user
-        outside = self.outside_change(name, now_bytes, commit, records, in_scope_tickets) if now_bytes is not None and (latest is None or latest["then"] != now_bytes) else None
+        outside = self.outside_change(name, now_bytes, commit, outside_records) if now_bytes is not None and (latest is None or latest["then"] != now_bytes) else None
         for user in users:
             check_id = f"contract.{user['slice_id']}.{name}"
             item = {"path": name, "sha256_at_release": sha(now_bytes) if now_bytes is not None else None,
@@ -713,32 +781,29 @@ class Release:
             else:
                 check(check_id, "contract", "fail", "The integrated file matches no version a review in this release approved: it was changed outside review.")
 
-    def outside_change(self, name: str, now_bytes: bytes, commit: str, records: Dict[str, Dict[str, Any]], in_scope_tickets: set) -> Optional[str]:
-        """An integrated ticket outside the release whose reviewed change made the contract what it is now."""
-        for ticket_id, record in sorted(records.items()):
-            if ticket_id in in_scope_tickets or record.get("outcome") != "merged":
+    def outside_change(self, name: str, now_bytes: bytes, commit: str, outside_records: List[Dict[str, Any]]) -> Optional[str]:
+        """An integrated ticket outside the release whose reviewed change made the contract what it is now, by its change record."""
+        for record in outside_records:
+            facts = record["facts"]
+            if name not in facts["contracts"]:
                 continue
-            files = self.archive_of(record)
-            cell = self.json_in(files, "cell.json")
-            if name not in (cell.get("contracts") or []):
+            bound = self.bind(record, commit)
+            if bound["problem"]:
                 continue
-            approved = (record.get("integration") or {}).get("approved_commit") or self.json_in(files, "review/decision.json").get("head")
-            facts = self.line.work(ticket_id, commit)
-            if facts.get("status") != "integrated":
-                continue
-            then, touched = self.reviewed_change(name, approved, facts.get("commit"))
+            then, touched = self.reviewed_change(name, facts["commits"].get("approved"), bound["landed_in"])
             if then == now_bytes and touched:
-                return f"{cell.get('slice_id') or record.get('slice_id') or 'a slice'} ({ticket_id})"
+                return f"{facts.get('slice_id') or 'a slice'} ({facts.get('ticket_id')})"
         return None
 
-    def dependency_integrated(self, dep: Dict[str, Any], found: Optional[str], entries: Dict[str, Dict[str, Any]], specs: Dict[str, Dict[str, Any]], commit: str) -> bool:
-        """A dependency outside the release: integrated at this commit when this Factory's record of it says so, checked in
-        Git, or, for one it never took in, when its spec is at the commit."""
+    def dependency_integrated(self, dep: Dict[str, Any], found: Optional[str], committed: List[Dict[str, Any]], specs: Dict[str, Dict[str, Any]], commit: str) -> bool:
+        """A dependency outside the release: integrated at this commit when its spec is there with a change record that
+        counts for it, or, for one built before records carried facts or named only by its issue, when its spec is there."""
         if found is not None:
-            entry = entries[found]
-            return bool(entry.get("ticket_id")) and self.line.work(entry["ticket_id"], commit, entry.get("earlier_runs") or 0).get("status") == "integrated"
-        if dep.get("slice_id"):
-            return dep["slice_id"] in specs
+            spec = specs.get(found)
+            written = [item for item in committed if item["facts"].get("slice_id") == found]
+            if written:
+                return bool(spec) and any(item["facts"]["spec"].get("sha256") == spec["spec_sha256"] and not self.bind(item, commit)["problem"] for item in written)
+            return bool(spec)
         return any(spec["issue"] == dep.get("issue") for spec in specs.values())
 
     def acceptance(self, scope: Dict[str, Any], release_id: str, commit: str) -> Dict[str, Any]:
