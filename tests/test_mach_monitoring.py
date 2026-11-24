@@ -274,25 +274,22 @@ class GrantTest(Base):
 
     def test_enable_statement_names_monitoring_requests(self):
         code, out, err = self.run_factory("enable", "--autonomy", "supervised")
-        self.assertEqual(json.loads(out)["would_enable"]["monitoring_requests"],
+        self.assertEqual(json.loads(out)["summary"]["monitoring_requests"],
                          "Does not take issues from monitoring accounts. Those wait for an engineer.")
+        self.assertFalse(policy.effective(policy.read(self.eng), {})["monitoring_requests"])
         self.assertIn("needs --autonomy supervised", self.refused_factory("enable", "--autonomy", "observe", "--monitoring-requests"))
-        code, out, err = self.run_factory("enable", "--autonomy", "supervised", "--monitoring-requests")
-        asked = json.loads(out)
-        self.assertEqual(asked["would_enable"]["monitoring_requests"],
+        code, out, err = self.run_factory("enable", "--autonomy", "supervised", "--monitoring-requests")  # one step, on the engineer's explicit request
+        done = json.loads(out)
+        self.assertEqual(done["summary"]["monitoring_requests"],
                          "Also takes issues filed by the monitoring accounts this project lists (tickets.github.monitor_accounts) and grooms them "
                          "without a person, at most 3 per pass. Each answer is recorded as decided without a product manager; anything about money, "
                          "access, deletion or conflicting rules stops for a person. Builds only what grooming rates below High risk, and within this "
                          "machine's risk limit. The issue text comes from outside the team; it is treated as data.")
         self.assertEqual(activation.MONITORING_STATEMENT[False], "Does not take issues from monitoring accounts. Those wait for an engineer.")
-        # The execution risk is still accepted explicitly, against the tool list.
-        self.assertIn("add --accept-execution-risk", self.refused_factory("enable", "--confirm", asked["confirm_with"]))
-        self.assertFalse(self.local("runner.json").exists())
-        done = self.factory("enable", "--confirm", asked["confirm_with"], "--accept-execution-risk")
         self.assertTrue(done["policy"]["monitoring_requests"])
         stored = json.loads(self.local("runner.json").read_text())
         self.assertIs(stored["monitoring_requests"], True)
-        self.assertEqual(stored["execution_risk_accepted"]["tools_digest"], policy.tools_digest(stored["allowed_tools"]))
+        self.assertNotIn("execution_risk_accepted", stored)
         self.assertTrue(policy.effective(policy.read(self.eng), {})["monitoring_requests"])
 
 
@@ -330,7 +327,7 @@ class SupervisorTest(Base):
         self.assertEqual([item["ticket_id"] for item in report["started"]], ["42"])
         # first_execution already held that the first run stops before build. Claim times have one-second
         # resolution, so the two runs are compared as a set, not by an order two equal times cannot give.
-        self.assertEqual(sorted(record["until"] for record in self.runs_for("42")), ["build", "merge"])  # the default stop before merge still holds
+        self.assertEqual([record["until"] for record in sorted(self.runs_for("42"), key=lambda record: record["until"] is None)], ["build", None])  # merging is the project's to decide (M23 2.3)
         self.assertEqual(self.entries()["42"]["state"], "building")
         argv = self.calls()[-1]["argv"]
         self.assertIn("--restricted", argv)

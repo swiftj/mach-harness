@@ -27,6 +27,7 @@ sys.path.insert(0, str(SCRIPTS))
 import activation  # noqa: E402
 import executor  # noqa: E402
 import intake  # noqa: E402
+import notify  # noqa: E402
 import policy  # noqa: E402
 import run  # noqa: E402
 import service  # noqa: E402
@@ -142,6 +143,22 @@ class Base(IntakeBase):
                            "FAKE_LAUNCHCTL_LOG": str(self.launchctl_log), "HOME": str(self.home)})
         class_template.step(self, "supervisor", self.root, self.stand_ins)
         self.addCleanup(self.end_executions)
+        # No test starts a detached supervisor or shows a real banner: the start is recorded, the banner's runner shows nothing,
+        # the Claude Code session is a stand-in number, and a subprocess a test runs cannot start one either (MACH_FACTORY_NO_START).
+        self.detached = []
+        self.session = 777001
+        os.environ[service.NO_START_ENV] = "1"
+
+        def start_detached(root, run_script, **how):
+            self.detached.append((Path(root), Path(run_script)))
+            self.how = how
+            return 424242
+
+        for target, attribute, value in ((service, "start_detached", start_detached), (notify, "run_osascript", lambda argv, timeout: (True, None)),
+                                         (service, "find_session_pid", lambda start=None: self.session)):
+            patcher = mock.patch.object(target, attribute, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def stand_ins(self):
         """The stand-ins for Claude Code and launchctl, a home folder, and the Factory's settings; files only."""
@@ -193,10 +210,9 @@ class Base(IntakeBase):
         return class_template.step(self, "enable " + json.dumps([flags, autonomy]), self.root, lambda: self._enable(*flags, autonomy=autonomy))
 
     def _enable(self, *flags, autonomy="supervised"):
-        code, out, err = self.run_factory("enable", "--autonomy", autonomy, *flags)
-        asked = json.loads(out)
-        self.assertTrue(asked.get("ready"), out + err)
-        return self.factory("enable", "--confirm", asked["confirm_with"], *(["--accept-execution-risk"] if autonomy != "observe" else []))
+        done = self.factory("enable", "--autonomy", autonomy, *flags)  # one step (M23)
+        self.assertTrue(done.get("enabled"), json.dumps(done))
+        return done
 
     def tick(self):
         return self.factory("tick")
@@ -248,7 +264,7 @@ class Base(IntakeBase):
     def supervised(self, *flags):
         """SLICE-001 in a ready folder on the shared branch, and Supervised Autopilot enabled."""
         self.first()
-        return self.enable("--include-backlog", *flags)
+        return self.enable(*flags)
 
 
 class ActivationTest(Base):
@@ -266,59 +282,53 @@ class ActivationTest(Base):
         self.assertEqual(self.tickets(), [])  # a disabled Factory does not even take work in
         self.assertFalse((self.eng / ".factory/intake").exists())
 
-    def test_enable_shows_what_it_would_do_and_needs_the_code(self):
+    def test_enable_is_one_step_and_says_what_it_allows(self):
+        """M23 2.1: no code, no second acceptance, no backlog question. The checks run; then the authorization is written."""
         self.first()
-        code, out, _ = self.run_factory("enable", "--autonomy", "supervised", "--include-backlog", "--max-parallel", "1")
-        asked = json.loads(out)
-        self.assertEqual((code, asked["ready"], asked["enabled"]), (0, True, False))
-        self.assertFalse(self.local("runner.json").exists())  # nothing is enabled by asking
-        self.assertEqual(self.factory("status")["factory"], "disabled")
-        would = asked["would_enable"]
-        self.assertEqual((would["autonomy"], would["limits"]["max_parallel"], would["work_already_here"][0]["slice_id"]), ("supervised", 1, "SLICE-001"))
-        self.assertIn("Never merges", would["merges"])
-        self.assertIn(f"Bash({sys.executable} *)", would["tools_each_execution_may_use"])
-        self.assertIn("run this repository's tests", would["runs_repository_code"])
-        self.assertIn("restricted mode", would["execution_boundary"])
-        self.assertIn("not a sandbox", would["execution_boundary"])
-        ready = next(item for item in asked["checks"] if item["check"] == "claude_ready")
+        done = self.factory("enable", "--max-parallel", "1")
+        self.assertEqual((done["enabled"], done["updated"], done["factory"], done["factory_started"]), (True, False, "supervised", True))  # it starts the supervisor (M23 2.4)
+        summary = done["summary"]
+        self.assertEqual((summary["autonomy"], summary["limits"]["max_parallel"], summary["limits"]["max_budget_usd_per_run"]), ("supervised", 1, None))
+        self.assertIn("Low and Medium risk merge once review approves", summary["merges"])
+        self.assertIn("No spending limit", summary["spending"])
+        self.assertIn(f"Bash({sys.executable} *)", summary["tools_each_execution_may_use"])
+        self.assertIn("run this repository's tests", summary["runs_repository_code"])
+        self.assertIn("restricted mode", summary["execution_boundary"])
+        self.assertIn("not a sandbox", summary["execution_boundary"])
+        self.assertIn("no operating-system sandbox", " ".join(summary["what_an_execution_can_do"]))
+        self.assertIn("/mach stop", summary["stop"])
+        ready = next(item for item in done["checks"] if item["check"] == "claude_ready")
         self.assertIn("inside the execution boundary", ready["detail"])  # the probe ran with the execution's own flags
-        self.assertTrue(all(item["ok"] for item in asked["checks"] if item["required"]))
-        self.assertIn("not the confirmation code", self.refused_factory("enable", "--confirm", "000000"))
-        self.assertFalse(self.local("runner.json").exists())
-        # M7: the central residual risk, worked out from the tool list, and accepted explicitly.
-        risk = would["execution_risk"]
-        self.assertEqual(risk["unrestricted_tools"], ["Bash(python3 *)", f"Bash({sys.executable} *)"])
-        self.assertIn("can run any program as this user, read and change this user's files (not only this project's), and use the network", risk["statement"][0])
-        self.assertIn("check what is merged, not what an execution does outside the repository", risk["statement"][1])
-        self.assertIn("no operating-system sandbox", risk["statement"][2])
-        self.assertEqual(risk["tools_digest"], policy.tools_digest(would["tools_each_execution_may_use"]))
-        self.assertIn("--accept-execution-risk", asked["next"])
-        refusal = self.refused_factory("enable", "--confirm", asked["confirm_with"])
-        self.assertIn("add --accept-execution-risk, only if the person has read the execution risk and accepts it", refusal)
-        self.assertEqual(len(refusal.strip().splitlines()), 1)
-        self.assertFalse(self.local("runner.json").exists())
-        done = self.factory("enable", "--confirm", asked["confirm_with"], "--accept-execution-risk")  # the code was not used up by the refusal
-        accepted = done["policy"]["execution_risk_accepted"]
-        self.assertEqual((accepted["accepted"], accepted["by"], accepted["tools_digest"]), (True, "Erin Engineer", risk["tools_digest"]))
-        self.assertTrue(accepted["at"])
-        self.assertEqual((done["enabled"], done["factory"], done["policy"]["limits"]["max_parallel"], done["policy"]["allow_merge"]), (True, "supervised", 1, False))
-        self.assertEqual(done["policy"]["enabled_by"], "Erin Engineer")
+        pol = done["policy"]
+        self.assertEqual((pol["limits"]["max_parallel"], pol["allow_merge"], pol["enabled_by"], pol["max_risk"]), (1, True, "Erin Engineer", "High"))
+        stored = json.loads(self.local("runner.json").read_text())
+        self.assertNotIn("execution_risk_accepted", stored)
+        self.assertNotIn("max_budget_usd_per_run", stored["limits"])
         self.assertEqual(stat.S_IMODE(self.local("runner.json").stat().st_mode), 0o600)
         self.assertEqual(subprocess.run(["git", "status", "--porcelain"], cwd=str(self.eng), capture_output=True, text=True).stdout, "")  # never visible to Git
-        self.assertIn("Nothing is waiting to be confirmed", self.refused_factory("enable", "--confirm", asked["confirm_with"]))  # a code works once
-        self.assertIn("already enabled", self.refused_factory("enable"))
-        self.assertEqual(self.kinds().count("factory.activated"), 1)
+        # factory start (= enable) starts a supervisor that outlives the session.
+        self.assertEqual((done["supervisor"], self.detached, self.how), ("started", [(self.eng, SCRIPTS / "run.py")], {"lifetime": "background", "started_by": "factory start"}))
+        self.assertIn("also after Claude Code closes", done["in_words"])
+        # Run again, it changes only what was asked for and keeps the runner's identity.
+        again = self.factory("enable", "--budget-per-day", "50", "--no-merge")
+        self.assertEqual((again["updated"], again["policy"]["runner_id"], again["policy"]["limits"]["max_parallel"], again["policy"]["limits"]["max_budget_usd_per_day"],
+                          again["policy"]["allow_merge"]), (True, pol["runner_id"], 1, 50, False))
+        self.assertIn("Never merges", again["summary"]["merges"])
+        self.assertEqual(self.kinds().count("factory.activated"), 2)
+        for flag in ("--confirm", "--accept-execution-risk", "--include-backlog", "--exclude-backlog", "--allow-merge"):
+            with self.subTest(removed=flag), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as refused:
+                run.main(["--project", str(self.eng), "factory", "enable", flag, *(["abc"] if flag == "--confirm" else [])])
+            self.assertEqual(refused.exception.code, 2)
 
-    def test_a_confirmation_expires(self):
+    def test_a_code_left_by_an_earlier_version_is_removed_and_never_read(self):
         self.first()
-        asked = json.loads(self.run_factory("enable", "--autonomy", "observe")[1])
-        pending = json.loads(self.local("pending-enable.json").read_text())
-        pending["expires_at"] = "2026-01-01T00:00:00Z"
-        self.local("pending-enable.json").write_text(json.dumps(pending))
-        self.assertIn("expired", self.refused_factory("enable", "--confirm", asked["confirm_with"]))
-        self.assertFalse(self.local("runner.json").exists())
+        self.local("pending-enable.json").parent.mkdir(parents=True, exist_ok=True)
+        self.local("pending-enable.json").write_text(json.dumps({"code": "abc123", "request": {"autonomy": "observe"}}))
+        self.factory("enable")
+        self.assertFalse(self.local("pending-enable.json").exists())
+        self.assertEqual(policy.read(self.eng)["autonomy"], "supervised")
 
-    def test_preflight_failures_give_no_code(self):
+    def test_a_failing_check_enables_nothing_and_says_which(self):
         self.first()
         cases = [
             (lambda: self.config(build={"require_audit": True}), "audit", "no readiness audit report"),
@@ -334,9 +344,6 @@ class ActivationTest(Base):
             # Secrets and dependency scan: switching it off in tracked settings refuses unattended work too.
             (lambda: self.config(security={"scan": {"enabled": False}}), "security_review", "security.scan.enabled is false"),
             (lambda: self.config(factory={"supervisor": False}), "project_allows", "not allowed here"),
-            (lambda: self.local("supervisor.json").parent.mkdir(exist_ok=True) or self.local("supervisor.json").write_text(json.dumps(
-                {"instance": "other", "runner_id": "r", "pid": os.getpid(), "host": supervisor.platform.node(), "heartbeat_at": "x", "expires_at": "2099-01-01T00:00:00Z"})),
-             "ownership", "Another supervisor"),
         ]
         # Each case starts from the same tracked settings: a section one case breaks (security, say) must not carry into the next.
         settings = (self.eng / ".factory/config.json").read_text()
@@ -345,45 +352,40 @@ class ActivationTest(Base):
                 (self.eng / ".factory/config.json").write_text(settings)
                 self.config(build={"require_audit": False}, review={}, factory={"max_parallel": 3})
                 self.claude({"default": {"stage": "approved"}})
-                if self.local("supervisor.json").exists():
-                    self.local("supervisor.json").unlink()
                 break_it()
-                code, out, _ = self.run_factory("enable", "--autonomy", "supervised", "--include-backlog")
+                code, out, _ = self.run_factory("enable")
                 asked = json.loads(out)
-                self.assertEqual((code, asked["ready"]), (1, False))
-                self.assertNotIn("confirm_with", asked)
+                self.assertEqual((code, asked["ready"], asked["enabled"]), (1, False, False))
                 self.assertEqual([item["check"] for item in asked["failed"]], [name])
                 self.assertIn(words, asked["failed"][0]["detail"])
+                self.assertEqual(asked["why"], asked["failed"][0]["detail"])
                 self.assertFalse(self.local("runner.json").exists())
-                self.assertFalse(self.local("pending-enable.json").exists())
+        # A supervisor already running here is not a failure: it is woken.
+        (self.eng / ".factory/config.json").write_text(settings)
+        self.config(build={"require_audit": False}, review={}, factory={"max_parallel": 3})
+        self.local("supervisor.json").parent.mkdir(parents=True, exist_ok=True)
+        self.local("supervisor.json").write_text(json.dumps({"instance": "other", "runner_id": "r", "pid": os.getpid(), "host": supervisor.platform.node(),
+                                                             "heartbeat_at": "x", "expires_at": "2099-01-01T00:00:00Z"}))
+        done = self.factory("enable")
+        ownership = next(item for item in done["checks"] if item["check"] == "ownership")
+        self.assertEqual((done["enabled"], ownership["required"]), (True, False))
+        self.assertIn("it is woken", ownership["detail"])
 
     def test_wrong_branch_and_bad_limits(self):
         self.first()
         self.assertIn("must be a number from 1 to 8", self.refused_factory("enable", "--max-parallel", "50"))
         git(self.eng, "switch", "-q", "-c", "elsewhere")
-        asked = json.loads(self.run_factory("enable", "--autonomy", "supervised", "--include-backlog")[1])
+        asked = json.loads(self.run_factory("enable", "--autonomy", "supervised")[1])
         self.assertEqual([item["check"] for item in asked["failed"]], ["checkout"])
 
-    def test_work_already_here_needs_a_decision(self):
+    def test_work_already_here_is_the_supervisors_to_take_in(self):
+        """No backlog question: ready work that was here before the Factory was turned on is the supervisor's like any other."""
         self.first()
-        code, out, _ = self.run_factory("enable", "--autonomy", "supervised")
-        asked = json.loads(out)
-        self.assertEqual((code, asked["ready"]), (1, False))
-        self.assertIn("--include-backlog", asked["why"])
-        self.assertEqual([item["slice_id"] for item in asked["would_enable"]["work_already_here"]], ["SLICE-001"])
-        self.assertNotIn("confirm_with", asked)
-        self.enable("--exclude-backlog")
-        self.assertEqual(policy.read(self.eng)["excluded_slices"], ["SLICE-001"])
+        done = self.enable()
+        self.assertEqual(done["policy"]["excluded_slices"], [])
         report = self.tick()
-        self.assertEqual(self.tickets(), ["LOCAL-001"])  # taken in, as a ticket
-        self.assertEqual((report["dispatched"], report["started"]), ([], []))
-        self.assertIn("left to the engineer", report["held"][0]["why"])
-        self.assertEqual(self.calls(), [])
-        self.assertEqual(self.product("dispatch", "SLICE-001")["tickets"], ["LOCAL-001"])  # the engineer still can
-        # New work that arrives after activation is the supervisor's.
-        self.publish(self.a, self.slice(self.a, "Arrived later"))
-        report = self.tick()
-        self.assertEqual([item["slice_id"] for item in report["dispatched"]], ["SLICE-002"])
+        self.assertEqual(report["dispatched"], [{"slice_id": "SLICE-001", "ticket_id": "LOCAL-001"}])
+        self.wait()
 
     def test_authorization_does_not_travel(self):
         self.supervised()
@@ -434,7 +436,7 @@ class ActivationTest(Base):
 
 
 class ExecutionRiskTest(Base):
-    """M7 T2: a mode that starts agents needs a person to accept the execution risk, for one exact tool list."""
+    """M7 T2, changed by M23 2.1: what an execution can do is said in plain words; no separate acceptance is written or required."""
 
     def rewrite(self, change):
         data = json.loads(self.local("runner.json").read_text())
@@ -442,35 +444,21 @@ class ExecutionRiskTest(Base):
         self.local("runner.json").write_text(json.dumps(data))
         os.chmod(str(self.local("runner.json")), 0o600)
 
-    def test_a_changed_tool_list_or_a_missing_acceptance_reads_as_needing_acceptance(self):
+    def test_an_older_authorization_reads_with_or_without_an_acceptance(self):
+        """M23 2.1: execution_risk_accepted is no longer written or required; a file from before that still has it reads."""
         self.supervised()
+        self.rewrite(lambda d: d.update(execution_risk_accepted={"accepted": True, "by": "x", "at": "2026-01-01T00:00:00Z", "tools_digest": "0" * 64}))
         self.assertEqual(policy.read(self.eng)["source"], "local-file")
-        self.rewrite(lambda d: d["allowed_tools"].append("Bash(curl *)"))
+        self.rewrite(lambda d: d["limits"].update(max_budget_usd_per_run=25, max_budget_usd_per_day=None, max_runs_per_day=20))
         read = policy.read(self.eng)
-        self.assertEqual((read["enabled"], read["source"]), (False, "invalid-file"))
-        self.assertIn("allowed tool list changed since a person accepted the execution risk", read["problems"][0])
-        self.assertEqual(self.tick()["state"], "disabled")
-        self.rewrite(lambda d: (d["allowed_tools"].remove("Bash(curl *)"), d.pop("execution_risk_accepted")))
-        read = policy.read(self.eng)  # an authorization written before M7: supervised mode needs acceptance first
-        self.assertIn("records no acceptance", read["problems"][0])
-        self.assertIn("--accept-execution-risk", read["problems"][0])
-        self.assertEqual(self.factory("status")["factory"], "disabled")
+        self.assertEqual((read["source"], read["limits"]["max_budget_usd_per_run"], "max_budget_usd_per_day" in read["limits"]), ("local-file", 25, False))
+        self.rewrite(lambda d: d["allowed_tools"].append("Bash"))
+        self.assertIn("every shell command", policy.read(self.eng)["problems"][0])
 
-    def test_resume_keeps_the_acceptance(self):
-        self.supervised()
-        before = json.loads(self.local("runner.json").read_text())["execution_risk_accepted"]
-        self.factory("pause")
-        self.assertTrue(self.factory("resume")["resumed"])
-        self.assertEqual(json.loads(self.local("runner.json").read_text())["execution_risk_accepted"], before)
-        self.assertEqual(policy.read(self.eng)["source"], "local-file")
-
-    def test_observe_needs_no_acceptance(self):
+    def test_observe_starts_no_agent(self):
         self.first()
-        asked = json.loads(self.run_factory("enable", "--autonomy", "observe")[1])
-        self.assertIsNone(asked["would_enable"]["execution_risk"])
-        self.assertNotIn("--accept-execution-risk", asked["next"])
-        done = self.factory("enable", "--confirm", asked["confirm_with"])
-        self.assertEqual((done["factory"], done["policy"]["execution_risk_accepted"]), ("observe", None))
+        done = self.factory("enable", "--autonomy", "observe")
+        self.assertEqual((done["factory"], done["summary"]["tools_each_execution_may_use"]), ("observe", []))
         self.assertEqual(policy.read(self.eng)["source"], "local-file")
 
     def test_the_statement_follows_the_tool_list(self):
@@ -548,7 +536,7 @@ class CapacityReportTest(Base):
 
     def test_supervised_reports_the_machine_cap_and_holds_the_slice_waiting_for_a_place(self):
         self.two_ready()
-        self.enable("--include-backlog", "--max-parallel", "1")
+        self.enable("--max-parallel", "1")
         report = self.tick()
         self.assertEqual([item["slice_id"] for item in report["dispatched"]], ["SLICE-001"])  # one place, one dispatch: unchanged
         self.assertIn({"slice_id": "SLICE-002", "why": "it is ready and waits for a free place: 0 of 1 in use"}, report["held"])
@@ -567,7 +555,7 @@ class CapacityReportTest(Base):
 
     def test_observe_mode_says_which_slices_wait_for_a_place(self):
         self.two_ready()
-        self.enable("--include-backlog", "--max-parallel", "1", autonomy="observe")
+        self.enable("--max-parallel", "1", autonomy="observe")
         report = self.tick()
         self.assertEqual(report["held"], [{"slice_id": "SLICE-001", "why": "the Factory is in observe mode, which never starts work"},
                                           {"slice_id": "SLICE-002", "why": "it is ready and waits for a free place: 0 of 1 in use"}])
@@ -602,13 +590,14 @@ class SupervisedTest(Base):
         call = self.calls()[0]
         argv = call["argv"]
         self.assertEqual((Path(call["cwd"]).resolve(), call["env_wait"]), (self.eng.resolve(), "0"))
-        self.assertEqual(argv[1], 'Run the workflow named mach:belt with args {"tickets": ["LOCAL-001"], "until": "merge"}. Use the Workflow tool. '
+        # Merging is the project's to decide (M23 2.3): the run is not stopped before the merge station.
+        self.assertEqual(argv[1], 'Run the workflow named mach:belt with args {"tickets": ["LOCAL-001"]}. Use the Workflow tool. '
                                   "When it has finished, reply with only the JSON it returned. If you are refused, say so and stop.")
         self.assertEqual(argv[argv.index("--permission-mode") + 1], "default")  # the tool list is a real limit, whatever this machine's own settings
         self.assertEqual(argv[argv.index("--output-format") + 1], "stream-json")
-        self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "25")
+        self.assertNotIn("--max-budget-usd", argv)  # no spending limit was set, so none is passed (M23 2.1)
         # The person's own settings, plugins, MCP servers and hooks stay out; MACH (here, this repository as a plugin) is the only plugin.
-        self.assertEqual(argv[argv.index("-p") + 2:argv.index("--max-budget-usd")],
+        self.assertEqual(argv[argv.index("-p") + 2:argv.index("--session-id")],
                          ["--output-format", "stream-json", "--verbose", "--restricted", "--strict-mcp-config", "--plugin-dir", str(ROOT),
                           "--permission-mode", "default", "--permission-prompts", "none", "--tools", "Workflow,Skill,Agent,Read,Write,Edit,Glob,Grep,Bash",
                           "--add-dir", str(ROOT), "--disallowedTools", f"Edit(/{ROOT}/**)", f"Edit(/{self.eng}/.factory/local/**)", f"Edit(/{self.eng}/.claude/**)"])
@@ -623,7 +612,7 @@ class SupervisedTest(Base):
         # M6.1: the run carries its own execution ID, so the station scripts it starts stamp their lifecycle records with it.
         self.assertEqual(call["env"][executor.EXECUTION_ENV], record["execution_id"])
         self.assertEqual(argv[argv.index("--session-id") + 1], record["session_id"])
-        self.assertEqual((record["stage_at_start"], record["action_at_start"], record["until"], record["attempt"]), ("spec-ready", "plan", "merge", 1))
+        self.assertEqual((record["stage_at_start"], record["action_at_start"], record["until"], record["attempt"], record["budget_usd"]), ("spec-ready", "plan", None, 1, None))
         # The next pass reads the cell's own record of where the ticket stands.
         report = self.tick()
         self.assertEqual(report["recovered"], [{"execution_id": record["execution_id"], "ticket_id": "LOCAL-001", "found": "ended"}])
@@ -647,10 +636,10 @@ class SupervisedTest(Base):
         self.assertEqual(len(self.calls()), 1)
 
     def test_an_approved_ticket_waits_for_a_person_to_merge_and_is_said_once(self):
-        """Where the project lets the line merge, an unattended run still stops before merging unless this machine allowed it."""
+        """Where the project lets the line merge, an unattended run still stops before merging when this machine says --no-merge."""
         self.first()
         self.config(build={"require_audit": False}, merge={"mode": "auto", "method": "local"})
-        self.enable("--include-backlog")
+        self.enable("--no-merge")
         self.claude({"default": {"stage": "approved", "deny": [{"tool_name": "Bash", "tool_input": {"command": "cd /tmp && ls"}}]}})
         self.tick()
         self.wait()
@@ -722,7 +711,7 @@ class SupervisedTest(Base):
         self.product("intake")
         self.product("dispatch", "SLICE-001")  # by hand, before the Factory is enabled
         step = run.next_step(run.Project(self.eng), "LOCAL-001", True)
-        self.enable("--exclude-backlog")
+        self.enable()
         report = self.tick()
         self.assertEqual(report["started"], [])
         self.assertEqual(report["held"], [{"ticket_id": "LOCAL-001", "slice_id": "SLICE-001", "why": "an engineer is moving this ticket by hand"}])
@@ -733,13 +722,63 @@ class SupervisedTest(Base):
             run.main(["--project", str(self.eng), "status"])
         self.assertEqual(json.loads(out.getvalue())["ready_to_run"], ["LOCAL-001"])
 
-    def test_including_the_backlog_hands_work_in_the_line_to_the_supervisor(self):
+    def test_carry_on_gives_released_tickets_to_the_supervisor_and_starts_or_wakes_it(self):
+        """activation.carry_on, as a recorded decision calls it: a ticket a person released becomes the supervisor's even if an
+        engineer dispatched it, and the supervisor is started detached (here: recorded) or woken."""
         self.first()
         self.product("intake")
-        self.product("dispatch", "SLICE-001")
-        self.enable("--include-backlog")
+        self.product("dispatch", "SLICE-001")  # by hand
+        project = run.Project(self.eng)
+        ctx = run.factory_context(project)
+        off = activation.carry_on(ctx, tickets=["LOCAL-001"])
+        self.assertEqual((off["supervisor"], off["given"]), ("none", []))
+        self.assertIn("/mach pull turns it on", off["why_not"])
+        self.assertEqual(self.ledger()["slices"]["SLICE-001"]["owner"], "engineer")
+        self.enable()
+        before = len(self.detached)
+        started = activation.carry_on(run.factory_context(run.Project(self.eng)), tickets=["LOCAL-001"])
+        self.assertEqual((started["supervisor"], started["pid"], started["why_not"], started["given"], started["lifetime"]),
+                         ("started", 424242, None, ["LOCAL-001"], "session"))
+        self.assertEqual((self.detached[before:], self.how), ([(self.eng, SCRIPTS / "run.py")], {"lifetime": "session", "session_pid": self.session, "started_by": "pull"}))
         self.assertEqual(self.ledger()["slices"]["SLICE-001"]["owner"], "supervisor")
         self.assertEqual([item["ticket_id"] for item in self.tick()["started"]], ["LOCAL-001"])
+        self.wait()
+        self.local("supervisor.json").write_text(json.dumps({"instance": "live", "runner_id": "r", "pid": os.getpid(), "host": supervisor.platform.node(),
+                                                             "started_at": "x", "heartbeat_at": "x", "expires_at": "2099-01-01T00:00:00Z"}))
+        woken = activation.carry_on(run.factory_context(run.Project(self.eng)))
+        self.assertEqual((woken["supervisor"], woken["pid"], "given" in woken, woken["already_running"]["lifetime"]), ("woken", os.getpid(), False, "background"))
+        self.assertEqual(len(self.detached), before + 1)
+        self.local("supervisor.json").unlink()
+        # The Factory Floor's process has no session: it wakes a running supervisor and never starts one.
+        self.assertEqual(activation.carry_on(run.factory_context(run.Project(self.eng)), start=False),
+                         {"supervisor": "none", "pid": None, "why_not": "No Factory is running here. /mach pull in Claude Code carries it on."})
+        self.session = None
+        self.assertIn("could not find the Claude Code session", activation.carry_on(run.factory_context(run.Project(self.eng)))["why_not"])
+        self.session = 777001
+        self.factory("pause")
+        paused = activation.carry_on(run.factory_context(run.Project(self.eng)))
+        self.assertEqual((paused["supervisor"], paused["why_not"]), ("none", "The Factory is paused on this machine. /mach resume carries on."))
+        resumed = self.run_main("resume")  # the short form; it starts the supervisor again
+        self.assertEqual((resumed["resumed"], resumed["supervisor"]), (True, "started"))
+        self.assertEqual(len(self.detached), before + 2)
+        self.factory("disable")
+        gone = activation.carry_on(run.factory_context(run.Project(self.eng)))
+        self.assertEqual(gone["why_not"], "A person turned the Factory off on this machine. /mach factory start turns it back on.")
+        self.assertIn("/mach factory start turns it back on", self.refused_short("resume"))
+
+    def run_main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = run.main(["--project", str(self.eng), *argv])
+        self.assertEqual(code, 0, err.getvalue() + out.getvalue())
+        return json.loads(out.getvalue())
+
+    def refused_short(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = run.main(["--project", str(self.eng), *argv])
+        self.assertEqual(code, 1, out.getvalue())
+        return err.getvalue()
 
     def test_refused_tools_go_to_a_person_and_are_never_granted(self):
         self.supervised()
@@ -762,7 +801,7 @@ class SupervisedTest(Base):
 
     def test_risk_above_the_local_ceiling_waits_for_a_person(self):
         self.first()
-        self.enable("--include-backlog", "--max-risk", "Medium")
+        self.enable("--max-risk", "Medium")
         report = self.tick()  # the fixture's slice is High risk
         self.assertEqual(self.cell("LOCAL-001")["risk"], "High")
         self.assertEqual(report["started"], [])
@@ -789,7 +828,9 @@ class ScheduleHoldTest(Base):
         for ticket, risk, names in zip(("LOCAL-001", "LOCAL-002"), risks, files):
             self.set_cell(ticket, stage="planned", risk=risk)
             (self.eng / ".factory/worktrees" / ticket / "plan.md").write_text(plan_md(*names))
-        self.enable("--include-backlog")
+        self.enable()
+        # Dispatched by hand above; a pull (or a decision) gives such tickets to the supervisor.
+        self.assertEqual(activation.give_to_supervisor(run.factory_context(run.Project(self.eng)), ["LOCAL-001", "LOCAL-002"]), ["LOCAL-001", "LOCAL-002"])
 
     def test_a_ticket_sharing_files_with_a_running_one_waits_for_a_later_pass(self):
         self.two_planned(("Medium", "Medium"), (["app/x.py", "app/a.py"], ["app/x.py", "app/b.py"]))
@@ -833,7 +874,7 @@ class LimitsTest(Base):
         self.ready_slices(3)
         release = self.root / "release-the-run"
         self.claude({"default": {"hold": str(release), "stage": "approved"}})
-        self.enable("--include-backlog", "--max-parallel", "1")
+        self.enable("--max-parallel", "1")
         report = self.tick()
         self.assertEqual(([item["slice_id"] for item in report["dispatched"]], [item["ticket_id"] for item in report["started"]]), (["SLICE-001"], ["LOCAL-001"]))
         again = self.tick()
@@ -846,12 +887,12 @@ class LimitsTest(Base):
     def test_the_project_can_restrict_but_never_widen(self):
         self.ready_slices(3)
         self.claude({"default": {"sleep": 2, "stage": "approved"}})
-        self.enable("--include-backlog", "--max-parallel", "2")
+        self.enable("--max-parallel", "2")
         self.config(factory={"max_parallel": 8, "max_runs_per_day": 500, "max_risk": "High", "supervisor": True, "autonomy_ceiling": "extended", "allow_merge": True,
                              "allowed_tools": ["Bash"], "enabled": True})  # tracked settings asking for more than the machine granted
         effective = policy.effective(policy.read(self.eng), json.loads((self.eng / ".factory/config.json").read_text()))
         self.assertEqual((effective["limits"]["max_parallel"], effective["allow_merge"], effective["allowed_tools"], effective["restricted_by_project"]),
-                         (2, False, policy.default_tools(), []))
+                         (2, True, policy.default_tools(), []))  # merging is on here (M23 2.3); the project could only turn it off
         self.assertEqual(len(self.tick()["started"]), 2)
         self.wait()
         self.assertNotIn("Bash", self.calls()[0]["argv"][self.calls()[0]["argv"].index("--allowedTools") + 1:])
@@ -867,7 +908,7 @@ class LimitsTest(Base):
     def test_review_settings_that_remove_the_security_check_hold_every_pass(self):
         """M7: a tracked change made after enabling is seen on the next pass and before any dispatch, not only at resume."""
         self.ready_slices(1)
-        self.enable("--include-backlog")
+        self.enable()
         for review in ({"security_veto": False}, {"medium": {"reviewers": 1}}, {"high": {"human_approval": False}}):
             with self.subTest(review=review):
                 self.config(review=review)
@@ -891,14 +932,14 @@ class LimitsTest(Base):
 
     def test_runs_and_money_per_day_are_limited(self):
         self.ready_slices(2)
-        self.enable("--include-backlog", "--max-runs-per-day", "1")
+        self.enable("--max-runs-per-day", "1")
         report = self.tick()
         self.assertEqual(len(report["started"]), 1)
         self.assertIn("limit of 1 executions in 24 hours", json.dumps(report["held"]))
         self.wait()
         self.assertEqual(self.tick()["started"], [])  # the first run is settled; the second still waits for tomorrow
         self.factory("disable")
-        self.enable("--include-backlog", "--budget-per-day", "1")
+        self.enable("--budget-per-day", "1")
         ledger = self.ledger()
         for record in ledger["supervisor"]["executions"].values():
             record["cost_usd"] = 1.5
@@ -914,7 +955,7 @@ class LimitsTest(Base):
         # D21 (M6.2 acceptance): a day limit of $5.50, a first run that cost $1.68, and the next run was still given $5.
         self.first()
         self.claude({"default": {"stage": "approved", "cost": 1.68}})
-        self.enable("--include-backlog", "--max-parallel", "2", "--budget-per-run", "5", "--budget-per-day", "5.5")
+        self.enable("--max-parallel", "2", "--budget-per-run", "5", "--budget-per-day", "5.5")
         self.assertEqual(len(self.tick()["started"]), 1)
         self.wait()
         self.publish(self.a, self.slice(self.a, "Slice 2"))
@@ -930,7 +971,7 @@ class LimitsTest(Base):
     def test_runs_started_in_one_pass_never_add_up_to_more_than_the_day(self):
         self.ready_slices(3)
         self.claude({"default": {"sleep": 2, "stage": "approved"}})
-        self.enable("--include-backlog", "--max-parallel", "3", "--budget-per-run", "3", "--budget-per-day", "5.5")
+        self.enable("--max-parallel", "3", "--budget-per-run", "3", "--budget-per-day", "5.5")
         report = self.tick()
         self.assertEqual(len(report["started"]), 2)
         # The first two hold $3 and $2.50 between them while they run; nothing is left for a third.
@@ -943,7 +984,7 @@ class LimitsTest(Base):
     def test_too_little_left_to_start_is_the_daily_budget_reached(self):
         self.ready_slices(2)
         self.claude({"default": {"sleep": 2, "stage": "approved"}})
-        self.enable("--include-backlog", "--max-parallel", "2", "--budget-per-run", "5", "--budget-per-day", "5.5")
+        self.enable("--max-parallel", "2", "--budget-per-run", "5", "--budget-per-day", "5.5")
         report = self.tick()
         self.assertEqual(len(report["started"]), 1)  # $0.50 would be left for the second: below the $1 a run is started with
         self.assertIn("limit of $5.5 in 24 hours is reached ($0.00 spent, $5.00 committed", json.dumps(report["held"]))
@@ -1217,12 +1258,146 @@ class LifecycleTest(Base):
         self.assertEqual([(item["ticket_id"], item["signalled"]) for item in stopped["stopped"]], [("LOCAL-001", True)])
         self.wait()
         self.assertEqual(json.loads((self.local("executions") / record["execution_id"] / "result.json").read_text())["ended"], "interrupted")
+        self.assertTrue(self.local("stop").exists(), "a running supervisor, whichever lifetime, reads this and exits")
+        self.assertIn("/mach pull or /mach factory start starts the Factory again", stopped["note"])
+        self.assertEqual(policy.read(self.eng)["paused"], False)  # stopped, not paused: the authorization stays as it was
         report = self.tick()
-        self.assertEqual((report["state"], report["started"]), ("paused", []))
+        self.assertEqual((report["state"], report["started"]), ("supervised", []))
         self.assertIn("stopped by a person", report["parked"]["LOCAL-001"]["reason"])
-        self.assertEqual(self.factory("resume")["still_waiting_for_a_person"], ["LOCAL-001"])
-        self.assertEqual(self.tick()["started"], [])  # resumed, but that ticket still waits for a person
+        self.assertEqual(self.factory("resume", "--retry", "LOCAL-001")["retrying"], ["LOCAL-001"])
         self.assertEqual(len(self.calls()), 1)
+
+    def test_stop_ends_a_running_supervisor_of_either_lifetime(self):
+        self.supervised()
+        _, line = run.factory(run.Project(self.eng))
+        sup = supervisor.Supervisor(self.eng, json.loads((self.eng / ".factory/config.json").read_text()), line,
+                                    next_step=lambda t: run.next_step(run.Project(self.eng), t, True), audit=run.Project(self.eng).audit, git=run.git,
+                                    run_script=SCRIPTS / "run.py", workflow="mach:belt")
+        self.claude({"default": {"stage": "approved"}})
+        calls = {"n": 0}
+
+        def stop_after_the_first_pass(pid):
+            calls["n"] += 1
+            if calls["n"] == 3:  # a person, in another session or on the Factory Floor, runs factory stop
+                self.assertEqual(self.factory("stop")["supervisor_stopped"], True)
+            return True
+
+        with mock.patch.object(supervisor, "process_alive", stop_after_the_first_pass):
+            served = sup.serve(interval=30, lifetime="session", session_pid=os.getpid(), started_by="pull")
+        self.assertEqual((served["stopped"], served["lifetime"]), ("a person stopped the Factory", "session"))
+        self.assertFalse(self.local("supervisor.json").exists())
+        self.wait()
+
+
+class LifetimeTest(Base):
+    """M23 2.4 as the owner changed it: a pull's supervisor belongs to its Claude Code session; factory start's runs until stopped."""
+
+    def a_supervisor(self):
+        _, line = run.factory(run.Project(self.eng))
+        return supervisor.Supervisor(self.eng, json.loads((self.eng / ".factory/config.json").read_text()), line,
+                                     next_step=lambda t: run.next_step(run.Project(self.eng), t, True), audit=run.Project(self.eng).audit, git=run.git,
+                                     run_script=SCRIPTS / "run.py", workflow="mach:belt")
+
+    def test_when_the_session_ends_the_work_pauses_and_the_next_pass_carries_it_on(self):
+        self.supervised()
+        release = self.root / "release-the-run"
+        self.claude({"default": {"hold": str(release), "stage": "approved"}})
+        sup = self.a_supervisor()
+        seen = {"n": 0, "lease": None}
+
+        def session_alive(pid):
+            seen["n"] += 1
+            if seen["n"] == 2:
+                seen["lease"] = json.loads(self.local("supervisor.json").read_text())
+            return seen["n"] < 4  # the session ends a few seconds after the first pass started the run
+
+        # The real session pid is this test process, so the run's own watch (a separate process) sees it alive; the supervisor's
+        # check is the stand-in that says it ended.
+        with mock.patch.object(supervisor, "process_alive", session_alive):
+            served = sup.serve(interval=30, lifetime="session", session_pid=os.getpid(), started_by="pull")
+        self.assertEqual({key: seen["lease"][key] for key in ("lifetime", "session_pid", "started_by")}, {"lifetime": "session", "session_pid": os.getpid(), "started_by": "pull"})
+        self.assertIn("session it belonged to ended", served["stopped"])
+        self.assertEqual([item["ticket_id"] for item in served["paused_for_session_end"]], ["LOCAL-001"])
+        self.wait()
+        record = list(self.executions().values())[0]
+        self.assertTrue(record["tied_to_session"])
+        spec = json.loads((self.local("executions") / record["execution_id"] / "spec.json").read_text())
+        self.assertEqual(spec["watch"]["session_pid"], os.getpid())
+        result = json.loads((self.local("executions") / record["execution_id"] / "result.json").read_text())
+        self.assertEqual(result["ended"], "session-ended")
+        # The next pass (the next pull's supervisor) records it without parking it or counting an attempt, and starts it again.
+        report = self.tick()
+        self.assertEqual(report["recovered"], [{"execution_id": record["execution_id"], "ticket_id": "LOCAL-001", "found": "ended"}])
+        self.assertNotIn("LOCAL-001", report["parked"])
+        self.assertNotIn("LOCAL-001", self.ledger()["supervisor"]["attempts"])
+        completed = [e for e in self.events() if e["type"] == "execution.completed"]
+        self.assertEqual([(e["data"]["how"], e["data"]["paused_because"]) for e in completed], [("session-ended", "the Claude Code session ended")])
+        self.assertEqual([item["ticket_id"] for item in report["started"]], ["LOCAL-001"])
+        release.touch()
+        self.wait()
+
+    def test_a_run_tied_to_a_session_ends_when_its_supervisor_or_session_is_gone(self):
+        self.supervised()
+        self.claude({"default": {"hang": True}})
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait()  # a process that has ended: its number stands for the session that closed
+        argv = [str(self.bin / "claude"), "-p", 'Run the workflow named mach:belt with args {"tickets": ["LOCAL-001"]}. Use the Workflow tool.', "--session-id", "s-1"]
+        home = executor.prepare(self.eng, "x000000000002", argv, timeout_minutes=5, watch={"supervisor_pid": os.getpid(), "session_pid": gone.pid})
+        with mock.patch.object(executor, "GRACE_SECONDS", 2):
+            self.assertEqual(executor.wrapper(self.eng, "x000000000002"), 0)
+        self.assertEqual(json.loads((home / "result.json").read_text())["ended"], "session-ended")
+        self.assertEqual(executor.outcome(self.eng, "x000000000002")["how"], "session-ended")
+        # Made a background one meanwhile (factory start), a run no longer watches the session.
+        self.local("lifetime.json").write_text(json.dumps({"lifetime": "background"}))
+        self.assertFalse(executor.session_gone(self.eng, {"supervisor_pid": os.getpid(), "session_pid": gone.pid}))
+        self.assertFalse(executor.session_gone(self.eng, None))
+
+    def test_a_merge_cut_short_by_the_session_goes_to_a_person(self):
+        self.first()
+        self.config(build={"require_audit": False}, merge={"mode": "auto", "method": "local"})
+        self.enable()
+        self.tick()
+        self.wait()
+        self.claude({"default": {"hang": True}})
+        sup = self.a_supervisor()
+        seen = {"n": 0}
+
+        def session_alive(pid):
+            seen["n"] += 1
+            return seen["n"] < 4
+
+        with mock.patch.object(supervisor, "process_alive", session_alive):
+            sup.serve(interval=30, lifetime="session", session_pid=os.getpid(), started_by="pull")
+        self.wait()
+        report = self.tick()
+        self.assertIn("merge station was running when the Claude Code session ended", report["parked"]["LOCAL-001"]["reason"])
+        self.assertIn("never retried automatically", report["parked"]["LOCAL-001"]["reason"])
+
+    def test_factory_start_does_not_double_a_running_supervisor_and_makes_a_session_one_a_background_one(self):
+        self.supervised()
+        lease = {"instance": "live", "runner_id": "r", "pid": os.getpid(), "host": supervisor.platform.node(), "started_at": "2026-11-24T09:00:00Z",
+                 "heartbeat_at": "x", "expires_at": "2099-01-01T00:00:00Z", "lifetime": "background", "session_pid": None, "started_by": "factory start"}
+        self.local("supervisor.json").write_text(json.dumps(lease))
+        before = len(self.detached)
+        done = self.factory("start")
+        self.assertEqual((done["supervisor"], done["already_running"], len(self.detached)),
+                         ("already-running", {"lifetime": "background", "since": "2026-11-24T09:00:00Z", "pid": os.getpid(), "started_by": "factory start"}, before))
+        self.assertEqual(done["in_words"], "A Factory is already running here in the background (started 2026-11-24T09:00:00Z). /mach factory stop stops it.")
+        self.assertEqual(self.factory("status")["supervisor"]["lifetime"], "background")
+        lease.update(lifetime="session", session_pid=os.getpid(), started_by="pull")
+        self.local("supervisor.json").write_text(json.dumps(lease))
+        self.assertEqual(self.factory("status")["supervisor"]["lifetime"], "session")
+        done = self.factory("start")
+        self.assertEqual((done["supervisor"], json.loads(self.local("lifetime.json").read_text())["lifetime"]), ("converted", "background"))
+        self.assertIn("no longer stops when that session ends", done["in_words"])
+        # The running supervisor takes the request on its next look: its lease says background, and the session tie is dropped.
+        sup = self.a_supervisor()
+        sup.lease.instance = "live"
+        sup.lease.lifetime, sup.lease.session_pid = "session", os.getpid()
+        with mock.patch.object(supervisor, "process_alive", lambda pid: False):
+            self.assertFalse(sup.session_over())
+        stored = json.loads(self.local("supervisor.json").read_text())
+        self.assertEqual((stored["lifetime"], stored["session_pid"], stored["started_by"]), ("background", None, "factory start"))
 
 
 class RecoveryTest(Base):
@@ -1301,7 +1476,7 @@ class RecoveryTest(Base):
     def test_an_unknown_outcome_at_the_merge_station_is_never_retried(self):
         self.first()
         self.config(build={"require_audit": False}, merge={"mode": "auto", "method": "local"})
-        self.enable("--include-backlog", "--allow-merge")
+        self.enable()
         self.claude({"default": {"stage": "approved"}})
         self.tick()
         self.wait()
@@ -1387,7 +1562,7 @@ class GitTest(Base):
 
     def test_fetched_work_is_discovered_without_moving_the_checkout(self):
         self.first()
-        self.enable("--include-backlog", "--auto-sync")
+        self.enable("--auto-sync")
         self.tick()
         self.wait()
         self.tick()
@@ -1415,7 +1590,7 @@ class GitTest(Base):
         mine = "#!/bin/sh\n# my own hook\necho merged >> \"$(git rev-parse --show-toplevel)/my-hook.log\"\n"
         (hooks / "post-merge").write_text(mine)
         (hooks / "post-merge").chmod(0o755)
-        self.enable("--include-backlog", "--hooks")
+        self.enable("--hooks")
         text = (hooks / "post-merge").read_text()
         self.assertTrue(text.startswith(mine))
         self.assertIn(service.BEGIN, text)
@@ -1437,7 +1612,7 @@ class GitTest(Base):
     def test_a_project_that_manages_its_own_hooks_is_left_alone(self):
         self.first()
         git(self.eng, "config", "core.hooksPath", ".husky")
-        done = self.enable("--include-backlog", "--hooks")
+        done = self.enable("--hooks")
         self.assertEqual(done["git_hooks"]["installed"], [])
         self.assertIn("manages its own hooks", done["git_hooks"]["skipped"])
         self.assertEqual(git(self.eng, "config", "--get", "core.hooksPath").strip(), ".husky")
@@ -1453,17 +1628,18 @@ class GitTest(Base):
 class ServiceTest(Base):
     def test_the_persistent_service_is_installed_only_on_request_and_binds_nothing(self):
         self.first()
-        self.enable("--include-backlog")
+        self.enable()
         self.assertFalse(service.agent_path(self.eng).parent.exists())  # enabling alone installs no service
         self.assertFalse(self.launchctl_log.exists())
         self.factory("disable")
-        done = self.enable("--include-backlog", "--persistent")
+        done = self.enable("--persistent")
         import plistlib
         path = service.agent_path(self.eng)
         self.assertEqual(Path(done["persistent_service"]["definition"]), path)
         self.assertTrue(str(path).startswith(str(self.home)))
         with path.open("rb") as handle:
             definition = plistlib.load(handle)
+        # --stay: the service keeps the supervisor up, where one a pull started ends when nothing is left to do.
         self.assertEqual(definition["ProgramArguments"], [sys.executable, str(SCRIPTS / "run.py"), "--project", str(self.eng), "factory", "serve"])
         self.assertEqual((definition["RunAtLoad"], definition["KeepAlive"]), (True, {"SuccessfulExit": False}))
         for key in ("Sockets", "MachServices", "inetdCompatibility", "UserName", "GroupName"):
@@ -1591,7 +1767,7 @@ class EventsTest(Base):
             self.assertIn(event["source"], ("supervisor", "engineer", "intake"))
             self.assertEqual(event["runner_id"], runner)
         started = next(e for e in events if e["type"] == "execution.started")
-        self.assertEqual((started["ticket_id"], started["slice_id"], started["data"]["workflow"], started["data"]["until"]), ("LOCAL-001", "SLICE-001", "mach:belt", "merge"))
+        self.assertEqual((started["ticket_id"], started["slice_id"], started["data"]["workflow"], started["data"]["until"]), ("LOCAL-001", "SLICE-001", "mach:belt", None))
         self.assertEqual(started["refs"], {"execution": f".factory/local/executions/{started['execution_id']}/", "cell": ".factory/worktrees/LOCAL-001/cell.json"})
         log = (self.eng / ".factory/intake/events.jsonl").read_text()
         for secret in ("Run the workflow named", "--allowedTools", "Use the Workflow tool"):
