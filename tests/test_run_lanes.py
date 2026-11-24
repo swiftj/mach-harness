@@ -419,6 +419,63 @@ class JoinTest(Base):
         self.assertEqual((joined["code"], joined["needs"], joined["then"]), ("lane-dirty", "lanes-blocked", "person"))
 
 
+class HandBackTest(Base):
+    def test_a_lane_handed_back_counts_as_done_and_its_tasks_are_built_in_the_cell(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.lanes_start()
+        self.build_lane("L1", L1)
+        handed = self.run_json("lanes-hand-back", TICKET, "--lane", "L2", "--reason", "it needs a file of another lane", "--holder", HOLDER)
+        self.assertEqual((handed["status"], handed["lane"], handed["finished"], handed["handed_back"], handed["then"]),
+                         ("HANDED_BACK", "L2", [], ["T03", "T04"], "lanes-start"))
+        self.assertEqual(handed["reason"], "Lane L2 was handed back to the cell: its tasks T03, T04 are built one at a time after the join.")
+        found = self.next_step("--holder", HOLDER)
+        self.assertIn("Every lane is built or handed back; the lanes are joined next", found["reason"])
+        self.assertIn("Handed back to the cell, to be built one task at a time after the join: L2.", found["reason"])
+        self.assertEqual([view["status"] for view in found["lanes"]], ["done", "handed-back"])
+        self.assertEqual(self.lanes_start()["then"], "lanes-join")
+        again = self.run_json("lanes-hand-back", TICKET, "--lane", "L2", "--reason", "again")
+        self.assertEqual((again["status"], again["code"], again["then"]), ("REFUSED", "already-handed-back", "lanes-start"))
+        self.assertEqual(self.lanes_join("--holder", HOLDER)["status"], "JOINED")
+        self.assertEqual(self.next_step("--holder", HOLDER)["action"], "build")
+        self.assertEqual(self.ok("next", TICKET)["task"], "T03")
+
+    def test_a_lane_taken_over_by_another_driver_cannot_be_handed_back_by_the_old_one(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.lanes_start()
+        self.lanes_start(OTHER, "--take-over")
+        answer = self.run_json("lanes-hand-back", TICKET, "--lane", "L1", "--reason", "x", "--holder", HOLDER)
+        self.assertEqual((answer["status"], answer["needs"]), ("WAIT", "worker-in-cell"))
+
+
+class TestCommandTest(Base):
+    """A build with no test command is never a dead end: the routing sheet tells the builder to set one, and decide offers it first."""
+
+    def test_no_test_command_at_the_start_routes_back_to_the_builder_with_the_way_forward(self):
+        self.ready_lanes(settings={"build": {"max_lanes": 1}})
+        self.audit_report(commands={"test": {"command": None}, "lint": {"command": None}})
+        code, _, err = self.run_build("start", TICKET)
+        self.assertEqual(code, 1)
+        self.assertIn("No test command is known", err)
+        found = self.next_step()
+        self.assertEqual((found["action"], found["stop"]), ("build", False), "never a stop, never abandoning")
+        self.assertIn(f'build.py start {TICKET} --test-cmd "<command>"', found["prompt"])
+        self.assertIn("the builder sets one and the build carries on", found["reason"])
+        decided = self.run_json("decide", TICKET, "--json")
+        (item,) = [t for t in decided.get("tickets") or [] if t.get("ticket_id") == TICKET]
+        first = item["options"][0]
+        self.assertEqual((first["key"], first["label"]), ("set-test-command", "Set a test command"))
+        self.assertEqual(first["route"], f'build.py start {TICKET} --test-cmd "<command>"')
+        self.ok("start", TICKET, "--test-cmd", lanes_fixture.test_build.TEST_CMD)
+        after = self.next_step()
+        self.assertNotIn("test command", after["prompt"], "once given, nothing more is said")
+
+    def test_a_build_without_the_refusal_has_the_prompt_it_always_had(self):
+        self.ready_lanes(settings={"build": {"max_lanes": 1}})
+        self.assertEqual(self.next_step()["prompt"], f"Build MACH ticket {TICKET}.")
+
+
 class TwoDriversTest(Base):
     """Design 15, scenario 10, and design 9: two drivers, a dead lane builder, an interrupted conversation."""
 
@@ -518,12 +575,15 @@ def do(task, workdir):
     assert code == 0, (task, step)
 
 lane = re.match(r"Build lane (L[0-9]+) of MACH ticket ", prompt)
+holder = re.search(r"--holder ([0-9a-f]+)", prompt)
+stall = os.environ.get("MACH_TEST_STALL_LANE")
 stop = os.environ.get("MACH_TEST_STOP_LANE")
 marker = project / ".factory" / f"stopped-{stop}"
 if lane:
     name, count = lane.group(1), 0
-    while True:
-        code, data = call("next", ticket, "--lane", name)
+    assert holder, "the lane prompt names the holder"
+    while name != stall:  # a stalled lane's builder never gets anywhere
+        code, data = call("next", ticket, "--lane", name, "--holder", holder.group(1))
         if data.get("status") == "LANE_DONE":
             break
         if name == stop and count == 1 and not marker.exists():
@@ -564,7 +624,7 @@ async function agent(prompt, opts) {
     asked.push(rest)
     let out
     try {
-      out = execFileSync(PY, [RUNPY, '--project', PROJECT, ...rest.split(' ')], { encoding: 'utf8', env })
+      out = execFileSync(PY, [RUNPY, '--project', PROJECT, ...rest.match(/"[^"]*"|\S+/g).map(word => word.replace(/^"|"$/g, ''))], { encoding: 'utf8', env })
     } catch (error) {
       return { action: 'ERROR', status: 'ERROR', outcome: 'ERROR', refused: 'ERROR', reason: String(error.stderr || error.message), stop: false, agent_type: '', lanes: [], then: '' }
     }
@@ -624,9 +684,9 @@ class BeltLanesTest(Base):
         lanes = self.lane_starts(got)
         self.assertEqual([w["label"] for w in lanes], [f"{TICKET}: lane L1", f"{TICKET}: lane L2"])
         self.assertEqual({(w["agentType"], w["model"]) for w in lanes}, {("mach:builder", "sonnet")})
+        cell = lanes_fixture.build.Cell(self.project, TICKET)
         for w, name in zip(lanes, ("L1", "L2")):
-            self.assertEqual(w["prompt"], f"Build lane {name} of MACH ticket {TICKET}. Follow the build skill's section 'Building one lane': run "
-                                          f"build.py next {TICKET} --lane {name}, work only in {self.lane_work(name)}, and stop when it answers LANE_DONE.")
+            self.assertEqual(w["prompt"], lanes_fixture.build.lane_prompt(cell, name, self.lane_work(name), HOLDER), "exactly as lanes-open printed it")
         self.assertEqual(got["most"], 2, "both lane builders were at work at once")
         self.assertIn(f"lanes-start {TICKET} --holder {HOLDER}", got["asked"])
         self.assertIn(f"lanes-join {TICKET} --holder {HOLDER}", got["asked"])
@@ -634,6 +694,18 @@ class BeltLanesTest(Base):
         self.assertTrue(any("lanes joined: 4 task commit(s) landed" in line for line in got["logs"]), got["logs"])
         self.assertEqual(json.loads((self.cellroot / "cell.json").read_text())["stage"], "built")
         self.assertEqual([subject.split(" ")[1] for subject in self.log()[:5]], ["T05", "T04", "T03", "T02", "T01"], "one commit per task, in plan order")
+
+    def test_a_lane_whose_builder_gets_nowhere_is_handed_back_and_the_ticket_goes_on(self):
+        self.ready_lanes()
+        got = self.belt({"MACH_TEST_STALL_LANE": "L2"})
+        (ticket,) = got["result"]["tickets"]
+        self.assertEqual((ticket["outcome"], ticket["stations"]), ("stopped", ["build", "build-lanes", "build"]), got["logs"])
+        self.assertEqual([w["label"].split(": ")[1] for w in self.lane_starts(got)], ["lane L1", "lane L2", "lane L2"])
+        self.assertIn(f'lanes-hand-back {TICKET} --lane L2 --reason "its builder stopped twice without finishing another task" --holder {HOLDER}', got["asked"])
+        state = self.state()
+        self.assertEqual([lane["status"] for lane in state["lanes"]["lanes"]], ["joined", "handed-back"])
+        self.assertEqual(json.loads((self.cellroot / "cell.json").read_text())["stage"], "built", "the cell's builder built L2's tasks after the join")
+        self.assertIn("lane-handed-back", [d["type"] for d in state["deviations"]])
 
     def test_batches_and_a_builder_that_died_stay_inside_one_step(self):
         self.ready_lanes(plan=FIVE_LANES, settings={"factory": {"max_builders": 2}})

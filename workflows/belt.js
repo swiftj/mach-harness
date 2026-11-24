@@ -158,18 +158,19 @@ function cleanLanes(answer, most, ticket) {
 }
 // END cleanLanes
 // BEGIN cleanJoin: a pure function, evaluated on its own by tests/test_run.py.
-// The relay's copy of run.py lanes-join's answer. An unknown status or next command is refused; what the join did is kept
-// only as plain, bounded text, for the log and the ticket's result.
+// The relay's copy of run.py lanes-join's (or lanes-hand-back's) answer. An unknown status or next command is refused; what
+// the station did is kept only as plain, bounded text, for the log and the ticket's result.
 function cleanJoin(answer) {
   const clean = value => (typeof value === 'string' ? value.trim().replace(/^["'`\s]+|["'`\s]+$/g, '') : '')
   if (!answer || typeof answer !== 'object') return { error: 'run.py lanes-join returned nothing usable' }
   const status = clean(answer.status).toUpperCase()
   const reason = clean(answer.reason).slice(0, 600)
   if (!status || status === 'ERROR') return { error: reason || 'run.py lanes-join failed' }
-  if (!['JOINED', 'INTERACTION', 'REFUSED', 'WAIT'].includes(status)) return { error: `run.py lanes-join answered an unknown status '${status.slice(0, 40)}'` }
+  if (!['JOINED', 'INTERACTION', 'HANDED_BACK', 'REFUSED', 'WAIT'].includes(status)) return { error: `run.py lanes-join answered an unknown status '${status.slice(0, 40)}'` }
   const then = clean(answer.then)
   if (!['lanes-start', 'next', 'wait', 'person'].includes(then)) return { error: `run.py lanes-join named an unknown next command '${then.slice(0, 40)}'` }
   if ((status === 'JOINED' || status === 'INTERACTION') && then !== 'next') return { error: `run.py lanes-join answered ${status} but not to go on in the cell` }
+  if (status === 'HANDED_BACK' && then !== 'lanes-start') return { error: 'run.py lanes-hand-back answered HANDED_BACK but not to ask for the lanes again' }
   return { status, then, reason, needs: clean(answer.needs).slice(0, 60), next: clean(answer.next).slice(0, 600) }
 }
 // END cleanJoin
@@ -274,7 +275,7 @@ if (!HOLDER) log('No usable holder came back from run.py where, so this run clai
 function clerk(command, schema, label, phase) {
   return agent(
     'Run exactly the one command in the code block below, complete and unchanged, including its last words, and nothing else:\n\n' +
-      '```bash\n' + `${RUN} ${command}${HOLDER && /^(next|schedule|lanes-start|lanes-join) /.test(command) ? ' --holder ' + HOLDER : ''}` + '\n```\n\n' +
+      '```bash\n' + `${RUN} ${command}${HOLDER && /^(next|schedule|lanes-start|lanes-join|lanes-hand-back) /.test(command) ? ' --holder ' + HOLDER : ''}` + '\n```\n\n' +
       'Report the fields of the JSON it prints, copied exactly; use an empty string where a field is null or absent. ' +
       'If the command prints no JSON or fails, set "action" (or "outcome", or "refused") to "ERROR", set any true/false field to false, and put its error text in "reason" (or "detail"). ' +
       'Do not run any other command, load any skill, or try another way.',
@@ -294,16 +295,18 @@ async function review(ticket) {
 }
 
 // A plan the build station builds in lanes: one builder per lane, all at once, each with exactly the agent type, model and
-// prompt the station printed. Lanes that come in batches (more lanes than free places), and a lane handed back because its
-// builder stopped part way, are all asked for inside this one step, so the guard against a station repeating sees one step.
-// A lane that comes back twice without one more task done is stuck, for a person, with its builder's last report.
+// prompt the station printed, passed on unchanged. Lanes that come in batches (more lanes than free places), and a lane given
+// back to the same holder because its builder stopped part way, are all asked for inside this one step, so the guard against
+// a station repeating sees one step. A lane whose builder comes back twice without another task done is handed back to the
+// cell (its finished tasks land at the join, the rest are built one at a time after it), and the ticket carries on to the join.
 const MAX_LANES_AT_ONCE = 8 // the belt's own fixed maximum, whatever a relay reports
-const MAX_LANE_ROUNDS = 24 // a backstop: each round starts at least one lane, and a lane that does not move stops sooner
+const MAX_LANE_ROUNDS = 24 // a backstop: each round starts or hands back at least one lane, and a lane that does not move is handed back
 async function buildLanes(ticket) {
   const last = {} // each lane's tasks done when it was last started
   const stalls = {} // how many times a lane came back with no more tasks done
   const said = {} // what each lane's builder last reported
   let own = '' // the lanes' holder when this run has none of its own: the first answer makes one
+  const holder = () => (HOLDER || !own ? '' : ' --holder ' + own)
   for (let round = 0; round < MAX_LANE_ROUNDS; round++) {
     const asked = await clerk(`lanes-start ${ticket}${HOLDER ? '' : ' --holder ' + (own || 'new')}`, LANES, `${ticket}: which lanes now?`, 'Build')
     const read = cleanLanes(asked, MAX_LANES_AT_ONCE, ticket)
@@ -311,14 +314,22 @@ async function buildLanes(ticket) {
     const answer = read.answer
     if (!HOLDER && !own) own = cleanHolder(answer.holder)
     if (answer.status === 'OPEN') {
-      for (const lane of answer.lanes) {
-        if (lane.lane in last) {
-          stalls[lane.lane] = lane.done > last[lane.lane] ? 0 : (stalls[lane.lane] || 0) + 1
-          if (stalls[lane.lane] >= 2) {
-            return { outcome: 'stuck', stage: 'building', reason: `lane ${lane.lane}'s builder stopped twice without finishing another task`, last_report: said[lane.lane] || '',
-              next: `Everything is kept. Read the builder's report: if it names a plan defect, re-plan the ticket; otherwise run the ticket again and lane ${lane.lane} carries on where it stopped.` }
+      const stuck = answer.lanes.filter(lane => lane.lane in last && lane.done <= last[lane.lane] && (stalls[lane.lane] || 0) >= 1)
+      if (stuck.length) {
+        // The reason is fixed words: a builder's own report is never put on a command line.
+        for (const lane of stuck) {
+          const handed = cleanJoin(await clerk(`lanes-hand-back ${ticket} --lane ${lane.lane} --reason "its builder stopped twice without finishing another task"${holder()}`,
+            JOIN, `${ticket}: hand lane ${lane.lane} back`, 'Build'))
+          if (handed.error) return { outcome: 'error', reason: `the hand-back could not be read: ${handed.error}` }
+          log(`${ticket}: ${handed.status === 'HANDED_BACK' ? '' : `lane ${lane.lane} not handed back: `}${handed.reason}`)
+          if (handed.then !== 'lanes-start') {
+            return { outcome: 'stopped', stage: 'building', waiting_for: handed.needs || 'a person', reason: handed.reason, next: handed.next, last_report: said[lane.lane] || '' }
           }
         }
+        continue
+      }
+      for (const lane of answer.lanes) {
+        if (lane.lane in last) stalls[lane.lane] = lane.done > last[lane.lane] ? 0 : (stalls[lane.lane] || 0) + 1
         last[lane.lane] = lane.done
       }
       log(`${ticket}: ${answer.lanes.length} lane builder${answer.lanes.length > 1 ? 's' : ''} at work at once (${answer.lanes.map(lane => `${lane.lane}: ${lane.tasks.join(', ')}`).join('; ')})`)
@@ -331,7 +342,7 @@ async function buildLanes(ticket) {
       continue
     }
     if (answer.then === 'lanes-join') {
-      const joined = cleanJoin(await clerk(`lanes-join ${ticket}${HOLDER || !own ? '' : ' --holder ' + own}`, JOIN, `${ticket}: join the lanes`, 'Build'))
+      const joined = cleanJoin(await clerk(`lanes-join ${ticket}${holder()}`, JOIN, `${ticket}: join the lanes`, 'Build'))
       if (joined.error) return { outcome: 'error', reason: `the join could not be read: ${joined.error}` }
       log(`${ticket}: ${joined.status === 'JOINED' ? 'lanes joined' : joined.status === 'INTERACTION' ? 'lanes joined; they do not pass together yet' : 'lanes not joined'}: ${joined.reason}`)
       if (joined.then === 'next') return null

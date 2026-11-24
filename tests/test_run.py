@@ -533,6 +533,9 @@ async function agent(prompt, opts) {
     if (answer.then === 'next') stages[command.split(' ')[1]] = 'planned'
     return answer
   }
+  if (command.startsWith('lanes-hand-back ')) {
+    return (scheduleSays.hand_back || []).shift() || { status: 'ERROR', reason: 'no hand-back scripted', then: '' }
+  }
   if (command.startsWith('lanes-join ')) {
     const answer = scheduleSays.join || { status: 'ERROR', reason: 'no join scripted', then: '' }
     if (answer.then === 'next') stages[command.split(' ')[1]] = 'approved'
@@ -728,6 +731,8 @@ workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.s
             "refused": {"status": "REFUSED", "then": "person", "reason": "Nothing was landed.", "needs": "lanes-blocked", "next": "Put it right."},
             "not_done": {"status": "REFUSED", "then": "lanes-start", "reason": "Not every lane is done."},
             "joined_but_join_again": {"status": "JOINED", "then": "lanes-start", "reason": "r"},
+            "handed_back": {"status": "HANDED_BACK", "then": "lanes-start", "reason": "Lane L1 was handed back."},
+            "handed_back_but_next": {"status": "HANDED_BACK", "then": "next", "reason": "r"},
             "unknown": {"status": "MERGED", "then": "next", "reason": "r"},
             "unknown_then": {"status": "REFUSED", "then": "push", "reason": "r"},
             "error": {"status": "ERROR", "then": "", "reason": "refused: x"},
@@ -743,7 +748,8 @@ workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.s
         self.assertEqual(got["interaction"]["status"], "INTERACTION")
         self.assertEqual((got["refused"]["needs"], got["refused"]["next"]), ("lanes-blocked", "Put it right."))
         self.assertEqual(got["not_done"]["then"], "lanes-start")
-        for key in ("joined_but_join_again", "unknown", "unknown_then", "error", "nothing"):
+        self.assertEqual((got["handed_back"]["status"], got["handed_back"]["then"]), ("HANDED_BACK", "lanes-start"))
+        for key in ("joined_but_join_again", "handed_back_but_next", "unknown", "unknown_then", "error", "nothing"):
             self.assertIn("error", got[key], key)
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
@@ -765,17 +771,32 @@ workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.s
         self.assertIn("A: lanes joined: 6 task commit(s) landed on the ticket's branch, in plan order.", got["logs"])
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
-    def test_a_lane_that_comes_back_twice_without_a_task_done_is_stuck(self):
+    def test_a_lane_that_comes_back_twice_without_a_task_done_is_handed_back_and_the_ticket_goes_on(self):
         lane = self.lane
-        rules = {"lanes_start": [self.opened(lane("L1"), lane("L2")), self.opened(lane("L1")), self.opened(lane("L1"))]}
+        holder = "ab" * 16
+        none_left = {"status": "NONE_LEFT", "then": "lanes-join", "reason": "Every lane is done or handed back.", "lanes": []}
+        rules = {"holder": holder, "lanes_start": [self.opened(lane("L1"), lane("L2")), self.opened(lane("L1")), self.opened(lane("L1")), none_left],
+                 "hand_back": [{"status": "HANDED_BACK", "then": "lanes-start", "reason": "Lane L1 was handed back to the cell: its tasks T01, T02 are built one at a time after the join."}],
+                 "join": {"status": "JOINED", "then": "next", "reason": "2 task commit(s) landed."}}
         got = self.run_belt({"tickets": ["A"]}, {"A": "lanes"}, rules)
         (a,) = got["result"]["tickets"]
-        self.assertEqual((a["outcome"], a["stage"]), ("stuck", "building"))
-        self.assertEqual(a["reason"], "lane L1's builder stopped twice without finishing another task")
-        self.assertEqual(a["last_report"], "built L1")
-        self.assertIn("carries on where it stopped", a["next"])
-        self.assertEqual([command for command in got["asked"] if command.startswith("Lane ")].count("Lane L1 A mach:builder sonnet"), 2)
-        self.assertFalse([command for command in got["asked"] if command.startswith("lanes-join")])
+        self.assertEqual((a["outcome"], a["waiting_for"], a["stations"]), ("stopped", "merge", ["build-lanes"]), "never stuck for one lane")
+        self.assertEqual([command for command in got["asked"] if command.startswith("Lane ")].count("Lane L1 A mach:builder sonnet"), 2,
+                         "started once, asked again once, then handed back")
+        self.assertEqual([command for command in got["asked"] if command.startswith("lanes-")],
+                         [f"lanes-start A --holder {holder}"] * 3
+                         + [f'lanes-hand-back A --lane L1 --reason "its builder stopped twice without finishing another task" --holder {holder}',
+                            f"lanes-start A --holder {holder}", f"lanes-join A --holder {holder}"])
+        self.assertIn("A: Lane L1 was handed back to the cell: its tasks T01, T02 are built one at a time after the join.", got["logs"])
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_a_hand_back_that_is_refused_stops_with_its_words(self):
+        lane = self.lane
+        refused = {"status": "REFUSED", "then": "person", "reason": "The station said no.", "needs": "lanes-blocked", "next": "Put it right."}
+        rules = {"lanes_start": [self.opened(lane("L1")), self.opened(lane("L1")), self.opened(lane("L1"))], "hand_back": [refused]}
+        got = self.run_belt({"tickets": ["A"]}, {"A": "lanes"}, rules)
+        (a,) = got["result"]["tickets"]
+        self.assertEqual((a["outcome"], a["waiting_for"], a["next"], a["last_report"]), ("stopped", "lanes-blocked", "Put it right.", "built L1"))
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_lane_answers_that_stop_or_go_back_to_the_cell(self):

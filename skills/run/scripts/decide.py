@@ -259,6 +259,13 @@ def build_gate_options(ticket: str, cellroot: Path, stage: Optional[str], gate: 
     loop = build.get("loop") if isinstance(build, dict) and isinstance(build.get("loop"), int) else 0
     pending = any(isinstance(task, dict) and task.get("status") != "done" for task in tasks)
     options = []
+    if code == "no-test-command":
+        # No test command is known: nothing is wrong with the work. A person names one and the build carries on from where it is.
+        command = (f'build.py set-commands {ticket} --test-cmd "<command>" --reason "<why>"' if tasks else
+                   f'build.py start {ticket} --test-cmd "<command>"')
+        options.append(option("set-test-command", "Set a test command",
+                              f"Name the command that runs this project's tests; the build carries on from where it is, with nothing undone: {command}",
+                              command, needs_reason=bool(tasks)))
     if name == "build.start" and code == "baseline-red":
         # The tests fail on the main checkout itself: no builder can get past that, only hardening can.
         options.append(option("audit", "Audit the repository",
