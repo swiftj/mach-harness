@@ -217,6 +217,8 @@ func New(opts Options) *Server {
 		"analytics/contributors":        s.analyticsContributors,
 		"analytics/insights":            s.analyticsInsights,
 		"release/readiness":             s.releases,
+		"decisions":                     s.decisions,
+		"decisions/{adr}":               s.decision,
 	} {
 		s.api.HandleFunc("GET /api/v1/"+route, h)
 	}

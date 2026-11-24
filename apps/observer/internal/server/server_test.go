@@ -164,7 +164,8 @@ func routes() []string {
 		"/api/v1/slices", "/api/v1/slices/SLICE-001", "/api/v1/cells", "/api/v1/cells/T-1",
 		"/api/v1/cells/T-1/visits/build%231", "/api/v1/cells/T-1/evidence", "/api/v1/runs", "/api/v1/runs/x0123456789ab",
 		"/api/v1/runs/x0123456789ab/agents", "/api/v1/runs/x0123456789ab/tools", "/api/v1/spans", "/api/v1/artifacts",
-		"/api/v1/analytics/metrics", "/api/v1/analytics/runs", "/api/v1/history", "/api/v1/series", "/api/v1/concurrency", "/api/v1/marks"}
+		"/api/v1/analytics/metrics", "/api/v1/analytics/runs", "/api/v1/history", "/api/v1/series", "/api/v1/concurrency", "/api/v1/marks",
+		"/api/v1/decisions", "/api/v1/decisions/ADR-0001"}
 }
 
 // ---- security ----
@@ -289,6 +290,7 @@ func TestEveryEndpointShape(t *testing.T) {
 		"/api/v1/artifacts":                  {"items", "settings"},
 		"/api/v1/analytics/metrics":          {"metrics", "definitions_version"},
 		"/api/v1/analytics/runs":             {"items", "total"},
+		"/api/v1/decisions":                  {"basis", "source", "adrs", "problems", "baseline", "waiting", "cells"},
 	}
 	for path, keys := range want {
 		d := h.get(t, path)

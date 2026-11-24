@@ -1,0 +1,209 @@
+{
+  "about": "ADR files that adr.py (tests/test_adr_floor_parity.py) and the Factory Floor observer (apps/observer/internal/adr/adr_test.go) both parse; each must give exactly this. adr.py is the authority: when it changes a rule, change the Go reader and this file together.",
+  "dir": "docs/adr",
+  "adrs": [
+    {
+      "file": "docs/adr/0001-use-python.md",
+      "id": "ADR-0001",
+      "number": 1,
+      "title": "Write the service in Python 3.12, tested with unittest",
+      "status": "accepted",
+      "superseded_by": null,
+      "topics": [
+        "language",
+        "testing"
+      ],
+      "binding": true,
+      "problem_count": 0
+    },
+    {
+      "file": "docs/adr/0002-use-sqlite.md",
+      "id": "ADR-0002",
+      "number": 2,
+      "title": "Keep data in SQLite",
+      "status": "superseded",
+      "superseded_by": "ADR-0005",
+      "topics": [
+        "storage"
+      ],
+      "binding": false,
+      "problem_count": 0
+    },
+    {
+      "file": "docs/adr/0003-deploy-with-docker.md",
+      "id": "ADR-0003",
+      "number": 3,
+      "title": "Deploy with Docker on one host",
+      "status": "proposed",
+      "superseded_by": null,
+      "topics": [
+        "deployment"
+      ],
+      "binding": false,
+      "problem_count": 0
+    },
+    {
+      "file": "docs/adr/0004-no-title.md",
+      "id": "ADR-0004",
+      "number": 4,
+      "title": null,
+      "status": "accepted",
+      "superseded_by": null,
+      "topics": [
+        "framework"
+      ],
+      "binding": false,
+      "problem_count": 1
+    },
+    {
+      "file": "docs/adr/0005-use-postgresql.md",
+      "id": "ADR-0005",
+      "number": 5,
+      "title": "Use PostgreSQL for every service's own data",
+      "status": "accepted",
+      "superseded_by": null,
+      "topics": [
+        "storage",
+        "coding-standards"
+      ],
+      "binding": true,
+      "problem_count": 0
+    },
+    {
+      "file": "docs/adr/0006-bad-status.md",
+      "id": "ADR-0006",
+      "number": 6,
+      "title": "Undecided status",
+      "status": null,
+      "superseded_by": null,
+      "topics": [],
+      "binding": false,
+      "problem_count": 1
+    },
+    {
+      "file": "docs/adr/0007-rejected-idea.md",
+      "id": "ADR-0007",
+      "number": 7,
+      "title": "Use a single-page framework",
+      "status": "rejected",
+      "superseded_by": null,
+      "topics": [
+        "framework"
+      ],
+      "binding": false,
+      "problem_count": 0
+    },
+    {
+      "file": "docs/adr/0008-Bad-Name.md",
+      "id": null,
+      "number": null,
+      "title": "A badly named file",
+      "status": "accepted",
+      "superseded_by": null,
+      "topics": [],
+      "binding": false,
+      "problem_count": 1
+    },
+    {
+      "file": "docs/adr/0009-superseded-missing.md",
+      "id": "ADR-0009",
+      "number": 9,
+      "title": "Superseded by a decision that does not exist",
+      "status": "superseded",
+      "superseded_by": "ADR-0099",
+      "topics": [],
+      "binding": false,
+      "problem_count": 1
+    },
+    {
+      "file": "docs/adr/0011-first.md",
+      "id": "ADR-0011",
+      "number": 11,
+      "title": "First file numbered eleven",
+      "status": "accepted",
+      "superseded_by": null,
+      "topics": [
+        "framework"
+      ],
+      "binding": false,
+      "problem_count": 1
+    },
+    {
+      "file": "docs/adr/0011-second.md",
+      "id": "ADR-0011",
+      "number": 11,
+      "title": "Second file numbered eleven",
+      "status": "accepted",
+      "superseded_by": null,
+      "topics": [
+        "framework"
+      ],
+      "binding": false,
+      "problem_count": 1
+    },
+    {
+      "file": "docs/adr/0012-bad-header.md",
+      "id": "ADR-0012",
+      "number": 12,
+      "title": "A header with a tab and bad items",
+      "status": "accepted",
+      "superseded_by": null,
+      "topics": [],
+      "binding": false,
+      "problem_count": 5
+    },
+    {
+      "file": "docs/adr/0013-deprecated.md",
+      "id": "ADR-0013",
+      "number": 13,
+      "title": "Use REST for every internal call",
+      "status": "deprecated",
+      "superseded_by": null,
+      "topics": [],
+      "binding": false,
+      "problem_count": 0
+    },
+    {
+      "file": "docs/adr/0014-unclosed.md",
+      "id": "ADR-0014",
+      "number": 14,
+      "title": null,
+      "status": null,
+      "superseded_by": null,
+      "topics": [],
+      "binding": false,
+      "problem_count": 2
+    },
+    {
+      "file": "docs/adr/0015-no-header.md",
+      "id": "ADR-0015",
+      "number": 15,
+      "title": "A file with no header",
+      "status": null,
+      "superseded_by": null,
+      "topics": [],
+      "binding": false,
+      "problem_count": 1
+    }
+  ],
+  "missing": [
+    "framework",
+    "deployment"
+  ],
+  "covered_by": {
+    "language": [
+      "ADR-0001"
+    ],
+    "framework": [],
+    "storage": [
+      "ADR-0005"
+    ],
+    "testing": [
+      "ADR-0001"
+    ],
+    "deployment": [],
+    "coding-standards": [
+      "ADR-0005"
+    ]
+  }
+}
