@@ -6,7 +6,7 @@ Keep this file current: when a piece below is finished or the plan changes, chan
 
 ## 1. State
 
-- **Released:** 0.21.0, tag `v0.21.0`, on `main`. Unmerged: `feature/a6-qualify-across-machines` (section 2.1), built and waiting for the owner's word to merge.
+- **Released:** 0.21.0, tag `v0.21.0`, on `main`. Merged to `main` since, not pushed and not released: qualifying a release across machines (section 2.1).
 - **What 0.21.0 added:** MACH for a team (Part A of the M20 design, except A6), the basic decisions drafted from an engineer's own documents, a ticket's workspace that holds no `.claude/` files, and a plain message when MACH's files are from different versions. The release notes are `docs/guides/RELEASE_NOTES_DRAFT.md`.
 - **Checks at release:** `make check` (2,149 tests, 1 skipped), `go test ./...` in both apps, and the web typecheck, lint, build and unit tests (347 and 396) all passed on the release commit.
 
@@ -16,7 +16,7 @@ The owner decided this order on 2026-11-23.
 
 ### 2.1 Qualifying a release across machines (A6 in the M20 design)
 
-**Built on the branch `feature/a6-qualify-across-machines`, not merged and not released.** What it does and its limits are in section A6 of `docs/mach-next/M20_TEAMS_AND_MOVING.md` and the release section of `docs/BLUEPRINT.md`. The owner decided on 2026-11-23 that an evidence file's SHA-256 in the committed change record is enough on a machine that does not hold the file, so no shared place for evidence was built.
+**Built and merged to `main` on 2026-11-23; not pushed and not released.** What it does and its limits are in section A6 of `docs/mach-next/M20_TEAMS_AND_MOVING.md` and the release section of `docs/BLUEPRINT.md`. The owner decided on 2026-11-23 that an evidence file's SHA-256 in the committed change record is enough on a machine that does not hold the file, so no shared place for evidence was built.
 
 The four conditions, as tested: a third clone that built nothing reaches the same outcome, check for check, as the two that built the slices; a record edited, replaced or put back by hand, or a spec changed after it, blocks the slice; `acceptance record` works from the third clone's snapshot and is read back there; `AcrossMachinesTest` errors on 0.21.0's qualification and passes now.
 
