@@ -18,7 +18,8 @@ Skip-worktree entries are not reported by `git status` or `git diff`, so the fil
 
 Needs Git 2.36 or later (`sparse-checkout set --no-cone`, and Git setting up per-worktree configuration itself).
 
-Shared by cell.py (open), build.py (a cell groomed before the repository had history) and the doctor (a throwaway
+Shared by cell.py (open), build.py (a cell groomed before the repository had history, and each lane of a build), landing.py
+(the join's worktree) and the doctor (a throwaway
 worktree made the same way). Standard library only.
 """
 
@@ -115,10 +116,13 @@ def _undo(project: Path, repo: Path, branch: Optional[str], made_branch: bool) -
     return left
 
 
-def create(project: Path, repo: Path, branch: Optional[str]) -> None:
-    """Make the cell's worktree at `repo` on `branch` (made from HEAD when it does not exist yet; detached at HEAD when
-    `branch` is None), the sparse way. On any failure everything it made is removed and WorkspaceError says what Git
-    said and what to do."""
+def create(project: Path, repo: Path, branch: Optional[str], start: Optional[str] = None) -> None:
+    """Make the cell's worktree at `repo` on `branch` (made from `start`, or from HEAD, when it does not exist yet; detached
+    at `start` or HEAD when `branch` is None), the sparse way. A branch that exists is used at its own tip, whatever
+    `start` says: that is how a lane's worktree is made again on the work it already committed. `project` may be the main
+    checkout or any of its worktrees (a lane is made beside its cell's worktree): Git keeps one record of every worktree,
+    and the sparse rule is written to the new worktree's own configuration either way. On any failure everything it made
+    is removed and WorkspaceError says what Git said and what to do."""
     problem = version_problem(git_version(project))
     if problem:
         raise WorkspaceError(f"{problem} Nothing was made. Install a newer Git, then run this again; /mach doctor checks it.")
@@ -126,12 +130,14 @@ def create(project: Path, repo: Path, branch: Optional[str]) -> None:
         raise WorkspaceError(f"{repo} already exists, so Git cannot make the workspace there. Nothing was changed. "
                              "Move that folder aside (or finish its ticket with cleanup), then run this again.")
     made_branch = False
+    if start is not None and (not start or start.startswith("-")):
+        raise WorkspaceError(f"'{start}' is not a commit to make the workspace from. Nothing was made.")
     if branch is None:
-        add = ["worktree", "add", "--no-checkout", "--detach", str(repo), "HEAD"]
+        add = ["worktree", "add", "--no-checkout", "--detach", str(repo), start or "HEAD"]
     elif git(["show-ref", "--verify", "-q", f"refs/heads/{branch}"], project).returncode == 0:
         add = ["worktree", "add", "--no-checkout", str(repo), branch]
     else:
-        add = ["worktree", "add", "--no-checkout", "-b", branch, str(repo)]
+        add = ["worktree", "add", "--no-checkout", "-b", branch, str(repo)] + ([start] if start else [])
         made_branch = True
     steps = [(add, project, "git worktree add"),
              (["sparse-checkout", "set", "--no-cone", *PATTERNS], repo, "git sparse-checkout set"),

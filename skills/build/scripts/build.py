@@ -19,6 +19,18 @@ handed to verification.
     build.py revise <ticket>           start a revision after a failed round; the third failed round escalates
     build.py status <ticket>
 
+Lanes (M22): a plan whose author divided its tasks into parts (`### Before the lanes`, `### Lanes`, `### After the lanes`)
+or marked a task `after Tnn` is built in lanes when build.max_lanes is above 1 (default 3): chains of tasks that share no
+file and no requirement, each in its own sparse worktree under the cell, on its own branch, with its own state file and its
+own builder, under the same gates. A plan without those additions is built one task at a time, exactly as before.
+
+    build.py lanes <ticket>                              the lane plan and each lane's status; reads only
+    build.py lanes-open <ticket> --holder H [--grant N] [--take-over]
+                                                         make the lanes' worktrees and say which lanes to start now
+    build.py next <ticket> --lane L                      a lane's next task, in the lane's own worktree
+    build.py join <ticket>                               land every lane's commits on the ticket's branch, one per task in
+                                                         plan order, and run the whole suite on the result
+
 Architecture decisions (adr.py, the intent station's shared helper): `start` lists the accepted ADRs the plan was made
 under and refuses a High-risk ticket whose own proposed ADR no person has accepted; no step may change a file in the ADR
 folder, and no override allows it; the build report lists the ADRs in force and every exception.
@@ -39,7 +51,10 @@ Standard library only. It runs the project's test and lint commands inside the c
 """
 
 import argparse
+import contextlib
+import copy
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -47,8 +62,9 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -73,6 +89,20 @@ UI_FILE_RE = re.compile(r"\.(tsx|jsx|vue|svelte|html|astro)$")
 INLINE_STYLE_RE = re.compile(r"style\s*=\s*(\"|'|\{\{)")
 HEX_COLOR_RE = re.compile(r"(?<![\w&])#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b")
 EXCLUDE_LINE = ".factory/worktrees/"
+# build.max_lanes when the project's settings give no usable value. cell.py's DEFAULT_MAX_LANES is the same number (a test
+# checks that the two stay equal): the plan stage and this station read the setting the same way.
+DEFAULT_MAX_LANES = 3
+DEFAULT_MAX_PARALLEL = 3  # factory.max_parallel when the settings name none (intake.py, schedule.py)
+DEFAULT_CLAIM_MINUTES = 90  # factory.claim_minutes when the settings name none (claim.py)
+HOLDER_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+JOIN_TASK = "J-T01"
+LANES_NEXT = "Stop here and report. The line starts one builder per lane."
+LANE_DONE_NEXT = "Report and stop. The line joins the lanes."
+
+try:
+    import fcntl  # the lanes' lock; where there is none, lanes-open and join run without it
+except ImportError:  # pragma: no cover - not POSIX
+    fcntl = None  # type: ignore[assignment]
 
 
 # Files that running a build or test suite leaves behind. They are never part of a change, so the
@@ -224,6 +254,15 @@ class Cell:
     def save(self) -> None:
         self.state["updated_at"] = now()
         self.state_path.write_text(json.dumps(self.state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    lane: Optional[str] = None  # the lane a Lane works in; None for the cell's own checkout
+
+    def tick(self, task_id: str) -> None:
+        """Mark the task done in plan.md. A lane never writes plan.md: the join ticks its tasks once."""
+        tick_plan(self, task_id)
+
+    def all_done_hint(self) -> str:
+        return "All tasks are done. Run: build.py finish " + self.ticket_id
 
     def require_started(self) -> None:
         if not self.state.get("tasks"):
@@ -598,7 +637,15 @@ def check_scope(cell: Cell, task: Dict[str, Any], files: Sequence[str], args: ar
     if decisions:
         raise BuildError(f"{task['id']} changes architecture decision records ({', '.join(decisions[:3])}). Only people change an ADR, by pull request; "
                          "no override allows it. Undo those changes. If the code cannot follow an ADR, stop and report it.", code="adr-files")
-    frozen = sorted(set(files) & set(cell.state.get("test_files", []))) if task["kind"] != "test" else []
+    if cell.lane:
+        foreign = sorted(set(files) & set(cell.foreign_files()))
+        if foreign:
+            raise BuildError(f"{task['id']} is in lane {cell.lane} but changes files the plan gives another lane: {', '.join(foreign[:5])}. "
+                             "Lanes are built at the same time from the same starting point, so a lane never changes another lane's file, and "
+                             "no override allows it (neither --allow-extra nor --amend-test). Undo those changes. If this lane cannot be built "
+                             "without them, the plan's claim that its lanes are independent is wrong: stop and report a plan defect.",
+                             code="lane-scope")
+    frozen =sorted(set(files) & set(cell.state.get("test_files", []))) if task["kind"] != "test" else []
     if frozen:
         if not args.amend_test:
             raise BuildError(
@@ -679,7 +726,8 @@ def take(cell: Cell, task_id: str, step: str) -> Dict[str, Any]:
 
 
 def complete(cell: Cell, task: Dict[str, Any], files: Sequence[str], result: Optional[Dict[str, Any]], note: str) -> None:
-    summary = re.sub(r"\s*\((?:(?:FR|INV|AC)-\d+[,\s]*)+\)\s*$", "", task["text"].replace("`", ""))  # drop the trailing ID list
+    # Drop the trailing ID list, with any `after Tnn` mark in it.
+    summary = re.sub(r"\s*\((?:(?:(?:FR|INV|AC)-\d+|(?i:after)\s+(?:R\d+-)?T\d+)[,\s]*)+\)\s*$", "", task["text"].replace("`", ""))
     summary = " ".join(summary.split())[:64].rstrip(" —-,;:")
     scope = cell.info.get("slice_id") or cell.ticket_id
     sha = commit(cell, files, f"{COMMIT_PREFIX[task['kind']]}({scope}): {task['id']} {summary} [{cell.ticket_id}]")
@@ -687,16 +735,26 @@ def complete(cell: Cell, task: Dict[str, Any], files: Sequence[str], result: Opt
     if result:
         task["test_run"] = {"exit_code": result["exit_code"], "seconds": result["seconds"], "scope": result.get("scope", "whole suite"),
                             "command": result.get("command") if result.get("scope", "whole suite") == "whole suite" else None}
-    tick_plan(cell, task["id"])
+    if cell.lane:
+        # The lane commit is exactly the tree this task's test run saw: the station commits what it ran the tests on.
+        task.update({"lane": cell.lane, "lane_commit": sha, "ran_on": sha})
+    cell.tick(task["id"])
     cell.save()
     cell.report_overrides(task["id"])
-    telemetry(cell.root, "build.task_completed", "build", lambda: {"task": task["id"], "kind": task["kind"], "step": STEP_FOR[task["kind"]],
-                                                                   "first_run": task.get("first_run"), "suite": cell.state.get("suite"), "commit": lifecycle.short(sha)})
+    telemetry(cell.root, "build.task_completed", "build", lambda: task_completed(cell, task, STEP_FOR[task["kind"]], task.get("first_run"), lifecycle.short(sha)))
     following = cell.next_task()
     print(json.dumps({
         "status": "DONE", "task": task["id"], "commit": sha[:10], "note": note, "suite": cell.state["suite"],
-        "next": f"{following['id']} [{following['kind']}]" if following else "All tasks are done. Run: build.py finish " + cell.ticket_id,
+        "next": f"{following['id']} [{following['kind']}]" if following else cell.all_done_hint(),
     }, indent=2))
+
+
+def task_completed(cell: Cell, task: Dict[str, Any], step: str, first_run: Any, commit: Optional[str]) -> Dict[str, Any]:
+    """The build.task_completed record. In a lane it also names the lane; its commit is the lane commit, made at that moment."""
+    data = {"task": task["id"], "kind": task["kind"], "step": step, "first_run": first_run, "suite": cell.state.get("suite"), "commit": commit}
+    if cell.lane:
+        data["lane"] = cell.lane
+    return data
 
 
 # ---------------------------------------------------------------- commands
@@ -900,6 +958,9 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
                              code="baseline-red")
         cell.state["suite"] = "green"
         cell.state["test_file_check"] = calibrate_test_file(cell)
+    planned = plan_lanes_at_start(cell, plan_path.read_text(encoding="utf-8"), args)
+    if planned is not None:
+        cell.state["lanes"] = planned
     cell.state["baseline_run"] = {k: v for k, v in baseline.items() if k not in ("output_tail", "output")}
     cell.info.update({"stage": "building", "human_review_required": bool(gate["human_review_required"]) or cell.info.get("risk") == "High"})
     cell.save()
@@ -908,14 +969,20 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
                                                              "audit_tier": gate.get("tier")})
     cell.report_overrides(None)
     telemetry(cell.root, "station.entered", "build", lambda: {"stage": "building", "tasks": len(tasks), "synced_with_main": bool(synced)})
-    print(json.dumps({
+    answer = {
         "status": "STARTED", "ticket_id": cell.ticket_id, "workdir": str(cell.work), "branch": cell.info.get("branch"),
         "tasks": len(tasks), "test_cmd": cell.state["test_cmd"], "lint_cmd": cell.state["lint_cmd"], "audit": gate,
         "new_tests_run_alone": cell.state.get("test_file_check") or {"trusted": False, "why": "no passing baseline run to check a single-file run against"},
         "adrs": adrs_in_force(cell),
         "synced_with_main": merge_note(synced),
         "next": f"{tasks[0]['id']} [{tasks[0]['kind']}]",
-    }, indent=2))
+    }
+    if planned is not None:
+        answer["lanes"] = {"count": len(planned["lanes"]), "lanes": [{"lane": entry["lane"], "tasks": entry["tasks"]} for entry in planned["lanes"]],
+                           "before": planned["plan"]["before"], "after": planned["plan"]["after"],
+                           "note": "Do the tasks before the lanes here, in order. When 'next' answers LANES, stop and report: the line starts "
+                                   "one builder per lane and joins them."}
+    print(json.dumps(answer, indent=2))
     return 0
 
 
@@ -936,7 +1003,15 @@ def spec_excerpt(cell: Cell, ids: Sequence[str]) -> Dict[str, Any]:
 
 def cmd_next(cell: Cell, args: argparse.Namespace) -> int:
     cell.require_started()
+    if getattr(args, "lane", None):
+        return lane_next(cell, args.lane)
+    record = lane_record(cell)
+    if record is not None and record.get("state") == "open":
+        raise BuildError(lanes_open_refusal(cell, record), code="lanes-open")
     task = cell.next_task()
+    if record is not None and record.get("state") == "planned" and task is not None and lane_of(cell, task["id"]):
+        print(json.dumps({"status": "LANES", "lanes": [entry["lane"] for entry in record["lanes"]], "next": LANES_NEXT}, indent=2))
+        return 0
     if task is None:
         print(json.dumps({"status": "ALL_TASKS_DONE", "next": f"build.py finish {cell.ticket_id}"}, indent=2))
         return 0
@@ -959,6 +1034,7 @@ def failure_excerpt(output: str, stems: Sequence[str]) -> str:
 
 
 def cmd_red(cell: Cell, args: argparse.Namespace) -> int:
+    cell = route(cell, args.task)
     task = take(cell, args.task, "red")
     files = changed_files(cell)
     if args.written_early:
@@ -971,14 +1047,15 @@ def cmd_red(cell: Cell, args: argparse.Namespace) -> int:
         cell.deviation(task["id"], "test-written-early", args.written_early)
         task.update({"status": "done", "commit": None, "files_changed": [], "first_run": "not-run", "at": now(), "loop": cell.state.get("loop", 0),
                      "note": "No change: its test was committed by an earlier task. " + args.written_early})
-        tick_plan(cell, task["id"])
+        if cell.lane:
+            task["lane"] = cell.lane
+        cell.tick(task["id"])
         cell.save()
         cell.report_overrides(task["id"])
-        telemetry(cell.root, "build.task_completed", "build", lambda: {"task": task["id"], "kind": task["kind"], "step": "red", "first_run": "not-run",
-                                                                       "suite": cell.state.get("suite"), "commit": None})
+        telemetry(cell.root, "build.task_completed", "build", lambda: task_completed(cell, task, "red", "not-run", None))
         following = cell.next_task()
         print(json.dumps({"status": "DONE", "task": task["id"], "commit": None, "note": task["note"], "suite": cell.state["suite"],
-                          "next": f"{following['id']} [{following['kind']}]" if following else "All tasks are done. Run: build.py finish " + cell.ticket_id}, indent=2))
+                          "next": f"{following['id']} [{following['kind']}]" if following else cell.all_done_hint()}, indent=2))
         return 0
     check_scope(cell, task, files, args)
     if task.get("ids") and not cell.state.get("hardening"):
@@ -1108,18 +1185,20 @@ def green_already_done(cell: Cell, task: Dict[str, Any], files: Sequence[str], r
     task.update({"status": "done", "commit": None, "files_changed": [], "at": now(), "loop": cell.state.get("loop", 0),
                  "test_run": {key: result[key] for key in ("exit_code", "seconds")},
                  "note": "No change: an earlier task already implemented it; suite green. " + reason})
-    tick_plan(cell, task["id"])
+    if cell.lane:
+        task["lane"] = cell.lane
+    cell.tick(task["id"])
     cell.save()
     cell.report_overrides(task["id"])
-    telemetry(cell.root, "build.task_completed", "build", lambda: {"task": task["id"], "kind": task["kind"], "step": "green", "first_run": None,
-                                                                   "suite": cell.state.get("suite"), "commit": None})
+    telemetry(cell.root, "build.task_completed", "build", lambda: task_completed(cell, task, "green", None, None))
     following = cell.next_task()
     print(json.dumps({"status": "DONE", "task": task["id"], "commit": None, "note": task["note"], "suite": cell.state["suite"],
-                      "next": f"{following['id']} [{following['kind']}]" if following else "All tasks are done. Run: build.py finish " + cell.ticket_id}, indent=2))
+                      "next": f"{following['id']} [{following['kind']}]" if following else cell.all_done_hint()}, indent=2))
     return 0
 
 
 def cmd_green(cell: Cell, args: argparse.Namespace) -> int:
+    cell = route(cell, args.task)
     task = take(cell, args.task, "green")
     files = changed_files(cell)
     if args.already_done:
@@ -1135,6 +1214,7 @@ def cmd_green(cell: Cell, args: argparse.Namespace) -> int:
 
 
 def cmd_done(cell: Cell, args: argparse.Namespace) -> int:
+    cell = route(cell, args.task)
     task = take(cell, args.task, "done")
     files = changed_files(cell)
     check_scope(cell, task, files, args)
@@ -1234,15 +1314,37 @@ def timing(cell: Cell, final: Dict[str, Any]) -> Dict[str, Any]:
     step is the clock between two recorded moments, so it includes the builder's work and any time the build sat idle."""
     steps = []
     previous = cell.state.get("started_at")
+    joined = joined_lanes(cell)
+    chains: Dict[str, Any] = {}  # with lanes: the last recorded moment of each lane's own chain
     for task in cell.state["tasks"]:
         run = task.get("test_run") if isinstance(task.get("test_run"), dict) else {}
-        steps.append({"task": task.get("id"), "kind": task.get("kind"), "loop": task.get("loop"), "tests": run.get("scope"), "test_seconds": run.get("seconds"),
-                      "seconds_since_previous_step": seconds_between(previous, task.get("at")) if previous and task.get("at") else None})
-        previous = task.get("at") or previous
+        if joined is None:
+            steps.append({"task": task.get("id"), "kind": task.get("kind"), "loop": task.get("loop"), "tests": run.get("scope"), "test_seconds": run.get("seconds"),
+                          "seconds_since_previous_step": seconds_between(previous, task.get("at")) if previous and task.get("at") else None})
+            previous = task.get("at") or previous
+            continue
+        # With lanes, "since the previous step" is measured within each chain: a lane's from when it was handed to its builder,
+        # the cell's own from its previous step, or from the join for the first step after it. Never across lanes.
+        chain = task.get("lane") if task.get("lane") and not task.get("set_aside") else None
+        if chain:
+            before = chains.get(chain) or lane_record_of(joined, chain).get("handed_at")
+        else:
+            before = previous
+            join_at = (joined.get("join") or {}).get("finished_at")
+            if join_at and task.get("at") and str(task.get("at")) >= str(join_at) and (not before or str(before) < str(join_at)):
+                before = join_at
+        step = {"task": task.get("id"), "kind": task.get("kind"), "loop": task.get("loop"), "tests": run.get("scope"), "test_seconds": run.get("seconds"),
+                "seconds_since_previous_step": seconds_between(before, task.get("at")) if before and task.get("at") else None}
+        if chain:
+            step["lane"] = chain
+            chains[chain] = task.get("at") or before
+        else:
+            previous = task.get("at") or previous
+        steps.append(step)
     baseline = cell.state.get("baseline_run") if isinstance(cell.state.get("baseline_run"), dict) else {}
     measured = [step["test_seconds"] for step in steps if isinstance(step["test_seconds"], (int, float))]
     extra = [value for value in (baseline.get("seconds"), None if final.get("reused_from") else final.get("seconds")) if isinstance(value, (int, float))]
-    return {
+    measured_time = {
         "started_at": cell.state.get("started_at"), "finished_at": now(), "elapsed_seconds": seconds_between(cell.state.get("started_at"), now()),
         "test_seconds_total": round(sum(measured) + sum(extra), 1), "test_runs": len(measured) + len(extra),
         "whole_suite_runs": sum(1 for step in steps if step["tests"] == "whole suite") + len(extra),
@@ -1253,6 +1355,14 @@ def timing(cell: Cell, final: Dict[str, Any]) -> Dict[str, Any]:
         "note": "Elapsed time is the clock from start to finish and includes any time the build sat idle or was resumed later.",
         "steps": steps,
     }
+    if joined is not None:
+        joined_run = ((joined.get("join") or {}).get("suite") or {}).get("seconds")
+        if isinstance(joined_run, (int, float)):  # the joined suite run; a finish that reused it did not count it again
+            measured_time["test_seconds_total"] = round(measured_time["test_seconds_total"] + joined_run, 1)
+            measured_time["test_runs"] += 1
+            measured_time["whole_suite_runs"] += 1
+        measured_time["lanes"] = lanes_timing(joined)
+    return measured_time
 
 
 def reusable_suite_run(cell: Cell) -> Optional[Dict[str, Any]]:
@@ -1260,13 +1370,20 @@ def reusable_suite_run(cell: Cell) -> Optional[Dict[str, Any]]:
 
     The last task's step ran the whole suite on its changes and then committed them. If that commit is still the
     branch's tip, the tree is clean and the test command is the same, running the suite again would run the same
-    code and learn nothing. Anything else (a test task last, a different tip, a failed run) runs it again."""
+    code and learn nothing. Anything else (a test task last, a different tip, a failed run) runs it again.
+
+    A run is reused only if it ran on the commit that is the tip now (`ran_on`, where a task records it). A task built in a
+    lane ran its suite on the lane's tree; after the join its landed commit is the tip, but that tree was never run as such.
+    The join's own whole-suite run, on the landed tip, is reused instead when nothing came after it."""
     last = next((task for task in reversed(cell.state["tasks"]) if task.get("status") == "done" and task.get("commit")), None)
     run = last.get("test_run") if last else None
     if not isinstance(run, dict) or run.get("scope") != "whole suite" or run.get("exit_code") != 0 or run.get("command") != cell.state.get("test_cmd"):
-        return None
-    if cell.state.get("suite") != "green" or cell.state["tasks"][-1] is not last or git(cell.work, "rev-parse", "HEAD").stdout.strip() != last["commit"]:
-        return None
+        return joined_suite_run(cell)
+    head = git(cell.work, "rev-parse", "HEAD").stdout.strip()
+    if cell.state.get("suite") != "green" or cell.state["tasks"][-1] is not last or head != last["commit"]:
+        return joined_suite_run(cell)
+    if "ran_on" in last and last["ran_on"] != head:
+        return joined_suite_run(cell)
     return {"command": run["command"], "exit_code": 0, "passed": True, "seconds": 0.0, "output_tail": "", "output": "",
             "scope": "whole suite", "reused_from": last["id"], "reused_run_seconds": run.get("seconds"),
             "note": f"Not run again: the whole suite passed on exactly this code when {last['id']} was completed."}
@@ -1276,6 +1393,9 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
     cell.require_started()
     if cell.info.get("stage") == "built":
         raise BuildError("This cell is already built.", code="wrong-stage")
+    record = lane_record(cell)
+    if record is not None and record.get("state") == "open":
+        raise BuildError(lanes_open_refusal(cell, record), code="lanes-open")
     problems: List[str] = []
     pending = [task["id"] for task in cell.state["tasks"] if task["status"] != "done"]
     if pending:
@@ -1340,6 +1460,8 @@ def cmd_finish(cell: Cell, args: argparse.Namespace) -> int:
                         "not_a_secret": [{"task": d.get("task"), "reason": d.get("detail"), "candidates": d.get("candidates") or []}
                                          for d in cell.state.get("deviations") or [] if d.get("type") == "not-a-secret"]},
     }
+    if lane_record(cell) is not None:
+        report_lanes(cell, report)
     (cell.root / "build-report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     cell.info["stage"] = "built"
     cell.save()
@@ -1427,13 +1549,871 @@ def cmd_revise(cell: Cell, args: argparse.Namespace) -> int:
 
 def cmd_status(cell: Cell, args: argparse.Namespace) -> int:
     tasks = cell.state.get("tasks") or []
-    print(json.dumps({
+    answer = {
         "ticket_id": cell.ticket_id, "stage": cell.info.get("stage"), "loop": cell.state.get("loop", 0), "suite": cell.state.get("suite"),
         "done": sum(1 for t in tasks if t["status"] == "done"), "tasks": len(tasks), "deviations": len(cell.state.get("deviations") or []),
         "next": (cell.next_task() or {}).get("id") if tasks else None, "workdir": str(cell.work),
         "adrs": adrs_in_force(cell) if adr is not None else None,
+    }
+    record = lane_record(cell)
+    if record is not None:
+        answer["lanes"] = {"state": record.get("state"), "lanes": [{"lane": entry["lane"], "status": lane_status(cell, entry)} for entry in record["lanes"]]}
+    print(json.dumps(answer, indent=2, ensure_ascii=False))
+    return 0
+
+
+# ---------------------------------------------------------------- lanes (M22)
+#
+# Where state lives. build.json holds the lane plan and each lane's status under "lanes"; only lanes-open and join write
+# it, whole and atomically, under the lock file lanes/.lock. Each lane has its own folder, lanes/<L>/, holding its sparse
+# worktree (repo/, on the branch mach-lane/<ticket>/<L>, made from the fork point) and its own state file, lane.json, which
+# only the commands run in that lane write. No lane writes build.json, cell.json or plan.md, so two lanes never share a
+# checkout or a state file. Lifecycle records from every lane go to the cell's one lifecycle.jsonl (concurrent appends are
+# safe there).
+
+AGENT_TYPE = "mach-builder" if Path(__file__).resolve().parent.parent.name.startswith("mach-") else "mach:builder"
+_SIBLINGS: Dict[str, Any] = {}
+
+
+def sibling(name: str) -> Any:
+    """lanes.py or landing.py, the scripts beside this one, loaded when first needed so that this script loads without
+    them (a project's parse_plan readers never need either). A module already loaded under that name is used."""
+    if name in sys.modules:
+        return sys.modules[name]
+    if name not in _SIBLINGS:
+        script = Path(__file__).resolve().parent / f"{name}.py"
+        if not script.is_file():
+            raise BuildError(f"{script.name} is not installed beside this script, so lanes cannot be {'joined' if name == 'landing' else 'planned'}.",
+                             code=f"{name}-missing")
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec = importlib.util.spec_from_file_location(f"mach_build_{name}", script)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)  # type: ignore[union-attr]
+        finally:
+            sys.dont_write_bytecode = previous
+        _SIBLINGS[name] = module
+    return _SIBLINGS[name]
+
+
+def whole(value: Any) -> Optional[int]:
+    return value if type(value) is int and value >= 1 else None
+
+
+def max_lanes(config: Dict[str, Any]) -> int:
+    """build.max_lanes: how many lanes one ticket may run at once. Only a whole number of at least 1 is taken as given (1 builds
+    one task at a time, as before lanes); absent or anything else reads as DEFAULT_MAX_LANES."""
+    section = config.get("build") if isinstance(config.get("build"), dict) else {}
+    return whole(section.get("max_lanes")) or DEFAULT_MAX_LANES
+
+
+def max_builders(config: Dict[str, Any]) -> int:
+    """factory.max_builders: builders on this machine across tickets. Default: factory.max_parallel."""
+    section = config.get("factory") if isinstance(config.get("factory"), dict) else {}
+    return whole(section.get("max_builders")) or whole(section.get("max_parallel")) or DEFAULT_MAX_PARALLEL
+
+
+def claim_limit(config: Dict[str, Any]) -> int:
+    section = config.get("factory") if isinstance(config.get("factory"), dict) else {}
+    return whole(section.get("claim_minutes")) or DEFAULT_CLAIM_MINUTES
+
+
+def moment(value: Any) -> Optional[datetime]:
+    try:
+        when = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+
+def fresh(value: Any, minutes: int) -> bool:
+    """Whether a recorded moment is less than `minutes` ago (and not believably in the future)."""
+    when = moment(value) if value else None
+    current = datetime.now(timezone.utc)
+    return when is not None and when <= current + timedelta(minutes=5) and current - when < timedelta(minutes=minutes)
+
+
+def write_json(path: Path, data: Any) -> None:
+    """Write a state file whole and atomically: a reader sees the old file or the new one, never part of one."""
+    handle, temp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as out:
+            out.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        os.replace(temp, str(path))
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(temp)
+        raise
+
+
+@contextlib.contextmanager
+def lanes_lock(cell: Cell) -> Any:
+    """The one writer of build.json while lanes exist: lanes-open and join hold this lock, and read build.json again under it."""
+    folder = cell.root / "lanes"
+    folder.mkdir(exist_ok=True)
+    with open(str(folder / ".lock"), "a", encoding="utf-8") as handle:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            cell.state = load_json(cell.state_path, {}) or {}
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def save_shared(cell: Cell) -> None:
+    cell.state["updated_at"] = now()
+    write_json(cell.state_path, cell.state)
+
+
+def lane_record(cell: Cell) -> Optional[Dict[str, Any]]:
+    """build.json's lane record, or None for a build without lanes (every build of a plan written without the parts)."""
+    record = cell.state.get("lanes")
+    return record if isinstance(record, dict) and isinstance(record.get("lanes"), list) else None
+
+
+def joined_lanes(cell: Cell) -> Optional[Dict[str, Any]]:
+    record = lane_record(cell)
+    return record if record is not None and record.get("state") == "joined" else None
+
+
+def lane_record_of(record: Dict[str, Any], name: str) -> Dict[str, Any]:
+    return next((entry for entry in record.get("lanes") or [] if entry.get("lane") == name), {})
+
+
+def lane_of(cell: Cell, task_id: str) -> Optional[str]:
+    """The lane a task is built in, from build.json's lane plan; None for a task before or after the lanes, or no lanes."""
+    record = lane_record(cell)
+    if record is None or record.get("state") in ("sequential",):
+        return None
+    return next((entry["lane"] for entry in record["lanes"] if task_id in (entry.get("tasks") or [])), None)
+
+
+def lanes_open_refusal(cell: Cell, record: Dict[str, Any]) -> str:
+    names = ", ".join(entry["lane"] for entry in record["lanes"])
+    return (f"The lanes of {cell.ticket_id} are open ({names}), so nothing is built in the cell's own checkout until they are joined. "
+            f"A lane's builder runs: build.py next {cell.ticket_id} --lane <L>. When every lane is done, the line runs: build.py join {cell.ticket_id}.")
+
+
+class Lane(Cell):
+    """One lane of a build (design 7.2): the cell with three things changed. `work` is the lane's own worktree, the state is
+    lane.json, and saving writes only lane.json. Tasks are taken in the lane's own order; plan.md is not ticked (the join
+    ticks it once) and cell.json is never written."""
+
+    def __init__(self, cell: Cell, name: str) -> None:  # noqa: D107 - shares the cell's settings; never reads build.json again
+        self.project, self.ticket_id, self.root, self.info, self.config = cell.project, cell.ticket_id, cell.root, cell.info, cell.config
+        self.cell = cell
+        self.lane = name
+        self.folder = cell.root / "lanes" / name
+        self.state_path = self.folder / "lane.json"
+        self.state = load_json(self.state_path, {}) or {}
+
+    @property
+    def work(self) -> Path:
+        return self.folder / "repo"
+
+    def save(self) -> None:
+        self.state["updated_at"] = now()
+        tasks = self.state.get("tasks") or []
+        if self.state.get("status") == "open" and tasks and all(task.get("status") == "done" for task in tasks):
+            self.state["status"] = "done"
+            self.state["finished_at"] = now()
+        write_json(self.state_path, self.state)
+
+    def save_info(self) -> None:
+        raise BuildError("A lane never writes cell.json.", code="lane-state")
+
+    def tick(self, task_id: str) -> None:
+        return None
+
+    def all_done_hint(self) -> str:
+        return f"Lane {self.lane} is done. {LANE_DONE_NEXT}"
+
+    def foreign_files(self) -> List[str]:
+        """Every file the lane plan gives another lane."""
+        record = lane_record(self.cell) or {}
+        return sorted({name for entry in record.get("lanes") or [] if entry.get("lane") != self.lane for name in entry.get("files") or []})
+
+    def touch(self) -> None:
+        """Every build.py call in a lane records that the lane is alive."""
+        self.state["last_step_at"] = now()
+        if not self.state.get("started_at"):
+            self.state["started_at"] = self.state["last_step_at"]
+        self.save()
+
+
+class Checkout(Cell):
+    """The cell's settings and state with another checkout: the join's worktree, where the joined suite runs."""
+
+    def __init__(self, cell: Cell, work: Path) -> None:  # noqa: D107
+        self.project, self.ticket_id, self.root, self.info, self.config, self.state = cell.project, cell.ticket_id, cell.root, cell.info, cell.config, cell.state
+        self.state_path = cell.state_path
+        self._work = work
+
+    @property
+    def work(self) -> Path:
+        return self._work
+
+
+def open_lane(cell: Cell, name: str) -> Lane:
+    """The lane a builder works in, refused unless it is open and handed out; records the call."""
+    record = lane_record(cell)
+    if record is None:
+        raise BuildError(f"{cell.ticket_id} is not built in lanes; there is no lane {name}. Run: build.py next {cell.ticket_id}", code="no-lanes")
+    entry = lane_record_of(record, name)
+    if not entry:
+        raise BuildError(f"{cell.ticket_id} has no lane {name}. Its lanes: {', '.join(e['lane'] for e in record['lanes'])}.", code="unknown-lane")
+    if record.get("state") == "joined" or entry.get("status") in ("joined", "set-aside"):
+        raise BuildError(f"Lane {name} of {cell.ticket_id} has been joined; nothing more is built in it. Run: build.py next {cell.ticket_id}", code="lane-joined")
+    if record.get("state") != "open" or entry.get("status") == "planned":
+        raise BuildError(f"Lane {name} of {cell.ticket_id} is not open yet; the line opens it (build.py lanes-open).", code="lane-not-open")
+    lane = Lane(cell, name)
+    if not lane.state.get("tasks") or not lane.work.is_dir():
+        raise BuildError(f"Lane {name} of {cell.ticket_id} has no worktree; the line makes it again with build.py lanes-open.", code="lane-not-open")
+    lane.touch()
+    return lane
+
+
+def route(cell: Cell, task_id: str) -> Cell:
+    """Where red, green and done work on a task: its lane's worktree and lane.json while the lanes are open, else the cell.
+    A builder cannot work a task in the wrong lane, nor any task in the cell's checkout while lanes are open."""
+    if isinstance(cell, Lane):
+        return cell
+    record = lane_record(cell)
+    if record is None:
+        return cell
+    name = lane_of(cell, task_id)
+    if record.get("state") == "open":
+        if name is None:
+            if not any(task["id"] == task_id for task in cell.state.get("tasks") or []):
+                return cell  # an unknown task is refused as before
+            raise BuildError(lanes_open_refusal(cell, record), code="lanes-open")
+        return open_lane(cell, name)
+    if record.get("state") == "planned" and name is not None:
+        first = cell.next_task()
+        if first is not None and first["id"] == task_id:
+            raise BuildError(f"{task_id} is built in lane {name}, and the lanes are not open yet. {LANES_NEXT}", code="lanes-not-open")
+    return cell
+
+
+def lane_next(cell: Cell, name: str) -> int:
+    lane = open_lane(cell, name)
+    task = lane.next_task()
+    if task is None:
+        print(json.dumps({"status": "LANE_DONE", "lane": name, "next": LANE_DONE_NEXT}, indent=2))
+        return 0
+    done = sum(1 for t in lane.state["tasks"] if t["status"] == "done")
+    print(json.dumps({
+        "task": task["id"], "kind": task["kind"], "complete_with": STEP_FOR[task["kind"]], "text": task["text"],
+        "files": task["files"] or "The plan names no files for this task.", "progress": f"{done} of {len(lane.state['tasks'])} done in lane {name}",
+        "suite": lane.state["suite"], "workdir": str(lane.work), "lane": name, "spec": spec_excerpt(cell, task["ids"]),
     }, indent=2, ensure_ascii=False))
     return 0
+
+
+def plan_lanes_at_start(cell: Cell, text: str, args: argparse.Namespace) -> Optional[Dict[str, Any]]:
+    """The lane plan `start` records, or None: then nothing about lanes is written and the build is as before (design 7.1).
+
+    Lanes apply only when all hold: the plan's author used the parts or `after` marks (a plan without them is built one
+    task at a time whatever the lane rule would compute: its independence was never claimed); build.max_lanes is above 1;
+    the plan gives two lanes or more; the ticket is not a hardening ticket; and it started from a passing suite."""
+    setting = max_lanes(cell.config)
+    if setting < 2 or cell.state.get("hardening") or args.no_baseline or cell.state.get("suite") != "green":
+        return None
+    try:
+        L = sibling("lanes")
+    except BuildError:
+        return None
+    if not L.uses_additions(text):
+        return None
+    tasks, touch = parse_plan(text)
+    if L.problems(text, copy.deepcopy(tasks), copy.deepcopy(touch)):
+        return None  # check-plan refuses such a plan; one that reaches the build anyway is built one task at a time
+    lane_plan = L.plan(text, copy.deepcopy(tasks), copy.deepcopy(touch))
+    if len(lane_plan["lanes"]) < 2:
+        return None
+    return {"state": "planned", "setting": setting, "planned_at": now(), "fork": None,
+            "plan": {key: lane_plan.get(key) for key in ("before", "after", "joined_because", "single_reason")},
+            "lanes": [{"lane": entry["lane"], "tasks": entry["tasks"], "files": entry["files"], "status": "planned",
+                       "branch": f"mach-lane/{cell.ticket_id}/{entry['lane']}"} for entry in lane_plan["lanes"]]}
+
+
+def live_lanes(cell_root: Path, minutes: int) -> List[str]:
+    """The lanes of a cell whose builder called the station less than `minutes` ago and that are not done."""
+    found = []
+    for path in sorted((cell_root / "lanes").glob("L*/lane.json")):
+        data = load_json(path, {}) or {}
+        if isinstance(data, dict) and data.get("status") == "open" and fresh(data.get("last_step_at") or data.get("handed_at"), minutes):
+            found.append(path.parent.name)
+    return found
+
+
+def others_using(cell: Cell, minutes: int) -> Tuple[int, List[Dict[str, Any]]]:
+    """Builders the other tickets on this machine use (design 7.5): each other cell that is building with a fresh claim or a
+    live lane counts one place, or one per live lane."""
+    total, detail = 0, []
+    base = cell.project / ".factory" / "worktrees"
+    for folder in sorted(base.iterdir()) if base.is_dir() else []:
+        if folder.name == cell.ticket_id or not folder.is_dir() or folder.is_symlink():
+            continue
+        info = load_json(folder / "cell.json", {})
+        if not isinstance(info, dict) or info.get("stage") != "building":
+            continue
+        claim = load_json(folder / "claim.json", {})
+        claimed = isinstance(claim, dict) and claim.get("stage") == "building" and any(
+            fresh(claim.get(key), minutes) for key in ("renewed_at", "at") if claim.get(key))
+        live = live_lanes(folder, minutes)
+        if claimed or live:
+            total += max(1, len(live))
+            detail.append({"ticket": folder.name, "builders": max(1, len(live))})
+    return total, detail
+
+
+def registered_worktree(cell: Cell, repo: Path, branch: str) -> bool:
+    listed = git(cell.project, "worktree", "list", "--porcelain").stdout.splitlines()
+    paths = {Path(line[len("worktree "):]).resolve() for line in listed if line.startswith("worktree ")}
+    return repo.resolve() in paths and git(repo, "symbolic-ref", "-q", "--short", "HEAD").stdout.strip() == branch
+
+
+def lane_prompt(cell: Cell, name: str, work: Path) -> str:
+    return (f"Build lane {name} of MACH ticket {cell.ticket_id}. Follow the build skill's section 'Building one lane': run "
+            f"build.py next {cell.ticket_id} --lane {name}, work only in {work}, and stop when it answers LANE_DONE.")
+
+
+def cmd_lanes(cell: Cell, args: argparse.Namespace) -> int:
+    cell.require_started()
+    record = lane_record(cell)
+    if record is None:
+        print(json.dumps({"ticket_id": cell.ticket_id, "state": "none", "lanes": [],
+                          "why": "This build has no lanes: its plan is built one task at a time."}, indent=2))
+        return 0
+    minutes = claim_limit(cell.config)
+    lanes = []
+    for entry in record["lanes"]:
+        lane = Lane(cell, entry["lane"])
+        tasks = lane.state.get("tasks") or []
+        lanes.append({"lane": entry["lane"], "tasks": entry["tasks"], "files": entry["files"], "status": lane_status(cell, entry),
+                      "done": sum(1 for t in tasks if t.get("status") == "done"),
+                      "workdir": str(lane.work) if lane.work.is_dir() else None, "branch": entry.get("branch"),
+                      "live": lane.state.get("status") == "open" and fresh(lane.state.get("last_step_at") or lane.state.get("handed_at"), minutes),
+                      "last_step_at": lane.state.get("last_step_at")})
+    before_done = all(t["status"] == "done" for t in cell.state["tasks"] if t["id"] in (record["plan"].get("before") or []))
+    state = record.get("state")
+    if state == "planned":
+        upcoming = f"build.py lanes-open {cell.ticket_id} --holder <holder>" if before_done else f"build.py next {cell.ticket_id}"
+    elif state == "open":
+        upcoming = (f"build.py join {cell.ticket_id}" if all(item["status"] == "done" for item in lanes)
+                    else f"build.py lanes-open {cell.ticket_id} --holder <holder>")
+    else:
+        upcoming = f"build.py next {cell.ticket_id}"
+    print(json.dumps({"ticket_id": cell.ticket_id, "state": state, "setting": record.get("setting"), "fork": record.get("fork"),
+                      "ready": state == "planned" and before_done, "before": record["plan"].get("before"), "after": record["plan"].get("after"),
+                      "lanes": lanes, "why": record.get("why"), "next": upcoming}, indent=2))
+    return 0
+
+
+def lane_status(cell: Cell, entry: Dict[str, Any]) -> str:
+    """A lane's status: build.json's, or, for an open lane, its own lane.json's (a lane marks itself done)."""
+    if entry.get("status") in ("open",):
+        own = (load_json(cell.root / "lanes" / entry["lane"] / "lane.json", {}) or {}).get("status")
+        return own if own in ("open", "done") else "open"
+    return str(entry.get("status"))
+
+
+def cmd_lanes_open(cell: Cell, args: argparse.Namespace) -> int:
+    """Make any missing lane worktree and say which lanes to start now (design 6.2, 7.1, 7.5)."""
+    cell.require_started()
+    with lanes_lock(cell):
+        record = lane_record(cell)
+        if record is None:
+            print(json.dumps({"status": "NONE_LEFT", "lanes": [], "why": "This build has no lanes: its plan is built one task at a time.",
+                              "next": f"build.py next {cell.ticket_id}"}, indent=2))
+            return 0
+        if record.get("state") == "sequential":
+            print(json.dumps({"status": "SEQUENTIAL", "lanes": [], "why": record.get("why"), "next": f"build.py next {cell.ticket_id}"}, indent=2))
+            return 0
+        if record.get("state") == "joined":
+            print(json.dumps({"status": "NONE_LEFT", "lanes": [], "why": "The lanes are joined.", "next": f"build.py next {cell.ticket_id}"}, indent=2))
+            return 0
+        if not HOLDER_RE.match(str(args.holder or "")):
+            raise BuildError("--holder must be the driver's holder token: 8 to 64 letters, digits, '-' or '_'.", code="bad-holder")
+        if cell.info.get("stage") != "building" or cell.state.get("loop", 0):
+            raise BuildError("Lanes open only in a ticket's first build, never in a revision round.", code="wrong-stage")
+        before = [t["id"] for t in cell.state["tasks"] if t["id"] in (record["plan"].get("before") or []) and t["status"] != "done"]
+        if before:
+            raise BuildError(f"The tasks before the lanes are not done yet ({', '.join(before)}). The cell's builder does them first: "
+                             f"build.py next {cell.ticket_id}", code="lanes-not-ready")
+        if args.grant is not None and args.grant < 0:
+            raise BuildError("--grant must be a whole number, 0 or more.", code="bad-grant")
+        first = record.get("state") == "planned"
+        if first:
+            if cell.state.get("suite") != "green":
+                raise BuildError("The cell's suite is not green, so no lane could start from it. Finish the tasks before the lanes first.",
+                                 code="suite-red")
+            dirty = changed_files(cell)
+            if dirty:
+                raise BuildError(f"The cell has uncommitted changes ({', '.join(dirty[:5])}), so the lanes cannot start from its last commit. "
+                                 "Every change belongs to a task.", code="uncommitted-changes")
+        minutes = claim_limit(cell.config)
+        held, candidates, done = [], [], []
+        for entry in record["lanes"]:
+            if entry.get("status") in ("joined", "set-aside"):
+                continue
+            lane = Lane(cell, entry["lane"])
+            if lane.state.get("status") == "done":
+                done.append(entry["lane"])
+            elif (lane.state and lane.state.get("holder") != args.holder and not args.take_over
+                  and fresh(lane.state.get("last_step_at") or lane.state.get("handed_at"), minutes)):
+                held.append(entry["lane"])
+            else:
+                candidates.append(entry)
+        if not candidates:
+            if held:
+                raise BuildError(f"Every lane left ({', '.join(held)}) is being built by another holder, whose builder called the station less "
+                                 f"than factory.claim_minutes ({minutes}) ago. Wait for it, or a person takes it over with --take-over.",
+                                 code="lane-held")
+            print(json.dumps({"status": "NONE_LEFT", "lanes": [], "why": f"Every lane is done ({', '.join(done)}).",
+                              "next": f"build.py join {cell.ticket_id}"}, indent=2))
+            return 0
+        used, others = others_using(cell, minutes)
+        free = max_builders(cell.config) - used
+        limits = [max_lanes(cell.config), free] + ([args.grant] if args.grant is not None else [])
+        room = min(limits) - len(held)
+        if first and min(room, len(candidates)) < 2:
+            why = (f"Only {max(room, 0)} builder(s) may run for this ticket now (build.max_lanes {max_lanes(cell.config)}; factory.max_builders "
+                   f"{max_builders(cell.config)}, of which other tickets use {used}" + (f"; the line granted {args.grant}" if args.grant is not None else "")
+                   + "), so its plan is built one task at a time in the cell, as without lanes.")
+            record.update({"state": "sequential", "why": why, "decided_at": now(), "free_places": free, "others": others})
+            for entry in record["lanes"]:
+                entry["status"] = "sequential"
+            save_shared(cell)
+            telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "build.lanes-open", "outcome": "refuse", "reason_code": "sequential",
+                                                                     "overridden_by_reason": False, "lanes": len(record["lanes"]), "granted": max(room, 0)})
+            print(json.dumps({"status": "SEQUENTIAL", "lanes": [], "why": why, "next": f"build.py next {cell.ticket_id}"}, indent=2))
+            return 0
+        if room < 1:
+            raise BuildError(f"No place is free for another builder now (factory.max_builders {max_builders(cell.config)}, of which other tickets use "
+                             f"{used}, and {len(held)} of this ticket's lanes are live). Ask again when one is free.", code="no-free-place")
+        chosen = candidates[:room]
+        fork = record.get("fork") or git(cell.work, "rev-parse", "HEAD").stdout.strip()
+        made: List[Tuple[Lane, str, bool]] = []
+        handed = []
+        for entry in chosen:
+            lane = Lane(cell, entry["lane"])
+            branch = entry.get("branch") or f"mach-lane/{cell.ticket_id}/{entry['lane']}"
+            seconds = None
+            if lane.work.exists():
+                if not registered_worktree(cell, lane.work, branch):
+                    raise BuildError(f"{lane.work} exists but is not this lane's worktree on {branch}. Nothing was changed; a person moves it aside.",
+                                     code="lane-folder-unknown")
+            else:
+                has_branch = git(cell.project, "show-ref", "--verify", "-q", f"refs/heads/{branch}").returncode == 0
+                if lane.state.get("tasks") and any(t.get("commit") for t in lane.state["tasks"]) and not has_branch:
+                    raise BuildError(f"Lane {entry['lane']} committed work, but its branch {branch} is gone, so its worktree cannot be made again. "
+                                     "A person looks at it.", code="lane-branch-missing")
+                if workspace is None:
+                    raise BuildError("The intent station's workspace.py is not installed beside this skill, so a lane's worktree cannot be made.",
+                                     code="worktree-failed")
+                lane.folder.mkdir(parents=True, exist_ok=True)
+                started = time.monotonic()
+                try:  # sparse like the cell's own: never .claude/ or .mcp.json
+                    workspace.create(cell.project, lane.work, branch, start=fork)
+                except workspace.WorkspaceError as exc:
+                    for other, other_branch, new in made:  # only what this call made
+                        workspace._undo(cell.project, other.work, other_branch, new)  # noqa: SLF001
+                    raise BuildError(f"Lane {entry['lane']}'s worktree could not be made, so no lane was opened. {exc}", code="worktree-failed")
+                seconds = round(time.monotonic() - started, 1)
+                made.append((lane, branch, not has_branch))
+            handed.append((entry, lane, branch, seconds))
+        at = now()
+        for entry, lane, branch, seconds in handed:
+            if not lane.state.get("tasks"):
+                wanted = set(entry["tasks"])
+                lane.state = {
+                    "ticket_id": cell.ticket_id, "lane": entry["lane"], "branch": branch, "fork": fork, "status": "open",
+                    "opened_at": at, "loop": 0, "hardening": False, "baseline": fork,
+                    "test_cmd": cell.state.get("test_cmd"), "lint_cmd": cell.state.get("lint_cmd"),
+                    **{key: cell.state[key] for key in ("test_file_cmd", "test_one", "test_file_check") if key in cell.state},
+                    "suite": "green", "test_files": list(cell.state.get("test_files") or []), "deviations": [],
+                    "tasks": [copy.deepcopy(t) for t in cell.state["tasks"] if t["id"] in wanted],
+                    "worktree_seconds": seconds, "started_at": None, "last_step_at": None,
+                }
+            elif seconds is not None:
+                lane.state["worktree_seconds"] = round((lane.state.get("worktree_seconds") or 0) + seconds, 1)
+            lane.state.update({"holder": args.holder, "handed_at": at, "status": "done" if lane.state.get("status") == "done" else "open"})
+            write_json(lane.state_path, lane.state)
+            entry["status"] = "open"
+        if first:
+            record.update({"state": "open", "fork": fork, "opened_at": at})
+        record.setdefault("batches", []).append({"at": at, "lanes": [entry["lane"] for entry, _, _, _ in handed], "granted": room,
+                                                 "free_places": free, "others": others})
+        save_shared(cell)
+    telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "build.lanes-open", "outcome": "pass", "reason_code": None, "overridden_by_reason": False,
+                                                             "lanes": [entry["lane"] for entry, _, _, _ in handed], "granted": room, "first": first})
+    model = cell.section("models").get("build") if isinstance(cell.section("models").get("build"), str) and cell.section("models").get("build") else "sonnet"
+    print(json.dumps({
+        "status": "OPEN",
+        "lanes": [{"lane": entry["lane"], "tasks": entry["tasks"], "workdir": str(lane.work), "branch": branch, "agent_type": AGENT_TYPE,
+                   "model": model, "prompt": lane_prompt(cell, entry["lane"], lane.work)} for entry, lane, branch, _ in handed],
+        "why": f"{len(handed)} lane(s) to start now, at once; " + (f"{len(candidates) - len(handed)} more after them. " if len(candidates) > len(handed) else "")
+               + f"Each builder stops at LANE_DONE. When every lane is done: build.py join {cell.ticket_id}.",
+        "fork": fork,
+    }, indent=2))
+    return 0
+
+
+# ---------------------------------------------------------------- the join (design 8)
+
+def patch_id(project: Path, sha: str) -> Optional[str]:
+    """A commit's stable patch ID: the same for two commits that make the same change, whatever their parents."""
+    shown = git(project, "show", "--format=", "--no-color", "--no-ext-diff", "--binary", sha)
+    if shown.returncode != 0:
+        return None
+    if not shown.stdout.strip():
+        return ""
+    done = subprocess.run(["git", "patch-id", "--stable"], cwd=str(project), input=shown.stdout, capture_output=True, text=True)
+    words = done.stdout.split()
+    return words[0] if done.returncode == 0 and words else None
+
+
+def commit_files(project: Path, commits: Sequence[str]) -> List[str]:
+    files = set()
+    for sha in commits:
+        files |= {name for name in git(project, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha).stdout.splitlines() if name.strip()}
+    return sorted(files)
+
+
+def own_overlaps(project: Path, commits: Dict[str, List[str]], tests: Dict[str, List[str]]) -> List[Dict[str, Any]]:
+    """Two lanes that changed one file, or a lane that changed another lane's test file: the station's own reading, beside
+    landing.overlaps, so a lane that broke independence is found whichever reads it."""
+    found = []
+    files = {name: commit_files(project, shas) for name, shas in commits.items()}
+    names = list(commits)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            for name in sorted(set(files[a]) & set(files[b])):
+                why = "frozen-test" if name in tests.get(a, []) or name in tests.get(b, []) else "same-file"
+                found.append({"lane": b, "other": a, "file": name, "why": why})
+    return found
+
+
+def choose_set_aside(order: Dict[str, int], overlaps: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """For each pair of lanes that broke independence, the later in plan order is set aside (design 8.2); a lane already set
+    aside lands nothing, so it causes no other lane to be set aside."""
+    aside: Dict[str, Dict[str, Any]] = {}
+    pairs = [item for item in overlaps if item.get("lane") in order and item.get("other") in order and item.get("lane") != item.get("other")]
+    for item in sorted(pairs, key=lambda i: (min(order[i["lane"]], order[i["other"]]), max(order[i["lane"]], order[i["other"]]), str(i.get("file")))):
+        a, b = item["lane"], item["other"]
+        if a in aside or b in aside:
+            continue
+        later, earlier = (a, b) if order[a] > order[b] else (b, a)
+        aside[later] = {"lane": later, "other": earlier, "file": item.get("file"), "why": item.get("why")}
+    return aside
+
+
+FAILED_TEST_RE = re.compile(r"^(?:FAIL|ERROR): (\w+) \(([\w.]+)\)|^FAILED ([^\s:]+)::(\S+)", re.MULTILINE)
+
+
+def failing_tests(output: str, lanes_files: Dict[str, List[str]]) -> List[Dict[str, Any]]:
+    """The failing tests a unittest or pytest run names, each with the lane that wrote its file where one did."""
+    found = []
+    for match in FAILED_TEST_RE.finditer(output or ""):
+        if match.group(1):
+            # unittest names a test "name (module.Class)", or, since Python 3.11, "name (module.Class.name)".
+            name, where = match.group(1), match.group(2)
+            if where.endswith("." + name):
+                where = where[:-len(name) - 1]
+            parts = where.split(".")
+            stem = parts[-2] if len(parts) >= 2 else parts[0]
+            files = [f for lane_files in lanes_files.values() for f in lane_files if Path(f).stem == stem]
+            test = f"{where}.{name}"
+        else:
+            test, files = f"{match.group(3)}::{match.group(4)}", [match.group(3)]
+        lane = next((lane for lane, lane_files in lanes_files.items() if set(files) & set(lane_files)), None)
+        entry = {"test": test, "file": files[0] if files else None, "lane": lane}
+        if entry not in found:
+            found.append(entry)
+    return found[:50]
+
+
+def cmd_join(cell: Cell, args: argparse.Namespace) -> int:
+    """Land every lane's commits on the ticket's branch, one per task in plan order, and run the whole suite on the result."""
+    cell.require_started()
+    landing = sibling("landing")
+    failure = getattr(landing, "LandingError", RuntimeError)
+    with lanes_lock(cell):
+        record = lane_record(cell)
+        if record is None or record.get("state") != "open":
+            state = "joined" if record is not None and record.get("state") == "joined" else (record or {}).get("state", "none")
+            raise BuildError(f"There are no open lanes to join for {cell.ticket_id} (lanes: {state}).", code="lanes-not-open" if state != "joined" else "already-joined")
+        fork = str(record.get("fork") or "")
+        order = {entry["lane"]: index for index, entry in enumerate(record["lanes"])}
+        views = {entry["lane"]: Lane(cell, entry["lane"]) for entry in record["lanes"] if entry.get("status") not in ("joined", "set-aside")}
+        unfinished = [name for name, lane in views.items() if lane.state.get("status") != "done"]
+        if unfinished:
+            raise BuildError(f"Not every lane is done ({', '.join(unfinished)} still open), so the lanes cannot be joined yet.", code="lanes-not-done")
+        join_repo = cell.root / "lanes" / "join" / "repo"
+        join_branch = f"mach-lane/{cell.ticket_id}/join"
+        head = git(cell.work, "rev-parse", "HEAD").stdout.strip()
+        pending = record.get("join") if isinstance(record.get("join"), dict) and record["join"].get("state") == "landed" else None
+        dirty = changed_files(cell)
+        if dirty:
+            raise BuildError(f"The cell has uncommitted changes ({', '.join(dirty[:5])}), so the ticket's branch cannot be moved.", code="uncommitted-changes")
+        if pending is None:
+            if head != fork:
+                raise BuildError(f"The ticket's branch moved since the lanes were opened ({fork[:10]} then, {head[:10]} now), so the lanes cannot be "
+                                 "landed on it. A person looks at what moved it.", code="branch-moved")
+            for name, lane in views.items():
+                stray = changed_files(lane) if lane.work.is_dir() else []
+                if stray:
+                    raise BuildError(f"Lane {name} has uncommitted changes ({', '.join(stray[:5])}): work no task holds. Nothing was joined; "
+                                     "it is not thrown away by the station.", code="lane-dirty")
+            started_at, clock = now(), time.monotonic()
+            commits = {name: [t["commit"] for t in lane.state["tasks"] if t.get("commit")] for name, lane in views.items()}
+            fork_tests = set(cell.state.get("test_files") or [])
+            tests = {name: sorted(set(lane.state.get("test_files") or []) - fork_tests) for name, lane in views.items()}
+            found = list(landing.overlaps(cell.work, fork, commits, tests) or []) + own_overlaps(cell.project, commits, tests)
+            aside = choose_set_aside(order, found)
+            plan_order = [t["id"] for t in cell.state["tasks"]]
+            landed_tasks = [(task_id, name) for task_id in plan_order for name, lane in views.items()
+                            if name not in aside and task_id in [t["id"] for t in lane.state["tasks"]]]
+            by_id = {t["id"]: t for lane in views.values() for t in lane.state["tasks"]}
+            in_order = [by_id[task_id]["commit"] for task_id, _ in landed_tasks if by_id[task_id].get("commit")]
+            if join_repo.exists() or git(cell.project, "show-ref", "--verify", "-q", f"refs/heads/{join_branch}").returncode == 0:
+                landing.remove(cell.project, [join_repo], [join_branch])  # a join that stopped part way starts again from the fork point
+            try:
+                landed = landing.land(cell.project, join_repo, join_branch, fork, in_order)
+            except failure as exc:
+                return join_refused(cell, record, "landing-failed", f"A lane commit did not apply on the fork point, so nothing was joined and the "
+                                    f"ticket's branch is unchanged: {exc} A person looks at the lanes.")
+            pairs = list(landed.get("landed") or [])
+            if [item.get("lane_commit") for item in pairs] != in_order:
+                landing.remove(cell.project, [join_repo], [join_branch])
+                return join_refused(cell, record, "landing-failed", "Landing did not land every lane commit in plan order, so nothing was joined.")
+            mismatched = [item["lane_commit"][:10] for item in pairs
+                          if not (patch_id(cell.project, item["lane_commit"]) == item.get("patch_id") == patch_id(cell.project, item["commit"]))]
+            if mismatched:
+                landing.remove(cell.project, [join_repo], [join_branch])
+                return join_refused(cell, record, "patch-id-mismatch", f"The landed change differs from what its lane committed for {', '.join(mismatched)} "
+                                    "(patch IDs differ), so lines no gate saw could enter. Nothing was joined; a person looks at it.")
+            landing_seconds = round(time.monotonic() - clock, 1)
+            tip = str(landed.get("tip") or "")
+            try:
+                ran = run_tests(Checkout(cell, join_repo))
+            except BuildError:
+                landing.remove(cell.project, [join_repo], [join_branch])
+                raise
+            lane_commit_of = {item["lane_commit"]: item for item in pairs}
+            pending = {
+                "state": "landed", "started_at": started_at, "fork": fork, "tip": tip, "landing_seconds": landing_seconds,
+                "order": [task_id for task_id, _ in landed_tasks],
+                "landed": [{"task": task_id, "lane": name, "lane_commit": by_id[task_id].get("commit"),
+                            "commit": (lane_commit_of.get(by_id[task_id].get("commit")) or {}).get("commit"),
+                            "patch_id": (lane_commit_of.get(by_id[task_id].get("commit")) or {}).get("patch_id")} for task_id, name in landed_tasks],
+                "set_aside": [{**item, "tasks": [t["id"] for t in views[name].state["tasks"]], "lane_commits": commits[name]} for name, item in aside.items()],
+                "overlaps": found,
+                "suite": {"passed": ran["passed"], "exit_code": ran["exit_code"], "seconds": ran["seconds"], "command": ran["command"],
+                          "scope": "whole suite", "ran_on": tip, "output_tail": "" if ran["passed"] else ran["output_tail"][-1500:]},
+            }
+            record["join"] = pending
+            save_shared(cell)  # recorded before the branch moves: a join stopped after this point carries on from here
+        head = git(cell.work, "rev-parse", "HEAD").stdout.strip()
+        if head == pending["fork"] and pending["tip"] != pending["fork"]:
+            try:
+                landing.fast_forward(cell.work, pending["tip"])
+            except Exception as exc:  # noqa: BLE001 - a refusal for a person, the branch unchanged
+                raise BuildError(f"The ticket's branch could not be moved to the joined commits ({exc}). Nothing changed on it.", code="branch-not-moved")
+        elif head != pending["tip"]:
+            raise BuildError(f"The ticket's branch is at {head[:10]}, neither the fork point nor the joined tip, so the join stops for a person.",
+                             code="branch-moved")
+        return join_record(cell, record, views, landing)
+
+
+def join_refused(cell: Cell, record: Dict[str, Any], code: str, why: str) -> int:
+    record.setdefault("join_refusals", []).append({"at": now(), "reason": code, "why": why})
+    save_shared(cell)
+    telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "build.join", "outcome": "refuse", "reason_code": code, "overridden_by_reason": False})
+    print(json.dumps({"status": "REFUSED", "landed": 0, "set_aside": [], "suite": None, "why": why,
+                      "next": "Stop and report to a person. The ticket's branch is unchanged and every lane is kept."}, indent=2))
+    return 1
+
+
+def join_record(cell: Cell, record: Dict[str, Any], views: Dict[str, Lane], landing: Any) -> int:
+    """Design 8.1 step 5: the tasks take their landed commits, lane deviations are copied in with their lane, plan.md is
+    ticked, the lanes are joined and their worktrees and branches removed. On a joined suite that fails, J-T01 is added."""
+    join = record["join"]
+    aside = {item["lane"]: item for item in join.get("set_aside") or []}
+    landed = {item["task"]: item for item in join.get("landed") or []}
+    own = {t["id"]: t for lane in views.values() for t in lane.state.get("tasks") or []}
+    test_files = set(cell.state.get("test_files") or [])
+    for task in cell.state["tasks"]:
+        name = lane_of(cell, task["id"])
+        if name is None:
+            continue
+        if name in aside:
+            task.update({"lane": name, "set_aside": True})
+            continue
+        built = own.get(task["id"]) or {}
+        task.update({key: value for key, value in built.items() if key != "commit"})
+        task["lane"] = name
+        if built.get("commit"):
+            task["lane_commit"] = built["commit"]
+            task["commit"] = (landed.get(task["id"]) or {}).get("commit")
+        else:
+            task["commit"] = None
+        cell.tick(task["id"])
+    for entry in record["lanes"]:
+        name = entry["lane"]
+        lane = views.get(name)
+        if lane is None:
+            continue
+        state = lane.state
+        if name not in aside:
+            for item in state.get("deviations") or []:
+                cell.state.setdefault("deviations", []).append({**item, "lane": name})
+            test_files |= set(state.get("test_files") or [])
+        runs = [t.get("test_run", {}).get("seconds") for t in state.get("tasks") or [] if isinstance(t.get("test_run"), dict)]
+        entry.update({"status": "set-aside" if name in aside else "joined", "handed_at": state.get("handed_at"), "opened_at": state.get("opened_at"),
+                      "started_at": state.get("started_at"), "finished_at": state.get("finished_at"),
+                      "worktree_seconds": state.get("worktree_seconds"),
+                      "test_seconds": round(sum(r for r in runs if isinstance(r, (int, float))), 1),
+                      "files_changed": sorted({f for t in state.get("tasks") or [] for f in t.get("files_changed") or []}),
+                      "commits": [{"task": t["id"], "lane_commit": t.get("commit"), "files": t.get("files_changed") or []}
+                                  for t in state.get("tasks") or []]})
+    for name, item in aside.items():
+        cell.deviation(None, "lane-set-aside", f"Lane {name} was set aside: it and lane {item.get('other')} both changed {item.get('file')} "
+                       f"({item.get('why')}), so the plan's claim that they are independent was false. Its tasks "
+                       f"({', '.join(item.get('tasks') or [])}) are built again in the cell, one at a time, where every gate sees the landed work. "
+                       f"Its lane commits, not kept: {', '.join(str(c)[:10] for c in item.get('lane_commits') or [])}.")
+        cell.state["deviations"][-1].update({"lane": name, "other": item.get("other"), "file": item.get("file"), "why": item.get("why"), "by": "build station"})
+    cell.state["test_files"] = sorted(test_files)
+    suite = join["suite"]
+    interaction = None
+    if suite["passed"]:
+        cell.state["suite"] = "green"
+    else:
+        cell.state["suite"] = "red"
+        changed = {name: entry.get("files_changed") or [] for entry in record["lanes"] for name in [entry["lane"]] if name not in aside}
+        failing = failing_tests(suite.get("output_tail") or "", changed)
+        code_files = sorted({f for files in changed.values() for f in files if f not in test_files})
+        interaction = {"failing": failing, "files": code_files, "output_tail": suite.get("output_tail")}
+        add_join_task(cell, record, code_files)
+        cell.deviation(JOIN_TASK, "lanes-interaction", "Every lane passed its own suite, but the whole suite fails on the joined result: "
+                       + ("; ".join(f"{item['test']} (written by lane {item['lane']})" if item.get("lane") else item["test"] for item in failing[:10])
+                          or "see the output") + f". {JOIN_TASK} makes the lanes pass together.")
+        cell.state["deviations"][-1].update({"failing": failing, "output_tail": (suite.get("output_tail") or "")[-800:], "by": "build station"})
+    folders = [cell.root / "lanes" / entry["lane"] / "repo" for entry in record["lanes"]] + [cell.root / "lanes" / "join" / "repo"]
+    branches = [entry.get("branch") or f"mach-lane/{cell.ticket_id}/{entry['lane']}" for entry in record["lanes"]] + [f"mach-lane/{cell.ticket_id}/join"]
+    left = list(landing.remove(cell.project, [f for f in folders if f.exists()], branches) or [])
+    join.update({"state": "joined", "finished_at": now(), "interaction": interaction, "not_removed": left})
+    record["state"] = "joined"
+    save_shared(cell)
+    for name, item in aside.items():
+        telemetry(cell.root, "gate.evaluated", "build", lambda name=name, item=item: {
+            "gate": "build.join", "outcome": "refuse", "reason_code": "lane-set-aside", "overridden_by_reason": False, "lane": name, "why": item.get("why")})
+    telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "build.join", "outcome": "pass" if suite["passed"] else "refuse",
+                                                             "reason_code": None if suite["passed"] else "lanes-interaction", "overridden_by_reason": False,
+                                                             "landed": len(join.get("landed") or []), "set_aside": len(aside)})
+    following = cell.next_task()
+    print(json.dumps({
+        "status": "JOINED" if suite["passed"] else "INTERACTION", "landed": len([i for i in join.get("landed") or [] if i.get("commit")]),
+        "set_aside": [{"lane": name, "other": item.get("other"), "file": item.get("file"), "why": item.get("why"), "tasks": item.get("tasks")}
+                      for name, item in aside.items()],
+        "suite": {key: suite.get(key) for key in ("passed", "exit_code", "seconds", "command", "ran_on")},
+        "interaction": {"failing": interaction["failing"], "task": JOIN_TASK, "output_tail": (interaction["output_tail"] or "")[-1200:]} if interaction else None,
+        "not_removed": left,
+        "next": (f"The ticket's build goes on in the cell: build.py next {cell.ticket_id}" if following else f"build.py finish {cell.ticket_id}"),
+    }, indent=2))
+    return 0
+
+
+def add_join_task(cell: Cell, record: Dict[str, Any], files: List[str]) -> None:
+    """J-T01 [impl], after the last task of the lanes part and before the tasks after the lanes (design 8.3)."""
+    if any(task["id"] == JOIN_TASK for task in cell.state["tasks"]):
+        return
+    lane_ids = {task_id for entry in record["lanes"] for task_id in entry.get("tasks") or []}
+    last = max((index for index, task in enumerate(cell.state["tasks"]) if task["id"] in lane_ids), default=len(cell.state["tasks"]) - 1)
+    text = "Make the lanes pass together" + (" — " + ", ".join(f"`{name}`" for name in files) if files else "")
+    cell.state["tasks"].insert(last + 1, {"id": JOIN_TASK, "kind": "impl", "text": text, "ids": [], "files": files, "status": "pending", "added_by": "join"})
+    plan = cell.root / "plan.md"
+    if plan.is_file():
+        lines = plan.read_text(encoding="utf-8").split("\n")
+        previous = cell.state["tasks"][last]["id"]
+        at = next((index for index, line in enumerate(lines) if TASK_RE.match(line) and TASK_RE.match(line).group(2) == previous), None)
+        line = f"- [ ] {JOIN_TASK} [impl] {text}"
+        if at is None:
+            lines.append(line)
+        else:
+            lines.insert(at + 1, line)
+        plan.write_text("\n".join(lines), encoding="utf-8")
+
+
+def joined_suite_run(cell: Cell) -> Optional[Dict[str, Any]]:
+    """The join's whole-suite run, when it ran on exactly the code that is the tip now and passed."""
+    record = joined_lanes(cell)
+    suite = ((record or {}).get("join") or {}).get("suite") or {}
+    if not suite.get("passed") or suite.get("command") != cell.state.get("test_cmd") or cell.state.get("suite") != "green":
+        return None
+    if suite.get("ran_on") != git(cell.work, "rev-parse", "HEAD").stdout.strip():
+        return None
+    return {"command": suite["command"], "exit_code": 0, "passed": True, "seconds": 0.0, "output_tail": "", "output": "",
+            "scope": "whole suite", "reused_from": "join", "reused_run_seconds": suite.get("seconds"),
+            "note": "Not run again: the whole suite passed on exactly this code when the lanes were joined."}
+
+
+def lanes_timing(record: Dict[str, Any]) -> Dict[str, Any]:
+    """design 13.1: the lanes part's wall time against the sum of its lanes' times, and the fixed costs, each measured."""
+    per_lane = []
+    for entry in record["lanes"]:
+        start = entry.get("started_at") or entry.get("handed_at")
+        per_lane.append({"lane": entry["lane"], "status": entry.get("status"), "started_at": start, "finished_at": entry.get("finished_at"),
+                         "elapsed_seconds": seconds_between(start, entry.get("finished_at")) if start and entry.get("finished_at") else None,
+                         "test_seconds": entry.get("test_seconds"), "worktree_seconds": entry.get("worktree_seconds")})
+    ends = [item["finished_at"] for item in per_lane if item["finished_at"]]
+    wall = seconds_between(record.get("opened_at"), max(ends)) if record.get("opened_at") and ends else None
+    summed = round(sum(item["elapsed_seconds"] for item in per_lane if isinstance(item["elapsed_seconds"], (int, float))), 1)
+    join = record.get("join") or {}
+    return {"wall_seconds": wall, "summed_lane_seconds": summed, "ratio": round(summed / wall, 2) if wall else None,
+            "worktree_seconds": round(sum(item["worktree_seconds"] or 0 for item in per_lane), 1),
+            "landing_seconds": join.get("landing_seconds"), "joined_suite_seconds": (join.get("suite") or {}).get("seconds"),
+            "lanes": per_lane,
+            "note": "Wall time is from opening the lanes to the last lane done; the summed time adds each lane's own time, first to last "
+                    "station call. The summed time is not what a build one task at a time would have taken, which was not run (it would "
+                    "have read the ground once and run its tests alone). The measured facts are this ratio for the lanes part and the "
+                    "build's elapsed time; nothing is claimed beyond them."}
+
+
+def report_lanes(cell: Cell, report: Dict[str, Any]) -> None:
+    """design 13.1: only when lanes were planned. Each task built in a lane gains its lane, lane commit and the commit its
+    tests ran on; the report gains the lane plan, each lane, and the join."""
+    record = lane_record(cell) or {}
+    if record.get("state") != "joined":
+        report["lanes"] = {"state": record.get("state"), "setting": record.get("setting"), "why": record.get("why"),
+                           "note": "Lanes were planned but did not run: the plan was built one task at a time in the cell."}
+        return
+    by_id = {t["id"]: t for t in cell.state["tasks"]}
+    for item in report["tasks"]:
+        task = by_id.get(item["id"]) or {}
+        if task.get("lane"):
+            item.update({"lane": task.get("lane"), "lane_commit": task.get("lane_commit"), "ran_on": task.get("ran_on"),
+                         "set_aside": bool(task.get("set_aside"))})
+    join = dict(record.get("join") or {})
+    report["lanes"] = {
+        "state": "joined", "setting": record.get("setting"), "granted": [batch.get("granted") for batch in record.get("batches") or []],
+        "fork": record.get("fork"), "opened_at": record.get("opened_at"), "batches": record.get("batches") or [],
+        "plan": {"before": record["plan"].get("before"), "after": record["plan"].get("after"), "joined_because": record["plan"].get("joined_because"),
+                 "lanes": [{"lane": e["lane"], "tasks": e["tasks"], "files": e["files"]} for e in record["lanes"]]},
+        "lanes": [{key: entry.get(key) for key in ("lane", "branch", "status", "tasks", "handed_at", "started_at", "finished_at", "test_seconds",
+                                                   "worktree_seconds", "files_changed", "commits")} for entry in record["lanes"]],
+        "join": join,
+        "reds": [{"task": t["id"], "lane": t.get("lane"), "seen_failing_on": t.get("ran_on"), "first_run": t.get("first_run")}
+                 for t in cell.state["tasks"] if t.get("kind") == "test" and t.get("lane") and not t.get("set_aside")],
+        "note": "Each lane's tests ran in its own worktree: the fork point plus that lane's earlier tasks. Each red was seen on the lane commit "
+                "named. The joined tip was run as a whole at the join; the commits between the fork point and the tip, landed in plan order "
+                "across lanes, were never run as such.",
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1479,10 +2459,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_revise)
 
     for name, func, text in (("next", cmd_next, "show the next task and the spec text it must satisfy"), ("finish", cmd_finish, "final gate; writes build-report.json"),
-                             ("status", cmd_status, "show progress")):
+                             ("status", cmd_status, "show progress"), ("lanes", cmd_lanes, "the lane plan and each lane's status; reads only"),
+                             ("join", cmd_join, "land every lane's commits on the ticket's branch and run the whole suite on the result")):
         p = sub.add_parser(name, help=text)
         p.add_argument("ticket_id")
+        if name == "next":
+            p.add_argument("--lane", metavar="L", help="the next task of this lane, in the lane's own worktree")
         p.set_defaults(func=func)
+
+    p = sub.add_parser("lanes-open", help="make the lanes' worktrees and say which lanes to start now")
+    p.add_argument("ticket_id")
+    p.add_argument("--holder", required=True, help="the driver's holder token (the ticket's claim); a lane is handed only to the holder that opened it")
+    p.add_argument("--grant", type=int, help="at most this many lanes at once (the line's count of free places)")
+    p.add_argument("--take-over", action="store_true", help="hand over lanes another holder still holds (a person's decision)")
+    p.set_defaults(func=cmd_lanes_open)
     return parser
 
 
@@ -1497,7 +2487,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return args.func(Cell(project, args.ticket_id), args)
     except BuildError as exc:
         print(f"refused: {exc}", file=sys.stderr)
-        if project is not None and args.command not in ("next", "status"):
+        if project is not None and args.command not in ("next", "status", "lanes"):
             telemetry(project / ".factory" / "worktrees" / args.ticket_id, "gate.evaluated", "build", lambda: {
                 "gate": f"build.{args.command}", "outcome": "refuse", "reason_code": exc.code, "overridden_by_reason": False, "task": getattr(args, "task", None)})
         return 1

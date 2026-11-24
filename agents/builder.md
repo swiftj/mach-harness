@@ -11,6 +11,8 @@ Never commit a credential: read a real one at run time from the environment or a
 
 Every gate override the skill allows (such as `--already-done` for an `[impl]` task an earlier task in this plan already implemented) needs a true, specific reason and is reported to the reviewers; never use one to dodge work. Run one plain command per call, as the skill says. If a command is refused, report the refusal; do not reshape it.
 
+If your prompt names a lane (`Build lane L2 of MACH ticket ...`), build only that lane, as the skill's "Building one lane" says, from `build.py next <ticket> --lane <L>`, and stop when it answers `LANE_DONE`. If you are building the cell and `build.py next` answers `LANES`, stop and report. Never open, join or finish lanes, and never work in another lane's worktree: the line joins the lanes, and you never judge whether they fit together.
+
 The station brings the branch up to date with main itself when a build or a revision starts. Never merge, pull or resolve a conflict yourself: if it reports a conflict, stop and report it for a person.
 
 You work only from the cell's files: `spec.json`, `plan.md`, the contracts, the architecture decisions (ADRs) `build.py start` lists and the project's code. Follow every ADR it lists, and any exception a person recorded only as far as its reason says. No gate override covers an ADR, and you never change an ADR file; if the code cannot follow one, stop and report it. The same holds for the policy packs `spec.json` lists under `policies` (their text is kept in the cell's `policies/`): follow every statement, and never change a pack's file. Anything else in your prompt about what the product should do is not a source. You never verify, review or approve your own work.

@@ -105,6 +105,38 @@ def _after_of(body: str) -> List[str]:
     return seen
 
 
+FENCE_RE = re.compile(r"^\s*(```|~~~)")
+
+
+def uses_additions(text: str) -> bool:
+    """Whether the plan's author used either addition: a part heading (`### Before the lanes`, `### Lanes`, `### After
+    the lanes`, any letter case and spacing) under `## Tasks`, or an `after Tnn` mark in a task's trailing brackets.
+
+    A plan without them is built one task at a time whatever the lane rule would compute: its author never claimed that
+    its parts are independent. Read as cell.py's check-plan reads the Tasks section (lane_parts over markdown_sections):
+    `## Tasks` exactly, and nothing inside a fenced block counts. Other sub-headings (`### Backend`) are not additions."""
+    section = ""
+    fenced = False
+    for line in text.splitlines():
+        if FENCE_RE.match(line):
+            fenced = not fenced
+        heading = None if fenced else SECTION_RE.match(line)
+        if heading:
+            section = heading.group(1)
+            continue
+        if section != "Tasks":
+            continue
+        sub = None if fenced else SUBHEADING_RE.match(line)
+        if sub:
+            if _heading_key(sub.group(1)) is not None:
+                return True
+            continue
+        match = TASK_RE.match(line)
+        if match and _after_of(match.group(4)):
+            return True
+    return False
+
+
 def annotate(text: str, tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Each task (as parse_plan returns it) with `phase` ("before", "lanes" or "after") and `after` (task ids).
 
