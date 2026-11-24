@@ -265,6 +265,9 @@ class ShippedOnceTest(SharedRemote):
         landed = self.other_copy_lands()
         git(self.project, "pull", "-q", "--no-rebase", "origin", "main")
         origin_before = git(self.project, "ls-remote", str(self.origin), "refs/heads/main").stdout.split()[0]
+        plan = self.m_ok("plan", "LOCAL-001")  # the plan says it before anything is run
+        self.assertFalse(plan["allowed"])
+        self.assert_refused("\n".join(plan["refusals"]), landed)
         self.assert_refused(self.m_refused("run", "LOCAL-001"), landed)
         self.assertNotIn("Merge LOCAL-001", " ".join(self.main_log()))
         self.assertEqual(self.cell_json()["stage"], "approved", "left for cleanup")
@@ -360,6 +363,10 @@ class ShippedOnceTest(SharedRemote):
         self.assertIn("cell.py next-id", err)
         self.assertEqual(self.calls(), [])
         self.assertEqual(self.cell_json()["stage"], "approved")
+        plan = self.m_ok("plan", "LOCAL-001")  # run fetched the shared main; the plan reads it as fetched and says the same
+        self.assertFalse(plan["allowed"])
+        self.assertIn("two engineers took one slice number", "\n".join(plan["refusals"]))
+        self.assertEqual(self.calls(), [], "the plan opens and closes nothing")
 
     def test_the_same_slice_handed_over_under_another_file_name_is_not_refused(self):
         """A slice Product Studio handed this cell is one slice whatever its file is called (the 0.20.0 rule): a newer revision

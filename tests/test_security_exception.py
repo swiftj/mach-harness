@@ -35,7 +35,11 @@ from test_build import git  # noqa: E402
 from test_review import Base as ReviewBase, TICKET  # noqa: E402
 
 REASON = "We accept the verbose log line for this internal build; it is rotated hourly and fixed in the next slice."
-TODAY = datetime.now(timezone.utc).date()
+
+
+def today():
+    """Today in UTC, read when a test needs it: a run that crosses midnight must not carry yesterday's date."""
+    return datetime.now(timezone.utc).date()
 
 
 class Base(ReviewBase):
@@ -110,7 +114,7 @@ class Base(ReviewBase):
 
     def expire(self, days=1):
         """The exception's expiry moves into the past, as time passing would do."""
-        past = (TODAY - timedelta(days=days)).isoformat()
+        past = (today() - timedelta(days=days)).isoformat()
         for path in (self.round / "decision.json", self.cellroot / "review/decision.json"):
             data = json.loads(path.read_text())
             for item in data.get("exceptions") or []:
@@ -126,7 +130,7 @@ class WhatMayBeExceptedTest(Base):
         votes_before = {p.name: p.read_bytes() for p in (self.round / "votes").glob("*.json")}
         findings_before = (self.round / "findings.md").read_bytes()
         head = git(self.work, "rev-parse", "HEAD").stdout.strip()
-        result = self.excepted(extra=("--expires", (TODAY + timedelta(days=30)).isoformat()))
+        result = self.excepted(extra=("--expires", (today() + timedelta(days=30)).isoformat()))
         self.assertEqual((result["outcome"], result["stage"], result["remaining"]), ("APPROVED", "approved", []))
         decision = self.decision()
         self.assertEqual(decision, self.top(), "the round's record and the latest decision agree")
@@ -135,7 +139,7 @@ class WhatMayBeExceptedTest(Base):
         self.assertEqual({k: item[k] for k in ("by", "round", "seat", "index", "title", "rule", "file", "class", "impact", "head", "reason")},
                          {"by": "Dana Smith", "round": "1", "seat": "product", "index": 1, "title": "Email is never validated",
                           "rule": "REVIEW.md: no secrets in logs", "file": "app/invite.py", "class": "security", "impact": "high", "head": head, "reason": REASON})
-        self.assertEqual(item["expires"], (TODAY + timedelta(days=30)).isoformat())
+        self.assertEqual(item["expires"], (today() + timedelta(days=30)).isoformat())
         self.assertTrue(item["recorded_at"])
         self.assertEqual({p.name: p.read_bytes() for p in (self.round / "votes").glob("*.json")}, votes_before, "no vote is edited")
         self.assertEqual((self.round / "findings.md").read_bytes(), findings_before, "no finding is edited")
@@ -294,8 +298,8 @@ class WhoAndWhyTest(Base):
         self.assertIn("--by must name the person", self.except_refused(by=" D "))
         self.assertIn("in the person's own words", self.except_refused(reason="ok"))
         self.assertIn("YYYY-MM-DD", self.except_refused(extra=("--expires", "next week")))
-        self.assertIn("in the past", self.except_refused(extra=("--expires", (TODAY - timedelta(days=1)).isoformat())))
-        self.assertEqual(self.excepted(extra=("--expires", TODAY.isoformat()))["outcome"], "APPROVED", "today is not in the past")
+        self.assertIn("in the past", self.except_refused(extra=("--expires", (today() - timedelta(days=1)).isoformat())))
+        self.assertEqual(self.excepted(extra=("--expires", today().isoformat()))["outcome"], "APPROVED", "today is not in the past")
 
     def test_the_reason_is_bounded_and_redacted(self):
         self.vetoed()
@@ -376,7 +380,7 @@ class ApprovalStillNeededTest(Base):
 
     def test_approve_human_is_refused_once_an_exception_expired(self):
         self.vetoed(risk="High", config={"review": {"high": {"approvals": 2}}})
-        self.excepted(extra=("--expires", TODAY.isoformat()))
+        self.excepted(extra=("--expires", today().isoformat()))
         self.expire()
         self.assertIn("expired", self.r_refused("approve-human", TICKET, "--by", "Release Owner"))
 
@@ -384,7 +388,7 @@ class ApprovalStillNeededTest(Base):
 class LifecycleTest(Base):
     def test_the_log_records_codes_and_never_the_reason_or_the_name(self):
         self.vetoed()
-        self.excepted(extra=("--expires", (TODAY + timedelta(days=3)).isoformat()))
+        self.excepted(extra=("--expires", (today() + timedelta(days=3)).isoformat()))
         records = [r for r in self.log() if r["type"] == "review.exception_recorded"]
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["station"], "review")
@@ -400,7 +404,7 @@ class LifecycleTest(Base):
         from test_lifecycle import SCHEMA, schema_errors
         self.assertIn("review.exception_recorded", lifecycle.TYPES)
         self.vetoed()
-        self.excepted(extra=("--expires", (TODAY + timedelta(days=3)).isoformat()))
+        self.excepted(extra=("--expires", (today() + timedelta(days=3)).isoformat()))
         for record in self.log():
             self.assertEqual(schema_errors(record, SCHEMA), [], record)
 
@@ -434,7 +438,7 @@ class MergeTest(Base):
         self.assertEqual((kept["outcome"], len(kept["exceptions"])), ("VOID", 1), "the exception stays on record with the voided round")
 
     def test_an_expired_exception_stops_the_merge_for_a_person(self):
-        self.approved_by_exception(on=TODAY.isoformat())
+        self.approved_by_exception(on=today().isoformat())
         self.expire()
         plan = json.loads(self.m("plan", TICKET, "--by-person")[1])
         self.assertFalse(plan["allowed"])
@@ -449,9 +453,9 @@ class MergeTest(Base):
         self.assertEqual(gate["reason_code"], "exception-expired")
 
     def test_a_person_may_renew_an_expired_exception(self):
-        self.approved_by_exception(on=TODAY.isoformat())
+        self.approved_by_exception(on=today().isoformat())
         self.expire()
-        renewed = self.excepted(extra=("--expires", (TODAY + timedelta(days=7)).isoformat()), by="Lee Park")
+        renewed = self.excepted(extra=("--expires", (today() + timedelta(days=7)).isoformat()), by="Lee Park")
         self.assertEqual((renewed["outcome"], renewed["renewal"]), ("APPROVED", True))
         items = self.decision()["exceptions"]
         self.assertEqual([(e["by"], e.get("renews")) for e in items], [("Dana Smith", None), ("Lee Park", 0)], "the expired one is kept")
@@ -473,7 +477,7 @@ class MergeTest(Base):
 class RunRecordTest(Base):
     def test_cleanup_counts_exceptions_without_the_reason_or_the_name(self):
         self.vetoed()
-        self.excepted(extra=("--expires", (TODAY + timedelta(days=3)).isoformat()))
+        self.excepted(extra=("--expires", (today() + timedelta(days=3)).isoformat()))
         record = cleanup.run_record(cleanup.Cell(self.project, TICKET), "abandoned", "test", "x.tar.gz")
         self.assertEqual(record["record_version"], 2, "an optional field added: the version stays, as M8 decided for origin")
         [item] = record["security_exceptions"]
@@ -520,7 +524,7 @@ class ExplainAndDecideTest(Base):
 
     def test_decide_offers_renewal_once_it_expired(self):
         self.vetoed()
-        self.excepted(extra=("--expires", TODAY.isoformat()))
+        self.excepted(extra=("--expires", today().isoformat()))
         self.expire()
         [item] = self.decide()["tickets"]
         self.assertEqual(item["state"], "exception-expired")

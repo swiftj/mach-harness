@@ -422,6 +422,10 @@ def run_suite(cell: Cell) -> Dict[str, Any]:
         raise MergeError("The build report records no test command, so the merged result cannot be checked.")
     argv = shlex.split(command)
     env = dict(os.environ)
+    # The project's own commands never leave Python byte code in the checkout: a cached file can outlive the source it was
+    # made from (rewritten at the same size within the same second), and a later run would then test the old code. A command
+    # that needs byte code written says so itself, with a leading PYTHONDONTWRITEBYTECODE= of its own.
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     while argv and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0]):
         key, value = argv.pop(0).split("=", 1)
         env[key] = value
@@ -1357,7 +1361,18 @@ def load_text(text: str) -> Dict[str, Any]:
 
 
 def cmd_plan(cell: Cell, args: argparse.Namespace) -> int:
-    print(json.dumps(survey(cell, args.by_person), indent=2, ensure_ascii=False))
+    plan = survey(cell, args.by_person)
+    # M20: what `run` would refuse after its fetch, said here too, against the main branch as last fetched: this slice already
+    # shipped from another Factory, or its slice number is another slice's on main. Reads only.
+    for check in (landed_elsewhere, slice_id_taken):
+        try:
+            found = check(cell, plan["into"])
+        except MergeError as exc:
+            found = str(exc)
+        if found:
+            plan["refusals"].append(found)
+            plan["allowed"] = False
+    print(json.dumps(plan, indent=2, ensure_ascii=False))
     return 0
 
 

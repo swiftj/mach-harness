@@ -1418,7 +1418,7 @@ class ServiceTest(Base):
     def test_the_persistent_service_is_installed_only_on_request_and_binds_nothing(self):
         self.first()
         self.enable("--include-backlog")
-        self.assertFalse((self.home / "Library").exists())  # enabling alone installs no service
+        self.assertFalse(service.agent_path(self.eng).parent.exists())  # enabling alone installs no service
         self.assertFalse(self.launchctl_log.exists())
         self.factory("disable")
         done = self.enable("--include-backlog", "--persistent")

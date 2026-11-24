@@ -11,7 +11,7 @@
  * - the **stage notice**: the honest empty and failure states (no observer, no Factory state, the
  *   observer gone quiet), over the stage only while it is empty or its contents may be out of date;
  * - the **Factory state chip**: the steady states that leave the stage full and correct (the Factory
- *   not enabled on this machine, or paused), as a compact chip in the top bar whose popover holds the
+ *   with unattended runs off on this machine, or paused), as a compact chip in the top bar whose popover holds the
  *   whole notice, so it never covers the Line or the Floor.
  *
  * Nothing here starts, pauses, schedules or approves anything; the menu only chooses what to read.
@@ -303,7 +303,7 @@ export function CompletenessBadge() {
 
 /**
  * The honest empty and failure states: at most one over the stage (the most important), and the
- * Factory's steady state on this machine (not enabled, paused) for the top bar's chip, each chosen
+ * Factory's steady state on this machine (unattended runs off, paused) for the top bar's chip, each chosen
  * on its own so a chip never hides an empty or failing stage's notice.
  */
 export function useNotices(): { stage: Notice | null; chip: Notice | null } {
@@ -347,7 +347,7 @@ export function StageNotice({ at = "top" }: { readonly at?: "top" | "bottom" } =
 }
 
 /**
- * The Factory's steady state on this machine (not enabled, paused) as a chip in the top bar: one tab
+ * The Factory's steady state on this machine (unattended runs off, paused) as a chip in the top bar: one tab
  * stop, never over the stage. Its popover holds the whole notice, including that nothing in the
  * Factory Floor can change it; screen readers hear the notice from the chip itself.
  */

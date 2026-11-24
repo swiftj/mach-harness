@@ -87,6 +87,7 @@ STATUS_GIVE_UP_KINDS = ("auth", "refused", "not_found", "moved", "no_github", "n
 EPIC_VIEW_MOMENT = "epic-view"  # M13: the outbox write that replaces the epic's current-view comment
 CLAIM_WITHDRAW_MOMENT = "claim-withdraw"  # M20: the outbox write that withdraws this Factory's claim on a slice's issue
 DEFAULT_CLAIM_STALE_DAYS = 3  # M20: a claim with no activity for this long holds nothing (intake.claim_stale_days)
+ALIVE_RETRY = timedelta(hours=1)  # M20: a sign of life GitHub did not take is tried again no sooner than this
 LOCK_STALE_SECONDS = 15 * 60  # a lock older than this, or held by a process that is gone, is taken over
 ENGINEER = "engineer"  # the only caller that may dispatch without an authorization
 IGNORE_LINE = ".factory/intake/"
@@ -897,7 +898,8 @@ class Factory:
             if cell.get("branch") and integration_ref:
                 count = self.git(self.root, "rev-list", "--count", f"refs/heads/{cell['branch']}..{integration_ref}").stdout.strip()
                 behind = int(count) if count.isdigit() else None
-            return {"status": "active", "stage": cell.get("stage"), "next": step.get("action"), "needs": step.get("needs"),
+            return {"status": "active", "stage": cell.get("stage"), "branch": cell.get("branch"), "cell_updated_at": cell.get("updated_at"),
+                    "next": step.get("action"), "needs": step.get("needs"),
                     "reason": step.get("reason"), "behind_integration": behind, "cell_product": cell.get("product"),
                     "question": (cell.get("spec_question") or {}).get("text") if isinstance(cell.get("spec_question"), dict) else None}
         records = self.run_records(ticket_id)[earlier_runs:]
@@ -1452,6 +1454,108 @@ class Factory:
         return (f"GitHub could not be reached to claim {slice_id} on issue #{entry['issue']} ({kind}), so it was not started and nothing was made. "
                 "Pull again when GitHub answers.")
 
+    # ---- M20: a sign of life for a claim whose work is really moving ----
+    #
+    # A claim with no activity for intake.claim_stale_days holds nothing. A build that moves slowly, with its branch not on
+    # GitHub, would look dead; so while this Factory holds a claim and builds the slice, and the work has moved since the
+    # claim's last known activity, it posts a sign of life once that activity is older than half the quiet spell (at least a
+    # day). Work that has not moved posts nothing and goes stale as before. A plan makes a GitHub call only when one is due;
+    # a failed post is recorded and tried again later, and never fails the plan.
+
+    def alive_interval(self) -> timedelta:
+        return timedelta(hours=max(24, self.stale_days() * 12))
+
+    def moved_at(self, entry: Dict[str, Any], facts: Dict[str, Any]) -> Optional[str]:
+        """When the slice's work last moved on this machine: the latest of the ticket branch's last commit in the cell's checkout
+        and the time its cell's stage was last seen to change (recorded in the ledger). None when neither is known."""
+        times = []
+        seen = entry.get("stage_seen") if isinstance(entry.get("stage_seen"), dict) else {}
+        if isinstance(seen.get("at"), str):
+            times.append(seen["at"])
+        repo = self.root / ".factory" / "worktrees" / str(entry.get("ticket_id")) / "repo"
+        branch = facts.get("branch")
+        named = isinstance(branch, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,200}", branch)
+        ref = f"refs/heads/{branch}" if named else "HEAD"
+        where = repo if repo.is_dir() else (self.root if named else None)  # a cell without its own checkout builds in the project
+        if where is not None:
+            done = self.git(where, "log", "-1", "--format=%ct", ref)
+            stamp = done.stdout.strip() if done.returncode == 0 else ""
+            if stamp.isdigit():
+                times.append(datetime.fromtimestamp(int(stamp), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        return min(max(times), now()) if times else None  # a time ahead of this machine's clock counts as now
+
+    @staticmethod
+    def see_stage(entry: Dict[str, Any], facts: Dict[str, Any]) -> bool:
+        """Record when the cell's stage was seen to change: the cell's own last write time, as the stage was written then. The
+        stage first seen has no time: it changed before this Factory watched. True when the ledger changed."""
+        seen = entry.get("stage_seen") if isinstance(entry.get("stage_seen"), dict) else None
+        stage = facts.get("stage")
+        if seen is not None and seen.get("stage") == stage:
+            return False
+        written = facts.get("cell_updated_at")
+        valid = isinstance(written, str) and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", written)
+        entry["stage_seen"] = {"stage": stage, "at": None if seen is None else (min(written, now()) if valid else now())}
+        return True
+
+    def signs_of_life(self, ledger: Dict[str, Any], work: Dict[str, Dict[str, Any]]) -> None:
+        changed = False
+        interval = self.alive_interval()
+        for key in sorted(ledger["slices"], key=number):
+            entry, facts = ledger["slices"][key], work.get(key) or {}
+            claim = entry.get("claim") if isinstance(entry.get("claim"), dict) else None
+            if (facts.get("status") != "active" or entry.get("source") != "github" or not entry.get("issue") or not entry.get("repository")
+                    or not entry.get("ticket_id") or not claim or claim.get("withdrawn") or claim.get("revision") != entry.get("revision")):
+                continue
+            changed = self.see_stage(entry, facts) or changed
+            try:
+                changed = self.sign_of_life(entry, claim, facts, interval) or changed
+            except Exception as exc:  # never fails the plan: recorded and tried again later
+                claim["alive"] = {**(claim.get("alive") or {}), "kind": "other", "failed_at": now(),
+                                  "next_at": (datetime.now(timezone.utc) + ALIVE_RETRY).strftime("%Y-%m-%dT%H:%M:%SZ"), "problem": str(exc)[:200]}
+                changed = True
+        if changed:
+            self.save(ledger)
+
+    def sign_of_life(self, entry: Dict[str, Any], claim: Dict[str, Any], facts: Dict[str, Any], interval: timedelta) -> bool:
+        """Post one sign of life for this claim when one is due. True when the ledger changed."""
+        alive = claim.get("alive") if isinstance(claim.get("alive"), dict) else {}
+        moved = self.moved_at(entry, facts)
+        known = max(str(claim.get("at") or ""), str(entry.get("dispatched_at") or ""), str(alive.get("moved_at") or ""), str(alive.get("active_at") or ""))
+        clock = datetime.now(timezone.utc)
+        current, due_before = now(), (clock - interval).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if (not moved or moved <= known or known >= due_before or str(alive.get("posted_at") or "") >= due_before
+                or str(alive.get("next_at") or "") > current):
+            return False
+        slice_id = str(entry["slice_id"])
+        argv = ["slice-alive", str(entry["issue"]), "--repository", str(entry["repository"]), "--slice", slice_id, "--revision", str(entry.get("revision")),
+                "--token", self.claim_token(slice_id), "--moved-at", moved, "--due-before", due_before, "--stale-before", self.stale_before()]
+        branch = self.branch_active_at(entry["issue"])
+        if branch:
+            argv += ["--branch-active-at", branch]
+        done = self.ticket(*argv)
+        try:
+            answer = json.loads(done.stdout) if done.stdout.strip() else {}
+        except ValueError:
+            answer = {}
+        answer = answer if isinstance(answer, dict) else {}
+        status, kind = answer.get("status"), answer.get("kind") if isinstance(answer.get("kind"), str) else None
+        record = {**alive, "checked_at": current, "kind": None, "next_at": None}
+        if done.returncode == 0 and status == "done":
+            record.update(posted_at=current, moved_at=moved, active_at=moved)
+        elif done.returncode == 0 and status == "skipped" and kind in ("not_due", "no_progress"):
+            if isinstance(answer.get("active_at"), str):
+                record["active_at"] = answer["active_at"]
+            if isinstance(answer.get("alive_posted_at"), str):
+                record["posted_at"] = answer["alive_posted_at"]
+        elif done.returncode in (0, 2) and status in ("skipped", "refused"):
+            # this Factory's claim does not hold the slice (stale, lost) or the issue changed: nothing is revived; looked at again later
+            record.update(kind=kind or "refused", next_at=(clock + interval).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        else:
+            record.update(kind=kind if kind and re.fullmatch(r"[a-z_]{1,20}", kind) else "other", failed_at=current,
+                          next_at=(clock + ALIVE_RETRY).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        claim["alive"] = record
+        return True
+
     def queue_withdraw(self, ledger: Dict[str, Any], entry: Dict[str, Any], comment_id: int, why: str) -> None:
         """Record the withdrawal of this Factory's claim comment, once; sent with the status writes and retried like them."""
         key = sha("\n".join([CLAIM_WITHDRAW_MOMENT, str(entry["repository"]), str(entry["issue"]), str(comment_id)]).encode("utf-8"))[:16]
@@ -1786,6 +1890,7 @@ class Factory:
                                             + (" or taken by work ahead of it." if free else "."))
         if record:
             self.record(ledger, rows)
+            self.signs_of_life(ledger, work)
         counts: Dict[str, int] = {}
         for row in rows.values():
             counts[row["state"]] = counts.get(row["state"], 0) + 1

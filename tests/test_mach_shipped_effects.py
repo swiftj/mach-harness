@@ -36,7 +36,7 @@ from test_build import git as build_git  # noqa: E402
 from test_cell import INTENT  # noqa: E402
 from test_mach_product_issues import IssuesBase, git as issues_git, spec_for  # noqa: E402
 from test_review import Base as ReviewBase, NOTE, TARGETS, TICKET  # noqa: E402
-from test_security_exception import Base as ExceptionBase, TODAY  # noqa: E402
+from test_security_exception import Base as ExceptionBase, today  # noqa: E402
 
 FIXTURE_NAME = "SLICE-001-invite-teammate.md"
 FIXTURE = (ROOT / "tests" / "fixtures" / FIXTURE_NAME).read_text(encoding="utf-8")
@@ -389,13 +389,13 @@ class ExceptionRenewalTest(ExceptionBase):
 
     def approved(self):
         self.vetoed()
-        self.excepted(extra=("--expires", TODAY.isoformat()))
+        self.excepted(extra=("--expires", today().isoformat()))
         self.expire()
 
     def test_the_record_commit_on_the_approved_commit_may_be_renewed(self):
         self.approved()
         self.record()
-        renewed = self.excepted(extra=("--expires", (TODAY + timedelta(days=7)).isoformat()), by="Lee Park")
+        renewed = self.excepted(extra=("--expires", (today() + timedelta(days=7)).isoformat()), by="Lee Park")
         self.assertEqual((renewed["outcome"], renewed["renewal"]), ("APPROVED", True))
 
     def test_a_record_commit_that_changes_anything_else_is_refused(self):

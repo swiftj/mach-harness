@@ -221,15 +221,15 @@ class InstructionsTest(unittest.TestCase):
         self.assertEqual(failures, [])
 
     def test_verify_and_review_commands_parse_with_their_scripts(self):
-        parsers = {"skills/verify/scripts/verify.py": verify.build_parser(), "skills/review/scripts/review.py": review.build_parser()}
+        parsers = {"skills/verify/scripts/verify.py": verify.parse, "skills/review/scripts/review.py": review.build_parser().parse_args}
         checked = 0
         for name, where, command, expanded in self.commands():
             if where == "inline" and "<ticket" not in command:
                 continue  # a reference in prose to a command named in full elsewhere, such as `VERIFY finish`
-            for script, parser in parsers.items():
+            for script, parse in parsers.items():
                 if expanded.startswith(f"python3 {ROOT / script} "):
                     try:
-                        parser.parse_args(script_args(expanded))
+                        parse(script_args(expanded))
                     except SystemExit:
                         self.fail(f"{name} ({where}): {command!r} is not a valid {Path(script).name} command")
                     checked += 1
