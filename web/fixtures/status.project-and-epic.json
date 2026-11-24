@@ -12,7 +12,8 @@
         "Admins stay in control of who has access"
       ],
       "issue": null,
-      "url": null
+      "url": null,
+      "changed_elsewhere": null
     },
     "approvals_withdrawn": [],
     "epics": [
@@ -27,6 +28,8 @@
         ],
         "issue": null,
         "url": null,
+        "changed_elsewhere": null,
+        "same_moment": null,
         "counts": {
           "total": 0,
           "by_progress": {},
@@ -39,7 +42,8 @@
     "saved": {
       "everything_saved": true,
       "note": "Everything is saved.",
-      "not_saved": []
+      "not_saved": [],
+      "github_check": null
     },
     "order": [
       {
@@ -56,6 +60,8 @@
         "note": null
       }
     ],
+    "same_id_twice": [],
+    "project_on_github": null,
     "github": {
       "repository": null,
       "form": null,

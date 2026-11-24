@@ -68,7 +68,7 @@
         "state": "settled",
         "settled": {
           "as": "slice",
-          "at": "2026-11-23T16:21:35Z",
+          "at": "2026-11-24T13:29:24Z",
           "reason": "The opening belongs to inviting.",
           "slice": "M1"
         }
@@ -99,7 +99,7 @@
         "state": "settled",
         "settled": {
           "as": "later",
-          "at": "2026-11-23T16:21:35Z",
+          "at": "2026-11-24T13:29:24Z",
           "reason": "Not this quarter."
         }
       },
@@ -111,7 +111,7 @@
         "state": "settled",
         "settled": {
           "as": "out-of-scope",
-          "at": "2026-11-23T16:21:35Z",
+          "at": "2026-11-24T13:29:24Z",
           "reason": "Billing is the finance team's."
         }
       }

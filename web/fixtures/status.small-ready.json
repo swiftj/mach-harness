@@ -11,7 +11,8 @@
         "Teams can work together"
       ],
       "issue": 1,
-      "url": "https://github.com/acme/team-space/issues/1"
+      "url": "https://github.com/acme/team-space/issues/1",
+      "changed_elsewhere": null
     },
     "approvals_withdrawn": [],
     "epics": [
@@ -25,6 +26,8 @@
         ],
         "issue": 2,
         "url": "https://github.com/acme/team-space/issues/2",
+        "changed_elsewhere": null,
+        "same_moment": null,
         "counts": {
           "total": 5,
           "by_progress": {
@@ -67,11 +70,12 @@
           "changed_on_github": false,
           "newer_elsewhere": false,
           "number_taken": false,
+          "same_moment": null,
           "question": null,
           "question_note": null,
           "shipped_issues": [],
           "times": {
-            "marked_ready": "2026-11-22T12:34:36Z",
+            "marked_ready": "2026-11-24T13:29:21Z",
             "building": null,
             "question": null,
             "shipped": null
@@ -108,6 +112,7 @@
           "changed_on_github": false,
           "newer_elsewhere": false,
           "number_taken": false,
+          "same_moment": null,
           "question": null,
           "question_note": null,
           "shipped_issues": [],
@@ -127,7 +132,7 @@
           "shipped_rule": null,
           "light_path": false,
           "widened": {
-            "at": "2026-11-22T12:34:35Z",
+            "at": "2026-11-24T13:29:20Z",
             "reason": "This is not a small change: a small change has at most 3 functional requirements, and this one has more.",
             "rule": "requirements"
           }
@@ -153,6 +158,7 @@
           "changed_on_github": false,
           "newer_elsewhere": false,
           "number_taken": false,
+          "same_moment": null,
           "question": null,
           "question_note": null,
           "shipped_issues": [],
@@ -172,7 +178,7 @@
           "shipped_rule": null,
           "light_path": false,
           "widened": {
-            "at": "2026-11-22T12:34:35Z",
+            "at": "2026-11-24T13:29:21Z",
             "reason": "It should also change the reminder email, which is a second message.",
             "rule": null
           }
@@ -198,6 +204,7 @@
           "changed_on_github": false,
           "newer_elsewhere": false,
           "number_taken": false,
+          "same_moment": null,
           "question": null,
           "question_note": null,
           "shipped_issues": [],
@@ -232,6 +239,7 @@
           "changed_on_github": false,
           "newer_elsewhere": false,
           "number_taken": false,
+          "same_moment": null,
           "question": null,
           "question_note": null,
           "shipped_issues": [],
@@ -248,7 +256,8 @@
     "saved": {
       "everything_saved": true,
       "note": "Everything is saved.",
-      "not_saved": []
+      "not_saved": [],
+      "github_check": null
     },
     "order": [
       {
@@ -301,6 +310,8 @@
         "note": null
       }
     ],
+    "same_id_twice": [],
+    "project_on_github": null,
     "github": {
       "repository": "acme/team-space",
       "form": "sub_issues",

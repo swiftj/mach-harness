@@ -191,7 +191,7 @@ Product Studio refreshes at the start of a session. A refresh reads the project,
 - **Another slice uses this number:** your work is fine; it needs a new number, and every reference moves with it.
 - **A question from the builders:** see section 8.
 
-If GitHub could not be reached, it says so and carries on with what you have.
+If GitHub could not be reached, MACH tries again twice, a few seconds apart, before it says so, and it says what actually went wrong: no network, GitHub limiting or not answering, or something on your computer stopping it. Then it carries on with what you have and tells you how many times it tried and what the GitHub tool said. A failed check is not counted as something not saved: nothing of yours is lost. In the app the top bar shows **GitHub not checked** beside the saved state; open it to see when the check failed and how old what you see is, and press **Check GitHub again**. While it shows, the app also checks again by itself, at most once a minute, until a check works.
 
 ### Working with other product managers
 

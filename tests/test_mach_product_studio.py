@@ -418,6 +418,16 @@ class WorkspaceTest(Base):
         self.assertIn("symbolic link", self.refused("status"))
         self.assertEqual(list(elsewhere.iterdir()), [])
 
+    def test_mach_makes_the_project_id_from_the_name(self):
+        for name, expected in (("Team Space", "team-space"), ("  Café — Orders 2!  ", "cafe-orders-2"), ("3D Planner", "project-3d-planner"), ("X", "project-x"),
+                               ("!!!", "project"), ("日本語", "project"), ("A" * 200, "a" * 64), ("Ab-" * 40, ("ab-" * 22)[:64].rstrip("-"))):
+            made = product.project_id_from(name)
+            self.assertEqual(made, expected, name)
+            self.assertRegex(made, product.PROJECT_RE)
+        folder = self.make_project("named")
+        done = self.ok("project", "init", "--name", "3D Planner", "--vision", "v", "--outcome", "o", project=folder)
+        self.assertEqual(done["project"]["project_id"], "project-3d-planner")
+
     def test_bad_ids_never_become_paths(self):
         self.start()
         for bad in ("../../etc", "SLICE-1", "slice-001", "SLICE-001/../x"):

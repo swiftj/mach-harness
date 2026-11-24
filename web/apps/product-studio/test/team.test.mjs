@@ -283,7 +283,7 @@ test("drafts numbered without GitHub: the sentence stands apart from what was ma
     const data = run(name).data;
     assert.equal(data.numbers_from_github.checked, false);
     const split = splitNumbersNote(data.note, data.numbers_from_github);
-    assert.match(split.numbers, /^MACH could not read GitHub before numbering them \(GitHub could not be reached\), so a number may already be in use there; marking a slice ready checks again\.$/);
+    assert.match(split.numbers, /^MACH could not read GitHub before numbering them \(GitHub could not be reached.*\), so a number may already be in use there; marking a slice ready checks again\.$/);
     assert.match(split.made, /^Made \d epics? and 2 draft slices from /);
     assert.equal(`${split.made} ${split.numbers}`, data.note, "nothing is lost or reworded");
   }

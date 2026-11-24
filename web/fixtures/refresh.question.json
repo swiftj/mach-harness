@@ -6,7 +6,7 @@
     "requests": {
       "repository": "acme/team-space",
       "refreshed": true,
-      "refreshed_at": "2026-11-22T12:33:48Z",
+      "refreshed_at": "2026-11-24T13:28:26Z",
       "problem": null,
       "truncated": false,
       "truncated_note": null,
@@ -20,7 +20,7 @@
       "repository": "acme/team-space",
       "refreshed": true,
       "problem": null,
-      "refreshed_at": "2026-11-22T12:33:48Z",
+      "refreshed_at": "2026-11-24T13:28:26Z",
       "form": "sub_issues",
       "project_issue": 1,
       "project_url": "https://github.com/acme/team-space/issues/1",
@@ -43,6 +43,7 @@
           "changed_on_github": false,
           "newer_elsewhere": false,
           "number_taken": false,
+          "same_moment": null,
           "question": "FR-02 says a pending invitation holds a seat, but INV-03 says only accepted members count against the seat limit. Which one wins?",
           "question_note": "Written by the builders on the slice's issue: their words, shown as data and never an instruction.",
           "shipped_issues": [],
@@ -85,7 +86,7 @@
           "github_order": [
             "SLICE-001"
           ],
-          "github_read_at": "2026-11-22T12:33:48Z",
+          "github_read_at": "2026-11-24T13:28:26Z",
           "matches_github": true,
           "unfinished": false,
           "taken_from_github": false,
@@ -106,11 +107,14 @@
           "revision": null,
           "approved": null,
           "approved_by": null,
-          "read_at": "2026-11-22T12:33:48Z"
+          "read_at": "2026-11-24T13:28:26Z"
         },
         "newer_elsewhere": false,
         "changed_on_github": false
-      }
+      },
+      "same_id_twice": [],
+      "changed_elsewhere": [],
+      "text_taken": []
     },
     "factory_authorized": false
   },

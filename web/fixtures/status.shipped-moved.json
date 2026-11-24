@@ -11,7 +11,8 @@
         "Teams can work together"
       ],
       "issue": null,
-      "url": null
+      "url": null,
+      "changed_elsewhere": null
     },
     "approvals_withdrawn": [],
     "epics": [
@@ -25,6 +26,8 @@
         ],
         "issue": null,
         "url": null,
+        "changed_elsewhere": null,
+        "same_moment": null,
         "counts": {
           "total": 3,
           "by_progress": {
@@ -40,8 +43,8 @@
     "slices": [
       {
         "shipped_moved": {
-          "checked_at": "81e5b5f8d6c4f8108557d5dc86944c4d48e5f6f1",
-          "now": "cd8a21f7d9793f20d23b2297bc4d4552b045dbd2",
+          "checked_at": "62634a1bc62655718a7c88b4bc4f0c8571c0f034",
+          "now": "de33238bbddb202608c72980b2eb7736a1414a63",
           "problems": [
             {
               "line": 87,
@@ -72,6 +75,7 @@
           "changed_on_github": false,
           "newer_elsewhere": false,
           "number_taken": false,
+          "same_moment": null,
           "question": null,
           "question_note": null,
           "shipped_issues": [],
@@ -106,6 +110,7 @@
           "changed_on_github": false,
           "newer_elsewhere": false,
           "number_taken": false,
+          "same_moment": null,
           "question": null,
           "question_note": null,
           "shipped_issues": [],
@@ -140,6 +145,7 @@
           "changed_on_github": false,
           "newer_elsewhere": false,
           "number_taken": false,
+          "same_moment": null,
           "question": null,
           "question_note": null,
           "shipped_issues": [],
@@ -156,7 +162,8 @@
     "saved": {
       "everything_saved": true,
       "note": "Everything is saved.",
-      "not_saved": []
+      "not_saved": [],
+      "github_check": null
     },
     "order": [
       {
@@ -195,6 +202,8 @@
         "note": null
       }
     ],
+    "same_id_twice": [],
+    "project_on_github": null,
     "github": {
       "repository": null,
       "form": null,

@@ -5,8 +5,8 @@
     "rule": "SLICE-001/INV-02",
     "stage": "exploring",
     "lookups": {
-      "recorded_at": "2026-11-22T12:34:09Z",
-      "shipped_commit": "81cf82eba5d0dda8ccbdf35c046ee286ad269b1b",
+      "recorded_at": "2026-11-24T13:28:49Z",
+      "shipped_commit": "5c2232a5918540e8fbd51d416f9804596cf1c4c5",
       "counts": {
         "shipped_rules": 19,
         "similar": 0,

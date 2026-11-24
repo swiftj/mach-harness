@@ -69,8 +69,11 @@ type ProjectInitArgs struct {
 }
 
 func (a *ProjectInitArgs) Argv() ([]string, error) {
-	if err := checkID("id", a.ID, ProjectIDPattern, "campaign-platform"); err != nil {
-		return nil, err
+	// MACH makes the project's ID from its name; one is checked only when a caller sends its own.
+	if a.ID != "" {
+		if err := checkID("id", a.ID, ProjectIDPattern, "campaign-platform"); err != nil {
+			return nil, err
+		}
 	}
 	if err := checkText("name", a.Name, maxShortText, true); err != nil {
 		return nil, err
@@ -81,7 +84,11 @@ func (a *ProjectInitArgs) Argv() ([]string, error) {
 	if err := checkList("outcome", a.Outcome, maxLongText); err != nil {
 		return nil, err
 	}
-	argv := []string{"project", "init", flag("id", a.ID), flag("name", a.Name), flag("vision", a.Vision)}
+	argv := []string{"project", "init"}
+	if a.ID != "" {
+		argv = append(argv, flag("id", a.ID))
+	}
+	argv = append(argv, flag("name", a.Name), flag("vision", a.Vision))
 	return append(argv, repeated("outcome", a.Outcome)...), nil
 }
 

@@ -3,7 +3,7 @@
   "data": {
     "reads_only": true,
     "dir": "policies",
-    "commit": "7a99c14f61a7b3eadd75b2213e78430f6b3ea810",
+    "commit": "c46c4b8658b4388f678bbe8f5d2a66792eabc5f2",
     "packs": [
       {
         "id": "POL-privacy",

@@ -3,7 +3,7 @@
 // answers in an empty project (web/fixtures/start_memory.py). Run: pnpm --filter @mach/product-studio test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { prdNeedsTheProduct, prdStands, projectIdFrom, requestStep, requestsToStartFrom, startedWays, ways } from "../src/features/home/start/model.ts";
+import { prdNeedsTheProduct, prdStands, requestStep, requestsToStartFrom, startedWays, ways } from "../src/features/home/start/model.ts";
 import { applyPlan, applySummary, prdCommand } from "../src/features/prd/model.ts";
 import empty from "../../../fixtures/status.start-empty.json" with { type: "json" };
 import prdImported from "../../../fixtures/status.start-prd-imported.json" with { type: "json" };
@@ -113,10 +113,11 @@ test("only requests that count and are not picked up here are offered", () => {
   assert.deepEqual(requestsToStartFrom(null), []);
 });
 
-test("the project ID is proposed from the name; the engine checks it", () => {
-  assert.equal(projectIdFrom("Team Space"), "team-space");
-  assert.equal(projectIdFrom("  Café — Orders 2!  "), "cafe-orders-2");
-  assert.equal(projectIdFrom(""), "");
+test("naming the product asks for no project ID: MACH makes it from the name", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const form = await readFile(new URL("../src/features/vision/ProjectForm.tsx", import.meta.url), "utf8");
+  assert.ok(!form.includes("Project ID"), "the form has no Project ID field");
+  assert.ok(/act\.run\("project\.init", \{ name: /.test(form), "project.init is sent without an id");
 });
 
 test("the command that proposes a PRD's map in Claude Code follows the install", () => {

@@ -68,7 +68,7 @@
         "state": "settled",
         "settled": {
           "as": "slice",
-          "at": "2026-11-23T22:38:55Z",
+          "at": "2026-11-24T13:29:58Z",
           "slice": "M1"
         }
       },
@@ -98,7 +98,7 @@
         "state": "settled",
         "settled": {
           "as": "out-of-scope",
-          "at": "2026-11-23T22:38:55Z",
+          "at": "2026-11-24T13:29:58Z",
           "reason": "Billing belongs to the finance team."
         }
       },
@@ -110,13 +110,13 @@
         "state": "settled",
         "settled": {
           "as": "later",
-          "at": "2026-11-23T22:38:55Z"
+          "at": "2026-11-24T13:29:58Z"
         }
       }
     ],
     "not_covered": [],
     "can_apply": true,
-    "note": "Made 1 epic and 2 draft slices from PRD-01. Nothing is approved, sent or started; each slice is confirmed with the product manager when it is resumed. MACH could not read GitHub before numbering them (GitHub could not be reached), so a number may already be in use there; marking a slice ready checks again.",
+    "note": "Made 1 epic and 2 draft slices from PRD-01. Nothing is approved, sent or started; each slice is confirmed with the product manager when it is resumed. MACH could not read GitHub before numbering them (GitHub could not be reached. The GitHub tool (gh) said: \"error connecting to api.github.com\"), so a number may already be in use there; marking a slice ready checks again.",
     "applied": true,
     "made": {
       "epics": [
@@ -134,7 +134,7 @@
     "missing": [],
     "numbers_from_github": {
       "checked": false,
-      "problem": "GitHub could not be reached."
+      "problem": "GitHub could not be reached. The GitHub tool (gh) said: \"error connecting to api.github.com\"."
     }
   },
   "refused": null,

@@ -60,15 +60,6 @@ export const ways: readonly Way[] = [
 
 export const wayById = (id: WayId): Way => ways.find((w) => w.id === id) as Way;
 
-/** A project ID proposed from the product's name: lowercase words joined by hyphens. The engine checks it. */
-export function projectIdFrom(name: string): string {
-  return name
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
 /** The requests a project can start from: counted (labelled by someone with write access) and not picked up here. */
 export function requestsToStartFrom(items: readonly RequestItem[] | null | undefined): RequestItem[] {
   return (items ?? []).filter((item) => item.state === "accepted" && !item.picked_up_here && !item.idea_template);

@@ -12,9 +12,12 @@ Standard library only. Imported by studio.py, issues.py and requests_in.py; not 
 
 import importlib.util
 import json
+import math
+import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -40,6 +43,11 @@ FAILURE_KINDS = (
     ("auth", ("authentication failed", "invalid username or password", "bad credentials", "http 401", "401 unauthorized",
               "could not read username", "could not read password", "terminal prompts disabled", "gh auth login",
               "not logged in", "authentication required", "token is expired", "token has expired", "permission denied (publickey)")),
+    # GitHub's limits and outages, and this computer stopping the tool, are said as what they are: none of them is a refusal
+    # of this account, and none is "no network". They are matched before the kinds whose words they also contain.
+    ("rate_limit", ("rate limit", "http 429", "429 too many requests")),
+    ("unavailable", ("http 500", "http 502", "http 503", "http 504", "bad gateway", "service unavailable", "gateway timeout")),
+    ("blocked", ("operation not permitted", "proxyconnect", "proxy authentication required", "http 407")),
     ("rule", ("[remote rejected]", "gh006", "gh013", "protected branch", "hook declined", "push declined", "rule violation",
               "permission to ", "http 403", "403 forbidden", "returned error: 403", "resource not accessible", "must have push access",
               "not permitted", "pre-receive")),
@@ -64,7 +72,7 @@ def bounded(text: str, limit: int = REASON_LIMIT) -> str:
 def classify(done: subprocess.CompletedProcess) -> Dict[str, str]:
     """Why a push, fetch or gh call failed, from its exit status and output.
 
-    `kind` is one of network, auth, rule, sso, other. `reason` is the remote's own words (its
+    `kind` is one of network, auth, rule, sso, rate_limit, unavailable, blocked, not_found, other. `reason` is the remote's own words (its
     "remote:" lines when it sent any), bounded, to be shown as quoted data and never interpreted.
     `link` is the address GitHub printed for single sign-on, if any, also data."""
     raw = "\n".join(part for part in (done.stderr, done.stdout if done.returncode != 0 and not done.stderr else "") if part)
@@ -101,12 +109,59 @@ NO_GH = {"kind": "other", "reason": "The GitHub tool (gh) is not installed on th
 Failure = Optional[Dict[str, str]]
 
 
+# A read of GitHub that fails for the network is tried again before it is reported: one dropped connection, or a computer
+# just woken from sleep, is not "GitHub cannot be reached". Seconds to wait before each further try; MACH_GH_RETRY_WAITS
+# replaces them (comma-separated seconds; empty for no further try). Only reads are tried again, never a write.
+DEFAULT_RETRY_WAITS = (2.0, 6.0)
+
+
+RETRIED_KINDS = ("network", "unavailable")  # passing failures; a refusal, a limit or a block is never tried again
+
+
+def retry_waits() -> Tuple[float, ...]:
+    raw = os.environ.get("MACH_GH_RETRY_WAITS")
+    if raw is None:
+        return DEFAULT_RETRY_WAITS
+    try:
+        waits = tuple(float(part) for part in raw.split(",") if part.strip())[:5]
+    except ValueError:
+        return DEFAULT_RETRY_WAITS
+    return tuple(min(max(wait, 0.0), 30.0) for wait in waits) if all(math.isfinite(wait) for wait in waits) else DEFAULT_RETRY_WAITS
+
+
+# Further tries are for a failure that passes quickly. They stop for the rest of this command once a read has used all of
+# its tries (GitHub is out of reach: the next read would only wait as long again), and a try that itself took longer than
+# SLOW_TRY seconds to fail is not repeated (a network that drops packets fails slowly, every time). So one command waits a few
+# seconds more at most, and stays inside the time the app's host allows it.
+SLOW_TRY = 5.0
+_GAVE_UP: List[bool] = []
+
+
+def tried_words(failure: Dict[str, str]) -> str:
+    """" (tried 3 times)" for a failure that was tried more than once; nothing otherwise."""
+    tries = str(failure.get("tries") or "")
+    return f" (tried {tries} times)" if re.fullmatch(r"[2-9]|[1-9][0-9]", tries) else ""
+
+
 def _gh_json(project: Path, *args: str, lines: bool = False) -> Tuple[Any, Failure]:
     if shutil.which("gh") is None:
         return None, dict(NO_GH)
-    done = gh(project, *args)
-    if done.returncode != 0:
-        return None, classify(done)
+    waits = [] if _GAVE_UP else list(retry_waits())
+    tries = 0
+    while True:
+        started = time.monotonic()
+        done = gh(project, *args)
+        tries += 1
+        if done.returncode == 0:
+            break
+        failure = classify(done)
+        passing = failure["kind"] in RETRIED_KINDS
+        if not passing or not waits or time.monotonic() - started > SLOW_TRY:
+            if passing:
+                _GAVE_UP.append(True)
+            failure["tries"] = str(tries)
+            return None, failure
+        time.sleep(waits.pop(0))
     try:
         if lines:
             return [json.loads(line) for line in done.stdout.splitlines() if line.strip()], None

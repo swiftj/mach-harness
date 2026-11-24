@@ -660,10 +660,16 @@ def origin_number(work: Dict[str, Any], repository: Optional[str]) -> Optional[i
 
 def explain(failure: Optional[Dict[str, str]]) -> str:
     if not failure:
-        return "GitHub could not be reached."
+        return "GitHub did not answer as expected."
     words = {"network": "GitHub could not be reached.",
              "auth": "GitHub did not accept your sign-in on this computer.",
              "sso": "Your organisation requires your GitHub sign-in to be authorised for single sign-on.",
-             "rule": "GitHub refused this for your account."}.get(failure.get("kind", ""), "GitHub did not answer as expected.")
+             "rule": "GitHub refused this for your account.",
+             "rate_limit": "GitHub is limiting how often this account may ask just now. It lifts by itself, usually within the hour.",
+             "unavailable": "GitHub is not answering properly just now.",
+             "blocked": "Something on this computer stopped the GitHub tool from reaching GitHub: a proxy, or a sandbox the session runs in."}.get(failure.get("kind", ""), "GitHub did not answer as expected.")
     reason = failure.get("reason")
-    return f'{words} GitHub said: "{reason}"' if reason and failure.get("kind") != "network" else words
+    if failure.get("kind") == "network":  # as handoff.explain says it: how often it was tried, and the GitHub tool's own words
+        tried = collab.tried_words(failure)
+        return f"GitHub could not be reached{tried}." + (f' The GitHub tool (gh) said: "{reason}".' if reason and reason != "no reason given" else "")
+    return f'{words} GitHub said: "{reason}".' if reason else words

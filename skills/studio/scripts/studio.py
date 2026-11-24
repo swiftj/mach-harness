@@ -765,15 +765,32 @@ def saved_state(studio: Studio, ledger: Dict[str, Any], slices: Dict[str, Dict[s
                             "text": "The product principles have changes that are not published. Publish them so the builders get them."})
     waiting += needs.not_saved(sys.modules[__name__], studio, ledger)  # M17 A: technical needs not published, or a publish unfinished
     waiting += shape.not_saved(sys.modules[__name__], studio)  # M16 A: an idea's save to GitHub unfinished, or changed since
-    problem = (ledger.get("seen") or {}).get("problem")
-    if problem:
-        waiting.append({"kind": "refresh_failed", "target": None, "text": f"The last check of GitHub did not finish: {problem}"})
     notes = github_updates_waiting(studio)
     for key in ("github_updates_note", "github_updates_not_made_note"):
         if notes.get(key):
             waiting.append({"kind": "request_updates", "target": None, "text": notes[key]})
     return {"everything_saved": not waiting, "note": "Everything is saved." if not waiting else
-            f"{len(waiting)} thing{'s are' if len(waiting) != 1 else ' is'} not saved yet.", "not_saved": waiting}
+            f"{len(waiting)} thing{'s are' if len(waiting) != 1 else ' is'} not saved yet.", "not_saved": waiting,
+            "github_check": github_check(ledger)}
+
+
+def github_check(ledger: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """None while the last check of GitHub worked (or none was made). When it failed: what happened and when, and how old what
+    is shown is. A failed read loses nothing a person did, so it is said on its own and never counted as something not saved."""
+    seen = ledger.get("seen") or {}
+    problem = seen.get("problem")
+    if not problem:
+        return None
+    last = seen.get("refreshed_at")
+    shown = f"What you see is from the last check that worked, at {clock(last)}." if last else "MACH has not yet read this project from GitHub on this computer."
+    return {"failed_at": seen.get("problem_at"), "last_worked_at": last, "problem": problem,
+            "text": f"MACH could not check GitHub at {clock(seen.get('problem_at'))}: {problem} {shown} Nothing of yours is lost; MACH checks again when you refresh."}
+
+
+def clock(moment: Any) -> str:
+    """A recorded UTC time as a person reads it, such as 2026-11-24 13:06 UTC."""
+    text = str(moment or "")
+    return f"{text[:10]} {text[11:16]} UTC" if re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", text) else "an unrecorded time"
 
 
 def github_updates_waiting(studio: Studio) -> Dict[str, Any]:
@@ -892,9 +909,11 @@ def cmd_project_init(studio: Studio, args: argparse.Namespace) -> int:
     studio.prepare()
     if studio.path("project").is_file():
         raise StudioError(say("This project is already defined. Change it with: studio.py project set", "This project is already defined. Change it instead."), hint("edit_project"))
-    if not product.PROJECT_RE.fullmatch(args.id):
-        raise StudioError(f"'{args.id}' is not a usable project ID. Use lowercase letters, digits and hyphens, starting with a letter, such as campaign-platform.")
-    data = {"schema_version": 1, "project_id": args.id, "name": args.name.strip(), "revision": 1, "status": "draft",
+    # MACH makes the project's ID from its name: a person is never asked for one. --id is for someone who wants their own.
+    project_id = args.id or product.project_id_from(args.name)
+    if not product.PROJECT_RE.fullmatch(project_id):
+        raise StudioError(f"'{project_id}' is not a usable project ID. Use lowercase letters, digits and hyphens, starting with a letter, such as campaign-platform.")
+    data = {"schema_version": 1, "project_id": project_id, "name": args.name.strip(), "revision": 1, "status": "draft",
             "vision": args.vision.strip(), "outcomes": clean_list(args.outcome, "outcome")}
     if not data["outcomes"]:
         raise StudioError(say("A project needs at least one outcome (--outcome, repeatable).", "A project needs at least one outcome."))
@@ -2292,7 +2311,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     project = sub.add_parser("project", help="the project's name, vision and outcomes").add_subparsers(dest="action", required=True)
     p = project.add_parser("init")
-    p.add_argument("--id", required=True)
+    p.add_argument("--id", help="the project's ID; left out, MACH makes it from the name")
     p.add_argument("--name", required=True)
     p.add_argument("--vision", required=True)
     p.add_argument("--outcome", action="append", default=[])

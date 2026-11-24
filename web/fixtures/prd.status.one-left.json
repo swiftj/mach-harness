@@ -63,7 +63,7 @@
         "state": "settled",
         "settled": {
           "as": "slice",
-          "at": "2026-11-22T12:33:57Z",
+          "at": "2026-11-24T13:28:36Z",
           "reason": "The opening belongs to inviting.",
           "slice": "M1"
         }
@@ -94,7 +94,7 @@
         "state": "settled",
         "settled": {
           "as": "later",
-          "at": "2026-11-22T12:33:57Z",
+          "at": "2026-11-24T13:28:36Z",
           "reason": "Not this quarter."
         }
       },

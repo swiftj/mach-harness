@@ -8,9 +8,12 @@
     "saved": {
       "everything_saved": true,
       "note": "Everything is saved.",
-      "not_saved": []
+      "not_saved": [],
+      "github_check": null
     },
     "order": [],
+    "same_id_twice": [],
+    "project_on_github": null,
     "github": {
       "repository": null,
       "form": null,

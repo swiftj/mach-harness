@@ -425,7 +425,7 @@ class TakeRefusalTest(TakeBase):
     def test_without_gh_or_github(self):
         self.ok(self.b, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
         self.gh_fails("*", once=False)
-        self.assertIn("GitHub could not be reached. Nothing was changed.", self.refused(self.b, "slice", "take", "41"))  # the repository is not even named
+        self.assertRegex(self.refused(self.b, "slice", "take", "41"), r'GitHub could not be reached\. The GitHub tool \(gh\) said: "[^"]+"\. Nothing was changed\.')  # the repository is not even named
         (self.root / "bin" / "gh").unlink()
         os.environ["PATH"] = os.pathsep.join(p for p in os.environ["PATH"].split(os.pathsep) if not (Path(p) / "gh").exists())
         self.assertIn("The GitHub tool (gh) is not installed on this computer, so a slice cannot be read from GitHub. Nothing was changed.",

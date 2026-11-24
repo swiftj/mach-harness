@@ -129,7 +129,7 @@ class NothingIsWiredInTest(unittest.TestCase):
 
     def test_the_validator_cannot_start_or_serve_anything(self):
         """Standard-library reading and checking only: no processes, no network, no writing."""
-        allowed = {"argparse", "datetime", "hashlib", "json", "re", "sys", "pathlib", "typing"}
+        allowed = {"argparse", "datetime", "hashlib", "json", "re", "sys", "pathlib", "typing", "unicodedata"}  # unicodedata: plain letters for a project's ID
         # The two lines every entry point carries (M14: they load MACH's own fault recorder, skills/intent/scripts/faults.py)
         # are held by tests/test_faults.py; everything else here is held as before.
         lines = (PRODUCT_SCRIPTS / "product.py").read_text().splitlines()

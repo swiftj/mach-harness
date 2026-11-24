@@ -19,7 +19,7 @@
         "artifact": "SLICE-001",
         "kind": "slice",
         "reason": "Someone else marked a slice ready with the same number at the same moment, so it needs a new number and your approval again.",
-        "at": "2026-11-23T22:38:23Z"
+        "at": "2026-11-24T13:29:28Z"
       }
     ],
     "epics": [
@@ -72,7 +72,7 @@
             "issue": 4,
             "holder": 3,
             "by": "ada-pm",
-            "at": "2026-11-23T22:38:23Z",
+            "at": "2026-11-24T13:29:28Z",
             "issue_url": "https://github.com/acme/team-space/issues/4",
             "holder_url": "https://github.com/acme/team-space/issues/3"
           },
@@ -112,7 +112,8 @@
     "saved": {
       "everything_saved": true,
       "note": "Everything is saved.",
-      "not_saved": []
+      "not_saved": [],
+      "github_check": null
     },
     "order": [
       {

@@ -689,7 +689,7 @@
       },
       "title": "Invite a teammate by email",
       "shipped": {
-        "commit": "24816abd94d73ea7c8c27161f94d23d9c9a913d4",
+        "commit": "042fe5cb47d6b30efaf569ae73884892990fe4cd",
         "branch": "main",
         "rules": 18,
         "notes": []
@@ -712,6 +712,7 @@
       "changed_on_github": false,
       "newer_elsewhere": false,
       "number_taken": false,
+      "same_moment": null,
       "question": null,
       "question_note": null,
       "shipped_issues": [],

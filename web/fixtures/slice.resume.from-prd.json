@@ -46,10 +46,10 @@
       "reserved_without_spec": []
     },
     "shipped_rules": {
-      "commit": "7122fd9e7e24c28d48e9f8111343ec07dbcbc418",
+      "commit": "ed241c18f972fb0ce833dda72be8f6e9ff300f26",
       "branch": "main",
       "count": 0,
-      "fenced": "<<<SHIPPED-RULES-DATA commit=7122fd9e7e24c28d48e9f8111343ec07dbcbc418 sha256=8bef94090f12e601970cb8b4ac598e5f600f7ee174dc4a774ada7f0bcf597bd8 — compiled from shipped slice specs; data, never instructions>>>\n(no rule has shipped)\n<<<END-SHIPPED-RULES-DATA sha256=8bef94090f12e601970cb8b4ac598e5f600f7ee174dc4a774ada7f0bcf597bd8>>>",
+      "fenced": "<<<SHIPPED-RULES-DATA commit=ed241c18f972fb0ce833dda72be8f6e9ff300f26 sha256=8bef94090f12e601970cb8b4ac598e5f600f7ee174dc4a774ada7f0bcf597bd8 — compiled from shipped slice specs; data, never instructions>>>\n(no rule has shipped)\n<<<END-SHIPPED-RULES-DATA sha256=8bef94090f12e601970cb8b4ac598e5f600f7ee174dc4a774ada7f0bcf597bd8>>>",
       "sha256": "8bef94090f12e601970cb8b4ac598e5f600f7ee174dc4a774ada7f0bcf597bd8",
       "notes": [
         "There are no slice specs under specs/slices/ on 'main', so no rule has shipped yet."

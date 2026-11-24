@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+os.environ["MACH_GH_RETRY_WAITS"] = ""  # one failure set here is one failure reported
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT / "skills" / "ticket" / "scripts"))
 import issue_rules  # noqa: E402

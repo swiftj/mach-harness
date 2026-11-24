@@ -11,7 +11,8 @@
         "Teams can work together"
       ],
       "issue": 1,
-      "url": "https://github.com/acme/team-space/issues/1"
+      "url": "https://github.com/acme/team-space/issues/1",
+      "changed_elsewhere": null
     },
     "approvals_withdrawn": [],
     "epics": [
@@ -25,6 +26,8 @@
         ],
         "issue": null,
         "url": null,
+        "changed_elsewhere": null,
+        "same_moment": null,
         "counts": {
           "total": 0,
           "by_progress": {},
@@ -46,14 +49,14 @@
         "revision": 1,
         "sha256": "4b3eb5956520dd8c3bbfba31f2514f637ffa076ae7e7b234387bdb686b6d73c3",
         "approved_by": "ada-pm",
-        "published_at": "2026-11-22T12:34:01Z",
+        "published_at": "2026-11-24T13:28:40Z",
         "issue": 1,
         "url": "https://github.com/acme/team-space/issues/1",
         "github": {
           "revision": 1,
           "approved": true,
           "approved_by": "ada-pm",
-          "read_at": "2026-11-22T12:34:01Z"
+          "read_at": "2026-11-24T13:28:40Z"
         },
         "newer_elsewhere": false,
         "changed_on_github": false
@@ -64,7 +67,8 @@
     "saved": {
       "everything_saved": true,
       "note": "Everything is saved.",
-      "not_saved": []
+      "not_saved": [],
+      "github_check": null
     },
     "order": [
       {
@@ -81,6 +85,8 @@
         "note": null
       }
     ],
+    "same_id_twice": [],
+    "project_on_github": null,
     "github": {
       "repository": "acme/team-space",
       "form": null,

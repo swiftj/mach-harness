@@ -7,6 +7,11 @@ Keep this file current: when a piece below is finished or the plan changes, chan
 ## 1. State
 
 - **Released:** 0.23.1, tag `v0.23.1`, on `main`. Nothing is unmerged.
+- **On the branch `fix/studio-github-and-project-id`, built 2026-11-24, not merged:** two faults the owner met in Product Studio's app.
+  - *Naming the product* asked for a Project ID, proposed one from the name, and could then refuse its own proposal. The form no longer has the field: MACH makes the ID from the name (`product.project_id_from`), and `project init --id` is optional.
+  - *The check of GitHub* was tried once, said only "GitHub could not be reached", was counted as something "not saved", and stayed until a manual refresh. Now a read is tried again (with a budget, so a command stays inside the host's time limit); a failure is named as what it is (no network, GitHub's limit, GitHub not answering, something on the computer blocking the tool, the sign-in, a refusal) with the GitHub tool's own words; it is its own notice (`saved.github_check`, "GitHub not checked" in the top bar) and never counted as unsaved; and the app checks again by itself, backing off from one minute to fifteen.
+  - *Not known:* what actually failed on the owner's machine (repository `cof-sandbox/...`, a last good read at 08:01 and failures after it). The old message hid the tool's words. With this change the notice quotes them; a corporate proxy or a Claude Code sandbox around the app's host are the likely causes to check first.
+  - The app's fixtures were regenerated from MACH's own output (`web/fixtures/generate.py`), which also brought in keys added since they were last generated.
 - **What 0.23.1 added:** Product Studio's command is `/mach-studio` (plugin: `/mach:studio`), renamed from `/mach-product-studio`. The skill's folder is `skills/studio`; the product is still MACH Product Studio, and the web app's folder and package keep their names.
 - **What 0.23.0 added:** Decisions in force, a read-only page on the Factory Floor for architecture decisions.
 - **What 0.22.1 added:** a sign of life for slow builds, the merge plan's two refusals, the "Unattended runs: off" label, five layout items and four defect fixes (section 2.3).

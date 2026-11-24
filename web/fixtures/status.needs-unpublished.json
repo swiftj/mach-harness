@@ -11,7 +11,8 @@
         "Teams can work together"
       ],
       "issue": 1,
-      "url": "https://github.com/acme/team-space/issues/1"
+      "url": "https://github.com/acme/team-space/issues/1",
+      "changed_elsewhere": null
     },
     "approvals_withdrawn": [],
     "epics": [
@@ -25,6 +26,8 @@
         ],
         "issue": null,
         "url": null,
+        "changed_elsewhere": null,
+        "same_moment": null,
         "counts": {
           "total": 0,
           "by_progress": {},
@@ -43,7 +46,8 @@
           "target": null,
           "text": "The technical needs have changes that are not published. Publish them so the engineer gets them."
         }
-      ]
+      ],
+      "github_check": null
     },
     "order": [
       {
@@ -60,6 +64,8 @@
         "note": null
       }
     ],
+    "same_id_twice": [],
+    "project_on_github": null,
     "github": {
       "repository": "acme/team-space",
       "form": null,
@@ -90,14 +96,14 @@
         "revision": 1,
         "sha256": "af78a93ddb5fe4f65133596724ddd9f4552ea53d2c628ee9ff195792672ffe0f",
         "approved_by": "ada-pm",
-        "published_at": "2026-11-22T12:34:30Z",
+        "published_at": "2026-11-24T13:29:14Z",
         "issue": 1,
         "url": "https://github.com/acme/team-space/issues/1",
         "github": {
           "revision": 1,
           "approved": true,
           "approved_by": "ada-pm",
-          "read_at": "2026-11-22T12:34:30Z"
+          "read_at": "2026-11-24T13:29:14Z"
         },
         "newer_elsewhere": false,
         "changed_on_github": false

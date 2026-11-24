@@ -3,7 +3,6 @@ import { Plus, X } from "lucide-react";
 import { Banner, Button, Field, HintAction, Input, Textarea, toast } from "@mach/ui";
 import type { OperationResult } from "@mach/ui/api";
 import { useEngineAct } from "../../api/act";
-import { projectIdFrom } from "../home/start/model";
 import { rememberProjectStart } from "../../api/projectStart";
 import { projectStartNote } from "../../shared/team";
 import { ProjectOnGithubNotice } from "../../shared/ProjectStartNotice";
@@ -58,7 +57,7 @@ export const cleanList = (list: string[]) => list.map((s) => s.trim()).filter(Bo
 /* ── Create ──────────────────────────────────────────────────────────── */
 
 /**
- * Naming the product: its name, vision and outcomes, and the project ID proposed from the name (`project.init`). The
+ * Naming the product: its name, vision and outcomes (`project.init`); MACH makes the project's ID from the name. The
  * person writes every word; nothing here fills them in. Used by the Vision screen and, inside a way to start, at the
  * point where that way needs the project to exist (making the drafts from a PRD or an idea, picking up a request).
  */
@@ -80,10 +79,7 @@ export function ProjectCreator({
   const [name, setName] = useState("");
   const [vision, setVision] = useState("");
   const [outcomes, setOutcomes] = useState<string[]>([""]);
-  const [id, setId] = useState("");
-  const [idTouched, setIdTouched] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const projectId = idTouched ? id : projectIdFrom(name);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -91,10 +87,9 @@ export function ProjectCreator({
     if (!name.trim()) next.name = "Give the product a name.";
     if (!vision.trim()) next.vision = "Write the vision: one sentence about what the product is for.";
     if (!cleanList(outcomes).length) next.outcomes = "Add at least one outcome.";
-    if (!projectId) next.id = "Give the project an ID: lowercase words joined by hyphens.";
     setErrors(next);
     if (Object.keys(next).length) return;
-    const result = await act.run("project.init", { id: projectId, name: name.trim(), vision: vision.trim(), outcome: cleanList(outcomes) });
+    const result = await act.run("project.init", { name: name.trim(), vision: vision.trim(), outcome: cleanList(outcomes) });
     if (!result) return;
     // M20: the repository already had a project on GitHub (its words were taken, not these), or GitHub was not checked.
     // The page moves on at once, so the note is kept for the next page as well as said here.
@@ -116,16 +111,6 @@ export function ProjectCreator({
         <Textarea editorial rows={3} value={vision} onChange={(e) => setVision(e.target.value)} placeholder="For example: Teams work together without friction." />
       </Field>
       <OutcomesEditor outcomes={outcomes} onChange={setOutcomes} error={errors.outcomes} />
-      <Field label="Project ID" hint="Used in file names and links. Proposed from the name; it cannot be changed later." error={errors.id}>
-        <Input
-          className="font-mono"
-          value={projectId}
-          onChange={(e) => {
-            setIdTouched(true);
-            setId(e.target.value);
-          }}
-        />
-      </Field>
       {act.shown ? (
         <Banner
           tone="danger"

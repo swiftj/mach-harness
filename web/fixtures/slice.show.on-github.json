@@ -683,7 +683,7 @@
       },
       "title": "Invite a teammate by email",
       "shipped": {
-        "commit": "7122fd9e7e24c28d48e9f8111343ec07dbcbc418",
+        "commit": "ed241c18f972fb0ce833dda72be8f6e9ff300f26",
         "branch": "main",
         "rules": 0,
         "notes": [
@@ -705,11 +705,12 @@
       "changed_on_github": false,
       "newer_elsewhere": false,
       "number_taken": false,
+      "same_moment": null,
       "question": null,
       "question_note": null,
       "shipped_issues": [],
       "times": {
-        "marked_ready": "2026-11-22T12:33:40Z",
+        "marked_ready": "2026-11-24T13:28:19Z",
         "building": null,
         "question": null,
         "shipped": null

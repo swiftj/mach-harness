@@ -64,7 +64,7 @@
         "state": "settled",
         "settled": {
           "as": "slice",
-          "at": "2026-11-22T12:33:57Z",
+          "at": "2026-11-24T13:28:36Z",
           "reason": "The opening belongs to inviting.",
           "slice": "M1"
         }
@@ -110,7 +110,7 @@
     "note": "2 sections of PRD-01 no slice cites: 4, 5. Settle each: a slice, out of scope, or later.",
     "settled": {
       "section": 1,
-      "at": "2026-11-22T12:33:57Z",
+      "at": "2026-11-24T13:28:36Z",
       "as": "slice",
       "slice": "M1",
       "reason": "The opening belongs to inviting."

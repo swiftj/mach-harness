@@ -11,7 +11,8 @@
         "Teams can work together"
       ],
       "issue": null,
-      "url": null
+      "url": null,
+      "changed_elsewhere": null
     },
     "approvals_withdrawn": [],
     "epics": [
@@ -25,6 +26,8 @@
         ],
         "issue": null,
         "url": null,
+        "changed_elsewhere": null,
+        "same_moment": null,
         "counts": {
           "total": 0,
           "by_progress": {},
@@ -37,7 +40,8 @@
     "saved": {
       "everything_saved": true,
       "note": "Everything is saved.",
-      "not_saved": []
+      "not_saved": [],
+      "github_check": null
     },
     "order": [
       {
@@ -54,6 +58,8 @@
         "note": null
       }
     ],
+    "same_id_twice": [],
+    "project_on_github": null,
     "github": {
       "repository": null,
       "form": null,
@@ -71,7 +77,7 @@
           "source": {
             "kind": "typed"
           },
-          "created": "2026-11-22T12:34:12Z",
+          "created": "2026-11-24T13:28:54Z",
           "revision": 1,
           "has_brief": true,
           "brief_checked": false,
@@ -80,7 +86,7 @@
           "verdict": {
             "decision": "go",
             "by": "ada-pm",
-            "at": "2026-11-22T12:34:12Z",
+            "at": "2026-11-24T13:28:54Z",
             "revision": 1,
             "holds": false,
             "stale": true,
@@ -115,7 +121,7 @@
           "source": {
             "kind": "typed"
           },
-          "created": "2026-11-22T12:34:13Z",
+          "created": "2026-11-24T13:28:54Z",
           "revision": 1,
           "has_brief": true,
           "brief_checked": true,
@@ -124,7 +130,7 @@
           "verdict": {
             "decision": "go",
             "by": "ada-pm",
-            "at": "2026-11-22T12:34:13Z",
+            "at": "2026-11-24T13:28:54Z",
             "revision": 1,
             "holds": true,
             "stale": false,
@@ -159,7 +165,7 @@
           "source": {
             "kind": "typed"
           },
-          "created": "2026-11-22T12:34:13Z",
+          "created": "2026-11-24T13:28:54Z",
           "revision": 1,
           "has_brief": true,
           "brief_checked": true,
@@ -168,7 +174,7 @@
           "verdict": {
             "decision": "go",
             "by": "ada-pm",
-            "at": "2026-11-22T12:34:13Z",
+            "at": "2026-11-24T13:28:54Z",
             "revision": 1,
             "holds": true,
             "stale": false,
@@ -203,7 +209,7 @@
           "source": {
             "kind": "typed"
           },
-          "created": "2026-11-22T12:34:13Z",
+          "created": "2026-11-24T13:28:55Z",
           "revision": 0,
           "has_brief": false,
           "brief_checked": false,

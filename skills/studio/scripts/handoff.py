@@ -52,7 +52,7 @@ def utc_now() -> str:
 def explain(failure: Optional[Dict[str, str]]) -> str:
     """A GitHub failure in plain words; GitHub's own words are quoted as data."""
     if not failure:
-        return "GitHub could not be reached."
+        return "GitHub did not answer as expected."  # nothing failed that MACH can name: never said as a network failure
     kind = failure.get("kind", "")
     if kind == "not_ours":
         return str(failure.get("reason"))
@@ -60,10 +60,19 @@ def explain(failure: Optional[Dict[str, str]]) -> str:
              "auth": "GitHub did not accept your sign-in on this computer.",
              "sso": "Your organisation requires your GitHub sign-in to be authorised for single sign-on.",
              "rule": "GitHub refused this for your account.",
+             "rate_limit": "GitHub is limiting how often this account may ask just now. It lifts by itself, usually within the hour.",
+             "unavailable": "GitHub is not answering properly just now.",
+             "blocked": "Something on this computer stopped the GitHub tool from reaching GitHub: a proxy, or a sandbox the session runs in.",
              "not_found": "GitHub could not find it.",
              "moved": "The issue has moved to another repository."}.get(kind, "GitHub did not answer as expected.")
     reason = failure.get("reason")
-    return f'{words} GitHub said: "{collab.bounded(reason, 200)}"' if reason and kind not in ("network", "moved") else words
+    if kind == "network":
+        # Said as it happened: how often it was tried, and the GitHub tool's own words, so a person can tell a passing
+        # failure from a setting on this computer that stops the tool reaching GitHub.
+        tried = collab.tried_words(failure)
+        said = f' The GitHub tool (gh) said: "{collab.bounded(reason, 200)}".' if reason and reason != "no reason given" else ""
+        return f"GitHub could not be reached{tried}.{said}"
+    return f'{words} GitHub said: "{collab.bounded(reason, 200)}".' if reason and kind != "moved" else words
 
 
 class Channel:
