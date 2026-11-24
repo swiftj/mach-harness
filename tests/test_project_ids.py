@@ -413,12 +413,34 @@ class RecordTest(unittest.TestCase):
         self.assertOnly(idea(), out, {"idea_id": "IDEA-002", "title": "Like IDEA-002 before", "source.rule": "SLICE-015/INV-01",
                                       "verdict.reason": "SLICE-013 needs it", "route.why": "Touches EPIC-004", "route.details": details,
                                       "made.epics": ["EPIC-004"], "made.slices": ["SLICE-013", "SLICE-014"],
+                                      "route.counted.high_risk_not_determined": ["SLICE-015/FR-02"],
                                       "lookback.outcomes.O-1.note": "SLICE-013 did it", "lookback.assumptions.A-1.note": "Not EPIC-005"})
-        # Left exactly: the hashes (5.3), route.counted, an area's free text and a file path.
-        self.assertEqual(out["route"]["counted"], idea()["route"]["counted"])
+        # Left exactly: the hashes (5.3), route.counted's numbers, an area's free text and a file path.
+        self.assertEqual(out["route"]["counted"]["outcomes"], 2)
         self.assertEqual(out["verdict"]["brief_sha256"], SHA)
         self.assertEqual(out["route"]["details"]["high_risk"]["areas"][0]["area"], "auth SLICE-001")
         self.assertEqual(out["route"]["details"]["high_risk"]["areas"][0]["files"], ["specs/slices/SLICE-011-x.md"])
+
+    def test_counted_rules_agree_with_route_details_after_a_renumber(self):
+        out = self.rewritten("idea", idea())
+        self.assertEqual(out["route"]["counted"]["high_risk_not_determined"], ["SLICE-015/FR-02"])
+        details = out["route"]["details"]
+        self.assertTrue(set(out["route"]["counted"]["high_risk_not_determined"])
+                        <= set(details["touches"]["shipped_rules"]) | set(details["high_risk"]["areas"][0]["rules"]))
+        odd = idea()
+        odd["route"]["counted"]["high_risk_not_determined"] = ["SLICE-099/FR-01"]
+        _, notes = rewrite_record_noted("idea", odd, MAP, None)
+        self.assertIn({"field": "route.counted.high_risk_not_determined[0]", "line": None, "id": "SLICE-099", "why": "not_in_archive"}, notes)
+
+    def test_map_epics_words_are_prose(self):
+        for kind, make in (("idea_map", idea_map), ("prd_map", prd_map)):
+            data = make()
+            data["epics"].append({"key": "E2", "title": "`EPIC-001` as typed", "criteria": ["Unknown EPIC-777"]})
+            out, notes = rewrite_record_noted(kind, data, MAP, None)
+            self.assertEqual(out["epics"][0], {"key": "E1", "title": "New EPIC-005", "criteria": ["SLICE-013 works"]}, kind)
+            self.assertEqual(out["epics"][1], data["epics"][1], kind)
+            self.assertIn({"field": "epics[1].title", "line": 1, "id": "EPIC-001", "why": "in_code"}, notes)
+            self.assertIn({"field": "epics[1].criteria[0]", "line": 1, "id": "EPIC-777", "why": "not_in_archive"}, notes)
 
     def test_idea_sources_other_than_change_are_left(self):
         for source in ({"kind": "typed"}, {"kind": "moved"}, {"kind": "fault", "ticket": "AUTO-20261120T101500Z"},
@@ -436,18 +458,20 @@ class RecordTest(unittest.TestCase):
 
     def test_idea_map(self):
         out = self.rewritten("idea_map", idea_map())
-        self.assertOnly(idea_map(), out, {"idea_id": "IDEA-002", "slices.0.title": "After SLICE-013", "slices.0.scope": "Like EPIC-004",
+        self.assertOnly(idea_map(), out, {"idea_id": "IDEA-002", "epics.0.title": "New EPIC-005", "epics.0.criteria": ["SLICE-013 works"],
+                                          "slices.0.title": "After SLICE-013", "slices.0.scope": "Like EPIC-004",
                                           "slices.1.epic": "EPIC-004", "slices.1.depends_on": ["M1", "SLICE-013"],
                                           "settled.O-2.reason": "SLICE-014 has it",
                                           "applied": {"epics": {"E1": "EPIC-005"}, "slices": {"M1": "SLICE-013", "M2": "trying"}}})
-        # A map key is not an ID, even one shaped like a principle's; the map's epics are not a field 5.1 lists.
+        # A map key is not an ID, even one shaped like a principle's.
         self.assertEqual(out["slices"][2]["epic"], "PP-01")
         self.assertEqual(out["slices"][2]["depends_on"], ["PP-01"])
-        self.assertEqual(out["epics"], idea_map()["epics"])
+        self.assertEqual(out["epics"][0]["key"], "E1")
 
     def test_prd_map(self):
         out = self.rewritten("prd_map", prd_map())
-        self.assertOnly(prd_map(), out, {"prd_id": "PRD-02", "slices.0.title": "After SLICE-013", "slices.0.scope": "Like EPIC-004",
+        self.assertOnly(prd_map(), out, {"prd_id": "PRD-02", "epics.0.title": "New EPIC-005", "epics.0.criteria": ["SLICE-013 works"],
+                                         "slices.0.title": "After SLICE-013", "slices.0.scope": "Like EPIC-004",
                                          "slices.1.epic": "EPIC-004", "slices.1.depends_on": ["M1", "SLICE-013"], "settled.4.reason": "After SLICE-014",
                                          "applied": {"epics": {"E1": "EPIC-005"}, "slices": {"M1": "SLICE-013", "M2": "trying"}}})
         self.assertEqual(out["prd_sha256"], SHA2)
