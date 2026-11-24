@@ -4,8 +4,9 @@
  * the stage, the contextual inspector, Theater Mode, the keyboard map and its help sheet, and the
  * screen-reader announcer.
  *
- * Three workspaces (the store's `workspace`): the Line (the default: stations as columns, a row for
- * each ticket, with its own side panel), the Floor (the isometric Factory Atlas, with the inspector) and Factory Analytics (with the inspector on request). The Floor's stage stays
+ * Four workspaces (the store's `workspace`): the Line (the default: stations as columns, a row for
+ * each ticket, with its own side panel), the Floor (the isometric Factory Atlas, with the inspector), Factory Analytics (with the inspector on request)
+ * and Decisions (the architecture decisions in force, a list and one decision's page, no inspector). The Floor's stage stays
  * mounted while another workspace is up: hidden, inert, and reading a held view of the store
  * (heldStore), so it does no work and returns exactly as it was. The Line and Analytics are mounted
  * only while shown. Everything shows the present: there is no playhead.
@@ -17,8 +18,9 @@ import { CircleHelp, Monitor, Moon, PanelRight, PanelRightClose, Sun, TvMinimalP
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn, useTheme, type ThemePreference } from "@mach/ui";
 import { refKind } from "../sim";
-import { heldStore, SceneStoreProvider, showInAnalytics, showOnFloor, showOnLine, useSceneStore, useStore, type SceneStore } from "../scene";
+import { heldStore, SceneStoreProvider, showDecisions, showInAnalytics, showOnFloor, showOnLine, useSceneStore, useStore, type SceneStore } from "../scene";
 import { AnalyticsWorkspace } from "../analytics/Workspace";
+import { DecisionsWorkspace } from "../decisions/Workspace";
 import { LineWorkspace } from "../line/Workspace";
 import { Announcer } from "./Announcer";
 import { Brand, PlacesChip, RunIdentity, WorkspaceSwitch } from "./chrome";
@@ -148,7 +150,10 @@ function TopBar({ inspectorOpen, onInspector, onHelp, sourceOpen, onSource }: { 
     <div className="flex min-h-12 min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-canvas px-3 py-1 min-[1100px]:gap-x-4 min-[1100px]:px-4" data-top-bar="">
       <Brand />
       <nav aria-label="Workspaces" className="flex shrink-0 flex-wrap items-center gap-1.5">
-        <WorkspaceSwitch value={workspace} onChange={(w) => (w === "line" ? showOnLine(store) : w === "analytics" ? showInAnalytics(store) : showOnFloor(store))} />
+        <WorkspaceSwitch
+          value={workspace}
+          onChange={(w) => (w === "line" ? showOnLine(store) : w === "analytics" ? showInAnalytics(store) : w === "decisions" ? showDecisions(store) : showOnFloor(store))}
+        />
       </nav>
       <span className="h-5 w-px shrink-0 bg-line max-[639px]:hidden" aria-hidden="true" />
       <div className="min-w-0 flex-1 basis-0 overflow-hidden max-[639px]:order-last max-[639px]:basis-full">
@@ -178,7 +183,7 @@ function TopBar({ inspectorOpen, onInspector, onHelp, sourceOpen, onSource }: { 
             Theater
           </span>
         </button>
-        {workspace === "line" ? null : (
+        {workspace === "line" || workspace === "decisions" ? null : (
           <IconButton label={inspectorOpen ? "Hide the inspector" : "Show the inspector"} shortcut="I" onClick={onInspector} pressed={inspectorOpen}>
             {inspectorOpen ? <PanelRightClose aria-hidden="true" /> : <PanelRight aria-hidden="true" />}
           </IconButton>
@@ -202,7 +207,7 @@ function usePageTitle() {
   }, [source, project]);
 }
 
-const STAGE_LABEL = { line: "Line", floor: "Floor: Factory Atlas", analytics: "Factory Analytics" } as const;
+const STAGE_LABEL = { line: "Line", floor: "Floor: Factory Atlas", analytics: "Factory Analytics", decisions: "Decisions in force" } as const;
 
 export function Shell() {
   const store = useStore();
@@ -215,13 +220,16 @@ export function Shell() {
   const onFloor = workspace === "floor";
   const onLine = workspace === "line";
   const inAnalytics = workspace === "analytics";
+  const inDecisions = workspace === "decisions";
   const floorStore = useFloorStore(store);
   const floorRef = useRef<HTMLDivElement>(null);
   const lineRef = useRef<HTMLDivElement>(null);
   const analyticsRef = useRef<HTMLDivElement>(null);
+  const decisionsRef = useRef<HTMLDivElement>(null);
   useArrival(floorRef, onFloor, reduced);
   useArrival(lineRef, onLine, reduced);
   useArrival(analyticsRef, inAnalytics, reduced);
+  useArrival(decisionsRef, inDecisions, reduced);
   const selection = useSceneStore((s) => s.selection);
   // For browser tests: the scene's first state is applied (the simulation at once; live once history
   // holds something or the connection has left "connecting"), and the shell has mounted with it.
@@ -257,8 +265,8 @@ export function Shell() {
     if (inAnalytics && selection) setAnalyticsInspector(true);
   }
 
-  // The Line has its own side panel; the inspector belongs to the Floor and Analytics.
-  const inspectorOpen = onLine ? false : inAnalytics ? analyticsInspector : wide ? inspectorWanted : overlayOpen;
+  // The Line has its own side panel and Decisions its own pages; the inspector belongs to the Floor and Analytics.
+  const inspectorOpen = onLine || inDecisions ? false : inAnalytics ? analyticsInspector : wide ? inspectorWanted : overlayOpen;
   const inspectorW = wide ? (large ? INSPECTOR_W.large : INSPECTOR_W.regular) : INSPECTOR_W.overlay;
   const toggleInspector = useCallback(() => (inAnalytics ? setAnalyticsInspector((v) => !v) : wide ? setInspectorWanted((v) => !v) : setOverlayOpen((v) => !v)), [wide, inAnalytics]);
   const commands = useMemo(
@@ -292,7 +300,7 @@ export function Shell() {
         }}
         className="sr-only z-[70] rounded-sm bg-surface-raised px-3 py-2 text-label text-ink shadow-2 focus:not-sr-only focus:fixed focus:left-3 focus:top-3"
       >
-        {onFloor ? "Skip to the factory view" : inAnalytics ? "Skip to the analytics" : "Skip to the line"}
+        {onFloor ? "Skip to the factory view" : inAnalytics ? "Skip to the analytics" : inDecisions ? "Skip to the decisions" : "Skip to the line"}
       </a>
 
       <header ref={headerRef} className="min-w-0 overflow-hidden [grid-area:top]" inert={theater}>
@@ -344,13 +352,18 @@ export function Shell() {
             <AnalyticsWorkspace />
           </div>
         ) : null}
+        {inDecisions ? (
+          <div ref={decisionsRef} className="absolute inset-0 isolate z-10 overflow-hidden bg-surface" data-workspace="decisions" data-decisions-workspace="" data-decisions-source={source}>
+            <DecisionsWorkspace />
+          </div>
+        ) : null}
       </main>
 
       <aside
         tabIndex={-1}
         aria-label={selectionWord ? `Inspector: ${selectionWord}` : "Inspector: the run now"}
         inert={theater || !inspectorOpen}
-        hidden={onLine}
+        hidden={onLine || inDecisions}
         className={cn(
           "min-h-0 min-w-0 overflow-hidden border-line bg-surface outline-none [grid-area:inspector]",
           wide

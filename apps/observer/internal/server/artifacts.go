@@ -490,10 +490,11 @@ func freeTextPolicy() map[string]any {
 		"event_fields":      redact.FreeTextFields,
 		"projection_fields": redact.ProjectionFields, // M6.6: where the projection serves copies of them
 		// M15: the verifier's words on a design mock's side-by-side record, read from results.json.
-		"catalog_fields": []map[string]any{
+		// Decisions in force: the ADRs' titles and text, and people's reasons recorded against them.
+		"catalog_fields": append([]map[string]any{
 			{"route": "/api/v1/cells/{ticket}/evidence", "path": "checks[].mock.note", "from": "results.json mock_records.<id>.note", "max": redact.MaxText},
 			{"route": "/api/v1/cells/{ticket}/evidence", "path": "checks[].mock.differences[]", "from": "results.json mock_records.<id>.differences[]", "max": redact.MaxText},
-		},
+		}, decisionFreeText...),
 		"render": "text only; never markup",
 	}
 }

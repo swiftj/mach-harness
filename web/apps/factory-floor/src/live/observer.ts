@@ -437,6 +437,12 @@ export interface ObserverClient {
   analyticsInsights?(query: ObserverAnalyticsQuery): Promise<Readonly<Record<string, unknown>>>;
   /** `/session`'s `display_policy` unparsed (`free_text` says which fields hold prose); null when absent. */
   displayPolicy?(): Promise<Readonly<Record<string, unknown>> | null>;
+  // ---- Decisions in force. Optional like the methods above; each returns the reply's `data` unparsed
+  // (src/decisions/model.ts reads it). A 404 (`not_found`) from /decisions means an observer without the route.
+  /** `GET /api/v1/decisions`: every ADR, the required baseline, what waits on a person. */
+  decisions?(signal?: AbortSignal): Promise<Readonly<Record<string, unknown>>>;
+  /** `GET /api/v1/decisions/{adr}`: one decision's page. */
+  decision?(id: string, signal?: AbortSignal): Promise<Readonly<Record<string, unknown>>>;
 }
 
 /** The filters every analytics route reads (M6_5_DESIGN.md 3); a route that cannot honour one answers 400. Values are identifiers or codes, never prose. */
@@ -969,6 +975,13 @@ export function createObserverClient(options: { readonly fetch: FetchLike; reado
     async displayPolicy() {
       const d = await get("/session");
       return d.display_policy && typeof d.display_policy === "object" ? obj(d.display_policy) : null;
+    },
+    async decisions(signal) {
+      return get("/decisions", signal);
+    },
+    async decision(id, signal) {
+      if (!/^ADR-[0-9]{4}$/.test(id)) throw new ObserverError("invalid", "An architecture decision is named by its ID, such as ADR-0007.", 0);
+      return get(`/decisions/${id}`, signal);
     },
   };
 }
