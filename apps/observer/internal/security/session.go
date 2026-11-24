@@ -3,10 +3,12 @@
 // response headers.
 //
 // Copied and adapted from apps/studio/internal/security (M5, session.go and
-// headers.go) rather than shared, so that Product Studio's host is not touched in this wave. The
-// differences are deliberate: the observer answers GET only, so it has no CSRF token and no
-// state-changing check; it refuses any request whose Origin or Sec-Fetch-Site says it came from
-// another site; and the cookie has its own name, so the two hosts never share a session.
+// headers.go) rather than shared, so that Product Studio's host is not touched. The differences are
+// deliberate: the observer answers GET everywhere except its two write routes (a person's decision
+// and the Factory's stop, M23), which also pass CheckStateChange: the Origin must be this host and
+// the X-MACH-CSRF header must carry the token derived from the browser's own session; it refuses
+// any request whose Origin or Sec-Fetch-Site says it came from another site; and the cookie has
+// its own name, so the two hosts never share a session.
 package security
 
 import (
@@ -23,6 +25,9 @@ import (
 	"sync"
 	"time"
 )
+
+// CSRFHeader carries the session's CSRF token on every request that changes something.
+const CSRFHeader = "X-MACH-CSRF"
 
 // CookieName is the session cookie. HttpOnly and SameSite=Strict; not Secure, because the
 // observer serves plain HTTP on the loopback interface.
@@ -308,4 +313,41 @@ func (g *Guard) SameSite(r *http.Request) error {
 		return nil
 	}
 	return errors.New("The request came from another site.")
+}
+
+// CSRF is the token a browser sends back in X-MACH-CSRF on a write: a keyed hash of its own session
+// token under the guard's key, so each browser session has its own, nothing more is kept, and the
+// token is useless without the cookie it was derived from. "" when the request has no session.
+func (g *Guard) CSRF(r *http.Request) string {
+	c, err := r.Cookie(CookieName)
+	if err != nil || c.Value == "" {
+		return ""
+	}
+	m := hmac.New(sha256.New, g.key)
+	m.Write([]byte("mach-observer-csrf\x00" + c.Value))
+	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
+}
+
+// ErrForbidden explains why a write was refused, without echoing a secret.
+type ErrForbidden struct{ Reason string }
+
+func (e *ErrForbidden) Error() string { return e.Reason }
+
+// CheckStateChange applies to every request that can change something, after Authenticated: the
+// Origin must be this host as the browser addressed it, and the CSRF header must carry the token
+// of this request's own session.
+func (g *Guard) CheckStateChange(r *http.Request) error {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return &ErrForbidden{"The request has no Origin header."}
+	}
+	if !g.HostAllowed(r.Host) || origin != "http://"+r.Host {
+		return &ErrForbidden{"The request came from another origin."}
+	}
+	want := g.CSRF(r)
+	token := r.Header.Get(CSRFHeader)
+	if want == "" || token == "" || !equal(token, want) {
+		return &ErrForbidden{"The request is missing this session's CSRF token. Reload the page."}
+	}
+	return nil
 }
