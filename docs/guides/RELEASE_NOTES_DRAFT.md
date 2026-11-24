@@ -2,6 +2,73 @@
 
 What is new in each release, newest first, followed by supported platforms, what you need, upgrading and security notes.
 
+## What changed in 0.24.0
+
+One command runs the Factory, a person decides in the terminal or in the Factory Floor, and a build can work on several tasks at once.
+
+### `/mach pull` is the one command
+
+| Change | What it is |
+| --- | --- |
+| Pull hands the batch to the Factory | `/mach pull` takes in what is ready, hands the batch to the Factory Supervisor and returns. There is no enabling step, no code and no second command. |
+| Work pauses when Claude Code closes | The Factory that pull starts stops its work when Claude Code exits. The next `/mach pull` carries each ticket on from the stage it was at. |
+| `/mach factory start` for the background | It starts the same Factory in the background, where it keeps running after Claude Code exits. |
+| It says when one is already running | Pull and `factory start` look first. If a Factory is running they say how it was started and since when, hand it the batch, and give the Factory Floor's link. |
+| `/mach stop`, `/mach pause`, `/mach resume` | Short forms. Stop ends the Factory's work; the next pull or `factory start` starts it again with no other step. |
+| Low and Medium risk merge on their own | Once review approves. A High-risk change waits for a person's approval, then merges. |
+| No spending limit unless you set one | A project (`factory.*` in its settings) or a person (`/mach factory start --budget-per-day N`) sets one. One execution is still stopped after 120 minutes, and a ticket that gets nowhere twice waits for a person. |
+| `/mach pull --here` | Runs the batch in the conversation, as pull used to. `/mach <ticket>` and `/mach 1 3 6` are unchanged. |
+| A project can still say no | `factory.supervisor: false` keeps every pull in the conversation. `/mach factory disable` does the same for one machine, and it sticks. |
+
+The first pull in a project says one plain line: agents now build here on their own, running this repository's tests and scripts as you, and `/mach stop` stops them.
+
+### "Needs you"
+
+| Change | What it is |
+| --- | --- |
+| One list | Everything waiting for a person is one list, read from the Factory's own files, so it is the same after Claude Code, the Factory or the computer restarts. `/mach` and `/mach pull` lead with "Needs you: N". |
+| One command records a decision | Approve, send back, merge, accept an ADR, an exception to an ADR, plan again, set a test command, answer open questions, abandon. The Factory then carries the ticket on; no `resume --retry`. |
+| Decide in the Factory Floor | "Needs you" in the Factory Floor shows what happened and the same options, as buttons. A decision that cannot be undone is confirmed first. A reason is always your own words. |
+| Answer open questions in writing | Questions that grooming without a person left open can be answered one by one, or left open, in the Floor or the terminal. |
+| Stop from the Factory Floor | The top bar says when a Factory is running and how it was started, with a Stop control. The Floor never starts or enables a Factory. |
+| A banner on a Mac | Once the Factory is on, a Notification Center banner says when a ticket needs you. `/mach notify banner off` turns it off. |
+
+### Building in lanes
+
+| Change | What it is |
+| --- | --- |
+| Several tasks at once | A plan whose parts do not depend on each other is built in lanes, up to three at once (`build.max_lanes`), each in its own workspace, then joined and tested whole. |
+| Lanes on the Factory Floor | A ticket being built in lanes shows each lane and where it is. |
+| A build that cannot start says how to fix it | With no test command known, the build says so before anything changes, and `set-commands` supplies one at any point. Planning again keeps the newest spec and sets nothing aside for good. |
+
+### Moving a project
+
+| Change | What it is |
+| --- | --- |
+| Export and import | `/mach-studio` exports a Product Studio project to one archive and imports it into another repository, which may already hold a project. Everything is renumbered and every slice arrives as a draft. |
+
+### Under a sandbox, and day to day
+
+| Change | What it is |
+| --- | --- |
+| The installer sets what a sandbox blocks | It turns on Git's per-worktree settings, so a ticket's workspace can be made under Claude Code's sandbox. |
+| Package caches inside the project | npm, pip and other tools keep their caches under `.factory/cache/`, where a sandbox allows writing. `commands.env` adds your own variables. |
+| MACH's own tickets go to GitHub | When the project's origin is GitHub, the installer says so and how to switch to local tickets. |
+| The audit is not run on every pull | A good audit stays good as the main branch moves, for 30 days (`audit.max_age_days`). |
+| No archive by default | Cleanup keeps an archive of a ticket's evidence only when a person decided something on it (`cleanup.archive`). The rest is in Git. |
+
+### The Factory Floor
+
+| Change | What it is |
+| --- | --- |
+| Finished tickets leave the floor | A ticket that is merged and cleaned up moves to a Finished shelf. |
+| How fresh the page is | The top bar says when the last record arrived, and warns when a ticket is at work and nothing has arrived for ten minutes. |
+| "Partial" says what is missing | The badge opens a list of the records that were lost, and a ticket folder the page cannot show gets its own line saying why. |
+| Fewer false "Partial" | Restarting the Floor, merging a pull request, widening a small change, planning again and a voided approval no longer leave gaps. |
+| The gate panel | A link back to the slice, plain words for a refusal, and no "Related" or "Measured to the millisecond". |
+
+**After updating:** `/mach factory enable` no longer asks for a code; `--confirm`, `--accept-execution-risk`, `--include-backlog`, `--exclude-backlog` and `--allow-merge` are gone, and `--no-merge` is new. A machine that was enabled before keeps working.
+
 ## What changed in 0.23.2
 
 Product Studio says what really happened when it cannot check GitHub, and naming a product no longer asks for a project ID.
