@@ -212,6 +212,31 @@ When engineering has built an epic and checked it as a release, they give you a 
 
 **This is available in the terminal only today.** Claude reads the file with you first: its outcome, blockers, incomplete items and exceptions. Only on your explicit decision does it record accepted or rejected. The decision is a comment on the epic's issue, signed with your GitHub account and tied to that release and its commit. Accepting is refused unless the file is for that release, epic and commit and says `qualified` or `qualified_with_exceptions`. Rejecting is always possible. Recording it twice posts nothing more. It releases and deploys nothing. Engineering's release snapshot says "not recorded" until the comment is there, and ignores a comment that was edited or written by someone other than the account it names.
 
+## Moving your project to another repository
+
+Sometimes a project has to move to another repository, for example into another organisation where GitHub will not move the issues across. MACH can carry the whole project over in one file. This is done in the conversation: type `/mach-studio` and say "move this project to another repository". The visual app has no button for it.
+
+**Leaving.** Claude tells you what goes and what stays, and asks before it makes the file:
+
+- **Goes:** the project, its epics, every slice with its spec and why, the order within each epic, the principles, the technical needs, your ideas with their briefs, PRDs and designs you brought in, and design mocks.
+- **Stays:** approvals, the GitHub issues and their numbers, Jira links and requests. The file names no repository and no GitHub account.
+
+If any text in the project names this repository, a GitHub account, a folder on your computer, or holds something that looks like a password, MACH makes no file. Claude shows you the line, and you decide together how to change it. Nothing is taken out without your word. If other product managers have slices of this project that are not in your workspace, Claude asks whether to open them here first or to leave them out.
+
+You get one file, and Claude tells you where it is. Carry it to the other repository yourself; MACH never sends it anywhere.
+
+**Arriving.** In the other repository, type `/mach-studio`, say you want to bring a project in, and drag the file into the conversation. Claude first tells you what would happen, and changes nothing until you say yes:
+
+- If that repository already has a project, yours joins it as more epics. If not, yours becomes the project there.
+- Numbers change where they would clash with what is already there. Claude says so in plain words, for example "SLICE-001 becomes SLICE-031". Every reference to a slice, epic, principle or idea moves with it. Ask "what was SLICE-007 before?" at any time afterwards.
+- **Every slice arrives as a draft.** Nothing comes over approved. Claude tells you which slices were ready, being built or shipped in the old repository. Check each one and mark it ready again when you are happy with it.
+- **Sections about shipped behaviour must be answered again.** A slice whose spec says what it does to rules that shipped in the old repository fails its check here, because those rules did not ship here. Answer that section again with Claude for this repository.
+- The principles and technical needs arrive unpublished. Publish the principles before any slice can be marked ready.
+- Jira keys are left off. Claude lists them; link them again if this organisation uses the same Jira.
+- An ID inside a quoted code example is left as written. Claude shows you the line, to check by hand.
+
+Bringing a project in never writes to GitHub, never marks anything ready and never starts the builders. If it stops part way (the computer sleeps, the disk is full), Product Studio says so under what is not saved. Bring the same file in again: it finishes and repeats nothing.
+
 ## 10. What the messages mean
 
 | Message (in short) | What it means | What to do |

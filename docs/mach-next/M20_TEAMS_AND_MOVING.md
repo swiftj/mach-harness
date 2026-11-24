@@ -170,6 +170,8 @@ One decision is needed: one repository still means one project. Two products in 
 
 `project export` writes the whole project to a folder that names no repository; `project import` brings it into another. It covers moves across organisations and to trackers other than GitHub. Approvals cannot be carried this way as if given there: each slice is offered to its product manager to mark ready again. Worth building only if B2 proves too narrow.
 
+**Built in M21**, as one ZIP archive rather than a folder, through `/mach-studio` only: design and as-built notes in `M21_EXPORT_IMPORT.md`.
+
 ## 4. Order of work
 
 | Step | Contents | Size |
