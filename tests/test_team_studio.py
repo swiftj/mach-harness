@@ -19,7 +19,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT / "skills" / "product-studio" / "scripts"))
+sys.path.insert(0, str(ROOT / "skills" / "studio" / "scripts"))
 from test_mach_product_issues import REPO, IssuesBase  # noqa: E402
 import handoff  # noqa: E402
 import issue_rules  # noqa: E402

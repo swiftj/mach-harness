@@ -109,12 +109,12 @@ Almost everything goes through two commands.
 
 | Command | For | What it is |
 |---|---|---|
-| `/mach-product-studio` | Product managers | The workspace for the project, its epics and slices, saved as GitHub issues |
+| `/mach-studio` | Product managers | The workspace for the project, its epics and slices, saved as GitHub issues |
 | `/mach` | Engineers | The line: move a ticket, see the status of every ticket, take in product work, check the setup |
 
 Both take plain words as well as the forms shown in this guide: "open the app", "what is LOCAL-004 waiting for?", "open the Factory Floor".
 
-**Names.** With the one-command install the main command is `/mach`, and the others carry a dash: `/mach-product-studio`, `/mach-intent`. With the plugin every command carries the plugin's name and a colon, so the main one is `/mach:run` and the others `/mach:product-studio`, `/mach:intent`; Claude Code does not let a plugin's command be a bare `/mach`. This guide uses the first form. In a terminal, `mach` is a different thing: the installer (`mach install`, `mach status`, `mach uninstall`).
+**Names.** With the one-command install the main command is `/mach`, and the others carry a dash: `/mach-studio`, `/mach-intent`. With the plugin every command carries the plugin's name and a colon, so the main one is `/mach:run` and the others `/mach:studio`, `/mach:intent`; Claude Code does not let a plugin's command be a bare `/mach`. This guide uses the first form. In a terminal, `mach` is a different thing: the installer (`mach install`, `mach status`, `mach uninstall`).
 
 ## How work flows
 
@@ -122,7 +122,7 @@ A request can start as a GitHub issue labelled `mach:request`; Product Studio sh
 
 ```text
   PRODUCT MANAGER                      ENGINEER                        THE FACTORY
-  /mach-product-studio                 /mach
+  /mach-studio                 /mach
 
   describe the project
   interview, one question
@@ -143,7 +143,7 @@ A small team, or one person, can skip the left column: an engineer can groom an 
 Open Claude Code in the project folder and type:
 
 ```
-/mach-product-studio
+/mach-studio
 ```
 
 With nothing after it, it shows where things stand and suggests the next step. It also starts the visual app on your computer and shows its link: click it, or say "open the app", to work in your browser instead. The app and the conversation share the same drafts.
@@ -427,11 +427,11 @@ A cost appears only where one was recorded, which today means work the superviso
 
 ## Every command
 
-`/mach-product-studio` and `/mach` are the ones to remember. The station commands at the bottom of the table still work and you can run any of them yourself, but `/mach` calls them for you.
+`/mach-studio` and `/mach` are the ones to remember. The station commands at the bottom of the table still work and you can run any of them yourself, but `/mach` calls them for you.
 
 | Command | What it does |
 |---|---|
-| `/mach-product-studio` | Shape an idea before any epic (brief, case, verdict); project, epics, slices; a small change; mark a slice ready (a GitHub issue); requests from GitHub issues; `refresh`; "open the app" |
+| `/mach-studio` | Shape an idea before any epic (brief, case, verdict); project, epics, slices; a small change; mark a slice ready (a GitHub issue); requests from GitHub issues; `refresh`; "open the app" |
 | `/mach-idea` | For anyone: describe an idea in your own words and send it to the product team as a GitHub issue (or get the text to paste) |
 | `/mach <ticket>` | Move one ticket to the next point a person is needed |
 | `/mach <ticket> <ticket> ...` | Run several tickets, scheduled by MACH's rules; `--dry-run`, `--limit <n>`, `--sequential` |

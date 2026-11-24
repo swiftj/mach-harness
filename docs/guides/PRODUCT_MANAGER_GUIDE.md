@@ -25,7 +25,7 @@ If the visual app could not be downloaded, the install still succeeds and says s
 
 ## 2. Starting Product Studio
 
-In Claude Code, in the project folder, ask for Product Studio. With the plugin the skill is `/mach:product-studio`. With the one-project install it is `/mach-product-studio`. With nothing after it, it shows where things stand and suggests the next step.
+In Claude Code, in the project folder, ask for Product Studio. With the plugin the skill is `/mach:studio`. With the one-project install it is `/mach-studio`. With nothing after it, it shows where things stand and suggests the next step.
 
 Each time you start Product Studio, MACH also starts the visual app on your own computer and shows you its link with where things stand. Click the link, or paste it into a browser on your computer. To have the app open in your browser for you, say "open the app". The link works once and only on your computer. Do not share it. For another browser, or if you closed the page, ask for a new link. The app and the conversation work on the same drafts, so you can switch between them.
 

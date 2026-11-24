@@ -299,7 +299,7 @@ class BoundariesTest(unittest.TestCase):
         self.assertIn("issue_rules.epic_view_comment(", body)  # the only text written is the fixed template around the compiled view
 
     def test_studio_epic_current_reads_only_the_compiler(self):
-        source = (ROOT / "skills" / "product-studio" / "scripts" / "studio.py").read_text()
+        source = (ROOT / "skills" / "studio" / "scripts" / "studio.py").read_text()
         body = source[source.index("def cmd_epic_current("):source.index("# ---- M13 part E")]
         self.assertEqual(sorted(set(re.findall(r"\bcompiler\.([a-z_]+)\(", body))), ["human", "integration", "report"])
         for word in ("gh", "issues.", "handoff", "collab", "write", "fetch", "push", "ticket"):

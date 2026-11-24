@@ -73,7 +73,7 @@ func TestThePrdConversationOverHTTPBeforeAnyProject(t *testing.T) {
 	}
 	h.mustOp("prd.map", `{"prd_id":"PRD-01","map":`+prdMap+`}`)
 	calls := testkit.Calls(t, claude)
-	if len(calls) != 1 || calls[0].Argv[len(calls[0].Argv)-1] != "/mach:product-studio start from PRD-01. Propose a map of this PRD with the product "+
+	if len(calls) != 1 || calls[0].Argv[len(calls[0].Argv)-1] != "/mach:studio start from PRD-01. Propose a map of this PRD with the product "+
 		"manager: run status and prd show first, then propose the map in one message and ask whether to record it." {
 		t.Fatalf("calls %+v", calls)
 	}

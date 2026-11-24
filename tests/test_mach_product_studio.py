@@ -13,7 +13,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SCRIPTS = ROOT / "skills" / "product-studio" / "scripts"
+SCRIPTS = ROOT / "skills" / "studio" / "scripts"
 INTENT = ROOT / "skills" / "intent"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(INTENT / "scripts"))
@@ -227,7 +227,7 @@ class ApprovalGateTest(Base):
         self.ready_slice()
         (self.draft / "product/intents/SLICE-001.md").unlink()
         self.assertIn("is missing", self.refused("slice", "ready", "SLICE-001"))
-        self.write_intent(text=(ROOT / "skills/product-studio/assets/intent-template.md").read_text())
+        self.write_intent(text=(ROOT / "skills/studio/assets/intent-template.md").read_text())
         self.assertIn("placeholder", self.refused("slice", "ready", "SLICE-001"))
         self.write_intent(text=INTENT_TEXT.replace("- **Tier:** High", "- **Tier:** Severe"))
         self.assertIn("Tier", self.refused("slice", "ready", "SLICE-001"))
@@ -742,7 +742,7 @@ def cell_validator():
 
 class IntentTemplateTest(unittest.TestCase):
     def test_slice_intent_template_keeps_the_intent_sections_without_a_ticket(self):
-        text = (ROOT / "skills/product-studio/assets/intent-template.md").read_text()
+        text = (ROOT / "skills/studio/assets/intent-template.md").read_text()
         sections = cell.markdown_sections(text)
         self.assertEqual([name for name in sections if name], list(cell.INTENT_SECTIONS))
         header = cell.fields(sections[""])

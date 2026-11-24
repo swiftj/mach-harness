@@ -214,7 +214,7 @@ func TestTheInterviewerProcessIsExactlyAsSpecified(t *testing.T) {
 	r := newRig(t, testkit.Turn{Text: testkit.QuestionText(1, "Who invites")}, testkit.Turn{Text: testkit.QuestionText(2, "Seats")})
 	started := r.start("SLICE-001")
 	evs := until(t, r.bridge, started.InterviewID, 0, "waiting_for_reply")
-	if err := r.bridge.Reply(context.Background(), started.InterviewID, "/mach:product-studio approve SLICE-001"); err != nil {
+	if err := r.bridge.Reply(context.Background(), started.InterviewID, "/mach:studio approve SLICE-001"); err != nil {
 		t.Fatal(err)
 	}
 	until(t, r.bridge, started.InterviewID, lastSeq(evs), "waiting_for_reply")
@@ -226,12 +226,12 @@ func TestTheInterviewerProcessIsExactlyAsSpecified(t *testing.T) {
 	first := calls[0]
 	session := first.Argv[indexOf(first.Argv, "--session-id")+1]
 	want := p.Args("SLICE-001", interview.TurnOptions{BudgetUSD: 2, SessionID: session},
-		"/mach:product-studio continue SLICE-001. The app just created it in EPIC-001 for this idea from the product manager: let an admin invite a teammate")
+		"/mach:studio continue SLICE-001. The app just created it in EPIC-001 for this idea from the product manager: let an admin invite a teammate")
 	if strings.Join(first.Argv, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("argv\n got %q\nwant %q", first.Argv, want)
 	}
 	skills := filepath.Dir(filepath.Dir(filepath.Dir(testkit.Script(t))))
-	if strings.Join(p.ReadDirs, " ") != filepath.Join(skills, "intent")+" "+filepath.Join(skills, "product-studio") {
+	if strings.Join(p.ReadDirs, " ") != filepath.Join(skills, "intent")+" "+filepath.Join(skills, "studio") {
 		t.Fatalf("read folders %q", p.ReadDirs)
 	}
 	head := []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--restricted",
@@ -259,7 +259,7 @@ func TestTheInterviewerProcessIsExactlyAsSpecified(t *testing.T) {
 	if second[indexOf(second, "--resume")+1] != session || indexOf(second, "--session-id") >= 0 {
 		t.Fatal("the second turn does not resume the session")
 	}
-	if got := second[len(second)-1]; got != "The product manager replied: /mach:product-studio approve SLICE-001" || second[len(second)-2] != "--" {
+	if got := second[len(second)-1]; got != "The product manager replied: /mach:studio approve SLICE-001" || second[len(second)-2] != "--" {
 		t.Fatalf("reply message %q", got)
 	}
 	// The environment is the minimal one, never the host's.
@@ -359,7 +359,7 @@ func TestTheOneSkillPluginIsStable(t *testing.T) {
 	if string(manifest) != `{"name": "mach", "version": "0.0.0-interviewer", "description": "Product Studio interviewer"}` {
 		t.Fatalf("manifest %s", manifest)
 	}
-	target, err := os.Readlink(filepath.Join(plugin, "skills", "product-studio"))
+	target, err := os.Readlink(filepath.Join(plugin, "skills", "studio"))
 	if err != nil || target != filepath.Dir(filepath.Dir(testkit.Script(t))) {
 		t.Fatalf("link %s %v", target, err)
 	}
@@ -731,18 +731,18 @@ func TestCapability(t *testing.T) {
 	}
 	r := newRig(t)
 	testkit.SetFakeFile(t, r.claude, "auth.json", `{"loggedIn": false}`)
-	if ok, reason := r.bridge.Available(); ok || !strings.Contains(reason, "/mach:product-studio continue SLICE-NNN") {
+	if ok, reason := r.bridge.Available(); ok || !strings.Contains(reason, "/mach:studio continue SLICE-NNN") {
 		t.Fatalf("bridge reason: %q", reason)
 	}
-	if r.bridge.ContinueCommand() != "/mach:product-studio continue" {
+	if r.bridge.ContinueCommand() != "/mach:studio continue" {
 		t.Fatal(r.bridge.ContinueCommand())
 	}
-	if interview.ContinueCommandFor("/p/.claude/skills/mach-product-studio/scripts/studio.py") != "/mach-product-studio continue" {
+	if interview.ContinueCommandFor("/p/.claude/skills/mach-studio/scripts/studio.py") != "/mach-studio continue" {
 		t.Fatal("project install command")
 	}
 	// M16 clean-up: the idea's own command, for the same install.
-	for given, want := range map[string]string{"/mach:product-studio continue": "/mach:product-studio explore",
-		"/mach-product-studio continue": "/mach-product-studio explore", "": "", "continue": "", "/x y continue": "", "/mach:product-studio": ""} {
+	for given, want := range map[string]string{"/mach:studio continue": "/mach:studio explore",
+		"/mach-studio continue": "/mach-studio explore", "": "", "continue": "", "/x y continue": "", "/mach:studio": ""} {
 		if got := interview.ExploreCommandOf(given); got != want {
 			t.Errorf("ExploreCommandOf(%q) = %q, want %q", given, got, want)
 		}

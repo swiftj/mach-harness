@@ -57,7 +57,7 @@ func TestTheShapeConversationOverHTTP(t *testing.T) {
 	}
 	h.mustOp("idea.stage", `{"idea_id":"IDEA-001","stage":"exploring"}`)
 	calls := testkit.Calls(t, claude)
-	if len(calls) != 1 || calls[0].Argv[len(calls[0].Argv)-1] != "/mach:product-studio explore IDEA-001. Explore this idea with the product manager: run idea show first, then ask open questions, one at a time." {
+	if len(calls) != 1 || calls[0].Argv[len(calls[0].Argv)-1] != "/mach:studio explore IDEA-001. Explore this idea with the product manager: run idea show first, then ask open questions, one at a time." {
 		t.Fatalf("calls %+v", calls)
 	}
 	status, env = h.call("GET", "/api/interview/history?idea_id=IDEA-001", "", nil)

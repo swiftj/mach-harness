@@ -1,6 +1,6 @@
 /**
  * M18: a small change (docs/mach-next/M18_DESIGN.md part C, docs/mach-next/M18_APP.md). The shapes are the engine's own
- * (skills/product-studio/scripts/small_change.py), from the real fixtures in web/fixtures (small_memory.py). A slice
+ * (skills/studio/scripts/small_change.py), from the real fixtures in web/fixtures (small_memory.py). A slice
  * started any other way carries none of these fields, so every one is optional where it appears.
  */
 import type { WorkOrder } from "./types";

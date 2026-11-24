@@ -163,8 +163,8 @@ test("an open question is read for display; anything else is shown as written", 
 });
 
 test("the terminal command is the host's own explore command, with the idea's ID", () => {
-  assert.equal(exploreCommand("/mach:product-studio explore", "IDEA-002"), "/mach:product-studio explore IDEA-002");
-  assert.equal(exploreCommand("/mach-product-studio explore", "IDEA-002"), "/mach-product-studio explore IDEA-002");
+  assert.equal(exploreCommand("/mach:studio explore", "IDEA-002"), "/mach:studio explore IDEA-002");
+  assert.equal(exploreCommand("/mach-studio explore", "IDEA-002"), "/mach-studio explore IDEA-002");
   assert.equal(exploreCommand(null, "IDEA-002"), null);
   assert.equal(exploreCommand("  ", "IDEA-002"), null);
 });

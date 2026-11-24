@@ -50,7 +50,7 @@ class SelectTest(unittest.TestCase):
     def test_a_file_read_through_a_helper_selects_the_class_that_calls_it(self):
         # InstructionsTest reads with `read = lambda *parts: ROOT.joinpath(*parts).read_text()`, called with literal parts
         # and, in a loop, with `read(*path)`; the ten-commit check found the first form missed before it was followed.
-        hits = self.reaching("skills/product-studio/SKILL.md") & self.reaching("templates/REVIEW.md")
+        hits = self.reaching("skills/studio/SKILL.md") & self.reaching("templates/REVIEW.md")
         self.assertIn("test_mach_policy_packs.InstructionsTest", hits)
 
     def test_a_changed_test_module_selects_its_own_classes_and_its_importers(self):

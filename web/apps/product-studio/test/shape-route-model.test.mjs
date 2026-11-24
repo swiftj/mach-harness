@@ -105,7 +105,7 @@ test("there are exactly four routes, the engine's, the light path first (M18)", 
     ["small-change", "one-slice", "epic", "several-epics"],
   );
   assert.equal(routeName("small-change"), "A small change");
-  const engine = readFileSync(new URL("../../../../skills/product-studio/scripts/shape_route.py", import.meta.url), "utf8");
+  const engine = readFileSync(new URL("../../../../skills/studio/scripts/shape_route.py", import.meta.url), "utf8");
   for (const r of ROUTES) assert.ok(engine.includes(`"${r.route}"`), r.route);
 });
 

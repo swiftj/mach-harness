@@ -11,7 +11,7 @@
       "/Users/johnswift/Projects/mach-harness/skills/intent/references/ears-syntax.md",
       "/Users/johnswift/Projects/mach-harness/skills/intent/references/acceptance-matrices.md"
     ],
-    "intent_template": "/Users/johnswift/Projects/mach-harness/skills/product-studio/assets/intent-template.md",
+    "intent_template": "/Users/johnswift/Projects/mach-harness/skills/studio/assets/intent-template.md",
     "is_git_repository": true
   },
   "refused": null,

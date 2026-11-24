@@ -6,7 +6,7 @@ import (
 )
 
 // The operations M17 added to the engine, for the Technical needs screens: technical needs and a
-// design the team already has (skills/product-studio/scripts/needs.py and design.py). Each is one
+// design the team already has (skills/studio/scripts/needs.py and design.py). Each is one
 // engine command with a fixed argument vector, as every other operation is. `design map` is not one
 // of them: the needs conversation records a map (interview.Paths); no person's button does.
 

@@ -14,7 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT / "skills" / "product-studio" / "scripts"))
+sys.path.insert(0, str(ROOT / "skills" / "studio" / "scripts"))
 sys.path.insert(0, str(ROOT / "skills" / "intent" / "scripts"))
 import prd  # noqa: E402
 import product  # noqa: E402

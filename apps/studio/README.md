@@ -1,7 +1,7 @@
 # mach-studio: the local host for the visual Product Studio
 
 A small Go program that serves the Product Studio web app on the loopback interface. It passes the
-app's requests to the Product Studio engine, `skills/product-studio/scripts/studio.py`, and runs
+app's requests to the Product Studio engine, `skills/studio/scripts/studio.py`, and runs
 the guided interview through the person's own Claude Code. The engine decides every product rule;
 the host checks the shape and safety of a request, runs one allowlisted engine operation, and
 returns what the engine said. The working contract is `docs/mach-next/M5_CONTRACT.md` (section 8
@@ -54,7 +54,7 @@ bin/mach-studio --project ~/work/team-space --no-open
 | `--engine <path>` | `studio.py`. Default: found as below. For tests. |
 
 Start-up prints `Open: http://127.0.0.1:<port>/?t=<token>` and opens it (not with `--no-open`,
-which is how the product-studio skill starts it). The link works once. In a project that has a
+which is how the studio skill starts it). The link works once. In a project that has a
 `.factory/` folder the host also keeps the next unused link in `.factory/local/studio/link` (mode
 0600, in a folder private to the user with its own `.gitignore`; a symbolic link in place of either
 folder is refused), writes it at start, replaces it each time a link is used, and removes it on exit.
@@ -76,9 +76,9 @@ Resolved once, at start-up, to absolute paths that are then fixed for the life o
 
 1. `--engine`, if given.
 2. Next to the binary: its folder and each folder above it (up to eight levels), first
-   `skills/product-studio/scripts/studio.py` (the plugin, or this repository), then
-   `.claude/skills/mach-product-studio/scripts/studio.py` (a script install into a project).
-3. The project: `<project>/.claude/skills/mach-product-studio/scripts/studio.py`.
+   `skills/studio/scripts/studio.py` (the plugin, or this repository), then
+   `.claude/skills/mach-studio/scripts/studio.py` (a script install into a project).
+3. The project: `<project>/.claude/skills/mach-studio/scripts/studio.py`.
 
 The binary is checked before the project so the host and the engine come from the same install.
 The interpreter is `--python`, else `python3` on `PATH`, made absolute (not resolved through
@@ -126,10 +126,10 @@ application/json`. A GET never needs Origin or the CSRF token.
 | `POST /api/interview/<id>/interrupt` | `{}` | `{interrupted: true}` once the turn has stopped; `conflict` when no turn is running |
 | `POST /api/interview/<id>/stop` | `{}` | `{stopped: true}`; the draft, the saved note and the Claude session remain |
 
-`continue_command` is `/mach:product-studio continue` (plugin) or `/mach-product-studio continue`
+`continue_command` is `/mach:studio continue` (plugin) or `/mach-studio continue`
 (project install); the app adds the slice ID. `explore_command` (M16) is the same install's
-`/mach:product-studio explore` or `/mach-product-studio explore`; the app adds the idea's ID.
-`needs_command` (M17) is the same install's `/mach:product-studio needs` or `/mach-product-studio needs`.
+`/mach:studio explore` or `/mach-studio explore`; the app adds the idea's ID.
+`needs_command` (M17) is the same install's `/mach:studio needs` or `/mach-studio needs`.
 
 Requests from GitHub issues (M8, `docs/mach-next/M8_DESIGN.md` D8) are five more operations, each
 one engine command; `number` is a JSON whole number from 1 to 999,999,999 (a string, a fraction, zero
@@ -257,7 +257,7 @@ The exact vector (`internal/interview/command.go`, asserted by a test):
 ```
 claude -p --output-format stream-json --verbose --include-partial-messages
   --restricted --plugin-dir <project>/.factory/studio/interviews/plugin
-  --add-dir <product-studio skill> --add-dir <intent skill>        (only when outside the project)
+  --add-dir <studio skill> --add-dir <intent skill>        (only when outside the project)
   --strict-mcp-config --permission-mode default --permission-prompts none
   --tools Read,Glob,Grep,Edit,Write,Bash
   --allowedTools <generated> --disallowedTools <generated>
@@ -284,7 +284,7 @@ claude -p --output-format stream-json --verbose --include-partial-messages
   slice command, the stage, verdict, size, map, settle, map-status, apply, change, chain, publish,
   renumber, add and look back, every act of principles, policies, Jira, the PRD on-ramp and
   requests, and the names the app never offers. Its first message is
-  `/mach:product-studio explore <IDEA>.` and a fixed sentence; nothing the person typed is added.
+  `/mach:studio explore <IDEA>.` and a fixed sentence; nothing the person typed is added.
   A shaped idea is refused before Claude Code starts. Its session, lock and history are
   `<IDEA>.json`, `<IDEA>.lock` and `<IDEA>.events.jsonl` beside the slices'.
 - Since M17 the slice interview and the Shape conversation also deny every `need` and `design`
@@ -298,7 +298,7 @@ claude -p --output-format stream-json --verbose --include-partial-messages
   `product/needs.json` is written only by the engine. Denied again: `need retire|publish`,
   `reconcile`, `design import|settle|publish`, every slice, Shape, project and epic command, the
   acts of principles, policies, Jira, the PRD on-ramp and requests, and the names the app never
-  offers. Its first message is `/mach:product-studio needs.` and a fixed sentence. It is refused
+  offers. Its first message is `/mach:studio needs.` and a fixed sentence. It is refused
   before Claude Code starts when the project does not exist. Its session, lock and history are
   `needs.json`, `needs.lock` and `needs.events.jsonl`.
 - The environment is `HOME USER LOGNAME PATH LANG LC_ALL TMPDIR SHELL TERM` and
@@ -306,7 +306,7 @@ claude -p --output-format stream-json --verbose --include-partial-messages
 - The working folder is the project's real path. Stderr and the raw stream are never logged or sent.
 - Local state: `.factory/studio/interviews/<SLICE>.json` (session ID, turns, cost, last message),
   `<SLICE>.lock` (flock for the whole interview, the same lock the terminal prototype takes), and
-  `plugin/` (a one-skill plugin whose skill is a link to the installed product-studio skill).
+  `plugin/` (a one-skill plugin whose skill is a link to the installed studio skill).
 - `--add-dir`: with `--restricted` the file tools reach only the working folders. In a plugin
   install the interview method, templates and spec rules (`studio.py where`) live outside the
   project, so the two skill folders are added, read-only in effect (no rule allows editing or

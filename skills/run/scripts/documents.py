@@ -78,7 +78,7 @@ def prd() -> Any:
     """Product Studio's prd.py, whose document reading every imported document shares, whichever way MACH is installed."""
     if "prd" not in _LOADED:
         skills = Path(__file__).resolve().parent.parent.parent
-        folder = next((skills / name / "scripts" for name in ("mach-product-studio", "product-studio") if (skills / name / "scripts" / "prd.py").is_file()), None)
+        folder = next((skills / name / "scripts" for name in ("mach-studio", "studio") if (skills / name / "scripts" / "prd.py").is_file()), None)
         if folder is None:
             raise DocumentError(f"MACH's Product Studio skill, which reads documents, is not installed beside this one ({skills}).")
         if "one_writer" not in sys.modules:  # prd.py imports its neighbour by name

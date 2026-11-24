@@ -43,7 +43,7 @@ const folder = new URL("../src/features/needs/design/", import.meta.url);
 const source = (file) => readFileSync(new URL(file, folder), "utf8");
 const files = () => readdirSync(folder).filter((f) => /\.tsx?$/.test(f));
 const allSources = () => files().map((f) => source(f)).join("\n");
-const engine = readFileSync(new URL("../../../../skills/product-studio/scripts/design.py", import.meta.url), "utf8");
+const engine = readFileSync(new URL("../../../../skills/studio/scripts/design.py", import.meta.url), "utf8");
 
 test("where each design stands, from the engine's summary, in one word with the same words on the list and the page", () => {
   const one = (name) => data(name).designs[0];

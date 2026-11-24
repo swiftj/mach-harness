@@ -325,13 +325,13 @@ func TestLocateScript(t *testing.T) {
 		os.WriteFile(path, []byte("# stand-in\n"), 0o644)
 		return path
 	}
-	plugin := write("plugin/skills/product-studio/scripts/studio.py")
+	plugin := write("plugin/skills/studio/scripts/studio.py")
 	binary := write("plugin/apps/studio/bin/mach-studio")
 	got, err := engine.LocateScript("", binary, "")
 	if err != nil || got.Script != plugin || got.Install != "plugin" {
 		t.Fatalf("plugin layout: %+v %v", got, err)
 	}
-	installed := write("project/.claude/skills/mach-product-studio/scripts/studio.py")
+	installed := write("project/.claude/skills/mach-studio/scripts/studio.py")
 	bin := write("project/.claude/bin/mach-studio")
 	if got, err := engine.LocateScript("", bin, ""); err != nil || got.Script != installed || got.Install != "project" {
 		t.Fatalf("project install next to the binary: %+v %v", got, err)

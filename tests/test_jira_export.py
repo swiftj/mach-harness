@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
-sys.path.insert(0, str(ROOT / "skills" / "product-studio" / "scripts"))
+sys.path.insert(0, str(ROOT / "skills" / "studio" / "scripts"))
 import jira_export  # noqa: E402
 import test_mach_product_issues as issues_tests  # noqa: E402
 
@@ -311,7 +311,7 @@ class IsolationTest(unittest.TestCase):
     """The export and the keys reach neither GitHub, Git nor any network, and change Studio only through its link helpers."""
 
     def test_no_network_library_no_git_and_no_gh(self):
-        source = (ROOT / "skills" / "product-studio" / "scripts" / "jira_export.py").read_text()
+        source = (ROOT / "skills" / "studio" / "scripts" / "jira_export.py").read_text()
         imported = set()
         for node in ast.walk(ast.parse(source)):
             if isinstance(node, ast.Import):

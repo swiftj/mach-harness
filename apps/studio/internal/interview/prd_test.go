@@ -173,7 +173,7 @@ func TestThePrdConversationRunsWithItsOwnRulesAndRecordsTheMap(t *testing.T) {
 	p := r.bridge.Paths()
 	first := calls[0].Argv
 	session := first[indexOf(first, "--session-id")+1]
-	want := p.Args("PRD-01", interview.TurnOptions{BudgetUSD: 2, SessionID: session}, "/mach:product-studio start from PRD-01. "+interview.PrdOpeningNote)
+	want := p.Args("PRD-01", interview.TurnOptions{BudgetUSD: 2, SessionID: session}, "/mach:studio start from PRD-01. "+interview.PrdOpeningNote)
 	if strings.Join(first, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("argv\n got %q\nwant %q", first, want)
 	}

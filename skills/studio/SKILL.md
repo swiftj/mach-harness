@@ -1,5 +1,5 @@
 ---
-name: product-studio
+name: studio
 description: MACH Product Studio, the product manager's workspace. Shapes ideas (brief, case, verdict) before epics; defines a project's vision and outcomes, its product principles, its epics, and one thin slice at a time through a guided interview (one yes-or-no question at a time); saves and resumes drafts; marks a finished slice ready for the builders, saving it as a GitHub issue under its epic (or to a folder); takes a ready slice back to change it; and shows what is on GitHub. Use when a product manager or founder wants to shape an idea, write a brief, ask if an idea is worth building, plan a product, define or change a project, set principles, add an epic, start or continue a slice, see where product work stands, mark a slice ready or change one that is ready, catch up with what others saved, or look at requests. Works in a private draft workspace; the PM never runs Git or opens GitHub. It never starts engineering work. Not for grooming an engineering ticket or a crash report: that is the intent skill.
 argument-hint: "[what you want to do, an idea, slice or epic ID, or nothing to see where things stand]"
 effort: high

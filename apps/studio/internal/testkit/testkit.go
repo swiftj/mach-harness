@@ -54,7 +54,7 @@ func RepoRoot(t testing.TB) string {
 		t.Fatal(err)
 	}
 	for {
-		if _, err := os.Stat(filepath.Join(dir, "skills", "product-studio", "scripts", "studio.py")); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, "skills", "studio", "scripts", "studio.py")); err == nil {
 			return dir
 		}
 		parent := filepath.Dir(dir)
@@ -67,7 +67,7 @@ func RepoRoot(t testing.TB) string {
 
 // Script is the real studio.py.
 func Script(t testing.TB) string {
-	return filepath.Join(RepoRoot(t), "skills", "product-studio", "scripts", "studio.py")
+	return filepath.Join(RepoRoot(t), "skills", "studio", "scripts", "studio.py")
 }
 
 // Python is python3 on PATH; the test is skipped without it.

@@ -7,6 +7,7 @@ Keep this file current: when a piece below is finished or the plan changes, chan
 ## 1. State
 
 - **Released:** 0.23.0, tag `v0.23.0`, on `main`. Nothing is unmerged.
+- **On `main` since 0.23.0, not released:** Product Studio's command is `/mach-studio` (plugin: `/mach:studio`), renamed from `/mach-product-studio` on 2026-11-24. The skill's folder is `skills/studio`; the product is still called MACH Product Studio, and the web app's folder and package keep their names. An update removes the old `mach-product-studio` skill folder from a project. The next release notes must say the command changed. On the owner's word only three test modules, two Go packages, the manifests and the web typecheck were run for it, not the whole suite.
 - **What 0.23.0 added:** Decisions in force, a read-only page on the Factory Floor for architecture decisions.
 - **What 0.22.1 added:** a sign of life for slow builds, the merge plan's two refusals, the "Unattended runs: off" label, five layout items and four defect fixes (section 2.3).
 - **What 0.22.0 added:** qualifying a release on any machine, from each slice's committed change record (A6 of the M20 design).

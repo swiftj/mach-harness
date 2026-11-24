@@ -532,7 +532,7 @@ class InstructionsTest(unittest.TestCase):
         self.assertIn("## Policies", read("skills", "intent", "references", "spec-structure.md"))
         self.assertIn("## Policies", read("skills", "intent", "assets", "slice-template.md"))
         self.assertIn("CELL policies", read("skills", "intent", "SKILL.md"))
-        self.assertIn("policy accept", read("skills", "product-studio", "SKILL.md"))
+        self.assertIn("policy accept", read("skills", "studio", "SKILL.md"))
         self.assertIn("policy accept", read("skills", "run", "SKILL.md"))
         self.assertIn("Policies", read("agents", "contract-engineer.md"))
         for path in (("skills", "review", "references", "security.md"), ("skills", "review", "references", "product.md"),

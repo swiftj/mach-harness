@@ -104,7 +104,7 @@ class FeedbackIsDataTest(unittest.TestCase):
     collab's gh calls are argv lists and review text is only ever a value in the JSON it prints."""
 
     def test_reviewer_text_never_reaches_a_command(self):
-        source = (ROOT / "skills/product-studio/scripts/collab.py").read_text(encoding="utf-8")
+        source = (ROOT / "skills/studio/scripts/collab.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and getattr(node.func, "attr", getattr(node.func, "id", "")) in ("run", "Popen", "check_output", "call"):

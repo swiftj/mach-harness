@@ -62,7 +62,7 @@ Never give only a tier and a number. Never say a repository "scored" or "came ba
 
 `RUN` below means `python3 "${CLAUDE_SKILL_DIR}/scripts/run.py"`. It reads what every station recorded and names the single next step.
 
-If the input is `floor`, or the person asks in words to open the Factory Floor, to watch the factory, or to see the Factory live in a browser, go to **The Factory Floor** at the end. If the input is `studio`, or the person asks in words to open Product Studio or its app, use the product-studio skill with "open the app" and follow its **The visual app** steps (step 5 opens the browser). Both are words this skill recognises, for a person; neither is a command of `RUN`, and neither takes an argument. Never open either on your own initiative, in headless mode, or inside a supervised Factory execution.
+If the input is `floor`, or the person asks in words to open the Factory Floor, to watch the factory, or to see the Factory live in a browser, go to **The Factory Floor** at the end. If the input is `studio`, or the person asks in words to open Product Studio or its app, use the studio skill with "open the app" and follow its **The visual app** steps (step 5 opens the browser). Both are words this skill recognises, for a person; neither is a command of `RUN`, and neither takes an argument. Never open either on your own initiative, in headless mode, or inside a supervised Factory execution.
 
 ## Locating the script
 

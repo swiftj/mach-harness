@@ -420,7 +420,7 @@ class ActivationTest(Base):
             self.assertEqual(self.factory("status", project=project)["factory"], "disabled")
         tracked = git(self.origin, "ls-tree", "-r", "--name-only", "main").split()
         self.assertEqual([name for name in tracked if ".factory/local" in name or "runner" in name], [])
-        studio_sources = "".join((ROOT / "skills/product-studio/scripts" / name).read_text() for name in ("studio.py", "collab.py"))
+        studio_sources = "".join((ROOT / "skills/studio/scripts" / name).read_text() for name in ("studio.py", "collab.py"))
         for word in ("policy.py", "import policy", "activation", "factory enable", ".factory/local"):
             self.assertNotIn(word, studio_sources)
 
@@ -1512,7 +1512,7 @@ class BoundaryTest(Base):
             for path in source.rglob("*"):
                 if path.is_file() and "__pycache__" not in path.parts:
                     self.assertEqual((folder / "skills" / name / path.relative_to(source)).read_bytes(), path.read_bytes(), str(path))
-        self.assertFalse((folder / "skills/product-studio").exists())  # a product manager's skill has no place in an unattended run
+        self.assertFalse((folder / "skills/studio").exists())  # a product manager's skill has no place in an unattended run
         self.assertEqual(json.loads((folder / ".claude-plugin/plugin.json").read_text())["name"], "mach")
         # The path never changes, and an unchanged install is not rewritten under a running execution.
         stamp = (folder / executor.PLUGIN_STAMP).stat().st_mtime_ns

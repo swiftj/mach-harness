@@ -21,7 +21,7 @@ const run = (name) => JSON.parse(readFileSync(new URL(`${name}.json`, folder), "
 const shapeFixtures = readdirSync(folder).filter((f) => /^(idea|brief|case|verdict|lookback)\.|^(status|refresh)\.ideas/.test(f)).map((f) => f.slice(0, -5));
 
 test("every next step the engine can name for an idea leads to one of the six steps", () => {
-  const sources = ["shape.py", "shape_route.py"].map((f) => readFileSync(new URL(`../../../../skills/product-studio/scripts/${f}`, import.meta.url), "utf8")).join("\n");
+  const sources = ["shape.py", "shape_route.py"].map((f) => readFileSync(new URL(`../../../../skills/studio/scripts/${f}`, import.meta.url), "utf8")).join("\n");
   const kinds = [...new Set([...sources.matchAll(/step\("([a-z_]+)"/g)].map((m) => m[1]))].filter((k) => !["labels", "issue", "state", "verdict"].includes(k));
   assert.ok(kinds.includes("look_back") && kinds.includes("record_verdict") && kinds.includes("apply"), kinds.join(","));
   const known = { explore: "explore", write_brief: "explore", check_brief: "brief", record_verdict: "case", publish: "case", renumber: "case", size: "route", map: "route", settle: "route", apply: "route", look_back: "look-back" };

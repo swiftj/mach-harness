@@ -118,7 +118,7 @@ type Bridge interface {
 	// Available says whether interviews can run here, and if not, why, in a person's words.
 	Available() (bool, string)
 	// ContinueCommand is the command that continues an interview in Claude Code, without the slice
-	// ID: "/mach:product-studio continue" (plugin) or "/mach-product-studio continue" (project).
+	// ID: "/mach:studio continue" (plugin) or "/mach-studio continue" (project).
 	ContinueCommand() string
 	Start(ctx context.Context, req StartRequest) (Started, error)
 	Current(sliceID string) (*Current, error)
@@ -160,7 +160,7 @@ func (u Unavailable) ContinueCommand() string {
 	if u.Command != "" {
 		return u.Command
 	}
-	return "/mach:product-studio continue"
+	return "/mach:studio continue"
 }
 
 func (Unavailable) Start(context.Context, StartRequest) (Started, error) {

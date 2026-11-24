@@ -1,4 +1,4 @@
-// Conformance: the terminal engine (studio.py run directly, as /mach:product-studio does) and the
+// Conformance: the terminal engine (studio.py run directly, as /mach:studio does) and the
 // host API must leave equivalent workspaces, reports and GitHub issues for the same operations,
 // and the host must expose exactly its allowlist: none of the engine's leftover commands.
 //

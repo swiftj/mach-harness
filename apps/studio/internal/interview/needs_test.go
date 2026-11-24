@@ -160,9 +160,9 @@ func TestTheSliceInterviewAndTheShapeConversationReachNoneOfTheNeeds(t *testing.
 
 func TestTheNeedsCommandFollowsTheInstall(t *testing.T) {
 	for continueCommand, want := range map[string]string{
-		"/mach:product-studio continue": "/mach:product-studio needs",
-		"/mach-product-studio continue": "/mach-product-studio needs",
-		"/mach:product-studio":          "",
+		"/mach:studio continue": "/mach:studio needs",
+		"/mach-studio continue": "/mach-studio needs",
+		"/mach:studio":          "",
 		"two words continue":            "",
 		"":                              "",
 	} {
@@ -213,7 +213,7 @@ func TestTheNeedsConversationRunsWithItsOwnRulesAndRecords(t *testing.T) {
 	p := r.bridge.Paths()
 	first := calls[0].Argv
 	session := first[indexOf(first, "--session-id")+1]
-	want := p.Args(interview.NeedsSubject, interview.TurnOptions{BudgetUSD: 2, SessionID: session}, "/mach:product-studio needs. "+interview.NeedsOpeningNote)
+	want := p.Args(interview.NeedsSubject, interview.TurnOptions{BudgetUSD: 2, SessionID: session}, "/mach:studio needs. "+interview.NeedsOpeningNote)
 	if strings.Join(first, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("argv\n got %q\nwant %q", first, want)
 	}

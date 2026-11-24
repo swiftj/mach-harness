@@ -1,6 +1,6 @@
 # Interview method
 
-How to interview a Product Manager (PM) about one slice. The intent skill and the product-studio skill both follow this file, so a slice is questioned the same way wherever it starts. The skill that sent you here names the commands and files; "Phase 3" and "Phase 4" are that skill's Sanity Check and Spec Write-up phases.
+How to interview a Product Manager (PM) about one slice. The intent skill and the studio skill both follow this file, so a slice is questioned the same way wherever it starts. The skill that sent you here names the commands and files; "Phase 3" and "Phase 4" are that skill's Sanity Check and Spec Write-up phases.
 
 ## Interview guardrails
 

@@ -68,7 +68,7 @@ func TestTheNeedsConversationOverHTTP(t *testing.T) {
 	}
 	h.mustOp("need.none", `{"kind":"connections"}`)
 	calls := testkit.Calls(t, claude)
-	if len(calls) != 1 || calls[0].Argv[len(calls[0].Argv)-1] != "/mach:product-studio needs. Talk through the product's technical needs with the product manager: "+
+	if len(calls) != 1 || calls[0].Argv[len(calls[0].Argv)-1] != "/mach:studio needs. Talk through the product's technical needs with the product manager: "+
 		"run need list first, then ask about the unanswered kinds, one open question at a time." {
 		t.Fatalf("calls %+v", calls)
 	}

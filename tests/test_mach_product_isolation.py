@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PRODUCT_SCRIPTS = ROOT / "skills" / "product-studio" / "scripts"
+PRODUCT_SCRIPTS = ROOT / "skills" / "studio" / "scripts"
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(PRODUCT_SCRIPTS))
 from product import read_local_policy, validate_workspace  # noqa: E402
@@ -83,12 +83,12 @@ class NothingIsWiredInTest(unittest.TestCase):
         found = []
         for top in ("skills", "agents", "workflows", "bin"):
             for path in sorted((ROOT / top).rglob("*")):
-                if path.is_file() and "__pycache__" not in path.parts and "product-studio" not in path.parts and path.suffix in (".py", ".js", ""):
+                if path.is_file() and "__pycache__" not in path.parts and "studio" not in path.parts and path.suffix in (".py", ".js", ""):
                     text = path.read_text(encoding="utf-8", errors="ignore")
                     found += [f"{path.relative_to(ROOT)}: {word}" for word in ("studio.py", "product.py", "collab.py", "import product", "import studio", "import collab") if word in text]
         self.assertEqual(found, [])
         source = (ROOT / "skills" / "run" / "scripts" / "intake.py").read_text()
-        for word in ("self.collab", "self.product", "sibling(\"product-studio\")"):
+        for word in ("self.collab", "self.product", "sibling(\"studio\")"):
             self.assertNotIn(word, source)  # M11: the Factory reads what Product Studio handed over, never its scripts
 
     def test_intake_reads_git_and_starts_nothing(self):
@@ -358,7 +358,7 @@ class NothingIsWiredInTest(unittest.TestCase):
         ticket_modules = {path.stem for path in (ROOT / "skills" / "ticket" / "scripts").glob("*.py")}
         self.assertIn("issue_rules", ticket_modules)
         found = set()
-        for path in sorted((ROOT / "skills" / "product-studio").rglob("*.py")):
+        for path in sorted((ROOT / "skills" / "studio").rglob("*.py")):
             for node in ast.walk(ast.parse(path.read_text())):
                 if isinstance(node, ast.Import):
                     found |= {alias.name.split(".")[0] for alias in node.names} & ticket_modules

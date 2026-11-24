@@ -114,8 +114,8 @@ func TestAnInterviewOverHTTP(t *testing.T) {
 		Capabilities map[string]any `json:"capabilities"`
 	}
 	json.Unmarshal(env.Data, &session)
-	if session.Capabilities["interview"] != true || session.Capabilities["continue_command"] != "/mach:product-studio continue" ||
-		session.Capabilities["explore_command"] != "/mach:product-studio explore" || session.Capabilities["needs_command"] != "/mach:product-studio needs" {
+	if session.Capabilities["interview"] != true || session.Capabilities["continue_command"] != "/mach:studio continue" ||
+		session.Capabilities["explore_command"] != "/mach:studio explore" || session.Capabilities["needs_command"] != "/mach:studio needs" {
 		t.Fatalf("capabilities %v", session.Capabilities)
 	}
 	h.startSlice()

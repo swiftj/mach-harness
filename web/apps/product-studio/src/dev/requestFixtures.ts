@@ -2,7 +2,7 @@
  * DEVELOPMENT ONLY. Loaded by `vite --mode fixtures`; never part of a production build.
  *
  * Answers the request operations (`request.list|show|pick|link|met`) in the engine's own shapes
- * (skills/product-studio/scripts/requests_in.py `item_view` and `block`). Query parameters before
+ * (skills/studio/scripts/requests_in.py `item_view` and `block`). Query parameters before
  * the hash choose the scenario:
  *
  *   ?requests=all       one request in every state (the default)

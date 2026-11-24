@@ -177,9 +177,9 @@ export const fixtureTransport: Transport = async ({ path, method, body }) => {
         interview_reason: unavailable
           ? "Claude Code 2.1.322 or later was not found on this computer, so the interview cannot run inside Product Studio. (Development fixture.)"
           : null,
-        continue_command: "/mach:product-studio continue",
-        explore_command: "/mach:product-studio explore",
-        needs_command: "/mach:product-studio needs",
+        continue_command: "/mach:studio continue",
+        explore_command: "/mach:studio explore",
+        needs_command: "/mach:studio needs",
       },
       versions: { host: "fixtures", api: 1, engine_install: null },
       engine_problem: null,

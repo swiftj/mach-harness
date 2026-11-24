@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
-for folder in ("ticket", "intent", "product-studio"):
+for folder in ("ticket", "intent", "studio"):
     sys.path.insert(0, str(ROOT / "skills" / folder / "scripts"))
 import issue_rules  # noqa: E402
 import studio  # noqa: E402
