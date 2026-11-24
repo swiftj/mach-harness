@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import unittest
+from unittest import mock
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -536,6 +537,64 @@ class TwoDriversTest(Base):
         self.assertEqual([item["lane"] for item in answer["lanes"]], ["L1", "L2"])
         self.assertEqual(json.loads(self.lane_file("L2").read_text())["holder"], OTHER)
         self.assertEqual(self.next_step("--holder", HOLDER)["needs"], "worker-in-cell", "the first driver is now the other one")
+
+    def test_the_schedule_holds_a_ticket_whose_lanes_another_driver_holds_by_the_same_rule_as_next(self):
+        self.opened()
+        self.age(self.cellroot / "claim.json")  # only the live lanes hold it now
+        held = self.run_json("schedule", TICKET, "--holder", OTHER)
+        self.assertEqual(held["start"], [])
+        (item,) = held["held"]
+        self.assertEqual((item["ticket_id"], item["rule"]), (TICKET, "claimed"))
+        self.assertIn("another worker is building its lane(s) L1, L2, since", item["why"])
+        self.assertNotIn(HOLDER, json.dumps(held), "never the holder")
+        self.assertEqual(self.next_step("--holder", OTHER)["needs"], "worker-in-cell", "the routing sheet agrees")
+        self.assertEqual([item["ticket_id"] for item in self.run_json("schedule", TICKET, "--holder", HOLDER)["start"]], [TICKET],
+                         "the driver whose lanes they are is not held by them")
+        self.assertEqual(self.run_json("schedule", TICKET)["held"][0]["rule"], "claimed", "without a holder, any live lane holds it")
+        self.age(self.lane_file("L1"), self.lane_file("L2"))
+        self.assertEqual([item["ticket_id"] for item in self.run_json("schedule", TICKET, "--holder", OTHER)["start"]], [TICKET],
+                         "lanes idle past factory.claim_minutes hold nothing")
+
+    def supervised(self, mine, earlier_state, runner="r-1"):
+        """A ledger with two supervised executions of this ticket: an earlier one (in `earlier_state`) and this one (`mine`)."""
+        ledger = {"supervisor": {"executions": {
+            "x111111111111": {"ticket_id": TICKET, "state": earlier_state, "runner_id": runner},
+            mine: {"ticket_id": TICKET, "state": "started", "runner_id": "r-1"}}}}
+        self.put(self.project, {".factory/intake/ledger.json": json.dumps(ledger)})
+        return mock.patch.dict(os.environ, {run.EXECUTION_ENV: mine})
+
+    def test_a_new_execution_carries_on_its_ended_predecessors_lanes_at_once(self):
+        earlier = run.execution_holder("x111111111111")
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        with self.supervised("x111111111111", "started"):
+            self.assertEqual(self.run_json("where")["holder"], earlier, "an execution's holder is its own, the same each time")
+            self.lanes_start(earlier)
+        self.build_lane("L1", L1[:1])  # then the execution was killed mid-lanes; the ledger records it as ended
+        with self.supervised("x222222222222", "unknown"):
+            mine = self.run_json("where")["holder"]
+            self.assertEqual(mine, run.execution_holder("x222222222222"))
+            found = self.next_step("--holder", mine)
+            self.assertEqual(found["action"], "build-lanes", "no worker-in-cell: its predecessor is known to have ended")
+            self.assertIn("Carried on from this ticket's earlier Factory execution, which has ended", found["reason"])
+            answer = self.lanes_start(mine)
+            self.assertEqual([(item["lane"], item["done"]) for item in answer["lanes"]], [("L1", 1), ("L2", 0)], "each from where it stopped")
+            self.assertEqual(json.loads(self.lane_file("L1").read_text())["earlier_holders"],
+                             [{"holder": earlier, "until": json.loads(self.lane_file("L1").read_text())["handed_at"],
+                               "why": "carried on from a run known to have ended"}])
+
+    def test_an_execution_never_carries_on_from_one_still_running_or_another_machines(self):
+        earlier = run.execution_holder("x111111111111")
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        with self.supervised("x111111111111", "started"):
+            self.lanes_start(earlier)
+        for state, runner in (("started", "r-1"), ("finished", "r-2")):
+            with self.supervised("x222222222222", state, runner=runner):
+                mine = self.run_json("where")["holder"]
+                self.assertEqual(self.next_step("--holder", mine)["needs"], "worker-in-cell", (state, runner))
+                self.assertEqual(self.lanes_start(mine)["code"], "worker-in-cell")
+        self.assertEqual(json.loads(self.lane_file("L1").read_text())["holder"], earlier)
 
     def test_an_interrupted_conversation_carries_on_with_its_own_lanes(self):
         self.opened()

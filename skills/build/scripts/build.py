@@ -2150,14 +2150,21 @@ def plan_lanes_at_start(cell: Cell, text: str, args: argparse.Namespace) -> Opti
                        "branch": f"mach-lane/{cell.ticket_id}/{entry['lane']}"} for entry in lane_plan["lanes"]]}
 
 
-def live_lanes(cell_root: Path, minutes: int) -> List[str]:
-    """The lanes of a cell whose builder called the station less than `minutes` ago and that are not done."""
+def lanes_at_work(cell_root: Path, minutes: int) -> List[Dict[str, Any]]:
+    """The lanes of a cell whose builder is at work: not done, and handed out or at a station step less than `minutes` ago. Each with
+    its holder and times. Reads only. The routing sheet and the schedule decide who holds a ticket from this (schedule.lanes_held)."""
     found = []
     for path in sorted((cell_root / "lanes").glob("L*/lane.json")):
         data = load_json(path, {}) or {}
-        if isinstance(data, dict) and data.get("status") == "open" and fresh(data.get("last_step_at") or data.get("handed_at"), minutes):
-            found.append(path.parent.name)
+        last = data.get("last_step_at") or data.get("handed_at") if isinstance(data, dict) else None
+        if isinstance(data, dict) and data.get("status") == "open" and fresh(last, minutes):
+            found.append({"lane": path.parent.name, "holder": data.get("holder"), "handed_at": data.get("handed_at"), "last_step_at": last})
     return found
+
+
+def live_lanes(cell_root: Path, minutes: int) -> List[str]:
+    """The lanes of a cell whose builder called the station less than `minutes` ago and that are not done."""
+    return [lane["lane"] for lane in lanes_at_work(cell_root, minutes)]
 
 
 def others_using(cell: Cell, minutes: int) -> Tuple[int, List[Dict[str, Any]]]:
@@ -2285,6 +2292,7 @@ def cmd_lanes_open(cell: Cell, args: argparse.Namespace) -> int:
             if lane.state.get("status") == "done":
                 done.append(entry["lane"])
             elif (lane.state and lane.state.get("holder") != args.holder and not args.take_over
+                  and lane.state.get("holder") not in (getattr(args, "carry_on_from", None) or [])
                   and fresh(lane.state.get("last_step_at") or lane.state.get("handed_at"), minutes)):
                 held.append(entry["lane"])
             else:
@@ -2377,7 +2385,10 @@ def cmd_lanes_open(cell: Cell, args: argparse.Namespace) -> int:
                 lane.state["worktree_seconds"] = round((lane.state.get("worktree_seconds") or 0) + seconds, 1)
             if lane.state.get("holder") and lane.state.get("holder") != args.holder:
                 # Taken over: the earlier holder's builder is refused from now on when it names its holder (check_holder).
-                lane.state.setdefault("earlier_holders", []).append({"holder": lane.state.get("holder"), "until": at})
+                earlier = {"holder": lane.state.get("holder"), "until": at}
+                if lane.state.get("holder") in (getattr(args, "carry_on_from", None) or []):
+                    earlier["why"] = "carried on from a run known to have ended"
+                lane.state.setdefault("earlier_holders", []).append(earlier)
             lane.state.update({"holder": args.holder, "handed_at": at, "status": "done" if lane.state.get("status") == "done" else "open"})
             write_json(lane.state_path, lane.state)
             entry["status"] = "open"
@@ -2869,6 +2880,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--holder", required=True, help="the driver's holder token (the ticket's claim); a lane is handed only to the holder that opened it")
     p.add_argument("--grant", type=int, help="at most this many lanes at once (the line's count of free places)")
     p.add_argument("--take-over", action="store_true", help="hand over lanes another holder still holds (a person's decision)")
+    p.add_argument("--carry-on-from", action="append", metavar="H", help="a holder whose run is known to have ended (an earlier supervised "
+                   "execution of this ticket): its lanes are handed to --holder at once, each from where it stopped (repeatable)")
     p.set_defaults(func=cmd_lanes_open)
     return parser
 

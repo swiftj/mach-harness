@@ -94,6 +94,14 @@ for ticket in args["tickets"]:
         with open(os.path.join(cell_dir, "lifecycle.jsonl"), "a") as log:
             log.write(json.dumps({"v": 1, "type": "gate.evaluated", "station": "build", "ticket_id": ticket, "execution_id": os.environ.get("MACH_EXECUTION_ID"),
                                   "data": {"gate": "build.green", "outcome": "refuse", "reason_code": "suite-red", "task": plan["refuse"]}}) + "\n")
+    if plan.get("complete"):  # build tasks this run completed, in the cell or in a lane: the lifecycle log says so, as build.py writes it
+        cell_dir = os.path.join(".factory", "worktrees", ticket)
+        json.dump({"tasks": [{"id": "T%02d" % n, "kind": "impl", "status": "pending"} for n in range(1, 9)], "lanes": {"state": "open", "lanes": []}},
+                  open(os.path.join(cell_dir, "build.json"), "w"))
+        with open(os.path.join(cell_dir, "lifecycle.jsonl"), "a") as log:
+            for task in plan["complete"]:
+                log.write(json.dumps({"v": 1, "type": "build.task_completed", "station": "build", "ticket_id": ticket, "execution_id": os.environ.get("MACH_EXECUTION_ID"),
+                                      "data": {"task": task, "kind": "impl", "step": "green", "lane": "L1"}}) + "\n")
     if plan.get("ask"):  # a relay inside the run asks the belt script about tickets, with the run's own environment
         import subprocess
         answers = {}
@@ -1026,6 +1034,34 @@ class NotProgressingTest(Base):
         failed = [e for e in self.events() if e["type"] == "execution.failed"]
         self.assertEqual([(e["data"]["not_progressing"], e["data"]["attempt"]) for e in failed], [("same-refusal", 1)])
         self.assertEqual(len(self.calls()), 2)
+
+    def test_a_long_build_that_completes_tasks_across_executions_is_progress_never_not_progressing(self):
+        """A build in lanes (or one task at a time) stays at building, step build-lanes or build, for many executions: each that
+        completed build tasks moved it, whether it was stopped at its time limit or the belt gave up on a repeated step."""
+        self.supervised()  # max_attempts 2
+        self.claude({"default": {"stage": "building", "complete": ["T01"], "kill": True}})
+        self.tick()
+        self.wait()
+        self.claude({"default": {"stage": "building", "complete": ["T02", "T03"]}})  # same stage and step: tasks done in lanes
+        self.tick()
+        self.wait()
+        self.claude({"default": {"stage": "building", "complete": ["T04"], "outcome": "stuck"}})
+        self.tick()
+        self.wait()
+        # The next one completes nothing at the same stage: no progress, as before.
+        self.claude({"default": {"stage": "building", "exit": 1, "is_error": True}})
+        report = self.tick()
+        self.assertNotIn("LOCAL-001", report["parked"])
+        self.assertNotIn("execution.failed", self.kinds())
+        self.assertEqual(len([e for e in self.events() if e["type"] == "execution.completed"]), 3)
+        self.assertEqual(len(report["started"]), 1, "every execution that moved the build is followed by the next")
+        ended = [r for r in self.ledger()["supervisor"]["executions"].values() if r["state"] in ("finished", "unknown")]
+        self.assertEqual(sorted((r.get("build_at_end") or {}).get("tasks_completed") for r in ended), [1, 1, 2])
+        self.assertEqual([r.get("moved") for r in ended], [True, True, True])
+        self.wait()
+        self.tick()
+        failed = [e for e in self.events() if e["type"] == "execution.failed"]
+        self.assertEqual([e["data"]["attempt"] for e in failed], [1])
 
     def test_a_killed_execution_that_moved_is_completed_with_its_exit_code_and_keeps_the_attempt_count(self):
         self.supervised()

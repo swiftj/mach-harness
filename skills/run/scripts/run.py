@@ -122,7 +122,12 @@ holder each time. `--take-over` replaces a fresh claim, only on a person's expli
 and the cell's next task a lane's. The driver runs `lanes-start` and starts every lane it lists at once, asks again until
 NONE_LEFT (lanes that come in batches loop inside the one step), then runs `lanes-join`; the build then goes on in the cell.
 A lane whose builder called the build station less than factory.claim_minutes ago answers `next` with `worker-in-cell` for
-any other holder, whatever claim.json says.
+any other holder, whatever claim.json says (the schedule holds such a ticket by the same rule, schedule.lanes_held).
+
+Inside a supervised Factory execution, `where` gives the execution's own holder (the same each time it is asked), and the
+claims and lanes of the same supervisor's earlier executions of the ticket that the intake ledger records as ended are
+carried on at once, never waited out: whatever ran them has stopped. A live execution, another machine's, and a person's
+driver are never taken over this way.
 
 Standard library only. It reads; the only commands it runs are git queries, the review station's own script, and the
 build station's lanes-open and join, which lanes-start and lanes-join run in this process. The product commands are the exception and live in intake.py: on an
@@ -131,6 +136,7 @@ stations' own scripts. Nothing here starts an agent, and nothing runs in the bac
 """
 
 import argparse
+import hashlib
 import io
 import json
 import os
@@ -654,33 +660,39 @@ def build_station() -> Any:
     return _BUILD[0]
 
 
-def live_lanes(project: Project, ticket_id: str) -> List[Dict[str, Any]]:
-    """The lanes of a ticket whose builder is at work: open, and handed out or at a build station step less than
-    factory.claim_minutes ago, by the build station's own rule. Reads only; empty for a build without lanes."""
-    folder = project.cell_dir(ticket_id) / "lanes"
-    if not folder.is_dir():
+def lanes_held(project: Project, ticket_id: str, holder: Optional[str], own: Sequence[str] = ()) -> Optional[Dict[str, Any]]:
+    """Lanes of a ticket another worker's builders are at work in, in words anyone may be shown (never the holder); None when there
+    are none. The one rule this script's claim check and the schedule share (schedule.lanes_held), on the build station's own record
+    of each lane (build.py lanes_at_work). `own`: other holders that count as this driver's (an ended execution it carries on from)."""
+    if not (project.cell_dir(ticket_id) / "lanes").is_dir():
+        return None
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import schedule
+    return schedule.lanes_held(project.cell_dir(ticket_id), holder, claims().minutes(project.config), build_station(), claims(), own)
+
+
+def execution_holder(execution_id: str) -> str:
+    """The holder token of a supervised execution: one per execution, worked out from its ID, so the supervisor's next execution of the
+    same ticket can tell its predecessor's claims and lanes from anyone else's. A holder is a coordination token, not a secret."""
+    return hashlib.sha256(f"mach execution holder {execution_id}".encode("utf-8")).hexdigest()[:32]
+
+
+def ended_executions_holders(project: Project, ticket_id: str) -> List[str]:
+    """Inside a supervised execution: the holders of the same supervisor's earlier executions of this ticket that the ledger records as
+    ended (finished, of unknown outcome, or released). Their claims and lanes are this execution's to carry on at once, instead of
+    waiting out factory.claim_minutes: whatever ran them is known to have stopped. Empty anywhere else, so a person's driver and any
+    live execution are never taken over without a person's word."""
+    value = os.environ.get(EXECUTION_ENV)
+    if not value or not EXECUTION_ID_RE.match(value):
         return []
-    B = build_station()
-    minutes = B.claim_limit(project.config)
-    found = []
-    for path in sorted(folder.glob("L*/lane.json")):
-        data = load_json(path, {})
-        if not isinstance(data, dict) or data.get("status") != "open":
-            continue
-        last = data.get("last_step_at") or data.get("handed_at")
-        if B.fresh(last, minutes):
-            found.append({"lane": path.parent.name, "holder": data.get("holder"), "handed_at": data.get("handed_at"), "last_step_at": last,
-                          "lapses_at": claims().lapses_at({"at": last}, minutes)})
-    return found
-
-
-def lanes_in_words(lanes: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """What anyone may be shown about lanes another worker is building: which, since when, until when. Never the holder."""
-    started = min(str(lane.get("handed_at") or lane["last_step_at"]) for lane in lanes)
-    last = max(str(lane["last_step_at"]) for lane in lanes)
-    lapses = max(str(lane["lapses_at"]) for lane in lanes)
-    return {"step": "build-lanes", "stage": "building", "at": started, "renewed_at": last, "lapses_at": lapses,
-            "lanes": [lane["lane"] for lane in lanes]}
+    ledger = load_json(project.root / ".factory" / "intake" / "ledger.json", {}) or {}
+    records = ((ledger.get("supervisor") or {}).get("executions") or {}) if isinstance(ledger, dict) else {}
+    me = records.get(value) if isinstance(records, dict) else None
+    if not isinstance(me, dict) or me.get("ticket_id") != ticket_id:
+        return []
+    return [execution_holder(other_id) for other_id, record in sorted(records.items())
+            if other_id != value and EXECUTION_ID_RE.match(str(other_id)) and isinstance(record, dict) and record.get("ticket_id") == ticket_id
+            and record.get("runner_id") == me.get("runner_id") and record.get("state") in ("finished", "unknown", "released")]
 
 
 def landed_from_another_factory(project: Project, cell: Dict[str, Any]) -> Optional[str]:
@@ -953,8 +965,20 @@ def status_digest(project: Project, rows: List[Dict[str, Any]]) -> Dict[str, Any
 
 def cmd_where(project: Project, args: argparse.Namespace) -> int:
     print(json.dumps({"run_script": str(Path(__file__).resolve()), "project": str(project.root), "python": sys.executable,
-                      "is_mach_project": (project.root / ".factory").is_dir(), "holder": claims().new_holder()}, indent=2))
+                      "is_mach_project": (project.root / ".factory").is_dir(), "holder": run_holder(project)}, indent=2))
     return 0
+
+
+def run_holder(project: Project) -> str:
+    """A new holder for a driver; inside a supervised execution the ledger records, that execution's own (execution_holder), the same
+    every time it is asked, so the execution resumes its own claims and lanes at once and its successor can recognise them."""
+    value = os.environ.get(EXECUTION_ENV)
+    if value and EXECUTION_ID_RE.match(value):
+        ledger = load_json(project.root / ".factory" / "intake" / "ledger.json", {}) or {}
+        records = ((ledger.get("supervisor") or {}).get("executions") or {}) if isinstance(ledger, dict) else {}
+        if isinstance(records, dict) and isinstance(records.get(value), dict):
+            return execution_holder(value)
+    return claims().new_holder()
 
 
 EXECUTION_ENV = "MACH_EXECUTION_ID"  # set by the Factory's executor on every supervised run, inherited by its shell commands
@@ -1095,11 +1119,13 @@ def claim_step(project: Project, found: Dict[str, Any], holder: Optional[str], t
     # A lane whose builder is at work belongs to the driver that started it, whatever claim.json says (design 6.3): a second
     # driver never seats builders in it. It stops counting when the lane is done, or when its builder has not called the
     # build station for factory.claim_minutes; then the next driver takes the lane over and it resumes where it stopped.
-    working = [lane for lane in live_lanes(project, ticket_id) if holder is None or lane.get("holder") != holder]
-    if working and not take_over:
-        shown = lanes_in_words(working)
+    # A supervised execution carries on at once from the same supervisor's earlier execution of this ticket once the ledger records
+    # that one as ended: its claim and lanes are its predecessor's, not another worker's.
+    succeeded = ended_executions_holders(project, ticket_id) if holder else []
+    shown = None if take_over else lanes_held(project, ticket_id, holder, succeeded)
+    if shown:
         return step(ticket_id, found.get("stage"), "stop",
-                    f"Another worker is building lane{'s' if len(working) > 1 else ''} {', '.join(shown['lanes'])} of this ticket, since {shown['at']}; "
+                    f"Another worker is building lane{'s' if len(shown['lanes']) > 1 else ''} {', '.join(shown['lanes'])} of this ticket, since {shown['at']}; "
                     f"its builders last worked at {shown['renewed_at']}. They count as at work until {shown['lapses_at']}, or until their lanes are done; "
                     "after that the next driver takes them over and they carry on where they stopped. Do not start another worker on it. "
                     "A person can say to take over this step.",
@@ -1108,8 +1134,10 @@ def claim_step(project: Project, found: Dict[str, Any], holder: Optional[str], t
     if holder is None:
         other = C.current(root, limit)
         return refused(other) if other else found
+    other = C.current(root, limit)
+    carried_on = bool(other) and other["holder"] in succeeded and not take_over
     try:
-        result = C.take(root, found["action"], holder, limit, take_over=take_over)
+        result = C.take(root, found["action"], holder, limit, take_over=take_over or carried_on)
     except (C.ClaimError, OSError) as exc:
         raise RunError(f"The claim on this step could not be recorded ({exc}), so the step was not handed out.")
     if result["refused"]:
@@ -1118,7 +1146,9 @@ def claim_step(project: Project, found: Dict[str, Any], holder: Optional[str], t
     if result["replaced"]:
         before = C.public(result["replaced"], limit)
         found["took_over"] = before
-        found["reason"] = (f"{found['reason']} Taken over, as a person asked: another worker had been handed the {before['step']} step "
+        found["reason"] = (f"{found['reason']} Carried on from this ticket's earlier Factory execution, which has ended: it had been handed the "
+                           f"{before['step']} step at {before['at']}; its claim is this execution's now." if carried_on else
+                           f"{found['reason']} Taken over, as a person asked: another worker had been handed the {before['step']} step "
                            f"at {before['at']}; its claim is replaced.")
     if found.get("action") == "plan" and found.get("prompt"):
         found["prompt"] += (f"\nThis step is claimed for holder {holder}: when the skill claims the plan step, pass --holder {holder}.")
@@ -1297,11 +1327,11 @@ def cmd_status(project: Project, args: argparse.Namespace) -> int:
         info = next_step(project, ticket_id, args.headless)
         row = {key: info[key] for key in ("ticket_id", "stage", "action", "needs", "reason")}
         held = C.current(project.cell_dir(ticket_id), limit)
-        working = live_lanes(project, ticket_id) if not held else []
+        working = lanes_held(project, ticket_id, None) if not held else None
         if held:
             row["claim"] = C.public(held, limit)  # someone is working on it: the step and since when, never the holder
         elif working:
-            row["claim"] = lanes_in_words(working)  # lane builders at work, whatever claim.json says
+            row["claim"] = working  # lane builders at work, whatever claim.json says
         note = adr_note(project, ticket_id)
         if note:
             row["adrs"] = note  # decided after it was planned: flagged, never restarted or blocked
@@ -1465,6 +1495,8 @@ def cmd_lanes_start(project: Project, args: argparse.Namespace) -> int:
         room = {"grant": grant, "free_places": max(free, 0), "max_lanes": B.max_lanes(project.config), "max_builders": B.max_builders(project.config),
                 "other_tickets": others, "own_place_only": free < 1}
         argv = ["lanes-open", args.ticket_id, "--holder", holder, "--grant", str(grant)] + (["--take-over"] if args.take_over else [])
+        for earlier in ended_executions_holders(project, args.ticket_id):  # an ended execution's lanes: this execution carries them on
+            argv += ["--carry-on-from", earlier]
         said, refusal = station_answer(project, args.ticket_id, *argv)
         if refusal is not None:
             answer = lanes_refused(args.ticket_id, refusal, room)

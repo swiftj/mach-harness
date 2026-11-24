@@ -359,13 +359,15 @@ class Supervisor:
         step = self.next_step(ticket)
         moved = (step.get("stage"), step.get("action")) != (record.get("stage_at_start"), record.get("action_at_start"))
         build_at_end = self.build_refusal(ticket, record["execution_id"]) if step.get("stage") == "building" else None
+        # A build moves within its stage: build tasks this execution completed (in the cell or in its lanes) are progress too.
+        moved = moved or bool((build_at_end or {}).get("tasks_completed"))
         record.update({"state": "finished" if known else "unknown", "ended_at": facts.get("ended_at") or stamp(), "how": facts.get("how") if known else "unknown",
                        "exit_code": facts.get("exit_code"), "session_id": facts.get("session_id") or record.get("session_id"), "cost_usd": facts.get("cost_usd"),
                        "refused_tools": facts.get("refused_tools") or [], "stage_at_end": step.get("stage"), "next_at_end": step.get("action"), "moved": moved,
                        "build_at_end": build_at_end})
         common = {"ticket_id": ticket, "slice_id": record.get("slice_id"), "execution_id": record["execution_id"],
                   "refs": {"cell": f".factory/worktrees/{ticket}/cell.json", "execution": f".factory/local/executions/{record['execution_id']}/"}}
-        stuck = self.not_progressing(supervisor, record, facts, known)
+        stuck = None if (build_at_end or {}).get("tasks_completed") else self.not_progressing(supervisor, record, facts, known)
         if stuck:
             # A deterministic stop: running the same work again would stop in the same place. A person decides.
             count = int((supervisor["attempts"].get(ticket) or {}).get("count") or 0) + 1
@@ -428,6 +430,7 @@ class Supervisor:
             return None
         pending = next((task.get("id") for task in tasks if isinstance(task, dict) and task.get("status") != "done"), None)
         refusal = None
+        completed = 0  # build tasks this execution completed, in the cell or in a lane: a build that moves within one stage
         try:
             with (cell / "lifecycle.jsonl").open("r", encoding="utf-8", errors="replace") as lines:
                 for line in lines:
@@ -436,12 +439,14 @@ class Supervisor:
                     except ValueError:
                         continue
                     data = entry.get("data") if isinstance(entry, dict) else None
+                    if isinstance(data, dict) and entry.get("type") == "build.task_completed" and entry.get("execution_id") == execution_id:
+                        completed += 1
                     if (isinstance(data, dict) and entry.get("type") == "gate.evaluated" and entry.get("station") == "build"
                             and entry.get("execution_id") == execution_id and data.get("outcome") == "refuse"):
                         refusal = {"gate": data.get("gate"), "reason_code": data.get("reason_code"), "task": data.get("task")}
         except OSError:
             pass
-        return {"task": pending, "refusal": refusal}
+        return {"task": pending, "refusal": refusal, "tasks_completed": completed}
 
     def not_progressing(self, supervisor: Dict[str, Any], record: Dict[str, Any], facts: Dict[str, Any], known: bool) -> Optional[Tuple[str, str]]:
         """Why this execution shows the ticket cannot progress without a person, from recorded facts only; or None.
