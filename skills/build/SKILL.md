@@ -160,4 +160,6 @@ A revision round is never built in lanes: its tasks are done in the cell, one at
 
 ## Stopping early
 
+When an install or a download fails in a command the station ran, report what the station printed. Never run `npm config set cache` or any other command that changes a person's own tool settings, and never point a cache somewhere yourself: MACH already points a package cache that cannot be written into `.factory/cache/` for the commands it runs (the start's `caches` says so), and when the failure says a package download was refused or the network could not be reached, the network rules are the person's, in Claude Code's own settings. Stop and report it.
+
 Stop and report, rather than improvise, when: a gate refuses to start for any reason but a test command; you find a spec or plan defect; a tool the tests need is missing and no task of the plan installs it; or the suite will not go green after three attempts. A missing or wrong test command is never a reason to stop: give the build one (see The test command). Say which task you were on and what you observed. The cell keeps its state, so the build resumes from `BUILD next`.

@@ -269,14 +269,9 @@ def execute(repo: Repo, kind: str, command: Optional[str], timeouts: Dict[str, i
         argv = shlex.split(command)
     except ValueError as exc:
         return {**result, "status": "fail", "output_tail": f"Cannot parse the command: {exc}"}
-    env = dict(os.environ)
-    # The project's own commands never leave Python byte code in the checkout: a cached file can outlive the source it was
-    # made from (rewritten at the same size within the same second), and a later run would then test the old code. A command
-    # that needs byte code written says so itself, with a leading PYTHONDONTWRITEBYTECODE= of its own.
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    while argv and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0]):  # leading VAR=value, as in a shell
-        key, value = argv.pop(0).split("=", 1)
-        env[key] = value
+    # One rule for every station's project commands (command_env.py): no Python byte code left in the checkout, a package
+    # cache that cannot be written pointed into .factory/cache/, commands.env, and a leading VAR=value of the command's own.
+    env, argv = command_env_module().environment(repo.project, repo.project, argv)
     if not argv or shutil.which(argv[0]) is None and not (repo.project / argv[0]).is_file():
         return {**result, "status": "unavailable", "output_tail": f"'{argv[0] if argv else command}' is not installed or not on PATH."}
     started = time.monotonic()
@@ -287,7 +282,11 @@ def execute(repo: Repo, kind: str, command: Optional[str], timeouts: Dict[str, i
     except OSError as exc:
         return {**result, "status": "unavailable", "output_tail": str(exc)}
     tail = (done.stdout + ("\n" + done.stderr if done.stderr else "")).strip()[-2000:]
-    return {**result, "status": "pass" if done.returncode == 0 else "fail", "exit_code": done.returncode, "seconds": round(time.monotonic() - started, 1), "output_tail": tail}
+    ran = {**result, "status": "pass" if done.returncode == 0 else "fail", "exit_code": done.returncode, "seconds": round(time.monotonic() - started, 1), "output_tail": tail}
+    hint = command_env_module().network_hint(done.stdout + "\n" + done.stderr) if done.returncode != 0 else None
+    if hint:
+        ran["hint"] = hint
+    return ran
 
 
 class Card:
@@ -479,6 +478,18 @@ try:
 except Exception:  # noqa: BLE001
     lifecycle = None
 
+# The environment of the project's commands: a shared helper with the intent station too (its path is added above).
+try:
+    import command_env  # noqa: E402
+except Exception:  # noqa: BLE001
+    command_env = None
+
+
+def command_env_module() -> Any:
+    if command_env is None:
+        raise AuditError("The intent station's command_env.py is not installed beside this skill, so the project's commands cannot be run.")
+    return command_env
+
 
 def adr_notes(repo: Repo) -> List[str]:
     """Notes about the project's architecture decisions (ADRs). A note never changes the score or the tier, and is never a blocker."""
@@ -565,6 +576,10 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
         "fixed": fixed,
         "notes": adr_notes(repo),
     }
+    if command_env is not None:  # a package cache MACH pointed elsewhere, and a refused network: said once, in the notes
+        if command_env.moved(project):
+            report["caches"] = command_env.moved(project)
+        report["notes"] = command_env.notices(project) + [runs[kind]["hint"] for kind in runs if runs[kind].get("hint")] + report["notes"]
     path = project / REPORT
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

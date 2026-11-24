@@ -88,6 +88,12 @@ try:
 except Exception:  # noqa: BLE001
     scan = None
 
+# The environment of the project's commands (the intent station's command_env.py), shared with the audit, build and verify stations.
+try:
+    import command_env  # noqa: E402
+except Exception:  # noqa: BLE001
+    command_env = None
+
 # M13: the change record, written on the ticket's branch as the station's last act before landing.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import change_record  # noqa: E402
@@ -421,14 +427,11 @@ def run_suite(cell: Cell) -> Dict[str, Any]:
     if not isinstance(command, str) or not command.strip():
         raise MergeError("The build report records no test command, so the merged result cannot be checked.")
     argv = shlex.split(command)
-    env = dict(os.environ)
-    # The project's own commands never leave Python byte code in the checkout: a cached file can outlive the source it was
-    # made from (rewritten at the same size within the same second), and a later run would then test the old code. A command
-    # that needs byte code written says so itself, with a leading PYTHONDONTWRITEBYTECODE= of its own.
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    while argv and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0]):
-        key, value = argv.pop(0).split("=", 1)
-        env[key] = value
+    if command_env is None:
+        raise MergeError("The intent station's command_env.py is not installed beside this skill, so the merged result cannot be checked.")
+    # One rule for every station's project commands (command_env.py): no Python byte code left in the checkout, a package
+    # cache that cannot be written pointed into the project's .factory/cache/, commands.env, and a leading VAR=value.
+    env, argv = command_env.environment(cell.project, cell.work, argv)
     if not argv or (shutil.which(argv[0]) is None and not (cell.work / argv[0]).is_file()):
         raise MergeError(f"'{argv[0] if argv else command}' is not installed or not on PATH, so the merged result cannot be checked.")
     try:
@@ -436,7 +439,11 @@ def run_suite(cell: Cell) -> Dict[str, Any]:
         code, out = done.returncode, done.stdout + ("\n" + done.stderr if done.stderr else "")
     except subprocess.TimeoutExpired:
         code, out = 124, "Still running after 600 seconds; stopped."
-    return {"command": command, "passed": code == 0, "exit_code": code, "output_tail": out.strip()[-1500:]}
+    tail = out.strip()[-1500:]
+    hint = command_env.network_hint(out) if code not in (0, 124) else None
+    if hint:  # added to the failure output the findings carry; the suite still fails and the ticket goes back as before
+        tail = tail[-(1498 - len(hint)):] + "\n\n" + hint
+    return {"command": command, "passed": code == 0, "exit_code": code, "output_tail": tail, **({"hint": hint} if hint else {})}
 
 
 def survey(cell: Cell, by_person: bool) -> Dict[str, Any]:
@@ -849,8 +856,8 @@ def revalidate(cell: Cell, main: str, main_head: str) -> Optional[Dict[str, Any]
     if not suite["passed"]:
         path = send_back(cell, f"The test suite fails once {main} is merged in.",
                          f"The ticket passed on its own, but with the current {main} merged into it `{suite['command']}` fails:\n\n```\n{suite['output_tail']}\n```")
-        raise MergeError(f"With the current {main} merged in, the test suite fails, so nothing was merged. The ticket goes back to the build station: findings are in {path}.",
-                         code="sent-back")
+        raise MergeError(f"With the current {main} merged in, the test suite fails, so nothing was merged. The ticket goes back to the build station: findings are in {path}."
+                         + (f"\n{suite['hint']}" if suite.get("hint") else ""), code="sent-back")
     check_landed(cell, main, before, main_head)
     cell.info["revalidated"] = {"head": cell.head(), "onto": main_head, "at": now(), "tests": suite["command"]}
     cell.save_info()
@@ -1441,6 +1448,8 @@ def land(cell: Cell, args: argparse.Namespace, plan: Dict[str, Any]) -> int:
                               else {"written": False, "reason": "records.enabled is false in .factory/config.json."}}
     if moves:
         result["main_moved_again"] = moves
+    if command_env is not None and command_env.notices(cell.project):  # only when a package cache was pointed elsewhere
+        result["caches"] = command_env.notices(cell.project)
     if cell.method == "local":
         title = cell.info.get("title") or cell.info.get("slice_id") or "change"
         message = (f"{cell.jira} " if cell.jira else "") + f"Merge {cell.ticket_id}: {title}"  # a checked Jira key first (M13)

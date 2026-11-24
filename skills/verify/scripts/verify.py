@@ -116,6 +116,19 @@ try:
 except Exception:  # noqa: BLE001
     lifecycle = None
 
+# The environment of the project's commands (the intent station's command_env.py), shared with the audit, build and merge stations.
+try:
+    import command_env  # noqa: E402
+except Exception:  # noqa: BLE001
+    command_env = None
+
+
+def command_env_module() -> Any:
+    if command_env is None:
+        raise VerifyError("The intent station's command_env.py is not installed beside this skill, so the project's commands cannot be run.",
+                          code="command-env-missing")
+    return command_env
+
 
 def telemetry(*args: Any, **kwargs: Any) -> None:
     """Report what this station has just recorded to the cell's lifecycle log. Never raises."""
@@ -255,14 +268,9 @@ def test_command(cell: Cell) -> Optional[str]:
 
 def run_logged(cell: Cell, command: str, log: Path, timeout: int = 600) -> Dict[str, Any]:
     argv = shlex.split(command)
-    env = dict(os.environ)
-    # The project's own commands never leave Python byte code in the checkout: a cached file can outlive the source it was
-    # made from (rewritten at the same size within the same second), and a later run would then test the old code. A command
-    # that needs byte code written says so itself, with a leading PYTHONDONTWRITEBYTECODE= of its own.
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    while argv and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0]):
-        key, value = argv.pop(0).split("=", 1)
-        env[key] = value
+    # One rule for every station's project commands (command_env.py): no Python byte code left in the checkout, a package
+    # cache that cannot be written pointed into the project's .factory/cache/, commands.env, and a leading VAR=value.
+    env, argv = command_env_module().environment(cell.project, cell.work, argv)
     started = time.monotonic()
     if not argv or (shutil.which(argv[0]) is None and not (cell.work / argv[0]).is_file()):
         code, out = 127, f"'{argv[0] if argv else command}' is not installed or not on PATH."
@@ -273,8 +281,10 @@ def run_logged(cell: Cell, command: str, log: Path, timeout: int = 600) -> Dict[
         except subprocess.TimeoutExpired:
             code, out = 124, f"Still running after {timeout} seconds; stopped."
     seconds = round(time.monotonic() - started, 1)
-    log.write_text(f"$ {command}\n(in {cell.work}, at {now()})\n\n{out.rstrip()}\n\nexit code: {code}\nseconds: {seconds}\n", encoding="utf-8")
-    return {"command": command, "exit_code": code, "passed": code == 0, "seconds": seconds, "log": log.name}
+    hint = command_env_module().network_hint(out) if code not in (0, 124, 127) else None
+    log.write_text(f"$ {command}\n(in {cell.work}, at {now()})\n\n{out.rstrip()}\n\nexit code: {code}\nseconds: {seconds}\n" + (f"\n{hint}\n" if hint else ""),
+                   encoding="utf-8")
+    return {"command": command, "exit_code": code, "passed": code == 0, "seconds": seconds, "log": log.name, **({"hint": hint} if hint else {})}
 
 
 def check_contracts(cell: Cell) -> Dict[str, Any]:
@@ -408,6 +418,7 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         **({"neighbours": {key: near[key] for key in ("commit", "branch", "epic_id", "limit")}} if near.get("chosen") else
            {"neighbours_note": near.get("note")}),
         **({"neighbours_setting": near["setting_note"]} if near.get("setting_note") else {}),
+        **({"caches": command_env.notices(cell.project)} if command_env is not None and command_env.notices(cell.project) else {}),
         "records_file": str(cell.root / RECORDS_FILE),
         "next": "Prove each item yourself: write a driver into evidence_dir, run it with 'capture', and record each item with 'record' "
                 "(or all at once with 'record --from' and the records_file).",
@@ -556,8 +567,8 @@ def cmd_capture(cell: Cell, args: argparse.Namespace) -> int:
             raise VerifyError(f"Input file '{args.input}' does not exist in the evidence folder.", code="no-input")
     passed = list(args.args or [])
     argv = [sys.executable, "-B", str(driver), *passed]
-    env = dict(os.environ)
-    env.update({"PYTHONDONTWRITEBYTECODE": "1", "MACH_VERIFY_WORKDIR": str(cell.work), "MACH_VERIFY_EVIDENCE": str(cell.evidence),
+    env, _ = command_env_module().environment(cell.project, cell.work, [])  # the same rule as the suite's run (command_env.py)
+    env.update({"MACH_VERIFY_WORKDIR": str(cell.work), "MACH_VERIFY_EVIDENCE": str(cell.evidence),
                 "PYTHONPATH": os.pathsep.join([str(cell.work), *([env["PYTHONPATH"]] if env.get("PYTHONPATH") else [])])})
     shown = " ".join(shlex.quote(part) for part in ["python3", "-B", f"evidence/{driver.relative_to(cell.evidence.resolve()).as_posix()}", *passed])
     started = time.monotonic()
