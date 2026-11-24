@@ -62,10 +62,9 @@ PLAN_TASK_RE = re.compile(r"^\s*[-*+]\s+\[[ xX]\]\s+((?:R\d+-)?T\d+)\s+\[(test|i
 # M22: the plan's two optional additions. Parts of '## Tasks', as '###' sub-headings, in this order, each at most once;
 # and 'after Tnn' beside a task's IDs in its trailing brackets. A plan with neither is read exactly as before.
 LANE_PARTS = (("before", "Before the lanes"), ("lanes", "Lanes"), ("after", "After the lanes"))
-PART_OF = {title: part for part, title in LANE_PARTS}
 SUBHEADING_RE = re.compile(r"^###\s+(.+?)\s*$")
 TRAILING_BRACKETS_RE = re.compile(r"\(([^()]*)\)\s*$")
-AFTER_MARK_RE = re.compile(r"\bafter\s+((?:R\d+-)?T\d+)\b")
+AFTER_MARK_RE = re.compile(r"\bafter\s+((?:R\d+-)?T\d+)\b", re.IGNORECASE)
 # build.max_lanes when a project does not set it: MACH builds a plan's independent parts at the same time, up to this many,
 # within the machine-wide cap on builders. A project sets 1 to build one task at a time. For the build station to share.
 DEFAULT_MAX_LANES = 3
@@ -1262,18 +1261,28 @@ def lane_parts(task_section: Sequence[str]) -> Dict[str, Any]:
         heading = None if fenced else SUBHEADING_RE.match(line)
         if heading:
             headings.append(heading.group(1))
-            part = PART_OF.get(heading.group(1), part)
+            part = part_of(heading.group(1)) or part
             continue
         match = PLAN_TASK_RE.match(line)
         if match:
             brackets = TRAILING_BRACKETS_RE.search(match.group(3))
+            after: List[str] = []
+            for name in AFTER_MARK_RE.findall(brackets.group(1)) if brackets else []:
+                if name.upper() not in after:
+                    after.append(name.upper())
             tasks.append({"id": match.group(1), "kind": match.group(2), "ids": set(REQ_RE.findall(match.group(3))), "part": part,
-                          "after": AFTER_MARK_RE.findall(brackets.group(1)) if brackets else [], "line": line})
-    known = [title for title in headings if title in PART_OF]
+                          "after": after, "line": line})
+    known = [title for title in headings if part_of(title)]
     if not known:
         for task in tasks:
             task["part"] = "lanes"
     return {"used": bool(known) or any(task["after"] for task in tasks), "headings": headings, "tasks": tasks}
+
+
+def part_of(title: str) -> Optional[str]:
+    """The part a sub-heading names, read as the build station's lanes.py reads it: letter case and runs of spaces aside."""
+    wanted = " ".join(title.split()).lower()
+    return next((part for part, name in LANE_PARTS if name.lower() == wanted), None)
 
 
 def named_files(task_id: str, files: Dict[str, List[str]]) -> str:
@@ -1288,19 +1297,20 @@ def lane_problems(parts: Dict[str, Any], files: Dict[str, List[str]]) -> List[st
     if not parts["used"]:
         return []
     problems: List[str] = []
-    order = [title for _, title in LANE_PARTS]
-    seen: List[str] = []
+    order = [part for part, _ in LANE_PARTS]
+    seen: List[str] = []  # parts, in the order their headings came
     for title in parts["headings"]:
-        if title not in PART_OF:
+        part = part_of(title)
+        if part is None:
             problems.append(f"'### {title}' under '## Tasks' is not one of the plan's parts. Use only '### Before the lanes', '### Lanes' "
-                            "and '### After the lanes', spelt exactly so, or remove the heading")
-        elif title in seen:
+                            "and '### After the lanes', or remove the heading")
+        elif part in seen:
             problems.append(f"'### {title}' appears twice under '## Tasks'. Each part comes once: put all of its tasks under one heading")
         else:
-            if seen and order.index(title) < max(order.index(earlier) for earlier in seen):
-                problems.append(f"'### {title}' comes after '### {seen[-1]}'. The parts go in the order Before the lanes, Lanes, "
-                                "After the lanes: move the heading and its tasks")
-            seen.append(title)
+            if seen and order.index(part) < max(order.index(earlier) for earlier in seen):
+                problems.append(f"'### {title}' comes after '### {dict(LANE_PARTS)[seen[-1]]}'. The parts go in the order Before the lanes, "
+                                "Lanes, After the lanes: move the heading and its tasks")
+            seen.append(part)
     tasks = parts["tasks"]
     for task in tasks:
         if task["part"] is None:

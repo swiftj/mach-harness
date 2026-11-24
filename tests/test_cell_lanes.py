@@ -255,3 +255,33 @@ class LanesOutputTest(PlanProject):
         mine = cell.lane_parts(task_section(PARTS_PLAN))["tasks"]
         self.assertEqual([(t["id"], t["phase"], list(t["after"])) for t in annotated], [(t["id"], t["part"], t["after"]) for t in mine])
         self.assertEqual(lanes.problems(PARTS_PLAN, *cell.plan_tasks(PARTS_PLAN)), [])
+
+    def test_check_plan_and_the_calculator_read_the_tasks_section_alike(self):
+        # Where the two readers could differ. A task above the first heading has no part for check-plan, which refuses it;
+        # the calculator counts it before the lanes and reports it as a problem too: both refuse, so None reads as "before".
+        lanes = cell.lanes_module()
+        cases = {
+            "letter case and spaces": PARTS_PLAN.replace("### Before the lanes", "### before the LANES").replace("### Lanes", "###   lanes")
+                                                .replace("### After the lanes", "### After  the  lanes"),
+            "an unknown heading": PARTS_PLAN.replace("- [ ] T05 [test]", "### Backend\n- [ ] T05 [test]"),
+            "a task above the first heading": PARTS_PLAN.replace("### Before the lanes\n- [ ] T01 [test] Invitation model — `tests/model.test.ts` (INV-01)\n",
+                                                                 "- [ ] T01 [test] Invitation model — `tests/model.test.ts` (INV-01)\n### Before the lanes\n"),
+            "repeated and lower-case after": PARTS_PLAN.replace("(FR-06, FR-09, after T02)", "(FR-06, FR-09, after T02, After t02, after T01)"),
+            "an after in the prose only": PARTS_PLAN.replace("T06 [impl] Expiry —", "T06 [impl] Expiry after T04 —"),
+            "no headings, one mark": PLAN.replace("`src/invite.ts` (FR-06, FR-08)", "`src/invite.ts` (FR-06, FR-08, after T01)"),
+            "unknown headings only": PLAN.replace("## Tasks\n", "## Tasks\n\n### Backend\n"),
+        }
+        for name, text in cases.items():
+            with self.subTest(case=name):
+                tasks, touch = cell.plan_tasks(text)
+                theirs = [(t["id"], t["phase"], list(t["after"])) for t in lanes.annotate(text, tasks)]
+                parts = cell.lane_parts(task_section(text))
+                mine = [(t["id"], t["part"] or "before", t["after"]) for t in parts["tasks"]]
+                self.assertEqual(mine, theirs)
+                refused = (bool(cell.lane_problems(parts, {})), bool(lanes.problems(text, tasks, touch)))
+                if name == "unknown headings only":
+                    # A known disagreement, kept visible: a plan whose only sub-headings are other ones is a plan written the
+                    # old way, which check-plan accepts as it always did; lanes.problems (not called by check-plan) refuses it.
+                    self.assertEqual(refused, (False, True))
+                else:
+                    self.assertEqual(refused[0], refused[1], "both readers accept or both refuse")
