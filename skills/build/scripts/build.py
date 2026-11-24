@@ -165,6 +165,13 @@ except Exception:  # noqa: BLE001
     adr = None
 
 
+# Whether the readiness audit must run again: the one rule, shared with run.py. Its rule is a gate, so a build without it refuses.
+try:
+    import audit_state  # noqa: E402
+except Exception:  # noqa: BLE001
+    audit_state = None
+
+
 # The secrets and dependency scan: a shared helper with the intent station too. Its rule is a gate, so a build without it refuses.
 try:
     import scan  # noqa: E402
@@ -382,30 +389,34 @@ def ticket_labels(cell: Cell) -> List[str]:
 
 
 def audit_gate(cell: Cell) -> Dict[str, Any]:
-    """Read the audit station's report. Bronze blocks everything except repository hardening."""
-    if cell.section("build").get("require_audit") is False:
+    """Read the audit station's report through the shared rule (the intent station's audit_state.py, as run.py does).
+    Bronze blocks everything except repository hardening."""
+    if audit_state is None:
+        raise BuildError("The intent station's audit_state.py is not installed beside this skill, so the audit gate cannot be read.", code="audit-helper-missing")
+    judged = audit_state.state(cell.project, cell.config)
+    if judged["state"] == "off":
         return {"tier": None, "human_review_required": False, "note": "The audit gate is switched off in .factory/config.json."}
     hardening = HARDENING_LABEL in ticket_labels(cell)
-    report = load_json(cell.project / ".factory" / "audit-report.json")
-    if not isinstance(report, dict):
+    if judged["state"] == "missing":
         raise BuildError("There is no audit report. Run the audit skill on the main checkout first; building is gated on it.", code="audit-missing")
-    head = git(cell.project, "rev-parse", "HEAD").stdout.strip() or None
-    limit = cell.section("audit").get("max_age_days", 7)
-    try:
-        age = (datetime.now(timezone.utc) - datetime.fromisoformat(report["timestamp"])).total_seconds() / 86400
-    except (KeyError, ValueError, TypeError):
-        age = float("inf")
-    if report.get("head") != head or age > limit:
-        raise BuildError("The audit report is stale (a different commit, or too old). Run the audit skill again, then start the build.", code="audit-stale")
-    tier = report.get("readiness_tier")
+    if judged["state"] == "stale":
+        raise BuildError(judged["reason"] + " Run the audit skill on the main checkout, then start the build.", code="audit-stale")
+    tier = judged.get("tier")
     if tier not in ("Gold", "Silver"):
         if not hardening:
             raise BuildError(
-                "The repository's readiness tier is Bronze, so autonomous building is blocked: " + " ".join(report.get("blockers") or [])
+                "The repository's readiness tier is Bronze, so autonomous building is blocked: " + " ".join(judged.get("blockers") or [])
                 + f" Only tickets labelled '{HARDENING_LABEL}' may be built until it is hardened.", code="audit-bronze"
             )
         return {"tier": tier, "human_review_required": True, "note": "Bronze repository: allowed because this is a hardening ticket. A person must review it."}
     return {"tier": tier, "human_review_required": tier == "Silver", "note": "Silver: a person must review before merge." if tier == "Silver" else "Gold."}
+
+
+def mark_audit_due(cell: Cell, code: str) -> None:
+    """The tests failed in the cell before any change: record that the audit is due again, so a main branch that broke
+    since it ran is measured before the next build. Not for a hardening ticket, which may start from a failing suite."""
+    if audit_state is not None and cell.section("build").get("require_audit") is not False:
+        audit_state.mark_due(cell.project, code, cell.ticket_id, "A build's tests failed in its cell before any change.")
 
 
 def find_command(cell: Cell, kind: str, given: Optional[str]) -> Optional[str]:
@@ -1084,13 +1095,21 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
         cell.deviation(None, "no-baseline", args.no_baseline)
     elif not hardening:
         baseline = run_tests(cell)
+        if not baseline["passed"]:
+            # A reason to doubt the audit: the next ticket's route runs it again before another build (audit_state.py).
+            mark_audit_due(cell, "baseline-red-after-main" if merges else "baseline-red")
         if not baseline["passed"] and merges:
             last = merges[-1]
+            audited = (load_json(cell.project / ".factory" / "audit-report.json", {}) or {}).get("head") if gate.get("tier") else None
             raise BuildError(
                 f"The tests fail in the cell now that {last.get('main')} ({str(last.get('main_commit'))[:10]}) is merged into the branch, so building cannot start. "
                 "Nothing has been built for this ticket yet, so its own work is not the cause. "
                 + ("The audit found the main checkout's tests passing at this commit, so the failure comes from what the branch held from grooming "
-                   f"(its spec and contracts) together with the newer code on {last.get('main')}. " if gate.get("tier") in ("Gold", "Silver") else
+                   f"(its spec and contracts) together with the newer code on {last.get('main')}. "
+                   if gate.get("tier") in ("Gold", "Silver") and audited and audited == last.get("main_commit") else
+                   f"The audit found the main checkout's tests passing at {str(audited)[:10]}, and {last.get('main')} has moved since: either its newer "
+                   "code fails its own tests, or what the branch held from grooming (its spec and contracts) does not fit it. The audit runs again "
+                   "before the next build to tell. " if gate.get("tier") in ("Gold", "Silver") and audited else
                    f"Either {last.get('main')}'s own tests fail at this commit (run the audit), or what the branch held from grooming (its spec and "
                    f"contracts) does not fit the newer code on {last.get('main')}. ")
                 + "Look at the output below. If the test command is wrong, start again with --test-cmd \"<command>\". If the contracts no longer "
@@ -1101,7 +1120,8 @@ def cmd_start(cell: Cell, args: argparse.Namespace) -> int:
             behind = cell.info.get("isolation") == "worktree" and not is_ancestor(cell, git(cell.project, "rev-parse", "HEAD").stdout.strip())
             where = ("The cell's branch was not brought up to date with the main checkout (build.update_from_main is off), so this is the branch's own state."
                      if behind else "The cell is up to date with the main checkout, so the main checkout's tests fail too: run the audit, and harden the repository first.")
-            raise BuildError("The tests already fail in the cell before any change, so building cannot start. Nothing was recorded. " + where
+            raise BuildError("The tests already fail in the cell before any change, so building cannot start. Nothing was recorded for this build; "
+                             "the readiness audit is marked due, so it runs again before the next build. " + where
                              + f" If the test command itself is wrong ({cell.state.get('test_cmd')}), start again with --test-cmd \"<command>\".\n"
                              + baseline["output_tail"][-800:], code="baseline-red")
         cell.state["suite"] = "green"

@@ -218,9 +218,10 @@ class Supervisor:
             return False, why
         if not self.lease.owned():
             return False, "this supervisor does not own the project"
-        state = self.audit().get("state")
+        audit = self.audit()
+        state = audit.get("state")
         if state not in ("ok", "off"):
-            return False, f"the readiness audit is {state}"
+            return False, f"the readiness audit is {state}" + (f" ({audit['reason']})" if state == "stale" and audit.get("reason") else "")
         return True, why
 
     # ---- one pass ----

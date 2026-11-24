@@ -234,6 +234,20 @@ def intent_cell() -> Any:
     return _CELL[0]
 
 
+_AUDIT_STATE: List[Any] = []
+
+
+def audit_rule() -> Any:
+    """The shared rule for whether the readiness audit must run again (the intent station's audit_state.py), loaded once."""
+    if not _AUDIT_STATE:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("mach_audit_state", sibling("intent") / "scripts" / "audit_state.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _AUDIT_STATE.append(module)
+    return _AUDIT_STATE[0]
+
+
 _FAULTS: List[Any] = []
 
 
@@ -372,21 +386,8 @@ class Project:
         return bool(self.observe_status().get("due"))
 
     def audit(self) -> Dict[str, Any]:
-        """Whether the readiness audit lets building start: ok, or why not."""
-        if self.section("build").get("require_audit") is False:
-            return {"state": "off"}
-        report = load_json(self.root / ".factory" / "audit-report.json")
-        if not isinstance(report, dict):
-            return {"state": "missing"}
-        head = git(self.root, "rev-parse", "HEAD").stdout.strip() or None
-        try:
-            age = (datetime.now(timezone.utc) - datetime.fromisoformat(report["timestamp"])).total_seconds() / 86400
-        except (KeyError, ValueError, TypeError):
-            age = float("inf")
-        if report.get("head") != head or age > self.section("audit").get("max_age_days", 7):
-            return {"state": "stale"}
-        tier = report.get("readiness_tier")
-        return {"state": "ok" if tier in ("Gold", "Silver") else "bronze", "tier": tier, "blockers": report.get("blockers") or []}
+        """Whether the readiness audit lets building start: ok, or why not. The rule is the intent station's audit_state.py, shared with build.py."""
+        return audit_rule().state(self.root, self.config)
 
     def default_branch(self) -> str:
         remote = git(self.root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").stdout.strip()
@@ -497,7 +498,7 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
     if stage == "planned":
         audit = project.audit()
         if audit["state"] in ("missing", "stale"):
-            return step(ticket_id, stage, "audit", f"The readiness audit report is {audit['state']}; building is gated on it.", model=project.model("build"),
+            return step(ticket_id, stage, "audit", audit["reason"] + " Building is gated on it.", model=project.model("build"), audit_due=audit.get("why"),
                         prompt=f"Use the MACH audit skill on the main checkout: {skill('audit')}")
         if audit["state"] == "bronze" and HARDENING_LABEL not in project.ticket_labels(ticket_id):
             return step(ticket_id, stage, "stop", "The repository's readiness tier is Bronze: " + " ".join(audit["blockers"])
