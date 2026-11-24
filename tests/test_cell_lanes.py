@@ -1,5 +1,5 @@
 """Tests for the plan stage's part of building one plan in lanes (M22, piece B): the plan's two optional additions,
-what check-plan refuses in them, and the `lanes` it prints when build.max_lanes is above 1.
+what check-plan refuses in them, and the `lanes` it prints for such a plan unless build.max_lanes is 1 (it defaults to 3).
 
 A plan written without the additions is checked exactly as before: the old-plan tests below cover every plan the
 test suite writes and the plan template. The tests that need the lane calculator (skills/build/scripts/lanes.py,
@@ -121,25 +121,26 @@ class PlanProject(test_cell.Base):
 
 class OldPlanCheckTest(PlanProject):
     def test_an_old_plan_never_loads_the_lane_calculator_and_prints_what_it_printed(self):
-        settings = {"absent": None, "1": {"build": {"max_lanes": 1}}, "text": {"build": {"max_lanes": "3"}}, "true": {"build": {"max_lanes": True}},
-                    "zero": {"build": {"max_lanes": 0}}}
+        # Decided from the plan, not the setting: on by default (absent), off (1), on (3), and unusable values.
+        settings = {"absent": None, "1": {"build": {"max_lanes": 1}}, "3": {"build": {"max_lanes": 3}}, "text": {"build": {"max_lanes": "3"}},
+                    "true": {"build": {"max_lanes": True}}, "zero": {"build": {"max_lanes": 0}}}
         outputs = {}
         for name, config in settings.items():
             with self.subTest(setting=name):
                 self.fresh()
                 self.ready(PLAN.replace("## Tasks\n", "## Tasks\n\n### Backend\n"), config)
-                with mock.patch.object(cell, "lanes_module", side_effect=AssertionError("an old plan at max_lanes 1 loaded lanes.py")):
+                with mock.patch.object(cell, "lanes_module", side_effect=AssertionError("an old plan loaded lanes.py")):
                     code, out, _ = run("check-plan", "LOCAL-001", project=self.project)
                 self.assertEqual(code, 0, out)
                 printed = json.loads(out[out.index("{"):])
                 self.assertEqual(list(printed), ["status", "app_type", "risk", "contracts", "tasks", "adrs"])
                 outputs[name] = out
-        self.assertEqual(len(set(outputs.values())), 1, "every reading of max_lanes as 1 prints the same")
+        self.assertEqual(len(set(outputs.values())), 1, "an old plan prints the same whatever the setting")
 
 
 class PartsCheckTest(PlanProject):
     def test_a_plan_in_parts_is_accepted(self):
-        code, out, _ = self.check(PARTS_PLAN)
+        code, out, _ = self.check(PARTS_PLAN, {"build": {"max_lanes": 1}})
         self.assertEqual(code, 0, out)
         self.assertNotIn('"lanes"', out, "at build.max_lanes 1 PLANNED says nothing about lanes")
         parts = cell.lane_parts(task_section(PARTS_PLAN))
@@ -147,6 +148,12 @@ class PartsCheckTest(PlanProject):
                          [("T01", "before"), ("T02", "before"), ("T03", "lanes"), ("T04", "lanes"), ("T05", "lanes"), ("T06", "lanes"),
                           ("T07", "after"), ("T08", "after")])
         self.assertEqual(parts["tasks"][5]["after"], ["T02"])
+
+    def test_without_the_lane_calculator_a_plan_in_parts_is_still_checked_and_accepted(self):
+        with mock.patch.object(cell, "lanes_module", return_value=None):
+            code, out, _ = self.check(PARTS_PLAN)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn('"lanes"', out)
 
     def test_the_mistakes_in_parts_and_marks_are_refused_in_plain_sentences(self):
         cases = {
@@ -205,9 +212,11 @@ class LaneUnreachableGreenTest(unittest.TestCase):
 class MaxLanesTest(test_cell.Base):
     with_git = False
 
-    def test_only_a_whole_number_above_one_turns_lanes_on(self):
+    def test_a_whole_number_is_taken_as_given_and_anything_else_is_the_default(self):
+        self.assertEqual(cell.DEFAULT_MAX_LANES, 3)
         (self.project / ".factory").mkdir()
-        for value, expected in ((None, 1), (2, 2), (1, 1), (0, 1), (-3, 1), ("2", 1), (True, 1), (2.0, 1), (4, 4)):
+        self.assertEqual(cell.max_lanes(self.project), 3, "no config file")
+        for value, expected in ((None, 3), (2, 2), (1, 1), (0, 3), (-3, 3), ("2", 3), (True, 3), (2.0, 3), (4, 4)):
             with self.subTest(value=value):
                 (self.project / ".factory" / "config.json").write_text(json.dumps({"build": {} if value is None else {"max_lanes": value}}))
                 self.assertEqual(cell.max_lanes(self.project), expected)
@@ -224,14 +233,20 @@ class LanesOutputTest(PlanProject):
         self.assertEqual([lane["tasks"] for lane in lanes["lanes"]], [["T03", "T04"], ["T05", "T06"]])
         self.assertEqual([lane["lane"] for lane in lanes["lanes"]], ["L1", "L2"])
 
-    def test_an_old_plan_at_max_lanes_two_is_one_lane_with_the_reason(self):
-        code, out, _ = self.check(PLAN, {"build": {"max_lanes": 2}})
+    def test_planned_shows_the_lanes_by_default(self):
+        code, out, _ = self.check(PARTS_PLAN)
         self.assertEqual(code, 0, out)
-        printed = json.loads(out[out.index("{"):])
-        self.assertEqual(list(printed)[:6], ["status", "app_type", "risk", "contracts", "tasks", "adrs"])
-        self.assertEqual(printed["lanes"]["count"], 1)
-        self.assertEqual(printed["lanes"]["lanes"][0]["tasks"], ["T01", "T02", "T03", "T04"])
-        self.assertTrue(printed["lanes"]["joined_because"], "the output says why the tasks were joined")
+        self.assertEqual(json.loads(out[out.index("{"):])["lanes"]["count"], 2)
+
+    def test_at_max_lanes_one_the_lanes_are_checked_but_not_printed(self):
+        code, out, _ = self.check(PARTS_PLAN, {"build": {"max_lanes": 1}})
+        self.assertEqual(code, 0, out)
+        self.assertNotIn('"lanes"', out)
+
+    def test_the_calculator_gives_a_reason_for_every_join(self):
+        lane_plan = cell.lanes_module().plan(PLAN, *cell.plan_tasks(PLAN))
+        self.assertEqual([lane["tasks"] for lane in lane_plan["lanes"]], [["T01", "T02", "T03", "T04"]])
+        self.assertTrue(lane_plan["joined_because"], "the output says why the tasks were joined")
 
     def test_the_calculator_reads_the_parts_and_marks_as_check_plan_does(self):
         lanes = cell.lanes_module()

@@ -66,6 +66,9 @@ PART_OF = {title: part for part, title in LANE_PARTS}
 SUBHEADING_RE = re.compile(r"^###\s+(.+?)\s*$")
 TRAILING_BRACKETS_RE = re.compile(r"\(([^()]*)\)\s*$")
 AFTER_MARK_RE = re.compile(r"\bafter\s+((?:R\d+-)?T\d+)\b")
+# build.max_lanes when a project does not set it: MACH builds a plan's independent parts at the same time, up to this many,
+# within the machine-wide cap on builders. A project sets 1 to build one task at a time. For the build station to share.
+DEFAULT_MAX_LANES = 3
 INTENT_SECTIONS = ("Why", "Goal ancestry", "Constraints", "Risk", "Deferred work")
 INTENT_FIELDS = ("Ticket", "Slice", "Mode", "Status")
 PLAN_FIELDS = ("App type", "Risk tier", "Contracts", "ADRs")
@@ -1341,10 +1344,11 @@ def lanes_unreachable_green(parts: Dict[str, Any], lane_plan: Dict[str, Any]) ->
 
 
 def max_lanes(project: Path) -> int:
-    """build.max_lanes: how many lanes one ticket may run at once. A whole number of at least 1; anything else reads as 1 (off)."""
+    """build.max_lanes: how many lanes one ticket may run at once. A whole number of at least 1 is taken as given (1 builds
+    one task at a time); absent or anything else reads as DEFAULT_MAX_LANES."""
     section = load_config(project).get("build")
     value = section.get("max_lanes") if isinstance(section, dict) else None
-    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 1 else 1
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 1 else DEFAULT_MAX_LANES
 
 
 def lane_summary(lane_plan: Dict[str, Any]) -> Dict[str, Any]:
@@ -1479,24 +1483,21 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
 def plan_lanes(project: Path, text: str, task_section: Sequence[str], problems: List[str], check_lanes: bool) -> Optional[Dict[str, Any]]:
     """M22, design 4.4: add to `problems` what the plan's parts and 'after' marks get wrong, and each lane's own
     unreachable_green when the whole plan has none (`check_lanes`). Returns the lane plan for PLANNED when build.max_lanes is
-    above 1, else None. A plan without the parts or marks, at build.max_lanes 1, never loads the lane calculator: it is
-    checked exactly as before."""
+    above 1, else None. Decided from the plan, whatever the setting: a plan without the parts or marks never loads the lane
+    calculator and gets no `lanes` in PLANNED, so it is checked and printed exactly as before."""
     parts = lane_parts(task_section)
-    tasks, touch = plan_tasks(text) if parts["used"] else ([], {})
+    if not parts["used"]:
+        return None
+    tasks, touch = plan_tasks(text)
     own = lane_problems(parts, {task["id"]: task.get("files") or [] for task in tasks})
     problems.extend(own)
-    wanted = max_lanes(project) > 1
-    if own or not (parts["used"] or wanted):
-        return None
-    module = lanes_module()
+    module = lanes_module() if not own else None
     if module is None:
         return None
-    if not parts["used"]:
-        tasks, touch = plan_tasks(text)
     lane_plan = module.plan(text, copy.deepcopy(tasks), copy.deepcopy(touch))
-    if parts["used"] and check_lanes:
+    if check_lanes:
         problems.extend(lanes_unreachable_green(parts, lane_plan))
-    return lane_plan if wanted else None
+    return lane_plan if max_lanes(project) > 1 else None
 
 
 CLAUDE_CONFIG_REFUSAL = ("the plan changes {files}, which is Claude Code configuration that a ticket's workspace never holds, "
@@ -1556,7 +1557,7 @@ _LANES: List[Any] = []
 
 def lanes_module() -> Optional[Any]:
     """The build station's lane calculator (lanes.py, M22), loaded by path as build.py is; None where it is not installed.
-    Loaded only for a plan that uses the parts or 'after' marks, or when build.max_lanes is above 1."""
+    Loaded only for a plan that uses the parts or 'after' marks."""
     if not _LANES:
         import importlib.util
         script = build_script("lanes.py")
