@@ -528,6 +528,22 @@ def record_on_branch(cell: Cell, record: Optional[Dict[str, Any]]) -> bool:
         git(cell.work, "merge-base", "--is-ancestor", commit, "HEAD").returncode == 0
 
 
+def approved_spec_sha(cell: Cell, base: str) -> Optional[str]:
+    """The SHA-256 of the ticket's spec as it is on the branch at `base`, taken the way intake takes it (the text without
+    MACH's header line), so release qualification can bind the change record to the approved spec. None when it cannot be read."""
+    path = cell.info.get("spec_path")
+    try:
+        rules = intake_rules()
+    except MergeError:
+        return None
+    if not isinstance(path, str) or not path:
+        return None
+    done = subprocess.run(["git", "show", f"{base}:{path}"], cwd=str(cell.work), capture_output=True)
+    if done.returncode != 0:
+        return None
+    return rules.text_sha(rules.without_header(done.stdout.decode("utf-8-sig", errors="replace"))[0])
+
+
 def write_record(cell: Cell, revalidated: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """The station's last act before landing (M13): write the change record on the ticket's branch and commit it alone.
 
@@ -547,7 +563,8 @@ def write_record(cell: Cell, revalidated: Optional[Dict[str, Any]]) -> Dict[str,
     try:
         path = change_record.path_for(cell.records["dir"], cell.ticket_id, taken, earlier.get("path") if earlier else None)
         text = change_record.render(cell.root, cell.info, cell.ticket_id, {
-            "approved": cell.decision.get("head"), "revalidated": reval.get("head"), "onto": reval.get("onto"), "base": base}, issue_rules(), cell.jira_url)
+            "approved": cell.decision.get("head"), "revalidated": reval.get("head"), "onto": reval.get("onto"), "base": base}, issue_rules(), cell.jira_url,
+            spec_sha256=approved_spec_sha(cell, base))
         text = change_record.mask(text, path, scan)
     except change_record.RecordError as exc:
         raise MergeError(str(exc), code="record-refused")

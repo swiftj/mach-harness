@@ -1,12 +1,12 @@
 # Where the work stands, and what is next
 
-Written on 2026-11-23, after MACH 0.21.0 was published, for whoever picks the work up next: a person, or an AI coding agent starting a new session on another machine. Read this first, then `docs/mach-next/M20_TEAMS_AND_MOVING.md`.
+Written on 2026-11-23, after MACH 0.21.0 was published, and brought up to date the same day when A6 was built, for whoever picks the work up next: a person, or an AI coding agent starting a new session on another machine. Read this first, then `docs/mach-next/M20_TEAMS_AND_MOVING.md`.
 
 Keep this file current: when a piece below is finished or the plan changes, change it here in the same commit.
 
 ## 1. State
 
-- **Released:** 0.21.0, tag `v0.21.0`, on `main`. Nothing is unmerged; every other branch is merged or abandoned.
+- **Released:** 0.21.0, tag `v0.21.0`, on `main`. Merged to `main` since, not pushed and not released: qualifying a release across machines (section 2.1).
 - **What 0.21.0 added:** MACH for a team (Part A of the M20 design, except A6), the basic decisions drafted from an engineer's own documents, a ticket's workspace that holds no `.claude/` files, and a plain message when MACH's files are from different versions. The release notes are `docs/guides/RELEASE_NOTES_DRAFT.md`.
 - **Checks at release:** `make check` (2,149 tests, 1 skipped), `go test ./...` in both apps, and the web typecheck, lint, build and unit tests (347 and 396) all passed on the release commit.
 
@@ -16,23 +16,16 @@ The owner decided this order on 2026-11-23.
 
 ### 2.1 Qualifying a release across machines (A6 in the M20 design)
 
-**Why it is first.** With 0.21.0 any engineer's Factory builds any slice, so the slices of one epic are normally built on different machines. Release qualification reads each slice's run record and evidence from the local archive of the machine that built it. On any one machine the others show as "This Factory never took the slice in", and the epic cannot be qualified or accepted without an exception per check.
+**Built and merged to `main` on 2026-11-23; not pushed and not released.** What it does and its limits are in section A6 of `docs/mach-next/M20_TEAMS_AND_MOVING.md` and the release section of `docs/BLUEPRINT.md`. The owner decided on 2026-11-23 that an evidence file's SHA-256 in the committed change record is enough on a machine that does not hold the file, so no shared place for evidence was built.
 
-**Start by answering one question.** How much of what qualification needs is already in the change record that the merge station commits with every ticket? Read:
+The four conditions, as tested: a third clone that built nothing reaches the same outcome, check for check, as the two that built the slices; a record edited, replaced or put back by hand, or a spec changed after it, blocks the slice; `acceptance record` works from the third clone's snapshot and is read back there; `AcrossMachinesTest` errors on 0.21.0's qualification and passes now.
 
-- `skills/run/scripts/qualify.py`: around lines 390 to 470 (where a slice is "missing") and around 718 to 740 (how records are read);
-- `skills/merge/scripts/merge.py`, `write_record`, and `skills/merge/scripts/change_record.py`: what the committed record holds;
-- `skills/cleanup/scripts/cleanup.py`: what the local archive holds that the change record does not;
-- the setting `records.publish_command` and the release section of `docs/BLUEPRINT.md`.
+Left open by it:
 
-If the change record carries the verdicts and the scenario-to-evidence map, this is a medium piece: qualification reads the committed record for a slice this machine did not build, and checks it against the merged commit. If the evidence itself (screenshots, recordings) must be read, it also needs a shared place for evidence, which is larger.
-
-**What done looks like.**
-
-1. On a machine that built none of an epic's slices, `/mach release qualify --epic <epic>` reaches the same outcome as it would on a machine that built all of them.
-2. A record cannot be swapped or edited without qualification noticing: it is bound to the merged commit and to the approved spec's SHA-256.
-3. Product acceptance (`acceptance record`) works from that qualification.
-4. A reproduction test that fails today passes: one epic, two slices, built in two separate clones, qualified from a third.
+- **A release of it.** The change record is version 2 and the readiness snapshot is schema version 3. Every slice merged before this shows as `missing` when qualified, so an epic part-built on 0.21.0 needs an exception per slice or a rebuild.
+- **Never run for real:** only simulated station records in clones on one machine; no real Factory run, no real second machine, no real pull request merged on GitHub (a squashed one is not bound).
+- **The product approval in `human_approvals`** comes from this machine's ledger, so that list can differ between machines. Putting who approved the slice into the change record would close it.
+- **A newer approved revision not yet built** is known only to a Factory that took it in.
 
 ### 2.2 Moving a project to another repository (Part B of the M20 design)
 
@@ -60,6 +53,12 @@ git clone https://github.com/swiftj/mach-harness.git
 ```
 
 Then, from the clone: `make check`; `go test ./...` in `apps/studio` and in `apps/observer`; in `web/`, `pnpm typecheck`, `pnpm lint`, `pnpm build`, `pnpm --filter @mach/product-studio test` and `pnpm --filter @mach/factory-floor test`.
+
+Two things found on a second machine (2026-11-23, macOS, Homebrew Python 3.15.2), neither yet fixed:
+
+- **The tests need Python 3.11 or later, and not Apple's.** With `/usr/bin/python3` (3.9.6), 7 classes fail: no `tomllib` (three in `test_adr_baseline`), a byte-code cache under `~/Library/Caches` (`test_installer.InstallTest`, `test_mach_factory_supervisor.ServiceTest`), and `capture ... -- <arguments>` refused by its `argparse` (`test_verify.CaptureTest`, `test_unattended_commands.InstructionsTest`). The last is MACH itself, not only its test: `verify.py capture` with arguments after `--` does not parse on 3.9.
+- **Run the tests with `PYTHONDONTWRITEBYTECODE=1`.** Without it two classes fail every time: `test_verify.CaptureTest` (finds `__pycache__` in the checkout) and `test_build.StepTest` (the build station's test run reads a stale `.pyc` after a source file is rewritten at the same size in the same second). The second is a weakness in the build station's own test runs, not only in the test. So here: `PYTHONDONTWRITEBYTECODE=1 PATH="/opt/homebrew/bin:$PATH" make check`.
+- A full run that crosses midnight UTC fails four classes in `test_security_exception` (the test's "today" is fixed when it starts). Run it again.
 
 An AI agent's saved notes and a person's own Claude Code settings do not travel with the repository. Section 4 holds what those notes said.
 

@@ -1,6 +1,6 @@
 # M20 design: teams, and moving a project
 
-Status: Part A is built, except A6 (qualifying a release across machines). Part B (moving a project) is a proposal; nothing of it is built. Also built alongside: a ticket's workspace that holds no `.claude/` files, and the basic decisions drafted from an engineer's own documents (both in `docs/BLUEPRINT.md`). It rests on two investigations run against MACH 0.20.0 on 2026-11-23:
+Status: Part A is built. Part B (moving a project) is a proposal; nothing of it is built. Also built alongside: a ticket's workspace that holds no `.claude/` files, and the basic decisions drafted from an engineer's own documents (both in `docs/BLUEPRINT.md`). It rests on two investigations run against MACH 0.20.0 on 2026-11-23:
 
 - a real GitHub issue transfer between two private throwaway repositories, with a real MACH project in the first;
 - an audit of what happens when several product managers and several engineers use MACH at once on one repository, with 15 reproduction tests (9 of them show a defect and are marked as expected failures).
@@ -104,6 +104,18 @@ For a dependency this Factory did not build, the plan reads the merged spec on m
 
 Run records and archives are published to a shared place (the hook `records.publish_command` exists), and qualification reads them. This is the largest item and can follow the others.
 
+**Built, another way, on the owner's decision of 2026-11-23.** No shared place was needed. The owner decided that an evidence file's SHA-256 in the committed change record is enough for a scenario to pass on a machine that does not hold the file. So:
+
+- The merge station's change record is version 2: it ends with `## For MACH`, a fenced JSON document of facts (`change_record.facts`, read back by `read_facts`). It adds what the prose could not give reliably: the approved spec's SHA-256, the contracts the plan named, whether review required a person's approval, the slices depended on, and the verdicts, scenario-to-evidence map, exceptions and final-round blockers as data.
+- Qualification (`qualify.py`) reads every slice from that block at the release commit, on every machine, and no longer from the intake ledger, `runs.jsonl` or the archive. The archive is used only to hash an evidence file this machine holds.
+- A record is bound to the commit that added it (`bind`): the last commit to touch the file must be the record commit (`change_record.holds`), brought in by a merge, with the spec on its branch and at the release commit matching the SHA-256 it names.
+- The snapshot is schema version 3 (`schemas/release-readiness.v3.schema.json`): each slice names its `change_record`; sources are the record's path, never a local archive path; an evidence entry is the file and its recorded SHA-256.
+- A version 1 record is passed over, so a slice merged before this shows as `missing`.
+
+Limits, as built: the binding does not catch a record forged on a ticket's branch by someone who can merge. `human_approvals` still lists a slice's product approval from this machine's ledger only, so that list (not the outcome or any check) can differ between machines. A newer approved revision not yet built is known only to a Factory that took it in. A pull request that a person squashed leaves no record commit, so its record is not bound and the slice is blocked.
+
+Tests: `tests/test_release_qualify.py` (`AcrossMachinesTest`: one epic, two slices built in two clones, qualified and accepted from a third; `RecordTest`: an edited record, one put back by hand, a spec changed afterwards, a differing evidence file), `tests/test_change_record.py` (the facts through a real merge, and text from the cell that tries to forge them).
+
 ### What a team should still agree
 
 Written before Part A was built. With it built, the first, third, fourth and sixth points below are now MACH's own rules; the rest still hold.
@@ -116,7 +128,7 @@ Written before Part A was built. With it built, the first, third, fourth and six
 - Refresh before starting a slice and before marking one ready.
 - Tell the engineer before reopening a slice that is being built.
 - Engineers let Product Studio allocate slice numbers, or announce a number before grooming.
-- Qualify an epic on the machine that built all of its slices.
+- Qualify an epic on the machine that built all of its slices. (No longer needed: A6 is built.)
 
 ## 3. Part B: moving a project
 
@@ -167,7 +179,7 @@ One decision is needed: one repository still means one project. Two products in 
 | 3 | B1 references by ID, B3 recognising a move | M |
 | 4 | B2 move this project | L |
 | 5 | B4 merging two projects | L |
-| 6 | A6 qualifying across machines | L |
+| 6 | A6 qualifying across machines (built) | M |
 
 **A1. Built, after two decisions by the owner on 2026-11-23.** First: no slice is assigned in advance; every Factory must be able to build anything. Second: two Factories should not build the same slice at the same time, because that ends in a duplicate pull request. The first build (a claim that refused dispatch, with a release only by hand) was replaced on the first decision by a model with no claim at all, and that in turn was replaced on the second by what is built: `ticket.py slice-claim` (rules in `issue_rules`: `claim_token`, `claim_comment`, `claims`, `claim_holder`) is called by `intake.py` `_dispatch` for every slice from an issue not yet in the line, so an engineer's dispatch, `/mach pull` and the supervisor all go through it. A Factory is its random value in `.factory/local/factory.json`; a claim carries a token derived from it and the slice ID. The earliest live counting claim per revision holds, by comment ID; a claim counts only as the exact template, unedited, by a person with triage or above. A slice held elsewhere is taken in and skipped by the plan ("being built by @x since …"), so pull and the supervisor take the next; a Factory that loses a race withdraws its own claim and pull dispatches the next slice in its place. Released by its own Factory (abandoned work withdraws its claim), by going stale (no activity for `intake.claim_stale_days`, default 3), or by an engineer's explicit `product dispatch <slice> --take-over`, never unattended. Backstop: `intake.already_landed`, used by `run.py next`, stops a copy whose revision already landed; the merge station checks the same (built, see A3's Factory note). Differs from the text above: a failed status write does not block dispatch; the claim comment is the claim. Tests: `tests/test_team_factory.py`.
 
