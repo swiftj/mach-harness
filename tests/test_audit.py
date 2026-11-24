@@ -242,12 +242,12 @@ class GateTest(Base):
         self.assertEqual((code, result["allowed"], result["tier"], result["human_review_required"]), (0, True, "Gold", False))
         code, result = self.gate("--max-age-days", "0")
         self.assertEqual(code, 1)
-        self.assertIn("days old", result["reason"])
+        self.assertIn("days ago, more than audit.max_age_days (0) allows", result["reason"])
         self.write({"app/more.py": "x = 1\n"})
         self.commit("change")
         code, result = self.gate()
-        self.assertEqual(code, 1)
-        self.assertIn("different commit", result["reason"])
+        self.assertEqual((code, result["allowed"]), (0, True), "a Gold audit stays good when the main branch moves")
+        self.assertIn("the main branch has moved since", result["note"])
 
     def test_gate_refuses_bronze_and_flags_silver(self):
         self.repo(**{"tests/test_core.py": FAILING_TEST})

@@ -89,7 +89,7 @@ If the input is exactly `where`, an automated workflow is asking where this skil
 
 | Action | What you do |
 |--------|-------------|
-| `audit` | Run the audit skill yourself, as the prompt says. It only measures. If the result is Bronze, the next `RUN next` will stop the line. |
+| `audit` | Run the audit skill yourself, as the prompt says. It only measures. If the result is Bronze, the next `RUN next` will stop the line. The step comes when there is no report, or the reason says why it must run again: it is older than `audit.max_age_days` (30 days by default), a build's tests failed before any change since it ran, or the repository is Bronze and the main branch has moved. A Gold or Silver audit is not run again merely because tickets merged. Say the reason in a few words. |
 | `groom` | If `interactive` is true, run the intent skill in this conversation: the user is the product owner and answers its questions. When the person has said in this conversation that this ticket is a small change, add ` --small` to the intent skill's input (never in headless mode, and never on your own judgment); a ticket labelled `small-change` needs nothing added. Otherwise start a sub-agent on `model` with the prompt. |
 | `plan` | Start a sub-agent on `model` with the prompt. |
 | `build`, `revise` | Start the sub-agent named by `agent_type` with the prompt. |

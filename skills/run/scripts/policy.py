@@ -510,7 +510,7 @@ def preflight(root: Path, config: Dict[str, Any], request: Dict[str, Any], *, gi
             checks.append(check("claude_ready", ok, detail))
         state = audit.get("state")
         checks.append(check("audit", state in ("ok", "off"), {"ok": f"The readiness audit is current: {audit.get('tier')}.", "off": "This project has switched the audit gate off.",
-                                                              "missing": "There is no readiness audit report. Run the audit first.", "stale": "The readiness audit is out of date. Run it again.",
+                                                              "missing": "There is no readiness audit report. Run the audit first.", "stale": str(audit.get("reason") or "The readiness audit must run again."),
                                                               "bronze": "The repository's readiness tier is Bronze; unattended building is not allowed."}.get(str(state), f"Audit state: {state}.")))
         problems = security_review_problems(config)
         checks.append(check("security_review", not problems,
