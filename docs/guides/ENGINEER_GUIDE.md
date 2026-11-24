@@ -93,9 +93,57 @@ A small change is a fix to a shipped rule that is not holding, or an adjustment 
 - **Limits.** `intent.small_change` in `.factory/config.json`: `requirements` (3), `scenarios` (4), `questions` (5) and `changed_shipped_rules` (1, which can only be lowered).
 - **Where it shows.** The pull request title and the change record say "small change" beside the ticket; one that became a full slice says so, with the rule. The Line names it on the ticket, and Analytics sets time at Groom for small changes beside full slices.
 
-**Re-planning a wrong plan.** `cell.py replan <ticket> --reason "<why>"` (the intent station's script), only when you say so, returns a `planned` or `building` cell to `spec-ready` so the line plans it again. Nothing is lost: the old `plan.md`, `build.json` and `build-report.json` go under `plan-history/<n>/`, and if the branch had moved its old tip is kept as `refs/mach/replan/<ticket>/<n>`. It refuses a cell that has been through a judging round, uncommitted changes, task work already on main, and an empty reason. It adds no judging round. `RUN next` then says `plan`.
+**Re-planning a wrong plan.** `cell.py replan <ticket> --reason "<why>"` (the intent station's script), only when you say so, returns a `planned` or `building` cell to `spec-ready` so the line plans it again. Nothing is lost: the old `plan.md`, `build.json` and `build-report.json` go under `plan-history/<n>/`, the branch goes back to the slice's latest spec, and if the branch had moved its old tip is kept as `refs/mach/replan/<ticket>/<n>`, with any uncommitted files in the cell saved on top of it. The result lists any commit MACH did not recognise with the `git cherry-pick` that brings it back, and the uncommitted files with the `git checkout` that brings them back. It refuses a cell that has been through a judging round, task work already on main, and an empty reason. It adds no judging round. `RUN next` then says `plan`. A spec corrected after building started needs no re-plan: the intent station sets the old plan and build aside the same way, by itself, and plans again.
 
 Open question from testing: nothing distinguishes a product manager's copy from an engineer's. A refused dispatch there was refused only because the copy had no intake ledger. `factory enable` ran its preflight and issued a code there. Treat "only an engineer dispatches" as a convention until this is decided.
+
+### Building in lanes
+
+A plan's independent parts can be built at the same time, each by its own builder. Each part is a **lane**: a chain of tasks that shares no file and no requirement with another lane. Each lane works in its own worktree under the ticket's cell (`.factory/worktrees/<ticket>/lanes/<L>/repo`, on the branch `mach-lane/<ticket>/<L>`), from the same starting commit, under the same gates as any task: test first and seen failing, committed tests frozen, the plan's files only, the whole suite after each code task, the secrets scan before each commit. When every lane is done, MACH joins them: it lands their commits on the ticket's branch, one per task, in the plan's order, runs the whole test suite on the result, and only then moves the branch. The history then looks like a build done one task at a time. Verification and review are unchanged.
+
+**It is on by default, and only for plans written for it.** `build.max_lanes` is 3 unless you set it. But only a plan whose author divided its tasks under `### Before the lanes`, `### Lanes` and `### After the lanes`, or marked a task `after T04`, is built in lanes. The contract engineer is told to plan that way where the slice really has separate parts, and never to split work only to look parallel. A plan written the old way is built one task at a time, exactly as before, whatever the setting. So is a revision round, a `repo-hardening` ticket, and a ticket whose suite is not green when the lanes would open. `cell.py check-plan` shows the lanes a plan gives, and why any two tasks were put in one lane.
+
+**Turning it down or off.** In `.factory/config.json`:
+
+```json
+{ "build": { "max_lanes": 1 } }
+```
+
+1 builds one task at a time; 2 allows two lanes at once. `factory.max_builders` (default `factory.max_parallel`) caps builders on this machine across every ticket. Lanes take only the places other building tickets leave free, so lanes on their own never put more builders on the machine than that; a ticket whose lanes are open always keeps at least one. With no place for a second builder when the lanes would open, the ticket is built one task at a time.
+
+**Measuring your past builds.** Before you rely on it, see what your own plans would have allowed. In a script install:
+
+```
+python3 .claude/skills/mach-build/scripts/lanes.py measure --project .
+python3 .claude/skills/mach-build/scripts/lanes.py show .factory/worktrees/<ticket>/plan.md
+```
+
+With the plugin, ask Claude Code to run `lanes.py measure --project .` from the `mach:build` skill's `scripts` folder; it is the same script. `measure` reads each ticket's cell, or its archive once cleaned up, and changes nothing. For each build it prints the tasks, the lanes the plan's shape gives and why tasks were joined, the time the build took and its share of test time, and estimates of the time in lanes with two, three and four at once. The estimates come from recorded numbers and are labelled as such; making worktrees and landing are assumed at 30 seconds each unless you give `--worktree-seconds` and `--landing-seconds`. `measure` applies the lane rule to every plan, so for a plan written the old way it says what its shape would have allowed, not what MACH does with it.
+
+**What you see.** In `/mach`, when the tasks before the lanes are done: how many builders start and what each is building ("Two builders are now working at the same time: one on who may invite (T03, T04), one on the invitation e-mail (T05, T06)"); after the join, how many tasks landed and whether the whole suite passed. `/mach status` and `/mach explain` carry one line on the ticket's lanes. On the Factory Floor's Line, a ticket built in lanes has a strip under its row from the Build column on: one chip per lane with its current task and how many of its tasks are done, and the moment of the join ("The lanes are being joined", joined, a lane set aside, or the lanes failing together). Its side panel groups the tasks by lane, each with its time.
+
+**When a lane does not work out.** Nothing stops the ticket, and nothing is lost:
+
+- **A lane that cannot finish** (it truly needs a file the plan gives another lane, or its builder stopped twice with nothing more done) is handed back to the cell, by its builder or by the line. Its finished tasks land at the join; its other tasks are built in the cell, one at a time, after it.
+- **A lane that proves not independent** (two lanes changed one file, or one changed a test file another lane holds) is set aside at the join, by MACH, the later one in plan order. Its tasks are built again in the cell, one at a time, where they see the landed work.
+- **Lanes that pass alone but fail together**: the joined result is kept, and MACH adds one task, `J-T01`, for the builder to make them pass together. Every test is then frozen, so the fix is in the code.
+- **A join that cannot land** changes nothing on the ticket's branch and keeps every lane; run the ticket again and the join starts over.
+
+Each of these is recorded with its reason and shown to the reviewers, in `/mach explain` and in the change record.
+
+**The cost.** Each lane's builder reads the plan, the spec, the contracts and the code next to its files again, so with three lanes expect about two extra readings of that, plus small calls to start and join the lanes. Token use rises when lanes run. MACH records cost only for supervised executions, as one total per execution, never per lane. The time a lane takes includes any time its builder sat idle. Lanes run their test suites at the same time, so where a suite already keeps every core busy, or uses a fixed port, a shared database or a fixed temporary path, the gain is small or the runs can clash; set `build.max_lanes` to 1 for such a project.
+
+### The test command
+
+Every step of a build runs the project's tests, so a build always has a test command. MACH looks for it in this order: `--test-cmd` given to the build's start, `build.commands.test` or `audit.commands.test` in `.factory/config.json`, then the command the audit found. When none is known, the build does not start: the cell stays planned, nothing is recorded, and the message says how to give one.
+
+The builder may choose the command itself: the one the plan or the project's documents name, or one that fits the project's language and layout. It may also set or change it at any time while the ticket is building, in lanes or not, in a revision round, or after its tasks are finished but before it is verified:
+
+```
+python3 .claude/skills/mach-build/scripts/build.py set-commands <ticket> --test-cmd "<command>" --reason "<why>"
+```
+
+With the plugin it is the same script, in the `mach:build` skill's `scripts` folder. Nothing done is undone: done tasks stay done, and the build carries on where it was. Each change is recorded with the old and the new command, the reason and when, and the reviewers, `/mach explain` and the change record show it. A missing or wrong test command never means starting the ticket over.
 
 ### Issues filed by a monitoring system
 

@@ -1,6 +1,6 @@
 # M22 design: building one plan in lanes
 
-Status: design only. Nothing here is built.
+Status: built. The body below is the design as written; several decisions changed afterwards. What MACH does now is in "As built" at the end, which wins where the two differ.
 
 The build station works through a plan's tasks one after another (`build.py` `take`, `skills/build/scripts/build.py:666-678`: "Tasks are done in plan order"). The owner's slices have close to 30 tasks, and a build is slow. They want the station to work on several tasks at once. They have heard, and set aside, thinner slices and faster test runs. This document designs that fan-out.
 
@@ -444,3 +444,68 @@ Each scenario runs real Git in a temporary project, with a small Python project 
 - **The belt's repeat guard** (`belt.js:235-241`) would call a second batch of lanes stuck unless the batches loop inside one step.
 - **The plan's grammar has one parser shared by three stations** (`cell.py:1390-1404`, `schedule.py:198-228`); this design leaves `parse_plan` alone and reads the additions in `lanes.py`, at the price of a second reader of the Tasks section.
 - **Not determined from the code**: whether a Claude Code sub-agent can start sub-agents (not relied on); how many agents the belt's `parallel()` runs at once and what the account's rate limits allow; whether Claude Code's sandbox, when switched on, lets a `python3` subprocess add worktrees (opening a cell already does); whether the observer drops an unknown event field; and how much independence the owner's real plans have.
+
+## As built
+
+What MACH does now. Where this section and the body above differ, this section is right; the build skill (`skills/build/SKILL.md`) and the blueprint's build station (`docs/BLUEPRINT.md`, section 4) say the same.
+
+### What differs from the design, and why
+
+- **On by default.** `build.max_lanes` defaults to 3, not 1 (design 10 and 16, point 1). 1 builds one task at a time. The owner chose this because the next decision already keeps every existing plan as it was: lanes apply only to a plan written for them.
+- **Only a plan written for lanes is built in lanes.** The design read a plan with no sub-headings as all lanes part (4.2), so unrelated tasks of an old plan could have run at once. As built, a plan is built in lanes only when its author used a part heading (`### Before the lanes`, `### Lanes`, `### After the lanes`) or an `after Tnn` mark (`lanes.uses_additions`). A plan written the old way is built one task at a time, exactly as before, whatever the setting: its author never claimed that its parts are independent. `cell.py check-plan` applies the new checks, and adds `lanes` to `PLANNED`, only for such a plan.
+- **A lane that cannot finish is handed back, never a stop** (design 9 and 16, point 4). `build.py hand-back <ticket> --lane <L> --reason "<why>"`, run by the lane's builder or by the line, gives the lane's unfinished tasks to the cell: its finished tasks still land at the join, and the rest are built in the cell, one at a time, after it, where every landed file is in reach. The belt hands a lane back by itself when its builder comes back twice with nothing more done. One lane never stops the ticket. Recorded as `lane-handed-back` (and `lane-handed-back-joined` at the join).
+- **A lane that proves not independent is set aside automatically** (8.2 and 16, point 5, as recommended), and its tasks are built one at a time in the cell after the join. **A failure that appears only when lanes are joined gets one recorded fix task**, `J-T01` (8.3 and 16, point 6, as recommended); if a handed-back task already made the suite pass, `J-T01` is completed with `--already-done`. **Revision rounds never fan out** (16, point 9).
+- **No state without a way forward.** The owner's rule for the whole product: MACH is flexible and trusts the builder and the user; it never leaves a state with no way forward, and never suggests abandoning or deleting work for something that can be put right. In that spirit:
+  - **The test command can be given or changed at any time, and the builder may choose it**: `build.py set-commands <ticket> --test-cmd "<command>" [--lint-cmd "<command>"] --reason "<why>"`, in a first build or a revision round, before, during or after the lanes, and on a ticket whose tasks are finished but not yet verified. Nothing done is undone. Each change is a deviation with the old and the new command, the reason and when, shown to the reviewers, in `explain` and in the change record. While lanes are open only `build.json` is written, under the lanes' lock, and each lane takes the command at its next step.
+  - **The start refuses, with the cell still planned, when no test command is known.** It records nothing and names both ways on (pass `--test-cmd`, or set `build.commands.test`). A start never accepts a build it could not carry on.
+  - **A red suite when the lanes would open** makes the build go on one task at a time in the cell (`lanes.state: sequential`, with the reason) instead of stopping for a person.
+  - **A lane's stray uncommitted files at the join** are set aside by the station itself, kept, with how to bring them back, and the join goes on.
+  - **A re-plan** (`cell.py replan`) keeps the slice's latest spec on the branch, moves the old `plan.md`, `build.json` and `build-report.json` to `plan-history/<n>/`, keeps the old tip, with any uncommitted files committed on top of it, as `refs/mach/replan/<ticket>/<n>`, and lists any commit it did not recognise with the `git cherry-pick` that brings it back and the uncommitted files with the `git checkout` that brings them back.
+  - **A spec corrected after building started** sets the old plan and build aside the same way, at `cell.py finalize`, with no separate instruction, and the contract engineer plans again.
+- **At least one builder per ticket with open lanes.** A ticket whose lanes are open always keeps at least one builder, however many places other tickets use, so open lanes are never left with nobody to finish them.
+- **Scheduling and supervision.** The schedule treats a ticket with a live lane as held, and the supervisor counts tasks completed during an execution as progress, so a build whose lanes are moving is not parked as not progressing.
+- **The Factory Floor shows lanes** (13.2 said no screen would change): on the Line and in a ticket's side panel (below). **The join's start is recorded**, so the Floor can say that the lanes are being joined while it runs.
+- **The joined suite failing still moves the branch** (8.3), as designed: `landing.join_lanes` takes `move_on_red`, and the build station passes it.
+- **A lane whose branch is gone is made again from its commits.** `lanes-open` puts a lane's branch back at its last recorded commit; only when the commits themselves are gone does the lane start again from the fork point, and it says so (`restarted`).
+- **A set-aside lane's commits are not kept on a branch.** As designed (8.2), the join removes a set-aside lane's worktree and branch; the deviation names its lane commits. A landed lane's worktree or branch that still holds anything that has not landed is not removed, and is listed.
+
+### The commands as built
+
+Build station (`skills/build/scripts/build.py`):
+
+- `start <ticket> [--test-cmd C] [--lint-cmd C]`: as before; refuses `no-test-command` when none is known. Adds `lanes` (count, each lane's tasks, before, after) only when lanes apply.
+- `next <ticket>`: answers `LANES` when the next task is a lane's; refuses `lanes-open` while lanes are open. `next <ticket> --lane L --holder H`: the lane's next task and its `workdir`, or `LANE_DONE`.
+- `red|green|done <ticket> <task> [--holder H]`: unchanged; a lane's task is worked in its lane's worktree and `lane.json`.
+- `lanes <ticket>`: reads only; the lane plan, each lane's status, whether it is live, and the next command.
+- `lanes-open <ticket> --holder H [--grant N] [--take-over]`: `OPEN` (lanes with `agent_type`, `model`, `prompt`, `workdir`, `branch`), `SEQUENTIAL` or `NONE_LEFT`; a refusal (`lane-held`, `no-free-place`, `lanes-not-ready`, `lane-folder-unknown` and others) names the way on.
+- `hand-back <ticket> --lane L --reason "<why>" [--holder H]`: `HANDED_BACK`.
+- `join <ticket>`: `JOINED`, `INTERACTION`, or `REFUSED` (nothing landed, the branch where it was, every lane kept; run it again and it starts over from the fork point).
+- `set-commands <ticket> --test-cmd C [--lint-cmd C] --reason "<why>"`: `COMMANDS_SET` or `UNCHANGED`.
+- `status <ticket>`: adds `lanes` for a build that has them.
+
+Run skill (`skills/run/scripts/run.py`): `next` names the step `build-lanes`; `lanes-start <ticket> --holder H|new [--take-over]` claims the step, fills in the grant from the free places and runs `lanes-open`, answering `OPEN`, `SEQUENTIAL`, `NONE_LEFT`, `WAIT` or `REFUSED` with the driver's next command in `then`; `lanes-join <ticket> [--holder H]`; `lanes-hand-back <ticket> --lane L --reason "<why>" [--holder H]`. The belt (`workflows/belt.js`) runs `buildLanes` for the step, with `cleanLanes` checking the relay's copy and at most 8 lanes started at once; the run skill does the same in a conversation (its **Building in lanes**).
+
+The calculator (`skills/build/scripts/lanes.py`): `show <plan.md> [--json]`; `measure --project <folder> [<ticket>...] [--json] [--worktree-seconds N] [--landing-seconds N]`, or `measure <cell folder or archive .tar.gz>...`. It reads only. `measure` reads each ticket's live cell or, failing that, its newest archive, in memory and never extracted. It applies the lane rule to every plan, with or without the headings, so for a plan written the old way it says what the plan's shape would have allowed, not what MACH does with that plan today.
+
+### Settings
+
+| Setting | Default | What it does |
+|---|---|---|
+| `build.max_lanes` | 3 | How many lanes one ticket may run at once. 1 builds one task at a time. Anything but a whole number of at least 1 reads as 3. |
+| `factory.max_builders` | `factory.max_parallel` (3 when that is not set) | Builders on this machine across tickets. Lanes take only the places other building tickets leave free; a ticket with open lanes always keeps one. |
+
+`factory.claim_minutes` (default 90) also decides when a lane whose builder has gone quiet may be handed to another holder. `templates/config.json` names neither new setting: the defaults hold without a key.
+
+### What the Factory Floor shows
+
+`GET /api/v1/cells/{ticket}` gains `lanes` for a build in lanes (`M6_1_EVENT_CONTRACT.md` section 10.8). On the Line, from the Build column on, a ticket built in lanes has a strip under its row: one chip per lane (its current task and how many of its tasks are done, waiting for a free place, done, landed, or set aside), the marker at Build saying how many lanes there are, and the moment of the join: every lane done and the join next, "The lanes are being joined" while it runs, a join that stopped and landed nothing with every lane's work kept, joined with the whole suite passing, a lane set aside, or a failure only when joined and the fix task. The ticket's side panel adds a Lanes part: its tasks grouped before the lanes, by lane and after the lanes, each with its time, and the lanes' wall time against their summed time. A ticket without lanes, or whose lanes were never opened, is shown as before.
+
+### Known limits
+
+- **It only helps plans written for it.** A plan without a part heading or an `after` mark is built one task at a time. How much faster a build in lanes is depends on how many independent parts the slice has, how even the lanes are, and how much of a task's time is its test run; where the test suite already keeps every core busy, lanes mostly wait for each other's tests.
+- **A lane's task time includes idle time.** A lane's time runs from its first to its last call to the station, and each task's time is the clock since the previous step, so a builder that waits, or a driver slow to start the next batch, is counted.
+- **Token use rises by default.** Each lane's builder reads the plan, the spec, the contracts, the ADRs and the code next to its files again: with L lanes, about L−1 extra readings, plus the clerk calls and any fix task. MACH records cost only for supervised executions, as one total per execution; nothing per lane is recorded or estimated. A project that wants the old cost sets `build.max_lanes` to 1.
+- **Nothing has been run with real agents.** Lanes, hand-backs, set-asides, joins and the fix task have been run only with scripted builders in tests.
+- **The measuring tool's numbers are estimates.** `lanes.py measure` works out what a past build would have taken in lanes from its recorded steps; the time to make worktrees and to land is assumed (30 seconds each unless given), the time to read the ground is inferred from the first task, and every figure is labelled as an estimate.
+- **What a test suite needs that Git does not hold** (installed packages, a virtual environment, `node_modules`) is not made in a lane's worktree by MACH.
+- **Suites that use a fixed port, a shared database or a fixed temporary path** can fail when lanes run their tests at the same time.

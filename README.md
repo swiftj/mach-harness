@@ -319,6 +319,8 @@ MACH decides what may run together by fixed rules, and it only ever runs fewer t
 
 Only you can raise a limit: in the settings, or by telling Claude Code to raise it for one run. `/mach` with no ticket still shows the status of every ticket and starts nothing.
 
+Inside one ticket, the build can also run in **lanes**: when the plan's author divided its tasks into parts that share no file (or marked which task needs which), each part is built at the same time by its own builder, in its own worktree, and MACH then joins them on the ticket's branch, one commit per task, and runs the whole test suite on the result. Up to `build.max_lanes` lanes run at once (3 by default; 1 builds one task at a time), using only the builder places, `factory.max_builders`, that other tickets leave free. A plan written without them is built one task at a time, as before. A lane that cannot finish is handed back and its tasks are built one at a time after the join; nothing stops the ticket. Lanes cost more tokens, since each builder reads the plan and code for itself. See the [Engineer Guide](docs/guides/ENGINEER_GUIDE.md#building-in-lanes).
+
 ### Working as a team
 
 Several product managers and several engineers can use MACH on one repository at the same time, each on their own computer.
@@ -462,7 +464,7 @@ A cost appears only where one was recorded, which today means work the superviso
 | `/mach factory status\|enable\|pause\|resume\|disable\|stop` | The unattended supervisor on this machine |
 | `/mach release status\|qualify\|show` | Is an epic, or a set of slices, ready to release, at one commit |
 | `/mach-intent <ticket or idea>` | The interview, spec, contracts and plan; `--headless` when no person can answer |
-| `/mach-build <ticket>` | Build test-first inside the cell |
+| `/mach-build <ticket>` | Build test-first inside the cell; the separate parts of a plan written in parts are built at the same time, in lanes |
 | `/mach-verify <ticket>` | Prove the built slice with captured evidence |
 | `/mach-review <ticket>` | The review panel; `approve --by <name>` records a person's approval |
 | `/mach-merge <ticket>` | Land exactly the approved commit; `--by-person` to merge it yourself |
@@ -491,6 +493,8 @@ Settings are in `.factory/config.json`. The ones people change most:
 | `review.security_exception_by` | `[]` | Names of the people who may except a security blocker; empty means any person. It guards against accident, not forgery |
 | `factory.max_parallel` | `3` | How many tickets may run at once |
 | `factory.max_parallel_high` | `1` | How many High-risk tickets may run at once |
+| `factory.max_builders` | `factory.max_parallel` | How many builders may run on this machine across every ticket. Lanes use only the places other tickets leave free |
+| `build.max_lanes` | `3` | How many parts of one ticket's plan may be built at the same time, in lanes. Only a plan written for it (in parts, or with `after` marks) is built this way. `1` builds one task at a time |
 | `factory.claim_minutes` | `90` | How long a worker's claim on a ticket holds without news of it, before another worker may take the ticket |
 | `factory.notifications` | not set | `false` forbids notifications for this project on every machine. Nothing in this file can turn them on |
 | `merge.pr.inline_findings` | `true` | With `merge.method` `pr`, post the review panel's findings on the pull request |
