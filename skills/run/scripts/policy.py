@@ -8,6 +8,10 @@ fresh clone has no such file, and no file means the Factory is disabled.
 Everything here fails closed. A missing, unreadable, symlinked or malformed file; a file written
 for another machine or another folder; a file other users can write: each reads as disabled.
 
+The file is written by a person's `pull` (the first time it hands work to the supervisor here) or
+by `factory enable`, in one step. A person's `factory disable` writes enabled: false, and that
+sticks: `pull` never turns it back on.
+
 The local grant is an upper bound. Settings tracked in the project (.factory/config.json, key
 "factory") can only restrict it: turn the supervisor off, cap the autonomy, lower a limit. Nothing
 tracked in Git, and nothing in a product file, can widen what this file allows.
@@ -21,13 +25,12 @@ import json
 import os
 import platform
 import re
-import secrets
 import shutil
 import stat
 import subprocess
 import sys
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -37,19 +40,19 @@ import executor  # noqa: E402  (the boundary's flags and environment; the probe 
 POLICY_VERSION = 2
 AUTONOMY = ("observe", "supervised")  # observe: discover, reconcile and plan. supervised: also run eligible work, stopping at every human gate
 RISKS = ("Low", "Medium", "High")
-CONFIRM_MINUTES = 10
 LIMITS = {
-    # name: (default, minimum, maximum)
-    "max_parallel": (2, 1, 8),                # cells in the line at once
+    # name: (default, minimum, maximum). A default of None: absent or null means no limit of this machine's own.
+    "max_parallel": (None, 1, 8),             # cells in the line at once; absent: the project's own ceiling governs
     "max_execution_minutes": (120, 5, 720),   # one execution is stopped after this long
-    "max_runs_per_day": (20, 1, 500),         # executions started in any 24 hours
-    "max_budget_usd_per_run": (25, 1, 500),   # passed to Claude as its spending limit for one execution
-    "max_budget_usd_per_day": (100, 1, 5000),
+    "max_runs_per_day": (None, 1, 500),       # executions started in any 24 hours
+    "max_budget_usd_per_run": (None, 1, 500), # passed to Claude as its spending limit for one execution; absent: none is passed
+    "max_budget_usd_per_day": (None, 1, 5000),
     "max_attempts": (2, 1, 5),                # executions that end without moving a ticket, before a person is asked
     "poll_seconds": (300, 30, 3600),          # how often a running supervisor looks again without being woken
 }
+OPTIONAL_LIMITS = tuple(name for name, (default, _, _) in LIMITS.items() if default is None)
 # The tools one execution may use without asking. Everything else is refused and reported for a person.
-# A person consents to this exact list at activation; extra entries are added only by them.
+# Extra entries are added only by a person (factory enable --allow-tool).
 BASE_TOOLS = ("Workflow", "Skill", "Agent", "Read", "Write", "Edit", "Glob", "Grep",
               "Bash(python3 *)", "Bash(git status *)", "Bash(git log *)", "Bash(git diff *)", "Bash(git show *)")
 DISABLED = {"enabled": False, "paused": False, "autonomy": "observe", "auto_sync": False}
@@ -128,6 +131,12 @@ def write_private(path: Path, text: str) -> None:
     with os.fdopen(handle, "w", encoding="utf-8") as out:
         out.write(text)
     os.replace(str(temporary), str(path))
+
+
+def limit(pol: Dict[str, Any], name: str) -> Optional[float]:
+    """One limit in force, or None when there is none (an optional limit nobody set)."""
+    value = (pol.get("limits") or {}).get(name)
+    return None if value is None or isinstance(value, bool) else value
 
 
 def interpreter() -> str:
@@ -210,8 +219,13 @@ def read(root: Path) -> Dict[str, Any]:
     else:
         for name, (_, low, high) in LIMITS.items():
             value = limits.get(name)
+            if value is None and name in OPTIONAL_LIMITS:
+                continue  # absent or null: no limit of this machine's own
             if type(value) not in (int, float) or isinstance(value, bool) or not low <= value <= high:
-                problems.append(f"limit '{name}' must be a number from {low} to {high}")
+                problems.append(f"limit '{name}' must be a number from {low} to {high}" + (", or absent" if name in OPTIONAL_LIMITS else ""))
+        unknown = sorted(set(limits) - set(LIMITS))
+        if unknown:
+            problems.append("unknown limit(s): " + ", ".join(unknown))
     tools = data.get("allowed_tools")
     if not isinstance(tools, list) or not tools or any(not isinstance(tool, str) or not tool.strip() or "\n" in tool for tool in tools):
         problems.append("'allowed_tools' must be a list of tool names")
@@ -225,15 +239,8 @@ def read(root: Path) -> Dict[str, Any]:
         return refuse(f"The policy was written on another machine ('{data['machine']}'). Authorization does not travel: enable the Factory here.")
     if Path(data["project_root"]) != root:
         return refuse("The policy was written for a different folder. Authorization does not follow a copied or moved project: enable the Factory here.")
-    if data["autonomy"] != "observe":
-        accepted = data.get("execution_risk_accepted")
-        if not isinstance(accepted, dict) or accepted.get("accepted") is not True or not isinstance(accepted.get("at"), str):
-            return refuse("Supervised execution needs a person to accept the execution risk (no operating-system sandbox), and this authorization records no "
-                          "acceptance. Enable the Factory again and confirm with --accept-execution-risk.")
-        if accepted.get("tools_digest") != tools_digest(data["allowed_tools"]):
-            return refuse("The allowed tool list changed since a person accepted the execution risk for it, so the acceptance needs renewing. "
-                          "Enable the Factory again and confirm with --accept-execution-risk.")
-    return {**data, "source": "local-file", "problems": []}
+    # An older file may still carry execution_risk_accepted: it is kept as written, and no longer required.
+    return {**data, "limits": {name: value for name, value in limits.items() if value is not None}, "source": "local-file", "problems": []}
 
 
 def effective(policy: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
@@ -242,7 +249,7 @@ def effective(policy: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     if policy.get("source") != "local-file":
         return result
     section = config.get("factory") if isinstance(config.get("factory"), dict) else {}
-    limits = dict(policy["limits"])
+    limits = {name: value for name, value in policy["limits"].items() if value is not None}
     if section.get("supervisor") is False and policy["enabled"]:
         result["enabled"] = False
         result["restricted_by_project"].append("factory.supervisor is false: this project does not allow unattended execution")
@@ -252,7 +259,12 @@ def effective(policy: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
         result["restricted_by_project"].append("factory.autonomy_ceiling is observe")
     for name in ("max_parallel", "max_execution_minutes", "max_runs_per_day", "max_budget_usd_per_run", "max_budget_usd_per_day", "max_attempts"):
         value = section.get(name)
-        if type(value) in (int, float) and not isinstance(value, bool) and 0 < value < limits[name]:
+        if type(value) not in (int, float) or isinstance(value, bool) or value <= 0:
+            continue
+        if name not in limits:
+            if name != "max_parallel":  # the project's own ceiling already governs the line (intake reads it): one number, not two
+                limits[name] = value  # this machine set no limit of its own, so the project's is the limit
+        elif value < limits[name]:
             limits[name] = value
             result["restricted_by_project"].append(f"factory.{name} is {value}")
     if section.get("allow_merge") is False and policy["allow_merge"]:
@@ -294,7 +306,7 @@ def may_execute(policy: Dict[str, Any]) -> Tuple[bool, str]:
     return True, f"runner {policy.get('runner_id')}; supervised"
 
 
-# ---- the residual risk a person accepts for modes that start agents ----
+# ---- what an execution can do on this machine, in plain words ----
 
 # A Bash pattern that runs one of these with any arguments runs any program: an interpreter, a shell, or a launcher.
 UNRESTRICTED_RE = re.compile(r"^Bash\((?:\S*/)?(python[0-9.]*|pypy[0-9.]*|node|nodejs|deno|bun|ruby|perl|php|lua|sh|bash|zsh|dash|ksh|fish|env|xargs|exec|"
@@ -318,36 +330,35 @@ def execution_risk(tools: Sequence[str]) -> Dict[str, Any]:
         lines.append("An execution can run these commands as this user: " + ", ".join(shells) + "." if shells else "An execution can run no shell command.")
     lines.append("MACH's gates (tests, verification, review, merge) check what is merged, not what an execution does outside the repository while it runs.")
     lines.append("There is no operating-system sandbox: nothing but the tool list stands between an execution and this machine.")
-    return {"unrestricted_tools": unrestricted, "statement": lines, "tools_digest": tools_digest(tools),
-            "to_accept": "Confirm with --confirm <code> --accept-execution-risk, only after the person has read this and said yes."}
+    return {"unrestricted_tools": unrestricted, "statement": lines, "tools_digest": tools_digest(tools)}
 
 
-def accept_execution_risk(policy: Dict[str, Any], by: str) -> Dict[str, Any]:
-    policy["execution_risk_accepted"] = {"accepted": True, "by": by, "at": stamp(), "tools_digest": tools_digest(policy["allowed_tools"])}
-    return policy
-
-
-def build(root: Path, request: Dict[str, Any], enabled_by: str, claude: str, source_branch: str, excluded: Sequence[str]) -> Dict[str, Any]:
-    limits = {name: default for name, (default, _, _) in LIMITS.items()}
+def build(root: Path, request: Dict[str, Any], enabled_by: str, claude: str, source_branch: str, excluded: Sequence[str] = (),
+          runner_id: Optional[str] = None) -> Dict[str, Any]:
+    """The authorization for this machine and folder: supervised, merging as the project's settings allow, with no spending limit
+    unless one is asked for. What a person's pull, or a one-step `factory enable`, writes. `runner_id` keeps an earlier one's identity."""
+    limits = {name: default for name, (default, _, _) in LIMITS.items() if default is not None}
     for name, value in (request.get("limits") or {}).items():
         if name not in LIMITS:
             raise PolicyError(f"'{name}' is not a limit. Limits: {', '.join(LIMITS)}.")
         _, low, high = LIMITS[name]
+        if value is None and name in OPTIONAL_LIMITS:
+            continue
         if type(value) not in (int, float) or isinstance(value, bool) or not low <= value <= high:
             raise PolicyError(f"'{name}' must be a number from {low} to {high}.")
         limits[name] = value
     tools = list(dict.fromkeys([*default_tools(), *[tool.strip() for tool in request.get("extra_tools") or [] if tool.strip()]]))
     monitoring = request.get("monitoring_requests") is True
-    if monitoring and request.get("autonomy") != "supervised":
+    autonomy = request.get("autonomy") or "supervised"
+    if monitoring and autonomy != "supervised":
         raise PolicyError("--monitoring-requests needs --autonomy supervised: monitoring requests are groomed and built by executions.")
     built = {
-        "schema_version": POLICY_VERSION, "enabled": True, "paused": False, "autonomy": request["autonomy"],
-        "auto_sync": bool(request.get("auto_sync")), "allow_merge": bool(request.get("allow_merge")), "persistent": bool(request.get("persistent")),
+        "schema_version": POLICY_VERSION, "enabled": True, "paused": False, "autonomy": autonomy,
+        "auto_sync": bool(request.get("auto_sync")), "allow_merge": request.get("allow_merge") is not False, "persistent": bool(request.get("persistent")),
         "max_risk": request.get("max_risk") or "High", "limits": limits, "allowed_tools": tools,
         "excluded_slices": sorted(set(excluded)), "source_branch": source_branch, "claude": claude,
-        "runner_id": str(uuid.uuid4()), "machine": platform.node(), "project_root": str(root),
+        "runner_id": runner_id or str(uuid.uuid4()), "machine": platform.node(), "project_root": str(root),
         "enabled_by": enabled_by, "enabled_at": stamp(),
-        "execution_risk_accepted": None,  # set at confirmation, for a mode that starts agents, only on a person's explicit acceptance
     }
     if monitoring:
         built["monitoring_requests"] = True  # written only when granted: a file without it reads as false
@@ -362,50 +373,16 @@ def save(root: Path, policy: Dict[str, Any]) -> None:
     write_private(policy_path(root), json.dumps(data, indent=2, sort_keys=True) + "\n")
 
 
-# ---- a pending activation: asked for, shown to a person, not yet confirmed ----
-
-
 def pending_path(root: Path) -> Path:
     return local_dir(root) / "pending-enable.json"
 
 
-def propose(root: Path, request: Dict[str, Any], summary: Dict[str, Any]) -> Dict[str, Any]:
-    """Record an activation that a person has not confirmed yet, with a code that expires."""
-    pending = {"code": secrets.token_hex(3), "expires_at": stamp(now() + timedelta(minutes=CONFIRM_MINUTES)), "request": request, "summary": summary}
-    write_private(pending_path(root), json.dumps(pending, indent=2, sort_keys=True) + "\n")
-    return pending
-
-
-def load_pending(root: Path) -> Dict[str, Any]:
-    """The pending activation, read without using it up; empty when there is none or it cannot be read."""
+def forget_pending(root: Path) -> None:
+    """Earlier versions enabled in two steps and left a code here until it was confirmed. Nothing reads it now; it is removed."""
     path = pending_path(root)
-    try:
-        if path.is_symlink():
-            return {}
-        pending = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return pending if isinstance(pending, dict) else {}
-
-
-def take_pending(root: Path, code: str) -> Dict[str, Any]:
-    path = pending_path(root)
-    try:
-        if path.is_symlink():
-            raise ValueError("symlink")
-        pending = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        raise PolicyError("Nothing is waiting to be confirmed. Ask for the activation first; it shows what will be enabled and gives a code.")
-    expires = parse(pending.get("expires_at"))
-    if not isinstance(pending, dict) or not expires or now() > expires:
-        with contextlib.suppress(OSError):
-            path.unlink()
-        raise PolicyError("That confirmation has expired. Ask for the activation again and read what it shows.")
-    if not isinstance(code, str) or not secrets.compare_digest(code.strip(), str(pending.get("code"))):
-        raise PolicyError("That is not the confirmation code for the pending activation. Nothing was enabled.")
     with contextlib.suppress(OSError):
-        path.unlink()
-    return pending
+        if path.is_file() or path.is_symlink():
+            path.unlink()
 
 
 # ---- preflight ----
@@ -491,8 +468,11 @@ def preflight(root: Path, config: Dict[str, Any], request: Dict[str, Any], *, gi
     if request.get("allow_merge") and merge.get("method") == "pr":
         checks.append(check("gh", shutil.which("gh") is not None, "The GitHub tool is available for pull requests." if shutil.which("gh") else "merge.method is 'pr' but gh is not installed."))
     claude = shutil.which("claude")
-    checks.append(check("claude_installed", claude is not None, f"Claude Code is at {claude}." if claude else "Claude Code (the 'claude' command) is not on the PATH.", required=supervised))
-    checks.append(check("workflow_installed", workflow_installed, "The MACH belt workflow is installed." if workflow_installed else "The MACH belt workflow is not installed in this project or plugin.",
+    checks.append(check("claude_installed", claude is not None, f"Claude Code is at {claude}." if claude else
+                        "Claude Code (the 'claude' command) is not on the PATH, so the Factory cannot start agents in the background. "
+                        "Make 'claude' runnable from a shell on this machine, then pull again.", required=supervised))
+    checks.append(check("workflow_installed", workflow_installed, "The MACH belt workflow is installed." if workflow_installed else
+                        "The MACH belt workflow is not installed in this project or plugin. Run MACH's installer again, then pull again.",
                         required=supervised))
     if supervised:
         if claude and probe:
@@ -517,11 +497,15 @@ def preflight(root: Path, config: Dict[str, Any], request: Dict[str, Any], *, gi
                             "A security reviewer's blocker cannot be outvoted, Medium and High panels keep the security seat, and High risk keeps a person's approval."
                             if not problems else " ".join(problems)))
     free = shutil.disk_usage(str(root)).free // (1024 * 1024)
-    wanted = (request.get("limits") or {}).get("max_parallel", LIMITS["max_parallel"][0])
+    wanted = (request.get("limits") or {}).get("max_parallel")  # only a number a person asked for here; otherwise the project's ceiling governs
     cpus = os.cpu_count() or 1
-    checks.append(check("resources", free >= 1024 and wanted <= max(1, cpus), f"{free} MB free; {cpus} processors; {wanted} cell(s) at once requested."
-                        + ("" if free >= 1024 else " At least 1024 MB free is needed.") + ("" if wanted <= max(1, cpus) else " That is more cells than processors.")))
-    checks.append(check("ownership", lease_holder is None, "No other supervisor owns this project." if lease_holder is None else f"Another supervisor is running here: {lease_holder}."))
+    fits = wanted is None or wanted <= max(1, cpus)
+    checks.append(check("resources", free >= 1024 and fits, f"{free} MB free; {cpus} processors" + (f"; {wanted} cell(s) at once requested." if wanted is not None else ".")
+                        + ("" if free >= 1024 else " At least 1024 MB free is needed: free some disk space, then try again.")
+                        + ("" if fits else " That is more cells than processors: ask for fewer with --max-parallel.")))
+    # Said, never a refusal: a supervisor already running here is woken instead of a second one started.
+    checks.append(check("ownership", True, "No supervisor is running here yet." if lease_holder is None else f"A supervisor is already running here ({lease_holder}); it is woken.",
+                        required=False))
     if request.get("persistent"):
         checks.append(check("persistent_service", sys.platform == "darwin", "A per-user LaunchAgent can be installed." if sys.platform == "darwin"
                             else "A persistent supervisor is only supported on macOS in this version."))

@@ -16,7 +16,7 @@ The command is fixed and explicit:
         --permission-mode default                 nothing is allowed unless it is listed
         --permission-prompts none                 anything that would ask is refused, never asked
         --tools <the built-in tools the list names>
-        --max-budget-usd <limit>  --session-id <a new id>
+        [--max-budget-usd <limit>, only when a spending limit is set]  --session-id <a new id>
         [--add-dir <the MACH plugin, when it lives outside the project>]
         --disallowedTools <edits to MACH itself and to the Factory's local state>
         --allowedTools <the list a person consented to>
@@ -129,17 +129,19 @@ def boundary_flags(plugin_dir: Path, tools: Sequence[str], add_dirs: Sequence[Pa
     return flags
 
 
-def command(claude: str, workflow: str, tickets: Sequence[str], until: Optional[str], tools: Sequence[str], budget_usd: float, session_id: str,
+def command(claude: str, workflow: str, tickets: Sequence[str], until: Optional[str], tools: Sequence[str], budget_usd: Optional[float], session_id: str,
             plugin_dir: Path, add_dirs: Sequence[Path] = (), denied: Sequence[str] = ()) -> List[str]:
+    """`budget_usd` None: no spending limit was set on this machine or in the project, so Claude is given none."""
     for tool in tools:
         if tool.strip() in ("Bash", "Bash(*)", "*") or "dangerously" in tool:
             raise ValueError("The tool list may not allow every shell command.")
     if not Path(plugin_dir).is_absolute():
         raise ValueError("The MACH plugin folder must be an absolute path.")
-    # --allowedTools stays last: it takes every word after it, and it is exactly the list a person consented to.
+    budget = ["--max-budget-usd", format(budget_usd, "g")] if budget_usd is not None else []
+    # --allowedTools stays last: it takes every word after it, and it is exactly the tool list in the authorization.
     return [claude, "-p", prompt(workflow, tickets, until), "--output-format", "stream-json", "--verbose",
             *boundary_flags(plugin_dir, tools, add_dirs, denied),
-            "--max-budget-usd", format(budget_usd, "g"), "--session-id", session_id, "--allowedTools", *tools]
+            *budget, "--session-id", session_id, "--allowedTools", *tools]
 
 
 def environment(base: Mapping[str, str]) -> Dict[str, str]:
@@ -308,13 +310,51 @@ def read_json(path: Path) -> Optional[Dict[str, Any]]:
     return data if isinstance(data, dict) else None
 
 
-def prepare(root: Path, execution_id: str, argv: Sequence[str], timeout_minutes: float) -> Path:
-    """Write what the wrapper will run. Kept on disk so a restart can see exactly what was asked."""
+def prepare(root: Path, execution_id: str, argv: Sequence[str], timeout_minutes: float, watch: Optional[Dict[str, Any]] = None) -> Path:
+    """Write what the wrapper will run. Kept on disk so a restart can see exactly what was asked.
+    `watch` ({"supervisor_pid", "session_pid"}): started by a supervisor tied to a Claude Code session, the run ends when either
+    process is gone, recorded as "session-ended", unless the supervisor has meanwhile become a background one."""
     home = folder(root, execution_id)
     home.mkdir(parents=True, exist_ok=True)
     os.chmod(str(home), 0o700)
-    write_json(home / "spec.json", {"execution_id": execution_id, "argv": list(argv), "cwd": str(root), "timeout_seconds": int(timeout_minutes * 60), "prepared_at": now()})
+    spec = {"execution_id": execution_id, "argv": list(argv), "cwd": str(root), "timeout_seconds": int(timeout_minutes * 60), "prepared_at": now()}
+    if watch:
+        spec["watch"] = {"supervisor_pid": watch.get("supervisor_pid"), "session_pid": watch.get("session_pid")}
+    write_json(home / "spec.json", spec)
     return home
+
+
+SESSION_ENDED = "session-ended"  # how an execution ended when the Claude Code session its supervisor belonged to ended
+SESSION_MARK = "session-ended"   # the file a supervisor leaves in an execution's folder before it stops it for that reason
+
+
+def process_alive(pid: Any) -> bool:
+    """Whether a process exists. Replaced in tests."""
+    if type(pid) is not int or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def background_now(root: Path) -> bool:
+    """Whether the supervisor became a background one after this run started (factory start converts a session one)."""
+    for path in (root / ".factory" / "local" / "supervisor.json", root / ".factory" / "local" / "lifetime.json"):
+        data = read_json(path)
+        if data and data.get("lifetime") == "background":
+            return True
+    return False
+
+
+def session_gone(root: Path, watch: Optional[Dict[str, Any]]) -> bool:
+    """For a run tied to a session: whether its supervisor or its session has ended. False for any other run."""
+    if not watch or background_now(root):
+        return False
+    return any(isinstance(watch.get(key), int) and not process_alive(watch[key]) for key in ("supervisor_pid", "session_pid"))
 
 
 def launch(root: Path, execution_id: str, run_script: Path) -> int:
@@ -350,6 +390,7 @@ def wrapper(root: Path, execution_id: str) -> int:
             return 1
         write_json(home / "started.json", {"execution_id": execution_id, "wrapper_pid": os.getpid(), "child_pid": child.pid, "started_at": now()})
         ended = "exited"
+        root = Path(spec["cwd"])
         while True:
             try:
                 code: Optional[int] = child.wait(timeout=1)
@@ -357,8 +398,11 @@ def wrapper(root: Path, execution_id: str) -> int:
             except subprocess.TimeoutExpired:
                 pass
             too_long = time.time() - started > spec["timeout_seconds"]
-            if interrupted["signal"] is not None or too_long:
-                ended = "timed-out" if too_long and interrupted["signal"] is None else "interrupted"
+            session_over = session_gone(root, spec.get("watch"))
+            if session_over or (home / SESSION_MARK).exists():
+                session_over = True
+            if interrupted["signal"] is not None or too_long or session_over:
+                ended = SESSION_ENDED if session_over else "timed-out" if too_long and interrupted["signal"] is None else "interrupted"
                 child.terminate()
                 try:
                     code = child.wait(timeout=GRACE_SECONDS)
@@ -391,6 +435,16 @@ def stop(pid: Any, execution_id: str) -> bool:
     except OSError:
         return False
     return True
+
+
+def end_for_session(root: Path, pid: Any, execution_id: str) -> bool:
+    """Stop a running execution because its session ended: the mark first, so the wrapper records "session-ended"."""
+    with_mark = folder(root, execution_id) / SESSION_MARK
+    try:
+        with_mark.write_text(now() + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    return stop(pid, execution_id)
 
 
 def tool_summary(name: Any, tool_input: Any) -> str:

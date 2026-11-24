@@ -227,7 +227,9 @@ class AddressTest(Base):
         self.assertEqual((result["host"], result["label"]), ("hooks.example.test", "Shop team"))
         status = self.ok("notify", "status")
         self.assertEqual((status["on"], status["webhook"]["host"], status["label"], status["webhook"]["last_sent"]), (True, "hooks.example.test", "Shop team", None))
-        self.assertEqual((status["banner"]["on"], status["banner"]["why_off"]), (False, "The banner is not turned on here."))
+        # M23 3.3: the banner comes on by itself once the Factory works on this machine; it does not here yet.
+        self.assertEqual((status["banner"]["on"], status["banner"]["why_off"]), (False, notify.NOT_YET))
+        self.assertIn("notify banner on turns it on now", status["banner"]["why_off"])
         self.assert_address_nowhere()
 
     def test_refused_addresses_store_nothing_and_never_repeat_the_address(self):
@@ -385,10 +387,10 @@ class MessageTest(Base):
                 ticket = f"LOCAL-{number:03d}"
                 self.receiver.requests.clear()
                 self.assertTrue(sender.wait(ticket, f"stage-{install}", needs)["sent"])
-                self.assertEqual(self.receiver.texts(), [f"MACH · Shop team: {ticket} is waiting for a person.\n{run.NEEDS_TEXT[needs]}\nIn Claude Code: {command}"])
+                self.assertEqual(self.receiver.texts(), [f"MACH · Shop team: {ticket} is waiting for a person.\n{run.NEEDS_TEXT[needs]}\nIn Claude Code: {command}, or on the Factory Floor."])
         self.assertEqual(self.receiver.texts(), ["MACH · Shop team: LOCAL-014 is waiting for a person.\n"
                                                  "Bringing the ticket's branch up to date with the main branch conflicts: merge it in the cell and resolve it, "
-                                                 "then the build carries on.\nIn Claude Code: /mach:run decide"])
+                                                 "then the build carries on.\nIn Claude Code: /mach:run decide, or on the Factory Floor."])
 
     def test_the_exact_text_for_each_parked_reason_code(self):
         self.set_address()
@@ -410,7 +412,7 @@ class MessageTest(Base):
                 self.receiver.requests.clear()
                 ticket = f"P-{code}"
                 self.assertTrue(sender.parked(ticket, f"building-{install}", code)["sent"])
-                self.assertEqual(self.receiver.texts(), [f"MACH · shop-app: {ticket} is waiting for a person.\n{sentence}\nIn Claude Code: {command}"])
+                self.assertEqual(self.receiver.texts(), [f"MACH · shop-app: {ticket} is waiting for a person.\n{sentence}\nIn Claude Code: {command}, or on the Factory Floor."])
         self.receiver.requests.clear()
         sender.parked("P-x", "building", "anything else")
         self.assertIn(expected["general"], self.receiver.texts()[0])
@@ -454,7 +456,10 @@ class BannerTest(Base):
         self.assertIn("osascript exited 0", status["banner"]["meaning"])
         self.assertIn("cannot see whether macOS displayed", status["banner"]["meaning"])
         self.assertEqual(self.ok("notify", "banner", "off"), {"banner": "off", "webhook_still_on": False})
-        self.assertFalse(self.local("notify.json").exists())
+        # A person's "off" is kept, so the banner stays off even once the Factory works here (M23 3.3).
+        self.assertEqual(self.stored()["banner"], False)
+        status = self.ok("notify", "status")
+        self.assertEqual((status["banner"]["on"], status["banner"]["why_off"]), (False, notify.NO_BANNER))
 
     def test_not_a_mac_refuses_on_and_ignores_a_stored_switch(self):
         self.banners.system = "Linux"
@@ -480,9 +485,9 @@ class BannerTest(Base):
             self.assertTrue(sender.wait("LOCAL-014", f"awaiting-human-{install}", "human-approval")["sent"])
             self.assertTrue(sender.parked("LOCAL-015", f"building-{install}", "risk")["sent"])
             self.assertEqual([call["argv"] for call in self.banners.calls], [
-                self.expected_argv(f"Approve the change, or not, after reading the review findings.\nIn Claude Code: {command}", "MACH · Shop team",
+                self.expected_argv(f"Approve the change, or not, after reading the review findings.\nIn Claude Code: {command}, or on the Factory Floor.", "MACH · Shop team",
                                    "LOCAL-014 is waiting for a person."),
-                self.expected_argv(f"Its risk tier is above what this machine runs unattended; a person runs it or decides.\nIn Claude Code: {command}",
+                self.expected_argv(f"Its risk tier is above what this machine runs unattended; a person runs it or decides.\nIn Claude Code: {command}, or on the Factory Floor.",
                                    "MACH · Shop team", "LOCAL-015 is waiting for a person."),
             ])
             self.assertEqual({call["timeout"] for call in self.banners.calls}, {5})
@@ -580,7 +585,7 @@ class BannerTest(Base):
         self.set_address()
         self.assertEqual(self.ok("notify", "banner", "off"), {"banner": "off", "webhook_still_on": True})
         self.assertEqual(self.stored()["url"], URL)
-        self.assertNotIn("banner", self.stored())
+        self.assertEqual(self.stored()["banner"], False)  # off, as the person said, kept beside the address
 
     def test_notify_test_reports_each_channel(self):
         self.set_address("--label", "Shop team")
@@ -798,7 +803,7 @@ class SupervisorTriggerTest(SupervisorBase):
         return code, out.getvalue(), err.getvalue()
 
     def expected(self, ticket, middle):
-        return f"MACH · Shop team: {ticket} is waiting for a person.\n{middle}\nIn Claude Code: /mach:run decide"
+        return f"MACH · Shop team: {ticket} is waiting for a person.\n{middle}\nIn Claude Code: /mach:run decide, or on the Factory Floor."
 
     def test_an_execution_that_ends_waiting_for_a_person_is_announced_once_across_both_triggers(self):
         self.supervised()
@@ -817,7 +822,7 @@ class SupervisorTriggerTest(SupervisorBase):
         """The project would let the line merge, this machine does not merge unattended: neither a stop nor a park, and still a wait."""
         self.first()
         self.config(build={"require_audit": False}, merge={"mode": "auto", "method": "local"})
-        self.enable("--include-backlog")
+        self.enable("--no-merge")
         self.claude({"default": {"stage": "approved"}})
         self.tick()
         self.wait()
@@ -833,7 +838,7 @@ class SupervisorTriggerTest(SupervisorBase):
         self.wait()
         self.tick()
         self.assertEqual(len(self.receiver.requests), 1)
-        self.assertEqual(self.banners.texts(), [[run.NEEDS_TEXT["merge"] + "\nIn Claude Code: /mach:run decide", "MACH · Shop team", "LOCAL-001 is waiting for a person."]])
+        self.assertEqual(self.banners.texts(), [[run.NEEDS_TEXT["merge"] + "\nIn Claude Code: /mach:run decide, or on the Factory Floor.", "MACH · Shop team", "LOCAL-001 is waiting for a person."]])
         self.run_cmd("next", "LOCAL-001", "--headless")
         self.tick()
         self.assertEqual((len(self.receiver.requests), len(self.banners.calls)), (1, 1))
@@ -841,7 +846,7 @@ class SupervisorTriggerTest(SupervisorBase):
     def test_a_failed_merge_wait_message_is_tried_again_while_it_still_waits(self):
         self.first()
         self.config(build={"require_audit": False}, merge={"mode": "auto", "method": "local"})
-        self.enable("--include-backlog")
+        self.enable("--no-merge")
         self.claude({"default": {"stage": "approved"}})
         self.tick()
         self.wait()
@@ -869,7 +874,7 @@ class SupervisorTriggerTest(SupervisorBase):
 
     def test_a_risk_park_and_a_failed_message_retried_on_the_next_pass(self):
         self.first()
-        self.enable("--include-backlog", "--max-risk", "Medium")
+        self.enable("--max-risk", "Medium")
         self.receiver.behaviour = {"status": 500}
         report = self.tick()
         self.assertIn("above the Medium this machine allows unattended", report["held"][0]["why"])
@@ -906,14 +911,29 @@ class SupervisorTriggerTest(SupervisorBase):
         self.assertIn("stopped by a person", self.ledger()["supervisor"]["parked"]["LOCAL-001"]["reason"])
         self.assertEqual(self.receiver.requests, [])
 
-    def test_no_address_no_message_and_nothing_changes(self):
+    def test_no_address_no_webhook_message_and_the_banner_by_default(self):
+        """M23 3.3: with no address the webhook sends nothing; with the Factory working here, the Mac's banner is on by default."""
         self.run_cmd("notify", "off")
         self.supervised()
         self.tick()
         self.wait()
         self.tick()
         self.assertEqual(self.receiver.requests, [])
+        self.assertEqual(self.banners.texts(), [[run.NEEDS_TEXT["merge"] + "\nIn Claude Code: /mach:run decide, or on the Factory Floor.",
+                                                 f"MACH · {notify.default_label(self.eng)}", "LOCAL-001 is waiting for a person."]])
+
+    def test_banner_off_or_a_project_that_forbids_notifications_sends_nothing(self):
+        self.run_cmd("notify", "off")
+        self.assertEqual(self.run_cmd("notify", "banner", "off")[0], 0)
+        self.supervised()
+        self.tick()
+        self.wait()
+        self.tick()
+        self.assertEqual((self.receiver.requests, self.banners.calls), ([], []))
         self.assertFalse((self.eng / ".factory/local/notify-state.json").exists())
+        self.assertEqual(self.run_cmd("notify", "banner", "on")[0], 0)
+        self.config(factory={"notifications": False})
+        self.assertFalse(notify.read(self.eng, {})["banner"]["on"])
 
     def assert_nowhere(self):
         for path in (self.eng / ".factory").rglob("*"):

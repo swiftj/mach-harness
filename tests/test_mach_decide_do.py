@@ -386,7 +386,7 @@ class CommandTest(Base):
     def test_done_is_one_json_object(self):
         self.spec_open()
         given = self.answers_file([{"n": 1, "answer": "Yes."}, {"n": 2, "answer": "leave open"}])
-        with mock.patch.object(act, "supervisor_carry_on", lambda make: (lambda: {"supervisor": "started", "pid": 7, "why_not": None})):
+        with mock.patch.object(act, "supervisor_carry_on", lambda make, **how: (lambda: {"supervisor": "started", "pid": 7, "why_not": None})):
             code, out, err = self.cli("decide", "do", TICKET, "answers", f"--answers-file={given}", "--by=Dana Smith", "--via=floor", "--json")
         self.assertEqual(code, 0, err)
         result = json.loads(out)
