@@ -15,7 +15,10 @@ The only paths it deletes are .factory/worktrees/<ticket>/ and its own partial f
 .factory/tmp/. It archives first, checks the archive, and only then deletes. The only refs it deletes
 are the cell's own feature branch and the old branch tips a re-plan saved under
 refs/mach/replan/<ticket>/ (cell.py replan); the commits those tips hold are kept in the archive
-(replans.bundle) unless the default branch or the archived branch bundle already holds them.
+(replans.bundle) unless the default branch or the archived branch bundle already holds them. For a ticket built in lanes
+(M22) it also removes the lane and join worktrees under lanes/, Git's records of them, and the branches under
+mach-lane/<ticket>/; the lanes' state files are archived, never a lane's checked-out tree, the commits only the lane
+branches hold go into lanes.bundle and each lane's uncommitted files under lanes-saved/<lane>/.
 
 The merge station's change record (M13, docs/changes/<ticket>.md on the branch) is named in the run record with its
 SHA-256. A team that keeps evidence elsewhere sets records.publish_command in .factory/config.json, a list of strings run
@@ -162,16 +165,213 @@ class Cell:
         return [name for name in names if not is_byproduct(name.strip('"'))]
 
     def members(self) -> List[str]:
-        """Every file in the cell folder except the worktree, relative to the cell folder."""
+        """Every file in the cell folder except the worktree and the lanes' worktrees, relative to the cell folder."""
         found = []
         for entry in sorted(self.root.iterdir()):
             if entry.name == "repo":
                 continue
-            if entry.is_dir() and not entry.is_symlink():
+            if entry.name == LANES and entry.is_dir() and not entry.is_symlink():
+                found += sorted(lane_state_files(self.root, entry))
+            elif entry.is_dir() and not entry.is_symlink():
                 found += [p.relative_to(self.root).as_posix() for p in sorted(entry.rglob("*")) if p.is_file() or p.is_symlink()]
             else:
                 found.append(entry.name)
         return found
+
+
+# ---------------------------------------------------------------- lanes (M22)
+#
+# A ticket built in lanes has, beside its own worktree, one worktree per lane at lanes/<L>/repo and the join's at
+# lanes/join/repo, on branches mach-lane/<ticket>/<L> and mach-lane/<ticket>/join. The build station removes them when it
+# joins the lanes; a ticket abandoned with its lanes open, or a join that left something behind, still has them. Cleanup
+# archives each lane's state files (lane.json and the rest) but never a lane's checked-out tree, keeps every lane commit the
+# default branch does not hold in lanes.bundle and every lane's uncommitted files under lanes-saved/<L>/, then removes the
+# worktrees, Git's records of them and the branches.
+
+LANES = "lanes"
+LANE_BRANCH_PREFIX = "mach-lane/"
+LANE_NAME_RE = re.compile(r"^(?:L\d{1,3}|join)$")
+LANES_BUNDLE = "lanes.bundle"
+LANES_SAVED = "lanes-saved"
+
+
+def is_lane_tree(parts: Sequence[str]) -> bool:
+    """Whether a path inside the cell folder (its parts) is a lane's checked-out tree, lanes/<L>/repo, or inside one."""
+    return len(parts) >= 3 and parts[0] == LANES and parts[2] == "repo"
+
+
+def lane_state_files(root: Path, folder: Path) -> List[str]:
+    """Every file under lanes/ except inside a lane's checked-out tree, relative to the cell folder. The tree is never
+    walked: it can be a whole working copy."""
+    found: List[str] = []
+    for child in sorted(folder.iterdir()):
+        parts = child.relative_to(root).parts
+        if is_lane_tree(parts):
+            continue
+        if child.is_dir() and not child.is_symlink():
+            found += lane_state_files(root, child)
+        elif child.is_file() or child.is_symlink():
+            found.append("/".join(parts))
+    return found
+
+
+def lane_branch_refs(project: Path, ticket_id: str) -> List[Tuple[str, str]]:
+    """Every branch under exactly mach-lane/<ticket>/, with the commit it points at. Another ticket's are never listed."""
+    prefix = f"refs/heads/{LANE_BRANCH_PREFIX}{ticket_id}/"
+    found = []
+    for line in git(project, "for-each-ref", "--format=%(refname) %(objectname)", prefix).stdout.splitlines():
+        name, _, sha = line.partition(" ")
+        if name.startswith(prefix) and len(name) > len(prefix) and sha.strip():
+            found.append((name[len("refs/heads/"):], sha.strip()))
+    return found
+
+
+def registered_worktrees(project: Path) -> List[Tuple[Path, Optional[str]]]:
+    """Git's worktree records: each worktree's path and the branch it has checked out (None when detached)."""
+    found: List[Tuple[Path, Optional[str]]] = []
+    path: Optional[Path] = None
+    for line in git(project, "worktree", "list", "--porcelain").stdout.splitlines():
+        if line.startswith("worktree "):
+            if path is not None:
+                found.append((path, None))
+            path = Path(line[len("worktree "):])
+        elif line.startswith("branch ") and path is not None:
+            found.append((path, line[len("branch refs/heads/"):] if line.startswith("branch refs/heads/") else None))
+            path = None
+    if path is not None:
+        found.append((path, None))
+    return found
+
+
+def inside(path: Path, folder: Path) -> bool:
+    try:
+        resolved = path.resolve()
+    except (OSError, RuntimeError):
+        return False
+    return folder.resolve() in resolved.parents
+
+
+def lane_survey(cell: "Cell", refs: List[str]) -> Optional[Dict[str, Any]]:
+    """What the ticket's lanes left: worktrees (folders under lanes/ and Git's records of them), branches, the commits only
+    the lane branches hold, and each lane checkout's uncommitted files. None when the ticket has no lanes at all, so
+    everything else cleanup says and does is as before. `problems` are refusals: a folder cleanup cannot account for."""
+    project, folder = cell.project, cell.root / LANES
+    branches = lane_branch_refs(project, cell.ticket_id)
+    records = [(path, branch) for path, branch in registered_worktrees(project) if inside(path, folder)]
+    if not folder.is_dir() and not branches and not records:
+        return None
+    problems: List[str] = []
+    trees: Dict[str, Dict[str, Any]] = {}
+    for lane in sorted(folder.iterdir()) if folder.is_dir() and not folder.is_symlink() else []:
+        repo = lane / "repo"
+        if not (repo.exists() or repo.is_symlink()):
+            continue
+        name = lane.name
+        if not LANE_NAME_RE.match(name) or repo.is_symlink() or not repo.is_dir():
+            problems.append(f"{repo} is not a lane's worktree cleanup knows ({'a symbolic link' if repo.is_symlink() else 'an unexpected name or not a folder'}). "
+                            f"Nothing was touched. Move it out of {cell.root} to keep what it holds, then run cleanup again.")
+            continue
+        top = git(repo, "rev-parse", "--show-toplevel") if (repo / ".git").exists() else None
+        if top is None or top.returncode != 0 or Path(top.stdout.strip()).resolve() != repo.resolve():
+            problems.append(f"{repo} is not a Git worktree, so nothing else holds what is in it. Nothing was touched. "
+                            f"Move it out of {cell.root} to keep it, then run cleanup again.")
+            continue
+        names = [line[3:] for line in git(repo, "status", "--porcelain", "--untracked-files=all").stdout.splitlines() if line.strip()]
+        trees[name] = {"repo": repo, "uncommitted": [item for item in names if not is_byproduct(item.strip('"'))],
+                       "head": git(repo, "rev-parse", "--verify", "-q", "HEAD").stdout.strip() or None}
+    known = {tree["repo"].resolve() for tree in trees.values()}
+    gone = [str(path) for path, _ in records if path.resolve() not in known]  # Git still records it; its folder is gone or unknown
+    bundle_refs = [f"refs/heads/{branch}" for branch, _ in branches]
+    unkept = unkept_commits(project, bundle_refs, refs) if bundle_refs else 0
+    return {"folder": str(folder), "worktrees": {name: str(tree["repo"]) for name, tree in trees.items()}, "stale_records": gone,
+            "branches": dict(branches), "bundle_refs": bundle_refs, "unkept_commits": unkept, "bundle_excludes": list(refs),
+            "uncommitted": {name: tree["uncommitted"] for name, tree in trees.items() if tree["uncommitted"]},
+            "heads": {name: tree["head"] for name, tree in trees.items()}, "problems": problems}
+
+
+def lanes_result(cell: "Cell", lanes: Dict[str, Any], done: Dict[str, Any], archive: str, default: Optional[str]) -> Dict[str, Any]:
+    """What cleanup did with the ticket's lanes, where their work is kept, and how to get it back."""
+    ticket, restore = cell.ticket_id, []
+    bundle = f"{ticket}/{LANES_BUNDLE}" if lanes["unkept_commits"] else None
+    if bundle:
+        restore.append(f"The lane branches' {lanes['unkept_commits']} commit(s) that are not on {default or 'the default branch'} are saved in the archive. "
+                       "To bring the branches back: "
+                       f"tar -xzf {archive} {bundle} && git fetch {bundle} 'refs/heads/{LANE_BRANCH_PREFIX}{ticket}/*:refs/heads/{LANE_BRANCH_PREFIX}{ticket}/*'")
+    saved = {}
+    for lane in sorted(lanes["uncommitted"]):
+        folder = f"{ticket}/{LANES_SAVED}/{lane}"
+        saved[lane] = folder + "/"
+        head = lanes["heads"].get(lane)
+        restore.append(f"Lane {lane}'s uncommitted files are saved under {folder}/ in the archive, made against commit {head or '(not recorded)'}. "
+                       f"To put them back{' (bring the branches back first)' if bundle else ''}: tar -xzf {archive} {folder}, then git worktree add <a folder> {head or '<that commit>'}, and in that folder "
+                       f"git apply <the project>/{folder}/uncommitted.patch and copy in the files under {folder}/untracked/.")
+    return {"worktrees_removed": [relative(cell.project, Path(repo)) for repo in sorted(lanes["worktrees"].values())],
+            "worktree_records_dropped": lanes["stale_records"], "branches": lanes["branches"], "branches_deleted": done["branches_deleted"],
+            "bundle": bundle, "uncommitted_saved": saved, "left": done["left"],
+            "restore": restore or None,
+            "note": (f"Every lane commit that is not on {default or 'the default branch'} and every lane's uncommitted file is in the archive; "
+                     "no lane's checked-out tree is.")}
+
+
+def bundle_lanes(project: Path, refs: List[str], excludes: List[str], path: Path) -> None:
+    """Save the commits only the lane branches hold as a git bundle, and check git can read it back."""
+    done = git(project, "bundle", "create", str(path), *refs, *(["--not", *excludes] if excludes else []))
+    if done.returncode != 0 or not path.is_file() or path.stat().st_size == 0:
+        raise CleanupError(f"git could not bundle the lane branches {', '.join(refs)}: {done.stderr.strip()}")
+    check = git(project, "bundle", "verify", str(path))
+    if check.returncode != 0:
+        raise CleanupError(f"The bundle of the lane branches does not verify: {check.stderr.strip()}")
+
+
+def save_uncommitted(tar: tarfile.TarFile, repo: Path, prefix: str) -> List[str]:
+    """A checkout's uncommitted changes as uncommitted.patch and its untracked files under untracked/, beneath `prefix` in the
+    archive; what test runs leave behind is not saved. Returns the member names written."""
+    written: List[str] = []
+    patch = subprocess.run(["git", "diff", "HEAD", "--binary"], cwd=str(repo), capture_output=True)
+    if patch.returncode != 0:
+        raise CleanupError(f"git could not write the uncommitted changes of {repo} as a patch: " + patch.stderr.decode("utf-8", "replace").strip())
+    if patch.stdout:
+        add_bytes(tar, f"{prefix}/uncommitted.patch", patch.stdout)
+        written.append(f"{prefix}/uncommitted.patch")
+    listed = subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "-z"], cwd=str(repo), capture_output=True)
+    for raw in listed.stdout.split(b"\0"):
+        name = raw.decode("utf-8", "surrogateescape").rstrip("/")
+        if name and not is_byproduct(name):
+            tar.add(str(repo / name), arcname=f"{prefix}/untracked/{name}")
+            written.append(f"{prefix}/untracked/{name}")
+    return written
+
+
+def remove_lane_worktrees(cell: "Cell", lanes: Dict[str, Any]) -> List[str]:
+    """After the archive is written and checked: remove every lane worktree. A folder Git will not remove goes with the cell
+    folder, deleted next, and Git's record of it is dropped by finish_lanes. Returns the folders, relative to the project."""
+    for repo in sorted(lanes["worktrees"].values()):
+        git(cell.project, "worktree", "remove", "--force", "--force", repo)
+    return [relative(cell.project, Path(repo)) for repo in sorted(lanes["worktrees"].values())]
+
+
+def finish_lanes(cell: "Cell", lanes: Dict[str, Any]) -> Dict[str, Any]:
+    """Once the cell folder is gone: drop Git's records of the lane worktrees, then delete each lane branch, only if it still
+    points where it did when the archive was made and no worktree elsewhere has it checked out. Never raises."""
+    project, folder = cell.project, Path(lanes["folder"])
+    git(project, "worktree", "prune")
+    worktrees = registered_worktrees(project)
+    left = [f"Git still records the worktree {path}; run git worktree prune once its folder is gone" for path, _ in worktrees if inside(path, folder)]
+    checked_out = {branch: path for path, branch in worktrees if branch}
+    deleted = []
+    for branch, sha in sorted(lanes["branches"].items()):
+        if not branch.startswith(f"{LANE_BRANCH_PREFIX}{cell.ticket_id}/"):
+            continue
+        if branch in checked_out:
+            left.append(f"the branch {branch} was kept: {checked_out[branch]} has it checked out. Its commits are in the archive too; "
+                        f"delete it with git branch -D {branch} once that worktree no longer needs it")
+            continue
+        if git(project, "update-ref", "-d", f"refs/heads/{branch}", sha).returncode == 0:
+            deleted.append(branch)
+        else:
+            left.append(f"the branch {branch} was kept: it moved after the archive was made, so its newest commits are only on it. "
+                        f"Look at them with git log {branch}")
+    return {"branches_deleted": deleted, "left": left}
 
 
 def default_branch(project: Path) -> Tuple[Optional[str], List[str]]:
@@ -561,7 +761,14 @@ def survey(cell: Cell, abandon: Optional[str], merged_as: Optional[str] = None) 
         members.append(f"{ticket_id}/replans.bundle (the {replan_unkept} commit(s) the re-plans set aside, under {', '.join(replans)})")
     if dirty:
         members.append(f"{ticket_id}/uncommitted.patch and {ticket_id}/untracked/ (the uncommitted work)")
-    return {
+    lanes = lane_survey(cell, refs)  # M22: None for a ticket without lanes, which leaves everything below as before
+    if lanes is not None:
+        refusals += lanes["problems"]
+        if lanes["unkept_commits"]:
+            members.append(f"{ticket_id}/{LANES_BUNDLE} (the {lanes['unkept_commits']} commit(s) of the lane branches that are not on {name or 'any other branch'})")
+        for lane in sorted(lanes["uncommitted"]):
+            members.append(f"{ticket_id}/{LANES_SAVED}/{lane}/uncommitted.patch and {ticket_id}/{LANES_SAVED}/{lane}/untracked/ (lane {lane}'s uncommitted work)")
+    plan = {
         "ticket_id": ticket_id, "allowed": not refusals, "refusals": refusals,
         "outcome": "abandoned" if abandoning else "merged", "abandon_reason": reason,
         "stage": stage, "isolation": cell.info.get("isolation"), "branch": branch, "default_branch": name,
@@ -579,6 +786,13 @@ def survey(cell: Cell, abandon: Optional[str], merged_as: Optional[str] = None) 
         },
         "never": "No merge, no push, no remote branch deleted, nothing changed on the main checkout.",
     }
+    if lanes is not None:
+        plan["lanes"] = lanes
+        plan["would"].update({"remove_lane_worktrees": [relative(project, Path(repo)) for repo in sorted(lanes["worktrees"].values())],
+                              "drop_lane_worktree_records": lanes["stale_records"],
+                              "bundle_lanes": lanes["unkept_commits"] > 0, "delete_lane_branches": sorted(lanes["branches"]),
+                              "save_lane_uncommitted": sorted(lanes["uncommitted"])})
+    return plan
 
 
 def add_bytes(tar: tarfile.TarFile, name: str, data: bytes) -> None:
@@ -611,7 +825,8 @@ def bundle_replans(project: Path, refs: List[str], excludes: List[str], path: Pa
 
 
 def write_archive(cell: Cell, target: Path, dirty: List[str], bundle_refs: Optional[List[str]] = None, merged_as: Optional[str] = None,
-                  log: Optional[bytes] = None, replans: Optional[Tuple[List[str], List[str]]] = None) -> List[str]:
+                  log: Optional[bytes] = None, replans: Optional[Tuple[List[str], List[str]]] = None,
+                  lanes: Optional[Dict[str, Any]] = None) -> List[str]:
     """Write the archive beside the others, check it, and return its member names. On any failure nothing is left behind.
 
     bundle_refs, when given, are the default branch refs: the cell's branch is bundled against them and added.
@@ -620,12 +835,18 @@ def write_archive(cell: Cell, target: Path, dirty: List[str], bundle_refs: Optio
     log (made before M6.1, or by hand) is archived exactly as before, with no log added.
     replans, when given, is (the re-plan refs, the refs whose commits are held already): the commits only the
     re-plan refs reach are bundled and added as replans.bundle.
+    lanes, when given, is lane_survey's answer (M22): lanes/ is archived without any lane's checked-out tree, the commits only
+    the lane branches hold are added as lanes.bundle, and each lane checkout's uncommitted work under lanes-saved/<L>/.
     """
     project, prefix = cell.project, cell.ticket_id
     partial = project / ".factory" / "tmp" / f"cleanup-{target.name}.partial"
     bundle = project / ".factory" / "tmp" / f"cleanup-{target.name}.bundle"
     replan_bundle = project / ".factory" / "tmp" / f"cleanup-{target.name}.replans.bundle"
+    lane_bundle = project / ".factory" / "tmp" / f"cleanup-{target.name}.lanes.bundle"
     expected = [f"{prefix}/{name}" for name in cell.members()]
+
+    def no_lane_tree(member: tarfile.TarInfo) -> Optional[tarfile.TarInfo]:
+        return None if is_lane_tree(member.name.split("/")[1:]) else member
     try:
         partial.parent.mkdir(parents=True, exist_ok=True)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -635,6 +856,8 @@ def write_archive(cell: Cell, target: Path, dirty: List[str], bundle_refs: Optio
                     add_bytes(tar, f"{prefix}/cell.json", (json.dumps({**cell.info, "merged_as": merged_as}, indent=2) + "\n").encode("utf-8"))
                 elif entry.name == LIFECYCLE_LOG and log is not None:
                     add_bytes(tar, f"{prefix}/{LIFECYCLE_LOG}", log)
+                elif entry.name == LANES:  # every lane's state files, never a lane's checked-out tree
+                    tar.add(str(entry), arcname=f"{prefix}/{entry.name}", filter=no_lane_tree)
                 elif entry.name != "repo":
                     tar.add(str(entry), arcname=f"{prefix}/{entry.name}")
             if bundle_refs is not None:
@@ -658,6 +881,12 @@ def write_archive(cell: Cell, target: Path, dirty: List[str], bundle_refs: Optio
                     if name and not is_byproduct(name):
                         tar.add(str(cell.repo / name), arcname=f"{prefix}/untracked/{name}")
                         expected.append(f"{prefix}/untracked/{name}")
+            if lanes is not None and lanes["unkept_commits"]:
+                bundle_lanes(project, lanes["bundle_refs"], lanes["bundle_excludes"], lane_bundle)
+                tar.add(str(lane_bundle), arcname=f"{prefix}/{LANES_BUNDLE}")
+                expected.append(f"{prefix}/{LANES_BUNDLE}")
+            for lane in sorted((lanes or {}).get("uncommitted") or {}):
+                expected += save_uncommitted(tar, Path(lanes["worktrees"][lane]), f"{prefix}/{LANES_SAVED}/{lane}")
         with tarfile.open(str(partial), "r:gz") as tar:
             names = set(tar.getnames())
         missing = [name for name in expected if name not in names]
@@ -665,6 +894,8 @@ def write_archive(cell: Cell, target: Path, dirty: List[str], bundle_refs: Optio
             raise CleanupError(f"The archive did not come out complete (missing: {', '.join(missing[:5]) or 'cell.json'}).")
         if any(name == f"{prefix}/repo" or name.startswith(f"{prefix}/repo/") for name in names):
             raise CleanupError("The archive unexpectedly contains the worktree.")
+        if any(is_lane_tree(name.split("/")[1:]) for name in names):
+            raise CleanupError("The archive unexpectedly contains a lane's worktree.")
         if target.exists():
             raise CleanupError(f"{target} appeared while archiving; refusing to overwrite it.")
         partial.replace(target)
@@ -673,7 +904,7 @@ def write_archive(cell: Cell, target: Path, dirty: List[str], bundle_refs: Optio
             partial.unlink()
         raise CleanupError(f"Archiving failed, so nothing was deleted. {exc}", code="archive-failed")
     finally:
-        for leftover in (bundle, replan_bundle):
+        for leftover in (bundle, replan_bundle, lane_bundle):
             if leftover.exists():
                 leftover.unlink()
     if not target.is_file() or target.stat().st_size == 0:
@@ -709,7 +940,8 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
         ("station.exited", "cleanup", {"outcome": plan["outcome"]}),
     ], "abandoned" if abandoning else "closed")
     replans = (plan["replan_refs"], plan["replan_bundle_excludes"]) if plan["would"]["bundle_replans"] else None
-    members = write_archive(cell, target, plan["uncommitted"], default_branch(project)[1] if bundled else None, plan["merged_as"], log, replans)
+    lanes = plan.get("lanes")
+    members = write_archive(cell, target, plan["uncommitted"], default_branch(project)[1] if bundled else None, plan["merged_as"], log, replans, lanes)
     # The archive is written and checked: a team that keeps its evidence elsewhere gets it now (records.publish_command, M13).
     # The outcome is recorded; a failure never stops cleanup.
     published = publish(project, cell.ticket_id, target)
@@ -727,11 +959,14 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
             removed.append(relative(project, cell.repo))
         else:
             git(project, "worktree", "prune")  # the folder is already gone; drop git's stale record so the branch is free
+    if lanes is not None:
+        removed += remove_lane_worktrees(cell, lanes)
     try:
         shutil.rmtree(str(root))
     except OSError as exc:
         raise CleanupError(f"Could not remove {root}: {exc}. {kept}")
     removed.append(relative(project, root))
+    lanes_done = finish_lanes(cell, lanes) if lanes is not None else None
 
     branch_deleted, note = False, None
     if plan["would"]["delete_branch"]:
@@ -766,6 +1001,7 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
         "observe_due": observe["due"], "finished_since_last_observe_pass": observe["finished_since_last_pass"],
         "next": f"Set the ticket {cell.ticket_id} to {state}, using the ticket skill."
                 + (f" Then an observe pass is due ({observe['finished_since_last_pass']} tickets have finished since the last one): run the observe skill with --auto." if observe["due"] else ""),
+        **({"lanes": lanes_result(cell, lanes, lanes_done, archive, plan["default_branch"])} if lanes is not None and lanes_done is not None else {}),
     }, indent=2, ensure_ascii=False))
     return 0
 
