@@ -908,7 +908,9 @@ class SupervisorTriggerTest(SupervisorBase):
         self.claude({"default": {"hang": True}})
         self.tick()
         self.factory("stop")
-        self.assertIn("stopped by a person", self.ledger()["supervisor"]["parked"]["LOCAL-001"]["reason"])
+        self.wait()
+        self.assertEqual(self.ledger()["supervisor"]["parked"], {})  # paused, not waiting for a person (M23: /mach stop)
+        self.tick()
         self.assertEqual(self.receiver.requests, [])
 
     def test_no_address_no_webhook_message_and_the_banner_by_default(self):

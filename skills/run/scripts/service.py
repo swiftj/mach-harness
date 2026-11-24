@@ -87,24 +87,50 @@ def parent_of(pid: int) -> Tuple[Optional[int], str]:
         return None, ""
 
 
+def command_line(pid: int) -> str:
+    """A process's whole command line, from ps; "" when it cannot be read. Replaced in tests."""
+    try:
+        done = subprocess.run(["ps", "-o", "command=", "-p", str(int(pid))], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return ""
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
+SCRIPT_RUNNERS = ("node", "bun")
+
+
+def is_claude_code(pid: int, name: str) -> bool:
+    """Whether this process is Claude Code itself: its program is named exactly `claude` (the native build), or it is node or
+    bun running a script whose path ends in `claude` or lies in the claude-code package (the npm build). The desktop app's
+    `Claude`, a terminal or a multiplexer is never one."""
+    program = Path(name.strip()).name
+    if program == "claude":
+        return True
+    if program not in SCRIPT_RUNNERS:
+        return False
+    words = command_line(pid).split()
+    for word in words[1:]:
+        if word.startswith("-"):
+            continue
+        return Path(word).name == "claude" or "claude-code" in word or "@anthropic-ai/claude-code" in word
+    return False
+
+
 def find_session_pid(start: Optional[int] = None) -> Optional[int]:
-    """The Claude Code process this command descends from: the nearest ancestor whose program is named claude; failing that,
-    the top-most ancestor that is not pid 1 (the session leader). None when no ancestor can be read. Replaced in tests."""
-    pid = start if start is not None else os.getpid()
-    chain: List[Tuple[int, str]] = []
-    seen = set()
-    while pid and pid > 1 and pid not in seen and len(chain) < 64:
+    """The Claude Code process this command descends from: the nearest ancestor that is Claude Code (is_claude_code). None
+    when there is none, or the ancestry cannot be read: then nothing can be tied to a session, and the caller says so.
+    `parent_of` and `command_line` are replaced in tests."""
+    first = start if start is not None else os.getpid()
+    pid, seen = first, set()
+    while pid and pid > 1 and pid not in seen and len(seen) < 64:
         seen.add(pid)
         parent, name = parent_of(pid)
         if parent is None:
-            break
-        if pid != (start if start is not None else os.getpid()):
-            chain.append((pid, name))
+            return None
+        if pid != first and is_claude_code(pid, name):
+            return pid
         pid = parent
-    for ancestor, name in chain:
-        if Path(name.strip()).name.lower() in ("claude", "claude.exe") or Path(name.strip()).name.lower().startswith("claude"):
-            return ancestor
-    return chain[-1][0] if chain else None
+    return None
 
 
 def start_detached(root: Path, run_script: Path, lifetime: str = "background", session_pid: Optional[int] = None, started_by: Optional[str] = None) -> int:

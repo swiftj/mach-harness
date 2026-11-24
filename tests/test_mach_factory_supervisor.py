@@ -31,6 +31,7 @@ import notify  # noqa: E402
 import policy  # noqa: E402
 import run  # noqa: E402
 import service  # noqa: E402
+REAL_FIND_SESSION_PID = service.find_session_pid  # the bases replace it during each test; SessionLookupTest walks the real one
 import supervisor  # noqa: E402
 from test_mach_product_issues import git  # noqa: E402
 from test_mach_product_intake import Base as IntakeBase  # noqa: E402
@@ -309,6 +310,8 @@ class ActivationTest(Base):
         # factory start (= enable) starts a supervisor that outlives the session.
         self.assertEqual((done["supervisor"], self.detached, self.how), ("started", [(self.eng, SCRIPTS / "run.py")], {"lifetime": "background", "started_by": "factory start"}))
         self.assertIn("also after Claude Code closes", done["in_words"])
+        self.assertTrue(done["next"].startswith("The Factory is on for this machine only"), done["next"])
+        self.assertIn("ends the Factory: running work stops where it is. /mach pull or /mach factory start starts it again.", summary["stop"])
         # Run again, it changes only what was asked for and keeps the runner's identity.
         again = self.factory("enable", "--budget-per-day", "50", "--no-merge")
         self.assertEqual((again["updated"], again["policy"]["runner_id"], again["policy"]["limits"]["max_parallel"], again["policy"]["limits"]["max_budget_usd_per_day"],
@@ -830,7 +833,7 @@ class ScheduleHoldTest(Base):
             (self.eng / ".factory/worktrees" / ticket / "plan.md").write_text(plan_md(*names))
         self.enable()
         # Dispatched by hand above; a pull (or a decision) gives such tickets to the supervisor.
-        self.assertEqual(activation.give_to_supervisor(run.factory_context(run.Project(self.eng)), ["LOCAL-001", "LOCAL-002"]), ["LOCAL-001", "LOCAL-002"])
+        self.assertEqual(activation.give_to_supervisor(run.factory_context(run.Project(self.eng)), ["LOCAL-001", "LOCAL-002"]), (["LOCAL-001", "LOCAL-002"], []))
 
     def test_a_ticket_sharing_files_with_a_running_one_waits_for_a_later_pass(self):
         self.two_planned(("Medium", "Medium"), (["app/x.py", "app/a.py"], ["app/x.py", "app/b.py"]))
@@ -1257,15 +1260,55 @@ class LifecycleTest(Base):
             stopped = self.factory("stop")
         self.assertEqual([(item["ticket_id"], item["signalled"]) for item in stopped["stopped"]], [("LOCAL-001", True)])
         self.wait()
-        self.assertEqual(json.loads((self.local("executions") / record["execution_id"] / "result.json").read_text())["ended"], "interrupted")
+        self.assertEqual(json.loads((self.local("executions") / record["execution_id"] / "result.json").read_text())["ended"], "stopped-by-person")
         self.assertTrue(self.local("stop").exists(), "a running supervisor, whichever lifetime, reads this and exits")
         self.assertIn("/mach pull or /mach factory start starts the Factory again", stopped["note"])
         self.assertEqual(policy.read(self.eng)["paused"], False)  # stopped, not paused: the authorization stays as it was
+        # Like a session's end: not parked, no attempt counted, and the next pass carries the ticket on where it was, with no --retry.
+        self.claude({"default": {"stage": "approved"}})
         report = self.tick()
-        self.assertEqual((report["state"], report["started"]), ("supervised", []))
-        self.assertIn("stopped by a person", report["parked"]["LOCAL-001"]["reason"])
-        self.assertEqual(self.factory("resume", "--retry", "LOCAL-001")["retrying"], ["LOCAL-001"])
-        self.assertEqual(len(self.calls()), 1)
+        self.assertEqual(report["recovered"], [{"execution_id": record["execution_id"], "ticket_id": "LOCAL-001", "found": "ended"}])
+        self.assertEqual((report["state"], report["parked"], self.ledger()["supervisor"]["attempts"]), ("supervised", {}, {}))
+        completed = [e for e in self.events() if e["type"] == "execution.completed"]
+        self.assertEqual([(e["data"]["how"], e["data"]["paused_because"]) for e in completed], [("stopped-by-person", "a person stopped the Factory")])
+        self.assertEqual([item["ticket_id"] for item in report["started"]], ["LOCAL-001"])
+        self.wait()
+        self.assertEqual(len(self.calls()), 2)
+
+    def test_one_execution_stopped_while_the_factory_goes_on_waits_for_a_person(self):
+        self.supervised()
+        self.claude({"default": {"hang": True}})
+        self.tick()
+        record = list(self.executions().values())[0]
+        deadline = time.time() + 15
+        while not (self.local("executions") / record["execution_id"] / "started.json").exists() and time.time() < deadline:
+            time.sleep(0.1)
+        with mock.patch.object(executor, "GRACE_SECONDS", 2):
+            stopped = self.factory("stop", "--execution", record["execution_id"])
+        self.assertFalse(stopped["supervisor_stopped"])
+        self.wait()
+        report = self.tick()
+        self.assertIn("stopped by a person", report["parked"]["LOCAL-001"]["reason"])  # or the supervisor would start it again at once
+        self.assertEqual(report["started"], [])
+
+    def test_a_merge_stopped_by_a_person_goes_to_a_person(self):
+        self.first()
+        self.config(build={"require_audit": False}, merge={"mode": "auto", "method": "local"})
+        self.enable()
+        self.tick()
+        self.wait()
+        self.claude({"default": {"hang": True}})
+        self.tick()
+        record = next(r for r in self.executions().values() if r["state"] in ("claimed", "started"))
+        self.assertEqual(record["action_at_start"], "merge")
+        deadline = time.time() + 15
+        while not (self.local("executions") / record["execution_id"] / "started.json").exists() and time.time() < deadline:
+            time.sleep(0.1)
+        with mock.patch.object(executor, "GRACE_SECONDS", 2):
+            self.factory("stop")
+        self.wait()
+        report = self.tick()
+        self.assertIn("merge station was running when a person stopped the Factory", report["parked"]["LOCAL-001"]["reason"])
 
     def test_stop_ends_a_running_supervisor_of_either_lifetime(self):
         self.supervised()
@@ -1322,7 +1365,7 @@ class LifetimeTest(Base):
         record = list(self.executions().values())[0]
         self.assertTrue(record["tied_to_session"])
         spec = json.loads((self.local("executions") / record["execution_id"] / "spec.json").read_text())
-        self.assertEqual(spec["watch"]["session_pid"], os.getpid())
+        self.assertEqual(spec["watch"], {"session_pid": os.getpid()})  # the session only: a supervisor that ends leaves its runs to finish
         result = json.loads((self.local("executions") / record["execution_id"] / "result.json").read_text())
         self.assertEqual(result["ended"], "session-ended")
         # The next pass (the next pull's supervisor) records it without parking it or counting an attempt, and starts it again.
@@ -1351,6 +1394,52 @@ class LifetimeTest(Base):
         self.local("lifetime.json").write_text(json.dumps({"lifetime": "background"}))
         self.assertFalse(executor.session_gone(self.eng, {"supervisor_pid": os.getpid(), "session_pid": gone.pid}))
         self.assertFalse(executor.session_gone(self.eng, None))
+
+    def test_a_released_ticket_is_given_only_to_a_supervisor_that_will_run_it(self):
+        self.first()
+        self.product("intake")
+        self.product("dispatch", "SLICE-001")  # by hand
+        self.enable()
+        before = len(self.detached)
+
+        def owner():
+            return self.ledger()["slices"]["SLICE-001"]["owner"]
+
+        # The Factory Floor's process, with no supervisor running: nothing runs it, so it is not given.
+        floor = activation.carry_on(run.factory_context(run.Project(self.eng)), tickets=["LOCAL-001"], start=False)
+        self.assertEqual((floor["supervisor"], floor["given"], owner()), ("none", [], "engineer"))
+        # A worker in a conversation holds it: it stays there, and no supervisor is started for it.
+        C = run.claims()
+        C.take(self.eng / ".factory/worktrees/LOCAL-001", "plan", C.new_holder(), C.minutes({}))
+        kept = activation.carry_on(run.factory_context(run.Project(self.eng)), tickets=["LOCAL-001"])
+        self.assertEqual((kept["supervisor"], kept["given"], owner(), len(self.detached)), ("none", [], "engineer", before))
+        self.assertIn("carries on there", kept["not_given"][0]["why"])
+        # An engineer's own ticket (not from a slice) is never the supervisor's.
+        own = activation.carry_on(run.factory_context(run.Project(self.eng)), tickets=["LOCAL-900"])
+        self.assertEqual((own["supervisor"], own["given"], len(self.detached)), ("none", [], before))
+        self.assertIn("/mach LOCAL-900 carries it on", own["not_given"][0]["why"])
+
+    def test_a_run_outlives_its_supervisor_while_the_session_lives(self):
+        """Disabled, a lost lease or a crash end the supervisor, not its runs: they finish, and the next supervisor adopts them."""
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait()
+        self.assertFalse(executor.session_gone(self.eng, {"supervisor_pid": gone.pid, "session_pid": os.getpid()}))
+        self.assertTrue(executor.session_gone(self.eng, {"supervisor_pid": os.getpid(), "session_pid": gone.pid}))
+
+    def test_a_session_supervisor_whose_session_ended_is_not_running_and_a_fresh_one_starts(self):
+        self.supervised()
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait()
+        self.local("supervisor.json").write_text(json.dumps({"instance": "winding-down", "runner_id": "r", "pid": os.getpid(), "host": supervisor.platform.node(),
+                                                             "started_at": "x", "heartbeat_at": "x", "expires_at": "2099-01-01T00:00:00Z",
+                                                             "lifetime": "session", "session_pid": gone.pid, "started_by": "pull"}))
+        lease = supervisor.Lease(self.eng, "r")
+        self.assertIsNone(lease.running())
+        self.assertIsNone(lease.holder(), "a fresh supervisor may take over from one whose session ended")
+        before = len(self.detached)
+        started = activation.carry_on(run.factory_context(run.Project(self.eng)))
+        self.assertEqual((started["supervisor"], len(self.detached)), ("started", before + 1))
+        self.assertEqual(activation.carry_on(run.factory_context(run.Project(self.eng)), start=False)["supervisor"], "none")
 
     def test_a_merge_cut_short_by_the_session_goes_to_a_person(self):
         self.first()
@@ -1665,6 +1754,42 @@ class ServiceTest(Base):
             with self.assertRaises(service.ServiceError):
                 service.install_agent(self.eng, SCRIPTS / "run.py")
         self.assertFalse(self.launchctl_log.exists())
+
+
+class SessionLookupTest(unittest.TestCase):
+    """service.find_session_pid's real walk up the process tree, with the process table stood in for: the nearest ancestor that
+    is Claude Code, and nothing else (no fallback to a terminal, a multiplexer or the desktop app)."""
+
+    def walk(self, table, commands=None):
+        """table: pid -> (parent pid, comm). The walk starts at pid 100, this command."""
+        with mock.patch.object(service, "parent_of", lambda pid: table.get(pid, (None, ""))), \
+                mock.patch.object(service, "command_line", lambda pid: (commands or {}).get(pid, "")):
+            return REAL_FIND_SESSION_PID(100)
+
+    def test_the_native_build(self):
+        self.assertEqual(self.walk({100: (90, "python3"), 90: (80, "/Users/x/.local/bin/claude"), 80: (1, "-zsh")}), 90)
+
+    def test_the_npm_build_runs_under_node(self):
+        table = {100: (90, "python3"), 90: (80, "node"), 80: (1, "-zsh")}
+        self.assertEqual(self.walk(table, {90: "node /usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js --resume"}), 90)
+        self.assertEqual(self.walk(table, {90: "node --no-warnings /opt/homebrew/bin/claude"}), 90)
+        self.assertIsNone(self.walk(table, {90: "node /srv/app/server.js"}), "another node program is not Claude Code")
+
+    def test_the_desktop_app_above_a_claude_child_the_child_wins(self):
+        # This command (100) runs in a shell (90) of the claude process (80) the desktop app (70) started.
+        table = {100: (90, "python3"), 90: (80, "/bin/zsh"), 80: (70, "/Applications/Claude.app/Contents/Resources/app/claude"),
+                 70: (1, "/Applications/Claude.app/Contents/MacOS/Claude")}
+        self.assertEqual(self.walk(table), 80)
+
+    def test_a_plain_terminal_tmux_or_the_desktop_app_alone_is_no_session(self):
+        for table in ({100: (90, "-zsh"), 90: (80, "login"), 80: (1, "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal")},
+                      {100: (90, "bash"), 90: (80, "tmux"), 80: (1, "tmux")},
+                      {100: (90, "python3"), 90: (80, "/bin/zsh"), 80: (1, "/Applications/Claude.app/Contents/MacOS/Claude")}):
+            with self.subTest(top=table[max(k for k in table if table[k][0] == 1)][1]):
+                self.assertIsNone(self.walk(table))
+
+    def test_an_unreadable_ancestry_is_no_session(self):
+        self.assertIsNone(self.walk({}))
 
 
 class BoundaryTest(Base):

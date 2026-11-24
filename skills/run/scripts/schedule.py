@@ -289,7 +289,8 @@ def dependencies(root: Path, factory: Optional[Callable[[], Any]]) -> Dict[str, 
 
 def main(args: Any, project: Path, *, config: Dict[str, Any], sibling: Optional[Callable[[str], Path]] = None,
          factory: Optional[Callable[[], Any]] = None, workflow: str = "mach:belt", supervised: Optional[str] = None,
-         resolved: Optional[Dict[str, str]] = None, beside: Sequence[str] = (), claims: Any = None) -> Dict[str, Any]:
+         resolved: Optional[Dict[str, str]] = None, beside: Sequence[str] = (), claims: Any = None,
+         gone: Optional[Callable[[str], Sequence[str]]] = None) -> Dict[str, Any]:
     """The schedule for the tickets in `args` (ticket_ids, running, limit, sequential, by_person, dry_run).
 
     run.py resolves bare numbers first and passes what was typed for each resolved ticket in `resolved`, and the
@@ -297,8 +298,9 @@ def main(args: Any, project: Path, *, config: Dict[str, Any], sibling: Optional[
     other live executions: they take no place here (the supervisor keeps its own ceiling), but the High-risk and
     file-overlap rules count them, and one whose plan is not written yet holds a ticket in the line, because its
     files are not known. `claims` is the shared claim helper (claim.py): a pending ticket with a fresh claim by a
-    holder other than `args.holder` (any fresh claim, with no holder) is held. Returns the report; prints and
-    writes nothing."""
+    holder other than `args.holder` (any fresh claim, with no holder) is held, unless `gone(ticket)` names that holder:
+    a Factory execution that is known to have stopped (its session ended, or its process is gone) holds nothing.
+    Returns the report; prints and writes nothing."""
     if args.by_person and supervised:
         raise ScheduleError(f"--by-person is a person's word, and this runs inside a supervised Factory execution (for {supervised}); the settings ceiling applies.")
     factory_section = config.get("factory") if isinstance(config.get("factory"), dict) else {}
@@ -316,6 +318,8 @@ def main(args: Any, project: Path, *, config: Dict[str, Any], sibling: Optional[
                 continue
             cell_dir = project / ".factory" / "worktrees" / item["ticket_id"]
             held = claims.current(cell_dir, limit)
+            if held and gone is not None and held["holder"] in set(gone(item["ticket_id"])):
+                held = None  # its holder was an execution that has stopped: nobody holds the ticket
             if held and held["holder"] != mine:
                 item["claimed"] = claims.public(held, limit)
                 continue
