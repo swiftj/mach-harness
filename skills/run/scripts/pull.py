@@ -34,7 +34,7 @@ Standard library only. Imported by run.py; not a command of its own.
 import re
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 INTAKE_KEYS = ("created", "updated", "applied", "withdrawn", "needs_person", "notes", "refused")
 # Said once, the first time a pull writes the Factory's authorization on this machine (M23 2).
@@ -56,7 +56,8 @@ def cells(root: Path) -> List[str]:
 
 def pull(args: Any, root: Path, *, config: Dict[str, Any], line: Any, schedule: Any, claims: Any,
          next_step: Callable[[str], Dict[str, Any]], sibling: Optional[Callable[[str], Path]], workflow: str, run_one: str,
-         hand: Any = None, needs_you: Optional[Callable[[], List[Dict[str, Any]]]] = None) -> Dict[str, Any]:
+         hand: Any = None, needs_you: Optional[Callable[[], List[Dict[str, Any]]]] = None,
+         gone: Optional[Callable[[str], Sequence[str]]] = None) -> Dict[str, Any]:
     """The whole pull: reconcile, choose, hand over or dispatch here (each skipped or simulated with --dry-run). Returns the report.
     `hand` is activation.HandOver (None: the batch runs here); `needs_you` gives the "Needs you" list (decide's tickets)."""
     factory_section = config.get("factory") if isinstance(config.get("factory"), dict) else {}
@@ -66,18 +67,22 @@ def pull(args: Any, root: Path, *, config: Dict[str, Any], line: Any, schedule: 
         raise PullError(str(exc))
     if args.dry_run:
         taken, plan = simulated_intake(line)
-        report = choose(args, root, config, line, schedule, claims, next_step, sibling, workflow, run_one, ceiling, taken, plan, dispatch=None, hand=None)
+        report = choose(args, root, config, line, schedule, claims, next_step, sibling, workflow, run_one, ceiling, taken, plan, dispatch=None, hand=None, gone=gone)
     else:
         with line.lock("pull"):
             reconciled = line.reconcile()
             report = choose(args, root, config, line, schedule, claims, next_step, sibling, workflow, run_one, ceiling,
-                            reconciled["intake"], reconciled["plan"], dispatch=line.dispatch, hand=hand)
+                            reconciled["intake"], reconciled["plan"], dispatch=line.dispatch, hand=hand, gone=gone)
         if report["factory"]["handed_over"]:  # outside the lock: the supervisor takes it itself
             started = dict(hand.carry_on())
             words = started.pop("in_words", None)
             report["factory"].update(started)
             if words:
                 report["factory"]["running_words"] = words
+        elif hand is not None and hasattr(hand, "running"):
+            running = hand.running()  # nothing handed to it this time, and still said (M23 2.4)
+            if running:
+                report["factory"].update(running)
     report["first_time"] = bool(report["factory"]["handed_over"] and getattr(hand, "first_time", False))
     report["factory_started"] = report["factory"]["handed_over"] and report["factory"]["supervisor"] != "none"
     try:
@@ -121,7 +126,8 @@ def simulated_intake(line: Any):
 
 def choose(args: Any, root: Path, config: Dict[str, Any], line: Any, schedule: Any, claims: Any, next_step: Callable[[str], Dict[str, Any]],
            sibling: Optional[Callable[[str], Path]], workflow: str, run_one: str, ceiling: Dict[str, Any], taken: Dict[str, Any],
-           plan: Dict[str, Any], dispatch: Optional[Callable[..., Dict[str, Any]]], hand: Any = None) -> Dict[str, Any]:
+           plan: Dict[str, Any], dispatch: Optional[Callable[..., Dict[str, Any]]], hand: Any = None,
+           gone: Optional[Callable[[str], Sequence[str]]] = None) -> Dict[str, Any]:
     rows = {row["slice_id"]: row for row in plan["slices"]}
     slice_of = {str(row["ticket_id"]): key for key, row in rows.items() if row.get("ticket_id")}
     ticket_of = {key: str(row.get("ticket_id") or row.get("stand_in")) for key, row in rows.items() if row.get("ticket_id") or row.get("stand_in")}
@@ -152,7 +158,7 @@ def choose(args: Any, root: Path, config: Dict[str, Any], line: Any, schedule: A
     candidates = movable + [ticket_of[key] for key in offered]
     decided = schedule.main(SimpleNamespace(ticket_ids=candidates, running=[], limit=args.limit, sequential=args.sequential, by_person=False,
                                             dry_run=args.dry_run, holder=None),
-                            root, config=config, sibling=sibling, factory=lambda: line, workflow=workflow, claims=claims) if candidates else {"start": [], "held": []}
+                            root, config=config, sibling=sibling, factory=lambda: line, workflow=workflow, claims=claims, gone=gone) if candidates else {"start": [], "held": []}
     slice_by_ticket = {ticket_of[key]: key for key in offered}
 
     # The hand-over (M23 2): the chosen slices and the tickets in the line this pull would carry on, where no worker holds
@@ -327,8 +333,11 @@ def lead(report: Dict[str, Any]) -> List[str]:
                          "Closing Claude Code pauses it; the next /mach pull carries on where it left off.")
         if report.get("first_time"):
             lines.append(FIRST_TIME)
-    elif factory.get("why_not") and not report["dry_run"] and (report["run"] or report["start_now"]):
-        lines.append(f"This batch runs here, in the conversation: {factory['why_not']}")
+    else:
+        if factory.get("already_running") and factory.get("running_words"):
+            lines.append(str(factory["running_words"]))
+        if factory.get("why_not") and not report["dry_run"] and (report["run"] or report["start_now"]):
+            lines.append(f"This batch runs here, in the conversation: {factory['why_not']}")
     return lines
 
 

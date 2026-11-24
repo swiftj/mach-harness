@@ -140,13 +140,16 @@ class Lease:
         data = self.read()
         if not self.live(data):
             return None
+        if data.get("lifetime") == "session" and data.get("host") == platform.node() and not process_alive(data.get("session_pid")):
+            return None  # its session has ended: it is stopping its work and exiting, and cannot take more
         return {"lifetime": data.get("lifetime") or "background", "since": data.get("started_at"), "pid": data.get("pid"),
                 "started_by": data.get("started_by")}
 
     def holder(self) -> Optional[str]:
         """A description of another live owner, or None."""
         data = self.read()
-        if self.live(data) and data.get("instance") != self.instance:
+        if self.live(data) and data.get("instance") != self.instance and (self.running() or data.get("host") != platform.node()):
+            # A session supervisor whose session has ended holds nothing: a fresh one takes over while it winds down.
             return f"process {data.get('pid')} on {data.get('host')}, runner {data.get('runner_id')}, last heard from at {data.get('heartbeat_at')}"
         return None
 
@@ -370,11 +373,14 @@ class Supervisor:
                     record["instance"] = self.lease.instance
                     self.line.emit(ledger, "recovery.started", ticket_id=record["ticket_id"], slice_id=record.get("slice_id"), execution_id=execution_id, kind="still-running")
                     report["recovered"].append({"execution_id": execution_id, "ticket_id": record["ticket_id"], "found": "still running"})
-            elif (executor.folder(self.root, execution_id) / executor.SESSION_MARK).exists():
-                # Stopped because its session ended, and its wrapper went with it before writing a result: the same pause.
-                self.line.emit(ledger, "recovery.started", ticket_id=record["ticket_id"], slice_id=record.get("slice_id"), execution_id=execution_id, kind="session-ended")
-                self.finish(ledger, pol, record, {**facts, "how": executor.SESSION_ENDED, "ended_at": facts.get("ended_at") or stamp()}, known=True)
-                report["recovered"].append({"execution_id": execution_id, "ticket_id": record["ticket_id"], "found": "paused when its session ended"})
+            elif executor.paused_how(self.root, execution_id):
+                # Stopped because its session ended or a person stopped the Factory, and its wrapper went before writing a result:
+                # the same pause.
+                how = executor.paused_how(self.root, execution_id)
+                self.line.emit(ledger, "recovery.started", ticket_id=record["ticket_id"], slice_id=record.get("slice_id"), execution_id=execution_id, kind=how)
+                self.finish(ledger, pol, record, {**facts, "how": how, "ended_at": facts.get("ended_at") or stamp()}, known=True)
+                report["recovered"].append({"execution_id": execution_id, "ticket_id": record["ticket_id"],
+                                            "found": "paused when a person stopped the Factory" if how == executor.STOPPED_BY_PERSON else "paused when its session ended"})
             elif record["state"] == "claimed" and not facts["started"] and not record.get("wrapper_pid"):
                 # Reserved, never launched: nothing ran, so nothing is uncertain. Give the place back.
                 record.update({"state": "released", "ended_at": stamp()})
@@ -400,20 +406,22 @@ class Supervisor:
                        "build_at_end": build_at_end})
         common = {"ticket_id": ticket, "slice_id": record.get("slice_id"), "execution_id": record["execution_id"],
                   "refs": {"cell": f".factory/worktrees/{ticket}/cell.json", "execution": f".factory/local/executions/{record['execution_id']}/"}}
-        if known and facts.get("how") == executor.SESSION_ENDED:
-            # The Claude Code session the supervisor belonged to ended, so the work paused. Nothing is parked and no attempt is
-            # counted: the next pull carries the ticket on from the stage its records show. Merge and cleanup reach beyond the
-            # cell, so one of those cut short still goes to a person, as for any lost run.
+        if known and facts.get("how") in executor.PAUSED:
+            # The Claude Code session the supervisor belonged to ended, or a person stopped the Factory (/mach stop): the work
+            # paused. Nothing is parked and no attempt is counted: the next pull or factory start carries the ticket on from the
+            # stage its records show. Merge and cleanup reach beyond the cell, so one of those cut short still goes to a person.
+            by_person = facts.get("how") == executor.STOPPED_BY_PERSON
+            because = "a person stopped the Factory" if by_person else "the Claude Code session ended"
             record["state"] = "finished"
             if record.get("action_at_start") in NEVER_RETRIED and not moved:
                 self.line.emit(ledger, "execution.failed", stage=step.get("stage"), next=step.get("action"), how=record["how"], claude_error=None,
                                exit_code=record["exit_code"], attempt=None, session_id=record["session_id"], **common)
-                self.park(ledger, ticket, f"The {record.get('action_at_start')} station was running when the Claude Code session ended, and what it did is "
-                          "not known. It is never retried automatically.", common, code="outcome-unknown")
+                self.park(ledger, ticket, f"The {record.get('action_at_start')} station was running when {because}, and what it did is "
+                          "not known. It is never retried automatically.", common, code=None if by_person else "outcome-unknown")
                 return
             self.line.emit(ledger, "execution.completed", stage=step.get("stage"), next=step.get("action"), waiting_for=step.get("needs"),
                            how=record["how"], exit_code=record["exit_code"], seen_to_end=False, cost_usd=record["cost_usd"], session_id=record["session_id"],
-                           refused_tools=record["refused_tools"], paused_because="the Claude Code session ended", **common)
+                           refused_tools=record["refused_tools"], paused_because=because, **common)
             return
         stuck = None if (build_at_end or {}).get("tasks_completed") else self.not_progressing(supervisor, record, facts, known)
         if stuck:
@@ -811,8 +819,8 @@ class Supervisor:
         record.update(context)
         argv = executor.command(pol["claude"], boundary["workflow"], [ticket], until, pol["allowed_tools"], budget_usd, record["session_id"],
                                 boundary["plugin_dir"], boundary["add_dirs"], boundary["denied"])
-        # A supervisor tied to a session gives its runs the same tie: each ends if the supervisor or the session is gone.
-        watch = {"supervisor_pid": os.getpid(), "session_pid": self.lease.session_pid} if self.lease.lifetime == "session" else None
+        # A supervisor tied to a session gives its runs the same tie: each ends when the session is gone.
+        watch = {"session_pid": self.lease.session_pid} if self.lease.lifetime == "session" else None
         record["tied_to_session"] = watch is not None
         executor.prepare(self.root, execution_id, argv, pol["limits"]["max_execution_minutes"], watch=watch)
         record["wrapper_pid"] = executor.launch(self.root, execution_id, self.run_script)
@@ -826,17 +834,23 @@ class Supervisor:
     # ---- stopping ----
 
     def stop_executions(self, only: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Ask running executions to stop. What each had done by then is not known, and is recorded as such."""
+        """A person stopped the Factory: each running execution is stopped, marked "stopped-by-person". It is not parked and no
+        attempt is counted: the next pass (a pull, factory start) records it and carries the ticket on from the stage its records
+        show, except a run cut short at merge or cleanup, which goes to a person (finish)."""
         stopped = []
         with self.line.lock("supervisor"):
             ledger = self.line.ledger()
             for execution_id, record in sorted(ledger["supervisor"]["executions"].items()):
                 if record["state"] not in LIVE or (only and execution_id != only):
                     continue
-                signalled = executor.stop(record.get("wrapper_pid"), execution_id)
                 record["stop_requested_at"] = stamp()
-                self.park(ledger, record["ticket_id"], "Its execution was stopped by a person. What it had done by then is not known; check the ticket before resuming.",
-                          {"ticket_id": record["ticket_id"], "slice_id": record.get("slice_id"), "execution_id": execution_id}, code=None)  # the person who stopped it is here
+                if only:
+                    # One run stopped while the Factory goes on: held for a person, or the supervisor would start it again at once.
+                    signalled = executor.stop(record.get("wrapper_pid"), execution_id)
+                    self.park(ledger, record["ticket_id"], "Its execution was stopped by a person. What it had done by then is not known; check the ticket before resuming.",
+                              {"ticket_id": record["ticket_id"], "slice_id": record.get("slice_id"), "execution_id": execution_id}, code=None)
+                else:
+                    signalled = executor.end_by_person(self.root, record.get("wrapper_pid"), execution_id)
                 stopped.append({"execution_id": execution_id, "ticket_id": record["ticket_id"], "signalled": signalled})
             self.line.save(ledger)
         return stopped

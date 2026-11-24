@@ -54,6 +54,7 @@ MONITORING_STATEMENT = {
            "stops for a person. Builds only what grooming rates below High risk, and within this machine's risk limit. The issue text comes from outside "
            "the team; it is treated as data."),
 }
+PULL_REQUEST = {"autonomy": "supervised", "limits": {}, "allow_merge": True}  # what a pull writes the first time (M23 2.1)
 STOP_COMMAND = "/mach stop"
 ENABLE_COMMAND = "/mach factory start"
 RESUME_COMMAND = "/mach resume"
@@ -117,6 +118,9 @@ def why_not(raw: Dict[str, Any], pol: Dict[str, Any]) -> Optional[str]:
     if pol.get("security_review_problems"):
         return pol["security_review_problems"][0]
     if pol.get("autonomy") != "supervised":
+        if any("autonomy_ceiling" in item for item in section):
+            return ("This project's settings keep the Factory to observing (factory.autonomy_ceiling is observe in .factory/config.json), so it "
+                    "starts no work. Its tickets run in the conversation (/mach <ticket>, or /mach pull --here).")
         return f"The Factory is set to observe on this machine, so it starts no work. {ENABLE_COMMAND} --autonomy supervised lets it run work."
     return None
 
@@ -218,7 +222,7 @@ def summarize(request: Dict[str, Any]) -> Dict[str, Any]:
         "persistent": "Installs a per-user service that keeps the supervisor running without a Claude session." if request.get("persistent")
         else "The supervisor runs in the background until stopped; no service is installed.",
         "monitoring_requests": MONITORING_STATEMENT[request.get("monitoring_requests") is True],
-        "stop": f"{STOP_COMMAND} stops every running execution and pauses the Factory.",
+        "stop": f"{STOP_COMMAND} ends the Factory: running work stops where it is. /mach pull or /mach factory start starts it again.",
     }
 
 
@@ -281,7 +285,7 @@ def enable(ctx: Context, args: Any) -> Dict[str, Any]:
             "supervisor": started["supervisor"], "pid": started.get("pid"), "why_not": started.get("why_not"),
             **({"already_running": started["already_running"]} if started.get("already_running") else {}),
             "in_words": started.get("in_words") or started.get("why_not"),
-            "next": ("The Factory is on on this machine only, and runs in the background until stopped. /mach pull hands it ready work; "
+            "next": ("The Factory is on for this machine only, and runs in the background until stopped. /mach pull hands it ready work; "
                      "/mach factory stop stops it."),
             "factory_started": started["supervisor"] in ("started", "converted", "already-running", "service")}
 
@@ -295,22 +299,35 @@ def wake_note(root: Path, why: str) -> None:
                                 json.dumps({"event": str(why)[:40], "at": policy_module.stamp(), "n": secrets.token_hex(4)}) + "\n")
 
 
-def give_to_supervisor(ctx: Context, tickets: Sequence[str]) -> List[str]:
+def give_to_supervisor(ctx: Context, tickets: Sequence[str]) -> Tuple[List[str], List[Dict[str, str]]]:
     """Give the supervisor these tickets' slices in the line (owner "supervisor"), under the intake lock, whoever dispatched
-    them: a person's decision released them. A ticket that is not from a slice is not the supervisor's to run, and is left."""
-    wanted = {str(ticket) for ticket in tickets}
+    them: a person's decision released them. Returns (given, kept): a ticket is kept where it is, with why, when a worker in a
+    conversation holds a fresh claim on it (ctx.held_by, from run.py), or when it is not from a slice (an engineer's own
+    ticket, which the supervisor never runs): /mach <ticket> carries those on."""
+    wanted = list(dict.fromkeys(str(ticket) for ticket in tickets))
     given: List[str] = []
+    kept: List[Dict[str, str]] = []
     if not wanted or ctx.line is None:
-        return given
+        return given, kept
+    held_by: Callable[[str], Optional[str]] = getattr(ctx, "held_by", None) or (lambda ticket: None)
     with ctx.line.lock("activation"):
         ledger = ctx.line.ledger()
-        for entry in ledger["slices"].values():
-            if str(entry.get("ticket_id")) in wanted and entry.get("dispatched_at") and entry.get("owner") != SUPERVISOR:
+        entries = {str(entry.get("ticket_id")): entry for entry in ledger["slices"].values() if entry.get("dispatched_at")}
+        for ticket in wanted:
+            entry = entries.get(ticket)
+            if entry is None:
+                kept.append({"ticket_id": ticket, "why": f"it is an engineer's own ticket, which the Factory does not run: /mach {ticket} carries it on"})
+                continue
+            holder = held_by(ticket)
+            if holder:
+                kept.append({"ticket_id": ticket, "why": f"{holder}; it carries on there (or /mach {ticket} in that conversation)"})
+                continue
+            if entry.get("owner") != SUPERVISOR:
                 entry["owner"] = SUPERVISOR
-                given.append(str(entry.get("ticket_id")))
-        if given:
+            given.append(ticket)
+        if any(entries[ticket].get("owner") == SUPERVISOR for ticket in given):
             ctx.line.save(ledger)
-    return given
+    return given, kept
 
 
 NO_SESSION = ("MACH could not find the Claude Code session this runs in, so it cannot tie the Factory to it. "
@@ -332,21 +349,28 @@ def carry_on(ctx: Context, tickets: Sequence[str] = (), start: bool = True, star
     """Wake the live supervisor; with none live, start one tied to this Claude Code session (start=True, from a terminal), or,
     with start=False (the browser app's process, which has no session), start nothing.
 
-    `tickets`: tickets a person's decision just released (decide do). When the Factory may work here they become the
-    supervisor's (give_to_supervisor), even if an engineer dispatched them; otherwise they are left as they are.
+    `tickets`: tickets a person's decision just released (decide do). Only when a supervisor is running here or is about to be
+    started do they become the supervisor's (give_to_supervisor), even if an engineer dispatched them; a ticket a worker in a
+    conversation holds, or an engineer's own ticket, is kept where it is.
 
     Returns {"supervisor": "started"|"woken"|"none", "pid": int|None, "why_not": str|None}; with "woken", also "already_running"
-    ({"lifetime", "since", "pid", "started_by"}); with `tickets`, also "given": [tickets]. Never raises for an ordinary reason
-    (not on, turned off, paused, forbidden by the project, no session found): it answers "none" with the reason and what changes it."""
+    ({"lifetime", "since", "pid", "started_by"}); with `tickets`, also "given": [tickets] and "not_given": [{"ticket_id", "why"}].
+    Never raises for an ordinary reason (not on, turned off, paused, forbidden by the project, no session found): it answers
+    "none" with the reason and what changes it."""
     try:
         raw = policy_module.read(ctx.root)
         pol = policy_module.effective(raw, ctx.config)
         reason = why_not(raw, pol)
         if reason:
-            return {"supervisor": "none", "pid": None, "why_not": reason, **({"given": []} if tickets else {})}
+            return {"supervisor": "none", "pid": None, "why_not": reason, **({"given": [], "not_given": []} if tickets else {})}
         if tickets:
-            given = give_to_supervisor(ctx, tickets)
-            return {**carry_on(ctx, start=start, started_by=started_by), "given": given}
+            will_take = bool(ctx.sup.lease.running()) or (start and bool(service.find_session_pid()))
+            given, kept = give_to_supervisor(ctx, tickets) if will_take else ([], [])
+            if kept and not given:  # each stays where it is driven: no supervisor is started just for it
+                return {"supervisor": "none", "pid": None, "why_not": None, "given": [], "not_given": kept}
+            # Should the start fail after all, the tickets given stay the supervisor's: the next pull or decision carries them on.
+            result = carry_on(ctx, start=start, started_by=started_by)
+            return {**result, "given": given, "not_given": kept}
         wake_note(ctx.root, "carry-on")
         already = ctx.sup.lease.running()
         if already:
@@ -429,6 +453,13 @@ class HandOver:
                 return reason
         elif raw.get("source") == "invalid-file":
             return why_not(raw, pol)
+        else:
+            # Nothing written yet: judge the authorization take() would write, through this project's own restrictions, before
+            # anything is written or any ticket changes hands.
+            would = {**policy_module.build(ctx.root, PULL_REQUEST, "pull", "claude", "main"), "source": "local-file", "problems": []}
+            reason = why_not(would, policy_module.effective(would, ctx.config))
+            if reason:
+                return reason
         request = {"autonomy": "supervised", "limits": {}, "allow_merge": True, "persistent": False}
         problem = next(iter(failed(checks(self.ctx, request, probe=False))), None)
         if problem:
@@ -442,7 +473,7 @@ class HandOver:
         raw = policy_module.read(self.ctx.root)
         if raw.get("source") == "local-file":
             return
-        write_authorization(self.ctx, {"autonomy": "supervised", "limits": {}, "allow_merge": True}, "pull", "pull")
+        write_authorization(self.ctx, PULL_REQUEST, "pull", "pull")
         self.first_time = True
 
     def authorize(self, plan: Dict[str, Any]) -> Tuple[bool, str]:
@@ -469,6 +500,11 @@ class HandOver:
         if given:
             line.save(ledger)
         return given
+
+    def running(self) -> Optional[Dict[str, Any]]:
+        """The supervisor running here now, with the line that says so (took=False: nothing was handed to it); None when none is."""
+        already = self.ctx.sup.lease.running()
+        return {"already_running": already, "running_words": running_words(already, took=False)} if already else None
 
     def carry_on(self) -> Dict[str, Any]:
         """Wake the live supervisor, or start one tied to this session; say which, and what was already running."""
@@ -544,17 +580,29 @@ def disable(ctx: Context, args: Any) -> Dict[str, Any]:
     agent = service.remove_agent(ctx.root)
     policy_module.forget_pending(ctx.root)
     was_enabled = raw.get("source") == "local-file" and raw.get("enabled")
+    kept_off = True
     if raw.get("source") == "local-file":
         raw.update({"enabled": False, "paused": False, "persistent": False})
         policy_module.save(ctx.root, raw)  # enabled: false sticks; a pull never turns it back on
-    elif policy_module.policy_path(ctx.root).exists() and not policy_module.policy_path(ctx.root).is_symlink():
-        policy_module.policy_path(ctx.root).unlink()  # an unusable file is removed, so nothing ambiguous is left behind
+    else:
+        # No file, or one that cannot be used: a valid one saying off is written, so the person's word sticks here too.
+        path = policy_module.policy_path(ctx.root)
+        with contextlib.suppress(OSError):
+            if path.is_symlink():
+                path.unlink()  # the link itself, never what it points to
+        try:
+            off = policy_module.build(ctx.root, {"autonomy": "supervised"}, person(ctx), shutil.which("claude") or "claude",
+                                      str((ctx.line.integration() if ctx.line is not None else {}).get("branch") or "main"))
+            off.update({"enabled": False, "paused": False, "persistent": False})
+            policy_module.save(ctx.root, off)
+        except (policy_module.PolicyError, OSError):
+            kept_off = False  # tracked by Git, or the folder cannot be written: nothing here can turn the Factory on either
     if was_enabled:
         change(ctx, "factory.disabled", by="engineer", stopped=[item["execution_id"] for item in stopped])
     with contextlib.suppress(OSError):
         policy_module.write_private(policy_module.local_dir(ctx.root) / "wake", "disabled\n")  # a running supervisor notices and exits
     running = [item["ticket_id"] for item in status(ctx)["executions"]]
-    return {"disabled": True, "was_enabled": bool(was_enabled), "stopped": stopped, "still_running": running, "git_hooks_removed": hooks, "persistent_service_removed": agent,
+    return {"disabled": True, "was_enabled": bool(was_enabled), "recorded_off": kept_off, "stopped": stopped, "still_running": running, "git_hooks_removed": hooks, "persistent_service_removed": agent,
             "note": ("Automatic execution is revoked on this machine, and stays off: /mach pull runs batches in the conversation until "
                      f"{ENABLE_COMMAND} turns it back on. " + ("Work already running finishes its run; nothing new starts." if running else "Nothing is running."))}
 
@@ -585,7 +633,7 @@ def stop(ctx: Context, args: Any) -> Dict[str, Any]:
     stopped = ctx.sup.stop_executions(only)
     ended = end_supervisor(ctx) if not only else {"was_running": None, "signalled": False}
     return {"stopped": stopped, "supervisor_stopped": bool(ended["was_running"]), "was_running": ended["was_running"],
-            "note": ("The Factory is stopped. " if not only else "That execution is stopped. ")
-            + ("Each stopped ticket now waits for a person. What its execution had done is not known: check the ticket, then "
-               f"{RESUME_COMMAND} --retry <ticket> for the ones to continue. " if stopped else "")
-            + ("/mach pull or /mach factory start starts the Factory again." if not only else "")}
+            "note": ("The Factory is stopped. Its work is paused where it was: /mach pull or /mach factory start starts the Factory again, "
+                     "and it carries each ticket on from there (a run stopped while merging or cleaning up waits for a person)." if not only else
+                     "That execution is stopped, and its ticket waits for a person while the Factory goes on with the rest: check it, then "
+                     f"{RESUME_COMMAND} --retry <ticket> lets it run again.")}

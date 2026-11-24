@@ -312,20 +312,23 @@ def read_json(path: Path) -> Optional[Dict[str, Any]]:
 
 def prepare(root: Path, execution_id: str, argv: Sequence[str], timeout_minutes: float, watch: Optional[Dict[str, Any]] = None) -> Path:
     """Write what the wrapper will run. Kept on disk so a restart can see exactly what was asked.
-    `watch` ({"supervisor_pid", "session_pid"}): started by a supervisor tied to a Claude Code session, the run ends when either
+    `watch` ({"session_pid"}): started by a supervisor tied to a Claude Code session, the run ends when that session
     process is gone, recorded as "session-ended", unless the supervisor has meanwhile become a background one."""
     home = folder(root, execution_id)
     home.mkdir(parents=True, exist_ok=True)
     os.chmod(str(home), 0o700)
     spec = {"execution_id": execution_id, "argv": list(argv), "cwd": str(root), "timeout_seconds": int(timeout_minutes * 60), "prepared_at": now()}
     if watch:
-        spec["watch"] = {"supervisor_pid": watch.get("supervisor_pid"), "session_pid": watch.get("session_pid")}
+        spec["watch"] = {"session_pid": watch.get("session_pid")}
     write_json(home / "spec.json", spec)
     return home
 
 
 SESSION_ENDED = "session-ended"  # how an execution ended when the Claude Code session its supervisor belonged to ended
 SESSION_MARK = "session-ended"   # the file a supervisor leaves in an execution's folder before it stops it for that reason
+STOPPED_BY_PERSON = "stopped-by-person"  # how an execution ended when a person stopped the Factory (/mach stop)
+STOP_MARK = "stopped-by-person"          # the file factory stop leaves in an execution's folder before it stops it
+PAUSED = (SESSION_ENDED, STOPPED_BY_PERSON)  # ends that pause the work: nothing parked, no attempt counted
 
 
 def process_alive(pid: Any) -> bool:
@@ -354,7 +357,10 @@ def session_gone(root: Path, watch: Optional[Dict[str, Any]]) -> bool:
     """For a run tied to a session: whether its supervisor or its session has ended. False for any other run."""
     if not watch or background_now(root):
         return False
-    return any(isinstance(watch.get(key), int) and not process_alive(watch[key]) for key in ("supervisor_pid", "session_pid"))
+    # The session only. A supervisor that ends while the session lives (disabled, a lost lease, a crash) leaves its runs to
+    # finish, and the next supervisor adopts them, as for any run.
+    session = watch.get("session_pid")
+    return type(session) is int and not process_alive(session)
 
 
 def launch(root: Path, execution_id: str, run_script: Path) -> int:
@@ -401,8 +407,10 @@ def wrapper(root: Path, execution_id: str) -> int:
             session_over = session_gone(root, spec.get("watch"))
             if session_over or (home / SESSION_MARK).exists():
                 session_over = True
-            if interrupted["signal"] is not None or too_long or session_over:
-                ended = SESSION_ENDED if session_over else "timed-out" if too_long and interrupted["signal"] is None else "interrupted"
+            by_person = (home / STOP_MARK).exists()
+            if interrupted["signal"] is not None or too_long or session_over or by_person:
+                ended = (STOPPED_BY_PERSON if by_person else SESSION_ENDED if session_over else
+                         "timed-out" if too_long and interrupted["signal"] is None else "interrupted")
                 child.terminate()
                 try:
                     code = child.wait(timeout=GRACE_SECONDS)
@@ -439,12 +447,31 @@ def stop(pid: Any, execution_id: str) -> bool:
 
 def end_for_session(root: Path, pid: Any, execution_id: str) -> bool:
     """Stop a running execution because its session ended: the mark first, so the wrapper records "session-ended"."""
-    with_mark = folder(root, execution_id) / SESSION_MARK
+    return marked_stop(root, pid, execution_id, SESSION_MARK)
+
+
+def end_by_person(root: Path, pid: Any, execution_id: str) -> bool:
+    """Stop a running execution because a person stopped the Factory (/mach stop): the mark first, so the wrapper records
+    "stopped-by-person". Like a session's end, it pauses the work; the next pull or factory start carries it on."""
+    return marked_stop(root, pid, execution_id, STOP_MARK)
+
+
+def marked_stop(root: Path, pid: Any, execution_id: str, mark: str) -> bool:
     try:
-        with_mark.write_text(now() + "\n", encoding="utf-8")
+        (folder(root, execution_id) / mark).write_text(now() + "\n", encoding="utf-8")
     except OSError:
         pass
     return stop(pid, execution_id)
+
+
+def paused_how(root: Path, execution_id: str) -> Optional[str]:
+    """How a run was paused, from the mark left in its folder: "stopped-by-person", "session-ended", or None."""
+    home = folder(root, execution_id)
+    if (home / STOP_MARK).exists():
+        return STOPPED_BY_PERSON
+    if (home / SESSION_MARK).exists():
+        return SESSION_ENDED
+    return None
 
 
 def tool_summary(name: Any, tool_input: Any) -> str:

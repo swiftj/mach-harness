@@ -493,8 +493,8 @@ class HandOverTest(PullBase):
         self.assertEqual(len(self.detached), before)
         self.assertEqual(json.loads((self.eng / ".factory/local/wake").read_text())["event"], "carry-on")
         # One started from another Claude Code session that is still open is handed the batch the same way.
-        data = json.loads(lease.read_text())
-        data.update(lifetime="session", session_pid=12345, started_by="pull")
+        data = json.loads(lease.read_text())  # another Claude Code window, still open
+        data.update(lifetime="session", session_pid=os.getpid(), started_by="pull")
         lease.write_text(json.dumps(data))
         self.ready("SLICE-003", self.epic_number())
         report = self.pull()
@@ -587,6 +587,69 @@ class HandOverTest(PullBase):
         self.assertEqual(self.runner()["enabled"], False)
         self.assertEqual(len(self.detached), 1, "only the first pull started a supervisor")
         self.assertEqual(report["run"], [item["ticket_id"] for item in report["start_now"]])
+
+    def test_after_the_session_ended_the_next_pull_carries_the_ticket_on(self):
+        """A run its session's end stopped left its claim on the cell, fresh for claim_minutes, and nothing new is ready: the next
+        pull does not hold the ticket as a worker's, and starts a supervisor for the work it already owns."""
+        (a,) = self.issues(1)
+        self.pull()
+        ticket, execution = str(a), "x0000000000aa"
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait()
+        ledger = self.ledger()
+        ledger["supervisor"]["executions"][execution] = {"execution_id": execution, "ticket_id": ticket, "slice_id": "SLICE-001", "state": "started",
+                                                         "wrapper_pid": gone.pid, "started_at": "2026-11-24T10:00:00Z", "runner_id": self.runner()["runner_id"]}
+        (self.eng / ".factory/intake/ledger.json").write_text(json.dumps(ledger))
+        home = self.eng / ".factory/local/executions" / execution
+        home.mkdir(parents=True)
+        (home / "session-ended").write_text("2026-11-24T10:05:00Z\n")
+        C = run.claims()
+        C.take(self.eng / ".factory/worktrees" / ticket, "plan", run.execution_holder(execution), C.minutes({}))
+        self.detached.clear()
+        report = self.pull()
+        self.assertNotIn("claimed", [item["rule"] for item in report["waits"]])
+        self.assertEqual((report["factory"]["handed_over"], report["factory"]["supervisor"], report["factory"]["tickets"]), (True, "started", [ticket]))
+        self.assertEqual(len(self.detached), 1)
+        # A claim held by a worker that is still at work keeps holding it.
+        C.take(self.eng / ".factory/worktrees" / ticket, "plan", C.new_holder(), C.minutes({}), take_over=True)
+        self.assertEqual(self.waiting(self.pull())["SLICE-001"]["rule"], "claimed")
+
+    def test_a_disable_with_no_authorization_here_still_sticks(self):
+        self.issues(1)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(run.main(["--project", str(self.eng), "factory", "disable"]), 0)
+        self.assertEqual((json.loads(out.getvalue())["recorded_off"], self.runner()["source"], self.runner()["enabled"]), (True, "local-file", False))
+        report = self.pull()
+        self.assertEqual(report["factory"]["why_not"], "A person turned the Factory off on this machine. /mach factory start turns it back on.")
+        self.assertEqual((self.runner()["enabled"], self.detached), (False, []))
+        # One that cannot be used (written on another machine) is replaced by a valid one saying off.
+        data = json.loads((self.eng / ".factory/local/runner.json").read_text())
+        data["machine"] = "someone-elses-laptop"
+        (self.eng / ".factory/local/runner.json").write_text(json.dumps(data))
+        self.assertEqual(self.runner()["source"], "invalid-file")
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(run.main(["--project", str(self.eng), "factory", "disable"]), 0)
+        self.assertEqual((self.runner()["source"], self.runner()["enabled"]), ("local-file", False))
+
+    def test_a_project_that_keeps_the_factory_to_observing_gets_no_authorization_and_no_hand_over(self):
+        self.issues(1)
+        data = json.loads((self.eng / ".factory/config.json").read_text())
+        data["factory"]["autonomy_ceiling"] = "observe"
+        (self.eng / ".factory/config.json").write_text(json.dumps(data))
+        self.runs_here(self.pull(), "factory.autonomy_ceiling is observe")
+
+    def test_a_running_factory_is_said_even_with_nothing_new_to_hand_it(self):
+        lease = self.eng / ".factory/local/supervisor.json"
+        lease.parent.mkdir(parents=True, exist_ok=True)
+        lease.write_text(json.dumps({"instance": "running", "runner_id": "r", "pid": os.getpid(), "host": supervisor.platform.node(),
+                                     "started_at": "2026-11-24T08:00:00Z", "heartbeat_at": "x", "expires_at": "2099-01-01T00:00:00Z",
+                                     "lifetime": "background", "session_pid": None, "started_by": "factory start"}))
+        report = self.pull()  # nothing is ready
+        self.assertFalse(report["factory"]["handed_over"])
+        self.assertEqual(report["factory"]["already_running"],
+                         {"lifetime": "background", "since": "2026-11-24T08:00:00Z", "pid": os.getpid(), "started_by": "factory start"})
+        self.assertEqual(report["in_words"][0], "A Factory is already running here in the background (started 2026-11-24T08:00:00Z). /mach factory stop stops it.")
 
     def test_a_dry_run_hands_nothing_over(self):
         self.issues(2)
