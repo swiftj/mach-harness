@@ -318,7 +318,8 @@ A PM can take the whole project from one repository to another, for example into
 2. Always look first: run `STUDIO project import <path> --plan`. It changes nothing. Tell the PM, in plain words:
    - whether it joins their project (`mode: join`, `into_project`) or becomes the project here, and how many epics and slices come (`slices`);
    - what will be renumbered, as a sentence, never the raw map: "Its slices get new numbers so they do not clash with yours: SLICE-001 becomes SLICE-031, SLICE-002 becomes SLICE-032, and so on; its epics become EPIC-004 and EPIC-005." Give the first two or three and the count; show every pair only if they ask. If nothing is renumbered, say the numbers stay as they are;
-   - that every slice arrives as a draft, and which were ready to build, being built or shipped in the old repository (`slices[].was_words`);
+   - that every slice arrives as a draft, and which were ready to build, being built or shipped in the old repository (`slices[].was_words`); a slice replaced in the old repository stays replaced (`superseded`);
+   - if GitHub could not be read to count the numbers in use, say so in one line (`numbers_note`): marking ready checks again;
    - what will need doing afterwards (`after`): publishing the principles, answering again the sections about shipped behaviour that name the old repository's rules, linking Jira again;
    - any line under `check_by_hand` (an ID inside quoted code, left as written) or `not_in_archive` (an ID the file does not hold), with the file and line.
    Then ask whether to bring it in. Do not bring it in without their yes to this plan.
@@ -327,7 +328,7 @@ A PM can take the whole project from one repository to another, for example into
    - the slices that were ready to build, being built or shipped in the old repository and are drafts here, each by its new ID;
    - IDs left as written inside code, to check by hand (`check_by_hand`), with file and line;
    - the slices whose section about shipped behaviour must be answered again for this repository: their old rows name rules that shipped elsewhere, so their check fails until they are settled again in the interview;
-   - the Jira keys that were left off (`left_behind.jira`): link them again only on the PM's word (`slice link`, `epic link`);
+   - the Jira keys that were left off (`left_behind.jira` for slices, `left_behind.epic_jira` for epics): link them again only on the PM's word (`slice link`, `epic link`);
    - any `structural_errors` the import introduced, as written.
 4. Offer the next step: publish the principles (on their word), then continue the first slice. Never mark anything ready, publish anything or record anything as approved as part of bringing a project in: each slice is checked and marked ready again by the PM, one at a time, as any other.
 5. **"What was SLICE-007 before?"** or "which projects were brought in here?": `STUDIO project imports SLICE-007`, or `STUDIO project imports` with nothing after it. Read the answer as it is.

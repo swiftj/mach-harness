@@ -154,11 +154,9 @@ class ExportCommandTest(IssuesBase):
         terminal = self.refused(self.a, "project", "export")
         self.assertIn("(slice take 41)", terminal)
         self.assertIn("(project export --only-mine)", terminal)
-        imports = self.a / ".factory/studio/imports"
-        imports.mkdir(parents=True)
-        (imports / "0123456789abcdef.json").write_text(json.dumps({"schema_version": 1, "archive_sha256": "e" * 64,
-                                                                    "started_at": "2026-11-24T10:00:00Z", "finished_at": None}))
-        err = self.refused(self.a, "--app", "project", "export", "--only-mine")
+        stopped = {"file": "mach-project-lending-20261124T130600Z.zip", "archive_sha256": "e" * 64, "started_at": "2026-11-24T10:00:00Z"}
+        with mock.patch.object(project_export, "_unfinished_import", return_value=stopped):
+            err = self.refused(self.a, "--app", "project", "export", "--only-mine")
         self.assertIn("Bringing in another project stopped part way here.", err)
         self.assertIsNone(BANNED.search(err), err)
 
@@ -206,7 +204,9 @@ class ImportCommandTest(IssuesBase):
         self.assertEqual(dict(map(tuple, plan["map"]["SLICE"])), {"SLICE-001": "SLICE-003", "SLICE-002": "SLICE-004"})
         self.assertEqual(dict(map(tuple, plan["map"]["EPIC"])), {"EPIC-001": "EPIC-002"})
         self.assertEqual(self.draft_tree(self.b), before)
-        self.assertFalse((self.b / ".factory/studio/imports").exists() and any((self.b / ".factory/studio/imports").iterdir()))
+        self.assertIsNone(project_import.unfinished(studio.Studio(self.b)))
+        self.assertTrue(self.ok(self.b, "status")["saved"]["everything_saved"])
+        self.assertEqual(self.writes(), [])
 
     def test_the_import_through_main_brings_the_project_in_as_drafts(self):
         archive = self.exported()
