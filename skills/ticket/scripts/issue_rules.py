@@ -1500,6 +1500,46 @@ def claim_withdrawn_comment(slice_id: str, revision: int, token: str, why: str) 
             f"<!-- mach:claim-withdrawn v1 slice={slice_id} revision={revision} factory={token} -->")
 
 
+# A sign of life: the Factory that holds a claim, and whose work on the slice has really moved since its claim's last activity,
+# says so on the issue, at most once per interval, so a slow build keeps its claim. It names only a time read on that machine
+# from Git or the cell (when the work last moved). It counts as activity for the claim, at that time, only while it is exactly
+# the template, unedited, by the claim's account, carrying the claim's token; anything else is ignored, like a claim.
+
+ALIVE_RE = re.compile(r"<!-- mach:alive v1 slice=(SLICE-[0-9]{3,}) revision=([0-9]{1,6}) factory=([0-9a-f]{16}) moved=([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z) -->")
+ALIVE_TIME_RE = re.compile(r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$")
+
+
+def alive_comment(slice_id: str, revision: int, token: str, moved_at: str) -> str:
+    """The sign of life a Factory posts on a slice issue it holds: one sentence for a person, and the hidden marker."""
+    _claim_args(slice_id, revision, token)
+    if not isinstance(moved_at, str) or not ALIVE_TIME_RE.fullmatch(moved_at):
+        raise ValueError("a sign of life names when the work last moved, as a UTC time (YYYY-MM-DDTHH:MM:SSZ)")
+    return (f"The MACH Factory that claimed {slice_id} revision {revision} is still building it: its work last moved at {claim_time(moved_at)}.\n\n"
+            f"<!-- mach:alive v1 slice={slice_id} revision={revision} factory={token} moved={moved_at} -->")
+
+
+def _alive_signs(comments: Sequence[Dict[str, Any]], index: int, login: str, slice_id: str, revision: int, token: str) -> List[Tuple[str, str]]:
+    """(time the work moved, as activity; time the sign was posted) for every sign of life after the claim at `index` that counts."""
+    found = []
+    for other in comments[index + 1:]:
+        body = other.get("body") or ""
+        match = ALIVE_RE.search(body)
+        if not match or (match.group(1), int(match.group(2)), match.group(3)) != (slice_id, revision, token):
+            continue
+        if other.get("login") != login or other.get("app") or other.get("type") != "User" or not unedited(other):
+            continue
+        try:
+            if body != alive_comment(slice_id, revision, token, match.group(4)):
+                continue
+        except ValueError:
+            continue
+        posted = other.get("created_at")
+        if not isinstance(posted, str):
+            continue
+        found.append((min(match.group(4), posted), posted))  # a stated time later than the post itself counts only up to the post
+    return found
+
+
 def claims(comments: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """The claim comments that can count, in GitHub's order (by comment ID; the order listed when an ID is missing): exactly
     the template, unedited, written by a person. Whether each author's role counts is for the caller to ask."""
@@ -1517,11 +1557,14 @@ def claims(comments: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if (item.get("app") or item.get("type") != "User" or not isinstance(login, str) or not LOGIN_RE.fullmatch(login)
                 or login.lower() == GHOST or login.endswith("[bot]") or item.get("id") is None):
             continue
-        # Its Factory's activity on the issue: the claim, and every later MACH status comment by the same account.
+        # Its Factory's activity on the issue: the claim, every later MACH status comment by the same account, and every later
+        # sign of life of this very claim (at the time it says the work moved).
         later = [other.get("created_at") for other in comments[index:] if other.get("login") == login and isinstance(other.get("created_at"), str)
                  and MARKER_RE.search(other.get("body") or "")]
+        signs = _alive_signs(comments, index, login, slice_id, revision, token)
         found.append({"slice_id": slice_id, "revision": revision, "token": token, "login": login, "at": item.get("created_at"),
-                      "active_at": max([item.get("created_at") or "", *later]) or None, "takeover": takeover,
+                      "active_at": max([item.get("created_at") or "", *later, *[moved for moved, _ in signs]]) or None, "takeover": takeover,
+                      "alive_posted_at": max([posted for _, posted in signs]) if signs else None,
                       "comment_id": item.get("comment_id"), "index": index})
     if all(type(item["comment_id"]) is int for item in found):
         found.sort(key=lambda item: item["comment_id"])

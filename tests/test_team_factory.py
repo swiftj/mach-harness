@@ -16,9 +16,11 @@ stand-in's clock reads 2026-11-17, so the tests set a long quiet spell (intake.c
 import io
 import json
 import os
+import subprocess
 import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -27,6 +29,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 from test_mach_product_intake import Base as IntakeBase  # noqa: E402
 from test_mach_product_issues import ADDRESS, git  # noqa: E402
 import class_template  # noqa: E402
+import intake  # noqa: E402
 import issue_rules  # noqa: E402
 import run  # noqa: E402
 
@@ -438,6 +441,173 @@ class SplitChainTest(TwoFactories):
         rows = self.rows2()
         self.assertNotEqual(rows["SLICE-001"]["state"], "completed")
         self.assertFalse(rows["SLICE-002"]["dispatchable"])
+
+
+class SignOfLifeTest(TwoFactories):
+    """A Factory that holds a claim and whose work on the slice has really moved posts a sign of life, at most once per half the
+    quiet spell, so a slow build whose branch is not on GitHub keeps its claim. Days pass here: the stand-in for GitHub and the
+    Factories' clock both read this machine's clock moved on by the same amount; commits in the cell are dated in that time."""
+
+    def setUp(self):
+        super().setUp()
+        state = self.gh()
+        state["clock_offset"] = 0
+        self.write_state(state)
+        for clone in (self.eng, self.eng2):
+            self.quiet_days(clone, 3)  # a sign is due once the claim's last activity is a day and a half old
+
+    def at(self, days):
+        """GitHub and both Factories `days` from now (a context manager for the Factories' clock)."""
+        state = self.gh()
+        state["clock_offset"] = int(days * 86400)
+        self.write_state(state)
+        shift = timedelta(days=days)
+
+        class Later(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime.now(tz) + shift
+
+        return mock.patch.object(intake, "datetime", Later)
+
+    def work_moves(self, number, days):
+        """A commit on the slice's branch in the first Factory's cell, dated `days` from now: the build moved then."""
+        repo = self.eng / ".factory/worktrees" / str(number) / "repo"
+        self.assertTrue(repo.is_dir())
+        stamp = (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        (repo / f"progress-{days}.txt").write_text(stamp + "\n")
+        env = {**os.environ, "GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp}
+        for argv in (["add", "-A"], ["commit", "-q", "-m", f"work at {stamp}"]):
+            subprocess.run(["git", *argv], cwd=str(repo), env=env, check=True, capture_output=True)
+
+    def signs(self, number):
+        return [c for c in self.gh()["issues"][str(number)]["comments"] if "<!-- mach:alive v1 " in c["body"]]
+
+    def alive(self):
+        return self.ledger()["slices"]["SLICE-001"]["claim"].get("alive") or {}
+
+    def building(self):
+        number = self.ready("SLICE-001", self.epic())
+        self.product("intake")
+        self.assertEqual(self.product("dispatch", "SLICE-001")["tickets"], [str(number)])
+        return number
+
+    def test_a_slow_build_that_keeps_moving_keeps_its_claim(self):
+        number = self.building()
+        self.work_moves(number, 1.5)
+        with self.at(2):
+            self.product("intake")
+        [first] = self.signs(number)
+        self.assertEqual(first["login"], "erin-eng")
+        self.assertRegex(first["body"], r"^The MACH Factory that claimed SLICE-001 revision 1 is still building it: its work last moved at "
+                                        r"\d{4}-\d\d-\d\d \d\d:\d\d UTC\.\n\n<!-- mach:alive v1 slice=SLICE-001 revision=1 factory=[0-9a-f]{16} moved=")
+        self.work_moves(number, 3.5)
+        with self.at(4):  # more than claim_stale_days after the claim
+            self.product("intake")
+            self.assertEqual(len(self.signs(number)), 2)
+            self.product2("intake")
+            row = self.rows2()["SLICE-001"]
+            self.assertFalse(row["dispatchable"])
+            self.assertRegex(row["being_built_elsewhere"], r"^SLICE-001 is being built by @erin-eng since ")
+            report = self.pull2()
+        self.assertEqual(report["start_now"], [])
+        self.assertFalse(self.cell_on("eng2", number))
+        self.assertEqual(len(self.claim_comments(number)), 1)
+
+    def test_a_build_that_has_not_moved_posts_nothing_and_goes_stale(self):
+        number = self.building()
+        with self.at(2):
+            self.product("intake")
+        with self.at(4):
+            self.product("intake")
+            self.assertEqual(self.signs(number), [])
+            self.product2("intake")
+            self.assertRegex(self.rows2()["SLICE-001"]["being_built_elsewhere"], r"^Claimed by @erin-eng, no activity for \d+ days: free to take\.$")
+            report = self.pull2()
+        self.assertEqual([item["slice_id"] for item in report["start_now"]], ["SLICE-001"], report["in_words"])
+        self.assertTrue(self.cell_on("eng2", number))
+
+    def test_no_sign_of_life_more_often_than_the_interval(self):
+        number = self.building()
+        self.work_moves(number, 1.5)
+        with self.at(2):
+            self.product("intake")
+        checked = self.alive()["checked_at"]
+        self.work_moves(number, 2.2)
+        with self.at(2.5):
+            self.product("intake")
+            self.product("reconcile")
+        self.assertEqual(len(self.signs(number)), 1)
+        self.assertEqual(self.alive()["checked_at"], checked)  # no GitHub call for it: none was due
+        # The ticket station refuses too, from what GitHub says: a sign was posted after --due-before.
+        _, line = run.factory(run.Project(self.eng))
+        with self.at(2.5):
+            stamp = (datetime.now(timezone.utc) + timedelta(days=2.4)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            due = (datetime.now(timezone.utc) + timedelta(days=1.9)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            done = line.ticket("slice-alive", str(number), "--repository", "acme/team-space", "--slice", "SLICE-001", "--revision", "1",
+                               "--token", line.claim_token("SLICE-001"), "--moved-at", stamp, "--due-before", due)
+        answer = json.loads(done.stdout)
+        self.assertEqual((done.returncode, answer["status"], answer["kind"], answer["posted"]), (0, "skipped", "not_due", False))
+        self.assertEqual(len(self.signs(number)), 1)
+        # Another Factory's token never posts for a claim it does not hold.
+        done = line.ticket("slice-alive", str(number), "--repository", "acme/team-space", "--slice", "SLICE-001", "--revision", "1",
+                           "--token", "0123456789abcdef", "--moved-at", stamp, "--due-before", stamp)
+        self.assertEqual(json.loads(done.stdout)["kind"], "not_held")
+        self.assertEqual(len(self.signs(number)), 1)
+
+    def test_a_failed_post_does_not_fail_the_plan(self):
+        number = self.building()
+        self.work_moves(number, 1.5)
+        self.gh_fails("issue comment")
+        with self.at(2):
+            self.product("intake")
+            self.assertEqual(self.product("plan")["slices"][0]["state"], "active")
+        self.assertEqual(self.signs(number), [])
+        self.assertEqual(self.alive()["kind"], "network")
+        self.assertTrue(self.alive()["next_at"])
+        with self.at(2.01):  # within the hour: not tried again
+            self.product("intake")
+        self.assertEqual(self.signs(number), [])
+        with self.at(2.1):
+            self.product("intake")
+        self.assertEqual(len(self.signs(number)), 1)
+        self.assertIsNone(self.alive()["kind"])
+
+
+class SignOfLifeRuleTest(unittest.TestCase):
+    """What counts as a sign of life for a claim, read from the issue's comments alone."""
+
+    TOKEN = "0123456789abcdef"
+
+    def comment(self, body, login="erin-eng", at="2026-11-17T10:00:00Z", updated=None, cid=1):
+        return {"login": login, "id": 5001, "type": "User", "app": False, "created_at": at, "updated_at": updated or at, "body": body, "comment_id": cid}
+
+    def active_at(self, *later):
+        comments = [self.comment(issue_rules.claim_comment("SLICE-001", 1, self.TOKEN)), *later]
+        [claim] = issue_rules.claims(comments)
+        return claim["active_at"]
+
+    def test_only_the_exact_unedited_sign_by_the_claims_account_with_its_token_counts(self):
+        sign = issue_rules.alive_comment("SLICE-001", 1, self.TOKEN, "2026-11-20T08:00:00Z")
+        at = "2026-11-20T09:00:00Z"
+        self.assertEqual(self.active_at(self.comment(sign, at=at, cid=2)), "2026-11-20T08:00:00Z")
+        self.assertEqual(self.active_at(self.comment(sign, at=at, updated="2026-11-20T09:05:00Z", cid=2)), "2026-11-17T10:00:00Z")  # edited
+        self.assertEqual(self.active_at(self.comment(sign, login="ada-pm", at=at, cid=2)), "2026-11-17T10:00:00Z")  # another account
+        other = issue_rules.alive_comment("SLICE-001", 1, "fedcba9876543210", "2026-11-20T08:00:00Z")
+        self.assertEqual(self.active_at(self.comment(other, at=at, cid=2)), "2026-11-17T10:00:00Z")  # another token
+        self.assertEqual(self.active_at(self.comment(sign + " ", at=at, cid=2)), "2026-11-17T10:00:00Z")  # not the template
+        self.assertEqual(self.active_at(self.comment(sign.replace("still building", "done building"), at=at, cid=2)), "2026-11-17T10:00:00Z")
+        bot = {**self.comment(sign, at=at, cid=2), "app": True}
+        self.assertEqual(self.active_at(bot), "2026-11-17T10:00:00Z")
+        # A stated time later than the post itself counts only up to the post.
+        ahead = issue_rules.alive_comment("SLICE-001", 1, self.TOKEN, "2026-12-30T00:00:00Z")
+        self.assertEqual(self.active_at(self.comment(ahead, at=at, cid=2)), at)
+
+    def test_the_template_takes_only_known_values(self):
+        for args in (("SLICE-001", 1, self.TOKEN, "yesterday"), ("SLICE-001", 1, self.TOKEN, "2026-11-20T08:00:00Z -->"),
+                     ("SLICE-001", 1, "nothex", "2026-11-20T08:00:00Z"), ("slice", 1, self.TOKEN, "2026-11-20T08:00:00Z")):
+            with self.assertRaises(ValueError):
+                issue_rules.alive_comment(*args)
 
 
 if __name__ == "__main__":
