@@ -1,12 +1,13 @@
 # M23 design: one pull, and decisions where the person is
 
-Status: design. Decided by the owner on 2026-11-24; the four decisions are in section 1.
+Status: design, being built. Decided by the owner on 2026-11-24; the four decisions are in section 1, and the owner's change to how long the supervisor lives is in 2.4.
 
 Today there are two ways to move work and they do not meet. `/mach pull` takes ready slices in and runs them inside the conversation, which has to stay open. `/mach factory` runs work without a person, but only after an enabling step with a code and a second acceptance, and it will not touch what `pull` dispatched. A ticket that needs a person is found by running `/mach decide`. The owner's words: "way over the top", "disjointed", and it "cannot be viewed as a heavy onerous and ponderous system".
 
 In short:
 
-- **`/mach pull` is the one command.** It takes in what is ready, hands the batch to the Factory Supervisor, and returns. The supervisor runs in the background, on its own, and keeps running when the Claude Code session ends. No code, no confirmation, no second command.
+- **`/mach pull` is the one command.** It takes in what is ready, hands the batch to the Factory Supervisor, and returns. The supervisor works on its own while Claude Code is open and pauses all work when Claude Code exits; the next `/mach pull` carries on where it left off. No code, no confirmation, no second command.
+- **`/mach factory start` is for work that should outlive the session.** It starts the same supervisor in the background, and it keeps running after Claude Code exits. Either command says so when a Factory is already running, with the Factory Floor's link, where it can be stopped.
 - **One list, "Needs you".** Everything waiting for a person is one list, read from the Factory's own files, so it is the same after a restart. The terminal walks it (`/mach decide`, and at the end of `/mach pull`); the Factory Floor shows it and lets the person decide there.
 - **One command records a decision**, whoever asks: `run.py decide do`. The terminal and the Factory Floor both call it. The supervisor then carries the ticket on by itself.
 - **`/mach <ticket>` and `/mach 1 3 6` are unchanged**: a person driving tickets in the conversation.
@@ -31,8 +32,8 @@ These replace two earlier rules: "unattended execution is off on every machine u
 3. **Hand over.** Unless one of the reasons in 2.2 applies:
    - If this machine has no Factory authorization, MACH writes one (2.1).
    - The chosen slices are dispatched with the supervisor as owner. Tickets already in the line that `pull` would have carried on, and that no worker holds, are given to the supervisor too.
-   - If no supervisor is running for this project, MACH starts one, detached from the session (`factory serve`, its own process group, output in `.factory/local/supervisor.log`). If one is running, it is woken.
-4. **Report**: what was taken in, what the Factory started on, what waits and why, and the "Needs you" list. Then the skill walks the person through that list if it is not empty, and ends. The person can close Claude Code.
+   - If no supervisor is running for this project, MACH starts one tied to this session (2.4; output in `.factory/local/supervisor.log`). If one is running, it is woken and the report says so.
+4. **Report**: what was taken in, what the Factory started on, what waits and why, and the "Needs you" list. Then the skill walks the person through that list if it is not empty, and ends.
 
 New report fields: `factory: {"handed_over": bool, "supervisor": "started"|"woken"|"none", "pid", "why_not"}`, `needs_you` (the `decide` list), and `first_time: true` the first time an authorization is written here. `in_words` leads with one line, for example "Two slices are ready. The Factory has started on #41 and #42 and carries on in the background." The first time, one more plain line: "Agents now build here on their own: they run this repository's tests and scripts as you. `/mach stop` stops them."
 
@@ -60,10 +61,14 @@ Pull then runs the batch in the conversation exactly as it does today, and says 
 
 ### 2.4 The supervisor's life
 
-- Started by `pull`, by `decide do` when a decision frees work, and by `/mach factory resume`. Never by installing MACH or cloning.
-- It ends by itself when a pass finds nothing running, nothing it may start, and nothing dispatchable. Work waiting for a person does not keep it alive; the decision starts it again.
-- Running executions already outlive the session. A new supervisor adopts them (`recover`).
-- `/mach stop` (= `factory stop`), `/mach pause`, `/mach resume` are short forms. `/mach factory ...` keeps working.
+The owner's decision: work started by `/mach pull` stops when Claude Code exits; `/mach factory` is the way to keep a Factory running without a session.
+
+- **With the session** (started by `/mach pull`, and by a decision recorded in the terminal). The supervisor records the Claude Code process it was started from. When that process is gone it stops its running executions and exits. Each stopped execution is recorded as ended because the session ended: nothing is parked and no attempt is counted. The next `/mach pull` starts those tickets again from the stage each is at. An execution that was in the merge or cleanup station when it stopped still goes to a person, as today.
+- **In the background** (started by `/mach factory start`; `--persistent` adds the per-user service as today). Detached from the session; it runs until `/mach factory stop`.
+- **Already running.** `/mach pull` and `/mach factory start` look first. If a Factory is running, they say so (how it was started, since when), hand it the batch, and give the Factory Floor's link, where it can be stopped. They never start a second one.
+- **Stopping.** `/mach factory stop` (short form `/mach stop`) stops the running executions and the supervisor, from any session, and so does the Factory Floor. The authorization stays, so the next `/mach pull` or `/mach factory start` starts it again with no step in between. `pause` and `resume` are as today.
+- Never started by installing MACH or cloning.
+- A decision recorded in the Factory Floor wakes a running supervisor. With none running it is recorded and waits: the Floor says "`/mach pull` in Claude Code carries it on."
 
 ### 2.5 A decision frees a parked ticket
 
@@ -123,7 +128,8 @@ A spec saved by grooming without a person lists `## Open questions`. `decide --j
   - `POST /api/v1/needs/{ticket}/{option}` with a JSON body (`by`, `reason`, `adrs`, `test_cmd`, `answers`) runs `decide do ... --via=floor`.
 - Writes need: the session cookie, an `Origin` equal to this host, and a `X-MACH-CSRF` token given by `GET /api/v1/session`. Body must be JSON, capped. One decision at a time per project.
 - The session answer says `capabilities.decisions: true|false`. `read_only` is removed.
-- It still binds to 127.0.0.1 only, still takes no MACH lock itself, still writes only under `.factory/local/observer/`. It never enables, pauses, dispatches or starts the Factory: those stay in Claude Code.
+- `POST /api/v1/factory/stop` runs `factory stop`. The top bar shows that a Factory is running, how it was started, and a Stop control with a confirmation.
+- It still binds to 127.0.0.1 only, still takes no MACH lock itself, still writes only under `.factory/local/observer/`. It never enables, dispatches or starts the Factory: those stay in Claude Code.
 - A person's name sent with a decision is passed to the station and not echoed; replies stay redacted as today.
 
 ### 4.2 The page
@@ -137,7 +143,7 @@ A spec saved by grooming without a person lists `## Open questions`. `decide --j
 
 ## 5. What is not in this design
 
-- Starting, pausing or stopping the Factory from the Floor.
+- Starting or pausing the Factory from the Floor. Stopping it is in.
 - A security exception from the Floor.
 - A persistent service by default. A LaunchAgent stays an option (`/mach factory enable --persistent`).
 - An operating-system sandbox for executions. The first-time line says so in plain words.
