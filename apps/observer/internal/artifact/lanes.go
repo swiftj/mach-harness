@@ -193,9 +193,17 @@ type Lanes struct {
 	Batches  []Batch       `json:"batches"`
 	Join     *JoinView     `json:"join"`
 	Refusals []JoinRefusal `json:"join_refusals"`
-	Tasks    []TaskView    `json:"tasks"`
-	Commits  []CommitLink  `json:"commits"`
-	Timing   *ReportTiming `json:"report_timing"`
+	// JoinStartedAt is when the latest join started (build.json's join_started_at), recorded at the
+	// moment it really started; null before any join started.
+	JoinStartedAt *string `json:"join_started_at"`
+	// Joining says whether a join that started has not reached its result yet: "running" (the process
+	// doing it is alive on this machine), "interrupted" (that process is gone: the join never finished
+	// and can be run again) or "unknown" (it cannot be checked from here); null when no join is under
+	// way. The process is checked, never served.
+	Joining *string       `json:"joining"`
+	Tasks   []TaskView    `json:"tasks"`
+	Commits []CommitLink  `json:"commits"`
+	Timing  *ReportTiming `json:"report_timing"`
 }
 
 // ---- what is decoded: typed, so nothing else in the files is ever looked at ----
@@ -280,6 +288,11 @@ type rawBuild struct {
 			At     any `json:"at"`
 			Reason any `json:"reason"`
 		} `json:"join_refusals"`
+		JoinStartedAt any `json:"join_started_at"`
+		JoinRunning   *struct {
+			Pid  any `json:"pid"`
+			Host any `json:"host"`
+		} `json:"join_running"`
 	} `json:"lanes"`
 }
 
@@ -655,6 +668,10 @@ func ReadLanes(root, ticket string, expected bool) *Lanes {
 			break
 		}
 		out.Refusals = append(out.Refusals, JoinRefusal{At: optTime(jr.At), ReasonCode: optCode(jr.Reason)})
+	}
+	out.JoinStartedAt = optTime(rec.JoinStartedAt)
+	if run := rec.JoinRunning; run != nil && out.State == "open" && source == "cell" {
+		out.Joining = str(joinState(run.Pid, run.Host))
 	}
 	landed := map[string]string{} // lane commit -> landed commit
 	aside := map[string]bool{}

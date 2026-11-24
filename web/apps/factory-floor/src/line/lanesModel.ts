@@ -14,6 +14,7 @@
  * "set aside" is not landed, and its tasks are built again in the cell, one at a time.
  */
 import type { CellState } from "../sim";
+import { utcClock } from "../shell/time";
 import { LINE_STATIONS, type LineRow } from "./model";
 
 const BUILD = LINE_STATIONS.findIndex((s) => s.key === "build");
@@ -111,6 +112,13 @@ export interface LanesReply {
   readonly lanes: readonly LaneRecord[];
   readonly join: JoinRecord | null;
   readonly refusals: readonly { readonly at: number | null; readonly reasonCode: string | null }[];
+  /** When the latest join started, as the build station recorded it at that moment; null before any join started. */
+  readonly joinStartedAt: number | null;
+  /**
+   * A join that started and has no result yet: "running" (its process is alive), "interrupted" (its process is gone: it never
+   * finished and can be run again) or "unknown" (the observer cannot tell from here); null when no join is under way.
+   */
+  readonly joining: "running" | "interrupted" | "unknown" | null;
   readonly tasks: readonly LaneTask[];
   readonly commits: readonly CommitLink[];
   readonly report: ReportTiming | null;
@@ -205,6 +213,8 @@ export function readLanesReply(raw: unknown): LanesReply | null {
     lanes,
     join,
     refusals: arr(d.join_refusals).map((x) => ({ at: time(obj(x).at), reasonCode: code(obj(x).reason_code) })),
+    joinStartedAt: time(d.join_started_at),
+    joining: oneOf(d.joining, ["running", "interrupted", "unknown"] as const),
     tasks: arr(d.tasks).flatMap((x) => {
       const t = obj(x);
       const task = taskId(t.task);
@@ -316,6 +326,22 @@ function chipOf(l: LaneRecord, aside: ReadonlySet<string>): LaneChip {
   return { lane: l.lane, words: `${l.lane}: ${l.current ?? "next task not recorded"}, ${done} of ${l.total} done`, tone: "working" };
 }
 
+/** A join under way, from its recorded start: being joined, or one that never finished; null when none is under way. */
+function joinUnderWay(reply: LanesReply): { readonly words: string; readonly summary: string; readonly tone: "working" | "held" } | null {
+  if (reply.state !== "open" || reply.joining === null) return null;
+  const since = reply.joinStartedAt === null ? null : `${utcClock(reply.joinStartedAt)} UTC`;
+  if (reply.joining === "interrupted") {
+    const words = `The join ${since ? `started at ${since} and ` : ""}did not finish; every lane's work is kept, and it can be run again.`;
+    return { words, summary: words, tone: "held" };
+  }
+  const words = `The lanes are being joined${since ? `, since ${since}` : ""}.`;
+  return {
+    words,
+    summary: `${words.slice(0, -1)}: their commits are landed on the ticket's branch, one per task in plan order, and the whole suite is run on the result.`,
+    tone: "working",
+  };
+}
+
 /** The last join that stopped and landed nothing, when no join has finished since: landing's own code. */
 function stoppedJoin(reply: LanesReply): string | null {
   if (reply.state !== "open") return null;
@@ -335,8 +361,11 @@ export function laneLine(reply: LanesReply | null, cell: Pick<CellState, "tasks"
   const chips = lanes.map((l) => chipOf(l, aside));
   if (reply.state === "open") {
     const stopped = stoppedJoin(reply);
+    const underWay = joinUnderWay(reply);
     const allDone = lanes.length > 0 && lanes.every((l) => l.status === "done" || (l.done !== null && l.done >= l.total));
-    const moment = stopped
+    const moment = underWay
+      ? { words: underWay.words, tone: underWay.tone }
+      : stopped
       ? { words: `The join stopped and landed nothing (${stopped}); every lane's work is kept.`, tone: "fail" as const }
       : allDone
         ? { words: "Every lane is done: next, the lanes are joined.", tone: "working" as const }
@@ -522,6 +551,8 @@ function summaryOf(reply: LanesReply, lanes: readonly LaneRecord[]): string {
     case "unreadable":
       return "Built in lanes, but the build record could not be read, so its lanes are not shown.";
     case "open": {
+      const underWay = joinUnderWay(reply);
+      if (underWay) return `Built in ${n}. ${underWay.summary}`;
       const stopped = stoppedJoin(reply);
       if (stopped) return `Built in ${n}. The join stopped and landed nothing (${stopped}); the ticket's branch is where it was and every lane's work is kept.`;
       const waiting = lanes.filter((l) => l.waiting === "free-place").length;
