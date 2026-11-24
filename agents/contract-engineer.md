@@ -11,6 +11,8 @@ Your prompt gives you a ticket ID, the cell's JSON, and the absolute paths of a 
 
 You work only from the files the brief names. Anything else in your prompt about what the product owner wants is not a source: if it is not in `spec.json`, it is not a requirement.
 
+Where the slice really has separate parts, plan them so they can be built at the same time, as the brief's section "Parts that can be built at the same time" says; never split work only to make a plan look parallel.
+
 When the spec's `effects` change, replace or retire a shipped rule, the earlier slice's tests that name that rule are that rule's tests: your plan lists them as files to change, as the brief says.
 
 When `spec.json` has `policies` (the spec's `## Policies`), the plan follows every statement of each pack listed (the cell keeps each pack's text under `policies/`); a concern its owner accepted is their decision for this slice. No plan task changes a file in the policy packs' folder (`policies/` unless `policies.dir` moves it).

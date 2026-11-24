@@ -18,6 +18,7 @@ can decide, so the model only makes the judgment calls.
 """
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -58,6 +59,13 @@ STUDIO_DRAFT = (".factory", "studio", "draft")
 FIELD_RE = re.compile(r"^[-*+]\s+\*\*([A-Za-z ]+):\*\*\s*(.*)$")
 REQ_RE = re.compile(r"\b(?:FR|INV|AC)-\d{2,}\b")
 PLAN_TASK_RE = re.compile(r"^\s*[-*+]\s+\[[ xX]\]\s+((?:R\d+-)?T\d+)\s+\[(test|impl|contract|refactor|docs)\]\s+(.*)$")
+# M22: the plan's two optional additions. Parts of '## Tasks', as '###' sub-headings, in this order, each at most once;
+# and 'after Tnn' beside a task's IDs in its trailing brackets. A plan with neither is read exactly as before.
+LANE_PARTS = (("before", "Before the lanes"), ("lanes", "Lanes"), ("after", "After the lanes"))
+PART_OF = {title: part for part, title in LANE_PARTS}
+SUBHEADING_RE = re.compile(r"^###\s+(.+?)\s*$")
+TRAILING_BRACKETS_RE = re.compile(r"\(([^()]*)\)\s*$")
+AFTER_MARK_RE = re.compile(r"\bafter\s+((?:R\d+-)?T\d+)\b")
 INTENT_SECTIONS = ("Why", "Goal ancestry", "Constraints", "Risk", "Deferred work")
 INTENT_FIELDS = ("Ticket", "Slice", "Mode", "Status")
 PLAN_FIELDS = ("App type", "Risk tier", "Contracts", "ADRs")
@@ -1237,6 +1245,116 @@ def unreachable_green(task_lines: Sequence[str]) -> List[str]:
     return problems
 
 
+def lane_parts(task_section: Sequence[str]) -> Dict[str, Any]:
+    """The plan's parts and 'after' marks (M22), read from the lines of '## Tasks'. `used` is False for a plan written
+    without them: nothing else here applies to it, and it is checked and built exactly as before. With no part heading,
+    every task is in the lanes part; with headings, a task above the first one has no part (None)."""
+    headings: List[str] = []
+    tasks: List[Dict[str, Any]] = []
+    part: Optional[str] = None
+    fenced = False
+    for line in task_section:
+        if validate_slice.FENCE_RE.match(line):
+            fenced = not fenced
+        heading = None if fenced else SUBHEADING_RE.match(line)
+        if heading:
+            headings.append(heading.group(1))
+            part = PART_OF.get(heading.group(1), part)
+            continue
+        match = PLAN_TASK_RE.match(line)
+        if match:
+            brackets = TRAILING_BRACKETS_RE.search(match.group(3))
+            tasks.append({"id": match.group(1), "kind": match.group(2), "ids": set(REQ_RE.findall(match.group(3))), "part": part,
+                          "after": AFTER_MARK_RE.findall(brackets.group(1)) if brackets else [], "line": line})
+    known = [title for title in headings if title in PART_OF]
+    if not known:
+        for task in tasks:
+            task["part"] = "lanes"
+    return {"used": bool(known) or any(task["after"] for task in tasks), "headings": headings, "tasks": tasks}
+
+
+def named_files(task_id: str, files: Dict[str, List[str]]) -> str:
+    """' (`a`, `b`)' for a refusal that names a task, or '' when the plan gives it no file."""
+    names = files.get(task_id) or []
+    return f" ({', '.join(f'`{name}`' for name in names)})" if names else ""
+
+
+def lane_problems(parts: Dict[str, Any], files: Dict[str, List[str]]) -> List[str]:
+    """What check-plan refuses in a plan that uses the parts or 'after' marks (M22, design 4.4). Never that the plan is
+    one lane: that is right for a slice with one behaviour."""
+    if not parts["used"]:
+        return []
+    problems: List[str] = []
+    order = [title for _, title in LANE_PARTS]
+    seen: List[str] = []
+    for title in parts["headings"]:
+        if title not in PART_OF:
+            problems.append(f"'### {title}' under '## Tasks' is not one of the plan's parts. Use only '### Before the lanes', '### Lanes' "
+                            "and '### After the lanes', spelt exactly so, or remove the heading")
+        elif title in seen:
+            problems.append(f"'### {title}' appears twice under '## Tasks'. Each part comes once: put all of its tasks under one heading")
+        else:
+            if seen and order.index(title) < max(order.index(earlier) for earlier in seen):
+                problems.append(f"'### {title}' comes after '### {seen[-1]}'. The parts go in the order Before the lanes, Lanes, "
+                                "After the lanes: move the heading and its tasks")
+            seen.append(title)
+    tasks = parts["tasks"]
+    for task in tasks:
+        if task["part"] is None:
+            problems.append(f"{task['id']}{named_files(task['id'], files)} comes before the first part heading under '## Tasks'. When the plan "
+                            f"has parts, every task is in one: put {task['id']} under '### Before the lanes', '### Lanes' or '### After the lanes'")
+    position = {task["id"]: number for number, task in enumerate(tasks)}
+    for number, task in enumerate(tasks):
+        for name in task["after"]:
+            if name not in position:
+                problems.append(f"{task['id']} says 'after {name}', but the plan has no task {name}. Name the earlier task whose work "
+                                f"{task['id']} needs, or remove the mark")
+            elif position[name] >= number:
+                problems.append(f"{task['id']} says 'after {name}', but {name} does not come before it. A task can only wait for an earlier "
+                                f"one: move {name} above {task['id']}, or remove the mark")
+            elif tasks[position[name]]["part"] == "after":
+                problems.append(f"{task['id']} says 'after {name}', but {name} is after the lanes, where tasks are built one at a time in "
+                                f"plan order anyway. Remove the mark from {task['id']}")
+    before = [task for task in tasks if task["part"] == "before"]
+    made = {identifier for task in before if task["kind"] == "impl" for identifier in task["ids"]}
+    for task in before:
+        if task["kind"] != "test":
+            continue
+        open_ids = sorted(i for i in task["ids"] if not i.startswith("INV-") and i not in made)
+        if open_ids:
+            problems.append(f"{task['id']} [test]{named_files(task['id'], files)} is before the lanes and tests {', '.join(open_ids)}, but no "
+                            f"[impl] task before the lanes names {'it' if len(open_ids) == 1 else 'them'}, so every lane would start from a "
+                            f"failing suite. Put the [impl] task that makes {task['id']} pass before the lanes too, or move {task['id']} into "
+                            "'### Lanes' beside its code")
+    return problems
+
+
+def lanes_unreachable_green(parts: Dict[str, Any], lane_plan: Dict[str, Any]) -> List[str]:
+    """unreachable_green applied to each lane's own sequence of tasks (design 4.4). Under today's lane rule a lane's
+    problem is always a whole plan's problem too; this guards a later change to the rule."""
+    line_of = {task["id"]: task["line"] for task in parts["tasks"]}
+    problems: List[str] = []
+    for lane in lane_plan.get("lanes") or []:
+        for problem in unreachable_green([line_of[task_id] for task_id in lane.get("tasks") or [] if task_id in line_of]):
+            problems.append(f"in lane {lane.get('lane')}: {problem}")
+    return problems
+
+
+def max_lanes(project: Path) -> int:
+    """build.max_lanes: how many lanes one ticket may run at once. A whole number of at least 1; anything else reads as 1 (off)."""
+    section = load_config(project).get("build")
+    value = section.get("max_lanes") if isinstance(section, dict) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 1 else 1
+
+
+def lane_summary(lane_plan: Dict[str, Any]) -> Dict[str, Any]:
+    """What PLANNED says about lanes when build.max_lanes is above 1: how many, their tasks, and why tasks were joined."""
+    lanes = lane_plan.get("lanes") or []
+    return {"count": len(lanes), "before": lane_plan.get("before") or [], "lanes": [{"lane": lane.get("lane"), "tasks": lane.get("tasks") or []} for lane in lanes],
+            "after": lane_plan.get("after") or [], "joined_because": lane_plan.get("joined_because") or [],
+            **({"single_reason": lane_plan["single_reason"]} if lane_plan.get("single_reason") else {})}
+
+
 def refuse_without_baseline(project: Path, ticket_id: str) -> None:
     """No plan is started or accepted while a required topic has no accepted ADR on the main branch (adr.baseline_stop)."""
     stop = adr.baseline_stop(project, load_config(project), ticket_labels(project, ticket_id))
@@ -1316,7 +1434,9 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
         problems.append("'## Tasks' needs at least one checklist item, such as '- [ ] T01 [test] ...'")
     elif not re.search(r"\[test\]", task_lines[0]):
         problems.append("the first task must be a [test] task: tests are written before implementation")
-    problems.extend(unreachable_green(task_lines))
+    stranded = unreachable_green(task_lines)
+    problems.extend(stranded)
+    lane_plan = plan_lanes(project, text, sections.get("Tasks", []), problems, check_lanes=not stranded)
     problems.extend(claude_config_problems(plan_files(text) + contracts))
     decisions = plan_adrs(project, root, cell, header, text, app_type, problems)
 
@@ -1351,8 +1471,32 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
                       "adrs": {"named": decisions["record"]["named"], "applied": decisions["record"]["applied"],
                                "proposed": [item["id"] for item in decisions["record"]["proposed"]], "exceptions": [item.get("adr") for item in adr.exceptions(cell)]},
                       **({"waits_for_acceptance": waiting, "next": "This High-risk ticket proposes a new ADR: the build waits until an engineer accepts it "
-                                                                  "(cell.py adr-accept, on their word)."} if waiting else {})}, indent=2))
+                                                                  "(cell.py adr-accept, on their word)."} if waiting else {}),
+                      **({"lanes": lane_summary(lane_plan)} if lane_plan is not None else {})}, indent=2))
     return 0
+
+
+def plan_lanes(project: Path, text: str, task_section: Sequence[str], problems: List[str], check_lanes: bool) -> Optional[Dict[str, Any]]:
+    """M22, design 4.4: add to `problems` what the plan's parts and 'after' marks get wrong, and each lane's own
+    unreachable_green when the whole plan has none (`check_lanes`). Returns the lane plan for PLANNED when build.max_lanes is
+    above 1, else None. A plan without the parts or marks, at build.max_lanes 1, never loads the lane calculator: it is
+    checked exactly as before."""
+    parts = lane_parts(task_section)
+    tasks, touch = plan_tasks(text) if parts["used"] else ([], {})
+    own = lane_problems(parts, {task["id"]: task.get("files") or [] for task in tasks})
+    problems.extend(own)
+    wanted = max_lanes(project) > 1
+    if own or not (parts["used"] or wanted):
+        return None
+    module = lanes_module()
+    if module is None:
+        return None
+    if not parts["used"]:
+        tasks, touch = plan_tasks(text)
+    lane_plan = module.plan(text, copy.deepcopy(tasks), copy.deepcopy(touch))
+    if parts["used"] and check_lanes:
+        problems.extend(lanes_unreachable_green(parts, lane_plan))
+    return lane_plan if wanted else None
 
 
 CLAUDE_CONFIG_REFUSAL = ("the plan changes {files}, which is Claude Code configuration that a ticket's workspace never holds, "
@@ -1387,19 +1531,47 @@ def ticket_labels(project: Path, ticket_id: str) -> List[str]:
 _PARSE_PLAN: List[Any] = []
 
 
-def plan_files(text: str) -> List[str]:
-    """Every file the plan says it touches, as the build station reads the plan (its own parse_plan, loaded, never copied)."""
+def build_script(name: str) -> Path:
+    """A script of the build station installed beside this one."""
+    here = Path(__file__).resolve().parent.parent
+    return here.parent / ("mach-build" if here.name.startswith("mach-") else "build") / "scripts" / name
+
+
+def plan_tasks(text: str) -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
+    """The plan's tasks and file touch map, as the build station reads them (its own parse_plan, loaded, never copied)."""
     if not _PARSE_PLAN:
         import importlib.util
-        here = Path(__file__).resolve().parent.parent
-        script = here.parent / ("mach-build" if here.name.startswith("mach-") else "build") / "scripts" / "build.py"
+        script = build_script("build.py")
         if not script.is_file():
             raise CellError(f"The build station is not installed beside this one ({script}), so the plan's files cannot be read.")
         spec = importlib.util.spec_from_file_location("mach_build_station_for_plan", script)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         _PARSE_PLAN.append(module.parse_plan)
-    tasks, touch = _PARSE_PLAN[0](text)
+    return _PARSE_PLAN[0](text)
+
+
+_LANES: List[Any] = []
+
+
+def lanes_module() -> Optional[Any]:
+    """The build station's lane calculator (lanes.py, M22), loaded by path as build.py is; None where it is not installed.
+    Loaded only for a plan that uses the parts or 'after' marks, or when build.max_lanes is above 1."""
+    if not _LANES:
+        import importlib.util
+        script = build_script("lanes.py")
+        if not script.is_file():
+            return None
+        spec = importlib.util.spec_from_file_location("mach_build_lanes_for_plan", script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _LANES.append(module)
+    return _LANES[0]
+
+
+def plan_files(text: str) -> List[str]:
+    """Every file the plan says it touches, as the build station reads the plan (its own parse_plan, loaded, never copied)."""
+    tasks, touch = plan_tasks(text)
     names = set(touch) | {name for task in tasks for name in task.get("files") or []}
     return sorted(name[2:] if name.startswith("./") else name for name in names if isinstance(name, str) and name)
 

@@ -26,7 +26,13 @@ Paths are relative to the cell's working folder ("workdir").
      every [impl] task is preceded by the [test] task that fails without it. Every FR, INV and AC in
      the spec appears in at least one task. The suite must pass after each [impl] task with only the
      files of the [impl] tasks so far: put every file one behaviour needs in one [impl] task, and name
-     on it only the FR and AC IDs it makes pass. -->
+     on it only the FR and AC IDs it makes pass.
+     Optional, only where the slice really has separate parts (the brief's "Parts that can be built at
+     the same time"): give each behaviour its own test file and module; split the list with the
+     sub-headings "### Before the lanes" (what several parts need), "### Lanes" and "### After the
+     lanes" (the wiring that joins them), in that order; and write "after T03" beside a task's IDs when
+     it needs that earlier task's work in a way its files do not show. Never split work only to make
+     the plan look parallel. Without them the plan is one sequence, as before. -->
 - [ ] T01 [test] <What the failing test proves> — `<test file>` (<FR-NN, INV-NN, AC-NN>)
 - [ ] T02 [impl] <The smallest change that makes T01 pass> — `<file>` (<FR-NN>)
 
