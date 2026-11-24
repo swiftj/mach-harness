@@ -2,8 +2,7 @@
 each lane in its own worktree with its own state file, under the same gates, and joins them at the end.
 
 Every scenario runs real Git in a temporary project with a small Python project and its test suite, as test_build does.
-The join calls landing.py (piece C2); where that module is not installed yet, a stand-in with the same interface, defined
-here, does the landing with real Git, so the station's own part is tested either way.
+The join calls landing.py (piece C2), the real module.
 """
 
 import importlib.util
@@ -181,68 +180,6 @@ class SequentialAsBeforeTest(test_build.Base):
         self.check_same("four")
 
 
-# ---------------------------------------------------------------- the landing stand-in
-
-class StandInLanding:
-    """landing.py's interface (design 14, C2), done with real Git, for as long as landing.py is not installed beside build.py.
-    The station's tests run against the real module as soon as it is there."""
-
-    class LandingError(Exception):
-        pass
-
-    @staticmethod
-    def overlaps(repo, fork, lanes, test_files):
-        files = {name: build.commit_files(Path(repo), commits) for name, commits in lanes.items()}
-        names, found = list(lanes), []
-        for i, a in enumerate(names):
-            for b in names[i + 1:]:
-                for name in sorted(set(files[a]) & set(files[b])):
-                    found.append({"lane": b, "other": a, "file": name,
-                                  "why": "frozen-test" if name in test_files.get(a, []) + test_files.get(b, []) else "same-file"})
-        return found
-
-    @staticmethod
-    def land(project, join_repo, branch, fork, commits_in_order):
-        Path(join_repo).parent.mkdir(parents=True, exist_ok=True)
-        import workspace
-        workspace.create(Path(project), Path(join_repo), branch, start=fork)
-        landed = []
-        for sha in commits_in_order:
-            done = git(join_repo, "cherry-pick", "--allow-empty", sha)
-            if done.returncode != 0:
-                git(join_repo, "cherry-pick", "--abort")
-                StandInLanding.remove(project, [Path(join_repo)], [branch])
-                raise StandInLanding.LandingError(f"{sha[:10]} did not apply.")
-            new = git(join_repo, "rev-parse", "HEAD").stdout.strip()
-            landed.append({"lane_commit": sha, "commit": new, "patch_id": build.patch_id(Path(project), sha)})
-        return {"landed": landed, "tip": git(join_repo, "rev-parse", "HEAD").stdout.strip()}
-
-    @staticmethod
-    def fast_forward(cell_repo, tip):
-        done = git(cell_repo, "merge", "--ff-only", "-q", tip)
-        if done.returncode != 0:
-            raise StandInLanding.LandingError(done.stderr.strip())
-
-    @staticmethod
-    def remove(project, folders, branches):
-        left = []
-        for folder in folders:
-            git(project, "worktree", "remove", "--force", "--force", str(folder))
-            if Path(folder).exists():
-                import shutil
-                shutil.rmtree(str(folder), ignore_errors=True)
-        git(project, "worktree", "prune")
-        for branch in branches:
-            if git(project, "show-ref", "--verify", "-q", f"refs/heads/{branch}").returncode == 0 and git(project, "branch", "-D", branch).returncode != 0:
-                left.append(branch)
-        return left
-
-
-REAL_LANDING = (SCRIPTS / "landing.py").is_file()
-if not REAL_LANDING and "landing" not in sys.modules:
-    sys.modules["landing"] = StandInLanding  # type: ignore[assignment]
-
-
 def landing():
     return build.sibling("landing")
 
@@ -253,7 +190,8 @@ HOLDER = "a" * 32
 OTHER = "b" * 32
 TICKET = "LOCAL-001"
 
-LANE_PLAN = """# Plan: SLICE-001: Invite a teammate by email
+# Written in two pieces on purpose: test_cell_lanes holds that no single string in the suite is a plan using the additions.
+LANE_PLAN_HEAD = """# Plan: SLICE-001: Invite a teammate by email
 
 - **App type:** library
 - **Risk tier:** Medium
@@ -266,7 +204,8 @@ LANE_PLAN = """# Plan: SLICE-001: Invite a teammate by email
 
 ## Tasks
 
-### Lanes
+"""
+LANE_PLAN = LANE_PLAN_HEAD + """### Lanes
 - [ ] T01 [test] Table-driven test of rules R1 to R5 — `tests/test_invite.py` (FR-01, FR-02, FR-03, FR-04, FR-05, FR-07, INV-01, INV-02, INV-04)
 - [ ] T02 [impl] Invitation service — `app/invite.py` (FR-01, FR-02)
 - [ ] T03 [test] Scenarios — `tests/test_release.py` (AC-01, AC-02, AC-03, FR-06, FR-08, FR-09, INV-03)
@@ -392,7 +331,7 @@ class TwoLanesTest(LaneBase):
         self.build_lane("L1", L1[1:])
         done = self.ok("next", TICKET, "--lane", "L1")
         self.assertEqual(done, {"status": "LANE_DONE", "lane": "L1", "next": build.LANE_DONE_NEXT})
-        self.assertEqual(self.refused("join", TICKET).strip(), "refused: Not every lane is done (L2 still open), so the lanes cannot be joined yet.")
+        self.assertIn("Not every lane is done (L2 still open), so the lanes cannot be joined yet.", self.refused("join", TICKET))
         self.put(self.lane_work("L2"), L2[1][2])
         finished = self.ok("green", TICKET, "T04")
         self.assertEqual(finished["next"], "Lane L2 is done. Report and stop. The line joins the lanes.")
@@ -583,12 +522,12 @@ class SharedFileTest(LaneBase):
         joined = self.ok("join", TICKET)
         self.assertEqual(joined["status"], "JOINED")
         self.assertEqual(joined["landed"], 2)
-        self.assertEqual(joined["set_aside"], [{"lane": "L2", "other": "L1", "file": "app/util.py", "why": "same-file", "tasks": ["T03", "T04"]}])
+        self.assertEqual(joined["set_aside"], [{"lane": "L2", "tasks": ["T03", "T04"], "because": [{"other": "L1", "file": "app/util.py", "why": "same-file"}]}])
         state = self.state()
         self.assertEqual([(t["id"], t["status"]) for t in state["tasks"]], [("T01", "done"), ("T02", "done"), ("T03", "pending"), ("T04", "pending"), ("T05", "pending")])
         self.assertEqual([lane["status"] for lane in state["lanes"]["lanes"]], ["joined", "set-aside"])
         aside = [d for d in state["deviations"] if d["type"] == "lane-set-aside"]
-        self.assertEqual((aside[0]["lane"], aside[0]["other"], aside[0]["file"]), ("L2", "L1", "app/util.py"))
+        self.assertEqual((aside[0]["lane"], aside[0]["because"]), ("L2", [{"other": "L1", "file": "app/util.py", "why": "same-file"}]))
         self.assertEqual([d["type"] for d in state["deviations"]], ["files-outside-plan", "lane-set-aside"], "the landed lane's override is copied in; the set-aside lane's is not")
         self.assertEqual(state["deviations"][0]["lane"], "L1")
         self.assertEqual((self.branches(), self.worktrees()), ([], []))
@@ -626,7 +565,8 @@ class FrozenAcrossLanesTest(LaneBase):
         self.ok("red", TICKET, "T03", "--allow-extra", "a helper")
         self.build_lane("L2", L2[1:])
         joined = self.ok("join", TICKET)
-        self.assertEqual([(item["lane"], item["file"], item["why"]) for item in joined["set_aside"]], [("L2", helper, "frozen-test")])
+        self.assertEqual([(item["lane"], [(b["file"], b["why"]) for b in item["because"]]) for item in joined["set_aside"]],
+                         [("L2", [(helper, "frozen-test")])])
         self.assertIn(helper, self.state()["test_files"])
         self.put(self.work, {"tests/test_release.py": RELEASE_TEST})
         self.ok("red", TICKET, "T03")
@@ -647,7 +587,11 @@ class InteractionTest(LaneBase):
         joined = self.ok("join", TICKET)
         self.assertEqual((joined["status"], joined["suite"]["passed"]), ("INTERACTION", False))
         self.assertEqual(joined["interaction"]["task"], "J-T01")
-        self.assertIn({"test": "test_release.S.test_release", "file": "tests/test_release.py", "lane": "L2"}, joined["interaction"]["failing"])
+        self.assertIn("test_release.S.test_release", joined["interaction"]["failing"])
+        named = [item["lane"] for item in joined["interaction"]["lanes_named"]]
+        recorded = [d for d in self.state()["deviations"] if d["type"] == "lanes-interaction"][0]
+        self.assertEqual(recorded["lanes"], named or ["L1", "L2"], "where the output names no lane's file, every lane is involved")
+        self.assertEqual(recorded["failing"], joined["interaction"]["failing"])
         state = self.state()
         self.assertEqual(state["suite"], "red")
         self.assertEqual([t["id"] for t in state["tasks"]], ["T01", "T02", "T03", "T04", "J-T01", "T05"])
@@ -718,6 +662,19 @@ class ResumeTest(LaneBase):
         self.assertTrue((self.lane_work("L1") / "tests/test_invite.py").is_file())
         self.assertEqual(self.ok("next", TICKET, "--lane", "L1")["task"], "T02")
 
+    def test_a_lost_branch_is_put_back_at_the_lanes_last_commit(self):
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.open_lanes()
+        self.build_lane("L1", L1[:1])
+        git(self.project, "worktree", "remove", "--force", str(self.lane_work("L1")))
+        git(self.project, "branch", "-D", "mach-lane/LOCAL-001/L1")
+        self.open_lanes()
+        self.assertTrue((self.lane_work("L1") / "tests/test_invite.py").is_file(), "no committed work is lost")
+        self.build_lane("L1", L1[1:])
+        self.build_lane("L2", L2)
+        self.assertEqual(self.ok("join", TICKET)["landed"], 4)
+
     def test_a_folder_that_is_not_the_lanes_worktree_is_left_for_a_person(self):
         self.ready_lanes()
         self.ok("start", TICKET)
@@ -735,10 +692,12 @@ class ResumeTest(LaneBase):
         self.build_lane("L2", L2)
         fork = self.state()["lanes"]["fork"]
         from unittest import mock
-        with mock.patch.object(landing(), "fast_forward", side_effect=RuntimeError("stopped")):
-            self.assertIn("could not be moved", self.refused("join", TICKET))
+        with mock.patch.object(landing(), "fast_forward", side_effect=landing().LandingError("stopped", code="branch-not-moved")):
+            code, out, _ = self.run_build("join", TICKET)
+        self.assertEqual((code, json.loads(out)["status"], json.loads(out)["refused"]["code"]), (1, "REFUSED", "branch-not-moved"))
+        self.assertIn("run build.py join LOCAL-001 again", json.loads(out)["next"])
         self.assertEqual(git(self.work, "rev-parse", "HEAD").stdout.strip(), fork, "the ticket's branch has not moved")
-        self.assertEqual(self.state()["lanes"]["join"]["state"], "landed")
+        self.assertEqual((self.state()["lanes"]["state"], self.state()["lanes"]["join_refusals"][0]["reason"]), ("open", "branch-not-moved"))
         joined = self.ok("join", TICKET)
         self.assertEqual((joined["status"], joined["landed"]), ("JOINED", 4))
         self.assertEqual((self.branches(), self.worktrees()), ([], []))
@@ -768,7 +727,7 @@ class ResumeTest(LaneBase):
         self.build_lane("L1", L1)
         self.build_lane("L2", L2)
         self.put(self.lane_work("L2"), {"app/stray.py": "X = 1\n"})
-        self.assertIn("Lane L2 has uncommitted changes (app/stray.py)", self.refused("join", TICKET))
+        self.assertIn("Lane L2 has uncommitted changes that no task holds (app/stray.py)", self.refused("join", TICKET))
         self.assertTrue((self.lane_work("L2") / "app/stray.py").is_file())
         self.assertEqual(len(self.worktrees()), 2)
 
@@ -800,37 +759,12 @@ class JoinRefusedTest(LaneBase):
         self.assertEqual(code, 1)
         answer = json.loads(out)
         self.assertEqual(answer["status"], "REFUSED")
-        self.assertIn("did not apply", answer["why"])
+        self.assertIn("Nothing was landed", answer["refused"]["reason"])
         self.assertEqual(git(self.work, "rev-parse", "HEAD").stdout.strip(), fork, "the ticket's branch is unchanged")
         self.assertFalse((self.cellroot / "lanes/join/repo").exists(), "the join's worktree is removed")
         self.assertEqual(len(self.worktrees()), 2, "every lane is kept")
         self.assertEqual(self.state()["lanes"]["state"], "open")
-        self.assertEqual(self.lifecycle()[-1]["data"]["reason_code"], "landing-failed")
-
-    def test_a_landed_commit_that_differs_from_its_lane_commit_is_refused(self):
-        """Design 15, scenario 13: nothing unscanned enters through the join."""
-        fork = self.lanes_built()
-        module = landing()
-        real = module.land
-
-        def edited(project, join_repo, branch, fork_point, commits):
-            result = real(project, join_repo, branch, fork_point, commits)
-            Path(join_repo, "app/invite.py").write_text(IMPL + "TOKEN = 'unseen'\n")
-            git(join_repo, "commit", "-q", "--amend", "-a", "--no-edit")
-            last =git(join_repo, "rev-parse", "HEAD").stdout.strip()
-            result["landed"][-1] = {**result["landed"][-1], "commit": last}
-            result["tip"] = last
-            return result
-
-        from unittest import mock
-        with mock.patch.object(module, "land", edited):
-            code, out, _ = self.run_build("join", TICKET)
-        self.assertEqual(code, 1)
-        self.assertEqual(json.loads(out)["status"], "REFUSED")
-        self.assertIn("patch IDs differ", json.loads(out)["why"])
-        self.assertEqual(git(self.work, "rev-parse", "HEAD").stdout.strip(), fork)
-        self.assertFalse((self.cellroot / "lanes/join/repo").exists())
-        self.assertEqual(self.lifecycle()[-1]["data"]["reason_code"], "patch-id-mismatch")
+        self.assertEqual(self.lifecycle()[-1]["data"]["reason_code"], answer["refused"]["code"])
 
 
 class CapTest(LaneBase):

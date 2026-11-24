@@ -109,7 +109,7 @@ A plan whose author divided its tasks into parts (`### Before the lanes`, `### L
 
 - The cell's builder does the tasks before the lanes as usual. When `BUILD next <ticket>` answers `LANES`, it stops and reports.
 - The line then starts one builder per lane, all at once, and joins the lanes when every one is done. After the join, `BUILD next <ticket>` carries on in the cell with the tasks after the lanes, any task of a lane the join set aside, and any fix task it added (`J-T01`), then `BUILD finish` as usual.
-- `BUILD join` may add `J-T01 [impl] Make the lanes pass together` when every lane passed its own suite but the joined result does not. Work it like any `[impl]` task with `BUILD green <ticket> J-T01`: every test is committed and frozen, so fix the code, never a test.
+- `BUILD join` may add `J-T01 [impl] Make the lanes pass together` when every lane passed its own suite but the joined result does not. Work it like any `[impl]` task with `BUILD green <ticket> J-T01`: every test is committed and frozen, so fix the code, never a test. Its files are every non-test file the lanes changed; if the fix truly needs another file, use `--allow-extra "<why>"` as for any task.
 
 ### Building one lane
 
