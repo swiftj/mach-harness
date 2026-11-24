@@ -75,8 +75,10 @@ def strip_idea(record: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def strip_lookups(record: Dict[str, Any]) -> Dict[str, Any]:
-    """The lookups without the similar entries that name a request (an issue number in a repository the archive does not name)."""
+    """The lookups without the similar entries that name a request (an issue number in a repository the archive does not name)
+    and without shipped_commit (a commit of this repository, which anyone can search for on GitHub to find the repository)."""
     out = copy.deepcopy(record)
+    out.pop("shipped_commit", None)
     if isinstance(out.get("similar"), list):
         out["similar"] = [item for item in out["similar"] if not (isinstance(item, dict) and "request" in item)]
     return out
@@ -222,9 +224,40 @@ def forbidden(host: Any, studio: Any) -> List[str]:
     return forms + logins + _paths(studio)
 
 
+# A login made only of letters and shorter than this may be an ordinary word ("ux", "max", "design"): it is matched only where
+# it reads as an account. A login with a digit, hyphen or underscore, or this long or longer, is matched as a whole word
+# anywhere: ordinary words that long are rare as logins, and a plain-letter login that long is almost always a name or handle.
+DISTINCT_LOGIN_LENGTH = 8
+# The words Studio's records and people use for an account beside it: "by ada", "approved by: ada", "author ada", "owner: @ada".
+PEOPLE_WORDS = (r"by|approved[ _]by|accepted[ _]by|asked[ _]by|labell?ed[ _]by|picked[ _]up[ _]by|author|login|owner|user|account|"
+                r"assignee|reviewer|cc")
+
+
+def distinctive_login(login: str) -> bool:
+    """True when a login cannot be an ordinary word: it holds a digit, hyphen or underscore, or is DISTINCT_LOGIN_LENGTH or longer."""
+    return bool(re.search(r"[0-9_-]", login)) or len(login) >= DISTINCT_LOGIN_LENGTH
+
+
+def login_patterns(logins: Sequence[str], tail: str = "(?![A-Za-z0-9-])") -> List["re.Pattern[str]"]:
+    """The patterns that find a recorded login as an account in text, case-insensitively; group 1 is the login found. `tail` is
+    what may not follow it."""
+    found: List["re.Pattern[str]"] = []
+    ordered = sorted(logins, key=len, reverse=True)
+    distinct = [login for login in ordered if distinctive_login(login)]
+    if distinct:
+        found.append(re.compile("(?<![A-Za-z0-9-])(" + "|".join(map(re.escape, distinct)) + ")" + tail, re.IGNORECASE))
+    if ordered:
+        names = "|".join(map(re.escape, ordered))
+        found.append(re.compile(r"(?<![A-Za-z0-9_.@-])@(" + names + ")" + tail, re.IGNORECASE))       # @ux
+        found.append(re.compile(r"github\.com[/:](" + names + ")" + tail, re.IGNORECASE))             # github.com/ux
+        found.append(re.compile(r"(?<![A-Za-z0-9])(?:" + PEOPLE_WORDS + r")[\"']?[ \t]*[:=]?[ \t]*[\"']?@?(" + names + ")" + tail,
+                                re.IGNORECASE))                                                       # by ux, "by": "ux"
+    return found
+
+
 class _Scanner:
-    """One pass over each line of a text: the repository (case-insensitive), a login (case-insensitive, as a whole name),
-    an absolute path, and the secret shapes of the intent station's scan.py."""
+    """One pass over each line of a text: the repository (case-insensitive), a login where it reads as an account (see
+    login_patterns), an absolute path, and the secret shapes of the intent station's scan.py."""
 
     def __init__(self, host: Any, studio: Any):
         repositories, logins = _recorded(host, studio)
@@ -232,10 +265,20 @@ class _Scanner:
         if repositories:
             self.rules.append(("repository", re.compile("(?<![A-Za-z0-9_.-])(" + "|".join(map(re.escape, repositories)) + ")(?![A-Za-z0-9_-])",
                                                         re.IGNORECASE)))
-        if logins:
-            self.rules.append(("login", re.compile("(?<![A-Za-z0-9-])(" + "|".join(map(re.escape, sorted(logins, key=len, reverse=True)))
-                                                   + ")(?![A-Za-z0-9-])", re.IGNORECASE)))
+        self.rules += [("login", pattern) for pattern in login_patterns(logins)]
         self.rules.append(("path", re.compile("(" + "|".join(map(re.escape, _paths(studio))) + ")(?![A-Za-z0-9_.-])")))
+        # In a picture's data the bytes after a name are arbitrary (a chunk's checksum follows its text), so nothing is asked of them.
+        self.byte_rules: List[Tuple[str, "re.Pattern[str]"]] = []
+        if repositories:
+            self.byte_rules.append(("repository", re.compile("(?<![A-Za-z0-9_.-])(" + "|".join(map(re.escape, repositories)) + ")", re.IGNORECASE)))
+        distinct = sorted((login for login in logins if distinctive_login(login)), key=len, reverse=True)
+        if distinct:
+            self.byte_rules.append(("login", re.compile("(?<![A-Za-z0-9-])(" + "|".join(map(re.escape, distinct)) + ")", re.IGNORECASE)))
+        if logins:  # a short login of letters only: where it reads as an account, with a separator, so chance bytes do not match
+            names = "|".join(map(re.escape, sorted(logins, key=len, reverse=True)))
+            self.byte_rules.append(("login", re.compile(r"(?:github\.com/|(?<![A-Za-z0-9])(?:" + PEOPLE_WORDS + r")[\"']?(?:[ \t]*[:=][ \t]*|[ \t]+)[\"']?@?)("
+                                                        + names + ")", re.IGNORECASE)))
+        self.byte_rules.append(("path", re.compile("(" + "|".join(map(re.escape, _paths(studio))) + ")")))
         host.intent_modules()
         import scan  # noqa: E402  the intent station's secret shapes, loaded as change_record's caller loads them
         self.scan = scan
@@ -251,6 +294,17 @@ class _Scanner:
                 return number, "secret", ""
         return None
 
+    def in_bytes(self, data: bytes) -> Optional[Tuple[str, str]]:
+        """(kind, what was found) in a picture's bytes read as Latin-1, so text a PNG or JPEG carries (a comment, an author, a
+        path the picture was saved from) is read as text is; the secret shapes are left to text, as a picture's data would
+        match them by chance."""
+        text = data.decode("latin-1")
+        for kind, pattern in self.byte_rules:
+            found = pattern.search(text)
+            if found:
+                return kind, found.group(1)
+        return None
+
 
 def _found_sentence(member: str, line: int, kind: str, value: str) -> str:
     what, noun = described(member)
@@ -264,6 +318,16 @@ def _found_sentence(member: str, line: int, kind: str, value: str) -> str:
         return (f"{what} names a folder on this computer ({value}) on line {line}. The archive must not name a folder on this computer, "
                 f"so nothing was exported. {fix}")
     return f"{what} holds text shaped like a password or key on line {line}. The archive must not carry a secret, so nothing was exported. {fix}"
+
+
+def _picture_sentence(member: str, kind: str, value: str) -> str:
+    what, _ = described(member)
+    digest = member.rsplit("/", 1)[-1][:12]
+    named = {"repository": f"this repository ({value})", "login": f"the GitHub account {value}",
+             "path": f"a folder on this computer ({value})"}[kind]
+    must = {"repository": "the repository", "login": "an account", "path": "a folder on this computer"}[kind]
+    return (f"{what} {digest} holds text naming {named} inside the picture file. The archive must not name {must}, so nothing was "
+            "exported. Save the picture again without that text, add it to the slice in place of this one, then export again.")
 
 
 # ---- reading the workspace ----
@@ -561,6 +625,9 @@ def _collect(host: Any, studio: Any, only_mine: bool) -> Tuple[Dict[str, bytes],
             raise refusal(host, sentence.replace("Take it out of the workspace", "Save the note again without it", 1))
     for member in sorted(files):
         if project_archive.kind_of(member) == "mock":
+            in_picture = scanner.in_bytes(files[member])
+            if in_picture:
+                raise refusal(host, _picture_sentence(member, *in_picture))
             continue
         found = scanner.first(files[member].decode("utf-8"))
         if found:
@@ -599,8 +666,10 @@ def export(host: Any, studio: Any, out: Optional[Path], only_mine: bool) -> Dict
         raise refusal(host, "Exporting a project is a product manager's act; a supervised execution does not do it.")
     folder = _out_folder(host, studio, out)
     if _unfinished_import(studio):
-        raise refusal(host, host.say("Bringing in another project stopped part way here. Finish it first (run the import again with the same file), then export.",
-                                     "Bringing in another project stopped part way here. Finish it first (bring the same file in again), then export."))
+        raise refusal(host, host.say("Bringing in another project stopped part way here. Finish it first (run the import again with the same file), "
+                                     "or set it aside, then export.",
+                                     "Bringing in another project stopped part way here. Finish it first (bring the same file in again), "
+                                     "or set it aside, then export."))
     files, facts, warnings, counts, left_out = _collect(host, studio, only_mine)
     project = json.loads(files["workspace/product/project.json"].decode("utf-8"))
     exported_at = host.now(None)

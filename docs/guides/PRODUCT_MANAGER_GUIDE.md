@@ -221,7 +221,7 @@ Sometimes a project has to move to another repository, for example into another 
 - **Goes:** the project, its epics, every slice with its spec and why, the order within each epic, the principles, the technical needs, your ideas with their briefs, PRDs and designs you brought in, and design mocks.
 - **Stays:** approvals, the GitHub issues and their numbers, Jira links and requests. The file names no repository and no GitHub account.
 
-If any text in the project names this repository, a GitHub account, a folder on your computer, or holds something that looks like a password, MACH makes no file. Claude shows you the line, and you decide together how to change it. Nothing is taken out without your word. If other product managers have slices of this project that are not in your workspace, Claude asks whether to open them here first or to leave them out.
+If any text in the project names this repository, a GitHub account, a folder on your computer, or holds something that looks like a password, MACH makes no file. The same goes for a design mock whose picture file carries such text (a picture can hold a hidden comment or an author's name): save the picture again without it and add it in place of the old one. Claude shows you the line, and you decide together how to change it. Nothing is taken out without your word. If other product managers have slices of this project that are not in your workspace, Claude asks whether to open them here first or to leave them out.
 
 You get one file, and Claude tells you where it is. Carry it to the other repository yourself; MACH never sends it anywhere.
 
@@ -234,8 +234,13 @@ You get one file, and Claude tells you where it is. Carry it to the other reposi
 - The principles and technical needs arrive unpublished. Publish the principles before any slice can be marked ready.
 - Jira keys are left off. Claude lists them; link them again if this organisation uses the same Jira.
 - An ID inside a quoted code example is left as written. Claude shows you the line, to check by hand.
+- **Links to things that did not come in the file** (slices left out, or deleted in the old repository) are taken out when your project joins another, because there that number is someone else's item: an idea no longer lists that slice as made by it, a slice no longer says which idea it serves. Claude lists each. Where such an ID appears in your own text, it cannot be taken out without changing what you wrote: it stays, and Claude tells you that here it names a different item.
+- When your project joins another, that project's answers about which kinds of technical needs have nothing to say stay as they are; yours are not brought in.
 
-Bringing a project in never writes to GitHub, never marks anything ready and never starts the builders. If it stops part way (the computer sleeps, the disk is full), Product Studio says so under what is not saved. Bring the same file in again: it finishes and repeats nothing.
+Bringing a project in never writes to GitHub, never marks anything ready and never starts the builders. If it stops part way (the computer sleeps, the disk is full), Product Studio says so under what is not saved. You can then do one of two things:
+
+- **Finish it.** Bring the same file in again: it finishes and repeats nothing. If you changed something it had already brought in, your version is kept, and Claude says so.
+- **Set it aside**, if you no longer want it. Say so to Claude. The numbers it was holding are freed and you can export or bring in another project again. Whatever it had already brought in stays where it is; Claude lists it, and you choose whether to keep it or remove it.
 
 ## 10. What the messages mean
 

@@ -12,10 +12,13 @@ destination's (`numbering`), they rewrite every place an ID appears (docs/mach-n
     rename(relative, mapping)                  a draft-relative path with its ID part renamed
 
 The token rule (5.2): a token is a prefix (SLICE, EPIC or IDEA with three or more digits; PP, TN, PRD or DES with two or
-more), not preceded by a word character (a letter or digit of any script, or `_`) or `-`, and not followed by a word
-character. The whole token is looked up in the map; one pass replaces every token at once, so no replacement is looked
-at again. Tokens inside fenced code blocks and inline code spans are left as written and noted (`in_code`); a token the
-map does not hold is left as written and noted (`not_in_archive`).
+more), not preceded by a letter or digit of any script or `-`, and not followed by a letter or digit of any script. An
+underscore next to an ID is Markdown emphasis (`_SLICE-001_`, `__EPIC-001__`) or a word joiner (`SLICE-001_notes`), so it
+counts as a boundary. The whole token is looked up in the map; one pass replaces every token at once, so no replacement is
+looked at again. Tokens inside fenced code blocks and inline code spans are left as written and noted (`in_code`); a token
+the map does not hold is left as written and noted (`not_in_archive`). An ID glued to further letters or digits
+(`SLICE-001a`, `SLICE-001é`) is a different token and is left alone, but when the ID it starts with is one the map changes
+it is noted (`near_miss`), so nothing ID-shaped is left pointing at the old number without a person seeing it.
 
 The fence and inline-code patterns are copies of skills/intent/scripts/validate_slice.py's FENCE_RE and INLINE_CODE_RE,
 which stay authoritative (a test asserts they are equal).
@@ -33,7 +36,10 @@ FENCE_RE = re.compile(r"^\s*(```|~~~)")
 INLINE_CODE_RE = re.compile(r"`[^`]*`")
 
 # The token rule, in one pattern. Group "kind" is the prefix, "number" its digits.
-TOKEN_RE = re.compile(r"(?<![\w-])(?P<kind>SLICE|EPIC|IDEA|PP|TN|PRD|DES)-(?P<number>[0-9]+)(?!\w)")
+# A letter or digit of any script is `[^\W_]`; an underscore, like every other character, is a boundary.
+TOKEN_RE = re.compile(r"(?<![^\W_])(?<!-)(?P<kind>SLICE|EPIC|IDEA|PP|TN|PRD|DES)-(?P<number>[0-9]+)(?![^\W_])")
+# An ID glued to a following letter or a digit of another script (SLICE-001a, SLICE-001é): not a token, a near miss.
+NEAR_RE = re.compile(r"(?<![^\W_])(?<!-)(?P<kind>SLICE|EPIC|IDEA|PP|TN|PRD|DES)-(?P<number>[0-9]+)(?![0-9])(?=[^\W_])")
 ID_RE = re.compile(r"^(?P<kind>SLICE|EPIC|IDEA|PP|TN|PRD|DES)-(?P<number>[0-9]+)$")
 PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")  # product.PROJECT_RE, which stays authoritative
 
@@ -153,6 +159,16 @@ def _code_spans(line: str) -> List[Tuple[int, int]]:
     return [m.span() for m in INLINE_CODE_RE.finditer(line)] + _backtick_spans(line)
 
 
+def _near_misses(text: str) -> List[Tuple[int, str]]:
+    """Every ID glued to a further letter or digit: (line index, the ID it starts with)."""
+    found = []
+    for index, (content, _) in enumerate(_lines(text)):
+        for match in NEAR_RE.finditer(content):
+            if _token_kind(match) is not None:
+                found.append((index, match.group("kind") + "-" + match.group("number")))
+    return found
+
+
 def _scan(text: str) -> List[Tuple[int, int, int, "re.Match[str]", bool]]:
     """Every token: (line index, start in the whole text, end, match, inside code)."""
     found = []
@@ -195,6 +211,10 @@ def _rewrite(text: str, mapping: Mapping[str, str]) -> Tuple[str, List[Note]]:
             pieces.append(text[last:start])
             pieces.append(mapping[ident])
             last = end
+    for index, ident in _near_misses(text):
+        if ident in mapping and mapping[ident] != ident:
+            notes.append({"line": index + 1, "id": ident, "why": "near_miss"})
+    notes.sort(key=lambda note: note["line"])
     if not pieces:
         return text, notes
     pieces.append(text[last:])
@@ -203,7 +223,7 @@ def _rewrite(text: str, mapping: Mapping[str, str]) -> Tuple[str, List[Note]]:
 
 def rewrite_text(text: str, mapping: Mapping[str, str]) -> Tuple[str, List[Dict[str, Any]]]:
     """The text with every token outside code replaced by the map's, all at once, and the notes:
-    {line, id, why: "in_code" | "not_in_archive"}. Everything else, line endings included, is as it was."""
+    {line, id, why: "in_code" | "not_in_archive" | "near_miss"}. Everything else, line endings included, is as it was."""
     if not isinstance(text, str):
         raise TypeError("rewrite_text takes text")
     _check_mapping(mapping)
@@ -275,6 +295,7 @@ def _dicts(value: Any) -> List[Dict[str, Any]]:
 def _project(p: _Pass, r: Dict[str, Any], project_id: Optional[str]) -> None:
     if project_id is not None and "project_id" in r:
         r["project_id"] = project_id
+    p.at(r, "name", p.text)
     p.at(r, "vision", p.text)
     p.each(r, "outcomes", p.text)
 
@@ -309,6 +330,8 @@ def _slice(p: _Pass, r: Dict[str, Any], project_id: Optional[str]) -> None:
     p.each(r, "open_questions", p.text)
     if isinstance(r.get("widened"), dict):
         p.at(r["widened"], "reason", p.text, "widened.reason")
+    for n, item in enumerate(_dicts(r.get("mocks"))):
+        p.at(item, "note", p.text, f"mocks[{n}].note")
 
 
 def _principles(p: _Pass, r: Dict[str, Any], project_id: Optional[str]) -> None:
@@ -360,6 +383,7 @@ def _idea(p: _Pass, r: Dict[str, Any], project_id: Optional[str]) -> None:
 
 
 def _lookups(p: _Pass, r: Dict[str, Any], project_id: Optional[str]) -> None:
+    p.at(r, "idea_id", p.ids(("IDEA",)))
     for n, item in enumerate(_dicts(r.get("shipped_rules"))):
         p.at(item, "rule", p.rule, f"shipped_rules[{n}].rule")
         p.at(item, "epic_id", p.ids(("EPIC",)), f"shipped_rules[{n}].epic_id")
@@ -410,12 +434,25 @@ def _owner(id_key: str, id_kind: str) -> Callable[[_Pass, Dict[str, Any], Option
 def _prd_answers(p: _Pass, r: Dict[str, Any], project_id: Optional[str]) -> None:
     p.at(r, "slice_id", p.ids(("SLICE",)))
     p.at(r, "prd_id", p.ids(("PRD",)))
+    for n, item in enumerate(_dicts(r.get("answers"))):
+        for key in ("question", "answer"):
+            p.at(item, key, p.text, f"answers[{n}].{key}")
 
 
 def _design_map(p: _Pass, r: Dict[str, Any], project_id: Optional[str]) -> None:
     p.at(r, "design_id", p.ids(("DES",)))
     for n, item in enumerate(_dicts(r.get("conflicts"))):
         p.at(item, "against", p.ids(("PP", "TN")), f"conflicts[{n}].against")
+        for key in ("note", "reason"):
+            p.at(item, key, p.text, f"conflicts[{n}].{key}")
+    topics = r.get("topics")
+    if isinstance(topics, dict):
+        for topic, entry in topics.items():
+            if isinstance(entry, dict):
+                for key in ("summary", "missing"):
+                    p.at(entry, key, p.text, f"topics.{topic}.{key}")
+    for n, item in enumerate(_dicts(r.get("other"))):
+        p.at(item, "summary", p.text, f"other[{n}].summary")
 
 
 REWRITERS: Dict[str, Callable[[_Pass, Dict[str, Any], Optional[str]], None]] = {

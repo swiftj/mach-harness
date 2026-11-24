@@ -52,7 +52,7 @@ class ParserTest(unittest.TestCase):
     def test_the_three_commands_are_under_project(self):
         self.assertTrue({"init", "set", "export", "import", "imports"} <= set(self.project))
         self.assertEqual(options(self.project["export"]) - {"-h", "--help"}, {"--out", "--only-mine"})
-        self.assertEqual(options(self.project["import"]) - {"-h", "--help"}, {"--plan"})
+        self.assertEqual(options(self.project["import"]) - {"-h", "--help"}, {"--plan", "--abandon"})
         self.assertEqual(positionals(self.project["import"]), ["archive"])
         self.assertEqual(options(self.project["imports"]) - {"-h", "--help"}, set())
         self.assertEqual(positionals(self.project["imports"]), ["identifier"])
@@ -66,6 +66,8 @@ class ParserTest(unittest.TestCase):
         args = parser.parse_args(["project", "import", "a.zip", "--plan"])
         self.assertEqual((args.func, args.archive, args.plan), (studio.cmd_project_import, "a.zip", True))
         self.assertFalse(parser.parse_args(["project", "import", "a.zip"]).plan)
+        args = parser.parse_args(["project", "import", "--abandon"])
+        self.assertEqual((args.func, args.archive, args.abandon, args.plan), (studio.cmd_project_import, None, True, False))
         args = parser.parse_args(["project", "imports"])
         self.assertEqual((args.func, args.identifier), (studio.cmd_project_imports, None))
         self.assertEqual(parser.parse_args(["project", "imports", "SLICE-007"]).identifier, "SLICE-007")
@@ -240,7 +242,8 @@ class ImportCommandTest(IssuesBase):
         name = Path(archive).name
         saved = self.ok(self.b, "status")["saved"]
         row = next(row for row in saved["not_saved"] if row["kind"] == "import_unfinished")
-        self.assertEqual(row["text"], f"Bringing in the project from {name} stopped part way. Run it again with the same file to finish.")
+        self.assertEqual(row["text"], f"Bringing in the project from {name} stopped part way. Run it again with the same file to finish, "
+                                      "or set it aside.")
         app_row = next(row for row in self.ok(self.b, "--app", "status")["saved"]["not_saved"] if row["kind"] == "import_unfinished")
         self.assertIsNone(BANNED.search(app_row["text"]), app_row["text"])
         here = studio.Studio(self.b)
@@ -252,6 +255,50 @@ class ImportCommandTest(IssuesBase):
         self.assertTrue(result["imported"])
         self.assertTrue(self.ok(self.b, "status")["saved"]["everything_saved"])
         self.assertEqual(here.next_id("slice"), "SLICE-005")
+        self.assertEqual(self.writes(), [])
+
+    def test_an_import_stopped_part_way_can_be_set_aside(self):
+        """Through main: the import stops after the epic; setting it aside frees its numbers, keeps the epic it placed where it
+        is, lists it, and no longer blocks export or another import. Nothing else is changed."""
+        archive = self.exported()
+        self.own_project()
+        real = project_import._place
+
+        def place(source, target):
+            if target.parent.name == "slices" and target.parent.parent.name == "specs":
+                raise OSError(28, "No space left on device")
+            real(source, target)
+
+        with mock.patch.object(project_import, "_place", place):
+            self.refused(self.b, "project", "import", archive)
+        here = studio.Studio(self.b)
+        self.assertEqual(project_import.reserved_numbers(here, "SLICE"), [3, 4])
+        before = self.draft_tree(self.b)
+        err = self.refused(self.b, "project", "import", "--abandon", "--plan")
+        self.assertTrue(err.strip().endswith(NOTHING_CHANGED), err)
+        result = self.ok(self.b, "project", "import", "--abandon")
+        self.assertTrue(result["set_aside"])
+        self.assertFalse(result["factory_authorized"])
+        self.assertEqual(result["brought_in"], [{"id": "EPIC-002", "was": "EPIC-001", "files": ["product/epics/EPIC-002.json"]}])
+        self.assertEqual(result["note"], f"MACH stopped bringing in the project from {Path(archive).name} and set it aside. What it had already "
+                                         "brought in stays where it is: EPIC-002 (listed under brought_in). Keep it, or remove it if you do "
+                                         "not want it. The numbers it was holding are free again, and nothing else was changed.")
+        self.assertEqual(self.draft_tree(self.b), before, "every file already placed stays exactly where it is; nothing else changes")
+        self.assertIsNone(project_import.unfinished(here))
+        for kind in ("SLICE", "EPIC", "PP", "TN", "IDEA", "PRD", "DES"):
+            self.assertEqual(project_import.reserved_numbers(here, kind), [], kind)
+        self.assertEqual(here.next_id("slice"), "SLICE-003", "the numbers it held are free again")
+        self.assertEqual(here.next_id("epic"), "EPIC-003", "the epic it placed is counted as any epic here is")
+        self.assertEqual(studio.next_principle_id(here, []), "PP-01")
+        self.assertTrue(self.ok(self.b, "status")["saved"]["everything_saved"])
+        imports = self.b / ".factory/studio/imports"
+        self.assertEqual([p.name for p in imports.iterdir() if not p.name.endswith(".json")], [], "staging and the log are removed")
+        found = self.ok(self.b, "project", "imports", "EPIC-001")
+        self.assertIn("set aside on", found["note"])
+        self.assertIn("nothing to set aside", self.refused(self.b, "project", "import", "--abandon"))
+        self.assertTrue(self.ok(self.b, "project", "export", "--out", str(self.out))["exported"])
+        again = self.ok(self.b, "project", "import", archive, "--plan")  # the same archive can be brought in afresh
+        self.assertEqual(dict(map(tuple, again["map"]["EPIC"])), {"EPIC-001": "EPIC-003"})
         self.assertEqual(self.writes(), [])
 
     # ---- the numbers an unfinished import holds, and the row in `saved` (studio.py's own wiring) ----
@@ -277,7 +324,7 @@ class ImportCommandTest(IssuesBase):
         self.assertFalse(saved["everything_saved"])
         row = next(row for row in saved["not_saved"] if row["kind"] == "import_unfinished")
         self.assertEqual(row["text"], "Bringing in the project from mach-project-lending-20261124T130600Z.zip stopped part way. "
-                                      "Run it again with the same file to finish.")
+                                      "Run it again with the same file to finish, or set it aside.")
         app_row = next(row for row in app["not_saved"] if row["kind"] == "import_unfinished")
         self.assertIsNone(BANNED.search(app_row["text"]), app_row["text"])
         self.assertTrue(self.ok(self.b, "status")["saved"]["everything_saved"])
