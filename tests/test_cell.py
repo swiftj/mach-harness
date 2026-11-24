@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "skills" / "intent" / "scripts"))
@@ -853,6 +854,74 @@ class ReplanTest(Base):
         self.assertEqual([(item["commit"], item["as"]) for item in result["kept_on_branch"]], [(contract, "contracts")])
         self.assertEqual([(item["commit"], item["as"]) for item in result["set_aside"]], [(task, "task T01")])
         self.assertEqual(self.state()["spec_commit"], second)
+
+
+
+class RefusalReasonCodeTest(Base):
+    """Every refusal of the intent station records what was wrong as its reason code, never the bare verdict `refused`:
+    the Factory Floor shows the code's words beside the refusal."""
+
+    CODE_RE = __import__("re").compile(r"^[a-z]+(?:-[a-z]+)*$")
+
+    def gates(self):
+        path = self.project / ".factory" / "worktrees" / "LOCAL-001" / "lifecycle.jsonl"
+        events = [json.loads(line) for line in path.read_text().splitlines()] if path.is_file() else []
+        return [(e["data"].get("gate"), e["data"].get("reason_code")) for e in events if e["type"] == "gate.evaluated" and e["data"].get("outcome") == "refuse"]
+
+    def refused(self, *argv, env=None):
+        before = len(self.gates())
+        with mock.patch.dict(os.environ, env or {}):
+            code, out, err = run(*argv, project=self.project)
+        self.assertEqual(code, 2, out + err)
+        recorded = self.gates()[before:]
+        self.assertEqual(len(recorded), 1, recorded)
+        return recorded[0]
+
+    def test_each_refusal_records_its_own_code(self):
+        self.groom()
+        execution = {"MACH_EXECUTION_ID": "exec-1"}
+        cases = [
+            (("check-plan", "LOCAL-001"), None, ("plan.check", "spec-not-ready")),
+            (("replan", "LOCAL-001", "--reason", " "), None, ("plan.replan", "reason-missing")),
+            (("replan", "LOCAL-001", "--reason", "the plan is wrong"), None, ("plan.replan", "wrong-stage")),
+            (("finalize", "LOCAL-001", "--spec", f"specs/slices/{SPEC_NAME}", "--from-studio", "nope"), None, ("groom.finalize", "slice-id-invalid")),
+            (("adr-conflict", "LOCAL-001", "--adr", "ADR-0000", "--reason", "x"), None, ("plan.adr", "wrong-stage")),
+            (("adr-exception", "LOCAL-001", "--adr", "ADR-0000", "--by", "Sam", "--reason", "x"), execution, ("plan.adr", "person-only")),
+            (("adr-exception", "LOCAL-001", "--adr", "ADR-0000", "--by", "Sam", "--reason", "x"), None, ("plan.adr", "wrong-stage")),
+            (("adr-accept", "LOCAL-001", "--adr", "ADR-0001", "--by", "Sam"), execution, ("plan.adr", "person-only")),
+            (("adr-accept", "LOCAL-001", "--adr", "ADR-0001", "--by", "Sam"), None, ("plan.adr", "wrong-stage")),
+            (("policy-accept", "LOCAL-001", "--policy", "x", "--by", "Sam", "--reason", "x"), execution, ("groom.policy", "person-only")),
+        ]
+        for argv, env, expected in cases:
+            with self.subTest(argv=argv[0], expected=expected[1]):
+                self.assertEqual(self.refused(*argv, env=env), expected)
+        run("finalize", "LOCAL-001", "--spec", f"specs/slices/{SPEC_NAME}", project=self.project)
+        self.assertEqual(self.refused("check-plan", "LOCAL-001"), ("plan.check", "plan-missing"))
+        for gate, code in self.gates():
+            self.assertNotIn(code, ("refused", cell.NO_REASON_CODE, None), gate)
+            self.assertRegex(code, self.CODE_RE)
+
+    def test_an_error_without_a_code_records_not_recorded_never_the_verdict(self):
+        self.groom()
+        with mock.patch.object(cell, "cmd_check_plan", side_effect=cell.CellError("no code given")):
+            self.assertEqual(self.refused("check-plan", "LOCAL-001"), ("plan.check", "not-recorded"))
+
+    def test_every_raise_in_cell_py_names_its_code(self):
+        # A new refusal without a code would be recorded as `not-recorded`: this keeps every one named.
+        import ast
+        source = Path(cell.__file__).read_text(encoding="utf-8")
+        found = []
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "CellError":
+                code = next((k.value for k in node.keywords if k.arg == "code"), None)
+                value = getattr(code, "value", getattr(code, "s", None))
+                found.append((node.lineno, value))
+        self.assertGreater(len(found), 50)
+        for line, value in found:
+            with self.subTest(line=line):
+                self.assertIsInstance(value, str, f"cell.py line {line}: CellError(..., code=\"<what-was-wrong>\") with a literal code")
+                self.assertRegex(value, self.CODE_RE)
+                self.assertNotIn(value, ("refused", "refuse", cell.NO_REASON_CODE))
 
 
 if __name__ == "__main__":

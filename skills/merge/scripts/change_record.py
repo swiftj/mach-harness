@@ -619,6 +619,7 @@ def build_section(t: Text, root: Path) -> List[str]:
               f"{seen if type(seen) is int else '(not recorded)'}.", ""]
     deviations = [item for item in report.get("deviations") or [] if isinstance(item, dict)]
     lines += lanes_lines(t, report, deviations)  # M22: nothing for a build without lanes, so its record is as before
+    lines += commands_lines(t, deviations)  # nothing unless a command was set or changed while building
     by_station = any(item.get("by") == STATION for item in deviations)
     lines += ["Overrides the builder recorded, and what the build station recorded itself, each with its reason:" if by_station
               else "Overrides the builder recorded, each with its reason:", ""]
@@ -684,6 +685,7 @@ def lanes_lines(t: Text, report: Dict[str, Any], deviations: List[Dict[str, Any]
              f"onto the ticket's branch, one commit per task in the plan's order, ending at commit {sha(join.get('tip'))}.", ""]
     if plan.get("before"):
         lines.append(f"- Before the lanes, in the cell: {task_list(t, plan.get('before'))}.")
+    handed = handed_back(report, lanes, deviations)
     for item in planned[:MAX_ITEMS]:
         name = item.get("lane")
         line = f"- Lane {t.one(name, 10)} held {task_list(t, item.get('tasks'))}."
@@ -692,6 +694,8 @@ def lanes_lines(t: Text, report: Dict[str, Any], deviations: List[Dict[str, Any]
             words = "; ".join(set_aside_words(t, b) for b in because[:MAX_ITEMS]) or "why was not recorded"
             line += (f" It was set aside at the join ({words}), so its commits were not landed; its tasks were then built again "
                      "one at a time in the cell, after the join.")
+        elif name in handed:
+            line += " " + handed_back_words(t, report, handed[name])
         lines.append(line)
     if plan.get("after"):
         lines.append(f"- After the lanes, in the cell: {task_list(t, plan.get('after'))}.")
@@ -704,10 +708,19 @@ def lanes_lines(t: Text, report: Dict[str, Any], deviations: List[Dict[str, Any]
         fix = next((task for task in report.get("tasks") or [] if isinstance(task, dict) and task.get("id") == fix_id), {})
         failing = [item for item in (interaction or {}).get("failing") or [] if isinstance(item, str)]
         involved = [item for item in (interaction or {}).get("lanes") or [] if isinstance(item, str)]
-        line = ("- Every lane passed its own suite, but the joined result failed" + (f": {', '.join(t.one(item, 200) for item in failing[:20])}" if failing else "")
-                + (f" (lanes involved: {', '.join(t.one(item, 10) for item in involved)})" if involved else "") + ". ")
-        if fix.get("status") == "done":
+        # Only what was recorded: which lanes' work the joined result held. Nothing records each lane's own suite at its end,
+        # so the record does not say that every lane passed it.
+        line = ("- The whole suite failed on the joined result" + (f": {', '.join(t.one(item, 200) for item in failing[:20])}" if failing else "")
+                + (f" (lanes involved: {', '.join(t.one(item, 10) for item in involved)})" if involved else "") + ". "
+                + joined_held(t, planned, aside, handed) + " ")
+        already = next((item for item in deviations if item.get("type") == "impl-already-done" and item.get("task") == fix_id), None)
+        if fix.get("status") == "done" and fix.get("commit"):
             line += f"The build station added {t.one(fix_id, 20)}, which made them pass together, at commit {sha(fix.get('commit'))}."
+        elif fix.get("status") == "done" and already is not None:
+            line += (f"The build station added {t.one(fix_id, 20)} to make them pass together; when it was reached nothing was left to change, "
+                     f"and it was completed with the reason \"{t.one(already.get('detail'), REASON_LIMIT)}\".")
+        elif fix.get("status") == "done":
+            line += f"The build station added {t.one(fix_id, 20)} to make them pass together; it is done, and no commit of its own is recorded."
         else:
             line += f"The build station added {t.one(fix_id, 20)} to make them pass together; it is {t.one(fix.get('status'), 20, 'not recorded')}."
         lines.append(line)
@@ -722,6 +735,88 @@ def lanes_lines(t: Text, report: Dict[str, Any], deviations: List[Dict[str, Any]
                  f"{duration(summed)}" + (f" ({missing} task{'s' if missing != 1 else ''} with no time recorded)" if counted and missing else "") + ". "
                  "A summed time is not what a build one task at a time would have taken; that build was not run.")
     return lines + [""]
+
+
+def handed_back(report: Dict[str, Any], lanes: Dict[str, Any], deviations: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Each lane handed back to the cell, by name, from what the build recorded: the lane's own record in the report
+    (`handed_back`: the reason, the tasks finished then, the tasks built in the cell), or, failing that, the deviations
+    `lane-handed-back` (reason, tasks, finished) and `lane-handed-back-joined` (the tasks built in the cell)."""
+    found: Dict[str, Dict[str, Any]] = {}
+    for item in deviations:
+        name = item.get("lane")
+        if not isinstance(name, str) or not name:
+            continue
+        if item.get("type") == "lane-handed-back":
+            entry = found.setdefault(name, {})
+            entry.setdefault("reason", item.get("reason"))
+            entry.setdefault("finished", item.get("finished"))
+            entry.setdefault("unfinished", item.get("tasks"))
+        elif item.get("type") == "lane-handed-back-joined":
+            found.setdefault(name, {}).setdefault("built_in_cell", item.get("tasks"))
+    for item in lanes.get("lanes") or []:
+        if not isinstance(item, dict) or not isinstance(item.get("handed_back"), dict) or not isinstance(item.get("lane"), str):
+            continue
+        record = item["handed_back"]
+        entry = found.setdefault(item["lane"], {})
+        for key, field in (("reason", "reason"), ("finished", "finished_then"), ("unfinished", "unfinished_then"), ("built_in_cell", "built_in_cell")):
+            if record.get(field) is not None:
+                entry[key] = record.get(field)
+    return found
+
+
+def handed_back_words(t: Text, report: Dict[str, Any], entry: Dict[str, Any]) -> str:
+    """A handed-back lane: the reason given, which of its tasks landed from the lane, and where its other tasks stand."""
+    status = {task.get("id"): task.get("status") for task in report.get("tasks") or [] if isinstance(task, dict)}
+    finished = [item for item in entry.get("finished") or [] if isinstance(item, str)]
+    rest = [item for item in (entry.get("built_in_cell") or entry.get("unfinished") or []) if isinstance(item, str)]
+    words = f"It was handed back to the cell before it finished, because \"{t.one(entry.get('reason'), REASON_LIMIT)}\""
+    parts = [f"{task_list(t, finished)} landed from the lane at the join" if finished else "none of its tasks had finished, so nothing landed from it"]
+    built = [item for item in rest if status.get(item) == "done"]
+    waiting = [item for item in rest if status.get(item) != "done"]
+    if built:
+        parts.append(f"{task_list(t, built)} {'was' if len(built) == 1 else 'were'} then built in the cell, one at a time, after the join")
+    if waiting:
+        states = sorted({t.one(status.get(item), 20, "not recorded") for item in waiting})
+        parts.append(f"{task_list(t, waiting)} {'is' if len(waiting) == 1 else 'are'} to be built in the cell after the join; "
+                     f"{'it is' if len(waiting) == 1 else 'they are'} {' or '.join(states)}")
+    return words + ": " + ", and ".join(parts) + "."
+
+
+def joined_held(t: Text, planned: List[Dict[str, Any]], aside: Dict[Any, Any], handed: Dict[str, Dict[str, Any]]) -> str:
+    """What the joined result held, from the recorded lanes: the work of each lane landed whole, and what each handed-back
+    lane had finished. A set-aside lane's work was not landed, so it is not named."""
+    whole = [item.get("lane") for item in planned if isinstance(item.get("lane"), str) and item.get("lane") not in aside and item.get("lane") not in handed]
+    names = [t.one(name, 10) for name in whole]
+    listed = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1] if names else ""
+    parts = [f"the work of lane{'s' if len(names) > 1 else ''} {listed}"] if names else []
+    for name in sorted(handed):
+        finished = [item for item in handed[name].get("finished") or [] if isinstance(item, str)]
+        if finished:
+            parts.append(f"what lane {t.one(name, 10)} finished before it was handed back ({task_list(t, finished)})")
+    return ("It held " + " and ".join(parts) + ".") if parts else "It held no lane's work."
+
+
+COMMAND_SET = ("test-command-set", "lint-command-set")
+
+
+def commands_lines(t: Text, deviations: List[Dict[str, Any]]) -> List[str]:
+    """A test or lint command set or changed while building (build.py set-commands): each with what it was, what it is
+    now, why and when, from the recorded deviation. Nothing when none was, so every record without one is as before."""
+    items = [item for item in deviations if item.get("type") in COMMAND_SET]
+    if not items:
+        return []
+    lines: List[str] = []
+    for item in items[:MAX_ITEMS]:
+        kind = item.get("command") if item.get("command") in ("test", "lint") else str(item.get("type")).split("-", 1)[0]
+        if "new" not in item:
+            lines.append(f"- The {kind} command: {t.one(item.get('detail'), REASON_LIMIT)}")
+            continue
+        old, new = item.get("old"), item.get("new")
+        when = t.one(item.get("at"), 40) + (f" ({t.one(item.get('during'), 60)})" if item.get("during") else "")
+        was = f"it was \"{t.one(old, 300)}\", and" if isinstance(old, str) and old.strip() else "there was none before, and it"
+        lines.append(f"- The {kind} command was {'changed' if isinstance(old, str) and old.strip() else 'set'} at {when}: {was} is now "
+                     f"\"{t.one(new, 300)}\". Reason: {t.one(item.get('reason'), REASON_LIMIT).rstrip('.')}.")
+    return ["Commands set or changed during the build, as recorded:", ""] + capped(lines, len(items), MAX_ITEMS, "command changes") + [""]
 
 
 def commits_section(commits: Dict[str, Optional[str]]) -> List[str]:

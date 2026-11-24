@@ -63,6 +63,7 @@ PLAN_TASK_RE = re.compile(r"^\s*[-*+]\s+\[[ xX]\]\s+((?:R\d+-)?T\d+)\s+\[(test|i
 # and 'after Tnn' beside a task's IDs in its trailing brackets. A plan with neither is read exactly as before.
 LANE_PARTS = (("before", "Before the lanes"), ("lanes", "Lanes"), ("after", "After the lanes"))
 SUBHEADING_RE = re.compile(r"^###\s+(.+?)\s*$")
+PLAN_SECTION_RE = re.compile(r"^##\s+(.+?)\s*$")  # a section as the build station's parse_plan finds one
 TRAILING_BRACKETS_RE = re.compile(r"\(([^()]*)\)\s*$")
 AFTER_MARK_RE = re.compile(r"\bafter\s+((?:R\d+-)?T\d+)\b", re.IGNORECASE)
 # build.max_lanes when a project does not set it: MACH builds a plan's independent parts at the same time, up to this many,
@@ -83,7 +84,15 @@ AUTO_TICKET_RE = re.compile(r"^AUTO-")  # a fault ticket, groomed headless: neve
 
 
 class CellError(Exception):
-    """A problem the caller can fix; printed without a traceback."""
+    """A problem the caller can fix; printed without a traceback. `code` is the refusal's stable reason code (lower-case
+    words joined by hyphens, naming what was wrong), recorded with gate.evaluated; a test holds every raise to one."""
+
+    def __init__(self, message: str, code: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+NO_REASON_CODE = "not-recorded"  # only for an error raised without a code, which the test of every raise forbids
 
 
 def now() -> str:
@@ -118,7 +127,7 @@ def load_config(project: Path) -> Dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise CellError(f"{path}: cannot read factory config: {exc}")
+        raise CellError(f"{path}: cannot read factory config: {exc}", code="config-unreadable")
     return data if isinstance(data, dict) else {}
 
 
@@ -126,7 +135,7 @@ def check_ticket_id(ticket_id: str) -> str:
     if not TICKET_ID_RE.match(ticket_id) or ticket_id.endswith(".lock"):
         raise CellError(
             f"'{ticket_id}' is not a usable ticket ID. Use letters, digits, '-', '_' and '.', such as LOCAL-001 or GIT-1042."
-        )
+        , code="ticket-id-invalid")
     return ticket_id
 
 
@@ -137,7 +146,7 @@ def cell_dir(project: Path, ticket_id: str) -> Path:
 def read_cell(project: Path, ticket_id: str) -> Dict[str, Any]:
     path = cell_dir(project, ticket_id) / "cell.json"
     if not path.is_file():
-        raise CellError(f"No cell for {ticket_id}. Run: cell.py open {ticket_id}")
+        raise CellError(f"No cell for {ticket_id}. Run: cell.py open {ticket_id}", code="no-cell")
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -369,22 +378,22 @@ def cmd_widen(project: Path, args: argparse.Namespace) -> int:
     other way. The ticket carries on as the full interview, with nothing in it changed."""
     cell = read_cell(project, args.ticket_id)
     if cell.get("kind") != small.KIND:
-        raise CellError(f"{args.ticket_id} is not a small change, so its interview is already the full one.")
+        raise CellError(f"{args.ticket_id} is not a small change, so its interview is already the full one.", code="not-small")
     if cell.get("widened"):
-        raise CellError(f"{args.ticket_id} is already a full slice ({cell['widened'].get('at')}): {cell['widened'].get('reason')}")
+        raise CellError(f"{args.ticket_id} is already a full slice ({cell['widened'].get('at')}): {cell['widened'].get('reason')}", code="already-widened")
     if from_studio(cell):
-        raise CellError(f"{args.ticket_id} came from Product Studio: the product manager makes it a full slice there (slice widen).")
+        raise CellError(f"{args.ticket_id} came from Product Studio: the product manager makes it a full slice there (slice widen).", code="from-studio")
     if cell.get("stage") not in STAGES[:2]:
         raise CellError(f"A small change is made a full slice by this command while its spec is written (interview or spec-open); {args.ticket_id} is "
-                        f"'{cell.get('stage')}'. After that, the checks do it themselves.")
+                        f"'{cell.get('stage')}'. After that, the checks do it themselves.", code="wrong-stage")
     if args.by_rule is not None:
         if args.by_rule not in small.RULES:
-            raise CellError(f"'{args.by_rule[:40]}' is not a rule for a small change. The rules are: {', '.join(small.RULES)}.")
+            raise CellError(f"'{args.by_rule[:40]}' is not a rule for a small change. The rules are: {', '.join(small.RULES)}.", code="rule-unknown")
         widen(cell, small.verdict([args.by_rule], small_limits(project)), "interview")
     else:
         why = " ".join((args.why or "").split())
         if not why:
-            raise CellError("Give the reason in the engineer's own words (--why).")
+            raise CellError("Give the reason in the engineer's own words (--why).", code="reason-missing")
         cell["widened"] = dict(small.asked(why, now()), by="engineer")
     write_cell(project, cell)
     print(json.dumps({"status": "WIDENED", "ticket_id": args.ticket_id, "widened": cell["widened"], "small_change": small_view(project, cell),
@@ -398,7 +407,7 @@ def open_small(project: Path, cell: Dict[str, Any], args: argparse.Namespace) ->
     while its spec is still to be written. Headless grooming and fault (AUTO-) tickets never are; neither is a slice from
     Product Studio, whose kind comes with it. Returns a note when the word could not be taken."""
     if args.small and (args.headless or AUTO_TICKET_RE.match(cell["ticket_id"])):
-        raise CellError("Headless grooming, and a fault ticket (AUTO-), is never a small change: it is groomed with the full method.")
+        raise CellError("Headless grooming, and a fault ticket (AUTO-), is never a small change: it is groomed with the full method.", code="small-not-allowed")
     if args.headless or AUTO_TICKET_RE.match(cell["ticket_id"]) or from_studio(cell) or cell.get("kind"):
         return None
     source = "engineer" if args.small else ("label" if SMALL_LABEL in ticket_labels(project, cell["ticket_id"]) else None)
@@ -414,7 +423,7 @@ def open_small(project: Path, cell: Dict[str, Any], args: argparse.Namespace) ->
 def cmd_open(project: Path, args: argparse.Namespace) -> int:
     ticket_id = check_ticket_id(args.ticket_id)
     if args.small and (args.headless or AUTO_TICKET_RE.match(ticket_id)):  # refused before anything is made
-        raise CellError("Headless grooming, and a fault ticket (AUTO-), is never a small change: it is groomed with the full method.")
+        raise CellError("Headless grooming, and a fault ticket (AUTO-), is never a small change: it is groomed with the full method.", code="small-not-allowed")
     root = cell_dir(project, ticket_id)
     path = root / "cell.json"
     if path.is_file():
@@ -440,7 +449,7 @@ def cmd_open(project: Path, args: argparse.Namespace) -> int:
         # Git is here but refused to answer (an ownership rule, a broken repository): never take that for "no Git"
         # and work in the project root.
         raise CellError(f"{ticket_id} was not opened, and no work happens in the project root instead. Git could not read this "
-                        f"repository: {(inside.stderr or '').strip()[:300] or 'it gave no reason'}. Fix what Git reports, then run this again.")
+                        f"repository: {(inside.stderr or '').strip()[:300] or 'it gave no reason'}. Fix what Git reports, then run this again.", code="git-unreadable")
     if inside.returncode != 0:
         note = "The project is not a git repository, so the cell works in the project root."
     elif git(["rev-parse", "--verify", "-q", "HEAD"], project).returncode != 0:
@@ -454,7 +463,7 @@ def cmd_open(project: Path, args: argparse.Namespace) -> int:
                 shutil.rmtree(str(root), ignore_errors=True)
             elif not had_evidence:
                 shutil.rmtree(str(root / "evidence"), ignore_errors=True)
-            raise CellError(f"{ticket_id} was not opened, and no work happens in the project root instead. {exc}")
+            raise CellError(f"{ticket_id} was not opened, and no work happens in the project root instead. {exc}", code="open-failed")
         isolation = "worktree"
     cell = {
         "ticket_id": ticket_id,
@@ -598,17 +607,17 @@ def resolve_spec(project: Path, cell: Dict[str, Any], given: Optional[str]) -> P
     work = workdir(project, cell)
     value = given or cell.get("spec_path")
     if not value:
-        raise CellError("No spec recorded for this cell yet. Pass --spec specs/slices/SLICE-NNN-name.md.")
+        raise CellError("No spec recorded for this cell yet. Pass --spec specs/slices/SLICE-NNN-name.md.", code="spec-not-recorded")
     path = Path(value)
     path = path if path.is_absolute() else work / path
     if not path.is_file():
-        raise CellError(f"{path}: spec not found.")
+        raise CellError(f"{path}: spec not found.", code="spec-missing")
     try:
         relative = path.resolve().relative_to(work.resolve())
     except ValueError:
-        raise CellError(f"{path} is outside this cell's working folder ({work}). Write the spec under {work / 'specs' / 'slices'}.")
+        raise CellError(f"{path} is outside this cell's working folder ({work}). Write the spec under {work / 'specs' / 'slices'}.", code="spec-outside-cell")
     if relative.parts[:2] != ("specs", "slices"):
-        raise CellError(f"{path}: slice specs live in specs/slices/ inside the cell's working folder ({work}).")
+        raise CellError(f"{path}: slice specs live in specs/slices/ inside the cell's working folder ({work}).", code="spec-wrong-folder")
     return path
 
 
@@ -663,14 +672,14 @@ def cell_principles(cell_root: Path) -> Optional[List[Dict[str, Any]]]:
         recorded = None
     principles = recorded.get("principles") if isinstance(recorded, dict) else None
     if isinstance(principles, dict) and principles.get("several"):
-        raise CellError(several_projects(principles["several"]) + f" Then run 'cell.py principles {cell_root.name}' again.")
+        raise CellError(several_projects(principles["several"]) + f" Then run 'cell.py principles {cell_root.name}' again.", code="several-projects")
     path = cell_root / PRINCIPLES_FILE
     if not path.is_file() or path.is_symlink():
         return None
     try:
         return validate_slice.load_principles(path)
     except (OSError, UnicodeDecodeError, ValueError, RecursionError) as exc:
-        raise CellError(f"{path} cannot be read ({exc}). Run 'cell.py principles {cell_root.name}' again.")
+        raise CellError(f"{path} cannot be read ({exc}). Run 'cell.py principles {cell_root.name}' again.", code="principles-unreadable")
 
 
 def ticket_script() -> Optional[Path]:
@@ -746,7 +755,7 @@ def cmd_principles(project: Path, args: argparse.Namespace) -> int:
     root = cell_dir(project, args.ticket_id)
     if cell.get("product") or cell.get("stage") not in STAGES[:2]:
         # A slice from Product Studio was checked against the principles there; a spec past grooming is not re-read.
-        raise CellError(f"{args.ticket_id} is past grooming or came from Product Studio, so its principles are not read again here.")
+        raise CellError(f"{args.ticket_id} is past grooming or came from Product Studio, so its principles are not read again here.", code="principles-closed")
     found = published_principles(project)
     path = root / PRINCIPLES_FILE
     if found.get("several"):
@@ -754,7 +763,7 @@ def cmd_principles(project: Path, args: argparse.Namespace) -> int:
             path.unlink()
         cell["principles"] = {"source": None, "several": found["several"], "read_at": now()}
         write_cell(project, cell)
-        raise CellError(several_projects(found["several"]))
+        raise CellError(several_projects(found["several"]), code="several-projects")
     if found["source"] is None:
         if path.exists():
             path.unlink()
@@ -822,19 +831,19 @@ def cmd_policy_accept(project: Path, args: argparse.Namespace) -> int:
     explicit word; refused inside a supervised execution, and for a slice from Product Studio (the product manager records
     it there, in a new revision). Never recommended by rule."""
     if policies.unattended():
-        raise CellError(policies.UNATTENDED)
+        raise CellError(policies.UNATTENDED, code="person-only")
     cell = read_cell(project, args.ticket_id)
     root = cell_dir(project, args.ticket_id)
     if cell.get("product"):
-        raise CellError(f"{args.ticket_id} came from Product Studio: the owner's acceptance is recorded there (policy accept), in a new revision of the slice.")
+        raise CellError(f"{args.ticket_id} came from Product Studio: the owner's acceptance is recorded there (policy accept), in a new revision of the slice.", code="from-studio")
     if cell.get("stage") not in STAGES[:2]:
-        raise CellError(f"An owner's acceptance is recorded while the spec is written (interview or spec-open); {args.ticket_id} is '{cell.get('stage')}'.")
+        raise CellError(f"An owner's acceptance is recorded while the spec is written (interview or spec-open); {args.ticket_id} is '{cell.get('stage')}'.", code="wrong-stage")
     spec = resolve_spec(project, cell, None)
     try:
         text, check = policies.accept(spec.read_text(encoding="utf-8-sig"), args.policy, args.by, args.reason,
                                       allowed=policies.accept_by(load_config(project)))
     except ValueError as exc:
-        raise CellError(str(exc))
+        raise CellError(str(exc), code="policy-acceptance-invalid")
     spec.write_text(text, encoding="utf-8")
     cell.setdefault("policy_acceptances", []).append({"statement": args.policy, "by": " ".join(args.by.split()), "owner_check": check,
                                                       "reason": " ".join(args.reason.split())[:policies.WORDS_LIMIT],
@@ -1120,7 +1129,7 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     # --from-studio on the first finalize, before the cell records where it came from; afterwards the cell's record says so.
     from_studio_id = getattr(args, "from_studio", None)
     if from_studio_id is not None and not SLICE_ID_RE.fullmatch(from_studio_id):
-        raise CellError(f"--from-studio: '{from_studio_id}' is not a slice ID, such as SLICE-001.")
+        raise CellError(f"--from-studio: '{from_studio_id}' is not a slice ID, such as SLICE-001.", code="slice-id-invalid")
     same_slice = handed_over(cell) + ([from_studio_id] if from_studio_id else [])
     findings, model = analyze_spec(project, spec, ready=True, cell_root=root, rules=found["rules"], packs=packs, same_slice=same_slice)
     # An open policy concern (M14) holds the spec back like an open question: saved at spec-open, never ready, until the owner accepts it.
@@ -1144,6 +1153,7 @@ def cmd_finalize(project: Path, args: argparse.Namespace) -> int:
     corrected = bool(spec_before) and spec_before != hashlib.sha256(text.encode("utf-8")).hexdigest() and building_started(root, stage_before)
     if corrected and cell.get("isolation") == "worktree":
         replan_commits(project, cell, build_state(root), workdir(project, cell))
+        lanes_survey(project, root, cell)
     (root / "spec.md").write_text(text, encoding="utf-8")
     cell["spec_path"] = str(spec.resolve().relative_to(workdir(project, cell).resolve()))
     cell["slice_id"] = model.get("slice_id")
@@ -1278,18 +1288,48 @@ def unreachable_green(task_lines: Sequence[str]) -> List[str]:
     return problems
 
 
+def plan_task_lines(text: str) -> List[str]:
+    """The lines of the plan's Tasks section as the build station's parse_plan finds it, for lane_parts: a line `## <name>`
+    starts a section, its name in any letter case, fenced or not. Each '## Tasks' line is kept, so lane_parts closes an
+    open fence where a section starts, as parse_plan's reading does."""
+    lines: List[str] = []
+    inside = False
+    for line in text.splitlines():
+        heading = PLAN_SECTION_RE.match(line)
+        if heading:
+            inside = heading.group(1).lower() == "tasks"
+            if inside:
+                lines.append(line)
+        elif inside:
+            lines.append(line)
+    return lines
+
+
 def lane_parts(task_section: Sequence[str]) -> Dict[str, Any]:
     """The plan's parts and 'after' marks (M22), read from the lines of '## Tasks'. `used` is False for a plan written
     without them: nothing else here applies to it, and it is checked and built exactly as before. With no part heading,
-    every task is in the lanes part; with headings, a task above the first one has no part (None)."""
+    every task is in the lanes part; with headings, a task above the first one has no part (None).
+
+    Read by the rules of the build station's lanes.task_walk, which a test holds this to: every task line parse_plan reads
+    is a task, inside a fenced block or not (the build builds it); a '###' line inside a fenced block is not a heading. A
+    block opens on a line starting with ``` or ~~~ and closes on the next line starting with the same character; a
+    '## ' line closes it."""
     headings: List[str] = []
     tasks: List[Dict[str, Any]] = []
     part: Optional[str] = None
-    fenced = False
+    fence: Optional[str] = None
     for line in task_section:
-        if validate_slice.FENCE_RE.match(line):
-            fenced = not fenced
-        heading = None if fenced else SUBHEADING_RE.match(line)
+        if PLAN_SECTION_RE.match(line):
+            fence = None
+            continue
+        opened = validate_slice.FENCE_RE.match(line)
+        if opened:
+            if fence is None:
+                fence = opened.group(1)[0]
+            elif opened.group(1)[0] == fence:
+                fence = None
+            continue
+        heading = None if fence is not None else SUBHEADING_RE.match(line)
         if heading:
             headings.append(heading.group(1))
             part = part_of(heading.group(1)) or part
@@ -1404,7 +1444,7 @@ def refuse_without_baseline(project: Path, ticket_id: str) -> None:
     """No plan is started or accepted while a required topic has no accepted ADR on the main branch (adr.baseline_stop)."""
     stop = adr.baseline_stop(project, load_config(project), ticket_labels(project, ticket_id))
     if stop:
-        raise CellError(stop["reason"] + " Do not start the contract engineer, and do not plan it yourself.")
+        raise CellError(stop["reason"] + " Do not start the contract engineer, and do not plan it yourself.", code="adr-baseline-missing")
 
 
 def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
@@ -1418,14 +1458,14 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
     if not spec_json.is_file():
         widened = cell.get("widened") if cell.get("kind") == small.KIND and cell.get("stage") in STAGES[:2] else None
         raise CellError("spec.json is missing: the spec is not ready. Run 'cell.py finalize' first."
-                        + (f" This small change is a full slice now ({widened.get('reason')}): the interview carries on in full first." if widened else ""))
+                        + (f" This small change is a full slice now ({widened.get('reason')}): the interview carries on in full first." if widened else ""), code="spec-not-ready")
     spec_path = work / str(cell.get("spec_path"))
     if not spec_path.is_file() or hashlib.sha256(spec_path.read_text(encoding="utf-8-sig").encode("utf-8")).hexdigest() != cell.get("spec_sha256"):
-        raise CellError("The slice spec changed after it was finalized. Run 'cell.py finalize' again, then redo the plan.")
+        raise CellError("The slice spec changed after it was finalized. Run 'cell.py finalize' again, then redo the plan.", code="spec-changed")
     model = json.loads(spec_json.read_text(encoding="utf-8"))
     plan = root / "plan.md"
     if not plan.is_file():
-        raise CellError(f"{plan} is missing.")
+        raise CellError(f"{plan} is missing.", code="plan-missing")
     text = plan.read_text(encoding="utf-8")
     problems = leftover(text)
     problems.extend(diagrams.problems(text, "plan.md"))
@@ -1481,7 +1521,7 @@ def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
         problems.append("the first task must be a [test] task: tests are written before implementation")
     stranded = unreachable_green(task_lines)
     problems.extend(stranded)
-    lane_plan = plan_lanes(project, text, sections.get("Tasks", []), problems, check_lanes=not stranded)
+    lane_plan = plan_lanes(project, text, plan_task_lines(text), problems, check_lanes=not stranded)
     problems.extend(claude_config_problems(plan_files(text) + contracts))
     decisions = plan_adrs(project, root, cell, header, text, app_type, problems)
 
@@ -1585,7 +1625,7 @@ def plan_tasks(text: str) -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
         import importlib.util
         script = build_script("build.py")
         if not script.is_file():
-            raise CellError(f"The build station is not installed beside this one ({script}), so the plan's files cannot be read.")
+            raise CellError(f"The build station is not installed beside this one ({script}), so the plan's files cannot be read.", code="build-station-missing")
         spec = importlib.util.spec_from_file_location("mach_build_station_for_plan", script)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -1644,7 +1684,7 @@ def small_after_plan(project: Path, root: Path, cell: Dict[str, Any], work: Path
     try:
         found = small.judge_plan(project, plan_files(text), existing, [item["file"] for item in decisions["record"]["proposed"]], limits=limits)
     except RuntimeError as exc:
-        raise CellError(f"Whether this small change is still small after its plan cannot be judged: {exc}")
+        raise CellError(f"Whether this small change is still small after its plan cannot be judged: {exc}", code="small-unjudged")
     if found["small"] and risk == "High":
         found = dict(small.verdict(["risk"], limits), high_risk=[])
     if found["small"]:
@@ -1819,16 +1859,16 @@ def replan_commits(project: Path, cell: Dict[str, Any], state: Dict[str, Any], w
     if merged:
         raise CellError(f"Work of this ticket is already on the main branch ({', '.join(merged)}): returning the branch to its spec would take back "
                         "work that has landed, so it cannot be re-planned, and nothing was changed. The build can carry on under this plan from "
-                        "where it is; what is still to do can go in a new ticket.")
+                        "where it is; what is still to do can go in a new ticket.", code="work-on-main")
     kept = [named(sha) for sha in found["kept"]]
     return {"tip": tip, "point": point, "recorded": found["recorded"],
             "kept": [{key: item[key] for key in ("commit", "subject", "as")} for item in kept if item["as"] not in ("main", "spec")],
             "set_aside": [{key: item[key] for key in ("commit", "subject", "as")} for item in above if item["as"] != "main"]}
 
 
-def save_uncommitted(work: Path, tip: str, ticket_id: str) -> Optional[Dict[str, Any]]:
-    """Every uncommitted change in the cell's checkout (tracked and untracked, not ignored), as one commit on top of the tip,
-    made through a separate index so the checkout and its own index are not touched. None when the checkout is clean."""
+def save_uncommitted(work: Path, tip: str, ticket_id: str, message: str = "Uncommitted work in the cell's checkout, saved by a re-plan") -> Optional[Dict[str, Any]]:
+    """Every uncommitted change in a checkout (the cell's, or a lane's), tracked and untracked, not ignored, as one commit on
+    top of the tip, made through a separate index so the checkout and its own index are not touched. None when it is clean."""
     listed = git(["status", "--porcelain", "-z", "--untracked-files=all"], work).stdout.split("\0")
     paths, skip = [], False
     for entry in listed:
@@ -1855,14 +1895,14 @@ def save_uncommitted(work: Path, tip: str, ticket_id: str) -> Optional[Dict[str,
             shutil.copyfile(str(index), str(scratch))
         added = run_git("add", "-A", "--sparse")
         tree = run_git("write-tree") if added.returncode == 0 else added
-        made = run_git("commit-tree", tree.stdout.strip(), "-p", tip, "-m", f"Uncommitted work in the cell's checkout, saved by a re-plan [{ticket_id}]") \
+        made = run_git("commit-tree", tree.stdout.strip(), "-p", tip, "-m", f"{message} [{ticket_id}]") \
             if tree.returncode == 0 else tree
     finally:
         if scratch.exists():
             scratch.unlink()
     if made.returncode != 0:
-        raise CellError("The cell's checkout has uncommitted changes and they could not be saved, so nothing was changed: "
-                        + (made.stderr.strip() or made.stdout.strip())[:300] + ". Commit them on the cell's branch and re-plan again.")
+        raise CellError(f"The checkout at {work} has uncommitted changes and they could not be saved, so nothing was changed: "
+                        + (made.stderr.strip() or made.stdout.strip())[:300] + ". Commit them on its branch and re-plan again.", code="uncommitted-unsaved")
     return {"commit": made.stdout.strip(), "paths": sorted(paths)}
 
 
@@ -1890,19 +1930,19 @@ def cmd_replan(project: Path, args: argparse.Namespace) -> int:
     """Return a planned or building cell to spec-ready so it is planned again. Only on a person's explicit instruction."""
     reason = (args.reason or "").strip()
     if not reason:
-        raise CellError("--reason is required: say why the plan is wrong.")
+        raise CellError("--reason is required: say why the plan is wrong.", code="reason-missing")
     cell = read_cell(project, args.ticket_id)
     root = cell_dir(project, args.ticket_id)
     stage = cell.get("stage")
     if stage == "spec-ready" and isinstance(cell.get("adr_conflict"), dict):
         return replan_after_adr(project, root, cell, reason)
     if stage not in REPLAN_STAGES:
-        raise CellError(f"Only a planned or building cell can be re-planned; {args.ticket_id} is '{stage}'.")
+        raise CellError(f"Only a planned or building cell can be re-planned; {args.ticket_id} is '{stage}'.", code="wrong-stage")
     state = build_state(root)
     if int(state.get("loop") or 0) > 0 or (root / "review").exists() or (root / "evidence" / "summary.json").exists():
         raise CellError("This ticket has been through a judging round, and its rounds must stand, so it cannot be re-planned; nothing was changed. "
                         "The build carries on in its current round, answering the judges' findings, and a person can settle the ticket in the "
-                        "walkthrough (/mach decide).")
+                        "walkthrough (/mach decide).", code="judged")
     done = set_aside_build(project, root, cell, reason, stage, "replanned")
     cell["stage"] = "spec-ready"
     write_cell(project, cell)
@@ -1922,17 +1962,244 @@ def build_state(root: Path) -> Dict[str, Any]:
     return state if isinstance(state, dict) else {}
 
 
+LANE_BRANCH_PREFIX = "mach-lane/"
+LANE_NAME_RE = re.compile(r"^(?:L\d{1,3}|join)$")
+
+
+def registered_worktrees(project: Path) -> List[Tuple[Path, Optional[str]]]:
+    """Git's worktree records: each worktree's path and the branch it has checked out (None when detached)."""
+    found: List[Tuple[Path, Optional[str]]] = []
+    path: Optional[Path] = None
+    branch: Optional[str] = None
+    for line in git(["worktree", "list", "--porcelain"], project).stdout.splitlines() + [""]:
+        if line.startswith("worktree "):
+            path, branch = Path(line[len("worktree "):]), None
+        elif line.startswith("branch refs/heads/"):
+            branch = line[len("branch refs/heads/"):]
+        elif not line.strip() and path is not None:
+            found.append((path, branch))
+            path = None
+    return found
+
+
+def same_path(one: Path, other: Path) -> bool:
+    try:
+        return one.resolve() == other.resolve()
+    except (OSError, RuntimeError):
+        return False
+
+
+def lanes_survey(project: Path, root: Path, cell: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """What a build in lanes left in the cell (M22): every lane and join worktree under lanes/ with Git's record of it, every
+    branch under mach-lane/<ticket>/, and the lanes' state files. Reads only. None for a cell that never had lanes, so a
+    re-plan of any other build says and does what it always did. Raises, with nothing changed, for a folder under lanes/
+    that is not one of this ticket's lane worktrees: what is in it is held nowhere else, so a person moves it first."""
+    ticket_id = cell["ticket_id"]
+    folder = root / "lanes"
+    prefix = f"refs/heads/{LANE_BRANCH_PREFIX}{ticket_id}/"
+    branches: Dict[str, str] = {}
+    for line in git(["for-each-ref", "--format=%(refname) %(objectname)", prefix], project).stdout.splitlines():
+        name, _, sha = line.partition(" ")
+        if name.startswith(prefix) and len(name) > len(prefix) and sha.strip():
+            branches[name[len(prefix):]] = sha.strip()
+    base = str(folder.resolve()) + os.sep if folder.exists() else str(folder) + os.sep
+    records = [(path, branch) for path, branch in registered_worktrees(project) if str(path.resolve()).startswith(base) or str(path).startswith(base)]
+    if not folder.is_dir() and not branches and not records:
+        return None
+    if folder.is_symlink():
+        raise CellError(f"{folder} is a symbolic link, not the cell's own lanes folder, so the build cannot be set aside safely. Nothing was changed. "
+                        f"Move it out of {root} to keep what it points at, then re-plan again.", code="lanes-folder-unknown")
+    trees: Dict[str, Dict[str, Any]] = {}
+    for lane in sorted(folder.iterdir()) if folder.is_dir() else []:
+        repo = lane / "repo"
+        if not (repo.exists() or repo.is_symlink()):
+            continue
+        record = next((item for item in records if same_path(item[0], repo)), None)
+        expected = f"{LANE_BRANCH_PREFIX}{ticket_id}/{lane.name}"
+        top = git(["rev-parse", "--show-toplevel"], repo) if repo.is_dir() and not repo.is_symlink() else None
+        if (not LANE_NAME_RE.match(lane.name) or record is None or record[1] not in (None, expected) or top is None or top.returncode != 0
+                or not same_path(Path(top.stdout.strip()), repo)):
+            raise CellError(f"{repo} is not one of this ticket's lane worktrees, so what is in it is held nowhere else, and the build cannot be set "
+                            f"aside without it. Nothing was changed. Move that folder out of {root} to keep what it holds, then re-plan again.", code="lanes-folder-unknown")
+        head = git(["rev-parse", "--verify", "-q", "HEAD"], repo).stdout.strip() or None
+        trees[lane.name] = {"repo": repo, "head": head, "branch": record[1]}
+    known = [tree["repo"] for tree in trees.values()]
+    stale = [path for path, _ in records if not any(same_path(path, repo) for repo in known)]
+    files: List[str] = []
+
+    def walk(at: Path) -> None:
+        for child in sorted(at.iterdir()):
+            parts = child.relative_to(root).parts
+            if len(parts) >= 3 and parts[2] == "repo":
+                continue  # a lane's checked-out tree: its work is saved as commits, never copied as files
+            if child.is_dir() and not child.is_symlink():
+                walk(child)
+            else:
+                files.append("/".join(parts))
+    if folder.is_dir():
+        walk(folder)
+    return {"folder": folder, "branches": branches, "trees": trees, "stale": stale, "files": files}
+
+
+def lanes_ref(ticket_id: str, number: int, lane: str) -> str:
+    """Where a re-plan keeps a lane's work. Beside the cell's own ref, refs/mach/replan/<ticket>/<n>, not under it: Git cannot
+    hold a ref both as a name and as a folder of names. Under refs/mach/replan/<ticket>/, which cleanup bundles and removes."""
+    return f"refs/mach/replan/{ticket_id}/{number}-lanes/{lane}"
+
+
+def keep_ref(project: Path, ref: str, sha: str) -> Tuple[str, bool]:
+    """Make `ref` point at `sha` without moving a ref that already holds something else (an earlier re-plan attempt that
+    stopped part way may have made it): such a ref is kept and the next free name, <ref>-2, -3, ..., is used. Returns the
+    ref and whether this call made it; raises CellError with Git's words when Git refuses."""
+    candidate, number = ref, 1
+    while True:
+        held = git(["rev-parse", "--verify", "-q", candidate], project).stdout.strip()
+        if held == sha:
+            return candidate, False
+        if not held:
+            done = git(["update-ref", candidate, sha, ""], project)
+            if done.returncode != 0:
+                raise CellError((done.stderr or done.stdout).strip()[:200] or "git update-ref failed", code="ref-refused")
+            return candidate, True
+        number += 1
+        candidate = f"{ref}-{number}"
+
+
+def save_lanes(project: Path, cell: Dict[str, Any], state: Dict[str, Any], survey: Dict[str, Any], number: int, work: Path) -> Dict[str, Any]:
+    """The Git half of setting a build's lanes aside (M22), done before the cell's own branch moves: each lane's branch tip
+    (the join branch's too), with the lane worktree's uncommitted and untracked files saved as one commit on top as the
+    cell's own are, is kept under lanes_ref(); then the lane and join worktrees are removed with Git's records of them and
+    the mach-lane/<ticket>/ branches are deleted. Every ref is made before anything is removed: if Git refuses one, the refs
+    this call made are taken back and nothing is changed. The state files move later, with the plan (move_lane_files)."""
+    ticket_id = cell["ticket_id"]
+    record = state.get("lanes") if isinstance(state.get("lanes"), dict) else {}
+    fork = record.get("fork") or None
+    main_head = git(["rev-parse", "HEAD"], project).stdout.strip()
+    where = f'git -C "{work}"'
+    names = sorted(set(survey["trees"]) | set(survey["branches"]), key=lambda name: (name == "join", len(name), name))
+
+    def commits_on(tip: str) -> List[Dict[str, Any]]:
+        since = [fork] if fork and git(["merge-base", "--is-ancestor", fork, tip], project).returncode == 0 else [x for x in (main_head,) if x]
+        found = []
+        for line in git(["log", "--reverse", "--format=%H %s", tip, *[f"^{base}" for base in since]], project).stdout.splitlines():
+            sha, _, subject = line.partition(" ")
+            found.append({"commit": sha, "subject": subject[:120], "bring_back": f"{where} cherry-pick {sha}"})
+        return found
+
+    saved: List[Dict[str, Any]] = []
+    for name in names:
+        tree = survey["trees"].get(name)
+        tip = (tree or {}).get("head") or survey["branches"].get(name)
+        if not tip:
+            continue
+        uncommitted = save_uncommitted(tree["repo"], tip, ticket_id, f"Uncommitted work in lane {name}, saved by a re-plan") if tree else None
+        entry = {"lane": name, "branch": f"{LANE_BRANCH_PREFIX}{ticket_id}/{name}" if name in survey["branches"] else None,
+                 "saved_as": lanes_ref(ticket_id, number, name), "tip": uncommitted["commit"] if uncommitted else tip, "commits": commits_on(tip),
+                 "uncommitted": uncommitted}
+        branch_tip = survey["branches"].get(name)
+        if branch_tip and branch_tip != tip and git(["merge-base", "--is-ancestor", branch_tip, entry["tip"]], project).returncode != 0:
+            entry["branch_tip"] = {"commit": branch_tip, "saved_as": entry["saved_as"] + "-branch"}  # the branch moved away from its worktree
+        saved.append(entry)
+    made: List[str] = []
+    for entry in saved:
+        targets = [(entry, "saved_as", entry["tip"])] + ([(entry["branch_tip"], "saved_as", entry["branch_tip"]["commit"])] if entry.get("branch_tip") else [])
+        for holder, key, sha in targets:
+            try:
+                holder[key], new = keep_ref(project, holder[key], sha)
+            except CellError as refused:
+                for back in made:
+                    git(["update-ref", "-d", back], project)
+                raise CellError(f"Could not keep lane {entry['lane']}'s work as {holder[key]} ({refused}), so nothing was changed: the lanes, the "
+                                f"plan and the build are where they were. Run the re-plan again; if Git refuses the same way, the error above is "
+                                f"Git's, from the repository at {project}.", code="ref-refused")
+            if new:
+                made.append(holder[key])
+        if entry["uncommitted"]:
+            entry["uncommitted"] = dict(entry["uncommitted"], bring_back=f"{where} checkout {entry['saved_as']} -- <path>")
+    # A ref kept by an earlier attempt of this re-plan that stopped part way, for a lane that is gone now: named too.
+    ours = {entry["saved_as"] for entry in saved} | {entry["branch_tip"]["saved_as"] for entry in saved if entry.get("branch_tip")}
+    prefix = lanes_ref(ticket_id, number, "")
+    for line in git(["for-each-ref", "--format=%(refname) %(objectname)", prefix], project).stdout.splitlines():
+        ref, _, sha = line.partition(" ")
+        if ref.startswith(prefix) and ref not in ours and sha.strip():
+            saved.append({"lane": ref[len(prefix):], "branch": None, "saved_as": ref, "tip": sha.strip(), "commits": commits_on(sha.strip()),
+                          "uncommitted": None, "saved_earlier": True})
+    removed, left = [], []
+    for name in names:
+        tree = survey["trees"].get(name)
+        if tree is None:
+            continue
+        done = git(["worktree", "remove", "--force", "--force", str(tree["repo"])], project)
+        if done.returncode != 0 and tree["repo"].exists():
+            left.append(f"{tree['repo']} ({(done.stderr or done.stdout).strip()[:200]})")
+        else:
+            removed.append(str(tree["repo"]))
+    git(["worktree", "prune"], project)
+    if left:
+        raise CellError("Every lane's work is kept (" + ", ".join(sorted(ours)) + "), but Git would not remove the lane worktree " + "; ".join(left)
+                        + ". The plan, the build and the cell's branch were not changed" + (f"; these lane worktrees were removed: {', '.join(removed)}" if removed else "")
+                        + ". Close anything that has a file open in that folder and re-plan again: what was kept stays kept, and the re-plan names it.", code="worktree-not-removed")
+    deleted, kept = [], []
+    for name, sha in sorted(survey["branches"].items()):
+        branch = f"{LANE_BRANCH_PREFIX}{ticket_id}/{name}"
+        (deleted if git(["update-ref", "-d", f"refs/heads/{branch}", sha], project).returncode == 0 else kept).append(branch)
+    return {"kept_in": None, "state_files": survey["files"], "saved": saved, "worktrees_removed": removed,
+            "worktree_records_dropped": [str(path) for path in survey["stale"]], "branches_deleted": deleted, "branches_kept": kept}
+
+
+def move_lane_files(root: Path, keep: Path, survey: Dict[str, Any], lanes: Dict[str, Any]) -> None:
+    """The file half: the lanes' state files (never a checked-out tree) move to plan-history/<n>/lanes/, and the emptied
+    lanes/ folder goes, so the new plan's build finds no lane of the old one."""
+    for name in survey["files"]:
+        source = root / name
+        if source.exists() or source.is_symlink():
+            destination = keep / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            source.replace(destination)
+    folder = survey["folder"]
+    if folder.is_dir() and not folder.is_symlink():
+        for path in sorted((p for p in folder.rglob("*") if p.is_dir() and not p.is_symlink()), key=lambda p: len(p.parts), reverse=True):
+            if not any(path.iterdir()):
+                path.rmdir()
+        if not any(folder.iterdir()):
+            folder.rmdir()
+    lanes["kept_in"] = str(keep / "lanes")
+
+
+def lanes_told(lanes: Dict[str, Any]) -> List[str]:
+    """What a re-plan's `next` says about the lanes it set aside."""
+    told = [f"The build's lanes are set aside too, not lost: their state files are in {lanes['kept_in']}, and their worktrees and "
+            f"branches are removed, so the new plan's lanes start afresh."]
+    for entry in lanes["saved"]:
+        said = f"Lane {entry['lane']}'s work is kept as {entry['saved_as']}"
+        if entry["commits"]:
+            said += "; to bring a commit back onto the branch, run: " + "; ".join(item["bring_back"] for item in entry["commits"])
+        if entry["uncommitted"]:
+            said += f"; its files that were not committed ({', '.join(entry['uncommitted']['paths'][:5])}" + (", ..." if len(entry["uncommitted"]["paths"]) > 5 else "") \
+                    + f") come back with: {entry['uncommitted']['bring_back']}"
+        if entry.get("branch_tip"):
+            said += f"; its branch had moved away from its worktree and is kept as {entry['branch_tip']['saved_as']}"
+        told.append(said + ".")
+    if lanes["branches_kept"]:
+        told.append(f"The branch(es) {', '.join(lanes['branches_kept'])} moved after the re-plan kept their work, so Git was not asked to delete "
+                    "them and nothing on them is lost; a person looks at them with git log and deletes them with git branch -D.")
+    return told
+
+
 def set_aside_build(project: Path, root: Path, cell: Dict[str, Any], reason: str, stage: Optional[str], reason_code: str,
                     extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Set a cell's plan and build aside so that it is planned again, losing nothing: the branch's tip, with any uncommitted
     files saved as one commit on top of it, is kept under refs/mach/replan/<ticket>/<n>; the branch returns to the spec as
-    finalized last; plan.md, build.json and build-report.json move to plan-history/<n>/. Used by a re-plan (on a person's
+    finalized last; plan.md, build.json and build-report.json move to plan-history/<n>/. A build in lanes (M22) has its lanes
+    set aside too: each lane's work is kept under refs/mach/replan/<ticket>/<n>-lanes/<L>, its worktree and branch are
+    removed, and its state files move to plan-history/<n>/lanes/ (save_lanes, move_lane_files). Used by a re-plan (on a person's
     word) and by finalize when the spec was corrected after building started. The caller sets the stage and writes cell.json.
     Returns {"number", "keep", "ref", "reset", "branch", "told"}."""
     ticket_id = cell["ticket_id"]
     state = build_state(root)
     work = workdir(project, cell)
     found = replan_commits(project, cell, state, work) if cell.get("isolation") == "worktree" else None
+    survey = lanes_survey(project, root, cell) if cell.get("isolation") == "worktree" else None  # M22: None for a build without lanes
     history = root / "plan-history"
     number = 1 + max([int(path.name) for path in history.glob("*") if path.name.isdigit()] or [0])
     keep = history / str(number)
@@ -1941,6 +2208,9 @@ def set_aside_build(project: Path, root: Path, cell: Dict[str, Any], reason: str
     # top of the old tip, and the ref keeps that commit, so a reset never loses a file the build wrote and did not commit.
     reset = uncommitted = restored = None
     spec_commit = None
+    # The lanes before the cell's own branch: their work is kept under refs first, then their worktrees and branches go, so the
+    # new plan's build never finds a lane of the old one. A refusal here leaves the cell's branch and the plan where they were.
+    lanes = save_lanes(project, cell, state, survey, number, work) if survey is not None else None
     if found is not None:
         uncommitted = save_uncommitted(work, found["tip"], ticket_id)
         saved = uncommitted["commit"] if uncommitted else found["tip"]
@@ -1948,11 +2218,11 @@ def set_aside_build(project: Path, root: Path, cell: Dict[str, Any], reason: str
         if saved != point:
             if git(["update-ref", ref, saved], work).returncode != 0:
                 raise CellError(f"Could not save the branch's old tip as {ref}, so nothing was changed. Run the re-plan again; if it fails the same way, "
-                                "the Git error is in the checkout at " + str(work) + ".")
+                                "the Git error is in the checkout at " + str(work) + ".", code="ref-refused")
             if git(["reset", "-q", "--hard", point], work).returncode != 0 or (
                     uncommitted and git(["clean", "-q", "-f", "-d", "-e", ".claude/", "-e", ".mcp.json"], work).returncode != 0):
                 raise CellError(f"The old tip is saved as {ref}, but the branch could not be reset to {point[:12]}; the plan files were not moved. "
-                                f"Run the re-plan again: the saved ref keeps everything, and a second re-plan saves its own.")
+                                f"Run the re-plan again: the saved ref keeps everything, and a second re-plan saves its own.", code="reset-failed")
             reset = {"from": found["tip"], "to": point, "saved_as": ref}
         restored = restore_spec(project, cell, root, work)
         spec_commit = git(["rev-parse", "HEAD"], work).stdout.strip() or None
@@ -1967,6 +2237,8 @@ def set_aside_build(project: Path, root: Path, cell: Dict[str, Any], reason: str
         if (root / name).is_file():
             (root / name).replace(keep / name)
             moved.append(name)
+    if lanes is not None:
+        move_lane_files(root, keep, survey, lanes)
     branch: Dict[str, Any] = {}
     if found is not None:
         where = f'git -C "{work}"'
@@ -1978,6 +2250,7 @@ def set_aside_build(project: Path, root: Path, cell: Dict[str, Any], reason: str
             "not_recognised": not_recognised if reset else [],
             "uncommitted": dict(uncommitted, saved_as=ref, bring_back=f"{where} checkout {ref} -- <path>") if uncommitted else None,
             "spec_restored": restored,
+            **({"lanes": lanes} if lanes is not None else {}),
         }
     (keep / "replan.json").write_text(json.dumps({"replan": number, "at": now(), "reason": reason, "from_stage": stage, "kept": moved, "reset": reset,
                                                  **branch, **(extra or {})}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -1992,20 +2265,22 @@ def set_aside_build(project: Path, root: Path, cell: Dict[str, Any], reason: str
         told.append(f"Files that were not committed are saved in {ref}; to bring one back, run: git -C \"{work}\" checkout {ref} -- <path>.")
     if restored and not restored.get("commit"):
         told.append(f"The spec as finalized last is written back to {restored['path']} but not committed: {restored.get('note') or 'git.auto_commit is false'}.")
+    if lanes is not None:
+        told.extend(lanes_told(lanes))
     return {"number": number, "keep": keep, "ref": ref, "reset": reset, "branch": branch, "told": told, "moved": moved}
 
 
 def binding_record(project: Path, root: Path, cell: Dict[str, Any], ident: str) -> Dict[str, Any]:
     """An accepted ADR that binds this cell, or a refusal that says why the ID does not name one."""
     if not ADR_ID_RE.match(ident or ""):
-        raise CellError(f"'{ident}' is not an ADR ID such as ADR-0007.")
+        raise CellError(f"'{ident}' is not an ADR ID such as ADR-0007.", code="adr-id-invalid")
     view = adr.cell_view(project, load_config(project), root, cell)
     record = adr.by_id(view["adrs"]).get(ident)
     if record is None:
-        raise CellError(f"{ident} does not exist in {view['dir']}.")
+        raise CellError(f"{ident} does not exist in {view['dir']}.", code="adr-missing")
     if not record["binding"]:
         status = f"superseded by {record['superseded_by']}" if record.get("superseded_by") else record.get("status") or "unreadable"
-        raise CellError(f"{ident} is {status}, not accepted, so it binds nothing" + (f" ({'; '.join(record['problems'][:2])})" if record["problems"] else "") + ".")
+        raise CellError(f"{ident} is {status}, not accepted, so it binds nothing" + (f" ({'; '.join(record['problems'][:2])})" if record["problems"] else "") + ".", code="adr-not-binding")
     return record
 
 
@@ -2017,7 +2292,7 @@ def replan_after_adr(project: Path, root: Path, cell: Dict[str, Any], reason: st
     record = adr.by_id(view["adrs"]).get(conflict.get("adr"))
     if record is not None and record["binding"] and record["digest"] == conflict.get("digest"):
         raise CellError(f"{conflict.get('adr')} is unchanged on the main branch and still accepted, so a new plan would stop at it again. "
-                        "An engineer supersedes or changes it by pull request first, or a person records an exception (cell.py adr-exception).")
+                        "An engineer supersedes or changes it by pull request first, or a person records an exception (cell.py adr-exception).", code="adr-unchanged")
     now_is = "no longer exists" if record is None else ("changed" if record["binding"] else f"now {record.get('status') or 'unreadable'}")
     cell.pop("adr_conflict")
     cell.setdefault("adr_replans", []).append({"adr": conflict.get("adr"), "was": conflict.get("digest"), "now": now_is, "reason": reason, "at": now()})
@@ -2038,7 +2313,7 @@ def cmd_adrs(project: Path, args: argparse.Namespace) -> int:
     view = adr.cell_view(project, config, root, cell)
     app_type = (args.app_type or cell.get("app_type") or config.get("app_type") or "")
     if app_type and app_type not in adr.APP_TYPES:
-        raise CellError("--app-type must be one of: " + ", ".join(adr.APP_TYPES))
+        raise CellError("--app-type must be one of: " + ", ".join(adr.APP_TYPES), code="app-type-invalid")
     files = list(args.path or [])
     plan = root / "plan.md"
     if plan.is_file():
@@ -2072,26 +2347,26 @@ def cmd_adr_draft(project: Path, args: argparse.Namespace) -> int:
     cell = read_cell(project, args.ticket_id)
     root = cell_dir(project, args.ticket_id)
     if cell.get("stage") != "spec-ready":
-        raise CellError(f"An ADR is proposed while the plan is written, when the cell is spec-ready; {args.ticket_id} is '{cell.get('stage')}'.")
+        raise CellError(f"An ADR is proposed while the plan is written, when the cell is spec-ready; {args.ticket_id} is '{cell.get('stage')}'.", code="wrong-stage")
     if cell.get("isolation") != "worktree":
-        raise CellError("This cell has no branch of its own (the project has no git history yet), so it cannot propose an ADR. An engineer writes it with /mach adr new.")
+        raise CellError("This cell has no branch of its own (the project has no git history yet), so it cannot propose an ADR. An engineer writes it with /mach adr new.", code="no-branch")
     if TUNING_LABEL in ticket_labels(project, args.ticket_id):
-        raise CellError("A factory-tuning ticket never proposes an ADR: architecture decisions are people's.")
+        raise CellError("A factory-tuning ticket never proposes an ADR: architecture decisions are people's.", code="factory-tuning")
     title = " ".join((args.title or "").split())
     if len(title) < 8:
-        raise CellError("--title must state the decision in a few words, such as 'Use PostgreSQL for the billing service'.")
+        raise CellError("--title must state the decision in a few words, such as 'Use PostgreSQL for the billing service'.", code="title-missing")
     applies, problems = adr.check_applies(args.applies_to) if args.applies_to else ([], [])
     if problems:
-        raise CellError("; ".join(problems))
+        raise CellError("; ".join(problems), code="applies-to-invalid")
     config = load_config(project)
     folder, setting = adr.folder_of(config)
     if setting:
-        raise CellError(setting)
+        raise CellError(setting, code="adr-folder-setting")
     number = adr.next_number(project, config)
     name = f"{folder}/{number:04d}-{adr.slug(title)}.md"
     path = workdir(project, cell) / name
     if path.exists():
-        raise CellError(f"{name} already exists.")
+        raise CellError(f"{name} already exists.", code="adr-exists")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(adr.render(title, applies_to=applies), encoding="utf-8")
     print(json.dumps({"status": "DRAFTED", "id": f"ADR-{number:04d}", "file": name, "path": str(path),
@@ -2106,11 +2381,11 @@ def cmd_adr_conflict(project: Path, args: argparse.Namespace) -> int:
     cell = read_cell(project, args.ticket_id)
     root = cell_dir(project, args.ticket_id)
     if cell.get("stage") != "spec-ready":
-        raise CellError(f"A conflict with an ADR is recorded while the plan is written, when the cell is spec-ready; {args.ticket_id} is '{cell.get('stage')}'.")
+        raise CellError(f"A conflict with an ADR is recorded while the plan is written, when the cell is spec-ready; {args.ticket_id} is '{cell.get('stage')}'.", code="wrong-stage")
     record = binding_record(project, root, cell, args.adr)
     reason = " ".join((args.reason or "").split())
     if len(reason) < 20:
-        raise CellError("--reason must say which part of the ADR the slice cannot follow, and why, in a sentence or two.")
+        raise CellError("--reason must say which part of the ADR the slice cannot follow, and why, in a sentence or two.", code="reason-missing")
     cell["adr_conflict"] = {"adr": record["id"], "digest": record["digest"], "title": adr.bounded(record["title"], 200), "file": record["file"],
                             "reason": reason[:2000], "at": now()}
     write_cell(project, cell)
@@ -2129,12 +2404,12 @@ def cmd_spec_question(project: Path, args: argparse.Namespace) -> int:
     cell = read_cell(project, args.ticket_id)
     root = cell_dir(project, args.ticket_id)
     if cell.get("stage") != "spec-ready":
-        raise CellError(f"A question about the spec is asked while the plan is written, when the cell is spec-ready; {args.ticket_id} is '{cell.get('stage')}'.")
+        raise CellError(f"A question about the spec is asked while the plan is written, when the cell is spec-ready; {args.ticket_id} is '{cell.get('stage')}'.", code="wrong-stage")
     if not isinstance(cell.get("product"), dict):
-        raise CellError(f"{args.ticket_id} was not handed over by Product Studio. Put the question to the product manager in the grooming interview instead.")
+        raise CellError(f"{args.ticket_id} was not handed over by Product Studio. Put the question to the product manager in the grooming interview instead.", code="not-from-studio")
     question = (args.question or "").strip()
     if len(question) < 20:
-        raise CellError("--question must say what in the spec contradicts itself or cannot be built, and what the product manager needs to decide.")
+        raise CellError("--question must say what in the spec contradicts itself or cannot be built, and what the product manager needs to decide.", code="question-missing")
     cell["spec_question"] = {"text": question[:4000], "at": now(), "revision": cell["product"].get("revision")}
     write_cell(project, cell)
     telemetry(root, "gate.evaluated", "plan", lambda: {"gate": "plan.spec", "outcome": "refuse", "reason_code": "spec-question", "overridden_by_reason": False})
@@ -2148,21 +2423,21 @@ def cmd_adr_exception(project: Path, args: argparse.Namespace) -> int:
     """A person's exception to one accepted ADR for this ticket, with their reason in their words. Only on their
     explicit word; refused inside a supervised execution. Shown to the contract engineer, the builder and the reviewers."""
     if adr.unattended():
-        raise CellError(adr.UNATTENDED)
+        raise CellError(adr.UNATTENDED, code="person-only")
     cell = read_cell(project, args.ticket_id)
     root = cell_dir(project, args.ticket_id)
     if cell.get("stage") != "spec-ready":
         raise CellError(f"An exception to an ADR is recorded before the ticket is planned, when the cell is spec-ready; {args.ticket_id} is '{cell.get('stage')}'. "
-                        "To plan a planned ticket again first, use replan.")
+                        "To plan a planned ticket again first, use replan.", code="wrong-stage")
     name = " ".join((args.by or "").split())
     if len(name) < 2:
-        raise CellError("--by must name the person who decided.")
+        raise CellError("--by must name the person who decided.", code="person-missing")
     reason = " ".join((args.reason or "").split())
     if len(reason) < 10:
-        raise CellError("--reason must say, in the person's own words, why this ticket may depart from the ADR.")
+        raise CellError("--reason must say, in the person's own words, why this ticket may depart from the ADR.", code="reason-missing")
     record = binding_record(project, root, cell, args.adr)
     if any(item.get("adr") == record["id"] for item in adr.exceptions(cell)):
-        raise CellError(f"An exception to {record['id']} is already recorded for {args.ticket_id}.")
+        raise CellError(f"An exception to {record['id']} is already recorded for {args.ticket_id}.", code="exception-exists")
     cell.setdefault("adr_exceptions", []).append({"adr": record["id"], "digest": record["digest"], "title": adr.bounded(record["title"], 200), "by": name,
                                                   "reason": reason[:2000], "at": now(), "recorded_by": "an agent, on the person's instruction in conversation"})
     conflict = cell.get("adr_conflict")
@@ -2182,14 +2457,14 @@ def cmd_adr_accept(project: Path, args: argparse.Namespace) -> int:
     on its branch. Only on their explicit word; refused inside a supervised execution. Accepting an ADR on the main branch
     is an engineer's own edit and pull request, never this."""
     if adr.unattended():
-        raise CellError(adr.UNATTENDED)
+        raise CellError(adr.UNATTENDED, code="person-only")
     cell = read_cell(project, args.ticket_id)
     root = cell_dir(project, args.ticket_id)
     if cell.get("stage") != "planned":
-        raise CellError(f"A ticket's proposed ADR is accepted after its plan is checked and before it is built; {args.ticket_id} is '{cell.get('stage')}'.")
+        raise CellError(f"A ticket's proposed ADR is accepted after its plan is checked and before it is built; {args.ticket_id} is '{cell.get('stage')}'.", code="wrong-stage")
     name = " ".join((args.by or "").split())
     if len(name) < 2:
-        raise CellError("--by must name the person who accepted it.")
+        raise CellError("--by must name the person who accepted it.", code="person-missing")
     proposed = {item.get("id"): item for item in adr.planned_record(cell).get("proposed") or [] if isinstance(item, dict)}
     view = adr.cell_view(project, load_config(project), root, cell)
     own = adr.by_id(view["own"])
@@ -2197,11 +2472,11 @@ def cmd_adr_accept(project: Path, args: argparse.Namespace) -> int:
     for ident in dict.fromkeys(args.adr):
         record, planned = own.get(ident), proposed.get(ident)
         if planned is None or record is None:
-            raise CellError(f"{ident} is not an ADR this ticket's plan proposes" + (f"; it proposes {', '.join(sorted(proposed))}" if proposed else "") + ".")
+            raise CellError(f"{ident} is not an ADR this ticket's plan proposes" + (f"; it proposes {', '.join(sorted(proposed))}" if proposed else "") + ".", code="adr-not-proposed")
         if record["status"] != "proposed" or record["problems"]:
-            raise CellError(f"{ident} is {record['status'] or 'unreadable'}" + (f" ({'; '.join(record['problems'][:2])})" if record["problems"] else "") + "; only a readable proposed ADR is accepted.")
+            raise CellError(f"{ident} is {record['status'] or 'unreadable'}" + (f" ({'; '.join(record['problems'][:2])})" if record["problems"] else "") + "; only a readable proposed ADR is accepted.", code="adr-not-proposed")
         if record["digest"] != planned.get("digest"):
-            raise CellError(f"{ident} changed after the plan was checked; check the plan again before it is accepted.")
+            raise CellError(f"{ident} changed after the plan was checked; check the plan again before it is accepted.", code="adr-changed")
         targets.append(record)
     work = workdir(project, cell)
     accepted = []
@@ -2209,12 +2484,12 @@ def cmd_adr_accept(project: Path, args: argparse.Namespace) -> int:
         try:
             text = adr.set_status(record["text"], "accepted")
         except adr.ADRError as exc:
-            raise CellError(f"{record['id']}: {exc}")
+            raise CellError(f"{record['id']}: {exc}", code="adr-accept-failed")
         (work / record["file"]).write_text(text, encoding="utf-8")
         message = commit(project, cell, [record["file"]], f"adr({record['id']}): accepted by {name} [{cell['ticket_id']}]", False)
         if not message or message.startswith("warning"):
             raise CellError(f"{record['id']} was set to accepted but not committed on the ticket's branch" + (f": {message}" if message else
-                            " (git.auto_commit is false); commit it on the branch yourself") + ".")
+                            " (git.auto_commit is false); commit it on the branch yourself") + ".", code="adr-not-committed")
         item = {"id": record["id"], "digest": adr.digest(text), "by": name, "note": (args.note or "").strip() or None, "at": now(),
                 "recorded_by": "an agent, on the person's instruction in conversation"}
         cell.setdefault("adr_acceptances", []).append(item)
@@ -2310,11 +2585,11 @@ def cmd_ticket_new(project: Path, args: argparse.Namespace) -> int:
 def cmd_ticket_note(project: Path, args: argparse.Namespace) -> int:
     path = local_ticket_path(project, args.ticket_id)
     if not path.is_file():
-        raise CellError(f"{path} does not exist. This command only updates local Markdown tickets; use the ticket skill for other trackers.")
+        raise CellError(f"{path} does not exist. This command only updates local Markdown tickets; use the ticket skill for other trackers.", code="ticket-missing")
     text = path.read_text(encoding="utf-8")
     match = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
     if not match:
-        raise CellError(f"{path} has no YAML front matter.")
+        raise CellError(f"{path} has no YAML front matter.", code="ticket-unreadable")
     front, rest = match.group(1).splitlines(), text[match.end():]
     changes = []
     if args.state:
@@ -2345,7 +2620,7 @@ def cmd_ticket_note(project: Path, args: argparse.Namespace) -> int:
     if args.comment:
         changes.append(args.comment.strip())
     if not changes:
-        raise CellError("Nothing to record. Pass --state, --label, --remove-label or --comment.")
+        raise CellError("Nothing to record. Pass --state, --label, --remove-label or --comment.", code="nothing-to-record")
     if "## Activity Log" not in rest:
         rest = rest.rstrip("\n") + "\n\n## Activity Log\n"
     entry = "\n".join(f"- {now()} {line}" if i == 0 else f"  {line}" for i, line in enumerate(" ".join(changes).splitlines()))
@@ -2361,7 +2636,7 @@ def cmd_claim(project: Path, args: argparse.Namespace) -> int:
     import claim as claims  # the shared helper beside this script; loaded only for this command
     root = cell_dir(project, args.ticket_id)
     if not (root / "cell.json").is_file():
-        raise CellError(f"No cell for {args.ticket_id}. Run: cell.py open {args.ticket_id}")
+        raise CellError(f"No cell for {args.ticket_id}. Run: cell.py open {args.ticket_id}", code="no-cell")
     if args.step == "plan":
         refuse_without_baseline(project, args.ticket_id)
     holder = args.holder or claims.new_holder()
@@ -2369,11 +2644,11 @@ def cmd_claim(project: Path, args: argparse.Namespace) -> int:
     try:
         result = claims.take(root, args.step, holder, limit)
     except claims.ClaimError as exc:
-        raise CellError(str(exc))
+        raise CellError(str(exc), code="claim-refused")
     except OSError as exc:
-        raise CellError(f"The claim could not be recorded ({exc.__class__.__name__}), so do not start the worker.")
+        raise CellError(f"The claim could not be recorded ({exc.__class__.__name__}), so do not start the worker.", code="claim-failed")
     if result["refused"]:
-        raise CellError(claims.in_words(result["refused"], limit) + " Do not start another worker on it; a person can say to take over.")
+        raise CellError(claims.in_words(result["refused"], limit) + " Do not start another worker on it; a person can say to take over.", code="claim-held")
     print(json.dumps({"ticket_id": args.ticket_id, **claims.shown(result["claim"], limit)}, indent=2))
     return 0
 
@@ -2523,7 +2798,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                          "policy-accept": ("groom", "groom.policy")}.get(args.command, (None, None))
         if station:
             telemetry(project / ".factory" / "worktrees" / args.ticket_id, "gate.evaluated", station, lambda: {
-                "gate": gate, "outcome": "refuse", "reason_code": "refused", "overridden_by_reason": False})
+                "gate": gate, "outcome": "refuse", "reason_code": exc.code or NO_REASON_CODE, "overridden_by_reason": False})
         return 2
 
 
