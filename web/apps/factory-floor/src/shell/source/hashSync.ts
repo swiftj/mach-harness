@@ -33,6 +33,10 @@ export function applyHash(store: SceneStore, h: HashState): void {
     // The address describes the whole view: every member is set (defaults included), so it lands exactly as written.
     if (h.analytics) store.setAnalyticsView(h.analytics);
     store.setWorkspace("analytics");
+  } else if (h.route === "decisions") {
+    // The address describes the whole view: no `adr` is the list.
+    store.setDecision(h.decision);
+    store.setWorkspace("decisions");
   }
   if (h.sel) store.select(h.sel, { focus: floor });
   if (h.theater) store.setTheater(true);
@@ -51,8 +55,9 @@ export interface HashSync {
 /** Start keeping the address written. The address is assumed applied already (applyHash, before the first render). */
 export function createHashSync(store: SceneStore, host: HashHost): HashSync {
   let last = host.getHash();
-  /** The workspace (and Analytics area) of the entry written last: a change pushes a new entry. */
-  const placeOf = (s: SceneStoreState) => (s.workspace === "analytics" ? `analytics|${s.analytics.area}` : s.workspace);
+  /** The workspace (and Analytics area, or the decision open) of the entry written last: a change pushes a new entry. */
+  const placeOf = (s: SceneStoreState) =>
+    s.workspace === "analytics" ? `analytics|${s.analytics.area}` : s.workspace === "decisions" ? `decisions|${s.decision ?? ""}` : s.workspace;
   let place = placeOf(store.getState());
 
   const write = () => {
@@ -62,6 +67,7 @@ export function createHashSync(store: SceneStore, host: HashHost): HashSync {
       sel: s.selection,
       analytics: s.analytics,
       evidence: s.evidence ? { ticket: s.evidence.ticket, check: s.evidence.check } : null,
+      decision: s.decision,
     });
     if (next === last) return;
     last = next;

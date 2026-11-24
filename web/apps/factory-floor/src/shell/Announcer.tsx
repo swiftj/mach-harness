@@ -38,7 +38,9 @@ export function Announcer() {
             ? "Line: stations left to right, a row for each ticket"
             : s.workspace === "analytics"
               ? `Factory Analytics: ${ANALYTICS_AREA_WORDS[s.analytics.area]}`
-              : "Floor: Factory Atlas",
+              : s.workspace === "decisions"
+                ? "Decisions: the architecture decisions in force"
+                : "Floor: Factory Atlas",
         );
       else if (s.workspace === "analytics" && s.analytics.area !== prev.analytics.area) setStatus(`Factory Analytics: ${ANALYTICS_AREA_WORDS[s.analytics.area]}`);
       // One announcement per connection change, never for its counters.

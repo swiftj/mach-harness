@@ -190,7 +190,7 @@ Step 1 removes the three ways work is duplicated or merged untested without anyo
 
 ## 5. Not in this design
 
-- An engineer's page in the browser for architecture decisions. Raised and left open.
+- An engineer's page in the browser for architecture decisions. Raised here and since built on the Factory Floor: the Decisions workspace (key `4`, `#decisions`), described in `docs/BLUEPRINT.md` under "The Factory Floor".
 - Converting existing ADRs from another format, and bringing in several design documents or PDFs at once.
 - Windows and Intel Mac builds.
 

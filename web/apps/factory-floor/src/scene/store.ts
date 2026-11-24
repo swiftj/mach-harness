@@ -36,10 +36,12 @@ import { EVIDENCE_CHECK, EVIDENCE_TICKET } from "../evidence/ids";
 export const PLAYBACK_BASE_RATE = 10;
 /**
  * The workspace on screen: the Line (the default: stations as columns, tickets as rows), the Floor
- * (the isometric Factory Atlas), or Factory Analytics.
+ * (the isometric Factory Atlas), Factory Analytics, or Decisions (the architecture decisions in force).
  */
-export type Workspace = "line" | "floor" | "analytics";
-export const WORKSPACES: readonly Workspace[] = ["line", "floor", "analytics"];
+export type Workspace = "line" | "floor" | "analytics" | "decisions";
+export const WORKSPACES: readonly Workspace[] = ["line", "floor", "analytics", "decisions"];
+/** An architecture decision's ID, as the Decisions workspace names one ("ADR-0007"). */
+export const DECISION_ID = /^ADR-[0-9]{4}$/;
 /** How far the live edge may run ahead of the last thing the stream confirmed (a heartbeat comes every 15 s). */
 export const LIVE_EXTRAPOLATION_MS = 20_000;
 /**
@@ -109,8 +111,10 @@ export interface SceneStoreState {
   readonly hovered: EntityRef | null;
   /** What to highlight: the hovered (or else the selected) entity's dependency set or relations. */
   readonly highlighted: readonly EntityRef[];
-  /** Line, Floor or Analytics. */
+  /** Line, Floor, Analytics or Decisions. */
   readonly workspace: Workspace;
+  /** The architecture decision whose page Decisions shows (its ID), or null for the list. Interface state only. */
+  readonly decision: string | null;
   /**
    * Factory Analytics' interface state (area, period, shared filters, comparison, the metric whose rows
    * are open), kept here so it survives a workspace switch. Interface state only.
@@ -163,6 +167,8 @@ export interface SceneStore {
   setAnalyticsView(patch: AnalyticsViewPatch): void;
   /** Theater Mode on or off. Asking for it while another workspace is up does nothing: it belongs to the Floor. */
   setTheater(on: boolean): void;
+  /** The decision whose page Decisions shows, by ID (null: the list). Anything that is not an ADR ID is ignored. */
+  setDecision(id: string | null): void;
   /** Open the evidence player for a ticket (M6.4), at a check and, in memory only, a file. An id that is not an identifier is refused. */
   openEvidence(ticket: string, options?: { readonly check?: string | null; readonly start?: EvidenceOpen["start"] }): void;
   /** The check the open player shows (written to the address); nothing when the player is closed or the id is not an identifier. */
@@ -258,6 +264,7 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
     hovered: null,
     highlighted: [],
     workspace: options.workspace ?? "line",
+    decision: null,
     analytics: INITIAL_ANALYTICS_VIEW,
     theater: false,
     evidence: null,
@@ -387,6 +394,10 @@ export function createSceneStore(options: SceneStoreOptions): SceneStore {
       if (on && state.workspace !== "floor") return;
       if (on !== state.theater) set({ theater: on });
     },
+    setDecision(id) {
+      if (id !== null && !DECISION_ID.test(id)) return;
+      if (id !== state.decision) set({ decision: id });
+    },
     openEvidence(ticket, opts = {}) {
       if (!EVIDENCE_TICKET.test(ticket)) return;
       const check = opts.check && EVIDENCE_CHECK.test(opts.check) ? opts.check : null;
@@ -514,6 +525,12 @@ export function showInAnalytics(store: SceneStore, target?: AnalyticsTarget | nu
     });
   }
   store.setWorkspace("analytics");
+}
+
+/** "Show in Decisions": to the Decisions workspace, at one decision's page when an ID is given (null: the list), else where it was. */
+export function showDecisions(store: SceneStore, id?: string | null): void {
+  if (id !== undefined) store.setDecision(id);
+  store.setWorkspace("decisions");
 }
 
 /** A view of the store that can be held still: what a hidden workspace reads. */
