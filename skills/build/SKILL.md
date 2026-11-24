@@ -42,9 +42,20 @@ Run `BUILD start <ticket>`. It checks, and refuses with a reason if any fails:
 
 `BUILD revise` brings the branch up to date the same way before the revision starts, and reports `tests_after_merge` if the suite fails only because of what main brought: the revision must make the whole suite pass again. No other step merges. What the merge brought is main's, not yours: the gates judge only what you change after it. Never merge, pull or resolve a conflict yourself; a conflict is a person's (`build.update_from_main: false` switches all of this off).
 
-If it says no test command is known, find the one the plan's Tasks section or the project documents and pass it with `--test-cmd`. Do not invent one. If the tests fail at the start only because the project has no test suite yet, and the audit gate is switched off or this is a hardening ticket, add `--no-baseline "<why>"`; it is recorded for the reviewers. If it says building has already started, the build is being resumed: go to step 3 and continue from `BUILD next`. If it refuses for any other reason, report the reason and stop: do not work around it.
+If it says no test command is known, pass one with `BUILD start <ticket> --test-cmd "<command>"` (see The test command below). If the tests fail at the start only because the project has no test suite yet, and the audit gate is switched off or this is a hardening ticket, add `--no-baseline "<why>"`; it is recorded for the reviewers. If it says building has already started, the build is being resumed: go to step 3 and continue from `BUILD next`. If it refuses for any other reason, report the reason and stop: do not work around it.
 
 If the input has `--revise`, see Revision rounds instead.
+
+### The test command
+
+Every step after the start runs the project's tests, so a build always has a test command, and you may choose it. You never stop, and never report a ticket as stuck, for want of one.
+
+- **When none is known at the start**, the start refuses and records nothing. Pass one with `--test-cmd`: the command the plan's Tasks section or the project documents name, or, when they name none, the one you choose for this project's language and layout.
+- **When the plan's task introduces the build or test tool** (a hardening ticket that installs it), name the command it will use once installed. It need not run yet: the start records that the baseline could not run, and the steps after the tool is installed run it.
+- **When the command recorded turns out wrong** (a red whose output never mentions your test because the runner cannot load the folder, a suite that never reaches the project's tests, a missing command), change it and carry on: `BUILD set-commands <ticket> --test-cmd "<command>" --reason "<why>"`. It works at any time while the cell is building, in a revision round, and while lanes are open or joined. Nothing done is undone: done tasks stay done, uncommitted files stay where they are, and the build carries on from `BUILD next <ticket>`. The station checks again how one test file runs, runs the whole suite once with the new command (not while lanes are open: each lane's next step does), and never reuses a suite run made under the old command.
+- `--lint-cmd "<command>"` sets the lint command the same way, alone or with `--test-cmd`.
+
+The reason must be true and specific: where the command comes from, or what showed the recorded one was wrong. Every change is recorded with the old and the new command, the reason and when, and reported to the reviewers and in the change record.
 
 ### 2. Learn the ground, once
 
@@ -76,7 +87,7 @@ Repeat until `BUILD next <ticket>` says all tasks are done:
 - Name the spec ID each test proves in its docstring or a comment, written exactly as the spec writes it, with its capitals and hyphen: `FR-04`, `INV-01`, `AC-03`. A function name cannot hold a hyphen, so `test_fr04_...` alone does not count. `BUILD red` refuses a test that leaves out an ID the plan gave its task, while the test can still be edited, and `BUILD finish` checks every ID is named.
 - For the decision matrix, write one table-driven test that reads the cases from `decision_matrix.cases` in the cell's `spec.json` content: copy the cases into the test as data, one row per case, keeping each case ID (`R2-3`). Assert the expected outcome with its exact message, and the side effects, including that a refusal changes nothing.
 - For a scenario, follow its Given, When, Then steps with the scenario's own data. Simulate outside services, including the failure the scenario describes. Control the clock; never sleep.
-- Check that the test fails for the right reason: the behavior is missing, not a typo, a broken test command, or an error before your test is reached. `BUILD red` refuses a failure whose output never mentions your test file. If the test command itself is wrong, stop and report a plan defect at this first task; do not carry on with a suite that cannot run.
+- Check that the test fails for the right reason: the behavior is missing, not a typo, a broken test command, or an error before your test is reached. `BUILD red` refuses a failure whose output never mentions your test file. If the test command itself is wrong, give the right one with `BUILD set-commands` (see The test command) and run the step again; your test is kept. Do not carry on with a suite that cannot run.
 
 **If a `[test]` task has nothing left to write** because an earlier task already committed its test, do not pad the file or touch the build state. Check that the committed test really covers what this task names, then complete it with `BUILD red <ticket> <task> --written-early "<which task committed it>"`.
 
@@ -108,32 +119,35 @@ Record the same on the ticket with the ticket skill if it is installed, setting 
 A plan whose author divided its tasks into parts (`### Before the lanes`, `### Lanes`, `### After the lanes`) or marked a task `after Tnn` may be built in lanes: chains of tasks that share no file and no requirement, each built at the same time by its own builder in its own worktree, from the same starting commit. The station decides the lanes from the plan; no builder changes them. `BUILD start` lists them under `lanes`. A plan without the parts or marks is built one task at a time, as above, whatever the settings say.
 
 - The cell's builder does the tasks before the lanes as usual. When `BUILD next <ticket>` answers `LANES`, it stops and reports.
-- The line then starts one builder per lane, all at once, and joins the lanes when every one is done. After the join, `BUILD next <ticket>` carries on in the cell with the tasks after the lanes, any task of a lane the join set aside, and any fix task it added (`J-T01`), then `BUILD finish` as usual.
-- `BUILD join` may add `J-T01 [impl] Make the lanes pass together` when every lane passed its own suite but the joined result does not. Work it like any `[impl]` task with `BUILD green <ticket> J-T01`: every test is committed and frozen, so fix the code, never a test. Its files are every non-test file the lanes changed; if the fix truly needs another file, use `--allow-extra "<why>"` as for any task.
+- The line then starts one builder per lane, all at once, and joins the lanes when every one is done or handed back. After the join, `BUILD next <ticket>` carries on in the cell with the tasks of a lane that was handed back or that the join set aside, the tasks after the lanes, and any fix task the join added (`J-T01`), then `BUILD finish` as usual.
+- `BUILD join` may add `J-T01 [impl] Make the lanes pass together` when the joined result's whole suite does not pass. Work it like any `[impl]` task with `BUILD green <ticket> J-T01`: every test is committed and frozen, so fix the code, never a test. Its files are every non-test file the lanes changed; if the fix truly needs another file, use `--allow-extra "<why>"` as for any task. If a task handed back to the cell already made the suite pass, so that `J-T01` has nothing left to change, complete it with `BUILD green <ticket> J-T01 --already-done "<which task made the suite pass>"`.
 
 ### Building one lane
 
-Your prompt names one lane (`Build lane L2 of MACH ticket <ticket>`). Everything in Rules and step 3 holds, in the lane's own worktree:
+Your prompt names one lane and its holder (`Build lane L2 of MACH ticket <ticket>` and `--holder <holder>`). Everything in Rules and step 3 holds, in the lane's own worktree:
 
-1. Run `BUILD next <ticket> --lane <L>`. It prints the lane's next task and the lane's `workdir`: write only there, never in the cell's own checkout or another lane's.
-2. Complete the task with `BUILD red`, `BUILD green` or `BUILD done` as usual; the station knows the task's lane and works in its worktree and its state.
-3. Repeat until `BUILD next <ticket> --lane <L>` answers `LANE_DONE`. Then report what the station recorded and stop.
+1. Run `BUILD next <ticket> --lane <L> --holder <holder>`. It prints the lane's next task and the lane's `workdir`: write only there, never in the cell's own checkout or another lane's.
+2. Complete the task with `BUILD red <ticket> <task> --holder <holder>`, `BUILD green <ticket> <task> --holder <holder>` or `BUILD done <ticket> <task> --holder <holder>` as usual; the station knows the task's lane and works in its worktree and its state.
+3. Repeat until `BUILD next <ticket> --lane <L> --holder <holder>` answers `LANE_DONE`. Then report what the station recorded and stop.
+
+If a lane command refuses because the lane has been taken over by another holder, or was handed back, stop and report: leave the lane's files as they are. Nothing you completed is lost; the lane's new holder, or the cell, carries on.
 
 In a lane:
 
 - Learn the ground as in step 2, once, for your lane's tasks.
-- Your lane's tests run on the starting commit plus your lane's own work; other lanes' work is not in your worktree. If your code cannot pass without a file another lane owns, that is a **plan defect**: stop and report it. The station refuses any change to a file the plan gives another lane, and no override allows it, `--allow-extra` and `--amend-test` included.
+- Your lane's tests run on the starting commit plus your lane's own work; other lanes' work is not in your worktree. The station refuses any change to a file the plan gives another lane, and no override allows it, `--allow-extra` and `--amend-test` included. If your lane truly cannot finish without such a file, hand its remaining tasks back to the cell: `BUILD hand-back <ticket> --lane <L> --reason "<which file, and why>" --holder <holder>`. Your finished tasks still land at the join, and the rest are built in the cell, one at a time, after it, where every landed file is in reach. Then report it as a **plan defect**, naming the file, and stop.
 - The other gates are the same: test first and seen failing, committed tests frozen, the plan's files only, the whole suite after each `[impl]` task, the secrets scan before each commit.
 - Never run `BUILD lanes-open`, `BUILD join` or `BUILD finish`, and never work a task of another lane. The line opens and joins the lanes; you never judge whether they fit together.
-- If you stop part way, your lane's state stays on disk; the next builder for the lane carries on from `BUILD next <ticket> --lane <L>`.
+- If you stop part way, your lane's state stays on disk; the next builder for the lane carries on from `BUILD next <ticket> --lane <L> --holder <holder>`.
+- The test command is the build's, not the lane's: `BUILD set-commands` (see The test command) changes it for every lane at once, and each lane's next step uses it.
 
 ## Revision rounds
 
 A revision round is never built in lanes: its tasks are done in the cell, one at a time. When review or verification sends a built ticket back, run `BUILD revise <ticket> --findings <file>`. It counts the failed round. A ticket gets three rounds of verification and review in all: two revisions, and the third failure is escalated.
 
-- `REVISING`: read the findings. For each one, add a task with `BUILD add-task <ticket> --kind <kind> --text "<what to fix> (<spec IDs>)" --file <path>`. A finding about wrong behavior gets a `[test]` task that reproduces it first, then an `[impl]` task. Then work the tasks as in step 3 and finish again. Address every finding; do not argue with one in code.
+- `REVISING`: read the findings. If one shows the test command was wrong, change it first with `BUILD set-commands`. For each finding, add a task with `BUILD add-task <ticket> --kind <kind> --text "<what to fix> (<spec IDs>)" --file <path>`. A finding about wrong behavior gets a `[test]` task that reproduces it first, then an `[impl]` task. Then work the tasks as in step 3 and finish again. Address every finding; do not argue with one in code.
 - `ESCALATE`: this was the third failed round. Do not build. Label the ticket `blocked-requires-sme`, set its state to `blocked`, and report to a person with the findings that remain.
 
 ## Stopping early
 
-Stop and report, rather than improvise, when: a gate refuses to start; you find a spec or plan defect; a tool the tests need is missing; or the suite will not go green after three attempts. Say which task you were on and what you observed. The cell keeps its state, so the build resumes from `BUILD next`.
+Stop and report, rather than improvise, when: a gate refuses to start for any reason but a test command; you find a spec or plan defect; a tool the tests need is missing and no task of the plan installs it; or the suite will not go green after three attempts. A missing or wrong test command is never a reason to stop: give the build one (see The test command). Say which task you were on and what you observed. The cell keeps its state, so the build resumes from `BUILD next`.

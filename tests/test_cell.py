@@ -552,6 +552,44 @@ class ReplanTest(Base):
         code, out, _ = self.check()
         self.assertEqual(code, 0, out)
 
+    def test_a_spec_corrected_after_building_started_sets_the_plan_and_build_aside_as_a_replan_does(self):
+        info = self.planned()
+        spec_commit = json.loads((self.cell / "cell.json").read_text())["spec_commit"]
+        tip = self.task_commit()
+        (self.work / "src").mkdir()
+        (self.work / "src/invite.ts").write_text("export const invite = 1;\n")  # written by the builder, not committed
+        spec = Path(info["specs_dir"]) / SPEC_NAME
+        spec.write_text(SPEC.replace("7 days", "14 days"))
+        code, out, err = run("finalize", "LOCAL-001", "--spec", f"specs/slices/{SPEC_NAME}", project=self.project)
+        self.assertEqual(code, 0, err + out)
+        self.assertIn("Building had started under the old spec, so its plan and build are set aside as a re-plan sets them aside", out)
+        self.assertIn("nothing is lost", out)
+        ref = "refs/mach/replan/LOCAL-001/1"
+        self.assertIn(ref, out)
+        cell_state = json.loads((self.cell / "cell.json").read_text())
+        self.assertEqual((cell_state["stage"], cell_state["replans"]), ("spec-ready", 1))
+        kept = self.cell / "plan-history" / "1"
+        self.assertEqual(sorted(path.name for path in kept.iterdir()), ["build-report.json", "build.json", "plan.md", "replan.json"])
+        self.assertFalse((self.cell / "plan.md").exists() or (self.cell / "build.json").exists(), "nothing stale is left for a later build")
+        record = json.loads((kept / "replan.json").read_text())
+        self.assertEqual((record["from_stage"], record["automatic"], record["reason"]), ("building", True, cell.SPEC_CORRECTED))
+        # The branch: the old tip and the uncommitted file are kept under the ref; the branch holds the corrected spec on the old spec commit.
+        saved = git(self.work, "rev-parse", ref).stdout.strip()
+        self.assertEqual(git(self.work, "rev-parse", f"{ref}~1").stdout.strip(), tip)
+        self.assertEqual(record["uncommitted"]["commit"], saved)
+        self.assertEqual(git(self.work, "rev-parse", "HEAD~1").stdout.strip(), spec_commit)
+        self.assertTrue(git(self.work, "log", "-1", "--format=%s").stdout.startswith("spec(SLICE-001): "))
+        self.assertEqual(cell_state["spec_commit"], git(self.work, "rev-parse", "HEAD").stdout.strip(), "spec_commit is the corrected spec, below no task")
+        self.assertIn("14 days", spec.read_text())
+        self.assertEqual(git(self.work, "status", "--porcelain").stdout, "")
+        git(self.work, "checkout", ref, "--", "src/invite.ts")
+        self.assertEqual((self.work / "src/invite.ts").read_text(), "export const invite = 1;\n", "the builder's file comes back")
+        gates = [json.loads(line) for line in (self.cell / "lifecycle.jsonl").read_text().splitlines()]
+        self.assertIn(("plan.replan", "spec-changed"), [(g["data"].get("gate"), g["data"].get("reason_code")) for g in gates if g["type"] == "gate.evaluated"])
+        # Planned again for the corrected spec, as after any re-plan.
+        self.plan_again()
+        self.assertEqual(json.loads((self.cell / "cell.json").read_text())["stage"], "planned")
+
     def test_finalizing_an_unchanged_spec_again_sets_no_plan_aside(self):
         self.planned()
         code, out, err = run("finalize", "LOCAL-001", "--spec", f"specs/slices/{SPEC_NAME}", project=self.project)
