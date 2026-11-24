@@ -1,6 +1,7 @@
 package project
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -776,7 +777,38 @@ func HistoryFacts(s *State) map[string]any {
 		completeness = "partial"
 	}
 	return map[string]any{"completeness": completeness, "partial": s.Partial, "lost": lost, "not_interpreted": notInterpreted,
-		"classes": classes, "gaps": gaps, "not_v3": s.NotV3}
+		"classes": classes, "gaps": gaps, "not_v3": s.NotV3, "lost_ranges": LostRanges(s, maxLostRanges)}
+}
+
+// maxLostRanges: how many of the latest lost ranges the history facts list.
+const maxLostRanges = 20
+
+// LostRanges lists the latest ranges of history that were lost, oldest first, at most n: which
+// source (a partition key: "c:<ticket>:<generation>" a ticket's lifecycle log, "i:..." the intake
+// log, "r:..." the run records, "s:..." an execution's stream), between which record numbers, the
+// gap's reason and class, where in history it sits (at_ms) and when the observer noticed it
+// (noticed_ms). Identifiers, codes, numbers and times only. Conflicts and records not
+// interpreted lose nothing and are not listed.
+func LostRanges(s *State, n int) []map[string]any {
+	out := []map[string]any{}
+	for i := len(s.Gaps) - 1; i >= 0 && len(out) < n; i-- {
+		g := s.Gaps[i]
+		if !g.Lost {
+			continue
+		}
+		var at any
+		if g.At != nil {
+			at = stampMS(g.At)
+		}
+		var noticed any
+		if g.NoticedMS != nil {
+			noticed = *g.NoticedMS
+		}
+		out = append(out, map[string]any{"source_key": g.SourceKey, "from_seq": g.FromSeq, "to_seq": g.ToSeq, "count": g.Count,
+			"reason": g.Reason, "class": g.Class, "at_ms": at, "noticed_ms": noticed, "event_id": g.EventID})
+	}
+	slices.Reverse(out)
+	return out
 }
 
 // HasPrefixAny reports whether v starts with any prefix.

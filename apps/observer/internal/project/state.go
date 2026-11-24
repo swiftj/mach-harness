@@ -874,4 +874,7 @@ type Gap struct {
 	EventID   string `json:"event_id"`
 	Pos       uint64 `json:"pos"`
 	At        *Stamp `json:"at"`
+	// NoticedMS is when the observer noticed it (the gap record's observed_at), Unix ms; nil when
+	// not recorded.
+	NoticedMS *int64 `json:"noticed_ms,omitempty"`
 }

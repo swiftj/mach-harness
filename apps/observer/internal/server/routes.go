@@ -145,6 +145,9 @@ func (s *Server) freshness(now time.Time, in IngestState) map[string]any {
 		if src.Runtime != nil {
 			sources[len(sources)-1]["runtime"] = src.Runtime
 		}
+		if src.Cell != nil {
+			sources[len(sources)-1]["cell"] = src.Cell
+		}
 	}
 	ps := s.opts.Projector.Status()
 	return map[string]any{

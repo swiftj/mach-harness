@@ -2057,8 +2057,12 @@ func (s *State) applyObserver(e *feed.Event, st *Stamp) {
 		}
 		s.GapCounts[d.Reason]++
 		s.GapClasses[class]++
-		s.Gaps = append(s.Gaps, Gap{SourceKey: d.SourceKey, FromSeq: d.FromSeq, ToSeq: d.ToSeq, Reason: d.Reason, Class: class, Lost: lost,
-			Count: d.Count, EventID: e.ID, Pos: e.Pos, At: st})
+		g := Gap{SourceKey: d.SourceKey, FromSeq: d.FromSeq, ToSeq: d.ToSeq, Reason: d.Reason, Class: class, Lost: lost,
+			Count: d.Count, EventID: e.ID, Pos: e.Pos, At: st}
+		if ms, ok := feed.ParseMS(&e.Time.ObservedAt); ok {
+			g.NoticedMS = &ms
+		}
+		s.Gaps = append(s.Gaps, g)
 		if len(s.Gaps) > maxGapsKept {
 			s.Gaps = append([]Gap(nil), s.Gaps[len(s.Gaps)-maxGapsKept:]...)
 		}

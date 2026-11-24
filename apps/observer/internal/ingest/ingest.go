@@ -158,12 +158,28 @@ type SourceStat struct {
 	Blocked    bool   `json:"blocked"`
 	// Archived: a cell's lifecycle log that is gone because cleanup archived the cell (M6.6).
 	Archived bool `json:"archived,omitempty"`
+	// Cell is set for a cell's source only: what its folder under .factory/worktrees/ holds now.
+	Cell *CellFiles `json:"cell,omitempty"`
 	// For execution streams: the Claude Code version, whether its records are read (false only
 	// when some were refused for their shape), and the runtime's state.
 	ClaudeVersion string           `json:"claude_code_version,omitempty"`
 	StreamKnown   *bool            `json:"stream_observations,omitempty"`
 	Unrecognised  map[string]int64 `json:"unrecognised,omitempty"`
 	Runtime       *RuntimeStat     `json:"runtime,omitempty"`
+}
+
+// CellFiles: whether a ticket's folder is there and holds its lifecycle log and cell.json, as the
+// observer last saw them. A folder with cell.json and no lifecycle log is a ticket a station works
+// on whose records are not written: the station's lifecycle helper could not be loaded, or no
+// station has recorded anything yet. Nothing of the files' content is reported.
+type CellFiles struct {
+	Ticket       string `json:"ticket_id"`
+	Folder       bool   `json:"folder"`
+	LifecycleLog bool   `json:"lifecycle_log"`
+	CellJSON     bool   `json:"cell_json"`
+	// FirstSeenMS is when the observer first saw the folder (Unix ms), so a reader can tell a
+	// folder just made from one that has gone without records for a while.
+	FirstSeenMS int64 `json:"first_seen_ms,omitempty"`
 }
 
 // RuntimeStat is what one execution stream says about the runtime that wrote it, and how much of
@@ -1590,6 +1606,12 @@ func (o *Observer) record(started time.Time, factory bool, err error, suppressed
 				src.archived = cellArchived(o.archives, src.ticket)
 			}
 			st.Archived = src.archived
+		}
+		if src.kind == kindCell {
+			st.Cell = &CellFiles{Ticket: src.ticket, Folder: !st.Gone, LifecycleLog: !st.Gone && r.hasSize, CellJSON: !st.Gone && src.cellInfo.Present}
+			if !src.firstSeen.IsZero() {
+				st.Cell.FirstSeenMS = src.firstSeen.UnixMilli()
+			}
 		}
 		switch {
 		case cp.Blocked:
