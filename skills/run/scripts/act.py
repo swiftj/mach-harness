@@ -277,15 +277,16 @@ def unpark(root: Path, ticket: str, line: Callable[[], Any], announce: bool, run
         return False, (f"The Factory still holds {ticket} from earlier ({exc}). {run_skill} factory resume --retry {ticket} lets it run again.")
 
 
-def supervisor_carry_on(make_context: Callable[[], Any]) -> Callable[[], Dict[str, Any]]:
+def supervisor_carry_on(make_context: Callable[[], Any], tickets: Sequence[str] = (), start: bool = True) -> Callable[[], Dict[str, Any]]:
     """The one seam to the Factory's lifecycle: activation.carry_on(ctx) wakes the supervisor, or starts one, for this
-    project. `make_context` builds the activation Context as `factory` does. Where this MACH has no carry_on, nothing starts."""
+    project, and gives it the ticket the person just released. `make_context` builds the activation Context as `factory` does.
+    With `start` false (a decision made outside a Claude Code session) a running supervisor is woken and none is started."""
     def go() -> Dict[str, Any]:
         import activation  # loaded only once a decision is recorded
         carry_on = getattr(activation, "carry_on", None)
         if carry_on is None:
             return {"supervisor": "none", "pid": None, "why_not": "This MACH does not start the Factory supervisor after a decision."}
-        return carry_on(make_context())
+        return carry_on(make_context(), tickets=tuple(tickets), start=start, started_by="decide")
     return go
 
 

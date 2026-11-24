@@ -330,7 +330,7 @@ def running_words(already: Dict[str, Any], took: bool = True) -> str:
 
 def carry_on(ctx: Context, tickets: Sequence[str] = (), start: bool = True, started_by: str = "pull") -> Dict[str, Any]:
     """Wake the live supervisor; with none live, start one tied to this Claude Code session (start=True, from a terminal), or,
-    with start=False (the Factory Floor's process, which has no session), start nothing.
+    with start=False (the browser app's process, which has no session), start nothing.
 
     `tickets`: tickets a person's decision just released (decide do). When the Factory may work here they become the
     supervisor's (give_to_supervisor), even if an engineer dispatched them; otherwise they are left as they are.
@@ -578,7 +578,7 @@ def end_supervisor(ctx: Context) -> Dict[str, Any]:
 
 
 def stop(ctx: Context, args: Any) -> Dict[str, Any]:
-    """The emergency stop, from any session or the Factory Floor: running executions end now, and the Factory is not running
+    """The emergency stop, from any session or the browser app: running executions end now, and the Factory is not running
     afterwards. The authorization stays: the next /mach pull or /mach factory start starts it again, with no other step.
     With --execution, only that execution ends and the supervisor goes on."""
     only = getattr(args, "execution", None)

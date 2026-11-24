@@ -1252,22 +1252,6 @@ def cmd_decide(project: Project, args: argparse.Namespace) -> int:
     return 0
 
 
-def decide_context(project: Project) -> Any:
-    """The Factory's activation context, built as the factory command builds it, for act.py's one call to activation.carry_on."""
-    here = Path(__file__).resolve()
-    import activation
-    import supervisor as supervisor_module
-    problem, line = None, None
-    try:
-        _, line = factory(project)
-    except RunError as exc:
-        problem = str(exc)
-    sup = supervisor_module.Supervisor(project.root, project.config, line, next_step=lambda ticket_id: next_step(project, ticket_id, True),
-                                       audit=project.audit, git=git, run_script=here, workflow=workflow_name(), observe_due=project.observe_status,
-                                       sibling=sibling, notifier=notifier(project))
-    return activation.Context(project.root, project.config, line, sup, git, project.audit, here, workflow_installed(project), problem)
-
-
 def cmd_decide_do(project: Project, args: argparse.Namespace, decide: Any, ticket_id: str, key: str) -> int:
     """One person's decision on one waiting ticket (act.py): only an option `decide` offers for it now, carried out by its
     station; then the ticket is released and the Factory supervisor woken or started. Refused inside a supervised execution
@@ -1289,7 +1273,7 @@ def cmd_decide_do(project: Project, args: argparse.Namespace, decide: Any, ticke
     try:
         result = act.main(ticket_id, key, project.root, report=report, by=by, reason=args.reason, adrs=args.adr, test_cmd=args.test_cmd,
                           answers_file=answers, via=args.via or "terminal", station=act.station_runner(project.root, sibling),
-                          line=lambda: factory(project)[1], carry_on=act.supervisor_carry_on(lambda: decide_context(project)),
+                          line=lambda: factory(project)[1], carry_on=act.supervisor_carry_on(lambda: factory_context(project), tickets=[ticket_id], start=(args.via or "terminal") != "floor"),
                           run_skill=skill("run"))
     except act.ActError as exc:
         raise RunError(str(exc))

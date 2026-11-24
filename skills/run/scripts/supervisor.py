@@ -851,7 +851,7 @@ class Supervisor:
             return 0, ""
 
     def stop_asked(self, since_ns: int) -> bool:
-        """Whether a person stopped the Factory (factory stop, from any session or the Factory Floor) after this supervisor started."""
+        """Whether a person stopped the Factory (factory stop, from any session or the browser app) after this supervisor started."""
         try:
             return self.stop_path.stat().st_mtime_ns > since_ns
         except OSError:
