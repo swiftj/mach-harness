@@ -117,3 +117,14 @@ test("a keydown at the document (no element, no key) is ignored, not thrown", as
     assert.doesNotThrow(() => shellKeyHandler(fakeStore, commands)(ev));
   }
 });
+
+test("unattended runs off reads as a setting, not a fault: MACH works, only the Supervisor is off", () => {
+  const { chip } = notices.noticesFor({ source: "live", connection: null, empty: false, settled: true, notice: null, observer: null, factory: { factoryPresent: true, enabled: false, paused: false } });
+  assert.equal(chip.key, "disabled");
+  assert.equal(chip.chip, "Unattended runs: off");
+  assert.ok(chip.title.startsWith(chip.chip), "the chip's accessible name starts with its visible words");
+  assert.match(chip.body, /^MACH is installed and working: an engineer runs its work by hand/);
+  assert.match(chip.body, /Only the Factory Supervisor, which runs work unattended, is off/);
+  assert.match(chip.body, /outside the Factory Floor, which only reads/);
+  assert.doesNotMatch(`${chip.chip} ${chip.title} ${chip.body}`, /not enabled/i);
+});

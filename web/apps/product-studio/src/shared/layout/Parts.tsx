@@ -31,8 +31,8 @@ interface PartsContext {
 
 const Ctx = createContext<PartsContext | null>(null);
 
-/** How far above the pane's foot a part's act ends on arrival: clear of the "more below" mark, which covers the last 48px. */
-const ACT_CLEAR = 56;
+/** How far above the pane's foot a part's act ends on arrival (the "more below" mark has its own line under the pane). */
+const ACT_CLEAR = 24;
 
 export function Parts({
   label,
@@ -73,7 +73,7 @@ export function Parts({
       const toRow = at.top - box.top - header - 8;
       if (at.bottom <= box.bottom && at.top >= box.top + header) return;
       // The part's own act, when it marks one (`data-part-act`), must be in view too: the row goes to the top, and if
-      // the act is still below the pane's foot, the pane goes on until the act is clear of the "more below" mark there.
+      // the act is still below the pane's foot, the pane goes on until the act is clear of its foot.
       const act = item.querySelector<HTMLElement>("[data-part-act]");
       const actBelow = act ? act.getBoundingClientRect().bottom - box.bottom + ACT_CLEAR : 0;
       const fitAll = Math.max(0, at.bottom - box.bottom + 24);

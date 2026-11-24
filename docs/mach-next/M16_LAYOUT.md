@@ -41,7 +41,7 @@ Size and route  > About this step            ✓ Ideas — ✓ Explore — … �
 
 ### 2.3 Where a screen's acts sit
 
-- **The page's acts are in the context row**: acts that belong to the page as a whole and not to one part's form (Add an idea, Make the case, Back to the conversation, Publish the changes, Mark ready to build, Attach a picture, Accept the drafted answers, Start a slice, Refresh). A screen whose acts are only known inside its body (a Shape step drawn by `IdeaStepFrame`) writes them where it knows them with `ContextActs`; they appear in the row.
+- **The page's acts are in the context row**: acts that belong to the page as a whole and not to one part's form (Add an idea, Make the case, Back to the conversation, Publish the changes, Mark ready to build, Attach a picture, Accept the drafted answers, Save changes on Vision and outcomes, Start a slice, Refresh). A form whose submit is in the row ties it to the form by the form's id; a hint in the body that points to such an act names it by its words. A screen whose acts are only known inside its body (a Shape step drawn by `IdeaStepFrame`) writes them where it knows them with `ContextActs`; they appear in the row.
 - **A part's act stays at the foot of that part**, next to what it submits (Record the verdict, Record the look back on O-1, Settle O-2, Size IDEA-006, Make the drafts). When that part opens on arrival, its pane is brought to it so the act is in view (2.5).
 - The project home is the one list whose act is in the pane: its "Carry on" block is the first thing in it.
 
@@ -73,7 +73,7 @@ Size and route  > About this step            ✓ Ideas — ✓ Explore — … �
 Every box that scrolls on its own says when it has more than it shows, the same quiet way. It follows the pilot's dialog body:
 
 - **A dialog's body and any box inside a pane** (a board, a wide table, the chain of a look back): a 1px hairline in `line` at each edge where more is hidden (top, bottom, left or right), drawn on a border that is otherwise transparent, so nothing moves when it appears. A framed box (a table) takes the stronger `line-strong` on that side.
-- **A pane**, whose bottom edge is the window's own, where a hairline alone is lost: the hairline carries two quiet words at its right, "More below" and a down chevron, in `caption` `ink-subtle` on the pane's own ground. It hangs from a zero-height strip held at the pane's foot, so it takes no room and covers nothing for long; it is gone when the pane reaches its end.
+- **A pane**, whose bottom edge is the window's own, where a hairline alone is lost: the hairline carries two quiet words at its right, "More below" and a down chevron, in `caption` `ink-subtle` on the pane's own ground. It has its own line under the pane's scrolling box, kept for as long as the pane scrolls, so it never covers a line of the pane; at the pane's end the line stays, empty and without its rule, so nothing moves. A pane that fits has no such line.
 - It is never colour alone: the line is a shape and the pane's mark is in words. Nothing animates (reduced motion has nothing to remove). The mark is hidden from assistive technology, which reads the whole pane; the region's name and its tab stop are what a keyboard user meets.
 - A box has the mark only while it has more to show; a box whose content fits has no mark, no region role and no tab stop.
 - One helper decides it for both apps: `useScrollEdges` in `@mach/ui` (`web/packages/ui/src/lib/scroll-edges.ts`).
@@ -137,7 +137,7 @@ All in `web/apps/product-studio/src/shared/layout/`, except where said.
 - `width`: `"wide"` (60rem, the default), `"content"`, `"reading"`, `"column"` (a centred 44rem column) or `"full"`.
 - `header` stays at the top of the pane while the rest scrolls under it, with a rule under it, full width of the pane; it does not rely on the pane's padding. In the page-scroll fallback it is an ordinary first block.
 - `as="aside"` when the narrow pane is complementary to the page.
-- The pane carries `data-pane` and, while it scrolls, `data-more` ("below", "above below", "above" or "end"), and draws the "More below" mark.
+- The pane is a frame (`data-pane-frame`, which holds the ground and the narrow pane's left rule) around the scrolling box. The scrolling box carries `data-pane`, the region's name and, while it scrolls, `data-more` ("below", "above below", "above" or "end"); the "More below" mark is the frame's last line, under the box (2.7).
 
 ### 3.3 `ScrollRegion` and `WorkBoard` (`WorkScreen.tsx`)
 
@@ -322,12 +322,7 @@ Totals: of the 103 screens and states, 54 were taller than twice the window (1,8
 ## 6. What is still not good enough
 
 - **One-column lists leave the right of a 1440 window empty.** The project home, Decisions and the policy packs keep their content to 60rem, so about 340 pixels to the right are empty. By the rule (never a second pane just to fill space) that is right; a person may still read it as unfinished.
-- **The interview of an approved slice** shows only its "cannot be interviewed now" notice in the wide column; the 8.10 columns are kept for every state of the interview.
+- **The interview of an approved slice** shows only its "cannot be interviewed now" notice in the wide column. It is kept: the interview is the guide's guided question screen (8.10) in every state, the column beside the notice is the slice itself, and the notice's act opens the specification, where the approved slice is read as a document.
 - **A request's own text** (Decisions) and a PRD's quoted lines are still bounded boxes that scroll inside the pane. The guide bounds outside free text, and the request suite checks the box, so they keep their own frame; they do not carry the "more below" mark (their frame and the cut text say it).
-- **The "More below" mark covers the last line of a pane** until the pane is within 24 pixels of its end.
-- **On a slice's "From the PRD" page** the act (Accept the drafted answers) is in the context row, away from the checkboxes it depends on, and its hint still says "with the button at the top of the page".
-- **Vision and outcomes keeps "Save changes" in its form**, under the outcomes; with many outcomes it falls below the window (it is disabled until something changes, and in view in every fixture).
 - **The breadcrumb truncates at 1,024** ("Sh…", "Reserve a study room …"), as it did before; the context row carries the item's name.
-- **Each recorded time is a tab stop** (`RelativeTime`), so narrow panes with several times have long keyboard paths. It was so before.
-- **Fixture disagreement, not layout:** the Shape stepper says "No verdict yet" or "Not sized yet" on pages that show a verdict or a route, because the board fixture and the page fixtures are different MACH runs.
-- **The "ready to build" dialog's description** is still MACH's long note.
+- **Each recorded time is a tab stop** (`RelativeTime`), so narrow panes with several times have long keyboard paths. It is kept: the guide asks that a time show its exact moment on keyboard focus as well as on hover (7.16, and the checklist in 11.7), and without the tab stop a keyboard user who does not use a screen reader could not see it.

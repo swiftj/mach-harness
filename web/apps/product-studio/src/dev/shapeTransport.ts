@@ -39,11 +39,14 @@
  *   ?show=from-idea, ?resume=from-idea   a slice made from an idea (slice.show, slice.resume)
  *   ?refuse=<operation>               that Shape operation answers with the engine's real refusal
  *
+ * The board (status.ideas and idea.list) agrees with the page: its row for the idea chosen by ?idea= or ?map-status= is
+ * that run's own row, and a verdict recorded or a route found in fixture mode shows on the row too.
+ *
  * The Shape conversation in fixture mode is the scripted one in features/shape/explore/dev/ (its own parameters are
  * in its header); these routes answer only a client that reaches the host's routes directly.
  */
-import type { EngineRun, TransportResponse } from "@mach/ui/api";
-import { devParam } from "./devState";
+import type { EngineRun, IdeaBoard, IdeaRow, IdeaShow, TransportResponse } from "@mach/ui/api";
+import { devParam, devState } from "./devState";
 import { shapeRuns, type ShapeFixture } from "./shapeFixtures";
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -112,8 +115,11 @@ export function shapeRoute(path: string, method: string, args: Record<string, un
   if (refused) return answer(refused);
   const idea = typeof args.idea_id === "string" ? args.idea_id : "";
   switch (op) {
-    case "idea.list":
-      return answer(named("idea.list", devParam("ideas"), "idea.list.board"));
+    case "idea.list": {
+      const listed = answer(named("idea.list", devParam("ideas"), "idea.list.board"));
+      const json = listed.json as { ok: boolean; data?: unknown };
+      return json.ok ? { ...listed, json: { ...json, data: alignIdeaBoard(json.data) } } : listed;
+    }
     case "idea.faults":
       return answer(named("idea.faults", devParam("faults"), "idea.faults"));
     case "idea.show":
@@ -132,7 +138,7 @@ export function shapeRoute(path: string, method: string, args: Record<string, un
     case "idea.publish":
       return answer(named("idea.publish", devParam("publish-idea"), "idea.publish"));
     case "idea.size":
-      return answer(named("idea.size", devParam("size") ?? (idea === "IDEA-006" ? "one-slice" : null), "idea.size.several-epics"));
+      return remember(idea, answer(named("idea.size", devParam("size") ?? (idea === "IDEA-006" ? "one-slice" : null), "idea.size.several-epics")), (d: { route?: string }) => ({ route: d.route }));
     case "idea.map":
       return answer(named("idea.map", devParam("map"), "idea.map.uncovered"));
     case "idea.map-status":
@@ -162,7 +168,7 @@ export function shapeRoute(path: string, method: string, args: Record<string, un
     }
     case "verdict.record": {
       const decision = args.decision === "no" ? "no" : args.decision === "not-now" ? "not-now" : "go";
-      return answer(named("verdict.record", devParam("verdict") ?? decision, "verdict.record.go"));
+      return remember(idea, answer(named("verdict.record", devParam("verdict") ?? decision, "verdict.record.go")), (d: { verdict?: unknown; stage?: string }) => ({ verdict: d.verdict, stage: d.stage }));
     }
     case "lookback.record": {
       const given = devParam("lookback") ?? (args.assumption !== undefined ? "assumption" : args.result === "too-early" ? "too-early" : null);
@@ -172,6 +178,55 @@ export function shapeRoute(path: string, method: string, args: Record<string, un
       return devParam("resume") === "from-idea" ? answer("slice.resume.from-idea") : null;
   }
   return null;
+}
+
+/** Keeps what an act answered for an idea (a verdict, a route), so the board's row says it too after the page reloads. */
+function remember<D>(idea: string, response: TransportResponse, pick: (data: D) => { stage?: string; verdict?: unknown; route?: string }): TransportResponse {
+  const json = response.json as { ok: boolean; data?: D };
+  if (idea && json.ok && json.data) {
+    const picked = Object.fromEntries(Object.entries(pick(json.data)).filter(([, v]) => v !== undefined));
+    devState.ideaActs.set(idea, { ...devState.ideaActs.get(idea), ...picked });
+  }
+  return response;
+}
+
+/**
+ * The idea row of the idea.show chosen by ?idea= or ?map-status=, or null when none is chosen. The board fixtures and
+ * the page fixtures are different MACH runs, so without this the Shape stepper (which reads the idea's row from the
+ * board) could say "No verdict yet" or "Not sized yet" on a page showing a verdict or a route.
+ */
+function chosenIdeaRow(): IdeaRow | null {
+  const scenario = devParam("idea") ?? devParam("map-status");
+  const name = scenario ? `idea.show.${scenario}` : null;
+  if (!name || !Object.hasOwn(shapeRuns, name)) return null;
+  return (shapeRuns[name as ShapeFixture] as EngineRun<IdeaShow>).data?.idea ?? null;
+}
+
+/**
+ * A board (status.ideas, a refresh's status, idea.list) made to agree with the idea in view: its row for that idea is
+ * the one from the same run as the page's idea.show, and the stages and counts follow. Anything else passes through.
+ */
+export function alignIdeaBoard<T>(board: T): T {
+  const row = chosenIdeaRow();
+  const value = board as Partial<IdeaBoard> | null;
+  if (!value || !Array.isArray(value.ideas)) return board;
+  if (!devState.ideaActs.size && !(row && value.ideas.some((r) => r.idea_id === row.idea_id))) return board;
+  const ideas = value.ideas.map((r) => {
+    const base = row && r.idea_id === row.idea_id ? clone(row) : r;
+    const acts = devState.ideaActs.get(r.idea_id);
+    return acts ? ({ ...base, ...acts } as IdeaRow) : base;
+  });
+  const by_stage = Object.fromEntries(Object.keys(value.by_stage ?? {}).map((stage) => [stage, [] as string[]])) as IdeaBoard["by_stage"];
+  for (const r of ideas) (by_stage[r.stage] ??= []).push(r.idea_id);
+  const counts = Object.fromEntries(Object.entries(by_stage).map(([stage, ids]) => [stage, ids.length])) as IdeaBoard["counts"];
+  return { ...value, ideas, by_stage, counts } as T;
+}
+
+/** A status answer whose board agrees with the idea in view (see `alignIdeaBoard`). */
+export function alignStatusIdeas<T>(status: T): T {
+  const value = status as { ideas?: unknown } | null;
+  if (!value || typeof value !== "object" || !value.ideas) return status;
+  return { ...value, ideas: alignIdeaBoard(value.ideas) } as T;
 }
 
 /** slice.show for a slice made from an idea (?show=from-idea), or null. */

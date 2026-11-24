@@ -104,7 +104,7 @@ export function noticesFor({ source, connection, empty, settled, notice, observe
   }
   const chip: Notice | null =
     factory?.factoryPresent !== false && factory?.enabled === false && source === "live"
-      ? { key: "disabled", chip: "Factory not enabled", tone: "info", title: "The Factory is not enabled on this machine", body: "The observer shows what is recorded, but no Factory Supervisor runs work here. Enabling it is an engineer's decision taken outside the Factory Floor, which has no control to start, pause, schedule or approve anything." }
+      ? { key: "disabled", chip: "Unattended runs: off", tone: "info", title: "Unattended runs: off on this machine", body: "MACH is installed and working: an engineer runs its work by hand, and the Factory Floor shows what is recorded. Only the Factory Supervisor, which runs work unattended, is off, as it is on every machine until an engineer turns it on. That is an engineer's decision, made outside the Factory Floor, which only reads: it cannot start, pause, schedule or approve anything." }
       : factory?.factoryPresent !== false && factory?.paused && source === "live"
         ? { key: "paused", chip: "Factory paused", tone: "info", title: "The Factory is paused on this machine", body: "Recorded work stays as it is until an engineer resumes it, outside the Factory Floor." }
         : null;

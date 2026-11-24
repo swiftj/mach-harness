@@ -200,55 +200,72 @@ export function WorkPane({
   const pad = side && split === "side" ? "6" : "10";
   const ground = surface ?? (side ? "surface" : "canvas");
   const cap = side ? "" : widths[width];
+  // The "more below" mark takes its own line under the scrolling box while the pane scrolls, so it never covers the
+  // pane's last line; a pane that fits has no such line.
+  const scrolls = edges.above || edges.below;
   return (
-    <Tag
-      ref={ref}
-      data-pane={side ? "side" : "main"}
-      data-more={edges.more ? [edges.above && "above", edges.below && "below"].filter(Boolean).join(" ") || "end" : undefined}
-      aria-label={label}
-      // Reachable by keyboard only while it scrolls; otherwise its links and buttons are the stops.
-      tabIndex={edges.more ? 0 : undefined}
+    <div
+      data-pane-frame=""
       className={cn(
-        "relative min-h-0 overflow-y-auto overscroll-contain",
-        "max-[1023px]:overflow-visible [@media(max-height:619px)]:overflow-visible",
+        "flex min-h-0 flex-col max-[1023px]:block [@media(max-height:619px)]:block",
         ground === "surface" ? "bg-surface" : "bg-canvas",
         side && "border-l border-l-line max-[1023px]:border-l-0 max-[1023px]:border-t max-[1023px]:border-t-line",
-        pad === "6" ? "px-6" : "px-10",
-        header ? "pb-6" : "py-6",
       )}
     >
-      {header ? (
-        <div
-          className={cn(
-            "sticky top-0 z-10 mb-6 border-b border-line pb-3 pt-5 max-[1023px]:static [@media(max-height:619px)]:static",
-            pad === "6" ? "-mx-6 px-6" : "-mx-10 px-10",
-            ground === "surface" ? "bg-surface" : "bg-canvas",
-          )}
-        >
-          <div className={cap}>{header}</div>
-        </div>
-      ) : null}
-      <div className={cap}>{children}</div>
-      {edges.below ? <MoreBelow wide={pad === "10"} surface={ground === "surface"} /> : null}
-    </Tag>
+      <Tag
+        ref={ref}
+        data-pane={side ? "side" : "main"}
+        data-more={edges.more ? [edges.above && "above", edges.below && "below"].filter(Boolean).join(" ") || "end" : undefined}
+        aria-label={label}
+        // Reachable by keyboard only while it scrolls; otherwise its links and buttons are the stops.
+        tabIndex={edges.more ? 0 : undefined}
+        className={cn(
+          "relative min-h-0 flex-1 overflow-y-auto overscroll-contain",
+          "max-[1023px]:overflow-visible [@media(max-height:619px)]:overflow-visible",
+          pad === "6" ? "px-6" : "px-10",
+          header ? "pb-6" : "py-6",
+        )}
+      >
+        {header ? (
+          <div
+            className={cn(
+              "sticky top-0 z-10 mb-6 border-b border-line pb-3 pt-5 max-[1023px]:static [@media(max-height:619px)]:static",
+              pad === "6" ? "-mx-6 px-6" : "-mx-10 px-10",
+              ground === "surface" ? "bg-surface" : "bg-canvas",
+            )}
+          >
+            <div className={cap}>{header}</div>
+          </div>
+        ) : null}
+        <div className={cap}>{children}</div>
+      </Tag>
+      {scrolls ? <MoreBelow wide={pad === "10"} shown={edges.below} /> : null}
+    </div>
   );
 }
 
 /**
  * The "more below" mark of a pane. A pane's bottom edge is the window's, where a hairline alone is easy to miss, so
  * the hairline carries two quiet words at its right: a line across the pane's foot, "More below" and a down chevron
- * in `caption` `ink-subtle`. It takes no room (it hangs from a zero-height strip held at the pane's foot), it is gone
- * once the pane is at its end, nothing moves, and it is hidden from assistive technology, which reads the whole pane.
+ * in `caption` `ink-subtle`. It sits on its own line under the pane's scrolling box, kept there for as long as the
+ * pane scrolls, so it never covers a line of the pane and nothing moves when it comes and goes: at the pane's end the
+ * line stays, empty and without its rule. It is hidden from assistive technology, which reads the whole pane.
  */
-function MoreBelow({ wide, surface }: { wide: boolean; surface: boolean }) {
+function MoreBelow({ wide, shown }: { wide: boolean; shown: boolean }) {
   return (
-    <div aria-hidden="true" data-more-below="" className={cn("pointer-events-none sticky bottom-0 z-10 h-0", wide ? "-mx-10" : "-mx-6")}>
-      <div className={cn("absolute inset-x-0 bottom-0 flex justify-end border-t border-line py-0.5 text-caption text-ink-subtle", wide ? "px-10" : "px-6", surface ? "bg-surface" : "bg-canvas")}>
-        <span className="inline-flex items-center gap-1">
-          More below
-          <ChevronDown className="size-3.5" />
-        </span>
-      </div>
+    <div
+      aria-hidden="true"
+      data-more-below={shown ? "" : undefined}
+      className={cn(
+        "flex shrink-0 justify-end border-t py-0.5 text-caption text-ink-subtle max-[1023px]:hidden [@media(max-height:619px)]:hidden",
+        wide ? "px-10" : "px-6",
+        shown ? "border-line" : "border-transparent",
+      )}
+    >
+      <span className={cn("inline-flex items-center gap-1", !shown && "invisible")}>
+        More below
+        <ChevronDown className="size-3.5" />
+      </span>
     </div>
   );
 }
