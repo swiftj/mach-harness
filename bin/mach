@@ -632,8 +632,47 @@ def cmd_install(args: argparse.Namespace) -> int:
         programs, note, records = program_items(root, project, version, args)
         items += programs
     code = apply(project, items, components, version, args, records)
+    worktree_settings(project, args.dry_run)
     print(f"\n{note}" if note else "", end="\n" if note else "")
     return code
+
+
+WORKTREE_SETTING = "extensions.worktreeConfig"
+
+
+def worktree_settings(project: Path, dry: bool) -> None:
+    """Turn on Git's per-worktree settings in the project's repository (git config extensions.worktreeConfig true).
+
+    Every ticket's workspace is a worktree with settings of its own, and Git needs this one setting in the repository
+    before it can make one. Git turns it on itself the first time, but not when Claude Code runs in a sandbox, which
+    protects the repository's Git settings: the installer runs in a person's terminal, so it does it here, once. Only the
+    repository this project is the top of, never one above it; not a bare repository or one with core.worktree set, where
+    Git moves those settings itself. A problem here never fails the install: it is said, with the command to run."""
+    def git(*argv: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *argv], cwd=str(project), capture_output=True, text=True, errors="replace", timeout=60, check=False)
+
+    command = f"git config {WORKTREE_SETTING} true"
+    try:
+        top = git("rev-parse", "--show-toplevel")
+        if top.returncode != 0 or not top.stdout.strip() or Path(top.stdout.strip()).resolve() != project:
+            print(f"  git      not set: {project} is not the top folder of a Git repository. Once it is one, run the installer again "
+                  f"(or: {command}), so a ticket's workspace can be made when Claude Code runs in a sandbox.")
+            return
+        if git("config", "--type=bool", "--get", WORKTREE_SETTING).stdout.strip() == "true":
+            return
+        if git("config", "--type=bool", "--get", "core.bare").stdout.strip() == "true" or git("config", "--get", "core.worktree").stdout.strip():
+            return
+        if dry:
+            print(f"  git      would set {WORKTREE_SETTING} = true (a ticket's workspace needs it)")
+            return
+        done = git("config", WORKTREE_SETTING, "true")
+        if done.returncode == 0:
+            print(f"  git      set {WORKTREE_SETTING} = true (a ticket's workspace needs it; Claude Code's sandbox cannot set it later)")
+        else:
+            said = " ".join((done.stderr or done.stdout).split())[:200]
+            print(f"  git      could not set {WORKTREE_SETTING} ({said}). Run in the project: {command}")
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"  git      could not set {WORKTREE_SETTING} ({exc.__class__.__name__}). Run in the project: {command}")
 
 
 def cmd_scaffold(args: argparse.Namespace) -> int:

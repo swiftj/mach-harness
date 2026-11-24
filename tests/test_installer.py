@@ -58,6 +58,29 @@ class Base(unittest.TestCase):
 
 
 class InstallTest(Base):
+    def test_install_turns_on_the_git_setting_a_workspace_needs(self):
+        """A ticket's workspace needs extensions.worktreeConfig; Claude Code's sandbox cannot set it later, so the installer does."""
+        def setting():
+            return subprocess.run(["git", "config", "--get", "extensions.worktreeConfig"], cwd=str(self.project), capture_output=True, text=True).stdout.strip()
+
+        code, out = self.mach("install")  # not a Git repository yet: said, never a failure
+        self.assertEqual(code, 0, out)
+        self.assertIn("is not the top folder of a Git repository", out)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=str(self.project), check=True)
+        code, out = self.mach("install", "--dry-run")
+        self.assertEqual((code, setting()), (0, ""), out)
+        self.assertIn("would set extensions.worktreeConfig = true", out)
+        code, out = self.mach("install")
+        self.assertEqual((code, setting()), (0, "true"), out)
+        self.assertIn("set extensions.worktreeConfig = true", out)
+        code, out = self.mach("install")
+        self.assertNotIn("extensions.worktreeConfig", out, "already on: nothing to say")
+        inner = self.project / "packages" / "app"  # a folder inside a repository is not that repository's top: left alone
+        inner.mkdir(parents=True)
+        code, out = run("install", "--project", str(inner))
+        self.assertEqual(code, 0, out)
+        self.assertIn("is not the top folder of a Git repository", out)
+
     def test_install_into_an_empty_project(self):
         code, out = self.mach("install")
         self.assertEqual(code, 0, out)

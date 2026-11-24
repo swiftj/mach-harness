@@ -7,6 +7,7 @@ Keep this file current: when a piece below is finished or the plan changes, chan
 ## 1. State
 
 - **Released:** 0.23.2, tag `v0.23.2`, on `main`. Nothing is unmerged.
+- **On the branch `fix/worktree-config`, built 2026-11-24, not merged:** under Claude Code's sandbox a ticket's workspace could not be made until a person ran `git config extensions.worktreeConfig true`, because the sandbox protects the repository's Git settings. The installer now turns it on, and a ticket that still finds it off says the command before anything is made. Tested with a stand-in for the sandbox's refusal, not under the real sandbox.
 - **What 0.23.2 added:** fixes for two faults the owner met in Product Studio's app.
   - *Naming the product* asked for a Project ID, proposed one from the name, and could then refuse its own proposal. The form no longer has the field: MACH makes the ID from the name (`product.project_id_from`), and `project init --id` is optional.
   - *The check of GitHub* was tried once, said only "GitHub could not be reached", was counted as something "not saved", and stayed until a manual refresh. Now a read is tried again (with a budget, so a command stays inside the host's time limit); a failure is named as what it is (no network, GitHub's limit, GitHub not answering, something on the computer blocking the tool, the sign-in, a refusal) with the GitHub tool's own words; it is its own notice (`saved.github_check`, "GitHub not checked" in the top bar) and never counted as unsaved; and the app checks again by itself, backing off from one minute to fifteen.
