@@ -306,6 +306,9 @@ class TakeOverTest(Base):
         self.assertNotIn("holder", step["took_over"])
         self.assertIn("Taken over", step["reason"])
         self.assertEqual(self.saved()["holder"], MINE)
+        # A person's take-over is kept with the cell, so cleanup can tell a person decided something on the ticket (cleanup.archive).
+        kept = [json.loads(line) for line in (self.root / ".factory/worktrees/T-1/takeovers.jsonl").read_text().splitlines()]
+        self.assertEqual([(item["step"], item["from_claim_at"]) for item in kept], [("plan", at)])
 
     def test_without_a_holder_a_new_one_is_made(self):
         self.cell()
@@ -319,6 +322,7 @@ class TakeOverTest(Base):
         step = self.next("T-1", "--holder", MINE, "--take-over")
         self.assertEqual((step["action"], step["claim"]["holder"]), ("plan", MINE))
         self.assertNotIn("took_over", step)
+        self.assertFalse((self.root / ".factory/worktrees/T-1/takeovers.jsonl").exists(), "nothing was taken over")
         self.cell(stage="awaiting-human")
         self.assertEqual(self.next("T-1", "--take-over")["needs"], "human-approval")
 

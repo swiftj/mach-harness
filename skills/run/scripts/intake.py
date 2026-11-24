@@ -918,7 +918,11 @@ class Factory:
         return {"status": "integrated", "commit": landed} if landed else {"status": "merged-unverified"}
 
     def archived(self, record: Dict[str, Any], name: str) -> Dict[str, Any]:
-        """A JSON record from a cleaned-up ticket's archive, such as cell.json: what was landed."""
+        """A JSON record from a cleaned-up ticket's archive, such as cell.json: what was landed. Only for a run record from before
+        record version 2, which names no commit; a newer record names its commits itself (integration), and one whose archive was
+        not kept (`archive` null, cleanup.archive) is never matched to an older life's archive by its file name."""
+        if "archive" in record and not isinstance(record.get("archive"), str):
+            return {}
         relative = record.get("archive") if isinstance(record.get("archive"), str) else f".factory/archive/{record.get('ticket_id')}.tar.gz"
         path = self.root / relative
         try:

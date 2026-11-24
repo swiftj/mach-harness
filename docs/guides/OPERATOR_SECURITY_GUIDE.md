@@ -110,11 +110,12 @@ Open items from the review: none of the three below remain. (corrected: a deeply
 
 ## 8. Evidence retention
 
-- **After a merge, cleanup** writes `.factory/archive/<ticket_id>.tar.gz`: everything in the cell folder except the `repo/` checkout (intent, spec, plan, build and verify records, evidence, review rounds). It checks the archive before deleting anything and never overwrites an earlier one. `--abandon` also saves uncommitted work and a Git bundle of the unmerged branch.
-- `.factory/archive/runs.jsonl` holds one record per finished ticket.
+- **After a merge or an abandon, cleanup** writes `.factory/archive/<ticket_id>.tar.gz` only when `cleanup.archive` says to keep it: `"raised"` (the default) for a ticket a person decided something on (an approval, a send-back, an exception, an escalation, a person's merge, take-over, re-plan or abandon), `"all"` for every ticket, `"none"` for none; `cleanup.py run --keep-archive` or `--no-archive` decides for one ticket. The archive holds everything in the cell folder except the `repo/` checkout (intent, spec, plan, build and verify records, evidence, review rounds). Cleanup checks it before deleting anything and never overwrites or deletes an earlier one. With an archive, `--abandon` also saves uncommitted work and a Git bundle of the unmerged branch into it; with none, the branch, the uncommitted work and MACH's own refs stay in the repository.
+- With no archive kept, the evidence files (screenshots, recordings, logs) are deleted with the cell; the change record in Git still names each with its SHA-256. `records.publish_command`, when set, is given an archive to send elsewhere; it is removed locally only after the command succeeds.
+- `.factory/archive/runs.jsonl` holds one record per finished ticket, whatever the setting.
 - `.factory/release/<id>/` holds readiness snapshots, `run.json`, logs and `exceptions.jsonl`.
 - `.factory/local/` holds authorization, the supervisor's lease and each execution's output. `.factory/local/observer/` holds the observer's redacted index. All are git-ignored.
-- No automatic expiry or deletion of these is described in the code reviewed. Choose a retention period yourself.
+- Nothing expires by itself. `cleanup.py forget <ticket>` or `forget --older-than <days>` lists, and with `--confirm` deletes, a finished ticket's kept refs, its kept branch and its archives; nothing else is deleted for you. Choose a retention period yourself.
 
 ## 9. Logs and privacy
 

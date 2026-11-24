@@ -613,6 +613,27 @@ class MeasureTest(unittest.TestCase):
         found = {t: (s.name if s else None) for t, s, _ in lanes.project_sources(self.project, ["T-1"])}
         self.assertEqual(found, {"T-1": "T-1"})
 
+    def test_finished_tickets_with_no_archive_kept_are_counted_and_said_why(self):
+        self.cell("T-1", two_pair_plan(), report_for(TWO_PAIR_STEPS))
+        archive = self.project / ".factory" / "archive"
+        write_archive(archive / "T-2.tar.gz", "T-2", {"plan.md": one_lane_plan()})
+        (archive / "runs.jsonl").write_text("".join(json.dumps(r) + "\n" for r in (
+            {"ticket_id": "T-2", "archive": ".factory/archive/T-2.tar.gz"}, {"ticket_id": "T-3", "archive": None},
+            {"ticket_id": "T-5", "archive": None}, {"ticket_id": "T-6"})))
+        code, out = self.run_main("measure", "--project", str(self.project))
+        self.assertEqual(code, 0, out)
+        self.assertIn("T-1 (from the cell", out)
+        self.assertIn("T-2 (from the archive", out)
+        self.assertRegex(out, r"T-3\s+not read: finished, and its archive was not kept after cleanup \(cleanup.archive\)")
+        self.assertIn("2 finished ticket(s) could not be read: their archives were not kept after cleanup (cleanup.archive). "
+                      "This covers the open tickets and the finished ones whose archive was kept.", out)
+        self.assertNotIn("T-6", out, "an old record that names no archive and has none is not counted")
+        code, out = self.run_main("measure", "--project", str(self.project), "--json")
+        data = json.loads(out)
+        self.assertEqual((data["not_kept"], sorted(item["ticket"] for item in data["not_read"])), (2, ["T-3", "T-5"]))
+        code, out = self.run_main("measure", "--project", str(self.project), "T-3")
+        self.assertIn("not read: finished, and its archive was not kept", out)
+
     def test_paths_given_directly(self):
         folder = self.cell("T-1", two_pair_plan(), report_for(TWO_PAIR_STEPS))
         archive = self.tmp / "T-2.tar.gz"

@@ -18,6 +18,7 @@ can decide, so the model only makes the judgment calls.
 """
 
 import argparse
+import contextlib
 import copy
 import hashlib
 import json
@@ -28,7 +29,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import validate_slice  # noqa: E402
@@ -50,6 +51,31 @@ def telemetry(*args: Any, **kwargs: Any) -> None:
     """Report what this station has just recorded to the cell's lifecycle log. Never raises."""
     if lifecycle is not None:
         lifecycle.record(*args, **kwargs)
+
+
+try:
+    import fcntl  # the lanes' lock, as the build station takes it; where there is none, a re-plan runs without it, as lanes-open does
+except ImportError:  # pragma: no cover - not POSIX
+    fcntl = None  # type: ignore[assignment]
+
+
+@contextlib.contextmanager
+def lanes_lock(root: Path) -> Iterator[None]:
+    """The build station's lanes' lock (build.py lanes_lock): an exclusive fcntl.flock on <cell>/lanes/.lock. Every write of a lane's
+    lane.json happens under it, so a re-plan that reads the lanes' state, saves their work, removes their worktrees and branches and
+    moves their state files holds it throughout and never races a lane's builder. Nothing to lock when the cell has no lanes."""
+    path = root / "lanes" / ".lock"
+    if not path.parent.is_dir() or path.parent.is_symlink():
+        yield
+        return
+    with open(str(path), "a", encoding="utf-8") as handle:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*$")
 SLICE_FILE_RE = re.compile(r"^SLICE-(\d{3,})-.*\.md$")
@@ -1943,7 +1969,7 @@ def cmd_replan(project: Path, args: argparse.Namespace) -> int:
         raise CellError("This ticket has been through a judging round, and its rounds must stand, so it cannot be re-planned; nothing was changed. "
                         "The build carries on in its current round, answering the judges' findings, and a person can settle the ticket in the "
                         "walkthrough (/mach decide).", code="judged")
-    done = set_aside_build(project, root, cell, reason, stage, "replanned")
+    done = set_aside_build(project, root, cell, reason, stage, "replanned", {"by": "a person"})  # cleanup reads it (cleanup.archive)
     cell["stage"] = "spec-ready"
     write_cell(project, cell)
     told = ["plan: the contract engineer writes a new plan.md and 'cell.py check-plan' checks it.", *done["told"]]
@@ -2194,7 +2220,15 @@ def set_aside_build(project: Path, root: Path, cell: Dict[str, Any], reason: str
     set aside too: each lane's work is kept under refs/mach/replan/<ticket>/<n>-lanes/<L>, its worktree and branch are
     removed, and its state files move to plan-history/<n>/lanes/ (save_lanes, move_lane_files). Used by a re-plan (on a person's
     word) and by finalize when the spec was corrected after building started. The caller sets the stage and writes cell.json.
-    Returns {"number", "keep", "ref", "reset", "branch", "told"}."""
+    The lanes' lock (lanes_lock) is held from reading the lanes' state to moving their state files, so no lane's builder writes
+    its lane.json in between. Returns {"number", "keep", "ref", "reset", "branch", "told"}."""
+    with lanes_lock(root):
+        return set_aside_build_locked(project, root, cell, reason, stage, reason_code, extra)
+
+
+def set_aside_build_locked(project: Path, root: Path, cell: Dict[str, Any], reason: str, stage: Optional[str], reason_code: str,
+                           extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """set_aside_build, with the lanes' lock held."""
     ticket_id = cell["ticket_id"]
     state = build_state(root)
     work = workdir(project, cell)

@@ -36,6 +36,8 @@ import {
   buildSimModel,
   contentRequest,
   fileAccessibleName,
+  fileBanner,
+  notKeptWords,
   findCheck,
   initialSelection,
   keepSelection,
@@ -219,9 +221,11 @@ function PlayerPanel({ open }: { open: EvidenceOpen }) {
             {loaded.words}
           </p>
         ) : model && listedChecks(model).length === 0 ? (
-          <p className="text-body-sm text-ink-muted" data-evidence-empty="">
-            No verification check has been recorded for this ticket yet.
-          </p>
+          model.notKept ? null : (
+            <p className="text-body-sm text-ink-muted" data-evidence-empty="">
+              No verification check has been recorded for this ticket yet.
+            </p>
+          )
         ) : model && current ? (
           <div className="grid min-h-0 gap-3 lg:h-[68vh] lg:grid-cols-[minmax(280px,320px)_minmax(220px,280px)_minmax(0,1fr)]">
             <ChecksColumn model={model} current={current} failedOnly={failedOnly} onFailedOnly={setFailedOnly} onChoose={choose} />
@@ -261,6 +265,7 @@ function Notices({ model, source }: { model: EvidenceModel | null; source: strin
           Simulation. {SIM_CONTENT_NOTE}
         </p>
       ) : null}
+      {model?.notKept ? <NotKeptNote words={notKeptWords(model.notKept)} /> : null}
       {model && (model.readFrom === "archive" || model.readFrom === "both") ? (
         <p className="text-body-sm text-ink-muted" data-evidence-archive="">
           {model.readFrom === "archive" ? ARCHIVE_WORDS : "Some files are read from the ticket's archive, the others from its cell folder; each file says which."}
@@ -272,6 +277,19 @@ function Notices({ model, source }: { model: EvidenceModel | null; source: strin
         </Banner>
       ) : null}
     </>
+  );
+}
+
+/**
+ * The cell was cleaned up and its files were not kept (cleanup.archive): a plain statement, not an error and
+ * not an empty panel (STYLE_GUIDE 8.4, "Nothing to show, nothing to do"). The fact, then the run record's reason.
+ */
+function NotKeptNote({ words }: { words: { readonly title: string; readonly detail: string | null } }) {
+  return (
+    <div className="flex flex-col gap-1 rounded-sm border border-dashed border-line-strong px-3 py-2" data-evidence-not-kept="">
+      <p className="text-body-sm text-ink">{words.title}</p>
+      {words.detail ? <p className="text-body-sm text-ink-muted">{words.detail}</p> : null}
+    </div>
   );
 }
 
@@ -413,7 +431,7 @@ function ViewerColumn({ model, check, file, client }: { model: EvidenceModel; ch
   }
   if (check.mock) return <MockCompare model={model} check={check} file={file} client={client} />;
   const index = check.files.indexOf(file);
-  const banner = INTEGRITY_WORDS[file.integrity].banner;
+  const banner = fileBanner(file);
   return (
     <section aria-label={`Viewer, check ${check.id}, file ${index + 1} of ${check.files.length}`} className="flex min-h-0 flex-col gap-2 rounded-sm border border-line p-3" data-evidence-viewer="">
       {banner ? (
@@ -488,9 +506,9 @@ function MockCompare({ model, check, file, client }: { model: EvidenceModel; che
             </figcaption>
             {f ? (
               <>
-                {INTEGRITY_WORDS[f.integrity].banner ? (
+                {fileBanner(f) ? (
                   <p role="note" className={cn("rounded-sm border px-2 py-1 text-caption", f.integrity === "mismatch" ? "border-factory-fail bg-factory-fail-soft text-ink" : "border-line-strong bg-surface-sunken text-ink")} data-evidence-integrity={f.integrity}>
-                    {INTEGRITY_WORDS[f.integrity].banner}
+                    {fileBanner(f)}
                   </p>
                 ) : null}
                 <div className="flex min-h-0 flex-1 flex-col">

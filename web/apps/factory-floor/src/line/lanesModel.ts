@@ -17,6 +17,7 @@
  */
 import type { CellState } from "../sim";
 import { utcClock } from "../shell/time";
+import { NOT_KEPT_LANES_WORDS, NOT_KEPT_WORDS, notKeptDetail } from "../evidence/notKept";
 import { LINE_STATIONS, type LineRow } from "./model";
 
 const BUILD = LINE_STATIONS.findIndex((s) => s.key === "build");
@@ -144,8 +145,11 @@ export interface LanesGate {
 }
 
 export interface LanesReply {
-  readonly state: "planned" | "open" | "sequential" | "joined" | "unreadable";
-  readonly source: "cell" | "archive" | null;
+  /** "not-kept": the cell folder is gone and cleanup kept no archive of it (cleanup.archive), so the lanes' files are not there to read. */
+  readonly state: "planned" | "open" | "sequential" | "joined" | "unreadable" | "not-kept";
+  readonly source: "cell" | "archive" | "none" | null;
+  /** With state "not-kept": why, in the run record's words (the observer's `not_kept.reason`). Null otherwise. */
+  readonly notKept: { readonly reason: string } | null;
   readonly buildJson: FileRead;
   readonly buildReport: FileRead;
   readonly setting: number | null;
@@ -214,7 +218,9 @@ function fileRead(v: unknown): FileRead {
 export function readLanesReply(raw: unknown): LanesReply | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const d = obj(raw);
-  const state = oneOf(d.state, ["planned", "open", "sequential", "joined", "unreadable"] as const) ?? "unreadable";
+  const state = oneOf(d.state, ["planned", "open", "sequential", "joined", "unreadable", "not-kept"] as const) ?? "unreadable";
+  const nk = d.not_kept && typeof d.not_kept === "object" ? obj(d.not_kept) : null;
+  const notKept = state === "not-kept" ? { reason: typeof nk?.reason === "string" && nk.reason.trim() ? nk.reason.slice(0, 400) : NOT_KEPT_WORDS } : null;
   const lanes: LaneRecord[] = [];
   for (const x of arr(d.lanes)) {
     const l = obj(x);
@@ -279,7 +285,8 @@ export function readLanesReply(raw: unknown): LanesReply | null {
   const r = d.report_timing && typeof d.report_timing === "object" ? obj(d.report_timing) : null;
   return {
     state,
-    source: oneOf(d.source, ["cell", "archive"] as const),
+    source: oneOf(d.source, ["cell", "archive", "none"] as const),
+    notKept,
     buildJson: fileRead(d.build_json),
     buildReport: fileRead(d.build_report),
     setting: whole(d.setting),
@@ -489,6 +496,7 @@ function stoppedJoin(reply: LanesReply): string | null {
 export function laneLine(reply: LanesReply | null, cell: Pick<CellState, "tasks"> | null): LaneLine | null {
   if (!reply || reply.state === "planned" || reply.state === "sequential") return null;
   if (reply.state === "unreadable") return { marker: null, chips: [], moment: { words: "Built in lanes, but its build record could not be read.", tone: "held" } };
+  if (reply.state === "not-kept") return { marker: null, chips: [], moment: null }; // finished; its files were not kept, which the panel says
   const lanes = lanesNow(reply, cell);
   const aside = new Set((reply.join?.setAside ?? []).map((s) => s.lane));
   const done = doneTasks(reply, cell);
@@ -671,7 +679,7 @@ function taskTimes(reply: LanesReply): ReadonlyMap<string, { seconds: number | n
 export function lanesPanel(reply: LanesReply | null, cell: Pick<CellState, "tasks"> | null): LanesPanel | null {
   if (!reply) return null;
   const problems: string[] = [];
-  if (reply.buildJson.read !== "read") problems.push(`The build record (build.json) ${reply.buildJson.read === "absent" ? "is not there" : "could not be read"}${reply.buildJson.why ? `: ${reply.buildJson.why}` : ""}.`);
+  if (reply.buildJson.read !== "read" && reply.state !== "not-kept") problems.push(`The build record (build.json) ${reply.buildJson.read === "absent" ? "is not there" : "could not be read"}${reply.buildJson.why ? `: ${reply.buildJson.why}` : ""}.`);
   const lanes = lanesNow(reply, cell);
   for (const l of lanes) {
     if (l.record.read === "unreadable" || (l.record.read === "absent" && l.done === null)) problems.push(`Lane ${l.lane}'s own record could not be read${l.record.why ? `: ${l.record.why}` : ""}. Its progress is not shown.`);
@@ -805,6 +813,8 @@ function summaryOf(reply: LanesReply, lanes: readonly LaneRecord[]): string {
       return `Planned in ${n}, but too few builders' places were free when they were to open, so the plan is built one task at a time, as without lanes.`;
     case "unreadable":
       return "Built in lanes, but the build record could not be read, so its lanes are not shown.";
+    case "not-kept":
+      return [NOT_KEPT_LANES_WORDS, notKeptDetail(reply.notKept?.reason)].filter(Boolean).join(" ");
     case "open": {
       const underWay = joinUnderWay(reply);
       if (underWay) return `Built in ${n}. ${underWay.summary}`;
@@ -834,7 +844,7 @@ function summaryOf(reply: LanesReply, lanes: readonly LaneRecord[]): string {
 }
 
 function timingOf(reply: LanesReply, lanes: readonly LaneRecord[], times: ReadonlyMap<string, { seconds: number | null }>): PanelTiming | null {
-  if (reply.state === "planned" || reply.state === "sequential" || reply.state === "unreadable") return null;
+  if (reply.state === "planned" || reply.state === "sequential" || reply.state === "unreadable" || reply.state === "not-kept") return null;
   const r = reply.report;
   let wall = r?.wallSeconds ?? null;
   let summed = r?.summedSeconds ?? null;

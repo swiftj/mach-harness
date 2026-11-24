@@ -369,7 +369,8 @@ class Project:
                 except ValueError:
                     continue
                 if isinstance(record, dict) and record.get("ticket_id") == ticket_id:
-                    return f"This ticket is finished: it was {record.get('outcome', 'closed')} and cleaned up ({record.get('archive')})."
+                    return (f"This ticket is finished: it was {record.get('outcome', 'closed')} and cleaned up "
+                            + (f"({record['archive']})." if isinstance(record.get('archive'), str) else "(no archive kept, cleanup.archive)."))
         local = self.root / ".factory" / "tickets" / f"{ticket_id}.md"
         if local.is_file():
             front = re.match(r"^---\n(.*?)\n---", local.read_text(encoding="utf-8"), re.DOTALL)
@@ -434,7 +435,7 @@ def next_step(project: Project, ticket_id: str, headless: bool) -> Dict[str, Any
         slice_id = cell["product"]["slice_id"]
         branch = cell.get("branch") or f"feature/{ticket_id}"
         return step(ticket_id, stage, "stop", landed + f" Put this copy aside: cleanup run {ticket_id} --abandon \"{slice_id} was already shipped from another "
-                    f"Factory\" archives the cell and keeps its branch's commits in the archive (branch.bundle). To keep the branch itself for comparison, "
+                    f"Factory\" removes the cell and keeps its branch's commits (in its archive as branch.bundle, or as the branch where no archive is kept). To keep the branch itself for comparison, "
                     f"copy it first (git branch {branch}-copy {branch}).", needs="landed-elsewhere")
 
     if stage == "interview":
@@ -1151,6 +1152,12 @@ def claim_step(project: Project, found: Dict[str, Any], holder: Optional[str], t
                            f"{before['step']} step at {before['at']}; its claim is this execution's now." if carried_on else
                            f"{found['reason']} Taken over, as a person asked: another worker had been handed the {before['step']} step "
                            f"at {before['at']}; its claim is replaced.")
+        if not carried_on:  # a person's take-over is kept with the cell: cleanup keeps the archive of a ticket a person decided on
+            try:
+                with (root / "takeovers.jsonl").open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps({"step": before.get("step"), "from_claim_at": before.get("at"), "at": C.stamp(C.now())}) + "\n")
+            except (OSError, AttributeError):
+                pass
     if found.get("action") == "plan" and found.get("prompt"):
         found["prompt"] += (f"\nThis step is claimed for holder {holder}: when the skill claims the plan step, pass --holder {holder}.")
     return found

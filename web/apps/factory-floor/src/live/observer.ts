@@ -248,6 +248,22 @@ export interface CellEvidence {
   readonly cursor: string | null;
   /** The observer's own note on what verified evidence is (a catalog string). */
   readonly note: string | null;
+  /** The cell folder is gone and cleanup kept no archive of it (`not_kept`); null when the files are there, or the reply does not say. */
+  readonly notKept?: EvidenceNotKept | null;
+}
+
+/** `not_kept` of `/cells/{ticket}/evidence` (cleanup.archive): why a finished ticket's files are not there to read. */
+export interface EvidenceNotKept {
+  /** The run record's sentence; null when it gives none. */
+  readonly reason: string | null;
+  /** cleanup.archive as cleanup read it; null when the record does not say. */
+  readonly setting: "none" | "raised" | "all" | null;
+  /** "flag" when a person chose for that one cleanup. */
+  readonly chosenBy: "setting" | "flag" | null;
+  /** The codes of what a person decided on the ticket. */
+  readonly raisedToPerson: readonly string[];
+  /** The archive the run record names when that file is gone; null when none was kept. */
+  readonly archive: string | null;
 }
 
 /** Why the content route refused, as its reason codes (`error.reason`), plus what the client itself saw. */
@@ -346,6 +362,23 @@ export function readCellEvidence(data: unknown, ticket: string): CellEvidence {
     settingsSource: settings ? str(settings.source) : null,
     cursor: str(d.cursor),
     note: str(d.note),
+    notKept: readNotKept(d.not_kept),
+  };
+}
+
+const NOT_KEPT_SETTINGS = ["none", "raised", "all"] as const;
+
+/** `not_kept` (cleanup.archive), read tolerantly; null when the reply has none (the files are there, or an observer from before). */
+export function readNotKept(value: unknown): EvidenceNotKept | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const n = obj(value);
+  const setting = typeof n.setting === "string" && (NOT_KEPT_SETTINGS as readonly string[]).includes(n.setting) ? (n.setting as EvidenceNotKept["setting"]) : null;
+  return {
+    reason: typeof n.reason === "string" ? n.reason.slice(0, 400) : null,
+    setting,
+    chosenBy: n.chosen_by === "setting" || n.chosen_by === "flag" ? n.chosen_by : null,
+    raisedToPerson: list(n.raised_to_person).filter((c): c is string => typeof c === "string" && /^[a-z0-9-]{1,40}$/.test(c)),
+    archive: typeof n.archive === "string" ? n.archive.slice(0, 200) : null,
   };
 }
 
