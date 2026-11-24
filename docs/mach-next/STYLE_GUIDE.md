@@ -564,7 +564,7 @@ Grids use fractional columns with `minmax(0, 1fr)` so long IDs and paths wrap in
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────┐
-│ ■□ MACH Factory Floor [Line|Floor|Analytics] │ Run title  WAVE-001  [Live Factory▾] (●Live) … ⓘ ? ☀☾▣ │ ≥48px, wraps
+│ ■□ MACH Factory Floor [Line|Floor|Analytics|Decisions] │ Run title  WAVE-001  [Live Factory▾] (●Live) … ⓘ ? ☀☾▣ │ ≥48px, wraps
 ├──────────────────────────────────────────────────────────────┬───────────────────┤
 │ stage (factory-ground)                                       │ inspector 344px   │
 │                                                              │ (368px ≥1680px)   │
@@ -573,8 +573,8 @@ Grids use fractional columns with `minmax(0, 1fr)` so long IDs and paths wrap in
 
 - A CSS grid with areas `top top / stage inspector`, height `100dvh`, no minimum width (it reflows down to 320 CSS px). Row and column sizes animate over 400ms standard easing.
 - Top bar: minimum 48px, wraps onto further rows rather than clipping; gap 12px (16px from 1100px), padding 4px 12px (16px from 1100px), bottom border `line`, `canvas` background. Order: brand, workspace switch, a 1×20px `line` divider, run identity (shrinks first), source and connection badges, then icon buttons and the theme choice.
-- Inspector: a column at the right, 344px wide, 368px on windows 1680px and wider, left border `line`, `surface`. Below 1280px it is a drawer over the stage: `min(392px, 100vw - 32px)` wide, full width below 640px, `shadow-3`, sliding in from the right over 260ms with the enter curve. It opens when something is selected.
-- Skip link words name the destination: "Skip to the line", "Skip to the factory view", "Skip to the analytics".
+- Inspector: a column at the right, 344px wide, 368px on windows 1680px and wider, left border `line`, `surface`. Below 1280px it is a drawer over the stage: `min(392px, 100vw - 32px)` wide, full width below 640px, `shadow-3`, sliding in from the right over 260ms with the enter curve. It opens when something is selected. The Line and Decisions have none (the Line has its side panel, Decisions its own pages).
+- Skip link words name the destination: "Skip to the line", "Skip to the factory view", "Skip to the analytics", "Skip to the decisions".
 
 ### 4.4 Side panels, sheets and the full record
 
@@ -1143,7 +1143,7 @@ Charts are hand-drawn SVG, read-only, built on these rules:
 
 **Breadcrumb**: see 4.3.
 
-**Workspace switch** (segmented control; Factory Floor's primary navigation): a `fieldset` with a hidden legend "Workspace", radius 5px, 1px `line` border, `surface-sunken`, padding 2px. Segments: 28px tall, radius 3px, padding 0 10px, 6px gap, `body-sm` `ink-muted` (hover `ink`), a 16×14 icon and the word (hidden below 1100px); the chosen segment `surface`, semibold `ink`, `shadow-1`; focus shows a 2px `focus` outline at 1px offset on the segment. Real radio inputs: arrow keys move, the choice is announced. Number keys switch (1, 2, 3), declared with `aria-keyshortcuts`; each segment's title gives its description and key.
+**Workspace switch** (segmented control; Factory Floor's primary navigation): a `fieldset` with a hidden legend "Workspace", radius 5px, 1px `line` border, `surface-sunken`, padding 2px. Segments: 28px tall, radius 3px, padding 0 10px, 6px gap, `body-sm` `ink-muted` (hover `ink`), a 16×14 icon and the word (hidden below 1100px); the chosen segment `surface`, semibold `ink`, `shadow-1`; focus shows a 2px `focus` outline at 1px offset on the segment. Real radio inputs: arrow keys move, the choice is announced. Number keys switch (1, 2, 3, 4: Line, Floor, Analytics, Decisions), declared with `aria-keyshortcuts`; each segment's title gives its description and key.
 
 **Tabs**: a row with 20px gaps and a 1px `line` bottom border. Each tab 40px tall, overlapping the border by 1px, a 2px transparent bottom border, `label` `ink-muted` (hover `ink`, 120ms). The active tab: `accent` bottom border and `ink` text. Focus ring offset −2px (inside). Panels 20px below, focus offset 4px. Arrow keys move between tabs; only the active tab is in the tab order; Tab moves into the panel.
 
@@ -2152,7 +2152,7 @@ The Factory flavour's default workspace: stations as columns, a row for each tic
 
 **Top bar** (minimum 48px, wraps; padding 4px 16px; 16px gaps from 1100px; bottom `line`; `canvas`):
 - The 18px mark and "MACH" `label` `ink` with "Factory Floor" regular `ink-muted`.
-- The workspace switch (`nav` "Workspaces"): Line (chosen: `surface`, semibold, `shadow-1`), Floor, Analytics; keys 1, 2, 3.
+- The workspace switch (`nav` "Workspaces"): Line (chosen: `surface`, semibold, `shadow-1`), Floor, Analytics, Decisions; keys 1, 2, 3, 4.
 - A 1×20px `line` divider.
 - The run's identity: the project's name as `h1` in `body-lg` bold, leading none, truncated (at most 45% of the space), then wave IDs in mono `caption` `ink-subtle`, then "History held from 12 Nov 2026, 14:00:00 UTC" in `caption` `ink-subtle` from 1360px.
 - Badges: the source badge "Live Factory" (live ink and tint, bold, with its glyph and a chevron, opening the source menu); the connection badge "Live" (round, live ink border); the completeness badge only when history is incomplete; the Factory state chip ("Unattended runs: off", info) only when relevant; the places chip ("3 of 4 places working").
@@ -2169,6 +2169,26 @@ The Factory flavour's default workspace: stations as columns, a row for each tic
 **Full record** (Enter on a row or double-click): the large dialog of 8.7, titled "LOCAL-014: the full record".
 
 **States.** Empty live history: the board's single row says "No tickets on the line yet" / "Connected and waiting: each ticket appears here as the Factory records it." Stale: the connection badge reads "Stale since 18:50:00" (warning) and the stage notice says "As last seen" with what that means; nothing moves until the observer answers again.
+
+### 12.3 Factory Floor flavour: Decisions in force
+
+The fourth workspace (`#decisions`, key `4`; code `web/apps/factory-floor/src/decisions`): the project's architecture decisions (ADRs) for an engineer. "Architecture decision" and "ADR" are used as they are; the page is for engineers. It has no inspector.
+
+**Page.** One column on `surface` that scrolls on its own (its keyboard home, `tabindex="-1"`), at most 1120px wide and centred, padding 24px 16px (24px 32px from 900px), 24px between parts. Header: "Decisions in force" in `title-1` (650), the Simulation stamp when the source is the Simulation, and a secondary "Read again" button (32px, 16px `RefreshCw`) at the right; a one-sentence description in `body` `ink-muted`; then, in a `surface-sunken` box with a `line` border, the sentence that it only reads: "This page only reads. A decision is accepted, changed or superseded by a pull request for its ADR file, and a ticket's exception or a proposal's acceptance is recorded with /mach adr in Claude Code." Below each read, the reply's basis in `caption` `ink-subtle` (what was read, and that it is the working tree as on disk, live tickets only).
+
+**Parts of the list**, each a `section` named by its `title-3` heading with a `caption` `ink-subtle` note:
+
+1. **The required baseline.** When a topic is missing, a warning-soft box (`warning-line` border, radius 8px, padding 12px 16px): "Missing: framework, deployment." in `label` `warning-ink`, the sentence "No ticket is planned or built until every required topic is covered by an accepted decision on the main branch. Tickets already planned carry on.", and the command `/mach adr baseline` to copy. When all are covered, one `success-ink` sentence. Then a table (7.19) of Topic (mono 13px), What it decides (MACH's one line per topic, `ink-muted`) and Covered by (each ADR ID a button, or a square-cornered dashed warning pill "Missing").
+2. **Waiting on a person.** A list: each ticket stopped on a decision is a card with a 2px `warning-line` border (heavy: a question for a person), the ticket ID in mono 13px, the stop's title ("The plan cannot follow a decision", "A proposal waits to be accepted", "A decision file cannot be read"), the ADR IDs as buttons, one sentence saying what it means, the recorded reason (contained), and the commands to copy (`/mach decide <ticket>`, `/mach adr except <ticket> <ADR> "<why>"`, `/mach adr accept <ticket> <ADR>`). A ticket's proposal and the proposals in the ADR folder are cards with a 1px dashed `info-line` border (unsettled). With nothing waiting: "Nothing waits on a person about a decision. A ticket that stops on one appears here." in `body-sm` `ink-muted`.
+3. **Every decision.** A table in a bordered box, scrolling sideways in its own focusable region ("Every decision, scrolls sideways when narrow"): ADR (the ID, a button in mono 13px `accent-ink`, underlined), Decision (the title, contained, with the file in mono `caption` `ink-subtle` and "2 problems" in `caption` `danger-ink`), Status (a small pill: accepted `success`, proposed `info` with a dashed border, deprecated, rejected and superseded `neutral` with "Superseded by ADR-0009"; accepted with problems `warning` "Accepted, but binds nothing until its problems are fixed"; a file that cannot be read `danger`, square-cornered, "Cannot be read"; "supersedes ADR-0002" under it in `caption`), Topics. Under it, the folder's problems as a list headed "Problems MACH found in the ADR folder" (`label` `danger-ink`), and `/mach adr list` to copy. No decisions: the inline empty state "No architecture decisions yet" with what an engineer runs.
+
+**One decision** (`#decisions?adr=ADR-0007`; Escape or the back link returns to the list, and focus moves to the heading of what is shown): the back link "Back to every decision" (8.7) with "(Escape)" in `caption`; the ID in mono 13px `ink-muted`; the title as the `title-2` heading (contained); the status pill; facts as a definition list with 140px terms (File, Status, Superseded by, Supersedes, Topics, Applies to, Binds the Factory); "Why it binds nothing" in a danger-soft box when it has problems; "Where it is changed" (the read-only sentence, and `/mach adr accept <ADR>` for a proposal or `/mach adr new "<decision>"` to write the one that supersedes an accepted decision); "The decision as written": the file's text as plain monospaced text (13px, `pre-wrap`) on `surface-sunken` in a bordered box at most 60% of the window tall, scrolling in its own focusable region named "The text of ADR-0007" (never its words), never Markdown, never markup, nothing in it a link; "Tickets planned under it" ("Live tickets only"), each with its stage, when it was planned and an outline badge "under this text" or "under an earlier text" (warning); "Exceptions recorded against it", each a bordered card: the ticket, "decided by a person on 2026-11-18 08:00:00 UTC; recorded by an agent, on the person's instruction in conversation", and "Why:" with the person's words, contained; "Plans that cannot follow it" and "Proposed by a ticket" when there are any.
+
+**Free text.** Titles, the ADR's text, problems that quote a file's header and recorded reasons are people's words: printed only through the shared `UncheckedText`, cut to their limit, labelled once per part ("Titles and problems: free text, not checked for names"), never in a name, a hover, the address or storage. A person is shown by role, never by name.
+
+**States.** Loading: "Reading the decisions" (7.17). The observer cannot be read: the error state with its words and "Try again". An observer from before this page: "This observer does not serve decisions" with what to start instead. No observer at all, outside the Simulation: the page empty state "Nothing real to show here". A record that could not be read is named ("The records of T-11 could not be read, so what they wait on is not shown.").
+
+**Simulation.** The same page over a labelled sample: the Simulation stamp in the header and, in `warning-ink`, "Simulation: these are sample decisions to show the page. No project was read." The sample's tickets are named `SAMPLE-*`.
 
 ---
 
