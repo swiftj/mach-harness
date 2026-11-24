@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:mach:schema:runner-policy:v2",
   "title": "MACH Factory Runner Policy v2",
-  "description": "The machine-local authorization for unattended execution: .factory/local/runner.json. Git-ignored, readable only by its owner, and valid only on the machine and in the folder where an engineer enabled it. Absent, unreadable or invalid means disabled. Project settings may restrict what it grants and can never widen it.",
+  "description": "The machine-local authorization for unattended execution: .factory/local/runner.json. Written by a person's pull the first time it hands work to the supervisor on this machine (enabled_by \"pull\"), or by factory enable, in one step. Git-ignored, readable only by its owner, and valid only on the machine and in the folder where it was written. Absent, unreadable or invalid means disabled; enabled false is a person's factory disable, which a pull never undoes. Project settings may restrict what it grants and can never widen it.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -23,8 +23,7 @@
     "machine",
     "project_root",
     "enabled_by",
-    "enabled_at",
-    "execution_risk_accepted"
+    "enabled_at"
   ],
   "properties": {
     "schema_version": {
@@ -49,7 +48,7 @@
     },
     "allow_merge": {
       "type": "boolean",
-      "description": "False: every execution stops before the merge station. True: the project's own merge settings decide."
+      "description": "False (factory enable --no-merge): every execution stops before the merge station. True, the default: the project's own merge settings decide."
     },
     "persistent": {
       "type": "boolean",
@@ -66,21 +65,17 @@
     "limits": {
       "type": "object",
       "additionalProperties": false,
+      "description": "max_parallel, max_runs_per_day and both budgets are optional: absent or null means no limit of this machine's own (the project's factory.* settings may still set one; for max_parallel the project's own ceiling governs). With no per-run budget, no --max-budget-usd is passed to Claude.",
       "required": [
-        "max_parallel",
         "max_execution_minutes",
-        "max_runs_per_day",
-        "max_budget_usd_per_run",
-        "max_budget_usd_per_day",
         "max_attempts",
         "poll_seconds"
       ],
       "properties": {
         "max_parallel": {
-          "type": "number",
+          "type": ["number", "null"],
           "minimum": 1,
-          "maximum": 8,
-          "default": 2
+          "maximum": 8
         },
         "max_execution_minutes": {
           "type": "number",
@@ -89,22 +84,19 @@
           "default": 120
         },
         "max_runs_per_day": {
-          "type": "number",
+          "type": ["number", "null"],
           "minimum": 1,
-          "maximum": 500,
-          "default": 20
+          "maximum": 500
         },
         "max_budget_usd_per_run": {
-          "type": "number",
+          "type": ["number", "null"],
           "minimum": 1,
-          "maximum": 500,
-          "default": 25
+          "maximum": 500
         },
         "max_budget_usd_per_day": {
-          "type": "number",
+          "type": ["number", "null"],
           "minimum": 1,
-          "maximum": 5000,
-          "default": 100
+          "maximum": 5000
         },
         "max_attempts": {
           "type": "number",
@@ -133,7 +125,7 @@
       "items": {
         "type": "string"
       },
-      "description": "Work that was already here at activation and was left to the engineer."
+      "description": "Slices left to the engineer. Always empty when written now; an older authorization may list work that was here when it was enabled."
     },
     "source_branch": {
       "type": "string"
@@ -152,14 +144,15 @@
       "type": "string"
     },
     "enabled_by": {
-      "type": "string"
+      "type": "string",
+      "description": "\"pull\" when a pull wrote it; otherwise the person who ran factory enable."
     },
     "enabled_at": {
       "type": "string",
       "format": "date-time"
     },
     "execution_risk_accepted": {
-      "description": "A person's acceptance of the execution risk (no operating-system sandbox) for this exact allowed-tool list. Null for observe; required for a mode that starts agents, or the authorization reads as disabled.",
+      "description": "Written by versions before M23: a person's acceptance of the execution risk for one tool list. No longer written or required; a file that has it still reads.",
       "oneOf": [
         {"type": "null"},
         {

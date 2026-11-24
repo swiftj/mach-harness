@@ -39,9 +39,10 @@ and not by whoever is driving it.
     run.py product dispatch <slice>...   open the cells for chosen ready slices (or --ready); starts nothing
     run.py product events [--since N]    the intake ledger's transitions, for a supervisor or a dashboard
     run.py product reconcile [--fetch]   intake and a recorded plan in one locked step; never dispatches
-    run.py pull [--limit n] [--sequential] [--dry-run] [--json]
-                                         take in every slice marked ready, choose the next batch with the schedule and
-                                         dispatch it; prints what starts, what waits and why, and the tickets to run (pull.py)
+    run.py pull [--limit n] [--sequential] [--here] [--dry-run] [--json]
+                                         take in every slice marked ready, choose the next batch with the schedule and hand it
+                                         to the Factory, which carries on in the background (or, with a reason, run it here);
+                                         prints what the Factory took, what waits and why, and "Needs you" (pull.py)
     run.py adr list                      every architecture decision: ID, title, status, applies-to, problems, and a flag where one
                                          serves a technical need at an older revision, or one retired or missing; reads only (adr.py)
     run.py adr new --title T --context C --decision D [--option O]... [--consequence X]... [--applies-to A]... [--diagram M]
@@ -74,9 +75,9 @@ and not by whoever is driving it.
     run.py release show <release-id>     a readiness snapshot, its exceptions and when it was taken
     run.py release except ...            a person's exception for one check at the snapshot's commit; only on their explicit word
     run.py factory status                what is in force on this machine and what the supervisor is doing; changes nothing
-    run.py factory enable ...            preflight and a confirmation code; with --confirm, enable. Never a side effect
-    run.py factory pause | resume | disable | stop
-    run.py factory serve                 the supervisor: ticks until the Factory is disabled here
+    run.py factory start ...             turn the Factory on here and run it in the background until stopped (= factory enable)
+    run.py factory pause | resume | disable | stop     (stop, pause and resume also as run.py stop | pause | resume)
+    run.py factory serve                 the supervisor: ticks until stopped (or, started by a pull, until its session ends)
     run.py factory tick                  one supervisor pass
     run.py notify [status]               whether a waiting ticket is announced to a channel from this machine; changes nothing
     run.py notify set --from-file PATH | --from-env NAME [--label WORDS]
@@ -1782,21 +1783,39 @@ def cmd_product(project: Project, args: argparse.Namespace) -> int:
 
 
 def cmd_pull(project: Project, args: argparse.Namespace) -> int:
-    """Take in what is ready and start the next batch (pull.py): reconcile, choose with the schedule, dispatch. An engineer's
-    command: it reads no machine-local authorization, enables nothing and starts no agent."""
+    """Take in what is ready and hand the batch to the Factory (pull.py, activation.HandOver): reconcile, choose with the schedule,
+    then dispatch with the supervisor as owner and start or wake it detached; or, when a reason applies (--here, the project
+    forbids a supervisor, a person turned the Factory off here, a check fails), dispatch by the engineer's command and run the
+    batch in the conversation. A person's command: never inside a supervised execution."""
     if execution_scope(project) is not None:
         raise RunError("Pulling ready work is an engineer's command, in conversation; a supervised execution does not take in or dispatch work.")
     sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import activation
     import pull
     import schedule
     intake, line = factory(project)
+    ctx = factory_context(project, line)
     try:
         report = pull.pull(args, project.root, config=project.config, line=line, schedule=schedule, claims=claims(), sibling=sibling,
-                           next_step=lambda ticket_id: next_step(project, ticket_id, True), workflow=workflow_name(), run_one=skill("run"))
+                           next_step=lambda ticket_id: next_step(project, ticket_id, True), workflow=workflow_name(), run_one=skill("run"),
+                           hand=activation.HandOver(ctx, here=bool(args.here)), needs_you=lambda: needs_you(project))
     except (pull.PullError, intake.IntakeError) as exc:
         raise RunError(str(exc))
+    except Exception as exc:
+        if exc.__class__.__name__ in ("PolicyError", "ServiceError", "PluginError"):
+            raise RunError(str(exc))
+        raise
     print(json.dumps(report, indent=2, ensure_ascii=False) if args.json else pull.human(report))
     return 0
+
+
+def needs_you(project: Project) -> List[Dict[str, Any]]:
+    """The "Needs you" list: every ticket waiting for a person, with its options, as `decide --json` gives it. Reads only."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import decide
+    report = decide.main([], project.root, config=project.config, next_step=lambda ticket_id: next_step(project, ticket_id, False),
+                         intent_skill=skill("intent"))
+    return list(report.get("tickets") or [])
 
 
 def cmd_release(project: Project, args: argparse.Namespace) -> int:
@@ -2516,6 +2535,25 @@ def workflow_installed(project: Project) -> bool:
     return (SKILL_DIR.parent.parent / "workflows" / "belt.js").is_file()
 
 
+def factory_context(project: Project, line: Any = None, problem: Optional[str] = None) -> Any:
+    """The Factory's context on this machine (activation.Context), as every factory command, `pull` and a recorded decision
+    build it: the project, the intake line (made here when not given), a Supervisor object (no process), and the checks' inputs.
+    Pass it to activation.carry_on(ctx) to start or wake the supervisor."""
+    here = Path(__file__).resolve()
+    sys.path.insert(0, str(here.parent))
+    import activation
+    import supervisor as supervisor_module
+    if line is None and problem is None:
+        _, line = factory(project)
+    sup = supervisor_module.Supervisor(project.root, project.config, line, next_step=lambda ticket_id: next_step(project, ticket_id, True),
+                                       audit=project.audit, git=git, run_script=here, workflow=workflow_name(), observe_due=project.observe_status,
+                                       sibling=sibling, notifier=notifier(project))
+    return activation.Context(project.root, project.config, line, sup, git, project.audit, here, workflow_installed(project), problem)
+
+
+SHORT_FACTORY = {"stop": "stop", "pause": "pause", "resume": "resume"}  # /mach stop, /mach pause, /mach resume
+
+
 def cmd_factory(project: Project, args: argparse.Namespace) -> int:
     """The Factory's lifecycle on this machine. Loaded only for these commands; nothing else touches it."""
     here = Path(__file__).resolve()
@@ -2523,11 +2561,15 @@ def cmd_factory(project: Project, args: argparse.Namespace) -> int:
     import activation
     import executor
     import supervisor as supervisor_module
+    if args.command in SHORT_FACTORY:
+        args.action = SHORT_FACTORY[args.command]
     if args.action == "exec":  # the detached wrapper of one execution; internal
         return executor.wrapper(project.root, args.execution_id)
     if args.action == "wake":  # called by Git hooks; must never fail or print
         supervisor_module.wake(project.root, args.event)
         return 0
+    if args.action in ("enable", "start", "resume", "serve") and execution_scope(project) is not None:
+        raise RunError("Turning the Factory on or carrying it on is a person's command; a supervised execution does not do it.")
     problem, line = None, None
     try:
         _, line = factory(project)
@@ -2535,14 +2577,12 @@ def cmd_factory(project: Project, args: argparse.Namespace) -> int:
         problem = str(exc)
     if line is None and args.action != "status":
         raise RunError(problem or "Product intake is not available.")
-    sup = supervisor_module.Supervisor(project.root, project.config, line, next_step=lambda ticket_id: next_step(project, ticket_id, True),
-                                       audit=project.audit, git=git, run_script=here, workflow=workflow_name(), observe_due=project.observe_status,
-                                       sibling=sibling, notifier=notifier(project))
-    ctx = activation.Context(project.root, project.config, line, sup, git, project.audit, here, workflow_installed(project), problem)
+    ctx = factory_context(project, line, problem)
+    sup = ctx.sup
     try:
         if args.action == "status":
             result = activation.status(ctx)
-        elif args.action == "enable":
+        elif args.action in ("enable", "start"):
             result = activation.enable(ctx, args)
         elif args.action == "pause":
             result = activation.pause(ctx)
@@ -2555,7 +2595,8 @@ def cmd_factory(project: Project, args: argparse.Namespace) -> int:
         elif args.action == "tick":
             result = sup.once()
         else:
-            result = sup.serve(interval=args.interval, max_ticks=args.max_ticks)
+            result = sup.serve(interval=args.interval, max_ticks=args.max_ticks, lifetime=args.lifetime, session_pid=args.session_pid,
+                               started_by=args.started_by)
     except (activation.ActivationError, supervisor_module.SupervisorError) as exc:
         raise RunError(str(exc))
     except Exception as exc:
@@ -2563,7 +2604,7 @@ def cmd_factory(project: Project, args: argparse.Namespace) -> int:
             raise RunError(str(exc))
         raise
     print(json.dumps(result, indent=2, ensure_ascii=False))
-    return 1 if args.action == "enable" and not result.get("ready", True) and not result.get("enabled") else 0
+    return 1 if args.action in ("enable", "start") and not result.get("ready", True) and not result.get("enabled") else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2667,9 +2708,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--since", type=int, default=0, help="only events after this sequence number")
     p.set_defaults(func=cmd_product)
 
-    p = sub.add_parser("pull", help="take in every slice marked ready and dispatch the next batch the schedule allows; starts no agent")
+    p = sub.add_parser("pull", help="take in every slice marked ready and hand the next batch to the Factory, which carries on in the background")
     p.add_argument("--limit", type=int, help="run at most this many at once (never above the settings ceiling)")
     p.add_argument("--sequential", action="store_true", help="one ticket at a time")
+    p.add_argument("--here", action="store_true", help="run this batch in the conversation instead of handing it to the Factory")
     p.add_argument("--dry-run", action="store_true", help="change nothing; print the same schedule")
     p.add_argument("--json", action="store_true", help="the report as JSON, for the run skill")
     p.set_defaults(func=cmd_pull)
@@ -2752,48 +2794,56 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser(sub)  # M14 Factory evals
     bands_parser(sub)  # M15 control bands
 
-    fac = sub.add_parser("factory", help="the Factory on this machine: status, enable, pause, resume, disable").add_subparsers(dest="action", required=True)
+    fac = sub.add_parser("factory", help="the Factory on this machine: status, start, pause, resume, stop, disable").add_subparsers(dest="action", required=True)
     fac.add_parser("status", help="what is in force here; changes nothing").set_defaults(func=cmd_factory)
-    p = fac.add_parser("enable", help="preflight and a confirmation code; with --confirm, enable")
-    p.add_argument("--autonomy", choices=("observe", "supervised"), default="observe")
-    p.add_argument("--confirm", metavar="CODE", help="the code the first enable printed, after a person has agreed")
-    p.add_argument("--accept-execution-risk", action="store_true",
-                   help="with --confirm, for a mode that starts agents: the person has read the execution risk (no sandbox) and accepts it")
-    p.add_argument("--max-parallel", type=int)
-    p.add_argument("--max-minutes", type=int, help="stop one execution after this many minutes")
-    p.add_argument("--max-runs-per-day", type=int)
-    p.add_argument("--budget-per-run", type=float, help="spending limit for one execution, in US dollars")
-    p.add_argument("--budget-per-day", type=float)
-    p.add_argument("--max-attempts", type=int)
-    p.add_argument("--poll-seconds", type=int)
-    p.add_argument("--max-risk", choices=("Low", "Medium", "High"), help="tickets above this risk tier wait for a person")
-    p.add_argument("--allow-merge", action="store_true", help="let unattended runs reach the merge station (the project's merge settings still apply)")
-    p.add_argument("--allow-tool", action="append", metavar="TOOL", help="one more tool an execution may use, such as 'Bash(make test)'")
-    p.add_argument("--auto-sync", action="store_true", help="fetch from the shared repository on a timer")
-    p.add_argument("--hooks", action="store_true", help="add advisory wake-up notes to this repository's Git hooks")
-    p.add_argument("--persistent", action="store_true", help="install a per-user service that runs the supervisor without a Claude session (macOS)")
-    p.add_argument("--monitoring-requests", action="store_true",
-                   help="supervised only: also groom and build issues the project's monitoring accounts filed (only on the engineer's explicit request)")
-    backlog = p.add_mutually_exclusive_group()
-    backlog.add_argument("--include-backlog", action="store_true", help="automatic execution includes work that was already here")
-    backlog.add_argument("--exclude-backlog", action="store_true", help="work that was already here is left to the engineer")
-    p.set_defaults(func=cmd_factory)
+    for name, text in (("start", "turn the Factory on here and run it in the background until stopped, in one step; again to change a setting"),
+                       ("enable", "the same as factory start")):
+        p = fac.add_parser(name, help=text)
+        p.add_argument("--autonomy", choices=("observe", "supervised"), help="supervised (default) runs work; observe only takes in and plans")
+        p.add_argument("--max-parallel", type=int, help="at most this many cells at once here (default: the project's own ceiling)")
+        p.add_argument("--max-minutes", type=int, help="stop one execution after this many minutes")
+        p.add_argument("--max-runs-per-day", type=int, help="at most this many executions in 24 hours (default: no limit)")
+        p.add_argument("--budget-per-run", type=float, help="spending limit for one execution, in US dollars (default: no limit)")
+        p.add_argument("--budget-per-day", type=float, help="spending limit for 24 hours, in US dollars (default: no limit)")
+        p.add_argument("--max-attempts", type=int)
+        p.add_argument("--poll-seconds", type=int)
+        p.add_argument("--max-risk", choices=("Low", "Medium", "High"), help="tickets above this risk tier wait for a person")
+        p.add_argument("--no-merge", action="store_true", help="never merge unattended here: every ticket stops before the merge station for a person")
+        p.add_argument("--allow-tool", action="append", metavar="TOOL", help="one more tool an execution may use, such as 'Bash(make test)'")
+        p.add_argument("--auto-sync", action="store_true", help="fetch from the shared repository on a timer")
+        p.add_argument("--hooks", action="store_true", help="add advisory wake-up notes to this repository's Git hooks")
+        p.add_argument("--persistent", action="store_true", help="install a per-user service that keeps the supervisor running across restarts (macOS)")
+        p.add_argument("--monitoring-requests", action="store_true",
+                       help="supervised only: also groom and build issues the project's monitoring accounts filed (only on the engineer's explicit request)")
+        p.set_defaults(func=cmd_factory)
     fac.add_parser("pause", help="dispatch and start nothing new").set_defaults(func=cmd_factory)
-    p = fac.add_parser("resume", help="check readiness again, then continue")
+    p = fac.add_parser("resume", help="check readiness again, then carry on: the supervisor is started or woken")
     p.add_argument("--retry", action="append", metavar="TICKET", help="a ticket waiting for a person that may be run again")
     p.add_argument("--retry-all", action="store_true")
     p.set_defaults(func=cmd_factory)
-    p = fac.add_parser("disable", help="revoke automatic execution on this machine")
+    p = fac.add_parser("disable", help="revoke automatic execution on this machine; it stays off until enabled again")
     p.add_argument("--stop", action="store_true", help="also stop executions that are running now")
     p.set_defaults(func=cmd_factory)
-    p = fac.add_parser("stop", help="emergency stop: end running executions now, and pause")
-    p.add_argument("--execution", help="only this execution")
+    p = fac.add_parser("stop", help="stop: end running executions now, and the supervisor; pull or start starts it again")
+    p.add_argument("--execution", help="only this execution; the supervisor goes on")
     p.set_defaults(func=cmd_factory)
     fac.add_parser("tick", help="one supervisor pass").set_defaults(func=cmd_factory)
-    p = fac.add_parser("serve", help="run the supervisor until the Factory is disabled here")
+    p = fac.add_parser("serve", help="run the supervisor until stopped, the Factory is disabled here, or (lifetime session) its session ends")
     p.add_argument("--interval", type=int, help="seconds between passes (default: the policy's poll_seconds)")
+    p.add_argument("--lifetime", choices=("session", "background"), default="background", help=argparse.SUPPRESS)
+    p.add_argument("--session-pid", type=int, help=argparse.SUPPRESS)
+    p.add_argument("--started-by", help=argparse.SUPPRESS)
     p.add_argument("--max-ticks", type=int, help=argparse.SUPPRESS)
     p.set_defaults(func=cmd_factory)
+    # Short forms (M23 2.4): /mach stop, /mach pause, /mach resume are factory stop, pause and resume.
+    p = sub.add_parser("stop", help="the same as factory stop: end running executions now, and the supervisor")
+    p.add_argument("--execution", help="only this execution")
+    p.set_defaults(func=cmd_factory, action="stop")
+    sub.add_parser("pause", help="the same as factory pause").set_defaults(func=cmd_factory, action="pause")
+    p = sub.add_parser("resume", help="the same as factory resume: check readiness again, then carry on")
+    p.add_argument("--retry", action="append", metavar="TICKET", help="a ticket waiting for a person that may be run again")
+    p.add_argument("--retry-all", action="store_true")
+    p.set_defaults(func=cmd_factory, action="resume")
     p = fac.add_parser("exec", help=argparse.SUPPRESS)
     p.add_argument("execution_id")
     p.set_defaults(func=cmd_factory)

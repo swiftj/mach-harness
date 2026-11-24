@@ -58,6 +58,7 @@ LEASE_SECONDS = 180
 # day has less than this left, the daily budget is reported as reached.
 MIN_RUN_BUDGET_USD = float(policy_module.LIMITS["max_budget_usd_per_run"][1])
 SUPERVISOR = "supervisor"
+UNSET = object()  # start() works out the run's spending limit itself
 QUIET_NEEDS = (None, "nothing", "worker-in-cell")  # stops nobody has to act on: no message
 
 
@@ -92,6 +93,11 @@ def pid_alive(pid: Any) -> bool:
     return True
 
 
+def process_alive(pid: Any) -> bool:
+    """Whether the Claude Code session's process still exists. Replaced in tests."""
+    return pid_alive(pid)
+
+
 class Lease:
     """Ownership of one project by one supervisor process on this machine.
 
@@ -105,6 +111,11 @@ class Lease:
         self.path = policy_module.local_dir(root) / "supervisor.json"
         self.runner_id = runner_id
         self.instance = uuid.uuid4().hex
+        # M23 2.4: "session" (tied to the Claude Code process session_pid; ends with it) or "background" (runs until stopped);
+        # None for a single pass (factory tick). started_by: "pull", "factory start", "resume", "decide", or another caller's word.
+        self.lifetime: Optional[str] = None
+        self.session_pid: Optional[int] = None
+        self.started_by: Optional[str] = None
 
     def read(self) -> Optional[Dict[str, Any]]:
         try:
@@ -123,6 +134,14 @@ class Lease:
         if not expires or now() > expires:
             return False
         return data.get("host") != platform.node() or pid_alive(data.get("pid"))
+
+    def running(self) -> Optional[Dict[str, Any]]:
+        """The live supervisor here, as `already_running` says it: {"lifetime", "since", "pid", "started_by"}; None when none is live."""
+        data = self.read()
+        if not self.live(data):
+            return None
+        return {"lifetime": data.get("lifetime") or "background", "since": data.get("started_at"), "pid": data.get("pid"),
+                "started_by": data.get("started_by")}
 
     def holder(self) -> Optional[str]:
         """A description of another live owner, or None."""
@@ -148,7 +167,8 @@ class Lease:
         policy_module.write_private(self.path, json.dumps({
             "instance": self.instance, "runner_id": self.runner_id, "pid": os.getpid(), "host": platform.node(),
             "started_at": started or current.get("started_at") or stamp(), "heartbeat_at": stamp(),
-            "expires_at": stamp(now() + timedelta(seconds=seconds))}, indent=2, sort_keys=True) + "\n")
+            "expires_at": stamp(now() + timedelta(seconds=seconds)),
+            "lifetime": self.lifetime, "session_pid": self.session_pid, "started_by": self.started_by}, indent=2, sort_keys=True) + "\n")
 
     def owned(self) -> bool:
         data = self.read()
@@ -187,6 +207,8 @@ class Supervisor:
         self.workflow = workflow
         self.lease = Lease(root, policy_module.read(root).get("runner_id"))
         self.wake_path = policy_module.local_dir(root) / "wake"
+        self.stop_path = policy_module.local_dir(root) / "stop"  # written by factory stop: the running supervisor ends
+        self.lifetime_path = policy_module.local_dir(root) / "lifetime.json"  # written by factory start: become a background one
 
     # ---- policy ----
 
@@ -199,10 +221,15 @@ class Supervisor:
         project's setting and this machine's policy. Every plan the factory commands show or act on is made
         after this, so what they report as free is what the supervisor may actually use. Returns both sources."""
         project = self.line.max_parallel
-        machine = int(pol["limits"]["max_parallel"]) if pol.get("source") == "local-file" else None
+        machine = policy_module.limit(pol, "max_parallel") if pol.get("source") == "local-file" else None
+        machine = int(machine) if machine is not None else None
         if machine is not None:
             self.line.max_parallel = min(self.line.max_parallel, machine)
         return {"project": project, "machine_policy": machine, "in_force": self.line.max_parallel}
+
+    def places(self) -> int:
+        """Cells at once in force here (after cap): the project's ceiling, or this machine's lower limit if a person set one."""
+        return int(self.line.max_parallel)
 
     def attach(self, pol: Dict[str, Any]) -> None:
         """Mark everything the ledger records from here on as this supervisor's doing."""
@@ -343,6 +370,11 @@ class Supervisor:
                     record["instance"] = self.lease.instance
                     self.line.emit(ledger, "recovery.started", ticket_id=record["ticket_id"], slice_id=record.get("slice_id"), execution_id=execution_id, kind="still-running")
                     report["recovered"].append({"execution_id": execution_id, "ticket_id": record["ticket_id"], "found": "still running"})
+            elif (executor.folder(self.root, execution_id) / executor.SESSION_MARK).exists():
+                # Stopped because its session ended, and its wrapper went with it before writing a result: the same pause.
+                self.line.emit(ledger, "recovery.started", ticket_id=record["ticket_id"], slice_id=record.get("slice_id"), execution_id=execution_id, kind="session-ended")
+                self.finish(ledger, pol, record, {**facts, "how": executor.SESSION_ENDED, "ended_at": facts.get("ended_at") or stamp()}, known=True)
+                report["recovered"].append({"execution_id": execution_id, "ticket_id": record["ticket_id"], "found": "paused when its session ended"})
             elif record["state"] == "claimed" and not facts["started"] and not record.get("wrapper_pid"):
                 # Reserved, never launched: nothing ran, so nothing is uncertain. Give the place back.
                 record.update({"state": "released", "ended_at": stamp()})
@@ -368,6 +400,21 @@ class Supervisor:
                        "build_at_end": build_at_end})
         common = {"ticket_id": ticket, "slice_id": record.get("slice_id"), "execution_id": record["execution_id"],
                   "refs": {"cell": f".factory/worktrees/{ticket}/cell.json", "execution": f".factory/local/executions/{record['execution_id']}/"}}
+        if known and facts.get("how") == executor.SESSION_ENDED:
+            # The Claude Code session the supervisor belonged to ended, so the work paused. Nothing is parked and no attempt is
+            # counted: the next pull carries the ticket on from the stage its records show. Merge and cleanup reach beyond the
+            # cell, so one of those cut short still goes to a person, as for any lost run.
+            record["state"] = "finished"
+            if record.get("action_at_start") in NEVER_RETRIED and not moved:
+                self.line.emit(ledger, "execution.failed", stage=step.get("stage"), next=step.get("action"), how=record["how"], claude_error=None,
+                               exit_code=record["exit_code"], attempt=None, session_id=record["session_id"], **common)
+                self.park(ledger, ticket, f"The {record.get('action_at_start')} station was running when the Claude Code session ended, and what it did is "
+                          "not known. It is never retried automatically.", common, code="outcome-unknown")
+                return
+            self.line.emit(ledger, "execution.completed", stage=step.get("stage"), next=step.get("action"), waiting_for=step.get("needs"),
+                           how=record["how"], exit_code=record["exit_code"], seen_to_end=False, cost_usd=record["cost_usd"], session_id=record["session_id"],
+                           refused_tools=record["refused_tools"], paused_because="the Claude Code session ended", **common)
+            return
         stuck = None if (build_at_end or {}).get("tasks_completed") else self.not_progressing(supervisor, record, facts, known)
         if stuck:
             # A deterministic stop: running the same work again would stop in the same place. A person decides.
@@ -530,22 +577,27 @@ class Supervisor:
         return self.allowance(ledger, pol)[1]
 
     def allowance(self, ledger: Dict[str, Any], pol: Dict[str, Any]) -> Tuple[Optional[float], Optional[str]]:
-        """The spending limit the next execution may be given, or why none may start in this 24 hours.
+        """The spending limit the next execution may be given (None: no limit), or why none may start in this 24 hours.
 
-        The limit is the per-run limit, cut down to what the day has left. What the day has left is the
-        per-day limit less what executions in the last 24 hours have cost, where an execution still
-        running (or one whose cost was never reported) counts at the whole limit it was given: Claude Code
-        stops it there, so that is the most it can still cost. Executions started in one pass therefore
-        never add up to more than the day. Below MIN_RUN_BUDGET_USD, the lowest per-run limit a person can
-        set, nothing is started: a run with less could not do a station's work."""
-        limits = pol["limits"]
+        Each limit is optional: absent means no limit, unless the project's settings set one (policy.effective).
+        The run's limit is the per-run limit, cut down to what the day has left; with a daily limit and no per-run
+        one, it is what the day has left. What the day has left is the per-day limit less what executions in the
+        last 24 hours have cost, where an execution still running (or one whose cost was never reported) counts at
+        the whole limit it was given: Claude Code stops it there, so that is the most it can still cost. Executions
+        started in one pass therefore never add up to more than the day. Below MIN_RUN_BUDGET_USD, the lowest
+        per-run limit a person can set, nothing is started: a run with less could not do a station's work."""
+        runs = policy_module.limit(pol, "max_runs_per_day")
+        day = policy_module.limit(pol, "max_budget_usd_per_day")
+        per_run = policy_module.limit(pol, "max_budget_usd_per_run")
         since = now() - timedelta(hours=24)
         executions = list(ledger["supervisor"]["executions"].values())
         recent = [record for record in executions if record.get("started_at") and (parse(record.get("started_at")) or since) > since]
         counted = recent + [record for record in executions if record.get("state") in LIVE and not any(record is other for other in recent)]
-        if len(recent) >= limits["max_runs_per_day"]:
-            return None, f"the limit of {limits['max_runs_per_day']} executions in 24 hours is reached"
-        day, per_run = float(limits["max_budget_usd_per_day"]), float(limits["max_budget_usd_per_run"])
+        if runs is not None and len(recent) >= runs:
+            return None, f"the limit of {runs:g} executions in 24 hours is reached"
+        if day is None:
+            return per_run, None
+        day = float(day)
         spent = committed = 0.0
         for record in counted:
             reported = record.get("cost_usd")
@@ -553,12 +605,15 @@ class Supervisor:
                 spent += max(float(reported), 0.0)
                 continue
             given = record.get("budget_usd")  # still running, or its cost was never reported: the most it can cost
-            committed += float(given) if isinstance(given, (int, float)) and not isinstance(given, bool) and given > 0 else per_run
+            if isinstance(given, (int, float)) and not isinstance(given, bool) and given > 0:
+                committed += float(given)
+            elif per_run is not None:
+                committed += float(per_run)
         left = math.floor((day - spent - committed) * 100 + 1e-6) / 100  # whole cents, rounded down
         if left < MIN_RUN_BUDGET_USD:
             held = f"${spent:.2f} spent" + (f", ${committed:.2f} committed to executions still running or of unknown cost" if committed else "")
             return None, f"the limit of ${day:g} in 24 hours is reached ({held}; a run is not started with less than ${MIN_RUN_BUDGET_USD:g})"
-        return (limits["max_budget_usd_per_run"] if per_run <= left else left), None
+        return (per_run if per_run is not None and float(per_run) <= left else left), None
 
     def schedule(self, ledger: Dict[str, Any], pol: Dict[str, Any], plan: Dict[str, Any], report: Dict[str, Any]) -> None:
         intake = type(self.line)
@@ -604,8 +659,8 @@ class Supervisor:
                 reason = "waiting for a person: " + supervisor["parked"][ticket]["reason"]
             elif by_ticket.get(ticket, {}).get("needs_person"):
                 reason = "the plan says a person is needed"
-            elif len(live) >= pol["limits"]["max_parallel"]:
-                reason = f"all {pol['limits']['max_parallel']} place(s) are in use"
+            elif len(live) >= self.places():
+                reason = f"all {self.places()} place(s) are in use"
             elif self.risk_of(ticket) and RISKS.index(self.risk_of(ticket)) > RISKS.index(pol["max_risk"]):
                 reason = f"its risk tier is {self.risk_of(ticket)}, above the {pol['max_risk']} this machine allows unattended"
                 self.park(ledger, ticket, f"Its risk tier ({self.risk_of(ticket)}) is above what this machine runs unattended ({pol['max_risk']}).", {"ticket_id": ticket, "slice_id": slice_id},
@@ -680,8 +735,8 @@ class Supervisor:
                     self.park(ledger, ticket, f"Headless grooming stopped for a person: {why}", common, code="grooming")
                 report["held"].append({"ticket_id": ticket, "why": why})
                 return
-            if len(live()) >= pol["limits"]["max_parallel"]:
-                report["held"].append({"ticket_id": ticket, "why": f"all {pol['limits']['max_parallel']} place(s) are in use"})
+            if len(live()) >= self.places():
+                report["held"].append({"ticket_id": ticket, "why": f"all {self.places()} place(s) are in use"})
                 return
             beside = self.held_beside(ticket, live())
             if beside:
@@ -696,7 +751,7 @@ class Supervisor:
 
         for entry in sorted((item for item in entries.values() if item.get("state") in ("grooming", "building")), key=station.order):
             advance(entry)
-        for ticket in station.select(ledger, pol["limits"]["max_parallel"] - len(live())):
+        for ticket in station.select(ledger, self.places() - len(live())):
             advance(entries[ticket])
 
     def held_beside(self, ticket: str, live: List[Dict[str, Any]]) -> Optional[str]:
@@ -718,12 +773,12 @@ class Supervisor:
             return None
         return risk if risk in RISKS else None
 
-    def start(self, ledger: Dict[str, Any], pol: Dict[str, Any], ticket: str, slice_id: Optional[str], budget_usd: Optional[float] = None,
+    def start(self, ledger: Dict[str, Any], pol: Dict[str, Any], ticket: str, slice_id: Optional[str], budget_usd: Any = UNSET,
               first_stop: Optional[str] = None) -> Dict[str, Any]:
         """Claim, then check everything once more, then start. The claim is on disk before any process exists.
-        `budget_usd` is the spending limit the run is given: the per-run limit, cut to what the day has left (allowance).
-        `first_stop` stops the belt earlier than usual (a monitoring ticket's first execution stops before build)."""
-        if budget_usd is None:
+        `budget_usd` is the spending limit the run is given: the per-run limit, cut to what the day has left (allowance);
+        None when no limit is set. `first_stop` stops the belt earlier than usual (a monitoring ticket's first execution stops before build)."""
+        if budget_usd is UNSET:
             budget_usd, over = self.allowance(ledger, pol)
             if over:
                 return {"ticket_id": ticket, "slice_id": slice_id, "why": over}
@@ -756,7 +811,10 @@ class Supervisor:
         record.update(context)
         argv = executor.command(pol["claude"], boundary["workflow"], [ticket], until, pol["allowed_tools"], budget_usd, record["session_id"],
                                 boundary["plugin_dir"], boundary["add_dirs"], boundary["denied"])
-        executor.prepare(self.root, execution_id, argv, pol["limits"]["max_execution_minutes"])
+        # A supervisor tied to a session gives its runs the same tie: each ends if the supervisor or the session is gone.
+        watch = {"supervisor_pid": os.getpid(), "session_pid": self.lease.session_pid} if self.lease.lifetime == "session" else None
+        record["tied_to_session"] = watch is not None
+        executor.prepare(self.root, execution_id, argv, pol["limits"]["max_execution_minutes"], watch=watch)
         record["wrapper_pid"] = executor.launch(self.root, execution_id, self.run_script)
         record.update({"state": "started", "started_at": stamp()})
         self.line.emit(ledger, "execution.started", session_id=record["session_id"], until=until, workflow=boundary["workflow"],
@@ -785,21 +843,68 @@ class Supervisor:
 
     # ---- running continuously ----
 
-    def serve(self, interval: Optional[int] = None, max_ticks: Optional[int] = None) -> Dict[str, Any]:
-        """Tick until the Factory is disabled here, the process is told to stop, or another supervisor takes over."""
+    def wake_mark(self) -> Tuple[int, str]:
+        """What the wake note looks like now; a change means somebody asked the supervisor to look again."""
+        try:
+            return self.wake_path.stat().st_mtime_ns, self.wake_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return 0, ""
+
+    def stop_asked(self, since_ns: int) -> bool:
+        """Whether a person stopped the Factory (factory stop, from any session or the Factory Floor) after this supervisor started."""
+        try:
+            return self.stop_path.stat().st_mtime_ns > since_ns
+        except OSError:
+            return False
+
+    def session_over(self) -> bool:
+        """For a supervisor tied to a session: whether that Claude Code process has ended. Never for a background one.
+        A request to become a background one (factory start, lifetime.json) is taken here, and the tie dropped."""
+        if self.lease.lifetime != "session":
+            return False
+        request = executor.read_json(self.lifetime_path) or {}
+        if request.get("lifetime") == "background":
+            self.lease.lifetime, self.lease.session_pid = "background", None
+            self.lease.started_by = request.get("by") or self.lease.started_by
+            with contextlib.suppress(SupervisorError):
+                self.lease.heartbeat()  # the lease says so at once; runs it started stop watching the session too (executor.background_now)
+            return False
+        return not process_alive(self.lease.session_pid)
+
+    def pause_for_session_end(self) -> List[Dict[str, Any]]:
+        """The session ended: stop every running execution, marked so its end is recorded as "session-ended". Nothing is parked
+        and no attempt counts; the next supervisor's recover() records each, and a pull carries it on where it stopped."""
+        ended = []
+        ledger = self.line.ledger()
+        for execution_id, record in sorted(ledger["supervisor"]["executions"].items()):
+            if record["state"] in LIVE:
+                ended.append({"execution_id": execution_id, "ticket_id": record["ticket_id"],
+                              "signalled": executor.end_for_session(self.root, record.get("wrapper_pid"), execution_id)})
+        return ended
+
+    def serve(self, interval: Optional[int] = None, max_ticks: Optional[int] = None, lifetime: str = "background",
+              session_pid: Optional[int] = None, started_by: Optional[str] = None) -> Dict[str, Any]:
+        """Tick until the Factory is disabled here, a person stops it, the process is told to stop, or another supervisor takes
+        over; a "session" supervisor also ends when the Claude Code process `session_pid` ends, after pausing its work."""
         pol = self.policy()
         if not policy_module.running(pol):
             return {"served": 0, "stopped": "the Factory is not enabled on this machine"}
+        if lifetime == "session" and not (type(session_pid) is int and process_alive(session_pid)):
+            return {"served": 0, "stopped": "the Claude Code session this supervisor belongs to is not running"}
         self.lease.runner_id = pol.get("runner_id")
+        self.lease.lifetime, self.lease.session_pid, self.lease.started_by = lifetime, session_pid if lifetime == "session" else None, started_by
+        with contextlib.suppress(OSError):
+            self.lifetime_path.unlink()  # an older request to become a background one belongs to an earlier supervisor
         wait = int(interval or pol["limits"]["poll_seconds"])
         taken_over = self.lease.acquire(max(LEASE_SECONDS, wait * 3))
+        began = time.time_ns()
         stopping = {"now": False}
 
         def stop(number: int, frame: Any) -> None:
             stopping["now"] = True
 
         previous = {number: signal.signal(number, stop) for number in (signal.SIGTERM, signal.SIGINT)}
-        ticks, why = 0, "asked to stop"
+        ticks, why, paused = 0, "asked to stop", []
         try:
             if taken_over:
                 with self.line.lock("supervisor"):
@@ -808,6 +913,12 @@ class Supervisor:
                     self.line.emit(ledger, "recovery.started", kind="took-over-from-dead-supervisor", previous_pid=taken_over.get("pid"), previous_heartbeat=taken_over.get("heartbeat_at"))
                     self.line.save(ledger)
             while not stopping["now"]:
+                if self.session_over():
+                    why, paused = "the Claude Code session it belonged to ended: its work is paused, and the next /mach pull carries it on", self.pause_for_session_end()
+                    break
+                if self.stop_asked(began):
+                    why = "a person stopped the Factory"
+                    break
                 report = self.tick()
                 ticks += 1
                 if report["state"] == "disabled":
@@ -816,12 +927,12 @@ class Supervisor:
                 if max_ticks and ticks >= max_ticks:
                     why = "the requested number of passes was made"
                     break
-                woken = self.wake_path.stat().st_mtime if self.wake_path.exists() else 0
+                woken = self.wake_mark()
                 deadline, beat = time.time() + wait, time.time()
                 while time.time() < deadline and not stopping["now"]:
                     time.sleep(min(1.0, max(0.05, deadline - time.time())))
-                    if (self.wake_path.stat().st_mtime if self.wake_path.exists() else 0) != woken:
-                        break  # a Git hook or a person said to look now
+                    if self.wake_mark() != woken or self.session_over() or self.stop_asked(began):
+                        break  # a Git hook, a pull or a person said to look now; or the session ended; or a person stopped it
                     if time.time() - beat >= 30:
                         self.lease.heartbeat(max(LEASE_SECONDS, wait * 3))
                         beat = time.time()
@@ -831,7 +942,7 @@ class Supervisor:
             for number, handler in previous.items():
                 signal.signal(number, handler)
             self.lease.release()
-        return {"served": ticks, "stopped": why}
+        return {"served": ticks, "stopped": why, "lifetime": self.lease.lifetime, **({"paused_for_session_end": paused} if paused else {})}
 
     def once(self) -> Dict[str, Any]:
         """A single pass by a process that owns the project only while it runs."""

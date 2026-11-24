@@ -38,7 +38,7 @@ class Project(unittest.TestCase):
 
     def grant(self, root=None, **changes):
         root = root or self.root
-        data = policy.accept_execution_risk(policy.build(root, {"autonomy": "supervised"}, "engineer", "/usr/bin/false", "main", []), "engineer")
+        data = policy.build(root, {"autonomy": "supervised"}, "engineer", "/usr/bin/false", "main", [])
         data.update(changes)
         policy.save(root, data)
         return data
@@ -71,6 +71,41 @@ class RunnerFileTest(Project):
                 data["limits"][name] = value
                 policy.save(self.root, data)
                 self.assertDisabled(policy.read(self.root), f"limit '{name}'")
+
+    def test_absent_or_null_optional_limits_are_no_limit_and_anything_else_is_checked(self):
+        """M23 2.1: the budgets, runs per day and cells at once may be absent or null; a limit that is there is still checked,
+        an unknown one refuses the file, and the required ones stay required."""
+        data = self.grant()
+        self.assertEqual(sorted(data["limits"]), ["max_attempts", "max_execution_minutes", "poll_seconds"])
+        data["limits"].update(max_budget_usd_per_run=None, max_budget_usd_per_day=None, max_runs_per_day=None, max_parallel=None)
+        policy.save(self.root, data)
+        read = policy.read(self.root)
+        self.assertEqual((read["source"], sorted(read["limits"])), ("local-file", ["max_attempts", "max_execution_minutes", "poll_seconds"]))
+        for change, words in ((lambda d: d["limits"].update(max_budget_usd_per_day="lots"), "limit 'max_budget_usd_per_day'"),
+                              (lambda d: d["limits"].update(spend_freely=True), "unknown limit"),
+                              (lambda d: d["limits"].pop("max_attempts"), "limit 'max_attempts'")):
+            with self.subTest(words=words):
+                data = self.grant()
+                change(data)
+                policy.save(self.root, data)
+                self.assertDisabled(policy.read(self.root), words)
+
+    def test_the_project_sets_a_limit_this_machine_left_open_and_never_widens_one_it_set(self):
+        self.grant()
+        read = policy.read(self.root)
+        effective = policy.effective(read, {"factory": {"max_budget_usd_per_day": 40, "max_runs_per_day": 10, "max_parallel": 2}})
+        self.assertEqual((effective["limits"].get("max_budget_usd_per_day"), effective["limits"].get("max_runs_per_day")), (40, 10))
+        self.assertNotIn("max_parallel", effective["limits"])  # the project's ceiling governs the line itself: one number, not two
+        data = self.grant()
+        data["limits"]["max_budget_usd_per_day"] = 20
+        policy.save(self.root, data)
+        self.assertEqual(policy.effective(policy.read(self.root), {"factory": {"max_budget_usd_per_day": 40}})["limits"]["max_budget_usd_per_day"], 20)
+
+    def test_no_budget_means_no_spending_flag(self):
+        argv = executor.command("claude", "mach:belt", ["LOCAL-001"], None, policy.default_tools(), None, "sid", Path("/opt/mach-plugin"))
+        self.assertNotIn("--max-budget-usd", argv)
+        argv = executor.command("claude", "mach:belt", ["LOCAL-001"], None, policy.default_tools(), 7.5, "sid", Path("/opt/mach-plugin"))
+        self.assertEqual(argv[argv.index("--max-budget-usd") + 1], "7.5")
 
     def test_every_shell_command_is_refused(self):
         for tools in (["Bash"], ["Read", "Bash(*)"], ["*"], ["Read", "--dangerously-skip-permissions"]):
@@ -111,7 +146,9 @@ class RunnerFileTest(Project):
                 self.assertDisabled(policy.read(self.root), "")
 
     def test_tracked_config_can_only_narrow(self):
-        self.grant(max_risk="Medium", allow_merge=False)
+        limits = {"max_parallel": 2, "max_execution_minutes": 120, "max_runs_per_day": 20, "max_budget_usd_per_run": 25, "max_budget_usd_per_day": 100,
+                  "max_attempts": 2, "poll_seconds": 300}  # every limit set here, so every one the project names could only widen it
+        self.grant(max_risk="Medium", allow_merge=False, limits=limits)
         read = policy.read(self.root)
         widened = {"factory": {"max_parallel": 8, "max_budget_usd_per_run": 500, "max_risk": "High", "allow_merge": True,
                                "autonomy_ceiling": "supervised", "supervisor": True}}
