@@ -97,8 +97,12 @@ def split_holder(parser: Any, argv: Optional[Sequence[str]]) -> Tuple[List[str],
     return _claim.station_argv(parser, items) if _claim is not None else (items, None)
 
 
-def taken_over(project: Optional[Path], ticket_id: Any, holder: Optional[str]) -> Optional[str]:
-    return _claim.station_stop(project, ticket_id, holder) if _claim is not None else None
+READS = ('plan', 'status')  # commands that change nothing: a holderless call of one is never refused
+
+
+def taken_over(project: Optional[Path], ticket_id: Any, holder: Optional[str], command: Optional[str] = None) -> Optional[str]:
+    """The refusal for a displaced worker, or for a holderless call that changes something while a take-over stands; else None."""
+    return _claim.station_stop(project, ticket_id, holder, command, READS) if _claim is not None else None
 
 # M12's secret shapes (the intent station's scan.py), used to check the change record before it is committed.
 try:
@@ -471,10 +475,12 @@ def renumber(cell: Cell, main: str, slice_id: str, theirs: str, ours: str) -> No
     change goes back to be verified and reviewed (no judging round is used). Raises MergeError code "renumbered" with what was done,
     so nothing is merged in this run; or code "slice-id-taken" with the exact reason when renumbering is impossible."""
     if isinstance(cell.info.get("product"), dict) and (cell.info["product"].get("slice_id") == slice_id):
-        raise MergeError(f"{slice_id} is already on {main} as {theirs}, which is another slice than this ticket's {ours}. MACH cannot give this "
-                         f"ticket's slice another number here: {slice_id} is the number Product Studio gave it, and intake follows it by that "
-                         "number. Nothing was pushed or merged. The product manager gives the slice a free number in Product Studio and marks it "
-                         "ready again; the next intake brings the new revision to this cell.", code="slice-id-taken")
+        # The number is the one Product Studio gave this slice: intake finds the slice on main by it (the spec's file name and its text),
+        # so renaming it here would leave the slice never seen as shipped and its issue never closed. The smallest safe thing: this copy
+        # lands beside the other spec, under its own file name, and the result and the change record say that two specs share the number.
+        cell.info["number_shared"] = {"slice_id": slice_id, "theirs": theirs, "ours": ours, "at": now()}
+        cell.save_info()
+        return
     rules = cell_rules()
     try:
         used, reserved = rules.slice_ids(cell.project)
@@ -534,23 +540,61 @@ def renumber(cell: Cell, main: str, slice_id: str, theirs: str, ours: str) -> No
 def land_on_top(cell: Cell, main: str, main_head: str, landed: Dict[str, Any], by_person: bool) -> Optional[int]:
     """The meeting point, for a person's merge of a second copy of a slice that already landed: when, with main brought in, nothing in
     this copy differs from main, the cell is closed out as merged (as the commit that landed first) and cleanup removes it, no
-    abandoning; returns the exit code then. Otherwise None, and the copy lands as a change on top through the normal path (main merged
-    in, its tests run, the change record saying that another copy landed first)."""
+    abandoning; returns the exit code then. Otherwise, the first time, main is merged into the copy and its approval is voided once, so
+    it is verified and reviewed against main as it now is (code "recheck"; a conflict is recorded as the cell's main conflict, so the
+    routing sheet sends it to a person to resolve); after that review, None: it lands as a change on top through the normal path, the
+    change record saying that another copy landed first."""
     merged_tree = git(cell.work, "merge-tree", "--write-tree", main_head, "HEAD")
     main_tree = git(cell.work, "rev-parse", f"{main_head}^{{tree}}").stdout.strip()
     same = merged_tree.returncode == 0 and merged_tree.stdout.split() and merged_tree.stdout.split()[0] == main_tree
     slice_id = str((cell.info.get("product") or {}).get("slice_id"))
-    cell.info["landed_first"] = {"slice_id": slice_id, "commit": landed.get("commit"), "ref": landed.get("ref")}
+    commit = landed.get("commit") or main_head
+    earlier = cell.info.get("landed_first") if isinstance(cell.info.get("landed_first"), dict) else {}
+    cell.info["landed_first"] = {"slice_id": slice_id, "commit": landed.get("commit"), "ref": landed.get("ref"),
+                                 **({"rechecked": earlier["rechecked"]} if earlier.get("rechecked") else {})}
     cell.save_info()
     if not same:
-        return None
-    commit = landed.get("commit") or main_head
+        if cell.info["landed_first"].get("rechecked") == commit:
+            return None  # verified and reviewed against main with the other copy in it: it lands on top
+        if git(cell.work, "merge-base", "--is-ancestor", main_head, "HEAD").returncode == 0:
+            # main is in this copy already (a person resolved the meeting's conflict), and the approval is for this commit, after it.
+            cell.info["landed_first"]["rechecked"] = commit
+            cell.save_info()
+            return None
+        local_main = git(cell.project, "rev-parse", "HEAD").stdout.strip()
+        before = cell.head()
+        merged = git(cell.work, "merge", "--no-edit", "-m", f"Merge {main} into {cell.branch}: another copy of {slice_id} landed first [{cell.ticket_id}]",
+                     main_head)
+        if merged.returncode != 0:
+            conflicts = [name for name in git(cell.work, "diff", "--name-only", "--diff-filter=U").stdout.splitlines() if name.strip()]
+            git(cell.work, "merge", "--abort")
+            void_approval(cell, f"Another copy of {slice_id} landed first, and bringing {main} into this copy conflicts.")
+            cell.info["main_conflict"] = {"during": "meeting", "main": main, "main_commit": local_main, "branch_commit": before, "behind": None,
+                                          "files": conflicts[:50], "folder": str(cell.work), "findings": None, "at": now()}
+            cell.save_info()
+            raise MergeError(f"Another copy of {slice_id} landed on {main} first (as {str(commit)[:12]}), and bringing {main} into this copy conflicts in "
+                             f"{', '.join(conflicts[:10]) or 'some files'}. Nothing was merged. A person merges {main} into {cell.branch} in {cell.work} "
+                             "and resolves it; then this copy is verified and reviewed against main and lands what it still changes.", code="main-conflict")
+        cell.info["landed_first"]["rechecked"] = commit
+        void_approval(cell, f"Another copy of {slice_id} landed first: this copy now holds {main} and is verified and reviewed against it once.")
+        raise MergeError(f"Another copy of {slice_id} landed on {main} first (as {str(commit)[:12]}), and this copy still changes something. {main} is "
+                         f"merged into it now ({cell.head()[:12]}); it goes back to be verified and reviewed against {main} as it is (no judging round "
+                         "is used), and then a person's merge lands it on top, its change record saying another copy landed first.", code="recheck")
     cell.info.update({"stage": "merged", "merged": {"commit": None, "at": now(), "method": cell.method, "landed_commit": cell.head(),
                                                     "already_on_main": commit, **({"by_person": True} if by_person else {})}})
     cell.save_info()
     telemetry(cell.root, "station.exited", "merge", lambda: {"outcome": "already-on-main", "stage": "merged"})
+    reason = f"Everything in this copy is already on {main}: another copy of {slice_id} landed first, as {str(commit)[:12]}."
+    url = cell.info.get("pull_request")
+    if cell.method == "pr" and url:  # this copy's own pull request holds nothing main does not: closed, saying why
+        note = (f"Everything in this pull request is already on {main}: another copy of {inert(slice_id, 40)} landed first, as {str(commit)[:12]}. "
+                "Closed by MACH.")
+        closed = gh(cell, "pr", "close", str(url), "--comment", note, timeout=GH_TIMEOUT)
+        reason += (f" This copy's pull request ({url}) is closed, with a comment naming that commit." if closed.returncode == 0 else
+                   f" This copy's pull request ({url}) could not be closed now and is still open: it holds nothing {main} does not, so close it "
+                   "on GitHub with a note naming that commit, or run this merge again and MACH tries once more.")
     print(json.dumps({"ticket_id": cell.ticket_id, "status": "ALREADY_ON_MAIN", "branch": cell.branch, "into": main, "landed_first": cell.info["landed_first"],
-                      "reason": f"Everything in this copy is already on {main}: another copy of {slice_id} landed first, as {str(commit)[:12]}.",
+                      "reason": reason,
                       "next": f"Clean up with the cleanup skill for {cell.ticket_id}: it closes the cell out as merged, as {str(commit)[:12]}."},
                      indent=2, ensure_ascii=False))
     return 0
@@ -1605,6 +1649,11 @@ def land(cell: Cell, args: argparse.Namespace, plan: Dict[str, Any]) -> int:
                               else {"written": False, "reason": "records.enabled is false in .factory/config.json."}}
     if moves:
         result["main_moved_again"] = moves
+    shared = cell.info.get("number_shared") if isinstance(cell.info.get("number_shared"), dict) else None
+    if shared:
+        result["warnings"] = [f"{shared['slice_id']} is also on {main} as {shared['theirs']}, another slice. This copy lands beside it as {shared['ours']}: "
+                              f"{shared['slice_id']} is the number Product Studio gave this slice, and MACH follows the slice by it. The other spec, "
+                              f"{shared['theirs']}, can be given a free number on {main} by an ordinary change (cell.py next-id names one)."]
     if command_env is not None and command_env.notices(cell.project):  # only when a package cache was pointed elsewhere
         result["caches"] = command_env.notices(cell.project)
     if cell.method == "local":
@@ -1668,13 +1717,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     project = None
     try:
         project = args.project.resolve() if args.project else find_project(Path.cwd())
-        stop = taken_over(project, args.ticket_id, holder)
+        if getattr(args, "by_person", False) and os.environ.get("MACH_EXECUTION_ID"):
+            raise MergeError("--by-person is a person's word, and this runs inside a supervised Factory execution. Nothing was merged; "
+                             "the project's merge settings decide what the Factory merges.", code="not-a-person")
+        # A person's own merge is never mistaken for the worker taken over; any other holderless run is checked.
+        stop = taken_over(project, args.ticket_id, holder, None if getattr(args, "by_person", False) else args.command)
         if stop:
             raise MergeError(stop, code="taken-over")
         return args.func(Cell(project, args.ticket_id), args)
     except MergeError as exc:
-        if exc.code == "renumbered":  # a person's merge gave the slice a free number: not a refusal, the ticket goes on
-            print(json.dumps({"ticket_id": args.ticket_id, "status": "RENUMBERED", "reason": str(exc),
+        if exc.code in ("renumbered", "recheck"):  # a person's merge carried the copy on: not a refusal, the ticket goes on
+            print(json.dumps({"ticket_id": args.ticket_id, "status": "RENUMBERED" if exc.code == "renumbered" else "RECHECK", "reason": str(exc),
                               "next": "The change goes back to be verified and reviewed; check the routing sheet (next) and carry on."},
                              indent=2, ensure_ascii=False))
             return 3
