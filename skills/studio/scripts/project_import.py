@@ -764,21 +764,11 @@ READY_WAS = ("approved", "ready_to_build", "being_built", "question", "shipped")
 
 
 def ready_in_source(found: Incoming) -> List[str]:
-    """The archive's slices (old IDs) that were ready in the old repository: as the archive says it per slice (`was_ready` in
-    the manifest's `slices`, as an object or a list, or in facts.json), else from what facts.json records each slice was
-    (marked ready to build, being built, with a question from the builders, shipped, or approved). Read defensively: anything
-    else in those places is ignored. A slice replaced there is never counted."""
-    told: Dict[str, bool] = {}
-    listed = found.manifest.get("slices")
-    entries = list(listed.items()) if isinstance(listed, dict) else \
-        [(e.get("slice_id") or e.get("id"), e) for e in listed if isinstance(e, dict)] if isinstance(listed, list) else []
-    for ident, entry in entries:
-        value = entry.get("was_ready") if isinstance(entry, dict) else entry
-        if isinstance(ident, str) and type(value) is bool:
-            told.setdefault(ident, value)
-    for ident, entry in found.facts["slices"].items():
-        if type(entry.get("was_ready")) is bool:
-            told.setdefault(ident, entry["was_ready"])
+    """The archive's slices (old IDs) that were ready in the old repository: as the exporter says it per slice (facts.json
+    `slices[ID].was_ready`), else, in an archive made before it said so, from what facts.json records each slice was (marked
+    ready to build, being built, with a question from the builders, shipped, or approved). A slice replaced there is never
+    counted. (The manifest holds no such field: its reader refuses keys it does not know.)"""
+    told = {ident: entry["was_ready"] for ident, entry in found.facts["slices"].items() if type(entry.get("was_ready")) is bool}
     out = []
     for ident, work in found.slices.items():
         if work.get("status") == "superseded":
@@ -2076,7 +2066,8 @@ def summary(host: Any, studio: Any, found: Incoming, mapping: Dict[str, str], mo
                             "words": (f"{plural(len(ready), 'slice was', 'slices were')} ready in the old repository "
                                       f"({listing([both(i) for i in ready[:6]])}{' and others' if len(ready) > 6 else ''}). On your word, MACH can mark "
                                       f"{'it' if len(ready) == 1 else 'them'} ready here in one step, dependencies first, each checked as "
-                                      "marking ready checks it; it stops at the first that is not ready yet."
+                                      "marking ready checks it; it stops at the first that is not ready yet. That step first publishes "
+                                      "the product principles and technical needs that came with the project, as they then stand here."
                                       if ready else "No slice was ready in the old repository.")},
         "after": after,
         "left_behind": {"jira": jira, "epic_jira": epic_jira, "requests": requests, "accepted_concerns": built.accepted_concerns,
@@ -2096,7 +2087,7 @@ def shipped_here(studio: Any) -> Optional[Set[str]]:
         return None
 
 
-def note_words(found: Incoming, mapping: Dict[str, str], shared: Dict[str, Any], placed: bool) -> str:
+def note_words(found: Incoming, mapping: Dict[str, str], shared: Dict[str, Any], placed: bool, app: bool = False) -> str:
     slices = shared["slices"]
     epics = len(found.epics)
     verb = "Brought in" if placed else "Would bring in"
@@ -2111,14 +2102,16 @@ def note_words(found: Incoming, mapping: Dict[str, str], shared: Dict[str, Any],
         f" Every slice is a draft here, except {plural(len(replaced), 'slice')} replaced in the old repository, which {'stays' if len(replaced) == 1 else 'stay'} replaced"
     text += lead + (f": in the old repository {listing(parts)}." if parts else ".")
     text += " Nothing was sent to GitHub."
-    if shared["counts"]["principles"]:
+    ready = shared["ready_in_source"]["count"]
+    if ready:
+        # One instruction: what was ready there can be marked ready in one step, which publishes what came with it first.
+        how = "" if app else " (project imports ready)"
+        text += (f" {ready} of them {'was' if ready == 1 else 'were'} ready in the old repository and can be marked ready here in one step"
+                 f"{how}, on your word, which first publishes the principles and technical needs that came with them.")
+    elif shared["counts"]["principles"]:
         text += " Publish the principles, then mark each slice ready when you have checked it."
     else:
         text += " Mark each slice ready when you have checked it."
-    ready = shared["ready_in_source"]["count"]
-    if ready:
-        text += (f" The {plural(ready, 'slice')} that {'was' if ready == 1 else 'were'} ready in the old repository can be marked ready "
-                 "here in one step, on your word.")
     return text
 
 
@@ -2265,7 +2258,7 @@ def plan(host: Any, studio: Any, archive: Path) -> Dict[str, Any]:
     if work["record"] is None:
         keep_plan(host, studio, found, work["mapping"])
     return {"plan": True, "resuming": work["record"] is not None, **shared, "writes": "nothing",
-            "note": note_words(found, work["mapping"], shared, placed=False)}
+            "note": note_words(found, work["mapping"], shared, placed=False, app=bool(getattr(host, "APP", False)))}
 
 
 def plan_path(studio: Any, archive_sha256: str) -> Path:
@@ -2386,7 +2379,7 @@ def run(host: Any, studio: Any, archive: Path) -> Dict[str, Any]:
 
     shared = summary(host, studio, found, mapping, mode, into, built, work["how"], work["why"], work["notes"], work["numbers"],
                      work["joined"], rows_here, work["renumbered_now"])
-    note = note_words(found, mapping, shared, placed=True)
+    note = note_words(found, mapping, shared, placed=True, app=bool(getattr(host, "APP", False)))
     if yours:
         note += " " + " ".join(row["words"] for row in yours[:5])
         if len(yours) > 5:
@@ -2871,6 +2864,33 @@ def ready_record(host: Any, studio: Any, which: Optional[str]) -> Tuple[Path, Di
     return path, record
 
 
+def publish_first(host: Any, studio: Any, record: Dict[str, Any], order: Sequence[str], rules: Any) -> Tuple[List[str], Dict[str, Any]]:
+    """Before marking ready: marking a slice ready needs the principles and technical needs published, so the ones the import
+    brought in are published first, as they stand in this workspace now, through `principle publish`'s and `need publish`'s own
+    acts and checks; only when they have changes that are not published, and only when there is a slice left to mark ready.
+    Returns (what was published: "principles", "needs"; {"text": the sentence} or {"stopped": {"what", "reason"}})."""
+    if not order:
+        return [], {}
+    ledger = studio.handoff().load()
+    merges = record.get("merges") if isinstance(record.get("merges"), dict) else {}
+    done: List[str] = []
+    steps = (("principles", "product principles", bool(merges.get("principles")) and studio.unpublished(ledger), lambda: host.publish_principles(studio)),
+             ("needs", "technical needs", bool(merges.get("needs")) and host.needs.unpublished(host, studio, ledger),
+              lambda: host.needs.cmd_publish(host, studio, None)))
+    for key, words, wanted, act in steps:
+        if not wanted:
+            continue
+        try:
+            act()
+        except host.StudioError as exc:
+            return done, {"stopped": {"slice": None, "what": words, "reason": str(exc)}}
+        done.append(key)
+    if not done:
+        return [], {}
+    named = listing(["the product principles" if key == "principles" else "the technical needs" for key in done])
+    return done, {"text": f"Published {named} first, as they stand in this workspace, so the builders have what these slices answer."}
+
+
 def ready_all(host: Any, studio: Any, which: Optional[str]) -> Dict[str, Any]:
     """`project imports ready [<record>]` and `project import <archive> --ready`, on the product manager's word: every slice of the
     import that was ready in the old repository, still here and not replaced, marked ready as `slice ready` marks it (its checks, its
@@ -2890,7 +2910,10 @@ def ready_all(host: Any, studio: Any, which: Optional[str]) -> Dict[str, Any]:
     done: List[Dict[str, Any]] = []
     already: List[str] = []
     stopped: Optional[Dict[str, Any]] = None
-    for slice_id in order:
+    published, publish_words = publish_first(host, studio, record, order, rules)
+    if publish_words.get("stopped"):
+        stopped = publish_words["stopped"]
+    for slice_id in ([] if stopped else order):
         data = studio.load("slice", slice_id)
         view = handoff.slice_view(studio.handoff().load(), slice_id, data, rules)
         if data.get("status") == host.APPROVED and view.get("saved"):
@@ -2908,18 +2931,25 @@ def ready_all(host: Any, studio: Any, which: Optional[str]) -> Dict[str, Any]:
                      "warnings": result.get("warnings") or []})
     left = [s for s in order if s not in already and s not in {row["slice"] for row in done}]
     name = str((record.get("archive") or {}).get("file") or "the archive")
-    parts = [f"Marked {plural(len(done), 'slice')} ready" + (f" ({listing([row['slice'] for row in done])})" if done else "")
-             + f", dependencies first, of the {plural(len(order), 'slice')} from {name} that {'was' if len(order) == 1 else 'were'} ready in the "
-               "old repository."]
+    parts = [publish_words["text"]] if publish_words.get("text") else []
+    parts.append(f"Marked {plural(len(done), 'slice')} ready" + (f" ({listing([row['slice'] for row in done])})" if done else "")
+                 + f", dependencies first, of the {plural(len(order), 'slice')} from {name} that {'was' if len(order) == 1 else 'were'} ready in "
+                   "the old repository.")
     if already:
         parts.append(f"{listing(already)} {'was' if len(already) == 1 else 'were'} already marked ready here.")
     if stopped:
         reason = " ".join(stopped["reason"].split())
-        parts.append(f"Stopped at {stopped['slice']}: {reason}{'' if reason.endswith('.') else '.'}")
-        parts.append(f"Still to mark ready: {listing(left)}. Once that is settled, ask again and MACH carries on from {stopped['slice']}.")
+        reason += "" if reason.endswith(".") else "."
+        if stopped.get("slice"):
+            parts.append(f"Stopped at {stopped['slice']}: {reason}")
+            parts.append(f"Still to mark ready: {listing(left)}. Once that is settled, ask again and MACH carries on from {stopped['slice']}.")
+        else:  # publishing what came with the project was refused: nothing was marked ready
+            parts = [f"Stopped before marking anything ready: publishing the {stopped['what']} was refused. {reason}",
+                     f"Still to mark ready: {listing(left)}. Once that is settled, ask again and MACH publishes them and carries on."]
     others = sorted((s for s in slices_of(record) if s in works and s not in chosen), key=number)
     if others:
         parts.append("The other slice that came was not ready in the old repository: mark it ready when you have checked it." if len(others) == 1
                      else f"The other {len(others)} slices that came were not ready in the old repository: mark each ready when you have checked it.")
-    return {"marked_ready": done, "already_ready": already, "stopped_at": stopped, "left": left, "not_ready_in_source": others,
+    return {"published_first": published, "marked_ready": done, "already_ready": already, "stopped_at": stopped, "left": left,
+            "not_ready_in_source": others,
             "record": str(path.relative_to(studio.project)), "complete": stopped is None, "factory_authorized": False, "note": " ".join(parts)}
