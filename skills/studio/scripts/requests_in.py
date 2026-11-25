@@ -399,11 +399,18 @@ class Requests:
         decision = record.get("decision") or {}
         if decision.get("state") != "accepted":
             raise RequestError(f"Request #{number} cannot be picked up. {decision.get('reason') or 'Not accepted.'}")
-        if record.get("picked_up_by") and not also:
-            who = ", ".join(f"@{login}" for login in record.get("picked_up_by") or []) or "another product manager"
-            raise RequestError(f"Already picked up by {who}. To define another slice for it too, pick it up with --also.",
-                               f"Already picked up by {who}. To define another slice for it too, pick it up as well.")
+        # Never blocked: a request someone else already picked up is picked up by this product manager as well, with a warning
+        # (also_note). `also` is kept so --also still works; it no longer changes anything.
         return record, note
+
+    @staticmethod
+    def also_note(record: Dict[str, Any]) -> Optional[str]:
+        """The warning when someone else already picked the request up; None when nobody has."""
+        logins = [str(login) for login in record.get("picked_up_by") or [] if login]
+        if not logins and not record.get("picked_up_by"):
+            return None
+        who = " and ".join(f"@{login}" for login in logins) if logins else "Another product manager"
+        return f"{who} {'have' if len(logins) > 1 else 'has'} also picked this up."
 
     def record_pick(self, number: int, record: Dict[str, Any], slice_id: str) -> Dict[str, Any]:
         """After the slice exists: keep the text the interview starts from, and queue the writes."""

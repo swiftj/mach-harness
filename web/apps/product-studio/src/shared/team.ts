@@ -14,13 +14,13 @@ export function numberTakenWords(sliceId: string, github: Pick<SliceGithub, "num
   if (moment) {
     return {
       title: `Someone else marked ${sliceId} ready at the same moment`,
-      body: `${holderWords(moment)} issue #${moment.holder} was made first and keeps the number. Your issue #${moment.issue} was closed and never reached the builders. Your draft is unchanged: give it a new number, then mark it ready again.`,
+      body: `${holderWords(moment)} issue #${moment.holder} was made first and keeps the number. Your issue #${moment.issue} was closed and never reached the builders. Your draft is unchanged: mark it ready again, and MACH gives it the next free number.`,
     };
   }
   if (!github.number_taken) return null;
   return {
     title: `Another slice on GitHub uses ${sliceId}`,
-    body: "Your draft is unchanged: give it a new number, then mark it ready.",
+    body: "Your draft is unchanged: marking it ready gives it the next free number.",
   };
 }
 
@@ -32,8 +32,8 @@ export function holderWords(moment: SameMoment): string {
 /** One line in the list of what waits for the person, for a slice that needs a new number. */
 export function numberTakenLine(github: Pick<SliceGithub, "same_moment">): string {
   return github.same_moment
-    ? "needs a new number: someone else marked the same number ready at the same moment, and theirs keeps it."
-    : "needs a new number, because another slice on GitHub uses it.";
+    ? "gets a new number when you mark it ready again: someone else marked the same number ready at the same moment, and theirs keeps it."
+    : "gets a new number when you mark it ready, because another slice on GitHub uses it.";
 }
 
 /* ── Issue numbers in a sentence, linked ───────────────────────────────── */
@@ -79,7 +79,7 @@ export function epicNumberTakenWords(epicId: string, moment: SameMoment | null |
   if (!moment) return null;
   return {
     title: `Someone else saved a different epic as ${epicId} at the same moment`,
-    body: `Their issue #${moment.holder} was made first and keeps the number. Your issue #${moment.issue} was closed, and none of your slices reached the builders. Your epic is unchanged: give it a new number, then mark its slice ready again.`,
+    body: `Their issue #${moment.holder} was made first and keeps the number. Your issue #${moment.issue} was closed, and none of your slices reached the builders. Your epic is unchanged: mark its slice ready again, and MACH gives the epic the next free number.`,
   };
 }
 

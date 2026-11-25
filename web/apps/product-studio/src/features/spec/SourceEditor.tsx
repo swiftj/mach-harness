@@ -65,11 +65,11 @@ function Editor({ kind, sliceId, original, editable, onSaved }: { kind: Kind; sl
   }
 
   const changed = text !== original;
-  const save = () => {
+  const save = (interrupt = false) => {
     setSaving(true);
     setError(null);
     setResult(null);
-    studioClient.writeDraft(kind, sliceId, text).then(
+    studioClient.writeDraft(kind, sliceId, text, { interrupt }).then(
       (written) => {
         setSaving(false);
         setResult(written.check);
@@ -100,7 +100,21 @@ function Editor({ kind, sliceId, original, editable, onSaved }: { kind: Kind; sl
       <span id={hintId} className="sr-only">
         {editable ? "Editable. Save to run MACH's check." : "Read-only."}
       </span>
-      {error ? (
+      {error?.kind === "conflict" && error.hint?.kind === "interrupt_turn" ? (
+        // The interviewer is writing this draft: the host's warning, then the one action that saves all the same.
+        <Banner
+          tone="warning"
+          title="The interviewer is writing this draft"
+          live="polite"
+          actions={
+            <Button loading={saving} onClick={() => save(true)}>
+              Stop it and save
+            </Button>
+          }
+        >
+          {error.message}
+        </Banner>
+      ) : error ? (
         <ErrorState
           title={error.kind === "refused" ? "Not saved" : describeError(error).title}
           message={error.kind === "refused" ? error.message : describeError(error).message}
@@ -125,7 +139,7 @@ function Editor({ kind, sliceId, original, editable, onSaved }: { kind: Kind; sl
           <Button variant="ghost" disabled={!changed || saving} onClick={() => setText(original)}>
             Discard changes
           </Button>
-          <Button variant="primary" disabled={!changed} loading={saving} onClick={save}>
+          <Button variant="primary" disabled={!changed} loading={saving} onClick={() => save()}>
             Save and check
           </Button>
         </div>

@@ -1,9 +1,46 @@
 {
-  "exit_code": 1,
-  "data": null,
-  "refused": "SLICE-001 was marked ready at the same moment by someone else: ada-pm's issue #3 was made first and keeps the number. Your issue #4 was closed and never marked ready, so nothing reached the builders. Give your draft a new number, then mark it ready again.",
-  "hint": {
-    "kind": "renumber_slice",
-    "target": "SLICE-001"
-  }
+  "exit_code": 0,
+  "data": {
+    "ready": true,
+    "saved_to": "github",
+    "slice": {
+      "dependencies": [],
+      "epic_id": "EPIC-001",
+      "open_questions": [],
+      "project_id": "team-space",
+      "revision": 4,
+      "schema_version": 1,
+      "slice_id": "SLICE-002",
+      "spec_path": "specs/slices/SLICE-002-invite-teammate.md",
+      "spec_sha256": "c3d3b270393bc111fafce4279b3677f3453d58ec2025c330885bd7ae7b6f8888",
+      "status": "approved_for_engineering",
+      "title": "Remove a teammate"
+    },
+    "issue": 5,
+    "url": "https://github.com/acme/team-space/issues/5",
+    "revision": 1,
+    "follows": null,
+    "epic_issue": 2,
+    "project_issue": 1,
+    "approved_by": "ben-pm",
+    "risk": "High",
+    "counts": {
+      "invariants": 4,
+      "functional_requirements": 9,
+      "matrix_rules": 5,
+      "scenarios": 3
+    },
+    "warnings": [],
+    "request_updates": null,
+    "factory_authorized": false,
+    "note": "SLICE-001 was marked ready at the same moment by someone else: @ada-pm's issue #3 was made first and keeps the number. MACH closed yours, #4, before it was marked ready, so nothing reached the builders twice. MACH gave your draft the next free number: SLICE-001 is now SLICE-002. Saved to GitHub as #5 and marked ready. The builders take it from there; nothing has started yet.",
+    "renumbered": [
+      {
+        "from": "SLICE-001",
+        "to": "SLICE-002"
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
 }

@@ -97,6 +97,9 @@ type putDraftBody struct {
 	// Name is the spec's short name (the "invite-teammate" of SLICE-001-invite-teammate.md). Only
 	// for a spec, and only needed before the slice has one; a spec keeps its file name.
 	Name *string `json:"name"`
+	// Interrupt: the interviewer is writing this slice's draft (the conflict before it carried the
+	// warning and hint {kind: "interrupt_turn"}); stop its reply and write this edit.
+	Interrupt bool `json:"interrupt"`
 }
 
 // PUT /api/drafts/{spec|intent}/<slice>: replace the draft, then run slice.check and return it.
@@ -120,13 +123,21 @@ func (s *Server) putDraft(kind string) http.HandlerFunc {
 			writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, msg))
 			return
 		}
+		// While the interviewer writes this draft, an edit is warned about first; with interrupt, its
+		// reply is stopped (and waited for) before the transaction, then the edit is written.
+		warning := "The interviewer is writing " + id + "'s draft right now. Saving stops its reply first, and your edit replaces what it wrote."
+		if busy := s.writerBusy(r.Context(), id, body.Interrupt, warning); busy != nil {
+			s.logFailure("draft write", *busy)
+			writeEnvelope(w, statusFor(*busy), *busy)
+			return
+		}
 		env := s.opts.Engine.Transaction(r.Context(), func(tx *engine.Tx) engine.Envelope {
 			view, env := show(r.Context(), tx, id)
 			if view == nil {
 				return env
 			}
-			if s.opts.Bridge.Busy(id) {
-				return engine.Fail(engine.KindConflict, "The interviewer is writing this slice's draft right now. Wait for its reply, or interrupt it.")
+			if busy := s.writerBusy(r.Context(), id, false, warning); busy != nil {
+				return *busy // a new turn began in the meantime
 			}
 			if !view.Editable {
 				message := id + " cannot be changed."

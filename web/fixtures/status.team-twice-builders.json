@@ -98,7 +98,7 @@
         "github_order": [
           "SLICE-001"
         ],
-        "github_read_at": "2026-11-24T13:29:34Z",
+        "github_read_at": "2026-11-25T14:46:02Z",
         "matches_github": true,
         "unfinished": false,
         "taken_from_github": false,
@@ -111,7 +111,7 @@
         "id": "SLICE-001",
         "kept": 3,
         "kind": "slice",
-        "note": "SLICE-001 is held by more than one open issue on GitHub: #3 was made first, then #4. Yours was made later, and the builders have already taken it: tell the engineer before anything else.",
+        "note": "SLICE-001 is held by more than one open issue on GitHub: #3 was made first, then #4. Yours was made later, and the builders have already started on it, so MACH left it open: both are built, and the merge of the builders' work settles which one stays.",
         "others": [
           4
         ],
@@ -127,15 +127,15 @@
       "url": "https://github.com/acme/team-space/issues/1",
       "name": "Team Space",
       "readable": true,
-      "read_at": "2026-11-24T13:29:34Z"
+      "read_at": "2026-11-25T14:46:02Z"
     },
     "github": {
       "repository": "acme/team-space",
       "form": "sub_issues",
-      "last_read": "2026-11-24T13:29:34Z"
+      "last_read": "2026-11-25T14:46:02Z"
     },
     "current_slice": "SLICE-001",
-    "last_refreshed": "2026-11-24T13:29:34Z",
+    "last_refreshed": "2026-11-25T14:46:02Z",
     "structurally_valid": true,
     "structural_errors": [],
     "factory_authorized": false,

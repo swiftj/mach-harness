@@ -59,7 +59,8 @@ func TestThePrdConversationOverHTTPBeforeAnyProject(t *testing.T) {
 	} {
 		status, env := h.call("POST", "/api/ops/"+name, body, nil)
 		expect(t, status, env, 409, engine.KindConflict)
-		if !strings.Contains(env.Error.Message, "recording this PRD's map") {
+		if env.Error.Message != "The conversation is recording PRD-01's map right now. Going ahead stops its reply first." ||
+			string(env.Error.Hint) != `{"kind":"interrupt_turn","target":"PRD-01"}` {
 			t.Fatalf("%s: %q", name, env.Error.Message)
 		}
 	}

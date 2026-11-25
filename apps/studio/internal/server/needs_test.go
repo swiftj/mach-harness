@@ -55,7 +55,8 @@ func TestTheNeedsConversationOverHTTP(t *testing.T) {
 	} {
 		status, env := h.call("POST", "/api/ops/"+name, body, nil)
 		expect(t, status, env, 409, engine.KindConflict)
-		if !strings.Contains(env.Error.Message, "writing the technical needs") {
+		if env.Error.Message != "The conversation is writing the technical needs right now. Going ahead stops its reply first." ||
+			string(env.Error.Hint) != `{"kind":"interrupt_turn","target":"needs"}` {
 			t.Fatalf("%s: %q", name, env.Error.Message)
 		}
 	}

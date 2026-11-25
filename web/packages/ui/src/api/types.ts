@@ -438,7 +438,11 @@ export type HintKind =
   /** Not an act: the project issues a refusal names, with their addresses, for the app to link. */
   | "several_projects"
   /** POST /api/interview for a slice this host already interviews: `target` is the live interview's ID. */
-  | "open_interview";
+  | "open_interview"
+  /** POST /api/interview while another window on this computer writes the subject: the message is the warning; start again with `take_over`. */
+  | "take_over"
+  /** A draft edit or an act while a conversation writes it (`target`: its subject): the message is the warning; send it again with `interrupt`. */
+  | "interrupt_turn";
 
 /** The engine's NEXT_ACTION_KINDS. Unknown kinds are still shown, routed by their target. */
 export type NextActionKind =
@@ -1957,6 +1961,8 @@ export interface InterviewSummary {
   turn_running: boolean;
   /** Another host or window holds the slice's lock. */
   locked_elsewhere: boolean;
+  /** While `locked_elsewhere`: the warning to show before offering to take it over here. */
+  take_over_warning?: string;
   last_message: { message_id: string; text: string; kind: MessageKind; question: ParsedQuestion | null } | null;
   turns: number;
   session_cost_usd: number | null;

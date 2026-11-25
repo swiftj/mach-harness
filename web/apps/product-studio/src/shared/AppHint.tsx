@@ -23,6 +23,16 @@ export function AppHint({ hint }: { hint: ApiErrorHint }) {
   const location = useLocation();
   // Answered in place by the screen that asked: the interview screen joins the open interview.
   if (hint.kind === "open_interview") return null;
+  // Answered in place too: the conversation screen offers "Take it over here" (TakeOverBanner).
+  if (hint.kind === "take_over") return null;
+  // A conversation is writing what the act changes: the host warned, and this goes ahead (useEngineAct sets proceed).
+  if (hint.kind === "interrupt_turn") {
+    return hint.proceed ? (
+      <Button size="sm" onClick={hint.proceed}>
+        Stop the reply and go ahead
+      </Button>
+    ) : null;
+  }
   // M20: not an act. The project issues the refusal names, each linked where the engine gave its address, so the person
   // (or whoever looks after the repository) can open them.
   if (hint.kind === "several_projects") {

@@ -10,6 +10,7 @@ import { ContinueInTerminal } from "./ContinueInTerminal";
 import { ExploreTranscript } from "./ExploreTranscript";
 import { exploreMode, openQuestion } from "./model";
 import type { ConversationController } from "./useIdeaConversation";
+import { TakeOverBanner } from "../../../shared/TakeOverBanner";
 
 const PAUSE_REQUEST = "I need to stop here. Please save where we are so I can continue later.";
 
@@ -211,11 +212,7 @@ function Current({ conv, busy, row }: { conv: ConversationController; busy: bool
     case "unavailable":
       return conv.capability ? <ContinueInTerminal ideaId={row.idea_id} capability={conv.capability} /> : null;
     case "conflict":
-      return (
-        <Banner tone="warning" title="The conversation cannot be opened here" actions={<Button onClick={conv.retryLoad}>Check again</Button>}>
-          {conv.problem?.kind === "conflict" ? conv.problem.message : "Another window or process holds this idea's conversation."}
-        </Banner>
-      );
+      return <TakeOverBanner conv={conv} subject={row.idea_id} />;
     case "refused":
     case "error": {
       const error = conv.problem;

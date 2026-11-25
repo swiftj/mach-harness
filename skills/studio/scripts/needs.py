@@ -194,8 +194,10 @@ def block(host: Any, studio: Any, ledger: Dict[str, Any]) -> Dict[str, Any]:
     open_kinds = unanswered(items, none, rules.NEED_KINDS)
     behind = adrs_behind(host, studio, ledger)
     if view["newer_elsewhere"]:
-        nxt = host.say("Someone else published a newer version of the technical needs on GitHub: choose yours or theirs (reconcile needs --take mine|theirs).",
-                       "Someone else published a newer version of the technical needs on GitHub: choose yours or theirs.")
+        nxt = host.say("Someone else published a newer version of the technical needs on GitHub. Publishing yours replaces it, and theirs is kept; "
+                       "to use theirs instead, take it (reconcile needs --take theirs).",
+                       "Someone else published a newer version of the technical needs on GitHub. Publishing yours replaces it, and theirs is kept; "
+                       "you can take theirs instead.")
     elif view["unfinished"]:
         nxt = host.say("Publishing the technical needs to GitHub stopped part way: publish them again to finish (need publish).",
                        "Publishing the technical needs to GitHub stopped part way: publish them again to finish.")
@@ -388,8 +390,8 @@ def cmd_publish(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str, A
             "ways_on": [host.say(f"Commit the folder {folder.relative_to(studio.draft)} to the repository's main branch; the engineers read the needs "
                                  "from there when they record their decisions.",
                                  "Add this folder to the project's repository; the engineers read the needs from there when they record their decisions.")],
-            "note": f"Published on the project's issue (#{saved['issue']}) as version {saved['revision']}, and to the folder with the same version. "
-                    "No decision was taken and no work has started."}
+            "note": host.first_warned(saved, f"Published on the project's issue (#{saved['issue']}) as version {saved['revision']}, and to the folder "
+                                             "with the same version. No decision was taken and no work has started.")}
 
 
 def add_commands(sub: Any, host: Any) -> None:

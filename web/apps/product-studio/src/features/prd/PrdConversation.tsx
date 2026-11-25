@@ -6,6 +6,7 @@ import { ExploreTranscript } from "../shape/explore/ExploreTranscript";
 import { ReplyField, conversationBusy, useNewestInView } from "../shape/explore/Conversation";
 import type { ConversationController } from "./usePrdConversation";
 import { prdCommand } from "./model";
+import { TakeOverBanner } from "../../shared/TakeOverBanner";
 
 /**
  * The PRD conversation (M19), inside the map part of a PRD's page: MACH reads the PRD, proposes its epics and thin
@@ -75,11 +76,7 @@ function Current({ prdId, conv, busy, hasMap }: { prdId: string; conv: Conversat
     case "unavailable":
       return <InClaudeCode prdId={prdId} reason={conv.capability?.reason ?? null} />;
     case "conflict":
-      return (
-        <Banner tone="warning" title="The conversation cannot be opened here" actions={<Button onClick={conv.retryLoad}>Check again</Button>}>
-          {conv.problem?.kind === "conflict" ? conv.problem.message : `Another window or process holds the conversation about ${prdId}.`}
-        </Banner>
-      );
+      return <TakeOverBanner conv={conv} subject={prdId} />;
     case "refused":
     case "error": {
       const error = conv.problem;

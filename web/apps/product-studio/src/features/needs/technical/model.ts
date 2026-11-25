@@ -155,7 +155,7 @@ export function unpublishedWords(state: PublishState, list: Pick<NeedList, "acti
     case "changed-on-github":
       return "The needs on the project's issue were edited after they were approved, so the engineer cannot rely on them. Publish them again to save a version you approved.";
     case "newer-elsewhere":
-      return "Someone else published a newer version. Choose which to go on from first: publishing now would be refused.";
+      return "Someone else published a newer version. Publishing yours replaces it, and theirs is kept; or take theirs instead.";
   }
 }
 

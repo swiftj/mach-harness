@@ -6,7 +6,7 @@
     "requests": {
       "repository": "acme/team-space",
       "refreshed": true,
-      "refreshed_at": "2026-11-24T13:29:36Z",
+      "refreshed_at": "2026-11-25T14:46:05Z",
       "problem": null,
       "truncated": false,
       "truncated_note": null,
@@ -20,12 +20,16 @@
       "repository": "acme/team-space",
       "refreshed": true,
       "problem": null,
-      "refreshed_at": "2026-11-24T13:29:36Z",
-      "form": null,
+      "refreshed_at": "2026-11-25T14:46:05Z",
+      "form": "sub_issues",
       "project_issue": 1,
       "project_url": "https://github.com/acme/team-space/issues/1",
-      "epics": {},
-      "epic_urls": {},
+      "epics": {
+        "EPIC-002": 5
+      },
+      "epic_urls": {
+        "EPIC-002": "https://github.com/acme/team-space/issues/5"
+      },
       "slices": [
         {
           "slice_id": "SLICE-001",
@@ -63,6 +67,43 @@
             }
           ],
           "title": "Invite a teammate"
+        },
+        {
+          "slice_id": "SLICE-002",
+          "in_workspace": true,
+          "saved": "github",
+          "unfinished": false,
+          "issue": 6,
+          "url": "https://github.com/acme/team-space/issues/6",
+          "state_label": "mach:ready",
+          "revision": 1,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "same_moment": null,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": "2026-11-17T10:00:18Z",
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "ready_to_build",
+          "on_github": [
+            {
+              "issue": 6,
+              "state": "open",
+              "state_label": "mach:ready",
+              "revision": 1,
+              "title": "Send an invoice",
+              "matches_approval": true,
+              "approved_by": "ben-pm",
+              "question": null
+            }
+          ],
+          "title": "Send an invoice"
         }
       ],
       "order": [
@@ -76,20 +117,36 @@
               "in_workspace": false,
               "issue": 3,
               "state_label": "mach:ready"
-            },
-            {
-              "slice_id": "SLICE-002",
-              "title": "Send an invoice",
-              "in_workspace": true,
-              "issue": null,
-              "state_label": null
             }
           ],
           "on_github": true,
           "github_order": [
             "SLICE-001"
           ],
-          "github_read_at": "2026-11-24T13:29:36Z",
+          "github_read_at": "2026-11-25T14:46:05Z",
+          "matches_github": true,
+          "unfinished": false,
+          "taken_from_github": false,
+          "could_not_read": false,
+          "note": null
+        },
+        {
+          "epic_id": "EPIC-002",
+          "issue": 5,
+          "slices": [
+            {
+              "slice_id": "SLICE-002",
+              "title": "Send an invoice",
+              "in_workspace": true,
+              "issue": 6,
+              "state_label": "mach:ready"
+            }
+          ],
+          "on_github": true,
+          "github_order": [
+            "SLICE-002"
+          ],
+          "github_read_at": "2026-11-25T14:46:05Z",
           "matches_github": true,
           "unfinished": false,
           "taken_from_github": false,
@@ -110,7 +167,7 @@
           "revision": null,
           "approved": null,
           "approved_by": null,
-          "read_at": "2026-11-24T13:29:36Z"
+          "read_at": "2026-11-25T14:46:05Z"
         },
         "newer_elsewhere": false,
         "changed_on_github": false

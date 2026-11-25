@@ -128,9 +128,12 @@ test("the engine's wording refusal goes beside the statement whenever the statem
   assert.equal(refusalPlace({ principle_id: "PP-01", title: "T" }), "form");
 });
 
-test("a publish refused for a newer version leads to the choice on this screen", () => {
-  const refusal = fixture("principle.publish.refused-newer-elsewhere");
-  assert.equal(isPrinciplesReconcileHint(refusal.hint), true);
+test("a publish over a newer version goes ahead and says so; the choice is still there for theirs", () => {
+  const over = fixture("principle.publish.refused-newer-elsewhere");
+  assert.equal(over.exit_code, 0);
+  assert.match(over.data.note, /^@ben-pm published version \d+ of the principles on GitHub/);
+  assert.match(over.data.note, /replaces it\. Theirs is kept/);
+  assert.equal(isPrinciplesReconcileHint({ kind: "reconcile", target: "principles" }), true);
   assert.equal(isPrinciplesReconcileHint({ kind: "reconcile", target: "SLICE-004" }), false);
   assert.equal(isPrinciplesReconcileHint(null), false);
 });

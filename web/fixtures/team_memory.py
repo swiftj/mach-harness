@@ -57,20 +57,18 @@ def generate(Scenario, out: Path) -> None:
 
 
 def slice_same_moment(s):
-    """Ada and Ben mark SLICE-001 ready at the same moment. Ben's is refused (renumber_slice); he renumbers and marks it ready."""
+    """Ada and Ben mark SLICE-001 ready at the same moment. Never blocked: Ben's issue is closed, and in the same act his draft
+    gets the next free number, SLICE-002, and is marked ready under it."""
     ada_issue = s.ada_ships_first_slice()
     ben = s.ben_starts_the_same_project()
     s.drafted(ben, title="Remove a teammate")
+    s.capture("status.team-before-same-moment", "status", project=ben)
+    s.capture("slice.show.team-before-same-moment", "slice", "show", "SLICE-001", project=ben)
     with s.hidden({ada_issue}):
         s.capture("slice.ready.team-same-moment", "slice", "ready", "SLICE-001", project=ben)
     s.capture("status.team-same-moment", "status", project=ben)
     s.capture("refresh.team-same-moment", "refresh", project=ben)
-    s.capture("slice.show.team-same-moment", "slice", "show", "SLICE-001", project=ben)
-    s.capture("slice.renumber.team-same-moment", "slice", "renumber", "SLICE-001", project=ben)
-    s.capture("status.team-renumbered", "status", project=ben)
-    s.capture("slice.show.team-renumbered", "slice", "show", "SLICE-002", project=ben)
-    s.capture("slice.ready.team-renumbered", "slice", "ready", "SLICE-002", project=ben)
-    s.capture("status.team-renumbered-ready", "status", project=ben)
+    s.capture("slice.show.team-same-moment", "slice", "show", "SLICE-002", project=ben)
 
 
 def slice_twice(s):
@@ -103,7 +101,8 @@ def slice_twice_builders(s):
 
 
 def epic_same_moment(s):
-    """Ben's EPIC-001 ("Billing") is made a moment after Ada's ("Team membership"): refused (renumber_epic), renumbered, ready."""
+    """Ben's EPIC-001 ("Billing") is made a moment after Ada's ("Team membership"). Never blocked: his epic's issue is closed, and
+    in the same act the epic gets the next free number and the slice is marked ready under it."""
     s.ada_ships_first_slice()
     ada_epic = s.issues("mach:epic")[0]["number"]
     ben = s.ben()
@@ -111,14 +110,13 @@ def epic_same_moment(s):
     s.ok(ben, "epic", "add", "--title", "Billing", "--criterion", "Invoices are sent")
     s.drafted(ben, title="Send an invoice")
     s.ok(ben, "slice", "renumber", "SLICE-001")
+    s.capture("status.team-before-epic-same-moment", "status", project=ben)
+    s.capture("slice.show.team-before-epic-same-moment", "slice", "show", "SLICE-002", project=ben)
     with s.hidden({ada_epic}):
         s.capture("slice.ready.team-epic-same-moment", "slice", "ready", "SLICE-002", project=ben)
     s.capture("status.team-epic-same-moment", "status", project=ben)
     s.capture("refresh.team-epic-same-moment", "refresh", project=ben)
     s.capture("slice.show.team-epic-same-moment", "slice", "show", "SLICE-002", project=ben)
-    s.capture("epic.renumber.team-epic-same-moment", "epic", "renumber", "EPIC-001", project=ben)
-    s.capture("status.team-epic-renumbered", "status", project=ben)
-    s.capture("slice.ready.team-epic-renumbered", "slice", "ready", "SLICE-002", project=ben)
 
 
 def text_taken_at_ready(s):

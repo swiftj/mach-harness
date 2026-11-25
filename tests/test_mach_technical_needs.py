@@ -270,7 +270,6 @@ class StudioTest(IssuesBase):
         refreshed = self.ok(self.a, "refresh")
         self.assertNotIn("needs_taken", refreshed)
         self.assertTrue(refreshed["github"]["needs"]["newer_elsewhere"])
-        self.assertIn("reconcile needs", self.refused(self.a, "need", "publish"))
         self.assertEqual(self.add("never", "A customer never sees another customer's invoices.")["need"]["need_id"], "TN-03")  # TN-02 was seen on GitHub
         self.ok(self.a, "reconcile", "needs", "--take", "theirs")
         listed = self.ok(self.a, "need", "list")
@@ -290,6 +289,25 @@ class StudioTest(IssuesBase):
         self.ok(self.a, "refresh")
         self.ok(self.a, "reconcile", "needs", "--take", "mine")
         self.assertEqual(self.ok(self.a, "need", "publish")["revision"], 3)
+        self.assertEqual(issue_rules.parse_needs_section(self.issues("mach:project")[0]["body"])["needs"][0]["why"], "Ada's reason.")
+
+    def test_publishing_mine_over_a_newer_version_replaces_it_and_keeps_theirs(self):
+        """Never blocked: publishing replaces the newer technical needs someone else published; theirs is kept whole."""
+        self.add()
+        self.ok(self.a, "need", "publish")
+        self.project_and_epic(self.b)
+        self.set_gh(me="ben-pm")
+        self.ok(self.b, "refresh")
+        self.ok(self.b, "need", "set", "TN-01", "--why", "Ben's reason.")
+        self.ok(self.b, "need", "publish")
+        self.set_gh(me="ada-pm")
+        self.ok(self.a, "need", "set", "TN-01", "--why", "Ada's reason.")
+        published = self.ok(self.a, "need", "publish")  # not even refreshed: the act still goes ahead
+        self.assertEqual(published["revision"], 3)
+        self.assertIn("@ben-pm published version 2 of the technical needs on GitHub", published["note"])
+        self.assertIn("Yours is now version 3 and replaces it.", published["note"])
+        kept = json.loads((self.a / ".factory/studio/replaced/needs-version-2/needs.json").read_text())
+        self.assertEqual(kept["needs"][0]["why"], "Ben's reason.")
         self.assertEqual(issue_rules.parse_needs_section(self.issues("mach:project")[0]["body"])["needs"][0]["why"], "Ada's reason.")
 
     def test_an_adr_serving_an_older_revision_is_flagged(self):

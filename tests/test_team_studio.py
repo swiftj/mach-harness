@@ -101,56 +101,50 @@ class TwoProductManagers(IssuesBase):
 
 class SliceNumberTest(TwoProductManagers):
     def test_the_same_next_number_is_caught_at_ready_and_renumbered(self):
-        """One after the other: Ben, who never refreshed, gets SLICE-001 as well; marking it ready is refused before
-        anything is written, and renumbering gives SLICE-002."""
+        """One after the other: Ben, who never refreshed, gets SLICE-001 as well. Never blocked: marking it ready gives his draft
+        the next free number, SLICE-002, before anything is written, and marks it ready under that number in the same act."""
         self.ada_ships_first_slice()
         ben = self.ben_starts_the_same_project()
         self.assertEqual(self.drafted(ben, title="Remove a teammate"), "SLICE-001")  # allocated from what this computer can see
-        refused = self.refused(ben, "slice", "ready", "SLICE-001")
-        self.assertIn("already used on GitHub by another slice", refused)
-        self.assertEqual(self.ok(ben, "slice", "renumber", "SLICE-001")["renumbered"]["to"], "SLICE-002")
-        self.assertEqual(self.ready("SLICE-002", ben)["saved_to"], "github")
+        result = self.ready("SLICE-001", ben)
+        self.assertEqual((result["saved_to"], result["slice"]["slice_id"], result["renumbered"]),
+                         ("github", "SLICE-002", [{"from": "SLICE-001", "to": "SLICE-002"}]))
+        self.assertIn("SLICE-001 was already used on GitHub by another slice", result["note"])
         self.assertEqual(len(self.slice_issues_for("SLICE-001")), 1)
+        self.assertEqual(len(self.slice_issues_for("SLICE-002")), 1)
 
-    def test_two_ready_at_the_same_moment_the_later_is_closed_and_told(self):
+    def test_two_ready_at_the_same_moment_the_later_is_closed_and_carried_on(self):
         """At the same moment: both read GitHub before either wrote, so both make an issue holding SLICE-001. Ben's look-again
-        finds Ada's, which GitHub made first: his is closed before it carries an approval or mach:ready, he is told at once
-        who holds the number and which issue, his approval is undone, and the renumber is offered. (The audit's reproduction
-        expected Ben's `slice ready` to succeed; it is now refused, which is how he is told.)"""
+        finds Ada's, which GitHub made first: his is closed before it carries an approval or mach:ready. Never blocked: in the same
+        act his draft gets the next free number and is marked ready under it, and he is told who holds SLICE-001 and which issue."""
         ada_issue = self.ada_ships_first_slice()
         ben = self.ben_starts_the_same_project()
         self.drafted(ben, title="Remove a teammate")
         with self.hidden({ada_issue}):
-            err, hint = self.refused_app(ben, "slice", "ready", "SLICE-001")
-        self.assertEqual(hint, {"kind": "renumber_slice", "target": "SLICE-001"})
-        (ben_issue,) = [i for i in self.issues() if i["title"] == "Remove a teammate"]
-        self.assertIn(f"SLICE-001 was marked ready at the same moment by someone else: ada-pm's issue #{ada_issue} was made first and keeps the number. "
-                      f"Your issue #{ben_issue['number']} was closed and never marked ready, so nothing reached the builders. "
-                      "Give your draft a new number, then mark it ready again.", err)
-        self.assertNotIn("slice renumber", err)  # the app's wording names no command
-        # Ben's issue: closed, no MACH label, no approval; a fixed comment says which issue keeps the number.
-        self.assertEqual((ben_issue["state"], self.labels_of(ben_issue["number"])), ("CLOSED", []))
+            code, out, err = self.run_studio(ben, "--app", "slice", "ready", "SLICE-001")
+        self.assertEqual(code, 0, err)
+        result = json.loads(out)
+        (ben_issue,) = [i for i in self.issues() if i["title"] == "Remove a teammate" and i["state"] == "CLOSED"]
+        self.assertIn(f"SLICE-001 was marked ready at the same moment by someone else: @ada-pm's issue #{ada_issue} was made first and keeps the number. "
+                      f"MACH closed yours, #{ben_issue['number']}, before it was marked ready, so nothing reached the builders twice. "
+                      "MACH gave your draft the next free number: SLICE-001 is now SLICE-002.", result["note"])
+        self.assertNotIn("slice renumber", result["note"])  # the app's wording names no command
+        # Ben's first issue: closed, no MACH label, no approval; a fixed comment says which issue keeps the number.
+        self.assertEqual(self.labels_of(ben_issue["number"]), [])
         (comment,) = ben_issue["comments"]
         self.assertTrue(comment["body"].startswith(f"<!-- mach:closed slice=SLICE-001 kept=#{ada_issue} -->\nMACH Product Studio closed this issue."))
         self.assertEqual([i["number"] for i in self.slice_issues_for("SLICE-001")], [ada_issue])
-        self.assertEqual(self.ben_slice("SLICE-001")["status"], "ready_for_approval")
-        # Status, on Ben's computer, says the same without the network; Ada is not asked to do anything.
-        first = self.status(ben)["next_actions"][0]
-        self.assertEqual((first["kind"], first["target"]), ("renumber_slice", "SLICE-001"))
-        self.assertIn(f"issue #{ada_issue} was made first and keeps the number", first["reason"])
-        moment = next(row for row in self.status(ben)["slices"] if row["slice_id"] == "SLICE-001")["github"]["same_moment"]
-        self.assertEqual((moment["issue"], moment["holder"], moment["issue_url"], moment["holder_url"]),
-                         (ben_issue["number"], ada_issue, url(ben_issue["number"]), url(ada_issue)))
+        (now,) = self.slice_issues_for("SLICE-002")
+        self.assertIn("mach:ready", self.labels_of(now["number"]))
+        self.assertEqual((result["issue"], self.ben_slice("SLICE-002")["status"]), (now["number"], "approved_for_engineering"))
+        # Nothing is left for Ben to do about it, and Ada is not asked to do anything.
+        self.assertNotIn("renumber_slice", [a["kind"] for a in self.status(ben)["next_actions"]])
         self.assertNotIn("renumber_slice", [a["kind"] for a in self.status(self.ada())["next_actions"]])
-        # The existing renumber moves every reference; marked ready again, it is saved under the free number.
-        self.assertEqual(self.ok(self.ben(), "slice", "renumber", "SLICE-001")["renumbered"]["to"], "SLICE-002")
-        self.assertEqual(self.ready("SLICE-002", ben)["saved_to"], "github")
-        self.assertEqual(len(self.slice_issues_for("SLICE-001")), 1)
-        self.assertEqual(len(self.slice_issues_for("SLICE-002")), 1)
 
     def test_a_moment_missed_at_ready_is_found_by_either_refresh(self):
         """The look-again itself missed Ada's issue, so two open issues hold SLICE-001, both marked ready. Ada's refresh says
-        hers keeps the number; Ben's refresh says the same, closes his own (the builders have not taken it) and offers the renumber."""
+        hers keeps the number; Ben's refresh says the same and closes his own (the builders have not taken it). Marking it ready
+        again gives it the next free number."""
         ada_issue = self.ada_ships_first_slice()
         ben = self.ben_starts_the_same_project()
         self.drafted(ben, title="Remove a teammate")
@@ -163,15 +157,18 @@ class SliceNumberTest(TwoProductManagers):
         self.assertIn(f"SLICE-001 is held by more than one open issue on GitHub: #{ada_issue} was made first, then #{ben_issue}. Yours is #{ada_issue}", clash["note"])
         (clash,) = self.ok(self.ben(), "refresh")["github"]["same_id_twice"]
         self.assertEqual(clash["yours"], "closed")
-        self.assertIn("Yours was made later, so MACH closed it: give your draft a new number and mark it ready again.", clash["note"])
+        self.assertIn("Yours was made later, so MACH closed it: mark it ready again, and MACH gives it the next free number.", clash["note"])
         self.assertEqual((self.issue(ben_issue)["state"], self.labels_of(ben_issue)), ("CLOSED", []))
         self.assertEqual(self.ben_slice("SLICE-001")["status"], "ready_for_approval")
         first = self.status(ben)["next_actions"][0]
         self.assertEqual((first["kind"], first["target"]), ("renumber_slice", "SLICE-001"))
+        self.assertIn("Mark it ready again: MACH gives it the next free number.", first["reason"])
         self.assertEqual([i["number"] for i in self.slice_issues_for("SLICE-001")], [ada_issue])
+        self.assertEqual(self.ready("SLICE-001", ben)["slice"]["slice_id"], "SLICE-002")
 
     def test_a_later_duplicate_the_builders_took_is_reported_not_closed(self):
-        """Missed at ready, and the builders already took Ben's issue: refresh tells him so and leaves the issue alone."""
+        """Missed at ready, and the builders already took Ben's issue: refresh tells him so and leaves the issue alone; the merge of
+        the builders' work settles it."""
         ada_issue = self.ada_ships_first_slice()
         ben = self.ben_starts_the_same_project()
         self.drafted(ben, title="Remove a teammate")
@@ -180,24 +177,31 @@ class SliceNumberTest(TwoProductManagers):
         self.change_issue(ben_issue, labels=self.issue(ben_issue)["labels"] + [{"name": "mach:building"}])
         (clash,) = self.ok(self.ben(), "refresh")["github"]["same_id_twice"]
         self.assertEqual(clash["yours"], "taken_by_builders")
-        self.assertIn("the builders have already taken it: tell the engineer", clash["note"])
+        self.assertIn("the builders have already started on it, so MACH left it open", clash["note"])
+        self.assertNotIn("tell the engineer", clash["note"])
         self.assertEqual(self.issue(ben_issue)["state"], "OPEN")
 
 
 class EpicNumberTest(TwoProductManagers):
-    def test_an_epic_number_used_for_a_different_epic_is_refused(self):
-        """One after the other: the same EPIC-001 with another title is refused before anything is written, with a renumber hint."""
+    def test_an_epic_number_used_for_a_different_epic_is_given_the_next_free_number(self):
+        """One after the other: the same EPIC-001 with another title. Never blocked: the epic gets the next free number before
+        anything is written, and the slice is marked ready under it in the same act."""
         self.ada_ships_first_slice()
         ben = self.ben()
         self.ok(ben, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
         self.ok(ben, "epic", "add", "--title", "Billing", "--criterion", "Invoices are sent")
         self.drafted(ben, title="Send an invoice")
         self.ok(ben, "slice", "renumber", "SLICE-001")
-        self.assertIn("already used on GitHub by another epic", self.refused(ben, "slice", "ready", "SLICE-002"))
+        result = self.ready("SLICE-002", ben)
+        self.assertIn("EPIC-001 was already used on GitHub by another epic", result["note"])
+        self.assertIn("MACH gave your epic the next free number: EPIC-001 is now EPIC-002.", result["note"])
+        self.assertEqual((result["saved_to"], self.ben_slice("SLICE-002")["epic_id"]), ("github", "EPIC-002"))
+        self.assertEqual(sorted(i["title"] for i in self.issues("mach:epic")), ["Billing", "Team membership"])
 
     def test_an_epic_number_taken_at_the_same_moment_for_another_epic(self):
         """At the same moment: Ben's EPIC-001 ("Billing") is made a moment after Ada's ("Team membership"). His look-again finds
-        hers: his epic's issue is closed before any slice is made under it, he is told, and renumbering the epic lets him go on."""
+        hers: his epic's issue is closed before any slice is made under it. Never blocked: his epic gets the next free number and
+        the slice is marked ready under it, in the same act, with nothing left to do about it."""
         self.ada_ships_first_slice()
         ada_epic = self.issues("mach:epic")[0]["number"]
         ben = self.ben()
@@ -206,53 +210,20 @@ class EpicNumberTest(TwoProductManagers):
         self.drafted(ben, title="Send an invoice")
         self.ok(ben, "slice", "renumber", "SLICE-001")
         with self.hidden({ada_epic}):
-            err, hint = self.refused_app(ben, "slice", "ready", "SLICE-002")
-        self.assertEqual(hint, {"kind": "renumber_epic", "target": "EPIC-001"})
-        (ben_epic,) = [i for i in self.issues() if i["title"] == "Billing"]
+            result = self.ready("SLICE-002", ben)
+        (ben_epic,) = [i for i in self.issues() if i["title"] == "Billing" and i["state"] == "CLOSED"]
         self.assertIn(f"EPIC-001 was saved at the same moment by someone else, for a different epic: their issue #{ada_epic} was made first and keeps "
-                      f"the number. Your issue #{ben_epic['number']} was closed.", err)
-        self.assertEqual((ben_epic["state"], self.labels_of(ben_epic["number"])), ("CLOSED", []))
-        self.assertEqual(self.slice_issues_for("SLICE-002"), [])  # nothing was made under it
-        self.assertEqual(self.ben_slice("SLICE-002")["status"], "ready_for_approval")
-        # Status remembers it without the network: on the epic, first among the next actions, and in the withdrawal's reason.
-        status = self.status(ben)
-        moment = status["epics"][0]["same_moment"]
-        self.assertEqual((moment["issue"], moment["holder"], moment["issue_url"], moment["holder_url"]),
-                         (ben_epic["number"], ada_epic, url(ben_epic["number"]), url(ada_epic)))
-        first = status["next_actions"][0]
-        self.assertEqual((first["kind"], first["target"]), ("renumber_epic", "EPIC-001"))
-        self.assertIn(f"their issue #{ada_epic} was made first and keeps the number", first["reason"])
-        self.assertIn("(epic renumber EPIC-001)", status["suggested_next"][0])
-        (withdrawn,) = status["approvals_withdrawn"]
-        self.assertEqual(withdrawn["reason"], "Someone else saved a different epic as EPIC-001 at the same moment, so the epic needs a new number "
-                                              "and this slice needs your approval again.")
-        self.assertIsNone(self.status(self.ada())["epics"][0]["same_moment"])
-        self.assertEqual(self.ok(self.ben(), "epic", "renumber", "EPIC-001")["renumbered"]["to"], "EPIC-002")
+                      f"the number. MACH closed yours, #{ben_epic['number']}. MACH gave your epic the next free number: EPIC-001 is now EPIC-002.",
+                      result["note"])
+        self.assertEqual(self.labels_of(ben_epic["number"]), [])
+        self.assertEqual((result["saved_to"], self.ben_slice("SLICE-002")["status"], self.ben_slice("SLICE-002")["epic_id"]),
+                         ("github", "approved_for_engineering", "EPIC-002"))
         status = self.status(ben)
         self.assertEqual([e["same_moment"] for e in status["epics"]], [None])
         self.assertNotIn("renumber_epic", [a["kind"] for a in status["next_actions"]])
-        self.assertEqual(self.ready("SLICE-002", ben)["saved_to"], "github")
+        self.assertEqual(status["approvals_withdrawn"], [])
+        self.assertIsNone(self.status(self.ada())["epics"][0]["same_moment"])
         self.assertEqual(sorted(i["title"] for i in self.issues("mach:epic")), ["Billing", "Team membership"])
-
-
-    def test_an_epic_refused_at_the_same_moment_is_forgotten_once_the_number_is_free(self):
-        """The clash is gone at a refresh (the other epic's issue was closed): the epic is no longer offered a new number."""
-        self.ada_ships_first_slice()
-        ada_epic = self.issues("mach:epic")[0]["number"]
-        ben = self.ben()
-        self.ok(ben, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "x", "--outcome", "y")
-        self.ok(ben, "epic", "add", "--title", "Billing", "--criterion", "Invoices are sent")
-        self.drafted(ben, title="Send an invoice")
-        self.ok(ben, "slice", "renumber", "SLICE-001")
-        with self.hidden({ada_epic}):
-            self.refused_app(ben, "slice", "ready", "SLICE-002")
-        self.ok(ben, "refresh")
-        self.assertIsNotNone(self.status(ben)["epics"][0]["same_moment"])  # still held by Ada's open issue
-        self.change_issue(ada_epic, state="CLOSED")
-        self.ok(ben, "refresh")
-        status = self.status(ben)
-        self.assertIsNone(status["epics"][0]["same_moment"])
-        self.assertNotIn("renumber_epic", [a["kind"] for a in status["next_actions"]])
 
 
 class SharedProjectAndEpicTest(TwoProductManagers):
@@ -386,27 +357,35 @@ class OneProjectTest(TwoProductManagers):
         found = self.status(ben)["project_on_github"]
         self.assertEqual((found["issue"], found["name"], found["readable"]), (project_issue, None, False))
 
-    def test_several_project_issues_are_refused_and_named(self):
-        """Two open project issues: project init and marking ready both refuse, naming both, and refresh reports them."""
+    def test_several_project_issues_are_a_warning_and_closing_one_is_offered(self):
+        """Two open project issues. Never blocked: project init takes the oldest, marking ready carries on with the one this
+        workspace follows, both say so first and offer to close the other on the product manager's word, and refresh reports them."""
         self.ada_ships_first_slice()
         first = self.issues("mach:project")[0]["number"]
         second = self.second_project_issue()
         named = f"(#{first} and #{second})"
-        refused = self.refused(self.ben(), "project", "init", "--id", "team-space", "--name", "x", "--vision", "y", "--outcome", "z")
-        self.assertIn(f"This repository has more than one project issue on GitHub {named}. A repository holds one project, so nothing was defined. "
-                      "Ask someone who looks after the repository to close the one that should not be there, then try again.", refused)
+        result = self.ok(self.ben(), "project", "init", "--id", "team-space", "--name", "x", "--vision", "y", "--outcome", "z")
+        self.assertEqual(result["taken_from_github"], first)
+        self.assertIn(f"This repository has more than one project issue on GitHub {named}. A repository holds one project, so MACH used #{first}, "
+                      f"the oldest one MACH can read. Closing #{second} changes nothing in your work", result["note"])
+        self.assertIn(f"MACH can close #{second} for you (project close-issue {second}).", result["note"])
         self.drafted(self.ada(), title="Remove a teammate")
-        refused = self.refused(self.a, "slice", "ready", "SLICE-002")
-        self.assertIn(f"more than one project issue on GitHub {named}. A repository holds one project, so nothing was saved.", refused)
-        self.assertEqual(self.slice_issues_for("SLICE-002"), [])
-        # With --app, each refusal carries the issues with their addresses, for the app to link.
-        both = {"kind": "several_projects", "target": None, "issues": [{"issue": first, "url": url(first)}, {"issue": second, "url": url(second)}]}
-        self.assertEqual(self.refused_app(self.a, "slice", "ready", "SLICE-002")[1], both)
-        self.assertEqual(self.refused_app(self.ben(), "project", "init", "--id", "team-space", "--name", "x", "--vision", "y", "--outcome", "z")[1], both)
+        ready = self.ready("SLICE-002", self.a)
+        self.assertIn(f"so MACH used #{first}, the one this workspace already follows.", ready["note"])
+        self.assertEqual((ready["project_issue"], len(self.slice_issues_for("SLICE-002"))), (first, 1))
         clashes = self.ok(self.ada(), "refresh")["github"]["same_id_twice"]
         self.assertIn({"kind": "project", "others": [first, second], "urls": {str(first): url(first), str(second): url(second)}},
                       [{key: c[key] for key in ("kind", "others", "urls")} for c in clashes])
         self.assertIsNone(self.status(self.a)["project_on_github"])  # two: none is the project MACH would take
+        # The product manager's one yes: MACH closes the other, and the warning is gone.
+        closed = self.ok(self.a, "project", "close-issue", str(second))
+        self.assertEqual((closed["closed"], closed["kept"]), (second, first))
+        self.assertEqual((self.issue(second)["state"], self.labels_of(second)), ("CLOSED", []))
+        self.assertIn("MACH Product Studio closed this issue on a product manager's word.", self.issue(second)["comments"][-1]["body"])
+        self.drafted(self.a, title="Rename a teammate")
+        self.assertNotIn("warned", self.ready("SLICE-003", self.a))
+        self.assertIn("is not an open project issue", self.refused(self.a, "project", "close-issue", str(second)))
+
 
     def test_two_first_readies_at_once_leave_one_project_and_one_epic(self):
         """The first `project init` and ready done by two people at once: Ben's project and epic issues are made a moment after

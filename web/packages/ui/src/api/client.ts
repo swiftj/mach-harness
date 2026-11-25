@@ -56,14 +56,18 @@ export interface MachClient {
    * yourself to read the project and capabilities. Repeated calls share one request until it settles.
    */
   session(signal?: AbortSignal): Promise<Session>;
-  /** POST /api/ops/<name> with typed arguments; resolves with the engine's JSON. */
-  op<K extends OperationName>(name: K, args: OperationArgs<K>, signal?: AbortSignal): Promise<OperationResult<K>>;
+  /**
+   * POST /api/ops/<name> with typed arguments; resolves with the engine's JSON. `interrupt` follows a `conflict` with
+   * hint `interrupt_turn`: the conversation writing what the act changes is stopped first, then the act runs.
+   */
+  op<K extends OperationName>(name: K, args: OperationArgs<K>, signal?: AbortSignal, options?: { interrupt?: boolean }): Promise<OperationResult<K>>;
   readDraft(kind: "spec" | "intent", sliceId: string, signal?: AbortSignal): Promise<DraftRead>;
   /**
    * PUT a draft's markdown. The host runs `slice check` afterwards and returns it. `name` (such as
-   * "invite-teammate") is only for a slice's first spec.
+   * "invite-teammate") is only for a slice's first spec. `interrupt` follows a `conflict` with hint `interrupt_turn`:
+   * the interviewer's reply is stopped first, then the edit is written.
    */
-  writeDraft(kind: "spec" | "intent", sliceId: string, markdown: string, options?: { name?: string; signal?: AbortSignal }): Promise<DraftWriteResult>;
+  writeDraft(kind: "spec" | "intent", sliceId: string, markdown: string, options?: { name?: string; signal?: AbortSignal; interrupt?: boolean }): Promise<DraftWriteResult>;
   /** The interview routes (contract 8.2). */
   interview: InterviewClient;
   /** M16: the Shape conversation for one idea, on the same routes by `idea_id`. */
@@ -202,8 +206,8 @@ export function createClient(options: ClientOptions = {}): MachClient {
   return {
     connection,
     session: loadSession,
-    async op(name, args, signal) {
-      const result = await send("POST", `/api/ops/${name}`, name, args, signal);
+    async op(name, args, signal, opts) {
+      const result = await send("POST", `/api/ops/${name}${opts?.interrupt ? "?interrupt=true" : ""}`, name, args, signal);
       if (!readOnlyOperations.has(name)) changed(name);
       return result as OperationResult<typeof name>;
     },
@@ -215,7 +219,8 @@ export function createClient(options: ClientOptions = {}): MachClient {
       return send("GET", draftPath(kind, sliceId), `drafts.${kind}`, undefined, signal);
     },
     writeDraft(kind, sliceId, markdown, opts = {}) {
-      const body = kind === "spec" && opts.name ? { markdown, name: opts.name } : { markdown };
+      const base = kind === "spec" && opts.name ? { markdown, name: opts.name } : { markdown };
+      const body = opts.interrupt ? { ...base, interrupt: true } : base;
       return send<DraftWriteResult>("PUT", draftPath(kind, sliceId), `drafts.${kind}`, body, opts.signal).then((result) => {
         changed(`drafts.${kind}`);
         return result;

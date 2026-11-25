@@ -6,7 +6,7 @@
     "requests": {
       "repository": "acme/team-space",
       "refreshed": true,
-      "refreshed_at": "2026-11-24T13:29:32Z",
+      "refreshed_at": "2026-11-25T14:46:00Z",
       "problem": null,
       "truncated": false,
       "truncated_note": null,
@@ -20,7 +20,7 @@
       "repository": "acme/team-space",
       "refreshed": true,
       "problem": null,
-      "refreshed_at": "2026-11-24T13:29:32Z",
+      "refreshed_at": "2026-11-25T14:46:00Z",
       "form": "sub_issues",
       "project_issue": 1,
       "project_url": "https://github.com/acme/team-space/issues/1",
@@ -47,7 +47,7 @@
             "issue": 4,
             "holder": 3,
             "by": null,
-            "at": "2026-11-24T13:29:32Z",
+            "at": "2026-11-25T14:46:00Z",
             "issue_url": "https://github.com/acme/team-space/issues/4",
             "holder_url": "https://github.com/acme/team-space/issues/3"
           },
@@ -93,7 +93,7 @@
           "github_order": [
             "SLICE-001"
           ],
-          "github_read_at": "2026-11-24T13:29:32Z",
+          "github_read_at": "2026-11-25T14:46:00Z",
           "matches_github": true,
           "unfinished": false,
           "taken_from_github": false,
@@ -114,7 +114,7 @@
           "revision": null,
           "approved": null,
           "approved_by": null,
-          "read_at": "2026-11-24T13:29:32Z"
+          "read_at": "2026-11-25T14:46:00Z"
         },
         "newer_elsewhere": false,
         "changed_on_github": false
@@ -124,7 +124,7 @@
           "id": "SLICE-001",
           "kept": 3,
           "kind": "slice",
-          "note": "SLICE-001 is held by more than one open issue on GitHub: #3 was made first, then #4. Yours was made later, so MACH closed it: give your draft a new number and mark it ready again.",
+          "note": "SLICE-001 is held by more than one open issue on GitHub: #3 was made first, then #4. Yours was made later, so MACH closed it: mark it ready again, and MACH gives it the next free number.",
           "others": [
             4
           ],

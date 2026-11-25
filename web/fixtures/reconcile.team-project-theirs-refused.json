@@ -1,6 +1,9 @@
 {
   "exit_code": 1,
   "data": null,
-  "refused": "The project on GitHub is not in the form MACH writes, so it cannot be taken. Keep yours, or ask the person who changed it.",
-  "hint": null
+  "refused": "The project on GitHub (#1) (https://github.com/acme/team-space/issues/1) is not in the form MACH writes, so MACH cannot copy it into your workspace. Nothing was changed. Read it there and change your copy to match, then keep yours: MACH writes it to GitHub the next time you mark a slice ready.",
+  "hint": {
+    "kind": "reconcile",
+    "target": "project"
+  }
 }

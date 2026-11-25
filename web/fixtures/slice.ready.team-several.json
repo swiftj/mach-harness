@@ -1,19 +1,43 @@
 {
-  "exit_code": 1,
-  "data": null,
-  "refused": "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so nothing was saved. Ask someone who looks after the repository to close the one that should not be there, then try again.",
-  "hint": {
-    "kind": "several_projects",
-    "target": null,
-    "issues": [
-      {
-        "issue": 1,
-        "url": "https://github.com/acme/team-space/issues/1"
-      },
-      {
-        "issue": 4,
-        "url": "https://github.com/acme/team-space/issues/4"
-      }
-    ]
-  }
+  "exit_code": 0,
+  "data": {
+    "ready": true,
+    "saved_to": "github",
+    "slice": {
+      "dependencies": [],
+      "epic_id": "EPIC-001",
+      "open_questions": [],
+      "project_id": "team-space",
+      "revision": 2,
+      "schema_version": 1,
+      "slice_id": "SLICE-002",
+      "spec_path": "specs/slices/SLICE-002-invite-teammate.md",
+      "spec_sha256": "c3d3b270393bc111fafce4279b3677f3453d58ec2025c330885bd7ae7b6f8888",
+      "status": "approved_for_engineering",
+      "title": "Remove a teammate"
+    },
+    "issue": 5,
+    "url": "https://github.com/acme/team-space/issues/5",
+    "revision": 1,
+    "follows": null,
+    "epic_issue": 2,
+    "project_issue": 1,
+    "approved_by": "ada-pm",
+    "risk": "High",
+    "counts": {
+      "invariants": 4,
+      "functional_requirements": 9,
+      "matrix_rules": 5,
+      "scenarios": 3
+    },
+    "warnings": [],
+    "request_updates": null,
+    "factory_authorized": false,
+    "warned": [
+      "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so MACH used #1, the one this workspace already follows. Closing #4 changes nothing in your work: it leaves one project issue, and its text stays in its history. MACH can close it for you: ask for it in your conversation with MACH."
+    ],
+    "note": "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so MACH used #1, the one this workspace already follows. Closing #4 changes nothing in your work: it leaves one project issue, and its text stays in its history. MACH can close it for you: ask for it in your conversation with MACH. Saved to GitHub as #5 and marked ready. The builders take it from there; nothing has started yet."
+  },
+  "refused": null,
+  "hint": null
 }

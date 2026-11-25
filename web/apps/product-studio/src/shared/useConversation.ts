@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { toInterviewEvent, type InterviewClient, type InterviewHistory, type InterviewSummary, type MachApiError, type StartResult } from "@mach/ui/api";
+import { toInterviewEvent, type InterviewClient, type InterviewHistory, type InterviewSummary, type MachApiError, type StartOptions, type StartResult } from "@mach/ui/api";
 import { interviewCapability, loadSession, toApiError, type InterviewCapability } from "../api/session";
 import { initialModel, interviewReducer, type AnswerKind, type InterviewModel } from "../features/interview/model";
 
@@ -18,7 +18,7 @@ export type ConversationPhase =
   | "idle"
   | "starting"
   | "live"
-  /** Another window or host holds this subject's conversation. */
+  /** Another window or host holds this subject's conversation: `takeOverWarning` says so, and `takeOver` continues here. */
   | "conflict"
   /** The host or engine refused to start (an approved slice, an idea shaped into work). */
   | "refused"
@@ -34,6 +34,10 @@ export interface ConversationController {
   /** True while a reply, an interrupt or a stop is on its way to the host. */
   sending: "reply" | "interrupt" | "stop" | null;
   start: () => void;
+  /** While `conflict`: the host's warning about the other writer, shown before the one action that continues here. */
+  takeOverWarning: string | null;
+  /** Continue here although another window holds the conversation (the host warned first). */
+  takeOver: () => void;
   reply: (text: string, answer: AnswerKind) => void;
   interrupt: () => void;
   stop: () => void;
@@ -44,7 +48,7 @@ export interface ConversationController {
 export interface ConversationClient extends Pick<InterviewClient, "subscribe" | "reply" | "interrupt" | "stop"> {
   current(subject: string, signal?: AbortSignal): Promise<InterviewSummary | null>;
   history(subject: string, signal?: AbortSignal): Promise<InterviewHistory>;
-  start(subject: string): Promise<StartResult>;
+  start(subject: string, options?: StartOptions): Promise<StartResult>;
 }
 
 export interface ConversationSource {
@@ -144,12 +148,13 @@ export function useConversation(subject: string, source: ConversationSource): Co
     };
   }, [subject, loadTick, attach, load, label]);
 
-  const start = useCallback(() => {
+  const begin = useCallback(
+    (options?: StartOptions) => {
     const client = clientRef.current;
     if (!client) return;
     setPhase("starting");
     setProblem(null);
-    client.start(subject).then(
+    client.start(subject, options).then(
       (result) => {
         started?.(subject);
         attach(client, result.interview_id);
@@ -167,7 +172,11 @@ export function useConversation(subject: string, source: ConversationSource): Co
         setPhase(error.kind === "conflict" ? "conflict" : error.kind === "refused" ? "refused" : "error");
       },
     );
-  }, [subject, attach, label, started]);
+  },
+    [subject, attach, label, started],
+  );
+  const start = useCallback(() => begin(), [begin]);
+  const takeOver = useCallback(() => begin({ takeOver: true }), [begin]);
 
   const reply = useCallback(
     (text: string, answer: AnswerKind) => {
@@ -217,5 +226,9 @@ export function useConversation(subject: string, source: ConversationSource): Co
     setLoadTick((t) => t + 1);
   }, []);
 
-  return { phase, capability, summary, model, problem, sending, start, reply, interrupt, stop, retryLoad };
+  // The host's warning: from the refused start when there was one, else from the lookup that found the lock held.
+  const takeOverWarning =
+    phase !== "conflict" ? null : problem?.kind === "conflict" && problem.hint?.kind === "take_over" ? problem.message : (summary?.take_over_warning ?? null);
+
+  return { phase, capability, summary, model, problem, sending, start, takeOverWarning, takeOver, reply, interrupt, stop, retryLoad };
 }

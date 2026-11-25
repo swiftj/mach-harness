@@ -18,6 +18,11 @@ export interface ApiErrorHint {
   target: string | null;
   /** M20, `several_projects`: the project issues the refusal names, each with the address the engine gave (null without one). */
   issues?: Array<{ issue: number; url: string | null }>;
+  /**
+   * Set by the app, never by the host: the one action that goes ahead after a warning (`interrupt_turn`: the act is
+   * sent again with interrupt). The hint's control calls it.
+   */
+  proceed?: () => void;
 }
 
 /**

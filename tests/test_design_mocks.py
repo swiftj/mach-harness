@@ -154,17 +154,38 @@ class StudioTest(issues_tests.IssuesBase):
 
 
 class TakeTest(intake_tests.Base):
-    def test_a_slice_with_mocks_is_not_taken_from_github(self):
+    def test_a_slice_with_mocks_opens_and_its_pictures_come_from_the_main_branch(self):
+        """Never blocked: without the pictures on the main branch it opens without them, as a draft, saying how they come; once they
+        are committed and fetched, taking it again brings them, checked against the approved hash."""
         self.set_gh(me="ada-pm")
         self.project_and_epic()
         self.drafted()
         picture = self.root / "a.png"
         picture.write_bytes(png())
         self.ok(self.a, "slice", "mock", "add", "SLICE-001", str(picture))
-        number = self.ok(self.a, "slice", "ready", "SLICE-001")["issue"]
+        ready = self.ok(self.a, "slice", "ready", "SLICE-001")
+        number = ready["issue"]
         self.ok(self.b, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
         self.set_gh(me="ben-pm")
-        self.assertIn("has design mocks", self.refused_studio(self.b, "slice", "take", str(number)))
+        taken = self.ok(self.b, "slice", "take", str(number))
+        self.assertEqual((taken["taken"], taken["approved_here"]), (True, False))
+        self.assertIn(f"#{number} has design mocks, and their pictures are not on", taken["note"])
+        self.assertIn("So SLICE-001 is open here without them, as a draft, not as approved. To bring them, fetch the main branch (git fetch) "
+                      f"and open #{number} again (slice take {number}); or add them again (slice mock add SLICE-001 <picture>).", taken["note"])
+        self.assertNotIn("mocks", taken["slice"])
+        # Ada commits the pictures to the main branch; Ben fetches, and taking it again brings them.
+        git(self.a, "pull", "-q", "--ff-only")
+        folder = self.a / "product/ready/SLICE-001/mocks"
+        folder.mkdir(parents=True, exist_ok=True)
+        for name in ready["mocks"]["files"]:
+            (folder / name).write_bytes((self.a / ".factory/studio/draft/product/ready/SLICE-001/mocks" / name).read_bytes())
+        git(self.a, "add", "-A", "product")
+        git(self.a, "commit", "-q", "-m", "design mocks for SLICE-001")
+        git(self.a, "push", "-q", "origin", "main")
+        git(self.b, "fetch", "-q", "origin")
+        again = self.ok(self.b, "slice", "take", str(number))
+        self.assertEqual((again["already_in_workspace"], again.get("mocks_brought")), (True, True))
+        self.assertEqual(len(again["slice"]["mocks"]), 1)
 
     def refused_studio(self, project, *argv):
         code, out, err = self.run_studio(project, *argv)
