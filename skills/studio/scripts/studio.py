@@ -2434,9 +2434,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--status", choices=product.ENUMS["project"]["status"])
     p.set_defaults(func=cmd_project_set)
     # M21: moving the project to another repository in one archive file (only on the product manager's word)
-    p = project.add_parser("export", help="write the whole project to one archive file that names no repository")
+    p = project.add_parser("export", help="write the whole project to one archive file that names no repository; what GitHub holds and this "
+                                          "workspace does not is read from there (nothing here changes)")
     p.add_argument("--out", help="the folder to write it in; left out, .factory/studio/export/")
-    p.add_argument("--only-mine", action="store_true", help="leave out this project's slices that are on GitHub but not in this workspace")
+    p.add_argument("--only-mine", action="store_true", help="only what is in this workspace: leave out what is on GitHub but not here")
     p.set_defaults(func=cmd_project_export)
     p = project.add_parser("import", help="bring a project archive into this repository's workspace; every slice arrives as a draft")
     p.add_argument("archive", nargs="?", help="the archive file that project export wrote (with --abandon: which unfinished import, if more than one)")
