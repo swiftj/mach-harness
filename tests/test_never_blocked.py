@@ -244,75 +244,76 @@ class DisplacedWorkerTest(ClaimBase):
             self.next("T-1", "--holder", MINE, "--by-person")
         return folder, work
 
-    def test_the_takers_own_station_commits_and_files_are_never_set_aside(self):
-        folder, work = self.take_build_over(stage="spec-ready")
-        limit = 90
-        # The taker's planner, inside one of its station calls: a commit and a file of its own.
-        self.assertIsNone(C.guard(folder, MINE, "T-1", limit))
+    def test_nothing_is_reset_after_a_take_over_a_hand_commit_stays_and_is_warned_about_once(self):
+        folder, work = self.take_build_over()
+        (work / "late.py").write_text("LATE = 1\n")
+        git(work, "add", "-A")
+        git(work, "commit", "-q", "-m", "a commit made by hand after the take-over")
+        late = git(work, "rev-parse", "HEAD").stdout.strip()
+        (work / "half.py").write_text("an uncommitted file\n")
+        (folder / "build.json").write_text(json.dumps({"loop": 0, "deviations": []}))
+        (folder / "build-report.json").write_text(json.dumps({"review_loop": 0, "deviations": []}))
+        code, _, err = capture(build.main, ["--project", str(self.root), "status", "T-1", "--holder", MINE])
+        self.assertRegex(err, r"1 commit\(s\) were made on this branch outside MACH's stations since the take-over at \d\d:\d\d UTC \("
+                              + late[:10] + r"\)\. They are part of this change now: reviewers see them\. If they are not wanted, remove them "
+                              r"before the next step\.")
+        self.assertNotIn("worker taken over", err, "who made it is not known, so nobody is named")
+        self.assertEqual(git(work, "rev-parse", "HEAD").stdout.strip(), late, "nothing is reset")
+        self.assertTrue((work / "half.py").is_file(), "and no file is moved")
+        deviations = json.loads((folder / "build.json").read_text())["deviations"]
+        self.assertEqual([(item["type"], item["commits"]) for item in deviations], [("commits-outside-stations", [late])],
+                         "recorded for the reviewers the way deviations are")
+        report = json.loads((folder / "build-report.json").read_text())["deviations"]
+        self.assertEqual([item["type"] for item in report], ["commits-outside-stations"], "the build report the review packet names shows it")
+        _, _, again = capture(build.main, ["--project", str(self.root), "status", "T-1", "--holder", MINE])
+        self.assertNotIn("outside MACH's stations", again, "said once")
+
+    def test_a_merge_of_main_by_hand_stays_and_nothing_loops(self):
+        folder, work = self.take_build_over()
+        git(work, "checkout", "-q", "-b", "side")
+        (work / "side.py").write_text("SIDE = 1\n")
+        git(work, "add", "-A")
+        git(work, "commit", "-q", "-m", "on main meanwhile")
+        git(work, "checkout", "-q", "-")
+        git(work, "merge", "-q", "--no-ff", "-m", "a person merges main by hand", "side")
+        merged = git(work, "rev-parse", "HEAD").stdout.strip()
+        for _ in range(2):
+            capture(build.main, ["--project", str(self.root), "status", "T-1", "--holder", MINE])
+            self.assertEqual(git(work, "rev-parse", "HEAD").stdout.strip(), merged)
+
+    def test_a_commit_made_inside_a_station_call_is_never_warned_about(self):
+        folder, work = self.take_build_over()
+        self.assertIsNone(C.watch(folder, "T-1"))
         (work / "contract.proto").write_text("syntax = 1\n")
         git(work, "add", "-A")
-        git(work, "commit", "-q", "-m", "contracts, committed by the intent station for the taker")
-        mine = git(work, "rev-parse", "HEAD").stdout.strip()
-        C.record(folder, MINE, limit)
-        (work / "plan-notes.md").write_text("the taker's own file\n")
-        code, _, err = capture(build.main, ["--project", str(self.root), "status", "T-1", "--holder", MINE])
-        self.assertNotIn("taken over", err)
-        self.assertEqual(git(work, "rev-parse", "HEAD").stdout.strip(), mine, "the taker's own station commit stays")
-        self.assertTrue((work / "plan-notes.md").is_file(), "and its own uncommitted file stays where it is")
+        git(work, "commit", "-q", "-m", "a station's own commit, inside its call")
+        C.record(folder)  # the station call ends on it
+        self.assertIsNone(C.watch(folder, "T-1"))
 
-    def test_a_commit_the_displaced_worker_makes_after_the_takers_first_call_is_set_aside_at_the_next(self):
-        folder, work = self.take_build_over()
-        capture(build.main, ["--project", str(self.root), "status", "T-1", "--holder", MINE])  # the taker's first call: nothing stray
-        base = git(work, "rev-parse", "HEAD").stdout.strip()
-        (work / "late.py").write_text("LATE = 1\n")
+    def test_an_old_pair_of_specs_under_one_number_does_not_block_re_finalizing_either(self):
+        (self.root / "pair").mkdir()
+        work = self.make_repo(self.root / "pair")
+        names = ("SLICE-001-invite-teammate.md", "SLICE-001-engineers-own.md")
+        (work / "specs" / "slices").mkdir(parents=True)
+        for name in names:
+            (work / "specs" / "slices" / name).write_text(f"# SLICE-001: {name}\n")
         git(work, "add", "-A")
-        git(work, "commit", "-q", "-m", "the displaced worker's commit after the taker's first call")
-        _, _, err = capture(build.main, ["--project", str(self.root), "status", "T-1", "--holder", MINE])
-        self.assertIn("made after the take-over outside the stations", err)
-        self.assertEqual(git(work, "rev-parse", "HEAD").stdout.strip(), base)
-        self.assertEqual(git(work, "show", "refs/mach/taken-over/T-1/1:late.py").stdout, "LATE = 1\n")
+        git(work, "commit", "-q", "-m", "an old pair under one number")
+        used, _ = cell_script.scan_ids([work / "specs" / "slices"])
+        self.assertEqual(sorted(used[1].split(" and ")), sorted(names), "the allocator names both files")
+        import validate_slice
+        finding = validate_slice.Finding("error", 0, "duplicate-slice-id", f"SLICE-001 is already used by {names[1]}. Choose a new ID with 'cell.py next-id'.")
+        shown = cell_script.shared_number(work, work / "specs" / "slices" / names[0], finding)
+        self.assertEqual(shown.severity, "warning")
+        self.assertIn(f"{names[0]} (this one, which keeps its number) and {names[1]}", shown.message)
+        fresh = cell_script.shared_number(work, work / "specs" / "slices" / "SLICE-001-brand-new.md", finding)
+        self.assertEqual(fresh.severity, "error", "a new spec taking a used number still chooses another")
 
-    def test_files_outside_the_step_are_kept_aside_before_it_commits(self):
-        folder, work = self.take_build_over()
-        (work / "a.py").write_text("A = 2\n")
-        (work / "stray.py").write_text("slipped in\n")
-        left, said = C.aside_outside(work, "T-1", ["a.py"], ["a.py", "stray.py"], folder, 90)
-        self.assertEqual(left, ["a.py"])
-        self.assertIn("refs/mach/cell-files/T-1/outside-step-1", said)
-        self.assertFalse((work / "stray.py").exists())
-        self.assertEqual(git(work, "show", "refs/mach/cell-files/T-1/outside-step-1:stray.py").stdout, "slipped in\n")
-
-    def test_a_take_over_stops_standing_two_stages_on_or_after_a_quiet_claim_window(self):
+    def test_the_holderless_refusal_lasts_the_claim_window_once(self):
         folder, _ = self.take_build_over()
-        self.assertIsNotNone(C.standing(folder, 90))
-        self.cell(stage="built", isolation="worktree")
-        self.assertIsNotNone(C.standing(folder, 90), "one stage on, it still stands")
-        self.cell(stage="verified", isolation="worktree")
-        self.assertIsNone(C.standing(folder, 90), "two stages on, it ends")
-        folder2 = self.cell("T-2", stage="building")
-        C.displace(folder2, [OTHER], "build", taker=MINE)
         from datetime import datetime, timedelta, timezone
-        self.assertIsNotNone(C.standing(folder2, 90))
-        self.assertIsNone(C.standing(folder2, 90, at=datetime.now(timezone.utc) + timedelta(minutes=91)), "quiet for the claim window: it ends")
-
-    def test_the_takers_first_call_sets_aside_what_the_displaced_worker_did_after_the_take_over(self):
-        folder = self.cell(stage="building", isolation="worktree")
-        work = self.make_repo(folder)
-        base = git(work, "rev-parse", "HEAD").stdout.strip()
-        self.put_claim(step="build", stage="building", holder=OTHER)
-        with mock.patch.object(run, "git", side_effect=lambda cwd, *args: git(work, *args)):
-            self.next("T-1", "--holder", MINE, "--by-person")
-        # The displaced worker goes on with plain Git after the take-over, and leaves a file half written.
-        (work / "late.py").write_text("LATE = 1\n")
-        git(work, "add", "-A")
-        git(work, "commit", "-q", "-m", "the displaced worker's own commit")
-        code, _, err = capture(build.main, ["--project", str(self.root), "status", "T-1", "--holder", MINE])
-        self.assertIn("commit(s) on the branch were made after the take-over outside the stations", err)
-        self.assertIn("refs/mach/taken-over/T-1/1", err)
-        self.assertEqual(git(work, "rev-parse", "HEAD").stdout.strip(), base, "the new worker continues from the commit at the take-over")
-        self.assertEqual(git(work, "show", "refs/mach/taken-over/T-1/1:late.py").stdout, "LATE = 1\n", "nothing is lost")
-        _, _, again = capture(build.main, ["--project", str(self.root), "status", "T-1", "--holder", MINE])
-        self.assertNotIn("after the take-over", again, "nothing new is stray")
+        self.assertTrue(C.in_claim_window(folder, 90))
+        self.assertFalse(C.in_claim_window(folder, 90, at=datetime.now(timezone.utc) + timedelta(minutes=91)))
 
     def test_a_holder_not_displaced_and_no_holder_pass_the_gate(self):
         folder = self.cell()
@@ -344,6 +345,31 @@ class DisplacedWorkerTest(ClaimBase):
 
 class LanesTest(LanesBase):
     """E2: lanes another driver's builders hold."""
+
+    def test_e2_a_lanes_join_after_a_take_over_stays_and_the_records_agree_with_the_branch(self):
+        from test_build_lanes import L1, L2
+        self.ready_lanes()
+        self.ok("start", TICKET)
+        self.next_step("--holder", HOLDER)
+        self.assertEqual(self.lanes_start()["status"], "OPEN")
+        self.next_step("--holder", LANE_OTHER, "--by-person")
+        self.assertEqual(self.lanes_start(LANE_OTHER)["status"], "OPEN")
+        for name, steps in (("L1", L1), ("L2", L2)):
+            for task, step, files in steps:
+                self.put(self.lane_work(name), files)
+                code, _, err = self.run_build(step, TICKET, task, "--holder", LANE_OTHER)
+                self.assertEqual(code, 0, err)
+        joined = self.lanes_join("--holder", LANE_OTHER)
+        self.assertEqual(joined["status"], "JOINED", joined)
+        work = self.cellroot / "repo"
+        head = git(work, "rev-parse", "HEAD").stdout.strip()
+        code, _, err = self.run_build("status", TICKET, "--holder", LANE_OTHER)
+        self.assertNotIn("outside MACH's stations", err, "the join is a station's commit")
+        self.assertEqual(git(work, "rev-parse", "HEAD").stdout.strip(), head, "nothing is reset")
+        state = json.loads((self.cellroot / "build.json").read_text())
+        for task in state.get("tasks") or []:
+            if task.get("status") == "done" and task.get("commit"):
+                self.assertEqual(git(work, "merge-base", "--is-ancestor", task["commit"], "HEAD").returncode, 0, task["id"])
 
     def test_e2_a_person_takes_live_lanes_over_and_the_old_lane_builder_stops(self):
         self.ready_lanes()
