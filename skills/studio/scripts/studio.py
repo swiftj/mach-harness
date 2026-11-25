@@ -2041,6 +2041,11 @@ def cmd_principle_list(studio: Studio, args: argparse.Namespace) -> int:
 
 def cmd_principle_publish(studio: Studio, args: argparse.Namespace) -> int:
     """Save the principles where the builders read them: the project's GitHub issue, or the ready folder. On the product manager's word."""
+    return emit(publish_principles(studio))
+
+
+def publish_principles(studio: Studio) -> Dict[str, Any]:
+    """`principle publish`'s act, returning its result; a refusal raises StudioError. M21: the ready step of an import calls it too."""
     studio.prepare()
     project = studio.load("project")
     items = studio.principles()
@@ -2053,12 +2058,12 @@ def cmd_principle_publish(studio: Studio, args: argparse.Namespace) -> int:
     active = sum(1 for item in items if item["status"] == "active")
     if saved["saved_to"] == "folder":
         folder = Path(saved["folder"])
-        return emit({"published": True, **saved, "files": [str(folder / "principles.json")], "active": active, "factory_authorized": False,
+        return dict({"published": True, **saved, "files": [str(folder / "principles.json")], "active": active, "factory_authorized": False,
                      "ways_on": [say(f"Commit the folder {folder.relative_to(studio.draft)} to the repository; the builders read it from the main branch.",
                                      "Add this folder to the project's repository; the builders read it from there."),
                                  "Slices marked ready from now on answer these principles."],
                      "note": "Published to the folder. Nothing was sent to GitHub and no work has started."})
-    return emit({"published": True, **saved, "active": active, "factory_authorized": False,
+    return dict({"published": True, **saved, "active": active, "factory_authorized": False,
                  "note": f"Published on the project's issue (#{saved['issue']}) as version {saved['revision']}. Slices marked ready from now on answer these principles."})
 
 
@@ -2445,12 +2450,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--abandon", action="store_true",
                    help="set aside the import that stopped part way: its numbers are freed, what it already brought in stays where it is")
     p.add_argument("--ready", action="store_true",
-                   help="then mark ready, dependencies first, every slice that was ready in the old repository (on the product manager's word)")
+                   help="then publish the principles and technical needs that came, and mark ready, dependencies first, every slice that was ready in the old repository (on the product manager's word)")
     p.set_defaults(func=cmd_project_import)
-    p = project.add_parser("imports", help="the projects brought in here, or what one of their IDs is called here (reads only); "
-                                           "'imports ready' marks ready what was ready in the old repository")
-    p.add_argument("identifier", nargs="?", help="an ID from the project brought in, such as SLICE-007; or 'ready'")
-    p.add_argument("which", nargs="?", help="with 'ready': which import (its record, or the archive's file name); left out, the last one")
+    p = project.add_parser(
+        "imports", help="the projects brought in here, or what one of their IDs is called here (reads only); "
+                        "'project imports ready' marks ready what was ready in the old repository (on the product manager's word)",
+        usage="%(prog)s [ID]\n       %(prog)s ready [WHICH]",
+        description="project imports [ID]: every project brought in here, or what one of its IDs (such as SLICE-007) was or became. "
+                    "Reads only.\n\nproject imports ready [WHICH]: only on the product manager's word. For a project brought in here (the "
+                    "last one finished, or WHICH: its record or the archive's file name), publishes the product principles and technical "
+                    "needs that came with it, as they stand in this workspace, then marks ready, dependencies first and as slice ready "
+                    "does, every slice that was ready in the old repository. It stops at the first that is refused and says what was done "
+                    "and what is left; asked again, it carries on. A slice already marked ready is left as it is.",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("identifier", nargs="?", metavar="ID", help="an ID from a project brought in, such as SLICE-007; or the word ready")
+    p.add_argument("which", nargs="?", metavar="WHICH", help="after ready: which import (its record, or the archive's file name); left out, the last one")
     p.set_defaults(func=cmd_project_imports)
 
     epic = sub.add_parser("epic", help="epics").add_subparsers(dest="action", required=True)

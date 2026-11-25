@@ -292,19 +292,35 @@ class ReadyTest(ImportBase):
         self.assertEqual(planned["ready_in_source"]["slices"], ["SLICE-001", "SLICE-002", "SLICE-003"])
         self.assertTrue(planned["ready_in_source"]["words"].startswith("3 slices were ready in the old repository (SLICE-001, SLICE-002 and "
                                                                        "SLICE-003). On your word, MACH can mark them ready here in one step"))
+        self.assertTrue(planned["ready_in_source"]["words"].endswith("That step first publishes the product principles and technical needs "
+                                                                     "that came with the project, as they then stand here."))
+        self.assertTrue(planned["note"].endswith(" Nothing was sent to GitHub. 3 of them were ready in the old repository and can be marked "
+                                                 "ready here in one step (project imports ready), on your word, which first publishes the "
+                                                 "principles and technical needs that came with them."), planned["note"])
+        self.assertNotIn("when you have checked it", planned["note"], "one instruction, not two")
+        with mock.patch.object(studio, "APP", True):
+            self.assertNotIn("(project imports ready)", self.plan(self.b, self.archive)["note"], "no command in the app")
         self.bring(self.b, self.archive)
         self.assertEqual({self.work(self.b, s)["status"] for s in ("SLICE-001", "SLICE-002", "SLICE-003")}, {"draft"})
         self.assertEqual(self.record(self.b, self.archive)["was_ready"], {"SLICE-001": True, "SLICE-002": True, "SLICE-003": True})
 
     def test_ready_in_one_step_dependencies_first_stopping_at_the_first_refusal(self):
         self.bring(self.b, self.archive)
-        first = json.loads(self.run_studio(self.b, "project", "imports", "ready")[1])
-        self.assertEqual(first["marked_ready"], [], "the principles that came are not published yet")
-        self.assertEqual(first["stopped_at"]["slice"], "SLICE-001")
-        self.assertIn("the product principles have changes that are not published", first["note"])
-        self.ok(self.b, "principle", "publish")
+        # Publishing what came is refused: it stops there, with that reason, and nothing is marked ready.
+        with mock.patch.object(studio, "publish_principles", side_effect=studio.StudioError("Someone else published newer principles.")):
+            first = json.loads(self.run_studio(self.b, "project", "imports", "ready")[1])
+        self.assertEqual((first["published_first"], first["marked_ready"], first["stopped_at"]["slice"]), ([], [], None))
+        self.assertTrue(first["note"].startswith("Stopped before marking anything ready: publishing the product principles was refused. "
+                                                 "Someone else published newer principles. Still to mark ready: SLICE-001, SLICE-002 and SLICE-003."),
+                        first["note"])
+        self.assertEqual(self.work(self.b, "SLICE-001")["status"], "draft")
+        # One step: the principles and needs that came are published first, then the slices are marked ready.
         code, out, err = self.run_studio(self.b, "project", "imports", "ready")
         result = json.loads(out)
+        self.assertEqual(result["published_first"], ["principles", "needs"])
+        self.assertTrue(result["note"].startswith("Published the product principles and the technical needs first, as they stand in this "
+                                                  "workspace, so the builders have what these slices answer. Marked "), result["note"])
+        self.assertFalse(studio.Studio(self.b).unpublished(self.ledger(self.b)))
         done = [row["slice"] for row in result["marked_ready"]]
         self.assertEqual(done[:1], ["SLICE-001"], "a dependency first")
         for slice_id in done:
