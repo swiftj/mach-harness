@@ -617,6 +617,7 @@ class _FromGitHub:
         self.slices: Dict[str, Dict[str, Any]] = {}      # slice ID -> work order, for slices read from GitHub
         self.replaced: List[str] = []                    # local slices whose newer version on GitHub the archive holds
         self.numbers: Dict[str, int] = {}                # epic or slice ID read from GitHub -> its issue
+        self.notes: List[str] = []                       # sentences about what came, read with the warnings
         self.mocks = 0
 
     def leave(self, ident: str, what: str, issue: Optional[int], reason: str) -> None:
@@ -690,8 +691,11 @@ class _FromGitHub:
     def vet(self, read: Dict[str, Any], slice_id: str, spec_name: Optional[str]) -> Tuple[Optional[str], Dict[str, Any]]:
         """The take checks for one slice issue read now: (why it cannot be in the archive, or None; what it holds)."""
         check, number, labels = read["check"], read["number"], read["labels"]
-        shipped = check["problem"] == "shipped"
-        if shipped:  # shipped work is not opened as a draft, but it is the project's: the same checks, on the shipped text
+        # Shipped is what the Factory says with mach:shipped (handoff.describe's state_label, handoff.progress); an issue closed
+        # without it was closed by a person, not built. Both are checked as `slice take` checks an open one.
+        shipped = SHIPPED_LABEL in labels
+        closed = not shipped and (read.get("state") == "closed" or check["problem"] == "shipped")
+        if check["problem"] == "shipped":  # shipped work is not opened as a draft, but it is the project's: the same checks
             check = self.rules.slice_take_check({"state": "open", "labels": [name for name in labels if name != SHIPPED_LABEL], "body": read["body"]},
                                                 read["comments"])
         if check["problem"]:
@@ -723,13 +727,13 @@ class _FromGitHub:
         if errors or model.get("open_questions"):
             return (f"{slice_id}: the spec in #{number} does not pass the spec check ({(errors or ['it has open questions'])[0]}), so it is not "
                     "in the archive."), {}
-        ready_like = shipped or bool({"mach:ready", "mach:building", "mach:question"} & set(labels))
-        was = ("shipped" if shipped else "question" if "mach:question" in labels else "being_built" if "mach:building" in labels
-               else "ready_to_build" if "mach:ready" in labels else "interviewing")
+        ready_like = shipped or (not closed and bool({"mach:ready", "mach:building", "mach:question"} & set(labels)))
+        was = ("shipped" if shipped else "interviewing" if closed else "question" if "mach:question" in labels
+               else "being_built" if "mach:building" in labels else "ready_to_build" if "mach:ready" in labels else "interviewing")
         return None, {"marker": marker, "spec": spec, "why": why, "title": title, "name": name, "epic_issue": epic_issue, "depends": depends,
-                      "ready_like": ready_like, "was": was, "number": number}
+                      "ready_like": ready_like, "was": was, "number": number, "closed": closed}
 
-    def unit(self, slice_id: str, held: Dict[str, Any], ref: str) -> Tuple[Dict[str, bytes], Dict[str, Any], Optional[str]]:
+    def unit(self, slice_id: str, held: Dict[str, Any], ref: str, here: bool = False) -> Tuple[Dict[str, bytes], Dict[str, Any], Optional[str]]:
         """The archive members of one slice read from GitHub, its work order as `slice take` writes it, and why its design mocks
         are left out (or None)."""
         rules, host = self.rules, self.host
@@ -748,9 +752,11 @@ class _FromGitHub:
                 name = rules.mock_file_name(item)
                 data = _picture(host, self.studio, ref, slice_id, name)
                 if data is None or rules.check_mock_file(item, data) is not None:
+                    where = (f"Commit product/ready/{slice_id}/mocks/ to the main branch, fetch it here, then export again." if here else
+                             f"On the computer where it was marked ready, commit product/ready/{slice_id}/mocks/ to the main branch; then fetch "
+                             "here and export again.")
                     mocks_left = (f"{slice_id}'s design mocks are not in the archive: the picture {item['sha256'][:12]} is not on {ref} in this copy "
-                                  f"of the repository, or is not the approved one. {slice_id} is in the archive without them. Commit "
-                                  f"product/ready/{slice_id}/mocks/ to the main branch, fetch it here, then export again.")
+                                  f"of the repository, or is not the approved one. {slice_id} is in the archive without them. {where}")
                     break
                 pictures[f"workspace/product/mocks/{slice_id}/{name}"] = data
             if mocks_left is None:
@@ -760,7 +766,8 @@ class _FromGitHub:
         return unit, work, mocks_left
 
     def complete(self, local: Dict[str, Dict[str, Any]], local_epics: Dict[str, Dict[str, Any]], scanner_for: Callable[[], "_Scanner"],
-                 slice_now: Callable[[str], Tuple[Optional[str], Optional[str]]], spec_names: Dict[str, str], editable: Sequence[str]) -> None:
+                 slice_now: Callable[[str], Tuple[Optional[str], Optional[str]]], spec_names: Dict[str, str], editable: Sequence[str],
+                 changed_here: Sequence[str] = ()) -> None:
         """Every slice and epic GitHub holds that the archive does not, in dependency order; and, for a slice here that someone
         else saved a newer version of on GitHub, that version when this workspace's is the approved one (yours stays when you
         changed it). `slice_now(ID)` gives a local slice's spec and why SHA-256 as they are now."""
@@ -789,6 +796,8 @@ class _FromGitHub:
                                                      f"archive holds the one from this workspace. Giving your draft a new number in Product Studio "
                                                      + host.say(f"(slice renumber {slice_id}) ", "") + "lets both come; then export again.")
                 continue
+            if slice_id in changed_here:
+                continue  # approved here, then changed: the archive holds this workspace's text as a draft (said in _collect)
             item = next(item for item in items if item["number"] == own)
             theirs = (item["marker"].get("spec_sha256"), item["marker"].get("why_sha256"))
             if theirs == slice_now(slice_id):
@@ -849,7 +858,7 @@ class _FromGitHub:
             if epic_id in bad_epics:
                 self.keep_or_leave(slice_id, held["number"], f"{slice_id} belongs to {epic_id}, which is not in the archive (see {epic_id}).", local)
                 continue
-            unit, work, mocks_left = self.unit(slice_id, held, ref)
+            unit, work, mocks_left = self.unit(slice_id, held, ref, here=slice_id in local)
             finding = _unit_finding(scanner, unit)
             if finding:
                 what, _ = described(finding[0])
@@ -912,6 +921,8 @@ class _FromGitHub:
         self.mocks += len(work.get("mocks") or [])
         if mocks_left:
             self.leave(slice_id, "design mocks", held["number"], mocks_left)
+        if held.get("closed"):
+            self.notes.append(f"{slice_id}'s issue (#{held['number']}) was closed without being built, so it comes as a draft.")
         self.slice_facts[slice_id] = {"was": held["was"], "revision": held["marker"]["revision"], "jira": held["marker"].get("jira"),
                                       "request": None, "note": None, "was_ready": bool(held["ready_like"] and not mocks_left), "from_github": True}
 
@@ -972,6 +983,47 @@ def _misfit(host: Any, error: str, numbers: Dict[str, int]) -> str:
         where = f"{ident or 'It'} is in this workspace: put it right here in Product Studio"
     return (f"What GitHub holds and what is in this workspace do not fit together, so nothing was exported: {plain}. {where}, then export again, or "
             + host.say("export only what is here (project export --only-mine).", "export only what is in this workspace."))
+
+
+def _not_assessed(host: Any, studio: Any, files: Dict[str, bytes], local: Dict[str, Dict[str, Any]]) -> Tuple[List[Dict[str, str]], List[Tuple[str, str]]]:
+    """The Not assessed rows that travel (facts.json `not_assessed`), and the rows no import here vouches for: (slice, principle).
+    (a) every Not assessed row in a spec the archive holds, with the import record that wrote it (project_import.not_assessed_problems
+    finds none against it); (b) for a slice of this workspace already marked ready, each principle that came with a project brought
+    in after it and that its spec does not answer (what `principle list` computes and reopening writes)."""
+    import project_import  # noqa: E402  as studio.py imports it, where it is used
+    validate = studio.validate_slice
+    rows: Dict[Tuple[str, str], Dict[str, str]] = {}
+    unvouched: List[Tuple[str, str]] = []
+    for member in sorted(files):
+        found = re.fullmatch(r"workspace/specs/slices/(SLICE-[0-9]+)-.*\.md", member)
+        if not found:
+            continue
+        slice_id = found.group(1)
+        for line in files[member].decode("utf-8").splitlines():
+            row = validate.NOT_ASSESSED_ROW_RE.match(line.strip())
+            if not row:
+                continue
+            said = validate.not_assessed_reason(row.group(1), row.group(4))
+            if said is None or project_import.not_assessed_problems(studio, slice_id, [{"id": row.group(1), **said}]):
+                unvouched.append((slice_id, row.group(1)))
+                continue
+            rows[(slice_id, row.group(1))] = {"slice": slice_id, "principle": row.group(1), "how": said["how"], "project": said["project"],
+                                              "day": said["day"]}
+    current = {item["id"]: item for item in project_import.active_here(studio)}
+    for _, record in project_import._records(studio):  # noqa: SLF001  the import records, read as rows_on_reopen reads them
+        if record.get("mode") != "join" or not record.get("finished_at"):
+            continue
+        came = [current[i] for i in (record.get("merges") or {}).get("principles") or [] if i in current]
+        project = str(record.get("from_project_name") or record.get("from_project"))
+        day = str(record.get("day") or record.get("started_at") or "")[:10]
+        for slice_id, data in sorted(local.items()):
+            if data.get("status") != host.APPROVED or slice_id in project_import.slices_of(record):
+                continue
+            for item in project_import.rows_for_slices_here(host, studio, came, project_import.slices_of(record), project, day, write=False,
+                                                            only=[slice_id], editable=False):
+                rows.setdefault((slice_id, item["principle"]), {"slice": slice_id, "principle": item["principle"], "how": "principle_came",
+                                                                "project": project, "day": day})
+    return [rows[key] for key in sorted(rows, key=lambda key: (int(key[0].split("-")[1]), key[1]))], unvouched
 
 
 def _combined_errors(files: Dict[str, bytes]) -> List[str]:
@@ -1155,6 +1207,28 @@ def _collect(host: Any, studio: Any, only_mine: bool) -> Tuple[Dict[str, bytes],
             counts[counted] += 1
             documents_here.append(ident)
 
+    def slice_now(slice_id: str) -> Tuple[Optional[str], Optional[str]]:
+        spec, intent = studio.spec_of(slice_id), studio.intent_path(slice_id)
+        try:
+            return (rules.text_sha256_of(spec.read_text(encoding="utf-8")) if spec else None,
+                    rules.text_sha256_of(intent.read_text(encoding="utf-8")) if intent.is_file() else None)
+        except (OSError, UnicodeDecodeError):
+            return None, None
+
+    # An approved slice is ready only while its spec, why and design mocks are exactly what was approved (the hashes the approval
+    # and the ledger carry: handoff's spec_sha256, why_sha256, mocks_sha256). One changed here since comes as a draft.
+    changed_here: List[str] = []
+    for slice_id, data in local.items():
+        if data.get("status") != host.APPROVED:
+            continue
+        entry = ledger["slices"].get(slice_id) or {}
+        listed_mocks = mocks.listed(data)
+        if (not entry.get("spec_sha256") or not entry.get("why_sha256") or slice_now(slice_id) != (entry["spec_sha256"], entry["why_sha256"])
+                or (rules.mocks_sha256(listed_mocks) if listed_mocks else None) != entry.get("mocks_sha256")):
+            changed_here.append(slice_id)
+            files[f"workspace/product/slices/{slice_id}.json"] = host.canonical(STRIP["slice"]({**data, "status": "interviewing",
+                                                                                                "spec_sha256": None})).encode("utf-8")
+
     # What GitHub holds that this workspace does not (read now, through `slice take`'s reader and checks; recorded nowhere).
     editable = getattr(host, "EDITABLE_SLICE", ("draft", "interviewing", "ready_for_approval"))
     completion: Optional[_FromGitHub] = None
@@ -1170,16 +1244,8 @@ def _collect(host: Any, studio: Any, only_mine: bool) -> Tuple[Dict[str, bytes],
                 completion.files[member] = host.canonical(STRIP[key](record)).encode("utf-8")
                 completion.ids.append(key)
 
-            def slice_now(slice_id: str) -> Tuple[Optional[str], Optional[str]]:
-                spec, intent = studio.spec_of(slice_id), studio.intent_path(slice_id)
-                try:
-                    return (rules.text_sha256_of(spec.read_text(encoding="utf-8")) if spec else None,
-                            rules.text_sha256_of(intent.read_text(encoding="utf-8")) if intent.is_file() else None)
-                except (OSError, UnicodeDecodeError):
-                    return None, None
-
             completion.complete(local, epics, lambda: _Scanner(host, studio, [github["repository"]], sorted(completion.logins)),
-                                slice_now, spec_names, editable)
+                                slice_now, spec_names, editable, changed_here)
             completion.ideas(idea_facts)
         for slice_id in completion.replaced:  # the newer version from GitHub stands in for the approved one here
             for member in [m for m in files if m in (f"workspace/product/slices/{slice_id}.json", f"workspace/product/intents/{slice_id}.md")
@@ -1229,15 +1295,33 @@ def _collect(host: Any, studio: Any, only_mine: bool) -> Tuple[Dict[str, bytes],
         slice_facts[slice_id] = {"was": view["progress"], "revision": view["revision"] if type(view["revision"]) is int else None,
                                  "jira": (data.get("tracking") or {}).get("jira") if isinstance(data.get("tracking"), dict) else None,
                                  "request": origin.get("number") if type(origin.get("number")) is int else None, "note": note,
-                                 "was_ready": data.get("status") == host.APPROVED}
+                                 "was_ready": data.get("status") == host.APPROVED and slice_id not in changed_here}
+        if slice_id in changed_here:
+            slice_facts[slice_id]["was"] = "interviewing"
+            warnings.append(f"{slice_id} was changed here after it was approved, so it comes as a draft, not as ready.")
         if _changed_since_ready(rules, studio, ledger["slices"].get(slice_id) or {}, data, slice_id, editable):
             warnings.append(f"{slice_id} changed since it was marked ready; the archive holds your draft.")
         if view["newer_elsewhere"] and (completion is None or only_mine):
             warnings.append(f"Someone else saved a newer version of {slice_id} on GitHub; the archive holds the version in this workspace.")
     all_epics = {**epics, **(completion.epics if completion else {})}
     all_slices = {**local, **(completion.slices if completion else {})}
+    epic_jira: Dict[str, str] = {}
     if completion:
         slice_facts.update(completion.slice_facts)
+        warnings += completion.notes
+        # 4b. GitHub carries one key per slice, the slice's own or else its epic's. A key two or more slices of one epic carry, or
+        # the key this workspace's epic has, is the epic's: reported against the epic, not as each slice's own.
+        by_epic: Dict[Tuple[str, str], List[str]] = {}
+        for slice_id, row in completion.slice_facts.items():
+            if row.get("jira"):
+                by_epic.setdefault((completion.slices[slice_id]["epic_id"], row["jira"]), []).append(slice_id)
+        for (epic_id, key), members in by_epic.items():
+            here_key = (epics.get(epic_id, {}).get("tracking") or {}).get("jira") if isinstance(epics.get(epic_id, {}).get("tracking"), dict) else None
+            if len(members) > 1 or here_key == key:
+                for slice_id in members:
+                    slice_facts[slice_id]["jira"] = None
+                if epic_id in completion.epics:
+                    epic_jira[epic_id] = key
     seen = ledger.get("seen") or {}
     order: Dict[str, List[str]] = {}
     for epic_id in sorted(all_epics):
@@ -1250,11 +1334,17 @@ def _collect(host: Any, studio: Any, only_mine: bool) -> Tuple[Dict[str, bytes],
         "last_read_github_at": seen.get("refreshed_at") if isinstance(seen.get("refreshed_at"), str) else github["read_at"],
         "order": order,
         "slices": {slice_id: slice_facts[slice_id] for slice_id in sorted(slice_facts)},
-        "epics": {epic_id: {"jira": (data.get("tracking") or {}).get("jira") if isinstance(data.get("tracking"), dict) else None}
+        "epics": {epic_id: {"jira": (data.get("tracking") or {}).get("jira") if isinstance(data.get("tracking"), dict) else epic_jira.get(epic_id)}
                   for epic_id, data in sorted(all_epics.items())},
         "ideas": idea_facts,
         "lookups_removed": lookups_removed,
     }
+    not_assessed, unvouched = _not_assessed(host, studio, files, local)
+    if not_assessed:  # M21: optional; an importer that does not know it ignores it
+        facts["not_assessed"] = not_assessed
+    for slice_id, principle in unvouched:
+        warnings.append(f"{slice_id}'s spec says {principle} is 'Not assessed', but no project brought in here wrote that row, so it does not "
+                        "travel as one: in the new place it has to be answered.")
     files[project_archive.FACTS] = project_archive.canonical(facts)
 
     if from_github:  # what came from GitHub must fit what is here: the same structural check the workspace passes

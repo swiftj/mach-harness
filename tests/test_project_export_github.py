@@ -315,7 +315,7 @@ class MocksTest(GitHubBase):
         (row,) = result["not_included"]
         self.assertEqual((row["id"], row["what"]), ("SLICE-002", "design mocks"))
         self.assertIn("SLICE-002's design mocks are not in the archive", row["reason"])
-        self.assertIn("Commit product/ready/SLICE-002/mocks/ to the main branch", row["reason"])
+        self.assertIn("commit product/ready/SLICE-002/mocks/ to the main branch", row["reason"])
         members = self.members(result)
         self.assertNotIn("mocks", json.loads(members["workspace/product/slices/SLICE-002.json"]))
         self.assertFalse(json.loads(members["facts.json"])["slices"]["SLICE-002"]["was_ready"], "without its mocks it is not the approved version")
@@ -446,6 +446,75 @@ class MisfitTest(unittest.TestCase):
         said = project_export._misfit(studio, "product/slices/SLICE-002.json: epic_id is unknown", {})
         self.assertIn("SLICE-002 belongs to an epic that is neither in this workspace nor on GitHub. SLICE-002 is in this workspace: put it right "
                       "here in Product Studio, then export again", said)
+
+
+class ReadyOnlyWhenApprovedTest(GitHubBase):
+    """was_ready only for exactly the approved text; shipped only as the Factory says it."""
+
+    def facts(self, result):
+        return json.loads(self.members(result)["facts.json"])
+
+    def test_a_why_changed_after_approval_comes_as_a_draft(self):
+        """The approval covers the spec, the why and the mocks; the structural check sees only the spec."""
+        self.published()
+        why = self.draft(self.a, "product/intents/SLICE-002.md")
+        why.write_text(why.read_text() + "\nA line added after it was approved.\n")
+        result = self.export(self.a)
+        self.assertIn("SLICE-002 was changed here after it was approved, so it comes as a draft, not as ready.", result["warnings"])
+        self.assertIn("SLICE-002 was changed here after it was approved, so it comes as a draft, not as ready.", result["in_words"])
+        self.assertEqual(result["chosen"], [], "GitHub's copy is the approved one; this workspace's text is what the PM has")
+        row = self.facts(result)["slices"]["SLICE-002"]
+        self.assertEqual((row["was"], row["was_ready"]), ("interviewing", False))
+        members = self.members(result)
+        work = json.loads(members["workspace/product/slices/SLICE-002.json"])
+        self.assertEqual((work["status"], work["spec_sha256"]), ("interviewing", None))
+        self.assertEqual(members["workspace/product/intents/SLICE-002.md"], why.read_bytes())
+        self.assertTrue(self.facts(result)["slices"]["SLICE-001"]["was_ready"])
+
+    def test_an_issue_closed_without_being_built_comes_as_a_draft(self):
+        self.published()
+        (issue,) = self.slice_issue("SLICE-003")
+        self.change_issue(issue["number"], state="CLOSED")
+        result = self.export(self.b)
+        row = self.facts(result)["slices"]["SLICE-003"]
+        self.assertEqual((row["was"], row["was_ready"]), ("interviewing", False))
+        self.assertIn(f"SLICE-003's issue (#{issue['number']}) was closed without being built, so it comes as a draft.", result["in_words"])
+        self.assertEqual(json.loads(self.members(result)["workspace/product/slices/SLICE-003.json"])["status"], "interviewing")
+
+    def test_an_issue_the_factory_shipped_comes_as_shipped_and_ready(self):
+        self.published()
+        (issue,) = self.slice_issue("SLICE-003")
+        self.change_issue(issue["number"], state="CLOSED", labels=issue["labels"] + [{"name": "mach:shipped"}])
+        result = self.export(self.b)
+        row = self.facts(result)["slices"]["SLICE-003"]
+        self.assertEqual((row["was"], row["was_ready"]), ("shipped", True))
+        self.assertFalse(any("closed without being built" in line for line in result["in_words"]))
+
+    def test_an_epic_s_jira_key_is_reported_against_the_epic(self):
+        """GitHub carries one key per slice, its own or else its epic's: a key two slices of one epic carry is the epic's."""
+        a = self.a
+        self.project_and_epic(a)
+        self.ok(a, "epic", "link", "EPIC-001", "--jira", "TEAM-1")
+        self.drafted(a)
+        self.drafted(a, title="Remove a teammate")
+        self.ok(a, "epic", "add", "--title", "Bulk invites", "--criterion", "A whole team joins at once")
+        third = self.ok(a, "slice", "new", "--epic", "EPIC-002", "--title", "Invite a list")["slice"]["slice_id"]
+        self.write_slice(a, third)
+        self.ok(a, "slice", "link", third, "--jira", "TEAM-12")
+        for slice_id in ("SLICE-001", "SLICE-002", third):
+            self.ready(slice_id)
+        facts = self.facts(self.export(self.b))
+        self.assertEqual(facts["epics"]["EPIC-001"], {"jira": "TEAM-1"})
+        self.assertEqual((facts["slices"]["SLICE-001"]["jira"], facts["slices"]["SLICE-002"]["jira"]), (None, None))
+        self.assertEqual(facts["slices"][third]["jira"], "TEAM-12")
+
+
+class MockWordsTest(GitHubBase):
+    def test_pictures_missing_for_a_slice_read_from_github_say_where_to_commit_them(self):
+        self.published(with_mock=True)
+        (row,) = self.export(self.b)["not_included"]
+        self.assertTrue(row["reason"].endswith("SLICE-002 is in the archive without them. On the computer where it was marked ready, commit "
+                                               "product/ready/SLICE-002/mocks/ to the main branch; then fetch here and export again."), row["reason"])
 
 
 class OneNameEachTest(GitHubBase):
