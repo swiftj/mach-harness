@@ -546,8 +546,13 @@ class Studio:
                 result["errors"].append(f"{spec.name}: the spec's title names {model.get('slice_id')}, not {slice_id}.")
             if model.get("principles_not_assessed"):  # M21: a Not assessed row stands only when bringing in a project wrote it
                 import project_import
-                result["errors"] += [f"{spec.name}: {problem} [principle-not-assessed]"
-                                     for problem in project_import.not_assessed_problems(self, slice_id, model["principles_not_assessed"])]
+                problems = project_import.not_assessed_problems(self, slice_id, model["principles_not_assessed"])
+                result["errors"] += [f"{spec.name}: {problem} [principle-not-assessed]" for problem in problems]
+                # A row refused here is not also "not assessed yet": the validator's warning for it is dropped, so it is said once.
+                refused = {problem.split("'", 1)[0] for problem in problems}
+                said = lambda text: any(f": {ident} is not assessed for this slice yet" in text for ident in refused)  # noqa: E731
+                result["warnings"] = [w for w in result["warnings"] if not said(w)]
+                result["diagnostics"] = [d for d in result["diagnostics"] if not (d["rule"] == "principle-not-assessed" and said(": " + d["message"]))]
             result["open_questions"] = [self.question_text(q) for q in (model.get("open_questions") or [])]
             result["counts"] = {
                 "invariants": len(model.get("invariants") or []),
@@ -1054,7 +1059,12 @@ def cmd_project_import(studio: Studio, args: argparse.Namespace) -> int:
                  "complete": False, "factory_authorized": False, "note": f"Nothing was marked ready: {words}"}
     lead = (f"Already brought in on {str(result.get('finished_at'))[:10]}; bringing it in again changed nothing." if result.get("already")
             else result["note"])
-    emit({**result, "ready": ready, "note": lead + " " + ready["note"]})
+    # What is left to do no longer says to publish what the ready step has just published.
+    done = set(ready.get("published_first") or [])
+    after = [line for line in result.get("after") or []
+             if not ((line.startswith("Publish the principles before") and "principles" in done)
+                     or (line.startswith("Publish the technical needs") and "needs" in done))]
+    emit({**result, **({"after": after} if "after" in result else {}), "ready": ready, "note": lead + " " + ready["note"]})
     return 0 if ready["complete"] else 1
 
 
@@ -2412,8 +2422,10 @@ def cmd_renumber(studio: Studio, args: argparse.Namespace) -> int:
     if kind == "epic":
         studio.handoff().forget_epic_lost(old)  # M20: the number another epic's issue took is no longer this draft's
     studio.note_withdrawn({artifact: "It was given a new number, so it needs your approval again." for artifact in set(returned)})
+    import project_import  # M21: the records of projects brought in here follow the new number (rows vouched for, ready in one step)
+    records = project_import.renamed_here(sys.modules[__name__], studio, old, new) if mine else []
     structural = studio.structural()
-    return emit({"renumbered": {"from": old, "to": new}, "changed": sorted(set(changed)), "needs_approval_again": sorted(set(returned)),
+    return emit({"renumbered": {"from": old, "to": new}, "changed": sorted(set(changed + records)), "needs_approval_again": sorted(set(returned)),
                  "structurally_valid": structural["valid"], "structural_errors": structural["errors"]})
 
 

@@ -283,8 +283,28 @@ def lookup(studio: Any, ident: Optional[str]) -> Dict[str, Any]:
         day = str(data.get("finished_at") or data.get("set_aside_at") or data.get("started_at") or "")[:10]
         when = f"brought in on {day}" if data.get("finished_at") else \
             f"set aside on {day} before it was finished" if data.get("set_aside_at") else f"being brought in since {day}; not finished"
+        renames = [r for r in data.get("renumbered_here") or [] if isinstance(r, dict)]
+        given = {}  # the number this import gave, for each number it now names after renumbering here
+        for rename in renames:
+            given[rename["to"]] = given.pop(rename["from"], rename["from"])
+        for rename in renames:
+            if rename.get("from") == ident:
+                now = rename["to"]
+                while any(r.get("from") == now for r in renames):
+                    now = next(r["to"] for r in renames if r.get("from") == now)
+                old = next((o for o, n in data["map"].items() if n == now), None)
+                found.append({"from": old, "to": now, "from_project": data.get("from_project"), "from_project_name": name,
+                              "finished": bool(data.get("finished_at")),
+                              "words": f"{ident} here was given a new number, {rename['to']}, on {str(rename.get('at'))[:10]}"
+                                       + (f"; it is {now} now" if now != rename["to"] else "")
+                                       + (f", and was {old} of '{name}' ({when})." if old else ".")})
         for old, new in sorted(data["map"].items()):
             if old == ident or new == ident:
+                if new == ident and new in given:
+                    found.append({"from": old, "to": new, "from_project": data.get("from_project"), "from_project_name": name,
+                                  "finished": bool(data.get("finished_at")),
+                                  "words": f"{new} here was {given[new]} when it was brought in, and before that {old} of '{name}' ({when})."})
+                    continue
                 if old in (data.get("principles_matched") or {}):
                     words = (f"{old} of '{name}' said the same as {new} here, so it was taken as {new} ({when})." if old == ident else
                              f"{new} here is also what {old} of '{name}' said, so that one was taken as {new} ({when}).")
@@ -2046,8 +2066,9 @@ def summary(host: Any, studio: Any, found: Incoming, mapping: Dict[str, str], mo
     after.extend(item["words"] for item in same)
     not_assessed = built.not_assessed + rows_here
     if not_assessed:
-        came_rows = [row for row in not_assessed if row["how"] == "slice_came"]
-        here_rows = [row for row in not_assessed if row["how"] == "principle_came"]
+        came_rows = [row for row in not_assessed if row["how"] == "slice_came" and not row.get("carried")]
+        here_rows = [row for row in not_assessed if row["how"] == "principle_came" and row["slice"] not in came]
+        carried = [row for row in not_assessed if row.get("carried")]
         if came_rows:
             after.append(f"{plural(len({r['slice'] for r in came_rows}), 'slice')} that came "
                          f"({listing(sorted({both(r['slice']) for r in came_rows}))}) did not answer this project's "
@@ -2060,6 +2081,11 @@ def summary(host: Any, studio: Any, found: Incoming, mapping: Dict[str, str], mo
                          f"{listing(sorted({both(r['principle']) for r in here_rows}))}, which came with the project: each such row says "
                          "'Not assessed', which does not hold up marking ready. Answer them in the interview when you next change those slices "
                          "(listed under principles_not_assessed).")
+        if carried:
+            after.append(f"{plural(len({r['slice'] for r in carried}), 'slice')} that came "
+                         f"({listing(sorted({both(r['slice']) for r in carried}))}) already had 'Not assessed' rows in the old repository, "
+                         "written there when a project was brought in, and the file vouches for each: they come as they were and do not hold "
+                         "up marking ready. Answer them in the interview when you next change those slices (listed under principles_not_assessed).")
     if built.aligned:
         after.append(f"{plural(len(built.aligned), 'row')} answering a principle that says the same as one here now quote it as it is here "
                      "(listed under principles_aligned).")
@@ -2097,7 +2123,22 @@ def summary(host: Any, studio: Any, found: Incoming, mapping: Dict[str, str], mo
         after.append(f"{listing([both(i) for i in built.policy_rows])} answered the old organisation's policy packs; they show as answered under "
                      "other packs until answered again here.")
     if jira or epic_jira:
-        named = [f"{both(k)} had {v}" for k, v in sorted({**epic_jira, **jira}.items())]
+        # A slice's key that is its epic's, or a key held by an epic of one slice, cannot be told apart from the epic's own: said so.
+        slices_of_epic: Dict[str, List[str]] = {}
+        for ident, work in found.slices.items():
+            slices_of_epic.setdefault(mapping[work["epic_id"]], []).append(mapping[ident])
+        epic_of = {mapping[i]: mapping[w["epic_id"]] for i, w in found.slices.items()}
+        named = []
+        shared = set()
+        for key_id, key in sorted(jira.items()):
+            epic = epic_of.get(key_id)
+            if epic and (epic_jira.get(epic) == key or (epic not in epic_jira and len(slices_of_epic.get(epic, [])) == 1)):
+                named.append(f"{both(key_id)} or its epic had {key}")
+                shared.add(epic)
+            else:
+                named.append(f"{both(key_id)} had {key}")
+        named += [f"{both(k)} had {v}" for k, v in sorted(epic_jira.items()) if not (k in shared and v in jira.values())]
+        named.sort()
         after.append(f"Jira keys were left behind; link each again if this organisation uses the same Jira ({listing(named[:6])}"
                      f"{' and others' if len(named) > 6 else ''}).")
     if built.links_dropped:
@@ -2666,6 +2707,52 @@ def new_record(host: Any, found: Incoming, mapping: Dict[str, str], mode: str, i
                   "project": ({"name": found.project.get("name"), "vision": found.project.get("vision"),
                                "outcomes": list(found.project.get("outcomes") or [])} if mode == "join" else None)},
     }
+
+
+RENAMED_KEYED = ("was_ready", "notes", "order")                         # record fields keyed by an ID here
+RENAMED_LISTS = ("held_back", "shipped_there")                         # record fields that list IDs here
+RENAMED_FACTS = ("slices", "jira", "epic_jira", "requests", "idea_sources", "lookups_removed")
+
+
+def renamed_here(host: Any, studio: Any, old: str, new: str) -> List[str]:
+    """`slice renumber` / `epic renumber` here: every finished or set-aside import record that names `old` as one of its IDs here
+    now names `new` (its map, the Not assessed rows it vouches for, written and virtual, was_ready, held_back, shipped_there, the
+    order and notes it placed, its facts and the dependencies it added), and keeps the renaming (`renumbered_here`), so the rows
+    stay vouched for, marking ready in one step still finds the slice, and `project imports` answers through the chain. An import
+    still standing unfinished is left as it is: it does not bring a renumbered slice in again. Returns the records changed."""
+    changed = []
+    for path, record in _records(studio):
+        named = old in (record.get("map") or {}).values() or any(isinstance(e, dict) and old in (e.get("slice"), e.get("principle"))
+                                                                    for e in record.get("principles_not_assessed") or [])
+        if open_record(record) or not named:
+            continue
+        data = copy.deepcopy(record)
+        data["map"] = {k: (new if v == old else v) for k, v in data["map"].items()}
+        swap = lambda value: new if value == old else value  # noqa: E731
+        for key in RENAMED_KEYED:
+            if isinstance(data.get(key), dict):
+                data[key] = {swap(k): ([swap(i) for i in v] if isinstance(v, list) else v) for k, v in data[key].items()}
+        for key in RENAMED_LISTS:
+            if isinstance(data.get(key), list):
+                data[key] = [swap(i) for i in data[key]]
+        for entry in data.get("principles_not_assessed") or []:
+            if isinstance(entry, dict):
+                entry["slice"] = swap(entry.get("slice"))
+                entry["principle"] = swap(entry.get("principle"))
+        for entry in data.get("dependencies_added") or []:
+            if isinstance(entry, dict):
+                for key in ("slice", "on"):
+                    entry[key] = swap(entry.get(key))
+                if isinstance(entry.get("rule"), str) and entry["rule"].split("/", 1)[0] == old:
+                    entry["rule"] = new + "/" + entry["rule"].split("/", 1)[1]
+        facts = data.get("facts") if isinstance(data.get("facts"), dict) else {}
+        for key in RENAMED_FACTS:
+            if isinstance(facts.get(key), dict):
+                facts[key] = {swap(k): v for k, v in facts[key].items()}
+        data["renumbered_here"] = list(data.get("renumbered_here") or []) + [{"from": old, "to": new, "at": host.now(None)}]
+        host.write(path, host.canonical(data))
+        changed.append(str(path.relative_to(studio.project)))
+    return changed
 
 
 def numbers_moved(studio: Any, archive_sha256: str, mapping: Dict[str, str]) -> List[Dict[str, str]]:
