@@ -307,7 +307,7 @@ def _superseded_words(item: Any) -> str:
 
 
 def check(parsed: Mapping[str, Any], shipped: Any, slice_id: Optional[str] = None,
-          own_ids: Optional[Iterable[str]] = None) -> List[Dict[str, Any]]:
+          own_ids: Optional[Iterable[str]] = None, pending: Any = None) -> List[Dict[str, Any]]:
     """Problems with the parsed rows against what has shipped. Pure: the caller supplies everything.
 
     `shipped` is the set of shipped rules (see `_index` for the shapes taken). An entry whose info says
@@ -315,9 +315,15 @@ def check(parsed: Mapping[str, Any], shipped: Any, slice_id: Optional[str] = Non
     place (from "superseded_by": {"effect", "by", "slice_id"} entries, or plain strings). `slice_id` is this slice's own ID: a row may
     not name this slice's own rules. `own_ids` are the IDs this slice's spec holds (INV, FR, R and AC): the ID named
     in 'In this slice' must be one of them.
+
+    `pending` (the same shapes as `shipped`): rules of slices that have not shipped yet but ship before this one, because
+    this slice depends on them (M21: a project brought in from another repository, whose rules had shipped there). A row
+    naming one that has not shipped is a problem with "severity": "warning" (code effects-ships-first) instead of an error:
+    the row is checked against what shipped when this slice is built. Every other problem is an error, as before.
     """
     problems: List[Dict[str, Any]] = []
     known = _index(shipped)
+    waiting = _index(pending) if pending is not None else {}
     slices: Set[str] = {key.split("/", 1)[0] for key in known}
     mine = set(own_ids) if own_ids is not None else None
     for row in parsed.get("rows") or []:
@@ -326,7 +332,12 @@ def check(parsed: Mapping[str, Any], shipped: Any, slice_id: Optional[str] = Non
             problems.append(problem(line, "effects-own-slice", f"{rule} is a rule of this slice. The section names rules of slices that have already shipped."))
             continue
         info = known.get(rule)
-        if info is None:
+        if info is None and rule in waiting:
+            first = waiting[rule].get("slice_id") or row.get("slice_id")
+            problems.append(dict(problem(line, "effects-ships-first",
+                                         f"{rule} has not shipped yet. {first} ships before this slice, which depends on it, so this row is "
+                                         "checked again when this slice is built."), severity="warning"))
+        elif info is None:
             if row.get("slice_id") in slices:
                 problems.append(problem(line, "effects-not-shipped", f"{row.get('slice_id')} has no {row.get('rule_id')} in its shipped spec."))
             else:
