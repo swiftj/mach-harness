@@ -152,7 +152,7 @@ class StopTest(Uncovered):
         code, out, err = self.cell_run("claim", TICKET, "plan")
         self.assertEqual(code, 2)
         self.assertIn("not all written down as accepted ADRs", err + out)
-        self.assertIn("Do not start the contract engineer", err + out)
+        self.assertIn("the contract engineer is not started", err + out)
         self.assertFalse((self.cellroot / "claim.json").exists())
         code, out, err = self.check(PLAN_ADR)
         self.assertEqual(code, 2)
