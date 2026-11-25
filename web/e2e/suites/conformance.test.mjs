@@ -20,6 +20,7 @@ const ALLOWLIST = [
   // M15 (docs/mach-next/M15_STUDIO_FOUNDATION.md): what M13 and M14 added to the engine.
   "principle.list", "principle.add", "principle.set", "principle.retire", "principle.publish", "reconcile.principles",
   "policy.list", "policy.accept", "epic.current", "epic.link", "slice.link", "jira.export", "jira.keys",
+  "project.export", "project.import", "project.import.abandon", "project.imports", "project.imports.ready",
   "prd.import", "prd.list", "prd.show", "prd.map", "prd.settle", "prd.status", "prd.apply", "prd.draft", "prd.confirm",
   "slice.mock.add", "slice.mock.remove", "slice.mock.list",
   // M16 (docs/mach-next/M16_SHAPE_APP_FOUNDATION.md): Shape.
