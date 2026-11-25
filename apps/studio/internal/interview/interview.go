@@ -26,7 +26,13 @@ type ConflictError struct {
 	Message     string
 	InterviewID string
 	TakeOver    bool
+	// Running: the interviewer is writing its reply. Message is the warning (ReplyWhileRunning); the
+	// same reply with interrupt stops that turn and is sent.
+	Running bool
 }
+
+// ReplyWhileRunning is the warning when the product manager replies while the interviewer writes.
+const ReplyWhileRunning = "The interviewer is still writing its reply. Sending yours stops it first."
 
 func (e *ConflictError) Error() string { return e.Message }
 

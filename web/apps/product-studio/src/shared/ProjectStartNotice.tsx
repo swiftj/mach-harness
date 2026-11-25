@@ -2,6 +2,7 @@ import { Banner, Button } from "@mach/ui";
 import type { Status } from "@mach/ui/api";
 import { forgetProjectStart, useProjectStartNote } from "../api/projectStart";
 import { IssueLink, IssueText } from "./IssueLink";
+import { CloseProjectIssues } from "./CloseProjectIssue";
 import { projectOnGithubWords } from "./team";
 
 /**
@@ -13,9 +14,19 @@ export function ProjectOnGithubNotice({ found, className }: { found: Status["pro
   const words = projectOnGithubWords(found);
   if (!found || !words) return null;
   return (
-    <Banner tone={found.readable ? "info" : "warning"} title={words.title} className={className}>
+    <Banner tone="info" title={words.title} className={className}>
       <IssueText text={words.body} urls={{ [String(found.issue)]: found.url }} />
     </Banner>
+  );
+}
+
+/** The fix MACH offers for several project issues, beside its sentence: closing each extra one. A note kept from before has none. */
+function ExtraIssues({ numbers }: { numbers: number[] | undefined }) {
+  if (!numbers?.length) return null;
+  return (
+    <div className="mt-2">
+      <CloseProjectIssues numbers={numbers} />
+    </div>
   );
 }
 
@@ -39,6 +50,15 @@ export function ProjectStartNotice() {
         <p className="mt-1">
           Its issue: <IssueLink number={note.issue} url={note.url} />. You can change its text under Vision and outcomes.
         </p>
+        <ExtraIssues numbers={note.close} />
+      </Banner>
+    );
+  }
+  if (note.kind === "warned") {
+    return (
+      <Banner tone="info" live="polite" title="The project is defined" actions={close}>
+        <p>{note.note}</p>
+        <ExtraIssues numbers={note.close} />
       </Banner>
     );
   }

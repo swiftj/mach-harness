@@ -412,7 +412,11 @@ export interface VerdictRecorded {
   factory_authorized: false;
 }
 
-export type IdeaPublished =
+/**
+ * `idea.publish`. `renumbered`: another idea on GitHub already used the number, so MACH gave this one the next free
+ * number and saved it under that number in the same act (its note says so first).
+ */
+export type IdeaPublished = { renumbered?: { from: string; to: string } } & (
   | {
       published: true;
       saved_to: "github";
@@ -425,7 +429,8 @@ export type IdeaPublished =
       note: string;
       factory_authorized: false;
     }
-  | { published: true; saved_to: "folder"; folder: string; why_folder: string; revision: number; state_label: string; note: string; factory_authorized: false };
+  | { published: true; saved_to: "folder"; folder: string; why_folder: string; revision: number; state_label: string; note: string; factory_authorized: false }
+);
 
 export interface IdeaRenumbered {
   renumbered: { from: string; to: string };

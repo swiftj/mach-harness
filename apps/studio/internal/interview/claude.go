@@ -727,7 +727,7 @@ func (c *Claude) Reply(ctx context.Context, id, text string) error {
 	case s.ended:
 		return &ConflictError{Message: "This interview has ended. Start it again to continue."}
 	case s.running != nil:
-		return &ConflictError{Message: "The interviewer is still working on its reply. Wait for it, or interrupt it."}
+		return &ConflictError{Message: ReplyWhileRunning, Running: true}
 	}
 	s.newTurnLocked()
 	s.emitLocked("reply", map[string]any{"text": text}) // the PM's own words, for the history and other windows

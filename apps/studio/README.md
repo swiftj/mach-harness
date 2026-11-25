@@ -122,7 +122,7 @@ application/json`. A GET never needs Origin or the CSRF token.
 | `GET /api/interview?slice_id=<SLICE>` (or `?idea_id=<IDEA>`, or `?needs=true`) | | `{interview: null}` or `{interview: {interview_id, slice_id, live, state, turn_running, locked_elsewhere, take_over_warning?, last_message: {message_id, text, kind, question}, turns, session_cost_usd}}`; `interview_id` is null and `state` is `saved` when only a saved session exists; `take_over_warning` is the warning above while `locked_elsewhere` |
 | `GET /api/interview/history?slice_id=<SLICE>` (or `?idea_id=<IDEA>`, or `?needs=true`) | | `{slice_id, events: [{at, interview_id, event, data}], truncated}`: every saved event for the slice, across interviews and restarts, oldest first |
 | `GET /api/interview/<id>/events` | | server-sent events, below |
-| `POST /api/interview/<id>/reply` | `{text}` (up to 8000 characters) | `{sent: true}`; `conflict` while a turn is running or after the interview ended |
+| `POST /api/interview/<id>/reply` | `{text, interrupt?}` (up to 8000 characters) | `{sent: true}`; `conflict` after the interview ended. While a turn is running: `conflict`, message "The interviewer is still writing its reply. Sending yours stops it first.", hint `{kind: "interrupt_turn", target: null}`; with `interrupt: true` the turn is stopped, waited for, and the reply sent |
 | `POST /api/interview/<id>/interrupt` | `{}` | `{interrupted: true}` once the turn has stopped; `conflict` when no turn is running |
 | `POST /api/interview/<id>/stop` | `{}` | `{stopped: true}`; the draft, the saved note and the Claude session remain |
 
@@ -224,6 +224,7 @@ for exactly the thirteen rules the short interview names; `--why` is denied to i
 
 | Operation | Arguments | Engine command | Kind |
 |-----------|-----------|----------------|------|
+| `project.close-issue` | `{number}` (a whole number) | `project close-issue <n>` | network; on the product manager's word, closes one of the repository's project issues when it has more than one |
 | `project.export` | `{only_mine?}` | `project export [--only-mine]` (never `--out`) | network, 15 min; download |
 | `project.import` | exactly one of `file: {name, content_base64}` (a `.zip`, at most 64 MiB) or `kept: <sha256>`; `plan?`, `ready?` (never both) | `project import <kept file> [--plan] [--ready]` | network, 15 min; with `ready`, a stop in marking ready is a report (exit 1, JSON); body at most base64 of 64 MiB plus 64 KiB |
 | `project.import.abandon` | `{archive?}` (one line, not starting with `-`) | `project import --abandon [<archive>]` | this computer |

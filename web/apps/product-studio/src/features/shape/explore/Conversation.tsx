@@ -11,6 +11,7 @@ import { ExploreTranscript } from "./ExploreTranscript";
 import { exploreMode, openQuestion } from "./model";
 import type { ConversationController } from "./useIdeaConversation";
 import { TakeOverBanner } from "../../../shared/TakeOverBanner";
+import { ConversationProblem } from "../../../shared/ConversationProblem";
 
 const PAUSE_REQUEST = "I need to stop here. Please save where we are so I can continue later.";
 
@@ -299,15 +300,7 @@ function Current({ conv, busy, row }: { conv: ConversationController; busy: bool
         </Banner>
       ) : null}
       {/* A notice that ended the last turn is the transcript's last line, directly above: it is not repeated here. */}
-      {conv.problem ? (
-        <Banner
-          tone="danger"
-          title={conv.problem.kind === "conflict" ? "MACH is still working on a reply" : describeError(conv.problem).title}
-          actions={conv.problem.hint ? <HintAction hint={conv.problem.hint} /> : undefined}
-        >
-          {conv.problem.kind === "conflict" ? "Wait for it to finish, or interrupt it." : conv.problem.message}
-        </Banner>
-      ) : null}
+      {conv.problem ? <ConversationProblem problem={conv.problem} /> : null}
       {body}
       <div className="sr-only" aria-live="polite">
         {announce}

@@ -126,6 +126,19 @@ func (a *ProjectSetArgs) Argv() ([]string, error) {
 	return append(argv, optional("status", a.Status)...), nil
 }
 
+// ProjectCloseIssueArgs: on the product manager's word, close one of this repository's project issues when
+// it has more than one (`project close-issue <number>`).
+type ProjectCloseIssueArgs struct {
+	Number int `json:"number"`
+}
+
+func (a *ProjectCloseIssueArgs) Argv() ([]string, error) {
+	if a.Number < 1 || a.Number > maxRequestNumber {
+		return nil, invalid("number must be an issue number such as 9.")
+	}
+	return []string{"project", "close-issue", strconv.Itoa(a.Number)}, nil
+}
+
 type EpicAddArgs struct {
 	Title     string   `json:"title"`
 	Criterion []string `json:"criterion"`
@@ -490,6 +503,7 @@ func init() {
 	register(Operation{Name: "refresh", New: func() Args { return &refreshArgs{} }, Network: true})
 	register(Operation{Name: "project.init", New: func() Args { return &ProjectInitArgs{} }})
 	register(Operation{Name: "project.set", New: func() Args { return &ProjectSetArgs{} }})
+	register(Operation{Name: "project.close-issue", New: func() Args { return &ProjectCloseIssueArgs{} }, Network: true})
 	register(Operation{Name: "epic.add", New: func() Args { return &EpicAddArgs{} }})
 	register(Operation{Name: "epic.set", New: func() Args { return &EpicSetArgs{} }})
 	register(Operation{Name: "epic.renumber", New: func() Args { return &RenumberArgs{kind: "epic"} }})

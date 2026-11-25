@@ -22,7 +22,6 @@ const {
   questionViews,
   reasonLimit,
   recordedWithSentence,
-  renumberOffered,
   verdictArgs,
   verdictChoices,
   verdictConsequence,
@@ -98,7 +97,6 @@ test("the model has no function that takes the brief, the case or a check and re
     "questionViews",
     "reasonLimit",
     "recordedWithSentence",
-    "renumberOffered",
     "verdictArgs",
     "verdictChoices",
     "verdictConsequence",
@@ -240,15 +238,18 @@ test("where the idea is saved: not yet, on GitHub, in the folder, stopped part w
   const taken = publishState(data("idea.show.number-taken").idea.github);
   assert.equal(taken.kind, "number-taken");
   assert.deepEqual(taken.others, data("idea.show.number-taken").idea.github.other_issues);
-  assert.equal(data("idea.show.number-taken").idea.next.kind, "renumber");
+  assert.equal(data("idea.show.number-taken").idea.next.kind, "publish", "the next step is saving it: that gives it the next free number");
+  assert.match(data("idea.show.number-taken").idea.next.sentence, /Saving it gives yours the next free number\./);
+  const published = data("idea.publish.refused-number-taken");
+  assert.deepEqual(published.renumbered, { from: "IDEA-005", to: "IDEA-006" });
+  assert.match(published.note, /^IDEA-005 was already used on GitHub by another idea \(#\d+\), so MACH gave yours the next free number: IDEA-005 is now IDEA-006/);
   const changed = publishState(data("idea.show.changed").idea.github);
   assert.equal(changed.changedAfterVerdict, true);
   assert.ok(publishAct(changed, "publish"));
-  assert.equal(renumberOffered(taken, "publish"), true);
-  assert.equal(renumberOffered(notYet, "renumber"), true);
-  assert.equal(renumberOffered(notYet, "publish"), false);
+  // A number another idea holds never comes before saving: saving gives the idea the next free number in the same act.
+  assert.deepEqual(publishAct(taken, "renumber"), { label: "Save to GitHub", again: false });
   assert.match(run("idea.publish.refused-stopped").refused, /stopped part way/);
-  assert.match(run("idea.publish.refused-number-taken").refused, /Give yours the next free number/);
+  assert.doesNotMatch(source("PublishSection.tsx"), /Give it the next free number|idea\.renumber/);
   assert.deepEqual(data("idea.renumber").renumbered, { from: "IDEA-003", to: "IDEA-004" });
 });
 
@@ -261,7 +262,11 @@ test("what a publish did, from its answer: an issue, or the folder and why", () 
     verdictPosted: true,
     revision: 1,
     note: "Saved as issue #1. The brief is its body and the verdict a comment on it. Nothing reaches the builders: the brief is for people.",
+    renumbered: null,
   });
+  // Another idea held the number: the same act gave this one the next free number, and says so.
+  const moved = publishOutcome({ ...data("idea.publish"), renumbered: { from: "IDEA-003", to: "IDEA-004" } });
+  assert.deepEqual(moved.renumbered, { from: "IDEA-003", to: "IDEA-004" });
   const folder = publishOutcome(data("idea.publish.folder"));
   assert.equal(folder.where, "folder");
   assert.equal(folder.whyFolder, "You are not signed in to GitHub on this computer.");

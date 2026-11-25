@@ -22,7 +22,7 @@ func TestAllowlistIsExactlyTheContract(t *testing.T) {
 		"policy.accept", "policy.list",
 		"prd.apply", "prd.confirm", "prd.draft", "prd.import", "prd.list", "prd.map", "prd.settle", "prd.show", "prd.status",
 		"principle.add", "principle.list", "principle.publish", "principle.retire", "principle.set",
-		"project.export", "project.import", "project.import.abandon", "project.imports", "project.imports.ready", "project.init", "project.set",
+		"project.close-issue", "project.export", "project.import", "project.import.abandon", "project.imports", "project.imports.ready", "project.init", "project.set",
 		"reconcile", "reconcile.needs", "reconcile.principles", "refresh", "request.link", "request.list", "request.met", "request.pick", "request.show",
 		"slice.check", "slice.link", "slice.mock.add", "slice.mock.list", "slice.mock.remove", "slice.move", "slice.new", "slice.pause", "slice.ready",
 		"slice.renumber", "slice.reopen", "slice.resume", "slice.set", "slice.show", "slice.take", "slice.widen", "status", "validate", "verdict.record", "where",
@@ -37,7 +37,8 @@ func TestAllowlistIsExactlyTheContract(t *testing.T) {
 		}
 	}
 	// Publishing the principles writes the project's GitHub issue; choosing a version of them reads GitHub's.
-	for _, name := range []string{"principle.publish", "reconcile.principles"} {
+	// Closing an extra project issue writes GitHub too.
+	for _, name := range []string{"principle.publish", "reconcile.principles", "project.close-issue"} {
 		if op, _ := engine.Lookup(name); !op.Network || op.ReadOnly {
 			t.Errorf("%s reaches GitHub and changes the workspace", name)
 		}
@@ -207,6 +208,7 @@ func TestEveryOperationsArgumentVector(t *testing.T) {
 		{"project.init", `{"id":"team-space","name":"Team Space","vision":"Teams work.","outcome":["One","Two"]}`,
 			[]string{"project", "init", "--id=team-space", "--name=Team Space", "--vision=Teams work.", "--outcome=One", "--outcome=Two"}},
 		{"project.set", `{}`, []string{"project", "set"}},
+		{"project.close-issue", `{"number":9}`, []string{"project", "close-issue", "9"}},
 		{"project.set", `{"name":"N","vision":"V","outcome":["O"],"status":"active"}`,
 			[]string{"project", "set", "--name=N", "--vision=V", "--outcome=O", "--status=active"}},
 		{"epic.add", `{"title":"Team membership","criterion":["Only invited people can join"]}`,
@@ -433,6 +435,13 @@ func TestRequestsTheHostRejects(t *testing.T) {
 		{"project.init", `{"id":"Team Space","name":"n","vision":"v"}`, "campaign-platform"},
 		{"project.init", `{"id":"team","name":"","vision":"v"}`, "name is required"},
 		{"project.init", `{"id":"team","name":"n","vision":"v","outcome":[""]}`, "required"},
+		// The project issue to close is a whole number: never a flag, a string or a negative.
+		{"project.close-issue", `{}`, "issue number"},
+		{"project.close-issue", `{"number":0}`, "issue number"},
+		{"project.close-issue", `{"number":-9}`, "issue number"},
+		{"project.close-issue", `{"number":1000000000}`, "issue number"},
+		{"project.close-issue", `{"number":"--all"}`, "wrong type"},
+		{"project.close-issue", `{"number":9,"all":true}`, "Unknown field"},
 		{"epic.add", `{"title":"` + long + `"}`, "longer than"},
 		{"epic.add", `{"title":"a\u0000b"}`, "control character"},
 		{"epic.add", `{"title":"bell\u0007"}`, "control character"},

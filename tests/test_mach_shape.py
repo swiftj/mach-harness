@@ -387,10 +387,13 @@ class PublishTest(ShapeBase):
         self.ok(self.b, "idea", "publish", "IDEA-002")
         self.set_gh(me="ada-pm")
         self.add("Mine")
-        self.assertIn("already uses IDEA-002", self.refused(self.a, "idea", "publish", "IDEA-002"))
-        renamed = self.ok(self.a, "idea", "renumber", "IDEA-002")["renumbered"]
-        self.assertEqual(renamed, {"from": "IDEA-002", "to": "IDEA-003"})
-        self.assertEqual(self.ok(self.a, "idea", "publish", "IDEA-003")["saved_to"], "github")
+        # Never blocked: publishing gives it the next free number and saves it, in the same act.
+        published = self.ok(self.a, "idea", "publish", "IDEA-002")
+        self.assertEqual((published["renumbered"], published["idea_id"], published["saved_to"]),
+                         ({"from": "IDEA-002", "to": "IDEA-003"}, "IDEA-003", "github"))
+        self.assertTrue(published["note"].startswith("IDEA-002 was already used on GitHub by another idea (#"))
+        self.assertIn("so MACH gave yours the next free number: IDEA-002 is now IDEA-003", published["note"])
+        self.assertEqual(issue_rules.parse_shape_body(self.issue(published["issue"])["body"])["idea_id"], "IDEA-003")
         self.assertIn("already saved", self.refused(self.a, "idea", "renumber", "IDEA-003"))
 
 

@@ -735,9 +735,18 @@ class RefreshTest(IssuesBase):
         self.assertEqual((result["issue"], result["revision"]), (number, 3))
         self.assertIn("@ben-pm saved version 2 of SLICE-001 on GitHub", result["note"])
         self.assertIn(f"Yours is now version 3 and replaces it. Theirs is kept in the edit history of #{number} on GitHub and at "
-                      ".factory/studio/replaced/SLICE-001-version-2/.", result["note"])
-        self.assertEqual((self.a / ".factory/studio/replaced/SLICE-001-version-2/spec.md").read_text(), theirs)
-        self.assertEqual(result["replaced"][0]["kept"], ".factory/studio/replaced/SLICE-001-version-2/")
+                      f".factory/studio/replaced/SLICE-001-issue-{number}-version-2-", result["note"])
+        (folder,) = (self.a / ".factory/studio/replaced").glob(f"SLICE-001-issue-{number}-version-2-*")
+        self.assertEqual((folder / "spec.md").read_text(), theirs)
+        self.assertEqual(result["replaced"][0]["kept"], f".factory/studio/replaced/{folder.name}/")
+        # Kept, listed, and put back in one act; what was there is kept in turn, and nothing is overwritten.
+        listed = self.ok(self.a, "replaced", "list")["kept"]
+        self.assertEqual([row["name"] for row in listed], [folder.name])
+        restored = self.ok(self.a, "replaced", "restore", folder.name)
+        self.assertEqual(self.draft(self.a, "specs/slices/SLICE-001-invite-teammate.md").read_text(), theirs)
+        self.assertNotEqual(self.artifact(self.a, "product/slices/SLICE-001.json")["status"], "approved_for_engineering")
+        self.assertIn("What you had is kept at .factory/studio/replaced/SLICE-001-yours-", restored["note"])
+        self.assertEqual(len(self.ok(self.a, "replaced", "list")["kept"]), 2)
         self.assertNotIn("Changed by Ben", self.issue(number)["body"])
 
     def test_a_newer_version_from_someone_else_can_still_be_taken(self):

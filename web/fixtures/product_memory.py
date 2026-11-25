@@ -852,11 +852,19 @@ def shape_publish(Scenario):
         s.ok(s.b, "idea", "publish", "IDEA-003")
         s.set_gh(me="ada-pm")
         s.ok(s.a, "idea", "add", "Reserve a study room online")
-        s.capture("idea.publish.refused-number-taken", "idea", "publish", "IDEA-003")
         s.ok(s.a, "refresh")  # the next read of GitHub sees Ben's IDEA-003
         s.capture("idea.show.number-taken", "idea", "show", "IDEA-003")
         s.capture("status.ideas-number-taken", "status")
-        s.capture("idea.renumber", "idea", "renumber", "IDEA-003")
+        s.capture("idea.renumber", "idea", "renumber", "IDEA-003")  # the product manager may still renumber on their own
+        # Never blocked: Ben's IDEA-005 is on GitHub before Ada's read; publishing Ada's IDEA-005 gives it the next free number and
+        # saves it in the same act. (The file keeps its old name, from when this was refused.)
+        s.set_gh(me="ben-pm")
+        s.ok(s.b, "idea", "add", "Their fourth idea")
+        s.ok(s.b, "idea", "add", "Their fifth idea")
+        s.ok(s.b, "idea", "publish", "IDEA-005")
+        s.set_gh(me="ada-pm")
+        s.ok(s.a, "idea", "add", "Lend board games")
+        s.capture("idea.publish.refused-number-taken", "idea", "publish", "IDEA-005")
     run(shape_scenario(Scenario), body)
 
 

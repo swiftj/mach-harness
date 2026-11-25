@@ -109,7 +109,8 @@ export type ModelAction =
   | { type: "event"; event: InterviewEvent }
   | { type: "connection"; state: StreamConnection }
   | { type: "replied"; text: string; answer: AnswerKind }
-  | { type: "reply-failed" }
+  /** `running`: the host did not take it because a turn is still running (it warned; the same reply with interrupt goes ahead). */
+  | { type: "reply-failed"; running?: boolean }
   | { type: "reset"; decisions?: Decision[] }
   /** The saved history, oldest first, each with the interview it came from; replaces the model. */
   | { type: "history"; events: Array<{ event: InterviewEvent; interviewId: string }>; truncated: boolean }
@@ -188,7 +189,17 @@ function applyEvent(model: InterviewModel, event: InterviewEvent): InterviewMode
       const messages = { ...model.messages };
       dropped.forEach((id) => delete messages[id]);
       let timeline = model.timeline.filter((item) => !(item.type === "message" && dropped.has(item.id)));
-      if (event.data.outcome === "interrupted") {
+      // A reply sent while this turn ran stopped it (the host warned first): the notice goes above that reply, and the
+      // next turn, which answers it, is already on its way.
+      const sent = timeline.at(-1);
+      const replacedBy = event.data.outcome === "interrupted" && sent?.type === "reply" && sent.pending ? sent : null;
+      if (replacedBy) {
+        timeline = [
+          ...timeline.slice(0, -1),
+          { type: "notice", key: key("n"), tone: "info", title: "You interrupted that reply", text: "Nothing from it was kept. MACH answers your reply instead.", retry: false },
+          replacedBy,
+        ];
+      } else if (event.data.outcome === "interrupted") {
         timeline = [
           ...timeline,
           { type: "notice", key: key("n"), tone: "info", title: "You interrupted that reply", text: "Nothing from it was kept. Reply when you are ready.", retry: false },
@@ -199,7 +210,7 @@ function applyEvent(model: InterviewModel, event: InterviewEvent): InterviewMode
         messages,
         timeline,
         turn: model.turn + 1,
-        turnRunning: false,
+        turnRunning: Boolean(replacedBy),
         lastActivity: null,
         lastTurn: { outcome: event.data.outcome, seconds: event.data.seconds, cost: event.data.cost_usd, sessionCost: event.data.session_cost_usd },
       };
@@ -343,11 +354,12 @@ export function interviewReducer(model: InterviewModel, action: ModelAction): In
     case "reply-failed": {
       // The host did not take the reply: put the question back and drop the optimistic entry.
       const lastReply = [...model.timeline].reverse().find((item) => item.type === "reply");
-      if (!lastReply || lastReply.type !== "reply") return { ...model, turnRunning: false };
+      const running = Boolean(action.running);
+      if (!lastReply || lastReply.type !== "reply") return { ...model, turnRunning: running };
       return {
         ...model,
         awaiting: lastReply.to,
-        turnRunning: false,
+        turnRunning: running,
         decisions: model.decisions.filter((d) => d.messageId !== lastReply.to),
         timeline: model.timeline.filter((item) => item !== lastReply),
       };

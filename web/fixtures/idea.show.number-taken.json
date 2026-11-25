@@ -9,7 +9,7 @@
       "source": {
         "kind": "typed"
       },
-      "created": "2026-11-24T13:29:07Z",
+      "created": "2026-11-25T15:46:31Z",
       "revision": 0,
       "has_brief": false,
       "brief_checked": false,
@@ -32,11 +32,11 @@
         "other_issues": [
           3
         ],
-        "last_read": "2026-11-24T13:29:08Z"
+        "last_read": "2026-11-25T15:46:31Z"
       },
       "next": {
-        "kind": "renumber",
-        "sentence": "Another idea on GitHub already uses IDEA-003. Give yours the next free number."
+        "kind": "publish",
+        "sentence": "Another idea on GitHub already uses IDEA-003. Saving it gives yours the next free number."
       }
     },
     "source": {

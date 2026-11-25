@@ -2,6 +2,7 @@
 // live stream's replay, must show every event once. Run: pnpm --filter @mach/product-studio test
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { initialModel, interviewReducer } from "../src/features/interview/model.ts";
 
 const ev = (type, data, seq = null) => ({ type, data, seq });
@@ -119,4 +120,52 @@ test("the host's replay starts with the question the last reply answered", () =>
   assert.equal(replies(after).length, 2, "the replayed reply is not shown again");
   assert.equal(after.decisions.length, 2);
   assert.equal(after.awaiting, "m3", "Q3 still waits for its answer");
+});
+
+test("a reply sent while the interviewer writes: warned, then sent; the stopped reply is said above it", () => {
+  const loaded = run(initialModel, [{ type: "history", events: savedInterview("iv1"), truncated: false }, { type: "attached", interviewId: "iv1" }]);
+  const writing = run(loaded, [
+    { type: "replied", text: "yes", answer: "accepted" },
+    { type: "event", event: ev("state", "thinking", 200) },
+    { type: "event", event: ev("reply", { text: "yes" }, 201) },
+  ]);
+  assert.equal(writing.turnRunning, true);
+  // The host warned (a turn is running): the reply is taken back, and the turn is still running.
+  const warned = run(writing, [
+    { type: "replied", text: "Only admins invite.", answer: "reply" },
+    { type: "reply-failed", running: true },
+  ]);
+  assert.equal(warned.turnRunning, true, "the interviewer is still writing");
+  assert.equal(replies(warned).at(-1).text, "yes");
+  // The one click: the same reply with interrupt. The stopped turn ends, then the host records the reply.
+  const interrupted = { outcome: "interrupted", seconds: 3, cost_usd: 0, session_cost_usd: 0.02, refused: 0 };
+  const sent = run(warned, [
+    { type: "replied", text: "Only admins invite.", answer: "reply" },
+    { type: "event", event: ev("turn", interrupted, 202) },
+    { type: "event", event: ev("reply", { text: "Only admins invite." }, 203) },
+  ]);
+  const [notice, reply] = sent.timeline.slice(-2);
+  assert.equal(notice.type, "notice");
+  assert.equal(notice.text, "Nothing from it was kept. MACH answers your reply instead.");
+  assert.equal(reply.type, "reply");
+  assert.equal(reply.text, "Only admins invite.");
+  assert.equal(reply.pending, false);
+  assert.equal(sent.turnRunning, true, "the turn that answers it is on its way");
+  // An interrupt with no reply after it says, as before, to reply when ready.
+  const stopped = run(writing, [{ type: "event", event: ev("turn", interrupted, 202) }]);
+  assert.equal(stopped.timeline.at(-1).text, "Nothing from it was kept. Reply when you are ready.");
+  assert.equal(stopped.turnRunning, false);
+});
+
+test("a reply while the conversation writes is never refused, on every conversation screen", () => {
+  const read = (file) => readFileSync(new URL(`../src/${file}`, import.meta.url), "utf8");
+  const hook = read("shared/useConversation.ts");
+  assert.match(hook, /client\.reply\(id, trimmed, interrupt \? \{ interrupt: true \} : undefined\)/);
+  assert.match(hook, /withProceed\(error, \(\) => send\(trimmed, true\)\)/);
+  assert.match(read("shared/ConversationProblem.tsx"), /<HintAction hint=\{problem\.hint\} \/>/);
+  for (const file of ["features/interview/InterviewScreen.tsx", "features/needs/technical/NeedsConversation.tsx", "features/prd/PrdConversation.tsx", "features/shape/explore/Conversation.tsx"]) {
+    const source = read(file);
+    assert.doesNotMatch(source, /Wait for it to finish/, file);
+    assert.match(source, /<ConversationProblem problem=/, file);
+  }
 });

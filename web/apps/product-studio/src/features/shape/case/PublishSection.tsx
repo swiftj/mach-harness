@@ -7,7 +7,7 @@ import { useEngineAct } from "../../../api/act";
 import { useStatus } from "../../../api/store";
 import { IssueLink, SignInNote } from "../../../shared/IssueLink";
 import { ideaPath } from "../shell/steps";
-import { publishAct, publishOutcome, publishState, renumberOffered, whatIsSaved, type PublishOutcome, type PublishState } from "./model";
+import { publishAct, publishOutcome, publishState, whatIsSaved, type PublishOutcome, type PublishState } from "./model";
 
 /** Where focus goes once a dialog closes: the publishing part's own row. */
 const publishHeading = () => document.getElementById("publish-part")?.closest("li")?.querySelector<HTMLElement>("button") ?? null;
@@ -24,9 +24,7 @@ export function PublishSection({ row, show, onChanged }: { row: IdeaRow; show: I
   const repository = status.data?.github.repository ?? null;
   const navigate = useNavigate();
   const publish = useEngineAct();
-  const renumber = useEngineAct();
   const [asking, setAsking] = useState(false);
-  const [renumbering, setRenumbering] = useState(false);
   const [outcome, setOutcome] = useState<PublishOutcome | null>(null);
   const saved = whatIsSaved(show);
 
@@ -34,17 +32,12 @@ export function PublishSection({ row, show, onChanged }: { row: IdeaRow; show: I
     const result = await publish.run("idea.publish", { idea_id: row.idea_id });
     if (!result) return false;
     const done = publishOutcome(result);
+    // Another idea on GitHub held the number: MACH gave this one the next free number and saved it, in the same act.
+    const id = done.renumbered?.to ?? row.idea_id;
     setOutcome(done);
-    toast({ tone: "success", title: done.where === "github" ? `Saved ${row.idea_id} as issue #${done.issue}` : `Saved ${row.idea_id} to the folder`, description: result.note });
-    onChanged();
-    return true;
-  };
-
-  const doRenumber = async () => {
-    const result = await renumber.run("idea.renumber", { idea_id: row.idea_id });
-    if (!result) return false;
-    toast({ tone: "success", title: `${result.renumbered.from} is now ${result.renumbered.to}`, description: "Its brief, case and lookups moved with it." });
-    navigate(ideaPath(result.renumbered.to, "case"));
+    toast({ tone: "success", title: done.where === "github" ? `Saved ${id} as issue #${done.issue}` : `Saved ${id} to the folder`, description: result.note });
+    if (done.renumbered) navigate(ideaPath(done.renumbered.to, "case"));
+    else onChanged();
     return true;
   };
 
@@ -55,12 +48,6 @@ export function PublishSection({ row, show, onChanged }: { row: IdeaRow; show: I
           {explanation(state)}
         </Text>
         <div className="flex flex-wrap items-center gap-2">
-          {renumberOffered(state, row.next.kind) ? (
-            <Button onClick={() => setRenumbering(true)}>
-              <Hash aria-hidden="true" />
-              Give it the next free number
-            </Button>
-          ) : null}
           {offered ? (
             <Button
               onClick={() => {
@@ -98,6 +85,11 @@ export function PublishSection({ row, show, onChanged }: { row: IdeaRow; show: I
         focusAfter={publishHeading}
       >
         <div className="flex flex-col gap-4 pb-1">
+          {state.kind === "number-taken" ? (
+            <Banner tone="info" title="Another idea on GitHub already uses this number">
+              Saving gives {row.idea_id} the next free number first. It keeps everything it says, and its brief, case and lookups move with it.
+            </Banner>
+          ) : null}
           <div className="flex flex-col gap-2 rounded-md bg-surface-sunken px-4 py-3">
             <p className="text-label text-ink">What is saved</p>
             <ul className="flex list-disc flex-col gap-1 pl-5 text-body-sm text-ink">
@@ -119,17 +111,6 @@ export function PublishSection({ row, show, onChanged }: { row: IdeaRow; show: I
           </div>
         </div>
       </ConfirmDialog>
-
-      <ConfirmDialog
-        width="lg"
-        open={renumbering}
-        onOpenChange={setRenumbering}
-        title={`Give ${row.idea_id} a new number?`}
-        description="Another idea on GitHub already uses this number. Yours keeps everything it says and gets the next free number; its brief, case and lookups move with it."
-        confirmLabel="Give it a new number"
-        onConfirm={doRenumber}
-        error={renumber.error ? failureText(renumber.error, `${row.idea_id} was not given a new number`) : null}
-      />
     </div>
   );
 }
@@ -177,7 +158,7 @@ function explanation(state: PublishState): string {
     case "stopped":
       return "Saving to GitHub stopped part way. Save again to finish; nothing is made twice.";
     case "number-taken":
-      return `Another idea on GitHub already uses this number${state.others.length ? ` (${state.others.map((n) => `#${n}`).join(", ")})` : ""}. Give yours the next free number, then save it.`;
+      return `Another idea on GitHub already uses this number${state.others.length ? ` (${state.others.map((n) => `#${n}`).join(", ")})` : ""}. Saving gives yours the next free number; its brief, case and lookups move with it.`;
     case "folder":
       return "Saved to a folder in your workspace, for you to commit. Nothing was sent to GitHub.";
     case "github":

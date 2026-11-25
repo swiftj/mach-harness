@@ -1,6 +1,25 @@
 {
-  "exit_code": 1,
-  "data": null,
-  "refused": "Another idea on GitHub already uses IDEA-003 (#3). Nothing was saved. Give yours the next free number, then save it.",
+  "exit_code": 0,
+  "data": {
+    "published": true,
+    "saved_to": "github",
+    "issue": 5,
+    "url": "https://github.com/acme/team-space/issues/5",
+    "revision": 0,
+    "state_label": "mach:idea-new",
+    "verdict_posted": false,
+    "by": "ada-pm",
+    "idea_id": "IDEA-006",
+    "renumbered": {
+      "from": "IDEA-005",
+      "to": "IDEA-006"
+    },
+    "warned": [
+      "IDEA-005 was already used on GitHub by another idea (#4), so MACH gave yours the next free number: IDEA-005 is now IDEA-006; its brief, case and lookups moved with it."
+    ],
+    "factory_authorized": false,
+    "note": "IDEA-005 was already used on GitHub by another idea (#4), so MACH gave yours the next free number: IDEA-005 is now IDEA-006; its brief, case and lookups moved with it. Saved as issue #5. The brief is its body. Nothing reaches the builders: the brief is for people."
+  },
+  "refused": null,
   "hint": null
 }

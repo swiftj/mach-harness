@@ -65,8 +65,9 @@
           "question": null,
           "question_note": null,
           "shipped_issues": [],
+          "not_approved": null,
           "times": {
-            "marked_ready": "2026-11-25T14:45:58Z",
+            "marked_ready": "2026-11-25T15:46:52Z",
             "building": null,
             "question": null,
             "shipped": null

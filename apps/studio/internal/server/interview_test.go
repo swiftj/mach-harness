@@ -246,6 +246,63 @@ func TestADraftEditWhileTheInterviewerWritesIsWarnedThenApplied(t *testing.T) {
 	}
 }
 
+// A reply while the interviewer writes is never refused: it is warned about once, and the same
+// reply with interrupt stops the running turn and is sent as the next turn.
+func TestAReplyWhileTheInterviewerWritesIsWarnedThenSent(t *testing.T) {
+	h, claude := withClaude(t, testkit.Turn{Kind: "slow", Sleep: 60}, testkit.Turn{Text: testkit.QuestionText(1, "Who invites")}, testkit.Turn{Text: testkit.QuestionText(2, "Seats")})
+	h.login()
+	h.startSlice()
+	id := h.startInterview(`{"slice_id":"SLICE-001"}`)
+	// The first turn's process is up (it has recorded its call) before anything stops it.
+	for deadline := time.Now().Add(20 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		if entries, _ := os.ReadDir(filepath.Join(filepath.Dir(claude), "calls")); len(entries) == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the first turn never started")
+		}
+	}
+	status, env := h.call("POST", "/api/interview/"+id+"/reply", `{"text":"Only admins invite."}`, nil)
+	expect(t, status, env, 409, engine.KindConflict)
+	if env.Error.Message != "The interviewer is still writing its reply. Sending yours stops it first." ||
+		string(env.Error.Hint) != `{"kind":"interrupt_turn","target":null}` {
+		t.Fatalf("the warning: %q %s", env.Error.Message, env.Error.Hint)
+	}
+	for _, bad := range []string{`{"text":"yes","interrupt":"yes"}`, `{"interrupt":true}`} {
+		status, env := h.call("POST", "/api/interview/"+id+"/reply", bad, nil)
+		expect(t, status, env, 400, engine.KindInvalid)
+	}
+	began := time.Now()
+	if status, env := h.call("POST", "/api/interview/"+id+"/reply", `{"text":"Only admins invite.","interrupt":true}`, nil); status != 200 || !env.OK {
+		t.Fatalf("with interrupt: %d %+v", status, env.Error)
+	}
+	if time.Since(began) > 10*time.Second {
+		t.Fatal("the interrupt did not stop the reply promptly")
+	}
+	evs := h.stream(id, 0, "waiting_for_reply")
+	var outcomes []any
+	replied := false
+	for _, e := range evs {
+		if e.Name == "turn" {
+			outcomes = append(outcomes, e.Data["outcome"])
+		}
+		if e.Name == "reply" && e.Data["text"] == "Only admins invite." {
+			replied = true
+		}
+	}
+	if !replied || !strings.Contains(sseNames(evs), "question") {
+		t.Fatalf("the reply was not sent as the next turn: %s", sseNames(evs))
+	}
+	calls := testkit.Calls(t, claude)
+	if len(calls) != 2 || calls[1].Argv[len(calls[1].Argv)-1] != "Only admins invite." {
+		t.Fatalf("the reply is not the second turn's message: %d calls", len(calls))
+	}
+	// With interrupt and no turn running, the reply is simply sent.
+	if status, env := h.call("POST", "/api/interview/"+id+"/reply", `{"text":"Yes.","interrupt":true}`, nil); status != 200 || !env.OK {
+		t.Fatalf("interrupt with nothing running: %d %+v (turns %v)", status, env.Error, outcomes)
+	}
+}
+
 func TestASliceMarkedReadyIsNotInterviewed(t *testing.T) {
 	h, claude := withClaude(t)
 	h.login()
