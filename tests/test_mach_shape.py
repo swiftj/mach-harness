@@ -368,10 +368,62 @@ class PublishTest(ShapeBase):
         data = json.loads((folder / "idea.json").read_text())
         self.assertEqual((data["brief_sha256"], data["verdict"]["decision"], data["state_label"]), (issue_rules.text_sha256_of(SHIPPED_BRIEF), "go", "mach:idea-go"))
         self.assertEqual(self.idea_issues(), [])
-        # Signed in later, the verdict recorded without a login is not posted as someone's: it is recorded again first.
+        # Signed in later: never blocked. The idea is published; the verdict recorded without a login stays as it was, and no
+        # comment is posted in anyone's name.
         self.set_gh(signed_in=True)
-        self.assertIn("Record the verdict again", self.refused(self.a, "idea", "publish", "IDEA-001"))
-        self.assertEqual(self.idea_issues(), [])
+        published = self.ok(self.a, "idea", "publish", "IDEA-001")
+        self.assertEqual((published["saved_to"], published["verdict_posted"]), ("github", False))
+        self.assertTrue(published["note"].startswith("The verdict on IDEA-001 was recorded on "))
+        self.assertIn("while this computer was not signed in to GitHub, so it names no account", published["note"])
+        self.assertEqual([c for c in self.issue(published["issue"])["comments"] if "mach:idea-verdict" in c["body"]], [])
+        self.assertIsNone(json.loads(self.path("product/ideas/IDEA-001.json").read_text())["verdict"]["by"])
+
+    def test_renumbering_an_idea_moves_every_mention_of_its_number(self):
+        """As slice renumber does: the brief's own text, the verdict's reason, the lookups and the map name the new number; the
+        verdict still holds for the renamed brief, and its author is never touched."""
+        import hashlib
+        self.add("First idea")
+        self.add()
+        brief = SHIPPED_BRIEF.split("\n", 1)
+        self.write_brief("IDEA-002", brief[0] + ", the IDEA-002 brief\n" + brief[1])
+        self.ok(self.a, "verdict", "record", "IDEA-002", "--decision", "go", "--reason", "IDEA-002 answers the desk's calls; IDEA-001 does not.")
+        lookups = self.path("product/ideas/IDEA-002.lookups.json")
+        if not lookups.exists():
+            lookups.write_text(json.dumps({"schema_version": 1, "idea_id": "IDEA-002", "notes": ["Seen in IDEA-002's interviews."]}))
+        before = json.loads(self.path("product/ideas/IDEA-002.json").read_text())["verdict"]
+        moved = self.ok(self.a, "idea", "renumber", "IDEA-002")
+        self.assertEqual(moved["renumbered"], {"from": "IDEA-002", "to": "IDEA-003"})
+        text = self.path("product/briefs/IDEA-003.md").read_text()
+        self.assertIn("the IDEA-003 brief", text)
+        self.assertNotIn("IDEA-002", text)
+        verdict = json.loads(self.path("product/ideas/IDEA-003.json").read_text())["verdict"]
+        self.assertEqual(verdict["reason"], "IDEA-003 answers the desk's calls; IDEA-001 does not.")  # another idea's number stays
+        self.assertEqual((verdict["by"], verdict["at"], verdict["decision"]), (before["by"], before["at"], before["decision"]))
+        self.assertEqual(verdict["brief_sha256"], hashlib.sha256(text.encode("utf-8")).hexdigest(), "the verdict still holds for the renamed brief")
+        self.assertNotIn("IDEA-002", self.path("product/ideas/IDEA-003.lookups.json").read_text())
+        self.assertFalse(self.path("product/briefs/IDEA-002.md").exists())
+        self.assertEqual(self.ok(self.a, "idea", "show", "IDEA-003")["idea"]["verdict"]["decision"], "go")
+
+    def test_an_idea_whose_verdict_another_person_recorded_is_published_and_the_verdict_stays_theirs(self):
+        """Never blocked: Ben publishes the idea Ada decided. The note says first who recorded the verdict and when; the verdict
+        keeps Ada as its author, and no verdict comment is posted in her name from Ben's account."""
+        self.decided()  # Ada records go
+        record_before = json.loads(self.path("product/ideas/IDEA-001.json").read_text())["verdict"]
+        self.set_gh(me="ben-pm")
+        published = self.ok(self.a, "idea", "publish", "IDEA-001")
+        self.assertEqual((published["saved_to"], published["by"], published["verdict_by"], published["verdict_posted"]),
+                         ("github", "ben-pm", "ada-pm", False))
+        self.assertTrue(published["note"].startswith(f"The verdict on IDEA-001 was recorded by @ada-pm on {record_before['at'][:10]}. "
+                                                     "Publishing it under your account keeps their verdict as recorded"), published["note"])
+        self.assertEqual(json.loads(self.path("product/ideas/IDEA-001.json").read_text())["verdict"], record_before)
+        comments = self.issue(published["issue"])["comments"]
+        self.assertEqual([c for c in comments if "mach:idea-verdict" in c["body"]], [])
+        # Ada publishes from her own account later: her verdict's comment is posted then, signed by her.
+        self.set_gh(me="ada-pm")
+        again = self.ok(self.a, "idea", "publish", "IDEA-001")
+        self.assertTrue(again["verdict_posted"])
+        (verdict,) = [c for c in self.issue(published["issue"])["comments"] if "mach:idea-verdict" in c["body"]]
+        self.assertEqual(verdict["login"], "ada-pm")
 
     def test_an_issue_without_its_label_or_another_idea_s_number_is_left_alone(self):
         self.decided()

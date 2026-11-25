@@ -1,6 +1,21 @@
 {
-  "exit_code": 1,
-  "data": null,
-  "refused": "IDEA-001's verdict was recorded by someone not signed in to GitHub, and this computer is signed in as ada-pm. Nothing was saved. Record the verdict again as the person deciding.",
+  "exit_code": 0,
+  "data": {
+    "published": true,
+    "saved_to": "github",
+    "issue": 1,
+    "url": "https://github.com/acme/team-space/issues/1",
+    "revision": 2,
+    "state_label": "mach:idea-go",
+    "verdict_posted": false,
+    "by": "ada-pm",
+    "verdict_by": null,
+    "warned": [
+      "The verdict on IDEA-001 was recorded on 2026-11-25 while this computer was not signed in to GitHub, so it names no account. Publishing keeps it as recorded; no verdict comment is posted, because one must name the account that decided."
+    ],
+    "factory_authorized": false,
+    "note": "The verdict on IDEA-001 was recorded on 2026-11-25 while this computer was not signed in to GitHub, so it names no account. Publishing keeps it as recorded; no verdict comment is posted, because one must name the account that decided. Saved as issue #1. The brief is its body. Nothing reaches the builders: the brief is for people."
+  },
+  "refused": null,
   "hint": null
 }

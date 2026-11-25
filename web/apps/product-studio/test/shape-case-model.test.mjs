@@ -211,10 +211,13 @@ test("a verdict recorded with nobody signed in says why, in the engine's words",
   assert.equal(recorded.why_no_login, "You are not signed in to GitHub on this computer.");
 });
 
-test("the refusals are the engine's words: Go without a passing brief, GitHub unreachable, a different account", () => {
+test("the refusals are the engine's words: Go without a passing brief, GitHub unreachable; who recorded the verdict never stops publishing", () => {
   assert.match(run("verdict.record.refused-go-without-brief").refused, /^Go needs a brief that passes its check/);
   assert.match(run("verdict.record.refused-offline").refused, /GitHub could not be reached/);
-  assert.match(run("idea.publish.refused-no-login").refused, /this computer is signed in as ada-pm/);
+  const published = run("idea.publish.refused-no-login");
+  assert.equal(published.exit_code, 0);
+  assert.equal(published.data.verdict_posted, false);
+  assert.match(published.data.note, /^The verdict on IDEA-001 was recorded on \S+ while this computer was not signed in to GitHub/);
 });
 
 test("where the idea is saved: not yet, on GitHub, in the folder, stopped part way, number taken", () => {
