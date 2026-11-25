@@ -253,13 +253,14 @@ export function confirmWords(ticket: string, option: NeedOption): { readonly tit
     case "abandon":
       return { title: `Abandon ${ticket}?`, description: `MACH takes ${ticket} off the line and removes its cell, with your reason. This cannot be undone from here; MACH says how to get its work back.`, verb: "Abandon", tone: "danger" };
     case "take-over":
-      // MACH's own sentence says what happens to the other worker, in the words of the take-over it carries out.
+      // MACH's own sentence says what happens to the other worker, in the words of the take-over it carries out:
+      // "the other worker stops at its next step", and "the Factory's run on it is ended" when it was a Factory run.
       return { title: `Take over ${ticket}?`, description: option.does, verb: "Take it over", tone: "primary" };
     default:
       if (option.takesOver) {
         return {
           title: `${option.label}: ${ticket}?`,
-          description: `${option.does} Another worker holds this ticket's step, so MACH takes the step over from it as it records this.`,
+          description: `${option.does} Another worker holds this ticket's step, so MACH takes the step over as it records this: the other worker stops at its next step.`,
           verb: option.label,
           tone: "primary",
         };

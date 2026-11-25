@@ -123,7 +123,7 @@ const CLAIMED = {
       warnings: ["Another worker was handed this ticket's build step at 02:47 UTC and may still be at work."],
       options: [
         { key: "wait", label: "Let it carry on", does: "Nothing changes: the other worker carries on, and its claim lapses by itself if it stops.", do: true, needs: [], confirm: false, takes_over: false },
-        { key: "take-over", label: "Take it over", does: "MACH takes the build step from the other worker for you and carries the ticket on: it is stopped at its next step.", do: true, needs: [], confirm: true, takes_over: true },
+        { key: "take-over", label: "Take it over", does: "MACH takes the build step from the other worker for you and carries the ticket on: the Factory's run on it is ended, and the other worker stops at its next step.", do: true, needs: [], confirm: true, takes_over: true },
       ],
     },
     {
@@ -149,7 +149,7 @@ test("another worker on a ticket: its warning is read, and every option stays a 
   assert.equal(take.verb, "Take it over");
   const retry = parked.options[0];
   assert.equal(retry.confirm, true, "releasing a held ticket to the Factory takes the step over, so it is confirmed");
-  assert.match(N.confirmWords("T-6", retry).description, /MACH takes the step over from it as it records this\.$/);
+  assert.match(N.confirmWords("T-6", retry).description, /MACH takes the step over as it records this: the other worker stops at its next step\.$/);
   assert.deepEqual(N.readNeeds(LIST).tickets[0].warnings, [], "no warnings is an empty list");
 });
 
