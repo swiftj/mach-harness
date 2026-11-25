@@ -5,6 +5,7 @@
     mach scaffold   scaffold the factory files only (for projects that use the MACH plugin)
     mach uninstall  remove everything this tool installed and has not been changed since
     mach status     show what is installed and what has been changed
+    mach programs   bring the two programs in .factory/bin/ to the release installed here (used by /mach-app)
 
 Install and update always bring MACH's own files to the version being installed: the skills,
 agents and workflow under .claude/skills/mach/, .claude/skills/mach-*, .claude/agents/mach-* and
@@ -61,6 +62,7 @@ PLUGIN_ONLY_SKILLS = {"init"}
 SKIP_NAMES = {"__pycache__", ".DS_Store"}
 MAKEFILE_NAMES = ("Makefile", "makefile", "GNUmakefile")
 NAME_LINE_RE = re.compile(r"^name:\s*(\S+)\s*$", re.MULTILINE)
+SIBLING_RE = re.compile(r"\$\{CLAUDE_SKILL_DIR\}/\.\./(?!\.\.)([a-z]+)/")
 # The visual Product Studio's host: one prebuilt program per platform, attached to each MACH release.
 STUDIO_DEST = ".factory/bin/mach-studio"
 STUDIO_LOCAL_BUILD = "apps/studio/bin/mach-studio"
@@ -202,7 +204,11 @@ def skill_items(root: Path) -> List[Item]:
             relative = path.relative_to(skill)
             data = path.read_bytes()
             if relative.as_posix() == "SKILL.md":
-                data = prefixed(data.decode("utf-8"), skill.name, project_name(skill.name)).encode("utf-8")
+                text = prefixed(data.decode("utf-8"), skill.name, project_name(skill.name))
+                # A skill that runs another skill's script names it beside its own folder: skills/app/ in the plugin,
+                # .claude/skills/mach-app/ in a project.
+                text = SIBLING_RE.sub(lambda found: f"${{CLAUDE_SKILL_DIR}}/../{project_name(found.group(1))}/", text)
+                data = text.encode("utf-8")
             items.append(Item(f".claude/skills/{project_name(skill.name)}/{relative.as_posix()}", data, "managed", path.suffix == ".py"))
     agents = root / "agents"
     for path in sorted(agents.glob("*.md")) if agents.is_dir() else []:
@@ -930,6 +936,119 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?$")
+LATEST_TIMEOUT = 2.0  # seconds: asking which release is newest never holds anything up for longer
+
+
+def version_key(version: Optional[str]) -> Optional[Tuple[int, int, int, int]]:
+    """A release's number for comparing ('0.26.0' < '0.27.0-rc.1' < '0.27.0'); None for 'dev' or anything else."""
+    found = VERSION_RE.match((version or "").strip())
+    if not found:
+        return None
+    major, minor, patch, candidate = found.groups()
+    return int(major), int(minor), int(patch), int(candidate) if candidate is not None else 1 << 30
+
+
+def program_version(path: Path) -> Optional[str]:
+    """The release a program says it was built for (`<name> --version` prints '<name> <release>'), or None when it cannot say."""
+    try:
+        done = subprocess.run([str(path), "--version"], capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    words = done.stdout.split()
+    return words[1] if done.returncode == 0 and len(words) == 2 else None
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):  # noqa: D401 - the redirect's address is the answer
+        return None
+
+
+def latest_release(timeout: float = LATEST_TIMEOUT) -> Optional[str]:
+    """The newest published MACH release, from where the programs come from (github.com/<repo>/releases/latest answers with
+    a redirect to its tag), or None when it cannot be known within `timeout` seconds. Never raises."""
+    if program_override(STUDIO):
+        return None  # a mirror or a local folder: there is no "latest" to ask about
+    opener = urllib.request.build_opener(_NoRedirect)
+    request = urllib.request.Request(f"https://github.com/{release_repo()}/releases/latest", method="HEAD", headers={"User-Agent": "mach-installer"})
+    try:
+        with opener.open(request, timeout=timeout) as response:  # noqa: S310 - fixed https address
+            location = response.headers.get("Location", "")
+    except urllib.error.HTTPError as exc:
+        location = exc.headers.get("Location", "") if exc.code in (301, 302, 303, 307, 308) and exc.headers else ""
+    except Exception:  # noqa: BLE001 - offline, a sandbox, a slow network: the answer is "not known"
+        return None
+    found = re.search(r"/releases/tag/v([0-9][0-9A-Za-z.-]*)$", location)
+    return found.group(1) if found and version_key(found.group(1)) else None
+
+
+def refresh_program(program: Program, root: Path, project: Path, version: str, manifest: Dict) -> Dict[str, object]:
+    """Bring one program in .factory/bin/ to `version`: kept when it already says that release (or is a local build, 'dev'),
+    otherwise replaced by this MACH checkout's own build or by the release's build for this machine, downloaded and checked
+    exactly as `install` does (download_program: the release's SHA256SUMS, then build provenance). A program that cannot
+    be had is left as it was, and `problem` says why in one sentence."""
+    path = project / program.dest
+    found = program_version(path) if path.is_file() else None
+    answer: Dict[str, object] = {"name": program.name, "path": str(path), "version": found, "updated": False, "checked": None, "problem": None}
+    if found is not None and (found == version or found == "dev"):
+        return answer
+    if os.environ.get(program.env, "").lower() in SKIP_WORDS:
+        answer["problem"] = f"{program.env} is set to skip it, so MACH did not fetch it."
+        return answer
+    local = root / globals()[program.local]
+    try:
+        if local.is_file():
+            data, checked = local.read_bytes(), "not checked (built here)"
+            record = {"version": version, "source": "this MACH checkout's own build", "checked": checked}
+        else:
+            data, checked = download_program(program, version)
+            override = program_override(program)
+            source = f"{override} (a mirror or local folder)" if override else f"github.com/{release_repo()} release v{version}"
+            record = {"version": version, "asset": program_asset(program) or "", "source": source, "checked": checked}
+    except Fail as exc:
+        answer["problem"] = f"MACH could not fetch it: {str(exc).rstrip('.')}."
+        return answer
+    write(project, Item(program.dest, data, "managed", True))
+    if manifest:
+        manifest.setdefault("files", {})[program.dest] = sha(data)
+        manifest.setdefault("programs", {})[program.dest] = record
+        manifest["files"] = dict(sorted(manifest["files"].items()))
+        manifest["programs"] = dict(sorted(manifest["programs"].items()))
+    answer.update(version=program_version(path) or version, updated=True, checked=checked)
+    return answer
+
+
+def cmd_programs(args: argparse.Namespace) -> int:
+    """Bring the prebuilt programs in .factory/bin/ to the MACH release installed in this project, and nothing else: no
+    skill, agent or setting is touched. Used by /mach-app so the app that opens is always the installed release's."""
+    project = args.project.resolve()
+    manifest = load_manifest(project)
+    version = args.release or manifest.get("version") or source_version(source_root())
+    if not version:
+        raise Fail("MACH is not installed in this project, so MACH cannot tell which release its programs come from. Run MACH's installer in this project.")
+    if not (project / ".factory").is_dir():
+        raise Fail(f"{project} has no .factory folder, so MACH keeps no programs there. Run MACH's installer in this project (or /mach:init with the plugin).")
+    chosen = [program for program in PROGRAMS if not args.only or program.name in args.only]
+    results = [refresh_program(program, source_root(), project, version, manifest) for program in chosen]
+    if manifest and any(result["updated"] for result in results):
+        (project / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    newest = latest_release() if args.newer else None
+    newer = newest if newest and (version_key(newest) or (0,)) > (version_key(version) or (1 << 30,)) else None
+    if args.json:
+        print(json.dumps({"version": version, "programs": results, "newer": newer}, indent=2))
+        return 0
+    for result in results:
+        if result["updated"]:
+            print(f"{result['name']} {version} is in place ({result['checked']}).")
+        elif result["problem"]:
+            print(f"{result['name']}: {result['problem']}")
+        else:
+            print(f"{result['name']} {result['version']} is already in place.")
+    if newer:
+        print(f"MACH {newer} is available; this project has {version}. Running MACH's installer again updates it.")
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="mach", description="Install, update, inspect or remove the MACH software factory in a project.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -962,6 +1081,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p = sub.add_parser("status", help="show what is installed, what you changed, and the open cells")
     common(p, changes=False)
     p.set_defaults(func=cmd_status)
+    p = sub.add_parser("programs", help="bring the visual Product Studio app and the Factory Floor in .factory/bin/ to the MACH release "
+                       "installed here, checked as install checks them; nothing else changes")
+    common(p, changes=False)
+    p.add_argument("--only", action="append", choices=[program.name for program in PROGRAMS], help="only this program (may be repeated)")
+    p.add_argument("--release", help="the MACH release to bring them to (default: the one installed in this project)")
+    p.add_argument("--newer", action="store_true", help=f"also say whether a newer MACH release is published (asked for at most {LATEST_TIMEOUT:g} seconds)")
+    p.add_argument("--json", action="store_true", help="answer in JSON")
+    p.set_defaults(func=cmd_programs)
 
     args = parser.parse_args(argv)
     if sys.version_info < MIN_PYTHON:
