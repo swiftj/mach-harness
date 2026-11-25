@@ -309,9 +309,9 @@ A PM can take the whole project from one repository to another, for example into
 2. Tell them where the file is (`file`) and how big it is (`bytes`), and offer to show it in Finder. Never upload, attach or send it anywhere; they carry it to the other repository themselves.
 
 A refusal says what to do next. Read it in plain words and offer that step. Three need you:
-- **A text names this repository, a GitHub account, a folder on this computer, or holds something shaped like a password or key**: show them the line it names, as it is, and offer to change it with them. Never change their text without their yes, and never take something out quietly to get past the check. Once it is changed, export again. A design mock's picture that holds such text: offer to replace it with a copy saved without it.
+- **A text names this repository, a GitHub account, a folder on this computer, or holds something shaped like a password or key**: when the text is in this workspace, show them the line it names, as it is, and offer to change it with them. Never change their text without their yes, and never take something out quietly to get past the check. Once it is changed, export again. When it is the project's record as GitHub holds it, say what the refusal says: it is changed in Product Studio on any computer that has the project and saved to GitHub again, then exported again. Principles or technical needs from GitHub that hold such a line are left out and named, not refused. A design mock's picture that holds such text: offer to replace it with a copy saved without it.
 - **Bringing in another project stopped part way here**: finish it or set it aside first (below).
-- **What GitHub holds and what is here do not fit together**: say so, and offer to export only what is here.
+- **What GitHub holds and what is here do not fit together**: say what the refusal names and what it says resolves it, and offer to export only what is here.
 
 **Arriving.** When the PM wants to bring a project in:
 
