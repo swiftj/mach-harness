@@ -3,19 +3,19 @@
   "data": {
     "slice": {
       "dependencies": [],
-      "epic_id": "EPIC-001",
+      "epic_id": "EPIC-002",
       "open_questions": [],
       "project_id": "team-space",
-      "revision": 3,
+      "revision": 5,
       "schema_version": 1,
       "slice_id": "SLICE-002",
       "spec_path": "specs/slices/SLICE-002-invite-teammate.md",
-      "spec_sha256": null,
-      "status": "ready_for_approval",
+      "spec_sha256": "c3d3b270393bc111fafce4279b3677f3453d58ec2025c330885bd7ae7b6f8888",
+      "status": "approved_for_engineering",
       "title": "Send an invoice"
     },
-    "editable": true,
-    "edit_refusal": null,
+    "editable": false,
+    "edit_refusal": "SLICE-002 is approved. To change an approved slice, reopen it first.",
     "paths": {
       "work_order": "product/slices/SLICE-002.json",
       "specs_dir": "specs/slices",
@@ -622,7 +622,7 @@
     },
     "why": {
       "exists": true,
-      "markdown": "# Intent: Invite a teammate\n\n- **Slice:** SLICE-002 at specs/slices/SLICE-002-invite-teammate.md\n- **Status:** Ready for approval\n\n## Why\n\n- **Problem:** An admin cannot bring a colleague in.\n- **Who it is for:** A workspace admin.\n- **Success looks like:** The colleague receives an invitation.\n\n## Goal ancestry\n\n- **Goal:** Teams can work together\n- **Epic:** EPIC-001: Team membership\n- **Slice:** SLICE-002: An admin invites one teammate.\n\n## Constraints\n\n- None.\n\n## Risk\n\n- **Tier:** High\n- **Reason:** It grants access.\n\n## Deferred work\n\n- None.\n",
+      "markdown": "# Intent: Invite a teammate\n\n- **Slice:** SLICE-002 at specs/slices/SLICE-002-invite-teammate.md\n- **Status:** Ready for approval\n\n## Why\n\n- **Problem:** An admin cannot bring a colleague in.\n- **Who it is for:** A workspace admin.\n- **Success looks like:** The colleague receives an invitation.\n\n## Goal ancestry\n\n- **Goal:** Teams can work together\n- **Epic:** EPIC-002: Team membership\n- **Slice:** SLICE-002: An admin invites one teammate.\n\n## Constraints\n\n- None.\n\n## Risk\n\n- **Tier:** High\n- **Reason:** It grants access.\n\n## Deferred work\n\n- None.\n",
       "title": "Invite a teammate",
       "header": {
         "Slice": "SLICE-002 at specs/slices/SLICE-002-invite-teammate.md",
@@ -640,10 +640,10 @@
         },
         {
           "heading": "Goal ancestry",
-          "text": "- **Goal:** Teams can work together\n- **Epic:** EPIC-001: Team membership\n- **Slice:** SLICE-002: An admin invites one teammate.",
+          "text": "- **Goal:** Teams can work together\n- **Epic:** EPIC-002: Team membership\n- **Slice:** SLICE-002: An admin invites one teammate.",
           "fields": {
             "Goal": "Teams can work together",
-            "Epic": "EPIC-001: Team membership",
+            "Epic": "EPIC-002: Team membership",
             "Slice": "SLICE-002: An admin invites one teammate."
           }
         },
@@ -683,7 +683,7 @@
       },
       "title": "Invite a teammate by email",
       "shipped": {
-        "commit": "e4203565a5a6fee999ead0dfce4c510dc348c470",
+        "commit": "c9e1ccdfac34f6da8fdd7e68286d63cfaf9d8568",
         "branch": "main",
         "rules": 0,
         "notes": [
@@ -696,12 +696,12 @@
     },
     "resume_note": null,
     "github": {
-      "saved": null,
+      "saved": "github",
       "unfinished": false,
-      "issue": null,
-      "url": null,
-      "state_label": null,
-      "revision": null,
+      "issue": 6,
+      "url": "https://github.com/acme/team-space/issues/6",
+      "state_label": "mach:ready",
+      "revision": 1,
       "changed_on_github": false,
       "newer_elsewhere": false,
       "number_taken": false,
@@ -710,12 +710,12 @@
       "question_note": null,
       "shipped_issues": [],
       "times": {
-        "marked_ready": null,
+        "marked_ready": "2026-11-17T10:00:18Z",
         "building": null,
         "question": null,
         "shipped": null
       },
-      "progress": "ready_for_approval"
+      "progress": "ready_to_build"
     },
     "factory_authorized": false
   },

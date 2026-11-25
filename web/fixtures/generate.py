@@ -173,8 +173,16 @@ def on_github():
         s.change_issue(fourth, body=newer, comments=[*s.issue(fourth)["comments"], {"login": "ben-pm", "body": approval}])
         s.capture("refresh.newer-elsewhere", "refresh")
         s.capture("status.newer-elsewhere", "status")
-        s.capture("slice.ready.refused-newer-elsewhere", "slice", "ready", rename)
         s.capture("reconcile.theirs", "reconcile", rename, "--take", "theirs")
+        # Never blocked: Ben saves once more, and Ada marks her own text ready over it. Hers replaces it; Ben's is kept. (The file
+        # keeps its old name, from when this was refused.)
+        marker = issue_rules.parse_slice_body(s.issue(fourth)["body"])
+        spec = spec_for(rename) + "\nChanged by Ben again.\n"
+        newer = issue_rules.slice_issue_body(rename, marker["revision"] + 1, marker["epic"], [], intent_for(rename), spec)
+        approval = issue_rules.approval_comment(rename, marker["revision"] + 1, "ben-pm", issue_rules.text_sha256_of(spec), issue_rules.text_sha256_of(intent_for(rename)))
+        s.change_issue(fourth, body=newer, comments=[*s.issue(fourth)["comments"], {"login": "ben-pm", "body": approval}])
+        s.write_slice(s.a, rename, extra="\nAda's own words.\n")
+        s.capture("slice.ready.refused-newer-elsewhere", "slice", "ready", rename)
 
         # A draft whose number another slice on GitHub already uses.
         taken = s.drafted(title="Invite by link")

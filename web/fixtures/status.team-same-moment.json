@@ -14,14 +14,7 @@
       "url": "https://github.com/acme/team-space/issues/1",
       "changed_elsewhere": null
     },
-    "approvals_withdrawn": [
-      {
-        "artifact": "SLICE-001",
-        "kind": "slice",
-        "reason": "Someone else marked a slice ready with the same number at the same moment, so it needs a new number and your approval again.",
-        "at": "2026-11-24T13:29:28Z"
-      }
-    ],
+    "approvals_withdrawn": [],
     "epics": [
       {
         "epic_id": "EPIC-001",
@@ -38,77 +31,50 @@
         "counts": {
           "total": 1,
           "by_progress": {
-            "ready_for_approval": 1
+            "ready_to_build": 1
           },
-          "ready_or_further": 0,
+          "ready_or_further": 1,
           "ready_or_further_means": "marked ready to build, being built, or shipped"
         }
       }
     ],
     "slices": [
       {
-        "slice_id": "SLICE-001",
+        "slice_id": "SLICE-002",
         "title": "Remove a teammate",
         "epic_id": "EPIC-001",
-        "status": "ready_for_approval",
-        "revision": 3,
+        "status": "approved_for_engineering",
+        "revision": 4,
         "open_questions": 0,
-        "spec": "specs/slices/SLICE-001-invite-teammate.md",
+        "spec": "specs/slices/SLICE-002-invite-teammate.md",
         "has_intent": true,
         "resume_note": null,
         "dependencies": [],
-        "editable": true,
+        "editable": false,
         "github": {
-          "saved": null,
+          "saved": "github",
           "unfinished": false,
-          "issue": null,
-          "url": null,
-          "state_label": null,
-          "revision": null,
+          "issue": 5,
+          "url": "https://github.com/acme/team-space/issues/5",
+          "state_label": "mach:ready",
+          "revision": 1,
           "changed_on_github": false,
           "newer_elsewhere": false,
-          "number_taken": true,
-          "same_moment": {
-            "issue": 4,
-            "holder": 3,
-            "by": "ada-pm",
-            "at": "2026-11-24T13:29:28Z",
-            "issue_url": "https://github.com/acme/team-space/issues/4",
-            "holder_url": "https://github.com/acme/team-space/issues/3"
-          },
+          "number_taken": false,
+          "same_moment": null,
           "question": null,
           "question_note": null,
           "shipped_issues": [],
           "times": {
-            "marked_ready": null,
+            "marked_ready": "2026-11-25T14:45:58Z",
             "building": null,
             "question": null,
             "shipped": null
           },
-          "progress": "ready_for_approval"
+          "progress": "ready_to_build"
         }
       }
     ],
-    "principles": {
-      "active": [],
-      "retired": [],
-      "unpublished_changes": false,
-      "published": {
-        "saved": null,
-        "unfinished": false,
-        "revision": null,
-        "sha256": null,
-        "approved_by": null,
-        "published_at": null,
-        "issue": null,
-        "url": null,
-        "github": null,
-        "newer_elsewhere": false,
-        "changed_on_github": false
-      },
-      "slices_answered_under_older": [],
-      "next": null
-    },
     "saved": {
       "everything_saved": true,
       "note": "Everything is saved.",
@@ -121,14 +87,14 @@
         "issue": 2,
         "slices": [
           {
-            "slice_id": "SLICE-001",
+            "slice_id": "SLICE-002",
             "title": "Remove a teammate",
             "in_workspace": true,
-            "issue": null,
-            "state_label": null
+            "issue": 5,
+            "state_label": "mach:ready"
           }
         ],
-        "on_github": false,
+        "on_github": true,
         "github_order": null,
         "github_read_at": null,
         "matches_github": null,
@@ -145,28 +111,20 @@
       "form": "sub_issues",
       "last_read": null
     },
-    "current_slice": "SLICE-001",
+    "current_slice": "SLICE-002",
     "last_refreshed": null,
     "structurally_valid": true,
     "structural_errors": [],
     "factory_authorized": false,
     "suggested_next": [
-      "SLICE-001 was marked ready at the same moment by someone else (ada-pm's issue #3 keeps the number; yours, #4, was closed): give your draft a new number and mark it ready again (slice renumber SLICE-001).",
-      "SLICE-001 is ready for your approval: mark it ready for the builders (slice ready SLICE-001)."
+      "Start a new slice (slice new --epic EPIC-NNN --title \"...\")."
     ],
     "next_actions": [
       {
-        "kind": "renumber_slice",
-        "target": "SLICE-001",
-        "title": "Give SLICE-001 a new number",
-        "reason": "SLICE-001 was marked ready at the same moment by someone else: ada-pm's issue #3 was made first and keeps the number. Your issue #4 was closed and never reached the builders. Give your draft a new number and mark it ready again.",
-        "related": []
-      },
-      {
-        "kind": "mark_ready",
-        "target": "SLICE-001",
-        "title": "Mark SLICE-001 ready",
-        "reason": "Remove a teammate is ready for your approval. Marking it ready hands it to the builders.",
+        "kind": "start_slice",
+        "target": null,
+        "title": "Start a new slice",
+        "reason": "No slice of intent is being defined right now.",
         "related": []
       }
     ]

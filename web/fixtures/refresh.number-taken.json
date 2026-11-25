@@ -6,7 +6,7 @@
     "requests": {
       "repository": "acme/team-space",
       "refreshed": true,
-      "refreshed_at": "2026-11-24T13:28:22Z",
+      "refreshed_at": "2026-11-25T14:44:52Z",
       "problem": null,
       "truncated": false,
       "truncated_note": null,
@@ -20,7 +20,7 @@
       "repository": "acme/team-space",
       "refreshed": true,
       "problem": null,
-      "refreshed_at": "2026-11-24T13:28:22Z",
+      "refreshed_at": "2026-11-25T14:44:52Z",
       "form": "sub_issues",
       "project_issue": 1,
       "project_url": "https://github.com/acme/team-space/issues/1",
@@ -145,12 +145,12 @@
         {
           "slice_id": "SLICE-004",
           "in_workspace": true,
-          "saved": null,
+          "saved": "github",
           "unfinished": false,
           "issue": 6,
           "url": "https://github.com/acme/team-space/issues/6",
-          "state_label": null,
-          "revision": 2,
+          "state_label": "mach:ready",
+          "revision": 4,
           "changed_on_github": false,
           "newer_elsewhere": false,
           "number_taken": false,
@@ -159,21 +159,21 @@
           "question_note": null,
           "shipped_issues": [],
           "times": {
-            "marked_ready": null,
+            "marked_ready": "2026-11-17T14:00:26Z",
             "building": null,
             "question": null,
             "shipped": null
           },
-          "progress": "ready_for_approval",
+          "progress": "ready_to_build",
           "on_github": [
             {
               "issue": 6,
               "state": "open",
-              "state_label": null,
-              "revision": 2,
+              "state_label": "mach:ready",
+              "revision": 4,
               "title": "Rename a teammate",
               "matches_approval": true,
-              "approved_by": "ben-pm",
+              "approved_by": "ada-pm",
               "question": null
             }
           ],
@@ -248,7 +248,7 @@
               "title": "Rename a teammate",
               "in_workspace": true,
               "issue": 6,
-              "state_label": null
+              "state_label": "mach:ready"
             },
             {
               "slice_id": "SLICE-005",
@@ -265,7 +265,7 @@
             "SLICE-003",
             "SLICE-004"
           ],
-          "github_read_at": "2026-11-24T13:28:22Z",
+          "github_read_at": "2026-11-25T14:44:52Z",
           "matches_github": true,
           "unfinished": false,
           "taken_from_github": false,
@@ -286,7 +286,7 @@
           "revision": null,
           "approved": null,
           "approved_by": null,
-          "read_at": "2026-11-24T13:28:22Z"
+          "read_at": "2026-11-25T14:44:52Z"
         },
         "newer_elsewhere": false,
         "changed_on_github": false

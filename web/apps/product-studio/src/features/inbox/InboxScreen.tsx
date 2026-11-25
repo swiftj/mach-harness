@@ -148,7 +148,7 @@ export function InboxScreen() {
       name: "Versions to choose",
       count: newer.length,
       summary: sliceGroupSummary(titles(newer)),
-      hint: "Someone else saved a newer version of these on GitHub. Choose before you mark them ready.",
+      hint: "Someone else saved a newer version of these on GitHub. Marking yours ready replaces it, and theirs is kept; or take theirs here.",
       body: newer.map((slice) => <NewerVersionCard key={slice.slice_id} slice={slice} />),
     },
     {
@@ -156,7 +156,7 @@ export function InboxScreen() {
       name: "New numbers needed",
       count: taken.length,
       summary: sliceGroupSummary(titles(taken)),
-      hint: "Another slice on GitHub already uses these numbers. Your work is fine; it needs a new number.",
+      hint: "Another slice on GitHub already uses these numbers. Your work is fine: marking it ready gives it the next free number.",
       body: taken.map((slice) => (
         <SliceCard
           key={slice.slice_id}

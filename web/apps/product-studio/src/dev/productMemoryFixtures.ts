@@ -249,7 +249,8 @@ export const memoryRuns = {
   "principle.list.unpublished": run<PrincipleList>(principleListUnpublished),
   "principle.publish": run<PrinciplesPublishResult>(principlePublish),
   "principle.publish.folder": run<PrinciplesPublishResult>(principlePublishFolder),
-  "principle.publish.refused-newer-elsewhere": refusal(principlePublishRefusedNewerElsewhere),
+  // Never blocked: publishing over a newer version goes ahead, replacing it and keeping theirs (the file keeps its old name).
+  "principle.publish.refused-newer-elsewhere": run<PrinciplesPublishResult>(principlePublishRefusedNewerElsewhere),
   "principle.publish.refused-offline": refusal(principlePublishRefusedOffline),
   "principle.publish.refused-stopped": refusal(principlePublishRefusedStopped),
   "principle.retire": run<PrincipleChanged>(principleRetire),

@@ -1,19 +1,25 @@
 {
-  "exit_code": 1,
-  "data": null,
-  "refused": "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so nothing was defined. Ask someone who looks after the repository to close the one that should not be there, then try again.",
-  "hint": {
-    "kind": "several_projects",
-    "target": null,
-    "issues": [
-      {
-        "issue": 1,
-        "url": "https://github.com/acme/team-space/issues/1"
-      },
-      {
-        "issue": 4,
-        "url": "https://github.com/acme/team-space/issues/4"
-      }
-    ]
-  }
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "schema_version": 1,
+      "project_id": "team-space",
+      "name": "Team Space",
+      "revision": 1,
+      "status": "draft",
+      "vision": "Teams work together.",
+      "outcomes": [
+        "Teams can work together"
+      ]
+    },
+    "path": "/project/.factory/studio/draft/product/project.json",
+    "taken_from_github": 1,
+    "url": "https://github.com/acme/team-space/issues/1",
+    "warned": [
+      "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so MACH used #1, the oldest one MACH can read. Closing #4 changes nothing in your work: it leaves one project issue, and its text stays in its history. MACH can close it for you: ask for it in your conversation with MACH."
+    ],
+    "note": "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so MACH used #1, the oldest one MACH can read. Closing #4 changes nothing in your work: it leaves one project issue, and its text stays in its history. MACH can close it for you: ask for it in your conversation with MACH. This repository already has a project on GitHub (#1), so MACH took its name, vision and outcomes from there. Your own words were not used. A repository holds one project."
+  },
+  "refused": null,
+  "hint": null
 }

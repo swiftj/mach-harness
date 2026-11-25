@@ -234,8 +234,12 @@ test("publish: where it went and the engine's ways on, in its words; a newer ver
   const folder = publishOutcome(folderOnly);
   assert.equal(folder.github, null);
   assert.equal(folder.whyFolder, "GitHub is not set up here.");
-  const newer = fixture("need.publish.refused-newer-elsewhere");
-  assert.equal(isNeedsReconcileHint(newer.hint), true);
+  // Never blocked: publishing over a newer version goes ahead, replaces it and keeps theirs, saying so first.
+  const over = fixture("need.publish.refused-newer-elsewhere");
+  assert.equal(over.exit_code, 0);
+  assert.match(over.data.note, /^@ben-pm published version \d+ of the technical needs on GitHub/);
+  assert.match(over.data.note, /replaces it\. Theirs is kept/);
+  assert.equal(isNeedsReconcileHint({ kind: "reconcile", target: "needs" }), true);
   assert.equal(isNeedsReconcileHint({ kind: "reconcile", target: "principles" }), false);
   assert.equal(isNeedsReconcileHint(null), false);
   const publish = said(source("PublishNeeds.tsx"));

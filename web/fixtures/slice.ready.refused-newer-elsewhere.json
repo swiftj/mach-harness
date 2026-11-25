@@ -1,9 +1,54 @@
 {
-  "exit_code": 1,
-  "data": null,
-  "refused": "Someone else saved a newer version of SLICE-004 on GitHub (version 2). Choose yours or theirs before marking it ready.",
-  "hint": {
-    "kind": "reconcile",
-    "target": "SLICE-004"
-  }
+  "exit_code": 0,
+  "data": {
+    "ready": true,
+    "saved_to": "github",
+    "slice": {
+      "dependencies": [],
+      "epic_id": "EPIC-001",
+      "open_questions": [],
+      "project_id": "team-space",
+      "revision": 4,
+      "schema_version": 1,
+      "slice_id": "SLICE-004",
+      "spec_path": "specs/slices/SLICE-004-invite-teammate.md",
+      "spec_sha256": "0a24d6a8b435fb0f8e7a75da4024c81bd6bd61679a2e4bf70da1b149e44ea638",
+      "status": "approved_for_engineering",
+      "title": "Rename a teammate"
+    },
+    "issue": 6,
+    "url": "https://github.com/acme/team-space/issues/6",
+    "revision": 4,
+    "follows": null,
+    "epic_issue": 2,
+    "project_issue": 1,
+    "approved_by": "ada-pm",
+    "risk": "High",
+    "counts": {
+      "invariants": 4,
+      "functional_requirements": 9,
+      "matrix_rules": 5,
+      "scenarios": 3
+    },
+    "warnings": [],
+    "request_updates": null,
+    "factory_authorized": false,
+    "warned": [
+      "@ben-pm saved version 3 of SLICE-004 on GitHub. Yours is now version 4 and replaces it. Theirs is kept in the edit history of #6 on GitHub and at .factory/studio/replaced/SLICE-004-version-3/."
+    ],
+    "replaced": [
+      {
+        "what": "SLICE-004",
+        "issue": 6,
+        "revision": 3,
+        "by": "ben-pm",
+        "at": null,
+        "kept": ".factory/studio/replaced/SLICE-004-version-3/",
+        "replaced_by_revision": 4
+      }
+    ],
+    "note": "@ben-pm saved version 3 of SLICE-004 on GitHub. Yours is now version 4 and replaces it. Theirs is kept in the edit history of #6 on GitHub and at .factory/studio/replaced/SLICE-004-version-3/. Saved to GitHub as #6 and marked ready. The builders take it from there; nothing has started yet."
+  },
+  "refused": null,
+  "hint": null
 }

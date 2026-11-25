@@ -70,15 +70,15 @@
       "url": "https://github.com/acme/team-space/issues/1",
       "name": "Team Space",
       "readable": true,
-      "read_at": "2026-11-24T13:29:17Z"
+      "read_at": "2026-11-25T14:45:46Z"
     },
     "github": {
       "repository": "acme/team-space",
       "form": null,
-      "last_read": "2026-11-24T13:29:17Z"
+      "last_read": "2026-11-25T14:45:46Z"
     },
     "current_slice": null,
-    "last_refreshed": "2026-11-24T13:29:17Z",
+    "last_refreshed": "2026-11-25T14:45:46Z",
     "needs": {
       "active": [
         "TN-01",
@@ -99,20 +99,20 @@
         "revision": 1,
         "sha256": "452e454bd25fcfb34e5cf006e9f8bb11628d3fd88a0bcb013ef2515e9d4824d7",
         "approved_by": "ada-pm",
-        "published_at": "2026-11-24T13:29:16Z",
+        "published_at": "2026-11-25T14:45:45Z",
         "issue": 1,
         "url": "https://github.com/acme/team-space/issues/1",
         "github": {
           "revision": 2,
           "approved": true,
           "approved_by": "ben-pm",
-          "read_at": "2026-11-24T13:29:17Z"
+          "read_at": "2026-11-25T14:45:46Z"
         },
         "newer_elsewhere": true,
         "changed_on_github": false
       },
       "adrs_behind": [],
-      "next": "Someone else published a newer version of the technical needs on GitHub: choose yours or theirs."
+      "next": "Someone else published a newer version of the technical needs on GitHub. Publishing yours replaces it, and theirs is kept; you can take theirs instead."
     },
     "structurally_valid": true,
     "structural_errors": [],

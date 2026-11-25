@@ -126,8 +126,16 @@ def principles_and_policies(Scenario):
         s.set_gh(me="ada-pm")
         s.capture("refresh.principles-newer-elsewhere", "refresh")
         s.capture("principle.list.newer-elsewhere", "principle", "list")
-        s.capture("principle.publish.refused-newer-elsewhere", "principle", "publish")
         s.capture("reconcile.principles", "reconcile", "principles", "--take", "theirs")
+        # Never blocked: Ben publishes once more, and Ada publishes hers over it. Hers replaces it; Ben's is kept. (The file keeps
+        # its old name, from when this was refused.)
+        s.set_gh(me="ben-pm")
+        s.ok(s.b, "refresh")
+        s.ok(s.b, "principle", "add", "--title", "Seats are released", "--statement", "A declined invitation MUST release its seat.", "--reason", "Billing.")
+        s.ok(s.b, "principle", "publish")
+        s.set_gh(me="ada-pm")
+        s.ok(s.a, "principle", "set", "PP-01", "--reason", "Readers rely on what they saw, and so do auditors.")
+        s.capture("principle.publish.refused-newer-elsewhere", "principle", "publish")
     run(Scenario, body)
 
 
