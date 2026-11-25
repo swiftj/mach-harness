@@ -175,12 +175,19 @@ def taken_over(project: Optional[Path], ticket_id: Any, holder: Optional[str], c
     return _claim.station_stop(project, ticket_id, holder, command, READS) if _claim is not None else None
 
 
-def swept(project: Optional[Path], ticket_id: Any, holder: Optional[str]) -> None:
-    """At the taker's first call after a take-over: what the displaced worker left in the cell is kept aside and not used (claim.sweep)."""
-    if _claim is not None and project is not None and isinstance(ticket_id, str):
-        said = _claim.sweep(Path(project) / ".factory" / "worktrees" / ticket_id, holder, ticket_id)
-        if said:
-            print(f"note: {said}", file=sys.stderr)
+def guarded(project: Optional[Path], ticket_id: Any, holder: Optional[str], run: Any) -> Any:
+    """While a take-over stands, every call by a holder that is not displaced first sets aside commits made outside the stations since
+    the last station call (claim.guard), then records the commit it ends on as a station's (claim.record)."""
+    if _claim is None or project is None or not isinstance(ticket_id, str):
+        return run()
+    cell_dir = Path(project) / ".factory" / "worktrees" / ticket_id
+    limit = _claim.config_minutes(Path(project))
+    said = _claim.guard(cell_dir, holder, ticket_id, limit)
+    if said:
+        print(f"note: {said}", file=sys.stderr)
+    code = run()
+    _claim.record(cell_dir, holder, limit)
+    return code
 
 
 def telemetry(*args: Any, **kwargs: Any) -> None:
@@ -700,6 +707,18 @@ def commit(cell: Cell, files: Sequence[str], message: str) -> str:
     if done.returncode != 0:
         raise BuildError("git commit failed: " + (done.stderr.strip() or done.stdout.strip()), code="git-commit-failed")
     return git(cell.work, "rev-parse", "HEAD").stdout.strip()
+
+
+def outside_step(cell: Cell, task: Dict[str, Any], files: Sequence[str]) -> List[str]:
+    """While a person's take-over of this ticket stands, files changed outside this task's own (the plan's files for it, and its tests)
+    are kept aside before the commit, so the worker taken over cannot slip one in (claim.aside_outside). Returns what is left."""
+    if _claim is None:
+        return list(files)
+    keep = list(task.get("files") or [])
+    left, said = _claim.aside_outside(cell.work, cell.ticket_id, keep, files, cell.root, _claim.config_minutes(cell.project))
+    if said:
+        print(f"note: {said}", file=sys.stderr)
+    return left
 
 
 def check_scope(cell: Cell, task: Dict[str, Any], files: Sequence[str], args: argparse.Namespace) -> None:
@@ -1256,7 +1275,7 @@ def cmd_red(cell: Cell, args: argparse.Namespace) -> int:
     if recovered is not None:
         return recovered_answer(cell, recovered)
     task = take(cell, args.task, "red")
-    files = changed_files(cell)
+    files = outside_step(cell, task, changed_files(cell))
     if args.written_early:
         # An earlier task committed this task's test along with its own. Nothing is left to write;
         # record the slip for the reviewers rather than strand the ticket or pad a file.
@@ -1424,7 +1443,7 @@ def cmd_green(cell: Cell, args: argparse.Namespace) -> int:
     if recovered is not None:
         return recovered_answer(cell, recovered)
     task = take(cell, args.task, "green")
-    files = changed_files(cell)
+    files = outside_step(cell, task, changed_files(cell))
     if args.already_done:
         return green_already_done(cell, task, files, args.already_done)
     check_scope(cell, task, files, args)
@@ -1443,7 +1462,7 @@ def cmd_done(cell: Cell, args: argparse.Namespace) -> int:
     if recovered is not None:
         return recovered_answer(cell, recovered)
     task = take(cell, args.task, "done")
-    files = changed_files(cell)
+    files = outside_step(cell, task, changed_files(cell))
     check_scope(cell, task, files, args)
     result = None
     note = "Committed while tests are still red for the next implementation task."
@@ -3407,8 +3426,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         stop = taken_over(project, args.ticket_id, holder, args.command)
         if stop:
             raise BuildError(stop, code="taken-over")
-        swept(project, args.ticket_id, holder or getattr(args, "holder", None))
-        return args.func(Cell(project, args.ticket_id), args)
+        return guarded(project, args.ticket_id, holder or getattr(args, "holder", None), lambda: args.func(Cell(project, args.ticket_id), args))
     except BuildError as exc:
         print(f"refused: {exc}", file=sys.stderr)
         if project is not None and args.command not in ("next", "status", "lanes"):

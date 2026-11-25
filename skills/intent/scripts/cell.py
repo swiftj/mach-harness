@@ -2941,7 +2941,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                    ("status", "next-id", "validate", "principles", "shipped", "policies", "adrs", "open", "claim"))
         if stop:
             raise CellError(stop, code="taken-over")
-        return args.func(project, args)
+        ticket = getattr(args, "ticket_id", None)
+        if not isinstance(ticket, str):
+            return args.func(project, args)
+        cell_dir = project / ".factory" / "worktrees" / ticket
+        limit = claims.config_minutes(project)
+        said = claims.guard(cell_dir, holder or getattr(args, "holder", None), ticket, limit)
+        if said:
+            print(f"note: {said}", file=sys.stderr)
+        code = args.func(project, args)
+        claims.record(cell_dir, holder or getattr(args, "holder", None), limit)
+        return code
     except CellError as exc:
         print(f"error: {exc}", file=sys.stderr)
         station, gate = {"finalize": ("groom", "groom.finalize"), "check-plan": ("plan", "plan.check"), "replan": ("plan", "plan.replan"),

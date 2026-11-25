@@ -108,6 +108,21 @@ def taken_over(project: Optional[Path], ticket_id: Any, holder: Optional[str], c
     return _claim.station_stop(project, ticket_id, holder, command, READS) if _claim is not None else None
 
 
+def guarded(project: Optional[Path], ticket_id: Any, holder: Optional[str], run: Any) -> Any:
+    """While a take-over stands, every call by a holder that is not displaced first sets aside commits made outside the stations since
+    the last station call (claim.guard), then records the commit it ends on as a station's (claim.record)."""
+    if _claim is None or project is None or not isinstance(ticket_id, str):
+        return run()
+    cell_dir = Path(project) / ".factory" / "worktrees" / ticket_id
+    limit = _claim.config_minutes(Path(project))
+    said = _claim.guard(cell_dir, holder, ticket_id, limit)
+    if said:
+        print(f"note: {said}", file=sys.stderr)
+    code = run()
+    _claim.record(cell_dir, holder, limit)
+    return code
+
+
 def telemetry(*args: Any, **kwargs: Any) -> None:
     """Report what this station has just recorded to the cell's lifecycle log. Never raises."""
     if lifecycle is not None:
@@ -1695,7 +1710,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         stop = taken_over(project, getattr(args, "ticket_id", None), holder, args.command)
         if stop:
             raise CleanupError(stop, code="taken-over")
-        return args.func(project, args)
+        return guarded(project, getattr(args, "ticket_id", None), holder, lambda: args.func(project, args))
     except CleanupError as exc:
         print(f"refused: {exc}", file=sys.stderr)
         if project is not None and args.command == "run":
