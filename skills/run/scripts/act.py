@@ -638,6 +638,10 @@ def record(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[st
         else:
             done, what = f"{ticket} is sent back with {name}'s reason, which uses one of its rounds.", "the builder revises it"
     elif key == "merge":
+        if take_over is not None and (cellroot / "displaced.json").is_file() and (cellroot / "claim.json").is_file():
+            # A person's take-over of this ticket stands: a holderless merge would be taken for the worker taken over. The person
+            # deciding takes the ticket first, in the same act, as `next --by-person` would.
+            take_over(ticket, by=name, via=via, to_factory=False)
         result["station"] = run_station(station, key, [ticket, "--by-person"], allowed=(0, 3))
         answer = result["station"]["answer"] or {}
         if answer.get("status") == "ALREADY_ON_MAIN":
@@ -647,9 +651,15 @@ def record(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[st
         elif answer.get("status") == "RENUMBERED":
             done, what = (f"{ticket} is not merged yet. {sentence(answer.get('reason'))}",
                           "it is verified and reviewed again on the renamed spec, then merged")
-        elif result["station"]["exit_code"] == 3:
+        elif answer.get("status") == "RECHECK":
+            done, what = (f"{ticket} is not merged yet. Another copy of this slice landed first, so MACH brought main in and sent this copy to be "
+                          "verified and reviewed again before it lands.", "it is verified and reviewed against main, then merged on top")
+        elif answer.get("status") == "PR_OPEN":
             done, what = (f"The pull request for {ticket} is open and not merged yet: {answer.get('pull_request') or 'see the merge result'}.",
                           "the merge is checked again until it lands")
+        elif result["station"]["exit_code"] == 3:
+            done, what = (f"{ticket} is not merged yet: {sentence(answer.get('reason') or answer.get('next') or 'the merge station said why')}",
+                          "the routing sheet says what comes next")
         else:
             done, what = f"{ticket} is merged.", "cleanup follows"
     elif key == "accept":

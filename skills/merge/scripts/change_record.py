@@ -252,11 +252,12 @@ def render(root: Path, info: Dict[str, Any], ticket_id: str, commits: Dict[str, 
         lines += ["## Another copy landed first", "",
                   f"Another copy of {t.one(first.get('slice_id'), 40)} landed on the main branch first, as commit {t.one(str(first.get('commit') or 'unknown')[:12], 20)}. "
                   "A person merged this copy after it: main was brought in, and what lands here is only what this copy still changes on top of that one.", ""]
-    shared = info.get("number_shared") if isinstance(info.get("number_shared"), dict) else None
-    if shared:  # a person merged a Product Studio slice whose number another spec on main also carries
-        lines += ["## A slice number shared on the main branch", "",
-                  f"{t.one(shared.get('slice_id'), 40)} is also on the main branch as {t.one(shared.get('theirs'), 120)}, another slice. This change "
-                  f"lands beside it as {t.one(shared.get('ours'), 120)}, because {t.one(shared.get('slice_id'), 40)} is the number Product Studio gave it.", ""]
+    other = info.get("renumbered_other") if isinstance(info.get("renumbered_other"), dict) else None
+    if other:  # a person merged a Product Studio slice whose number an engineer's own spec on main held
+        lines += ["## Another spec renumbered", "",
+                  f"{t.one(other.get('slice_id'), 40)} is the number Product Studio gave this slice, and the main branch held it in "
+                  f"{t.one(other.get('spec'), 120)}, an engineer's own spec. That spec was renumbered to {t.one(other.get('to'), 40)} "
+                  f"({t.one(other.get('as'), 120)}) in this change, so the main branch holds one spec per number.", ""]
     lines += ticket_section(t, info, ticket_id, rules, jira_url)
     lines += ["## Why", "", *t.block(read_text(root / "intent.md"), INTENT_LIMIT), ""]
     spec = load_dict(root / "spec.json")  # M15: each of the next three sections only when the spec has it

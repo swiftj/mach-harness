@@ -104,6 +104,21 @@ def taken_over(project: Optional[Path], ticket_id: Any, holder: Optional[str], c
     """The refusal for a displaced worker, or for a holderless call that changes something while a take-over stands; else None."""
     return _claim.station_stop(project, ticket_id, holder, command, READS) if _claim is not None else None
 
+
+def guarded(project: Optional[Path], ticket_id: Any, holder: Optional[str], run: Any) -> Any:
+    """While a take-over stands, every call by a holder that is not displaced first sets aside commits made outside the stations since
+    the last station call (claim.guard), then records the commit it ends on as a station's (claim.record)."""
+    if _claim is None or project is None or not isinstance(ticket_id, str):
+        return run()
+    cell_dir = Path(project) / ".factory" / "worktrees" / ticket_id
+    limit = _claim.config_minutes(Path(project))
+    said = _claim.guard(cell_dir, holder, ticket_id, limit)
+    if said:
+        print(f"note: {said}", file=sys.stderr)
+    code = run()
+    _claim.record(cell_dir, holder, limit)
+    return code
+
 # M12's secret shapes (the intent station's scan.py), used to check the change record before it is committed.
 try:
     import scan  # noqa: E402
@@ -446,8 +461,10 @@ def slice_id_clash(cell: Cell, main: str) -> Optional[Tuple[str, str, str]]:
     for ref in refs:
         for path in git(cell.project, "ls-tree", "--name-only", ref, "--", "specs/slices/").stdout.split():
             match = SPEC_FILE_RE.match(path.rsplit("/", 1)[-1])
-            if not match or match.group(1) not in ours or path == ours[match.group(1)] or match.group(1) in same:
+            if not match or match.group(1) not in ours or path == ours[match.group(1)]:
                 continue
+            if match.group(1) in same:
+                continue  # the number Product Studio gave this cell's slice: another copy or revision of it (the 0.20.0 rule)
             slice_id = match.group(1)
             return slice_id, path, ours[slice_id]
     return None
@@ -474,13 +491,7 @@ def renumber(cell: Cell, main: str, slice_id: str, theirs: str, ours: str) -> No
     next free number, with every mention of the old number in it, and committed on the branch. The cell records the new spec, and the
     change goes back to be verified and reviewed (no judging round is used). Raises MergeError code "renumbered" with what was done,
     so nothing is merged in this run; or code "slice-id-taken" with the exact reason when renumbering is impossible."""
-    if isinstance(cell.info.get("product"), dict) and (cell.info["product"].get("slice_id") == slice_id):
-        # The number is the one Product Studio gave this slice: intake finds the slice on main by it (the spec's file name and its text),
-        # so renaming it here would leave the slice never seen as shipped and its issue never closed. The smallest safe thing: this copy
-        # lands beside the other spec, under its own file name, and the result and the change record say that two specs share the number.
-        cell.info["number_shared"] = {"slice_id": slice_id, "theirs": theirs, "ours": ours, "at": now()}
-        cell.save_info()
-        return
+    studio = isinstance(cell.info.get("product"), dict) and cell.info["product"].get("slice_id") == slice_id
     rules = cell_rules()
     try:
         used, reserved = rules.slice_ids(cell.project)
@@ -497,6 +508,8 @@ def renumber(cell: Cell, main: str, slice_id: str, theirs: str, ours: str) -> No
                 taken_here.add(int(match.group(1).split("-")[1]))
     highest = max([0, *used, *reserved, *shared, *taken_here])
     new_id = f"SLICE-{highest + 1:03d}"
+    if studio:
+        renumber_theirs(cell, main, slice_id, theirs, new_id)
     source = cell.work / ours
     target_rel = ours.rsplit("/", 1)[0] + "/" + new_id + ours.rsplit("/", 1)[-1][len(slice_id):]
     try:
@@ -535,6 +548,51 @@ def renumber(cell: Cell, main: str, slice_id: str, theirs: str, ours: str) -> No
     raise MergeError(f"{slice_id} is already on {main} as {theirs}, another slice, so MACH gave this ticket's slice the next free number: it is "
                      f"{new_id} now, renamed on its branch as {target_rel} (commit {cell.head()[:12]}). Nothing was merged in this run: the change goes "
                      "back to be verified and reviewed on the renamed spec (no judging round is used), then it is merged.", code="renumbered")
+
+
+def renumber_theirs(cell: Cell, main: str, slice_id: str, theirs: str, new_id: str) -> None:
+    """A Product Studio slice's own number is held on main by an engineer's own spec (no Studio header). The Studio number stays: intake
+    follows the slice by it. The engineer's spec on main is the one given the free number, as a commit on this branch (main is merged in
+    first), so the landing renames it and the main branch never holds two specs under one number. Raises MergeError code "renumbered"
+    (verified and reviewed again), or "main-conflict" when bringing main in conflicts."""
+    refs = [ref for ref in (f"refs/remotes/origin/{main}", f"refs/heads/{main}") if git(cell.project, "rev-parse", "--verify", "-q", ref).returncode == 0]
+    main_head = git(cell.project, "rev-parse", refs[0]).stdout.strip() if refs else ""
+    if main_head and git(cell.work, "merge-base", "--is-ancestor", main_head, "HEAD").returncode != 0:
+        before = cell.head()
+        merged = git(cell.work, "merge", "--no-edit", "-m", f"Merge {main} into {cell.branch} to renumber {theirs} [{cell.ticket_id}]", main_head)
+        if merged.returncode != 0:
+            conflicts = [name for name in git(cell.work, "diff", "--name-only", "--diff-filter=U").stdout.splitlines() if name.strip()]
+            git(cell.work, "merge", "--abort")
+            void_approval(cell, f"{slice_id} is held on {main} by another spec, and bringing {main} in to renumber it conflicts.")
+            cell.info["main_conflict"] = {"during": "renumber", "main": main, "main_commit": git(cell.project, "rev-parse", "HEAD").stdout.strip(),
+                                          "branch_commit": before, "behind": None, "files": conflicts[:50], "folder": str(cell.work), "findings": None,
+                                          "at": now()}
+            cell.save_info()
+            raise MergeError(f"{slice_id} is held on {main} by {theirs}, another slice, and bringing {main} into this branch to renumber that spec "
+                             f"conflicts in {', '.join(conflicts[:10]) or 'some files'}. Nothing was merged. A person merges {main} into {cell.branch} "
+                             f"in {cell.work} and resolves it; the merge then renumbers {theirs}.", code="main-conflict")
+    target = theirs.rsplit("/", 1)[0] + "/" + new_id + theirs.rsplit("/", 1)[-1][len(slice_id):]
+    try:
+        text = (cell.work / theirs).read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        raise MergeError(f"{slice_id} is held on {main} by {theirs}, and that spec could not be read here ({exc}). Nothing was pushed or merged.",
+                         code="slice-id-taken")
+    if git(cell.work, "mv", "--", theirs, target).returncode != 0:
+        raise MergeError(f"{slice_id} is held on {main} by {theirs}, and git could not rename it to {target} on this branch. Nothing was pushed "
+                         "or merged.", code="slice-id-taken")
+    (cell.work / target).write_text(re.sub(rf"\b{re.escape(slice_id)}\b", new_id, text), encoding="utf-8")
+    git(cell.work, "add", "--", target)
+    done = git(cell.work, "commit", "-q", "-m", f"Renumber {theirs} to {new_id}: {slice_id} is the number Product Studio gave this slice [{cell.ticket_id}]")
+    if done.returncode != 0:
+        git(cell.work, "reset", "-q", "--hard", "HEAD")
+        raise MergeError(f"{slice_id} is held on {main} by {theirs}, and git could not commit its renumbering. Nothing was pushed or merged.",
+                         code="slice-id-taken")
+    cell.info["renumbered_other"] = {"slice_id": slice_id, "spec": theirs, "to": new_id, "as": target, "commit": cell.head(), "at": now()}
+    void_approval(cell, f"{theirs} held {slice_id}, the number Product Studio gave this slice; it was renumbered to {new_id}.")
+    raise MergeError(f"{slice_id} is the number Product Studio gave this slice, and {main} held it in {theirs}, another slice that is no Studio "
+                     f"slice. MACH gave that spec the next free number: it is {new_id} now, renamed as {target} in commit {cell.head()[:12]} on this "
+                     "branch, so main never holds two specs under one number. Nothing was merged in this run: the change goes back to be verified "
+                     "and reviewed (no judging round is used), then it is merged.", code="renumbered")
 
 
 def land_on_top(cell: Cell, main: str, main_head: str, landed: Dict[str, Any], by_person: bool) -> Optional[int]:
@@ -1649,11 +1707,7 @@ def land(cell: Cell, args: argparse.Namespace, plan: Dict[str, Any]) -> int:
                               else {"written": False, "reason": "records.enabled is false in .factory/config.json."}}
     if moves:
         result["main_moved_again"] = moves
-    shared = cell.info.get("number_shared") if isinstance(cell.info.get("number_shared"), dict) else None
-    if shared:
-        result["warnings"] = [f"{shared['slice_id']} is also on {main} as {shared['theirs']}, another slice. This copy lands beside it as {shared['ours']}: "
-                              f"{shared['slice_id']} is the number Product Studio gave this slice, and MACH follows the slice by it. The other spec, "
-                              f"{shared['theirs']}, can be given a free number on {main} by an ordinary change (cell.py next-id names one)."]
+
     if command_env is not None and command_env.notices(cell.project):  # only when a package cache was pointed elsewhere
         result["caches"] = command_env.notices(cell.project)
     if cell.method == "local":
@@ -1721,10 +1775,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             raise MergeError("--by-person is a person's word, and this runs inside a supervised Factory execution. Nothing was merged; "
                              "the project's merge settings decide what the Factory merges.", code="not-a-person")
         # A person's own merge is never mistaken for the worker taken over; any other holderless run is checked.
-        stop = taken_over(project, args.ticket_id, holder, None if getattr(args, "by_person", False) else args.command)
+        stop = taken_over(project, args.ticket_id, holder, args.command)
         if stop:
             raise MergeError(stop, code="taken-over")
-        return args.func(Cell(project, args.ticket_id), args)
+        return guarded(project, args.ticket_id, holder, lambda: args.func(Cell(project, args.ticket_id), args))
     except MergeError as exc:
         if exc.code in ("renumbered", "recheck"):  # a person's merge carried the copy on: not a refusal, the ticket goes on
             print(json.dumps({"ticket_id": args.ticket_id, "status": "RENUMBERED" if exc.code == "renumbered" else "RECHECK", "reason": str(exc),
