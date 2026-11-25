@@ -590,10 +590,24 @@ class ReviewCitationTest(unittest.TestCase):
         self.assertEqual([item["id"] for item in packet["applies"]], ["PP-01"])
         self.assertEqual(packet["exceptions"][0]["decided_by"], "the product manager")
         self.assertEqual(packet["exceptions"][0]["reason"], "Agreed with legal.")
+        self.assertNotIn("not_assessed", packet)
         (self.root / "spec.json").write_text(json.dumps({"slice_id": "SLICE-001"}))
         self.assertIsNone(review.packet_principles(self.cell))
         with self.assertRaises(review.ReviewError):
             review.check_principle_citation(self.cell, "Finding 1", "PP-01")
+
+    def test_the_packet_shows_a_principle_the_slice_predates_one_line_each(self):
+        """M21: a Not assessed row is in the packet as data, with a note that it is not a finding by itself; a blocker may cite it."""
+        spec = json.loads((self.root / "spec.json").read_text())
+        reason = "PP-04 came with the project lending, brought in here on 2026-11-20, after this slice was written."
+        spec["principles_not_assessed"] = [{"id": "PP-04", "revision": 2, "statement": "A loan MUST NOT be changed after signing.",
+                                            "reason": reason, "how": "principle_came", "project": "lending", "day": "2026-11-20"}]
+        (self.root / "spec.json").write_text(json.dumps(spec))
+        packet = review.packet_principles(self.cell)
+        self.assertEqual(packet["not_assessed"], [f"PP-04 (revision 2) \"A loan MUST NOT be changed after signing.\": not assessed. {reason}"])
+        self.assertIn("not a finding by itself", packet["not_assessed_note"])
+        self.assertEqual([item["id"] for item in packet["applies"]], ["PP-01"])
+        review.check_principle_citation(self.cell, "Finding 1", "PP-04")
 
 
 class IntakeTest(IntakeBase):
