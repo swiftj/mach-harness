@@ -44,6 +44,7 @@ const STEP = {
     action: { type: 'string', enum: ACTIONS }, stop: { type: 'boolean' }, reason: text, stage: text, needs: text,
     agent_type: { type: 'string', enum: ['', ...AGENT_TYPES], description: 'the "agent_type" field exactly, or an empty string when it is null or absent' },
     model: text, prompt: text,
+    warnings: { type: 'array', items: text, description: 'the "warnings" list exactly (what was taken over, said first), or an empty list' },
   },
   required: ['action', 'stop', 'reason', 'agent_type'],
 }
@@ -281,7 +282,7 @@ const RUN = `${where.python || 'python3'} "${where.run_script}" --project "${whe
 // One holder for this whole run: every `next` claims its step for it, and `schedule` holds only tickets another
 // worker has claimed. Without a usable one the run claims nothing, and run.py still refuses a step another worker holds.
 const HOLDER = cleanHolder(where.holder)
-if (!HOLDER) log('No usable holder came back from run.py where, so this run claims no steps; a ticket another worker holds is still refused.')
+if (!HOLDER) log('No usable holder came back from run.py where, so each step is claimed for a new holder only when another worker has it.')
 
 function clerk(command, schema, label, phase) {
   return agent(
@@ -379,7 +380,10 @@ async function runTicket(ticket, prepare) {
   let last = ''
   let repeats = 0
   for (let i = 0; i < MAX_STEPS; i++) {
-    const read = cleanStep(await clerk(`next ${ticket} --headless`, STEP, `${ticket}: what next?`, 'Preflight'), AGENT_TYPES)
+    const asked = await clerk(`next ${ticket} --headless`, STEP, `${ticket}: what next?`, 'Preflight')
+    // A ticket a person named is never refused because another worker has it: run.py takes the step over and says so first.
+    for (const warning of (asked && Array.isArray(asked.warnings) ? asked.warnings : []).slice(0, 5)) log(`${ticket}: ${String(warning).slice(0, 400)}`)
+    const read = cleanStep(asked, AGENT_TYPES)
     if (read.error) {
       return { ticket, outcome: 'error', reason: `the next step could not be read: ${read.error}`, stations: done }
     }
