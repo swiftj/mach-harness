@@ -336,7 +336,7 @@ def in_words(studio: Any, result: Dict[str, Any]) -> List[str]:
                     + (f": {what}" + (f", {counts_words(states)}" if slices else "") + "." if what else ", with no epics or slices yet."))
     elif slices or epics:
         parts = [plural(epics, "epic") if epics else "", plural(len(slices), "slice") if slices else ""]
-        said.append(f"MACH brought in from GitHub what others published since: {listed([part for part in parts if part])}"
+        said.append(f"MACH brought in what is new on GitHub: {listed([part for part in parts if part])}"
                     + (f" ({', '.join(row['slice_id'] for row in slices)}; {counts_words(states)})" if slices else "") + ".")
     for row in result["updated"]:
         said.append(f"{row['slice_id']} is now the newer version someone else marked ready on GitHub (#{row['issue']}); your earlier copy was "

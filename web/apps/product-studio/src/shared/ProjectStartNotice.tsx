@@ -6,9 +6,9 @@ import { CloseProjectIssues } from "./CloseProjectIssue";
 import { projectOnGithubWords } from "./team";
 
 /**
- * M20: before the product is named, from the last time GitHub was read: this repository already has a project, so naming
- * it here takes that project's name, vision and outcomes instead of what is typed. Said before anything is typed, on the
- * start screen and above the "Name the product" form. Nothing when GitHub held no project or was not read.
+ * M20: before the product is named, from the last time GitHub was read: this repository has a project issue MACH cannot
+ * bring in (its text is not in MACH's form), so the person's own words define the project. Said before anything is typed,
+ * on the start screen and above the "Name the product" form. Nothing otherwise: a project MACH can read is brought in.
  */
 export function ProjectOnGithubNotice({ found, className }: { found: Status["project_on_github"]; className?: string }) {
   const words = projectOnGithubWords(found);
@@ -43,6 +43,18 @@ export function ProjectStartNotice() {
       Close
     </Button>
   );
+  if (note.kind === "joined") {
+    return (
+      <Banner tone="info" live="polite" title="This project came from GitHub" actions={close}>
+        <p>{note.note}</p>
+        {note.issue ? (
+          <p className="mt-1">
+            Its issue: <IssueLink number={note.issue} url={note.url} />. Every slice works as before: reopen one to change it, and mark it ready again.
+          </p>
+        ) : null}
+      </Banner>
+    );
+  }
   if (note.kind === "taken") {
     return (
       <Banner tone="info" live="polite" title="MACH used the project already on GitHub" actions={close}>

@@ -45,7 +45,9 @@ import { RenumberDialog } from "../../shared/RenumberDialog";
 import { AnswerQuestionDialog } from "../../shared/BuildersQuestion";
 import { SliceTimes } from "../../shared/SliceTimes";
 import { EpicSheet } from "../vision/EpicSheet";
-import { StartScreen } from "./start/StartScreen";
+import { BringingIn, StartScreen } from "./start/StartScreen";
+import { bringsInFromGithub } from "./start/model";
+import { joining, startJoin, useJoin } from "../../api/join";
 import { ShapeCarryOn } from "../shape/shell/ShapeCarryOn";
 import { Fold } from "../../shared/layout/Fold";
 import { ContextRow, OnePane, WorkScreen } from "../../shared/layout/WorkScreen";
@@ -61,13 +63,19 @@ let refreshedThisVisit = false;
 export function HomeScreen() {
   const status = useStatus();
   const refresh = useRefresh();
+  const join = useJoin();
+  const needsJoin = status.data ? bringsInFromGithub(status.data) : null;
 
   useEffect(() => {
-    if (!refreshedThisVisit) {
-      refreshedThisVisit = true;
-      void refresh.run();
-    }
-  }, [refresh]);
+    // Once the status says what is here: a project to bring in from GitHub is brought in first (its last batch is the
+    // refresh); otherwise this visit's refresh.
+    if (refreshedThisVisit || needsJoin === null) return;
+    refreshedThisVisit = true;
+    if (needsJoin) void startJoin();
+    else void refresh.run();
+  }, [refresh, needsJoin]);
+
+  if (joining(join)) return <BringingIn join={join} />;
 
   if (!status.data && (status.loading || (!status.error && !status.data))) return <HomeSkeleton />;
   if (!status.data && status.error) {
@@ -160,6 +168,8 @@ function ProjectHome({ status }: { status: Status }) {
           <Notices status={status} refresh={refresh.data} refreshError={refresh.error ? describeError(refresh.error).message : null} onRetry={() => void refresh.run()} />
 
           <ShapeCarryOn status={status} />
+
+          <IdeasOnGithub status={status} />
 
           <section aria-labelledby="epics-title" className="flex flex-col gap-8">
             <Heading level={2} size="title-3" id="epics-title" className="sr-only">
@@ -430,6 +440,36 @@ function EpicBlock({ epic, status, onAddSlice }: { epic: StatusEpicRow; status: 
   );
 }
 
+/**
+ * Ideas someone else published on GitHub, listed to read: each brief is their words, shown as data. What an idea lacks here
+ * (its exploring, case and verdict stay on the computer where it was written) is said once, in the engine's words.
+ */
+function IdeasOnGithub({ status }: { status: Status }) {
+  const found = status.ideas_on_github;
+  if (!found?.items.length) return null;
+  return (
+    <Fold label={`${plural(found.items.length, "idea")} published on GitHub`} heading={2} boxed>
+      <div className="flex flex-col gap-3">
+        <Text size="body-sm" tone="muted" className="max-w-reading">
+          {found.lacks}
+        </Text>
+        <ul className="flex flex-col gap-3">
+          {found.items.map((idea) => (
+            <li key={`${idea.idea_id}-${idea.issue}`} className="flex flex-col gap-1">
+              <span className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+                <span className="break-words text-body font-semibold text-ink">{idea.title ?? idea.idea_id}</span>
+                <ArtifactId>{idea.idea_id}</ArtifactId>
+                <IssueLink number={idea.issue} url={idea.url} />
+              </span>
+              {idea.brief ? <p className="max-w-reading whitespace-pre-wrap break-words text-body-sm text-ink-muted">{idea.brief}</p> : null}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </Fold>
+  );
+}
+
 /** Each slice with the engine's state for it, when it got there, and the way into its interview or its specification. */
 function SliceList({ slices, status }: { slices: Status["slices"]; status: Status }) {
   return (
@@ -454,9 +494,13 @@ function SliceRow({ slice, status, children }: { slice: StatusSliceRow; status: 
           <ArtifactId>{slice.slice_id}</ArtifactId>
           <SmallChangeLabel slice={slice} className="self-center" />
         </span>
-        {slice.open_questions > 0 || current ? (
+        {slice.open_questions > 0 || current || slice.github.approved_by ? (
           <span className="text-caption text-ink-muted">
-            {[current ? "You were last working on this slice" : null, slice.open_questions > 0 ? `${plural(slice.open_questions, "open question")}` : null]
+            {[
+              current ? "You were last working on this slice" : null,
+              slice.open_questions > 0 ? `${plural(slice.open_questions, "open question")}` : null,
+              slice.github.approved_by ? `Approved by @${slice.github.approved_by}` : null,
+            ]
               .filter(Boolean)
               .join(" · ")}
           </span>

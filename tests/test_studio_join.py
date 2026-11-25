@@ -212,7 +212,7 @@ class KeepingInStepTest(JoinBase):
         joined = self.ok(self.ada(), "refresh")["joined"]
         self.assertEqual([row["slice_id"] for row in joined["taken"]["slices"]], [ben_slice])
         self.assertEqual(self.artifact(self.a, f"product/slices/{ben_slice}.json")["status"], "approved_for_engineering")
-        self.assertIn(f"MACH brought in from GitHub what others published since: 1 slice ({ben_slice}; 1 ready).", joined["note"])
+        self.assertIn(f"MACH brought in what is new on GitHub: 1 slice ({ben_slice}; 1 ready).", joined["note"])
 
     def test_a_different_draft_here_under_the_same_number_is_renumbered(self):
         self.joined()

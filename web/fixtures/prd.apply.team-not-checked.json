@@ -13,8 +13,8 @@
       "slices_mapped": 2,
       "not_covered": [],
       "applied": [
-        "SLICE-001",
-        "SLICE-002"
+        "SLICE-002",
+        "SLICE-003"
       ]
     },
     "factory_authorized": false,
@@ -34,11 +34,11 @@
           "key": "M1",
           "title": "Invite a teammate",
           "scope": "An admin invites one teammate by email.",
-          "epic": "EPIC-001",
+          "epic": "EPIC-002",
           "depends_on": [],
           "cites": "5-9",
           "lines": "1-9",
-          "slice_id": "SLICE-001",
+          "slice_id": "SLICE-002",
           "status": "draft",
           "answers": null
         },
@@ -46,13 +46,13 @@
           "key": "M2",
           "title": "Remove a member",
           "scope": "An admin removes one member.",
-          "epic": "EPIC-001",
+          "epic": "EPIC-002",
           "depends_on": [
             "M1"
           ],
           "cites": "11-14",
           "lines": "11-14",
-          "slice_id": "SLICE-002",
+          "slice_id": "SLICE-003",
           "status": "draft",
           "answers": null
         }
@@ -68,7 +68,7 @@
         "state": "settled",
         "settled": {
           "as": "slice",
-          "at": "2026-11-24T13:29:58Z",
+          "at": "2026-11-25T22:35:03Z",
           "slice": "M1"
         }
       },
@@ -98,7 +98,7 @@
         "state": "settled",
         "settled": {
           "as": "out-of-scope",
-          "at": "2026-11-24T13:29:58Z",
+          "at": "2026-11-25T22:35:03Z",
           "reason": "Billing belongs to the finance team."
         }
       },
@@ -110,7 +110,7 @@
         "state": "settled",
         "settled": {
           "as": "later",
-          "at": "2026-11-24T13:29:58Z"
+          "at": "2026-11-25T22:35:03Z"
         }
       }
     ],
@@ -120,11 +120,11 @@
     "applied": true,
     "made": {
       "epics": [
-        "EPIC-001"
+        "EPIC-002"
       ],
       "slices": [
-        "SLICE-001",
-        "SLICE-002"
+        "SLICE-002",
+        "SLICE-003"
       ]
     },
     "kept": {

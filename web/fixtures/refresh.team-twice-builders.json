@@ -3,10 +3,51 @@
   "data": {
     "refreshed": true,
     "problem": null,
+    "joined": {
+      "joined": true,
+      "github": {
+        "connected": true,
+        "checked": true,
+        "problem": null,
+        "repository": "acme/team-space"
+      },
+      "taken": {
+        "project": false,
+        "principles": false,
+        "needs": false,
+        "epics": [],
+        "slices": [],
+        "ideas": []
+      },
+      "updated": [],
+      "already_here": {
+        "project": true,
+        "epics": [
+          "EPIC-001"
+        ],
+        "slices": [
+          "SLICE-001"
+        ]
+      },
+      "not_taken": [],
+      "renumbered": [],
+      "warned": [],
+      "remaining": 0,
+      "factory_authorized": false,
+      "project": {
+        "project_id": "team-space",
+        "name": "Team Space",
+        "issue": 1,
+        "url": "https://github.com/acme/team-space/issues/1"
+      },
+      "only_on_their_computer": "Drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were written.",
+      "in_words": [],
+      "note": ""
+    },
     "requests": {
       "repository": "acme/team-space",
       "refreshed": true,
-      "refreshed_at": "2026-11-25T15:46:57Z",
+      "refreshed_at": "2026-11-25T22:34:32Z",
       "problem": null,
       "truncated": false,
       "truncated_note": null,
@@ -20,7 +61,7 @@
       "repository": "acme/team-space",
       "refreshed": true,
       "problem": null,
-      "refreshed_at": "2026-11-25T15:46:57Z",
+      "refreshed_at": "2026-11-25T22:34:32Z",
       "form": "sub_issues",
       "project_issue": 1,
       "project_url": "https://github.com/acme/team-space/issues/1",
@@ -38,6 +79,7 @@
           "unfinished": false,
           "issue": 4,
           "url": "https://github.com/acme/team-space/issues/4",
+          "approved_by": "ben-pm",
           "state_label": "mach:building",
           "revision": 1,
           "changed_on_github": false,
@@ -97,7 +139,7 @@
           "github_order": [
             "SLICE-001"
           ],
-          "github_read_at": "2026-11-25T15:46:57Z",
+          "github_read_at": "2026-11-25T22:34:32Z",
           "matches_github": true,
           "unfinished": false,
           "taken_from_github": false,
@@ -118,7 +160,7 @@
           "revision": null,
           "approved": null,
           "approved_by": null,
-          "read_at": "2026-11-25T15:46:57Z"
+          "read_at": "2026-11-25T22:34:32Z"
         },
         "newer_elsewhere": false,
         "changed_on_github": false

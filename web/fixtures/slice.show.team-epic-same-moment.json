@@ -683,7 +683,7 @@
       },
       "title": "Invite a teammate by email",
       "shipped": {
-        "commit": "52115d8935d9c11e13dccd9e0fbe244c4202b36a",
+        "commit": "25308cf2f02f286b7ef751513d19b02e7a4c4835",
         "branch": "main",
         "rules": 0,
         "notes": [
@@ -700,6 +700,7 @@
       "unfinished": false,
       "issue": 6,
       "url": "https://github.com/acme/team-space/issues/6",
+      "approved_by": "ben-pm",
       "state_label": "mach:ready",
       "revision": 1,
       "changed_on_github": false,

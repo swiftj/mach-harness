@@ -43,14 +43,54 @@
         "changed_elsewhere": null,
         "same_moment": null,
         "counts": {
-          "total": 0,
-          "by_progress": {},
-          "ready_or_further": 0,
+          "total": 1,
+          "by_progress": {
+            "ready_to_build": 1
+          },
+          "ready_or_further": 1,
           "ready_or_further_means": "marked ready to build, being built, or shipped"
         }
       }
     ],
-    "slices": [],
+    "slices": [
+      {
+        "slice_id": "SLICE-001",
+        "title": "Invite a teammate",
+        "epic_id": "EPIC-001",
+        "status": "approved_for_engineering",
+        "revision": 1,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-001-invite-a-teammate.md",
+        "has_intent": true,
+        "resume_note": null,
+        "dependencies": [],
+        "editable": false,
+        "github": {
+          "saved": "github",
+          "unfinished": false,
+          "issue": 3,
+          "url": "https://github.com/acme/team-space/issues/3",
+          "approved_by": "ada-pm",
+          "state_label": "mach:ready",
+          "revision": 1,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "same_moment": null,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "not_approved": null,
+          "times": {
+            "marked_ready": "2026-11-17T10:00:07Z",
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "ready_to_build"
+        }
+      }
+    ],
     "saved": {
       "everything_saved": true,
       "note": "Everything is saved.",
@@ -65,7 +105,7 @@
           {
             "slice_id": "SLICE-001",
             "title": "Invite a teammate",
-            "in_workspace": false,
+            "in_workspace": true,
             "issue": 3,
             "state_label": "mach:ready"
           }
@@ -74,7 +114,7 @@
         "github_order": [
           "SLICE-001"
         ],
-        "github_read_at": "2026-11-24T13:29:43Z",
+        "github_read_at": "2026-11-25T22:34:41Z",
         "matches_github": true,
         "unfinished": false,
         "taken_from_github": false,
@@ -88,15 +128,16 @@
       "url": "https://github.com/acme/team-space/issues/1",
       "name": "Team Space",
       "readable": true,
-      "read_at": "2026-11-24T13:29:43Z"
+      "read_at": "2026-11-25T22:34:41Z"
     },
     "github": {
       "repository": "acme/team-space",
       "form": null,
-      "last_read": "2026-11-24T13:29:43Z"
+      "last_read": "2026-11-25T22:34:41Z",
+      "connected": true
     },
     "current_slice": null,
-    "last_refreshed": "2026-11-24T13:29:43Z",
+    "last_refreshed": "2026-11-25T22:34:41Z",
     "structurally_valid": true,
     "structural_errors": [],
     "factory_authorized": false,

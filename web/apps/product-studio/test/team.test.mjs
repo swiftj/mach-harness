@@ -27,6 +27,7 @@ import {
   versionFields,
 } from "../src/shared/team.ts";
 import { routeFor, routeForHint } from "../src/api/nextActions.ts";
+import { bringsInFromGithub, joinProgressWords, JOIN_BATCH } from "../src/features/home/start/model.ts";
 
 const run = (name) => JSON.parse(readFileSync(new URL(`../../../fixtures/${name}.json`, import.meta.url), "utf8"));
 
@@ -233,7 +234,7 @@ test("naming the product: the project already on GitHub is taken and said; GitHu
   assert.equal(taken.kind, "taken");
   assert.equal(taken.issue, 1);
   assert.match(taken.url, /\/issues\/1$/);
-  assert.match(taken.note, /MACH took its name, vision and outcomes from there\. Your own words were not used\./);
+  assert.match(taken.note, /so MACH brought it in from there\. The words you gave were not used: a repository holds one project\./);
   const notChecked = projectStartNote(run("project.init.team-not-checked").data);
   assert.equal(notChecked.kind, "not_checked");
   assert.match(notChecked.note, /^MACH could not check GitHub for a project already there\./);
@@ -251,10 +252,8 @@ test("before the product is named, the project already on GitHub is said from th
   assert.equal(projectOnGithubWords(null), null);
   const found = run("status.team-start-known").data.project_on_github;
   assert.deepEqual({ ...found, read_at: null }, { issue: 1, url: "https://github.com/acme/team-space/issues/1", name: "Team Space", readable: true, read_at: null });
-  const words = projectOnGithubWords(found);
-  assert.equal(words.title, "This repository already has a project: Team Space");
-  assert.match(words.body, /^Its issue on GitHub is #1\. When you name the product, MACH takes its name, vision and outcomes from GitHub, and what you type is not used\./);
-  plainWords(`${words.title} ${words.body}`, "project on GitHub");
+  // A project MACH can read is brought in by itself before anything is shown: no note asks for words that would not be used.
+  assert.equal(projectOnGithubWords(found), null);
   const unreadable = projectOnGithubWords({ ...found, name: null, readable: false });
   assert.match(unreadable.body, /not in the form MACH writes, so MACH cannot take its words\. When you name the product, your own words define the project, and the first slice you mark ready writes them to #1\./);
   assert.doesNotMatch(unreadable.body, /ask|before you name/i, "never sent to another person, never a step before naming it");
@@ -330,4 +329,61 @@ test("a number someone else holds goes straight to marking ready: no new number 
   assert.doesNotMatch(inbox, /RenumberDialog/);
   const notice = readFileSync(new URL("../src/shared/NumberTakenNotice.tsx", import.meta.url), "utf8");
   assert.match(notice, /export function NumberTakenNotice[\s\S]*?<Banner tone="info" title=\{words\.title\}>/);
+});
+
+test("a fresh clone of a repository whose project is on GitHub brings it in first, and offers no way to define it again", () => {
+  const start = run("status.team-join-start").data;
+  assert.equal(start.project, null);
+  assert.equal(start.github.connected, true);
+  assert.deepEqual(start.next_actions.map((a) => a.kind), ["join_project"], "never define_project while GitHub may hold the project");
+  assert.equal(bringsInFromGithub(start), true);
+  assert.deepEqual(routeFor(start.next_actions[0]), { type: "navigate", to: "/", label: "Bring in the project" });
+  // Batch by batch: the first says what came and how many are left; the last is the whole refresh.
+  const first = run("project.join.team-first").data;
+  assert.equal(first.joined, true);
+  assert.equal(first.taken.project, true);
+  assert.equal(first.taken.slices.length, 2);
+  assert.equal(first.remaining, 1);
+  assert.equal(first.in_words[0], "This repository's project is Team Space. MACH brought it in from GitHub: 1 epic and 2 slices, 2 ready.");
+  for (const line of first.in_words) plainWords(line, "joined");
+  assert.equal(run("project.join.team-last").data.remaining, 0);
+  assert.ok(JOIN_BATCH > 0);
+  assert.equal(joinProgressWords(2, 3), "2 of 3 slices");
+  assert.equal(joinProgressWords(3, 3), "3 slices");
+  // Brought in: the home, with every slice as Ada published it, approved by her.
+  const joined = run("status.team-joined").data;
+  assert.equal(bringsInFromGithub(joined), false);
+  assert.equal(joined.project.name, "Team Space");
+  assert.deepEqual(
+    joined.slices.map((s) => [s.slice_id, s.status, s.github.approved_by]),
+    [
+      ["SLICE-001", "approved_for_engineering", "ada-pm"],
+      ["SLICE-002", "approved_for_engineering", "ada-pm"],
+      ["SLICE-003", "approved_for_engineering", "ada-pm"],
+    ],
+  );
+});
+
+test("GitHub out of reach at the start: said in the tool's words, nothing changed, and the ways to start are not offered", () => {
+  const failed = run("project.join.team-failed").data;
+  assert.equal(failed.joined, false);
+  assert.match(failed.github.problem, /GitHub could not be reached/);
+  assert.match(failed.note, /^MACH could not check GitHub at .*Nothing here was changed\.$/);
+  plainWords(failed.note, "join failed");
+  const status = run("status.team-join-failed").data;
+  assert.equal(status.project, null);
+  assert.equal(bringsInFromGithub(status), true, "still brought in, never defined from nothing");
+  const screen = readFileSync(new URL("../src/features/home/start/StartScreen.tsx", import.meta.url), "utf8");
+  assert.match(screen, /bringsInFromGithub\(status\) \? <FromGithub \/> : <Ways status=\{status\} \/>/);
+  assert.match(screen, /Try again/);
+  assert.doesNotMatch(screen, /what you type is not used/);
+});
+
+test("GitHub holds no project for this repository: the ways to start are offered", () => {
+  const none = run("project.join.team-none").data;
+  assert.equal(none.joined, false);
+  assert.equal(none.github.problem, null);
+  const status = run("status.team-join-none").data;
+  assert.deepEqual(status.next_actions.map((a) => a.kind), ["define_project"]);
+  assert.equal(bringsInFromGithub(status), false);
 });
