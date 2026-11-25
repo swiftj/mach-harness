@@ -7,6 +7,7 @@
 package hostdir
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -21,6 +22,22 @@ const LinkName = "link"
 
 // LockName is the file in the host folder that the running host holds an exclusive lock on.
 const LockName = "lock"
+
+// HostName is the file in the host folder that says which program is running for this project:
+// its release, its process and its port (mode 0600). MACH reads it to tell whether the running host
+// is the release now installed, and which process to stop when it is not. It is written once the
+// host listens, and removed when it stops; one left by a host that crashed is ignored, since its
+// lock is free, and the next host replaces it.
+const HostName = "host.json"
+
+// Host is what the host file records.
+type Host struct {
+	Program string `json:"program"`
+	Version string `json:"version"`
+	PID     int    `json:"pid"`
+	Port    int    `json:"port"`
+	Project string `json:"project"`
+}
 
 // ErrHeld means another host is running for this project.
 var ErrHeld = errors.New("another Product Studio is already running for this project")
@@ -75,6 +92,21 @@ func (d *Dir) WriteLink(url string) error {
 
 // RemoveLink removes the kept link: a link must not outlive the host that would accept it.
 func (d *Dir) RemoveLink() { os.Remove(d.LinkPath()) }
+
+// HostPath is where the running host says which release and process it is.
+func (d *Dir) HostPath() string { return filepath.Join(d.Path, HostName) }
+
+// WriteHost replaces the host file atomically, readable only by this user.
+func (d *Dir) WriteHost(h Host) error {
+	data, err := json.Marshal(h)
+	if err != nil {
+		return err
+	}
+	return writePrivate(d.HostPath(), append(data, '\n'))
+}
+
+// RemoveHost removes the host file as the host stops.
+func (d *Dir) RemoveHost() { os.Remove(d.HostPath()) }
 
 // writePrivate writes data to path atomically, readable only by this user.
 func writePrivate(path string, data []byte) error {
