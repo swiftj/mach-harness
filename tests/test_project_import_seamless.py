@@ -175,6 +175,22 @@ class PrinciplesTest(ImportBase):
         self.assertIn(f"PP-04's row says 'Not assessed', which only bringing in a project writes, and no project brought in here wrote it for {made}.",
                       " ".join(check["errors"]))
         self.assertFalse(check["ready"])
+        self.assertFalse([w for w in check["warnings"] if "PP-04 is not assessed for this slice yet" in w], "said once, as the error")
+
+    def test_renumbering_a_slice_keeps_its_rows_vouched_for(self):
+        self.bring(self.b, self.archive)
+        moved = self.ok(self.b, "slice", "renumber", "SLICE-001")
+        new = moved["renumbered"]["to"]
+        self.assertIn(".factory/studio/imports/" + sha(self.archive.read_bytes())[:16] + ".json", moved["changed"])
+        check = json.loads(self.run_studio(self.b, "slice", "check", new)[1])
+        self.assertFalse([e for e in check["errors"] if "principle" in e], check["errors"])
+        moved = self.ok(self.b, "slice", "renumber", "SLICE-003")  # one that came with the project
+        newer = moved["renumbered"]["to"]
+        check = json.loads(self.run_studio(self.b, "slice", "check", newer, "--ready")[1])
+        self.assertFalse([e for e in check["errors"] if "principle" in e], check["errors"])
+        said = project_import.lookup(studio.Studio(self.b), newer)["note"]
+        self.assertIn(f"{newer} here was SLICE-003 when it was brought in, and before that SLICE-001 of 'Lending'", said)
+        self.assertIn(f"SLICE-003 here was given a new number, {newer}", project_import.lookup(studio.Studio(self.b), "SLICE-003")["note"])
 
 
 class NotAssessedRowTest(unittest.TestCase):
@@ -437,6 +453,21 @@ class ReadyTest(ImportBase):
         self.assertEqual(again["already_ready"], done, "a slice marked ready is left as it is; the path it was run with is accepted")
         self.assertEqual(again["marked_ready"], [])
 
+    def test_renumbering_before_the_one_step_keeps_the_slice_in_it(self):
+        self.bring(self.b, self.archive)
+        new = self.ok(self.b, "slice", "renumber", "SLICE-001")["renumbered"]["to"]
+        result = json.loads(self.run_studio(self.b, "project", "imports", "ready")[1])
+        self.assertEqual([row["slice"] for row in result["marked_ready"]], [new, "SLICE-002", "SLICE-003"], result["note"])
+        self.assertIn(f"{new} (was SLICE-001) had shipped there. It will be built again here.", result["note"])
+
+    def test_a_key_that_may_be_the_epic_s_is_said_so(self):
+        files, facts = ready_lending()
+        facts["slices"]["SLICE-003"]["jira"] = "TEAM-9"  # the only slice of EPIC-002, whose own key is not known
+        planned = self.plan(self.b, write_archive(self.archives / "keys.zip", files, facts))
+        line = next(line for line in planned["after"] if line.startswith("Jira keys were left behind"))
+        self.assertIn("SLICE-003 or its epic had TEAM-9", line)
+        self.assertIn("SLICE-001 had TEAM-12", line)
+
     def test_a_github_failure_part_way_is_reported_and_a_rerun_finishes_once(self):
         self.bring(self.b, self.archive)
         self.ok(self.b, "principle", "publish")
@@ -525,6 +556,8 @@ class ReadyTest(ImportBase):
         self.assertEqual(self.pairs(result, "SLICE")["SLICE-001"], "SLICE-001", "the import's own result is kept")
         self.assertNotIn("can be marked ready here in one step", result["note"], "the step ran: it says what it did")
         self.assertNotIn("Nothing was sent to GitHub", result["note"])
+        self.assertFalse([line for line in result["after"] if line.startswith(("Publish the principles before", "Publish the technical needs"))],
+                         "the ready step published them")
         self.assertIn(result["ready"]["note"], result["note"])
         code, out, err = self.run_studio(self.b, "project", "import", str(self.archive), "--ready")
         again = json.loads(out)
@@ -582,6 +615,9 @@ class SecondMoveTest(ImportBase):
                       self.text(self.b, "specs/slices/SLICE-003-invite-teammate.md"), "the row the old repository only knew of is written")
         self.assertEqual([(r["slice"], r["principle"]) for r in result["principles_not_assessed_unvouched"]], [("SLICE-002", "PP-02")])
         self.assertTrue(any("SLICE-002 carried 'Not assessed' rows the file does not say which import wrote" in line for line in result["after"]))
+        self.assertFalse([line for line in result["after"] if "of this project still being written" in line], "SLICE-003 came with the project")
+        self.assertTrue(any(line.startswith("2 slices that came (SLICE-001 and SLICE-003) already had 'Not assessed' rows") for line in result["after"]),
+                        result["after"])
         for slice_id in ("SLICE-001", "SLICE-003"):
             check = json.loads(self.run_studio(self.b, "slice", "check", slice_id, "--ready")[1])
             self.assertEqual([e for e in check["errors"] if "principle" in e], [], (slice_id, check["errors"]))
