@@ -970,8 +970,10 @@ workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.s
         self.assertIn("if (prepare && step.action === prepare)", self.SCRIPT)
 
     def test_the_belt_uses_only_cleaned_steps_and_a_strict_schema(self):
-        self.assertIn("const asked = await clerk(`next ${ticket} --headless${named && i === 0 ? ' --by-person' : ''}`, STEP", self.SCRIPT)
-        self.assertIn("const named = options.named === true", self.SCRIPT, "only a run a person named passes the person's word, and only once")
+        self.assertIn("const asked = await clerk(`next ${ticket} --headless${sayNamed ? ' --by-person' : ''}`, STEP", self.SCRIPT)
+        self.assertIn("const named = options.named === true", self.SCRIPT, "only a run a person named passes the person's word")
+        self.assertIn("const sayNamed = named && !namedOnce.has(ticket)", self.SCRIPT, "once per ticket per run, never again after a take-over")
+        self.assertIn("if (step.needs === 'taken-over')", self.SCRIPT, "a ticket taken over mid-run is stopped and reported")
         self.assertIn("const read = cleanStep(asked, AGENT_TYPES)", self.SCRIPT)
         self.assertIn("enum: ['', ...AGENT_TYPES]", self.SCRIPT)
         for name in ("builder", "contract-engineer", "verifier", "reviewer"):

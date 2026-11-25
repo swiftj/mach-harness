@@ -236,6 +236,65 @@ class DisplacedWorkerTest(ClaimBase):
             self.assertNotIn("names no holder", err, name)
         self.assertTrue(folder.exists())
 
+    def take_build_over(self, stage="building"):
+        folder = self.cell(stage=stage, isolation="worktree")
+        work = self.make_repo(folder)
+        self.put_claim(step="build" if stage == "building" else "plan", stage=stage, holder=OTHER)
+        with mock.patch.object(run, "git", side_effect=lambda cwd, *args: git(work, *args)):
+            self.next("T-1", "--holder", MINE, "--by-person")
+        return folder, work
+
+    def test_the_takers_own_station_commits_and_files_are_never_set_aside(self):
+        folder, work = self.take_build_over(stage="spec-ready")
+        limit = 90
+        # The taker's planner, inside one of its station calls: a commit and a file of its own.
+        self.assertIsNone(C.guard(folder, MINE, "T-1", limit))
+        (work / "contract.proto").write_text("syntax = 1\n")
+        git(work, "add", "-A")
+        git(work, "commit", "-q", "-m", "contracts, committed by the intent station for the taker")
+        mine = git(work, "rev-parse", "HEAD").stdout.strip()
+        C.record(folder, MINE, limit)
+        (work / "plan-notes.md").write_text("the taker's own file\n")
+        code, _, err = capture(build.main, ["--project", str(self.root), "status", "T-1", "--holder", MINE])
+        self.assertNotIn("taken over", err)
+        self.assertEqual(git(work, "rev-parse", "HEAD").stdout.strip(), mine, "the taker's own station commit stays")
+        self.assertTrue((work / "plan-notes.md").is_file(), "and its own uncommitted file stays where it is")
+
+    def test_a_commit_the_displaced_worker_makes_after_the_takers_first_call_is_set_aside_at_the_next(self):
+        folder, work = self.take_build_over()
+        capture(build.main, ["--project", str(self.root), "status", "T-1", "--holder", MINE])  # the taker's first call: nothing stray
+        base = git(work, "rev-parse", "HEAD").stdout.strip()
+        (work / "late.py").write_text("LATE = 1\n")
+        git(work, "add", "-A")
+        git(work, "commit", "-q", "-m", "the displaced worker's commit after the taker's first call")
+        _, _, err = capture(build.main, ["--project", str(self.root), "status", "T-1", "--holder", MINE])
+        self.assertIn("made after the take-over outside the stations", err)
+        self.assertEqual(git(work, "rev-parse", "HEAD").stdout.strip(), base)
+        self.assertEqual(git(work, "show", "refs/mach/taken-over/T-1/1:late.py").stdout, "LATE = 1\n")
+
+    def test_files_outside_the_step_are_kept_aside_before_it_commits(self):
+        folder, work = self.take_build_over()
+        (work / "a.py").write_text("A = 2\n")
+        (work / "stray.py").write_text("slipped in\n")
+        left, said = C.aside_outside(work, "T-1", ["a.py"], ["a.py", "stray.py"], folder, 90)
+        self.assertEqual(left, ["a.py"])
+        self.assertIn("refs/mach/cell-files/T-1/outside-step-1", said)
+        self.assertFalse((work / "stray.py").exists())
+        self.assertEqual(git(work, "show", "refs/mach/cell-files/T-1/outside-step-1:stray.py").stdout, "slipped in\n")
+
+    def test_a_take_over_stops_standing_two_stages_on_or_after_a_quiet_claim_window(self):
+        folder, _ = self.take_build_over()
+        self.assertIsNotNone(C.standing(folder, 90))
+        self.cell(stage="built", isolation="worktree")
+        self.assertIsNotNone(C.standing(folder, 90), "one stage on, it still stands")
+        self.cell(stage="verified", isolation="worktree")
+        self.assertIsNone(C.standing(folder, 90), "two stages on, it ends")
+        folder2 = self.cell("T-2", stage="building")
+        C.displace(folder2, [OTHER], "build", taker=MINE)
+        from datetime import datetime, timedelta, timezone
+        self.assertIsNotNone(C.standing(folder2, 90))
+        self.assertIsNone(C.standing(folder2, 90, at=datetime.now(timezone.utc) + timedelta(minutes=91)), "quiet for the claim window: it ends")
+
     def test_the_takers_first_call_sets_aside_what_the_displaced_worker_did_after_the_take_over(self):
         folder = self.cell(stage="building", isolation="worktree")
         work = self.make_repo(folder)
@@ -247,16 +306,13 @@ class DisplacedWorkerTest(ClaimBase):
         (work / "late.py").write_text("LATE = 1\n")
         git(work, "add", "-A")
         git(work, "commit", "-q", "-m", "the displaced worker's own commit")
-        (work / "half.py").write_text("half\n")
         code, _, err = capture(build.main, ["--project", str(self.root), "status", "T-1", "--holder", MINE])
-        self.assertIn("commit(s) made on the branch after the take-over", err)
+        self.assertIn("commit(s) on the branch were made after the take-over outside the stations", err)
         self.assertIn("refs/mach/taken-over/T-1/1", err)
-        self.assertIn("refs/mach/cell-files/T-1/after-take-over-1", err)
         self.assertEqual(git(work, "rev-parse", "HEAD").stdout.strip(), base, "the new worker continues from the commit at the take-over")
-        self.assertEqual(git(work, "status", "--porcelain").stdout, "")
         self.assertEqual(git(work, "show", "refs/mach/taken-over/T-1/1:late.py").stdout, "LATE = 1\n", "nothing is lost")
         _, _, again = capture(build.main, ["--project", str(self.root), "status", "T-1", "--holder", MINE])
-        self.assertNotIn("after the take-over", again, "swept once")
+        self.assertNotIn("after the take-over", again, "nothing new is stray")
 
     def test_a_holder_not_displaced_and_no_holder_pass_the_gate(self):
         folder = self.cell()
@@ -295,6 +351,10 @@ class LanesTest(LanesBase):
         self.next_step("--holder", HOLDER)
         self.assertEqual(self.lanes_start()["status"], "OPEN")
         self.assertEqual(self.next_step("--holder", LANE_OTHER)["needs"], "worker-in-cell", "without the person's word: nothing is taken")
+        waiting = self.lanes_start(LANE_OTHER)
+        self.assertEqual(waiting["status"], "WAIT")
+        self.assertIn(f"Say /mach {TICKET} and MACH takes it over", waiting["next"])
+        self.assertNotIn("supervised execution", waiting["next"], "a person is not told about a supervised execution")
         taken = self.next_step("--holder", LANE_OTHER, "--by-person")
         self.assertEqual(taken["action"], "build-lanes")
         self.assertTrue(taken["warnings"])
@@ -487,6 +547,31 @@ class MeetingPointTest(SharedRemote):
         self.assertIn("pull request (https://github.com/acme/app/pull/12) is closed, with a comment naming that commit", done["reason"])
         self.assertTrue(any(call[:2] == ["pr", "close"] for call in self.calls()))
 
+    def test_e9_a_holderless_merge_by_person_is_refused_while_a_take_over_stands(self):
+        self.approved(mode="manual")
+        folder = self.cellroot
+        C.displace(folder, ["b" * 32], "merge", taker="c" * 32)
+        C.write(folder, {"step": "merge", "stage": "approved", "holder": "c" * 32, "at": C.stamp(C.now()), "renewed_at": C.stamp(C.now())})
+        err = self.m_refused("run", "LOCAL-001", "--by-person")
+        self.assertIn("this call names no holder, so MACH cannot tell it from the worker taken over", err)
+        self.assertEqual(self.cell_json()["stage"], "approved")
+        self.assertEqual(self.m("run", "LOCAL-001", "--by-person", "--holder", "b" * 32)[0], 1, "and a displaced worker's own holder is refused")
+
+    def test_e9_two_specs_under_one_number_on_main_are_counted_once_and_found_by_their_own_text(self):
+        """The 0.20.0 rule lets a Studio slice land beside another spec that carries its number: the allocator still counts the number
+        as taken and gives the next one, and intake still finds the slice it follows by its own approved text."""
+        self.approved(mode="manual")
+        self.another_engineer_lands({"specs/slices/SLICE-001-something-else.md": "# SLICE-001: Something else\n\nAnother slice.\n",
+                                     "specs/slices/SLICE-001-invite-a-teammate.md": SPEC})
+        git(self.project, "pull", "-q", "--no-rebase", "origin", "main")
+        code, out, err = capture(cell_script.main, ["--project", str(self.project), "next-id", "--count", "1"])
+        self.assertEqual(code, 0, err)
+        self.assertNotEqual(json.loads(out)["next"], ["SLICE-001"])
+        sys.path.insert(0, str(ROOT / "skills" / "run" / "scripts"))
+        import intake
+        found = intake.already_landed(self.project, "SLICE-001", spec_sha(SPEC), ["refs/heads/main"])
+        self.assertEqual(found["path"], "specs/slices/SLICE-001-invite-a-teammate.md")
+
     def test_e9_merge_by_person_is_refused_inside_a_supervised_execution(self):
         self.approved(mode="manual")
         with mock.patch.dict(os.environ, {"MACH_EXECUTION_ID": EXECUTION}):
@@ -494,13 +579,7 @@ class MeetingPointTest(SharedRemote):
         self.assertIn("--by-person is a person's word, and this runs inside a supervised Factory execution", err)
         self.assertEqual(self.cell_json()["stage"], "approved")
 
-    def test_e9_a_product_slice_whose_own_number_is_taken_lands_beside_it(self):
-        self.approved(mode="manual")
-        self.set_cell(product={"slice_id": "SLICE-001", "spec_sha256": "0" * 64, "revision": 1})
-        cell = merge.Cell(self.project, "LOCAL-001")
-        merge.renumber(cell, "main", "SLICE-001", "specs/slices/SLICE-001-other.md", "specs/slices/SLICE-001-invite-teammate.md")
-        shared = self.cell_json()["number_shared"]
-        self.assertEqual((shared["theirs"], shared["ours"]), ("specs/slices/SLICE-001-other.md", "specs/slices/SLICE-001-invite-teammate.md"))
+
 
     def test_e9_a_slice_number_another_slice_holds_is_renumbered_for_a_person(self):
         self.approved(mode="auto", method="pr")
