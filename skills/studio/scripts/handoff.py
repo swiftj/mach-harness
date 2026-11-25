@@ -33,6 +33,7 @@ SCHEMA_VERSION = 1
 WAIT_SECONDS = 5.0
 STEPS = ("labels", "project", "epic", "slice", "unique", "approval", "link", "ready")
 STUDIO_LABELS = ("mach:project", "mach:epic", "mach:slice", "mach:ready")
+SNAPSHOT_LABELS = ("mach:project", "mach:epic", "mach:slice")
 BUSY = "Another Product Studio command is saving to GitHub; try again."
 
 
@@ -196,11 +197,16 @@ class Handoff:
 
     def read(self, repository: str) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, str]]]:
         found: Dict[str, Any] = {}
-        for label in ("mach:project", "mach:epic", "mach:slice"):
+        for label in SNAPSHOT_LABELS:
             listed, failure = issues.list_issues(self.project, repository, label)
             if failure:
                 return None, failure
             found[label] = listed or []
+        return self.snapshot_of(found), None
+
+    def snapshot_of(self, found: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
+        """The snapshot read() makes from the issues listed under each of SNAPSHOT_LABELS. M21: project export lists them to
+        their end itself (issues.list_all_issues) and makes the same snapshot here."""
         slices = []
         for item in found["mach:slice"]:
             marker = self.rules.parse_slice_body(item.get("body"))
@@ -213,7 +219,7 @@ class Handoff:
                              "kind": (self.rules.product_marker(item.get("body")) or (None,))[0], "title": item.get("title"),
                              "body": item.get("body"), "state": str(item.get("state") or "").lower()} for item in found[label]]
         return {"slices": slices, "projects": [p for p in tagged["project"] if p["kind"] == "project"],
-                "epics": [e for e in tagged["epic"] if e["kind"] == "epic"]}, None
+                "epics": [e for e in tagged["epic"] if e["kind"] == "epic"]}
 
     def own_issue(self, data: Dict[str, Any], slice_id: str, snapshot: Dict[str, Any], spec_sha: str, why_sha: str) -> Tuple[Optional[Dict[str, Any]], List[int]]:
         """This slice's own open issue, if it has one, and the numbers of issues holding its ID that are not its own."""
