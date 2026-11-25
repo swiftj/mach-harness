@@ -2,6 +2,25 @@
 
 What is new in each release, newest first, followed by supported platforms, what you need, upgrading and security notes.
 
+## What changed in 0.25.0
+
+Moving a project to another repository as it was: one export, one import, nothing interviewed again.
+
+| Change | What it is |
+| --- | --- |
+| Export needs nothing prepared | Asking to export the project makes the file straight away. Whatever the workspace lacks, MACH reads from GitHub by itself: the project, its principles and technical needs, the epics, every slice and the design mock pictures on the main branch. The workspace is not changed. |
+| Export from any computer | A computer that has never opened the project can export what GitHub holds. The result says what was read from GitHub, and that drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were written. |
+| The result says what the file holds | What came from this workspace, what came from GitHub, which version was used where both exist, and anything not in the file, each with its reason and what to do. |
+| Ready means still as approved | A slice comes as ready only when its spec, why and mocks are the approved ones and it answers the project's principles. One changed after approval, or whose issue was closed without being built, comes as a draft and the result says so. |
+| Mark ready in one step | "Mark ready the slices that were ready there" publishes the principles and technical needs that came, then marks those slices ready, dependencies first, on the product manager's word. If it stops, it says where, why and what is left, and carries on when asked again. |
+| Principles that say the same become one | When the destination already has a project, an incoming principle with the same statement takes the ID already there. |
+| "Not assessed" | Where a slice was written before a principle joined the project, MACH records that it was not assessed for it. The row does not hold up marking ready, reviewers see it, and it is answered when the slice is next changed. It travels with the project when it moves again. |
+| Effects on shipped behaviour need no second answer | A slice that names a rule of a slice that came with it now depends on that slice and waits for it to ship. A small change stays a small change. |
+| Numbers never collide with an engineer's slice | The engineers' numbering skips numbers an import holds, and an import gives its own slice another number and carries on when an engineer took one. Renumbering a slice afterwards keeps the import's records right. |
+| Move this project, in the app | Product Studio's app downloads the project as one file, and brings one in: it always shows what would come in first, then the report. A stopped import can be finished or set aside there, and "What was it called before?" answers for any ID. Files up to 64 MB; a larger one goes through `/mach-studio`. |
+
+A slice with design mocks is still held by the builders until its mock pictures are committed to the destination's main branch; marking ready says so for each such slice.
+
 ## What changed in 0.24.0
 
 One command runs the Factory, a person decides in the terminal or in the Factory Floor, and a build can work on several tasks at once.
