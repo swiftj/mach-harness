@@ -1401,6 +1401,17 @@ A person decides on a ticket in "Needs you" in the Factory Floor, and MACH recor
 - **The top bar, on every workspace.** "Needs you: N" (a 24px chip, `warning` tone when N > 0, else `ink-muted` on `surface`; named "Needs you: 3. Open the list") moves to the Line and focuses the strip's heading. When MACH says a Factory runs here: a `success` chip with a filled dot, "Factory running" and how it was started ("with this Claude Code session" or "in the background", hidden below 1440px but in the chip's title), and, where the session says `capabilities.stop`, a secondary `sm` "Stop" button. Its dialog: "Stop the Factory?" / "Stops the Factory's running work on this computer. /mach pull starts it again.", cancel "Keep it running", confirm "Stop the Factory" (`danger`); a refusal stays in the dialog under "The Factory was not stopped". Afterwards MACH's own sentence replaces the chip until the status says the Factory is not running.
 - **Words.** MACH or the Factory does things, never "a script"; never "engine" or "kind"; no em dash.
 
+### 8.15 Bringing a file in: look first, then confirm (Product Studio, M21 F)
+
+Used by "Move this project" (`features/move`), for an act whose input is a file the person chooses and whose effect is large.
+
+- **Choose.** A secondary button opens the browser's chooser ("Choose the file"); the input itself is hidden. The kind and size the host would refuse are said under the button before anything is sent, as a `danger-ink` line with `CircleAlert` and `role="alert"`, and the button becomes "Choose a file again". A file too large for the browser names the one place it can go ("Bring it in with /mach-studio in Claude Code instead").
+- **Look first, always.** Choosing the file runs the look (`plan`) at once; nothing else is offered until it answers. The answer is a `surface` panel captioned "What would come in · nothing is brought in yet", the thing's name as `h3` at `title-2`, then a definition list (where it goes, what comes in, what was ready there), the new numbers (the first three "SLICE-001 becomes SLICE-031" and a disclosure "Show every new number (N)"), the list of items, MACH's note as written, then each list MACH reported, titled, only when it has items. Under it the page's primary "Bring it in" and a secondary "Choose another file".
+- **Confirm.** The confirm dialog of 8.1, `lg`. An extra effect that reaches GitHub or the builders is a checkbox in the dialog, off by default, whose description says plainly what it does ("Each is published to GitHub, and the Factory can start building it."), and is offered only when MACH says how many it would touch.
+- **Work in flight.** A `surface` box with a spinner, what is happening in `body` semibold, and "· 12 s so far" in `ink-muted` tabular, with one line of what it is doing and "Leave this window open." (`role="status"`). Never a bar.
+- **After.** MACH's note first, then the same parts as the look, past tense, then "What to do next" with MACH's `after` sentences as a numbered list and one primary link. Something that stopped part way is a warning banner with MACH's sentence as written and the acts that resolve it ("Publish the principles", "Carry on"); a stop is never a dead end.
+- **A file kept between steps** is named by the host's hash; when the host no longer has it, the page asks for "the same file again" and repeats nothing.
+
 ---
 
 ## 9. Voice and wording
