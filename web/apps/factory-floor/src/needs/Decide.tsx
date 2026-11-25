@@ -7,14 +7,53 @@
  * An option that needs a conversation shows the command to run in Claude Code. The person's name is asked
  * once, kept in this browser and shown beside the decision; left empty, MACH records the name Git has.
  *
+ * MACH never holds a person back on another's account. Its warnings (another worker may still be on the ticket)
+ * are shown above the options in the warning tone, and every option stays a normal choice. "Take it over" is
+ * confirmed with MACH's own words for what happens to the other worker. While another decision on the project is
+ * being recorded, a decision made here waits and is recorded after it ("Recording after another decision
+ * finishes"); a decision someone else's made moot is said as information, with what is on offer now.
+ *
  * Every decision is recorded by MACH (run.py decide do, through the observer); this page records nothing.
  */
-import { useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Badge, Banner, Button, Checkbox, CommandLine, ConfirmDialog, Field, Input, Textarea, cn } from "@mach/ui";
 import { UncheckedText, UncheckedNote } from "../text/UncheckedText";
 import { useDisplayPolicy } from "../shell/displayPolicy";
-import { useNeeds, type Outcome } from "./context";
-import { answersPayload, confirmWords, decisionBody, missingInput, type AnswerDraft, type NeedOption, type NeedTicket } from "./model";
+import { useNeeds, type Outcome, type Waiting } from "./context";
+import { WAITING_WORDS, answersPayload, confirmWords, decisionBody, missingInput, waitedWords, type AnswerDraft, type NeedOption, type NeedTicket } from "./model";
+
+/** MACH's warnings for a ticket, above its options: read before deciding, never a reason an option is unavailable. */
+export function Warnings({ warnings, className }: { warnings: readonly string[]; className?: string }) {
+  if (warnings.length === 0) return null;
+  return (
+    <Banner tone="warning" title={warnings.length === 1 ? "Before you decide" : `Before you decide (${warnings.length})`} className={className}>
+      <ul className="flex flex-col gap-0.5" data-decide-warnings="">
+        {warnings.map((w) => (
+          <li key={w}>{w}</li>
+        ))}
+      </ul>
+    </Banner>
+  );
+}
+
+/** A decision made here that waits for another one on the project: how long, and a way to stop waiting. */
+export function WaitingLine({ waiting, onStop, className }: { waiting: Waiting; onStop: () => void; className?: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
+  return (
+    <div role="status" className={cn("flex flex-wrap items-center gap-3 rounded-md border border-info-line bg-info-soft px-3 py-2.5", className)} data-decide-waiting="">
+      <p className="min-w-0 flex-1 text-body-sm text-ink">
+        {WAITING_WORDS} <span className="text-ink-muted">({waitedWords(now - waiting.since)})</span>. Nothing else is needed from you.
+      </p>
+      <Button variant="ghost" size="sm" onClick={onStop} data-decide-stop-waiting="">
+        Stop waiting
+      </Button>
+    </div>
+  );
+}
 
 /** What a decision made here answered, as MACH said it: the `now` sentence, a refusal, or the command a conversation needs. */
 export function OutcomeLine({ outcome, ticket }: { outcome: Outcome | null | undefined; ticket: string }) {
@@ -38,9 +77,23 @@ export function OutcomeLine({ outcome, ticket }: { outcome: Outcome | null | und
       </div>
     );
   }
+  if (d.alreadyDecided) {
+    // Someone else's decision came first: information, with the options on offer now below it, never an error.
+    return (
+      <div role="status" className="mt-3 rounded-md border border-info-line bg-info-soft px-3 py-2.5" data-decide-already="">
+        <p className="text-label text-info-ink">Decided already</p>
+        <p className="mt-0.5 text-body-sm text-ink">{d.now ?? "Another decision on this ticket was recorded first."}</p>
+      </div>
+    );
+  }
   return (
     <div role="status" className="mt-3 rounded-md border border-success-line bg-success-soft px-3 py-2.5" data-decide-now="">
       {d.now ? <p className="text-body-sm text-ink">{d.now}</p> : <p className="text-body-sm text-ink">Recorded.</p>}
+      {d.warnings.map((w) => (
+        <p key={w} className="mt-1 text-body-sm text-warning-ink" data-decide-now-warning="">
+          {w}
+        </p>
+      ))}
       {d.note ? <p className="mt-1 text-body-sm text-ink-muted">{d.note}</p> : null}
     </div>
   );
@@ -102,6 +155,7 @@ export function DecidePanel({ ticket }: { ticket: NeedTicket }) {
   const headingId = useId();
   const sendRef = useRef<HTMLButtonElement>(null);
   const outcome = needs.outcomes[ticket.ticketId];
+  const waiting = needs.waiting[ticket.ticketId] ?? null;
   const hasData = ticket.title || ticket.reason || ticket.details.length > 0;
 
   const choose = (o: NeedOption) => {
@@ -122,6 +176,11 @@ export function DecidePanel({ ticket }: { ticket: NeedTicket }) {
         setTestCmd("");
         setDrafts({});
         return true;
+      }
+      if ("stopped" in result && result.stopped) {
+        // The person stopped waiting: nothing was recorded, their choice and words stay as they were.
+        setConfirming(false);
+        return false;
       }
       setDialogError(result.message);
       return false;
@@ -189,6 +248,8 @@ export function DecidePanel({ ticket }: { ticket: NeedTicket }) {
       ) : null}
 
       <OutcomeLine outcome={outcome} ticket={ticket.ticketId} />
+      <Warnings warnings={ticket.warnings} className="mt-3" />
+      {waiting ? <WaitingLine waiting={waiting} onStop={() => needs.stopWaiting(ticket.ticketId)} className="mt-3" /> : null}
 
       <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label={`What to do with ${ticket.ticketId}`}>
         {ticket.options.map((o) => (
@@ -268,6 +329,7 @@ export function DecidePanel({ ticket }: { ticket: NeedTicket }) {
           {chosen.needsReason && reason.trim() ? (
             <p className={cn("border-l-2 border-line-strong pl-3 text-body-sm italic text-ink")}>{reason}</p>
           ) : null}
+          {waiting ? <WaitingLine waiting={waiting} onStop={() => needs.stopWaiting(ticket.ticketId)} className="mt-3" /> : null}
         </ConfirmDialog>
       ) : null}
     </section>

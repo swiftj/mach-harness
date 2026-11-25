@@ -24,9 +24,10 @@ import { useSource } from "../shell/source/context";
 import { commandsPanel, laneLine, lanesPanel, withLaneMarker, type LaneLine } from "./lanesModel";
 import { lanesKey, useCellLanes } from "./useLanes";
 import "./line.css";
-import { useNeeds, type Outcome } from "../needs/context";
+import { TriangleAlert } from "lucide-react";
+import { useNeeds, type Outcome, type Waiting } from "../needs/context";
 import { DecidePanel, OutcomeLine } from "../needs/Decide";
-import { NOT_RUNNING, type NeedTicket } from "../needs/model";
+import { NOT_RUNNING, WAITING_WORDS, type NeedTicket } from "../needs/model";
 import { Back } from "./Panels";
 
 /**
@@ -57,7 +58,21 @@ interface NeedItem {
  * (M23) it is that list, in MACH's order; an item shows what a decision made here answered until the event
  * stream catches up. With nothing running here and something waiting, it says how the work carries on.
  */
-function NeedsYou({ items, now, onPick, outcomes, notRunning }: { items: readonly NeedItem[]; now: number; onPick: (item: NeedItem) => void; outcomes: Readonly<Record<string, Outcome>>; notRunning: boolean }) {
+function NeedsYou({
+  items,
+  now,
+  onPick,
+  outcomes,
+  waiting,
+  notRunning,
+}: {
+  items: readonly NeedItem[];
+  now: number;
+  onPick: (item: NeedItem) => void;
+  outcomes: Readonly<Record<string, Outcome>>;
+  waiting: Readonly<Record<string, Waiting>>;
+  notRunning: boolean;
+}) {
   return (
     <section aria-labelledby="needs-you" className="flex flex-wrap items-stretch gap-3 border-b border-line bg-canvas px-4 py-3" data-needs-you={items.length}>
       <h2 id="needs-you" tabIndex={-1} className="self-center text-label text-ink outline-none min-[700px]:min-w-[88px]">
@@ -72,7 +87,11 @@ function NeedsYou({ items, now, onPick, outcomes, notRunning }: { items: readonl
           const row = item.row;
           const state = row?.state ?? "person";
           const outcome = outcomes[item.ticketId];
-          const said = outcome?.refusal ?? outcome?.decided?.now ?? (outcome?.decided?.inConversation ? outcome.decided.why : null);
+          const said = waiting[item.ticketId]
+            ? `${WAITING_WORDS}.`
+            : (outcome?.refusal ?? outcome?.decided?.now ?? (outcome?.decided?.inConversation ? outcome.decided.why : null));
+          // MACH's warning (another worker may be on it) in the warning tone, under the line: never in place of the choice.
+          const warning = item.need?.warnings[0] ?? null;
           return (
             <button
               key={item.ticketId}
@@ -89,6 +108,12 @@ function NeedsYou({ items, now, onPick, outcomes, notRunning }: { items: readonl
                 <span className="block text-body-sm text-ink-muted" data-need-said={said ? "" : undefined}>
                   {said ?? item.need?.summary ?? row?.why}
                 </span>
+                {warning ? (
+                  <span className="mt-0.5 flex items-start gap-1.5 text-body-sm text-warning-ink" data-need-warning="">
+                    <TriangleAlert aria-hidden="true" className="mt-[3px] size-3.5 shrink-0" />
+                    <span>{warning}</span>
+                  </span>
+                ) : null}
               </span>
               <span className="shrink-0 whitespace-nowrap text-caption text-ink-muted">{row && row.since !== null ? `waiting ${duration(Math.max(0, now - row.since))}` : STATE_WORDS[state]}</span>
             </button>
@@ -209,7 +234,7 @@ export function LineWorkspace() {
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-line-workspace="" data-line-rows={model.rows.length}>
-      <NeedsYou items={items} now={now} onPick={pickItem} outcomes={needs.outcomes} notRunning={needs.enabled && running?.running === false} />
+      <NeedsYou items={items} now={now} onPick={pickItem} outcomes={needs.outcomes} waiting={needs.waiting} notRunning={needs.enabled && running?.running === false} />
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_360px] max-[899px]:grid-cols-1 max-[899px]:grid-rows-[minmax(0,1fr)_minmax(0,45%)]">
         <div className="flex min-h-0 min-w-0 flex-col" data-line-home="" tabIndex={-1}>
           <Board

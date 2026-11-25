@@ -104,6 +104,88 @@ test("the confirm dialogs say what happens and that it cannot be undone", () => 
   assert.equal(N.startedWords(null), null);
 });
 
+/** A ticket another worker holds: every option its state offers, and MACH's warning (run.py decide --json). */
+const CLAIMED = {
+  tickets: [
+    {
+      ticket_id: "T-4",
+      state: "approval",
+      warnings: ["Another worker was handed this ticket's review step at 02:47 UTC and may still be at work.", 7, ""],
+      situation: { summary: "The review panel approved this change, and a person must approve it before it can merge." },
+      options: [
+        { key: "approve", label: "Approve the change", does: "Records your approval.", do: true, needs: [], confirm: true, takes_over: false },
+        { key: "send-back", label: "Send it back", does: "Sends it back.", needs_reason: true, do: true, needs: [], confirm: false, takes_over: false },
+      ],
+    },
+    {
+      ticket_id: "T-5",
+      state: "worker-in-cell",
+      warnings: ["Another worker was handed this ticket's build step at 02:47 UTC and may still be at work."],
+      options: [
+        { key: "wait", label: "Let it carry on", does: "Nothing changes: the other worker carries on, and its claim lapses by itself if it stops.", do: true, needs: [], confirm: false, takes_over: false },
+        { key: "take-over", label: "Take it over", does: "MACH takes the build step from the other worker for you and carries the ticket on: it is stopped at its next step.", do: true, needs: [], confirm: true, takes_over: true },
+      ],
+    },
+    {
+      ticket_id: "T-6",
+      state: "parked",
+      warnings: ["Another worker was handed this ticket's build step at 02:47 UTC and may still be at work."],
+      options: [{ key: "retry", label: "Let the Factory retry", does: "The Factory clears this ticket's hold.", do: true, needs: [], confirm: false, takes_over: true }],
+    },
+  ],
+};
+
+test("another worker on a ticket: its warning is read, and every option stays a normal choice", () => {
+  const [approval, worker, parked] = N.readNeeds(CLAIMED).tickets;
+  assert.deepEqual(approval.warnings, ["Another worker was handed this ticket's review step at 02:47 UTC and may still be at work."], "only MACH's plain sentences");
+  assert.deepEqual(approval.options.map((o) => [o.key, o.canDo]), [["approve", true], ["send-back", true]], "the claim hides no option and disables none");
+  assert.deepEqual(worker.options.map((o) => [o.key, o.label, o.canDo, o.confirm, o.takesOver]), [
+    ["wait", "Let it carry on", true, false, false],
+    ["take-over", "Take it over", true, true, true],
+  ]);
+  const take = N.confirmWords("T-5", worker.options[1]);
+  assert.equal(take.title, "Take over T-5?");
+  assert.equal(take.description, worker.options[1].does, "the confirm says what happens to the other worker in MACH's own words");
+  assert.equal(take.verb, "Take it over");
+  const retry = parked.options[0];
+  assert.equal(retry.confirm, true, "releasing a held ticket to the Factory takes the step over, so it is confirmed");
+  assert.match(N.confirmWords("T-6", retry).description, /MACH takes the step over from it as it records this\.$/);
+  assert.deepEqual(N.readNeeds(LIST).tickets[0].warnings, [], "no warnings is an empty list");
+});
+
+test("a decision on a held ticket, a take-over, and one another person's decision made moot", () => {
+  const d = N.readDecided({ done: true, now: "Your approval of T-4 is recorded.", warnings: ["Another worker was handed this ticket's review step at 02:47 UTC and may still be at work."] });
+  assert.equal(d.warnings.length, 1);
+  assert.equal(d.alreadyDecided, false);
+  assert.equal(N.readDecided({ done: true, took_over: true, now: "You took over T-5's build step." }).tookOver, true);
+  const moot = N.readDecided({ done: false, already_decided: true, decided_at: "2026-11-25T14:02:00Z", now: "Approved by Dana at 14:02 UTC. It is now waiting for the merge." });
+  assert.equal(moot.alreadyDecided, true);
+  assert.equal(moot.now, "Approved by Dana at 14:02 UTC. It is now waiting for the merge.");
+  assert.equal(N.readDecided({ done: true, already_decided: true }).alreadyDecided, false, "a recorded decision is never shown as someone else's");
+  assert.equal(N.WAITING_WORDS, "Recording after another decision finishes");
+  assert.equal(N.waitedWords(12_400), "for 12 s");
+  assert.equal(N.waitedWords(185_000), "for 3 min");
+});
+
+test("waiting for another decision: asked again by the page, said as waiting, never as an error", () => {
+  const ctx = src("needs/context.tsx");
+  assert.match(ctx, /e instanceof ObserverError && e\.kind === "conflict" && !flag\.stopped/, "a conflict is waited out and asked again");
+  assert.match(ctx, /RETRY_MS/);
+  assert.match(ctx, /stopped: true/, "the person can stop waiting; nothing is said as a refusal then");
+  const decide = src("needs/Decide.tsx");
+  assert.match(decide, /<Warnings warnings=\{ticket\.warnings\}/, "the warnings are above the options");
+  assert.ok(decide.indexOf("<Warnings warnings={ticket.warnings}") < decide.indexOf('aria-label={`What to do with'), "above the options");
+  assert.match(decide, /tone="warning"/);
+  assert.match(decide, /data-decide-already/, "a decision made moot is information");
+  assert.ok(!/disabled=\{[^}]*warning/i.test(decide), "a warning never disables an option");
+  const row = src("line/Workspace.tsx");
+  assert.match(row, /item\.need\?\.warnings\[0\]/, "the row shows the warning");
+  assert.match(row, /text-warning-ink/);
+  for (const f of ["needs/Decide.tsx", "needs/context.tsx", "needs/model.ts", "line/Workspace.tsx"]) {
+    assert.ok(!/again in a moment|Wait for it|ask (?:the|another) (?:person|engineer|worker)/i.test(src(f)), `${f} holds a person back on another's account`);
+  }
+});
+
 test("the name is kept in this browser, and a storage that refuses is not an error", () => {
   const m = new Map();
   const store = { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => m.set(k, v), removeItem: (k) => m.delete(k) };
@@ -125,6 +207,7 @@ test("the client: writes are POSTs with JSON and this session's CSRF token; refu
     if (url.endsWith("/needs")) return reply(200, { ok: true, data: LIST });
     if (url.includes("/needs/T-1/approve")) return reply(409, { ok: false, error: { kind: "refused", message: '"approve" is not on offer for T-1 now, so nothing was recorded.' } });
     if (url.includes("/needs/T-1/send-back")) return reply(200, { ok: true, data: { ticket_id: "T-1", done: true, now: "T-1 is sent back with your reason." } });
+    if (url.includes("/needs/T-1/merge")) return reply(409, { ok: false, error: { kind: "conflict", message: "Recording after another decision finishes." } });
     if (url.endsWith("/factory/stop")) return reply(200, { ok: true, data: { stopped: 1, supervisor_stopped: true, note: "The Factory is stopped." } });
     return reply(404, { ok: false, error: { kind: "not_found", message: "no" } });
   };
@@ -140,10 +223,11 @@ test("the client: writes are POSTs with JSON and this session's CSRF token; refu
   assert.equal(post.headers["Content-Type"], "application/json");
   assert.equal(post.body, JSON.stringify({ reason: "Empty list." }));
   await assert.rejects(client.decide("T-1", "approve", {}), (e) => e.kind === "refused" && e.message.startsWith('"approve" is not on offer'));
+  await assert.rejects(client.decide("T-1", "merge", {}), (e) => e.kind === "conflict" && e.message === "Recording after another decision finishes.");
   await assert.rejects(client.decide("../T", "approve", {}), (e) => e.kind === "invalid");
   await assert.rejects(client.decide("T-1", "--json", {}), (e) => e.kind === "invalid");
   assert.equal((await client.stopFactory()).stopped, 1);
-  assert.equal(calls.filter((c) => c.method === "POST").length, 3, "a refused shape is never sent");
+  assert.equal(calls.filter((c) => c.method === "POST").length, 4, "a refused shape is never sent");
   // The running Factory, read from /factory/status.
   const status = live.readFactoryStatus({ running: { known: true, running: true, lifetime: "session", since: "2026-11-24T09:00:00Z", executions: 2 } });
   assert.deepEqual(status.running, { running: true, lifetime: "session", since: Date.parse("2026-11-24T09:00:00Z"), executions: 2 });
