@@ -68,6 +68,7 @@
             "PP-01"
           ],
           "retired": [],
+          "not_assessed": [],
           "note": "SLICE-001 was answered under older principles (PP-01). Check its answers in the interview."
         },
         "slice_id": "SLICE-001",
@@ -112,6 +113,7 @@
             "PP-01"
           ],
           "retired": [],
+          "not_assessed": [],
           "note": "SLICE-002 was answered under older principles (PP-01). Check its answers in the interview."
         },
         "slice_id": "SLICE-002",

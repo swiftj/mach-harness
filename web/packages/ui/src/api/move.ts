@@ -4,10 +4,8 @@
  * (move_memory.py), plus what the host adds (apps/studio/internal/engine/ops_move.go): `downloads` and
  * `download_problem` after an export, `kept` after a plan.
  *
- * Fields marked "assumed" are not printed by the engine yet: they are what the import is gaining (marking ready what was
- * ready there, principles recorded as not assessed). They are optional, and
- * the app reads every one of these results in one place only (apps/product-studio/src/features/move/model.ts), so a
- * name that turns out different is changed there and here.
+ * Fields an older engine does not print are optional. The app reads every one of these results in one place only
+ * (apps/product-studio/src/features/move/model.ts), so a name that changes is changed there and here.
  */
 import type { DownloadOffer } from "./types";
 
@@ -111,10 +109,30 @@ export interface ProjectImportShared {
     [key: string]: unknown;
   };
   factory_authorized: false;
-  /** Assumed: how many slices `--ready` would mark ready (those ready in the old repository), or their IDs. */
-  would_mark_ready?: number | string[];
-  /** Assumed: principle rows recorded as "not assessed". */
-  not_assessed?: MoveItem[];
+  /** The slices that were marked ready in the old repository (new IDs), how many `ready` would mark ready here, those held back
+   *  because the file does not hold their approved version whole, and all that in words. */
+  ready_in_source?: { slices: string[]; count: number; held_back: string[]; words: string };
+  /** Principle rows recorded as "Not assessed": a slice that came did not answer a principle here, or the other way round. */
+  principles_not_assessed?: Array<{ slice: string; principle: string; file: string; how: "slice_came" | "principle_came" | (string & {}) }>;
+  /** Rows that answered a principle saying the same as one here, now quoting it as it is here. */
+  principles_aligned?: MoveItem[];
+  /** A slice that names a rule of one that came with it now depends on that one (`added`), or cannot (`added: false`). */
+  dependencies_added?: MoveItem[];
+  /** Numbers given again when an import that stopped was finished, because another item took them meanwhile. */
+  renumbered_on_resume?: MoveItem[];
+}
+
+/** `project imports ready [<which>]`, and `ready` in an import's report: marking ready, dependencies first, what was ready
+ *  in the old repository. `complete: false` (exit 1) when it stopped part way; asking again carries on. */
+export interface ProjectImportsReady {
+  marked_ready: Array<{ slice: string; saved_to?: string | null; issue?: number | null; folder?: string | null; warnings?: string[] }>;
+  already_ready: string[];
+  stopped_at: { slice: string; reason: string } | null;
+  left: string[];
+  not_ready_in_source: string[];
+  record?: string;
+  complete: boolean;
+  note: string;
 }
 
 /** `project import <file> --plan`, with the host's `kept`. */
@@ -137,8 +155,8 @@ export interface ProjectImportDone extends ProjectImportShared {
   numbers_moved: Array<{ id: string; planned: string; now: string }>;
   record: string;
   note: string;
-  /** Assumed: the slices `--ready` marked ready. */
-  marked_ready?: Array<string | MoveItem>;
+  /** With `ready`: what marking ready did, and where it stopped. */
+  ready?: ProjectImportsReady;
 }
 
 /** A file brought in before: answered, not refused (plan or import). */

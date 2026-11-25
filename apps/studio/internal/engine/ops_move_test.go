@@ -27,6 +27,8 @@ var moveArgvCases = []struct {
 	{"project.import.abandon", `{"archive":"lending.zip"}`, []string{"project", "import", "--abandon", "lending.zip"}},
 	{"project.imports", `{}`, []string{"project", "imports"}},
 	{"project.imports", `{"identifier":"SLICE-007"}`, []string{"project", "imports", "SLICE-007"}},
+	{"project.imports.ready", `{}`, []string{"project", "imports", "ready"}},
+	{"project.imports.ready", `{"which":"lending.zip"}`, []string{"project", "imports", "ready", "lending.zip"}},
 }
 
 func TestMoveOperationsAreBoundedAndTimed(t *testing.T) {
@@ -51,6 +53,13 @@ func TestMoveOperationsAreBoundedAndTimed(t *testing.T) {
 	if abandon, _ := engine.Lookup("project.import.abandon"); abandon.ReadOnly || abandon.Network {
 		t.Errorf("project.import.abandon changes this computer only")
 	}
+	// Marking ready stopped part way is a report (exit 1, JSON on stdout), as a slice check's problems are.
+	if ready, _ := engine.Lookup("project.imports.ready"); !ready.Network || ready.ReadOnly || !ready.JSONOnFailure || ready.Timeout < 10*time.Minute {
+		t.Errorf("project.imports.ready: %+v", ready)
+	}
+	if !imported.JSONOnFailure {
+		t.Error("project.import with ready reports a stop part way as JSON")
+	}
 }
 
 func TestMoveRequestsAreChecked(t *testing.T) {
@@ -68,6 +77,8 @@ func TestMoveRequestsAreChecked(t *testing.T) {
 		{"project.import.abandon", `{"archive":"a\nb"}`, "one line"},
 		{"project.imports", `{"identifier":"SLICE-7"}`, "such as SLICE-007"},
 		{"project.imports", `{"identifier":"--plan"}`, "such as SLICE-007"},
+		{"project.imports", `{"identifier":"ready"}`, "such as SLICE-007"},
+		{"project.imports.ready", `{"which":"--abandon"}`, "name of the file"},
 	}
 	for _, c := range bad {
 		_, err := argv(t, c.op, c.body)
@@ -160,6 +171,10 @@ func TestAProjectMovesThroughTheRealEngine(t *testing.T) {
 	looked := mustOK(t, dest, "project.imports", `{"identifier":"SLICE-001"}`)
 	if found, _ := looked["found"].([]any); len(found) != 1 {
 		t.Fatalf("lookup: %v", looked)
+	}
+	// Nothing was ready there: marking ready marks nothing, and says so.
+	if ready := mustOK(t, dest, "project.imports.ready", `{}`); ready["complete"] != true || len(ready["marked_ready"].([]any)) != 0 {
+		t.Fatalf("ready: %v", ready)
 	}
 	// Bringing the same file in again is answered, not refused.
 	if again := mustOK(t, dest, "project.import", `{"file":`+upload+`,"plan":true}`); again["already"] != true {

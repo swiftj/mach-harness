@@ -1,0 +1,24 @@
+{
+  "exit_code": 1,
+  "data": {
+    "marked_ready": [],
+    "already_ready": [],
+    "stopped_at": {
+      "slice": "SLICE-001",
+      "reason": "SLICE-001-invite-teammate.md: Missing section '## Principles'. The project has product principles (PP-01), and the spec answers each one. [principle-unanswered]"
+    },
+    "left": [
+      "SLICE-001",
+      "SLICE-002"
+    ],
+    "not_ready_in_source": [
+      "SLICE-003"
+    ],
+    "record": ".factory/studio/imports/30609135f3dd740a.json",
+    "complete": false,
+    "factory_authorized": false,
+    "note": "Marked 0 slices ready, dependencies first, of the 2 slices from mach-project-lending-20261125T024109Z.zip that were ready in the old repository. Stopped at SLICE-001: SLICE-001-invite-teammate.md: Missing section '## Principles'. The project has product principles (PP-01), and the spec answers each one. [principle-unanswered]. Still to mark ready: SLICE-001 and SLICE-002. Once that is settled, ask again and MACH carries on from SLICE-001. The other slice that came was not ready in the old repository: mark it ready when you have checked it."
+  },
+  "refused": null,
+  "hint": null
+}

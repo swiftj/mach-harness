@@ -2,9 +2,9 @@
   "exit_code": 0,
   "data": {
     "exported": true,
-    "file": "/project/.factory/studio/export/mach-project-lending-20261125T023503Z.zip",
+    "file": "/project/.factory/studio/export/mach-project-lending-20261125T024110Z.zip",
     "bytes": 7473,
-    "sha256": "d0596f7e799e348812a310bd6e3fd643b3150dabb14a4cd650ca400b254a490b",
+    "sha256": "52fa19cd9c4863e546c6d302bace0bdad1cab1526684b1665cb7dffa8e381eee",
     "counts": {
       "epics": 1,
       "slices": 2,
@@ -32,7 +32,7 @@
     "github": {
       "checked": true,
       "problem": null,
-      "read_at": "2026-11-25T02:35:02Z"
+      "read_at": "2026-11-25T02:41:09Z"
     },
     "not_included": [],
     "chosen": [],

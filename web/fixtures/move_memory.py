@@ -115,6 +115,12 @@ def arriving(Scenario, archive: Path) -> None:
         s.capture("project.imports.lookup", "project", "imports", "SLICE-002")
         s.capture("project.imports.lookup-none", "project", "imports", "SLICE-099")
         s.capture("project.import.already", "project", "import", str(path), "--plan")
+        # Marking ready what was ready there, for this import already done: it stops at the principles not yet published,
+        # then, once they are, carries on.
+        s.capture("project.imports.ready.stopped", "project", "imports", "ready")
+        s.ok(s.a, "principle", "publish")
+        s.capture("project.imports.ready", "project", "imports", "ready")
+        s.capture("project.imports.ready.again", "project", "imports", "ready")
 
     run(Scenario, body)
 
@@ -129,7 +135,8 @@ def joining(Scenario, archive: Path) -> None:
         s.ok(s.a, "epic", "add", "--title", "Rooms", "--criterion", "Every room has a calendar")
         s.drafted(title="Add a room")
         s.capture("project.import.plan-join", "project", "import", str(path), "--plan")
-        s.capture("project.import.join", "project", "import", str(path))
+        # Brought in with "also mark ready": the import is done, and marking ready says where it stopped.
+        s.capture("project.import.join", "project", "import", str(path), "--ready")
         s.capture("project.imports.lookup-join", "project", "imports", "SLICE-001")
 
     run(Scenario, body)

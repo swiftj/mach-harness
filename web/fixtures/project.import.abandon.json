@@ -3,8 +3,8 @@
   "data": {
     "set_aside": true,
     "archive": {
-      "file": "mach-project-lending-20261125T023502Z.zip",
-      "sha256": "c7357068c7aac8633e0986284901ca893df1b1f99abf9f81c5e6262be9fd6167"
+      "file": "mach-project-lending-20261125T024109Z.zip",
+      "sha256": "30609135f3dd740a2d7794adf5c8f7edaa6938f44d77765021555ef18103bf38"
     },
     "from_project": "lending",
     "brought_in": [
@@ -51,9 +51,9 @@
         1
       ]
     },
-    "record": ".factory/studio/imports/c7357068c7aac863.set-aside-20261125T023507Z.json",
+    "record": ".factory/studio/imports/30609135f3dd740a.set-aside-20261125T024114Z.json",
     "factory_authorized": false,
-    "note": "MACH stopped bringing in the project from mach-project-lending-20261125T023502Z.zip and set it aside. What it had already brought in stays where it is: EPIC-001, EPIC-002, PP-01 and the project (listed under brought_in). Keep them, or remove them if you do not want them. The numbers it was holding are free again, and nothing else was changed."
+    "note": "MACH stopped bringing in the project from mach-project-lending-20261125T024109Z.zip and set it aside. What it had already brought in stays where it is: EPIC-001, EPIC-002, PP-01 and the project (listed under brought_in). Keep them, or remove them if you do not want them. The numbers it was holding are free again, and nothing else was changed."
   },
   "refused": null,
   "hint": null

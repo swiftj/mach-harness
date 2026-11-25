@@ -58,7 +58,7 @@ import type {
   ReconcileNeeds,
 } from "./needs";
 import type { SliceSmallChange, SliceWiden, SmallChangeResume, SmallOnWorkOrder, SmallStart, SmallWidened, StatusSmall } from "./small";
-import type { ProjectExport, ProjectImportResult, ProjectImportSetAside, ProjectImportsList, ProjectImportsLookup } from "./move";
+import type { ProjectExport, ProjectImportResult, ProjectImportSetAside, ProjectImportsList, ProjectImportsLookup, ProjectImportsReady } from "./move";
 
 /* ── Vocabulary ─────────────────────────────────────────────────────────── */
 
@@ -1049,6 +1049,8 @@ export interface Operations {
   };
   "project.import.abandon": { args: { archive?: string }; result: ProjectImportSetAside };
   "project.imports": { args: { identifier?: string }; result: ProjectImportsList | ProjectImportsLookup };
+  /** Marks ready, dependencies first, what was ready in the old repository, for an import already done. */
+  "project.imports.ready": { args: { which?: string }; result: ProjectImportsReady };
 }
 
 export type OperationName = keyof Operations;
@@ -1143,6 +1145,7 @@ export const personalActs: ReadonlySet<OperationName> = new Set<OperationName>([
   "project.export",
   "project.import",
   "project.import.abandon",
+  "project.imports.ready",
 ]);
 
 /* ── M15: types for what M13 and M14 added (web/fixtures/product_memory.py holds real samples) ── */

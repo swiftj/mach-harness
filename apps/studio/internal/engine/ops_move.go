@@ -128,6 +128,26 @@ func (a *ProjectAbandonArgs) Argv() ([]string, error) {
 	return append(argv, *a.Archive), nil
 }
 
+// ProjectImportsReadyArgs: mark ready, dependencies first, every slice of an import already done that was ready in the
+// old repository. `which` names the import (its record or the file's name); left out, the last one finished.
+type ProjectImportsReadyArgs struct {
+	Which *string `json:"which"`
+}
+
+func (a *ProjectImportsReadyArgs) Argv() ([]string, error) {
+	argv := []string{"project", "imports", "ready"}
+	if a.Which == nil {
+		return argv, nil
+	}
+	if err := checkOneLine("which", *a.Which, 255, true); err != nil {
+		return nil, err
+	}
+	if (*a.Which)[0] == '-' {
+		return nil, invalid("which must be the name of the file or its record.")
+	}
+	return append(argv, *a.Which), nil
+}
+
 // ProjectImportsArgs: the projects brought in here, or what one of their IDs is called here.
 type ProjectImportsArgs struct {
 	Identifier *string `json:"identifier"`
@@ -276,8 +296,13 @@ func withKept(data json.RawMessage, key, name string, size int64) json.RawMessag
 
 func init() {
 	register(Operation{Name: "project.export", New: func() Args { return &ProjectExportArgs{} }, Network: true, Download: true, Timeout: moveTimeout})
+	// With `ready`, the import's report comes back even when marking ready stopped part way (exit 1, the report on stdout):
+	// the project is in, and the report says where marking ready stopped.
 	register(Operation{Name: "project.import", New: func() Args { return &ProjectImportArgs{} }, Network: true, Timeout: moveTimeout,
-		MaxBody: bodyFor(projectArchive.maxBytes), TooLarge: tooLargeForApp})
+		MaxBody: bodyFor(projectArchive.maxBytes), TooLarge: tooLargeForApp, JSONOnFailure: true})
 	register(Operation{Name: "project.import.abandon", New: func() Args { return &ProjectAbandonArgs{} }})
 	register(Operation{Name: "project.imports", New: func() Args { return &ProjectImportsArgs{} }, ReadOnly: true})
+	// Marking ready publishes each slice to GitHub, as slice.ready does; a stop part way is a report (exit 1), not a refusal.
+	register(Operation{Name: "project.imports.ready", New: func() Args { return &ProjectImportsReadyArgs{} }, Network: true, Timeout: moveTimeout,
+		JSONOnFailure: true})
 }

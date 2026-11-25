@@ -3,6 +3,7 @@ import { Button, Field, Heading, Input, Skeleton, Text, describeError, formatWhe
 import { isMachApiError, type MachApiError, type ProjectImportsList, type ProjectImportsLookup } from "@mach/ui/api";
 import { client } from "../../api/client";
 import { importRows, lookupId, lookupWords } from "./model";
+import { MarkReady } from "./Ready";
 
 const STATE_WORDS = { finished: "Brought in", "set-aside": "Set aside before it was finished", unfinished: "Being brought in, not finished" } as const;
 
@@ -104,6 +105,11 @@ export function LookUp({
                   <span translate="no" className="break-all text-caption text-ink-subtle">
                     {row.fileName}
                   </span>
+                ) : null}
+                {row.state === "finished" ? (
+                  <div className="pt-2">
+                    <MarkReady which={row.key} />
+                  </div>
                 ) : null}
               </li>
             ))}

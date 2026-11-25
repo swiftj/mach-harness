@@ -18,6 +18,7 @@ import {
   lookupId,
   lookupWords,
   offersOnlyMine,
+  readyView,
   renumberedPreview,
   sizeText,
   unfinishedImport,
@@ -126,9 +127,31 @@ test("plan joining a project: every epic and slice renumbered, old to new, and t
   assert.deepEqual(view.leftBehind, ["The name, vision and outcomes of “Lending”: this project's own stay as they are."]);
 });
 
-test("the engine's own count of slices it would mark ready wins over the app's", () => {
-  assert.equal(importView({ ...fixture("project.import.plan"), would_mark_ready: 1 }).readyThere, 1);
-  assert.equal(importView({ ...fixture("project.import.plan"), would_mark_ready: ["SLICE-001"] }).readyThere, 1);
+test("the plan says how many it would mark ready, in its words; the choice is offered only when it does", () => {
+  const plan = fixture("project.import.plan");
+  const view = importView(plan);
+  assert.equal(view.readyThere, plan.ready_in_source.count);
+  assert.equal(view.readyWords, plan.ready_in_source.words);
+  assert.equal(view.canMarkReady, true);
+  assert.deepEqual(view.heldBack, []);
+  const older = { ...plan, ready_in_source: undefined };
+  assert.equal(importView(older).canMarkReady, false);
+  assert.equal(importView({ ...plan, ready_in_source: { ...plan.ready_in_source, count: 1, held_back: ["SLICE-002"] } }).heldBack[0], "SLICE-002");
+});
+
+test("marking ready what was ready there: the engine's note, where it stopped, and the principles to publish first", () => {
+  const stopped = readyView(fixture("project.imports.ready.stopped"));
+  assert.equal(stopped.complete, false);
+  assert.equal(stopped.stoppedAt, "SLICE-001");
+  assert.deepEqual(stopped.left, ["SLICE-001", "SLICE-002"]);
+  assert.equal(stopped.needsPrinciples, true);
+  assert.equal(stopped.note, fixture("project.imports.ready.stopped").note);
+  // Published, it stops at a slice that does not answer the principle: no publishing offered then.
+  assert.equal(readyView(fixture("project.imports.ready")).needsPrinciples, false);
+  // Brought in with "also mark ready": the report carries what marking ready did.
+  const joined = doneView(fixture("project.import.join"));
+  assert.equal(joined.ready.stoppedAt, "SLICE-002");
+  assert.equal(joined.archiveSha, fixture("project.import.join").archive.sha256);
 });
 
 test("rows the engine lists are read by their sentence, else ID, file, line and why", () => {
@@ -138,8 +161,16 @@ test("rows the engine lists are read by their sentence, else ID, file, line and 
   assert.equal(itemText("As it is."), "As it is.");
   assert.deepEqual(itemsOf(undefined), []);
   assert.deepEqual(itemsOf("One sentence."), ["One sentence."]);
-  const view = importView({ ...fixture("project.import.plan"), not_assessed: [{ id: "PP-01", words: "PP-01 was recorded as not assessed in SLICE-001." }] });
-  assert.deepEqual(view.notAssessed, ["PP-01 was recorded as not assessed in SLICE-001."]);
+  const view = importView({
+    ...fixture("project.import.plan"),
+    principles_not_assessed: [
+      { slice: "SLICE-001", principle: "PP-02", file: "specs/slices/SLICE-001-x.md", how: "slice_came" },
+      { slice: "SLICE-001", principle: "PP-02", file: "specs/slices/SLICE-001-x.md", how: "slice_came" },
+    ],
+    dependencies_added: [{ slice: "SLICE-016", on: "SLICE-012", rule: "SLICE-012/FR-01", added: true, words: "SLICE-016 now depends on SLICE-012." }],
+  });
+  assert.deepEqual(view.notAssessed, ["SLICE-001: PP-02 not assessed yet"]);
+  assert.deepEqual(view.dependenciesAdded, ["SLICE-016 now depends on SLICE-012."]);
 });
 
 test("the report once it is in: note, nothing kept or moved, no new problems", () => {
@@ -149,7 +180,7 @@ test("the report once it is in: note, nothing kept or moved, no new problems", (
   assert.deepEqual(view.keptYours, []);
   assert.deepEqual(view.structuralErrors, []);
   assert.deepEqual(view.numbersMoved, []);
-  assert.deepEqual(view.markedReady, []);
+  assert.equal(view.ready, null);
   const joined = doneView(fixture("project.import.join"));
   assert.equal(joined.renumbered.length, 5);
 });

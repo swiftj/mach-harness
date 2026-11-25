@@ -4,9 +4,9 @@
     "plan": true,
     "resuming": true,
     "archive": {
-      "file": "mach-project-lending-20261125T023502Z.zip",
-      "sha256": "c7357068c7aac8633e0986284901ca893df1b1f99abf9f81c5e6262be9fd6167",
-      "exported_at": "2026-11-25T02:35:02Z",
+      "file": "mach-project-lending-20261125T024109Z.zip",
+      "sha256": "30609135f3dd740a2d7794adf5c8f7edaa6938f44d77765021555ef18103bf38",
+      "exported_at": "2026-11-25T02:41:09Z",
       "mach_version": "0.24.0"
     },
     "mode": "new",
@@ -104,8 +104,21 @@
     "needs_none_left_behind": [],
     "shipped_rules": [],
     "same_principles": [],
+    "principles_not_assessed": [],
+    "principles_aligned": [],
+    "dependencies_added": [],
+    "renumbered_on_resume": [],
+    "ready_in_source": {
+      "slices": [
+        "SLICE-001",
+        "SLICE-002"
+      ],
+      "count": 2,
+      "held_back": [],
+      "words": "2 slices were ready in the old repository (SLICE-001 and SLICE-002). On your word, MACH can mark them ready here in one step, dependencies first, each checked as marking ready checks it; it stops at the first that is not ready yet."
+    },
     "after": [
-      "Publish the principles before any slice can be marked ready: 1 came with the project."
+      "Publish the principles before any slice can be marked ready: 1 came with the project (PP-01)."
     ],
     "left_behind": {
       "jira": {},
@@ -120,7 +133,7 @@
     },
     "factory_authorized": false,
     "writes": "nothing",
-    "note": "Would bring in 3 slices in 2 epics from the project 'Lending'. Every slice is a draft here: in the old repository 2 were ready to build. Nothing was sent to GitHub. Publish the principles, then mark each slice ready when you have checked it."
+    "note": "Would bring in 3 slices in 2 epics from the project 'Lending'. Every slice is a draft here: in the old repository 2 were ready to build. Nothing was sent to GitHub. Publish the principles, then mark each slice ready when you have checked it. The 2 slices that were ready in the old repository can be marked ready here in one step, on your word."
   },
   "refused": null,
   "hint": null

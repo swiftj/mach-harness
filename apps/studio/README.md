@@ -224,9 +224,10 @@ for exactly the thirteen rules the short interview names; `--why` is denied to i
 | Operation | Arguments | Engine command | Kind |
 |-----------|-----------|----------------|------|
 | `project.export` | `{only_mine?}` | `project export [--only-mine]` (never `--out`) | network, 15 min; download |
-| `project.import` | exactly one of `file: {name, content_base64}` (a `.zip`, at most 64 MiB) or `kept: <sha256>`; `plan?`, `ready?` (never both) | `project import <kept file> [--plan] [--ready]` | network, 15 min; body at most base64 of 64 MiB plus 64 KiB |
+| `project.import` | exactly one of `file: {name, content_base64}` (a `.zip`, at most 64 MiB) or `kept: <sha256>`; `plan?`, `ready?` (never both) | `project import <kept file> [--plan] [--ready]` | network, 15 min; with `ready`, a stop in marking ready is a report (exit 1, JSON); body at most base64 of 64 MiB plus 64 KiB |
 | `project.import.abandon` | `{archive?}` (one line, not starting with `-`) | `project import --abandon [<archive>]` | this computer |
 | `project.imports` | `{identifier?}` (`SLICE-007`, `EPIC-002`, `PP-03`, `TN-01`, `IDEA-004`, `PRD-01`, `DES-01`) | `project imports [<ID>]` | reads only |
+| `project.imports.ready` | `{which?}` (one line, not starting with `-`) | `project imports ready [<which>]` | network, 15 min; a stop part way is a report (exit 1, JSON) |
 
 **The project file brought in** is kept, unlike other uploads, so "look first" and "bring it in" use
 the same bytes: `.factory/studio/incoming/<sha256>/<plain name>`, written exclusively and without

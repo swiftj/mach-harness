@@ -2,9 +2,9 @@
   "exit_code": 0,
   "data": {
     "exported": true,
-    "file": "/project/.factory/studio/export/mach-project-lending-20261125T023503Z.zip",
-    "bytes": 8192,
-    "sha256": "4997cd9a3006cdd1c4084d426807552bd71f2d68e7f8bc0bba06ad861c07ac72",
+    "file": "/project/.factory/studio/export/mach-project-lending-20261125T024110Z.zip",
+    "bytes": 8191,
+    "sha256": "8c3eb04bfc82859cdf5594c3ad96368984d25a545ecef30fd6c8f99a5532f06f",
     "counts": {
       "epics": 2,
       "slices": 3,

@@ -43,7 +43,7 @@ function kept(data: Record<string, unknown>) {
   data.kept = { sha256: archive.sha256, name: archive.file, bytes: (run("project.export").data as { bytes: number }).bytes };
 }
 
-const state = { active: false, mode: "empty", imported: false, setAside: false };
+const state = { active: false, mode: "empty", imported: false, setAside: false, readyAsked: 0 };
 
 function begin() {
   if (state.active) return;
@@ -81,6 +81,9 @@ export function moveRoute(path: string, args: Record<string, unknown>): Transpor
       if (state.mode !== "unfinished" || state.setAside || state.imported) return answer("project.import.abandon.refused-none");
       state.setAside = true;
       return answer("project.import.abandon");
+    case "project.imports.ready":
+      // Stopped at the principles not yet published, then (asked again) stopped at a slice that does not answer them.
+      return answer(state.readyAsked++ === 0 ? "project.imports.ready.stopped" : "project.imports.ready");
     case "project.imports":
       // A lookup answers with a real run whatever ID was typed: SLICE-002 (or SLICE-001 when joining), or SLICE-099.
       if (typeof args.identifier === "string") {

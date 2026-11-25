@@ -2,6 +2,7 @@ import { Link } from "react-router";
 import { ArtifactId, Banner, Button, Disclosure, Heading, Text } from "@mach/ui";
 import { renumberedPreview, type DoneView, type ImportView, type Renumbered } from "./model";
 import { List } from "./List";
+import { MarkReady } from "./Ready";
 
 /**
  * What a project brought in holds and what changes, as the engine reported it: first the plan (nothing brought in yet),
@@ -59,7 +60,11 @@ export function ImportReport({ view }: { view: DoneView }) {
         </Banner>
       ) : null}
       <Facts view={view} into={null} done />
-      <List title="Marked ready to build" items={view.markedReady} />
+      {view.ready ? (
+        <MarkReady which={view.archiveSha} initial={view.ready} />
+      ) : view.canMarkReady && view.readyThere > 0 ? (
+        <MarkReady which={view.archiveSha} count={view.readyThere} />
+      ) : null}
       <List title="Kept as you left them" items={view.keptYours} />
       <List title="Numbers that moved since you looked" items={view.numbersMoved} />
       <Changes view={view} done />
@@ -103,10 +108,27 @@ function Facts({ view, into, done = false }: { view: ImportView; into: string | 
         <dd className="text-ink">{view.holds}</dd>
         <dt className="font-semibold text-ink-muted">Ready there</dt>
         <dd className="text-ink">
-          {view.readyThere === 0
-            ? "No slice was marked ready in the old repository."
-            : `${view.readyThere === 1 ? "1 slice was" : `${view.readyThere} slices were`} marked ready or further in the old repository. Here every slice is a draft unless you chose otherwise.`}
+          {view.readyWords ??
+            (view.readyThere === 0
+              ? "No slice was marked ready in the old repository."
+              : `${view.readyThere === 1 ? "1 slice was" : `${view.readyThere} slices were`} marked ready or further in the old repository. Here every slice is a draft unless you chose otherwise.`)}
         </dd>
+        {view.heldBack.length ? (
+          <>
+            <dt className="font-semibold text-ink-muted">Held back</dt>
+            <dd className="text-ink">
+              Ready there, but the file does not hold the approved version whole, so marking ready in one step leaves{" "}
+              {view.heldBack.length === 1 ? "it" : "them"} out:{" "}
+              {view.heldBack.map((id, index) => (
+                <span key={id}>
+                  {index ? ", " : ""}
+                  <ArtifactId plain>{id}</ArtifactId>
+                </span>
+              ))}
+              . Check each and mark it ready yourself.
+            </dd>
+          </>
+        ) : null}
       </dl>
       <NewNumbers view={view} done={done} />
       {view.slices.length ? (
@@ -215,7 +237,14 @@ function Changes({ view, done = false }: { view: ImportView; done?: boolean }) {
       <List title="Links taken out" items={view.linksDropped} />
       <List title="Sections about shipped behaviour to answer again here" items={view.shippedRules} />
       <List title="Principles that say the same thing" items={view.samePrinciples} />
-      <List title="Principles recorded as not assessed" items={view.notAssessed} />
+      <List
+        title="Principles recorded as not assessed"
+        note="These do not hold up marking ready. Each is answered in the interview when the slice is next changed."
+        items={view.notAssessed}
+      />
+      <List title="Rows that now quote a principle as it is here" items={view.aligned} />
+      <List title="Dependencies added" items={view.dependenciesAdded} />
+      <List title="Numbers given again when it was finished" items={view.renumberedOnResume} />
       <List title="Answers on technical needs not brought in" items={view.needsNoneLeftBehind} />
       {done ? null : <List title="Afterwards" items={view.after} />}
     </div>

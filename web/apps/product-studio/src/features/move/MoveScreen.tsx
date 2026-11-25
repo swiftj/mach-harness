@@ -43,6 +43,7 @@ import {
   importView,
   isFullImport,
   offersOnlyMine,
+  READY_MEANS,
   sizeText,
   unfinishedImport,
   type ExportView,
@@ -477,8 +478,8 @@ function Plan({
   const [running, setRunning] = useState(false);
   const [problem, setProblem] = useState<Shown | null>(null);
   const [markReady, setMarkReady] = useState(false);
-  // The plan says how many slices `ready` would mark ready; the choice is offered only when it does.
-  const offer = plan.would_mark_ready !== undefined && view.readyThere > 0 ? view.readyThere : 0;
+  // The plan says how many slices `ready` would mark ready (`ready_in_source.count`); the choice is offered only when it does.
+  const offer = view.canMarkReady && view.readyThere > 0 ? view.readyThere : 0;
   const into = view.mode === "join" ? (status.project?.name ? `“${status.project.name}”` : "this project") : null;
 
   const run = async () => {
@@ -540,7 +541,7 @@ function Plan({
                 checked={markReady}
                 onCheckedChange={(checked) => setMarkReady(checked === true)}
                 label={`Also mark ready the ${offer === 1 ? "slice that was" : `${offer} slices that were`} ready there`}
-                description={`Off unless you choose it. MACH marks ${offer === 1 ? "it" : "them"} ready to build here, in the order they depend on each other: each is published to GitHub, and the Factory can start building it. Leave it off to check each slice yourself first.`}
+                description={`Off unless you choose it. ${READY_MEANS} Leave it off to check each slice yourself first.`}
               />
             </div>
           ) : null}
@@ -654,7 +655,7 @@ function UnfinishedImport({
           busy ? null : (
             <>
               <Button size="sm" variant="primary" onClick={asking ? chooser.open : finish}>
-                {asking ? `Choose ${name} again` : "Finish it"}
+                {asking ? `Choose ${name} again` : problem ? "Bring the same file in again" : "Finish it"}
               </Button>
               <Button size="sm" onClick={() => setSettingAside(true)}>
                 Set it aside

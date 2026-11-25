@@ -16,6 +16,7 @@ import type {
   ProjectImportShared,
   ProjectImportsList,
   ProjectImportsLookup,
+  ProjectImportsReady,
   Status,
 } from "@mach/ui/api";
 
@@ -212,6 +213,8 @@ export interface ImportView {
   /** The project's name in the file. */
   name: string;
   fileName: string;
+  /** The file's SHA-256: how `project.imports.ready` names this import. */
+  archiveSha: string;
   /** "joins" this project, or "becomes" the project here. */
   mode: "join" | "new";
   intoProject: string;
@@ -225,8 +228,18 @@ export interface ImportView {
   notes: string[];
   /** Every slice, with where it was there and what it is here. */
   slices: Array<MoveSlice & { readyThere: boolean }>;
-  /** How many slices were marked ready or further in the old repository (the engine's count when it gives one). */
+  /** How many slices `ready` would mark ready here: those marked ready or further in the old repository (the engine's count
+   *  when it gives one), less those held back. */
   readyThere: number;
+  /** The engine's sentence about them, as written; null from an older engine. */
+  readyWords: string | null;
+  /** Ready there, but the file does not hold their approved version whole: never marked ready in one step. */
+  heldBack: string[];
+  /** Whether the engine can mark them ready in one step (it says how many it would). */
+  canMarkReady: boolean;
+  aligned: string[];
+  dependenciesAdded: string[];
+  renumberedOnResume: string[];
   checkByHand: string[];
   notInArchive: string[];
   linksDropped: string[];
@@ -254,8 +267,8 @@ export function importView(result: ProjectImportShared & { note: string }): Impo
     if (pairs.length) changedByKind.push([kind, pairs.length]);
   }
   const slices = (result.slices ?? []).map((row) => ({ ...row, readyThere: row.status_here !== "superseded" && READY_THERE.has(row.was ?? "") }));
-  const assumed = result.would_mark_ready;
-  const readyThere = typeof assumed === "number" ? assumed : Array.isArray(assumed) ? assumed.length : slices.filter((s) => s.readyThere).length;
+  const inSource = result.ready_in_source;
+  const readyThere = typeof inSource?.count === "number" ? inSource.count : slices.filter((s) => s.readyThere).length;
   const left = result.left_behind ?? {};
   const keys = { ...(left.epic_jira ?? {}), ...(left.jira ?? {}) };
   const leftBehind = Object.entries(keys).map(([id, key]) => `${id} had the Jira key ${key}.`);
@@ -267,6 +280,7 @@ export function importView(result: ProjectImportShared & { note: string }): Impo
   return {
     name: result.from_project_name || result.from_project,
     fileName: result.archive?.file ?? "",
+    archiveSha: result.archive?.sha256 ?? "",
     mode: result.mode === "join" ? "join" : "new",
     intoProject: result.into_project,
     holds: holdsWords(result.counts),
@@ -277,17 +291,30 @@ export function importView(result: ProjectImportShared & { note: string }): Impo
     notes: itemsOf(result.notes),
     slices,
     readyThere,
+    readyWords: sentence(inSource?.words),
+    heldBack: inSource?.held_back ?? [],
+    canMarkReady: typeof inSource?.count === "number",
+    aligned: itemsOf(result.principles_aligned),
+    dependenciesAdded: itemsOf(result.dependencies_added),
+    renumberedOnResume: itemsOf(result.renumbered_on_resume),
     checkByHand: itemsOf(result.check_by_hand),
     notInArchive: itemsOf(result.not_in_archive),
     linksDropped: itemsOf(result.links_dropped),
     needsNoneLeftBehind: itemsOf(result.needs_none_left_behind),
     shippedRules: itemsOf(result.shipped_rules),
     samePrinciples: itemsOf(result.same_principles),
-    notAssessed: itemsOf(result.not_assessed),
+    notAssessed: notAssessedRows(result.principles_not_assessed),
     leftBehind,
     after: itemsOf(result.after),
     note: result.note,
   };
+}
+
+/** "SLICE-002 does not answer PP-03 yet": one line per row, each slice once per principle. The rows carry no sentence of
+ *  their own; the engine's sentence about them is in `after`. */
+function notAssessedRows(rows: ProjectImportShared["principles_not_assessed"]): string[] {
+  const lines = (rows ?? []).filter((row) => row && row.slice && row.principle).map((row) => `${row.slice}: ${row.principle} not assessed yet`);
+  return [...new Set(lines)];
 }
 
 export interface DoneView extends ImportView {
@@ -295,7 +322,8 @@ export interface DoneView extends ImportView {
   keptYours: string[];
   structuralErrors: string[];
   numbersMoved: string[];
-  markedReady: string[];
+  /** With "also mark ready": what marking ready did and where it stopped. */
+  ready: ReadyView | null;
 }
 
 export function doneView(result: ProjectImportDone): DoneView {
@@ -304,7 +332,40 @@ export function doneView(result: ProjectImportDone): DoneView {
     keptYours: itemsOf(result.kept_yours),
     structuralErrors: itemsOf(result.structural_errors),
     numbersMoved: (result.numbers_moved ?? []).map((row) => `${row.id} was to be ${row.planned} and is ${row.now}.`),
-    markedReady: itemsOf(result.marked_ready),
+    ready: result.ready ? readyView(result.ready) : null,
+  };
+}
+
+/* ── Marking ready what was ready there (`project imports ready`, or `ready` with the import) ── */
+
+/** What marking ready in one step means, said in every place that offers it. */
+export const READY_MEANS =
+  "MACH marks them ready to build here, in the order they depend on each other, each checked as marking ready checks it. Each is published to GitHub, and the Factory can start building it. It stops at the first that is not ready yet, and says why.";
+
+export interface ReadyView {
+  /** The engine's note, word for word: what was marked, where it stopped and why, what is left. */
+  note: string;
+  marked: string[];
+  complete: boolean;
+  stoppedAt: string | null;
+  left: string[];
+  /** It stopped because the principles are not published yet: the page offers to publish them, then carry on. */
+  needsPrinciples: boolean;
+}
+
+/**
+ * The stop because the principles have changes not yet published is the one marking ready cannot get past by itself; the
+ * engine gives no hint for it, so its words are read ("... not published; publish them first ...").
+ */
+export function readyView(result: ProjectImportsReady): ReadyView {
+  const reason = result.stopped_at?.reason ?? "";
+  return {
+    note: result.note,
+    marked: (result.marked_ready ?? []).map((row) => row.slice),
+    complete: result.complete,
+    stoppedAt: result.stopped_at?.slice ?? null,
+    left: result.left ?? [],
+    needsPrinciples: !result.complete && /principles[^.]*not published|publish them first/i.test(reason),
   };
 }
 
