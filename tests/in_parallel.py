@@ -57,7 +57,7 @@ def run_one(name: str) -> Tuple[str, int, int, int, float, str]:
     done = subprocess.run(
         [sys.executable, "-m", "unittest", name],
         cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-        env={**os.environ, "MACH_FACTORY_NO_START": "1", "PYTHONPATH": os.pathsep.join(filter(None, [str(TESTS), os.environ.get("PYTHONPATH", "")]))},
+        env={**os.environ, "MACH_FACTORY_NO_START": "1", "MACH_APP_NO_START": "1", "PYTHONPATH": os.pathsep.join(filter(None, [str(TESTS), os.environ.get("PYTHONPATH", "")]))},
     )
     ran = RAN.search(done.stdout)
     skipped = SKIPPED.search(done.stdout.rsplit("\n", 3)[-2] if done.stdout.count("\n") > 1 else "")

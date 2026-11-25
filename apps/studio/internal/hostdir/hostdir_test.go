@@ -203,3 +203,29 @@ func TestKilledHostLeavesNoLock(t *testing.T) {
 	}
 	l.Release()
 }
+
+// The host file says which release and process is running, privately, and goes when asked.
+func TestHostFileIsPrivateAndRemoved(t *testing.T) {
+	root := tempRoot(t)
+	os.Mkdir(filepath.Join(root, ".factory"), 0o755)
+	d, err := Prepare(root)
+	if err != nil || d == nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if err := d.WriteHost(Host{Program: "mach-studio", Version: "9.8.7", PID: 42, Port: 5000, Project: root}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(d.HostPath())
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		t.Fatalf("host file: %v %v", info, err)
+	}
+	data, _ := os.ReadFile(d.HostPath())
+	want := `{"program":"mach-studio","version":"9.8.7","pid":42,"port":5000,"project":"` + root + `"}` + "\n"
+	if string(data) != want {
+		t.Fatalf("host file %q, want %q", data, want)
+	}
+	d.RemoveHost()
+	if _, err := os.Lstat(d.HostPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the host file was not removed")
+	}
+}

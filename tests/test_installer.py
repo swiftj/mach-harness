@@ -97,6 +97,7 @@ class InstallTest(Base):
                          ".claude/skills/mach/scripts/run.py", ".claude/workflows/mach-belt.js",
                          ".claude/skills/mach-merge/SKILL.md", ".claude/skills/mach-merge/scripts/merge.py",
                          ".claude/skills/mach-idea/SKILL.md", ".claude/skills/mach-idea/scripts/idea.py",
+                         ".claude/skills/mach-app/SKILL.md", ".claude/skills/mach-app/scripts/app.py",
                          ".claude/agents/mach-contract-engineer.md", ".factory/bin/mach", ".factory/mach.mk", ".factory/config.json",
                          "REVIEW.md", "AGENTS.md", "Makefile", "CLAUDE.md", ".gitignore", ".factory/.mach-manifest.json"):
             self.assertIn(expected, files)
@@ -812,6 +813,201 @@ class FloorTest(Base):
         self.assertEqual(code, 0, out)
         self.assertIn(f"remove   {mach.FLOOR_DEST}", out)
         self.assertEqual(list(self.project.iterdir()), [], out)
+
+
+def program(name, version):
+    """A stand-in for a prebuilt program: it answers --version as the real ones do."""
+    return f'#!/bin/sh\n[ "$1" = --version ] && echo "{name} {version}"\n'.encode()
+
+
+class ProgramsTest(Base):
+    """`mach programs` (used by /mach-app): brings the two programs in .factory/bin/ to the release installed in the
+    project, downloaded and checked exactly as install does, and changes nothing else."""
+
+    def setUp(self):
+        super().setUp()
+        self.mach("install")  # the programs skipped (Base): MACH 0.x is installed, with its record
+        self.version = json.loads((self.project / mach.MANIFEST).read_text())["version"]
+        self.setenv("MACH_STUDIO", None)
+        self.setenv("MACH_FLOOR", None)
+        self.release = Path(self.tmp.name).resolve() / "release"
+        self.release.mkdir()
+        self.setenv("MACH_STUDIO_URL", self.release.as_uri())
+        self.setenv("MACH_FLOOR_URL", None)
+        for name in ("STUDIO_LOCAL_BUILD", "FLOOR_LOCAL_BUILD"):
+            previous = getattr(mach, name)
+            setattr(mach, name, "apps/no-such-build")
+            self.addCleanup(setattr, mach, name, previous)
+        self.here = self.project / mach.STUDIO_DEST
+        self.here.write_bytes(program("mach-studio", "0.24.0"))
+        self.here.chmod(0o755)
+
+    def publish(self, data, listed=None):
+        (self.release / mach.studio_asset()).write_bytes(data)
+        (self.release / mach.STUDIO_SUMS).write_text(f"{listed or mach.sha(data)}  {mach.studio_asset()}\n", encoding="utf-8")
+
+    def programs(self, *extra):
+        code, out = self.mach("programs", "--only", "mach-studio", "--json", *extra)
+        self.assertEqual(code, 0, out)
+        return json.loads(out)
+
+    def test_the_program_of_the_installed_release_is_kept_as_it_is(self):
+        self.here.write_bytes(program("mach-studio", self.version))
+        before = snapshot(self.project)
+        answer = self.programs()
+        self.assertEqual(answer["programs"], [{"name": "mach-studio", "path": str(self.here), "version": self.version,
+                                               "updated": False, "checked": None, "problem": None}])
+        self.assertEqual(snapshot(self.project), before, "nothing is fetched or written")
+
+    def test_an_older_program_is_replaced_after_its_checksum_passes_and_recorded(self):
+        data = program("mach-studio", self.version)
+        self.publish(data)
+        before = {k: v for k, v in snapshot(self.project).items() if k not in (mach.STUDIO_DEST, mach.MANIFEST)}
+        answer = self.programs()
+        result = answer["programs"][0]
+        self.assertEqual((result["updated"], result["version"], result["problem"]), (True, self.version, None))
+        self.assertIn("checked against the release's checksum", result["checked"])
+        self.assertEqual(self.here.read_bytes(), data)
+        self.assertTrue(os.access(self.here, os.X_OK))
+        manifest = json.loads((self.project / mach.MANIFEST).read_text())
+        self.assertEqual(manifest["files"][mach.STUDIO_DEST], mach.sha(data))
+        self.assertEqual(manifest["programs"][mach.STUDIO_DEST]["version"], self.version)
+        after = {k: v for k, v in snapshot(self.project).items() if k not in (mach.STUDIO_DEST, mach.MANIFEST)}
+        self.assertEqual(after, before, "only the program and its record change")
+        self.assertNotIn("changed", self.mach("status")[1].split("mach-studio:")[1].split("\n")[0])
+
+    def test_a_failed_checksum_never_replaces_it(self):
+        old = self.here.read_bytes()
+        self.publish(program("mach-studio", self.version), listed="0" * 64)
+        result = self.programs()["programs"][0]
+        self.assertFalse(result["updated"])
+        self.assertEqual(result["version"], "0.24.0")
+        self.assertEqual(result["problem"], f"MACH could not fetch it: {mach.studio_asset()} does not match the release's published checksum, so it was refused.")
+        self.assertEqual(self.here.read_bytes(), old)
+
+    def test_a_failed_provenance_check_never_replaces_it(self):
+        old = self.here.read_bytes()
+        self.publish(program("mach-studio", self.version))
+        real = mach.check_provenance
+
+        def refuse(program_, asset, data):
+            raise mach.Fail(f"{asset} matched the release's checksum, but its build provenance did not verify")
+        mach.check_provenance = refuse
+        self.addCleanup(setattr, mach, "check_provenance", real)
+        result = self.programs()["programs"][0]
+        self.assertFalse(result["updated"])
+        self.assertIn("build provenance did not verify", result["problem"])
+        self.assertEqual(self.here.read_bytes(), old)
+
+    def test_no_network_keeps_it_and_says_why(self):
+        real = mach.fetch
+
+        def offline(url):
+            raise urllib.error.URLError("no network")
+        mach.fetch = offline
+        self.addCleanup(setattr, mach, "fetch", real)
+        result = self.programs()["programs"][0]
+        self.assertEqual(result["problem"], "MACH could not fetch it: SHA256SUMS could not be downloaded; check the internet connection.")
+        self.assertEqual(result["version"], "0.24.0")
+
+    def test_no_build_for_this_machine_is_said(self):
+        system, machine = mach.platform.system, mach.platform.machine
+        mach.platform.system, mach.platform.machine = (lambda: "Darwin"), (lambda: "x86_64")
+        self.addCleanup(lambda: (setattr(mach.platform, "system", system), setattr(mach.platform, "machine", machine)))
+        self.here.unlink()
+        result = self.programs()["programs"][0]
+        self.assertEqual((result["version"], result["problem"]), (None, "MACH could not fetch it: no build is published for Darwin x86_64."))
+
+    def test_a_local_build_is_never_replaced(self):
+        self.here.write_bytes(program("mach-studio", "dev"))
+        self.assertEqual(self.programs()["programs"][0]["updated"], False)
+
+    def test_a_project_without_mach_is_told_what_to_do(self):
+        other = self.project.parent / "bare"
+        other.mkdir()
+        code, out = run("programs", "--project", str(other), "--release", "1.2.3")
+        self.assertEqual(code, 2)
+        self.assertIn("has no .factory folder", out)
+
+    def test_a_newer_release_is_said_only_when_asked_and_only_when_newer(self):
+        self.here.write_bytes(program("mach-studio", self.version))
+        real = mach.latest_release
+        asked = []
+        mach.latest_release = lambda timeout=mach.LATEST_TIMEOUT: asked.append(timeout) or "99.0.0"
+        self.addCleanup(setattr, mach, "latest_release", real)
+        self.assertIsNone(self.programs()["newer"])
+        self.assertEqual(asked, [])
+        self.assertEqual(self.programs("--newer")["newer"], "99.0.0")
+        mach.latest_release = lambda timeout=mach.LATEST_TIMEOUT: self.version
+        self.assertIsNone(self.programs("--newer")["newer"])
+        mach.latest_release = lambda timeout=mach.LATEST_TIMEOUT: None
+        self.assertIsNone(self.programs("--newer")["newer"])
+
+    def test_the_newest_release_is_read_from_the_redirect_and_never_fails(self):
+        self.assertIsNone(mach.latest_release(), "a mirror or local folder has no latest release")
+        self.setenv("MACH_STUDIO_URL", None)
+        real = mach.urllib.request.build_opener
+
+        class Opener:
+            def __init__(self, answer):
+                self.answer = answer
+
+            def open(self, request, timeout):
+                assert request.full_url == "https://github.com/swiftj/mach-harness/releases/latest" and timeout == mach.LATEST_TIMEOUT
+                raise self.answer
+
+        def opener(answer):
+            mach.urllib.request.build_opener = lambda *handlers: Opener(answer)
+
+        self.addCleanup(setattr, mach.urllib.request, "build_opener", real)
+        opener(urllib.error.HTTPError("u", 302, "Found", {"Location": "https://github.com/swiftj/mach-harness/releases/tag/v0.27.0"}, None))
+        self.assertEqual(mach.latest_release(), "0.27.0")
+        opener(urllib.error.HTTPError("u", 302, "Found", {"Location": "https://evil.example/releases/tag/vnot-a-version"}, None))
+        self.assertIsNone(mach.latest_release())
+        opener(urllib.error.URLError("offline"))
+        self.assertIsNone(mach.latest_release())
+        opener(TimeoutError())
+        self.assertIsNone(mach.latest_release())
+
+    def test_versions_compare_as_releases(self):
+        key = mach.version_key
+        self.assertLess(key("0.26.0"), key("0.27.0-rc.1"))
+        self.assertLess(key("0.27.0-rc.1"), key("0.27.0"))
+        self.assertLess(key("0.9.0"), key("0.10.0"))
+        self.assertIsNone(key("dev"))
+
+    def test_the_project_copy_of_the_installer_does_it_without_the_mach_source(self):
+        """A project install has .factory/bin/mach but no MACH checkout: `programs` works from that copy."""
+        data = program("mach-studio", self.version)
+        self.publish(data)
+        env = {**os.environ, "MACH_STUDIO_URL": self.release.as_uri(), "PATH": os.environ.get("PATH", "")}
+        env.pop("MACH_STUDIO", None)
+        done = subprocess.run([sys.executable, str(self.project / ".factory/bin/mach"), "programs", "--project", str(self.project),
+                               "--only", "mach-studio", "--json"], capture_output=True, text=True, env=env, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertTrue(json.loads(done.stdout)["programs"][0]["updated"])
+        self.assertEqual(self.here.read_bytes(), data)
+
+
+class AppSkillTest(Base):
+    def test_the_app_skill_is_installed_as_mach_app_and_finds_its_neighbours(self):
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        skill = (self.project / ".claude/skills/mach-app/SKILL.md").read_text()
+        self.assertIn("\nname: mach-app\n", skill)
+        self.assertIn('!`python3 "${CLAUDE_SKILL_DIR}/scripts/app.py" "$ARGUMENTS"`', skill)
+        studio = (self.project / ".claude/skills/mach-studio/SKILL.md").read_text()
+        self.assertIn('python3 "${CLAUDE_SKILL_DIR}/../mach-app/scripts/app.py"', studio)
+        self.assertNotIn("${CLAUDE_SKILL_DIR}/../app/", studio)
+        run_skill = (self.project / ".claude/skills/mach/SKILL.md").read_text()
+        self.assertIn('python3 "${CLAUDE_SKILL_DIR}/../mach-app/scripts/app.py" floor', run_skill)
+        # A path above the skills folder is left as it is.
+        self.assertEqual(mach.SIBLING_RE.sub("x", "${CLAUDE_SKILL_DIR}/../../apps/studio/"), "${CLAUDE_SKILL_DIR}/../../apps/studio/")
+
+    def test_the_plugin_lists_the_app_skill(self):
+        self.assertTrue((ROOT / "skills/app/SKILL.md").is_file())
+        self.assertNotIn("app", mach.PLUGIN_ONLY_SKILLS)
+        self.assertEqual(mach.project_name("app"), "mach-app")
 
 
 class ProvenanceTest(Base):

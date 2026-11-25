@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -172,6 +174,41 @@ func TestTheHostKeepsOneLinkAndRunsOncePerProject(t *testing.T) {
 	again := startHost(t, project)
 	if fresh := again.link(t); readLinkFile(t, project) != fresh || fresh == next {
 		t.Fatal("a later start did not keep its own link")
+	}
+}
+
+// The running host says which release and process it is beside its link, and removes that as it
+// stops, so MACH can tell an older host from the one now installed and stop only this one.
+func TestTheHostSaysWhichReleaseIsRunning(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the host is built for macOS and Linux")
+	}
+	previous := version
+	version = "9.8.7"
+	t.Cleanup(func() { version = previous })
+	project := testkit.NewProject(t)
+	os.MkdirAll(filepath.Join(project, ".factory"), 0o755)
+	h := startHost(t, project)
+	link := h.link(t)
+	path := filepath.Join(project, filepath.FromSlash(hostdir.Rel), hostdir.HostName)
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("host file: %v %v", info, err)
+	}
+	var host hostdir.Host
+	data, _ := os.ReadFile(path)
+	if err := json.Unmarshal(data, &host); err != nil {
+		t.Fatal(err)
+	}
+	if host.Program != "mach-studio" || host.Version != "9.8.7" || host.PID != os.Getpid() || host.Project != project ||
+		!strings.HasPrefix(link, "http://127.0.0.1:"+strconv.Itoa(host.Port)+"/") {
+		t.Fatalf("host file %+v for link %s", host, link)
+	}
+	if err := h.stop(t); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the host file outlived the host")
 	}
 }
 

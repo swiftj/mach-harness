@@ -114,7 +114,7 @@ Almost everything goes through two commands.
 | `/mach-studio` | Product managers | The workspace for the project, its epics and slices, saved as GitHub issues |
 | `/mach` | Engineers | The line: move a ticket, see the status of every ticket, take in product work, check the setup |
 
-Both take plain words as well as the forms shown in this guide: "open the app", "what is LOCAL-004 waiting for?", "open the Factory Floor".
+Both take plain words as well as the forms shown in this guide: "open the app", "what is LOCAL-004 waiting for?", "open the Factory Floor". One more command needs no words at all: `/mach-app` opens Product Studio in your browser, always the release of MACH installed in the project, and `/mach-app floor` opens the Factory Floor.
 
 **Names.** With the one-command install the main command is `/mach`, and the others carry a dash: `/mach-studio`, `/mach-intent`. With the plugin every command carries the plugin's name and a colon, so the main one is `/mach:run` and the others `/mach:studio`, `/mach:intent`; Claude Code does not let a plugin's command be a bare `/mach`. This guide uses the first form. In a terminal, `mach` is a different thing: the installer (`mach install`, `mach status`, `mach uninstall`).
 
@@ -148,7 +148,7 @@ Open Claude Code in the project folder and type:
 /mach-studio
 ```
 
-With nothing after it, it shows where things stand and suggests the next step. It also starts the visual app on your computer and shows its link: click it, or say "open the app", to work in your browser instead. The app and the conversation share the same drafts.
+With nothing after it, it shows where things stand and suggests the next step. It also starts the visual app on your computer and shows its link. To open the app in your browser, type `/mach-app`: it always opens the release of MACH installed in the project. The app and the conversation share the same drafts.
 
 1. **Describe the project.** A name, a vision, and the outcomes you want for people. In the app, a new project first asks how you want to start: describe the product, start from a PRD, shape an idea first, or start from a request waiting on GitHub.
 2. **Add an epic**, a larger capability that several slices of intent deliver. An epic needs no approval; each slice is approved on its own when you mark it ready.
@@ -347,7 +347,7 @@ Issues that a production monitoring account files and labels itself can also be 
 
 ### Watching it
 
-Run `/mach floor`, or say "open the Factory Floor". It opens in your browser: the Line (every ticket, station by station, and what needs you), the Floor (the factory as an isometric drawing) and Analytics (how well the factory runs). You can decide there what waits for you (approve, send back, merge, answer open questions) and stop a running Factory. It never starts the Factory, and it serves this computer only.
+Run `/mach-app floor`, or say "open the Factory Floor". It opens in your browser: the Line (every ticket, station by station, and what needs you), the Floor (the factory as an isometric drawing) and Analytics (how well the factory runs). You can decide there what waits for you (approve, send back, merge, answer open questions) and stop a running Factory. It never starts the Factory, and it serves this computer only.
 
 ### Releasing
 
@@ -440,8 +440,8 @@ A cost appears only where one was recorded, which today means work the superviso
 | `/mach <ticket>` | Move one ticket to the next point a person is needed |
 | `/mach <ticket> <ticket> ...` | Run several tickets, scheduled by MACH's rules; `--dry-run`, `--limit <n>`, `--sequential` |
 | `/mach status` | Every open ticket and its next step |
-| `/mach studio` | Open Product Studio in your browser |
-| `/mach floor` | Open the Factory Floor in your browser: watch the factory, decide what waits for you, stop it |
+| `/mach-app` | Open Product Studio in your browser, the release installed here; `link` for a link only, `stop` to stop it |
+| `/mach-app floor` | Open the Factory Floor in your browser: watch the factory, decide what waits for you, stop it |
 | `/mach explain <ticket>` | Why a ticket failed or is waiting |
 | `/mach decide` | Walk through every ticket that waits on you, with its options |
 | `/mach doctor` | Check this machine and project; `--fix` creates missing MACH folders only |
