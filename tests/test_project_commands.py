@@ -145,8 +145,8 @@ class ExportCommandTest(IssuesBase):
         self.drafted(self.b, title="Ben's own")
         result = self.ok(self.b, "--app", "project", "export", "--out", str(self.out))
         (row,) = result["not_included"]
-        self.assertIn("SLICE-001 here is a different draft", row["reason"])
-        self.assertIn("Give your draft a new number, then export again to include both.", row["reason"])
+        self.assertEqual(row["reason"], f"Two different slices use the number SLICE-001: your draft here and #{row['issue']} on GitHub. The archive "
+                                        "holds the one from this workspace. Giving your draft a new number in Product Studio lets both come; then export again.")
         for line in result["in_words"] + [result["note"]]:
             self.assertIsNone(BANNED.search(line), line)
         terminal = self.ok(self.b, "project", "export", "--out", str(self.out))

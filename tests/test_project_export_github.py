@@ -243,8 +243,9 @@ class PartialWorkspaceTest(GitHubBase):
         studio_b.path("slice", "SLICE-001").write_text(studio.canonical(work))
         result = self.export(self.b)
         ids = {row["id"]: row for row in result["not_included"]}
-        self.assertIn("SLICE-001 here is a different draft", ids["SLICE-001"]["reason"])
-        self.assertIn("(slice renumber SLICE-001)", ids["SLICE-001"]["reason"])
+        self.assertIn("Two different slices use the number SLICE-001: your draft here and #", ids["SLICE-001"]["reason"])
+        self.assertIn("The archive holds the one from this workspace. Giving your draft a new number in Product Studio (slice renumber SLICE-001) "
+                      "lets both come; then export again.", ids["SLICE-001"]["reason"])
         self.assertEqual(ids["SLICE-002"]["reason"], "SLICE-002 depends on SLICE-001, which is not in the archive, so SLICE-002 from GitHub is not either.")
         self.assertEqual(result["left_out"], ["SLICE-001", "SLICE-002"])
         self.assertIn("SLICE-003", result["from_github"]["ids"])
@@ -395,6 +396,56 @@ class ListingTest(GitHubBase):
         limits = {call[call.index("--limit") + 1] for call in self.gh()["calls"][-12:] if call[:2] == ["issue", "list"]
                   and call[call.index("--label") + 1] in ("mach:project", "mach:epic", "mach:slice")}
         self.assertEqual(limits, {"2"})
+
+
+class ProjectIssueTextTest(GitHubBase):
+    """A line in what the project's issue holds that the archive must not carry: the sets are left out and named; the project's
+    own record refuses, saying where it is changed. Neither asks the person to take the project in here first."""
+
+    def account_in(self, section):
+        state = self.gh()
+        (issue,) = [item for item in state["issues"].values() if "mach:project" in [label["name"] for label in item["labels"]]]
+        issue["body"] = issue["body"].replace("Teams work together.", "Teams work together; ask ada-pm.") if section == "vision" else issue["body"]
+        self.gh_state.write_text(json.dumps(state))
+        return issue["number"]
+
+    def test_principles_naming_an_account_are_left_out_and_named(self):
+        a = self.a
+        self.project_and_epic(a)
+        self.drafted(a)
+        self.ok(a, "principle", "add", "--title", "Ada decides", "--statement", "A published version MUST NOT be edited in place by anyone but ada-pm.",
+                "--reason", "Trust.")
+        self.ok(a, "principle", "publish")
+        self.ok(a, "refresh")
+        result = self.export(self.b)
+        (row,) = result["not_included"]
+        number = row["issue"]
+        self.assertEqual(row["reason"], f"The product principles on GitHub (the project's issue, #{number}) name the GitHub account ada-pm, "
+                                        "so they are not in the archive. Change that line in Product Studio on any computer that has the project, this "
+                                        "one included, and publish them again; then export again.")
+        self.assertNotIn("principles", result["from_github"]["ids"])
+        self.assertEqual(result["counts"]["principles"], 0)
+        self.assertNotIn("workspace/product/principles.json", self.members(result))
+
+    def test_the_project_s_record_naming_an_account_refuses_and_says_where_to_change_it(self):
+        self.published(principles=False)
+        number = self.account_in("vision")
+        message = self.refused_export(self.b)
+        self.assertEqual(message, f"The project's record on GitHub (the project's issue, #{number}) names the GitHub account ada-pm, and "
+                                  "the archive must not, so nothing was exported. Change it in Product Studio on any computer that has the project, "
+                                  "this one included, and save it to GitHub again by marking a slice ready; then export again. Nothing was changed.")
+
+
+class MisfitTest(unittest.TestCase):
+    def test_the_first_thing_that_does_not_fit_in_plain_words(self):
+        said = project_export._misfit(studio, "product/slices/SLICE-004.json: unknown dependency 'SLICE-099'", {"SLICE-004": 12})
+        self.assertEqual(said, "What GitHub holds and what is in this workspace do not fit together, so nothing was exported: SLICE-004 depends on "
+                               "SLICE-099, which is neither in this workspace nor on GitHub. SLICE-004 came from GitHub (#12): the product manager who "
+                               "marked it ready can put it right in Product Studio and mark it ready again, then export again, or export only what is "
+                               "here (project export --only-mine).")
+        said = project_export._misfit(studio, "product/slices/SLICE-002.json: epic_id is unknown", {})
+        self.assertIn("SLICE-002 belongs to an epic that is neither in this workspace nor on GitHub. SLICE-002 is in this workspace: put it right "
+                      "here in Product Studio, then export again", said)
 
 
 class OneNameEachTest(GitHubBase):
