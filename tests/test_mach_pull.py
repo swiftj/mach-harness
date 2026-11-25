@@ -228,7 +228,8 @@ class RulesTest(PullBase):
         C.take(self.eng / ".factory/worktrees" / str(a), "plan", C.new_holder(), C.minutes({}))
         report = self.pull()
         held = self.waiting(report)["SLICE-001"]
-        self.assertEqual((held["rule"], held["in_this_run"], held["then"]), ("claimed", False, "left to the worker on it"))
+        self.assertEqual((held["rule"], held["in_this_run"]), ("claimed", False), "the pull's own choice leaves it alone")
+        self.assertIn(f"say /mach:run {a} and MACH takes it over and builds it here", held["then"], "and says how a person takes it: by naming it")
         self.assertEqual(report["run"], [str(b)])
 
     def test_a_not_accepted_issue_is_reported_and_never_built(self):
@@ -522,7 +523,7 @@ class HandOverTest(PullBase):
         report = self.pull()
         self.assertEqual((report["factory"]["handed_over"], report["factory"]["tickets"]), (True, [str(b)]))
         self.assertEqual(self.owners(), {"SLICE-001": "engineer", "SLICE-002": "supervisor"})
-        self.assertEqual(self.waiting(report)["SLICE-001"]["then"], "left to the worker on it")
+        self.assertIn("is left alone by this pull; say /mach:run", self.waiting(report)["SLICE-001"]["then"])
 
     def test_an_engineers_own_ticket_stays_in_the_conversation(self):
         (a,) = self.issues(1)

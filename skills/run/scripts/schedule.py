@@ -17,11 +17,18 @@ Facts per ticket, all read from what the stations and the intake ledger recorded
 A ticket in "prepare" may start, under the ceiling, only as far as the build station (until "build"), and is
 then scheduled again with its plan known.
 
+A person's schedule (run.py schedule outside a supervised execution: the tickets a person named) never holds a
+ticket because someone else has it: a ticket another worker has a fresh claim on, or whose lanes another worker's
+builders are at work in, starts, with a sentence in its "warnings" (its own `next` takes the step over), and so does
+a ticket whose dependencies are not integrated yet, unless the dependency is itself in this run. The ceiling,
+dependency (within the run), High-risk and file-overlap rules still order the person's tickets within the run: a
+ticket they hold starts as soon as one before it finishes.
+
 Rules, applied in the order the tickets were given:
-    1. a ticket already running is skipped; one another worker has a fresh claim on is held ("claimed", run.py
-       schedule --holder H: a claim by another holder than H; without --holder, any fresh claim), and so is one
-       whose lanes another worker's builders are at work in, whatever claim.json says (lanes_held, the rule
-       run.py next uses)
+    1. a ticket already running is skipped; for the Factory's own choice (a pull, the supervisor, a supervised
+       execution), one another worker has a fresh claim on is held ("claimed", run.py schedule --holder H: a claim
+       by another holder than H; without --holder, any fresh claim), and so is one whose lanes another worker's
+       builders are at work in, whatever claim.json says (lanes_held, the rule run.py next uses)
     2. ceiling: running plus started never exceeds the ceiling in force
     3. dependency: a ticket waits while a ticket it depends on is not integrated
     4. High risk: among tickets in the line, at most the High-risk ceiling run at once
@@ -242,6 +249,16 @@ def lanes_held(cell_dir: Path, holder: Optional[str], limit: int, station: Any, 
             "lanes": [lane["lane"] for lane in working]}
 
 
+def claimed_warning(ticket_id: str, claimed: Dict[str, Any], claims: Any) -> str:
+    """What a person is told first about a ticket they named that another worker has: the run takes it over when it starts it."""
+    clock = getattr(claims, "clock", lambda value: value)
+    if claimed.get("lanes"):
+        return (f"Another worker's builders are building lane(s) {', '.join(claimed['lanes'])} of {ticket_id}, last at "
+                f"{clock(claimed.get('renewed_at') or claimed.get('at'))}. This run takes them over when it starts {ticket_id}; they stop at their next step.")
+    return (f"Another worker was handed the {claimed.get('step')} step of {ticket_id} at {clock(claimed.get('at'))} and may still be at work. "
+            f"This run takes it over when it starts {ticket_id}; that worker is stopped at its next step.")
+
+
 def plan_files(cell_dir: Path, parse_plan: Optional[Callable[[str], Any]]) -> Optional[List[str]]:
     """Every file the plan says it touches, or None when there is no plan or it names no file."""
     if parse_plan is None:
@@ -290,7 +307,7 @@ def dependencies(root: Path, factory: Optional[Callable[[], Any]]) -> Dict[str, 
 def main(args: Any, project: Path, *, config: Dict[str, Any], sibling: Optional[Callable[[str], Path]] = None,
          factory: Optional[Callable[[], Any]] = None, workflow: str = "mach:belt", supervised: Optional[str] = None,
          resolved: Optional[Dict[str, str]] = None, beside: Sequence[str] = (), claims: Any = None,
-         gone: Optional[Callable[[str], Sequence[str]]] = None) -> Dict[str, Any]:
+         gone: Optional[Callable[[str], Sequence[str]]] = None, person: bool = False) -> Dict[str, Any]:
     """The schedule for the tickets in `args` (ticket_ids, running, limit, sequential, by_person, dry_run).
 
     run.py resolves bare numbers first and passes what was typed for each resolved ticket in `resolved`, and the
@@ -300,7 +317,8 @@ def main(args: Any, project: Path, *, config: Dict[str, Any], sibling: Optional[
     files are not known. `claims` is the shared claim helper (claim.py): a pending ticket with a fresh claim by a
     holder other than `args.holder` (any fresh claim, with no holder) is held, unless `gone(ticket)` names that holder:
     a Factory execution that is known to have stopped (its session ended, or its process is gone) holds nothing.
-    Returns the report; prints and writes nothing."""
+    `person`: a person named these tickets (run.py schedule with no supervised execution). Then a claimed ticket, and one waiting
+    for a dependency, is not held: it starts, with the reason as a warning. Returns the report; prints and writes nothing."""
     if args.by_person and supervised:
         raise ScheduleError(f"--by-person is a person's word, and this runs inside a supervised Factory execution (for {supervised}); the settings ceiling applies.")
     factory_section = config.get("factory") if isinstance(config.get("factory"), dict) else {}
@@ -322,20 +340,36 @@ def main(args: Any, project: Path, *, config: Dict[str, Any], sibling: Optional[
                 held = None  # its holder was an execution that has stopped: nobody holds the ticket
             if held and held["holder"] != mine:
                 item["claimed"] = claims.public(held, limit)
-                continue
-            # Live lanes count as held whatever claim.json says, exactly as run.py next decides it (the same rule, lanes_held).
-            lanes = lanes_held(cell_dir, mine, limit, station, claims)
-            if lanes:
-                item["claimed"] = lanes
+            else:
+                # Live lanes count as held whatever claim.json says, exactly as run.py next decides it (the same rule, lanes_held).
+                lanes = lanes_held(cell_dir, mine, limit, station, claims)
+                if lanes:
+                    item["claimed"] = lanes
+            if item.get("claimed") and person:
+                item.setdefault("warnings", []).append(claimed_warning(item["ticket_id"], item.pop("claimed"), claims))
+    if person:
+        # A dependency in this same run orders the person's tickets (it starts first, and this one when it finishes); one that is not
+        # in this run, or has finished in it without being merged, never holds the ticket: it starts, with a warning.
+        here = set(tickets) | set(running)
+        for item in facts:
+            unmerged = [str(name) for name in item.get("waits_for") or []]
+            outside = [name for name in unmerged if name not in here]
+            if outside:
+                item.setdefault("warnings", []).append(f"{item['ticket_id']} depends on {listed(outside)}, which {'is' if len(outside) == 1 else 'are'} "
+                                                       "not merged yet: its build may fail or need that work until then.")
+                item["waits_for"] = [name for name in unmerged if name in here]
     busy = [ticket_facts(project, name, parse, waits.get(name, [])) for name in running]
     peers = [dict(ticket_facts(project, name, parse), waits_for=[]) for name in dict.fromkeys(beside) if name not in tickets and name not in running]
     peers = [dict(item, phase="line", files=None) if item["phase"] == "prepare" else item for item in peers]  # no plan yet: files not known
     decided = decide(facts, busy + peers, ceiling["in_force"] + len(peers), ceiling["high"])
     decided["running"] = [name for name in decided["running"] if name in running]
     given = {ticket: typed for typed, ticket in (resolved or {}).items()}
+    said = {item["ticket_id"]: item["warnings"] for item in facts if item.get("warnings")}
     for item in decided["start"] + decided["held"]:
         if item["ticket_id"] in given:
             item["given"] = given[item["ticket_id"]]
+        if item["ticket_id"] in said:
+            item["warnings"] = said[item["ticket_id"]]
     skipped = [name for name in tickets if name in running]
     # The advisory order leaves claims out: a claim lapses or ends with its stage, and the simulation assumes work finishes.
     simulated = simulate([dict(item, claimed=None) for item in facts if item["ticket_id"] not in running], busy, ceiling["in_force"], ceiling["high"])
@@ -347,6 +381,7 @@ def main(args: Any, project: Path, *, config: Dict[str, Any], sibling: Optional[
         if args.by_person:
             workflow_args["by_person"] = True
     return {
+        **({"warnings": [line for lines in said.values() for line in lines]} if said else {}),
         "ceiling": ceiling,
         "tickets": [{key: item[key] for key in ("ticket_id", "stage", "phase", "risk", "files", "waits_for")} for item in facts],
         "start": decided["start"], "held": decided["held"], "running": decided["running"], "skipped_as_running": skipped,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One worker per ticket: the claim on a cell's next step.
+"""One worker per ticket, and a person's word always wins: the claim on a cell's next step.
 
 A claim is a small file in the cell, .factory/worktrees/<ticket_id>/claim.json:
 
@@ -16,6 +16,11 @@ honest drivers, not a security boundary.
 Shared by run.py (next, status, schedule) and cell.py (claim), and loaded the way lifecycle.py is. The station
 files stay authoritative: no station reads a claim, so recording one never changes a station's result.
 
+A person who names a ticket is never refused because another worker has it: the step is taken over at once and the
+other holder is recorded as displaced (displaced.json). Each station refuses a displaced holder at its next call
+(station_argv, station_stop), so two workers never go on in one cell. Only a supervised execution keeps the plain
+one-worker rule and waits.
+
 Standard library only.
 """
 
@@ -26,7 +31,7 @@ import secrets
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 FILE = "claim.json"
 DEFAULT_MINUTES = 90
@@ -168,6 +173,191 @@ def in_words(claim: Dict[str, Any], limit: int) -> str:
     renewed = f", last renewed {view['renewed_at']}" if view["renewed_at"] != view["at"] else ""
     return (f"Another worker was handed the {view['step']} step for this ticket at {view['at']}{renewed}. "
             f"The claim lapses at {view['lapses_at']}, or as soon as the ticket moves to a new stage.")
+
+
+def clock(value: Any, at: Optional[datetime] = None) -> str:
+    """A claim's time the way a person reads it: "02:47 UTC" today, "2026-11-24 02:47 UTC" another day."""
+    moment = parse(value)
+    if moment is None:
+        return str(value or "an unknown time")
+    moment = moment.astimezone(timezone.utc)
+    today = (at or now()).astimezone(timezone.utc).date()
+    return moment.strftime("%H:%M UTC") if moment.date() == today else moment.strftime("%Y-%m-%d %H:%M UTC")
+
+
+def taken_over_warning(claim: Dict[str, Any]) -> str:
+    """What a person is told first when MACH took a step over for them from another worker's fresh claim."""
+    return (f"Another worker was handed the {claim['step']} step for this ticket at {clock(claim.get('at'))} and may still be at work. "
+            "You have taken it over; that worker is stopped at its next step.")
+
+
+# ---- a person's request is carried out (the owner's rule, 2026-11-25) ----
+#
+# A person who names a ticket gets the work: another worker's fresh claim is taken over in the same call, and that worker is
+# displaced. A displaced holder is recorded in the cell (displaced.json): every station refuses it at its next call (station_argv,
+# stopped_words), and its own driver is told at its next `next` that its part stops here. A supervised execution is not a person:
+# it keeps the one-worker rule and never takes a step over.
+
+DISPLACED = "displaced.json"
+
+
+def displaced_all(cell_dir: Path) -> Dict[str, Dict[str, Any]]:
+    """Every holder a person's take-over displaced in this cell: {holder: {"at", "step", "by"}}. Empty when none or unreadable."""
+    try:
+        data = json.loads((Path(cell_dir) / DISPLACED).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    holders = data.get("holders") if isinstance(data, dict) else None
+    return {key: value for key, value in holders.items() if valid_holder(key) and isinstance(value, dict)} if isinstance(holders, dict) else {}
+
+
+def displaced(cell_dir: Path, holder: Optional[str]) -> Optional[Dict[str, Any]]:
+    """The record of this holder's displacement, or None when it was never displaced (or no holder is given)."""
+    if not valid_holder(holder):
+        return None
+    return displaced_all(cell_dir).get(str(holder))
+
+
+def _write_displaced(cell_dir: Path, holders: Dict[str, Dict[str, Any]]) -> None:
+    folder = Path(cell_dir)
+    handle, temp = tempfile.mkstemp(prefix=".displaced-", suffix=".tmp", dir=str(folder))
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as out:
+            out.write(json.dumps({"holders": holders}, indent=2) + "\n")
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temp, folder / DISPLACED)
+    except BaseException:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+        raise
+
+
+def displace(cell_dir: Path, holders: Any, step: str, by: str = "person", at: Optional[datetime] = None) -> None:
+    """Record that a person took this cell's work over from these holders. Raises OSError when it cannot be written."""
+    names = [name for name in dict.fromkeys(holders or []) if valid_holder(name)]
+    if not names:
+        return
+    known = displaced_all(cell_dir)
+    for name in names:
+        known[name] = {"at": stamp(at or now()), "step": step, "by": by}
+    _write_displaced(cell_dir, known)
+
+
+def reinstate(cell_dir: Path, holder: Optional[str]) -> None:
+    """A person named the ticket again for a holder that was displaced before: it holds the work again."""
+    known = displaced_all(cell_dir)
+    if holder in known:
+        known.pop(str(holder))
+        _write_displaced(cell_dir, known)
+
+
+def stopped_words(record: Dict[str, Any]) -> str:
+    """What a displaced worker is told at its next station call or its next `next`."""
+    return (f"This ticket was taken over by a person at {clock(record.get('at'))}. This worker's part stops here; nothing it had not "
+            "committed is used. Stop now and report that the ticket was taken over.")
+
+
+def station_argv(parser: Any, argv: Sequence[str]) -> Tuple[List[str], Optional[str]]:
+    """For a station's command line: (the arguments to parse, the --holder given or None). A station command whose own parser takes
+    --holder (a lane's build.py commands, cell.py claim) keeps it; for every other command it is taken out here, so any worker can pass
+    the holder its step was claimed for to every station command it runs."""
+    items = list(argv)
+    holder: Optional[str] = None
+    keeps = False
+    choices: Dict[str, Any] = {}
+    for action in getattr(parser, "_actions", []):
+        if action.__class__.__name__ == "_SubParsersAction":
+            choices = dict(action.choices)
+    command = next((item for item in items if item in choices), None)
+    if command is not None:
+        keeps = "--holder" in getattr(choices[command], "_option_string_actions", {})
+    out: List[str] = []
+    index = 0
+    while index < len(items):
+        item = items[index]
+        if item == "--holder" and index + 1 < len(items):
+            holder = items[index + 1]
+            if keeps:
+                out += items[index:index + 2]
+            index += 2
+            continue
+        if item.startswith("--holder="):
+            holder = item.split("=", 1)[1]
+            if keeps:
+                out.append(item)
+            index += 1
+            continue
+        out.append(item)
+        index += 1
+    return out, holder
+
+
+def station_stop(project: Optional[Path], ticket_id: Any, holder: Optional[str]) -> Optional[str]:
+    """The refusal for a worker whose holder a person's take-over displaced, or None. Shared by every station's command line."""
+    if project is None or not isinstance(ticket_id, str) or not valid_holder(holder):
+        return None
+    record = displaced(Path(project) / ".factory" / "worktrees" / ticket_id, holder)
+    return stopped_words(record) if record else None
+
+
+def set_aside(work: Path, ref: str, message: str) -> Optional[Dict[str, Any]]:
+    """Keep a checkout's uncommitted files (tracked and untracked, not ignored) as one commit on top of its HEAD under `ref`, through a
+    separate index, then put those files back to HEAD. None when the checkout is clean or is not a Git checkout. Raises OSError with
+    nothing changed when Git cannot save them. `git checkout <ref> -- <path>` brings a file back."""
+    import shutil
+    import subprocess
+
+    def git(*args: str, env: Optional[Dict[str, str]] = None) -> Any:
+        return subprocess.run(["git", *args], cwd=str(work), capture_output=True, text=True, env=env)
+
+    if not Path(work).is_dir() or git("rev-parse", "--verify", "-q", "HEAD").returncode != 0:
+        return None
+    listed = git("status", "--porcelain", "-z", "--untracked-files=all").stdout.split("\0")
+    paths: List[str] = []
+    skip = False
+    for entry in listed:
+        if skip:
+            skip = False
+            continue
+        if len(entry) > 3:
+            paths.append(entry[3:])
+            skip = entry[0] in "RC"
+    if not paths:
+        return None
+    head = git("rev-parse", "HEAD").stdout.strip()
+    index = Path(git("rev-parse", "--git-path", "index").stdout.strip())
+    index = index if index.is_absolute() else Path(work) / index
+    scratch = index.with_name(index.name + ".mach-takeover")
+    env = dict(os.environ, GIT_INDEX_FILE=str(scratch))
+    if git("var", "GIT_COMMITTER_IDENT").returncode != 0:
+        env.update({"GIT_AUTHOR_NAME": "MACH", "GIT_AUTHOR_EMAIL": "mach@localhost", "GIT_COMMITTER_NAME": "MACH", "GIT_COMMITTER_EMAIL": "mach@localhost"})
+    try:
+        if index.is_file():
+            shutil.copyfile(str(index), str(scratch))
+        added = git("add", "-A", "--sparse", env=env)
+        tree = git("write-tree", env=env) if added.returncode == 0 else added
+        made = git("commit-tree", tree.stdout.strip(), "-p", head, "-m", message, env=env) if tree.returncode == 0 else tree
+    finally:
+        if scratch.exists():
+            scratch.unlink()
+    if made.returncode != 0 or git("update-ref", ref, made.stdout.strip()).returncode != 0:
+        raise OSError((made.stderr or made.stdout or "git could not save the files").strip()[:300])
+    git("reset", "-q", "--", *paths)
+    tracked = [name for name in paths if git("cat-file", "-e", f"HEAD:{name}").returncode == 0]
+    if tracked:
+        git("checkout", "-q", "HEAD", "--", *tracked)
+    for name in paths:
+        if name in tracked:
+            continue
+        target = Path(work) / name
+        if target.is_symlink() or target.is_file():
+            target.unlink()
+        elif target.is_dir():
+            shutil.rmtree(str(target), ignore_errors=True)
+    return {"commit": made.stdout.strip(), "ref": ref, "paths": sorted(paths)}
 
 
 def take(cell_dir: Path, step: str, holder: str, limit: int, take_over: bool = False, at: Optional[datetime] = None) -> Dict[str, Any]:

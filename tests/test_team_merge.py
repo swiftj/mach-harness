@@ -244,7 +244,7 @@ def spec_sha(text):
 
 class ShippedOnceTest(SharedRemote):
     """M20: the shared main takes a slice revision once. Two Factories built SLICE-001; the other one's copy landed first
-    (pushed from another engineer's clone). This cell's merge is refused with intake's sentence, and nothing is merged,
+    (pushed from another engineer's clone). The Factory's own merge of this cell stops with intake's sentence, and nothing is merged,
     pushed, opened or closed."""
 
     def slice_cell(self, sha=None, **config):
@@ -258,7 +258,8 @@ class ShippedOnceTest(SharedRemote):
     def assert_refused(self, err, landed):
         self.assertIn(f"SLICE-001 was already shipped from another Factory (merged as {landed[:12]}). This copy was not merged.", err)
         self.assertIn("Nothing was pushed or merged.", err)
-        self.assertIn("cleanup run LOCAL-001 --abandon", err)
+        self.assertNotIn("--abandon", err, "a stop never suggests abandoning")
+        self.assertIn("A person's merge (merge LOCAL-001 --by-person) brings main into this copy", err)
 
     def test_local_merge_is_refused_once_the_other_copy_landed(self):
         self.slice_cell(mode="auto")
@@ -297,7 +298,7 @@ class ShippedOnceTest(SharedRemote):
         before = len(self.calls())
         err = self.m_refused("run", "LOCAL-001")
         self.assert_refused(err, landed)
-        self.assertIn("This copy's pull request (https://github.com/acme/app/pull/12) is left open: close it on GitHub once you no longer need it.", err)
+        self.assertIn("This copy's pull request (https://github.com/acme/app/pull/12) is left open.", err)
         self.assertEqual([call[:2] for call in self.calls()[before:]], [["pr", "view"]], "only read: not merged, not closed, nothing commented")
         self.assertEqual(self.cell_json()["stage"], "pr-open")
 
@@ -360,7 +361,7 @@ class ShippedOnceTest(SharedRemote):
         err = self.m_refused("run", "LOCAL-001")
         self.assertIn("SLICE-001 is already on main as specs/slices/SLICE-001-invite-a-teammate.md, which is another slice than this ticket's "
                       "specs/slices/SLICE-001-invite-teammate.md: two engineers took one slice number. Nothing was pushed or merged.", err)
-        self.assertIn("cell.py next-id", err)
+        self.assertIn("A person's merge (merge LOCAL-001 --by-person) gives this ticket's slice the next free number", err)
         self.assertEqual(self.calls(), [])
         self.assertEqual(self.cell_json()["stage"], "approved")
         plan = self.m_ok("plan", "LOCAL-001")  # run fetched the shared main; the plan reads it as fetched and says the same

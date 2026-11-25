@@ -86,6 +86,23 @@ try:
 except Exception:  # noqa: BLE001
     lifecycle = None
 
+# A person may take any ticket over (claim.py, with the intent station): a worker whose holder a take-over displaced is refused at its
+# next call to this station. Every command takes --holder for that; without one, nothing is checked. If the helper cannot be
+# loaded, nothing is checked and this station behaves exactly as before.
+try:
+    import claim as _claim  # noqa: E402
+except Exception:  # noqa: BLE001
+    _claim = None
+
+
+def split_holder(parser: Any, argv: Optional[Sequence[str]]) -> Tuple[List[str], Optional[str]]:
+    items = list(sys.argv[1:] if argv is None else argv)
+    return _claim.station_argv(parser, items) if _claim is not None else (items, None)
+
+
+def taken_over(project: Optional[Path], ticket_id: Any, holder: Optional[str]) -> Optional[str]:
+    return _claim.station_stop(project, ticket_id, holder) if _claim is not None else None
+
 
 def telemetry(*args: Any, **kwargs: Any) -> None:
     """Report what this station has just recorded to the cell's lifecycle log. Never raises."""
@@ -412,6 +429,12 @@ def default_branch(project: Path) -> Tuple[Optional[str], List[str]]:
 
 def branch_exists(project: Path, branch: str) -> bool:
     return git(project, "show-ref", "--verify", "-q", f"refs/heads/{branch}").returncode == 0
+
+
+def own_branch(ticket_id: str, branch: Any) -> bool:
+    """A cell's own feature branch: feature/<ticket>, or feature/<ticket>-<name>, the branch intake gives a slice a person took over
+    from another Factory so that both Factories' branches can be on origin at once (cell.py open --branch)."""
+    return isinstance(branch, str) and (branch == f"feature/{ticket_id}" or bool(re.fullmatch(rf"feature/{re.escape(ticket_id)}-[a-z0-9][a-z0-9-]{{0,38}}", branch)))
 
 
 def merged_into(project: Path, branch: str, refs: List[str]) -> Optional[str]:
@@ -1004,6 +1027,11 @@ def survey_gates(cell: Cell, abandon: Optional[str], merged_as: Optional[str] = 
     """The gates and what a cleanup that keeps the archive would do: the cleanup as it always was."""
     project, ticket_id, stage = cell.project, cell.ticket_id, cell.info.get("stage")
     abandoning = abandon is not None
+    recorded = cell.info.get("merged") if isinstance(cell.info.get("merged"), dict) else {}
+    if not abandoning and not merged_as and isinstance(recorded.get("already_on_main"), str):
+        # The merge station found everything in this copy already on main (another copy of the slice landed first): it closes out
+        # as merged, as that commit, exactly as a person's --merged-as would say.
+        merged_as = recorded["already_on_main"]
     reason = " ".join(abandon.split()) if abandoning else None
     refusals: List[str] = []
     if abandoning and len(reason or "") < MIN_REASON:
@@ -1016,7 +1044,7 @@ def survey_gates(cell: Cell, abandon: Optional[str], merged_as: Optional[str] = 
     branch, merged, target, landed = cell.branch, None, None, None
     has_branch, unmerged = False, 0
     if cell.isolated:
-        if branch != f"feature/{ticket_id}":
+        if not own_branch(ticket_id, branch):
             refusals.append(f"cell.json names the branch '{branch}', not 'feature/{ticket_id}'. Cleanup only deletes a cell's own feature branch; correct cell.json or remove the cell by hand.")
         else:
             has_branch = branch_exists(project, branch)
@@ -1456,7 +1484,7 @@ def forget_one(project: Path, ticket_id: str, records: List[Dict[str, Any]]) -> 
                              "branch": None, "archives": [], "left": []}
     recorded = next((record["kept_in_git"]["branch"] for record in reversed(records) if isinstance(record.get("kept_in_git"), dict)
                      and isinstance(record["kept_in_git"].get("branch"), dict)), None)
-    if recorded and recorded.get("name") == f"feature/{ticket_id}":
+    if recorded and own_branch(ticket_id, recorded.get("name")):
         name, was = recorded["name"], recorded.get("commit")
         tip = git(project, "rev-parse", "--verify", "-q", f"refs/heads/{name}").stdout.strip()
         checked_out = {branch: path for path, branch in registered_worktrees(project) if branch}
@@ -1654,10 +1682,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    argv, holder = split_holder(parser, argv)
+    args = parser.parse_args(argv)
     project = None
     try:
         project = args.project.resolve() if args.project else find_project(Path.cwd())
+        stop = taken_over(project, getattr(args, "ticket_id", None), holder)
+        if stop:
+            raise CleanupError(stop, code="taken-over")
         return args.func(project, args)
     except CleanupError as exc:
         print(f"refused: {exc}", file=sys.stderr)

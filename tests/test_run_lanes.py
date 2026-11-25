@@ -451,7 +451,7 @@ class HandBackTest(Base):
         self.lanes_start()
         self.lanes_start(OTHER, "--take-over")
         answer = self.run_json("lanes-hand-back", TICKET, "--lane", "L1", "--reason", "x", "--holder", HOLDER)
-        self.assertEqual((answer["status"], answer["needs"]), ("WAIT", "worker-in-cell"))
+        self.assertEqual((answer["status"], answer["needs"]), ("REFUSED", "taken-over"), "the old driver's part stops; it is never told to wait")
 
 
 class TestCommandTest(Base):
@@ -490,8 +490,34 @@ class TwoDriversTest(Base):
         self.assertEqual(self.next_step("--holder", HOLDER)["action"], "build-lanes")
         self.assertEqual(self.lanes_start()["status"], "OPEN")
 
-    def test_a_live_lane_stops_another_driver_even_after_the_claim_went_stale(self):
+    def factory_execution(self):
+        """The second driver as a supervised Factory execution of this ticket: it keeps the one-worker rule."""
+        self.put(self.project, {".factory/intake/ledger.json": json.dumps(
+            {"supervisor": {"executions": {"x222222222222": {"ticket_id": TICKET, "state": "started", "runner_id": "r-1"}}}})})
+        return mock.patch.dict(os.environ, {run.EXECUTION_ENV: "x222222222222"})
+
+    def test_a_live_lane_stops_a_supervised_driver_even_after_the_claim_went_stale(self):
         self.opened()
+        with self.factory_execution():
+            self.live_lanes_hold_the_execution()
+        mine = self.next_step("--holder", HOLDER)
+        self.assertEqual(mine["action"], "build-lanes", "the driver whose lanes they are carries on")
+
+    def test_a_persons_driver_takes_live_lanes_over_and_the_old_builders_stop(self):
+        self.opened()
+        taken = self.next_step("--holder", OTHER)
+        self.assertEqual(taken["action"], "build-lanes")
+        self.assertTrue(any("lanes L1, L2" in line and "taken them over" in line for line in taken["warnings"]), taken.get("warnings"))
+        self.assertNotIn(HOLDER, json.dumps(taken), "never the holder")
+        answer = self.lanes_start(OTHER)
+        self.assertEqual([item["lane"] for item in answer["lanes"]], ["L1", "L2"])
+        self.assertEqual(json.loads(self.lane_file("L1").read_text())["holder"], OTHER)
+        code, _, err = self.run_build("next", TICKET, "--lane", "L1", "--holder", HOLDER)
+        self.assertEqual(code, 1)
+        self.assertIn("taken over by a person", err, "the old lane builder is refused at its next station call")
+        self.assertEqual(self.next_step("--holder", HOLDER)["needs"], "taken-over", "the old driver stops at its next step")
+
+    def live_lanes_hold_the_execution(self):
         first = self.next_step("--holder", OTHER)
         self.assertEqual((first["action"], first["needs"]), ("stop", "worker-in-cell"), "the claim is fresh")
         self.age(self.cellroot / "claim.json")
@@ -501,7 +527,7 @@ class TwoDriversTest(Base):
         self.assertEqual(stopped["other_claim"]["lanes"], ["L1", "L2"])
         self.assertEqual(stopped["other_claim"]["step"], "build-lanes")
         self.assertIn("Another worker is building lanes L1, L2 of this ticket", stopped["reason"])
-        self.assertIn("A person can say to take over this step.", stopped["reason"])
+        self.assertIn("A person who names this ticket takes them over at once.", stopped["reason"])
         self.assertNotIn(HOLDER, json.dumps(stopped), "never the holder")
         self.assertEqual(self.next_step()["needs"], "worker-in-cell", "without a holder it is refused the same way")
         held = self.lanes_start(OTHER)
@@ -512,8 +538,6 @@ class TwoDriversTest(Base):
         (row,) = [row for row in status["tickets"] if row["ticket_id"] == TICKET]
         self.assertEqual(row["claim"]["lanes"], ["L1", "L2"], "the status says lane builders are at work")
         self.assertIn(TICKET, status["being_worked_on"])
-        mine = self.next_step("--holder", HOLDER)
-        self.assertEqual(mine["action"], "build-lanes", "the driver whose lanes they are carries on")
 
     def test_a_dead_lane_builder_is_taken_over_by_the_next_driver_and_resumes(self):
         self.opened()
@@ -538,11 +562,23 @@ class TwoDriversTest(Base):
         answer = self.lanes_start(OTHER, "--take-over")
         self.assertEqual([item["lane"] for item in answer["lanes"]], ["L1", "L2"])
         self.assertEqual(json.loads(self.lane_file("L2").read_text())["holder"], OTHER)
-        self.assertEqual(self.next_step("--holder", HOLDER)["needs"], "worker-in-cell", "the first driver is now the other one")
+        self.assertEqual(self.next_step("--holder", HOLDER)["needs"], "taken-over", "the first driver's part stops")
 
-    def test_the_schedule_holds_a_ticket_whose_lanes_another_driver_holds_by_the_same_rule_as_next(self):
+    def test_a_persons_schedule_starts_a_ticket_whose_lanes_another_driver_holds_with_a_warning(self):
         self.opened()
         self.age(self.cellroot / "claim.json")  # only the live lanes hold it now
+        report = self.run_json("schedule", TICKET, "--holder", OTHER)
+        self.assertEqual([item["ticket_id"] for item in report["start"]], [TICKET])
+        self.assertIn("lane(s) L1, L2", report["start"][0]["warnings"][0])
+        self.assertNotIn(HOLDER, json.dumps(report), "never the holder")
+
+    def test_the_factorys_schedule_holds_a_ticket_whose_lanes_another_driver_holds_by_the_same_rule_as_next(self):
+        self.opened()
+        self.age(self.cellroot / "claim.json")  # only the live lanes hold it now
+        with self.factory_execution():
+            self.factory_schedule_is_held()
+
+    def factory_schedule_is_held(self):
         held = self.run_json("schedule", TICKET, "--holder", OTHER)
         self.assertEqual(held["start"], [])
         (item,) = held["held"]

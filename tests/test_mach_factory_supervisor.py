@@ -1413,7 +1413,8 @@ class LifetimeTest(Base):
         C.take(self.eng / ".factory/worktrees/LOCAL-001", "plan", C.new_holder(), C.minutes({}))
         kept = activation.carry_on(run.factory_context(run.Project(self.eng)), tickets=["LOCAL-001"])
         self.assertEqual((kept["supervisor"], kept["given"], owner(), len(self.detached)), ("none", [], "engineer", before))
-        self.assertIn("carries on there", kept["not_given"][0]["why"])
+        self.assertIn("Say /mach LOCAL-001 and MACH takes it over", kept["not_given"][0]["why"])
+        self.assertNotIn("that conversation", kept["not_given"][0]["why"])
         # An engineer's own ticket (not from a slice) is never the supervisor's.
         own = activation.carry_on(run.factory_context(run.Project(self.eng)), tickets=["LOCAL-900"])
         self.assertEqual((own["supervisor"], own["given"], len(self.detached)), ("none", [], before))

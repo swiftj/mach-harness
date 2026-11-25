@@ -1,10 +1,11 @@
 """Teams (M20): several engineers' Factories, each on their own computer and clone, taking slices from one GitHub repository.
 
-The owner's two decisions of 2026-11-23: no slice belongs to anyone in advance, and two Factories do not build the same slice at
-the same time (no duplicate builds, no duplicate pull requests). A Factory claims a slice on its issue just before it opens a cell;
-the earliest claim that counts holds it. Another Factory skips it and takes the next slice nobody is building. A claim is released
-by its own Factory, goes stale after a quiet spell, or is taken over on an engineer's explicit word. As a backstop, the shared main
-takes a slice revision once.
+The owner's decisions of 2026-11-23: no slice belongs to anyone in advance, and a Factory's own choice does not build a slice
+another Factory is building. A Factory claims a slice on its issue just before it opens a cell; the earliest claim that counts
+holds it. Another Factory's own choice (pull, product dispatch --ready, the supervisor) skips it and takes the next slice nobody is
+building. And the owner's rule of 2026-11-25: an engineer who names a slice (product dispatch <slice>) gets it, whoever holds it:
+it is taken over with a warning, on a branch of its own, and the copies meet at the merge. As a backstop for the Factory's own
+merges, the shared main takes a slice revision once.
 
 Builds on test_mach_product_intake: the engineer's clone `eng` is one Factory; `eng2` is a second clone of the same shared
 repository, set up the same way, standing in for a second engineer's computer. Both reach the one GitHub stand-in (the same
@@ -125,8 +126,17 @@ class SameSliceTwiceTest(TwoFactories):
         self.assertRegex(row["being_built_elsewhere"], r"^SLICE-001 is being built by @erin-eng since 2026-11-17 \d\d:\d\d UTC\.$")
         status = {item["slice_id"]: item for item in self.product2("status")["slices"]}
         self.assertTrue(status["SLICE-001"]["being_built_elsewhere"].startswith("SLICE-001 is being built by @erin-eng"))
-        self.assertEqual(self.product2("dispatch", "SLICE-001")["tickets"], [])
+        self.assertEqual(self.product2("dispatch", "--ready")["tickets"], [], "the Factory's own choice skips it")
         self.assertFalse((self.eng2 / ".factory/worktrees").exists())
+        # An engineer who names it gets it: taken over with a warning, on a branch of its own.
+        taken = self.product2("dispatch", "SLICE-001")
+        self.assertEqual((taken["tickets"], taken["refused"]), ([str(number)], []))
+        self.assertTrue(taken["warnings"][0].startswith("@erin-eng's Factory has been building SLICE-001 since"), taken["warnings"])
+        self.assertEqual(taken["dispatched"][0]["branch"], f"feature/{number}-erin-eng")
+        cell = json.loads((self.eng2 / ".factory/worktrees" / str(number) / "cell.json").read_text())
+        self.assertEqual(cell["branch"], f"feature/{number}-erin-eng")
+        self.assertTrue([c for c in self.gh()["issues"][str(number)]["comments"] if c["body"].startswith("The MACH Factory is taking over SLICE-001")],
+                        "the issue gets the take-over comment so the other team sees it")
 
     def test_two_factories_reading_at_the_same_moment_build_it_once(self):
         """Both Factories read SLICE-001 while it was free. The first claims it and dispatches. The second's dispatch reads the
@@ -138,7 +148,7 @@ class SameSliceTwiceTest(TwoFactories):
         self.product2("intake")
         self.product("intake")
         self.assertEqual(self.product("dispatch", "SLICE-001")["tickets"], [str(number)])
-        lost = self.product2("dispatch", "SLICE-001")
+        lost = self.product2("dispatch", "--ready", "--limit", "1")  # the Factory's own choice, read while it was free
         self.assertEqual(lost["tickets"], [])
         [refused] = lost["refused"]
         self.assertEqual(refused["state"], "being_built_elsewhere")
@@ -180,7 +190,7 @@ class SameSliceTwiceTest(TwoFactories):
         row = self.rows2()["SLICE-001"]
         self.assertEqual((row["revision"], row["state"]), (2, "blocked"))
         self.assertIn("is being built by @erin-eng", row["being_built_elsewhere"])
-        self.assertEqual(self.product2("dispatch", "SLICE-001")["tickets"], [])
+        self.assertEqual(self.product2("dispatch", "--ready")["tickets"], [])
         self.assertFalse(self.cell_on("eng2", number))
 
 
@@ -193,11 +203,11 @@ class ClaimTest(TwoFactories):
         self.product("intake")
         self.post_claim(number, "erin-eng", self.token(self.eng))
         late = self.post_claim(number, "erin-eng", self.token(self.eng2))
-        second = self.product2("dispatch", "SLICE-001")
+        second = self.product2("dispatch", "--ready", "--limit", "1")
         self.assertEqual(second["tickets"], [])
         withdrawn = next(c for c in self.gh()["issues"][str(number)]["comments"] if c.get("cid") == late)
         self.assertTrue(withdrawn["body"].startswith(WITHDRAWN + " SLICE-001 revision 1. Another Factory claimed it first."), withdrawn["body"])
-        first = self.product("dispatch", "SLICE-001")
+        first = self.product("dispatch", "--ready", "--limit", "1")
         self.assertEqual(first["tickets"], [str(number)])
         self.assertEqual(len(self.claim_comments(number)), 1)
         self.assertEqual(self.ledger()["slices"]["SLICE-001"]["claim"]["comment_id"], late - 1)
@@ -216,21 +226,24 @@ class ClaimTest(TwoFactories):
         number = self.ready("SLICE-001", self.epic())
         self.product("intake")
         self.gh_fails("api comments")
-        done = self.product("dispatch", "SLICE-001")
-        self.assertEqual(done["tickets"], [])
+        done = self.product("dispatch", "--ready")
+        self.assertEqual(done["tickets"], [], "the Factory's own choice starts nothing")
         self.assertIn("GitHub could not be reached to claim SLICE-001", done["refused"][0]["why"][0])
         self.assertFalse((self.eng / ".factory/worktrees").exists())
         self.assertEqual(git(self.eng, "branch", "--list").split(), ["*", "main"])
         self.assertEqual(self.claim_comments(number), [])
-        self.assertEqual(self.product("dispatch", "SLICE-001")["tickets"], [str(number)])
+        self.gh_fails("api comments")
+        named = self.product("dispatch", "SLICE-001")
+        self.assertEqual(named["tickets"], [str(number)], "an engineer who names it gets it, GitHub or not")
+        self.assertTrue(any("GitHub could not be reached to claim SLICE-001" in line and "MACH builds it here anyway" in line for line in named["warnings"]))
 
     def test_a_claim_whose_answer_was_lost_is_this_factorys_own_next_time(self):
         number = self.ready("SLICE-001", self.epic())
         self.product("intake")
         self.lose("issue comment")
-        self.assertEqual(self.product("dispatch", "SLICE-001")["tickets"], [])
+        self.assertEqual(self.product("dispatch", "--ready")["tickets"], [])
         self.assertEqual(len(self.claim_comments(number)), 1)
-        self.assertEqual(self.product("dispatch", "SLICE-001")["tickets"], [str(number)])
+        self.assertEqual(self.product("dispatch", "--ready")["tickets"], [str(number)])
         self.assertEqual(len(self.claim_comments(number)), 1)
 
     def test_the_claim_holds_while_the_building_label_waits_in_the_outbox(self):
@@ -241,7 +254,7 @@ class ClaimTest(TwoFactories):
         self.assertEqual(self.labels_of(number), ["mach:ready", "mach:slice"])
         self.product2("intake")
         self.assertIn("is being built by @erin-eng", self.rows2()["SLICE-001"]["being_built_elsewhere"])
-        self.assertEqual(self.product2("dispatch", "SLICE-001")["tickets"], [])
+        self.assertEqual(self.product2("dispatch", "--ready")["tickets"], [])
 
     def test_two_engineers_signed_in_as_different_accounts(self):
         number = self.ready("SLICE-001", self.epic())
@@ -250,7 +263,7 @@ class ClaimTest(TwoFactories):
         self.set_gh(me="ada-pm")
         self.product2("dispatch", "SLICE-001")
         self.set_gh(me="erin-eng")
-        done = self.product("dispatch", "SLICE-001")
+        done = self.product("dispatch", "--ready", "--limit", "1")
         self.assertEqual(done["tickets"], [])
         self.assertIn("is being built by @ada-pm since", done["refused"][0]["why"][0])
         self.assertEqual([self.cell_on("eng", number), self.cell_on("eng2", number)], [False, True])
@@ -323,16 +336,17 @@ class ReleaseTest(TwoFactories):
         self.assertTrue(any(note.startswith("Taken from @erin-eng") for note in notes), notes)
         self.assertTrue(any("open pull request for SLICE-001 already exists: #77 by @ben-pm" in note for note in notes), notes)
 
-    def test_an_engineer_takes_a_slice_over_on_their_word(self):
+    def test_an_engineer_takes_a_slice_over_by_naming_it(self):
         number = self.ready("SLICE-001", self.epic())
         self.product("intake")
         self.product("dispatch", "SLICE-001")
         self.product2("intake")
-        self.assertEqual(self.product2("dispatch", "SLICE-001")["tickets"], [])
+        self.assertEqual(self.product2("dispatch", "--ready")["tickets"], [])
         self.set_gh(me="ada-pm")
-        done = self.product2("dispatch", "SLICE-001", "--take-over")
+        done = self.product2("dispatch", "SLICE-001")  # naming it is enough: no flag, no plan first, no second yes
         self.set_gh(me="erin-eng")
         self.assertEqual(done["tickets"], [str(number)])
+        self.assertEqual(done["dispatched"][0]["branch"], f"feature/{number}-ada-pm", "both Factories' branches can be on origin at once")
         self.assertTrue(done["dispatched"][0]["notes"][0].startswith("Taken over from @erin-eng"))
         taken = [c for c in self.gh()["issues"][str(number)]["comments"] if c["body"].startswith("The MACH Factory is taking over SLICE-001 revision 1")]
         self.assertEqual([c["login"] for c in taken], ["ada-pm"])
@@ -379,7 +393,8 @@ class ShippedOnceTest(TwoFactories):
         self.assertEqual((step["action"], step["needs"]), ("stop", "landed-elsewhere"))
         self.assertTrue(step["reason"].startswith(f"SLICE-001 was already shipped from another Factory (merged as {landed[:12]}). This copy was not merged."),
                         step["reason"])
-        self.assertIn(f"cleanup run {number} --abandon", step["reason"])
+        self.assertNotIn("--abandon", step["reason"], "the Factory's stop never suggests abandoning")
+        self.assertIn(f"A person who names this ticket (/mach {number}, or merge {number}) carries it on", step["reason"])
         calls = len(self.gh()["calls"])
         row = self.rows2()["SLICE-001"]
         self.assertEqual((row["state"], row["needs_person"], row["waiting_for"]), ("active", True, "landed-elsewhere"))

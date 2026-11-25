@@ -329,7 +329,9 @@ READY_SECONDS = 10  # how long a stop waits for a wrapper that has just been sta
 SESSION_MARK = "session-ended"   # the file a supervisor leaves in an execution's folder before it stops it for that reason
 STOPPED_BY_PERSON = "stopped-by-person"  # how an execution ended when a person stopped the Factory (/mach stop)
 STOP_MARK = "stopped-by-person"          # the file factory stop leaves in an execution's folder before it stops it
-PAUSED = (SESSION_ENDED, STOPPED_BY_PERSON)  # ends that pause the work: nothing parked, no attempt counted
+TAKEN_OVER = "taken-over-by-person"  # how an execution ended when a person took its ticket over (run.py next, by a person)
+TAKEN_OVER_MARK = "taken-over-by-person"  # the file a person's take-over leaves in the execution's folder before it stops it
+PAUSED = (SESSION_ENDED, STOPPED_BY_PERSON, TAKEN_OVER)  # ends that pause the work: nothing parked, no attempt counted
 
 
 def process_alive(pid: Any) -> bool:
@@ -409,8 +411,9 @@ def wrapper(root: Path, execution_id: str) -> int:
             if session_over or (home / SESSION_MARK).exists():
                 session_over = True
             by_person = (home / STOP_MARK).exists()
-            if interrupted["signal"] is not None or too_long or session_over or by_person:
-                ended = (STOPPED_BY_PERSON if by_person else SESSION_ENDED if session_over else
+            taken = (home / TAKEN_OVER_MARK).exists()
+            if interrupted["signal"] is not None or too_long or session_over or by_person or taken:
+                ended = (TAKEN_OVER if taken else STOPPED_BY_PERSON if by_person else SESSION_ENDED if session_over else
                          "timed-out" if too_long and interrupted["signal"] is None else "interrupted")
                 child.terminate()
                 try:
@@ -463,6 +466,12 @@ def end_by_person(root: Path, pid: Any, execution_id: str) -> bool:
     return marked_stop(root, pid, execution_id, STOP_MARK)
 
 
+def end_for_takeover(root: Path, pid: Any, execution_id: str) -> bool:
+    """Stop a running execution because a person took its ticket over: the mark first, so the wrapper records "taken-over-by-person".
+    Nothing is parked and no attempt counted; the ticket is the person's from then on."""
+    return marked_stop(root, pid, execution_id, TAKEN_OVER_MARK)
+
+
 def marked_stop(root: Path, pid: Any, execution_id: str, mark: str) -> bool:
     try:
         (folder(root, execution_id) / mark).write_text(now() + "\n", encoding="utf-8")
@@ -472,8 +481,10 @@ def marked_stop(root: Path, pid: Any, execution_id: str, mark: str) -> bool:
 
 
 def paused_how(root: Path, execution_id: str) -> Optional[str]:
-    """How a run was paused, from the mark left in its folder: "stopped-by-person", "session-ended", or None."""
+    """How a run was paused, from the mark left in its folder: "taken-over-by-person", "stopped-by-person", "session-ended", or None."""
     home = folder(root, execution_id)
+    if (home / TAKEN_OVER_MARK).exists():
+        return TAKEN_OVER
     if (home / STOP_MARK).exists():
         return STOPPED_BY_PERSON
     if (home / SESSION_MARK).exists():
