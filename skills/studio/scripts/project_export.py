@@ -28,7 +28,7 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import collab
 import design
@@ -1009,21 +1009,73 @@ def _not_assessed(host: Any, studio: Any, files: Dict[str, bytes], local: Dict[s
                 continue
             rows[(slice_id, row.group(1))] = {"slice": slice_id, "principle": row.group(1), "how": said["how"], "project": said["project"],
                                               "day": said["day"]}
-    current = {item["id"]: item for item in project_import.active_here(studio)}
-    for _, record in project_import._records(studio):  # noqa: SLF001  the import records, read as rows_on_reopen reads them
-        if record.get("mode") != "join" or not record.get("finished_at"):
-            continue
-        came = [current[i] for i in (record.get("merges") or {}).get("principles") or [] if i in current]
-        project = str(record.get("from_project_name") or record.get("from_project"))
-        day = str(record.get("day") or record.get("started_at") or "")[:10]
-        for slice_id, data in sorted(local.items()):
-            if data.get("status") != host.APPROVED or slice_id in project_import.slices_of(record):
-                continue
-            for item in project_import.rows_for_slices_here(host, studio, came, project_import.slices_of(record), project, day, write=False,
-                                                            only=[slice_id], editable=False):
-                rows.setdefault((slice_id, item["principle"]), {"slice": slice_id, "principle": item["principle"], "how": "principle_came",
-                                                                "project": project, "day": day})
+    # (b) exactly what the import records list: this workspace's slices marked ready before an import, for each principle it
+    # brought that they do not answer (the row reopening writes). Only while the slice is still marked ready and still lacks the row.
+    answered: Dict[str, Set[str]] = {}
+    for member in files:
+        found = re.fullmatch(r"workspace/specs/slices/(SLICE-[0-9]+)-.*\.md", member)
+        if found:
+            answered[found.group(1)] = {m.group(1) for line in files[member].decode("utf-8").splitlines()
+                                        for m in [validate.PRINCIPLE_ROW_RE.match(line.strip()) or validate.NOT_ASSESSED_ROW_RE.match(line.strip())] if m}
+    for entry in project_import.vouched_rows(studio):
+        slice_id = entry["slice"]
+        if entry.get("virtual") and slice_id in local and local[slice_id].get("status") == host.APPROVED \
+                and entry["principle"] not in answered.get(slice_id, set()):
+            rows.setdefault((slice_id, entry["principle"]), {k: entry[k] for k in ("slice", "principle", "how", "project", "day")})
     return [rows[key] for key in sorted(rows, key=lambda key: (int(key[0].split("-")[1]), key[1]))], unvouched
+
+
+def not_assessed_keys(rows: Sequence[Dict[str, str]]) -> List[Tuple[str, str]]:
+    return [(row["slice"], row["principle"]) for row in rows]
+
+
+def _principles_held_back(host: Any, studio: Any, files: Dict[str, bytes], slice_facts: Dict[str, Dict[str, Any]], carried: Set[Tuple[str, str]],
+                          unvouched: Set[Tuple[str, str]], warnings: List[str]) -> None:
+    """A slice that was ready (was_ready true) but whose spec does not answer every principle the archive holds, as slice ready will
+    check it in the new place, comes as a draft (was_ready false), and the export says why and what to do."""
+    raw = files.get("workspace/product/principles.json")
+    if raw is None:
+        return
+    validate = studio.validate_slice
+    try:
+        principles = validate.principles_shape(json.loads(raw.decode("utf-8")))
+    except ValueError:
+        return
+    if not any(item["status"] == "active" for item in principles):
+        return
+    specs = {}
+    for member in files:
+        found = re.fullmatch(r"workspace/specs/slices/(SLICE-[0-9]+)-.*\.md", member)
+        if found:
+            specs[found.group(1)] = (member, files[member].decode("utf-8"))
+    for slice_id, row in sorted(slice_facts.items()):
+        if not row.get("was_ready") or slice_id not in specs:
+            continue
+        member, text = specs[slice_id]
+        findings, _ = validate.analyze(text, member.rsplit("/", 1)[-1], principles=principles)
+        missing, stale = set(), set()
+        for finding in findings:
+            ident = re.match(r"^(PP-[0-9]{2,})", finding.message)
+            ident = ident.group(1) if ident else None
+            if finding.severity != "error" or not ident:
+                continue
+            if finding.rule == "principle-unanswered" and (slice_id, ident) not in carried:
+                missing.add(ident)
+            elif finding.rule in ("principle-quote", "principle-revision", "principle-not-assessed", "principle-unknown"):
+                stale.add(ident)
+        missing |= {principle for sid, principle in unvouched if sid == slice_id}
+        if not missing and not stale:
+            continue
+        row["was_ready"] = False
+        if missing:
+            named = ", ".join(sorted(missing))
+            warnings.append(f"{slice_id} was ready there, but it does not answer {named}, which joined the project later; this computer has no "
+                            f"record of that. It comes as a draft: export on the computer where the project was brought in, or answer {named} "
+                            "in the new place.")
+        else:
+            named = ", ".join(sorted(stale))
+            warnings.append(f"{slice_id} was ready there, but its answer to {named} is not for the principle as it stands now. It comes as a "
+                            f"draft: answer {named} again in the new place.")
 
 
 def _combined_errors(files: Dict[str, bytes]) -> List[str]:
@@ -1342,9 +1394,21 @@ def _collect(host: Any, studio: Any, only_mine: bool) -> Tuple[Dict[str, bytes],
     not_assessed, unvouched = _not_assessed(host, studio, files, local)
     if not_assessed:  # M21: optional; an importer that does not know it ignores it
         facts["not_assessed"] = not_assessed
+    import project_import  # noqa: E402  as studio.py imports it, where it is used
+    no_records = not project_import._records(studio)  # noqa: SLF001
+    from_github_ids = set(completion.slices) if completion else set()
     for slice_id, principle in unvouched:
-        warnings.append(f"{slice_id}'s spec says {principle} is 'Not assessed', but no project brought in here wrote that row, so it does not "
-                        "travel as one: in the new place it has to be answered.")
+        if no_records or slice_id in from_github_ids:
+            warnings.append(f"{slice_id}'s spec says {principle} is 'Not assessed'. This computer has no record of the project that was brought "
+                            "in, so it cannot vouch for the row. Export on the computer where that project was brought in to carry it; otherwise "
+                            "it has to be answered in the new place.")
+        else:
+            warnings.append(f"{slice_id}'s spec says {principle} is 'Not assessed', but no project brought in here wrote that row, so it does not "
+                            "travel as one: in the new place it has to be answered.")
+    # was_ready true means marking ready in one step will not stop on this slice for its principles: each ready slice's rows are
+    # checked against the principles the archive holds, as slice ready will check them there (a vouched Not assessed row stands,
+    # and one the import will write counts as written).
+    _principles_held_back(host, studio, files, slice_facts, set(not_assessed_keys(not_assessed)), set(unvouched), warnings)
     files[project_archive.FACTS] = project_archive.canonical(facts)
 
     if from_github:  # what came from GitHub must fit what is here: the same structural check the workspace passes
