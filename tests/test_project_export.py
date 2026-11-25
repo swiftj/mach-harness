@@ -157,10 +157,11 @@ class ExportTest(ExportBase):
         """Scenario 1, the export half: every member, the strips, facts.json, the result, and nothing else changed."""
         self.build()
         draft = self.draft(self.a, "")
-        before_project, before_calls = tree(self.a), len(self.gh()["calls"])
+        before_project, before_writes = tree(self.a), len(self.writes())
         result = self.export()
         self.assertEqual(tree(self.a), before_project)            # the workspace, Studio's records and the checkout, byte for byte
-        self.assertEqual(len(self.gh()["calls"]), before_calls)   # no call to GitHub at all, read or write
+        self.assertEqual(len(self.writes()), before_writes)       # GitHub is only read
+        self.assertEqual((result["from_github"], result["not_included"], result["chosen"]), ({"count": 0, "ids": []}, [], []))
         self.assertEqual(sorted(p.name for p in self.out.iterdir()), [Path(result["file"]).name])  # one file, no temporary left
 
         manifest, members = self.archive(result)  # every member's size and SHA-256 checked against the manifest
@@ -222,9 +223,10 @@ class ExportTest(ExportBase):
         self.assertEqual(facts["last_read_github_at"], self.ledger()["seen"]["refreshed_at"])
         self.assertEqual(facts["order"], {"EPIC-001": ["SLICE-001", "SLICE-002"], "EPIC-002": ["SLICE-003"]})
         self.assertEqual(facts["slices"], {
-            "SLICE-001": {"was": "ready_to_build", "revision": 1, "jira": None, "request": None, "note": None},
-            "SLICE-002": {"was": "interviewing", "revision": 1, "jira": None, "request": None, "note": None},
-            "SLICE-003": {"was": "draft", "revision": None, "jira": "TEAM-12", "request": 42, "note": "Stopped at the second question."}})
+            "SLICE-001": {"was": "ready_to_build", "revision": 1, "jira": None, "request": None, "note": None, "was_ready": True},
+            "SLICE-002": {"was": "interviewing", "revision": 1, "jira": None, "request": None, "note": None, "was_ready": False},
+            "SLICE-003": {"was": "draft", "revision": None, "jira": "TEAM-12", "request": 42, "note": "Stopped at the second question.",
+                          "was_ready": False}})
         self.assertEqual(facts["epics"], {"EPIC-001": {"jira": "TEAM-1"}, "EPIC-002": {"jira": None}})
         self.assertEqual(facts["ideas"], {"IDEA-001": {"was_source": {"kind": "request", "number": 42}},
                                           "IDEA-002": {"was_source": {"kind": "fault", "ticket": "AUTO-20261120T101500Z"}}})
@@ -433,7 +435,8 @@ class RefusalTest(ExportBase):
         return message
 
     def test_no_project(self):
-        self.refuses("There is no project here yet, so there is nothing to export.")
+        self.refuses("There is no project here yet, and GitHub holds none for this repository, so there is nothing to export. "
+                     "Define the project first (project init).")
 
     def test_an_invalid_workspace(self):
         self.build()
@@ -444,7 +447,9 @@ class RefusalTest(ExportBase):
         message = self.refuses("The project's files are not consistent, so they were not exported: product/slices/SLICE-003.json: unknown dependency 'SLICE-099'")
         self.assertIn("Run status to see what needs fixing.", message)
 
-    def test_slices_only_on_github_refuse_unless_only_mine(self):
+    def test_slices_github_held_at_the_last_refresh_are_named_when_github_cannot_be_read(self):
+        """GitHub out of reach: what is here is exported, and the slices the last refresh saw that are not here are named as not
+        in the archive, with why; --only-mine says it left them out. (When GitHub can be read, they come in: test_project_export_github.)"""
         self.build()
         ledger_path = self.a / ".factory/studio/issues.json"
         ledger = json.loads(ledger_path.read_text())
@@ -452,8 +457,12 @@ class RefusalTest(ExportBase):
         for slice_id, issue in (("SLICE-009", 41), ("SLICE-012", 51)):
             ledger["seen"]["slices"][slice_id] = [{"issue": issue, "epic_issue": epic_issue, "state": "open", "state_label": "mach:ready", "revision": 1}]
         ledger_path.write_text(json.dumps(ledger))
-        message = self.refuses("2 slices of this project are on GitHub but not in your workspace: SLICE-009 (#41), SLICE-012 (#51). "
-                               "Open each here first (slice take 41), or export without them (project export --only-mine).")
+        self.gh_fails("issue list", once=False)
+        result = self.export()
+        self.assertEqual(result["left_out"], ["SLICE-009", "SLICE-012"])
+        self.assertFalse(result["github"]["checked"])
+        self.assertTrue(result["not_included"][0]["reason"].startswith("SLICE-009 (#41) was on GitHub at the last refresh ("))
+        self.assertIn("may be missing", result["note"])
         result = self.export(only_mine=True)
         self.assertEqual(result["left_out"], ["SLICE-009", "SLICE-012"])
         self.assertIn("Left out, as you asked: 2 slices of this project on GitHub but not in your workspace (SLICE-009 (#41), SLICE-012 (#51)).",
