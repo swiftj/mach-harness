@@ -144,6 +144,28 @@ STEP_ORDER = {"Given": 0, "When": 1, "Then": 2}
 PRINCIPLE_ID_RE = re.compile(r"^PP-\d{2,}$")
 PRINCIPLE_ROW_RE = re.compile(r"^[-*+]\s+\*\*(PP-\d{2,})\*\*\s+\(revision (\d{1,6})\):\s+\"(.*)\"\s+\*\*(Applies|Does not apply|Exception):\*\*\s*(.*)$")
 ANSWERS = {"Applies": "applies", "Does not apply": "does_not_apply", "Exception": "exception"}
+# A principle a slice predates because one of them came into the project when another project was brought in (M21). It
+# claims neither that the principle applies nor that it does not: it says the slice was written before the two met. Only
+# bringing in a project writes it, in one of two fixed sentences, and Product Studio checks each against its import records.
+NOT_ASSESSED_ROW_RE = re.compile(r"^[-*+]\s+\*\*(PP-\d{2,})\*\*\s+\(revision (\d{1,6})\):\s+\"(.*)\"\s+\*\*Not assessed:\*\*\s*(.*)$")
+NOT_ASSESSED_REASONS = (
+    # the principle came with another project, after this slice was written here
+    re.compile(r"^(?P<id>PP-\d{2,}) came with the project (?P<project>\S.*?), brought in here on (?P<day>\d{4}-\d{2}-\d{2}), "
+               r"after this slice was written\.$"),
+    # this slice came with another project, which did not have the principle
+    re.compile(r"^This slice came with the project (?P<project>\S.*?), brought in here on (?P<day>\d{4}-\d{2}-\d{2}), "
+               r"which did not have (?P<id>PP-\d{2,})\.$"),
+)
+
+
+def not_assessed_reason(identifier: str, reason: str) -> Optional[Dict[str, str]]:
+    """The fixed sentence of a Not assessed row, read: {how: "principle_came" | "slice_came", project, day}; None when the
+    reason is not one of the two sentences or names another principle than its row."""
+    for how, pattern in zip(("principle_came", "slice_came"), NOT_ASSESSED_REASONS):
+        match = pattern.match(reason.strip())
+        if match and match.group("id") == identifier:
+            return {"how": how, "project": match.group("project"), "day": match.group("day")}
+    return None
 UPHELD_ID_RE = re.compile(r"^(?:FR|INV|AC)-\d{2,}$")
 PRINCIPLE_STATUSES = ("active", "retired")
 
@@ -1101,12 +1123,16 @@ def load_principles(path: Path) -> List[Dict[str, Any]]:
 
 def check_principles(
     section: Optional[Section], principles: Optional[Sequence[Dict[str, Any]]], requirements: Dict[str, int], scenario_ids: Set[str], report: Report,
+    not_assessed: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[List[Dict[str, Any]]]:
     """The spec's answer to each product principle (M13). Every row is checked on its own: `applies` names IDs this spec
     defines, `does not apply` and `exception` give a reason. When the principles are given, every active one is answered,
-    its statement quoted exactly and its current revision named. A project with no principles needs no section."""
+    its statement quoted exactly and its current revision named. A project with no principles needs no section.
+    A Not assessed row (M21) stands for the row of a principle the slice predates; it is listed in `not_assessed`, never
+    among the answers, and is a warning, not an error, while its statement and revision are current."""
     active = [item for item in principles or [] if item["status"] == "active"]
     known = {item["id"]: item for item in principles or []}
+    not_assessed = not_assessed if not_assessed is not None else []
     if section is None:
         if active:
             report.error(0, "principle-unanswered", "Missing section '## Principles'. The project has product principles ("
@@ -1117,6 +1143,10 @@ def check_principles(
     nothing = False
     for number, line in content_lines(section):
         match = PRINCIPLE_ROW_RE.match(line)
+        unassessed = NOT_ASSESSED_ROW_RE.match(line) if match is None else None
+        if unassessed is not None:
+            check_not_assessed(number, unassessed, known if principles is not None else None, lines, not_assessed, report)
+            continue
         if match is None:
             if BULLET_RE.match(line) and is_none(BULLET_RE.match(line).group(1)):
                 nothing = True
@@ -1157,14 +1187,46 @@ def check_principles(
             if revision != current["revision"]:
                 report.error(number, "principle-revision", f"{identifier} was answered under revision {revision}; it is now revision {current['revision']}. "
                              "Check the answer still holds, then name the current revision and quote its statement.")
-    if rows and nothing:
+    if (rows or not_assessed) and nothing:
         report.error(section.line, "principle-format", "'## Principles' lists principles, so it cannot also say '- None.'.")
-    if not rows and not nothing:
+    if not rows and not not_assessed and not nothing:
         report.error(section.line, "empty-section", "'## Principles' needs a row for each principle, or '- None.' when the project has none.")
     for item in active:
         if item["id"] not in lines:
             report.error(section.line, "principle-unanswered", f"{item['id']} is not answered. Add its row: does it apply, not apply, or is this slice an exception?")
     return rows
+
+
+def check_not_assessed(number: int, match: "re.Match[str]", known: Optional[Dict[str, Dict[str, Any]]], lines: Dict[str, int],
+                       found: List[Dict[str, Any]], report: Report) -> None:
+    """One Not assessed row (M21): one of the two fixed sentences, naming its own principle; with the principles given, its
+    statement quoted exactly and its revision current, as any row. It passes as a warning that says the principle is not
+    assessed for this slice yet; anything else about it is an error."""
+    identifier, revision, statement, reason = match.group(1), int(match.group(2)), match.group(3), match.group(4).strip()
+    register_id(lines, identifier, number, report)
+    read = not_assessed_reason(identifier, reason)
+    if read is None:
+        report.error(number, "principle-not-assessed", f"{identifier}: 'Not assessed' is written only by bringing in a project, in its own words. "
+                     f"Answer {identifier}: does it apply, not apply, or is this slice an exception?")
+        return
+    found.append({"id": identifier, "revision": revision, "statement": statement, "reason": reason, **read})
+    if known is None:
+        return
+    current = known.get(identifier)
+    if current is None:
+        report.error(number, "principle-unknown", f"{identifier} is not one of the project's product principles.")
+        return
+    if current["status"] == "retired":
+        report.warning(number, "principle-retired", f"{identifier} is retired; take its row out.")
+        return
+    if statement != current["statement"]:
+        report.error(number, "principle-quote", f"{identifier}'s statement is not quoted exactly. It reads: \"{current['statement']}\"")
+    elif revision != current["revision"]:
+        report.error(number, "principle-revision", f"{identifier} changed after this row was written (revision {revision}; it is now revision "
+                     f"{current['revision']}). Answer it: does it apply, not apply, or is this slice an exception?")
+    else:
+        report.warning(number, "principle-not-assessed", f"{identifier} is not assessed for this slice yet: {reason} "
+                       "Answer it when this slice is next changed: does it apply, not apply, or is this slice an exception?")
 
 
 _EFFECTS: List[Any] = []
@@ -1194,7 +1256,8 @@ def load_shipped(path: Path) -> List[Any]:
     return shipped_shape(json.loads(path.read_text(encoding="utf-8")))
 
 
-def check_effects(text: str, shipped: Optional[Sequence[Any]], slice_id: Optional[str], own_ids: Set[str], report: Report) -> Optional[List[Dict[str, Any]]]:
+def check_effects(text: str, shipped: Optional[Sequence[Any]], slice_id: Optional[str], own_ids: Set[str], report: Report,
+                  pending: Optional[Mapping[str, Any]] = None) -> Optional[List[Dict[str, Any]]]:
     """The spec's effects on shipped behaviour (M13 part B), read by effects.py and nothing else. Every problem the
     parser finds is an error. When the shipped rules are supplied (even an empty list), the section is required, and
     each row must name a rule that shipped and is still in force; with an empty list only 'None.' is valid. Without
@@ -1211,9 +1274,9 @@ def check_effects(text: str, shipped: Optional[Sequence[Any]], slice_id: Optiona
     if parsed["present"]:
         # Without the shipped list every named rule is taken as shipped, so only this spec's own side is checked.
         against = shipped if shipped is not None else [row["shipped_rule"] for row in parsed["rows"]]
-        problems += E.check(parsed, against, slice_id=slice_id, own_ids=own_ids)
+        problems += E.check(parsed, against, slice_id=slice_id, own_ids=own_ids, pending=pending if shipped is not None else None)
     for item in sorted(problems, key=lambda item: (item["line"], item["code"])):
-        report.error(item["line"], item["code"], item["message"])
+        (report.warning if item.get("severity") == "warning" else report.error)(item["line"], item["code"], item["message"])
     if not parsed["present"]:
         return None
     return [{key: row[key] for key in ("line", "shipped_rule", "slice_id", "rule_id", "effect", "in_slice", "note")} for row in parsed["rows"]]
@@ -1245,10 +1308,13 @@ def check_policies(text: str, policies: Optional[Dict[str, Any]], ready: bool, r
 def analyze(
     text: str, file_name: str, other_specs: Optional[Union[Mapping[str, str], Sequence[str]]] = None, ready: bool = False,
     principles: Optional[Sequence[Dict[str, Any]]] = None, shipped: Optional[Sequence[Any]] = None, policies: Optional[Dict[str, Any]] = None,
+    pending: Optional[Mapping[str, Any]] = None,
 ) -> Tuple[List[Finding], Dict[str, Any]]:
     """Check a spec. `principles` is the project's product principles (principles_shape's form), or None when they are not
     known here: then a Principles section is checked on its own and no answer is required. `shipped` is the shipped rules
-    (shipped_shape's form), or None when they are not known here: then '## Effects on shipped behaviour' is not required."""
+    (shipped_shape's form), or None when they are not known here: then '## Effects on shipped behaviour' is not required.
+    `pending` (M21, Product Studio only): rules of slices that have not shipped yet and ship before this one (effects.check);
+    a row naming one is a warning. The engineers' checks never pass it, so there such a row is checked as any other."""
     report = Report()
     if isinstance(other_specs, abc.Mapping):
         others: Mapping[str, str] = other_specs
@@ -1315,13 +1381,17 @@ def analyze(
             scenarios = check_scenarios(scenario_section, refs, report)
             model["scenarios"] = scenarios
         check_traceability(requirements, refs, report)
+    unassessed: List[Dict[str, Any]] = []
     rows = check_principles(found.get("Principles"), list(principles) if principles is not None else None, requirements,
-                            {str(scenario["id"]) for scenario in scenarios if scenario.get("id")}, report)
+                            {str(scenario["id"]) for scenario in scenarios if scenario.get("id")}, report, unassessed)
     if rows is not None:
         model["principles"] = rows  # only when the spec has the section, so a spec without one exports exactly as before
+    if unassessed:
+        model["principles_not_assessed"] = unassessed  # M21: only when there is one, so every other spec exports exactly as before
     matrix_ids = {str(rule.get("id")) for rule in (model.get("decision_matrix") or {}).get("rules") or [] if rule.get("id")}
     effects = check_effects(text, list(shipped) if shipped is not None else None, slice_id,
-                            set(requirements) | matrix_ids | {str(scenario["id"]) for scenario in scenarios if scenario.get("id")}, report)
+                            set(requirements) | matrix_ids | {str(scenario["id"]) for scenario in scenarios if scenario.get("id")}, report,
+                            pending)
     if effects is not None:
         model["effects"] = effects  # only when the spec has the section; [] for 'None.'
     packs = check_policies(text, policies, ready, report)
