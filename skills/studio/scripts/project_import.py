@@ -2046,6 +2046,16 @@ def summary(host: Any, studio: Any, found: Incoming, mapping: Dict[str, str], mo
     superseded = [row["to"] for row in slices if row["status_here"] == "superseded"]
     numbers_note = prd.numbers_note(numbers, {"slices": list(mapping.values())}).strip() if numbers else ""
     ready = [mapping[i] for i in ready_in_source(found)]
+    # Ready there, but the archive says its text is not the approved version (the exporter's word): for example a slice read
+    # from GitHub whose design mock pictures were not on the main branch, which came without them. Never marked ready in one step.
+    held_back = [mapping[i] for i in sorted(found.slices, key=number)
+                 if found.facts["slices"].get(i, {}).get("was") in READY_WAS and found.facts["slices"].get(i, {}).get("was_ready") is False
+                 and found.slices[i]["status"] != "superseded"]
+    if held_back:
+        after.append(f"{listing([both(i) for i in held_back])} {'was' if len(held_back) == 1 else 'were'} ready in the old repository, but the file "
+                     f"does not hold {'its' if len(held_back) == 1 else 'their'} approved version whole (for example design mocks that were not "
+                     "on the main branch there, so they did not come). Check each, add any mock again, and mark it ready yourself; marking "
+                     "ready in one step leaves it out.")
     return {
         "archive": {"file": found.label, "sha256": found.sha256, "exported_at": found.manifest.get("exported_at"),
                     "mach_version": found.manifest.get("mach_version")},
@@ -2062,7 +2072,7 @@ def summary(host: Any, studio: Any, found: Incoming, mapping: Dict[str, str], mo
         "shipped_rules": built.shipped_rules, "same_principles": same,
         "principles_not_assessed": not_assessed, "principles_aligned": built.aligned, "dependencies_added": built.dependencies_added,
         "renumbered_on_resume": list(renumbered_now or []),
-        "ready_in_source": {"slices": ready, "count": len(ready),
+        "ready_in_source": {"slices": ready, "count": len(ready), "held_back": held_back,
                             "words": (f"{plural(len(ready), 'slice was', 'slices were')} ready in the old repository "
                                       f"({listing([both(i) for i in ready[:6]])}{' and others' if len(ready) > 6 else ''}). On your word, MACH can mark "
                                       f"{'it' if len(ready) == 1 else 'them'} ready here in one step, dependencies first, each checked as "

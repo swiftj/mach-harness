@@ -332,7 +332,23 @@ class ReadyTest(ImportBase):
         files, facts = answered_lending()
         facts["slices"]["SLICE-003"]["was_ready"] = False
         archive = write_archive(self.archives / "told.zip", files, facts)
-        self.assertEqual(self.plan(self.b, archive)["ready_in_source"]["slices"], ["SLICE-001", "SLICE-002"])
+        planned = self.plan(self.b, archive)
+        self.assertEqual(planned["ready_in_source"]["slices"], ["SLICE-001", "SLICE-002"])
+        # Ready there, but not whole in the file (the exporter's word, as for a slice whose mock pictures were not on main): said.
+        self.assertEqual(planned["ready_in_source"]["held_back"], ["SLICE-003"])
+        self.assertTrue(any(line.startswith("SLICE-003 was ready in the old repository, but the file does not hold its approved version whole")
+                            for line in planned["after"]), planned["after"])
+
+    def test_a_slice_from_github_without_its_mocks_arrives(self):
+        """What export writes for a ready slice read from GitHub whose pictures were not on main: the work order lists no mock, the
+        facts say was_ready false and from_github true. It arrives as a draft; nothing is refused."""
+        files, facts = answered_lending()
+        facts["slices"]["SLICE-002"].update(was_ready=False, from_github=True)
+        result = self.bring(self.b, write_archive(self.archives / "nomocks.zip", files, facts))
+        self.assertTrue(result["imported"])
+        self.assertEqual(result["ready_in_source"]["held_back"], ["SLICE-002"])
+        self.assertNotIn("SLICE-002", result["ready_in_source"]["slices"])
+        self.assertEqual(self.record(self.b, self.archives / "nomocks.zip")["was_ready"], {"SLICE-001": True, "SLICE-003": True})
 
     def test_refused_in_a_supervised_execution_and_before_anything_is_brought_in(self):
         with mock.patch.object(studio.policies_helper(), "unattended", return_value=True):
