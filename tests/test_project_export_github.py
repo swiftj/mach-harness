@@ -362,6 +362,41 @@ class CheckedAsTakenTest(GitHubBase):
             self.assertNotIn(b"ada-pm", data)
 
 
+class ListingTest(GitHubBase):
+    """GitHub holding more issues than one listing gives: export reads on until it has them all, or says it could not."""
+
+    def test_more_slice_issues_than_one_listing_holds_are_all_read(self):
+        self.published()
+        self.assertEqual(len(self.issues("mach:slice")), 3)
+        with mock.patch.object(project_export.issues, "LIST_LIMIT", 2), \
+                mock.patch.object(project_export.issues, "LIST_CEILING", 20):
+            result = self.export(self.b)
+        self.assertEqual(result["counts"]["slices"], 3)
+        self.assertEqual(result["not_included"], [])
+        limits = [call[call.index("--limit") + 1] for call in self.gh()["calls"] if call[:2] == ["issue", "list"] and "mach:slice" in call]
+        self.assertEqual(limits[-2:], ["2", "20"], "a full page is asked for again, larger")
+
+    def test_more_than_can_be_read_is_said_not_left_silent(self):
+        self.published()
+        with mock.patch.object(project_export.issues, "LIST_LIMIT", 2), mock.patch.object(project_export.issues, "LIST_CEILING", 2):
+            result = self.export(self.b)
+        rows = [row for row in result["not_included"] if row["what"] == "listing"]
+        self.assertEqual([row["id"] for row in rows], ["epics", "slices"])  # two of each: a full list may hold more
+        self.assertEqual(rows[1]["reason"], "GitHub holds more slice issues for this repository than MACH could read (2), so the archive may lack "
+                                            "some slices. Close the issues that are long finished, then export again.")
+        self.assertIn(rows[1]["reason"], result["in_words"])
+        self.assertEqual(result["counts"]["slices"], 2)
+
+    def test_other_readers_keep_their_single_listing(self):
+        """refresh and the hand-off read as before: one listing at LIST_LIMIT."""
+        self.published()
+        with mock.patch.object(project_export.issues, "LIST_LIMIT", 2):
+            self.ok(self.b, "refresh")
+        limits = {call[call.index("--limit") + 1] for call in self.gh()["calls"][-12:] if call[:2] == ["issue", "list"]
+                  and call[call.index("--label") + 1] in ("mach:project", "mach:epic", "mach:slice")}
+        self.assertEqual(limits, {"2"})
+
+
 class OneNameEachTest(GitHubBase):
     def test_two_exports_in_the_same_second_keep_both(self):
         self.published()

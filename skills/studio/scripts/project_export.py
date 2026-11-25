@@ -444,7 +444,7 @@ def _read_github(host: Any, studio: Any) -> Dict[str, Any]:
     rules = host.ticket_rules()
     hand = studio.handoff()
     found: Dict[str, Any] = {"checked": False, "connected": False, "problem": None, "repository": None, "snapshot": None, "read_at": None,
-                             "ideas": [], "hand": hand}
+                             "ideas": [], "hand": hand, "incomplete": []}
     repository, why = hand.reachable()
     if repository is None:
         if why is None:  # no gh, or a remote that is not GitHub: only the first leaves something unread
@@ -454,13 +454,18 @@ def _read_github(host: Any, studio: Any) -> Dict[str, Any]:
         found.update(connected=why is not None, problem=why)
         return found
     found.update(connected=True, repository=repository)
-    snapshot, failure = hand.read(repository)
-    listed: Optional[List[Dict[str, Any]]] = None
-    if failure is None and snapshot is not None:
-        listed, failure = issues.list_issues(studio.project, repository, rules.SHAPE_IDEA_LABEL)
-    if failure or snapshot is None:
-        found["problem"] = handoff.explain(failure)
-        return found
+    lists: Dict[str, List[Dict[str, Any]]] = {}
+    failure = None
+    for label in (*handoff.SNAPSHOT_LABELS, rules.SHAPE_IDEA_LABEL):  # each read to its end; a list GitHub holds more of is named
+        listed, failure, whole = issues.list_all_issues(studio.project, repository, label)
+        if failure:
+            found["problem"] = handoff.explain(failure)
+            return found
+        lists[label] = listed or []
+        if not whole:
+            found["incomplete"].append(label)
+    snapshot = hand.snapshot_of(lists)
+    listed = lists[rules.SHAPE_IDEA_LABEL]
     ideas = set()
     for item in listed or []:
         marker = rules.parse_shape_body(item.get("body"))
@@ -468,6 +473,21 @@ def _read_github(host: Any, studio: Any) -> Dict[str, Any]:
             ideas.add((str(marker["idea_id"]), item["number"]))
     found.update(checked=True, snapshot=snapshot, read_at=host.now(None), ideas=sorted(ideas))
     return found
+
+
+LISTED_WHAT = {"mach:project": ("project", "project issues", "the project"), "mach:epic": ("epics", "epic issues", "epics"),
+               "mach:slice": ("slices", "slice issues", "slices"), "mach:idea": ("ideas", "idea issues", "ideas")}
+
+
+def _unread(github: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """A row for each kind of issue GitHub held more of than MACH could read: the archive may lack some, and says so."""
+    rows = []
+    for label in github.get("incomplete") or []:
+        ident, issues_word, lacks = LISTED_WHAT.get(label, (label, f"issues labelled {label}", "them"))
+        rows.append({"id": ident, "what": "listing", "issue": None,
+                     "reason": f"GitHub holds more {issues_word} for this repository than MACH could read ({issues.LIST_CEILING:,}), so the archive "
+                               f"may lack some {lacks}. Close the issues that are long finished, then export again."})
+    return rows
 
 
 def _no_project_here(host: Any, github: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
@@ -1154,7 +1174,7 @@ def _collect(host: Any, studio: Any, only_mine: bool) -> Tuple[Dict[str, bytes],
 
     from_here = _ordered(from_here + list(epics) + list(local) + list(idea_facts) + documents_here)
     from_github = _ordered(completion.ids) if completion else []
-    not_included = list(completion.not_included) if completion else []
+    not_included = _unread(github) + (list(completion.not_included) if completion else [])
     if not github["checked"] and github["connected"]:
         at = ((ledger.get("seen") or {}).get("refreshed_at")) if ledger.get("seen") else None
         for slice_id, issue in maybe_missing:
