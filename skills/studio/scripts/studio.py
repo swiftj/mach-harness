@@ -860,6 +860,12 @@ def github_updates_waiting(studio: Studio) -> Dict[str, Any]:
 
 
 # The vocabulary of next_actions[].kind. A client maps each to its own button or screen.
+# Why a slice opened from GitHub holds no approval here (handoff.record_taken, slice_view's not_approved).
+NOT_APPROVED_WORDS = {"edited": "its text was changed on GitHub after it was approved",
+                      "no_approval": "its issue has no approval for the version it holds",
+                      "check": "its spec does not pass the spec check here",
+                      "mocks": "it was opened without its design mocks"}
+
 NEXT_ACTION_KINDS = ("define_project", "add_epic", "reconcile", "renumber_slice", "renumber_epic", "answer_question", "continue_interview", "mark_ready",
                      "finish_ready", "start_slice")
 # The vocabulary of a refusal's hint (--app): the next-action kinds, plus the acts that resolve a refusal.
@@ -902,18 +908,22 @@ def next_actions(project, epics, slice_rows, changed: Sequence[Dict[str, Any]] =
         elif gh["number_taken"] and gh.get("same_moment"):
             moment = gh["same_moment"]
             who = f"{moment['by']}'s" if moment.get("by") else "another product manager's"
-            act("renumber_slice", sid, f"Give {sid} a new number",
+            act("renumber_slice", sid, f"Mark {sid} ready",
                 f"{sid} was marked ready at the same moment by someone else: {who} issue #{moment['holder']} was made first and keeps the number. "
                 f"Your issue #{moment['issue']} was closed and never reached the builders. Mark it ready again: MACH gives it the next free number.",
                 f"{sid} was marked ready at the same moment by someone else ({who} issue #{moment['holder']} keeps the number; yours, #{moment['issue']}, "
                 f"was closed): mark it ready again, and MACH gives it the next free number (slice ready {sid}).", first=True)
         elif gh["number_taken"]:
-            act("renumber_slice", sid, f"Give {sid} a new number",
+            act("renumber_slice", sid, f"Mark {sid} ready",
                 f"Another slice on GitHub already has the number of {row['title']}. Marking it ready gives it the next free number.",
                 f"Another slice on GitHub already uses {sid}: marking it ready gives your draft the next free number (slice ready {sid}).", first=True)
         if row["status"] in ("draft", "interviewing"):
             act("continue_interview", sid, f"Continue the interview for {sid}", f"{row['title']} is still being defined.",
                 f"Continue the interview for {sid}: {row['title']} (slice resume {sid}).")
+        elif row["status"] == "ready_for_approval" and gh.get("not_approved"):
+            why = NOT_APPROVED_WORDS.get(str(gh["not_approved"].get("why")), "it was opened here without an approval")
+            act("mark_ready", sid, f"Mark {sid} ready", f"{row['title']} is not approved: {why}. Read it, then mark it ready to approve this version.",
+                f"{sid} is not approved: {why}. Read it, then mark it ready to approve this version (slice ready {sid}).")
         elif row["status"] == "ready_for_approval":
             act("mark_ready", sid, f"Mark {sid} ready", f"{row['title']} is ready for your approval. Marking it ready hands it to the builders.",
                 f"{sid} is ready for your approval: mark it ready for the builders (slice ready {sid}).")
@@ -975,7 +985,7 @@ def cmd_project_init(studio: Studio, args: argparse.Namespace) -> int:
     # M20: one project per repository. The project issue already on GitHub is taken, never a second one started beside it.
     hand = studio.handoff()
     found = hand.github_project()
-    adopted, warned = None, []
+    adopted, warned, extra = None, [], {}
     usable = lambda item: product.PROJECT_RE.fullmatch(str(item.get("id") or "")) is not None  # noqa: E731
     readable = [item for item in found.get("projects") or [] if usable(item) and handoff.parse_project_text(item) is not None]
     chosen = (readable or found.get("projects") or [None])[0] if found["reachable"] else None
@@ -983,6 +993,7 @@ def cmd_project_init(studio: Studio, args: argparse.Namespace) -> int:
         # Never blocked: MACH takes the oldest project issue it can read, and says so. The others stay until someone closes them.
         numbers = [item["number"] for item in found["projects"]]
         warned.append(handoff.several_projects(numbers, chosen["number"], "the oldest one MACH can read" if readable else "the oldest"))
+        extra["extra_issues"] = [n for n in numbers if n != chosen["number"]]  # the ones MACH can close on the PM's word (project close-issue)
     if chosen is not None and usable(chosen):
         theirs = handoff.parse_project_text(chosen)
         if theirs is None:
@@ -996,6 +1007,7 @@ def cmd_project_init(studio: Studio, args: argparse.Namespace) -> int:
             data.update(project_id=chosen["id"], name=theirs["name"], vision=theirs["vision"], outcomes=list(theirs["outcomes"]))
         adopted = chosen["number"]
     elif chosen is not None:
+        extra["extra_issues"] = [item["number"] for item in found["projects"]]
         warned.append(f"This repository already has a project issue on GitHub (#{chosen['number']}), but it names a project MACH cannot read, so your "
                       "project is defined here with your own words. "
                       + say(f"MACH can close #{chosen['number']} for you (project close-issue {chosen['number']}); the first slice you mark ready "
@@ -1006,15 +1018,32 @@ def cmd_project_init(studio: Studio, args: argparse.Namespace) -> int:
         hand.link_project(found["repository"], chosen, words_kept=handoff.parse_project_text(chosen) is None)
         taken = handoff.parse_project_text(chosen) is not None
         return emit({"project": data, "path": str(studio.path("project")), "taken_from_github": adopted,
-                     "url": ticket_rules().issue_url(found["repository"], adopted), **({"warned": warned} if warned else {}),
+                     "url": ticket_rules().issue_url(found["repository"], adopted), **({"warned": warned} if warned else {}), **extra,
                      "note": " ".join([*warned, *([f"This repository already has a project on GitHub (#{adopted}), so MACH took its name, vision and "
                                                   "outcomes from there. Your own words were not used. A repository holds one project."] if taken else [])])})
     if warned:
-        return emit({"project": data, "path": str(studio.path("project")), "warned": warned, "note": " ".join(warned)})
+        return emit({"project": data, "path": str(studio.path("project")), "warned": warned, **extra, "note": " ".join(warned)})
     return emit({"project": data, "path": str(studio.path("project")),
                  **({"github_not_checked": found["problem"],
                      "note": f"MACH could not check GitHub for a project already there. {found['problem']} It checks again when you mark a slice ready."}
                     if not found["reachable"] and found.get("problem") else {})})
+
+
+def cmd_replaced_list(studio: Studio, args: argparse.Namespace) -> int:
+    """Never blocked: every version an act of the product manager's replaced, kept whole, newest first. Reads only."""
+    import replaced
+    rows = [{**row, "words": replaced.words(row)} for row in replaced.listing(studio.home, studio.project)]
+    return emit({"kept": rows, "factory_authorized": False,
+                 "note": (f"{len(rows)} kept {'version' if len(rows) == 1 else 'versions'}. "
+                          + say("Put one back with: replaced restore <name>.", "Putting one back keeps what is there now first.")) if rows
+                 else "Nothing has been replaced, so nothing is kept."})
+
+
+def cmd_replaced_restore(studio: Studio, args: argparse.Namespace) -> int:
+    """Put a kept version back in one act, on the product manager's word; what is there now is kept first."""
+    import replaced
+    studio.prepare()
+    return emit(replaced.restore(sys.modules[__name__], studio, args.name))
 
 
 def cmd_project_close_issue(studio: Studio, args: argparse.Namespace) -> int:
@@ -1790,10 +1819,18 @@ def mark_ready_once(studio: Studio, slice_id: str) -> Dict[str, Any]:
                  **hand.warned(),  # never blocked: a newer version someone else saved, replaced and kept; more than one project issue
                  # The app shows where and what is left as rows of their own, so its note says only what happened and who waits.
                  "note": first_warned(hand.warned(), say(
-                     f"Saved to GitHub as #{saved['issue']} and marked ready. The builders take it from there; nothing has started yet."
+                     f"Saved to GitHub as #{saved['issue']} and marked ready. {after_ready(hand)}"
                      + (" " + delivery["note"] if delivery else ""),
                      f"Saved to GitHub as #{saved['issue']} and marked ready. "
-                     + (delivery["note"] if delivery else "The builders take it from there; nothing has started yet.")))})
+                     + (delivery["note"] if delivery else after_ready(hand))))})
+
+
+def after_ready(hand: "handoff.Handoff") -> str:
+    """What happens next, as it is: a Factory already building an earlier version is told by the new version on the same issue."""
+    if hand.building:
+        return (f"The builders' work on version {hand.building['revision']} goes on until it leaves the line; then they take "
+                f"version {hand.building['replaced_by_revision']}.")
+    return "The builders take it from there; nothing has started yet."
 
 
 def cmd_slice_reopen(studio: Studio, args: argparse.Namespace) -> int:
@@ -2083,8 +2120,9 @@ def take_slice(studio: Studio, target: str, opening: List[str]) -> Dict[str, Any
                 aside.append(path)
         if aside:
             # Other text here for that ID that is not a draft: kept aside whole, never deleted, and GitHub's opens.
-            kept = hand.keep_replaced(f"{here_id}-workspace-{handoff.utc_now()[:19].replace(':', '')}",
-                                      {path.name: path.read_text(encoding="utf-8", errors="replace") for path in aside})
+            kept = hand.keep_replaced(f"{here_id}-workspace", {path.name: path.read_text(encoding="utf-8", errors="replace") for path in aside},
+                                      {"what": "files", "about": f"other text your workspace held for {here_id}",
+                                       "to": {path.name: studio.relative(path) for path in aside}})
             for path in aside:
                 path.unlink()
             existing = studio.spec_of(here_id)
@@ -2097,13 +2135,23 @@ def take_slice(studio: Studio, target: str, opening: List[str]) -> Dict[str, Any
         errors = [f"{finding.message} [{finding.rule}]" for finding in findings if finding.severity == "error"]
         if model.get("slice_id") != here_id:
             errors.append(f"the spec's title names {model.get('slice_id')}, not {here_id}")
+        reason = None if approved else str(check["problem"])
         if (errors or model.get("open_questions")) and approved:
-            approved = False
+            approved, reason = False, "check"
             warned.append(f"The spec in #{number} does not pass the spec check here ({(errors or ['it has open questions'])[0]}), so it is open as a "
                           "draft, not as approved: answer what is left in the interview, then mark it ready.")
+        items = marker.get("mocks") or []
+        with_mocks = False
+        if items:
+            with_mocks, words = mocks.for_take(sys.modules[__name__], studio, slice_id, number, items, into=here_id)
+            if not with_mocks:
+                if approved:
+                    approved, reason = False, "mocks"
+                warned.append(str(words))
         ready_like = bool({"mach:ready", "mach:building", "mach:question"} & set(read["labels"]))
         if not copy_as:
-            hand.record_taken(ledger, read, slice_id, "github" if ready_like else "withdrawn", epic_id)  # recorded before the draft is written
+            # Recorded before the draft is written; a version opened without its approval is recorded as not approved, and why.
+            hand.record_taken(ledger, read, slice_id, "github" if ready_like else "withdrawn", epic_id, not_approved=reason)
         created_epic = epic_here not in studio.all("epic")
         if created_epic:
             studio.commit_or_restore([("epic", {"schema_version": 1, "epic_id": epic_here, "project_id": project["project_id"], "revision": 1,
@@ -2111,13 +2159,6 @@ def take_slice(studio: Studio, target: str, opening: List[str]) -> Dict[str, Any
                                                 "acceptance_criteria": rules.epic_criteria(epic_issue.get("body"))})], f"Opening {epic_here}")
         write(spec_path, spec)
         write(intent, why)
-        items = marker.get("mocks") or []
-        with_mocks = False
-        if items:
-            with_mocks, words = mocks.for_take(sys.modules[__name__], studio, slice_id, number, items, into=here_id)
-            if not with_mocks:
-                approved = False
-                warned.append(str(words))
         as_approved = ready_like and approved and not copy_as
         work = {"schema_version": 1, "slice_id": here_id, "project_id": project["project_id"], "epic_id": epic_here, "revision": 1, "title": title,
                 "status": APPROVED if as_approved else "interviewing", "dependencies": dependencies, "open_questions": [],
@@ -2483,12 +2524,21 @@ def reconcile_slice(studio: Studio, slice_id: str, take: str) -> int:
             found, failure = issues.comments(studio.project, repository, number)
             approved = [a for a in rules.approvals([c["body"] for c in found or []]) if a["revision"] == marker["revision"] and a["slice_id"] == slice_id
                         and (a["spec_sha256"], a["why_sha256"]) == (marker["spec_sha256"], marker["why_sha256"])]
-            if failure or not marker["intact"] or not approved:
-                raise StudioError(f"The version of {slice_id} on GitHub was changed after it was approved, so it cannot be taken. Nothing was changed.")
+            # Never blocked: taking theirs always makes a draft, so a version changed after its approval, or with none, is taken too,
+            # as GitHub holds it; the draft is not approved either way. The product manager's own draft is kept first.
+            their_spec, their_why, _ = (marker["spec"], marker["why"], None) if marker["intact"] else held_text(
+                rules, {"body": (current or {}).get("body"), "check": {"marker": marker}, "comments": found or []})
+            if their_spec is None or their_why is None:
+                raise StudioError(f"MACH cannot find a why and a specification in #{number}, so there is nothing to take. Your draft of {slice_id} "
+                                  "stays as it is.")
+            unapproved = bool(failure or not marker["intact"] or not approved)
             data = studio.load("slice", slice_id)
             spec = studio.spec_of(slice_id) or studio.draft / "specs" / "slices" / f"{slice_id}-{kebab(data.get('title') or 'slice')}.md"
-            write(spec, marker["spec"])
-            write(studio.intent_path(slice_id), marker["why"])
+            mine = {name: path.read_text(encoding="utf-8") for name, path in (("spec.md", spec), ("why.md", studio.intent_path(slice_id)))
+                    if path.is_file()}
+            kept_mine = hand.keep_replaced(f"{slice_id}-yours", mine, {"what": "slice", "slice_id": slice_id, "from": "yours"}) if mine else None
+            write(spec, their_spec)
+            write(studio.intent_path(slice_id), their_why)
             data = studio.load("slice", slice_id)
             if data.get("status") == APPROVED:  # the approved text is being replaced
                 data.update({"status": "interviewing", "spec_sha256": None})
@@ -2504,9 +2554,13 @@ def reconcile_slice(studio: Studio, slice_id: str, take: str) -> int:
         data.update({"status": "ready_for_approval" if result["ready"] else "interviewing", "open_questions": result["open_questions"],
                      "spec_path": studio.relative(studio.spec_of(slice_id)), "spec_sha256": None})
         studio.save("slice", data, bump=False)
-    return emit({"reconciled": slice_id, "took": take, "github_version": marker["revision"], "approvals_withdrawn": withdrawn,
-                 "note": "Your draft now holds the version from GitHub. Mark it ready to approve it yourself." if take == "theirs"
-                 else "Your draft stays as it is. Marking it ready replaces the version on GitHub."})
+    note = "Your draft stays as it is. Marking it ready replaces the version on GitHub."
+    if take == "theirs":
+        note = ((f"#{number}'s text was changed on GitHub after it was approved, or has no approval; it is taken as it is. " if unapproved else "")
+                + "Your draft now holds the version from GitHub. Mark it ready to approve it yourself."
+                + (f" Your own draft is kept at {hand.where_kept(kept_mine)}." if kept_mine else ""))
+    return emit({"reconciled": slice_id, "took": take, "github_version": marker["revision"], "approvals_withdrawn": withdrawn, "note": note,
+                 **({"kept_yours": hand.where_kept(kept_mine)} if take == "theirs" and kept_mine else {})})
 
 
 def reconcile_text(studio: Studio, target: str, take: str) -> int:
@@ -2671,6 +2725,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="the slice, the epic, the project, the principles or the technical needs whose version on GitHub you are choosing about")
     p.add_argument("--take", required=True, choices=("mine", "theirs"), help="keep your draft, or take the version on GitHub whole")
     p.set_defaults(func=cmd_reconcile)
+
+    kept = sub.add_parser("replaced", help="versions your acts replaced, kept so you can get them back").add_subparsers(dest="action", required=True)
+    p = kept.add_parser("list", help="every kept version, newest first (reads only)")
+    p.set_defaults(func=cmd_replaced_list)
+    p = kept.add_parser("restore", help="put one kept version back; what is there now is kept first (only on the product manager's word)")
+    p.add_argument("name", help="the kept version's name, as replaced list shows it")
+    p.set_defaults(func=cmd_replaced_restore)
 
     project = sub.add_parser("project", help="the project's name, vision and outcomes; moving it to another repository").add_subparsers(dest="action", required=True)
     p = project.add_parser("init")

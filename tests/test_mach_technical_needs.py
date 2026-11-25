@@ -306,7 +306,8 @@ class StudioTest(IssuesBase):
         self.assertEqual(published["revision"], 3)
         self.assertIn("@ben-pm published version 2 of the technical needs on GitHub", published["note"])
         self.assertIn("Yours is now version 3 and replaces it.", published["note"])
-        kept = json.loads((self.a / ".factory/studio/replaced/needs-version-2/needs.json").read_text())
+        (folder,) = (self.a / ".factory/studio/replaced").glob("needs-version-2-*")
+        kept = json.loads((folder / "needs.json").read_text())
         self.assertEqual(kept["needs"][0]["why"], "Ben's reason.")
         self.assertEqual(issue_rules.parse_needs_section(self.issues("mach:project")[0]["body"])["needs"][0]["why"], "Ada's reason.")
 

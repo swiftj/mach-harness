@@ -350,9 +350,9 @@ class NumbersTest(ImportBase):
         (ticket / "SLICE-002-fix-login.md").write_text("# SLICE-002: Fix login\n")
         result = self.bring(self.b, self.archive)
         self.assertEqual(self.pairs(result, "SLICE")["SLICE-002"], "SLICE-008")
-        kept = self.b / ".factory/studio/replaced/import-SLICE-002/specs/slices/SLICE-002-invite-teammate.md"
-        self.assertTrue(kept.read_text().endswith("Added by the PM.\n"), "the person's file is kept whole")
-        self.assertIn(".factory/studio/replaced/import-SLICE-002/", json.dumps(result))
+        (folder,) = (self.b / ".factory/studio/replaced").glob("import-SLICE-002-*")
+        self.assertTrue((folder / "SLICE-002-invite-teammate.md").read_text().endswith("Added by the PM.\n"), "the person's file is kept whole")
+        self.assertIn(f".factory/studio/replaced/{folder.name}/", json.dumps(result))
         self.assertTrue(self.draft(self.b, "specs/slices/SLICE-008-invite-teammate.md").exists())
 
     def test_set_aside_takes_the_path_it_was_run_with(self):

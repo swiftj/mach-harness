@@ -93,6 +93,14 @@ class ShapeError(Exception):
         self.app = app
 
 
+class IdeaNumberTaken(ShapeError):
+    """Another idea's issue on GitHub holds this idea's number: never a stop, the idea is renumbered and published (cmd_idea_publish)."""
+
+    def __init__(self, message: str, holder: int):
+        super().__init__(message)
+        self.holder = holder
+
+
 def sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -784,8 +792,8 @@ def next_step(ideas: Ideas, record: Dict[str, Any], github: Dict[str, Any]) -> D
         return step("publish", host.say(f"Saving {idea_id} to GitHub stopped part way: publish it again to finish (idea publish {idea_id}).",
                     f"Saving {idea_id} to GitHub stopped part way. Save it again to finish."))
     if github.get("number_taken"):
-        return step("renumber", host.say(f"Another idea on GitHub already uses {idea_id}: give yours the next free number (idea renumber {idea_id}).",
-                    f"Another idea on GitHub already uses {idea_id}. Give yours the next free number."))
+        return step("publish", host.say(f"Another idea on GitHub already uses {idea_id}: publishing it gives yours the next free number (idea publish {idea_id}).",
+                    f"Another idea on GitHub already uses {idea_id}. Saving it gives yours the next free number."))
     if record["stage"] == "shaped":
         if github.get("saved") == "github" and not github.get("up_to_date"):
             return step("publish", host.say(f"{idea_id} is shaped into work: publish it again so its issue says so (idea publish {idea_id}).",
@@ -920,9 +928,10 @@ def publish(ideas: Ideas, idea_id: str) -> Dict[str, Any]:
                 number = entry["number"] = mine[0]["number"]
         others = [item["number"] for item in listed if (rules.parse_shape_body(item.get("body")) or {}).get("idea_id") == idea_id and item["number"] != number]
         if not number and others:
-            raise ShapeError(host.say(f"Another idea on GitHub already uses {idea_id} (#{others[0]}). Nothing was saved. Give yours the next free number "
-                                      f"(idea renumber {idea_id}), then publish it.",
-                                      f"Another idea on GitHub already uses {idea_id} (#{others[0]}). Nothing was saved. Give yours the next free number, then save it."))
+            # Never blocked: cmd_idea_publish gives this idea the next free number and publishes it in the same act. The numbers
+            # GitHub holds are kept first, so the next free one is none of them.
+            ideas.save_ledger(ledger)
+            raise IdeaNumberTaken(f"Another idea on GitHub already uses {idea_id} (#{others[0]}).", holder=others[0])
         entry["run"] = {"body_sha256": body_sha, "label": label, "verdict": wanted_verdict, "login": channel.login,
                         "steps": dict(run.get("steps") or {}) if same else {}, "started_at": run.get("started_at") if same else host.now(None)}
         steps = entry["run"]["steps"]
@@ -1407,19 +1416,45 @@ def cmd_verdict_record(host: Any, studio: Any, args: argparse.Namespace) -> Dict
 def cmd_idea_publish(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str, Any]:
     ideas = Ideas(host, studio)
     studio.prepare()
-    saved = publish(ideas, args.idea_id)
+    idea_id, done, renumbered = args.idea_id, [], None
+    for _ in range(4):
+        try:
+            saved = publish(ideas, idea_id)
+            break
+        except IdeaNumberTaken as exc:
+            # Never blocked: the product manager's idea gets the next free number and is published under it, in the same act.
+            try:
+                moved = renumber_idea(ideas, idea_id)["renumbered"]
+            except ShapeError as inner:
+                raise ShapeError(f"{exc} {inner}", getattr(inner, "app", None))
+            done.append(f"{idea_id} was already used on GitHub by another idea (#{exc.holder}), so MACH gave yours the next free number: "
+                        f"{idea_id} is now {moved['to']}; its brief, case and lookups moved with it.")
+            renumbered = {"from": args.idea_id, "to": moved["to"]}
+            idea_id = moved["to"]
+        except ShapeError as exc:
+            if not done:
+                raise
+            raise ShapeError(" ".join([*done, str(exc)]), " ".join([*done, getattr(exc, "app", None) or str(exc)]))
+    else:
+        raise ShapeError(" ".join(done) + " Every new number was taken on GitHub at once. Save it again: MACH tries the next free number.")
+    lead = (" ".join(done) + " ") if done else ""
+    extra = {"idea_id": idea_id, "renumbered": renumbered, "warned": done} if done else {}
     if saved["saved_to"] == "folder":
-        return {"published": True, **saved, "factory_authorized": False,
-                "note": "Saved to the folder in the workspace. Nothing was sent to GitHub, and nothing reaches the builders: the brief is for people."}
-    return {"published": True, **saved, "factory_authorized": False,
-            "note": f"Saved as issue #{saved['issue']}. The brief is its body" + (" and the verdict a comment on it." if saved["verdict_posted"] else ".")
+        return {"published": True, **saved, **extra, "factory_authorized": False,
+                "note": lead + "Saved to the folder in the workspace. Nothing was sent to GitHub, and nothing reaches the builders: the brief is for people."}
+    return {"published": True, **saved, **extra, "factory_authorized": False,
+            "note": lead + f"Saved as issue #{saved['issue']}. The brief is its body" + (" and the verdict a comment on it." if saved["verdict_posted"] else ".")
                     + " Nothing reaches the builders: the brief is for people."}
 
 
 def cmd_idea_renumber(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str, Any]:
     """An idea never saved to GitHub takes the next free number: its record, brief, case and lookups move with it."""
-    ideas = Ideas(host, studio)
-    old = args.idea_id
+    return renumber_idea(Ideas(host, studio), args.idea_id)
+
+
+def renumber_idea(ideas: "Ideas", old: str) -> Dict[str, Any]:
+    """`idea renumber`'s act; also done by MACH itself when publishing finds the number taken (cmd_idea_publish)."""
+    host = ideas.host
     ledger = ideas.load_ledger()
     entry = ledger["ideas"].get(old) or {}
     if entry.get("saved") or entry.get("run") or entry.get("number"):

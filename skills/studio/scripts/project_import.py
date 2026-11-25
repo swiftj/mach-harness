@@ -2369,10 +2369,11 @@ def settle_clashes(host: Any, studio: Any, found: Incoming, mapping: Dict[str, s
             if rel in earlier and here != earlier[rel]:
                 # Never blocked: a person changed this file, and the number is now another slice's. Their file is kept whole, aside,
                 # before it is removed; the import's file comes in under the new number, and the words say where theirs is.
-                aside = studio.home / "replaced" / f"import-{new}" / rel
-                aside.parent.mkdir(parents=True, exist_ok=True)
-                aside.write_bytes(target.read_bytes())
-                kept_aside[new] = str((studio.home / "replaced" / f"import-{new}").relative_to(studio.project)) + "/"
+                import replaced
+                name = Path(rel).name
+                kept = replaced.keep(studio.home, host.write, f"import-{new}", {name: target.read_text(encoding="utf-8", errors="replace")},
+                                     {"what": "files", "about": f"the file you changed under {new} while a project was brought in", "to": {name: rel}})
+                kept_aside[new] = str(kept.relative_to(studio.project)) + "/"
                 remove.append(rel)
             elif here == earlier.get(rel, sha(first.files[rel])):
                 remove.append(rel)
