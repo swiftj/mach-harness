@@ -45,17 +45,18 @@ func TestTheShapeConversationOverHTTP(t *testing.T) {
 	} {
 		status, env := h.call("POST", "/api/ops/"+name, body, nil)
 		expect(t, status, env, 409, engine.KindConflict)
-		if !strings.Contains(env.Error.Message, "writing this idea's brief or case") {
+		if env.Error.Message != "The conversation is writing IDEA-001's brief or case right now. Going ahead stops its reply first." ||
+			string(env.Error.Hint) != `{"kind":"interrupt_turn","target":"IDEA-001"}` {
 			t.Fatalf("%s: %q", name, env.Error.Message)
 		}
 	}
 	h.mustOp("idea.show", `{"idea_id":"IDEA-001"}`)
 	h.mustOp("idea.add", `{"title":"Email a reminder before a loan is due"}`)
 	h.mustOp("idea.stage", `{"idea_id":"IDEA-002","stage":"exploring"}`)
-	if status, env := h.call("POST", "/api/interview/"+id+"/interrupt", `{}`, nil); status != 200 || !env.OK {
-		t.Fatalf("interrupt: %d %+v", status, env.Error)
+	// The warning's one action: the same act with interrupt stops the reply and goes ahead.
+	if status, env := h.call("POST", "/api/ops/idea.stage?interrupt=true", `{"idea_id":"IDEA-001","stage":"exploring"}`, nil); status != 200 || !env.OK {
+		t.Fatalf("the act with interrupt: %d %+v", status, env.Error)
 	}
-	h.mustOp("idea.stage", `{"idea_id":"IDEA-001","stage":"exploring"}`)
 	calls := testkit.Calls(t, claude)
 	if len(calls) != 1 || calls[0].Argv[len(calls[0].Argv)-1] != "/mach:studio explore IDEA-001. Explore this idea with the product manager: run idea show first, then ask open questions, one at a time." {
 		t.Fatalf("calls %+v", calls)

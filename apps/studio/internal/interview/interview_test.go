@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -500,48 +501,122 @@ func TestReplayOnReconnect(t *testing.T) {
 
 // ---- the lock ----
 
-func TestTheLockAllowsOneInterviewPerSlice(t *testing.T) {
+// holdLock holds a slice's lock from another process, which records pid (its own when pid is 0).
+func holdLock(t *testing.T, project, slice string, pid int) *exec.Cmd {
+	t.Helper()
+	lock := filepath.Join(project, ".factory", "studio", "interviews", slice+".lock")
+	os.MkdirAll(filepath.Dir(lock), 0o755)
+	holder := exec.Command(testkit.Python(t), "-c",
+		"import fcntl,json,os,sys,time; f=open(sys.argv[1],'a+'); fcntl.flock(f, fcntl.LOCK_EX); f.truncate(0); "+
+			"f.write(json.dumps({'pid': int(sys.argv[2]) or os.getpid(), 'since': '2026-11-11T12:00:00Z'})); f.flush(); print('held', flush=True); time.sleep(60)",
+		lock, strconv.Itoa(pid))
+	out, _ := holder.StdoutPipe()
+	if err := holder.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { holder.Process.Kill(); holder.Wait() })
+	out.Read(make([]byte, 5))
+	return holder
+}
+
+// goneProcess is the ID of a process that has exited.
+func goneProcess(t *testing.T) int {
+	t.Helper()
+	done := exec.Command("true")
+	if err := done.Run(); err != nil {
+		t.Fatal(err)
+	}
+	return done.Process.Pid
+}
+
+// A second window in this host joins the running interview; another host on this computer is
+// warned, then continues with one more request; a lock whose process is gone is simply taken.
+func TestASecondWriterIsWarnedThenContinues(t *testing.T) {
 	r := newRig(t, testkit.Turn{Text: "Hello."}, testkit.Turn{Text: "Hello again."})
 	started := r.start("SLICE-001")
 	until(t, r.bridge, started.InterviewID, 0, "waiting_for_reply")
 	var conflict *interview.ConflictError
 	if _, err := r.bridge.Start(context.Background(), interview.StartRequest{SliceID: "SLICE-001"}); !errors.As(err, &conflict) ||
-		conflict.InterviewID != started.InterviewID || conflict.Message != "SLICE-001's interview is already open here." {
+		conflict.InterviewID != started.InterviewID || conflict.Message != "SLICE-001's interview is already open here." || conflict.TakeOver {
 		t.Fatalf("second start in this host: %v %+v", err, conflict)
 	}
-	other := r.newBridge(nil) // another host on the same project
-	if _, err := other.Start(context.Background(), interview.StartRequest{SliceID: "SLICE-001"}); !errors.As(err, &conflict) ||
-		!strings.Contains(conflict.Message, "already has an interview running (process") || conflict.InterviewID != "" {
-		t.Fatalf("another host: %v", err)
-	}
-	if cur, _ := other.Current("SLICE-001"); cur == nil || cur.Live || !cur.LockedElsewhere {
-		t.Fatalf("current from the other host: %+v", cur)
-	}
-	r.bridge.Stop(context.Background(), started.InterviewID)
-	s2, err := other.Start(context.Background(), interview.StartRequest{SliceID: "SLICE-001"})
-	if err != nil {
-		t.Fatalf("after stop: %v", err)
-	}
-	other.Stop(context.Background(), s2.InterviewID)
 
-	// A process that dies holding the lock (like a crashed terminal prototype) does not leave it held.
-	lock := filepath.Join(r.project, ".factory", "studio", "interviews", "SLICE-002.lock")
-	holder := exec.Command(testkit.Python(t), "-c",
-		"import fcntl,sys,time; f=open(sys.argv[1],'a+'); fcntl.flock(f, fcntl.LOCK_EX); f.write('{\"pid\": 1, \"since\": \"x\"}'); f.flush(); print('held', flush=True); time.sleep(60)", lock)
-	out, _ := holder.StdoutPipe()
-	holder.Start()
-	buf := make([]byte, 5)
-	out.Read(buf)
-	if _, err := r.bridge.Start(context.Background(), interview.StartRequest{SliceID: "SLICE-002"}); !errors.As(err, &conflict) {
-		t.Fatalf("a lock held by another process: %v", err)
+	// Another live process holds SLICE-002: a warning that names it, then the take-over goes ahead.
+	holder := holdLock(t, r.project, "SLICE-002", 0)
+	_, err := r.bridge.Start(context.Background(), interview.StartRequest{SliceID: "SLICE-002"})
+	if !errors.As(err, &conflict) || !conflict.TakeOver || conflict.InterviewID != "" ||
+		!strings.HasPrefix(conflict.Message, "Another window on this computer is writing SLICE-002 right now (process "+strconv.Itoa(holder.Process.Pid)+", since ") ||
+		!strings.HasSuffix(conflict.Message, "). Continuing here means two writers: the draft keeps whichever saves last, and the other's last turn stays in the history.") {
+		t.Fatalf("held by a live process: %v", err)
 	}
+	if cur, _ := r.bridge.Current("SLICE-002"); cur == nil || cur.Live || !cur.LockedElsewhere || cur.TakeOverWarning != conflict.Message {
+		t.Fatalf("current while held: %+v", cur)
+	}
+	taken, err := r.bridge.Start(context.Background(), interview.StartRequest{SliceID: "SLICE-002", TakeOver: true})
+	if err != nil {
+		t.Fatalf("take over: %v", err)
+	}
+	evs := until(t, r.bridge, taken.InterviewID, 0, "waiting_for_reply")
+	if len(find(evs, "message")) != 1 {
+		t.Fatalf("the taken-over interview: %s", names(evs))
+	}
+	// Once the other process lets the lock go, this host holds it: a third host is warned about this one.
 	holder.Process.Kill()
 	holder.Wait()
-	s3, err := r.bridge.Start(context.Background(), interview.StartRequest{SliceID: "SLICE-002"})
-	if err != nil {
-		t.Fatalf("after the holder died: %v", err)
+	third := r.newBridge(nil)
+	defer third.Shutdown(context.Background())
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		cur, _ := third.Current("SLICE-002")
+		if cur != nil && cur.LockedElsewhere && strings.Contains(cur.TakeOverWarning, "(process "+strconv.Itoa(os.Getpid())+",") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the lock was not taken after the holder left: %+v", cur)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	r.bridge.Stop(context.Background(), s3.InterviewID)
+	r.bridge.Stop(context.Background(), taken.InterviewID)
+
+	// A lock whose process is gone (it outlived the process that wrote it) is taken without a warning.
+	holdLock(t, r.project, "SLICE-003", goneProcess(t))
+	if cur, _ := r.bridge.Current("SLICE-003"); cur != nil && cur.LockedElsewhere {
+		t.Fatalf("a stale lock is reported held: %+v", cur)
+	}
+	stale, err := r.bridge.Start(context.Background(), interview.StartRequest{SliceID: "SLICE-003"})
+	if err != nil {
+		t.Fatalf("a stale lock: %v", err)
+	}
+	r.bridge.Stop(context.Background(), stale.InterviewID)
+}
+
+// Taking over this host's own interview ends it and resumes it here from what it saved.
+func TestTakingOverThisHostsOwnInterviewEndsItAndResumes(t *testing.T) {
+	r := newRig(t, testkit.Turn{Text: testkit.QuestionText(3, "Seats")}, testkit.Turn{Kind: "slow", Sleep: 60})
+	started := r.start("SLICE-001")
+	evs := until(t, r.bridge, started.InterviewID, 0, "waiting_for_reply")
+	if err := r.bridge.Reply(context.Background(), started.InterviewID, "five"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, r.bridge, started.InterviewID, "text") // its second turn is running
+	again, err := r.bridge.Start(context.Background(), interview.StartRequest{SliceID: "SLICE-001", TakeOver: true})
+	if err != nil {
+		t.Fatalf("take over: %v", err)
+	}
+	if again.InterviewID == started.InterviewID || !again.Resumed {
+		t.Fatalf("took over as %+v", again)
+	}
+	ended := until(t, r.bridge, started.InterviewID, lastSeq(evs), "ended")
+	if !strings.Contains(names(ended), "turn:interrupted") || !strings.Contains(names(ended), "ended:taken_over") {
+		t.Fatalf("the old interview: %s", names(ended))
+	}
+	resumed := until(t, r.bridge, again.InterviewID, 0, "waiting_for_reply")
+	if names(resumed) != "state:starting message question state:waiting_for_reply" {
+		t.Fatalf("resumed: %s", names(resumed))
+	}
+	if n := len(testkit.Calls(t, r.claude)); n != 2 {
+		t.Fatalf("%d turn processes, want 2: resuming shows the saved question", n)
+	}
 }
 
 // ---- interrupt, stop, time limit, budget, crash, shutdown, restart ----

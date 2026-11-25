@@ -398,19 +398,39 @@ func (c *Claude) Start(ctx context.Context, req StartRequest) (Started, error) {
 	}
 	if s := c.bySlice[subject]; s != nil {
 		c.mu.Unlock()
-		if err := s.answerQuestion(questionDigest(req.BuildersQuestion)); err != nil {
-			return Started{}, err
+		if !req.TakeOver {
+			// Another window of this host: it joins the interview that is already running.
+			if err := s.answerQuestion(questionDigest(req.BuildersQuestion)); err != nil {
+				return Started{}, err
+			}
+			return Started{}, openHere(subject, s.id)
 		}
-		return Started{}, openHere(subject, s.id)
+		// Taken over in this window: this host's interview ends, and is resumed below from what it saved.
+		c.end(ctx, s, "taken_over")
+	} else {
+		c.mu.Unlock()
 	}
-	c.mu.Unlock()
 
 	if err := c.prepare(); err != nil {
 		return Started{}, err
 	}
-	lock, err := acquireLock(c.lockPath(subject), subject)
+	lock, holder, err := acquireLock(c.lockPath(subject))
 	if err != nil {
 		return Started{}, err
+	}
+	if holder != nil {
+		if holder.Alive && !req.TakeOver {
+			return Started{}, &ConflictError{Message: TakeOverWarning(subject, *holder), TakeOver: true}
+		}
+		// The holder's process is gone (its lock outlived it), or the product manager chose to
+		// continue here: this host writes without the lock, names itself in the lock file, and takes
+		// the lock once the other process lets it go.
+		markLock(c.lockPath(subject))
+		if holder.Alive {
+			c.cfg.Logger.Printf("interview %s: continued here while process %d also writes it", subject, holder.PID)
+		} else {
+			c.cfg.Logger.Printf("interview %s: the lock of a process that is gone was taken over", subject)
+		}
 	}
 	rec := c.loadRecord(subject)
 	resumed := rec != nil
@@ -435,6 +455,9 @@ func (c *Claude) Start(ctx context.Context, req StartRequest) (Started, error) {
 	}
 	c.sessions[s.id], c.bySlice[subject] = s, s
 	c.mu.Unlock()
+	if lock == nil {
+		go s.takeLockWhenFree()
+	}
 
 	s.mu.Lock()
 	s.newTurnLocked()
@@ -544,6 +567,37 @@ func (s *session) answerQuestion(digest string) error {
 	return s.startTurnLocked(AnswerQuestionNote)
 }
 
+// takeLockWhenFree: a session that started without the lock (a take-over) takes it as soon as the
+// other process releases it, so the next window to look finds this one as the writer.
+func (s *session) takeLockWhenFree() {
+	path := s.c.lockPath(s.sliceID)
+	for {
+		time.Sleep(lockPoll)
+		s.mu.Lock()
+		done := s.ended || s.lock != nil
+		s.mu.Unlock()
+		if done {
+			return
+		}
+		lock, holder, err := acquireLock(path)
+		if err != nil || holder != nil {
+			continue
+		}
+		s.mu.Lock()
+		if s.ended {
+			s.mu.Unlock()
+			releaseLock(lock)
+			return
+		}
+		s.lock = lock
+		s.mu.Unlock()
+		return
+	}
+}
+
+// lockPoll is how often a session that took over looks for the lock to come free.
+const lockPoll = 500 * time.Millisecond
+
 // openHere: this host already runs the slice's interview; the app attaches to it by its ID.
 func openHere(sliceID, interviewID string) *ConflictError {
 	return &ConflictError{Message: sliceID + "'s interview is already open here.", InterviewID: interviewID}
@@ -597,11 +651,17 @@ func (c *Claude) Current(sliceID string) (*Current, error) {
 		return cur, nil
 	}
 	rec := c.loadRecord(sliceID)
-	held := lockHeld(c.lockPath(sliceID))
+	held, holder := lockHeld(c.lockPath(sliceID))
+	if held && !holder.Alive {
+		held = false // its process is gone: starting takes the lock without a warning
+	}
 	if rec == nil && !held {
 		return nil, nil
 	}
 	cur := &Current{State: "saved", LockedElsewhere: held}
+	if held {
+		cur.TakeOverWarning = TakeOverWarning(sliceID, holder)
+	}
 	cur.setSubject(sliceID)
 	if rec != nil {
 		cur.LastMessage, cur.Turns, cur.SessionCostUSD = withQuestion(rec.LastMessage), rec.Turns, rec.SessionCostUSD
@@ -691,6 +751,29 @@ func (c *Claude) Interrupt(ctx context.Context, id string) error {
 	case <-ctx.Done():
 	}
 	return nil
+}
+
+// InterruptSubject stops the subject's running turn, if any, and waits for it to end.
+func (c *Claude) InterruptSubject(ctx context.Context, sliceID string) error {
+	c.mu.Lock()
+	s := c.bySlice[sliceID]
+	c.mu.Unlock()
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	tp := s.running
+	s.mu.Unlock()
+	if tp == nil {
+		return nil
+	}
+	c.stopTurn(tp, true)
+	select {
+	case <-tp.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (c *Claude) Stop(ctx context.Context, id string) error {

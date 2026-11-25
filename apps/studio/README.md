@@ -112,14 +112,14 @@ application/json`. A GET never needs Origin or the CSRF token.
 |-------|------|--------|
 | `GET /?t=<token>` | | sets the cookie, redirects to `/` (303); a used or wrong token is 401 |
 | `GET /api/session` | | `{project: {folder, path, name, project_id}, csrf_token, capabilities: {interview, interview_reason, continue_command, explore_command, needs_command}, versions: {host, api, engine_install}, engine_problem}` |
-| `POST /api/ops/<operation>` | that operation's arguments (contract 8.1) | the engine's JSON |
+| `POST /api/ops/<operation>` (`?interrupt=true`) | that operation's arguments (contract 8.1) | the engine's JSON. An operation that changes what a conversation is writing right now is a `conflict` whose message is a warning and whose hint is `{kind: "interrupt_turn", target: <subject>}`; the same request with `?interrupt=true` stops that reply, waits for it, and goes ahead |
 | `GET /api/drafts/spec/<SLICE>` | | `{slice_id, kind, exists, markdown, path, spec_name_pattern, editable, edit_refusal}` |
-| `PUT /api/drafts/spec/<SLICE>` | `{markdown, name?}` | `{slice_id, kind, path, check}`; `conflict` while an interview turn is running for the slice |
+| `PUT /api/drafts/spec/<SLICE>` | `{markdown, name?, interrupt?}` | `{slice_id, kind, path, check}`. While an interview turn is running for the slice: `conflict`, message "The interviewer is writing SLICE-001's draft right now. Saving stops its reply first, and your edit replaces what it wrote.", hint `{kind: "interrupt_turn", target: "SLICE-001"}`; with `interrupt: true` the turn is stopped, waited for, and the edit written |
 | `GET /api/drafts/intent/<SLICE>` | | `{slice_id, kind, exists, markdown, path, editable, edit_refusal}` |
-| `PUT /api/drafts/intent/<SLICE>` | `{markdown}` | `{slice_id, kind, path, check}` |
+| `PUT /api/drafts/intent/<SLICE>` | `{markdown, interrupt?}` | `{slice_id, kind, path, check}`; as the spec while a turn is running |
 | `GET /api/slices/<SLICE>/mocks/<sha256>` | | the draft's own design mock with that SHA-256, inline (`image/png` or `image/jpeg` from its bytes, `nosniff`, `no-store`); `400` for a malformed ID or hash, `404` for anything not exactly that file |
-| `POST /api/interview` | `{slice_id, idea?}`, or (M16) `{idea_id}` for the Shape conversation on one idea, or (M17) `{needs: true}` for the needs conversation | `{interview_id, slice_id, resumed}`; `refused` for an approved or unknown slice; `conflict` while the slice's lock is held. Held by this host: message "SLICE-001's interview is already open here." and `hint: {kind: "open_interview", target: <interview_id>}`, so the app attaches to that interview. Held by another host or a terminal: "SLICE-001 already has an interview running (process N, since T).", no hint |
-| `GET /api/interview?slice_id=<SLICE>` (or `?idea_id=<IDEA>`, or `?needs=true`) | | `{interview: null}` or `{interview: {interview_id, slice_id, live, state, turn_running, locked_elsewhere, last_message: {message_id, text, kind, question}, turns, session_cost_usd}}`; `interview_id` is null and `state` is `saved` when only a saved session exists |
+| `POST /api/interview` | `{slice_id, idea?}`, or (M16) `{idea_id}` for the Shape conversation on one idea, or (M17) `{needs: true}` for the needs conversation; any of them with `take_over: true` | `{interview_id, slice_id, resumed}`; `refused` for an approved or unknown slice. Held by this host: `conflict`, message "SLICE-001's interview is already open here." and `hint: {kind: "open_interview", target: <interview_id>}`, so the app joins that interview; with `take_over: true` that interview ends (reason `taken_over`) and is resumed here from what it saved. Held by another live process on this computer: `conflict`, message "Another window on this computer is writing SLICE-001 right now (process N, since HH:MM). Continuing here means two writers: the draft keeps whichever saves last, and the other's last turn stays in the history.", `hint: {kind: "take_over", target: null}`; with `take_over: true` the interview starts here without the lock, names this host in the lock file, and takes the lock once the other process lets it go. Held by a process that is gone: the lock is taken, no warning |
+| `GET /api/interview?slice_id=<SLICE>` (or `?idea_id=<IDEA>`, or `?needs=true`) | | `{interview: null}` or `{interview: {interview_id, slice_id, live, state, turn_running, locked_elsewhere, take_over_warning?, last_message: {message_id, text, kind, question}, turns, session_cost_usd}}`; `interview_id` is null and `state` is `saved` when only a saved session exists; `take_over_warning` is the warning above while `locked_elsewhere` |
 | `GET /api/interview/history?slice_id=<SLICE>` (or `?idea_id=<IDEA>`, or `?needs=true`) | | `{slice_id, events: [{at, interview_id, event, data}], truncated}`: every saved event for the slice, across interviews and restarts, oldest first |
 | `GET /api/interview/<id>/events` | | server-sent events, below |
 | `POST /api/interview/<id>/reply` | `{text}` (up to 8000 characters) | `{sent: true}`; `conflict` while a turn is running or after the interview ended |
@@ -195,7 +195,8 @@ computer an idea may start from), `idea.show`, `idea.stage`, `idea.lookups`, `id
 `verdict.record`, `lookback.record`. An idea's title is the engine's one positional value and
 always follows `--`. Lookups and a map travel as JSON in the body (at most 256 KiB, the engine's
 own limit) and are staged like any other file. While the Shape conversation's turn is running for an
-idea, every Shape operation that changes that idea is a `conflict`.
+idea, every Shape operation that changes that idea is first a warning (`conflict`, hint
+`interrupt_turn`); with `?interrupt=true` the reply is stopped and the operation runs.
 
 ### Technical needs (M17)
 
@@ -205,7 +206,7 @@ command (`internal/engine/ops_needs.go`): `need.list`, `need.add`, `need.set`, `
 `design.list`, `design.import` (one Markdown or plain-text file as an upload in the body, the PRD
 on-ramp's limits), `design.show`, `design.settle`, `design.publish`. `design map` is not an
 operation: the needs conversation records a design's map. While the needs conversation's turn is
-running, every operation that changes the needs or a design is a `conflict`.
+running, every operation that changes the needs or a design is first a warning, as for Shape.
 
 ### A small change (M18)
 

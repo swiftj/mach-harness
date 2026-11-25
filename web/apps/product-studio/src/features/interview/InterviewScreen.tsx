@@ -33,6 +33,7 @@ import { useSliceShow } from "../../api/useSliceShow";
 import { useStatus } from "../../api/store";
 import { MarkReadyDialog } from "../spec/SliceActs";
 import { BuildersQuestion } from "../../shared/BuildersQuestion";
+import { TakeOverBanner } from "../../shared/TakeOverBanner";
 import { Fold } from "../../shared/layout/Fold";
 import { ContextRow, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
 
@@ -214,10 +215,7 @@ function Current({ iv, busy, sliceId, show, onApproved }: { iv: InterviewControl
       );
     case "conflict":
       return (
-        <Banner tone="warning" title="The interview cannot be opened here" actions={<Button onClick={iv.retryLoad}>Check again</Button>}>
-          {/* The host's own words when it gave them; otherwise the fact the lookup reported. */}
-          {iv.problem?.kind === "conflict" ? iv.problem.message : "Another process holds this slice's interview."}
-        </Banner>
+        <TakeOverBanner conv={iv} subject={sliceId} />
       );
     case "refused":
     case "error": {

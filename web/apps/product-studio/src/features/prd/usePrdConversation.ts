@@ -27,7 +27,7 @@ function bySubject(prd: PrdConversationClient): ConversationClient {
   return {
     current: (subject, signal) => prd.current(subject, signal),
     history: (subject, signal) => prd.history(subject, signal),
-    start: (subject) => prd.start(subject),
+    start: (subject, options) => prd.start(subject, options),
     subscribe: prd.subscribe,
     reply: prd.reply,
     interrupt: prd.interrupt,

@@ -8,6 +8,7 @@ import { ReplyField, conversationBusy, useNewestInView } from "../../shape/explo
 import { openQuestion } from "../../shape/explore/model";
 import type { ConversationController } from "../shell/useNeedsConversation";
 import { needsCommand } from "./model";
+import { TakeOverBanner } from "../../../shared/TakeOverBanner";
 
 const PAUSE_REQUEST = "I need to stop here. Please save where we are so I can continue later.";
 const NOTHING_TO_SAY = "Nothing to say about this.";
@@ -107,11 +108,7 @@ function Current({ conv, busy }: { conv: ConversationController; busy: boolean }
     case "unavailable":
       return <ContinueInClaudeCode reason={conv.capability?.reason ?? null} />;
     case "conflict":
-      return (
-        <Banner tone="warning" title="The conversation cannot be opened here" actions={<Button onClick={conv.retryLoad}>Check again</Button>}>
-          {conv.problem?.kind === "conflict" ? conv.problem.message : "Another window or process holds the needs conversation."}
-        </Banner>
-      );
+      return <TakeOverBanner conv={conv} subject="the technical needs" />;
     case "refused":
     case "error": {
       const error = conv.problem;

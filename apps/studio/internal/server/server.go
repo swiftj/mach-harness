@@ -4,6 +4,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -258,26 +259,30 @@ func (s *Server) operation(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// M16: an act on an idea waits while the guided conversation is writing that idea's brief or case,
-	// as a draft write waits for a slice's interview (drafts.go).
-	if idea := engine.WritesIdea(name, body); idea != "" && s.opts.Bridge.Busy(idea) {
-		env := engine.Fail(engine.KindConflict, "The conversation is writing this idea's brief or case right now. Wait for its reply, or interrupt it.")
-		writeEnvelope(w, statusFor(env), env)
-		return
+	// M16: an act on an idea while the guided conversation is writing that idea's brief or case is
+	// warned about first; with ?interrupt=true the conversation's reply is stopped and the act goes
+	// ahead, as a draft write does for a slice's interview (drafts.go). M17 and M19: the same for an
+	// act on the technical needs or a brought-in design, and on a PRD's map, its settlements or what
+	// is made from it.
+	interrupt := r.URL.Query().Get("interrupt") == "true"
+	var writers []busyWriter
+	if idea := engine.WritesIdea(name, body); idea != "" {
+		writers = append(writers, busyWriter{idea,
+			"The conversation is writing " + idea + "'s brief or case right now. Going ahead stops its reply first."})
 	}
-	// M17: an act on the technical needs or a brought-in design waits while the needs conversation is
-	// writing, in the same way.
-	if engine.WritesNeeds(name, body) && s.opts.Bridge.Busy(interview.NeedsSubject) {
-		env := engine.Fail(engine.KindConflict, "The conversation is writing the technical needs right now. Wait for its reply, or interrupt it.")
-		writeEnvelope(w, statusFor(env), env)
-		return
+	if engine.WritesNeeds(name, body) {
+		writers = append(writers, busyWriter{interview.NeedsSubject,
+			"The conversation is writing the technical needs right now. Going ahead stops its reply first."})
 	}
-	// M19: an act on a PRD's map, its settlements or what is made from it waits while the PRD
-	// conversation is recording that PRD's map, in the same way.
-	if prd := engine.WritesPRD(name, body); prd != "" && s.opts.Bridge.Busy(prd) {
-		env := engine.Fail(engine.KindConflict, "The conversation is recording this PRD's map right now. Wait for its reply, or interrupt it.")
-		writeEnvelope(w, statusFor(env), env)
-		return
+	if prd := engine.WritesPRD(name, body); prd != "" {
+		writers = append(writers, busyWriter{prd,
+			"The conversation is recording " + prd + "'s map right now. Going ahead stops its reply first."})
+	}
+	for _, writer := range writers {
+		if warning := s.writerBusy(r.Context(), writer.subject, interrupt, writer.message); warning != nil {
+			writeEnvelope(w, statusFor(*warning), *warning)
+			return
+		}
 	}
 	env := s.opts.Engine.Do(r.Context(), name, body)
 	if env.OK && op.Download {
@@ -295,6 +300,26 @@ func (s *Server) operation(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logFailure(name, env)
 	writeEnvelope(w, statusFor(env), env)
+}
+
+// busyWriter: a conversation that may be writing what a request changes, and the warning for it.
+type busyWriter struct{ subject, message string }
+
+// writerBusy: the subject's conversation is writing what this request changes. With interrupt,
+// its turn is stopped first and nil lets the request go ahead. Without, the answer is the warning,
+// whose hint {kind: "interrupt_turn"} tells the app to send the same request again with interrupt.
+func (s *Server) writerBusy(ctx context.Context, subject string, interrupt bool, warning string) *engine.Envelope {
+	if !s.opts.Bridge.Busy(subject) {
+		return nil
+	}
+	if interrupt {
+		if err := s.opts.Bridge.InterruptSubject(ctx, subject); err == nil && !s.opts.Bridge.Busy(subject) {
+			return nil
+		}
+	}
+	env := engine.Fail(engine.KindConflict, warning)
+	env.Error.Hint, _ = json.Marshal(map[string]string{"kind": "interrupt_turn", "target": subject})
+	return &env
 }
 
 // ---- helpers ----
