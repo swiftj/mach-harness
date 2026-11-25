@@ -210,8 +210,30 @@ def deliver(host: Any, studio: Any, slice_id: str, items: List[Dict[str, Any]], 
                              f"The builders hold {slice_id} until its design mocks are in the project's repository, at {relative}.")}
 
 
-TAKE_REFUSAL = ("#{number} has design mocks. Their pictures are files on the main branch, not in the issue, so it cannot be opened here as a draft. "
-                "Ask the product manager who saved it to change it, or reopen it on their computer.")
+def for_take(host: Any, studio: Any, slice_id: str, number: int, items: List[Dict[str, Any]], into: Optional[str] = None) -> Tuple[bool, Optional[str]]:
+    """`slice take` of an issue with design mocks: the pictures are files on the main branch, not in the issue. Each is read as project
+    export reads it (this workspace's copy, else product/ready/SLICE-NNN/mocks/ on the main branch as this copy last fetched it) and
+    checked against the approved SHA-256, then written into the draft's mocks folder. (True, None) when every one came; otherwise
+    (False, the warning that says the slice opens without them and how they come)."""
+    import project_export  # reads the main branch with Git, never touching the checkout
+    rules = host.ticket_rules()
+    ref = project_export._main_ref(studio)  # noqa: SLF001
+    files: Dict[str, bytes] = {}
+    for item in items:
+        name = rules.mock_file_name(item)
+        data = project_export._picture(host, studio, ref, slice_id, name)  # noqa: SLF001
+        if data is None or rules.check_mock_file(item, data) is not None:
+            return False, host.say(
+                f"#{number} has design mocks, and their pictures are not on {ref} in this copy of the repository, or are not the approved ones. "
+                f"So {slice_id} is open here without them, as a draft, not as approved. To bring them, fetch the main branch (git fetch) and open "
+                f"#{number} again (slice take {number}); or add them again (slice mock add {slice_id} <picture>).",
+                f"#{number} has design mocks, and their pictures are not in this copy of the project's repository yet. So {slice_id} is open here "
+                f"without them, as a draft, not as approved. To bring them, get the latest from the repository and open #{number} again; or add "
+                "the pictures again.")
+        files[name] = data
+    for name, data in files.items():
+        write_picture(host, folder(studio, into or slice_id) / name, data)
+    return True, None
 
 
 def add_commands(slice_parsers: Any, host: Any) -> None:

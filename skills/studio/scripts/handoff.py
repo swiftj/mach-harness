@@ -91,6 +91,11 @@ class Handoff:
         self.adopt: Optional[Callable[[str, Optional[str], Dict[str, Any]], None]] = None
         self.text_notes: List[Dict[str, Any]] = []  # M20: what happened to the project's and epics' text in this command
         self.chosen: Dict[str, Dict[str, Any]] = {}  # M20: each epic as decided in this command, by epic ID
+        # Never blocked: what this command did over someone else's work, said first as a warning. `replaced` is each version
+        # of someone else's that the product manager's act replaced, with where it is kept; `warnings` are the sentences.
+        self.replaced: List[Dict[str, Any]] = []
+        self.warnings: List[str] = []
+        self.pending_replaced: Optional[str] = None
         self.path = home / "issues.json"
         self.outgoing = home / "outgoing"
         for item in (self.path, self.outgoing, draft / "product" / "ready"):
@@ -135,6 +140,20 @@ class Handoff:
     def save(self, data: Dict[str, Any]) -> None:
         self.home.mkdir(parents=True, exist_ok=True)
         self._write(self.path, json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
+
+    def keep_replaced(self, name: str, files: Dict[str, str]) -> Path:
+        """Someone else's version that the product manager's act replaces, kept whole so a person can get it back:
+        .factory/studio/replaced/<name>/. Never read by MACH again; written before anything replaces it."""
+        target = self.home / "replaced" / name
+        for file_name, text in files.items():
+            self._write(target / file_name, text)
+        return target
+
+    def where_kept(self, path: Path) -> str:
+        try:
+            return str(path.relative_to(self.project)) + "/"
+        except ValueError:
+            return str(path) + "/"
 
     def handed_over(self) -> List[str]:
         """The slices this workspace has handed over: marked ready (to GitHub or the folder) or taken from GitHub, at any time
@@ -236,6 +255,27 @@ class Handoff:
                   and item["number"] != entry.get("number")]
         return own, others
 
+    def keep_newer_slice(self, data: Dict[str, Any], repository: str, slice_id: str, own: Dict[str, Any]) -> None:
+        """Someone else saved a newer version of this slice on its issue, and this product manager is marking theirs ready over
+        it. Their version is kept whole under .factory/studio/replaced/, and the warning says who saved it, when, and where it is."""
+        marker = own["marker"]
+        found, failure = issues.comments(self.project, repository, own["number"])
+        row = self.describe(data, own, found, failure)
+        by, at = row.get("approved_by"), (row.get("times") or {}).get("marked_ready")
+        current, failure = issues.view(self.project, repository, own["number"])
+        body = str((current or {}).get("body") or "") if not failure else ""
+        files = {"issue.md": body} if body else {}
+        if marker.get("intact") and marker.get("spec") is not None:
+            files.update({"spec.md": marker["spec"], "why.md": marker["why"]})
+        kept = self.keep_replaced(f"{slice_id}-version-{marker['revision']}", files or {"issue.md": ""})
+        who = f"@{by}" if by else "Someone else"
+        when = f" at {at[11:16]} UTC on {at[:10]}" if isinstance(at, str) and len(at) >= 16 else ""
+        self.replaced.append({"what": slice_id, "issue": own["number"], "revision": marker["revision"], "by": by, "at": at,
+                              "kept": self.where_kept(kept)})
+        self.pending_replaced = (f"{who} saved version {marker['revision']} of {slice_id} on GitHub{when}. Yours is now version "
+                                 "{revision} and replaces it. Theirs is kept in the edit history of #" + str(own["number"])
+                                 + f" on GitHub and at {self.where_kept(kept)}")
+
     # ---- marking ready on GitHub ----
 
     def prepare(self, data: Dict[str, Any], channel: Channel, slice_id: str, title: str, epic: Dict[str, Any], project: Dict[str, Any],
@@ -253,16 +293,18 @@ class Handoff:
         entry = self.entry(data, slice_id)
         own, others = self.own_issue(data, slice_id, snapshot, spec_sha, why_sha)
         if others and not own:
-            raise HandoffError(f"{slice_id} is already used on GitHub by another slice (#{others[0]}). Give your draft a new number, then mark it ready.",
-                               {"kind": "renumber_slice", "target": slice_id})
+            # Never blocked: studio.py gives the draft the next free number and carries on marking it ready.
+            raise NumberTaken(f"{slice_id} is already used on GitHub by another slice (#{others[0]}).",
+                              {"kind": "renumber_slice", "target": slice_id}, kind="slice", ident=slice_id, holder=others[0])
         run = entry.get("run") or {}
         if own:
             marker = own["marker"]
             same = ((marker["spec_sha256"], marker["why_sha256"], marker.get("jira"), marker.get("mocks_sha256"), marker.get("small"))
                     == (spec_sha, why_sha, jira, mocks_sha, small))
             if marker["revision"] > entry["base_revision"] and not same and marker["revision"] != run.get("revision"):
-                raise HandoffError(f"Someone else saved a newer version of {slice_id} on GitHub (version {marker['revision']}). "
-                                   f"Choose yours or theirs before marking it ready.", {"kind": "reconcile", "target": slice_id})
+                # Never blocked: the product manager asked to mark their text ready, so theirs replaces the newer version.
+                # That version is kept whole first, and GitHub keeps it in the issue's edit history too.
+                self.keep_newer_slice(data, str(channel.repository), slice_id, own)
             if "mach:shipped" in own["labels"] or own["state"] == "closed":
                 if same:
                     raise HandoffError(f"{slice_id} has already shipped as #{own['number']}, exactly as it is. To change it, reopen it first.",
@@ -272,6 +314,10 @@ class Handoff:
             else:
                 follows = None
             revision = marker["revision"] if own and same else max(entry["base_revision"], marker["revision"]) + 1
+            if self.pending_replaced:
+                self.warnings.append(self.pending_replaced.replace("{revision}", str(revision)) + ".")
+                self.replaced[-1]["replaced_by_revision"] = revision
+                self.pending_replaced = None
         else:
             follows = max(entry["shipped"]) if entry["shipped"] else None
             revision = (run.get("revision") if run.get("spec_sha256") == spec_sha and run.get("why_sha256") == why_sha and run.get("jira") == jira
@@ -315,16 +361,28 @@ class Handoff:
 
     def find_project(self, data: Dict[str, Any], snapshot: Dict[str, Any], project: Dict[str, Any]) -> Optional[int]:
         several = sorted(item["number"] for item in snapshot["projects"] if item["state"] == "open")
-        if len(several) > 1:
-            raise HandoffError(several_projects(several), several_hint(self.rules, data.get("repository"), several))
         linked = data.get("project") or {}
+        if len(several) > 1:
+            # Never blocked: MACH carries on with the project issue this workspace already follows, else this project's own
+            # oldest one, else the oldest, and says so. The others stay as they are until someone closes them.
+            mine = sorted(item["number"] for item in snapshot["projects"] if item["state"] == "open" and item["id"] == project["project_id"])
+            chosen = linked.get("number") if linked.get("number") in several else (mine or several)[0]
+            why = ("the one this workspace already follows" if chosen == linked.get("number") else
+                   "the oldest one that holds this project" if mine else "the oldest")
+            words = several_projects(several, chosen, why)
+            if words not in self.warnings:
+                self.warnings.append(words)
+            if chosen != linked.get("number"):
+                item = next(found for found in snapshot["projects"] if found["number"] == chosen)
+                if item["id"] != project["project_id"]:
+                    raise HandoffError(different_project(item))
+            return chosen
         if linked.get("number") in [item["number"] for item in snapshot["projects"]]:
             return linked["number"]
         same = sorted(item["number"] for item in snapshot["projects"] if item["id"] == project["project_id"] and item["state"] == "open")
         other = [item for item in snapshot["projects"] if item["id"] != project["project_id"] and item["state"] == "open"]
         if not same and other:
-            raise HandoffError(f"This repository's project on GitHub is a different one ({other[0]['id']}, #{other[0]['number']}). "
-                               "An engineer needs to look at this before anything is saved.")
+            raise HandoffError(different_project(other[0]))
         return same[0] if same else None
 
     def find_epic(self, data: Dict[str, Any], snapshot: Dict[str, Any], epic: Dict[str, Any]) -> Optional[int]:
@@ -336,8 +394,13 @@ class Handoff:
         title = self.rules.issue_title(epic.get("title"))
         matching = sorted(item["number"] for item in same_id if item.get("title") == title)
         if same_id and not matching:
-            raise HandoffError(f"{epic_id} is already used on GitHub by another epic (#{same_id[0]['number']}). Give your epic a new number first.",
-                               {"kind": "renumber_epic", "target": epic_id})
+            # Never blocked: studio.py gives the epic the next free number and carries on marking the slice ready. The epic
+            # numbers GitHub holds are kept first, so that number is not one of them.
+            data.setdefault("seen", {})["epics"] = [{"number": e["number"], "epic_id": e["id"], "title": self.rules.list_title(e.get("title"))}
+                                                    for e in snapshot["epics"]]
+            self.save(data)
+            raise NumberTaken(f"{epic_id} is already used on GitHub by another epic (#{same_id[0]['number']}).",
+                              {"kind": "renumber_epic", "target": epic_id}, kind="epic", ident=epic_id, holder=same_id[0]["number"])
         return matching[0] if matching else None
 
     def remember(self, data: Dict[str, Any], snapshot: Dict[str, Any]) -> None:
@@ -418,7 +481,8 @@ class Handoff:
                         data.setdefault("seen", {}).setdefault("epic_lost", {})[epic["epic_id"]] = {
                             "issue": epic_number, "holder": earlier["number"], "by": None, "at": utc_now()}
                         self.save(data)
-                        raise lost_error(epic_lost_words(epic["epic_id"], epic_number, earlier["number"]), {"kind": "renumber_epic", "target": epic["epic_id"]})
+                        raise lost_error(epic_lost_words(epic["epic_id"], epic_number, earlier["number"]), {"kind": "renumber_epic", "target": epic["epic_id"]},
+                                         kind="epic", ident=epic["epic_id"], holder=earlier["number"], closed=epic_number)
                     epic_number, item = earlier["number"], earlier  # the same epic, made twice at once: the issue GitHub made first is kept
                     data["epics"][epic["epic_id"]] = {"number": epic_number}
                     self.save(data)
@@ -550,8 +614,7 @@ class Handoff:
                 data["project"] = {"number": earlier["number"], "pin_tried": True, "pinned": None}
                 self.save(data)
                 if earlier["id"] != project["project_id"]:
-                    raise HandoffError(f"This repository's project on GitHub is a different one ({earlier['id']}, #{earlier['number']}). "
-                                       "An engineer needs to look at this before anything is saved.")
+                    raise HandoffError(different_project(earlier))
                 return self.sync_project(data, repository, earlier["number"], project, {"projects": [earlier]})
         if not data["project"].get("pin_tried"):
             # Pinned once. A repository holds only a few pinned issues, so not pinning stops nothing.
@@ -705,12 +768,13 @@ class Handoff:
         failure = self.stand_down(repository, number, "slice", slice_id, holder)
         if failure:
             raise HandoffError(f"{slice_id} is already held on GitHub by #{holder}, made at the same moment as yours (#{number}). Yours was not marked ready, "
-                               f"but closing it stopped part way. {explain(failure)} Mark it ready again to finish closing it.", {"kind": "finish_ready", "target": slice_id})
+                               f"but closing it stopped part way. {explain(failure)} Mark it ready again: MACH finishes closing it and gives yours "
+                               "the next free number.", {"kind": "finish_ready", "target": slice_id})
         entry.update(number=None, id=None, run=None, saved=None)
         entry["lost"]["closed"] = True
         self.save(data)
         raise lost_error(slice_lost_words(slice_id, number, holder, by, app=False), {"kind": "renumber_slice", "target": slice_id},
-                         slice_lost_words(slice_id, number, holder, by, app=True))
+                         slice_lost_words(slice_id, number, holder, by, app=True), kind="slice", ident=slice_id, holder=holder, closed=number, by=by)
 
     def clashes(self, data: Dict[str, Any], repository: str, snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
         """For refresh: IDs held by more than one open issue (made at the same moment and missed then). This workspace's own later
@@ -807,26 +871,30 @@ class Handoff:
             base = int(record.get("base_revision") or 0)
             if theirs and theirs["intact"] and kind.same(theirs["sha256"], theirs["extra"], sha, extra):
                 revision = theirs["revision"]
-            elif theirs and theirs["intact"] and theirs["revision"] > base and theirs["revision"] != run.get("revision"):
-                raise HandoffError(f"Someone else published version {theirs['revision']} of {kind.words} on GitHub. Choose yours or theirs "
-                                   f"before publishing (reconcile {kind.name} --take mine|theirs). Nothing was saved.", {"kind": "reconcile", "target": kind.name},
-                                   app=f"Someone else published version {theirs['revision']} of {kind.words} on GitHub. Choose yours or theirs "
-                                       f"on the {kind.page} page before publishing. Nothing was saved.")
             elif kind.same(run.get("sha256"), run.get(kind.extra), sha, extra) and run.get("revision"):
                 revision = run["revision"]
             else:
                 revision = max(base, theirs["revision"] if theirs else 0) + 1
+            if theirs and theirs["intact"] and theirs["revision"] > base and revision > theirs["revision"]:
+                # Never blocked: the product manager asked to publish their own set, so it replaces the newer one someone else
+                # published. Theirs is kept whole first; `reconcile --take theirs` brings it back.
+                self.keep_newer_set(kind, data, repository, number, theirs, revision)
             sections = {**self.kept(data, body_now), kind.name: kind.section_of(revision, items, extra)}
             item = next((found for found in snapshot["projects"] if found["number"] == number), None) if number else None
             keep_seen = False
             if item is not None:
                 # M20: the project's own text is written as GitHub holds it unless this workspace's may replace it.
                 plan, theirs_text = self.project_choice(data, item, project)
+                if plan == "changed" and theirs_text is None:
+                    # Never blocked: someone else's text on the project issue is not in MACH's form, so it cannot be kept in place
+                    # beside the published set. Yours is written; theirs is kept whole and stays in the issue's edit history.
+                    kept = self.keep_replaced(f"project-issue-{number}-{utc_now()[:19].replace(':', '')}", {"issue.md": str(item.get("body") or "")})
+                    self.replaced.append({"what": "project", "issue": number, "kept": self.where_kept(kept)})
+                    self.warnings.append(f"Someone else changed the project's issue on GitHub (#{number}), and its text is not in the form MACH writes, "
+                                         f"so MACH wrote your project's text with {kind.words}. Theirs is kept in the edit history of #{number} "
+                                         f"on GitHub and at {self.where_kept(kept)}.")
+                    plan = "write"
                 if plan != "write":
-                    if plan == "changed" and theirs_text is None:
-                        raise HandoffError("Someone else changed the project on GitHub, and its text is not in the form MACH writes. Choose yours or theirs "
-                                           "(reconcile project --take mine|theirs) before publishing. Nothing was saved.", {"kind": "reconcile", "target": "project"},
-                                           app="Someone else changed the project on GitHub. Choose yours or theirs before publishing. Nothing was saved.")
                     self.settle_text(data, "project", None, number, plan, theirs_text, raw_sha(item))
                     project = {**project, **({key: theirs_text[key] for key in ("name", "vision", "outcomes")} if theirs_text else {})}
                     keep_seen = plan == "changed"
@@ -889,7 +957,37 @@ class Handoff:
             if kind.folder_too:  # the needs: the baseline reads only committed files, so the folder form is written too, same revision and hash
                 self.write_set_folder(kind, revision, sha, items, extra)
             return {"saved_to": "github", "revision": revision, "sha256": sha, "issue": number, "url": self.rules.issue_url(repository, number),
-                    "approved_by": channel.login, **({"folder": str(self.set_folder(kind))} if kind.folder_too else {})}
+                    "approved_by": channel.login, **({"folder": str(self.set_folder(kind))} if kind.folder_too else {}), **self.warned()}
+
+    def warned(self) -> Dict[str, Any]:
+        """Never blocked: what this command did over someone else's work, for the result. Nothing when nothing was."""
+        return {**({"warned": list(self.warnings)} if self.warnings else {}), **({"replaced": list(self.replaced)} if self.replaced else {})}
+
+    def keep_newer_set(self, kind: "PublishedKind", data: Dict[str, Any], repository: str, number: Optional[int], theirs: Dict[str, Any],
+                       revision: int) -> None:
+        """Someone else published a newer version of the principles or the needs, and this product manager is publishing theirs over
+        it. That version is kept whole as JSON, in the form the ready folder holds, and the warning says who, when and where."""
+        seen = (data.get("seen") or {}).get(kind.name) or {}
+        by = seen.get("approved_by") if seen.get("revision") == theirs["revision"] else None
+        at = None
+        found, failure = issues.comments(self.project, repository, number) if number else (None, None)
+        for comment in found or []:
+            for approval in self.rules_set(kind).approvals([comment.get("body")]):
+                if approval.get("revision") == theirs["revision"] and approval.get("sha256") == theirs.get("sha256"):
+                    by = by or approval.get("by")
+                    at = str(comment["created_at"]) if comment.get("created_at") else at
+        record = {"schema_version": 1, "revision": theirs["revision"], "sha256": theirs.get("sha256"),
+                  kind.name: json.loads(self.rules_set(kind).canonical(theirs["items"])), **kind.extra_field(theirs.get("extra")),
+                  "published_by": by, "issue": number}
+        kept = self.keep_replaced(f"{kind.name}-version-{theirs['revision']}", {f"{kind.name}.json": json.dumps(record, indent=2, sort_keys=True, ensure_ascii=False) + "\n"})
+        self.replaced.append({"what": kind.name, "issue": number, "revision": theirs["revision"], "by": by, "at": at, "kept": self.where_kept(kept),
+                              "replaced_by_revision": revision})
+        who = f"@{by}" if by else "Someone else"
+        when = f" at {at[11:16]} UTC on {at[:10]}" if isinstance(at, str) and len(at) >= 16 else ""
+        back = say(f" To use theirs instead, take it (reconcile {kind.name} --take theirs).", " You can take theirs instead.")
+        self.warnings.append(f"{who} published version {theirs['revision']} of {kind.words} on GitHub{when}. Yours is now version {revision} and "
+                             f"replaces it. Theirs is kept in the edit history of the project's issue" + (f" (#{number})" if number else "")
+                             + f" and at {self.where_kept(kept)}.{back}")
 
     def write_set_folder(self, kind: "PublishedKind", revision: int, sha: str, items: List[Dict[str, Any]], extra: Any = None) -> None:
         """product/ready/<FOLDER>/<name>.json, written to a temporary folder first and then renamed."""
@@ -1376,13 +1474,52 @@ class Handoff:
         projects = sorted((item for item in snapshot["projects"] if item["state"] == "open"), key=lambda item: item["number"])
         return {"reachable": True, "repository": repository, "projects": projects}
 
-    def link_project(self, repository: str, item: Dict[str, Any]) -> None:
-        """project init took the project from its issue: this workspace has seen exactly that text."""
+    def close_project_issue(self, number: int) -> Dict[str, Any]:
+        """`project close-issue`: on the product manager's word, close one of this repository's project issues, the fix MACH offers when
+        there is more than one (or one it cannot read). A comment from a fixed template first, then MACH's labels off and the issue closed,
+        looking before each write. Its text stays in its history on GitHub."""
+        found = self.github_project()
+        if not found["reachable"]:
+            raise HandoffError(f"MACH could not read GitHub, so #{number} was not closed. {found['problem'] or ''} Try again when GitHub can be reached.".replace("  ", " "))
+        repository = str(found["repository"])
+        numbers = [item["number"] for item in found["projects"]]
+        if number not in numbers:
+            listed = ", ".join(f"#{n}" for n in numbers) or "none"
+            raise HandoffError(f"#{number} is not an open project issue in this repository, so nothing was closed. Its open project issues: {listed}.")
+        with self.exclusive():
+            data = self.for_repository(self.load(), repository)
+            linked = (data.get("project") or {}).get("number")
+            rest = [n for n in numbers if n != number]
+            kept = linked if linked in rest else (rest[0] if rest else None)
+            marker = f"<!-- mach:closed project-issue=#{int(number)} -->"
+            comments, failure = issues.comments(self.project, repository, number)
+            if failure:
+                raise HandoffError(f"#{number} was not closed. {explain(failure)} Try again; nothing is done twice.")
+            if not any(marker in (c.get("body") or "") for c in comments or []):
+                text = (f"{marker}\nMACH Product Studio closed this issue on a product manager's word. "
+                        + (f"This repository's project is #{int(kept)}. " if kept else "MACH makes the project's issue again when a slice is next marked ready. ")
+                        + "This issue's text stays in its history.\n")
+                failure = issues.comment(self.project, repository, number, self.outgoing_file(f"closed-project-{int(number)}", text))
+                if failure:
+                    raise HandoffError(f"#{number} was not closed. {explain(failure)} Try again; nothing is done twice.")
+            current, failure = issues.view(self.project, repository, number)
+            names = [name for name in ("mach:project", issues.READY) if name in issues.label_names(current or {})] if not failure else ["mach:project"]
+            failure = issues.stand_down(self.project, repository, number, names)
+            if failure:
+                raise HandoffError(f"#{number} was not closed. {explain(failure)} Try again; nothing is done twice.")
+            if linked == number:
+                data["project"] = None if kept is None else {"number": kept}
+            self.save(data)
+        return {"closed": number, "kept": kept, "repository": repository, "url": self.rules.issue_url(repository, number)}
+
+    def link_project(self, repository: str, item: Dict[str, Any], words_kept: bool = False) -> None:
+        """project init took the project from its issue: this workspace has seen exactly that text. With `words_kept` (its text is not in
+        MACH's form, so the product manager's own words were kept), what it holds counts as seen, so the next slice ready writes theirs."""
         theirs = parse_project_text(item) or {}
         with self.exclusive():
             data = self.for_repository(self.load(), repository)
             data["project"] = {"number": item["number"], "pin_tried": True, "pinned": None,
-                               "text_sha256": project_sha(theirs.get("name"), theirs.get("vision"), theirs.get("outcomes"))}
+                               "text_sha256": raw_sha(item) if words_kept else project_sha(theirs.get("name"), theirs.get("vision"), theirs.get("outcomes"))}
             self.save(data)
 
     def taken_ids(self) -> List[int]:
@@ -1685,24 +1822,34 @@ def text_changed_view(data: Dict[str, Any], rules: Any) -> List[Dict[str, Any]]:
     return rows
 
 
-class LostError(HandoffError):
-    """Refused because GitHub made another product manager's issue for the same ID first: the approval here is undone."""
+class NumberTaken(HandoffError):
+    """The slice's or epic's number is held on GitHub by someone else's issue. Never a stop for the product manager: studio.py
+    gives their item the next free number and carries on marking the slice ready in the same act (mark_ready)."""
+
+    def __init__(self, message: str, hint: Dict[str, Any], app: Optional[str] = None, kind: str = "slice", ident: str = "",
+                 holder: Optional[int] = None, closed: Optional[int] = None, by: Optional[str] = None):
+        super().__init__(message, hint, app)
+        self.kind, self.ident, self.holder, self.closed, self.by = kind, ident, holder, closed, by
 
 
-def lost_error(message: str, hint: Dict[str, Any], app: Optional[str] = None) -> LostError:
-    return LostError(message, hint, app)
+class LostError(NumberTaken):
+    """GitHub made another product manager's issue for the same ID first, at the same moment: this one was closed, never ready."""
+
+
+def lost_error(message: str, hint: Dict[str, Any], app: Optional[str] = None, kind: str = "slice", ident: str = "",
+               holder: Optional[int] = None, closed: Optional[int] = None, by: Optional[str] = None) -> LostError:
+    return LostError(message, hint, app, kind=kind, ident=ident, holder=holder, closed=closed, by=by)
 
 
 def slice_lost_words(slice_id: str, number: int, holder: int, by: Optional[str], app: bool) -> str:
-    who = f"{by}'s" if by else "another product manager's"
-    how = "Give your draft a new number, then mark it ready again." if app else f"Give your draft a new number (slice renumber {slice_id}), then mark it ready again."
+    who = f"@{by}'s" if by else "another product manager's"
     return (f"{slice_id} was marked ready at the same moment by someone else: {who} issue #{holder} was made first and keeps the number. "
-            f"Your issue #{number} was closed and never marked ready, so nothing reached the builders. {how}")
+            f"MACH closed yours, #{number}, before it was marked ready, so nothing reached the builders twice.")
 
 
 def epic_lost_words(epic_id: str, number: int, holder: int) -> str:
     return (f"{epic_id} was saved at the same moment by someone else, for a different epic: their issue #{holder} was made first and keeps the number. "
-            f"Your issue #{number} was closed. Give your epic a new number, then mark the slice ready again.")
+            f"MACH closed yours, #{number}.")
 
 
 def issue_urls(rules: Any, repository: Optional[str], numbers: Sequence[int]) -> Dict[str, str]:
@@ -1732,22 +1879,44 @@ def epic_same_moment(data: Dict[str, Any], epic_id: str, rules: Any) -> Optional
             "holder_url": rules.issue_url(repository, lost["holder"]) if repository and rules.is_issue_number(lost.get("holder")) else None}
 
 
-def several_projects(numbers: Sequence[int]) -> str:
+def several_projects(numbers: Sequence[int], chosen: Optional[int] = None, why: str = "the oldest") -> str:
+    """More than one open project issue: a warning, never a stop. MACH carries on with `chosen` (by default the oldest) and offers
+    to close the others on the product manager's word (project close-issue)."""
     named = ", ".join(f"#{n}" for n in numbers[:-1]) + f" and #{numbers[-1]}"
-    return (f"This repository has more than one project issue on GitHub ({named}). A repository holds one project, so nothing was saved. "
-            "Ask someone who looks after the repository to close the one that should not be there, then try again.")
+    chosen = numbers[0] if chosen is None else chosen
+    others = [n for n in numbers if n != chosen]
+    listed = ", ".join(f"#{n}" for n in others)
+    close = say(f"MACH can close {listed} for you (project close-issue {others[0]})." if len(others) == 1 else
+                f"MACH can close them for you, one at a time (project close-issue {others[0]}).",
+                f"MACH can close {'it' if len(others) == 1 else 'them'} for you: ask for it in your conversation with MACH.")
+    return (f"This repository has more than one project issue on GitHub ({named}). A repository holds one project, so MACH used #{chosen}, "
+            f"{why}. Closing {listed} changes nothing in your work: it leaves one project issue, and its text stays in its history. {close}")
+
+
+def different_project(item: Dict[str, Any]) -> str:
+    return (f"Nothing was saved. This repository's project on GitHub is a different one ({item.get('id')}, #{item['number']}), so what you save "
+            "here would be read as part of that project. Connect this project to its own GitHub repository, then try again.")
+
+
+APP = False  # set by studio.py with --app: text a person reads leaves out terminal commands
+
+
+def say(terminal: str, app: str) -> str:
+    return app if APP else terminal
 
 
 def clash_note(clash: Dict[str, Any]) -> str:
     others = ", ".join(f"#{n}" for n in clash["others"])
     if clash["kind"] == "project":
-        return several_projects(clash["others"]).replace(", so nothing was saved", "")
+        return several_projects(clash["others"])
     if clash["kind"] == "epic":
         return (f"{clash['id']} is held by more than one open issue on GitHub: #{clash['kept']} was made first, then {others}. "
-                "Ask someone who looks after the repository to close the one that should not be there.")
+                f"MACH reads #{clash['kept']}, the oldest, as {clash['id']}; slices under {others} stay as they are, and closing {others} "
+                "changes nothing in your work.")
     yours = {"kept": f" Yours is #{clash['kept']}, which keeps the number.",
-             "closed": " Yours was made later, so MACH closed it: give your draft a new number and mark it ready again.",
-             "taken_by_builders": " Yours was made later, and the builders have already taken it: tell the engineer before anything else.",
+             "closed": " Yours was made later, so MACH closed it: mark it ready again, and MACH gives it the next free number.",
+             "taken_by_builders": " Yours was made later, and the builders have already started on it, so MACH left it open: both are built, "
+                                  "and the merge of the builders' work settles which one stays.",
              "not_closed": " Yours was made later; MACH could not close it yet and tries again at the next refresh."}.get(str(clash["yours"]), "")
     return f"{clash['id']} is held by more than one open issue on GitHub: #{clash['kept']} was made first, then {others}.{yours}"
 
