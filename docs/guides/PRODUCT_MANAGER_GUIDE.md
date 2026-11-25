@@ -214,30 +214,33 @@ When engineering has built an epic and checked it as a release, they give you a 
 
 ## Moving your project to another repository
 
-Sometimes a project has to move to another repository, for example into another organisation where GitHub will not move the issues across. MACH can carry the whole project over in one file. This is done in the conversation: type `/mach-studio` and say "move this project to another repository". The visual app has no button for it.
+Sometimes a project has to move to another repository, for example into another organisation where GitHub will not move the issues across. MACH carries the whole project over in one file, as it is: nothing is interviewed again. Type `/mach-studio` and say "move this project to another repository".
 
-**Leaving.** Claude tells you what goes and what stays, and asks before it makes the file:
+**Leaving.** Claude makes the file straight away. You do not need to open anything first: whatever your workspace does not have, MACH reads from GitHub by itself, including slices other product managers marked ready and slices that have shipped, and changes nothing in your workspace.
 
 - **Goes:** the project, its epics, every slice with its spec and why, the order within each epic, the principles, the technical needs, your ideas with their briefs, PRDs and designs you brought in, and design mocks.
 - **Stays:** approvals, the GitHub issues and their numbers, Jira links and requests. The file names no repository and no GitHub account.
+- **Only on the computer where it was written:** drafts never marked ready, PRDs, designs, ideas' working files and interview notes. To include another product manager's, they export on their computer.
 
-If any text in the project names this repository, a GitHub account, a folder on your computer, or holds something that looks like a password, MACH makes no file. The same goes for a design mock whose picture file carries such text (a picture can hold a hidden comment or an author's name): save the picture again without it and add it in place of the old one. Claude shows you the line, and you decide together how to change it. Nothing is taken out without your word. If other product managers have slices of this project that are not in your workspace, Claude asks whether to open them here first or to leave them out.
+Claude then reads you what the file holds: what came from your workspace and what from GitHub, which version was used where both had one, what was left out and why, and, if GitHub could not be reached, what may be missing. It tells you where the file is and how big it is. Carry it to the other repository yourself; MACH never sends it anywhere.
 
-You get one file, and Claude tells you where it is. Carry it to the other repository yourself; MACH never sends it anywhere.
+If any text in the project names this repository, a GitHub account, a folder on your computer, or holds something that looks like a password, MACH makes no file. The same goes for a design mock whose picture file carries such text (a picture can hold a hidden comment or an author's name): save the picture again without it and add it in place of the old one. Claude shows you the line, and you decide together how to change it. Nothing is taken out without your word.
 
 **Arriving.** In the other repository, type `/mach-studio`, say you want to bring a project in, and drag the file into the conversation. Claude first tells you what would happen, and changes nothing until you say yes:
 
 - If that repository already has a project, yours joins it as more epics. If not, yours becomes the project there.
 - Numbers change where they would clash with what is already there. Claude says so in plain words, for example "SLICE-001 becomes SLICE-031". Every reference to a slice, epic, principle or idea moves with it. Ask "what was SLICE-007 before?" at any time afterwards.
-- **Every slice arrives as a draft.** Nothing comes over approved. Claude tells you which slices were ready, being built or shipped in the old repository. Check each one and mark it ready again when you are happy with it.
-- **Sections about shipped behaviour must be answered again.** A slice whose spec says what it does to rules that shipped in the old repository fails its check here, because those rules did not ship here. Answer that section again with Claude for this repository.
-- The principles and technical needs arrive unpublished. Publish the principles before any slice can be marked ready.
+- **Every slice arrives as a draft**, and Claude tells you how many were ready in the old repository.
+- **A principle that says the same as one here becomes that one.** Where a slice and a principle never met (the slice came without it, or it came after the slice was written), the slice's row for it says "Not assessed". That does not hold up marking ready; answer it when you next change that slice.
+- **Shipped behaviour carries over.** A slice that names a rule of a slice that came with it now waits for that slice to ship here first. Nothing needs answering again. Only a slice that names a rule of a slice that did not come needs that section answered again.
 - Jira keys are left off. Claude lists them; link them again if this organisation uses the same Jira.
 - An ID inside a quoted code example is left as written. Claude shows you the line, to check by hand.
-- **Links to things that did not come in the file** (slices left out, or deleted in the old repository) are taken out when your project joins another, because there that number is someone else's item: an idea no longer lists that slice as made by it, a slice no longer says which idea it serves. Claude lists each. Where such an ID appears in your own text, it cannot be taken out without changing what you wrote: it stays, and Claude tells you that here it names a different item.
+- **Links to things that did not come in the file** (slices left out, or deleted in the old repository) are taken out when your project joins another, because there that number is someone else's item. Claude lists each. Where such an ID appears in your own text, it stays, and Claude tells you that here it names a different item.
 - When your project joins another, that project's answers about which kinds of technical needs have nothing to say stay as they are; yours are not brought in.
 
-Bringing a project in never writes to GitHub, never marks anything ready and never starts the builders. If it stops part way (the computer sleeps, the disk is full), Product Studio says so under what is not saved. You can then do one of two things:
+Bringing a project in never writes to GitHub and never starts the builders. Afterwards, Claude offers once to mark ready, in one step, the slices that were ready in the old repository: on your yes it publishes the principles that came with the project, then marks those slices ready, dependencies first, for the builders. It stops at the first that is not ready yet and says what is left. Slices that were not ready there you check and mark ready yourself.
+
+If bringing a project in stops part way (the computer sleeps, the disk is full), Product Studio says so under what is not saved. You can then do one of two things:
 
 - **Finish it.** Bring the same file in again: it finishes and repeats nothing. If you changed something it had already brought in, your version is kept, and Claude says so.
 - **Set it aside**, if you no longer want it. Say so to Claude. The numbers it was holding are freed and you can export or bring in another project again. Whatever it had already brought in stays where it is; Claude lists it, and you choose whether to keep it or remove it.
