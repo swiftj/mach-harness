@@ -167,8 +167,20 @@ def split_holder(parser: Any, argv: Optional[Sequence[str]]) -> Tuple[List[str],
     return _claim.station_argv(parser, items) if _claim is not None else (items, None)
 
 
-def taken_over(project: Optional[Path], ticket_id: Any, holder: Optional[str]) -> Optional[str]:
-    return _claim.station_stop(project, ticket_id, holder) if _claim is not None else None
+READS = ('status', 'next')  # commands that change nothing: a holderless call of one is never refused
+
+
+def taken_over(project: Optional[Path], ticket_id: Any, holder: Optional[str], command: Optional[str] = None) -> Optional[str]:
+    """The refusal for a displaced worker, or for a holderless call that changes something while a take-over stands; else None."""
+    return _claim.station_stop(project, ticket_id, holder, command, READS) if _claim is not None else None
+
+
+def swept(project: Optional[Path], ticket_id: Any, holder: Optional[str]) -> None:
+    """At the taker's first call after a take-over: what the displaced worker left in the cell is kept aside and not used (claim.sweep)."""
+    if _claim is not None and project is not None and isinstance(ticket_id, str):
+        said = _claim.sweep(Path(project) / ".factory" / "worktrees" / ticket_id, holder, ticket_id)
+        if said:
+            print(f"note: {said}", file=sys.stderr)
 
 
 def telemetry(*args: Any, **kwargs: Any) -> None:
@@ -940,7 +952,7 @@ def ensure_isolated(cell: Cell) -> None:
         exclude.parent.mkdir(parents=True, exist_ok=True)
         with exclude.open("a", encoding="utf-8") as handle:
             handle.write("\n" + EXCLUDE_LINE + "\n")
-    branch = f"feature/{cell.ticket_id}"
+    branch = cell.info.get("branch") or f"feature/{cell.ticket_id}"  # a taken-over slice's own branch (feature/<ticket>-<name>) is kept
     if workspace is None:
         raise BuildError("The intent station's workspace.py is not installed beside this skill, so the ticket's workspace cannot be made.", code="worktree-failed")
     try:  # the same sparse worktree cell.py open makes: it never holds .claude/ or .mcp.json
@@ -3392,9 +3404,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     project = None
     try:
         project = args.project.resolve() if args.project else find_project(Path.cwd())
-        stop = taken_over(project, args.ticket_id, holder)
+        stop = taken_over(project, args.ticket_id, holder, args.command)
         if stop:
             raise BuildError(stop, code="taken-over")
+        swept(project, args.ticket_id, holder or getattr(args, "holder", None))
         return args.func(Cell(project, args.ticket_id), args)
     except BuildError as exc:
         print(f"refused: {exc}", file=sys.stderr)

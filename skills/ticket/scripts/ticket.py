@@ -1737,14 +1737,20 @@ def cmd_slice_claim(ctx: Context, args: argparse.Namespace) -> int:
             return issue_rules.claim_holder(found, args.slice_id, args.revision, building, counts, args.stale_before, args.branch_active_at, args.token)
 
         def open_pull_requests() -> List[Dict[str, Any]]:
-            """Open pull requests from the slice's branch (feature/<issue>): another Factory's copy may be waiting for review. Information only."""
+            """Open pull requests from the slice's branches (feature/<issue>, and feature/<issue>-<name> of a Factory that took it over):
+            another Factory's copy may be waiting for review. Information only."""
             try:
-                out = gh_call(ctx.project, "pr", "list", "--repo", repository, "--head", f"feature/{number}", "--state", "open", "--json", "number,url,author")
+                out = gh_call(ctx.project, "pr", "list", "--repo", repository, "--state", "open", "--limit", "200", "--json", "number,url,author,headRefName")
                 listed = json.loads(out or "[]")
             except (GhFailed, ValueError):
                 return []
-            return [{"number": item.get("number"), "url": item.get("url"), "login": (item.get("author") or {}).get("login")}
-                    for item in listed if isinstance(item, dict) and issue_rules.is_issue_number(item.get("number"))] if isinstance(listed, list) else []
+
+            def ours(head: Any) -> bool:
+                return isinstance(head, str) and (head == f"feature/{number}" or head.startswith(f"feature/{number}-"))
+
+            return [{"number": item.get("number"), "url": item.get("url"), "login": (item.get("author") or {}).get("login"), "branch": item.get("headRefName")}
+                    for item in listed if isinstance(item, dict) and issue_rules.is_issue_number(item.get("number"))
+                    and (ours(item.get("headRefName")) or "headRefName" not in item)] if isinstance(listed, list) else []
 
         def report_holder(item: Dict[str, Any]) -> None:
             result["holder"] = {key: item.get(key) for key in ("login", "at", "active_at", "comment_id", "revision")}

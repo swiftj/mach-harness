@@ -171,8 +171,12 @@ def split_holder(parser: Any, argv: Optional[Sequence[str]]) -> Tuple[List[str],
     return _claim.station_argv(parser, items) if _claim is not None else (items, None)
 
 
-def taken_over(project: Optional[Path], ticket_id: Any, holder: Optional[str]) -> Optional[str]:
-    return _claim.station_stop(project, ticket_id, holder) if _claim is not None else None
+READS = ('status', 'submit')  # commands that change nothing: a holderless call of one is never refused
+
+
+def taken_over(project: Optional[Path], ticket_id: Any, holder: Optional[str], command: Optional[str] = None) -> Optional[str]:
+    """The refusal for a displaced worker, or for a holderless call that changes something while a take-over stands; else None."""
+    return _claim.station_stop(project, ticket_id, holder, command, READS) if _claim is not None else None
 
 
 def telemetry(*args: Any, **kwargs: Any) -> None:
@@ -1757,7 +1761,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     project = None
     try:
         project = args.project.resolve() if args.project else find_project(Path.cwd())
-        stop = taken_over(project, args.ticket_id, holder)
+        stop = taken_over(project, args.ticket_id, holder, args.command)
         if stop:
             raise ReviewError(stop, code="taken-over")
         return args.func(Cell(project, args.ticket_id), args)

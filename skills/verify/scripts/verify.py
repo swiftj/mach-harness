@@ -159,8 +159,20 @@ def split_holder(parser: Any, argv: Optional[Sequence[str]]) -> Tuple[List[str],
     return _claim.station_argv(parser, items) if _claim is not None else (items, None)
 
 
-def taken_over(project: Optional[Path], ticket_id: Any, holder: Optional[str]) -> Optional[str]:
-    return _claim.station_stop(project, ticket_id, holder) if _claim is not None else None
+READS = ('status',)  # commands that change nothing: a holderless call of one is never refused
+
+
+def taken_over(project: Optional[Path], ticket_id: Any, holder: Optional[str], command: Optional[str] = None) -> Optional[str]:
+    """The refusal for a displaced worker, or for a holderless call that changes something while a take-over stands; else None."""
+    return _claim.station_stop(project, ticket_id, holder, command, READS) if _claim is not None else None
+
+
+def swept(project: Optional[Path], ticket_id: Any, holder: Optional[str]) -> None:
+    """At the taker's first call after a take-over: what the displaced worker left in the cell is kept aside and not used (claim.sweep)."""
+    if _claim is not None and project is not None and isinstance(ticket_id, str):
+        said = _claim.sweep(Path(project) / ".factory" / "worktrees" / ticket_id, holder, ticket_id)
+        if said:
+            print(f"note: {said}", file=sys.stderr)
 
 # The environment of the project's commands (the intent station's command_env.py), shared with the audit, build and merge stations.
 try:
@@ -1045,9 +1057,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     project = None
     try:
         project = args.project.resolve() if args.project else find_project(Path.cwd())
-        stop = taken_over(project, args.ticket_id, getattr(args, "holder_given", None))
+        stop = taken_over(project, args.ticket_id, getattr(args, "holder_given", None), args.command)
         if stop:
             raise VerifyError(stop, code="taken-over")
+        swept(project, args.ticket_id, getattr(args, "holder_given", None))
         return args.func(Cell(project, args.ticket_id), args)
     except VerifyError as exc:
         print(f"refused: {exc}", file=sys.stderr)
