@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -15,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "skills" / "run" / "scripts"))
 sys.path.insert(0, str(ROOT / "tests"))
 import run  # noqa: E402
-from test_build import git  # noqa: E402
+from test_build import build, git  # noqa: E402
 from test_verify import Base as VerifyBase, NOTE, TARGETS  # noqa: E402
 import class_template  # noqa: E402  (a step taken from the same starting folder is run once per class)
 
@@ -90,8 +91,10 @@ class BuildGateTest(Base):
         self.groom()
         step = self.next()
         self.assertEqual((step["action"], step["prompt"]), ("audit", "Use the MACH audit skill on the main checkout: /mach:audit"))
+        self.audit_report("Bronze", head="0" * 40)
+        self.assertIn("must run again: the repository is at Bronze and the main branch has moved", self.next()["reason"])
         self.audit_report(head="0" * 40)
-        self.assertIn("stale", self.next()["reason"])
+        self.assertEqual(self.next()["action"], "build", "a Gold audit stays good when the main branch moves")
         self.audit_report("Bronze")
         stopped = self.next()
         self.assertEqual((stopped["action"], stopped["needs"]), ("stop", "repository-hardening"))
@@ -362,6 +365,90 @@ class BareNumberTest(Base):
         self.assertIn("nothing was done", err)
 
 
+class GitHubHardeningTest(Base):
+    """A project on GitHub: the hardening ticket MACH files is a GitHub issue (here the stand-in for gh), its ID is the
+    bare issue number, and the line builds it like a local one: its repo-hardening label read from the issue."""
+
+    def setUp(self):
+        super().setUp()
+        from test_mach_product_issues import FAKE_GH  # the stand-in for gh: issues and labels kept in a JSON file
+        bin_dir = Path(self.tmp.name).resolve() / "gh-bin"
+        bin_dir.mkdir(exist_ok=True)
+        gh = bin_dir / "gh"
+        gh.write_text(FAKE_GH.replace("#!/usr/bin/env python3", "#!" + sys.executable, 1))
+        gh.chmod(0o755)
+        self.gh_state = Path(self.tmp.name).resolve() / "gh.json"
+        self.gh_state.write_text(json.dumps({"repo": "acme/app", "me": "erin-eng", "issues": {}, "labels": [], "fail": {}, "calls": []}))
+        patcher = mock.patch.dict("os.environ", {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "FAKE_GH_STATE": str(self.gh_state)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop("ISSUE_PROVIDER", None)
+        git(self.project, "remote", "add", "origin", "git@github.com:acme/app.git")
+        self.put(self.project, {".factory/config.json": json.dumps({"tickets": {"provider": "github"}})})
+
+    def ticket(self, *argv):
+        done = subprocess.run([sys.executable, str(ROOT / "skills/ticket/scripts/ticket.py"), "--project", str(self.project), *argv],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def issue(self, number):
+        return json.loads(self.gh_state.read_text())["issues"][str(number)]
+
+    def test_the_hardening_ticket_is_a_github_issue_and_is_built_by_its_number(self):
+        from test_build import IMPL, IMPL2, INTENT, PLAN, RED_TEST, SCENARIO_TEST, SPEC, SPEC_NAME
+        made = self.ticket("create", "--title", "Harden repository for autonomous work", "--label", "repo-hardening",
+                           "--body", "## Acceptance criteria\n\n- [ ] The baseline tests pass.")
+        self.assertEqual((made["ticket_id"], made["provider"], made["url"]), ("1", "github", "https://github.com/acme/app/issues/1"))
+        self.assertNotIn("kept_here", made)
+        self.assertEqual([label["name"] for label in self.issue(1)["labels"]], ["repo-hardening"])
+        self.assertFalse((self.project / ".factory/tickets").is_dir() and list((self.project / ".factory/tickets").iterdir()), "nothing kept here")
+
+        step = self.next(ticket="1")
+        self.assertEqual((step["ticket_id"], step["action"]), ("1", "groom"))
+        info = json.loads(self.cell_cmd("open", "1"))
+        cellroot = self.project / ".factory/worktrees/1"
+        work = Path(info["workdir"])
+        self.assertEqual(work, cellroot / "repo")
+        self.assertEqual(git(work, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip(), "feature/1")
+        self.put(work, {f"specs/slices/{SPEC_NAME}": SPEC})
+        self.put(cellroot, {"intent.md": INTENT.replace("LOCAL-001 (local)", "1 (github)").replace("LOCAL-001", "1")})
+        self.cell_cmd("finalize", "1", "--spec", f"specs/slices/{SPEC_NAME}")
+        self.put(cellroot, {"plan.md": PLAN})
+        self.cell_cmd("check-plan", "1")
+
+        self.audit_report("Bronze")
+        self.assertEqual(self.next(ticket="1")["action"], "build", "Bronze builds a ticket whose issue carries repo-hardening")
+        (self.project / ".factory/inbox/1.json").unlink()
+        stopped = self.next(ticket="1")
+        self.assertEqual((stopped["action"], stopped["needs"]), ("stop", "repository-hardening"), "without its labels it is like any other ticket")
+        self.assertEqual(self.ticket("view", "1")["labels"], ["repo-hardening"], "the labels are read from the issue itself")
+        self.assertEqual(self.next(ticket="1")["action"], "build")
+
+        started = self.b_ok("start", "1")
+        self.assertTrue(started["audit"]["human_review_required"], "a person reviews every hardening ticket")
+        for task, kind, files in (("T01", "red", {"tests/test_invite.py": RED_TEST}), ("T02", "green", {"app/invite.py": IMPL}),
+                                  ("T03", "red", {"tests/test_scenarios.py": SCENARIO_TEST}), ("T04", "green", {"app/invite.py": IMPL2}),
+                                  ("T05", "done", {"README.md": "# Sample\n\nAdmins can invite teammates.\n"})):
+            self.put(work, files)
+            self.b_ok(kind, "1", task)
+        self.b_ok("finish", "1")
+        step = self.next(ticket="1")
+        self.assertEqual((step["action"], step["prompt"]), ("verify", "Verify MACH ticket 1."))
+
+        self.ticket("update", "1", "--state", "in_progress", "--comment", "Building.")
+        self.assertIn("mach:in_progress", [label["name"] for label in self.issue(1)["labels"]])
+        self.ticket("update", "1", "--state", "closed")
+        self.assertEqual(self.issue(1)["state"], "CLOSED")
+
+    def b_ok(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = build.main(["--project", str(self.project), *argv])
+        self.assertEqual(code, 0, err.getvalue() + out.getvalue())
+        return json.loads(out.getvalue())
+
+
 class DoctorTest(Base):
     def test_doctor_is_reachable_without_a_factory_folder(self):
         self.assertFalse((self.project / ".factory").exists())
@@ -422,6 +509,7 @@ class WorkflowScriptTest(unittest.TestCase):
             "made_up": {"action": "deploy", "stop": False, "reason": "r", "prompt": "x"},
             "stop": {"action": "stop", "stop": True, "reason": "waiting", "needs": "human-approval", "agent_type": "''"},
             "worker_in_cell": {"action": "stop", "stop": True, "reason": "Another worker was handed the plan step.", "needs": " worker-in-cell ", "agent_type": ""},
+            "lanes": {"action": "build-lanes", "stop": False, "reason": "r", "stage": "building", "agent_type": "", "prompt": ""},
         }
         program = (f"const AGENT_TYPES = {types}\n{source}\nconst cases = {json.dumps(cases)}\n"
                    "const out = {}; for (const [k, v] of Object.entries(cases)) out[k] = cleanStep(v, AGENT_TYPES)\n"
@@ -440,6 +528,8 @@ class WorkflowScriptTest(unittest.TestCase):
         self.assertIn("unknown step 'deploy'", got["made_up"]["error"])
         self.assertEqual((got["stop"]["step"]["stop"], got["stop"]["step"]["agent_type"]), (True, ""))
         self.assertEqual((got["worker_in_cell"]["step"]["stop"], got["worker_in_cell"]["step"]["needs"], got["worker_in_cell"]["note"]), (True, "worker-in-cell", ""))
+        self.assertEqual((got["lanes"]["step"]["action"], got["lanes"]["step"]["stop"], got["lanes"]["step"]["prompt"]), ("build-lanes", False, ""),
+                         "build-lanes has no prompt: its builders' prompts come from lanes-start")
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_a_relayed_schedule_is_cleaned_before_any_ticket_starts(self):
@@ -498,6 +588,11 @@ async function agent(prompt, opts) {
     return found
   }
   const block = prompt.match(/```bash\n(.*)\n```/)
+  const lane = prompt.match(/^Build lane (L[0-9]+) of MACH ticket ([A-Z]+)/)
+  if (!block && lane) {  // a lane builder: the scripted lanes-start answers say what came of it
+    asked.push(`Lane ${lane[1]} ${lane[2]} ${opts.agentType || ''} ${opts.model || ''}`.trim())
+    return `built ${lane[1]}`
+  }
   if (!block) {  // a worker: move the ticket the way its station would
     const [verb, ticket] = prompt.split(' ')
     if (verb === 'Plan') stages[ticket] = scheduleSays.stuck_plan && scheduleSays.stuck_plan.includes(ticket) ? stages[ticket] : 'planned'
@@ -516,8 +611,22 @@ async function agent(prompt, opts) {
       return { action: 'stop', stop: true, reason: 'Another worker was handed the plan step at 09:00.', stage, needs: 'worker-in-cell', agent_type: '' }
     }
     if (stage === 'spec-ready') return { action: 'plan', stop: false, reason: 'r', stage, agent_type: '', model: 'opus', prompt: `Plan ${ticket}` }
+    if (stage === 'lanes') return { action: 'build-lanes', stop: false, reason: 'r', stage: 'building', agent_type: '', prompt: '' }
     if (stage === 'planned') return { action: 'build', stop: false, reason: 'r', stage, agent_type: 'mach:builder', prompt: `Build ${ticket}` }
     return { action: 'stop', stop: true, reason: 'approved', stage, needs: 'merge', agent_type: '' }
+  }
+  if (command.startsWith('lanes-start ')) {
+    const answer = (scheduleSays.lanes_start || []).shift() || { status: 'ERROR', reason: 'no answer scripted', then: '', lanes: [] }
+    if (answer.then === 'next') stages[command.split(' ')[1]] = 'planned'
+    return answer
+  }
+  if (command.startsWith('lanes-hand-back ')) {
+    return (scheduleSays.hand_back || []).shift() || { status: 'ERROR', reason: 'no hand-back scripted', then: '' }
+  }
+  if (command.startsWith('lanes-join ')) {
+    const answer = scheduleSays.join || { status: 'ERROR', reason: 'no join scripted', then: '' }
+    if (answer.then === 'next') stages[command.split(' ')[1]] = 'approved'
+    return answer
   }
   if (command.startsWith('schedule ')) {
     const words = command.split(' ').slice(1)
@@ -587,6 +696,8 @@ workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.s
         got = self.run_belt({"tickets": ["A", "B"]}, {"A": "spec-ready", "B": "planned"}, {"holder": f' "{holder}" '})
         relayed = [command for command in got["asked"] if command.split(" ")[0] in ("next", "schedule", "where", "status", "review-start", "review-tally")]
         claimed = [command for command in relayed if command.startswith(("next ", "schedule "))]
+        self.assertIn("lanes-join", self.SCRIPT[self.SCRIPT.index("const RUN = "):self.SCRIPT.index("async function review(")],
+                      "the clerk passes the holder on lanes-start and lanes-join too")
         self.assertTrue(claimed and all(command.endswith(f" --holder {holder}") for command in claimed), claimed)
         self.assertTrue(all(command.count("--holder") == 1 for command in claimed))
         self.assertFalse([command for command in relayed if "--holder" in command and not command.startswith(("next ", "schedule "))])
@@ -627,6 +738,226 @@ workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.s
         self.assertEqual((got["plain"], got["quoted"], got["longest"]), ("0123456789abcdef", "0123456789abcdef", "a" * 64))
         for key in ("upper", "short", "long", "shell", "number", "none"):
             self.assertEqual(got[key], "", key)
+
+    # ---- lanes (M22): the build-lanes step
+
+    LANE_HOLDER = "0123456789abcdef"
+
+    @staticmethod
+    def lane(name, done=0, ticket="A", root="/p", holder=None, **changes):
+        workdir = f"{root}/.factory/worktrees/{ticket}/lanes/{name}/repo"
+        holder = holder or WorkflowScriptTest.LANE_HOLDER
+        item = {"lane": name, "tasks": ["T01", "T02"], "workdir": workdir, "agent_type": "mach:builder", "model": "sonnet", "done": done,
+                "prompt": f"Build lane {name} of MACH ticket {ticket}. Follow the build skill's section 'Building one lane': run build.py next {ticket} "
+                          f"--lane {name} --holder {holder}, give the same --holder {holder} to red, green, done and hand-back, work only in {workdir}, "
+                          "and stop when it answers LANE_DONE."}
+        item.update(changes)
+        return item
+
+    def opened(self, *lanes):
+        return {"status": "OPEN", "then": "lanes-start", "reason": "r", "needs": "", "next": "n", "lanes": list(lanes)}
+
+    def test_the_belts_lane_prompt_is_the_build_stations_own(self):
+        """cleanLanes accepts only the station's printed prompt: this fixture, which the belt's check matches, is build.py's lane_prompt."""
+        import build
+        cell = type("Cell", (), {"ticket_id": "A"})()
+        workdir = "/p/.factory/worktrees/A/lanes/L2/repo"
+        self.assertEqual(build.lane_prompt(cell, "L2", Path(workdir), self.LANE_HOLDER), self.lane("L2")["prompt"])
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_a_relayed_lanes_answer_is_cleaned_before_any_builder_starts(self):
+        """Design 14 D: cleanLanes refuses the whole answer, so no builder starts, on anything this line would not start as printed."""
+        source = self.SCRIPT[self.SCRIPT.index("// BEGIN cleanLanes"):self.SCRIPT.index("// END cleanLanes")]
+        lane = self.lane
+        cases = {
+            "open": [self.opened(lane("L1"), lane("L2", done=1, model=" 'opus' ")), "A"],
+            "project_form": [self.opened(lane("L1", agent_type="mach-builder")), "A"],
+            "unknown_agent": [self.opened(lane("L1"), lane("L2", agent_type="general-purpose")), "A"],
+            "reviewer_agent": [self.opened(lane("L1", agent_type="mach:reviewer")), "A"],
+            "empty_prompt": [self.opened(lane("L1", prompt="   ")), "A"],
+            "outside_the_cell": [self.opened(lane("L1", workdir="/p/.factory/worktrees/B/lanes/L1/repo")), "A"],
+            "climbs_out": [self.opened(lane("L1", workdir="/p/.factory/worktrees/A/lanes/../../B/lanes/L1/repo")), "A"],
+            "relative": [self.opened(lane("L1", workdir=".factory/worktrees/A/lanes/L1/repo")), "A"],
+            "another_lanes_folder": [self.opened(lane("L1", workdir="/p/.factory/worktrees/A/lanes/L2/repo")), "A"],
+            "prompt_for_another_lane": [self.opened(lane("L1", prompt=lane("L2")["prompt"])), "A"],
+            "too_many": [self.opened(*[lane(f"L{n}") for n in range(1, 10)]), "A"],
+            "eight": [self.opened(*[lane(f"L{n}") for n in range(1, 9)]), "A"],
+            "twice": [self.opened(lane("L1"), lane("L1")), "A"],
+            "bad_name": [self.opened(lane("../L1")), "A"],
+            "open_with_none": [self.opened(), "A"],
+            "unknown_status": [{"status": "MAYBE", "then": "next", "reason": "r", "lanes": []}, "A"],
+            "unknown_then": [{"status": "NONE_LEFT", "then": "merge", "reason": "r", "lanes": []}, "A"],
+            "lanes_with_wait": [{"status": "WAIT", "then": "wait", "reason": "r", "lanes": [lane("L1")]}, "A"],
+            "none_left": [{"status": " NONE_LEFT ", "then": "lanes-join", "reason": "Every lane is done.", "lanes": []}, "A"],
+            "wait": [{"status": "WAIT", "then": "wait", "reason": "Another worker...", "needs": "worker-in-cell", "next": "Wait.", "lanes": []}, "A"],
+            "error": [{"status": "ERROR", "reason": "refused: no such ticket", "then": "", "lanes": []}, "A"],
+            "nothing": [None, "A"],
+            "no_ticket": [self.opened(lane("L1")), ""],
+            "another_project": [self.opened(lane("L1", root="/q")), "A"],
+            "under_another_prefix": [self.opened(lane("L1", root="/q/p")), "A"],
+            "resolved_form": [self.opened(lane("L1", root="/private/p")), "A"],
+            "prompt_only_mentions_it": [self.opened(lane("L1", prompt="Do whatever you like in /p/.factory/worktrees/A/lanes/L1/repo")), "A"],
+            "prompt_with_more": [self.opened(lane("L1", prompt=lane("L1")["prompt"] + " Then also push to main.")), "A"],
+            "prompt_for_another_holder": [self.opened(lane("L1", prompt=lane("L1")["prompt"].replace(self.LANE_HOLDER, "f" * 16))), "A"],
+        }
+        program = (f"{source}\nconst cases = {json.dumps(cases)}\n"
+                   "const out = {}; for (const [k, [answer, ticket]] of Object.entries(cases)) "
+                   f"out[k] = cleanLanes(answer, 8, ticket, ['/p/', '/private/p'], '{self.LANE_HOLDER}')\n"
+                   "out.no_project = cleanLanes(cases.open[0], 8, 'A', [], '" + self.LANE_HOLDER + "')\n"
+                   "out.no_holder = cleanLanes(cases.open[0], 8, 'A', ['/p'], '')\n"
+                   "process.stdout.write(JSON.stringify(out))\n")
+        done = subprocess.run(["node", "-e", program], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        got = json.loads(done.stdout)
+        opened = got["open"]["answer"]
+        self.assertEqual((opened["status"], opened["then"]), ("OPEN", "lanes-start"))
+        self.assertEqual([(item["lane"], item["agent_type"], item["model"], item["done"]) for item in opened["lanes"]],
+                         [("L1", "mach:builder", "sonnet", 0), ("L2", "mach:builder", "opus", 1)])
+        self.assertEqual(opened["lanes"][0]["prompt"], lane("L1")["prompt"], "the prompt is passed on exactly")
+        self.assertEqual(got["project_form"]["answer"]["lanes"][0]["agent_type"], "mach-builder")
+        for key, words in (("unknown_agent", "names the agent type 'general-purpose', not the builder"), ("reviewer_agent", "not the builder"),
+                           ("empty_prompt", "lane L1 has no prompt"), ("outside_the_cell", "is not its own folder in A's cell"),
+                           ("climbs_out", "not its own folder"), ("relative", "not its own folder"), ("another_lanes_folder", "not its own folder"),
+                           ("prompt_for_another_lane", "not the build station's own prompt"),
+                           ("another_project", "not its own folder in A's cell in this project"), ("under_another_prefix", "not its own folder"),
+                           ("prompt_only_mentions_it", "not the build station's own prompt"), ("prompt_with_more", "not the build station's own prompt"),
+                           ("prompt_for_another_holder", "not the build station's own prompt"),
+                           ("no_project", "does not know its own project folder"), ("no_holder", "no usable holder"), ("too_many", "listed 9 lanes, more than the 8"),
+                           ("twice", "repeated lane 'L1'"), ("bad_name", "unusable or repeated lane"), ("open_with_none", "OPEN with no lane"),
+                           ("unknown_status", "unknown status 'MAYBE'"), ("unknown_then", "unknown next command 'merge'"),
+                           ("lanes_with_wait", "listed lanes to start with the status WAIT"), ("error", "refused: no such ticket"),
+                           ("nothing", "returned nothing usable"), ("no_ticket", "not its own folder in this ticket's cell")):
+            self.assertIn(words, got[key].get("error", ""), key)
+            self.assertNotIn("answer", got[key], key)
+        self.assertEqual(len(got["eight"]["answer"]["lanes"]), 8)
+        self.assertEqual(got["resolved_form"]["answer"]["lanes"][0]["workdir"], "/private/p/.factory/worktrees/A/lanes/L1/repo",
+                         "the project folder as run.py where names it, links resolved")
+        self.assertEqual((got["none_left"]["answer"]["status"], got["none_left"]["answer"]["then"], got["none_left"]["answer"]["lanes"]), ("NONE_LEFT", "lanes-join", []))
+        self.assertEqual((got["wait"]["answer"]["needs"], got["wait"]["answer"]["next"]), ("worker-in-cell", "Wait."))
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_a_relayed_join_is_cleaned(self):
+        source = self.SCRIPT[self.SCRIPT.index("// BEGIN cleanJoin"):self.SCRIPT.index("// END cleanJoin")]
+        cases = {
+            "joined": {"status": "JOINED", "then": "next", "reason": "4 task commit(s) landed."},
+            "interaction": {"status": " INTERACTION ", "then": "next", "reason": "a fix task, J-T01, was added"},
+            "refused": {"status": "REFUSED", "then": "person", "reason": "Nothing was landed.", "needs": "lanes-blocked", "next": "Put it right."},
+            "not_done": {"status": "REFUSED", "then": "lanes-start", "reason": "Not every lane is done."},
+            "joined_but_join_again": {"status": "JOINED", "then": "lanes-start", "reason": "r"},
+            "handed_back": {"status": "HANDED_BACK", "then": "lanes-start", "reason": "Lane L1 was handed back."},
+            "handed_back_but_next": {"status": "HANDED_BACK", "then": "next", "reason": "r"},
+            "unknown": {"status": "MERGED", "then": "next", "reason": "r"},
+            "unknown_then": {"status": "REFUSED", "then": "push", "reason": "r"},
+            "error": {"status": "ERROR", "then": "", "reason": "refused: x"},
+            "nothing": None,
+        }
+        program = (f"{source}\nconst cases = {json.dumps(cases)}\n"
+                   "const out = {}; for (const [k, v] of Object.entries(cases)) out[k] = cleanJoin(v)\n"
+                   "process.stdout.write(JSON.stringify(out))\n")
+        done = subprocess.run(["node", "-e", program], capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        got = json.loads(done.stdout)
+        self.assertEqual((got["joined"]["status"], got["joined"]["then"]), ("JOINED", "next"))
+        self.assertEqual(got["interaction"]["status"], "INTERACTION")
+        self.assertEqual((got["refused"]["needs"], got["refused"]["next"]), ("lanes-blocked", "Put it right."))
+        self.assertEqual(got["not_done"]["then"], "lanes-start")
+        self.assertEqual((got["handed_back"]["status"], got["handed_back"]["then"]), ("HANDED_BACK", "lanes-start"))
+        for key in ("joined_but_join_again", "handed_back_but_next", "unknown", "unknown_then", "error", "nothing"):
+            self.assertIn("error", got[key], key)
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_lanes_start_at_once_ask_again_inside_one_step_and_then_join(self):
+        holder = "ab" * 16
+
+        def lane(name, **changes):
+            return self.lane(name, holder=holder, **changes)
+        rules = {"holder": holder, "lanes_start": [self.opened(lane("L1"), lane("L2")), self.opened(lane("L1", done=1)), self.opened(lane("L1", done=2), lane("L3")),
+                                                   {"status": "NONE_LEFT", "then": "lanes-join", "reason": "Every lane is done.", "lanes": []}],
+                 "join": {"status": "JOINED", "then": "next", "reason": "6 task commit(s) landed on the ticket's branch, in plan order."}}
+        got = self.run_belt({"tickets": ["A"]}, {"A": "lanes"}, rules)
+        (a,) = got["result"]["tickets"]
+        self.assertEqual((a["outcome"], a["waiting_for"], a["stations"]), ("stopped", "merge", ["build-lanes"]), "one step, however many rounds")
+        self.assertEqual([command for command in got["asked"] if command.startswith("Lane ")],
+                         ["Lane L1 A mach:builder sonnet", "Lane L2 A mach:builder sonnet", "Lane L1 A mach:builder sonnet",
+                          "Lane L1 A mach:builder sonnet", "Lane L3 A mach:builder sonnet"])
+        self.assertEqual([command for command in got["asked"] if command.startswith("lanes-")],
+                         [f"lanes-start A --holder {holder}"] * 4 + [f"lanes-join A --holder {holder}"])
+        self.assertIn("A: 2 lane builders at work at once (L1: T01, T02; L2: T01, T02)", got["logs"])
+        self.assertIn("A: lanes joined: 6 task commit(s) landed on the ticket's branch, in plan order.", got["logs"])
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_a_lane_that_comes_back_twice_without_a_task_done_is_handed_back_and_the_ticket_goes_on(self):
+        holder = "ab" * 16
+
+        def lane(name, **changes):
+            return self.lane(name, holder=holder, **changes)
+        none_left = {"status": "NONE_LEFT", "then": "lanes-join", "reason": "Every lane is done or handed back.", "lanes": []}
+        rules = {"holder": holder, "lanes_start": [self.opened(lane("L1"), lane("L2")), self.opened(lane("L1")), self.opened(lane("L1")), none_left],
+                 "hand_back": [{"status": "HANDED_BACK", "then": "lanes-start", "reason": "Lane L1 was handed back to the cell: its tasks T01, T02 are built one at a time after the join."}],
+                 "join": {"status": "JOINED", "then": "next", "reason": "2 task commit(s) landed."}}
+        got = self.run_belt({"tickets": ["A"]}, {"A": "lanes"}, rules)
+        (a,) = got["result"]["tickets"]
+        self.assertEqual((a["outcome"], a["waiting_for"], a["stations"]), ("stopped", "merge", ["build-lanes"]), "never stuck for one lane")
+        self.assertEqual([command for command in got["asked"] if command.startswith("Lane ")].count("Lane L1 A mach:builder sonnet"), 2,
+                         "started once, asked again once, then handed back")
+        self.assertEqual([command for command in got["asked"] if command.startswith("lanes-")],
+                         [f"lanes-start A --holder {holder}"] * 3
+                         + [f'lanes-hand-back A --lane L1 --reason "its builder stopped twice without finishing another task" --holder {holder}',
+                            f"lanes-start A --holder {holder}", f"lanes-join A --holder {holder}"])
+        self.assertIn("A: Lane L1 was handed back to the cell: its tasks T01, T02 are built one at a time after the join.", got["logs"])
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_a_hand_back_that_is_refused_stops_with_its_words(self):
+        lane = self.lane
+        refused = {"status": "REFUSED", "then": "person", "reason": "The station said no.", "needs": "lanes-blocked", "next": "Put it right."}
+        rules = {"holder": self.LANE_HOLDER, "lanes_start": [self.opened(lane("L1")), self.opened(lane("L1")), self.opened(lane("L1"))], "hand_back": [refused]}
+        got = self.run_belt({"tickets": ["A"]}, {"A": "lanes"}, rules)
+        (a,) = got["result"]["tickets"]
+        self.assertEqual((a["outcome"], a["waiting_for"], a["next"], a["last_report"]), ("stopped", "lanes-blocked", "Put it right.", "built L1"))
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_lane_answers_that_stop_or_go_back_to_the_cell(self):
+        lane = self.lane
+        wait = {"status": "WAIT", "then": "wait", "reason": "Another worker is building lanes L1, L2.", "needs": "worker-in-cell", "next": "Wait.", "lanes": []}
+        got = self.run_belt({"tickets": ["A"]}, {"A": "lanes"}, {"lanes_start": [wait]})
+        (a,) = got["result"]["tickets"]
+        self.assertEqual((a["outcome"], a["waiting_for"], a["reason"], a["next"]), ("stopped", "worker-in-cell", wait["reason"], "Wait."))
+        self.assertFalse([command for command in got["asked"] if command.startswith("Lane ")], "no builder is started")
+
+        bad = self.opened(lane("L1"), lane("L2", agent_type="general-purpose"))
+        got = self.run_belt({"tickets": ["A"]}, {"A": "lanes"}, {"holder": self.LANE_HOLDER, "lanes_start": [bad]})
+        (a,) = got["result"]["tickets"]
+        self.assertEqual(a["outcome"], "error")
+        self.assertIn("the lanes could not be read: lane L2 names the agent type 'general-purpose'", a["reason"])
+        self.assertFalse([command for command in got["asked"] if command.startswith("Lane ")], "not even the good lane is started")
+
+        sequential = {"status": "SEQUENTIAL", "then": "next", "reason": "Only 1 builder(s) may run for this ticket now.", "lanes": []}
+        got = self.run_belt({"tickets": ["A"]}, {"A": "lanes"}, {"lanes_start": [sequential]})
+        (a,) = got["result"]["tickets"]
+        self.assertEqual((a["outcome"], a["stations"]), ("stopped", ["build-lanes", "build"]), "the build goes on in the cell")
+
+        refused = {"status": "REFUSED", "then": "person", "reason": "Nothing was landed.", "needs": "lanes-blocked", "next": "Put it right, then run the ticket again."}
+        rules = {"lanes_start": [{"status": "NONE_LEFT", "then": "lanes-join", "reason": "Every lane is done.", "lanes": []}], "join": refused}
+        got = self.run_belt({"tickets": ["A"]}, {"A": "lanes"}, rules)
+        (a,) = got["result"]["tickets"]
+        self.assertEqual((a["outcome"], a["waiting_for"], a["next"]), ("stopped", "lanes-blocked", refused["next"]))
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_without_a_holder_the_lanes_get_one_of_their_own(self):
+        lane = self.lane
+        rules = {"lanes_start": [dict(self.opened(lane("L1", holder="cd" * 16)), holder="cd" * 16), {"status": "NONE_LEFT", "then": "lanes-join", "reason": "done", "lanes": []}],
+                 "join": {"status": "JOINED", "then": "next", "reason": "1 landed."}}
+        got = self.run_belt({"tickets": ["A"]}, {"A": "lanes"}, rules)
+        self.assertEqual([command for command in got["asked"] if command.startswith("lanes-")],
+                         ["lanes-start A --holder new", f"lanes-start A --holder {'cd' * 16}", f"lanes-join A --holder {'cd' * 16}"])
+
+    def test_build_lanes_is_a_known_step_in_the_build_phase(self):
+        self.assertIn("'build-lanes': 'Build'", self.SCRIPT)
+        self.assertIn("const ACTIONS = ['audit', 'groom', 'plan', 'build', 'build-lanes',", self.SCRIPT)
+        self.assertIn("if (step.action === 'build-lanes') {", self.SCRIPT)
+        self.assertIn("const read = cleanLanes(asked, MAX_LANES_AT_ONCE, ticket, PROJECTS, HOLDER || own || cleanHolder(asked && asked.holder))", self.SCRIPT)
+        self.assertIn("const MAX_LANES_AT_ONCE = 8", self.SCRIPT)
+        self.assertIn("build-lanes", run.claims().STEPS)
 
     def test_the_belt_runs_tickets_in_a_scheduled_pool(self):
         self.assertIn("const plan = cleanSchedule(asked, pending, [...running.keys()], MAX_AT_ONCE)", self.SCRIPT)

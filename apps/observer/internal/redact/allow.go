@@ -82,8 +82,8 @@ var Allow = map[string]*Shape{
 
 	"station.entered":           obj("station", "stage", "action", "resumed", "unclosed_visit", "head", "counts", anyKeys(scalar)),
 	"station.exited":            obj("station", "outcome", "stage", "duration_ms", "closed_by", "head", "counts", anyKeys(scalar), "app_type", "risk", "kind", "widened", "widened_rule"), // revision 2: app_type, risk (plan exit); revision 8: kind, widened, widened_rule (a small change, groom exit)
-	"gate.evaluated":            obj("gate", "verdict", "reason_code", "subject", "status", "audit_tier", "counts", anyKeys(scalar)),
-	"build.task_completed":      obj("task_id", "kind", "step", "first_run", "suite", "commit"),
+	"gate.evaluated":            obj("gate", "verdict", "reason_code", "subject", "status", "audit_tier", "counts", anyKeys(scalar), "lane"),                                              // revision 9: lane (M22)
+	"build.task_completed":      obj("task_id", "kind", "step", "first_run", "suite", "commit", "lane"),                                                                                   // revision 9: lane (M22)
 	"verify.check_recorded":     obj("target_id", "target_kind", "result", "evidence", list(obj("file", "sha256", "bytes")), "rerecorded"),
 	"review.round_started":      obj("risk", "max_rounds", "tuning", "approvals_needed", "human_approval_required", "panel", list(obj("seat", "model")), "delta", "restarted", "repeat"),
 	"review.verdict_submitted":  obj("seat", "vote", "blockers", "notes", "rules", leafList, "model"),

@@ -210,10 +210,19 @@ class DoctorTest(unittest.TestCase):
         code, checks, _, out = self.checks()
         self.assertEqual(code, 1)
         self.assertEqual(checks["tracker"]["status"], "fail")
+        self.assertEqual(checks["tracker"]["detail"], "GitHub tracker (from tickets.provider in .factory/config.json); the GitHub CLI is not signed in. "
+                                                      "Until it is, MACH's own tickets are kept on this computer, in .factory/tickets/.")
         self.assertNotIn(SECRET, out)
         _, text = self.run_doctor()
         self.assertNotIn(SECRET, text)
         self.assertNotIn("gho_", text)
+
+    def test_github_without_gh_says_where_machs_own_tickets_go_until_it_is_there(self):
+        self.healthy({"tickets": {"provider": "github"}})
+        _, checks, _, _ = self.checks()
+        self.assertEqual(checks["tracker"]["status"], "fail")
+        self.assertEqual(checks["tracker"]["detail"], "The github tracker (from tickets.provider in .factory/config.json) needs 'gh', which is not on PATH. "
+                                                      "Until it is, MACH's own tickets are kept on this computer, in .factory/tickets/.")
 
     def test_github_signed_in_is_ok(self):
         self.healthy({"tickets": {"provider": "github"}})
@@ -508,6 +517,45 @@ exit 1''')
         self.git("remote", "set-url", "origin", "https://example.com/acme/widgets.git")
         _, checks, _, _ = self.checks()
         self.assertNotIn("merge.protection", checks)
+
+    def screen(self, config, code, output):
+        if (self.project / ".git").exists():
+            shutil.rmtree(self.project)
+            self.project.mkdir()
+        calls = []
+
+        def start(argv, cwd, env, timeout):
+            calls.append(list(argv))
+            return code, output
+        with mock.patch.object(doctor, "BROWSER_LAUNCH", start), mock.patch.object(doctor, "BROWSER_WHICH", lambda name: f"/fake/{name}"):
+            self.healthy({"tickets": {"provider": "local"}, **config})
+            _, checks, _, _ = self.checks()
+        return checks.get("screen"), calls
+
+    def test_a_browser_that_cannot_start_is_a_note(self):
+        found, calls = self.screen({"app_type": "web"}, 1, "browserType.launch: Failed to launch: spawn EPERM: Operation not permitted")
+        self.assertEqual(found["status"], "ok", "a note, never a failure")
+        self.assertIn("A browser cannot be started here; web changes are verified without screenshots.", found["detail"])
+        self.assertIn("refused to start a browser", found["detail"])
+        self.assertEqual(calls[0][0], "/fake/playwright", "the same check as verification, with the start faked")
+        found, _ = self.screen({"app_type": "web"}, 0, "ok")
+        self.assertIn("verified with screenshots", found["detail"])
+        found, _ = self.screen({"app_type": "web", "verify": {"screen_evidence": "require"}}, 1, "Operation not permitted")
+        self.assertIn("wait for a person at verification", found["detail"])
+        self.assertEqual(found["status"], "ok")
+
+    def test_the_screen_check_is_skipped_when_it_cannot_matter(self):
+        found, calls = self.screen({}, 1, "Operation not permitted")
+        self.assertIsNone(found, "the app type cannot be told: no check")
+        self.assertEqual(calls, [])
+        found, calls = self.screen({"app_type": "library"}, 1, "x")
+        self.assertIsNone(found)
+        found, calls = self.screen({"app_type": "web", "verify": {"screen_evidence": "never"}}, 1, "x")
+        self.assertEqual(calls, [])
+        self.assertIn("'never'", found["detail"])
+        found, calls = self.screen({"app_type": "web", "verify": {"required_evidence": {"web": ["*.log"]}}}, 1, "x")
+        self.assertEqual(calls, [])
+        self.assertIn("does not try a browser", found["detail"])
 
     def test_github_repo_forms(self):
         self.healthy()

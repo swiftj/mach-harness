@@ -223,6 +223,15 @@ class CaseTest(Base):
         self.assertFalse(case["must_pass"])
         self.assertEqual(self.ok("collect")["already_cases"], [{"ticket_id": "LOCAL-001", "case_id": "LOCAL-001"}])
 
+    def test_a_ticket_whose_archive_was_not_kept_is_said_so_and_an_older_archive_is_not_taken_for_it(self):
+        records = [json.loads(line) for line in (self.project / ".factory/archive/runs.jsonl").read_text().splitlines()]
+        records[0]["archive"] = None  # cleanup.archive kept none; LOCAL-001.tar.gz on disk is another life's
+        self.runs(records)
+        found = self.ok("collect")
+        self.assertEqual(found["collected"], [])
+        why = {item["ticket_id"]: item["why"] for item in found["not_collected"]}["LOCAL-001"]
+        self.assertIn("archive was not kept after cleanup (cleanup.archive)", why)
+
     def test_a_squashed_or_fast_forwarded_ticket_starts_from_the_spec_commits_parent(self):
         records = [json.loads(line) for line in (self.project / ".factory/archive/runs.jsonl").read_text().splitlines()]
         records[0]["integration"] = {"merge_commit": None}

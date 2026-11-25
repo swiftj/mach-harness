@@ -1,6 +1,7 @@
 /**
  * One anatomy per entity type (spec f.9, item 3 and 5): the facts that matter for that kind of
- * thing now, and links to what it relates to. Each reads its entity's own object from
+ * thing now, each related entity a link where it is named (no "Related" list: the ticket that owns
+ * the entity is the link in the header's id). Each reads its entity's own object from
  * the scene, so it re-renders when that entity changes, not on every tick.
  */
 import { useMemo, type ReactNode } from "react";
@@ -39,7 +40,7 @@ import {
   parkedWords,
 } from "../../sim";
 import { useScene } from "../../scene";
-import { AgentGlyph, ArtifactGlyph, CellGlyph, DependencyGlyph, ExecutionGlyph, GateGlyphSmall, SliceGlyph, StateGlyph, StateWord, StationGlyph, ToolGlyph } from "../glyphs";
+import { AgentGlyph, ArtifactGlyph, DependencyGlyph, GateGlyphSmall, StateGlyph, StateWord, StationGlyph, ToolGlyph } from "../glyphs";
 import {
   ACTOR_WORDS,
   artifactOf,
@@ -58,15 +59,18 @@ import {
   timecode,
   toolFamily,
 } from "../vocab";
-import { Elapsed, Facts, Mono, NotRecorded, RecurrenceLink, RefLink, RefList, Section, StationHistoryLink, useEntityEvents, VisitHistoryLink } from "./parts";
+import { Elapsed, EntityLink, Facts, Mono, NotRecorded, RecurrenceLink, RefLink, RefList, Section, StationHistoryLink, useEntityEvents, VisitHistoryLink } from "./parts";
 import { parseStation } from "./entity";
 import { reviewTally } from "./timing";
 import { activityNote, agentsWords, interruptionWords, modelCostsOf, planWords, reviewerWords, runtimeWords, seatModelName, visitLeftWords } from "./words";
 import { useFreeTextLabel } from "./catalog";
 import { EventWords, FreeText, FreeTextLabel } from "./FreeText";
-import { gatePositionWords, outcomeStateWords, outcomeWordsOf, visitStateWords } from "./outcomes";
+import { evaluationWords, gateDecisionOf, gatePositionWords, NO_REASON_WORDS, outcomeStateWords, outcomeWordsOf, visitStateWords } from "./outcomes";
 import { OpenEvidence } from "../../evidence/OpenEvidence";
 import { checkCitingPath } from "../../evidence/model";
+import { useSource } from "../source/context";
+import { landedCommitOf, type CommitLink } from "../../line/lanesModel";
+import { lanesKey, useCellLanes } from "../../line/useLanes";
 import { historyEndedAt, useSceneStore } from "../../scene";
 import { isStale, type FactoryStatus } from "../../scene/connection";
 
@@ -95,8 +99,11 @@ function agentsOf(scene: Scene, status: FactoryStatus | null, executionId: strin
 
 const at = (t: number | null | undefined) => (t === null || t === undefined ? "not yet" : <Mono>{timecode(t, false)}</Mono>);
 
+/** An agent by its role (and seat), never by its opaque id. */
+const agentWord = (agent: Pick<AgentState, "role" | "seat">): string => (agent.role === "reviewer" && agent.seat ? `Reviewer, ${agent.seat}` : ROLE_WORDS[agent.role]);
+
 function AgentLink({ agent }: { agent: AgentState }) {
-  const word = agent.role === "reviewer" && agent.seat ? `Reviewer, ${agent.seat}` : ROLE_WORDS[agent.role];
+  const word = agentWord(agent);
   return (
     <RefLink to={ref.agent(agent.id)} glyph={<AgentGlyph tier={tierOf(agent.model)} agentRole={roleOf(agent.role)} size={20} state={runState(agent.status)} />} detail={agent.status === "running" ? "working" : timecode(agent.startedAt, false)}>
       {word} <FreeText field="agentLabel" text={agent.label} labelled expandable={false} className="text-ink-subtle" />
@@ -143,12 +150,15 @@ function GateLink({ gate, to }: { gate: GateState; to?: EntityRef }) {
   );
 }
 
-function CellLink({ cell }: { cell: CellState }) {
-  const look = stageLook(cell.stage);
+/**
+ * An id, in a fact, that is a link to its entity. There is no "Related" list: a panel links what it
+ * relates to where it is named, and the ticket that owns it in the header's id.
+ */
+function IdLink({ to, id, label }: { to: EntityRef; id: string; label?: string }) {
   return (
-    <RefLink to={ref.cell(cell.ticketId)} glyph={<CellGlyph size={18} state={look.state} />} detail={look.label}>
-      <span className="font-mono text-[12px]">{cell.ticketId}</span> <FreeText field="sliceTitle" text={cell.title} labelled expandable={false} />
-    </RefLink>
+    <EntityLink to={to} label={label} className="font-mono text-[12px] [overflow-wrap:anywhere]">
+      {id}
+    </EntityLink>
   );
 }
 
@@ -220,7 +230,8 @@ export function SliceAnatomy({ slice }: { slice: SliceState }) {
             ["Since", at(slice.since)],
             hold ? ["Held since", at(hold.since)] : null,
             ["Risk", isKnown(slice.meta, "risk") ? slice.risk : <NotRecorded key="r" />],
-            ["Ticket", slice.ticketId ? <Mono key="t">{slice.ticketId}</Mono> : <NotRecorded key="t" />],
+            // The ticket's cell, once it has one: a link (the only way to it from here).
+            ["Ticket", slice.ticketId ? cell ? <IdLink key="t" to={ref.cell(cell.ticketId)} id={slice.ticketId} /> : <Mono key="t">{slice.ticketId}</Mono> : <NotRecorded key="t" />],
             ["Issue", slice.issue !== null ? <Mono key="i">#{slice.issue}</Mono> : <NotRecorded key="i" />],
             ["Epic", <EpicWords key="e" epicId={slice.epicId} epicTitle={slice.epicTitle} />],
             slice.integratedCommit ? ["Integrated", <Mono key="c">{slice.integratedCommit.slice(0, 7)}</Mono>] : null,
@@ -249,21 +260,23 @@ export function SliceAnatomy({ slice }: { slice: SliceState }) {
           </div>
         ) : null}
         {slice.summary ? <p className="mt-3 text-body-sm text-ink-muted">{slice.summary}</p> : null}
-      </Section>
-      <Section title="Related">
-        <RefList>
-          {cell ? <CellLink cell={cell} /> : null}
-          {waitsFor.map((d) => (
-            <RefLink key={d.id} to={ref.dependency(d.from, d.to)} glyph={<DependencyGlyph size={18} satisfied={d.state === "satisfied"} />} detail={d.state === "satisfied" ? "satisfied" : "blocking"}>
-              Waits for <span className="font-mono text-[12px]">{d.to}</span>
-            </RefLink>
-          ))}
-          {blocks.map((d) => (
-            <RefLink key={d.id} to={ref.dependency(d.from, d.to)} glyph={<DependencyGlyph size={18} satisfied={d.state === "satisfied"} />} detail={d.state === "satisfied" ? "released" : "held"}>
-              <span className="font-mono text-[12px]">{d.from}</span> waits for this
-            </RefLink>
-          ))}
-        </RefList>
+        {/* What it waits for and what waits for it: the scheduler's dependencies, each a link. */}
+        {waitsFor.length || blocks.length ? (
+          <div className="mt-3">
+            <RefList>
+              {waitsFor.map((d) => (
+                <RefLink key={d.id} to={ref.dependency(d.from, d.to)} glyph={<DependencyGlyph size={18} satisfied={d.state === "satisfied"} />} detail={d.state === "satisfied" ? "satisfied" : "blocking"}>
+                  Waits for <span className="font-mono text-[12px]">{d.to}</span>
+                </RefLink>
+              ))}
+              {blocks.map((d) => (
+                <RefLink key={d.id} to={ref.dependency(d.from, d.to)} glyph={<DependencyGlyph size={18} satisfied={d.state === "satisfied"} />} detail={d.state === "satisfied" ? "released" : "held"}>
+                  <span className="font-mono text-[12px]">{d.from}</span> waits for this
+                </RefLink>
+              ))}
+            </RefList>
+          </div>
+        ) : null}
       </Section>
       <Section title="History">
         <ol className="flex flex-col gap-1 text-body-sm">
@@ -517,25 +530,18 @@ function CountOnlyAgent({ agent }: { agent: AgentState }) {
             agent.agentType ? ["Agent type", <Mono key="t">{agent.agentType}</Mono>] : null,
             ["State", agent.lifecycle === "queued" ? "Queued in its workflow" : agent.lifecycle === "unknown" ? "Ended; how is not recorded" : agent.lifecycle === "running" ? "Running" : agent.lifecycle === "error" ? "Ended in an error" : "Finished"],
             agent.lifecycle === "queued" ? null : ["Started", known("startedAt") ? at(agent.startedAt) : <NotRecorded key="s" />],
-            agent.lifecycle === "queued" ? null : ["Elapsed", agent.durationMs !== null ? `took ${durationOf(agent.durationMs)} (measured)` : <Elapsed key="e" startedAt={agent.startedAt} finishedAt={agent.finishedAt} />],
+            agent.lifecycle === "queued" ? null : ["Elapsed", agent.durationMs !== null ? `took ${durationOf(agent.durationMs)}` : <Elapsed key="e" startedAt={agent.startedAt} finishedAt={agent.finishedAt} />],
             ["Tokens", agent.tokens !== null ? agent.tokens.toLocaleString("en-GB") : <NotRecorded key="k" />],
             ["Tool calls", agent.toolCallCount !== null ? agent.toolCallCount.toLocaleString("en-GB") : <NotRecorded key="c" />],
             ["Last tool", agent.lastTool ? <Mono key="lt">{agent.lastTool}</Mono> : <NotRecorded key="lt" />],
             agent.refused.length ? ["Refused tools", <RefusedTools key="rt" tools={agent.refused} />] : null,
             note ? ["Read as", note] : null,
+            // An agent's id does not name its ticket: the ticket and the execution are linked here.
+            cell ? ["Ticket", <IdLink key="tk" to={ref.cell(cell.ticketId)} id={cell.ticketId} />] : null,
+            agent.executionId ? ["Execution", <IdLink key="x" to={ref.execution(agent.executionId)} id={agent.executionId} />] : null,
           ]}
         />
         <p className="mt-3 text-body-sm text-ink-muted">Individual tool calls are not observable for workflow agents. The count and the last tool's name come from the workflow's progress snapshots.</p>
-      </Section>
-      <Section title="Related">
-        <RefList>
-          {cell ? <CellLink cell={cell} /> : null}
-          {agent.executionId ? (
-            <RefLink to={ref.execution(agent.executionId)} glyph={<ExecutionGlyph size={18} />} detail="execution">
-              <span className="font-mono text-[12px]">{agent.executionId}</span>
-            </RefLink>
-          ) : null}
-        </RefList>
       </Section>
     </>
   );
@@ -580,6 +586,10 @@ function PerCallAgent({ agent }: { agent: AgentState }) {
             ["Time at work", <Elapsed key="e" startedAt={agent.startedAt} finishedAt={agent.finishedAt} />],
             agent.summary ? ["Reported", agent.summary] : null,
             note ? ["Read as", note] : null,
+            // An agent's id does not name its ticket: the ticket, the execution and the agent that started it are linked here.
+            cell ? ["Ticket", <IdLink key="tk" to={ref.cell(cell.ticketId)} id={cell.ticketId} />] : null,
+            agent.executionId ? ["Execution", <IdLink key="x" to={ref.execution(agent.executionId)} id={agent.executionId} />] : null,
+            parent ? ["Started by", <EntityLink key="pa" to={ref.agent(parent.id)}>{agentWord(parent)}</EntityLink>] : null,
           ]}
         />
       </Section>
@@ -609,24 +619,26 @@ function PerCallAgent({ agent }: { agent: AgentState }) {
           <Empty>No tool call yet.</Empty>
         )}
       </Section>
-      <Section title="Related">
-        <RefList>
-          {cell ? <CellLink cell={cell} /> : null}
-          {parent ? <AgentLink agent={parent} /> : null}
-          {children.map((a) => (
-            <AgentLink key={a.id} agent={a} />
-          ))}
-          {agent.executionId ? (
-            <RefLink to={ref.execution(agent.executionId)} glyph={<ExecutionGlyph size={18} />} detail="execution">
-              <span className="font-mono text-[12px]">{agent.executionId}</span>
-            </RefLink>
-          ) : null}
-          {produced.slice(-5).map((a) => (
-            <ArtifactLink key={a.id} artifact={a} />
-          ))}
-        </RefList>
-        {parent || children.length ? <FreeTextLabel what="Agent labels" /> : null}
-      </Section>
+      {children.length ? (
+        <Section title="Agents it started" aside={<span className="text-caption text-ink-subtle tabular">{children.length}</span>}>
+          <RefList>
+            {children.map((a) => (
+              <AgentLink key={a.id} agent={a} />
+            ))}
+          </RefList>
+          <FreeTextLabel what="Agent labels" />
+        </Section>
+      ) : null}
+      {produced.length ? (
+        <Section title="What it wrote" aside={<span className="text-caption text-ink-subtle tabular">{produced.length}</span>}>
+          <RefList>
+            {produced.slice(-5).map((a) => (
+              <ArtifactLink key={a.id} artifact={a} />
+            ))}
+          </RefList>
+          {produced.length > 5 ? <p className="mt-1 text-caption text-ink-subtle">The latest 5 of {produced.length}.</p> : null}
+        </Section>
+      ) : null}
     </>
   );
 }
@@ -654,27 +666,55 @@ export function ToolAnatomy({ call }: { call: ToolCallState }) {
             ["Time", <Elapsed key="e" startedAt={call.startedAt} finishedAt={call.finishedAt} />],
             ["Outcome", call.result === "unknown" ? "Not recorded: its execution ended before it returned" : call.status === "running" ? "Running" : call.status === "ok" ? "Returned" : "Returned an error"],
             call.summary ? ["Result", call.summary] : null,
+            // A call's id does not name its ticket: the agent that made it and the ticket are linked here.
+            agent ? ["Made by", <EntityLink key="ag" to={ref.agent(agent.id)}>{agentWord(agent)}</EntityLink>] : null,
+            cell ? ["Ticket", <IdLink key="tk" to={ref.cell(cell.ticketId)} id={cell.ticketId} />] : null,
           ]}
         />
       </Section>
-      <Section title="Related">
-        <RefList>
-          {agent ? <AgentLink agent={agent} /> : null}
-          {cell ? <CellLink cell={cell} /> : null}
-          {artifacts.map((a) => (
-            <ArtifactLink key={a.id} artifact={a} />
-          ))}
-        </RefList>
-        {agent ? <FreeTextLabel what="Agent labels" /> : null}
-      </Section>
+      {artifacts.length ? (
+        <Section title="What it wrote">
+          <RefList>
+            {artifacts.map((a) => (
+              <ArtifactLink key={a.id} artifact={a} />
+            ))}
+          </RefList>
+        </Section>
+      ) : null}
     </>
   );
 }
 
 // ---------------------------------------------------------------- artifact
 
+/**
+ * M22: a commit a task made in a lane. Once the lanes are joined it no longer exists on any branch:
+ * the join landed a copy under another id. The observer's lanes record links the two; that link is
+ * followed here, so the lane commit reads as landed (or set aside), never as missing.
+ */
+function useLaneCommit(artifact: ArtifactState, cell: CellState | null): CommitLink | null | undefined {
+  const { client } = useSource();
+  const commit = artifact.record?.commit ?? null;
+  // A ticket built in lanes: a task named its lane, or a lanes gate was evaluated.
+  const inLanes = Boolean(commit && cell && (cell.tasks.some((t) => t.lane) || cell.gateLog.some((g) => g.gate === "build.lanes-open" || g.gate === "build.join" || g.gate === "build.hand-back")));
+  // This very commit is one an event named as a lane's.
+  const known = Boolean(commit && cell?.tasks.some((t) => t.lane && t.commit && (t.commit.startsWith(commit) || commit.startsWith(t.commit))));
+  const wanted = useMemo(() => (inLanes && cell ? new Map([[cell.ticketId, lanesKey(cell)]]) : new Map<string, string>()), [inLanes, cell]);
+  const replies = useCellLanes(inLanes ? client : null, wanted);
+  if (!inLanes || !commit) return undefined;
+  const link = landedCommitOf(replies.get(artifact.ticketId)?.lanes ?? null, commit);
+  return link ?? (known ? null : undefined);
+}
+
+const LANE_COMMIT_WORDS: Readonly<Record<CommitLink["state"], string>> = {
+  landed: "made in a lane; the join landed it on the ticket's branch as",
+  "set-aside": "made in a lane that was set aside: not landed; its task is built again in the cell",
+  "not-joined": "made in a lane; on the lane's branch until the lanes are joined",
+};
+
 export function ArtifactAnatomy({ artifact }: { artifact: ArtifactState }) {
   const cell = useScene((s) => s.cells[artifact.ticketId] ?? null);
+  const laneCommit = useLaneCommit(artifact, cell);
   const freeText = useFreeTextLabel(artifact);
   const writer = artifact.writer.agentId && cell ? (cell.agents[artifact.writer.agentId] ?? null) : null;
   const base = artifact.path.split("/").pop() ?? artifact.path;
@@ -709,6 +749,18 @@ export function ArtifactAnatomy({ artifact }: { artifact: ArtifactState }) {
             artifact.round ? ["Round", artifact.round] : null,
             ["Written by", writer ? <span key="w">{ROLE_WORDS[writer.role]} (<FreeText field="agentLabel" text={writer.label} />)</span> : artifact.writer.script ? <Mono key="w">{artifact.writer.script}</Mono> : <NotRecorded key="w" />],
             artifact.record ? ["Integrity", `${artifact.record.integrity}, ${artifact.record.nature}${artifact.record.bytes !== null ? `, ${artifact.record.bytes.toLocaleString("en-GB")} bytes` : ""}`] : null,
+            laneCommit !== undefined
+              ? [
+                  "Lane",
+                  laneCommit === null ? (
+                    "made in a lane; what happened to it is not recorded yet"
+                  ) : (
+                    <span key="lc">
+                      {LANE_COMMIT_WORDS[laneCommit.state]} {laneCommit.state === "landed" && laneCommit.landed ? <Mono>{laneCommit.landed.slice(0, 10)}</Mono> : null}
+                    </span>
+                  ),
+                ]
+              : null,
             freeText ? ["Content", <FreeTextNote key="ft" label={freeText} block />] : null,
           ]}
         />
@@ -739,13 +791,6 @@ export function ArtifactAnatomy({ artifact }: { artifact: ArtifactState }) {
           ))}
         </RefList>
         {readers.length === 0 ? <Empty>No later tool call names this file yet.</Empty> : <p className="mt-1 text-caption text-ink-subtle">Readers are tool calls whose target names the file: {readers.length} so far.</p>}
-        {cell ? (
-          <div className="mt-2">
-            <RefList>
-              <CellLink cell={cell} />
-            </RefList>
-          </div>
-        ) : null}
       </Section>
     </>
   );
@@ -756,26 +801,45 @@ export function ArtifactAnatomy({ artifact }: { artifact: ArtifactState }) {
 export function GateAnatomy({ gate }: { gate: GateState }) {
   const cell = useScene((s) => s.cells[gate.ticketId] ?? null);
   const attention = useScene((s) => s.supervisor.attention[gate.ticketId] ?? null);
-  const state = gateState(gate.state);
   const verification = gate.gate === "verification" && cell ? cell.verifications.find((v) => v.round === gate.round) : undefined;
   const review = (gate.gate === "review" || gate.gate === "human-approval") && cell ? (gate.gate === "review" ? cell.reviews.find((r) => r.round === gate.round) : [...cell.reviews].reverse().find((r) => r.humanApprovalRequired)) : undefined;
   const waitingSince = gate.state === "waiting" ? Math.max(0, gate.openedAt) : null;
   // A review rejection or a failed verification: how often it recurs is Analytics' Quality area.
   const recurs = gate.state === "failed" && (gate.gate === "review" || gate.gate === "verification") ? (gate.gate === "review" ? "review" : "verify") : null;
+  // The lifecycle evaluation that set this gate state, if one did (the latest), for its reason and subject.
+  const evaluation = useMemo(() => (gate.recorded || !cell ? null : ([...cell.gateLog].reverse().find((g) => g.gateId === gate.id) ?? null)), [gate, cell]);
+  const decision = gateDecisionOf(gate, evaluation);
+  // The header names the gate, shows its position and when it was decided (or reached, while open):
+  // none of them is repeated here.
+  const reachedEarlier = gate.decidedAt !== null && gate.openedAt !== gate.decidedAt;
   return (
     <>
       <Section title="Decision" aside={recurs ? <RecurrenceLink kind={recurs} /> : undefined}>
         <Facts
           facts={[
-            ["Gate", gateName(gate)],
-            ["Position", <StateWord key="p" state={state} label={gatePositionWords(gate)} />],
+            decision.reason ? ["Reason", decision.reason === "none" ? NO_REASON_WORDS : <ReasonWords key="r" reason={decision.reason} />] : null,
+            decision.subject ? ["For", <Mono key="s">{decision.subject}</Mono>] : null,
             gate.round ? ["Round", `${gate.round} of ${MAX_ROUNDS}`] : null,
-            ["Reached", at(gate.openedAt)],
-            ["Decided", gate.decidedAt === null ? "not yet" : at(gate.decidedAt)],
+            reachedEarlier ? ["Reached", at(gate.openedAt)] : null,
             waitingSince !== null ? ["Waiting", <Elapsed key="w" startedAt={waitingSince} finishedAt={null} mode="wait" />] : null,
+            // Once merged, where the merge is (its station's visits): reached from here only.
+            cell?.merged && gate.gate === "merge-revalidation" ? ["Merged", <EntityLink key="m" to={ref.station("merge", gate.ticketId)}>Merge of {gate.ticketId}</EntityLink>] : null,
           ]}
         />
-        <p className="mt-3 text-body-sm text-ink-muted">{gate.detail}</p>
+        {decision.evaluations.length ? (
+          <div className="mt-3">
+            <p className="text-caption text-ink-subtle">Evaluated {decision.evaluations.length} times, oldest first</p>
+            <ol className="mt-1 flex flex-col gap-1 text-body-sm">
+              {decision.evaluations.map((e, i) => (
+                <li key={`${e.at}-${i}`} className="flex items-baseline gap-2">
+                  <span className="min-w-0 flex-1 text-ink">{evaluationWords(e)}</span>
+                  <Mono muted>{timecode(e.at, false)}</Mono>
+                </li>
+              ))}
+            </ol>
+          </div>
+        ) : null}
+        {decision.detail ? <p className="mt-3 text-body-sm text-ink-muted">{decision.detail}</p> : null}
       </Section>
       {verification ? (
         <Section title="What it checked" aside={<span className="text-caption text-ink-subtle">{verification.checks.filter((c) => c.result === "pass").length} of {verification.checks.length} proven</span>}>
@@ -872,18 +936,17 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
           ) : null}
         </Section>
       ) : null}
-      <Section title="Related">
-        <RefList>
-          {cell ? <CellLink cell={cell} /> : null}
-          {cell?.merged && gate.gate === "merge-revalidation" ? (
-            <RefLink to={ref.station("merge", gate.ticketId)} glyph={<StationGlyph kind="merge" size={18} state="succeeded" />} detail="merged">
-              Merge of {gate.ticketId}
-            </RefLink>
-          ) : null}
-        </RefList>
-      </Section>
     </>
   );
+}
+
+/**
+ * A recorded reason in plain words (the code itself stays in the evidence, with its record); a code
+ * the table does not know, as recorded, in mono.
+ */
+function ReasonWords({ reason }: { reason: { readonly words: string; readonly code: string; readonly known: boolean } }) {
+  if (!reason.known) return <Mono>{reason.code}</Mono>;
+  return <span>{`${reason.words[0]!.toUpperCase()}${reason.words.slice(1)}`}</span>;
 }
 
 function FindingLink({ finding }: { finding: FindingState }) {
@@ -917,25 +980,12 @@ export function FindingAnatomy({ finding }: { finding: FindingState }) {
             ["Recorded", at(finding.at)],
             finding.outvoted ? ["Outcome", "Outvoted: reported, not hidden"] : null,
             seat ? ["Seat's vote", seat.vote ? seat.vote.toLowerCase() : "not yet"] : null,
+            // The round's gate and the seat's reviewer, each a link (the ticket is the header's link).
+            round ? ["Review", <EntityLink key="g" to={ref.gate(`${ticketId}/review#${finding.round}`)}>Review consensus, round {finding.round}</EntityLink>] : null,
+            round ? ["Round's outcome", round.outcome ? outcomeWordsOf(round.outcome).words : "in progress"] : null,
+            seat?.agentId ? ["Reviewer", <EntityLink key="a" to={ref.agent(seat.agentId)}>Reviewer, {seat.seat} seat</EntityLink>] : null,
           ]}
         />
-      </Section>
-      <Section title="Related">
-        <RefList>
-          {round ? (
-            <RefLink to={ref.gate(`${ticketId}/review#${finding.round}`)} glyph={<GateGlyphSmall kind="consensus" size={18} state={round.outcome === null ? "active" : round.outcome === "APPROVED" ? "succeeded" : round.outcome === "AWAITING_HUMAN" ? "human" : "failed"} />} detail={round.outcome ? outcomeWordsOf(round.outcome).words : "in progress"}>
-              Review consensus, round {finding.round}
-            </RefLink>
-          ) : null}
-          {seat?.agentId ? (
-            <RefLink to={ref.agent(seat.agentId)} glyph={<AgentGlyph tier={seat.model} agentRole="reviewer" size={20} />} detail={seat.seat}>
-              Reviewer, {seat.seat} seat
-            </RefLink>
-          ) : null}
-          <RefLink to={ref.cell(ticketId)} glyph={<CellGlyph size={18} />}>
-            <span className="font-mono text-[12px]">{ticketId}</span>
-          </RefLink>
-        </RefList>
       </Section>
     </>
   );
@@ -966,24 +1016,14 @@ export function DependencyAnatomy({ dependency }: { dependency: DependencyState 
         <div className="mt-3">
           <Facts
             facts={[
-              ["Waits", <Mono key="f">{dependency.from}</Mono>],
-              ["For", <Mono key="t">{dependency.to}</Mono>],
+              // Each slice is a link to it where it is named.
+              ["Waits", from ? <IdLink key="f" to={ref.slice(from.id)} id={dependency.from} /> : <Mono key="f">{dependency.from}</Mono>],
+              ["For", to ? <IdLink key="t" to={ref.slice(to.id)} id={dependency.to} /> : <Mono key="t">{dependency.to}</Mono>],
               ["State", <StateWord key="s" state={satisfied ? "succeeded" : "waiting"} label={satisfied ? "Satisfied" : "Blocking"} />],
               ["Cleared", dependency.satisfiedAt === null ? "not yet" : at(dependency.satisfiedAt)],
             ]}
           />
         </div>
-      </Section>
-      <Section title="Related">
-        <RefList>
-          {[from, to].map((s) =>
-            s ? (
-              <RefLink key={s.id} to={ref.slice(s.id)} glyph={<SliceGlyph size={18} state={schedulerLook(s.scheduler).state} mark={schedulerLook(s.scheduler).mark} />} detail={schedulerLook(s.scheduler).label}>
-                <span className="font-mono text-[12px]">{s.id}</span> <FreeText field="sliceTitle" text={s.title} labelled expandable={false} />
-              </RefLink>
-            ) : null,
-          )}
-        </RefList>
       </Section>
     </>
   );
@@ -1036,12 +1076,14 @@ export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
   const cost = recordedCost(execution);
   const models = useModelCosts(execution.id);
   const under = mayBeUnderReported(execution);
+  const ticketCell = useScene((s) => Boolean(s.cells[execution.ticketId]));
   return (
     <>
       <Section title="Facts">
         <Facts
           facts={[
-            ["Ticket", <Mono key="t">{execution.ticketId}</Mono>],
+            // An execution's id does not name its ticket: the ticket is linked here.
+            ["Ticket", ticketCell ? <IdLink key="t" to={ref.cell(execution.ticketId)} id={execution.ticketId} /> : <Mono key="t">{execution.ticketId}</Mono>],
             ["State", executionStatusOf(execution, historyEnd).word],
             ["Attempt", isKnown(execution.meta, "attempt") ? execution.attempt : <NotRecorded key="at" />],
             ["Asked to", isKnown(execution.meta, "next") ? execution.next : <NotRecorded key="n" />],
@@ -1106,13 +1148,6 @@ export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
           {under ? <p className="mt-2 text-caption text-warning-ink">These may be under-reported: {underReportedWhy(execution)}.</p> : null}
         </Section>
       ) : null}
-      <Section title="Related">
-        <RefList>
-          <RefLink to={ref.cell(execution.ticketId)} glyph={<CellGlyph size={18} />}>
-            <span className="font-mono text-[12px]">{execution.ticketId}</span>
-          </RefLink>
-        </RefList>
-      </Section>
     </>
   );
 }
@@ -1213,7 +1248,8 @@ export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
       >
         <Facts
           facts={[
-            ["Station", STATION_WORDS[kind] ?? visit.station],
+            // The station is a link to every visit of this ticket to it (the ticket is the header's link).
+            ["Station", <EntityLink key="st" to={ref.station(visit.station, visit.ticketId)} label={`Every visit to ${STATION_WORDS[kind] ?? visit.station} in ${visit.ticketId}`}>{STATION_WORDS[kind] ?? visit.station}</EntityLink>],
             ["Cell", <Mono key="c">{visit.ticketId}</Mono>],
             ["Round", `${visit.round} of ${MAX_ROUNDS}`],
             ["Step", isKnown(visit.meta, "action") ? visit.action : <NotRecorded key="a" />],
@@ -1224,7 +1260,8 @@ export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
             [
               "Duration",
               visit.durationMs !== null ? (
-                `${Math.round(visit.durationMs / 1000)} s, measured`
+                // The recorded length, as it is: a length that is not measured says so (the branches below).
+                durationOf(visit.durationMs)
               ) : visit.leftAt === null ? (
                 <Elapsed key="e" startedAt={visit.enteredAt} finishedAt={null} mode={status.state === "waiting-person" ? "wait" : "work"} />
               ) : status.state === "ended-unrecorded" ? (
@@ -1241,16 +1278,6 @@ export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
           ]}
         />
       </Section>
-      <Section title="Related">
-        <RefList>
-          <RefLink to={ref.station(visit.station, visit.ticketId)} glyph={<StationGlyph kind={kind} size={18} />}>
-            Every visit to this station
-          </RefLink>
-          <RefLink to={ref.cell(visit.ticketId)} glyph={<CellGlyph size={18} />}>
-            <span className="font-mono text-[12px]">{visit.ticketId}</span>
-          </RefLink>
-        </RefList>
-      </Section>
     </>
   );
 }
@@ -1263,7 +1290,8 @@ export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
 function ReviewerWords({ seat }: { seat: SeatEntity }) {
   return (
     <span className="flex min-w-0 flex-col">
-      <span>{reviewerWords(seat.seat, seatModelName(seat.model))}</span>
+      {/* A link to the reviewer agent (it is shown by its seat and model, never its id). */}
+      <span>{seat.agentId ? <EntityLink to={ref.agent(seat.agentId)}>{reviewerWords(seat.seat, seatModelName(seat.model))}</EntityLink> : reviewerWords(seat.seat, seatModelName(seat.model))}</span>
       <span className="font-mono text-[11px] text-ink-subtle [overflow-wrap:anywhere]" title="The reviewer agent's id">
         <span className="sr-only">Agent id: </span>
         {seat.agentId}
@@ -1281,6 +1309,7 @@ export function SeatAnatomy({ seat }: { seat: SeatEntity }) {
             ["Seat", seat.seat],
             ["Cell", <Mono key="c">{seat.ticketId}</Mono>],
             ["Round", `${seat.round} of ${MAX_ROUNDS}`],
+            ["Review", <EntityLink key="g" to={ref.gate(`${seat.ticketId}/review#${seat.round}`)}>Review, round {seat.round}</EntityLink>],
             ["Model", seatModelName(seat.model) ?? <NotRecorded key="m" />],
             ["Vote", seat.vote ? outcomeStateWords(seat.vote) : "not yet"],
             seat.votedAt !== null ? ["Voted", at(seat.votedAt)] : null,
@@ -1289,18 +1318,6 @@ export function SeatAnatomy({ seat }: { seat: SeatEntity }) {
             ["Reviewer", seat.agentId ? <ReviewerWords key="r" seat={seat} /> : "not seen"],
           ]}
         />
-      </Section>
-      <Section title="Related">
-        <RefList>
-          <RefLink to={ref.gate(`${seat.ticketId}/review#${seat.round}`)} glyph={<GateGlyphSmall kind={gateOf("review")} size={18} />}>
-            Review, round {seat.round}
-          </RefLink>
-          {seat.agentId ? (
-            <RefLink to={ref.agent(seat.agentId)} glyph={<AgentGlyph tier={tierOf(seat.model)} agentRole={roleOf("reviewer")} size={18} />}>
-              The reviewer
-            </RefLink>
-          ) : null}
-        </RefList>
       </Section>
     </>
   );
@@ -1314,8 +1331,9 @@ export function WorkflowAnatomy({ workflow }: { workflow: WorkflowEntity }) {
         <Facts
           facts={[
             ["Workflow", workflow.name ? <Mono key="n">{workflow.name}</Mono> : <NotRecorded key="n" />],
-            ["Execution", <Mono key="x">{workflow.executionId}</Mono>],
-            ["Ticket", workflow.ticketId ? <Mono key="t">{workflow.ticketId}</Mono> : <NotRecorded key="t" />],
+            // A workflow's id does not name its ticket: the execution and the ticket are linked here.
+            ["Execution", <IdLink key="x" to={ref.execution(workflow.executionId)} id={workflow.executionId} />],
+            ["Ticket", workflow.ticketId ? <IdLink key="t" to={ref.cell(workflow.ticketId)} id={workflow.ticketId} /> : <NotRecorded key="t" />],
             ["Status", workflow.status === null ? <NotRecorded key="s" /> : workflow.status === "running" ? "Running" : workflow.status],
             workflow.stopReason ? ["Stopped by", workflow.stopReason] : null,
             ["Ended", workflow.finishedAt === null ? "not yet" : at(workflow.finishedAt)],
@@ -1325,13 +1343,6 @@ export function WorkflowAnatomy({ workflow }: { workflow: WorkflowEntity }) {
           ]}
         />
         <p className="mt-3 text-caption text-ink-subtle">A phase list is declared, not entered: when the belt is in a phase is not recorded.</p>
-      </Section>
-      <Section title="Related">
-        <RefList>
-          <RefLink to={ref.execution(workflow.executionId)} glyph={<ExecutionGlyph size={18} />}>
-            <span className="font-mono text-[12px]">{workflow.executionId}</span>
-          </RefLink>
-        </RefList>
       </Section>
     </>
   );

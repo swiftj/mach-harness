@@ -1,7 +1,10 @@
-// Package server is the observer's HTTP surface. Every route reads; none writes, starts, or
-// changes anything. The request checks follow M5's host (apps/studio/internal/server), narrowed
-// to GET: any other method is refused before routing, so there is no route to which a write
-// could later be attached by accident.
+// Package server is the observer's HTTP surface. Every route reads, except two (M23): a person's
+// decision on a ticket waiting for them (POST /api/v1/needs/{ticket}/{option}) and the Factory's
+// stop (POST /api/v1/factory/stop), each of which runs MACH's own run.py through internal/act
+// (needs.go). The request checks follow M5's host (apps/studio/internal/server): POST is accepted
+// on those two paths only, and every other method, and POST anywhere else, is refused before
+// routing, so no other route can be reached by a write. A write also needs the Origin of this host
+// and the session's CSRF token.
 //
 // The server knows the ingest side only through feed.Log (the merged log), and IngestSource and
 // FactorySource below; cmd/mach-observer adapts the store, the ingest loop and the factory reader
@@ -89,6 +92,8 @@ type SourceState struct {
 	Oversized  int64     `json:"oversized"`
 	Resets     int64     `json:"resets"`
 	Runtime    any       `json:"runtime,omitempty"` // execution streams: the runtime's version and state
+	// Cell: a cell's source only: whether its folder, lifecycle log and cell.json are there.
+	Cell any `json:"cell,omitempty"`
 }
 
 // IngestSource reports the ingest loop's state.
@@ -120,13 +125,16 @@ type FactorySource interface {
 
 // Options are what the server needs, resolved at start-up.
 type Options struct {
-	Root         string
-	Guard        *security.Guard
-	Log          feed.Log
-	Projector    *project.Projector
-	Catalog      *artifact.Catalog
-	Ingest       IngestSource
-	Factory      FactorySource
+	Root      string
+	Guard     *security.Guard
+	Log       feed.Log
+	Projector *project.Projector
+	Catalog   *artifact.Catalog
+	Ingest    IngestSource
+	Factory   FactorySource
+	// Act runs MACH's run.py for "Needs you", a decision and the stop; nil when run.py was not
+	// found (capabilities.decisions and .stop are then false and those routes answer unavailable).
+	Act          Actor
 	UI           http.Handler
 	Logger       *log.Logger
 	Started      time.Time
@@ -156,6 +164,9 @@ type Server struct {
 	snapEpoch string
 	snapPos   uint64
 	snapData  []byte
+
+	needsCache   needsCache
+	runningCache runningCache
 }
 
 // New wires the routes.
@@ -219,9 +230,13 @@ func New(opts Options) *Server {
 		"release/readiness":             s.releases,
 		"decisions":                     s.decisions,
 		"decisions/{adr}":               s.decision,
+		"needs":                         s.needs,
 	} {
 		s.api.HandleFunc("GET /api/v1/"+route, h)
 	}
+	// The only two writes (needs.go). ServeHTTP lets POST reach these paths and no other.
+	s.api.HandleFunc("POST /api/v1/needs/{ticket}/{option}", s.decide)
+	s.api.HandleFunc("POST /api/v1/factory/stop", s.stop)
 	s.api.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, fail(KindNotFound, "There is no such route."))
 	})
@@ -229,8 +244,9 @@ func New(opts Options) *Server {
 }
 
 // HTTPServer returns a configured http.Server. No WriteTimeout or ReadTimeout: either would end a
-// long-lived event stream. Headers are bounded by ReadHeaderTimeout and MaxHeaderBytes; no handler
-// reads a body; each stream write has its own deadline.
+// long-lived event stream. Headers are bounded by ReadHeaderTimeout and MaxHeaderBytes; only the two
+// write routes read a body, capped and with its own read deadline (readBody); each stream write
+// has its own deadline.
 func (s *Server) HTTPServer() *http.Server {
 	return &http.Server{
 		Handler:           s,
@@ -254,14 +270,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 	security.Headers(rec.Header())
 	isAPI := r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.EscapedPath(), "/api/")
-	if r.Method != http.MethodGet {
+	// A write route answers POST only; every other path GET only.
+	write := isAPI && writeRoute.MatchString(r.URL.Path)
+	allowed, words := http.MethodGet, "This route answers GET only: the Factory Floor changes nothing here."
+	if write {
+		allowed, words = http.MethodPost, "This route answers POST only."
+	}
+	if r.Method != allowed {
 		rec.Header().Set("Cache-Control", "no-store") // a refusal is never kept (M6.6 F7)
-		rec.Header().Set("Allow", "GET")
+		rec.Header().Set("Allow", allowed)
 		rec.Header().Set("Connection", "close")
 		if isAPI {
-			writeJSON(rec, http.StatusMethodNotAllowed, fail(KindInvalid, "The observer is read-only and answers GET only."))
+			writeJSON(rec, http.StatusMethodNotAllowed, fail(KindInvalid, words))
 		} else {
-			http.Error(rec, "The observer is read-only and answers GET only.", http.StatusMethodNotAllowed)
+			http.Error(rec, words, http.StatusMethodNotAllowed)
 		}
 		return
 	}
@@ -302,6 +324,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if env, ok := checkSchema(r); !ok {
 		writeJSON(rec, http.StatusBadRequest, env)
 		return
+	}
+	if write {
+		rec.Header().Set("Connection", "close") // nothing else rides on a connection that wrote
+		if err := s.opts.Guard.CheckStateChange(r); err != nil {
+			writeJSON(rec, http.StatusForbidden, fail(KindUnauthorized, err.Error()))
+			return
+		}
 	}
 	if !strings.HasSuffix(r.URL.Path, "/content") {
 		rec.people = redact.PeopleFor(s.opts.Root)

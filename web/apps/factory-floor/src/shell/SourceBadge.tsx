@@ -17,7 +17,7 @@
  * Nothing here starts, pauses, schedules or approves anything; the menu only chooses what to read.
  */
 import { Check, ChevronDown } from "lucide-react";
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { cn, Popover, PopoverContent, PopoverTrigger } from "@mach/ui";
 import { useSceneStore, type ConnectionStatus } from "../scene";
 import { refId, refKind, sourceRuntimeOf, streamObservationOf, type Completeness, type SceneSource } from "../sim";
@@ -28,6 +28,7 @@ import { connectionLook, noticesFor, unavailableSourceWords, type ConnectionLook
 export { connectionLook, noticesFor, type ConnectionLook, type Notice } from "./notices";
 import type { SourceChoice } from "./source/boot";
 import { duration as durationWords, isMoment, timecode, utcClock } from "./vocab";
+import { LOST_RANGES_ACTION, lostRangeLines, lostRangeSentence } from "./gaps";
 
 // ---------------------------------------------------------------- the two sources
 
@@ -253,7 +254,7 @@ export function ConnectionBadge() {
       <PopoverContent className="w-96" aria-label="Connection">
         <p className="mb-2 text-label text-ink">The observer connection</p>
         <ConnectionFacts connection={connection} />
-        <p className="mt-3 text-caption text-ink-subtle">The Factory Floor only reads. It cannot start, pause, schedule or approve anything.</p>
+        <p className="mt-3 text-caption text-ink-subtle">The Factory Floor never starts, pauses or schedules work. A decision made in "Needs you", and the Stop, are carried out by MACH, as in Claude Code.</p>
       </PopoverContent>
     </Popover>
   );
@@ -278,24 +279,52 @@ export function completenessKey(s: { log: { sceneAt(t: number): { completeness: 
  */
 export function CompletenessBadge() {
   const key = useSceneStore(completenessKey);
+  // Each lost range, the page's and the observer's (gaps.ts): read for the popover, the same objects until they change.
+  const gaps = useSceneStore((s) => (s.source === "simulation" ? null : s.log.sceneAt(s.now).completeness.gaps));
+  const observerRanges = useSceneStore((s) => s.factoryStatus?.history?.lostRanges ?? null);
+  const ranges = useMemo(() => lostRangeLines(gaps ?? [], observerRanges ?? []), [gaps, observerRanges]);
   if (!key) return null;
   const [state, sinceText, ...rest] = key.split("|");
   const why = rest.join("|");
   const since = sinceText ? Number(sinceText) : null;
   const label = state === "reconstructed" ? `Reconstructed${since !== null ? ` since ${timecode(since, false)}` : ""}` : state === "partial" ? `Partial${since !== null ? ` since ${timecode(since, false)}` : ""}` : "Not all interpreted";
   return (
-    <span
-      data-completeness={state}
-      title={why}
-      className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-xs border border-dashed border-line-strong px-2 text-caption font-semibold text-ink-muted"
-    >
-      <svg aria-hidden="true" width="10" height="10" viewBox="0 0 10 10">
-        <path d="M1 5H3.4M6.6 5H9" style={{ stroke: "currentColor", strokeWidth: 1.4 }} />
-        <path d="M4.2 2.5L5.8 7.5" style={{ stroke: "currentColor", strokeWidth: 1.2 }} />
-      </svg>
-      {label}
-      <span className="sr-only">. {why}</span>
-    </span>
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          data-completeness={state}
+          title={why}
+          aria-label={`${label}. ${why} Details`}
+          className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-xs border border-dashed border-line-strong px-2 text-caption font-semibold text-ink-muted outline-offset-2 hover:bg-surface-sunken"
+        >
+          <svg aria-hidden="true" width="10" height="10" viewBox="0 0 10 10">
+            <path d="M1 5H3.4M6.6 5H9" style={{ stroke: "currentColor", strokeWidth: 1.4 }} />
+            <path d="M4.2 2.5L5.8 7.5" style={{ stroke: "currentColor", strokeWidth: 1.2 }} />
+          </svg>
+          {label}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[28rem] max-w-[calc(100vw-2rem)]" aria-label="History not complete">
+        <p className="text-label text-ink">History not complete</p>
+        <p className="mt-1 text-body-sm text-ink-muted">{why}</p>
+        {ranges.length ? (
+          <>
+            <p className="mt-3 text-label text-ink-muted">What was lost</p>
+            <ul className="mt-1 flex max-h-64 flex-col gap-1.5 overflow-y-auto text-body-sm text-ink" data-lost-ranges={ranges.length}>
+              {ranges.map((r) => (
+                <li key={r.id} className="border-l-2 border-line-strong pl-2">
+                  {lostRangeSentence(r)}
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : state === "partial" ? (
+          <p className="mt-3 text-body-sm text-ink-muted">The ranges themselves are not listed: this page and the observer hold only how many were lost.</p>
+        ) : null}
+        <p className="mt-3 border-t border-line pt-2 text-caption text-ink-muted">{LOST_RANGES_ACTION}</p>
+      </PopoverContent>
+    </Popover>
   );
 }
 

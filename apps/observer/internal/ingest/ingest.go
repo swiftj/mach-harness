@@ -98,6 +98,13 @@ const (
 // an entry changes a folder's time on every file system the Factory runs on).
 const relistEvery = 10 * time.Second
 
+// openVisitGrace: while a station's visit is open in a cell's log, cell.json ahead of the log is
+// that station at work (it saves its own state before it records its exit: the merge station
+// saves "pr-open", then talks to GitHub for seconds or, when the shared main moves, runs the suite
+// again). Only when cell.json has stayed ahead this long is it taken for lost records
+// (state-mismatch, contract 6.5). With no visit open the comparison is made as before.
+const openVisitGrace = 15 * time.Minute
+
 // Options configure the loop.
 type Options struct {
 	Root    string // absolute project root
@@ -151,12 +158,28 @@ type SourceStat struct {
 	Blocked    bool   `json:"blocked"`
 	// Archived: a cell's lifecycle log that is gone because cleanup archived the cell (M6.6).
 	Archived bool `json:"archived,omitempty"`
+	// Cell is set for a cell's source only: what its folder under .factory/worktrees/ holds now.
+	Cell *CellFiles `json:"cell,omitempty"`
 	// For execution streams: the Claude Code version, whether its records are read (false only
 	// when some were refused for their shape), and the runtime's state.
 	ClaudeVersion string           `json:"claude_code_version,omitempty"`
 	StreamKnown   *bool            `json:"stream_observations,omitempty"`
 	Unrecognised  map[string]int64 `json:"unrecognised,omitempty"`
 	Runtime       *RuntimeStat     `json:"runtime,omitempty"`
+}
+
+// CellFiles: whether a ticket's folder is there and holds its lifecycle log and cell.json, as the
+// observer last saw them. A folder with cell.json and no lifecycle log is a ticket a station works
+// on whose records are not written: the station's lifecycle helper could not be loaded, or no
+// station has recorded anything yet. Nothing of the files' content is reported.
+type CellFiles struct {
+	Ticket       string `json:"ticket_id"`
+	Folder       bool   `json:"folder"`
+	LifecycleLog bool   `json:"lifecycle_log"`
+	CellJSON     bool   `json:"cell_json"`
+	// FirstSeenMS is when the observer first saw the folder (Unix ms), so a reader can tell a
+	// folder just made from one that has gone without records for a while.
+	FirstSeenMS int64 `json:"first_seen_ms,omitempty"`
 }
 
 // RuntimeStat is what one execution stream says about the runtime that wrote it, and how much of
@@ -1056,7 +1079,8 @@ func (o *Observer) pollCell(t *tickCtx, src *source) {
 	// Lost lifecycle writes leave no gap; compare the stage the log implies with cell.json's
 	// once the log has been quiet for the settle window and cell.json is newer (contract 6.5).
 	if life != nil && n == 0 && src.cellStage != "" && t.now.Sub(src.lastLine) > o.opts.Settle {
-		if src.tailer.Size >= 0 && src.cellMTime > src.tailer.ModNS {
+		atWork := life.InVisit() != "" && time.Since(time.Unix(0, src.cellMTime)) < openVisitGrace
+		if src.tailer.Size >= 0 && src.cellMTime > src.tailer.ModNS && !atWork {
 			if ev := life.StateMismatch(src.cellStage, t.read(cp.LineNo, true)); ev != nil && !src.mismatch[ev.ID] {
 				src.mismatch[ev.ID] = true
 				o.emit(t, []*event.Event{ev}, false)
@@ -1311,11 +1335,29 @@ func (o *Observer) catchUp(t *tickCtx, ticket string, a *archive) bool {
 	}
 	gen := event.Hash8([]byte(strings.TrimRight(string(first), "\r")))
 	suppress := int64(0)
-	if live != nil && live.tailer.CP.Epoch == gen {
-		if !live.gone {
-			return false
+	if live != nil {
+		// Where the live log was read to. After a restart the source is only resumed (its
+		// tailer has not opened the file, which cleanup removed while the observer was down): the
+		// committed checkpoint it was resumed from says it. Without this every line was read
+		// again and compared with what was stored (item 5: the "conflict" gaps after a restart).
+		epoch, line := live.tailer.CP.Epoch, live.tailer.CP.LineNo
+		if epoch == "" && live.saved != "" {
+			epoch, line = live.saved, live.suppress
 		}
-		suppress = live.tailer.CP.LineNo
+		if epoch == gen {
+			if !live.gone {
+				return false
+			}
+			suppress = line
+		}
+	}
+	if live == nil || live.gone {
+		// The ticket's slice and epic, as the live cell's cell.json gave them: the records read
+		// from the archive name the same slice as the same records read live, so a record read
+		// again agrees with the stored one and cleanup's own records name the slice too.
+		if info := normalize.ParseCell(a.files.Bytes["cell.json"]); info.Present {
+			o.identity.LearnProduct(ticket, info.Product)
+		}
 	}
 	o.people.cell("archive:"+ticket, a.files, int64(len(a.lifecycle)))
 	l := normalize.NewLifecycle(ticket, gen, o.opts.Root, o.identity)
@@ -1564,6 +1606,12 @@ func (o *Observer) record(started time.Time, factory bool, err error, suppressed
 				src.archived = cellArchived(o.archives, src.ticket)
 			}
 			st.Archived = src.archived
+		}
+		if src.kind == kindCell {
+			st.Cell = &CellFiles{Ticket: src.ticket, Folder: !st.Gone, LifecycleLog: !st.Gone && r.hasSize, CellJSON: !st.Gone && src.cellInfo.Present}
+			if !src.firstSeen.IsZero() {
+				st.Cell.FirstSeenMS = src.firstSeen.UnixMilli()
+			}
 		}
 		switch {
 		case cp.Blocked:

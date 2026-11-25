@@ -97,6 +97,9 @@ func (a ingestSource) Ingest() server.IngestState {
 		if src.Runtime != nil {
 			s.Runtime = src.Runtime
 		}
+		if src.Cell != nil {
+			s.Cell = src.Cell
+		}
 		if t, err := time.Parse(time.RFC3339Nano, src.LastReadAt); err == nil {
 			s.LastReadAt = t
 		}

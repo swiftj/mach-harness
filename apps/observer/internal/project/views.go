@@ -1,6 +1,7 @@
 package project
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -585,17 +586,41 @@ func Slices(s *State, epic, state string) []map[string]any {
 
 // CellSummary is one cell in a list.
 func CellSummary(c *Cell) map[string]any {
+	visits := runList(c.Visits, c.RunFrom.Visits)
 	last := ""
-	if n := len(c.Visits); n > 0 {
-		last = c.Visits[n-1].Outcome
+	if n := len(visits); n > 0 {
+		last = visits[n-1].Outcome
+	}
+	created := c.FirstSeen
+	if len(c.EarlierRuns) > 0 && c.RunStarted != nil {
+		created = c.RunStarted // the run at work's first record
 	}
 	return map[string]any{"ticket_id": c.TicketID, "cell_instance": c.CellInstance, "slice_id": c.SliceID, "epic_id": orNil(c.EpicID), "issue": issueOrNil(c.Issue), "stage": c.Stage,
 		"stage_source": c.StageSource, "risk": orNil(c.Risk), "app_type": orNil(c.AppType),
 		"plan": map[string]any{"app_type": orNil(c.AppType), "risk": orNil(c.Risk), "contracts": c.Contracts, "tasks": c.TasksPlanned,
-			"recorded_by": orNil(c.AppTypeSource)}, "created_at": TV(c.FirstSeen), "updated_at": TV(c.Updated),
-		"current_visit": c.CurrentVisit, "round": c.Round, "visits": len(c.Visits), "last_outcome": last, "lifecycle": c.Lifecycle,
+			"recorded_by": orNil(c.AppTypeSource)}, "created_at": TV(created), "updated_at": TV(c.Updated),
+		"current_visit": c.CurrentVisit, "round": c.Round, "visits": len(visits), "last_outcome": last, "lifecycle": c.Lifecycle,
 		"archived": c.Archived, "merged": c.Merge != nil, "executions": nonNilS(c.Executions),
-		"abandoned": c.Abandoned != nil, "reissued_as": orNil(c.ReissuedAs)}
+		"abandoned": c.Abandoned != nil, "reissued_as": orNil(c.ReissuedAs), "earlier_runs": EarlierRuns(c),
+		"run_records_unattributed": c.RunRecordsUnattributed}
+}
+
+// runList is the current run's part of a cell's list (all of it for a ticket used once).
+func runList[T any](list []T, from int) []T {
+	return list[fromOf(from, len(list)):]
+}
+
+// EarlierRuns lists the finished runs of a ticket used again, oldest first: each run's cell
+// instance, when its records begin and end, its last stage and how it ended ("outcome" null when
+// no record of it says). Empty for a ticket used once.
+func EarlierRuns(c *Cell) []map[string]any {
+	out := []map[string]any{}
+	for _, er := range c.EarlierRuns {
+		out = append(out, map[string]any{"cell_instance": orNil(er.CellInstance), "started_at": TV(er.Started), "ended_at": TV(er.Ended),
+			"stage": orNil(er.Stage), "outcome": orNil(er.Outcome), "merged": er.Merged, "abandoned": er.Abandoned, "archived": er.Archived,
+			"visits": er.Visits, "run_records": er.RunRecords})
+	}
+	return out
 }
 
 // Cells lists cells by ticket, optionally filtered by stage or station of the current visit.
@@ -623,21 +648,22 @@ type VisitView struct {
 
 // Visits renders a cell's visits with their contents.
 func Visits(c *Cell) []VisitView {
-	out := make([]VisitView, 0, len(c.Visits))
-	for _, v := range c.Visits {
+	visits := runList(c.Visits, c.RunFrom.Visits)
+	out := make([]VisitView, 0, len(visits))
+	for _, v := range visits {
 		vv := VisitView{Visit: v, EnteredAt: TV(v.Entered), ExitedAt: TV(v.Exited), Duration: between(v.Entered, v.Exited, false),
 			Gates: []*Gate{}, Tasks: []*Task{}, Checks: []*Check{}}
-		for _, g := range c.Gates {
+		for _, g := range runList(c.Gates, c.RunFrom.Gates) {
 			if g.VisitID == v.VisitID {
 				vv.Gates = append(vv.Gates, g)
 			}
 		}
-		for _, t := range c.Tasks {
+		for _, t := range runList(c.Tasks, c.RunFrom.Tasks) {
 			if t.VisitID == v.VisitID {
 				vv.Tasks = append(vv.Tasks, t)
 			}
 		}
-		for _, k := range c.Checks {
+		for _, k := range runList(c.Checks, c.RunFrom.Checks) {
 			if k.VisitID == v.VisitID {
 				vv.Checks = append(vv.Checks, k)
 			}
@@ -650,16 +676,17 @@ func Visits(c *Cell) []VisitView {
 // CellDetail is a cell's full station history.
 func CellDetail(s *State, c *Cell) map[string]any {
 	v := CellSummary(c)
+	// A ticket used again: this run's entries; the earlier runs are summarised in earlier_runs.
 	v["visits"] = Visits(c)
-	v["visit_count"] = len(c.Visits)
-	v["gates"] = orEmpty(c.Gates)
+	v["visit_count"] = len(runList(c.Visits, c.RunFrom.Visits))
+	v["gates"] = orEmpty(runList(c.Gates, c.RunFrom.Gates))
 	v["gates_dropped"] = c.GatesDropped
-	v["tasks"] = orEmpty(c.Tasks)
-	v["checks"] = orEmpty(c.Checks)
+	v["tasks"] = orEmpty(runList(c.Tasks, c.RunFrom.Tasks))
+	v["checks"] = orEmpty(runList(c.Checks, c.RunFrom.Checks))
 	v["targets"] = orEmpty(c.Targets)
-	v["reviews"] = orEmpty(c.Reviews)
-	v["findings"] = orEmpty(c.Findings)
-	v["approvals"] = orEmpty(c.Approvals)
+	v["reviews"] = orEmpty(runList(c.Reviews, c.RunFrom.Reviews))
+	v["findings"] = orEmpty(runList(c.Findings, c.RunFrom.Findings))
+	v["approvals"] = orEmpty(runList(c.Approvals, c.RunFrom.Approvals))
 	v["merge"] = c.Merge
 	v["cleanup"] = c.Cleanup
 	v["history_began"] = c.Began
@@ -674,7 +701,7 @@ func CellDetail(s *State, c *Cell) map[string]any {
 	v["human_gates"] = gates
 	v["waiting"] = ticketWait(s, c.TicketID, c.SliceID)
 	rounds := map[string]any{}
-	for _, vis := range c.Visits {
+	for _, vis := range runList(c.Visits, c.RunFrom.Visits) {
 		if vis.Round != nil {
 			k := itoa(vis.Round)
 			list, _ := rounds[k].([]string)
@@ -750,7 +777,38 @@ func HistoryFacts(s *State) map[string]any {
 		completeness = "partial"
 	}
 	return map[string]any{"completeness": completeness, "partial": s.Partial, "lost": lost, "not_interpreted": notInterpreted,
-		"classes": classes, "gaps": gaps, "not_v3": s.NotV3}
+		"classes": classes, "gaps": gaps, "not_v3": s.NotV3, "lost_ranges": LostRanges(s, maxLostRanges)}
+}
+
+// maxLostRanges: how many of the latest lost ranges the history facts list.
+const maxLostRanges = 20
+
+// LostRanges lists the latest ranges of history that were lost, oldest first, at most n: which
+// source (a partition key: "c:<ticket>:<generation>" a ticket's lifecycle log, "i:..." the intake
+// log, "r:..." the run records, "s:..." an execution's stream), between which record numbers, the
+// gap's reason and class, where in history it sits (at_ms) and when the observer noticed it
+// (noticed_ms). Identifiers, codes, numbers and times only. Conflicts and records not
+// interpreted lose nothing and are not listed.
+func LostRanges(s *State, n int) []map[string]any {
+	out := []map[string]any{}
+	for i := len(s.Gaps) - 1; i >= 0 && len(out) < n; i-- {
+		g := s.Gaps[i]
+		if !g.Lost {
+			continue
+		}
+		var at any
+		if g.At != nil {
+			at = stampMS(g.At)
+		}
+		var noticed any
+		if g.NoticedMS != nil {
+			noticed = *g.NoticedMS
+		}
+		out = append(out, map[string]any{"source_key": g.SourceKey, "from_seq": g.FromSeq, "to_seq": g.ToSeq, "count": g.Count,
+			"reason": g.Reason, "class": g.Class, "at_ms": at, "noticed_ms": noticed, "event_id": g.EventID})
+	}
+	slices.Reverse(out)
+	return out
 }
 
 // HasPrefixAny reports whether v starts with any prefix.

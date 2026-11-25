@@ -188,9 +188,22 @@ const CELL_PLACEHOLDERS = ["title", "summary", "risk", "appType"] as const;
  * its ticket (slice.materialized), so the link does not depend on which arrived first (D5). Agents
  * met before their cell (stray) are adopted when it opens.
  */
-function ensureCell(s: Scene, e: AnyV3Event, definitions: ProductDefinitions): Scene {
+function ensureCell(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Scene {
   const ticket = e.ids.ticket_id;
-  if (!ticket || s.cells[ticket]) return s;
+  if (!ticket) return input;
+  let s = input;
+  const known = s.cells[ticket];
+  if (known) {
+    // The same ticket opened again after its earlier run finished (a reissued slice keeps its
+    // ticket; the observer names the new run cell:<ticket>~2): a record of another cell instance
+    // after the earlier run's archive or run record starts this run's cell. The earlier run's
+    // records all come before its own cleanup, so they never reach here.
+    const another = e.ids.cell_instance && known.cellInstance && e.ids.cell_instance !== known.cellInstance;
+    if (!another || (known.archived === null && known.runRecord === null)) return s;
+    const cells = { ...s.cells };
+    delete (cells as Record<string, CellState>)[ticket];
+    s = { ...s, cells };
+  }
   const named = e.ids.slice_id && !labelled(e, "slice_id") ? e.ids.slice_id : "";
   const sliceId = named || (Object.values(s.slices).find((x) => x.ticketId === ticket)?.id ?? "");
   const def = sliceId ? definitions.slices[sliceId] : undefined;
@@ -627,8 +640,11 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
       const d = e.data;
       s = withCell(s, ticket, (cell) => {
         const existing = cell.tasks.find((k) => k.id === d.task_id);
+        // M22: a task built in a lane says so (revision 9); one built again in the cell after its lane was set aside does not.
+        const named = typeof d.lane === "string" && /^L[1-9]\d{0,2}$/.test(d.lane) ? d.lane : null;
+        const lane = named ? { lane: named } : existing?.lane ? { lane: null } : {};
         const task: TaskState = existing
-          ? { ...existing, status: d.step, doneAt: at, commit: d.commit, meta: touch(existing.meta, e, { end: timeQualityOf(e.time.precision) }) }
+          ? { ...existing, status: d.step, doneAt: at, commit: d.commit, ...lane, meta: touch(existing.meta, e, { end: timeQualityOf(e.time.precision) }) }
           : {
               id: d.task_id,
               kind: d.kind,
@@ -640,6 +656,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
               startedAt: at,
               doneAt: at,
               commit: d.commit,
+              ...lane,
               meta: metaOf(e, { unknown: ["startedAt", "text", "files", "ids"], start: "unknown", end: timeQualityOf(e.time.precision) }),
             };
         const tasks = existing ? cell.tasks.map((k) => (k.id === d.task_id ? task : k)) : [...cell.tasks, task];
@@ -934,6 +951,7 @@ function apply(input: Scene, e: AnyV3Event, definitions: ProductDefinitions): Sc
         count: e.data.count,
         class: cls,
         lost,
+        noticedAt: Number.isFinite(Date.parse(e.time.observed_at)) ? Date.parse(e.time.observed_at) : null,
       };
       const c = s.completeness;
       // Records received and not interpreted (unknown-type) lose no history: counted, never partial (D8).
@@ -1233,7 +1251,8 @@ function gateEvaluated(input: Scene, e: E<"gate.evaluated">, at: number): Scene 
   // The observer names the evaluation with its own gate ref (`gate:<cell>/<gate>[#<round>]`, contract
   // 5.2); kept so that ref resolves to this evaluation (and to the gate state it set), never parsed.
   const ownRef = e.entities.find((x) => x.startsWith("gate:")) ?? `gate:${ticket}/${d.gate}${round ? `#${round}` : ""}`;
-  s = withCell(s, ticket, (c) => ({ ...c, gateLog: [...c.gateLog, { gate: d.gate, verdict: d.verdict, reasonCode: d.reason_code, subject: d.subject, round, at, eventId: e.id, late: e.late === true, gateId: matched, ref: ownRef, counts: d.counts ?? {} }] }));
+  const lane = typeof d.lane === "string" && /^L[1-9]\d{0,2}$/.test(d.lane) ? { lane: d.lane } : {}; // M22, revision 9
+  s = withCell(s, ticket, (c) => ({ ...c, gateLog: [...c.gateLog, { gate: d.gate, verdict: d.verdict, reasonCode: d.reason_code, subject: d.subject, round, at, eventId: e.id, late: e.late === true, gateId: matched, ref: ownRef, counts: d.counts ?? {}, ...lane }] }));
   const meta = metaOf(e);
   switch (d.gate) {
     case "audit.readiness":

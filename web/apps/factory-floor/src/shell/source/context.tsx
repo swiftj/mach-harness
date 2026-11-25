@@ -23,7 +23,14 @@ export interface SourceInfo {
   readonly switchTo: (choice: SourceChoice) => void;
   /** The observer's client when one answered (reads its evidence catalog); null for the simulation. */
   readonly client?: ObserverClient | null;
+  /**
+   * What a person can do here (M23, the session's capabilities): record a decision on a ticket in "Needs you", and
+   * stop the Factory. Both false for the Simulation and wherever the observer cannot reach MACH's run.py.
+   */
+  readonly can?: { readonly decide: boolean; readonly stop: boolean };
 }
+
+export const CANNOT = { decide: false, stop: false } as const;
 
 const FALLBACK: SourceInfo = {
   requested: null,
@@ -32,6 +39,7 @@ const FALLBACK: SourceInfo = {
   project: null,
   switchTo: () => undefined,
   client: null,
+  can: CANNOT,
 };
 
 export const SourceContext = createContext<SourceInfo>(FALLBACK);
@@ -43,5 +51,7 @@ export function useSource(): SourceInfo {
 /** The value for the provider, stable while its parts are. */
 export function useSourceInfo(info: SourceInfo): SourceInfo {
   const { requested, observer, notice, project, switchTo, client = null } = info;
-  return useMemo(() => ({ requested, observer, notice, project, switchTo, client }), [requested, observer, notice, project, switchTo, client]);
+  const decide = info.can?.decide === true;
+  const stop = info.can?.stop === true;
+  return useMemo(() => ({ requested, observer, notice, project, switchTo, client, can: { decide, stop } }), [requested, observer, notice, project, switchTo, client, decide, stop]);
 }

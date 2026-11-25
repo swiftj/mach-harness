@@ -34,6 +34,7 @@ type Lifecycle struct {
 	decided  map[int64]int64  // round -> review.decided records read (a later start of that round is its repeat)
 	stage    string           // the stage the log implies (the last record that carried one)
 	lastLine int64
+	inVisit  string // the station whose visit the log's latest station.entered opened, until it exits
 }
 
 type visit struct {
@@ -51,13 +52,19 @@ func NewLifecycle(ticket, gen, root string, identity *Identity) *Lifecycle {
 // Key is the partition key.
 func (l *Lifecycle) Key() string { return l.key }
 
+// InVisit is the station whose visit is open at the end of the log (the latest station.entered,
+// not yet followed by its station.exited), or "". Inside its visit a station writes its own files
+// before its exit record, so cell.json may be ahead of the log for as long as the visit lasts.
+func (l *Lifecycle) InVisit() string { return l.inVisit }
+
 // ImpliedStage is the stage the log implies, and the last line read.
 func (l *Lifecycle) ImpliedStage() (string, int64) { return l.stage, l.lastLine }
 
 var (
 	visitRe        = regexp.MustCompile(`^(groom|plan|audit|build|verify|review|human-approval|merge|cleanup)#([1-9][0-9]{0,5})$`)
 	gateRe         = regexp.MustCompile(`^[a-z][a-z-]*(?:\.[a-z][a-z_-]*)?$`) // revision 7: an underscore after the dot (merge.landed_overlap, M13)
-	taskRe         = regexp.MustCompile(`^(?:R\d+-)?T\d+$`)
+	taskRe         = regexp.MustCompile(`^(?:(?:R\d+|J|C)-)?T\d+$`)           // revision 9: J-T01, the task the join adds when lanes fail together (M22); C-T01, the task set-commands adds when a changed command leaves the suite or linter failing
+	laneRe         = regexp.MustCompile(`^L[1-9][0-9]{0,2}$`)                 // revision 9: a lane of a build (M22): L1, L2, ...
 	ruleIDRe       = regexp.MustCompile(`\b(?:(?:FR|INV|AC)-\d{2,}|R\d{1,3})\b`)
 	mockIDRe       = regexp.MustCompile(`^MOCK-[1-9][0-9]{0,2}$`)
 	lifecycleKinds = map[string]bool{}
@@ -205,9 +212,23 @@ func (l *Lifecycle) Line(line []byte, r Read) []*event.Event {
 	if s, ok := ev.Data["stage"].(string); ok && (typ == "station.entered" || typ == "station.exited") {
 		l.stage = s
 	}
+	switch {
+	case typ == "station.entered":
+		l.inVisit = station
+	case typ == "station.exited" && station == l.inVisit:
+		l.inVisit = ""
+	}
 	out = append(out, ev)
 	out = append(out, l.reconstruct(ev, data, r)...)
 	return out
+}
+
+// laneOf is a lane's name as the build station writes it (L1, L2, ...), or null.
+func laneOf(v any) any {
+	if s, ok := v.(string); ok && laneRe.MatchString(s) {
+		return s
+	}
+	return nil
 }
 
 func strOf(v any) string {
@@ -346,6 +367,11 @@ func (l *Lifecycle) data(ev *event.Event, typ, station string, in map[string]any
 			okTier = false
 		}
 		d["audit_tier"] = nullStr(tier, okTier)
+		// Revision 9 (M22): a build gate about one lane names it (build.join's lane-set-aside). Absent on
+		// every other evaluation, so those are served exactly as before.
+		if _, ok := in["lane"]; ok && station == "build" {
+			d["lane"] = laneOf(get("lane"))
+		}
 		d["counts"] = counts(in, used)
 		if s, ok := subject.(string); ok && strings.Contains(gate, "review") {
 			if seat := enum(s, seats...); seat != nil {
@@ -369,6 +395,12 @@ func (l *Lifecycle) data(ev *event.Event, typ, station string, in map[string]any
 		d["first_run"] = enum(get("first_run"), "pass", "fail", "not-run")
 		d["suite"] = enum(get("suite"), "unknown", "red", "green")
 		d["commit"] = commitOrNil(get("commit"))
+		// Revision 9 (M22): a task built in a lane names its lane, and its commit is then the lane's own
+		// commit, made at that moment (the join lands a copy under another id, which build.json records).
+		// Absent for a task built in the cell, so its event is exactly as before.
+		if _, ok := in["lane"]; ok {
+			d["lane"] = laneOf(get("lane"))
+		}
 		if c, ok := d["commit"].(string); ok {
 			ref := "artifact:" + l.cellName() + ":commit/" + c
 			ev.Artifacts = append(ev.Artifacts, event.Artifact{Ref: ref, Commit: c})

@@ -88,6 +88,12 @@ try:
 except Exception:  # noqa: BLE001
     scan = None
 
+# The environment of the project's commands (the intent station's command_env.py), shared with the audit, build and verify stations.
+try:
+    import command_env  # noqa: E402
+except Exception:  # noqa: BLE001
+    command_env = None
+
 # M13: the change record, written on the ticket's branch as the station's last act before landing.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import change_record  # noqa: E402
@@ -347,7 +353,7 @@ def landed_elsewhere(cell: Cell, main: str) -> Optional[str]:
     if cell.method == "pr" and url:
         message += f" This copy's pull request ({url}) is left open: close it on GitHub once you no longer need it."
     return message + (f" Put this copy aside: cleanup run {cell.ticket_id} --abandon \"{slice_id} was already shipped from another Factory\" "
-                      "archives the cell and keeps its branch's commits in the archive.")
+                      "removes the cell and keeps its branch's commits (in its archive, or as the branch where no archive is kept).")
 
 
 _CELL_MODULE: List[Any] = []
@@ -421,14 +427,11 @@ def run_suite(cell: Cell) -> Dict[str, Any]:
     if not isinstance(command, str) or not command.strip():
         raise MergeError("The build report records no test command, so the merged result cannot be checked.")
     argv = shlex.split(command)
-    env = dict(os.environ)
-    # The project's own commands never leave Python byte code in the checkout: a cached file can outlive the source it was
-    # made from (rewritten at the same size within the same second), and a later run would then test the old code. A command
-    # that needs byte code written says so itself, with a leading PYTHONDONTWRITEBYTECODE= of its own.
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    while argv and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0]):
-        key, value = argv.pop(0).split("=", 1)
-        env[key] = value
+    if command_env is None:
+        raise MergeError("The intent station's command_env.py is not installed beside this skill, so the merged result cannot be checked.")
+    # One rule for every station's project commands (command_env.py): no Python byte code left in the checkout, a package
+    # cache that cannot be written pointed into the project's .factory/cache/, commands.env, and a leading VAR=value.
+    env, argv = command_env.environment(cell.project, cell.work, argv)
     if not argv or (shutil.which(argv[0]) is None and not (cell.work / argv[0]).is_file()):
         raise MergeError(f"'{argv[0] if argv else command}' is not installed or not on PATH, so the merged result cannot be checked.")
     try:
@@ -436,7 +439,11 @@ def run_suite(cell: Cell) -> Dict[str, Any]:
         code, out = done.returncode, done.stdout + ("\n" + done.stderr if done.stderr else "")
     except subprocess.TimeoutExpired:
         code, out = 124, "Still running after 600 seconds; stopped."
-    return {"command": command, "passed": code == 0, "exit_code": code, "output_tail": out.strip()[-1500:]}
+    tail = out.strip()[-1500:]
+    hint = command_env.network_hint(out) if code not in (0, 124) else None
+    if hint:  # added to the failure output the findings carry; the suite still fails and the ticket goes back as before
+        tail = tail[-(1498 - len(hint)):] + "\n\n" + hint
+    return {"command": command, "passed": code == 0, "exit_code": code, "output_tail": tail, **({"hint": hint} if hint else {})}
 
 
 def survey(cell: Cell, by_person: bool) -> Dict[str, Any]:
@@ -849,8 +856,8 @@ def revalidate(cell: Cell, main: str, main_head: str) -> Optional[Dict[str, Any]
     if not suite["passed"]:
         path = send_back(cell, f"The test suite fails once {main} is merged in.",
                          f"The ticket passed on its own, but with the current {main} merged into it `{suite['command']}` fails:\n\n```\n{suite['output_tail']}\n```")
-        raise MergeError(f"With the current {main} merged in, the test suite fails, so nothing was merged. The ticket goes back to the build station: findings are in {path}.",
-                         code="sent-back")
+        raise MergeError(f"With the current {main} merged in, the test suite fails, so nothing was merged. The ticket goes back to the build station: findings are in {path}."
+                         + (f"\n{suite['hint']}" if suite.get("hint") else ""), code="sent-back")
     check_landed(cell, main, before, main_head)
     cell.info["revalidated"] = {"head": cell.head(), "onto": main_head, "at": now(), "tests": suite["command"]}
     cell.save_info()
@@ -966,7 +973,7 @@ def pr_body(cell: Cell) -> str:
         f"{inert(cell.build.get('diff', ''), 400)}. Tests seen failing before their code was written: {inert(cell.build.get('tests_seen_failing_first', 0))}. "
         f"Gate overrides recorded: {len(cell.build.get('deviations') or [])}.",
         "",
-        f"Approved commit: `{inert(cell.decision.get('head'), 64)}`. Evidence ({len(evidence)} files) and the reviewers' findings are kept with the ticket's cell and archived on cleanup.",
+        f"Approved commit: `{inert(cell.decision.get('head'), 64)}`. Evidence ({len(evidence)} files) and the reviewers' findings are kept with the ticket's cell until cleanup, which keeps them in an archive when the project does (cleanup.archive).",
         "",
         *record_section(cell),
         "Opened by the MACH merge station.",
@@ -988,7 +995,7 @@ def record_section(cell: Cell) -> List[str]:
     repository = origin_repository(cell.project)
     where = f"[`{path}`](https://github.com/{repository}/blob/{commit}/{path})" if repository and commit else f"`{path}`"
     return [f"Change record: {where}, added to this branch by the merge station. It lists every verification check and review round, "
-            "with the SHA-256 of each evidence file kept in the local archive.", ""]
+            "with the SHA-256 of each evidence file.", ""]
 
 
 def exceptions_section(cell: Cell) -> List[str]:
@@ -1380,7 +1387,16 @@ def gate(cell: Cell, plan: Dict[str, Any]) -> None:
     """Refuse on the survey's refusals; a void approval is recorded as void first."""
     if plan.get("approval_void"):
         void_approval(cell)
-        raise MergeError(plan["refusals"][-1] if len(plan["refusals"]) == 1 else "\n- " + "\n- ".join(plan["refusals"]), code="approval-void")
+        # The merge station had the ticket and sent it back to be verified again: its visit carries the stage cell.json now
+        # holds ("built"), as a refusal inside land() does, so the log and cell.json agree.
+        telemetry(cell.root, "station.entered", "merge", lambda: {"stage": plan["stage"], "method": cell.method, "behind_main": bool(plan["behind_main"])},
+                  once=True)
+        telemetry(cell.root, "gate.evaluated", "merge", lambda: {"gate": "merge.run", "outcome": "refuse", "reason_code": "approval-void",
+                                                                 "overridden_by_reason": False})
+        telemetry(cell.root, "station.exited", "merge", lambda: {"outcome": "approval-void", "stage": cell.info.get("stage")})
+        exc = MergeError(plan["refusals"][-1] if len(plan["refusals"]) == 1 else "\n- " + "\n- ".join(plan["refusals"]), code="approval-void")
+        exc.recorded = True
+        raise exc
     if plan["refusals"]:
         raise MergeError(plan["refusals"][0] if len(plan["refusals"]) == 1 else "\n- " + "\n- ".join(plan["refusals"]),
                          code="exception-expired" if plan.get("exception_expired") else "merge-refused")
@@ -1441,6 +1457,8 @@ def land(cell: Cell, args: argparse.Namespace, plan: Dict[str, Any]) -> int:
                               else {"written": False, "reason": "records.enabled is false in .factory/config.json."}}
     if moves:
         result["main_moved_again"] = moves
+    if command_env is not None and command_env.notices(cell.project):  # only when a package cache was pointed elsewhere
+        result["caches"] = command_env.notices(cell.project)
     if cell.method == "local":
         title = cell.info.get("title") or cell.info.get("slice_id") or "change"
         message = (f"{cell.jira} " if cell.jira else "") + f"Merge {cell.ticket_id}: {title}"  # a checked Jira key first (M13)
@@ -1456,7 +1474,9 @@ def land(cell: Cell, args: argparse.Namespace, plan: Dict[str, Any]) -> int:
         result.update(landed)
         result["status"] = "MERGED" if landed["merged"] else "PR_OPEN"
     if result["status"] == "MERGED":
-        cell.info.update({"stage": "merged", "merged": {"commit": result.get("merge_commit"), "at": now(), "method": cell.method, "landed_commit": head}})
+        # A person's merge (--by-person) is recorded: cleanup keeps the archive of a ticket a person decided on (cleanup.archive).
+        cell.info.update({"stage": "merged", "merged": {"commit": result.get("merge_commit"), "at": now(), "method": cell.method, "landed_commit": head,
+                                                        **({"by_person": True} if args.by_person else {})}})
         cell.save_info()
         telemetry(cell.root, "merge.completed", "merge", lambda: {
             "method": cell.method, "approved_commit": lifecycle.short(result["approved_commit"]), "landed_commit": lifecycle.short(head),

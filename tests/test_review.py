@@ -491,6 +491,13 @@ class HumanApprovalTest(Base):
         self.assertIn(waiting, self.r_refused("approve-human", TICKET, "--by", "Dana Smith"))
         self.assertIsNone(json.loads((self.cellroot / "review/decision.json").read_text())["human_approval"])
 
+    def test_an_approval_made_in_the_factory_floor_says_so(self):
+        self.awaiting()
+        done = self.r_ok("approve-human", TICKET, "--by=Dana Smith", "--via=floor")
+        self.assertEqual(done["outcome"], "APPROVED")
+        approval = json.loads((self.cellroot / "review/decision.json").read_text())["human_approval"]
+        self.assertEqual((approval["by"], approval["recorded_by"]), ("Dana Smith", "a person, in the Factory Floor"))
+
     def test_a_person_can_send_it_back_with_their_reason(self):
         self.verified()
         self.assertIn("not waiting for a person's approval", self.r_refused("send-back", TICKET, "--by", "Dana Smith", "--reason", "The error text is wrong."))
@@ -508,6 +515,7 @@ class HumanApprovalTest(Base):
         self.assertEqual(decision, json.loads((self.round / "decision.json").read_text()))
         self.assertEqual((decision["outcome"], decision["rejected_by"], decision["human_approval"]), ("REJECTED", "a person", None))
         self.assertEqual((decision["human_send_back"]["by"], decision["human_send_back"]["reason"]), ("Dana Smith", "The error text must name the field."))
+        self.assertEqual(decision["human_send_back"]["recorded_by"], "an agent, on the person's instruction in conversation", "--via terminal is the default")
         findings = Path(decision["findings"]).read_text()
         self.assertIn("The error text must name the field.", findings)
         self.assertIn(decision["panel_findings"], findings, "the builder is pointed at the panel's own findings too")
@@ -811,6 +819,49 @@ class LaterRoundTest(Base):
         self.r_ok("start", TICKET)
         self.assertIsNone(json.loads((self.round / "packet.json").read_text())["delta"])
         self.assertEqual(self.vote("architecture", self.blocker(file="tests/test_invite.py", line=1))["vote"], "REJECT")
+
+
+class HeadlessEvidenceTest(Base):
+    """A web change verified without screenshots says so in the review packet and in the change record."""
+
+    def headless_verified(self):
+        self.built()
+        cell = self.cell_json()
+        cell["app_type"] = "web"
+        (self.cellroot / "cell.json").write_text(json.dumps(cell))
+        saved = verify.BROWSER_LAUNCH, verify.BROWSER_WHICH
+        verify.BROWSER_LAUNCH = lambda argv, cwd, env, timeout: (1, "Error: spawn EPERM: Operation not permitted")
+        verify.BROWSER_WHICH = lambda name: f"/fake/{name}"
+        try:
+            self.assertEqual(self.run_verify("start", TICKET)["evidence_mode"], "headless")
+            (self.evidence / "ac-01-page.html").write_text("<p>Invited</p>\n")
+            for target in TARGETS:
+                self.run_verify("record", TICKET, target, "--result", "pass", "--evidence", "ac-01-page.html", "--note", NOTE)
+            self.assertEqual(self.run_verify("finish", TICKET)["status"], "PASS")
+        finally:
+            verify.BROWSER_LAUNCH, verify.BROWSER_WHICH = saved
+
+    def test_the_packet_and_the_change_record_say_there_are_no_screenshots(self):
+        self.headless_verified()
+        self.r_ok("start", TICKET)
+        packet = json.loads((self.round / "packet.json").read_text())
+        self.assertEqual(packet["evidence_mode"]["mode"], "headless")
+        self.assertIn("Do not reject it for lacking screenshots", packet["evidence_mode"]["note"])
+        self.assertIn("refused to start a browser", packet["evidence_mode"]["why"])
+        sys.path.insert(0, str(ROOT / "skills" / "merge" / "scripts"))
+        import change_record
+        import merge
+        head = git(self.work, "rev-parse", "HEAD").stdout.strip()
+        text = change_record.render(self.cellroot, self.cell_json(), TICKET, {"approved": head, "base": head}, merge.issue_rules())
+        self.assertIn("Evidence without screenshots: No browser could start here, so there are no screenshots; "
+                      "this was verified from logs and saved pages.", text)
+        facts = change_record.read_facts(text)
+        self.assertEqual(facts["verification"]["evidence_mode"]["mode"], "headless")
+
+    def test_a_packet_with_screenshots_is_as_before(self):
+        self.verified()
+        self.r_ok("start", TICKET)
+        self.assertNotIn("evidence_mode", json.loads((self.round / "packet.json").read_text()))
 
 
 if __name__ == "__main__":

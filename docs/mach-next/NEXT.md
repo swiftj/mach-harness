@@ -6,7 +6,25 @@ Keep this file current: when a piece below is finished or the plan changes, chan
 
 ## 1. State
 
-- **Released:** 0.23.2, tag `v0.23.2`, on `main`. Nothing is unmerged.
+- **Released:** 0.23.2, tag `v0.23.2`, on `main`.
+- **On the branch `integration/next`, built 2026-11-24, not merged to `main`, not released.** The owner said it all goes out as one release; the notes are written as 0.24.0 in `docs/guides/RELEASE_NOTES_DRAFT.md`, and the version in `.claude-plugin/plugin.json`, `README.md` and the notes' title is still to be set. It holds:
+  - *One pull, and decisions where the person is* (`docs/mach-next/M23_ONE_PULL.md`, the design; the code is right where they differ). `/mach pull` hands the batch to the supervisor with no enabling step; that supervisor is tied to the Claude Code session (`service.find_session_pid`) and stops its runs when it ends; `/mach factory start` runs one in the background; `run.py decide do` records a decision (`skills/run/scripts/act.py`); the Factory Floor's observer runs `run.py` from one package (`apps/observer/internal/act`) to record decisions and stop the Factory.
+  - *Building in lanes* (`docs/mach-next/M22_PARALLEL_BUILD.md`), default three.
+  - *Export and import of a project* (`docs/mach-next/M21_EXPORT_IMPORT.md`).
+  - *Verification without a browser* (`skills/verify/scripts/browser.py`): verify checks whether a browser can start where it captures, and where none can it requires headless evidence instead of screenshots and says so in its results, the review packet, the change record and `/mach explain`; `verify.screen_evidence` is `prefer`, `require` or `never`. The commands it tries and the failure messages it recognises were never run against a real browser or a real sandbox. `/mach doctor` notes it for web projects only.
+  - The installer's sandbox and tickets settings, package caches under `.factory/cache/`, the audit that stays good, no archive by default, the stuck-build fixes, and the Factory Floor's finished shelf, record age and lost-ranges list.
+- **The owner's decisions of 2026-11-24, which replace two older rules:** nothing stands between a person and the supervisor starting; the Factory Floor may record decisions and stop a Factory; Low and Medium merge on their own; no spending limit unless set; a pull's supervisor stops with Claude Code, and `/mach factory` is the background one.
+- **Checks on `integration/next` (2026-11-24):** `make check` on Homebrew's Python (2,871 tests, 1 skipped) and `make test` on Apple's 3.9 (4 skipped), `go test ./...` in both apps, web typecheck, lint, build and unit tests (352 and 480).
+- **Never run for real, any of it:** no real supervisor, no real `claude -p`, no real Claude Code session ending, no real project behind the Floor's decisions, no real sandbox or package manager, no lanes with real builders, no export between real repositories. First things to try by hand: `/mach pull` in a real project, then quit Claude Code and see the work stop and the next pull carry on; the same from the Desktop app (does MACH find the Claude Code process: `factory status` shows `session_pid`); `/mach factory start`, then Stop from the Floor; an approval made in the Floor.
+- **Known and left:**
+  - The Floor shows the findings to read before an approval as file paths, not inline.
+  - The observer drops every `GIT_*` variable from what it runs, so a merge from the Floor that needs `GIT_SSH_COMMAND` to push may fail.
+  - `--via` on `decide do` is a label any caller can give; it is not a check.
+  - Pull does not test-run Claude before handing over (`factory start` does). A Claude Code missing a needed flag fails each run and the ticket then waits for a person.
+  - `factory stop --execution <id>` still holds that one ticket for a person, since the Factory keeps running.
+  - The supervisor does not guard against the session's process number being reused.
+  - Export/import: no button or upload in the app; `cell.slice_ids` does not see numbers an unfinished import holds.
+  - Agent worktrees under `.claude/worktrees/` and their branches, and the merged branches `feature/project-export-import`, `fix/worktree-config`, `feature/parallel-build`, are still there to clear away.
 - **What 0.23.2 added:** fixes for two faults the owner met in Product Studio's app.
   - *Naming the product* asked for a Project ID, proposed one from the name, and could then refuse its own proposal. The form no longer has the field: MACH makes the ID from the name (`product.project_id_from`), and `project init --id` is optional.
   - *The check of GitHub* was tried once, said only "GitHub could not be reached", was counted as something "not saved", and stayed until a manual refresh. Now a read is tried again (with a budget, so a command stays inside the host's time limit); a failure is named as what it is (no network, GitHub's limit, GitHub not answering, something on the computer blocking the tool, the sign-in, a refusal) with the GitHub tool's own words; it is its own notice (`saved.github_check`, "GitHub not checked" in the top bar) and never counted as unsaved; and the app checks again by itself, backing off from one minute to fifteen.
@@ -98,8 +116,9 @@ These were agreed over the project and apply to any session.
 
 **Fixed product rules** (they are also in the blueprint).
 - No second user-facing MACH command line.
-- Unattended execution is off by default on every machine; nothing in a repository can turn it on.
-- Every MACH service binds to localhost only. The Factory Floor only reads.
+- `/mach pull` starts the Factory with no enabling step (the owner, 2026-11-24). A project can forbid it (`factory.supervisor: false`); nothing in a repository can widen what a machine allows. Do not bring back a confirmation, a code or a default spending limit.
+- Every MACH service binds to localhost only. The Factory Floor records a person's decisions and stops a Factory, through MACH's own command; it never starts or enables one.
+- Trust the person: record a choice rather than forbid it, never leave a state with no way forward, never suggest abandoning work for something a setting fixes.
 - No weakening of Claude Code's safety controls, and no silent weakening of security review.
 - No fabricated Factory events or metrics.
 

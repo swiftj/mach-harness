@@ -17,8 +17,12 @@ import { LINE_STATIONS, STATE_WORDS, timesWords, type LineRow, type StationStat 
 import { Marker, PassedNode } from "./Marks";
 import { modelWords } from "./words";
 import { EpicLine } from "./Epic";
+import { LanesStrip } from "./Lanes";
+import type { LaneLine } from "./lanesModel";
 
 const COLS = LINE_STATIONS.length;
+/** Where the Build column starts, as a share of the lane's width (in %): a ticket's lanes are shown from there. */
+const BUILD_START = (LINE_STATIONS.findIndex((s) => s.key === "build") / COLS) * 100;
 /** The centre of a column, as a share of the lane's width (in %). */
 const centre = (column: number) => ((column + 0.5) / COLS) * 100;
 /** The boundary after a column (a person's approval sits between Review and Merge). */
@@ -46,7 +50,10 @@ export function underWords(row: LineRow, now: number): string | null {
     case "stopped":
       return `${row.roundsUsed} round${row.roundsUsed === 1 ? "" : "s"} used`;
     case "landed":
-      return since ? `${since} ago` : null;
+      if (!row.finished) return "merged, waiting for cleanup";
+      return since ? `finished ${since} ago` : "finished";
+    case "closed":
+      return since ? `finished ${since} ago` : "finished";
   }
 }
 
@@ -122,9 +129,11 @@ export interface BoardProps {
   readonly onRecord: (row: LineRow) => void;
   /** What the board says when there is no ticket at all. */
   readonly empty: { readonly title: string; readonly body: string };
+  /** M22: each ticket built in lanes, what its row shows of them (src/line/lanesModel.ts); absent for every other ticket. */
+  readonly lanes?: ReadonlyMap<string, LaneLine>;
 }
 
-export function Board({ rows, stats, now, landedHidden, selectedTicket, selectedColumn, onTicket, onStation, onRecord, empty }: BoardProps) {
+export function Board({ rows, stats, now, landedHidden, selectedTicket, selectedColumn, onTicket, onStation, onRecord, empty, lanes }: BoardProps) {
   const onRowKey = useCallback(
     (e: KeyboardEvent<HTMLButtonElement>, row: LineRow) => {
       if (e.key === "Enter") {
@@ -208,6 +217,7 @@ export function Board({ rows, stats, now, landedHidden, selectedTicket, selected
                 </div>
                 <div className={cn("col-span-7 min-w-0", selected ? "bg-surface/60" : "group-hover:bg-surface/40")}>
                   <Lane row={row} now={now} />
+                  {lanes?.get(row.ticketId) ? <LanesStrip ticketId={row.ticketId} line={lanes.get(row.ticketId)!} offset={BUILD_START} /> : null}
                 </div>
               </li>
             );
@@ -215,7 +225,7 @@ export function Board({ rows, stats, now, landedHidden, selectedTicket, selected
         </ol>
         {landedHidden > 0 ? (
           <p className="relative col-span-full pl-2 pt-2 text-caption text-ink-muted" data-landed-hidden={landedHidden}>
-            And {landedHidden} more landed earlier; Analytics lists every finished ticket.
+            And {landedHidden} more finished earlier; Analytics lists every finished ticket.
           </p>
         ) : null}
       </div>

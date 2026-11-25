@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Independently verifies a built MACH ticket by running the slice the way its user would and capturing evidence (screenshots and recordings for web, terminal sessions for CLIs, request and response dumps for APIs, transcripts for libraries), then gives a scripted verdict of PASS, FAIL_WITH_EVIDENCE or INCOMPLETE_EVIDENCE. Use after the build station finishes a ticket, when asked to verify, QA, prove or collect evidence for a built ticket or slice, or to re-verify after a revision.
+description: Independently verifies a built MACH ticket by running the slice the way its user would and capturing evidence (screenshots and recordings for web, or logs and saved pages where no browser can start, terminal sessions for CLIs, request and response dumps for APIs, transcripts for libraries), then gives a scripted verdict of PASS, FAIL_WITH_EVIDENCE or INCOMPLETE_EVIDENCE. Use after the build station finishes a ticket, when asked to verify, QA, prove or collect evidence for a built ticket or slice, or to re-verify after a revision.
 argument-hint: "[ticket ID]"
 compatibility: "python3 >= 3.8, git"
 ---
@@ -22,6 +22,7 @@ You are the factory's evidence engineer. The builder says the ticket is built; n
 5. **Record what happened, not what you expected.** If the observed message differs from the spec by one character, it is a failure. Never record a pass you did not observe, never reuse evidence from an earlier run, and never adjust a check until it passes.
 6. **Evidence is public.** Use synthetic data only. No credentials, tokens or personal data in any evidence file.
 7. **One plain command per call.** The Factory runs this station unattended with a short list of allowed commands, and anything else is refused, not asked about. Every shell command you run is one of the `VERIFY` commands below, written out in full with the script's absolute path. Never chain commands (`&&`, `;`, `|`, a second line), never redirect (`>`, `<`, `2>&1`, a heredoc), never `cd`, and never set shell variables or define functions. Read files with the Read tool, find them with Glob and Grep, and write your driver and records file with the Write tool. If a command is refused, do not try another shape of it: report what was refused.
+8. **An install or download that fails is reported, not worked around.** Report what the station printed (the suite's log ends with MACH's hint when the output shows a refused download or an unreachable network). Never run `npm config set cache` or any other command that changes a person's own tool settings: MACH already points a package cache that cannot be written into `.factory/cache/` for the commands it runs (the start's `caches` says so), and a sandbox's network rules are the person's, in Claude Code's own settings.
 
 ## Steps
 
@@ -31,16 +32,29 @@ Run `VERIFY start <ticket>`. It refuses unless the cell is built, its code is ex
 
 - `app_type`, `workdir` and `evidence_dir`;
 - `required_evidence`: the kinds of file a reviewer needs for this app type;
+- for a `web`, `desktop` or `mobile` slice, `evidence_mode` and `browser_check`: the station really started a browser (or the app type's screen capture) for a moment, here, and says what happened. `screen` means screenshots and a recording are required, as always. `headless` means nothing here can capture a screen, so `capture_instead` says what to capture instead (see "No screen here" below);
 - `tools_available`: the capture tools found on this machine;
 - `builder_notes`: gate overrides the builder used and tests that were never seen failing. Probe these areas hardest;
 - `prove`: every item you must prove;
 - `records_file`: where to write your records for `VERIFY record --from` (step 3).
 
-If it refuses, report the reason and stop.
+If it refuses, report the reason and stop. A refusal because screenshots are required and no browser can start here (`verify.screen_evidence` is `require`) is for a person, not the builder: report it as it is.
+
+### No screen here
+
+When `evidence_mode` is `headless`, MACH has already found that no browser can start here (or, for desktop and mobile, that the screen cannot be captured), or the project's settings say not to try. Do not try to start a browser or capture the screen yourself, and do not try again: the station decided, and it is not the builder's problem. Verify the slice without a screen:
+
+- start the app from the `workdir` the way the project documents, and drive it with a Python driver through `capture`: HTTP requests with the standard library against the running app, or the framework's own test client;
+- save what it shows as text in `evidence_dir`: each request and response (`ac-01-invite.log`), the page's HTML as served (`ac-01-page.html`), and a DOM or accessibility snapshot where a tool that needs no browser can make one;
+- prove and record every item exactly as you would with screenshots. At least one file like those `capture_instead` lists is required; every other check is unchanged.
+
+For a design mock, record `--result cannot-compare` with the reason; without a screen even a binding mock goes to the review panel's product seat instead of leaving the slice unproven.
+
+If a browser started at `start` but stops starting during the run, run `VERIFY browser-check <ticket>` once. It checks again and records the answer; when no browser can start any more it prints `capture_instead`, and `VERIFY finish` accepts that evidence. `finish` also checks again by itself when screenshots are missing, so a browser that fails part way never sends the ticket back to the builder.
 
 ### 2. Plan the capture
 
-Read `references/evidence-runners.md`, the section for this `app_type` only. Decide how you will run the slice and capture each required kind of evidence with the tools available. If a tool the app type needs is missing, or is refused, do not substitute something weaker and call it equivalent: capture what you can, and let `VERIFY finish` report the gap as incomplete evidence.
+Read `references/evidence-runners.md`, the section for this `app_type` only. Decide how you will run the slice and capture each required kind of evidence with the tools available. If a tool the app type needs is missing, or is refused, do not substitute something weaker and call it equivalent: capture what you can, and let `VERIFY finish` report the gap as incomplete evidence. Screenshots are the one exception, and MACH decides it, not you: see "No screen here".
 
 Write the driver, the script that exercises the slice from outside, as a Python file in `evidence_dir` with the Write tool. Run it, and save what it prints as evidence, with one command:
 
@@ -103,9 +117,9 @@ Run `VERIFY finish <ticket>` and report its verdict as it is:
 
 | Verdict | Meaning | What happens next |
 |---------|---------|-------------------|
-| `PASS` | Every item is proven with evidence, the suite passes and the contracts are well formed. | The ticket goes to the review station. |
+| `PASS` | Every item is proven with evidence, the suite passes and the contracts are well formed. | The ticket goes to the review station. When it was verified without a screen, `evidence` says so in one sentence; report that sentence. |
 | `FAIL_WITH_EVIDENCE` | At least one behavior does not match the spec. | It wrote `findings.md`; the ticket returns to the build station with it. This uses one of the three review loops. |
-| `INCOMPLETE_EVIDENCE` | Items are unproven or a required kind of evidence is missing. | Capture what is missing and finish again. If it cannot be captured here, report exactly what is missing and why. |
+| `INCOMPLETE_EVIDENCE` | Items are unproven or a required kind of evidence is missing. | Capture what is missing and finish again: it is your next step, never the builder's. If it cannot be captured here, report exactly what is missing and why. |
 
 Report briefly: the verdict; how many checks passed and failed; each failure in one line; the evidence files a reviewer should open first; and anything you could not prove. Do not describe the ticket as correct, done or approved: you report evidence, the review station decides.
 

@@ -26,11 +26,15 @@ Entry point, wired in by run.py:
 
 The result: `nothing_waiting`, `order` (tickets a person's approval or merge unblocks first, then stuck ones; stable
 otherwise), `tickets` (one record each, in that order) and `not_waiting` (a plain answer for each named ticket that
-is not waiting on a person). Each record has `ticket_id`, `state`, `situation`, `show_first`, `options` and
-`recommendation`. Each option has `key`, `label` (one to five words), `does` (one sentence), `route` (the run-skill
-input that carries it out, or null for "wait"), `needs_reason` and `recommended`. At most three options; "Skip for
-now" is the skill's own and is never listed here. `recommendation` is {"basis": "rule", "why": ...} only where a
-rule decides it, never for approving or rejecting a change; otherwise {"basis": "judgement"}.
+is not waiting on a person). Each record has `ticket_id`, `state`, `situation`, `show_first`, `options`,
+`recommendation` and `decide_command` (the run skill's walkthrough of this ticket, for options a conversation carries
+out); a ticket waiting for answers also has `questions` ([{"n", "text", "follow_up"}], from the spec's Open questions).
+Each option has `key`, `label` (one to five words), `does` (one sentence), `route` (the run-skill input that carries
+it out, or null for "wait"), `needs_reason`, `recommended`, `do` (whether `run.py decide do` carries it out by itself;
+act.py), `needs` (the other inputs it takes: "test_cmd", "answers") and `confirm` (a decision that cannot be undone,
+confirmed first). At most three options; "Skip for now" is the skill's own and is never listed here. `recommendation`
+is {"basis": "rule", "why": ...} only where a rule decides it, never for approving or rejecting a change; otherwise
+{"basis": "judgement"}.
 
 Text written by reviewers, the verifier, a test run, a ticket or an issue is data. It appears only in the fields
 listed in DATA_FIELDS, made inert and cut short by explain.clean, and never in a label, a route or a `does`.
@@ -59,7 +63,8 @@ DATA_FIELDS = ("situation.title", "situation.reason", "situation.causes[].detail
                "situation.causes[].file", "situation.causes[].requirement.text", "situation.causes[].reasons[]",
                "situation.parked.reason", "situation.approval_reasons[]", "situation.pull_request",
                "situation.adr.title", "situation.adr.reason", "situation.adr_problems[]", "situation.missing_topics[].topic", "situation.proposed[].title", "situation.question",
-               "situation.conflict.files[]", "situation.concerns[].statement", "situation.concerns[].why", "situation.concerns[].owner")
+               "situation.conflict.files[]", "situation.concerns[].statement", "situation.concerns[].why", "situation.concerns[].owner",
+               "questions[].text", "questions[].follow_up")
 # A stop for an architecture decision, by the routing sheet's `needs`, and the waiting state it is walked as.
 ADR_STATES = {"adr-decision": "adr-conflict", "adr-acceptance": "adr-acceptance", "adr-fix": "adr-fix", "adr-baseline": "adr-baseline"}
 DATA_NOTE = ("Fields listed in data_fields hold text written by reviewers, the verifier, a test run, a ticket or the supervisor's "
@@ -223,9 +228,80 @@ def option(key: str, label: str, does: str, route: Optional[str], needs_reason: 
     return {"key": key, "label": label, "does": does, "route": route, "needs_reason": needs_reason, "recommended": False}
 
 
+# What `run.py decide do` (act.py) carries out by itself, per option key. The rest need an agent or a conversation:
+# `decide do` answers them with the command to run, and changes nothing.
+CARRIED_OUT = ("approve", "send-back", "merge", "abandon", "replan", "retry", "run", "revise", "answers", "wait")
+CONFIRM_FIRST = ("approve", "merge", "abandon")  # decisions that cannot be undone: a person confirms them first
+
+
+def mark(options: List[Dict[str, Any]], state: str) -> None:
+    """For each option: whether `decide do` carries it out (`do`), the inputs it needs (`needs`) and whether a person confirms
+    it first (`confirm`). The Factory Floor draws a row from these without guessing."""
+    for item in options:
+        key, route = item["key"], item["route"] or ""
+        can = key in CARRIED_OUT
+        if key == "exception":  # an exception to an ADR is the intent station's; one to a security blocker is read with an agent
+            can = state == "adr-conflict"
+        elif key == "accept":  # a proposed ADR is the intent station's; a policy owner's acceptance is checked in conversation
+            can = state == "adr-acceptance"
+        elif key == "set-test-command":  # a build in progress takes it; a build not yet started is the builder's first step
+            can = route.startswith("build.py set-commands")
+        elif key == "run" and state == "parked":  # "Run it here": in this conversation, station by station
+            can = False
+        needs = ["test_cmd"] if key == "set-test-command" else ["answers"] if key == "answers" else []
+        item.update({"do": can, "needs": needs, "confirm": key in CONFIRM_FIRST})
+
+
+OPEN_QUESTIONS_RE = re.compile(r"^##\s+Open questions\s*$", re.IGNORECASE)
+FOLLOW_UP_RE = re.compile(r"\bFollow up:\s*", re.IGNORECASE)  # as validate_slice.py splits an open question
+MAX_QUESTIONS = 30
+
+
+def open_questions(spec: Path) -> List[Dict[str, Any]]:
+    """The spec's `## Open questions` bullets, numbered from 1 in order: each question's text and its follow-up note.
+    The text is the spec writer's, so it is data, bounded by explain.clean. `- None.` is not a question."""
+    try:
+        lines = spec.read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return []
+    items: List[str] = []
+    inside = False
+    for line in lines:
+        if OPEN_QUESTIONS_RE.match(line.strip()):
+            inside = True
+            continue
+        if inside and line.startswith("#"):
+            break
+        if not inside:
+            continue
+        bullet = re.match(r"^\s{0,3}[-*+]\s+(.*)$", line)
+        if bullet:
+            items.append(bullet.group(1).strip())
+        elif items and line.strip():
+            items[-1] += " " + line.strip()  # a bullet wrapped onto the next line
+    found = []
+    for text in items:
+        if re.fullmatch(r"none\.?", text.strip(), re.IGNORECASE):
+            continue
+        parts = FOLLOW_UP_RE.split(text, maxsplit=1)
+        found.append({"n": len(found) + 1, "text": explain.clean(parts[0].strip(), 600),
+                      "follow_up": explain.clean(parts[1].strip().rstrip("."), 200) if len(parts) > 1 else None})
+    return found[:MAX_QUESTIONS]
+
+
+def answers_pending(cellroot: Path, cell: Dict[str, Any]) -> bool:
+    """Whether a person's answers (.factory/local/answers/<ticket>.json, written by `decide do ... answers`, its hash in the
+    intake ledger) wait to be folded into this spec: they were given for the spec as it is now. Once grooming saves the spec
+    again, they have been read and this is false."""
+    import act
+    root = cellroot.parent.parent.parent
+    return isinstance(cell, dict) and act.trusted_answers(root, cellroot.name, cell.get("spec_sha256")) is not None
+
+
 def abandon(ticket: str, extra: str = "") -> Dict[str, Any]:
     return option("abandon", "Abandon the ticket",
-                  "The cleanup station archives the cell, keeping its unmerged commits in a bundle, removes it and closes the ticket as abandoned" + extra + ".",
+                  "The cleanup station removes the cell, keeping its unmerged commits (in its archive, or as its branch where no archive is kept) and "
+                  "closes the ticket as abandoned" + extra + ".",
                   f'abandon {ticket} "<why>"', needs_reason=True)
 
 
@@ -235,7 +311,7 @@ def run_again(ticket: str, does: str, label: str = "Run it again") -> Dict[str, 
 
 def replan_allowed(cellroot: Path, stage: Optional[str]) -> bool:
     """What cell.py replan checks from the cell's files: a planned or building cell that has had no judging round.
-    It also checks the branch when it runs, and refuses if a reset would discard work."""
+    It also checks the branch when it runs, and refuses only if this ticket's task work is already on the main branch."""
     if stage not in REPLAN_STAGES:
         return False
     build = load_json(cellroot / "build.json", {}) or {}
@@ -247,7 +323,7 @@ def replan_allowed(cellroot: Path, stage: Optional[str]) -> bool:
 
 def replan(ticket: str) -> Dict[str, Any]:
     return option("replan", "Plan it again",
-                  "The intent station returns the cell to spec-ready, keeping the old plan and branch tip, and the contract engineer writes a new plan.",
+                  "The intent station returns the cell to spec-ready, keeping the old plan, branch tip and any uncommitted files, and the contract engineer writes a new plan.",
                   f'replan {ticket} "<why>"', needs_reason=True)
 
 
@@ -259,6 +335,13 @@ def build_gate_options(ticket: str, cellroot: Path, stage: Optional[str], gate: 
     loop = build.get("loop") if isinstance(build, dict) and isinstance(build.get("loop"), int) else 0
     pending = any(isinstance(task, dict) and task.get("status") != "done" for task in tasks)
     options = []
+    if code == "no-test-command":
+        # No test command is known: nothing is wrong with the work. A person names one and the build carries on from where it is.
+        command = (f'build.py set-commands {ticket} --test-cmd "<command>" --reason "<why>"' if tasks else
+                   f'build.py start {ticket} --test-cmd "<command>"')
+        options.append(option("set-test-command", "Set a test command",
+                              f"Name the command that runs this project's tests; the build carries on from where it is, with nothing undone: {command}",
+                              command, needs_reason=bool(tasks)))
     if name == "build.start" and code == "baseline-red":
         # The tests fail on the main checkout itself: no builder can get past that, only hardening can.
         options.append(option("audit", "Audit the repository",
@@ -336,7 +419,8 @@ def classify(root: Path, ticket: str, info: Dict[str, Any], report: Dict[str, An
             return "main-conflict"
         return None  # finished, closed, or out of this execution's scope: nothing for a person to decide here
     if stage == "spec-open":
-        return "answers"
+        # A person's answers already wait for the next grooming: nothing more to decide until it has read them.
+        return None if answers_pending(cellroot, cell) else "answers"
     if stage == "pr-open":
         return "pull-request"
     if named and stage == "built" and info.get("action") == "revise" and exception_offer(root, ticket):
@@ -352,7 +436,7 @@ def classify(root: Path, ticket: str, info: Dict[str, Any], report: Dict[str, An
 
 
 def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Dict[str, Any], config: Dict[str, Any],
-           parked: Dict[str, Dict[str, Any]], intent_skill: str, now: datetime) -> Dict[str, Any]:
+           parked: Dict[str, Dict[str, Any]], intent_skill: str, now: datetime, run_skill: str = "/mach") -> Dict[str, Any]:
     cellroot = root / ".factory" / "worktrees" / ticket
     cell = load_json(cellroot / "cell.json", {}) or {}
     cell = cell if isinstance(cell, dict) else {}
@@ -360,6 +444,7 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
     facts = situation(state, info, report, cell)
     show_first: List[str] = []
     options: List[Dict[str, Any]] = []
+    extra: Dict[str, Any] = {}
     rule: Optional[str] = None
 
     if state == "approval":
@@ -397,8 +482,15 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
         options.append(run_again(ticket, "The merge station tries again under the same checks; a conflict must be resolved in the cell first."))
         options.append(abandon(ticket))
     elif state == "answers":
+        questions = open_questions(cellroot / "spec.md") if not cell.get("product") else []
         options.append(option("interview", "Answer the questions",
                               "The intent skill continues the interview in this conversation, one question at a time.", f"{intent_skill} {ticket}"))
+        if questions:
+            # Each open question answered in writing (or left open): the Factory grooms the spec again with them as the person's answers.
+            extra["questions"] = questions
+            options.append(option("answers", "Write the answers",
+                                  "The person writes an answer to each open question, or leaves it open, and grooming folds them into the spec as their answers.",
+                                  f"answers {ticket}"))
         options.append(abandon(ticket))
         rule = "Only the product owner's answers settle open questions; nothing else moves this ticket."
     elif state == "policy-owner":
@@ -556,8 +648,10 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
     options = options[:3]
     if rule and options:
         options[0]["recommended"] = True
+    mark(options, state)
     return {"ticket_id": ticket, "state": state, "situation": facts, "show_first": show_first, "options": options,
-            "recommendation": {"basis": "rule", "why": rule} if rule else {"basis": "judgement"}}
+            "recommendation": {"basis": "rule", "why": rule} if rule else {"basis": "judgement"},
+            "decide_command": f"{run_skill} decide {ticket}", **extra}
 
 
 def not_waiting(ticket: str, info: Dict[str, Any]) -> Dict[str, Any]:
@@ -571,7 +665,7 @@ def not_waiting(ticket: str, info: Dict[str, Any]) -> Dict[str, Any]:
 
 def main(ticket_ids: Sequence[str], root: Path, *, config: Dict[str, Any], next_step: Callable[[str], Dict[str, Any]],
          intent_skill: str = "/mach-intent", explain_facts: Optional[Callable[[str, Dict[str, Any]], Dict[str, Any]]] = None,
-         now: Optional[datetime] = None) -> Dict[str, Any]:
+         now: Optional[datetime] = None, run_skill: str = "/mach") -> Dict[str, Any]:
     """Every ticket waiting on a person (or the ones named), with its options, in the order to walk them."""
     root = Path(root)
     config = config if isinstance(config, dict) else {}
@@ -591,7 +685,7 @@ def main(ticket_ids: Sequence[str], root: Path, *, config: Dict[str, Any], next_
             if named:
                 answers.append(not_waiting(ticket, info))
             continue
-        waiting.append(record(root, ticket, state, info, report, config, parked, intent_skill, moment))
+        waiting.append(record(root, ticket, state, info, report, config, parked, intent_skill, moment, run_skill))
     waiting = [item for _, item in sorted(enumerate(waiting), key=lambda pair: (pair[1]["state"] not in UNBLOCKED_BY_A_PERSON, pair[0]))]
     return {"reads_only": True, "nothing_waiting": not waiting, "order": [item["ticket_id"] for item in waiting], "tickets": waiting,
             "not_waiting": answers, "data_fields": list(DATA_FIELDS), "data_note": DATA_NOTE,
@@ -610,6 +704,8 @@ def human(report: Dict[str, Any]) -> str:
             lines.append(f'    title: "{facts["title"]}"')
         for path in item["show_first"]:
             lines.append(f"    read first: {path}")
+        for question in item.get("questions") or []:
+            lines.append(f'    question {question["n"]}: "{question["text"]}"')
         for number, choice in enumerate(item["options"], 1):
             mark = " (recommended)" if choice["recommended"] else ""
             route = f"  [{choice['route']}]" if choice["route"] else ""

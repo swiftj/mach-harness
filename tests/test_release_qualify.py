@@ -505,7 +505,23 @@ class RecordTest(Base):
         self.assertEqual((row["verification"]["source"], row["review"]["source"], row["integration"]["recorded_in"]), ("docs/changes/LOCAL-001.md",) * 3)
         self.assertNotIn(".factory/archive", json.dumps(self.readiness("r1")), "the decision names nothing that only this machine holds")
         run_file = json.loads((self.eng / ".factory/release/r1/run.json").read_text())
-        self.assertEqual(run_file["evidence_files"], {"checked_in_this_machines_archive": 3, "held_on_another_machine": 0})
+        self.assertEqual(run_file["evidence_files"], {"checked_in_this_machines_archive": 3, "held_on_another_machine": 0, "built_here_not_kept": 0})
+
+    def test_a_ticket_built_here_with_no_archive_kept_reads_the_same_and_says_so(self):
+        """cleanup.archive kept no archive of a ticket built on this very machine: the recorded hashes stand, every check reads as
+        it does with the archive, and run.json counts its files as built here and not kept, never as held on another machine."""
+        self.qualified()
+        with_archive = self.checks(self.readiness("r1"))
+        archive = self.eng / ".factory/archive"
+        [record] = [json.loads(line) for line in (archive / "runs.jsonl").read_text().splitlines()]
+        shutil.rmtree(archive)  # what cleanup leaves when it keeps no archive: no tarball, and a run record naming none
+        archive.mkdir()
+        (archive / "runs.jsonl").write_text(json.dumps(dict(record, archive=None)) + "\n")
+        result, checks = self.again("r2")
+        self.assertEqual(result["outcome"], "qualified")
+        self.assertEqual({key: (item["status"], item["detail"]) for key, item in checks.items()},
+                         {key: (item["status"], item["detail"]) for key, item in with_archive.items()}, "every check, and what it says, is the same")
+        self.assertEqual(result["evidence_files"], {"checked_in_this_machines_archive": 0, "held_on_another_machine": 0, "built_here_not_kept": 3})
 
     def test_a_record_edited_after_it_landed_does_not_count(self):
         self.qualified()
@@ -625,8 +641,8 @@ class AcrossMachinesTest(Base):
             outcomes[name] = (result["outcome"], result["outcome_summary"], result["evidence_files"])
             statuses[name] = {key: (item["status"], item["detail"]) for key, item in self.checks(self.readiness("r1")).items()}
         self.assertEqual(outcomes["three"][:2], ("qualified", "qualified; not assessed: performance (not configured)"))
-        self.assertEqual(outcomes["three"][2], {"checked_in_this_machines_archive": 0, "held_on_another_machine": 6})
-        self.assertEqual(outcomes["one"][2], {"checked_in_this_machines_archive": 3, "held_on_another_machine": 3})
+        self.assertEqual(outcomes["three"][2], {"checked_in_this_machines_archive": 0, "held_on_another_machine": 6, "built_here_not_kept": 0})
+        self.assertEqual(outcomes["one"][2], {"checked_in_this_machines_archive": 3, "held_on_another_machine": 3, "built_here_not_kept": 0})
         self.assertEqual((outcomes["one"][:2], outcomes["two"][:2]), (outcomes["three"][:2],) * 2)
         self.assertEqual((statuses["one"], statuses["two"]), (statuses["three"],) * 2, "every check, and what it says, is the same on each machine")
         self.assertEqual(statuses["three"][f"dependency.{second}.{first}"][0], "pass")

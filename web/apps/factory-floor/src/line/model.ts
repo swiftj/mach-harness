@@ -13,7 +13,10 @@
  * - `person`: a person must act (a person's approval, a question for the product owner, a recorded
  *   request for a person);
  * - `stopped`: the line stopped work on it (blocked: the round limit, or the supervisor parked it);
- * - `landed`: merged.
+ * - `landed`: merged (finished once cleanup has closed it; until then "merged, waiting for cleanup");
+ * - `closed`: finished without a merge: cleanup closed it as abandoned (its run record says so), or
+ *   it was cleaned up with no merge recorded.
+ * Finished tickets (landed and cleaned up, or closed) are listed after the rest, the newest few only.
  */
 import {
   MAX_ROUNDS,
@@ -28,6 +31,7 @@ import {
   isKnown,
   holdOf,
   parkedWords,
+  finishedAt,
   type CellState,
   type ExecutionState,
   type Moment,
@@ -84,7 +88,7 @@ export function columnOf(station: StationId | null | undefined): number | null {
 
 // ---------------------------------------------------------------- one ticket
 
-export type LineState = "working" | "held" | "person" | "stopped" | "landed";
+export type LineState = "working" | "held" | "person" | "stopped" | "landed" | "closed";
 
 /** What the state is called, in plain words. */
 export const STATE_WORDS: Readonly<Record<LineState, string>> = {
@@ -93,6 +97,7 @@ export const STATE_WORDS: Readonly<Record<LineState, string>> = {
   person: "Waiting for you",
   stopped: "Stopped",
   landed: "Landed",
+  closed: "Abandoned",
 };
 
 /** A reason a ticket is held. `freeText`: the supervisor's own words, shown contained (never in a label). */
@@ -167,6 +172,8 @@ export interface LineRow {
   readonly cost: { readonly usd: number; readonly partial: boolean } | null;
   /** When its first record was made (for a stable order). */
   readonly openedAt: number;
+  /** Finished: cleanup has closed it (merged or abandoned). A merged ticket not yet closed is not. */
+  readonly finished?: boolean;
 }
 
 const ROUND_WORDS = ["", "once", "twice"];
@@ -403,8 +410,9 @@ export function rowOfCell(scene: Scene, cell: CellState, now: number): LineRow {
   };
   const landed = cell.merged !== null || cell.stage === "merged" || cell.runRecord?.outcome === "merged";
 
+  const closedAt = finishedAt(cell);
   if (landed) {
-    const cleaned = cell.archived !== null || cell.visits.some((v) => v.station === "cleanup" && v.leftAt !== null);
+    const cleaned = closedAt !== null || cell.visits.some((v) => v.station === "cleanup" && v.leftAt !== null);
     const column = cleaned ? CLEANUP : MERGE;
     return {
       ...base,
@@ -413,11 +421,31 @@ export function rowOfCell(scene: Scene, cell: CellState, now: number): LineRow {
       beforeMerge: false,
       passed: passedColumns(cell, column),
       detail: null,
-      since: cell.merged?.at ?? cell.runRecord?.at ?? null,
+      since: cleaned ? (closedAt ?? cell.merged?.at ?? null) : (cell.merged?.at ?? cell.runRecord?.at ?? null),
       held: null,
-      why: cleaned ? "Merged and cleaned up. Its record is in the archive." : "Merged. Clean-up has not finished yet.",
+      why: cleaned ? "Finished: merged and cleaned up." : "Merged, waiting for cleanup: it is finished once cleanup closes it.",
+      needs: cleaned ? "Nothing." : "Nothing from you: cleanup closes it.",
+      command: command("explain", cell.ticketId),
+      finished: cleaned,
+    };
+  }
+
+  if (closedAt !== null) {
+    // Closed by cleanup without a merge: abandoned (its run record says so), or cleaned up with no merge recorded.
+    const abandoned = cell.runRecord?.outcome === "abandoned";
+    return {
+      ...base,
+      state: "closed",
+      column: CLEANUP,
+      beforeMerge: false,
+      passed: passedColumns(cell, CLEANUP),
+      detail: null,
+      since: closedAt,
+      held: null,
+      why: abandoned ? "Finished: abandoned, and cleaned up. Nothing of it was merged." : "Finished: cleaned up with no merge recorded.",
       needs: "Nothing.",
       command: command("explain", cell.ticketId),
+      finished: true,
     };
   }
 
@@ -662,15 +690,15 @@ export function rowOfMockWait(wait: MockWait): LineRow {
 }
 
 export interface LineModel {
-  /** Rows in the order they entered the line; landed ones after the rest, the newest few only. */
+  /** Rows in the order they entered the line; finished ones (landed or abandoned, and cleaned up) after the rest, the newest few only. */
   readonly rows: readonly LineRow[];
-  /** Landed tickets not shown as rows (only the newest LANDED_SHOWN are). */
+  /** Finished tickets not shown as rows (only the newest LANDED_SHOWN are). */
   readonly landedHidden: number;
   /** Tickets waiting for a person or stopped, longest waiting first. */
   readonly needs: readonly LineRow[];
 }
 
-/** How many landed tickets keep a row. */
+/** How many finished tickets keep a row. */
 export const LANDED_SHOWN = 5;
 
 export function lineModel(scene: Scene, now: number): LineModel {
@@ -686,8 +714,11 @@ export function lineModel(scene: Scene, now: number): LineModel {
   }
   for (const wait of mockWaitsOf(scene)) rows.push(rowOfMockWait(wait));
   const byOpen = (a: LineRow, b: LineRow) => a.openedAt - b.openedAt || (a.ticketId < b.ticketId ? -1 : a.ticketId > b.ticketId ? 1 : 0);
-  const active = rows.filter((r) => r.state !== "landed").sort(byOpen);
-  const landed = rows.filter((r) => r.state === "landed").sort((a, b) => (b.since ?? 0) - (a.since ?? 0));
+  // Finished tickets (cleanup has closed them) after the rest, the newest few; a merged ticket not yet
+  // cleaned up is still in the line.
+  const done = (r: LineRow) => r.finished === true;
+  const active = rows.filter((r) => !done(r)).sort(byOpen);
+  const landed = rows.filter(done).sort((a, b) => (b.since ?? 0) - (a.since ?? 0));
   const needs = active.filter((r) => r.state === "person" || r.state === "stopped").sort((a, b) => (a.since ?? Infinity) - (b.since ?? Infinity));
   return { rows: [...active, ...landed.slice(0, LANDED_SHOWN).sort(byOpen)], landedHidden: Math.max(0, landed.length - LANDED_SHOWN), needs };
 }

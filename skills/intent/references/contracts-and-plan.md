@@ -94,9 +94,56 @@ Read the plan template and write `plan.md` to `plan_path`. The builder follows i
 - **Follow the project.** Reuse its service layers, test helpers, and, for user interfaces, its existing components and design tokens. If the project has a feature-flag system, put the new behavior behind a flag and say so under Engineering decisions.
 - **Engineering decisions.** Record each technical choice the spec left open, with its reason: status and error codes, schema choices, where state lives, how a time limit is enforced, how idempotency is achieved. Reviewers read this list to challenge them.
 
+### Parts that can be built at the same time
+
+MACH builds a plan's independent parts at the same time when it can, each in its own checkout with its own builder, so the shape of your plan decides how fast it builds. It does so only for a plan that says it may: one that uses a part heading (`### Before the lanes`, `### Lanes`, `### After the lanes`) or an `after Tnn` mark. A plan with neither is built one task at a time, top to bottom, however independent its tasks are. (A project that wants one task at a time for every plan sets `build.max_lanes` to 1 in `.factory/config.json`.) A script reads the parts from your plan; no agent decides them. Two tasks are built in one chain, a **lane**, when they share a file (on the task line or in the file touch map), when one is a `[test]` task and the other an `[impl]` task and they name a common FR or AC, or when one says `after` the other. A task that names no file makes the whole lanes part one lane.
+
+Plans are usually written as one long chain: the tests for the whole slice go in one test file and the code in one module, so every task shares a file with the next and nothing can be built alongside anything else. Where the slice really has separate parts, plan it so they stay separate. Because MACH acts on whatever independence the plan states, the first rule matters most:
+
+- **Never invent independence.** Do not split a behaviour, add files, or move tests only to make a plan look parallel. A false claim is caught (a lane cannot go green without another lane's file, or the lanes fail when joined), and it costs a lane set aside and rebuilt one task at a time: slower than one chain. A slice with one behaviour is one lane, and that is right. When unsure, keep tasks together: plan order is always correct.
+- **Find the real parts first.** A part is a behaviour whose tests and code need nothing another part writes: a rule check and the e-mail it triggers, a web form and a background export, a new command-line flag and a report format. Behaviours that change the same function, the same module or the same stored rows are one part. If you cannot say what a part's tests run against without the other parts' code, it is not independent.
+- **One test file per behaviour**, not one per slice, where the project's test layout allows it (most keep one test file per module or feature). The one table-driven test for the decision matrix stays one test: the rules it covers, and the `[impl]` tasks that make them pass, are one part.
+- **One module per behaviour** where the project's structure already has a place for it. Do not create a module only to keep two tasks apart.
+- **Shared files go before or after the lanes.** A file several parts need goes in a task under `### Before the lanes`: a model, a registry or route entry, a migration or migration list, a lock file or dependency manifest, generated contract code, shared test helpers. The wiring that brings the parts together (the route that exposes several behaviours, the command that dispatches to them) goes under `### After the lanes`, with its scenario tests. A file two parts change makes them one lane, with no exception.
+- **Before the lanes ends green.** Every FR and AC that a `[test]` task before the lanes names is also named by an `[impl]` task before the lanes, so each lane starts from a passing suite. `CELL check-plan` refuses a plan where it is not.
+- **Every part is still test first:** a `[test]` task, then the `[impl]` task that makes it pass, exactly as the rules above say. They hold inside each part.
+- **Write `after Tnn`** beside a task's IDs, in its trailing brackets, when it needs another task's work in a way its files do not show; the usual case is code that imports a module another task creates: `(FR-05, AC-02, after T04)`. Name only an earlier task. Naming a task before the lanes is allowed and changes nothing; naming a task after the lanes is refused.
+- **It must still read and build one task at a time.** A lane set aside, a revision round, and a project with `build.max_lanes` at 1 all build the plan from top to bottom. Order the tasks so that works: the tasks before the lanes, then each part in turn, then the tasks after the lanes. The headings and `after` marks are optional: without either, the plan is built one task at a time. With `after` marks but no heading, the whole list is the lanes part, so tasks that share nothing are built at the same time; that is one more reason to keep the order correct.
+
+The three headings go inside `## Tasks`, below the test command, in that order, each at most once. With headings, every task sits under one of them. For a plan with parts or `after` marks, unless the project builds one task at a time, `CELL check-plan` prints the lanes it found under `lanes`, with the first reason any two tasks were joined. If two parts you meant to keep apart were joined, the reason names the shared file or ID: change the plan only if the sharing is not real.
+
+A worked example: an admin invites a teammate. The slice has a rule for who may invite, an invitation e-mail, and a route that uses both. Written as one chain, everything shares the test file and the module:
+
+```
+- [ ] T01 [test] Who may invite, 16 matrix cases, and the e-mail — `tests/test_invite.py` (FR-01, FR-02, FR-05, AC-02, INV-01)
+- [ ] T02 [impl] Invitations — `app/invite.py`, `templates/invite.txt` (FR-01, FR-02, FR-05, AC-02)
+- [ ] T03 [test] Invite route — `tests/test_invite_route.py` (AC-01)
+- [ ] T04 [impl] Invite route — `app/routes.py`, `app/invite.py` (AC-01)
+```
+
+The rule and the e-mail are separate behaviours: the e-mail is sent once an invitation is allowed, but its tests can build an invitation directly. Both need the invitation model, and the route needs both. Written in parts:
+
+```
+### Before the lanes
+- [ ] T01 [test] Invitation model — `tests/test_invitation_model.py` (INV-01)
+- [ ] T02 [impl] Invitation model — `app/models/invitation.py` (INV-01)
+
+### Lanes
+- [ ] T03 [test] Who may invite, 16 matrix cases — `tests/test_invite_rules.py` (FR-01, FR-02)
+- [ ] T04 [impl] Who may invite — `app/invite/rules.py` (FR-01, FR-02)
+- [ ] T05 [test] The invitation e-mail — `tests/test_invite_mail.py` (FR-05, AC-02)
+- [ ] T06 [impl] The invitation e-mail — `app/invite/mail.py`, `templates/invite.txt` (FR-05, AC-02)
+
+### After the lanes
+- [ ] T07 [test] Invite route — `tests/test_invite_route.py` (AC-01)
+- [ ] T08 [impl] Invite route — `app/routes.py` (AC-01)
+```
+
+This gives two lanes, T03 and T04, and T05 and T06, built at the same time from the commit after T02. Built one task at a time it is still correct, in this order. Had the e-mail's code called the rule check, T06 would say `after T04`, and the two would be one lane.
+
 ## Gate
 
-Run `CELL check-plan <ticket-id>`. It checks the plan header, that each listed contract exists, that the plan is test-first, that every requirement and scenario is assigned, that no `[impl]` task waits on a later one to go green, and the architecture-decision rules above. Fix what it reports and rerun, at most 5 times. On `PLANNED` it records the app type, risk tier, contracts and the ADRs the plan was made under on the cell, keeps a copy of each ADR's text in the cell, and commits the contract files and any proposed ADR on the cell's branch. For a small change (`cell.json` has `kind: small`) a valid plan may instead print `WIDENED` or `STOPPED`: the plan shows the change is not small (an existing contract changed, a file in a high-risk area, a proposed ADR, a plan raised to High), so the plan is kept on record and the ticket goes back to the interview or waits for the product manager. That is not a plan error: do not change the plan to make the change look small, and do not run check-plan again; report the sentence it printed.
+Run `CELL check-plan <ticket-id>`. It checks the plan header, that each listed contract exists, that the plan is test-first, that every requirement and scenario is assigned, that no `[impl]` task waits on a later one to go green, the parts and `after` marks when the plan has them, and the architecture-decision rules above. Fix what it reports and rerun, at most 5 times. On `PLANNED` it records the app type, risk tier, contracts and the ADRs the plan was made under on the cell, keeps a copy of each ADR's text in the cell, and commits the contract files and any proposed ADR on the cell's branch. For a small change (`cell.json` has `kind: small`) a valid plan may instead print `WIDENED` or `STOPPED`: the plan shows the change is not small (an existing contract changed, a file in a high-risk area, a proposed ADR, a plan raised to High), so the plan is kept on record and the ticket goes back to the interview or waits for the product manager. That is not a plan error: do not change the plan to make the change look small, and do not run check-plan again; report the sentence it printed.
 
 ## Report
 

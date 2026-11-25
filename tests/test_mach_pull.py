@@ -1,9 +1,14 @@
-"""Tests for run.py pull (pull.py): take in what is ready and start the next batch, in one engineer's command.
+"""Tests for run.py pull (pull.py): take in what is ready and hand the batch to the Factory, in one engineer's command.
 
-Pull composes steps that exist already: intake's reconcile, the schedule's rule and intake's guarded dispatch.
-These tests use the product intake tests' fixture: slices are GitHub issues marked ready in the stand-in for gh
-(or ready folders), and nothing reaches the network. The line is stood in for by editing cell.json and plan.md,
-as the schedule tests do.
+Pull composes steps that exist already: intake's reconcile, the schedule's rule and intake's guarded dispatch,
+and the hand-over (activation.HandOver). These tests use the product intake tests' fixture: slices are GitHub
+issues marked ready in the stand-in for gh (or ready folders), and nothing reaches the network. The line is
+stood in for by editing cell.json and plan.md, as the schedule tests do.
+
+No test starts a supervisor: the detached start (service.start_detached) is replaced for every test with a
+recorder, and the banner's runner (notify.run_osascript) with one that shows nothing. In the fixture the
+readiness audit has not run, so the batch runs in the conversation unless a test switches the audit gate off
+and puts a stand-in for Claude Code on the PATH (HandOverTest).
 """
 
 import hashlib
@@ -21,7 +26,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT / "skills" / "run" / "scripts"))
 import intake  # noqa: E402
+import notify  # noqa: E402
+import policy  # noqa: E402
 import run  # noqa: E402
+import service  # noqa: E402
+import supervisor  # noqa: E402
 from test_mach_product_intake import Base  # noqa: E402
 from test_mach_product_issues import git, spec_for  # noqa: E402
 from test_mach_schedule import plan_md  # noqa: E402
@@ -34,7 +43,28 @@ def tree(root):
     return {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in root.rglob("*") if path.is_file()}
 
 
+FAKE_PID = 424242
+
+
 class PullBase(Base):
+    def setUp(self):
+        super().setUp()
+        self.detached = []  # every supervisor a pull would have started: (project, run.py)
+        self.how = {}  # how the last one was started: its lifetime, its session, who started it
+        self.session = 777001  # the Claude Code session's process, as the stand-in for its lookup gives it
+        os.environ[service.NO_START_ENV] = "1"  # a subprocess a test runs can never start one either
+
+        def start_detached(root, run_script, **how):
+            self.detached.append((Path(root), Path(run_script)))
+            self.how = how
+            return FAKE_PID
+
+        for target, attribute, value in ((service, "start_detached", start_detached), (notify, "run_osascript", lambda argv, timeout: (True, None)),
+                                         (service, "find_session_pid", lambda start=None: self.session)):
+            patcher = mock.patch.object(target, attribute, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def run_pull(self, *argv):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
@@ -105,7 +135,14 @@ class BatchTest(PullBase):
         (number,) = self.issues(1)
         report = self.pull()
         self.assertEqual((report["run"], report["run_one"]), ([str(number)], f"{run.skill('run')} {number}"))
-        self.assertEqual(report["start_now"], [{"ticket_id": str(number), "slice_id": "SLICE-001", "how": "dispatched", "until": "build"}])
+        self.assertEqual(report["start_now"], [{"ticket_id": str(number), "slice_id": "SLICE-001", "how": "dispatched", "until": "build", "by": "here"}])
+        # A check fails in this fixture (no readiness audit, and on a machine without Claude Code, no `claude` either): the batch
+        # runs here, and the report says why in the failing check's own words. Which check speaks first depends on the machine.
+        self.assertEqual((report["factory"]["handed_over"], report["factory"]["supervisor"]), (False, "none"))
+        self.assertTrue("readiness audit" in report["factory"]["why_not"] or "'claude' command" in report["factory"]["why_not"], report["factory"]["why_not"])
+        self.assertIn("This batch runs here, in the conversation: " + report["factory"]["why_not"], report["in_words"])
+        self.assertEqual((self.detached, report["first_time"], report["factory_started"]), ([], False, False))
+        self.assertFalse((self.eng / ".factory/local/runner.json").exists())
 
     def test_limit_and_sequential_lower_the_ceiling(self):
         numbers = self.issues(3)
@@ -137,13 +174,14 @@ class BatchTest(PullBase):
         self.assertEqual(json.dumps(self.gh()["issues"], sort_keys=True), gh_before)
         self.assertEqual((dry["dry_run"], self.started(dry, "would be dispatched"), dry["run"]), (True, [str(numbers[0]), str(numbers[1])], [str(numbers[0]), str(numbers[1])]))
         self.assertEqual(dry["in_words"][-1], "Nothing was changed: this was a dry run.")
+        self.assertEqual((dry["factory"]["handed_over"], dry["factory"]["why_not"]), (False, "This was a dry run: nothing was handed to the Factory."))
         real = self.pull()
         self.assertEqual((self.started(real, "dispatched"), real["run"], sorted(self.waiting(real))), (self.started(dry), dry["run"], sorted(self.waiting(dry))))
 
     def test_a_dry_run_of_a_ready_folder_shows_it_without_a_ticket(self):
         self.first()
         dry = self.pull("--dry-run")
-        self.assertEqual((dry["start_now"], dry["run"]), ([{"ticket_id": None, "slice_id": "SLICE-001", "how": "would be dispatched", "until": "build"}], []))
+        self.assertEqual((dry["start_now"], dry["run"]), ([{"ticket_id": None, "slice_id": "SLICE-001", "how": "would be dispatched", "until": "build", "by": "here"}], []))
         self.assertIn("A slice from a ready folder gets its ticket when it is taken in.", dry["in_words"])
         self.assertFalse(dry["nothing_to_run"])
         self.assertEqual(self.tickets(), [])
@@ -240,6 +278,9 @@ class LineTest(PullBase):
         self.assertEqual(person["why"], "The review panel approved, and a person must approve before merge.")
         self.assertEqual(report["run"], [str(b)])
         self.assertIn(f"Waits for a person: {a} (SLICE-001): {person['why']}", report["in_words"])
+        # "Needs you" is decide's own list, and the report leads with its count.
+        self.assertEqual([item["ticket_id"] for item in report["needs_you"]], [str(a)])
+        self.assertTrue(report["in_words"][0].startswith("Needs you: 1."), report["in_words"][0])
 
     def test_any_stop_is_a_persons_even_one_this_version_does_not_know(self):
         a, b = self.issues(2)
@@ -355,12 +396,17 @@ class RefusalTest(PullBase):
         self.assertIn("engineer's command", err)
         self.assertEqual(tree(self.eng / ".factory"), before)
 
-    def test_it_reads_no_machine_local_authorization_and_starts_nothing(self):
+    def test_the_authorization_and_the_supervisor_are_the_hand_overs_not_pulls(self):
+        """M23: pull hands the batch to the supervisor, but through activation.HandOver only. pull.py itself reads no
+        authorization file and starts no process; it starts or wakes the supervisor outside the intake lock."""
         source = (ROOT / "skills/run/scripts/pull.py").read_text()
-        for word in ("runner.json", "read_local_policy", "policy", "subprocess", "Popen", "os.system", "claude -p", "\"factory_started\": True", "authorize"):
+        for word in ("runner.json", "read_local_policy", "import policy", "import activation", "subprocess", "Popen", "os.system", "claude -p"):
             self.assertNotIn(word, source, word)
         self.assertIn("schedule.main(", source)
         self.assertIn("line.reconcile()", source)
+        body = source[source.index("def pull("):source.index("def simulated_intake(")]
+        self.assertLess(body.index("with line.lock(\"pull\"):"), body.index("hand.carry_on()"))
+        self.assertGreater(body.index("hand.carry_on()"), body.index("reconciled[\"plan\"]"))
 
     def test_one_writer_at_a_time(self):
         self.issues(1)
@@ -370,6 +416,247 @@ class RefusalTest(PullBase):
         self.assertEqual(code, 1)
         self.assertIn("Another dispatch is running on this Factory", err)
         self.assertFalse((self.eng / ".factory/worktrees").exists())
+
+
+FAKE_CLAUDE = "#!/bin/sh\necho 'a stand-in for Claude Code: pull never runs it' >&2\nexit 3\n"
+
+
+class HandOverTest(PullBase):
+    """M23 2: /mach pull takes in, chooses, and hands the batch to the supervisor, which it starts detached (here: recorded only)."""
+
+    def setUp(self):
+        super().setUp()
+        claude = self.root / "bin" / "claude"
+        claude.write_text(FAKE_CLAUDE)
+        claude.chmod(0o755)
+        self.settings(max_parallel=3)
+        data = json.loads((self.eng / ".factory/config.json").read_text())
+        data["build"] = {"require_audit": False}
+        (self.eng / ".factory/config.json").write_text(json.dumps(data))
+
+    def runner(self):
+        return policy.read(self.eng)
+
+    def owners(self):
+        return {key: entry.get("owner") for key, entry in self.ledger()["slices"].items()}
+
+    def test_the_first_pull_writes_the_authorization_hands_over_and_starts_the_supervisor(self):
+        a, b = self.issues(2)
+        report = self.pull()
+        factory = report["factory"]
+        self.assertEqual((factory["handed_over"], factory["supervisor"], factory["pid"], factory["why_not"], factory["tickets"]),
+                         (True, "started", FAKE_PID, None, [str(a), str(b)]))
+        self.assertEqual((report["first_time"], report["factory_started"], report["run"]), (True, True, []))
+        self.assertEqual(self.detached, [(self.eng, ROOT / "skills/run/scripts/run.py")])
+        self.assertEqual([item["by"] for item in report["start_now"]], ["factory", "factory"])
+        self.assertEqual(report["in_words"][0], f"The Factory has started on {a} and {b} and carries on in the background while this Claude Code "
+                                                "session is open. Closing Claude Code pauses it; the next /mach pull carries on where it left off.")
+        # M23 2.4 (as the owner changed it): a pull's supervisor belongs to this Claude Code session.
+        self.assertEqual(self.how, {"lifetime": "session", "session_pid": self.session, "started_by": "pull"})
+        self.assertEqual(report["factory"]["lifetime"], "session")
+        self.assertEqual(report["in_words"][1], "Agents now build here on their own: they run this repository's tests and scripts as you, "
+                                                "with no operating-system sandbox. /mach stop stops them.")
+        self.assertEqual(self.owners(), {"SLICE-001": "supervisor", "SLICE-002": "supervisor"})
+        # The authorization: supervised, merging as the project allows, High at most, the default tools, no spending limit, by pull.
+        pol = self.runner()
+        self.assertEqual((pol["source"], pol["enabled"], pol["autonomy"], pol["allow_merge"], pol["max_risk"], pol["enabled_by"], pol["allowed_tools"]),
+                         ("local-file", True, "supervised", True, "High", "pull", policy.default_tools()))
+        self.assertEqual(pol["limits"], {"max_execution_minutes": 120, "max_attempts": 2, "poll_seconds": 300})
+        self.assertNotIn("execution_risk_accepted", json.loads((self.eng / ".factory/local/runner.json").read_text()))
+        scheduled = [event for event in self.events() if event["type"] == "work.scheduled"]
+        self.assertEqual({event["data"]["by"] for event in scheduled}, {"supervisor"})
+        activated = [event for event in self.events() if event["type"] == "factory.activated"]
+        self.assertEqual([(event["data"]["by"], event["data"]["via"]) for event in activated], [("pull", "pull")])
+        # The next pull says nothing about a first time, and carries the same tickets on through the supervisor.
+        again = self.pull()
+        self.assertEqual((again["first_time"], again["factory"]["handed_over"], again["factory"]["tickets"], again["run"]), (False, True, [str(a), str(b)], []))
+        self.assertEqual(len(self.activated()), 1)
+
+    def activated(self):
+        return [event for event in self.events() if event["type"] == "factory.activated"]
+
+    def test_a_live_supervisor_is_woken_not_started_again(self):
+        self.issues(1)
+        self.pull()
+        lease = self.eng / ".factory/local/supervisor.json"
+        lease.write_text(json.dumps({"instance": "running", "runner_id": "r", "pid": os.getpid(), "host": supervisor.platform.node(),
+                                     "started_at": "2026-11-24T08:00:00Z", "heartbeat_at": "x", "expires_at": "2099-01-01T00:00:00Z",
+                                     "lifetime": "background", "session_pid": None, "started_by": "factory start"}))
+        before = len(self.detached)
+        self.ready("SLICE-002", self.epic_number())
+        self.session = None  # no session is needed to hand a batch to a supervisor already running
+        report = self.pull()
+        self.assertEqual((report["factory"]["handed_over"], report["factory"]["supervisor"], report["factory"]["pid"]), (True, "woken", os.getpid()))
+        self.assertEqual(report["factory"]["already_running"],
+                         {"lifetime": "background", "since": "2026-11-24T08:00:00Z", "pid": os.getpid(), "started_by": "factory start"})
+        self.assertEqual(report["in_words"][0], "A Factory is already running here in the background (started 2026-11-24T08:00:00Z). "
+                                                "It has taken this batch. /mach factory stop stops it.")
+        self.assertEqual(len(self.detached), before)
+        self.assertEqual(json.loads((self.eng / ".factory/local/wake").read_text())["event"], "carry-on")
+        # One started from another Claude Code session that is still open is handed the batch the same way.
+        data = json.loads(lease.read_text())  # another Claude Code window, still open
+        data.update(lifetime="session", session_pid=os.getpid(), started_by="pull")
+        lease.write_text(json.dumps(data))
+        self.ready("SLICE-003", self.epic_number())
+        report = self.pull()
+        self.assertEqual((report["factory"]["supervisor"], report["factory"]["already_running"]["lifetime"]), ("woken", "session"))
+        self.assertIn("It stops when that session ends; /mach factory start keeps it running in the background.", report["in_words"][0])
+
+    def test_without_a_session_to_tie_it_to_the_batch_runs_here(self):
+        self.issues(1)
+        self.session = None
+        report = self.pull()
+        self.runs_here(report, "could not find the Claude Code session")
+        self.assertIn("/mach factory start runs the Factory in the background instead", report["factory"]["why_not"])
+
+    def test_tickets_in_the_line_that_no_worker_holds_are_given_to_the_supervisor(self):
+        a, b = self.issues(2)
+        here = self.pull("--here")  # an engineer's batch, in the conversation
+        self.assertEqual((here["factory"]["handed_over"], here["run"]), (False, [str(a), str(b)]))
+        self.assertIn("This batch runs here, in the conversation: You asked for this batch to run here (--here).", here["in_words"])
+        self.assertEqual(self.owners(), {"SLICE-001": "engineer", "SLICE-002": "engineer"})
+        self.assertEqual(self.detached, [])
+        self.assertFalse((self.eng / ".factory/local/runner.json").exists(), "--here writes no authorization")
+        C = run.claims()
+        C.take(self.eng / ".factory/worktrees" / str(a), "plan", C.new_holder(), C.minutes({}))  # a worker is on it now
+        report = self.pull()
+        self.assertEqual((report["factory"]["handed_over"], report["factory"]["tickets"]), (True, [str(b)]))
+        self.assertEqual(self.owners(), {"SLICE-001": "engineer", "SLICE-002": "supervisor"})
+        self.assertEqual(self.waiting(report)["SLICE-001"]["then"], "left to the worker on it")
+
+    def test_an_engineers_own_ticket_stays_in_the_conversation(self):
+        (a,) = self.issues(1)
+        self.pull()
+        own = self.eng / ".factory/worktrees/LOCAL-900"
+        own.mkdir(parents=True)
+        (own / "cell.json").write_text(json.dumps({"ticket_id": "LOCAL-900", "stage": "planned", "risk": "Low"}))
+        (own / "plan.md").write_text(plan_md("own.py"))
+        real = run.next_step
+
+        def answer(project, ticket_id, headless):
+            if ticket_id == "LOCAL-900":
+                return run.step(ticket_id, "planned", "build", "Build the plan.")
+            return real(project, ticket_id, headless)
+
+        with mock.patch.object(run, "next_step", answer):
+            report = self.pull()
+        self.assertEqual((report["factory"]["tickets"], report["run"]), ([str(a)], ["LOCAL-900"]))
+        self.assertIn("To run here: LOCAL-900.", report["in_words"])
+
+    def runs_here(self, report, words):
+        """Not handed over: the reason in one line, with what changes it, and the batch runs in the conversation."""
+        self.assertFalse(report["factory"]["handed_over"])
+        self.assertIn(words, report["factory"]["why_not"])
+        self.assertTrue(report["run"], "the batch runs in the conversation")
+        self.assertIn("This batch runs here, in the conversation: " + report["factory"]["why_not"], report["in_words"])
+        self.assertEqual(self.detached, [])
+        self.assertFalse((self.eng / ".factory/local/runner.json").exists())
+        self.assertEqual(set(self.owners().values()), {"engineer"})
+
+    def test_a_project_that_forbids_a_supervisor_runs_its_batch_here(self):
+        self.issues(1)
+        data = json.loads((self.eng / ".factory/config.json").read_text())
+        data["factory"]["supervisor"] = False
+        (self.eng / ".factory/config.json").write_text(json.dumps(data))
+        self.runs_here(self.pull(), "factory.supervisor is false")
+
+    def test_a_failing_check_is_the_reason_in_its_own_words(self):
+        self.issues(1)
+        data = json.loads((self.eng / ".factory/config.json").read_text())
+        data["build"] = {"require_audit": True}
+        (self.eng / ".factory/config.json").write_text(json.dumps(data))
+        self.runs_here(self.pull(), "There is no readiness audit report.")
+
+    def test_without_claude_code_the_batch_runs_here(self):
+        self.issues(1)
+        (self.root / "bin" / "claude").unlink()
+        with mock.patch.dict(os.environ, {"PATH": str(self.root / "bin") + os.pathsep + "/usr/bin:/bin"}):
+            report = self.pull()
+        self.runs_here(report, "Claude Code (the 'claude' command) is not on the PATH")
+        self.assertIn("then pull again", report["factory"]["why_not"])
+
+    def test_a_persons_disable_sticks(self):
+        self.issues(1)
+        self.pull()
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(run.main(["--project", str(self.eng), "factory", "disable"]), 0)
+        self.ready("SLICE-002", self.epic_number())
+        report = self.pull()
+        self.assertFalse(report["factory"]["handed_over"])
+        self.assertEqual(report["factory"]["why_not"], "A person turned the Factory off on this machine. /mach factory start turns it back on.")
+        self.assertEqual(self.runner()["enabled"], False)
+        self.assertEqual(len(self.detached), 1, "only the first pull started a supervisor")
+        self.assertEqual(report["run"], [item["ticket_id"] for item in report["start_now"]])
+
+    def test_after_the_session_ended_the_next_pull_carries_the_ticket_on(self):
+        """A run its session's end stopped left its claim on the cell, fresh for claim_minutes, and nothing new is ready: the next
+        pull does not hold the ticket as a worker's, and starts a supervisor for the work it already owns."""
+        (a,) = self.issues(1)
+        self.pull()
+        ticket, execution = str(a), "x0000000000aa"
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait()
+        ledger = self.ledger()
+        ledger["supervisor"]["executions"][execution] = {"execution_id": execution, "ticket_id": ticket, "slice_id": "SLICE-001", "state": "started",
+                                                         "wrapper_pid": gone.pid, "started_at": "2026-11-24T10:00:00Z", "runner_id": self.runner()["runner_id"]}
+        (self.eng / ".factory/intake/ledger.json").write_text(json.dumps(ledger))
+        home = self.eng / ".factory/local/executions" / execution
+        home.mkdir(parents=True)
+        (home / "session-ended").write_text("2026-11-24T10:05:00Z\n")
+        C = run.claims()
+        C.take(self.eng / ".factory/worktrees" / ticket, "plan", run.execution_holder(execution), C.minutes({}))
+        self.detached.clear()
+        report = self.pull()
+        self.assertNotIn("claimed", [item["rule"] for item in report["waits"]])
+        self.assertEqual((report["factory"]["handed_over"], report["factory"]["supervisor"], report["factory"]["tickets"]), (True, "started", [ticket]))
+        self.assertEqual(len(self.detached), 1)
+        # A claim held by a worker that is still at work keeps holding it.
+        C.take(self.eng / ".factory/worktrees" / ticket, "plan", C.new_holder(), C.minutes({}), take_over=True)
+        self.assertEqual(self.waiting(self.pull())["SLICE-001"]["rule"], "claimed")
+
+    def test_a_disable_with_no_authorization_here_still_sticks(self):
+        self.issues(1)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(run.main(["--project", str(self.eng), "factory", "disable"]), 0)
+        self.assertEqual((json.loads(out.getvalue())["recorded_off"], self.runner()["source"], self.runner()["enabled"]), (True, "local-file", False))
+        report = self.pull()
+        self.assertEqual(report["factory"]["why_not"], "A person turned the Factory off on this machine. /mach factory start turns it back on.")
+        self.assertEqual((self.runner()["enabled"], self.detached), (False, []))
+        # One that cannot be used (written on another machine) is replaced by a valid one saying off.
+        data = json.loads((self.eng / ".factory/local/runner.json").read_text())
+        data["machine"] = "someone-elses-laptop"
+        (self.eng / ".factory/local/runner.json").write_text(json.dumps(data))
+        self.assertEqual(self.runner()["source"], "invalid-file")
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(run.main(["--project", str(self.eng), "factory", "disable"]), 0)
+        self.assertEqual((self.runner()["source"], self.runner()["enabled"]), ("local-file", False))
+
+    def test_a_project_that_keeps_the_factory_to_observing_gets_no_authorization_and_no_hand_over(self):
+        self.issues(1)
+        data = json.loads((self.eng / ".factory/config.json").read_text())
+        data["factory"]["autonomy_ceiling"] = "observe"
+        (self.eng / ".factory/config.json").write_text(json.dumps(data))
+        self.runs_here(self.pull(), "factory.autonomy_ceiling is observe")
+
+    def test_a_running_factory_is_said_even_with_nothing_new_to_hand_it(self):
+        lease = self.eng / ".factory/local/supervisor.json"
+        lease.parent.mkdir(parents=True, exist_ok=True)
+        lease.write_text(json.dumps({"instance": "running", "runner_id": "r", "pid": os.getpid(), "host": supervisor.platform.node(),
+                                     "started_at": "2026-11-24T08:00:00Z", "heartbeat_at": "x", "expires_at": "2099-01-01T00:00:00Z",
+                                     "lifetime": "background", "session_pid": None, "started_by": "factory start"}))
+        report = self.pull()  # nothing is ready
+        self.assertFalse(report["factory"]["handed_over"])
+        self.assertEqual(report["factory"]["already_running"],
+                         {"lifetime": "background", "since": "2026-11-24T08:00:00Z", "pid": os.getpid(), "started_by": "factory start"})
+        self.assertEqual(report["in_words"][0], "A Factory is already running here in the background (started 2026-11-24T08:00:00Z). /mach factory stop stops it.")
+
+    def test_a_dry_run_hands_nothing_over(self):
+        self.issues(2)
+        report = self.pull("--dry-run")
+        self.assertEqual((report["factory"]["handed_over"], report["first_time"], self.detached), (False, False, []))
+        self.assertFalse((self.eng / ".factory/local").exists())
 
 
 if __name__ == "__main__":

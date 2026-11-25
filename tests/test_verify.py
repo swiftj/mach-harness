@@ -20,10 +20,35 @@ TARGETS = ["AC-01", "AC-02", "AC-03", "R1", "R2", "R3", "R4", "R5"]
 NOTE = "Called invite() as a consumer and observed the expected outcome and unchanged seat count."
 
 
+def fake_tools(*names):
+    """A `which` that finds only the named tools."""
+    return lambda name: f"/fake/bin/{name}" if name in names else None
+
+
+def fake_start(code=0, output="A headless browser started and closed."):
+    """A browser start that never runs anything: it records what was asked and answers as told."""
+    calls = []
+
+    def start(argv, cwd, env, timeout):
+        calls.append(list(argv))
+        return code, output
+    start.calls = calls
+    return start
+
+
 class Base(BuildBase):
     def setUp(self):
         super().setUp()
         self.evidence = self.cellroot / "evidence"
+        # No test starts a real browser: by default one "starts" through a Playwright on PATH.
+        self.browser(fake_start(), fake_tools("node", "playwright"))
+
+    def browser(self, start, which=None):
+        for name, value in (("BROWSER_LAUNCH", start), ("BROWSER_WHICH", which or fake_tools("node", "playwright"))):
+            old = getattr(verify, name)
+            setattr(verify, name, value)
+            self.addCleanup(setattr, verify, name, old)
+        return start
 
     def built(self):
         class_template.step(self, "built", Path(self.tmp.name).resolve(), self._built)
@@ -343,6 +368,214 @@ class FinishTest(Base):
         self.put(self.project, {".factory/config.json": json.dumps({"verify": {"required_evidence": {"library": ["api-surface.txt"]}}})})
         self.prove_all()
         self.assertIn("No api-surface.txt was captured", self.v_refused("finish", "LOCAL-001"))
+
+
+SANDBOX = "browserType.launch: Failed to launch chromium because executable doesn't start\nError: spawn EPERM: Operation not permitted\n"
+HEADLESS_SAID = "No browser could start here, so there are no screenshots; this was verified from logs and saved pages."
+
+
+class ClassifyTest(unittest.TestCase):
+    """browser.py names why a browser did not start, in plain words, from the tool's own output."""
+
+    def check(self, code, output, tools=("node", "playwright")):
+        return verify.browser.check("web", Path("/nonexistent"), network_re=verify.command_env.NETWORK_RE,
+                                    launch=fake_start(code, output), which=fake_tools(*tools))
+
+    def test_each_failure_is_named(self):
+        cases = {
+            "browser-missing": (1, "browserType.launch: Executable doesn't exist at /home/u/.cache/ms-playwright/chromium-1/chrome\n"
+                                   "Looks like Playwright was just installed. Please run: npx playwright install"),
+            "sandbox": (1, SANDBOX),
+            "network": (1, "Downloading Chromium\nError: getaddrinfo ENOTFOUND playwright.azureedge.net"),
+            "timed-out": (None, ""),
+            "failed": (1, "something unexpected"),
+        }
+        for reason, (code, output) in cases.items():
+            found = self.check(code, output)
+            self.assertEqual((found["can_capture"], found["reason"]), (False, reason), reason)
+            self.assertTrue(found["words"] and found["at"])
+        self.assertIn("ENOTFOUND", self.check(*cases["network"])["why"], "the tool's own line, as data")
+        self.assertIn("refused to start a browser", self.check(*cases["sandbox"])["words"])
+
+    def test_no_tool_installed(self):
+        found = self.check(0, "", tools=())
+        self.assertEqual((found["can_capture"], found["reason"]), (False, "not-installed"))
+        self.assertEqual([item["tool"] for item in found["tried"]], ["playwright (project-local)", "playwright", "cypress"])
+        self.assertEqual(found["words"], "no tool that can start a browser is installed here")
+
+    def test_the_project_playwright_is_tried_first_and_the_line_is_capped(self):
+        with self.subTest("order"):
+            import tempfile
+            with tempfile.TemporaryDirectory() as folder:
+                (Path(folder) / "node_modules" / "@playwright" / "test").mkdir(parents=True)
+                start = fake_start(1, "x" * 900 + "\nOperation not permitted " + "y" * 900)
+                found = verify.browser.check("web", Path(folder), launch=start, which=fake_tools("node", "playwright"))
+                self.assertEqual([call[0] for call in start.calls], ["/fake/bin/node", "/fake/bin/playwright"])
+                self.assertEqual([item["tool"] for item in found["tried"]], ["playwright (project-local)", "playwright", "cypress"])
+                self.assertLessEqual(len(found["why"]), verify.browser.LINE_LIMIT)
+
+
+class ScreenEvidenceTest(Base):
+    """A web slice needs screenshots when a browser can start here, and is verified without them when none can."""
+
+    def setUp(self):
+        super().setUp()
+        self.built()
+
+    def web(self, config=None, app_type="web"):
+        cell = self.cell_json()
+        cell["app_type"] = app_type
+        (self.cellroot / "cell.json").write_text(json.dumps(cell))
+        if config is not None:
+            self.put(self.project, {".factory/config.json": json.dumps({"verify": config})})
+        git(self.project, "add", "-A")
+        git(self.project, "commit", "-q", "-m", "settings", "--allow-empty")
+
+    def prove_all(self):
+        for target in TARGETS:
+            self.record(target)
+
+    def summary(self):
+        return json.loads((self.evidence / "summary.json").read_text())
+
+    def test_screenshots_stay_the_default_when_a_browser_starts(self):
+        self.web()
+        started = self.v_ok("start", "LOCAL-001")
+        self.assertEqual((started["evidence_mode"], started["browser_check"]["can_capture"]), ("screen", True))
+        self.assertTrue(any(item.startswith("screenshot") for item in started["required_evidence"]))
+        self.assertNotIn("capture_instead", started)
+        self.prove_all()
+        self.capture("page.html", "<p>Invited</p>")
+        out = self.v_refused("finish", "LOCAL-001")
+        self.assertIn("No screenshot was captured", out)
+        self.assertNotIn("nothing goes back to the builder", out)
+        self.capture("ac-01.png", "png")
+        self.capture("flow.webm", "video")
+        done = self.v_ok("finish", "LOCAL-001")
+        self.assertEqual(done["status"], "PASS")
+        self.assertNotIn("evidence", done)
+        self.assertEqual(self.summary()["evidence_mode"]["mode"], "screen")
+
+    def test_no_browser_here_falls_back_and_passes(self):
+        self.web()
+        self.browser(fake_start(1, SANDBOX))
+        started = self.v_ok("start", "LOCAL-001")
+        self.assertEqual((started["evidence_mode"], started["browser_check"]["reason"]), ("headless", "sandbox"))
+        self.assertIn("Do not try to start a browser", started["capture_instead"])
+        self.assertIn("without a browser", started["required_evidence"][0])
+        self.assertIn("without a screen", started["next"])
+        status = self.v_ok("status", "LOCAL-001")
+        self.assertEqual(status["evidence_mode"], "headless")
+        self.assertIn("capture_instead", status)
+        self.prove_all()
+        self.capture("ac-01-page.html", "<p>Invited 3 of 5</p>")
+        done = self.v_ok("finish", "LOCAL-001")
+        self.assertEqual((done["status"], done["evidence_mode"], done["evidence"]), ("PASS", "headless", HEADLESS_SAID))
+        summary = self.summary()
+        self.assertEqual((summary["evidence_mode"]["mode"], summary["evidence_mode"]["reason"], summary["evidence_mode"]["said"]),
+                         ("headless", "no-capture", HEADLESS_SAID))
+        self.assertEqual(summary["browser_check"]["reason"], "sandbox")
+        self.assertEqual(self.cell_json()["stage"], "verified")
+
+    def test_the_fallback_still_needs_a_file_and_says_what_to_capture(self):
+        self.web()
+        self.browser(fake_start(1, SANDBOX))
+        self.v_ok("start", "LOCAL-001")
+        self.prove_all()  # consumer-run.log is captured by the records: remove it to leave nothing headless
+        for name in ("consumer-run.log",):
+            (self.evidence / name).unlink()
+        self.capture("notes.md", "not evidence of the right kind")
+        out = self.v_refused("finish", "LOCAL-001")
+        self.assertIn("INCOMPLETE_EVIDENCE", out)
+        self.assertIn("No record of driving the app without a browser", out)
+        self.assertIn("*.html", out)
+        self.assertIn("This is the verifier's own next step; nothing goes back to the builder.", out)
+        self.assertNotIn("screenshot was captured", out)
+        self.assertFalse((self.evidence / "summary.json").exists())
+        self.assertEqual(self.cell_json()["stage"], "built")
+
+    def test_a_browser_that_stops_starting_during_the_run(self):
+        self.web()
+        self.assertEqual(self.v_ok("start", "LOCAL-001")["evidence_mode"], "screen")
+        self.browser(fake_start(1, SANDBOX))
+        self.prove_all()
+        done = self.v_ok("finish", "LOCAL-001")  # finish sees no screenshot, checks again, and applies the fallback
+        self.assertEqual((done["status"], done["evidence"]), ("PASS", HEADLESS_SAID))
+        self.assertEqual(self.summary()["browser_check"]["can_capture"], False)
+
+    def test_browser_check_during_the_run_records_the_answer(self):
+        self.web()
+        self.v_ok("start", "LOCAL-001")
+        self.browser(fake_start(None, ""))
+        checked = self.v_ok("browser-check", "LOCAL-001")
+        self.assertEqual((checked["status"], checked["evidence_mode"], checked["browser_check"]["reason"]), ("NO_SCREEN", "headless", "timed-out"))
+        self.assertIn("Capture instead", checked["capture_instead"])
+        self.assertEqual(json.loads((self.evidence / "results.json").read_text())["browser_check"]["reason"], "timed-out")
+
+    def test_require_waits_for_a_person_and_never_goes_to_the_builder(self):
+        self.web({"screen_evidence": "require"})
+        self.browser(fake_start(1, SANDBOX))
+        out = self.v_refused("start", "LOCAL-001")
+        self.assertIn("verify.screen_evidence is 'require'", out)
+        self.assertIn("not sent back to the builder: it waits for a person", out)
+        self.assertIn("set verify.screen_evidence to 'prefer'", out)
+        self.assertFalse((self.evidence / "results.json").exists())
+        # A browser that starts at first and stops during the run: still screenshots, and the same words.
+        self.browser(fake_start())
+        self.v_ok("start", "LOCAL-001")
+        self.browser(fake_start(1, SANDBOX))
+        self.prove_all()
+        out = self.v_refused("finish", "LOCAL-001")
+        self.assertIn("No screenshot was captured", out)
+        self.assertIn("it waits for a person", out)
+        self.assertEqual(self.cell_json()["stage"], "built")
+
+    def test_never_tries_no_browser(self):
+        self.web({"screen_evidence": "never"})
+        start = self.browser(fake_start())
+        started = self.v_ok("start", "LOCAL-001")
+        self.assertEqual(start.calls, [])
+        self.assertEqual(started["evidence_mode"], "headless")
+        self.assertNotIn("browser_check", started)
+        self.prove_all()
+        done = self.v_ok("finish", "LOCAL-001")
+        self.assertEqual(start.calls, [])
+        self.assertEqual(done["status"], "PASS")
+        self.assertIn("settings say not to capture the screen", done["evidence"])
+
+    def test_required_evidence_in_the_settings_still_wins(self):
+        self.web({"required_evidence": {"web": ["*.log"]}, "screen_evidence": "require"})
+        start = self.browser(fake_start(1, SANDBOX))
+        started = self.v_ok("start", "LOCAL-001")
+        self.assertEqual(start.calls, [])
+        self.assertEqual(started["required_evidence"], ["*.log (*.log)"])
+        self.prove_all()
+        done = self.v_ok("finish", "LOCAL-001")
+        self.assertEqual(done["status"], "PASS")
+        self.assertEqual(self.summary()["evidence_mode"]["reason"], "setting")
+
+    def test_desktop_and_mobile_are_treated_the_same(self):
+        for app_type, tool in (("desktop", "screencapture"), ("mobile", "xcrun")):
+            with self.subTest(app_type):
+                self.web(app_type=app_type)  # a verified cell may be verified again
+                start = self.browser(fake_start(1, "could not create image from display"), fake_tools(tool))
+                started = self.v_ok("start", "LOCAL-001")
+                self.assertEqual(started["evidence_mode"], "headless")
+                if app_type == "mobile" or sys.platform == "darwin":
+                    self.assertEqual(start.calls[0][0], f"/fake/bin/{tool}")
+                self.prove_all()
+                done = self.v_ok("finish", "LOCAL-001")
+                self.assertEqual(done["status"], "PASS")
+                self.assertIn("Nothing here could capture the app's screen", done["evidence"])
+
+    def test_other_app_types_are_unchanged(self):
+        start = self.browser(fake_start())
+        started = self.v_ok("start", "LOCAL-001")
+        self.assertEqual(start.calls, [])
+        self.assertNotIn("evidence_mode", started)
+        self.prove_all()
+        self.v_ok("finish", "LOCAL-001")
+        self.assertNotIn("evidence_mode", self.summary())
 
 
 class AutomaticCheckTest(Base):

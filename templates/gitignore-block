@@ -20,6 +20,8 @@
 # Factory evals: each run's results and comparisons stay on this machine. The cases (.factory/evals/cases/) are shared.
 .factory/evals/runs/
 .factory/mach-backup-*/
+# Package caches MACH uses for the project's commands when a tool's usual cache cannot be written (it also has its own .gitignore).
+.factory/cache/
 # Python's cache, written when a MACH script runs.
 .claude/skills/mach-*/scripts/__pycache__/
 .factory/bin/__pycache__/

@@ -269,14 +269,9 @@ def execute(repo: Repo, kind: str, command: Optional[str], timeouts: Dict[str, i
         argv = shlex.split(command)
     except ValueError as exc:
         return {**result, "status": "fail", "output_tail": f"Cannot parse the command: {exc}"}
-    env = dict(os.environ)
-    # The project's own commands never leave Python byte code in the checkout: a cached file can outlive the source it was
-    # made from (rewritten at the same size within the same second), and a later run would then test the old code. A command
-    # that needs byte code written says so itself, with a leading PYTHONDONTWRITEBYTECODE= of its own.
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    while argv and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", argv[0]):  # leading VAR=value, as in a shell
-        key, value = argv.pop(0).split("=", 1)
-        env[key] = value
+    # One rule for every station's project commands (command_env.py): no Python byte code left in the checkout, a package
+    # cache that cannot be written pointed into .factory/cache/, commands.env, and a leading VAR=value of the command's own.
+    env, argv = command_env_module().environment(repo.project, repo.project, argv)
     if not argv or shutil.which(argv[0]) is None and not (repo.project / argv[0]).is_file():
         return {**result, "status": "unavailable", "output_tail": f"'{argv[0] if argv else command}' is not installed or not on PATH."}
     started = time.monotonic()
@@ -287,7 +282,11 @@ def execute(repo: Repo, kind: str, command: Optional[str], timeouts: Dict[str, i
     except OSError as exc:
         return {**result, "status": "unavailable", "output_tail": str(exc)}
     tail = (done.stdout + ("\n" + done.stderr if done.stderr else "")).strip()[-2000:]
-    return {**result, "status": "pass" if done.returncode == 0 else "fail", "exit_code": done.returncode, "seconds": round(time.monotonic() - started, 1), "output_tail": tail}
+    ran = {**result, "status": "pass" if done.returncode == 0 else "fail", "exit_code": done.returncode, "seconds": round(time.monotonic() - started, 1), "output_tail": tail}
+    hint = command_env_module().network_hint(done.stdout + "\n" + done.stderr) if done.returncode != 0 else None
+    if hint:
+        ran["hint"] = hint
+    return ran
 
 
 class Card:
@@ -479,6 +478,24 @@ try:
 except Exception:  # noqa: BLE001
     lifecycle = None
 
+# Whether a report must be run again: the one rule the routing sheet and the build's start use too.
+try:
+    import audit_state  # noqa: E402
+except Exception:  # noqa: BLE001
+    audit_state = None
+
+# The environment of the project's commands: a shared helper with the intent station too (its path is added above).
+try:
+    import command_env  # noqa: E402
+except Exception:  # noqa: BLE001
+    command_env = None
+
+
+def command_env_module() -> Any:
+    if command_env is None:
+        raise AuditError("The intent station's command_env.py is not installed beside this skill, so the project's commands cannot be run.")
+    return command_env
+
 
 def adr_notes(repo: Repo) -> List[str]:
     """Notes about the project's architecture decisions (ADRs). A note never changes the score or the tier, and is never a blocker."""
@@ -565,6 +582,10 @@ def cmd_run(project: Path, args: argparse.Namespace) -> int:
         "fixed": fixed,
         "notes": adr_notes(repo),
     }
+    if command_env is not None:  # a package cache MACH pointed elsewhere, and a refused network: said once, in the notes
+        if command_env.moved(project):
+            report["caches"] = command_env.moved(project)
+        report["notes"] = command_env.notices(project) + [runs[kind]["hint"] for kind in runs if runs[kind].get("hint")] + report["notes"]
     path = project / REPORT
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -604,23 +625,26 @@ def cmd_gate(project: Path, args: argparse.Namespace) -> int:
         result["reason"] = "No readable audit report. Run the audit first."
         print(json.dumps(result, indent=2))
         return 1
+    if audit_state is None:
+        raise AuditError("The intent station's audit_state.py is not installed beside this skill, so the report cannot be judged.")
     repo = Repo(project)
-    maximum = args.max_age_days if args.max_age_days is not None else repo.audit_config.get("max_age_days", 7)
+    due = None
     try:
-        age = (datetime.now(timezone.utc) - datetime.fromisoformat(report["timestamp"])).total_seconds() / 86400
-    except (KeyError, ValueError):
-        age = float("inf")
-    tier = report.get("readiness_tier")
-    result.update({"tier": tier, "score": report.get("readiness_score"), "human_review_required": tier == "Silver"})
-    if report.get("head") != repo.head:
-        result["reason"] = "The audit report is for a different commit than the one checked out. Run the audit again."
-    elif age > maximum:
-        result["reason"] = f"The audit report is {int(age)} days old (limit {maximum}). Run the audit again."
-    elif tier not in ("Gold", "Silver"):
+        due = json.loads((project / audit_state.DUE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    judged = audit_state.judge(report, repo.head, due, audit_state.max_age_days(repo.config, args.max_age_days))
+    tier = report.get("readiness_tier") if isinstance(report, dict) else None
+    result.update({"tier": tier, "score": report.get("readiness_score") if isinstance(report, dict) else None, "human_review_required": tier == "Silver"})
+    if judged["state"] in ("stale", "missing"):
+        result["reason"] = judged["reason"]
+    elif judged["state"] == "bronze":
         result["reason"] = "The repository is Bronze: autonomous work is blocked until it is hardened. " + " ".join(report.get("blockers") or [])
     else:
         result["allowed"] = True
         result["reason"] = "Full autonomy." if tier == "Gold" else "Autonomous build is allowed, but a person must review before merge."
+        if judged.get("note"):
+            result["note"] = judged["note"]
     print(json.dumps(result, indent=2))
     return 0 if result["allowed"] else 1
 
@@ -638,7 +662,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument(f"--{kind}-cmd", help=f"the {kind} command to use instead of the detected one")
     p.set_defaults(func=cmd_run)
     p = sub.add_parser("gate", help="say whether autonomous work may proceed, from the last report")
-    p.add_argument("--max-age-days", type=int, help="oldest acceptable report (default: audit.max_age_days in config, else 7)")
+    p.add_argument("--max-age-days", type=int, help="oldest acceptable report (default: audit.max_age_days in config, else 30)")
     p.set_defaults(func=cmd_gate)
     return parser
 

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Notifications (M10): one message on each channel that is on when a ticket is waiting for a person.
+"""Notifications (M10, M23 3.3): one message on each channel that is on when a ticket is waiting for a person.
 
-Two channels, each off until a person turns it on on this machine: a webhook (Slack or Discord) and, on
+Two channels: a webhook (Slack or Discord), off until a person stores its address on this machine, and, on
 macOS only, a Notification Center banner shown with /usr/bin/osascript (no shell; the words are arguments
-to a fixed script, never part of it). Each channel keeps its own attempts and give-up, and fails alone.
+to a fixed script, never part of it). The banner is on unless a person turns it off (notify banner off) or
+the project forbids notifications. Each channel keeps its own attempts and give-up, and fails alone.
 
 The webhook's address is a secret. It lives only in .factory/local/notify.json, private to this user
 (mode 0600), git-ignored with the rest of .factory/local/, and bound to this machine and this folder.
@@ -15,10 +16,11 @@ The address is never printed, logged, put in an event or an exception message, o
 line. Reports show its host only.
 
 A message is built only from fixed words and identifiers: the label a person chose (or the folder's
-name), the ticket ID, a fixed sentence for the kind of wait, and the command to run. It carries no link
-and can approve, start or change nothing.
+name), the ticket ID, a fixed sentence for the kind of wait, the command to run, and the Factory Floor
+as the other place to decide. It carries no link and can approve, start or change nothing.
 
-The same file holds the banner switch; it may hold the address, the switch or both.
+The same file holds the banner switch; it may hold the address, the switch or both. With no file, the
+banner is on and the webhook off.
 
 Once per wait, per channel: a wait is keyed by ticket and stage in .factory/local/notify-state.json,
 recorded before the message is sent. A failure is recorded with its HTTP status or kind of error, tried again on the next
@@ -187,7 +189,20 @@ def default_label(root: Path) -> str:
 
 CHANNELS = ("webhook", "banner")
 NO_ADDRESS = "No address is stored on this machine for this project."
-NO_BANNER = "The banner is not turned on here."
+NO_BANNER = "A person turned the banner off here (notify banner on turns it back on)."
+NOT_YET = ("The banner comes on by itself once the Factory works on this machine (after the first /mach pull hands it work); "
+           "notify banner on turns it on now.")
+FLOOR = "the Factory Floor"
+DEFAULT = object()
+
+
+def factory_on(root: Path) -> bool:
+    """Whether the Factory works on this machine for this folder: then a ticket can wait with nobody watching, and the banner
+    is on by default (M23 3.3). Without it, a person is in the conversation already. Never raises."""
+    try:
+        return policy_module.running(policy_module.read(Path(root)))
+    except Exception:  # noqa: BLE001
+        return False
 NOT_A_MAC = "Banners are shown only on macOS, and this machine is not a Mac."
 FORBIDDEN_WHY = "This project's settings forbid notifications (factory.notifications is false)."
 
@@ -257,8 +272,8 @@ def read(root: Path, config: Mapping[str, Any]) -> Dict[str, Any]:
     data, problem = load_setting(root)
     if problem:
         return off(problem, problem, problem)
-    if data is None:
-        return off(NO_ADDRESS, NO_BANNER)
+    if data is None:  # nothing stored: no webhook, and the banner's default
+        data = {"label": default_label(root), "created_at": None}
     url = data.get("url")
     if url is None:
         webhook = {"on": False, "url": None, "host": None, "why": NO_ADDRESS}
@@ -266,13 +281,18 @@ def read(root: Path, config: Mapping[str, Any]) -> Dict[str, Any]:
         webhook = {"on": False, "url": None, "host": None, "why": "The stored address is not one MACH sends to (https, a host, no user name or password)."}
     else:
         webhook = {"on": True, "url": url, "host": host_of(url), "why": None}
-    switch = data.get("banner", False)
+    switch = data.get("banner", DEFAULT)  # on unless a person turned it off here
+    if switch is DEFAULT:
+        switch = factory_on(root)
+        why_off = NOT_YET
+    else:
+        why_off = NO_BANNER
     if type(switch) is not bool:
         banner = {"on": False, "why": "The stored banner switch is not valid."}
     elif not switch:
-        banner = {"on": False, "why": NO_BANNER}
+        banner = {"on": False, "why": why_off}
     elif system_name() != "Darwin":
-        banner = {"on": False, "why": NOT_A_MAC + " The stored switch is ignored here."}
+        banner = {"on": False, "why": NOT_A_MAC + (" The stored switch is ignored here." if type(data.get("banner")) is bool else "")}
     else:
         banner = {"on": True, "why": None}
     return {"on": webhook["on"] or banner["on"], "label": data["label"], "forbidden_by_project": False, "why": None,
@@ -302,7 +322,8 @@ def write_setting(root: Path, data: Dict[str, Any], label: Optional[str]) -> Dic
         raise NotifyError("The notification setting or its folder is a symbolic link; nothing was written.")
     if policy_module.tracked_by_git(root, path):
         raise NotifyError("The notification setting is tracked by Git; nothing was written over it. Remove it from Git first.")
-    kept = {key: data[key] for key in ("url", "banner") if key in data and data[key] not in (None, False)}
+    # The address when there is one, and the banner switch as a person last set it (with none stored, the banner is on).
+    kept = {**({"url": data["url"]} if data.get("url") else {}), **({"banner": data["banner"]} if type(data.get("banner")) is bool else {})}
     if not kept:
         with contextlib.suppress(FileNotFoundError):
             path.unlink()
@@ -317,8 +338,16 @@ def write_setting(root: Path, data: Dict[str, Any], label: Optional[str]) -> Dic
     return stored
 
 
+def banner_on(root: Path, stored: Mapping[str, Any]) -> bool:
+    """Whether the banner shows on this machine with this stored setting: on a Mac, when a person turned it on, or by default once
+    the Factory works here; never when a person turned it off."""
+    if system_name() != "Darwin" or stored.get("banner") is False:
+        return False
+    return stored.get("banner") is True or factory_on(root)
+
+
 def store(root: Path, config: Mapping[str, Any], url: str, label: Optional[str]) -> Dict[str, Any]:
-    """Check the webhook address and store it for this machine and folder, beside the banner switch if that is on. Sends nothing."""
+    """Check the webhook address and store it for this machine and folder, beside the banner switch. Sends nothing."""
     if forbidden(root, config):
         raise NotifyError(FORBIDDEN)
     problem = check_address(url)
@@ -326,7 +355,7 @@ def store(root: Path, config: Mapping[str, Any], url: str, label: Optional[str])
         raise NotifyError(problem + " Nothing was stored.")
     label = clean_label(label) if label is not None else None
     stored = write_setting(root, {**current(root), "url": url}, label)
-    return {"stored": True, "host": host_of(url), "label": stored["label"], "sent": False, "banner": bool(stored.get("banner")),
+    return {"stored": True, "host": host_of(url), "label": stored["label"], "sent": False, "banner": banner_on(root, stored),
             "note": "The address is stored on this machine only. Delete the file or variable you put it in."}
 
 
@@ -358,7 +387,7 @@ def remove(root: Path) -> Dict[str, Any]:
         with contextlib.suppress(FileNotFoundError):
             path.unlink()
         stored = {}
-    banner = bool(stored.get("banner"))
+    banner = banner_on(root, stored) and not forbidden(root, {})
     return {"removed": existed, "webhook": "off", "banner_still_on": banner,
             "still_on": ["banner"] if banner else [], "note": "The macOS banner is still on here; notify banner off turns it off." if banner else "Nothing is on here now."}
 
@@ -487,8 +516,13 @@ def show_banner(body: str, title: str, subtitle: str) -> Tuple[bool, Optional[st
         return False, "error"
 
 
+def where(command: str) -> str:
+    """Both places a person can decide: the command in Claude Code, and the Factory Floor."""
+    return f"In Claude Code: {command}, or on {FLOOR}."
+
+
 def message(label: str, ticket_id: str, middle: str, command: str) -> str:
-    return f"MACH · {label}: {ticket_id} is waiting for a person.\n{middle}\nIn Claude Code: {command}"
+    return f"MACH · {label}: {ticket_id} is waiting for a person.\n{middle}\n{where(command)}"
 
 
 def trial_message(label: str, command: str) -> str:
@@ -497,7 +531,7 @@ def trial_message(label: str, command: str) -> str:
 
 def banner_texts(label: str, ticket_id: str, middle: str, command: str) -> Tuple[str, str, str]:
     """(body, title, subtitle): the webhook message's words, split the way a banner shows them."""
-    return f"{middle}\nIn Claude Code: {command}", f"MACH · {label}", f"{ticket_id} is waiting for a person."
+    return f"{middle}\n{where(command)}", f"MACH · {label}", f"{ticket_id} is waiting for a person."
 
 
 def trial_banner_texts(label: str, command: str) -> Tuple[str, str, str]:

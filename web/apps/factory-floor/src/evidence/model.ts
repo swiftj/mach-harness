@@ -12,8 +12,11 @@
  *
  * Words for people live here too (`*_WORDS`, `reasonWords`), so the tests pin them.
  */
-import type { ArtifactEntry, ArtifactRefusal, CellEvidence, CellEvidenceCheck, MockFacts, MockRole } from "../live/observer";
+import type { ArtifactEntry, ArtifactRefusal, CellEvidence, CellEvidenceCheck, EvidenceNotKept, MockFacts, MockRole } from "../live/observer";
 import type { ArtifactState, CellState, VerificationCheck, VerificationState } from "../sim";
+import { NOT_KEPT_FILE_WORDS, NOT_KEPT_WORDS, notKeptDetail } from "./notKept";
+
+export { NOT_KEPT_WORDS, NOT_KEPT_FILE_WORDS, notKeptDetail } from "./notKept";
 
 export type FileClass = "image" | "video" | "text" | "none";
 export type FileState = "ready" | "withheld" | "missing" | "changed";
@@ -21,7 +24,7 @@ export type Integrity = "match" | "mismatch" | "missing" | "unchecked" | "simula
 export type EvidenceSource = "live" | "simulation";
 
 /** Why a file is not shown: the content route's reason codes, and what the player itself knows. */
-export type EvidenceReason = ArtifactRefusal | "missing" | "not-catalogued";
+export type EvidenceReason = ArtifactRefusal | "missing" | "not-catalogued" | "not-kept";
 
 export interface EvidenceFile {
   /** Unique within its check: the catalog id, the scene artifact id, or a position. */
@@ -101,6 +104,18 @@ export interface EvidenceModel {
   readonly readFrom: "cell" | "archive" | "both" | "simulation" | null;
   /** The observer's note on what verified evidence is; null in the simulation. */
   readonly note: string | null;
+  /** The cell was cleaned up and its files were not kept (cleanup.archive); null when they are there, and in the simulation. */
+  readonly notKept?: EvidenceNotKept | null;
+}
+
+/** What the player says of files not kept after cleanup: the fact, then the run record's reason when it says more. */
+export function notKeptWords(notKept: EvidenceNotKept): { readonly title: string; readonly detail: string | null } {
+  return { title: NOT_KEPT_WORDS, detail: notKeptDetail(notKept.reason) };
+}
+
+/** The banner above a file: its integrity's, or, for a file not kept after cleanup, that fact instead of "not there". */
+export function fileBanner(file: Pick<EvidenceFile, "integrity" | "reason">): string | null {
+  return file.reason === "not-kept" ? NOT_KEPT_FILE_WORDS : INTEGRITY_WORDS[file.integrity].banner;
 }
 
 export interface EvidenceSelection {
@@ -172,6 +187,8 @@ export function reasonWords(reason: EvidenceReason, cls: FileClass = "none"): st
       return "The archive holds more than one file of this name, so neither is served.";
     case "missing":
       return "The file is not there to read.";
+    case "not-kept":
+      return NOT_KEPT_FILE_WORDS;
     case "not-catalogued":
       return "The observer's catalog has no entry for this file: no record it reads names it, or it is not there. It is not requested.";
     case "unavailable":
@@ -309,6 +326,7 @@ function readFromOf(files: readonly EvidenceFile[]): EvidenceModel["readFrom"] {
  */
 export function buildLiveModel(reply: CellEvidence, options: { readonly sessionMedia?: boolean | null } = {}): EvidenceModel {
   const mediaEnabled = reply.evidenceMedia ?? options.sessionMedia ?? false;
+  const notKept = reply.notKept ?? null;
   const byId = new Map<string, ArtifactEntry>();
   for (const a of reply.artifacts) byId.set(a.id, a);
   const checks: EvidenceCheck[] = [];
@@ -321,7 +339,9 @@ export function buildLiveModel(reply: CellEvidence, options: { readonly sessionM
       const contentAccess = ev.contentAccess ?? entry?.contentAccess ?? null;
       const path = ev.file || entry?.path || "";
       const cls = classOf(entry?.mediaType ?? null, path, contentAccess);
-      const st = stateOf({ artifactId: ev.artifactId, integrity, contentAccess, accessReason: entry?.accessReason ?? null, cls, mediaEnabled });
+      const known = stateOf({ artifactId: ev.artifactId, integrity, contentAccess, accessReason: entry?.accessReason ?? null, cls, mediaEnabled });
+      // The cell was cleaned up with no archive kept: a file not there was not kept, which is said as such.
+      const st = notKept && known.state === "missing" ? { ...known, reason: "not-kept" as const } : known;
       const proves = entry?.targets?.length ? entry.targets.map((t) => t.id) : [k.targetId];
       return {
         key: ev.artifactId ?? `n${i}`,
@@ -350,7 +370,7 @@ export function buildLiveModel(reply: CellEvidence, options: { readonly sessionM
     checks.push({ key: `${runKey}/${k.targetId}`, id: k.targetId, kind: k.targetKind, result: k.result, round: k.round, visitId: k.visitId, atMs, files, runKey, mock: k.mock ?? null });
   }
   const runs = groupRuns(checks);
-  return { ticket: reply.ticketId, source: "live", runs, mediaEnabled, readFrom: readFromOf(checks.flatMap((c) => c.files)), note: reply.note };
+  return { ticket: reply.ticketId, source: "live", runs, mediaEnabled, readFrom: readFromOf(checks.flatMap((c) => c.files)), note: reply.note, notKept };
 }
 
 /** The path a simulated check's evidence names (`131:evidence/x.png`), without the ticket. */

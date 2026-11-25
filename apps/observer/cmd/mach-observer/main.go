@@ -1,10 +1,13 @@
-// mach-observer is the read-only local observer behind the MACH Factory Floor. It follows the
-// Factory's own files, keeps a redacted index of what it saw under .factory/local/observer/, and
-// serves that index and a live event stream on the loopback interface.
+// mach-observer is the local observer behind the MACH Factory Floor. It follows the Factory's own
+// files, keeps a redacted index of what it saw under .factory/local/observer/, and serves that index
+// and a live event stream on the loopback interface.
 //
-// It writes nothing outside its own index folder, takes no lock MACH uses, runs no MACH command
-// and starts no process. It is started by a skill, never by a MACH command, and prints the
-// one-time link; it does not open a browser itself (that would need to start a process).
+// It writes nothing outside its own index folder and takes no lock MACH uses. The one thing it runs
+// is MACH's own run.py, through internal/act and with a fixed argument vector, for four requests a
+// person makes in the Factory Floor: the "Needs you" list (decide --json), a decision on one ticket
+// in it (decide do ... --via=floor), whether a Factory runs here (factory status) and the stop
+// (factory stop). It never enables, starts or dispatches work. It is started by a skill, never by
+// a MACH command, and prints the one-time link; it does not open a browser itself.
 package main
 
 import (
@@ -29,6 +32,7 @@ import (
 	"syscall"
 	"time"
 
+	"mach/observer/internal/act"
 	"mach/observer/internal/artifact"
 	"mach/observer/internal/ingest"
 	"mach/observer/internal/lock"
@@ -91,6 +95,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	port := flags.Int("port", 0, "the loopback port to listen on (default: a free one)")
 	memory := flags.Int("memory-events", store.DefaultMaxMemory, "how many recent events to hold in memory and serve by cursor")
 	showVersion := flags.Bool("version", false, "print the MACH release this program was built for, and exit")
+	machRun := flags.String("mach-run", "", "the run skill's main script of MACH, for decisions and the stop in the Factory Floor (default: beside this program's MACH, then the project's install)")
+	python := flags.String("python", "", "the Python interpreter that runs MACH (default: python3 on PATH)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -173,10 +179,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		defer os.Remove(path) // a stale link must not outlive the observer
 	}
 	done := make(chan struct{})
-	srv := server.New(server.Options{Root: root, Guard: guard, Log: feedLog, Projector: proj, Catalog: artifact.New(root),
-		Ingest: ingestSource{loop}, Factory: factorySource{root}, UI: webui.Handler(), Logger: logger, Done: done, LinkFile: linkFile}).HTTPServer()
+	srvOpts := server.Options{Root: root, Guard: guard, Log: feedLog, Projector: proj, Catalog: artifact.New(root),
+		Ingest: ingestSource{loop}, Factory: factorySource{root}, UI: webui.Handler(), Logger: logger, Done: done, LinkFile: linkFile}
+	runner, why := actor(root, indexDir, *machRun, *python)
+	if runner != nil {
+		srvOpts.Act = runner
+	}
+	srv := server.New(srvOpts).HTTPServer()
 
-	fmt.Fprintf(stdout, "MACH Factory Floor observer for %s (read-only)\n", filepath.Base(root))
+	fmt.Fprintf(stdout, "MACH Factory Floor observer for %s\n", filepath.Base(root))
+	if runner != nil {
+		fmt.Fprintf(stdout, "Decisions in the Factory Floor are recorded by %s.\n", runner.Script())
+	} else {
+		fmt.Fprintf(stdout, "Decisions cannot be made in the Factory Floor here (%s); it shows the commands to run in Claude Code.\n", why)
+	}
 	fmt.Fprintf(stdout, "Open: %s\n", guard.StartURL())
 	if linkFile != "" {
 		fmt.Fprintf(stdout, "The link works once. A fresh link for another browser is kept in %s. Press Ctrl+C to stop.\n", linkFile)
@@ -220,6 +236,29 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	return nil
+}
+
+// actor finds MACH's run.py and the interpreter for the Floor's decisions and stop. None in a
+// project with no .factory folder (nothing waits there, and the observer keeps no folder of its
+// own to stage answers in), or when either is not found: the Floor then shows commands to copy.
+func actor(root, indexDir, explicit, python string) (*act.Runner, string) {
+	if indexDir == "" {
+		return nil, "this project has no .factory folder"
+	}
+	exe, _ := os.Executable()
+	found, err := act.LocateScript(explicit, exe, root)
+	if err != nil {
+		return nil, "MACH was not found beside this program or in the project"
+	}
+	interpreter, err := act.LocatePython(python)
+	if err != nil {
+		return nil, err.Error()
+	}
+	runner, err := act.New(act.Config{Python: interpreter, Script: found.Script, Project: root, Scratch: indexDir})
+	if err != nil {
+		return nil, err.Error()
+	}
+	return runner, ""
 }
 
 // Files in the observer's folder that let a browser survive a restart.

@@ -135,9 +135,15 @@ func (s *Server) evidence(w http.ResponseWriter, r *http.Request) {
 	if mine == nil {
 		mine = []artifact.Entry{}
 	}
+	// A finished ticket whose cell folder is gone and whose archive cleanup did not keep: said plainly,
+	// with the run record's reason, never as an error or an empty list with nothing said.
+	var notKept *artifact.NotKept
+	if len(mine) == 0 {
+		notKept = artifact.NotKeptAt(s.opts.Root, t)
+	}
 	s.view(w, func(st *project.State) (int, Envelope) {
 		c := st.Cells[t]
-		if c == nil && len(mine) == 0 {
+		if c == nil && len(mine) == 0 && notKept == nil {
 			return http.StatusNotFound, fail(KindNotFound, "No such cell has been seen.")
 		}
 		checks := []map[string]any{}
@@ -202,7 +208,7 @@ func (s *Server) evidence(w http.ResponseWriter, r *http.Request) {
 					"visit_id": run.visit, "at": nil, "evidence": files, "basis": "results.json", "mock": mockView(m)})
 			}
 		}
-		return http.StatusOK, ok(map[string]any{"ticket_id": t, "artifacts": mine, "checks": checks, "settings": set, "cursor": s.cursor(st.Pos),
+		return http.StatusOK, ok(map[string]any{"ticket_id": t, "artifacts": mine, "checks": checks, "settings": set, "cursor": s.cursor(st.Pos), "not_kept": notKept,
 			"note": "verified evidence is a file results.json names with a matching hash; prose is written by an agent and is never proof"})
 	})
 }
@@ -494,7 +500,7 @@ func freeTextPolicy() map[string]any {
 		"catalog_fields": append([]map[string]any{
 			{"route": "/api/v1/cells/{ticket}/evidence", "path": "checks[].mock.note", "from": "results.json mock_records.<id>.note", "max": redact.MaxText},
 			{"route": "/api/v1/cells/{ticket}/evidence", "path": "checks[].mock.differences[]", "from": "results.json mock_records.<id>.differences[]", "max": redact.MaxText},
-		}, decisionFreeText...),
+		}, append(append([]map[string]any(nil), decisionFreeText...), needsFreeText...)...),
 		"render": "text only; never markup",
 	}
 }

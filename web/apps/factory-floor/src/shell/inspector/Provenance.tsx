@@ -1,17 +1,20 @@
 /**
  * The record behind a selected entity, for every kind (contract sections 7 and 8): who stands behind
- * it (authoritative, observed, reconstructed; the simulation's are simulated), how its times are
- * known (measured to the millisecond or second, arrival time, bounded, unknown), the id of the event
- * that last set it with "Go to event", the fields that apply but are not recorded ("Not recorded",
- * never 0 or blank), and the fields the observer filled by inference ("read from its label").
+ * it (authoritative, observed, reconstructed; the simulation's are simulated), the id of the event
+ * that last set it, the fields that apply but are not recorded ("Not recorded", never 0 or blank),
+ * and the fields the observer filled by inference ("read from its label").
+ *
+ * Its start and end times are not repeated here: the header and the anatomy show them, and the
+ * evidence shows each record's time. A time a record carried needs no note; only a start or end that
+ * was not recorded, or that the observer placed or bounded, is said ("Times").
  *
  * The simulation keeps the M6.0 telemetry class of its events (exists, derivable, missing): it says
  * what MACH would know today, which is a different question from where a real value came from.
  */
 import { EVENT_CATALOG, findAgent, refKind, sourceRuntimeOf, streamObservationOf, type AnyRef, type AnySimEvent, type EntityMeta, type Scene } from "../../sim";
 import { useScene, useSceneStore } from "../../scene";
-import { AuthorityBadge, Facts, Mono, precisionWords, Section, TelemetryBadge, useEntityEvents } from "./parts";
-import { runtimeStateWords } from "./words";
+import { AuthorityBadge, Facts, Mono, Section, TelemetryBadge, useEntityEvents } from "./parts";
+import { recordTimesWords, runtimeStateWords } from "./words";
 
 const FIELD_WORDS: Readonly<Record<string, string>> = {
   title: "Title",
@@ -106,7 +109,6 @@ export function Provenance({ entity, value }: { entity: AnyRef; value: unknown }
         <Facts
           facts={[
             ["Authority", <AuthorityBadge key="a" authority="simulated" />],
-            ["Time", "Simulated"],
             kind ? ["Telemetry today", <TelemetryBadge key="t" telemetry={EVENT_CATALOG[kind]?.telemetry ?? "missing"} />] : null,
             latest ? ["Source record", <Mono key="r">{latest.id}</Mono>] : null,
           ]}
@@ -116,6 +118,7 @@ export function Provenance({ entity, value }: { entity: AnyRef; value: unknown }
   }
 
   const recordId = meta?.eventId || latest?.id || null;
+  const times = meta ? recordTimesWords(meta) : null;
   const fields = meta ? Object.entries(meta.fields) : [];
   const inferred = meta ? Object.entries(meta.inferred) : [];
   return (
@@ -123,9 +126,7 @@ export function Provenance({ entity, value }: { entity: AnyRef; value: unknown }
       <Facts
         facts={[
           ["Authority", meta ? <AuthorityBadge key="a" authority={meta.authority} /> : latest ? <AuthorityBadge key="a" authority={latest.authority} /> : "Not recorded"],
-          meta ? ["Start time", meta.start === "unknown" ? "Not recorded" : precisionWords(meta.start)] : null,
-          meta ? ["End time", meta.end === "unknown" ? "Not recorded, or still open" : precisionWords(meta.end)] : null,
-          latest ? ["Latest record's time", precisionWords(latest.precision)] : null,
+          times ? ["Times", times] : null,
           ["Source record", recordId ? <Mono key="r">{recordId}</Mono> : "Not recorded"],
           runtime ? ["Runtime", runtime] : null,
           fields.length ? ["Fields from elsewhere", <span key="f">{fields.map(([f, a]) => `${fieldWord(f)}: ${a}`).join("; ")}</span>] : null,

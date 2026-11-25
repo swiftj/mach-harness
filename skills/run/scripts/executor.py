@@ -16,7 +16,7 @@ The command is fixed and explicit:
         --permission-mode default                 nothing is allowed unless it is listed
         --permission-prompts none                 anything that would ask is refused, never asked
         --tools <the built-in tools the list names>
-        --max-budget-usd <limit>  --session-id <a new id>
+        [--max-budget-usd <limit>, only when a spending limit is set]  --session-id <a new id>
         [--add-dir <the MACH plugin, when it lives outside the project>]
         --disallowedTools <edits to MACH itself and to the Factory's local state>
         --allowedTools <the list a person consented to>
@@ -129,17 +129,19 @@ def boundary_flags(plugin_dir: Path, tools: Sequence[str], add_dirs: Sequence[Pa
     return flags
 
 
-def command(claude: str, workflow: str, tickets: Sequence[str], until: Optional[str], tools: Sequence[str], budget_usd: float, session_id: str,
+def command(claude: str, workflow: str, tickets: Sequence[str], until: Optional[str], tools: Sequence[str], budget_usd: Optional[float], session_id: str,
             plugin_dir: Path, add_dirs: Sequence[Path] = (), denied: Sequence[str] = ()) -> List[str]:
+    """`budget_usd` None: no spending limit was set on this machine or in the project, so Claude is given none."""
     for tool in tools:
         if tool.strip() in ("Bash", "Bash(*)", "*") or "dangerously" in tool:
             raise ValueError("The tool list may not allow every shell command.")
     if not Path(plugin_dir).is_absolute():
         raise ValueError("The MACH plugin folder must be an absolute path.")
-    # --allowedTools stays last: it takes every word after it, and it is exactly the list a person consented to.
+    budget = ["--max-budget-usd", format(budget_usd, "g")] if budget_usd is not None else []
+    # --allowedTools stays last: it takes every word after it, and it is exactly the tool list in the authorization.
     return [claude, "-p", prompt(workflow, tickets, until), "--output-format", "stream-json", "--verbose",
             *boundary_flags(plugin_dir, tools, add_dirs, denied),
-            "--max-budget-usd", format(budget_usd, "g"), "--session-id", session_id, "--allowedTools", *tools]
+            *budget, "--session-id", session_id, "--allowedTools", *tools]
 
 
 def environment(base: Mapping[str, str]) -> Dict[str, str]:
@@ -308,13 +310,58 @@ def read_json(path: Path) -> Optional[Dict[str, Any]]:
     return data if isinstance(data, dict) else None
 
 
-def prepare(root: Path, execution_id: str, argv: Sequence[str], timeout_minutes: float) -> Path:
-    """Write what the wrapper will run. Kept on disk so a restart can see exactly what was asked."""
+def prepare(root: Path, execution_id: str, argv: Sequence[str], timeout_minutes: float, watch: Optional[Dict[str, Any]] = None) -> Path:
+    """Write what the wrapper will run. Kept on disk so a restart can see exactly what was asked.
+    `watch` ({"session_pid"}): started by a supervisor tied to a Claude Code session, the run ends when that session
+    process is gone, recorded as "session-ended", unless the supervisor has meanwhile become a background one."""
     home = folder(root, execution_id)
     home.mkdir(parents=True, exist_ok=True)
     os.chmod(str(home), 0o700)
-    write_json(home / "spec.json", {"execution_id": execution_id, "argv": list(argv), "cwd": str(root), "timeout_seconds": int(timeout_minutes * 60), "prepared_at": now()})
+    spec = {"execution_id": execution_id, "argv": list(argv), "cwd": str(root), "timeout_seconds": int(timeout_minutes * 60), "prepared_at": now()}
+    if watch:
+        spec["watch"] = {"session_pid": watch.get("session_pid")}
+    write_json(home / "spec.json", spec)
     return home
+
+
+SESSION_ENDED = "session-ended"  # how an execution ended when the Claude Code session its supervisor belonged to ended
+READY_SECONDS = 10  # how long a stop waits for a wrapper that has just been started to say it is ready
+SESSION_MARK = "session-ended"   # the file a supervisor leaves in an execution's folder before it stops it for that reason
+STOPPED_BY_PERSON = "stopped-by-person"  # how an execution ended when a person stopped the Factory (/mach stop)
+STOP_MARK = "stopped-by-person"          # the file factory stop leaves in an execution's folder before it stops it
+PAUSED = (SESSION_ENDED, STOPPED_BY_PERSON)  # ends that pause the work: nothing parked, no attempt counted
+
+
+def process_alive(pid: Any) -> bool:
+    """Whether a process exists. Replaced in tests."""
+    if type(pid) is not int or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def background_now(root: Path) -> bool:
+    """Whether the supervisor became a background one after this run started (factory start converts a session one)."""
+    for path in (root / ".factory" / "local" / "supervisor.json", root / ".factory" / "local" / "lifetime.json"):
+        data = read_json(path)
+        if data and data.get("lifetime") == "background":
+            return True
+    return False
+
+
+def session_gone(root: Path, watch: Optional[Dict[str, Any]]) -> bool:
+    """For a run tied to a session: whether its supervisor or its session has ended. False for any other run."""
+    if not watch or background_now(root):
+        return False
+    # The session only. A supervisor that ends while the session lives (disabled, a lost lease, a crash) leaves its runs to
+    # finish, and the next supervisor adopts them, as for any run.
+    session = watch.get("session_pid")
+    return type(session) is int and not process_alive(session)
 
 
 def launch(root: Path, execution_id: str, run_script: Path) -> int:
@@ -350,6 +397,7 @@ def wrapper(root: Path, execution_id: str) -> int:
             return 1
         write_json(home / "started.json", {"execution_id": execution_id, "wrapper_pid": os.getpid(), "child_pid": child.pid, "started_at": now()})
         ended = "exited"
+        root = Path(spec["cwd"])
         while True:
             try:
                 code: Optional[int] = child.wait(timeout=1)
@@ -357,8 +405,13 @@ def wrapper(root: Path, execution_id: str) -> int:
             except subprocess.TimeoutExpired:
                 pass
             too_long = time.time() - started > spec["timeout_seconds"]
-            if interrupted["signal"] is not None or too_long:
-                ended = "timed-out" if too_long and interrupted["signal"] is None else "interrupted"
+            session_over = session_gone(root, spec.get("watch"))
+            if session_over or (home / SESSION_MARK).exists():
+                session_over = True
+            by_person = (home / STOP_MARK).exists()
+            if interrupted["signal"] is not None or too_long or session_over or by_person:
+                ended = (STOPPED_BY_PERSON if by_person else SESSION_ENDED if session_over else
+                         "timed-out" if too_long and interrupted["signal"] is None else "interrupted")
                 child.terminate()
                 try:
                     code = child.wait(timeout=GRACE_SECONDS)
@@ -382,15 +435,50 @@ def alive(pid: Any, execution_id: str) -> bool:
     return type(pid) is int and pid > 0 and execution_id in command_of(pid)
 
 
-def stop(pid: Any, execution_id: str) -> bool:
-    """Ask a running execution to stop. The wrapper ends its Claude process and records the interruption."""
+def stop(pid: Any, execution_id: str, root: Optional[Path] = None) -> bool:
+    """Ask a running execution to stop. The wrapper ends its Claude process and records the interruption.
+    A wrapper that has only just been started has not yet said it is ready (started.json): a signal then would end it
+    before it could record anything, so it is given a few seconds to get there first."""
     if not alive(pid, execution_id):
         return False
+    if root is not None:
+        ready, deadline = folder(root, execution_id) / "started.json", time.time() + READY_SECONDS
+        while not ready.exists() and time.time() < deadline and alive(pid, execution_id):
+            time.sleep(0.1)
     try:
         os.kill(pid, signal.SIGTERM)
     except OSError:
         return False
     return True
+
+
+def end_for_session(root: Path, pid: Any, execution_id: str) -> bool:
+    """Stop a running execution because its session ended: the mark first, so the wrapper records "session-ended"."""
+    return marked_stop(root, pid, execution_id, SESSION_MARK)
+
+
+def end_by_person(root: Path, pid: Any, execution_id: str) -> bool:
+    """Stop a running execution because a person stopped the Factory (/mach stop): the mark first, so the wrapper records
+    "stopped-by-person". Like a session's end, it pauses the work; the next pull or factory start carries it on."""
+    return marked_stop(root, pid, execution_id, STOP_MARK)
+
+
+def marked_stop(root: Path, pid: Any, execution_id: str, mark: str) -> bool:
+    try:
+        (folder(root, execution_id) / mark).write_text(now() + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    return stop(pid, execution_id, root)
+
+
+def paused_how(root: Path, execution_id: str) -> Optional[str]:
+    """How a run was paused, from the mark left in its folder: "stopped-by-person", "session-ended", or None."""
+    home = folder(root, execution_id)
+    if (home / STOP_MARK).exists():
+        return STOPPED_BY_PERSON
+    if (home / SESSION_MARK).exists():
+        return SESSION_ENDED
+    return None
 
 
 def tool_summary(name: Any, tool_input: Any) -> str:

@@ -19,7 +19,9 @@ then scheduled again with its plan known.
 
 Rules, applied in the order the tickets were given:
     1. a ticket already running is skipped; one another worker has a fresh claim on is held ("claimed", run.py
-       schedule --holder H: a claim by another holder than H; without --holder, any fresh claim)
+       schedule --holder H: a claim by another holder than H; without --holder, any fresh claim), and so is one
+       whose lanes another worker's builders are at work in, whatever claim.json says (lanes_held, the rule
+       run.py next uses)
     2. ceiling: running plus started never exceeds the ceiling in force
     3. dependency: a ticket waits while a ticket it depends on is not integrated
     4. High risk: among tickets in the line, at most the High-risk ceiling run at once
@@ -92,8 +94,12 @@ def decide(tickets: Sequence[Dict[str, Any]], running: Sequence[Dict[str, Any]],
         seen.add(ticket_id)
         claimed = facts.get("claimed")
         if claimed:  # another worker is on it now: checked before the ceiling, so the reason given is the true one
-            hold(ticket_id, "claimed", f"another worker was handed its {claimed.get('step')} step at {claimed.get('at')}; "
-                 f"the claim lapses at {claimed.get('lapses_at')}, or when the ticket moves to a new stage", [])
+            if claimed.get("lanes"):
+                hold(ticket_id, "claimed", f"another worker is building its lane(s) {', '.join(claimed['lanes'])}, since {claimed.get('at')}; they count "
+                     f"as at work until {claimed.get('lapses_at')}, or until their lanes are done", [])
+            else:
+                hold(ticket_id, "claimed", f"another worker was handed its {claimed.get('step')} step at {claimed.get('at')}; "
+                     f"the claim lapses at {claimed.get('lapses_at')}, or when the ticket moves to a new stage", [])
             continue
         if len(busy) >= ceiling:
             hold(ticket_id, "ceiling", f"all {ceiling} place(s) are in use", [str(item["ticket_id"]) for item in busy])
@@ -194,8 +200,8 @@ def ceilings(factory: Dict[str, Any], limit: Optional[int] = None, sequential: b
 
 # ---------------------------------------------------------------- facts
 
-def plan_parser(sibling: Optional[Callable[[str], Path]]) -> Optional[Callable[[str], Any]]:
-    """The build station's own parse_plan, loaded from its script whichever way MACH is installed; None if absent."""
+def build_station(sibling: Optional[Callable[[str], Path]]) -> Any:
+    """The build station's script as a module, loaded once whichever way MACH is installed; None if absent."""
     if sibling is None:
         return None
     try:
@@ -209,8 +215,31 @@ def plan_parser(sibling: Optional[Callable[[str], Path]]) -> Optional[Callable[[
         spec = importlib.util.spec_from_file_location("mach_build_station", script)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        _PARSERS[key] = getattr(module, "parse_plan", None)
+        _PARSERS[key] = module
     return _PARSERS[key]
+
+
+def plan_parser(sibling: Optional[Callable[[str], Path]]) -> Optional[Callable[[str], Any]]:
+    """The build station's own parse_plan, loaded from its script whichever way MACH is installed; None if absent."""
+    return getattr(build_station(sibling), "parse_plan", None)
+
+
+def lanes_held(cell_dir: Path, holder: Optional[str], limit: int, station: Any, claims: Any, own: Sequence[str] = ()) -> Optional[Dict[str, Any]]:
+    """The one rule for lanes another worker holds, shared by `run.py next` (its claim check) and this schedule: a lane whose builder is
+    at work (open, and handed out or at a build station step less than factory.claim_minutes ago, by the build station's own rule) and
+    whose holder is not `holder` (any holder, when none is given) nor one of `own` (holders known to be this driver's own, such as an
+    earlier execution of the same supervisor that is known to have ended). None when no such lane; else what anyone may be shown: which
+    lanes, since when, until when; never the holder."""
+    if station is None or not (Path(cell_dir) / "lanes").is_dir():
+        return None
+    mine = set(own) | ({holder} if holder else set())
+    working = [lane for lane in station.lanes_at_work(Path(cell_dir), limit) if not mine or lane.get("holder") not in mine]
+    if not working:
+        return None
+    lapses = [claims.lapses_at({"at": lane["last_step_at"]}, limit) for lane in working]
+    return {"step": "build-lanes", "stage": "building", "at": min(str(lane.get("handed_at") or lane["last_step_at"]) for lane in working),
+            "renewed_at": max(str(lane["last_step_at"]) for lane in working), "lapses_at": max(str(item) for item in lapses),
+            "lanes": [lane["lane"] for lane in working]}
 
 
 def plan_files(cell_dir: Path, parse_plan: Optional[Callable[[str], Any]]) -> Optional[List[str]]:
@@ -260,7 +289,8 @@ def dependencies(root: Path, factory: Optional[Callable[[], Any]]) -> Dict[str, 
 
 def main(args: Any, project: Path, *, config: Dict[str, Any], sibling: Optional[Callable[[str], Path]] = None,
          factory: Optional[Callable[[], Any]] = None, workflow: str = "mach:belt", supervised: Optional[str] = None,
-         resolved: Optional[Dict[str, str]] = None, beside: Sequence[str] = (), claims: Any = None) -> Dict[str, Any]:
+         resolved: Optional[Dict[str, str]] = None, beside: Sequence[str] = (), claims: Any = None,
+         gone: Optional[Callable[[str], Sequence[str]]] = None) -> Dict[str, Any]:
     """The schedule for the tickets in `args` (ticket_ids, running, limit, sequential, by_person, dry_run).
 
     run.py resolves bare numbers first and passes what was typed for each resolved ticket in `resolved`, and the
@@ -268,8 +298,9 @@ def main(args: Any, project: Path, *, config: Dict[str, Any], sibling: Optional[
     other live executions: they take no place here (the supervisor keeps its own ceiling), but the High-risk and
     file-overlap rules count them, and one whose plan is not written yet holds a ticket in the line, because its
     files are not known. `claims` is the shared claim helper (claim.py): a pending ticket with a fresh claim by a
-    holder other than `args.holder` (any fresh claim, with no holder) is held. Returns the report; prints and
-    writes nothing."""
+    holder other than `args.holder` (any fresh claim, with no holder) is held, unless `gone(ticket)` names that holder:
+    a Factory execution that is known to have stopped (its session ended, or its process is gone) holds nothing.
+    Returns the report; prints and writes nothing."""
     if args.by_person and supervised:
         raise ScheduleError(f"--by-person is a person's word, and this runs inside a supervised Factory execution (for {supervised}); the settings ceiling applies.")
     factory_section = config.get("factory") if isinstance(config.get("factory"), dict) else {}
@@ -281,12 +312,21 @@ def main(args: Any, project: Path, *, config: Dict[str, Any], sibling: Optional[
     facts = [ticket_facts(project, name, parse, waits.get(name, [])) for name in tickets]
     if claims is not None:
         limit, mine = claims.minutes(config), getattr(args, "holder", None)
+        station = build_station(sibling)
         for item in facts:
             if item["ticket_id"] in running:
                 continue
-            held = claims.current(project / ".factory" / "worktrees" / item["ticket_id"], limit)
+            cell_dir = project / ".factory" / "worktrees" / item["ticket_id"]
+            held = claims.current(cell_dir, limit)
+            if held and gone is not None and held["holder"] in set(gone(item["ticket_id"])):
+                held = None  # its holder was an execution that has stopped: nobody holds the ticket
             if held and held["holder"] != mine:
                 item["claimed"] = claims.public(held, limit)
+                continue
+            # Live lanes count as held whatever claim.json says, exactly as run.py next decides it (the same rule, lanes_held).
+            lanes = lanes_held(cell_dir, mine, limit, station, claims)
+            if lanes:
+                item["claimed"] = lanes
     busy = [ticket_facts(project, name, parse, waits.get(name, [])) for name in running]
     peers = [dict(ticket_facts(project, name, parse), waits_for=[]) for name in dict.fromkeys(beside) if name not in tickets and name not in running]
     peers = [dict(item, phase="line", files=None) if item["phase"] == "prepare" else item for item in peers]  # no plan yet: files not known

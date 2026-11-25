@@ -83,6 +83,15 @@
   color: var(--mach-ink);
   font: 600 13px/1 var(--mach-font-sans);
 }
+/* The Finished list's trigger: a word and a count, set off from the camera's own buttons. */
+.atlas-controls button[data-finished-list] {
+  padding: 0 8px;
+  margin-right: 4px;
+  border-right: 1px solid var(--mach-line);
+  border-radius: 6px 0 0 6px;
+  color: var(--mach-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
 .atlas-controls button:hover {
   background: var(--mach-factory-plate-lit);
 }

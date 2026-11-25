@@ -268,6 +268,35 @@ class NoFallbackTest(test_cell.Base, Sandbox):
         self.assertEqual(git(self.project, "status", "--porcelain").stdout, "")
         self.assertEqual(self.open()["isolation"], "worktree", "once Git can, the ticket opens")
 
+    def test_the_git_setting_a_workspace_needs_is_turned_on_or_asked_for_plainly(self):
+        """Claude Code's sandbox protects the repository's Git settings: when the setting cannot be turned on, the ticket
+        stops before anything is made and says the one command to run. When it is already on, nothing needs writing."""
+        real = workspace.git
+        self.assertFalse(workspace.setting_on(self.project))
+
+        def sandboxed(args, cwd):
+            if list(args[:2]) == ["config", workspace.SETTING]:
+                return subprocess.CompletedProcess(args, 255, "", "error: could not lock config file .git/config: Operation not permitted")
+            return real(args, cwd)
+
+        with mock.patch.object(workspace, "git", sandboxed):
+            code, out, err = test_cell.run("open", "LOCAL-001", project=self.project)
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("could not be turned on from here: Git said: error: could not lock config file .git/config: Operation not permitted.", err)
+        self.assertIn("in a terminal outside Claude Code: git config extensions.worktreeConfig true", err)
+        self.assertIn("Nothing was made.", err)
+        self.assertEqual(self.leftovers(), {"folder": False, "branch": False, "worktree": False})
+        # As the installer leaves it: already on, so opening a ticket writes nothing to the repository's settings.
+        git(self.project, "config", workspace.SETTING, "true")
+        with mock.patch.object(workspace, "git", sandboxed):
+            code, out, err = test_cell.run("open", "LOCAL-001", project=self.project)
+        self.assertEqual(code, 0, err)
+        self.assertTrue((self.project / ".factory/worktrees/LOCAL-001/repo").is_dir())
+
+    def test_a_workspace_turns_the_setting_on_when_it_can(self):
+        self.assertIsNone(workspace.turn_on_setting(self.project))
+        self.assertTrue(workspace.setting_on(self.project))
+
     def test_an_old_git_is_named(self):
         with mock.patch.object(workspace, "git_version", return_value=(2, 30, 1)):
             code, _, err = test_cell.run("open", "LOCAL-001", project=self.project)

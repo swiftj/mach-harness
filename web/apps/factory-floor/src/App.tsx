@@ -12,8 +12,9 @@
  * address; switching makes a new store, and the view and selection carry over through the hash.
  *
  * No command, no setting: nothing the person chooses can make a simulation read as real execution.
- * Everything here reads; the observer serves GET only and the Factory Floor has no control that
- * starts, pauses, schedules or approves anything.
+ * On the Live Factory a person can record a decision on a ticket in "Needs you" and stop the
+ * Factory, where the observer can run MACH's run.py (session capabilities `decisions`, `stop`);
+ * nothing here starts, pauses or schedules work. The Simulation has no such control at all.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSceneStore, SceneStoreProvider, type SceneStore } from "./scene";
@@ -105,6 +106,11 @@ export function App() {
     switchTo,
     // The evidence catalog is read for real history only (free-text labels, R1).
     client: target === "live" ? client : null,
+    // Deciding and stopping are for the Live Factory only, and only where the observer reaches MACH's run.py.
+    can: {
+      decide: target === "live" && answer?.kind === "observer" && answer.session.decisions === true,
+      stop: target === "live" && answer?.kind === "observer" && answer.session.stop === true,
+    },
   });
 
   if (target === "pending") return <Probing label="Looking for the observer" />;

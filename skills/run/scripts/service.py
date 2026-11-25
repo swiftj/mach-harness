@@ -1,8 +1,17 @@
 #!/usr/bin/env python3
-"""Optional ways the Factory Supervisor is woken or kept running: Git hooks and a macOS LaunchAgent.
+"""How the Factory Supervisor is started, woken or kept running: a detached start, Git hooks and a macOS LaunchAgent.
 
-Neither is installed by cloning, installing or initialising MACH. Each is installed only as part of
-an activation a person confirmed, and each is removed again when the Factory is disabled.
+The detached start (start_detached) runs the supervisor as its own process group, its output in
+.factory/local/supervisor.log, in one of two lifetimes:
+
+    session     what `pull`, a recorded decision and `resume` start. It belongs to the Claude Code session it was
+                started from (find_session_pid) and, when that session ends, stops its executions and exits. Nothing
+                is lost: the next pull carries each ticket on from the stage it reached.
+    background  what `factory start` (= `factory enable`) starts, and what the LaunchAgent runs. It runs until stopped.
+
+Neither hooks nor the LaunchAgent is installed by cloning, installing or initialising MACH. Each is
+installed only when a person asks for it (factory enable --hooks, --persistent), and each is removed
+again when the Factory is disabled.
 
 Git hooks are a courtesy, not a control. A hook only leaves a note ("something changed") for a
 supervisor that is already enabled; it starts no agent, cannot fail the Git command it runs
@@ -27,7 +36,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 HOOKS = ("post-merge", "post-checkout", "post-rewrite")
 BEGIN = "# >>> mach factory wake (advisory; safe to remove) >>>"
@@ -41,6 +50,110 @@ class ServiceError(Exception):
 
 def git(root: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=str(root), capture_output=True, text=True)
+
+
+def log_path(root: Path) -> Path:
+    return root / ".factory" / "local" / "supervisor.log"
+
+
+NO_START_ENV = "MACH_FACTORY_NO_START"  # set (to anything) and no supervisor is started from this environment: tests set it
+
+
+def serve_argv(root: Path, run_script: Path, lifetime: str = "background", session_pid: Optional[int] = None, started_by: Optional[str] = None) -> List[str]:
+    argv = [sys.executable, str(run_script), "--project", str(root), "factory", "serve"]
+    if lifetime == "session":
+        argv += ["--lifetime", "session", "--session-pid", str(int(session_pid))]
+    if started_by:
+        argv += ["--started-by", started_by]
+    return argv
+
+
+# ---- the Claude Code session a supervisor belongs to ----
+
+
+def parent_of(pid: int) -> Tuple[Optional[int], str]:
+    """(parent pid, command name) of a process, from ps; (None, "") when it cannot be read. Replaced in tests."""
+    try:
+        done = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(int(pid))], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None, ""
+    line = done.stdout.strip()
+    if done.returncode != 0 or not line:
+        return None, ""
+    parts = line.split(None, 1)
+    try:
+        return int(parts[0]), (parts[1] if len(parts) > 1 else "")
+    except ValueError:
+        return None, ""
+
+
+def command_line(pid: int) -> str:
+    """A process's whole command line, from ps; "" when it cannot be read. Replaced in tests."""
+    try:
+        done = subprocess.run(["ps", "-o", "command=", "-p", str(int(pid))], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return ""
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
+SCRIPT_RUNNERS = ("node", "bun")
+
+
+def is_claude_code(pid: int, name: str) -> bool:
+    """Whether this process is Claude Code itself: its program is named exactly `claude` (the native build), or it is node or
+    bun running a script whose path ends in `claude` or lies in the claude-code package (the npm build). The desktop app's
+    `Claude`, a terminal or a multiplexer is never one."""
+    program = Path(name.strip()).name
+    if program == "claude":
+        return True
+    if program not in SCRIPT_RUNNERS:
+        return False
+    words = command_line(pid).split()
+    for word in words[1:]:
+        if word.startswith("-"):
+            continue
+        return Path(word).name == "claude" or "claude-code" in word or "@anthropic-ai/claude-code" in word
+    return False
+
+
+def find_session_pid(start: Optional[int] = None) -> Optional[int]:
+    """The Claude Code process this command descends from: the nearest ancestor that is Claude Code (is_claude_code). None
+    when there is none, or the ancestry cannot be read: then nothing can be tied to a session, and the caller says so.
+    `parent_of` and `command_line` are replaced in tests."""
+    first = start if start is not None else os.getpid()
+    pid, seen = first, set()
+    while pid and pid > 1 and pid not in seen and len(seen) < 64:
+        seen.add(pid)
+        parent, name = parent_of(pid)
+        if parent is None:
+            return None
+        if pid != first and is_claude_code(pid, name):
+            return pid
+        pid = parent
+    return None
+
+
+def start_detached(root: Path, run_script: Path, lifetime: str = "background", session_pid: Optional[int] = None, started_by: Optional[str] = None) -> int:
+    """Start `factory serve` for this project in its own session and process group, detached from the caller, with its
+    output appended to .factory/local/supervisor.log. Returns its process ID.
+
+    lifetime "session": the supervisor watches `session_pid` (the Claude Code process it was started from) and pauses its
+    work and exits when that ends. "background": it runs until stopped. Tests replace this function, and set
+    MACH_FACTORY_NO_START so a subprocess they run can never start one."""
+    if os.environ.get(NO_START_ENV):
+        raise ServiceError(f"Starting the supervisor is switched off in this environment ({NO_START_ENV} is set).")
+    if lifetime == "session" and not session_pid:
+        raise ServiceError("A supervisor tied to this session needs the session's process, and none was given.")
+    log = log_path(root)
+    for path in (root / ".factory", log.parent, log):
+        if path.is_symlink():
+            raise ServiceError(f"{path} is a symbolic link; the supervisor's log is not written through one.")
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with log.open("ab") as out:
+        os.chmod(str(log), 0o600)
+        process = subprocess.Popen(serve_argv(root, run_script, lifetime, session_pid, started_by), cwd=str(root), stdin=subprocess.DEVNULL, stdout=out, stderr=out,
+                                   start_new_session=True, close_fds=True)
+    return process.pid
 
 
 def hooks_dir(root: Path) -> Optional[Path]:
@@ -137,10 +250,10 @@ def install_agent(root: Path, run_script: Path) -> Dict[str, Any]:
     if shutil.which("launchctl") is None:
         raise ServiceError("launchctl is not available, so the service cannot be registered.")
     path = agent_path(root)
-    log = root / ".factory" / "local" / "supervisor.log"
+    log = log_path(root)
     definition = {
         "Label": label(root),
-        "ProgramArguments": [sys.executable, str(run_script), "--project", str(root), "factory", "serve"],
+        "ProgramArguments": serve_argv(root, run_script),  # a background supervisor: it runs until stopped
         "WorkingDirectory": str(root),
         "RunAtLoad": True,
         # Start it again if it crashes; leave it stopped when it exits cleanly, which it does once the Factory is disabled.

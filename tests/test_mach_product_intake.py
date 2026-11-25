@@ -9,6 +9,7 @@ commit product/ready/SLICE-NNN/ to the shared repository. Nothing reaches the ne
 
 import io
 import json
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -242,11 +243,24 @@ class Base(IssuesBase):
             self.clean_up(ticket_id)
         return landed
 
-    def clean_up(self, ticket_id, outcome="merged"):
-        """What the cleanup station leaves: an archive holding cell.json, a run record, and no cell."""
+    def clean_up(self, ticket_id, outcome="merged", kept=True):
+        """What the cleanup station leaves: an archive holding cell.json, a run record, and no cell. With kept=False, as with
+        cleanup.archive keeping none: no archive, and a run record that names its commits itself."""
         archive = self.eng / ".factory/archive"
         archive.mkdir(exist_ok=True)
         cell_file = self.eng / ".factory/worktrees" / ticket_id / "cell.json"
+        if not kept:
+            merged = json.loads(cell_file.read_text()).get("merged") or {}
+            with (archive / "runs.jsonl").open("a") as handle:
+                handle.write(json.dumps({"ticket_id": ticket_id, "outcome": outcome, "record_version": 2, "archive": None,
+                                         "integration": {"merge_commit": merged.get("commit"), "landed_commit": merged.get("landed_commit"),
+                                                         "approved_commit": None},
+                                         "archive_kept": {"kept": False, "setting": "raised", "chosen_by": "setting", "published": None,
+                                                          "reason": "The evidence files were not kept after cleanup."}}) + "\n")
+            git(self.eng, "worktree", "remove", "--force", str(cell_file.parent / "repo"))
+            git(self.eng, "branch", "-D", f"feature/{ticket_id}")
+            shutil.rmtree(str(cell_file.parent))
+            return
         name, number = archive / f"{ticket_id}.tar.gz", 1
         while name.exists():
             name, number = archive / f"{ticket_id}-{number}.tar.gz", number + 1
@@ -488,6 +502,29 @@ class SchedulerTest(Base):
         self.integrate(str(first), cleanup=True)
         plan, rows = self.plan()
         self.assertEqual((rows["SLICE-001"]["state"], plan["dispatchable"]), ("completed", ["SLICE-002"]))
+
+    def test_a_finished_ticket_with_no_archive_kept_reads_from_its_run_record(self):
+        """cleanup.archive kept no archive: the run record names the commits, so nothing depends on the archive, and an older
+        life's archive of the same name is never read for it."""
+        epic = self.epic()
+        first = self.ready("SLICE-001", epic)
+        self.ready("SLICE-002", epic, depends=[first])
+        self.product("intake")
+        self.product("dispatch", "SLICE-001")
+        self.integrate(str(first))
+        self.clean_up(str(first), kept=False)
+        self.assertEqual(list((self.eng / ".factory/archive").glob("*.tar.gz")), [])
+        plan, rows = self.plan()
+        self.assertEqual((rows["SLICE-001"]["state"], plan["dispatchable"]), ("completed", ["SLICE-002"]))
+        factory = intake.Factory.__new__(intake.Factory)
+        factory.root = self.eng
+        with tarfile.open(str(self.eng / f".factory/archive/{first}.tar.gz"), "w:gz") as tar:
+            data = json.dumps({"merged": {"commit": "f" * 40}}).encode()
+            info = tarfile.TarInfo(f"{first}/cell.json")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        self.assertEqual(factory.archived({"ticket_id": str(first), "archive": None}, "cell.json"), {})
+        self.assertEqual(factory.archived({"ticket_id": str(first)}, "cell.json"), {"merged": {"commit": "f" * 40}}, "an old record still reads its archive")
 
     def test_a_dependency_merged_before_this_factory_counts_when_its_spec_is_on_the_branch(self):
         (self.eng / "specs/slices").mkdir(parents=True)
@@ -926,6 +963,17 @@ class FolderTest(Base):
         self.assertIn("\n> Epic: Team membership (EPIC-001). Slice issue: none.\n", committed)
         self.assertEqual(self.cell("LOCAL-001")["product"]["source"], "folder")
         self.assertNotIn("issue", self.cell("LOCAL-001")["product"])
+
+    def test_a_folder_slice_keeps_a_local_ticket_when_the_project_files_tickets_on_github(self):
+        """The folder route exists for when GitHub cannot be used, so its ticket stays on this computer whatever tickets.provider says."""
+        (self.eng / ".factory/config.json").write_text(json.dumps({"tickets": {"provider": "github"}, "factory": {"max_parallel": 3}}))
+        self.first()
+        taken = self.product("intake")
+        self.assertEqual([c["ticket_id"] for c in taken["created"]], ["LOCAL-001"])
+        self.assertEqual(self.tickets(), ["LOCAL-001"])
+        self.assertFalse(any(call[:2] == ["issue", "create"] for call in self.gh()["calls"]), "no GitHub issue is filed for it")
+        self.product("dispatch", "SLICE-001")
+        self.assertIn('"groomed"', self.ticket_text("LOCAL-001"), "its updates stay local too")
 
     def test_a_folder_slice_is_reissued_only_while_its_folder_is_on_the_branch(self):
         self.first()

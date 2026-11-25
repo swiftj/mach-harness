@@ -1,6 +1,21 @@
 # Installing MACH: the programs and what is verified
 
-The [README](../../README.md) has the two install commands. This page covers the two optional browser programs and exactly what the installer checks.
+The [README](../../README.md) has the two install commands. This page covers where MACH's own tickets go, the two optional browser programs, and exactly what the installer checks.
+
+## Where MACH's own tickets go
+
+The first install writes `.factory/config.json` and sets `tickets.provider` in it. When the project is the top of a Git repository whose `origin` remote is on GitHub, it is `github`: tickets MACH files itself, such as the hardening ticket a weak first audit asks for, are GitHub issues in that repository, and their IDs are the issue numbers. Otherwise it is `local`: they are Markdown files in `.factory/tickets/`. A `.git` folder alone is not enough; the remote must be on GitHub. The installer reads only the repository's own settings, not the network, and says which it chose:
+
+```
+  tickets  MACH's own tickets will be GitHub issues in acme/widgets, the repository's origin remote
+           To keep them on this computer instead, set "tickets.provider" to "local" in .factory/config.json.
+```
+
+or `MACH's own tickets will be kept in .factory/tickets/`, with the reason when the repository has no GitHub remote. `--dry-run` says what it would choose.
+
+An install never changes `tickets.provider` once the file exists. A project installed before this that keeps its tickets locally, though it is on GitHub, stays local; the next update says once how to switch.
+
+When GitHub cannot take a ticket (no `gh`, not signed in, no network, no permission), MACH files it in `.factory/tickets/` instead, says why, and carries on. `/mach doctor` says which tracker is set and, when `gh` is missing or not signed in, that MACH's own tickets are kept on this computer until it is.
 
 ## The visual Product Studio app
 
@@ -10,9 +25,13 @@ If the download is not possible (offline, no build for your machine, or a versio
 
 ## The Factory Floor
 
-The Factory Floor is a read-only view of the Factory in your browser: slices and cells moving through the stations, review rounds, executions and their evidence. It has four workspaces: the Line (stations as columns, tickets as rows; the default, key `1`), the Floor (the isometric Factory Atlas, key `2`), Analytics (key `3`) and Decisions (the architecture decisions in force, key `4`). Selecting a ticket on the Line says why it is there, what it needs from a person and where the time went. Its program, `mach-observer`, is published beside the Product Studio host, for the same machines, and the installers fetch and check it the same way and put it at `.factory/bin/mach-observer` (git-ignored). Releases made before it shipped have no such file; the install then says so in one line and succeeds. Pass `--no-floor` (or set `MACH_FLOOR=skip`) to skip it; `MACH_FLOOR_URL` fetches it from another place, as `MACH_STUDIO_URL` does for the studio. Evidence screenshots and recordings are shown only when `.factory/config.json` sets `"floor": {"evidence_media": true}`. `bin/mach status` says whether each program is installed, and `mach-studio --version` / `mach-observer --version` which release it was built for (the install manifest records the same).
+The Factory Floor is a live view of the Factory in your browser: slices and cells moving through the stations, review rounds, executions and their evidence. It has four workspaces: the Line (stations as columns, tickets as rows; the default, key `1`), the Floor (the isometric Factory Atlas, key `2`), Analytics (key `3`) and Decisions (the architecture decisions in force, key `4`). Selecting a ticket on the Line says why it is there, what it needs from a person and where the time went. Its program, `mach-observer`, is published beside the Product Studio host, for the same machines, and the installers fetch and check it the same way and put it at `.factory/bin/mach-observer` (git-ignored). Releases made before it shipped have no such file; the install then says so in one line and succeeds. Pass `--no-floor` (or set `MACH_FLOOR=skip`) to skip it; `MACH_FLOOR_URL` fetches it from another place, as `MACH_STUDIO_URL` does for the studio. Evidence screenshots and recordings are shown only when `.factory/config.json` sets `"floor": {"evidence_media": true}`. `bin/mach status` says whether each program is installed, and `mach-studio --version` / `mach-observer --version` which release it was built for (the install manifest records the same).
 
-Ask the run skill to "open the Factory Floor" (or "watch the factory"). It starts the observer for the session, which prints a one-time link to `127.0.0.1`; the link for a second browser is kept in `.factory/local/observer/link`. There is no new command. The observer only reads the Factory's files: it cannot enable, start, pause, approve or merge anything, holds no MACH lock, and stopping it never affects the line. With no Factory state on the machine, it shows a clearly labelled Simulation instead of Live Factory.
+Ask the run skill to "open the Factory Floor" (or "watch the factory"). It starts the observer for the session, which prints a one-time link to `127.0.0.1`; the link for a second browser is kept in `.factory/local/observer/link`. There is no new command. The observer reads the Factory's files. A person can decide there what waits for them and stop a running Factory; it never starts, enables, pauses or dispatches anything, holds no MACH lock, and stopping it never affects the line. With no Factory state on the machine, it shows a clearly labelled Simulation instead of Live Factory.
+
+## Claude Code in a sandbox
+
+When Claude Code runs in its sandbox, commands cannot write in your home folder, where package managers keep their caches. MACH needs nothing from you for this: for the commands its stations run, it points the cache of each package manager the project uses (npm, Yarn, pip, uv, Poetry, Gradle, Maven, Go, Bundler, Composer, NuGet, and Playwright's and Cypress's downloads) at `.factory/cache/` in the project when the usual one cannot be written. Your own settings are not changed, and the folder is never committed. For any other tool, give its variable in `commands.env` in `.factory/config.json`, for example `"CARGO_HOME": "{cache}/cargo"`; `/mach doctor` shows what MACH does for each tool. The sandbox's network rules are yours to set, in Claude Code's own settings: MACH does not change them.
 
 ## What the installer verifies
 

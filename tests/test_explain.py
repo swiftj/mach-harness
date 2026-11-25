@@ -85,6 +85,32 @@ class CellTest(ReviewBase):
         self.assertIn("Next: revise", text)
         self.assertTrue(text.startswith("Where: LOCAL-001: stage built"), "the digest comes first")
 
+    def test_a_change_verified_without_screenshots_says_so(self):
+        self.built()
+        cell = json.loads((self.cellroot / "cell.json").read_text())
+        cell["app_type"] = "web"
+        (self.cellroot / "cell.json").write_text(json.dumps(cell))
+        saved = verify.BROWSER_LAUNCH, verify.BROWSER_WHICH
+        verify.BROWSER_LAUNCH = lambda argv, cwd, env, timeout: (1, "Error: spawn EPERM: Operation not permitted")
+        verify.BROWSER_WHICH = lambda name: f"/fake/{name}"
+        try:
+            self.run_verify("start", TICKET)
+            (self.evidence / "ac-01-page.html").write_text("<p>Invited</p>\n")
+            for target in TARGETS:
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    verify.main(["--project", str(self.project), "record", TICKET, target, "--result", "fail" if target == "R4" else "pass",
+                                 "--evidence", "ac-01-page.html", "--note", "The invitation was accepted and a seat was taken." if target == "R4" else NOTE])
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(verify.main(["--project", str(self.project), "finish", TICKET]), 1)
+        finally:
+            verify.BROWSER_LAUNCH, verify.BROWSER_WHICH = saved
+        report = self.explain()
+        self.assertEqual(report["headline_code"], "verification_failed")
+        self.assertEqual(report["verification_evidence"]["mode"], "headless")
+        self.assertIn("No browser could start here", (self.evidence / "findings.md").read_text())
+        _, text, _ = run_explain(self.project, TICKET)
+        self.assertIn("[verification] No browser could start here, so there are no screenshots; this was verified from logs and saved pages.", text)
+
     def test_a_review_rejection_names_seat_rule_file_and_a_security_veto(self):
         self.verified()
         self.r_ok("start", TICKET)
@@ -194,6 +220,21 @@ class RecordsTest(unittest.TestCase):
         report = self.explain("LOCAL-007")
         self.assertEqual((report["headline_code"], report["archive"], report["run_record"]), ("archived", ".factory/archive/LOCAL-007.tar.gz", {"outcome": "merged", "rounds": 1}))
         self.assertNotIn("tarfile", (ROOT / "skills/run/scripts/explain.py").read_text())
+
+    def test_a_finished_ticket_with_no_archive_kept_says_so_plainly(self):
+        archive = self.project / ".factory" / "archive"
+        archive.mkdir(parents=True)
+        (archive / "LOCAL-007.tar.gz").write_bytes(b"an earlier life's archive")  # never taken for this record's
+        reason = "The evidence files were not kept after cleanup: cleanup.archive is \"raised\" and no person decided anything on this ticket."
+        (archive / "runs.jsonl").write_text(json.dumps({"ticket_id": "LOCAL-007", "outcome": "merged", "rounds": 1, "archive": None,
+                                                        "archive_kept": {"kept": False, "setting": "raised", "chosen_by": "setting", "reason": reason}}) + "\n")
+        report = self.explain("LOCAL-007")
+        self.assertEqual((report["headline_code"], report["archive"]), ("finished", None))
+        self.assertEqual(report["evidence"], "The evidence files were not kept after cleanup (cleanup.archive). " + reason)
+        code, text, _ = run_explain(self.project, "LOCAL-007")
+        self.assertEqual(code, 0)
+        self.assertIn("LOCAL-007: The ticket is finished.", text)
+        self.assertIn("The evidence files were not kept after cleanup (cleanup.archive).", text)
 
     def test_hostile_reviewer_text_is_cut_short_and_inert(self):
         self.write("review/round-1/findings.md", "x")

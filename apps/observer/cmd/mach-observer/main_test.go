@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -51,6 +53,8 @@ func fixture(t *testing.T) string {
 	lease, _ := json.Marshal(map[string]any{"pid": 1, "host": "elsewhere", "heartbeat_at": "2026-11-12T09:00:00Z", "expires_at": "2026-11-12T09:01:00Z"})
 	os.WriteFile(filepath.Join(root, ".factory/local/supervisor.json"), lease, 0o600)
 	os.WriteFile(filepath.Join(root, ".factory/intake/lock"), nil, 0o600) // MACH's own lock file
+	// The project's own install of MACH's run.py, as a fake that answers the two reads and writes nothing.
+	testkit.Append(t, filepath.Join(root, ".claude/skills/mach/scripts/run.py"), []byte(fakeRunPy))
 	// A point in the past for every timestamp, so a touch by the observer would show.
 	past := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
@@ -61,6 +65,22 @@ func fixture(t *testing.T) string {
 	})
 	return root
 }
+
+// fakeRunPy answers `decide --json` and `factory status` as MACH would, and refuses anything else.
+const fakeRunPy = `import json, sys
+args = sys.argv[1:]
+if args[1:3] == ["decide", "--json"]:
+    print(json.dumps({"reads_only": True, "nothing_waiting": False, "order": ["T-1"], "data_fields": ["situation.title"], "data_note": "data",
+                      "tickets": [{"ticket_id": "T-1", "state": "approval", "situation": {"summary": "Approve it.", "title": "A title"},
+                                   "show_first": [".factory/worktrees/T-1/review/round-1/findings.md"], "decide_command": "/mach decide T-1",
+                                   "options": [{"key": "approve", "label": "Approve the change", "does": "Approves.", "route": "approve T-1",
+                                                "needs_reason": False, "recommended": False, "do": True, "needs": [], "confirm": True}]}]}))
+elif args[1:3] == ["factory", "status"]:
+    print(json.dumps({"factory": "observe", "supervisor": {"running": False}, "executions": []}))
+else:
+    sys.stderr.write("refused: not in this test\n")
+    sys.exit(1)
+`
 
 type running struct {
 	link   string
@@ -163,13 +183,23 @@ func waitEvents(t *testing.T, r *running, want int) []byte {
 	}
 }
 
-// The observer writes nothing outside .factory/local/observer/: no file created, removed, written,
-// chmod-ed or touched, across a full run (ingest, every endpoint, a stream) and a restart.
-func TestReadOnlyOverAFactoryTree(t *testing.T) {
+// With no decision made, the observer writes nothing outside .factory/local/observer/: no file
+// created, removed, written, chmod-ed or touched, across a full run (ingest, every endpoint, "Needs
+// you" and the running Factory read through the project's run.py, a stream) and a restart.
+func TestNothingChangesOverAFactoryTreeWithNoDecision(t *testing.T) {
 	root := fixture(t)
 	before := testkit.HashTree(t, root, IndexDir)
 
 	r := launch(t, root)
+	var session struct {
+		Data struct {
+			Capabilities map[string]any `json:"capabilities"`
+		} `json:"data"`
+	}
+	json.Unmarshal(r.get(t, "/api/v1/session"), &session)
+	if _, err := exec.LookPath("python3"); err == nil && session.Data.Capabilities["decisions"] != true {
+		t.Fatalf("the project's run.py was not found: %v", session.Data.Capabilities)
+	}
 	waitEvents(t, r, 7) // five ledger lines and two lifecycle lines
 	touchEveryEndpoint(t, r)
 	checkFreshness(t, r)
@@ -256,6 +286,23 @@ func touchEveryEndpoint(t *testing.T, r *running) {
 		"/api/v1/series", "/api/v1/concurrency", "/api/v1/marks", "/api/v1/artifacts", "/api/v1/cells/T-1/evidence", "/api/v1/analytics/metrics?group_by=day", "/api/v1/analytics/runs", "/", "/some/app/route"} {
 		r.get(t, path)
 	}
+	// "Needs you" runs the project's run.py (decide --json) when it is there; a write needs more than a cookie.
+	if resp, err := r.client.Get(r.base + "/api/v1/needs"); err == nil {
+		resp.Body.Close()
+		if resp.StatusCode != 200 && resp.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("/api/v1/needs: %d", resp.StatusCode)
+		}
+	}
+	for _, path := range []string{"/api/v1/needs/T-1/approve", "/api/v1/factory/stop"} {
+		resp, err := r.client.Post(r.base+path, "application/json", strings.NewReader("{}"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("POST %s without Origin and CSRF: %d", path, resp.StatusCode)
+		}
+	}
 	var snap struct {
 		Data struct {
 			Cursor string `json:"cursor"`
@@ -315,13 +362,18 @@ func TestOneObserverPerProject(t *testing.T) {
 	}
 }
 
-// Source boundary: no package starts a process, signals one, dials out (directly or through an
-// HTTP client or a resolver), locks anything but its own lock file, or loads code; and only the
-// index, the lock and start-up may call a function that writes to the file system.
+// Source boundary (M23: the Floor may run MACH's run.py, and nothing else). Only internal/act
+// imports os/exec, and only its exec_unix.go signals a process (its own process group, on a time
+// limit); no package dials out (directly or through an HTTP client or a resolver), locks anything
+// but its own lock file, or loads code; only the index, the lock, start-up and the answers file in
+// the observer's own folder may call a function that writes to the file system. In internal/act the
+// only script named is run.py, and every argument vector is built from the fixed words below; no
+// file in the observer names `factory enable`, `factory start`, `--persistent`, `dispatch` or `pull`.
 func TestSourceBoundary(t *testing.T) {
 	_, here, _, _ := runtime.Caller(0)
 	module := filepath.Join(filepath.Dir(here), "..", "..")
 	forbiddenImports := map[string]bool{"os/exec": true, "plugin": true, "unsafe": true, "net/http/httputil": true, "net/rpc": true, "net/smtp": true}
+	execAllowed := map[string]bool{"internal/act/act.go": true, "internal/act/exec_unix.go": true, "internal/act/exec_other.go": true, "internal/act/locate.go": true}
 	writers := map[string]bool{"WriteFile": true, "Create": true, "CreateTemp": true, "OpenFile": true, "Remove": true, "RemoveAll": true,
 		"Rename": true, "Mkdir": true, "MkdirAll": true, "MkdirTemp": true, "Truncate": true, "Chmod": true, "Chtimes": true, "Chown": true,
 		"Symlink": true, "Link": true}
@@ -331,10 +383,20 @@ func TestSourceBoundary(t *testing.T) {
 		"http.NewRequest": true, "http.NewRequestWithContext": true, "net.Dialer": true, "net.Resolver": true, "net.LookupHost": true,
 		"net.LookupIP": true, "net.LookupAddr": true, "tls.Dial": true, "syscall.ForkExec": true, "syscall.Exec": true}
 	allowedWriters := map[string]bool{"internal/store/store.go": true, "internal/lock/lock_unix.go": true, "cmd/mach-observer/main.go": true,
-		"internal/project/persist.go":  true,                                                                                // the saved projection, in the observer's own folder
+		"internal/project/persist.go": true, // the saved projection, in the observer's own folder
+		"internal/act/answers.go":     true, // a person's answers for run.py, a private file in the observer's own folder, removed after
 		"internal/tail/fileid_unix.go": true, "internal/factory/pid_unix.go": true, "internal/normalize/open_unix.go": true} // these open read-only (checked below)
 	readOnlyOpeners := map[string]bool{"internal/tail/fileid_unix.go": true, "internal/factory/pid_unix.go": true, "internal/normalize/open_unix.go": true,
 		"internal/artifact/safe.go": true}
+	// Every word an argument vector in internal/act is built from; any other string in a []string
+	// literal there fails. Values a person gives are only ever appended as --name=value (args.go).
+	argvWords := map[string]bool{"-I": true, "-B": true, "decide": true, "--json": true, "do": true, "factory": true, "status": true, "stop": true,
+		"--via=floor": true, "skills": true, "run": true, "scripts": true, "run.py": true, ".claude": true, "mach": true}
+	// Anywhere: these never appear in a string. In internal/act, which alone runs anything: no word
+	// that would enable, start, resume, pause or dispatch the Factory.
+	neverNamed := []string{"factory enable", "factory start", "--persistent"}
+	neverInAct := regexp.MustCompile(`\b(dispatch|pull|enable|start|resume|pause|serve|tick|wake)\b`)
+	vectorFiles := map[string]bool{"internal/act/act.go": true, "internal/act/args.go": true}
 	files := 0
 	filepath.Walk(module, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || strings.Contains(path, "/testkit/") {
@@ -350,10 +412,45 @@ func TestSourceBoundary(t *testing.T) {
 		}
 		for _, imp := range f.Imports {
 			p, _ := strconv.Unquote(imp.Path.Value)
-			if forbiddenImports[p] {
+			if forbiddenImports[p] && !(p == "os/exec" && execAllowed[rel]) {
 				t.Errorf("%s imports %s", rel, p)
 			}
 		}
+		inAct := strings.HasPrefix(rel, "internal/act/")
+		ast.Inspect(f, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.BasicLit:
+				if x.Kind != token.STRING {
+					return true
+				}
+				v, _ := strconv.Unquote(x.Value)
+				for _, word := range neverNamed {
+					if strings.Contains(v, word) {
+						t.Errorf("%s names %q: the observer never enables or starts the Factory", rel, word)
+					}
+				}
+				if inAct && neverInAct.MatchString(v) {
+					t.Errorf("%s: %q: internal/act never names a command that enables, starts, resumes or dispatches work", rel, v)
+				}
+				if inAct && !strings.Contains(v, " ") && strings.HasSuffix(v, ".py") && v != "run.py" {
+					t.Errorf("%s names the script %q: only run.py is run", rel, v)
+				}
+			case *ast.CompositeLit:
+				if arr, ok := x.Type.(*ast.ArrayType); ok && vectorFiles[rel] {
+					if id, ok := arr.Elt.(*ast.Ident); ok && id.Name == "string" {
+						for _, el := range x.Elts {
+							if lit, ok := el.(*ast.BasicLit); ok {
+								v, _ := strconv.Unquote(lit.Value)
+								if !argvWords[v] {
+									t.Errorf("%s builds an argument vector with %q", rel, v)
+								}
+							}
+						}
+					}
+				}
+			}
+			return true
+		})
 		ast.Inspect(f, func(n ast.Node) bool {
 			sel, ok := n.(*ast.SelectorExpr)
 			if !ok {
@@ -387,9 +484,9 @@ func TestSourceBoundary(t *testing.T) {
 				return true
 			}
 			if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-				if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "syscall" && sel.Sel.Name == "Kill" {
+				if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "syscall" && sel.Sel.Name == "Kill" && rel != "internal/act/exec_unix.go" {
 					if lit, ok := call.Args[1].(*ast.BasicLit); !ok || lit.Value != "0" {
-						t.Errorf("%s: syscall.Kill with a signal: the observer signals no process", rel)
+						t.Errorf("%s: syscall.Kill with a signal: only internal/act stops the process group it started", rel)
 					}
 				}
 			}

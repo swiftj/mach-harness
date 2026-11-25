@@ -133,10 +133,11 @@ Who merges is a setting, by risk tier:
 /mach-cleanup LOCAL-001
 ```
 
-Once the approved branch is merged, by the merge station or by you, cleanup archives the cell's artifacts to `.factory/archive/LOCAL-001.tar.gz`, removes the cell's worktree, folder and local branch, and appends a one-line record of how the ticket went to `.factory/archive/runs.jsonl`. It shows you a plan first, archives before it deletes, and deletes nothing if the archive fails.
+Once the approved branch is merged, by the merge station or by you, cleanup removes the cell's worktree, folder and local branch, and appends a one-line record of how the ticket went to `.factory/archive/runs.jsonl`. It keeps the cell's artifacts in `.factory/archive/LOCAL-001.tar.gz` only when `cleanup.archive` says to: by default, when a person decided something on the ticket (an approval, a send-back, an exception, a merge by hand, an abandon and the like); `"all"` keeps every one, `"none"` none, and `--keep-archive` or `--no-archive` decides for one cleanup. It shows you a plan first, archives before it deletes, and deletes nothing if the archive fails.
 
 - If you squash-merge or rebase, tell it the commit: `/mach-cleanup LOCAL-001 --merged-as <commit>`.
-- To drop a ticket that will not be finished: `/mach-cleanup LOCAL-001 --abandon "<why>"`. Uncommitted work and a git bundle of the branch are saved in the archive first.
+- To drop a ticket that will not be finished: `/mach-cleanup LOCAL-001 --abandon "<why>"`. Uncommitted work and a git bundle of the branch are saved in the archive first; with no archive kept, the branch stays and the uncommitted work is kept under `refs/mach/cell-files/LOCAL-001/`, and the result gives the commands that show and bring back each.
+- `/mach-cleanup forget LOCAL-001` lists what was kept for a finished ticket (refs, a kept branch, archives); add `--confirm` to delete it.
 - `/mach-cleanup orphans` lists cells that look finished or broken.
 
 It never merges, pushes, or deletes anything on a remote.
@@ -184,6 +185,6 @@ A build or test suite that fails, is missing, or could not be run makes the tier
 /mach-ticket ingest-telemetry sentry crash.json
 ```
 
-Tickets live in `.factory/tickets/` as Markdown files by default. That folder is a local working queue and is git-ignored, because stations update tickets as they work; to share tickets with a team, use a tracker. Set `tickets.provider` in `.factory/config.json` to `github`, `gitea-cli`, `jira` or `fossil` to use a tracker through its command-line tool; if your tool takes different arguments, replace any command under `tickets.commands`. MACH has five ticket states (`open`, `in_progress`, `needs_review`, `blocked`, `closed`); on trackers with only open and closed, the others are kept as `mach:<state>` labels.
+Tickets live where `tickets.provider` says: the installer sets it to `github` in a project whose `origin` remote is on GitHub, else to `local`, Markdown files in `.factory/tickets/`. That folder is a local working queue and is git-ignored, because stations update tickets as they work; to share tickets with a team, use a tracker. Set `tickets.provider` in `.factory/config.json` to `github`, `gitea-cli`, `jira` or `fossil` to use a tracker through its command-line tool; if your tool takes different arguments, replace any command under `tickets.commands`. MACH has five ticket states (`open`, `in_progress`, `needs_review`, `blocked`, `closed`); on trackers with only open and closed, the others are kept as `mach:<state>` labels.
 
 `ingest-telemetry` turns a Sentry, PostHog or Datadog payload, a failed CI log, or an application error log into an `AUTO-<timestamp>` ticket with the error, the culprit file and line, and a trimmed trace. Email addresses, tokens and other credentials are redacted from everything it writes except the raw payload, which stays in the git-ignored `.factory/inbox/`. The same fault is not ticketed twice while its ticket is open. Groom the result with `/mach-intent AUTO-... --headless`.

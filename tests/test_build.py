@@ -227,10 +227,10 @@ class StartTest(Base):
     def test_gates(self):
         self.groom()
         self.assertIn("no audit report", self.refused("start", "LOCAL-001"))
-        self.audit_report(timestamp=(datetime.now(timezone.utc) - timedelta(days=30)).isoformat(timespec="seconds"))
-        self.assertIn("stale", self.refused("start", "LOCAL-001"))
-        self.audit_report(head="0" * 40)
-        self.assertIn("stale", self.refused("start", "LOCAL-001"))
+        self.audit_report(timestamp=(datetime.now(timezone.utc) - timedelta(days=31)).isoformat(timespec="seconds"))
+        self.assertIn("must run again: it ran 31 days ago", self.refused("start", "LOCAL-001"))
+        self.audit_report("Bronze", head="0" * 40)
+        self.assertIn("must run again: the repository is at Bronze and the main branch has moved", self.refused("start", "LOCAL-001"))
         self.audit_report("Bronze")
         self.assertIn("Bronze", self.refused("start", "LOCAL-001"))
         self.audit_report("Silver")
@@ -733,6 +733,299 @@ class RevisionTest(Base):
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(out)["status"], "ESCALATE")
         self.assertEqual(json.loads((self.cellroot / "cell.json").read_text())["stage"], "blocked")
+
+
+HARDENING_TICKET = '---\nid: LOCAL-001\ntitle: "Harden"\nstate: open\nlabels: ["repo-hardening"]\n---\n'
+NEW_CMD = f"{sys.executable} -m unittest discover -s tests -p 'test_*.py'"
+
+
+class NoTestCommandTest(Base):
+    """The reported case (0.22.0): a hardening ticket in a new project with no test command anywhere."""
+
+    def hardening_without_command(self):
+        self.groom()
+        self.audit_report("Bronze", commands={"test": {"command": None}, "lint": {"command": None}})
+        self.put(self.project, {".factory/tickets/LOCAL-001.md": HARDENING_TICKET})
+
+    def test_the_start_refuses_before_recording_anything_and_says_both_ways_forward(self):
+        self.hardening_without_command()
+        refusal = self.refused("start", "LOCAL-001")
+        for words in ("No test command is known for LOCAL-001", "Nothing was recorded and the cell stays planned",
+                      "--test-cmd (not given)", "build.commands.test and audit.commands.test in .factory/config.json",
+                      "no test command in .factory/audit-report.json", 'build.py start LOCAL-001 --test-cmd "<command>"',
+                      "or set build.commands.test in .factory/config.json", "it need not run yet", "build.py set-commands LOCAL-001"):
+            self.assertIn(words, refusal)
+        self.assertNotIn("bandon", refusal)
+        self.assertEqual(json.loads((self.cellroot / "cell.json").read_text())["stage"], "planned")
+        self.assertFalse((self.cellroot / "build.json").is_file() and self.state().get("tasks"), "nothing is recorded")
+        # Started with the command the hardening ticket will install: it need not run yet.
+        started = self.ok("start", "LOCAL-001", "--test-cmd", "mach-test-tool-not-installed-yet -q")
+        self.assertEqual((started["status"], started["test_cmd"]), ("STARTED", "mach-test-tool-not-installed-yet -q"))
+        self.assertIn("could not run at the start", self.state()["baseline_run"]["skipped"])
+
+    def test_a_command_set_in_the_config_is_enough(self):
+        self.hardening_without_command()
+        self.put(self.project, {".factory/config.json": json.dumps({"build": {"commands": {"test": TEST_CMD}}})})
+        self.assertEqual(self.ok("start", "LOCAL-001")["test_cmd"], TEST_CMD)
+
+    def test_a_cell_stuck_as_0_22_0_left_it_is_given_a_command_and_finishes_with_nothing_lost(self):
+        self.hardening_without_command()
+        self.ok("start", "LOCAL-001", "--test-cmd", TEST_CMD)
+        state = self.state()  # what 0.22.0 recorded: building, with no test command and no baseline
+        for key in ("test_file_cmd", "test_one", "test_file_check"):
+            state.pop(key, None)
+        state.update({"test_cmd": None, "suite": "unknown", "baseline_run": {"skipped": "Hardening ticket with no test command yet."}})
+        (self.cellroot / "build.json").write_text(json.dumps(state))
+        self.put(self.work, {"tests/test_invite.py": RED_TEST})  # written by the stuck builder, never committed
+        refusal = self.refused("red", "LOCAL-001", "T01")
+        self.assertIn("No test command is known for this build", refusal)
+        self.assertIn('build.py set-commands LOCAL-001 --test-cmd "<command>" --reason "<why>"', refusal)
+        self.assertNotIn("Start again", refusal)
+        self.assertIn("already started", self.refused("start", "LOCAL-001", "--test-cmd", TEST_CMD))
+        self.assertIn("build.py set-commands LOCAL-001", self.refused("start", "LOCAL-001"))
+
+        done = self.ok("set-commands", "LOCAL-001", "--test-cmd", TEST_CMD, "--reason", "the project runs unittest from tests/; no command was recorded")
+        self.assertEqual((done["status"], done["test_cmd"], done["changed"]), ("COMMANDS_SET", TEST_CMD, [{"command": "test", "old": None, "new": TEST_CMD}]))
+        self.assertTrue(done["new_tests_run_alone"]["trusted"], "the single-file check is made again for the new command")
+        self.assertEqual(done["suite"]["passed"], False, "the uncommitted test fails: its code is not written yet")
+        self.assertIn("build.py next LOCAL-001", done["next"])
+        self.assertEqual((self.work / "tests/test_invite.py").read_text(), RED_TEST, "the uncommitted file is untouched")
+        state = self.state()
+        self.assertEqual((state["test_cmd"], state["suite"], [t["status"] for t in state["tasks"]]), (TEST_CMD, "red", ["pending"] * 5))
+        deviation = [d for d in state["deviations"] if d["type"] == "test-command-set"][0]
+        self.assertEqual((deviation["old"], deviation["new"], deviation["command"], deviation["during"], deviation["task"]), (None, TEST_CMD, "test", "first build", None))
+        self.assertIn("the project runs unittest", deviation["reason"])
+        self.assertTrue(deviation["at"])
+
+        self.ok("red", "LOCAL-001", "T01")
+        self.assertEqual(self.state()["tasks"][0]["first_run"], "fail")
+        for task, step, files in [("T02", "green", {"app/invite.py": IMPL}), ("T03", "red", {"tests/test_scenarios.py": SCENARIO_TEST}),
+                                  ("T04", "green", {"app/invite.py": IMPL2}), ("T05", "done", {"README.md": "# Sample\n\nAdmins can invite teammates.\n"})]:
+            self.put(self.work, files)
+            self.ok(step, "LOCAL-001", task)
+        self.assertEqual(self.ok("finish", "LOCAL-001")["status"], "BUILT")
+        report = json.loads((self.cellroot / "build-report.json").read_text())
+        self.assertIn("test-command-set", [d["type"] for d in report["deviations"]])
+        self.assertEqual(report["command_changes"][0]["changed"], [{"command": "test", "old": None, "new": TEST_CMD}])
+        self.assertIn("tests/test_invite.py", report["files_changed"])
+
+
+class SetCommandsTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.ready()
+        self.ok("start", "LOCAL-001")
+
+    def test_changing_the_command_mid_build_undoes_nothing_and_the_old_run_is_not_reused(self):
+        self.build_through("T02")
+        commits = self.log()
+        changed = self.ok("set-commands", "LOCAL-001", "--test-cmd", NEW_CMD, "--lint-cmd", f"{sys.executable} -c 'pass'",
+                          "--reason", "the project names its test files test_*.py")
+        self.assertEqual([item["command"] for item in changed["changed"]], ["test", "lint"])
+        self.assertEqual((changed["suite"]["passed"], changed["suite"]["command"]), (True, NEW_CMD))
+        self.assertEqual(self.log(), commits, "nothing is committed or undone")
+        state = self.state()
+        self.assertEqual(([t["status"] for t in state["tasks"]], state["suite"], state["test_cmd"]), (["done", "done", "pending", "pending", "pending"], "green", NEW_CMD))
+        self.assertEqual(state["test_file_check"]["command"], f"{build.shlex.quote(sys.executable)} -m unittest {{files}}")
+        self.assertEqual(self.ok("next", "LOCAL-001")["task"], "T03")
+        self.build_through_from("T03", "T05")
+        self.assertEqual(self.state()["tasks"][-1]["test_run"]["command"], NEW_CMD, "the next whole-suite run is the new command's")
+        self.assertEqual(self.ok("set-commands", "LOCAL-001", "--test-cmd", NEW_CMD, "--reason", "same again")["status"], "UNCHANGED")
+        self.assertEqual(len([d for d in self.state()["deviations"] if d["type"] == "test-command-set"]), 1, "an unchanged command records nothing")
+        self.ok("set-commands", "LOCAL-001", "--test-cmd", TEST_CMD, "--reason", "back to the audit's command", "--by=Dana Smith", "--via=floor")
+        person, builder = [d for d in self.state()["deviations"] if d["type"] == "test-command-set"][::-1]
+        self.assertEqual((person["by"], person["recorded_by"]), ("Dana Smith", "a person, in the Factory Floor"))
+        self.assertNotIn("by", builder, "the builder's own choice names no person")
+        self.assertEqual(self.state()["command_changes"][-1]["by"], "Dana Smith")
+        self.ok("finish", "LOCAL-001")
+        report = json.loads((self.cellroot / "build-report.json").read_text())
+        self.assertNotIn("reused_from", report["tests"], "T05's run was under the old command, so it is run again")
+        self.assertEqual((report["tests"]["command"], report["lint"]["status"]), (TEST_CMD, "pass"))
+        self.assertEqual([(d["old"], d["new"]) for d in report["deviations"] if d["type"] == "test-command-set"], [(TEST_CMD, NEW_CMD), (NEW_CMD, TEST_CMD)])
+        self.assertIn(("build.set-commands", "pass", "commands-set"),
+                      [(r["data"]["gate"], r["data"]["outcome"], r["data"]["reason_code"]) for r in
+                       (json.loads(line) for line in (self.cellroot / "lifecycle.jsonl").read_text().splitlines()) if r["type"] == "gate.evaluated"])
+
+    def build_through_from(self, first, last):
+        steps = [("T03", "red", {"tests/test_scenarios.py": SCENARIO_TEST}), ("T04", "green", {"app/invite.py": IMPL2}),
+                 ("T05", "done", {"README.md": "# Sample\n\nAdmins can invite teammates.\n"})]
+        ids = [step[0] for step in steps]
+        for task, step, files in steps[ids.index(first):ids.index(last) + 1]:
+            self.put(self.work, files)
+            self.ok(step, "LOCAL-001", task)
+
+    def test_in_a_revision_round(self):
+        self.build_through("T05")
+        self.ok("finish", "LOCAL-001")
+        head = git(self.work, "rev-parse", "HEAD").stdout.strip()
+        self.put(self.cellroot, {"evidence/results.json": json.dumps({"head": head, "started_at": "2026-11-24T10:00:00+00:00"})})
+        built = self.refused("set-commands", "LOCAL-001", "--test-cmd", NEW_CMD, "--reason", "x")
+        self.assertIn("is built and verification has already judged this build", built)
+        self.assertIn("build.py revise", built)
+        self.ok("revise", "LOCAL-001")
+        self.ok("set-commands", "LOCAL-001", "--test-cmd", NEW_CMD, "--reason", "review found the suite skipped files")
+        self.assertEqual([d["during"] for d in self.state()["deviations"] if d["type"] == "test-command-set"], ["revision round 1"])
+        self.assertEqual([d["loop"] for d in self.state()["deviations"] if d["type"] == "test-command-set"], [1])
+        self.ok("add-task", "LOCAL-001", "--kind", "docs", "--text", "Explain (FR-01)", "--file", "README.md")
+        self.put(self.work, {"README.md": "# Sample\n\nRound 1.\n"})
+        self.assertEqual(self.ok("done", "LOCAL-001", "R1-T01")["suite"], "green")
+        self.assertEqual(self.ok("finish", "LOCAL-001")["status"], "BUILT")
+
+    def test_on_a_built_cell_before_verification_a_passing_command_leaves_the_finish_standing(self):
+        self.build_through("T05")
+        self.ok("finish", "LOCAL-001")
+        commits = self.log()
+        done = self.ok("set-commands", "LOCAL-001", "--test-cmd", NEW_CMD, "--reason", "the project names its test files test_*.py")
+        self.assertEqual((done["status"], done["stage"], done["build"], done["suite"]["passed"]), ("COMMANDS_SET", "built", build.BUILT_STANDS, True))
+        self.assertIn("verify.py start LOCAL-001", done["next"])
+        self.assertEqual(self.log(), commits, "nothing is committed or undone")
+        self.assertEqual(json.loads((self.cellroot / "cell.json").read_text())["stage"], "built")
+        report = json.loads((self.cellroot / "build-report.json").read_text())
+        head = git(self.work, "rev-parse", "HEAD").stdout.strip()
+        self.assertEqual((report["status"], report["head"], report["tests"]["command"], report["tests"]["passed"], report["tests"]["ran_on"]),
+                         ("BUILT", head, NEW_CMD, True, head), "verification runs the command the report names: the new one")
+        self.assertEqual([(d["during"], d["old"], d["new"]) for d in report["deviations"] if d["type"] == "test-command-set"],
+                         [("built, before verification", TEST_CMD, NEW_CMD)])
+        self.assertEqual(report["command_changes"][0]["changed"], [{"command": "test", "old": TEST_CMD, "new": NEW_CMD}])
+        self.assertEqual(report["commands_changed_after_finish"][0]["outcome"], "the finish stands")
+
+    def test_on_a_built_cell_a_failing_command_reopens_the_build_and_nothing_is_lost(self):
+        self.build_through("T05")
+        self.ok("finish", "LOCAL-001")
+        commits = self.log()
+        failing = f"{sys.executable} -c 'import sys; sys.exit(1)'"
+        done = self.ok("set-commands", "LOCAL-001", "--test-cmd", failing, "--reason", "the suite should also run the slow checks")
+        self.assertEqual((done["status"], done["stage"], done["build"], done["suite"]["passed"], done["task_added"]),
+                         ("COMMANDS_SET", "building", build.BUILT_REOPENED, False, "C-T01"))
+        self.assertIn("build.py green LOCAL-001 C-T01", done["next"])
+        self.assertIn("--already-done", done["next"])
+        self.assertEqual(self.log(), commits, "every commit stays")
+        self.assertEqual(json.loads((self.cellroot / "cell.json").read_text())["stage"], "building")
+        report = json.loads((self.cellroot / "build-report.json").read_text())
+        self.assertEqual(report["status"], "REOPENED", "the old finish is never trusted again")
+        state = self.state()
+        self.assertEqual(([t["status"] for t in state["tasks"]], state["suite"]), (["done"] * 5 + ["pending"], "red"))
+        self.assertIn("- [ ] C-T01 [impl] Make the whole suite pass with the new test command", (self.cellroot / "plan.md").read_text())
+        self.assertEqual(self.ok("next", "LOCAL-001")["task"], "C-T01")
+        self.assertIn("does not pass", self.refused("green", "LOCAL-001", "C-T01", "--already-done", "x"))
+        # The builder finds the command was the problem: it changes it again, and completes the task with nothing to change.
+        self.ok("set-commands", "LOCAL-001", "--test-cmd", TEST_CMD, "--reason", "the slow checks are not part of this project's suite")
+        self.ok("green", "LOCAL-001", "C-T01", "--already-done", "the suite passes with the project's command; nothing to change")
+        self.assertEqual(self.ok("finish", "LOCAL-001")["status"], "BUILT")
+        report = json.loads((self.cellroot / "build-report.json").read_text())
+        self.assertEqual((report["status"], report["tests"]["command"]), ("BUILT", TEST_CMD))
+        self.assertEqual([d["during"] for d in report["deviations"] if d["type"] == "test-command-set"], ["built, before verification", "first build"])
+        entered = [r["data"] for r in self.lifecycle() if r["type"] == "station.entered" and r["station"] == "build"]
+        self.assertEqual(entered[-1]["reopened"], "commands-changed")
+
+    def test_on_a_built_cell_a_fix_can_be_committed_under_the_added_task(self):
+        self.build_through("T05")
+        self.ok("finish", "LOCAL-001")
+        strict = f"{sys.executable} -m unittest discover -s tests -p 'test_*.py' && {sys.executable} -c \"import pathlib, sys; sys.exit(0 if 'teammates' in pathlib.Path('NOTES.md').read_text() else 1)\""
+        strict = f"sh -c {build.shlex.quote(strict)}"
+        done = self.ok("set-commands", "LOCAL-001", "--test-cmd", strict, "--reason", "the suite checks the notes too")
+        self.assertEqual(done["task_added"], "C-T01")
+        self.put(self.work, {"NOTES.md": "Invite teammates.\n"})
+        self.ok("green", "LOCAL-001", "C-T01")
+        self.assertEqual(self.ok("finish", "LOCAL-001")["status"], "BUILT")
+        self.assertIn("NOTES.md", json.loads((self.cellroot / "build-report.json").read_text())["files_changed"])
+
+    def test_on_a_built_cell_uncommitted_files_are_set_aside_by_a_person_first(self):
+        self.build_through("T05")
+        self.ok("finish", "LOCAL-001")
+        self.put(self.work, {"scratch.txt": "x\n"})
+        refusal = self.refused("set-commands", "LOCAL-001", "--test-cmd", NEW_CMD, "--reason", "x")
+        self.assertIn("uncommitted changes (scratch.txt)", refusal)
+        self.assertIn("stash push --include-untracked", refusal)
+        self.assertIn("then run build.py set-commands LOCAL-001 again", refusal)
+
+    def lifecycle(self):
+        return [json.loads(line) for line in (self.cellroot / "lifecycle.jsonl").read_text().splitlines()]
+
+    def test_refusals_say_what_to_do(self):
+        self.assertIn("--reason is required", self.refused("set-commands", "LOCAL-001", "--test-cmd", NEW_CMD, "--reason", "  "))
+        self.assertIn("Name the command to set", self.refused("set-commands", "LOCAL-001", "--reason", "x"))
+        self.assertIn("cannot be read as a command", self.refused("set-commands", "LOCAL-001", "--test-cmd", "pytest 'open", "--reason", "x"))
+        self.assertIn("is empty", self.refused("set-commands", "LOCAL-001", "--test-cmd", " ", "--reason", "x"))
+        self.assertEqual(self.state()["test_cmd"], TEST_CMD, "a refusal changes nothing")
+
+    def test_a_command_that_cannot_run_yet_is_accepted_and_said(self):
+        done = self.ok("set-commands", "LOCAL-001", "--test-cmd", "mach-test-tool-not-installed-yet", "--reason", "the hardening ticket installs it in T02")
+        self.assertIn("cannot run yet", done["suite"]["not_run"])
+        self.assertEqual(self.state()["suite"], "unknown")
+        self.put(self.work, {"tests/test_invite.py": RED_TEST})
+        self.ok("red", "LOCAL-001", "T01")  # the new test file alone, the way the single-file check found that works here
+        self.put(self.work, {"app/invite.py": IMPL})
+        refusal = self.refused("green", "LOCAL-001", "T02")
+        self.assertIn("'mach-test-tool-not-installed-yet' is not installed or not on PATH", refusal)
+        self.ok("set-commands", "LOCAL-001", "--test-cmd", TEST_CMD, "--reason", "the tool is not part of this ticket after all")
+        self.assertEqual(self.ok("green", "LOCAL-001", "T02")["status"], "DONE")
+
+    def test_the_messages_that_named_no_way_forward_now_do(self):
+        state = self.state()
+        state["test_cmd"] = f"{sys.executable} -c 'import sys; print(\"ImportError: Start directory is not importable\"); sys.exit(1)'"
+        state.pop("test_file_cmd", None)
+        state.pop("test_one", None)
+        (self.cellroot / "build.json").write_text(json.dumps(state))
+        self.put(self.work, {"tests/test_invite.py": RED_TEST})
+        refusal = self.refused("red", "LOCAL-001", "T01")
+        self.assertIn('give the right one and run this step again (build.py set-commands LOCAL-001 --test-cmd "<command>"', refusal)
+        self.ok("set-commands", "LOCAL-001", "--test-cmd", TEST_CMD, "--reason", "the recorded command was a placeholder")
+        self.ok("red", "LOCAL-001", "T01")
+        self.put(self.work, {"app/invite.py": IMPL})
+        self.ok("green", "LOCAL-001", "T02")
+        self.build_through_from("T03", "T05")
+        self.put(self.work, {"notes.txt": "x"})
+        out = self.refused("finish", "LOCAL-001")
+        self.assertIn("stash push --include-untracked", out)
+        self.assertIn("nothing is lost", out)
+        self.assertNotIn("delete", out.lower())
+
+
+class MessagesTest(Base):
+    def test_uncommitted_files_at_the_start_are_never_to_be_deleted(self):
+        self.ready()
+        self.put(self.work, {"stray.txt": "x"})
+        refusal = self.refused("start", "LOCAL-001")
+        self.assertIn("A person commits them on feature/LOCAL-001", refusal)
+        self.assertIn(f'git -C "{self.work}" stash push --include-untracked', refusal)
+        self.assertNotIn("remove them", refusal)
+        self.assertTrue((self.work / "stray.txt").is_file())
+
+    def test_a_failing_baseline_after_main_names_the_replan_not_abandoning(self):
+        self.groom()
+        self.put(self.project, {"tests/test_main.py": "import unittest\n\nclass M(unittest.TestCase):\n    def test_fails(self):\n        self.fail('main')\n"})
+        self.commit_main()
+        self.audit_report()
+        refusal = self.refused("start", "LOCAL-001")
+        self.assertIn("cell.py replan LOCAL-001", refusal)
+        self.assertIn('start again with --test-cmd "<command>"', refusal)
+        self.assertNotIn("bandon", refusal)
+
+    def test_every_command_the_skill_and_the_builder_prescribe_parses(self):
+        """A BUILD command written in the build skill or the builder's definition is one the station accepts."""
+        import re
+        import shlex
+        parser = build.build_parser()
+        found = 0
+        for name in ("skills/build/SKILL.md", "agents/builder.md"):
+            text = (ROOT / name).read_text(encoding="utf-8")
+            for span in re.findall(r"`((?:BUILD|build\.py) [^`\n]+)`", text):
+                if "<" not in span:
+                    continue  # a mention in prose of a command written in full elsewhere, such as `BUILD finish`
+                words = shlex.split(re.sub(r"<[^<>]*>", lambda m: "impl" if m.group(0) == "<kind>" else "X", span))[1:]
+                if not words or words[0] not in parser._subparsers._group_actions[0].choices:  # noqa: SLF001
+                    continue
+                with self.subTest(command=span):
+                    with redirect_stderr(io.StringIO()):
+                        try:
+                            parser.parse_args(words)
+                        except SystemExit:
+                            self.fail(f"{name}: {span!r} does not parse")
+                found += 1
+        self.assertGreater(found, 15)
+        for command in ("set-commands", "hand-back"):
+            self.assertIn(f"BUILD {command}", (ROOT / "skills/build/SKILL.md").read_text(encoding="utf-8"))
 
 
 class PlanParsingTest(unittest.TestCase):

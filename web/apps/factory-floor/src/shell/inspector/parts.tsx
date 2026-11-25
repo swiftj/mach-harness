@@ -6,10 +6,11 @@
  */
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@mach/ui";
-import { entriesBehind, EVENT_CATALOG, eventsFor, isSceneLog, timingAt, type AnyRef, type AnySimEvent, type Authority, type LogEntry, type Telemetry } from "../../sim";
+import { entriesBehind, EVENT_CATALOG, eventsFor, isSceneLog, timingAt, type AnyRef, type AnySimEvent, type EntityRef, type Authority, type LogEntry, type Telemetry } from "../../sim";
 import { analyticsStationOf, showInAnalytics, useNowEffect, useSceneStore, useStore, type AnalyticsTarget } from "../../scene";
 import { visitAnalyticsWindow } from "../../scene/analytics";
 import { duration as durationWords, selectable, TELEMETRY_WORDS, timecode } from "../vocab";
+import { formatHash } from "../source/hash";
 import { elapsedWords } from "./words";
 import { EventWords } from "./FreeText";
 import { freeTextDataKeys } from "../../text/fields";
@@ -59,6 +60,37 @@ export function Mono({ children, muted }: { children: ReactNode; muted?: boolean
   return <span className={cn("font-mono text-[12px] tabular", muted ? "text-ink-muted" : "text-ink")}>{children}</span>;
 }
 
+/** Select an entity from inside the inspector and keep focus there: the link unmounts with the old entity's panel, so focus goes to the new heading. */
+function follow(select: (ref: EntityRef) => void, target: EntityRef): void {
+  select(target);
+  requestAnimationFrame(() => document.querySelector<HTMLElement>("[data-inspector-heading]")?.focus({ preventScroll: true }));
+}
+
+/**
+ * A link to another entity inside a sentence or a fact: a real link (its address selects the entity,
+ * so it can be opened in a new tab or copied) that, followed here, selects it and puts focus on the
+ * new panel's heading. `label` is its accessible name when the words alone do not say where it goes.
+ */
+export function EntityLink({ to, children, label, className }: { to: EntityRef; children: ReactNode; label?: string; className?: string }) {
+  const store = useStore();
+  const href = useSceneStore((s) => formatHash({ route: s.workspace, sel: to, analytics: s.analytics, decision: s.decision }));
+  return (
+    <a
+      href={href}
+      aria-label={label}
+      onClick={(e) => {
+        // A modified click opens the address elsewhere, as any link does.
+        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        follow(store.select, to);
+      }}
+      className={cn("rounded-xs text-accent-ink underline decoration-1 underline-offset-[3px] hover:decoration-2", className)}
+    >
+      {children}
+    </a>
+  );
+}
+
 /** A related entity: a link that selects it (and asks the view to focus it). */
 export function RefLink({ to, glyph, children, detail }: { to: AnyRef; glyph?: ReactNode; children: ReactNode; detail?: ReactNode }) {
   const { select } = useStore();
@@ -76,11 +108,7 @@ export function RefLink({ to, glyph, children, detail }: { to: AnyRef; glyph?: R
   return (
     <button
       type="button"
-      onClick={() => {
-        select(target);
-        // The link unmounts with the old entity's anatomy: keep focus in the inspector, on the new heading.
-        requestAnimationFrame(() => document.querySelector<HTMLElement>("[data-inspector-heading]")?.focus({ preventScroll: true }));
-      }}
+      onClick={() => follow(select, target)}
       className="group flex w-full min-w-0 items-center gap-2 rounded-sm px-1.5 py-1 text-left text-body-sm hover:bg-surface-sunken"
     >
       {glyph ? <span className="inline-flex shrink-0">{glyph}</span> : null}
@@ -161,25 +189,27 @@ export function AuthorityBadge({ authority }: { authority: Authority }) {
   );
 }
 
-/** How a time is known, in words. */
-export function precisionWords(precision: LogEntry["precision"] | "measured" | "inferred" | "unknown"): string {
+/**
+ * What a reader must know about a time beyond the time itself, or null when there is nothing: a
+ * time a record carried is shown as it is, with no note on how finely it was measured. Only a time
+ * that is not what it looks like says so (an arrival time, a bound, one the observer placed, one no
+ * record gives).
+ */
+export function timeCaveatWords(precision: LogEntry["precision"] | "measured" | "inferred" | "unknown"): string | null {
   switch (precision) {
     case "ms":
-      return "Measured to the millisecond";
     case "s":
-      return "Measured to the second";
+    case "measured":
+    case "simulated":
+      return null;
     case "arrival":
       return "Arrival time (when the observer read it)";
     case "bounded":
       return "Bounded between other records";
-    case "measured":
-      return "Measured";
     case "inferred":
       return "Placed by the observer, not measured";
-    case "simulated":
-      return "Simulated";
     default:
-      return "Unknown";
+      return "Time not recorded";
   }
 }
 
@@ -208,6 +238,7 @@ export function EventRow({ entry, current }: { entry: LogEntry; current?: boolea
   const policy = useDisplayPolicy();
   const fields = keyFields(event as { type?: string; data?: unknown }, policy);
   const sim = isSim(entry);
+  const caveat = sim ? null : [timeCaveatWords(entry.precision), entry.late ? "arrived late" : null].filter(Boolean).join(", ");
   return (
     <li className={cn("relative border-l-2 py-2 pl-3", current ? "border-factory-select" : "border-line")} data-event-id={entry.id}>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -223,8 +254,8 @@ export function EventRow({ entry, current }: { entry: LogEntry; current?: boolea
       </p>
       {sim ? null : (
         <p className="mt-0.5 text-caption text-ink-subtle">
-          {precisionWords(entry.precision)}
-          {entry.late ? ", arrived late" : ""}. <span className="font-mono text-[11px] break-all">{entry.id}</span>
+          {caveat ? `${caveat[0]!.toUpperCase()}${caveat.slice(1)}. ` : null}
+          <span className="font-mono text-[11px] break-all">{entry.id}</span>
         </p>
       )}
       {fields.length ? (

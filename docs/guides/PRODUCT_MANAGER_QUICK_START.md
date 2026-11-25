@@ -265,6 +265,7 @@ Each of these is optional. Say the words on the left when you need it.
 | `attach a mock to SLICE-004` | Add an approved picture of the screen (PNG or JPEG) to a slice. You can tie it to one scenario and say the built screen must match it. |
 | `link SLICE-004 to Jira ABC-123` | Record the Jira issue a slice or an epic belongs to. The key follows the work to the pull request. |
 | `export for Jira` | Write one file your Jira administrator can import, with epics and their slices as stories. |
+| `move this project to another repository` | One file that carries the whole project to another repository, and brings it in there. Every slice arrives as a draft to mark ready again, and sections about shipped behaviour are answered again. Done in the conversation only. See the Product Manager Guide. |
 | `how does this epic work today?` | The rules that have shipped. Choose one and say "change this" to start an idea from it. |
 | `open the app` | The same workspace in your browser. |
 

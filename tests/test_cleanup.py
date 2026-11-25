@@ -25,6 +25,8 @@ RECORD_KEYS = {
     "tests_passing_on_first_run", "created_at", "closed_at", "archive", "notes",
     # record_version 2: what landed and where, and the product slice a ticket came from
     "record_version", "integration", "product",
+    # what cleanup kept: whether a person decided something on the ticket (codes), and whether the archive was kept and why
+    "raised_to_person", "archive_kept",
 }
 INTEGRATION_KEYS = {"branch", "into", "method", "approved_commit", "landed_commit", "merge_commit", "pull_request", "merged_at"}
 
@@ -715,6 +717,64 @@ class ReplanRefsTest(Base):
         self.assertEqual(done["replan_refs_deleted"], [])
         self.assertIn(self.REF, done["replan_note"])
         self.assertIn(self.REF, self.refs())
+
+
+class LaneRefsTest(ReplanRefsTest):
+    """The build station keeps a set-aside lane's tip under refs/mach/lanes-set-aside/<ticket>/<L>/<n> and a lane's stray files under
+    refs/mach/lane-files/<ticket>/<L>/<n>. Cleanup carries them into the archive's bundle exactly as a re-plan's refs, on a merged and
+    on an abandoned ticket, and says where they are and how to bring them back."""
+
+    LANE = "refs/mach/lanes-set-aside/LOCAL-001/L2/1"
+    FILES = "refs/mach/lane-files/LOCAL-001/L1/1"
+
+    def keep_lane_refs(self):
+        tip = self.set_aside()
+        for ref in (self.LANE, self.FILES):
+            self.assertEqual(git(self.work, "update-ref", ref, tip).returncode, 0)
+        git(self.work, "update-ref", "-d", self.REF)
+        return tip
+
+    def restored(self, done, ref):
+        self.assertEqual(done["kept_refs"]["bundle"], "LOCAL-001/replans.bundle")
+        self.assertIn("git fetch LOCAL-001/replans.bundle 'refs/mach/*:refs/mach/*'", done["kept_refs"]["bring_back"])
+        out = Path(self.tmp.name).resolve() / "out"
+        out.mkdir()
+        with tarfile.open(str(self.archive / "LOCAL-001.tar.gz")) as tar:
+            for name in ("replans.bundle", "branch.bundle"):
+                if f"LOCAL-001/{name}" in tar.getnames():
+                    (out / name).write_bytes(tar.extractfile(f"LOCAL-001/{name}").read())
+        clone = Path(self.tmp.name).resolve() / "clone"
+        self.assertEqual(git(self.project.parent, "clone", "-q", "--no-local", str(self.project), str(clone)).returncode, 0)
+        if "branch.bundle" in done["kept_refs"]["bring_back"]:  # as the command says: the branch first, which the kept refs build on
+            self.assertEqual(git(clone, "fetch", "-q", str(out / "branch.bundle"), f"{BRANCH}:{BRANCH}").returncode, 0)
+        fetched = git(clone, "fetch", "-q", str(out / "replans.bundle"), "refs/mach/*:refs/mach/*")
+        self.assertEqual(fetched.returncode, 0, fetched.stderr)
+        return git(clone, "rev-parse", ref).stdout.strip()
+
+    def test_a_merged_ticket_keeps_the_lane_refs_in_the_archive(self):
+        self.worked()
+        tip = self.keep_lane_refs()
+        self.merge()
+        self.set_cell(stage="approved")
+        plan = self.c_ok("plan", "LOCAL-001")
+        self.assertEqual(sorted(plan["replan_refs"]), sorted([self.LANE, self.FILES]))
+        done = self.c_ok("run", "LOCAL-001")
+        self.assertEqual(sorted(done["replan_refs_deleted"]), sorted([self.LANE, self.FILES]))
+        self.assertEqual(self.refs(), [self.OTHER])
+        self.assertEqual(self.restored(done, self.LANE), tip)
+
+    def test_an_abandoned_ticket_keeps_the_lane_refs_in_the_archive(self):
+        self.worked()
+        tip = self.keep_lane_refs()
+        done = self.c_ok("run", "LOCAL-001", "--abandon", self.WHY)
+        self.assertIn("LOCAL-001/replans.bundle", self.members())
+        self.assertEqual(self.restored(done, self.FILES), tip)
+
+    def test_another_tickets_lane_refs_are_never_listed(self):
+        self.worked()
+        self.keep_lane_refs()
+        self.assertEqual(git(self.work, "update-ref", "refs/mach/lanes-set-aside/LOCAL-0011/L1/1", "HEAD").returncode, 0)
+        self.assertNotIn("refs/mach/lanes-set-aside/LOCAL-0011/L1/1", [ref for ref, _ in cleanup.replan_refs(self.project, "LOCAL-001")])
 
 
 if __name__ == "__main__":
