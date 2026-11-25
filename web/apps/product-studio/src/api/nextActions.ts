@@ -22,6 +22,9 @@ export function routeFor(action: NextAction): ActionRoute {
   const kind = artifactKind(id);
   const slice = kind === "slice" ? id : null;
   switch (action.kind) {
+    case "join_project":
+      // The project home brings it in by itself, before anything else is shown.
+      return { type: "navigate", to: "/", label: "Bring in the project" };
     case "define_project":
       return { type: "navigate", to: "/vision", label: "Define the project" };
     case "add_epic":

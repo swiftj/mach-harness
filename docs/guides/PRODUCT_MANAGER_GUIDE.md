@@ -108,9 +108,20 @@ Technical needs are what the product requires of whatever is built, said without
 
 **A design you already have.** From Technical needs, bring in one Markdown or plain-text file. Ask the conversation to read it. For each basic topic the page then shows what the document decides, partly decides or says nothing on, with the lines it cites. Where the document contradicts a need, a principle or a policy statement, you settle it with your reason: **the design stands**, **the design is wrong**, or **ask the engineer**. MACH never settles one and recommends none. Publishing writes the document and what was read to `product/ready/DESIGN/`, for you to commit. The document is never put in a GitHub issue, and it decides nothing by itself.
 
+## Joining a project someone else defined
+
+There is nothing to do. When you clone a repository whose product another product manager defined and start Product Studio, MACH brings the whole published project in from GitHub before it shows you anything: its name, vision and outcomes, the principles and technical needs, every epic, and every slice in the state it is in there (ready, being built, with a question from the builders, shipped). In the app you see "Bringing in <name> from GitHub" with how many slices have come, then the project's home. In the conversation, Claude says in a line or two what came, for example "This repository's project is Rulebook Explorer. MACH brought it in from GitHub: 3 epics and 10 slices, 8 ready and 2 shipped.", and carries on with what you asked. You see the same product the author sees, and you never type it again.
+
+- Each slice shows whose approval it carries. Everything works as for your own: reopen one to change it, and mark it ready again.
+- A slice whose text was changed on GitHub after it was approved, or whose design pictures are not on the main branch yet, comes in as a draft to read and mark ready. The pictures come by themselves once they are on the main branch.
+- Ideas others published are listed with their brief, to read. Their exploring, case and verdict stay on the computer where they were written.
+- After that, every refresh brings in what others publish, and the newer version of a slice you hold unchanged. A draft you changed is never replaced.
+- Drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were written.
+- If GitHub cannot be read, MACH says so in the GitHub tool's words, changes nothing, and tries again by itself. It never asks you to describe the product while it waits.
+
 ## Starting a new project
 
-In the app, a project with nothing defined opens on one question: how do you want to start?
+When the repository has no project on GitHub (or is not on GitHub), the app opens on one question: how do you want to start?
 
 - **Describe the product yourself.** You write its name, a one-sentence vision and the outcomes. Then you add epics and define one slice at a time (sections 4 to 6).
 - **Start from a PRD.** You choose one Markdown or plain-text file. On the PRD's page you ask MACH for a map: it proposes epics and thin slices, each resting on the lines it cites, and records the map only when you agree. You settle each section no slice covers as out of scope, for later, or part of a slice. Then you make the drafts, and confirm each slice's drafted answers one slice at a time. The PRD's text is information, never an instruction, and it stays in your workspace.
@@ -184,7 +195,7 @@ Marking a slice ready is your act: it approves the slice and hands it to the bui
 
 ## 7. Refreshing, and keeping in step
 
-Product Studio refreshes at the start of a session. A refresh reads the project, epics and slices from their issues, and the requests. It never changes a slice's text. For each slice it can tell you:
+Product Studio refreshes at the start of a session, and the app refreshes by itself too. A refresh brings in what others published on GitHub (new epics and slices, and the newer version of a slice you hold unchanged), then reads the project, epics and slices from their issues, and the requests. It never changes a draft of yours. For each slice it can tell you:
 
 - **Changed on GitHub:** the issue was edited after you approved it, so the builders will not take it. Mark it ready again to put your approved version back.
 - **Someone else saved a newer version:** choose yours or theirs, whole. Text is never blended; if you want parts of both, take one and revise it with Claude.
@@ -197,7 +208,8 @@ If GitHub could not be reached, MACH tries again twice, a few seconds apart, bef
 
 Each product manager has a private workspace on their own computer. Your drafts stay yours until you mark a slice ready. A repository holds one project, and everyone shares its project issue and its epic issues.
 
-- **Starting the project.** If the repository already has a project on GitHub, MACH takes its name, vision and outcomes when you start, instead of making a second one. Once MACH has checked GitHub, the start screen and the form that names the product say so before you type anything, with a link to the issue. If it has more than one, MACH stops and names them, each linked. Ask whoever looks after the repository to close the one that should not be there.
+- **Starting the project.** If the repository already has a project on GitHub, MACH brings it in when you start (see "Joining a project someone else defined"), instead of making a second one. If it has more than one, MACH uses the one your workspace follows, else the oldest, says so with each issue linked, and offers to close the other for you.
+- **What others publish.** Every refresh brings in the epics and slices others marked ready since, so you and they see the same published project without doing anything.
 - **The same number at the same moment.** If you and someone else mark a slice ready at the same moment with the same number, the issue GitHub made first keeps it. If yours came second, MACH tells you at once who has the number and which issue, with both issues linked. It closes your issue before the builders could see it, and your slice goes back to waiting for your approval. Give it a new number and mark it ready again. The same holds for an epic: until you give the epic a new number, it says so on the epic itself, on the project home, under Vision and on the epic's own page. A refresh on either computer reports it too, if the moment was missed.
 - **The project's and epics' text.** MACH never writes your copy of the project, or of an epic, over a version someone else saved. If someone else changed it and you had not, a refresh takes theirs into your workspace. If you both changed it, MACH says "someone else changed the project" (or the epic) and leaves GitHub as it is. You choose yours or theirs. If you keep yours, MACH writes it the next time you mark a slice ready.
 - **Starting from a PRD or an idea.** Before MACH numbers several new epics and slices at once, it reads which numbers are already in use on GitHub.

@@ -35,7 +35,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 SKILL_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import design  # noqa: E402
+import from_github  # noqa: E402  the project as GitHub holds it: the one reader
 import handoff  # noqa: E402
+import join  # noqa: E402  taking the project from GitHub into this workspace
 import issues  # noqa: E402
 import jira_export  # noqa: E402
 import mocks  # noqa: E402
@@ -723,7 +725,12 @@ def describe(studio: Studio) -> Dict[str, Any]:
     changed_by = {row["target"]: row for row in changed}
     moments = {key: handoff.epic_same_moment(ledger, key, rules) for key in epics}
     moments = {key: moment for key, moment in moments.items() if moment}
-    actions = next_actions(project, epics, slice_rows, changed, moments)
+    connected = from_github.has_github_remote(studio)
+    seen = ledger.get("seen") or {}
+    # No project here, and GitHub may hold one: it is brought in, never defined again (refresh, or the app's start, does it).
+    joinable = not project and connected and (not seen.get("refreshed_at") or bool(seen.get("problem"))
+                                               or bool((project_on_github(ledger, rules) or {}).get("readable")))
+    actions = next_actions(project, epics, slice_rows, changed, moments, joinable)
     withdrawn = []
     for artifact, note in sorted((session.get("withdrawn") or {}).items()):
         current = slices.get(artifact)
@@ -748,7 +755,9 @@ def describe(studio: Studio) -> Dict[str, Any]:
         "same_id_twice": list((ledger.get("seen") or {}).get("clashes") or []),  # M20: IDs more than one open issue held at the last refresh
         "project_on_github": project_on_github(ledger, rules),  # M20: the one project issue GitHub held at the last refresh, else None
         "github": {"repository": ledger.get("repository"), "form": ledger.get("form"),
-                   "last_read": (ledger.get("seen") or {}).get("refreshed_at")},
+                   "last_read": (ledger.get("seen") or {}).get("refreshed_at"),
+                   "connected": connected},  # this repository's shared remote is on GitHub (its address alone; nothing is read there)
+        **ideas_on_github(session, studio),
         "current_slice": session.get("current_slice"),
         "last_refreshed": session.get("refreshed_at"),
         **github_updates_waiting(studio),
@@ -762,6 +771,18 @@ def describe(studio: Studio) -> Dict[str, Any]:
         "suggested_next": [action["sentence"] for action in actions],
         "next_actions": [{key: action[key] for key in ("kind", "target", "title", "reason", "related")} for action in actions],
     }
+
+
+def ideas_on_github(session: Dict[str, Any], studio: Studio) -> Dict[str, Any]:
+    """Ideas others published on GitHub that this workspace does not hold, as joining last read them: listed to read, with their
+    brief fenced as data. Nothing when there are none."""
+    items = session.get("github_ideas")
+    if not isinstance(items, list) or not items:
+        return {}
+    here = set(join.idea_ids(sys.modules[__name__], studio))
+    rows = [{key: item.get(key) for key in ("idea_id", "issue", "url", "title", "state", "brief")} for item in items
+            if isinstance(item, dict) and item.get("idea_id") not in here]
+    return {"ideas_on_github": {"items": rows, "lacks": join.IDEA_LACKS}} if rows else {}
 
 
 def project_on_github(ledger: Dict[str, Any], rules: Any) -> Optional[Dict[str, Any]]:
@@ -866,7 +887,7 @@ NOT_APPROVED_WORDS = {"edited": "its text was changed on GitHub after it was app
                       "check": "its spec does not pass the spec check here",
                       "mocks": "it was opened without its design mocks"}
 
-NEXT_ACTION_KINDS = ("define_project", "add_epic", "reconcile", "renumber_slice", "renumber_epic", "answer_question", "continue_interview", "mark_ready",
+NEXT_ACTION_KINDS = ("join_project", "define_project", "add_epic", "reconcile", "renumber_slice", "renumber_epic", "answer_question", "continue_interview", "mark_ready",
                      "finish_ready", "start_slice")
 # The vocabulary of a refusal's hint (--app): the next-action kinds, plus the acts that resolve a refusal.
 # several_projects carries the project issues with their addresses, for the app to link; it is not an act.
@@ -874,7 +895,7 @@ HINT_KINDS = NEXT_ACTION_KINDS + ("reopen_slice", "edit_project", "several_proje
 
 
 def next_actions(project, epics, slice_rows, changed: Sequence[Dict[str, Any]] = (),
-                 epic_moments: Optional[Dict[str, Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+                 epic_moments: Optional[Dict[str, Dict[str, Any]]] = None, joinable: bool = False) -> List[Dict[str, Any]]:
     """What to do next, in order. One decision produces both forms: `sentence` for the terminal
     (it ends with the command in brackets) and kind, target, title and reason for an app."""
     actions: List[Dict[str, Any]] = []
@@ -884,6 +905,11 @@ def next_actions(project, epics, slice_rows, changed: Sequence[Dict[str, Any]] =
         item = {"kind": kind, "target": target, "title": title, "reason": reason, "related": list(related), "sentence": sentence}
         actions.insert(0, item) if first else actions.append(item)
 
+    if not project and joinable:
+        act("join_project", None, "Bring in the project from GitHub",
+            "This repository is on GitHub. MACH brings in its project, epics and slices from there, so nothing is typed again.",
+            "This repository is on GitHub: MACH brings in its project, epics and slices from there (refresh).")
+        return actions
     if not project:
         act("define_project", None, "Define the project", "Say what the product is for: its name, vision and outcomes.",
             "Define the project: its name, vision and outcomes (project init).")
@@ -982,9 +1008,21 @@ def cmd_project_init(studio: Studio, args: argparse.Namespace) -> int:
             "vision": args.vision.strip(), "outcomes": clean_list(args.outcome, "outcome")}
     if not data["outcomes"]:
         raise StudioError(say("A project needs at least one outcome (--outcome, repeatable).", "A project needs at least one outcome."))
-    # M20: one project per repository. The project issue already on GitHub is taken, never a second one started beside it.
+    # M20: one project per repository. The project already on GitHub is taken, never a second one started beside it: the whole of it,
+    # epics and slices too, by the same act as joining at the start (no words are asked for; the ones given are not used).
     hand = studio.handoff()
-    found = hand.github_project()
+    read_now = from_github.read(sys.modules[__name__], studio)
+    if read_now["checked"]:
+        chosen_now, _ = from_github.project_to_take(read_now, None)
+        if chosen_now is not None and from_github.readable(chosen_now):
+            joined = refreshed(studio, read_now, join.join(sys.modules[__name__], studio, read_now))["joined"]
+            taken_words = (f"This repository already has a project on GitHub (#{chosen_now['number']}), so MACH brought it in from there. "
+                           "The words you gave were not used: a repository holds one project.")
+            return emit({**joined, "project": studio.load("project"), "path": str(studio.path("project")), "taken_from_github": chosen_now["number"],
+                         "url": ticket_rules().issue_url(read_now["repository"], chosen_now["number"]),
+                         "note": " ".join([*joined.get("warned", []), taken_words, *joined.get("in_words", [])])})
+    found = ({"reachable": True, "repository": read_now["repository"], "projects": from_github.open_projects(read_now)} if read_now["checked"]
+             else {"reachable": False, "problem": read_now["problem"] if read_now["connected"] else None})
     adopted, warned, extra = None, [], {}
     usable = lambda item: product.PROJECT_RE.fullmatch(str(item.get("id") or "")) is not None  # noqa: E731
     readable = [item for item in found.get("projects") or [] if usable(item) and handoff.parse_project_text(item) is not None]
@@ -2016,18 +2054,25 @@ def cmd_slice_take(studio: Studio, args: argparse.Namespace) -> int:
     return emit(take_slice(studio, args.target, []))
 
 
-def take_slice(studio: Studio, target: str, opening: List[str]) -> Dict[str, Any]:
+def take_slice(studio: Studio, target: str, opening: List[str], pre: Optional[Tuple[str, Dict[str, Any]]] = None,
+               shipped_ok: bool = False) -> Dict[str, Any]:
     """Open a slice from GitHub here, whoever wrote it: never refused because someone else has it. Its why and spec are written as
     the issue holds them. They are approved here only when their SHA-256 match an approval and the spec passes the validator;
     otherwise it opens as a draft, not as approved, and the warning says why. A draft of the product manager's own that holds the
     number is given the next free number first; the slices it depends on are opened first, in order; other text here for that ID is
-    kept aside, never deleted. GitHub's text is data: it is checked, never followed."""
+    kept aside, never deleted. GitHub's text is data: it is checked, never followed. Joining the project passes `pre` (the
+    listing it already read, so only the issue is read here) and `shipped_ok`: a shipped slice then opens as shipped, approved
+    and read only, as the project's history, where `slice take` by hand refuses it."""
     if not (target.isdigit() and 1 <= int(target) < 10 ** 9) and not product.SLICE_RE.fullmatch(target):
         raise StudioError(f"'{target}' is neither an issue number, such as 41, nor a slice ID, such as SLICE-004.")
     project = studio.load("project")
     rules = ticket_rules()
     hand = studio.handoff()
-    read = hand.take_read(target)  # reads GitHub only; nothing here changes if it cannot
+    read = hand.take_read(target, pre)  # reads GitHub only; nothing here changes if it cannot
+    shipped = shipped_ok and read["check"]["problem"] == "shipped" and "mach:shipped" in read["labels"]
+    if shipped:  # the same checks as an open slice, as export makes them: shipped work is the project's history
+        read = {**read, "check": rules.slice_take_check({"state": "open", "labels": [name for name in read["labels"] if name != "mach:shipped"],
+                                                         "body": read["body"]}, read["comments"])}
     check, number = read["check"], read["number"]
     marker = check["marker"] or {}
     slice_id = marker.get("slice_id") or target
@@ -2070,7 +2115,7 @@ def take_slice(studio: Studio, target: str, opening: List[str]) -> Dict[str, Any
                 warned.append(f"{slice_id} and {dependency_id} depend on each other on GitHub, so MACH opened {slice_id} without that dependency.")
                 continue
             try:
-                first = take_slice(studio, str(dependency), [*opening, slice_id])
+                first = take_slice(studio, str(dependency), [*opening, slice_id], pre, shipped_ok)
             except (StudioError, handoff.HandoffError) as exc:
                 warned.append(f"{slice_id} depends on {dependency_id} (#{dependency}), which MACH could not open here, so {slice_id} opened without it: {exc}")
                 continue
@@ -2148,7 +2193,7 @@ def take_slice(studio: Studio, target: str, opening: List[str]) -> Dict[str, Any
                 if approved:
                     approved, reason = False, "mocks"
                 warned.append(str(words))
-        ready_like = bool({"mach:ready", "mach:building", "mach:question"} & set(read["labels"]))
+        ready_like = shipped or bool({"mach:ready", "mach:building", "mach:question"} & set(read["labels"]))
         if not copy_as:
             # Recorded before the draft is written; a version opened without its approval is recorded as not approved, and why.
             hand.record_taken(ledger, read, slice_id, "github" if ready_like else "withdrawn", epic_id, not_approved=reason)
@@ -2171,7 +2216,10 @@ def take_slice(studio: Studio, target: str, opening: List[str]) -> Dict[str, Any
         result = studio.check_slice(here_id, ready=True)
         work.update(status="ready_for_approval" if result["ready"] else "interviewing", open_questions=result["open_questions"])
         studio.save("slice", work, bump=False)
-    if as_approved:
+    if as_approved and shipped:
+        note = (f"{slice_id} is now in your workspace exactly as #{number} holds it (version {marker['revision']}, approved by {check['approved_by']}). "
+                "It has shipped. To change what it does, reopen it; marking it ready again makes a new issue that links to the shipped one.")
+    elif as_approved:
         note = (f"{slice_id} is now in your workspace exactly as #{number} holds it (version {marker['revision']}, approved by {check['approved_by']}). "
                 "To change it, reopen it; marking it ready again saves a new version of the same issue.")
     elif copy_as:
@@ -2183,7 +2231,7 @@ def take_slice(studio: Studio, target: str, opening: List[str]) -> Dict[str, Any
     return {"taken": True, "already_in_workspace": False, "slice": studio.load("slice", here_id), "issue": number,
             "url": rules.issue_url(read["repository"], number), "revision": marker["revision"], "approved_by": check["approved_by"],
             "approved_here": as_approved, "linked": not copy_as,
-            "state_label": next((name for name in ("mach:question", "mach:building", "mach:ready") if name in read["labels"]), None),
+            "state_label": next((name for name in ("mach:question", "mach:shipped", "mach:building", "mach:ready") if name in read["labels"]), None),
             "epic": {"epic_id": epic_here, "issue": epic_issue["number"], "created_here": created_epic}, "dependencies": dependencies,
             "opened_first": opened_first, "spec": studio.relative(spec_path), "why": studio.relative(intent), "editable": not as_approved,
             **({"warned": warned} if warned else {}), **({"replaced": hand.replaced} if hand.replaced else {}), "factory_authorized": False,
@@ -2364,11 +2412,39 @@ def reconcile_principles(studio: Studio, take: str) -> int:
 
 
 def cmd_refresh(studio: Studio, args: argparse.Namespace) -> int:
+    return emit(refreshed(studio))
+
+
+def cmd_project_join(studio: Studio, args: argparse.Namespace) -> int:
+    """Take the project from GitHub into this workspace. Nobody needs to type it: status' first refresh, the app's start and every
+    refresh do the same. With --batch the app shows progress; the last batch finishes with the whole refresh."""
+    if args.batch is not None and not 1 <= args.batch <= 1000:
+        raise StudioError(say("--batch takes a number from 1 to 1000.", "The batch size must be a number from 1 to 1000."))
+    return emit(join_project(studio, args.batch))
+
+
+def join_project(studio: Studio, batch: Optional[int] = None) -> Dict[str, Any]:
+    """The join, then (once nothing more waits to be taken) the rest of a refresh, so principles, technical needs, the builders' progress
+    and the requests come too. The join's own result, with what the refresh took."""
     studio.prepare()
+    found = from_github.read(sys.modules[__name__], studio)
+    joined = join.join(sys.modules[__name__], studio, found, batch)
+    if joined.get("remaining") or not found["checked"]:
+        return joined
+    return refreshed(studio, found, joined)["joined"]
+
+
+def refreshed(studio: Studio, found: Optional[Dict[str, Any]] = None, joined: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """`refresh`: the project as GitHub holds it, read once (from_github.read), taken into this workspace where it lacks it (join),
+    then what changed on GitHub for what is here, the principles and needs someone else published, and the requests."""
+    studio.prepare()
+    host = sys.modules[__name__]
+    found = found if found is not None else from_github.read(host, studio)
+    joined = joined if joined is not None else join.join(host, studio, found)
     requests = studio.requests().refresh(studio.all("slice"))  # never refuses: GitHub's problems are reported in the block
     hand = studio.handoff()
     project = studio.load("project") if studio.path("project").is_file() else None
-    github = hand.refresh(studio.all("slice"), project, studio.all("epic"))  # never refuses; writes only to close this workspace's own duplicate
+    github = hand.refresh(studio.all("slice"), project, studio.all("epic"), found)  # never refuses; writes only to close this workspace's own duplicate
     for slice_id, entry in hand.load()["slices"].items():
         if (entry.get("lost") or {}).get("closed") and not entry.get("number") and studio.path("slice", slice_id).is_file():
             undo_approval(studio, slice_id, "Someone else marked a slice ready with the same number at the same moment, so it needs a new number and your approval again.")
@@ -2390,9 +2466,17 @@ def cmd_refresh(studio: Studio, args: argparse.Namespace) -> int:
         session = studio.session()
         session["refreshed_at"] = now(None)
         studio.save_session(session)
-    return emit({
+    if joined.get("joined"):  # the principles and technical needs that came with the project, approvals and all
+        # Said again from what this refresh read: where each slice stands with the builders now.
+        joined["project_words"] = join.project_words(sys.modules[__name__], studio, hand, (project or {}).get("name") or "this project")
+        if joined["taken"]["project"] and joined.get("in_words"):
+            joined["in_words"][0] = joined["project_words"]
+            joined["note"] = " ".join([*joined.get("warned", []), *joined["in_words"]])
+        joined["taken"].update(principles=bool(taken) or joined["taken"]["principles"], needs=bool(needs_taken) or joined["taken"]["needs"])
+    return {
         "refreshed": bool(github.get("refreshed")),
         "problem": github.get("problem"),
+        "joined": joined,
         "requests": requests,
         "github": github,
         **({"principles_taken": taken} if taken else {}),
@@ -2400,7 +2484,7 @@ def cmd_refresh(studio: Studio, args: argparse.Namespace) -> int:
         **shipped_moved_field(studio),
         **shape.refresh_field(sys.modules[__name__], studio),  # M16 A: the idea issues read back; nothing when there are no ideas
         "factory_authorized": False,
-    })
+    }
 
 
 def shipped_moved_field(studio: Studio) -> Dict[str, Any]:
@@ -2750,6 +2834,11 @@ def build_parser() -> argparse.ArgumentParser:
                                                "(only on the product manager's word); its text stays in its history")
     p.add_argument("number", help="the project issue's number, such as 9")
     p.set_defaults(func=cmd_project_close_issue)
+    p = project.add_parser("join", help="take the project from GitHub into this workspace: the project, principles, technical needs, epics, "
+                                        "slices and published ideas; brings only what is new or changed, and writes nothing to GitHub. "
+                                        "Refresh does the same by itself")
+    p.add_argument("--batch", type=int, help="take at most this many slices now; `remaining` says how many are left (the app shows progress)")
+    p.set_defaults(func=cmd_project_join)
     # M21: moving the project to another repository in one archive file (only on the product manager's word)
     p = project.add_parser("export", help="write the whole project to one archive file that names no repository; what GitHub holds and this "
                                           "workspace does not is read from there (nothing here changes)")
@@ -2979,6 +3068,7 @@ def run_command(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     APP = bool(args.app)
     handoff.APP = APP
+    handoff.collab._GAVE_UP.clear()  # further tries of a failed read stop for the rest of one command, never for the next
     try:
         cell, _ = intent_modules()
         project = (args.project or cell.find_project(Path.cwd())).resolve()

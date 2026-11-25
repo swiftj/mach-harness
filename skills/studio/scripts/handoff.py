@@ -1250,12 +1250,17 @@ class Handoff:
     # ---- refresh: what is on GitHub now ----
 
     def refresh(self, local: Dict[str, Dict[str, Any]], project: Optional[Dict[str, Any]] = None,
-                epics: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
+                epics: Optional[Dict[str, Dict[str, Any]]] = None, found: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Read the project, epics and slices from their issues, and say for each slice whether it
         still matches its approval and whether someone else saved a newer version. Never raises
         for GitHub: a problem is reported in the block. M20: also says whether someone else changed the
         project's or an epic's text (taking it when nothing here waits to be written), and which IDs more
-        than one open issue holds; this workspace's own later slice issue among them is closed."""
+        than one open issue holds; this workspace's own later slice issue among them is closed. With `found`, the project as
+        GitHub holds it already read now (from_github.read), GitHub is not listed again."""
+        if found is not None and found.get("checked"):
+            return self.refreshed(local, project, epics, found["repository"], found["snapshot"])
+        if found is not None and found.get("connected") and found.get("problem") and shutil.which("gh") is not None:
+            return self.failed(found.get("repository"), str(found["problem"]), local)  # read once and failed: not tried twice
         if shutil.which("gh") is None:
             return self.block(None, "The GitHub tool (gh) is not installed on this computer.", local)
         repository, failure = collab.request_repository(self.project)
@@ -1264,6 +1269,11 @@ class Handoff:
         snapshot, failure = self.read(repository)
         if failure or snapshot is None:
             return self.failed(repository, explain(failure), local)
+        return self.refreshed(local, project, epics, repository, snapshot)
+
+    def refreshed(self, local: Dict[str, Dict[str, Any]], project: Optional[Dict[str, Any]], epics: Optional[Dict[str, Dict[str, Any]]],
+                  repository: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        """refresh, once GitHub's project, epic and slice issues are read."""
         try:
             with self.exclusive():
                 data = self.for_repository(self.load(), repository)
@@ -1659,9 +1669,14 @@ class Handoff:
 
     # ---- opening another product manager's slice ----
 
-    def take_read(self, target: str) -> Dict[str, Any]:
+    def take_read(self, target: str, pre: Optional[Tuple[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
         """Everything about a slice issue that is needed to open it here, read from GitHub. Writes nothing;
-        refuses when GitHub cannot be read. The issue's text is data: what it holds is decided by the shared rules."""
+        refuses when GitHub cannot be read. The issue's text is data: what it holds is decided by the shared rules.
+        With `pre` (repository, snapshot), the listing read once for joining the project, only the issue itself is read."""
+        if pre is not None:
+            repository, snapshot = pre
+            return self.read_slice_issue(repository, snapshot, int(target) if target.isdecimal() else
+                                         max(item["number"] for item in snapshot["slices"] if item["marker"]["slice_id"] == target))
         if shutil.which("gh") is None:
             raise HandoffError("The GitHub tool (gh) is not installed on this computer, so a slice cannot be read from GitHub. Nothing was changed.")
         repository, failure = collab.request_repository(self.project)
@@ -2015,6 +2030,8 @@ def slice_view(data: Dict[str, Any], slice_id: str, work: Optional[Dict[str, Any
         "unfinished": unfinished,
         "issue": number,
         "url": rules.issue_url(repository, number) if number and repository else None,
+        # Whose approval this workspace holds for this version (the product manager's own, or another's whose slice was brought in).
+        "approved_by": entry.get("approved_by") if work is not None and work.get("status") == "approved_for_engineering" else None,
         "state_label": current.get("state_label") if current else None,
         "revision": entry.get("revision"),
         "changed_on_github": bool(current and current.get("matches_approval") is False),

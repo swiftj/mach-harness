@@ -17,7 +17,8 @@
     "github": {
       "repository": null,
       "form": null,
-      "last_read": null
+      "last_read": null,
+      "connected": true
     },
     "current_slice": null,
     "last_refreshed": null,
@@ -25,14 +26,14 @@
     "structural_errors": [],
     "factory_authorized": false,
     "suggested_next": [
-      "Define the project: its name, vision and outcomes (project init)."
+      "This repository is on GitHub: MACH brings in its project, epics and slices from there (refresh)."
     ],
     "next_actions": [
       {
-        "kind": "define_project",
+        "kind": "join_project",
         "target": null,
-        "title": "Define the project",
-        "reason": "Say what the product is for: its name, vision and outcomes.",
+        "title": "Bring in the project from GitHub",
+        "reason": "This repository is on GitHub. MACH brings in its project, epics and slices from there, so nothing is typed again.",
         "related": []
       }
     ]

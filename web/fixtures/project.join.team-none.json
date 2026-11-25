@@ -1,0 +1,36 @@
+{
+  "exit_code": 0,
+  "data": {
+    "joined": false,
+    "github": {
+      "connected": true,
+      "checked": true,
+      "problem": null,
+      "repository": "acme/team-space"
+    },
+    "taken": {
+      "project": false,
+      "principles": false,
+      "needs": false,
+      "epics": [],
+      "slices": [],
+      "ideas": []
+    },
+    "updated": [],
+    "already_here": {
+      "project": false,
+      "epics": [],
+      "slices": []
+    },
+    "not_taken": [],
+    "renumbered": [],
+    "warned": [],
+    "remaining": 0,
+    "factory_authorized": false,
+    "project": null,
+    "project_on_github": null,
+    "note": "GitHub holds no project for this repository yet, so there is nothing to bring in."
+  },
+  "refused": null,
+  "hint": null
+}

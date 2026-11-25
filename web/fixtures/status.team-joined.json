@@ -1,0 +1,235 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Teams work together.",
+      "outcomes": [
+        "Teams can work together"
+      ],
+      "issue": 1,
+      "url": "https://github.com/acme/team-space/issues/1",
+      "changed_elsewhere": null
+    },
+    "approvals_withdrawn": [],
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "Team membership",
+        "status": "open",
+        "revision": 1,
+        "acceptance_criteria": [
+          "Only invited people can join"
+        ],
+        "issue": 2,
+        "url": "https://github.com/acme/team-space/issues/2",
+        "changed_elsewhere": null,
+        "same_moment": null,
+        "counts": {
+          "total": 3,
+          "by_progress": {
+            "ready_to_build": 3
+          },
+          "ready_or_further": 3,
+          "ready_or_further_means": "marked ready to build, being built, or shipped"
+        }
+      }
+    ],
+    "slices": [
+      {
+        "slice_id": "SLICE-001",
+        "title": "Invite a teammate",
+        "epic_id": "EPIC-001",
+        "status": "approved_for_engineering",
+        "revision": 1,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-001-invite-a-teammate.md",
+        "has_intent": true,
+        "resume_note": null,
+        "dependencies": [],
+        "editable": false,
+        "github": {
+          "saved": "github",
+          "unfinished": false,
+          "issue": 3,
+          "url": "https://github.com/acme/team-space/issues/3",
+          "approved_by": "ada-pm",
+          "state_label": "mach:ready",
+          "revision": 1,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "same_moment": null,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "not_approved": null,
+          "times": {
+            "marked_ready": "2026-11-17T10:00:07Z",
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "ready_to_build"
+        }
+      },
+      {
+        "slice_id": "SLICE-002",
+        "title": "Remove a teammate",
+        "epic_id": "EPIC-001",
+        "status": "approved_for_engineering",
+        "revision": 1,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-002-remove-a-teammate.md",
+        "has_intent": true,
+        "resume_note": null,
+        "dependencies": [],
+        "editable": false,
+        "github": {
+          "saved": "github",
+          "unfinished": false,
+          "issue": 4,
+          "url": "https://github.com/acme/team-space/issues/4",
+          "approved_by": "ada-pm",
+          "state_label": "mach:ready",
+          "revision": 1,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "same_moment": null,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "not_approved": null,
+          "times": {
+            "marked_ready": "2026-11-17T10:00:11Z",
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "ready_to_build"
+        }
+      },
+      {
+        "slice_id": "SLICE-003",
+        "title": "Rename a teammate",
+        "epic_id": "EPIC-001",
+        "status": "approved_for_engineering",
+        "revision": 1,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-003-rename-a-teammate.md",
+        "has_intent": true,
+        "resume_note": null,
+        "dependencies": [],
+        "editable": false,
+        "github": {
+          "saved": "github",
+          "unfinished": false,
+          "issue": 5,
+          "url": "https://github.com/acme/team-space/issues/5",
+          "approved_by": "ada-pm",
+          "state_label": "mach:ready",
+          "revision": 1,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "same_moment": null,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "not_approved": null,
+          "times": {
+            "marked_ready": "2026-11-17T10:00:15Z",
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "ready_to_build"
+        }
+      }
+    ],
+    "saved": {
+      "everything_saved": true,
+      "note": "Everything is saved.",
+      "not_saved": [],
+      "github_check": null
+    },
+    "order": [
+      {
+        "epic_id": "EPIC-001",
+        "issue": 2,
+        "slices": [
+          {
+            "slice_id": "SLICE-001",
+            "title": "Invite a teammate",
+            "in_workspace": true,
+            "issue": 3,
+            "state_label": "mach:ready"
+          },
+          {
+            "slice_id": "SLICE-002",
+            "title": "Remove a teammate",
+            "in_workspace": true,
+            "issue": 4,
+            "state_label": "mach:ready"
+          },
+          {
+            "slice_id": "SLICE-003",
+            "title": "Rename a teammate",
+            "in_workspace": true,
+            "issue": 5,
+            "state_label": "mach:ready"
+          }
+        ],
+        "on_github": true,
+        "github_order": [
+          "SLICE-001",
+          "SLICE-002",
+          "SLICE-003"
+        ],
+        "github_read_at": "2026-11-25T22:50:05Z",
+        "matches_github": true,
+        "unfinished": false,
+        "taken_from_github": false,
+        "could_not_read": false,
+        "note": null
+      }
+    ],
+    "same_id_twice": [],
+    "project_on_github": {
+      "issue": 1,
+      "url": "https://github.com/acme/team-space/issues/1",
+      "name": "Team Space",
+      "readable": true,
+      "read_at": "2026-11-25T22:50:05Z"
+    },
+    "github": {
+      "repository": "acme/team-space",
+      "form": null,
+      "last_read": "2026-11-25T22:50:05Z",
+      "connected": true
+    },
+    "current_slice": null,
+    "last_refreshed": "2026-11-25T22:50:05Z",
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Start a new slice (slice new --epic EPIC-NNN --title \"...\")."
+    ],
+    "next_actions": [
+      {
+        "kind": "start_slice",
+        "target": null,
+        "title": "Start a new slice",
+        "reason": "No slice of intent is being defined right now.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

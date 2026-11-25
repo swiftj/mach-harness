@@ -1024,7 +1024,7 @@ class RetryTest(IssuesBase):
         saved = self.ok(self.a, "status")["saved"]
         self.assertTrue(saved["everything_saved"], "a failed check is not something unsaved")
         self.assertEqual(saved["note"], "Everything is saved.")
-        self.assertIn(f'GitHub could not be reached. The GitHub tool (gh) said: "{NETWORK_DOWN}".', saved["github_check"]["problem"])
+        self.assertIn(f'GitHub could not be reached (tried 3 times). The GitHub tool (gh) said: "{NETWORK_DOWN}".', saved["github_check"]["problem"])
         # The first read that failed was tried three times; after that the command stops trying again, so it never waits long.
         listed = [json.dumps(call) for call in self.gh()["calls"][self.before:] if call[:2] == ["issue", "list"]]
         self.assertEqual(max(listed.count(call) for call in listed), 3)

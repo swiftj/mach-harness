@@ -221,22 +221,19 @@ export function sharedTextAfterReady(notes: SharedTextNote[] | undefined): Array
 
 /** `close`: the extra project issues MACH can close for the person (`project.close-issue`), each one click and a confirm. */
 export type ProjectStartNote =
+  /** The project someone else defined, brought in from GitHub when the app started: what came, in the engine's words. */
+  | { kind: "joined"; issue: number | null; url: string | null; note: string }
   | { kind: "taken"; issue: number; url: string | null; note: string; close: number[] }
   | { kind: "warned"; note: string; close: number[] }
   | { kind: "not_checked"; note: string };
 
 /**
- * Before the product is named: the repository's project already on GitHub, as last read. Said before the person types
- * anything, since naming it takes that project's words instead of theirs. Null when GitHub held none or was not read.
+ * Before the product is named: the repository's project issue on GitHub, as last read, when MACH cannot bring it in (its
+ * text is not in the form MACH writes). A project MACH can read is brought in by itself before anything is shown, so
+ * nothing is said for it here. Null when GitHub held none or was not read.
  */
 export function projectOnGithubWords(found: Status["project_on_github"]): { title: string; body: string } | null {
-  if (!found) return null;
-  if (found.readable && found.name) {
-    return {
-      title: `This repository already has a project: ${found.name}`,
-      body: `Its issue on GitHub is #${found.issue}. When you name the product, MACH takes its name, vision and outcomes from GitHub, and what you type is not used. A repository holds one project.`,
-    };
-  }
+  if (!found || (found.readable && found.name)) return null;
   return {
     title: "This repository already has a project on GitHub",
     body: `Its issue is #${found.issue}, but its text is not in the form MACH writes, so MACH cannot take its words. When you name the product, your own words define the project, and the first slice you mark ready writes them to #${found.issue}. What it holds now stays in its history on GitHub.`,

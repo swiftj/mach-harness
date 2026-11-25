@@ -137,3 +137,26 @@ export function requestStep(status: Pick<Status, "project" | "epics">): RequestS
   if (!status.epics.some((epic) => epic.status !== "deferred")) return "epic";
   return "pick";
 }
+
+/* ── A project someone else defined ──────────────────────────────────── */
+
+/**
+ * Whether the start screen brings the project in from GitHub instead of offering the ways to start from nothing. The engine
+ * decides: with no project here, a repository on GitHub that may hold one gets the next action `join_project` (never
+ * `define_project`). The ways to start are offered only when GitHub was read and holds no project for this repository, or
+ * when the repository is not on GitHub.
+ */
+export function bringsInFromGithub(status: Pick<Status, "project" | "next_actions">): boolean {
+  return !status.project && status.next_actions.some((action) => action.kind === "join_project");
+}
+
+/** How many slices a batch of `project.join` brings at a time, so the screen can say how many have come. */
+export const JOIN_BATCH = 4;
+
+/** "3 of 10 slices", or "10 slices" once all have come. */
+export function joinProgressWords(done: number, total: number | null): string {
+  if (total === null) return "";
+  if (total === 0) return "No slices yet";
+  const slices = total === 1 ? "1 slice" : `${total} slices`;
+  return done >= total ? slices : `${done} of ${slices}`;
+}

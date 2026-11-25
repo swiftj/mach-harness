@@ -139,10 +139,10 @@ class ExportCommandTest(IssuesBase):
 
     def test_the_app_wording_names_no_command_or_flag(self):
         """Ben's own SLICE-001 clashes with Ada's on GitHub: the sentence names the fix in the app's words, the command in the terminal's."""
+        self.project_and_epic(self.b)  # Ben started before anything was on GitHub, and has not refreshed since
+        self.drafted(self.b, title="Ben's own")
         self.built()
         self.ready("SLICE-001")
-        self.project_and_epic(self.b)
-        self.drafted(self.b, title="Ben's own")
         result = self.ok(self.b, "--app", "project", "export", "--out", str(self.out))
         (row,) = result["not_included"]
         self.assertEqual(row["reason"], f"Two different slices use the number SLICE-001: your draft here and #{row['issue']} on GitHub. The archive "

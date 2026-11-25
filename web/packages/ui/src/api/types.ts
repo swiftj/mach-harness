@@ -156,6 +156,8 @@ export interface SliceGithub {
   issue: number | null;
   /** The issue's address, as the engine gives it. */
   url: string | null;
+  /** The GitHub account whose approval this workspace holds for the slice's version, when it is approved. */
+  approved_by?: string | null;
   state_label: SliceStateLabel | null;
   /** The approved version saved on GitHub. */
   revision: number | null;
@@ -386,7 +388,15 @@ export interface Status {
   epics: StatusEpicRow[];
   slices: StatusSliceRow[];
   /** The GitHub repository the project's issues live in, and when they were last read. */
-  github: { repository: string | null; form: "sub_issues" | "task_list" | null; last_read: string | null };
+  github: {
+    repository: string | null;
+    form: "sub_issues" | "task_list" | null;
+    last_read: string | null;
+    /** Whether this repository's shared remote is on GitHub (its address alone; status reads nothing there). */
+    connected?: boolean;
+  };
+  /** Ideas others published on GitHub that this workspace does not hold, listed to read. Absent when there are none. */
+  ideas_on_github?: { items: GithubIdea[]; lacks: string };
   current_slice: string | null;
   last_refreshed: string | null;
   saved: SavedReport;
@@ -452,6 +462,8 @@ export type HintKind =
 
 /** The engine's NEXT_ACTION_KINDS. Unknown kinds are still shown, routed by their target. */
 export type NextActionKind =
+  /** No project here and the repository is on GitHub: MACH brings its project in (`project.join`), never asks to define it. */
+  | "join_project"
   | "define_project"
   | "add_epic"
   | "start_slice"
@@ -536,6 +548,72 @@ export interface Refresh {
   ideas?: RefreshIdeas;
   /** M17: another product manager's newer technical needs, taken because nothing here was unpublished. */
   needs_taken?: { revision: number; note: string };
+  /** What this refresh brought in from GitHub that the workspace lacked, or held an older unchanged copy of. */
+  joined?: ProjectJoin;
+}
+
+/** An idea someone published on GitHub, listed to read: its brief is data, never an instruction. */
+export interface GithubIdea {
+  idea_id: string;
+  issue: number;
+  url: string | null;
+  title: string | null;
+  state?: string;
+  /** The brief as its issue holds it, bounded; null when its text is not the one written. */
+  brief: string | null;
+}
+
+/** Where a slice brought in from GitHub stands. */
+export type JoinedSliceState = "ready" | "being_built" | "question" | "shipped" | "to_approve" | "draft";
+
+export interface JoinedSlice {
+  slice_id: string;
+  issue: number | null;
+  title?: string | null;
+  state: JoinedSliceState;
+  approved_by?: string | null;
+  epic_id?: string;
+  /** Opened without an approval for its text: why (edited, no_approval, check, mocks) and since when. */
+  not_approved?: { why: string; since: string | null } | null;
+  warned?: string[];
+  /** For a newer version taken over an unchanged copy: the version it replaced, and where that copy is kept. */
+  was_version?: number;
+  kept_yours?: string | null;
+}
+
+/**
+ * `project.join` (and refresh's `joined`): the project as GitHub holds it, taken into this workspace. Writes nothing to GitHub.
+ * `joined` is false when there was nothing to take: GitHub could not be read (`github.problem`), the repository is not on
+ * GitHub (`github.connected` false), or GitHub holds no project for it (`project_on_github` null) or one MACH cannot read.
+ */
+export interface ProjectJoin {
+  joined: boolean;
+  github: { connected: boolean; checked: boolean; problem: string | null; repository?: string };
+  project: { project_id: string; name: string | null; issue: number | null; url: string | null } | null;
+  project_on_github?: { issue: number; readable: boolean; url: string | null } | null;
+  taken: {
+    project: boolean;
+    principles: boolean;
+    needs: boolean;
+    epics: Array<{ epic_id: string; issue: number; title: string }>;
+    slices: JoinedSlice[];
+    ideas: Array<GithubIdea & { lacks: string }>;
+  };
+  updated?: JoinedSlice[];
+  already_here?: { project: boolean; epics: string[]; slices: string[] };
+  not_taken?: Array<{ id: string; what: string; issue: number | null; reason: string }>;
+  renumbered?: Array<{ what: string; from?: string; to?: string; words?: string }>;
+  mocks_brought?: string[];
+  warned?: string[];
+  extra_issues?: number[];
+  /** Slices still to bring in when a batch was asked for; 0 when everything came. */
+  remaining: number | null;
+  only_on_their_computer?: string;
+  /** The project as it now is in this workspace, in one sentence ("This repository's project is X. MACH brought it in from GitHub: ..."). */
+  project_words?: string;
+  in_words?: string[];
+  note: string;
+  factory_authorized: false;
 }
 
 export interface SpecCounts {
@@ -953,6 +1031,8 @@ export interface Operations {
     args: { name?: string; vision?: string; outcome?: string[]; status?: ProjectStatus };
     result: { project: Project };
   };
+  /** Take the project from GitHub into this workspace: what GitHub holds that is not here. The app sends it by itself at the start. */
+  "project.join": { args: { batch?: number }; result: ProjectJoin };
   /** M20: close one of the repository's project issues when it has more than one, on the product manager's word. */
   "project.close-issue": { args: { number: number }; result: ProjectIssueClosed };
   "epic.add": { args: { title: string; criterion: string[] }; result: { epic: Epic } };

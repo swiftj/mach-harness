@@ -77,9 +77,11 @@ Product Studio opens in your browser, on your own computer, always the release o
 
 ### Step 5. Tell MACH about the product
 
-A product has a name, a vision, and one or more outcomes. An outcome is a result for a person, such as "Invited members can open the campaigns they were invited to". It is not a list of features.
+**Joining a product someone else already defined?** There is nothing to do. If another product manager defined the product and marked slices ready, MACH brings it all in from GitHub when you open Product Studio: the project, its epics and its slices, as they published them. The app shows "Bringing in <name> from GitHub", then the project's home; the conversation says what came in a line or two. Skip to Part 3 to define your next slice.
 
-**In the app**, a new project opens on one question: how do you want to start?
+Otherwise, a product has a name, a vision, and one or more outcomes. An outcome is a result for a person, such as "Invited members can open the campaigns they were invited to". It is not a list of features.
+
+**In the app**, a project that is not on GitHub yet opens on one question: how do you want to start?
 
 | Way | What you need |
 |---|---|

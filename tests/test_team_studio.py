@@ -46,10 +46,12 @@ class TwoProductManagers(IssuesBase):
         return self.ready("SLICE-001", self.a)["issue"]
 
     def ben_starts_the_same_project(self, vision="Teams work together.", criterion="Only invited people can join"):
-        """Ben, on his own computer, starts the same project (same ID) and the same-named epic, as the guides tell a new
-        product manager to do: his workspace is private, so it starts empty."""
+        """Ben, on his own computer, started the same project (same ID) and the same-named epic before anything Ada saved was on
+        GitHub, and has not refreshed since: his workspace is private, so it started empty. (Started once Ada's issues are there,
+        Product Studio brings her project in instead: test_studio_join.)"""
         project = self.ben()
-        self.ok(project, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", vision, "--outcome", "Teams can work together")
+        with self.hidden({item["number"] for item in self.issues()}):
+            self.ok(project, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", vision, "--outcome", "Teams can work together")
         self.ok(project, "epic", "add", "--title", "Team membership", "--criterion", criterion)
         return project
 
@@ -58,16 +60,15 @@ class TwoProductManagers(IssuesBase):
 
     @contextlib.contextmanager
     def hidden(self, numbers):
-        """Every Handoff.read in the block misses these issues: they were made a moment after it read GitHub."""
-        real_read = handoff.Handoff.read
+        """Every read of GitHub's project, epic and slice issues in the block (Handoff.read, and the one reader of the project as
+        GitHub holds it) misses these issues: they were made a moment after it read GitHub."""
+        real_snapshot = handoff.Handoff.snapshot_of
 
-        def before_they_were_made(self_, repository):
-            found, failure = real_read(self_, repository)
-            if found:
-                found = {key: [item for item in value if item["number"] not in numbers] for key, value in found.items()}
-            return found, failure
+        def before_they_were_made(self_, found):
+            snapshot = real_snapshot(self_, found)
+            return {key: [item for item in value if item["number"] not in numbers] for key, value in snapshot.items()}
 
-        with mock.patch.object(handoff.Handoff, "read", before_they_were_made):
+        with mock.patch.object(handoff.Handoff, "snapshot_of", before_they_were_made):
             yield
 
     @contextlib.contextmanager
@@ -188,7 +189,8 @@ class EpicNumberTest(TwoProductManagers):
         anything is written, and the slice is marked ready under it in the same act."""
         self.ada_ships_first_slice()
         ben = self.ben()
-        self.ok(ben, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
+        with self.hidden({i["number"] for i in self.issues()}):  # Ben started before Ada's issues were there, and has not refreshed since
+            self.ok(ben, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
         self.ok(ben, "epic", "add", "--title", "Billing", "--criterion", "Invoices are sent")
         self.drafted(ben, title="Send an invoice")
         self.ok(ben, "slice", "renumber", "SLICE-001")
@@ -205,7 +207,8 @@ class EpicNumberTest(TwoProductManagers):
         self.ada_ships_first_slice()
         ada_epic = self.issues("mach:epic")[0]["number"]
         ben = self.ben()
-        self.ok(ben, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "x", "--outcome", "y")
+        with self.hidden({i["number"] for i in self.issues()}):  # Ben started before Ada's issues were there, and has not refreshed since
+            self.ok(ben, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "x", "--outcome", "y")
         self.ok(ben, "epic", "add", "--title", "Billing", "--criterion", "Invoices are sent")
         self.drafted(ben, title="Send an invoice")
         self.ok(ben, "slice", "renumber", "SLICE-001")
@@ -270,7 +273,8 @@ class SharedProjectAndEpicTest(TwoProductManagers):
         GitHub's as it is, and reconcile applies: mine is written by his next `slice ready`."""
         self.ada_ships_first_slice()
         project_issue = self.issues("mach:project")[0]["number"]
-        ben = self.ben_starts_the_same_project()
+        ben = self.ben()
+        self.ok(ben, "project", "init", "--name", "x", "--vision", "y", "--outcome", "z")  # brings Ada's project in: Ben has seen its text
         self.ok(self.ada(), "project", "set", "--vision", "Teams of any size work together.")
         self.ready("SLICE-001", self.a)
         self.assertIn("Teams of any size work together.", self.issue(project_issue)["body"])
@@ -322,19 +326,21 @@ class SharedProjectAndEpicTest(TwoProductManagers):
 
 class OneProjectTest(TwoProductManagers):
     def test_project_init_takes_the_project_already_on_github(self):
-        """Ben starts the project with his own words; the repository already has Ada's, so MACH takes hers."""
+        """Ben starts the project with his own words; the repository already has Ada's, so MACH brings hers in, with its epics and
+        slices, and his words are not used."""
         ada_issue = self.ada_ships_first_slice()
         project_issue = self.issues("mach:project")[0]["number"]
         result = self.ok(self.ben(), "project", "init", "--id", "teamspace", "--name", "Teamspace", "--vision", "Mine.", "--outcome", "Mine too")
         self.assertEqual(result["taken_from_github"], project_issue)
         self.assertEqual({key: result["project"][key] for key in ("project_id", "name", "vision", "outcomes")},
                          {"project_id": "team-space", "name": "Team Space", "vision": "Teams work together.", "outcomes": ["Teams can work together"]})
-        self.assertIn(f"This repository already has a project on GitHub (#{project_issue}), so MACH took its name, vision and outcomes from there.", result["note"])
-        self.ok(self.b, "epic", "add", "--title", "Team membership", "--criterion", "Only invited people can join")
+        self.assertTrue(result["note"].startswith(f"This repository already has a project on GitHub (#{project_issue}), so MACH brought it in from "
+                                                  "there. The words you gave were not used: a repository holds one project."), result["note"])
+        self.assertEqual([row["slice_id"] for row in result["taken"]["slices"]], ["SLICE-001"])
         self.drafted(self.b, title="Remove a teammate")
-        self.ok(self.b, "slice", "renumber", "SLICE-001")
         self.ready("SLICE-002", self.b)
         self.assertEqual(len(self.issues("mach:project")), 1)
+        self.assertEqual(len(self.issues("mach:epic")), 1)
         self.assertEqual(len(self.slice_issues_for("SLICE-001")), 1)
         self.assertEqual(self.slice_issues_for("SLICE-001")[0]["number"], ada_issue)
 
