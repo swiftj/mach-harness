@@ -136,9 +136,10 @@ class BatchTest(PullBase):
         report = self.pull()
         self.assertEqual((report["run"], report["run_one"]), ([str(number)], f"{run.skill('run')} {number}"))
         self.assertEqual(report["start_now"], [{"ticket_id": str(number), "slice_id": "SLICE-001", "how": "dispatched", "until": "build", "by": "here"}])
-        # The readiness audit has not run in this fixture: the batch runs here, and the report says why in the check's own words.
+        # A check fails in this fixture (no readiness audit, and on a machine without Claude Code, no `claude` either): the batch
+        # runs here, and the report says why in the failing check's own words. Which check speaks first depends on the machine.
         self.assertEqual((report["factory"]["handed_over"], report["factory"]["supervisor"]), (False, "none"))
-        self.assertIn("readiness audit", report["factory"]["why_not"])
+        self.assertTrue("readiness audit" in report["factory"]["why_not"] or "'claude' command" in report["factory"]["why_not"], report["factory"]["why_not"])
         self.assertIn("This batch runs here, in the conversation: " + report["factory"]["why_not"], report["in_words"])
         self.assertEqual((self.detached, report["first_time"], report["factory_started"]), ([], False, False))
         self.assertFalse((self.eng / ".factory/local/runner.json").exists())
