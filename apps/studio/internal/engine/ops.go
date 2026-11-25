@@ -139,6 +139,24 @@ func (a *ProjectCloseIssueArgs) Argv() ([]string, error) {
 	return []string{"project", "close-issue", strconv.Itoa(a.Number)}, nil
 }
 
+// ProjectJoinArgs: take the project from GitHub into this workspace (`project join`). The app sends it by
+// itself when it starts in a workspace with no project; Batch takes at most that many slices per call, so
+// the app can show how many have come.
+type ProjectJoinArgs struct {
+	Batch *int `json:"batch"`
+}
+
+func (a *ProjectJoinArgs) Argv() ([]string, error) {
+	argv := []string{"project", "join"}
+	if a.Batch != nil {
+		if *a.Batch < 1 || *a.Batch > 1000 {
+			return nil, invalid("batch must be a number from 1 to 1000.")
+		}
+		argv = append(argv, "--batch", strconv.Itoa(*a.Batch))
+	}
+	return argv, nil
+}
+
 type EpicAddArgs struct {
 	Title     string   `json:"title"`
 	Criterion []string `json:"criterion"`
@@ -504,6 +522,7 @@ func init() {
 	register(Operation{Name: "project.init", New: func() Args { return &ProjectInitArgs{} }})
 	register(Operation{Name: "project.set", New: func() Args { return &ProjectSetArgs{} }})
 	register(Operation{Name: "project.close-issue", New: func() Args { return &ProjectCloseIssueArgs{} }, Network: true})
+	register(Operation{Name: "project.join", New: func() Args { return &ProjectJoinArgs{} }, Network: true})
 	register(Operation{Name: "epic.add", New: func() Args { return &EpicAddArgs{} }})
 	register(Operation{Name: "epic.set", New: func() Args { return &EpicSetArgs{} }})
 	register(Operation{Name: "epic.renumber", New: func() Args { return &RenumberArgs{kind: "epic"} }})

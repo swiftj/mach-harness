@@ -207,14 +207,15 @@ def git_status(test):
 
 class TakeBase(OrderBase):
     def ada_ready(self, depends=()):
-        """Ada saves slices on GitHub; Ben's workspace has only the project."""
+        """Ada saves slices on GitHub; Ben's workspace has only the project: he started it before anything was on GitHub, and
+        has not refreshed since (a refresh brings in what Ada published by itself, test_studio_join)."""
+        self.ok(self.b, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
         self.project_and_epic(self.a)
         made = []
         for title, dep in (("Invite a teammate", None), ("Remove a teammate", "first"))[: 1 + len(depends)]:
             made.append(self.drafted(self.a, title=title, depends=[made[0]] if dep else ()))
         for slice_id in made:
             self.ready(slice_id, self.a)
-        self.ok(self.b, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
         self.set_gh(me="ben-pm")
         return made
 
@@ -227,8 +228,7 @@ class TakeTest(TakeBase):
     def test_another_product_managers_slice_is_opened_as_their_approved_version(self):
         (slice_id,) = self.ada_ready()
         (issue,) = self.slice_issue(slice_id)
-        listed = {row["slice_id"]: row for row in self.ok(self.b, "refresh")["github"]["slices"]}
-        self.assertFalse(listed[slice_id]["in_workspace"])
+        # Opened by hand here; a refresh would have brought it in by itself (test_studio_join).
         checkout = self.checkout_state(self.b)
         writes = len(self.writes())
         taken = self.ok(self.b, "slice", "take", str(issue["number"]))
@@ -257,9 +257,11 @@ class TakeTest(TakeBase):
         self.assertEqual((result["issue"], result["revision"], result["approved_by"]), (issue["number"], 2, "ben-pm"))
         self.assertEqual(len(self.slice_issue(slice_id)), 1)
         self.assertIn("Ben's change.", self.issue(issue["number"])["body"])
-        # Ada now sees Ben's newer version, by the existing rule.
+        # Ada's copy is the unchanged approved version 1, so her next refresh brings in Ben's version 2 by itself.
         self.set_gh(me="ada-pm")
-        self.assertTrue({r["slice_id"]: r for r in self.ok(self.a, "refresh")["github"]["slices"]}[slice_id]["newer_elsewhere"])
+        refreshed = self.ok(self.a, "refresh")
+        self.assertEqual([(row["slice_id"], row["was_version"]) for row in refreshed["joined"]["updated"]], [(slice_id, 1)])
+        self.assertFalse({r["slice_id"]: r for r in refreshed["github"]["slices"]}[slice_id]["newer_elsewhere"])
 
     def test_taken_on_a_computer_where_the_factory_already_has_it(self):
         (slice_id,) = self.ada_ready()

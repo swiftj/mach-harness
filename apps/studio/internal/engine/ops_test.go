@@ -22,7 +22,7 @@ func TestAllowlistIsExactlyTheContract(t *testing.T) {
 		"policy.accept", "policy.list",
 		"prd.apply", "prd.confirm", "prd.draft", "prd.import", "prd.list", "prd.map", "prd.settle", "prd.show", "prd.status",
 		"principle.add", "principle.list", "principle.publish", "principle.retire", "principle.set",
-		"project.close-issue", "project.export", "project.import", "project.import.abandon", "project.imports", "project.imports.ready", "project.init", "project.set",
+		"project.close-issue", "project.export", "project.import", "project.import.abandon", "project.imports", "project.imports.ready", "project.init", "project.join", "project.set",
 		"reconcile", "reconcile.needs", "reconcile.principles", "refresh", "request.link", "request.list", "request.met", "request.pick", "request.show",
 		"slice.check", "slice.link", "slice.mock.add", "slice.mock.list", "slice.mock.remove", "slice.move", "slice.new", "slice.pause", "slice.ready",
 		"slice.renumber", "slice.reopen", "slice.resume", "slice.set", "slice.show", "slice.take", "slice.widen", "status", "validate", "verdict.record", "where",
@@ -38,7 +38,7 @@ func TestAllowlistIsExactlyTheContract(t *testing.T) {
 	}
 	// Publishing the principles writes the project's GitHub issue; choosing a version of them reads GitHub's.
 	// Closing an extra project issue writes GitHub too.
-	for _, name := range []string{"principle.publish", "reconcile.principles", "project.close-issue"} {
+	for _, name := range []string{"principle.publish", "reconcile.principles", "project.close-issue", "project.join"} {
 		if op, _ := engine.Lookup(name); !op.Network || op.ReadOnly {
 			t.Errorf("%s reaches GitHub and changes the workspace", name)
 		}
@@ -209,6 +209,8 @@ func TestEveryOperationsArgumentVector(t *testing.T) {
 			[]string{"project", "init", "--id=team-space", "--name=Team Space", "--vision=Teams work.", "--outcome=One", "--outcome=Two"}},
 		{"project.set", `{}`, []string{"project", "set"}},
 		{"project.close-issue", `{"number":9}`, []string{"project", "close-issue", "9"}},
+		{"project.join", `{}`, []string{"project", "join"}},
+		{"project.join", `{"batch":4}`, []string{"project", "join", "--batch", "4"}},
 		{"project.set", `{"name":"N","vision":"V","outcome":["O"],"status":"active"}`,
 			[]string{"project", "set", "--name=N", "--vision=V", "--outcome=O", "--status=active"}},
 		{"epic.add", `{"title":"Team membership","criterion":["Only invited people can join"]}`,
@@ -442,6 +444,11 @@ func TestRequestsTheHostRejects(t *testing.T) {
 		{"project.close-issue", `{"number":1000000000}`, "issue number"},
 		{"project.close-issue", `{"number":"--all"}`, "wrong type"},
 		{"project.close-issue", `{"number":9,"all":true}`, "Unknown field"},
+		// Joining takes at most a whole number of slices at a time: never a flag or a string.
+		{"project.join", `{"batch":0}`, "batch"},
+		{"project.join", `{"batch":1001}`, "batch"},
+		{"project.join", `{"batch":"--all"}`, "wrong type"},
+		{"project.join", `{"force":true}`, "Unknown field"},
 		{"epic.add", `{"title":"` + long + `"}`, "longer than"},
 		{"epic.add", `{"title":"a\u0000b"}`, "control character"},
 		{"epic.add", `{"title":"bell\u0007"}`, "control character"},

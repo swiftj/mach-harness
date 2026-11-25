@@ -21,6 +21,7 @@ from mock_pictures import png  # noqa: E402
 from test_mach_product_issues import ADDRESS, IssuesBase, git  # noqa: E402
 import issue_rules  # noqa: E402
 import project_archive  # noqa: E402
+import join as join_module  # noqa: E402
 import project_export  # noqa: E402
 import studio  # noqa: E402
 
@@ -180,34 +181,42 @@ class EmptyWorkspaceTest(GitHubBase):
 
 
 class PartialWorkspaceTest(GitHubBase):
+    """A workspace with part of the project: bringing it in stopped after the project and its epics (as `project join --batch`
+    leaves it until it carries on), so the slices are still only on GitHub. Export reads them from there by itself."""
+
     maxDiff = None
+
+    def adopted(self):
+        """Ben's project and epics came from GitHub, and no slice yet (each join below takes none)."""
+        real = join_module.join
+        with mock.patch.object(join_module, "join", lambda host, studio_, found=None, batch=None: real(host, studio_, found, 0)):
+            self.ok(self.b, "project", "init", "--name", "anything", "--vision", "anything", "--outcome", "anything")
+            self.ok(self.b, "refresh")
 
     def test_after_project_init_and_refresh_the_slices_still_come_from_github(self):
         """The trial's silent archive: the project adopted here and refreshed, no slice taken. It must not be nearly empty."""
         self.published()
-        self.ok(self.b, "project", "init", "--name", "anything", "--vision", "anything", "--outcome", "anything")
-        self.ok(self.b, "refresh")
+        self.adopted()
         result = self.export(self.b)
         self.assertEqual(result["counts"]["slices"], 3)
         self.assertEqual(result["counts"]["epics"], 2)
-        self.assertEqual(result["from_here"]["ids"], ["project", "principles", "needs"])  # refresh took the principles and needs
-        self.assertEqual(result["from_github"]["ids"], ["EPIC-001", "EPIC-002", "SLICE-001", "SLICE-002", "SLICE-003"])
+        self.assertEqual(result["from_here"]["ids"], ["project", "principles", "needs", "EPIC-001", "EPIC-002"])  # refresh took the sets
+        self.assertEqual(result["from_github"]["ids"], ["SLICE-001", "SLICE-002", "SLICE-003"])
         self.assertIn(FROM_GITHUB, result["note"])
 
     def test_a_slice_taken_here_is_from_here_and_the_rest_from_github(self):
         self.published()
-        self.ok(self.b, "project", "init", "--name", "anything", "--vision", "anything", "--outcome", "anything")
-        self.ok(self.b, "refresh")
+        self.adopted()
         self.ok(self.b, "slice", "take", str(self.slice_issue("SLICE-001")[0]["number"]))
         result = self.export(self.b)
-        self.assertEqual(result["from_here"]["ids"], ["project", "principles", "needs", "EPIC-001", "SLICE-001"])
-        self.assertEqual(result["from_github"]["ids"], ["EPIC-002", "SLICE-002", "SLICE-003"])
+        self.assertEqual(result["from_here"]["ids"], ["project", "principles", "needs", "EPIC-001", "EPIC-002", "SLICE-001"])
+        self.assertEqual(result["from_github"]["ids"], ["SLICE-002", "SLICE-003"])
         self.assertEqual(result["counts"]["slices"], 3)
         self.assertEqual(result["chosen"], [])
 
     def test_only_mine_leaves_github_s_slices_out_and_says_so(self):
         self.published()
-        self.ok(self.b, "project", "init", "--name", "anything", "--vision", "anything", "--outcome", "anything")
+        self.adopted()
         result = self.export(self.b, only_mine=True)
         self.assertEqual(result["left_out"], ["SLICE-001", "SLICE-002", "SLICE-003"])
         self.assertEqual(result["from_github"]["count"], 0)
@@ -217,8 +226,7 @@ class PartialWorkspaceTest(GitHubBase):
 
     def test_with_github_out_of_reach_what_is_here_is_exported_and_what_may_be_missing_is_said(self):
         self.published()
-        self.ok(self.b, "project", "init", "--name", "anything", "--vision", "anything", "--outcome", "anything")
-        self.ok(self.b, "refresh")
+        self.adopted()
         self.gh_fails("issue list", once=False)
         result = self.export(self.b)
         self.assertFalse(result["github"]["checked"])
@@ -232,8 +240,7 @@ class PartialWorkspaceTest(GitHubBase):
     def test_a_draft_of_its_own_under_the_same_number_keeps_github_s_out_and_says_how(self):
         """Ben drafted his own SLICE-001; GitHub's SLICE-001 and SLICE-002 (which depends on it) cannot come in under those numbers."""
         self.published()
-        self.ok(self.b, "project", "init", "--name", "anything", "--vision", "anything", "--outcome", "anything")
-        self.ok(self.b, "refresh")
+        self.adopted()
         self.ok(self.b, "epic", "add", "--title", "Ben's own", "--criterion", "Something")
         # Ben's own draft numbered SLICE-001 is a different slice from GitHub's SLICE-001.
         studio_b = studio.Studio(self.b)
@@ -388,14 +395,15 @@ class ListingTest(GitHubBase):
         self.assertIn(rows[1]["reason"], result["in_words"])
         self.assertEqual(result["counts"]["slices"], 2)
 
-    def test_other_readers_keep_their_single_listing(self):
-        """refresh and the hand-off read as before: one listing at LIST_LIMIT."""
+    def test_refresh_reads_through_the_same_one_reader(self):
+        """refresh reads the project as GitHub holds it through the one reader export uses: each list to its end, once."""
         self.published()
+        calls = len(self.gh()["calls"])
         with mock.patch.object(project_export.issues, "LIST_LIMIT", 2):
             self.ok(self.b, "refresh")
-        limits = {call[call.index("--limit") + 1] for call in self.gh()["calls"][-12:] if call[:2] == ["issue", "list"]
-                  and call[call.index("--label") + 1] in ("mach:project", "mach:epic", "mach:slice")}
-        self.assertEqual(limits, {"2"})
+        listed = [call[call.index("--label") + 1] + "@" + call[call.index("--limit") + 1] for call in self.gh()["calls"][calls:]
+                  if call[:2] == ["issue", "list"] and call[call.index("--label") + 1] in ("mach:project", "mach:epic", "mach:slice")]
+        self.assertEqual(sorted(listed), ["mach:epic@2", "mach:epic@20", "mach:project@2", "mach:slice@2", "mach:slice@20"])
 
 
 class ProjectIssueTextTest(GitHubBase):

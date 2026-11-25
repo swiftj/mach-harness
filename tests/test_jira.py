@@ -236,10 +236,10 @@ class TakeTest(order_tests.TakeBase):
         slice_id = self.drafted(self.a)
         self.ok(self.a, "slice", "link", slice_id, "--jira", "TEAM-42")
         number = self.ready(slice_id, self.a)["issue"]
-        self.ok(self.b, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
         self.set_gh(me="ben-pm")
-        taken = self.ok(self.b, "slice", "take", str(number))
-        self.assertEqual(taken["revision"], 1)
+        # Starting the project in a repository that has one on GitHub brings it in, its slices too.
+        joined = self.ok(self.b, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
+        self.assertEqual([(row["slice_id"], row["issue"]) for row in joined["taken"]["slices"]], [(slice_id, number)])
         self.assertEqual(self.artifact(self.b, f"product/slices/{slice_id}.json")["tracking"], {"jira": "TEAM-42"})
 
 

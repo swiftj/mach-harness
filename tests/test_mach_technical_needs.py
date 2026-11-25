@@ -257,10 +257,11 @@ class StudioTest(IssuesBase):
     def test_another_product_managers_needs_are_taken_at_refresh_or_chosen(self):
         self.add()
         self.ok(self.a, "need", "publish")
-        self.project_and_epic(self.b)
         self.set_gh(me="ben-pm")
-        refreshed = self.ok(self.b, "refresh")
-        self.assertEqual(refreshed["needs_taken"]["revision"], 1)
+        # The project is on GitHub, so starting it takes it from there, with its needs and their approval.
+        joined = self.ok(self.b, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.",
+                         "--outcome", "Teams can work together")
+        self.assertTrue(joined["taken"]["needs"])
         self.assertEqual(self.ok(self.b, "need", "list")["needs"], [need()])
         self.assertEqual(self.add("data", "It keeps names for seven years.", self.b)["need"]["need_id"], "TN-02")
         self.assertEqual(self.ok(self.b, "need", "publish")["revision"], 2)
