@@ -361,6 +361,25 @@ class ProductRulesTest(Base):
                       policies={"commit": MAIN_COMMIT, "packs": []})
         self.assertEqual(before, self.render())
 
+    def test_a_principle_the_slice_predates_is_one_line_after_the_answers(self):
+        """M21: a Not assessed row (a project brought in from another repository) is listed as written, never as an answer."""
+        self.approved(mode="auto")
+        self.answered()
+        spec = json.loads((self.cellroot / "spec.json").read_text())
+        reason = "This slice came with the project lending, brought in here on 2026-11-20, which did not have PP-11."
+        spec["principles_not_assessed"] = [{"id": "PP-11", "revision": 1, "statement": "A loan MUST NOT be changed after signing.",
+                                            "reason": reason, "how": "slice_came", "project": "lending", "day": "2026-11-20"}]
+        self.put(self.cellroot, {"spec.json": json.dumps(spec)})
+        text = self.render()
+        self.assertIn(f"- PP-11 (revision 1) \"A loan MUST NOT be changed after signing.\": not assessed: {reason}", text)
+        self.assertLess(text.index("- PP-10"), text.index("- PP-11"))
+        spec["principles"] = []  # only Not assessed rows: listed, never "None."
+        self.put(self.cellroot, {"spec.json": json.dumps(spec)})
+        text = self.render()
+        self.assertIn("- PP-11 (revision 1)", text)
+        self.assertNotIn("## Product principles\n\nAnswered against the published principles, revision 4 (SHA-256 "
+                         f"`{PRINCIPLES_SHA}`).\n\n- None.", text)
+
     def test_none_answers_and_unknown_checks_are_said_plainly(self):
         self.approved(mode="auto")
         self.answered()

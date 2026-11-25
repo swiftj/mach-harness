@@ -52,7 +52,9 @@ not start on a change that edits or removes an existing ADR, nor on a factory-tu
 
 Product principles (M13): when the spec answers principles, the packet's `principles` lists those that apply, those that
 do not, and each exception as the product manager's decision. A blocker may cite a principle (PP-02) only when the spec
-lists it, and never one the product manager excepted.
+lists it, and never one the product manager excepted. A principle the slice predates (M21, a project brought in from
+another repository) is listed under `principles.not_assessed`, one line each, with a note that such a row is not a
+finding by itself; a blocker may cite it.
 
 Policy packs (M14, policies.py beside adr.py): when the spec answers packs, the packet's `policies` lists each with the
 seats that check it, the text the cell kept, and each concern its owner accepted as the owner's decision. A blocker may
@@ -719,12 +721,28 @@ def spec_principles(cell: Cell) -> Optional[List[Dict[str, Any]]]:
     return [row for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)] if isinstance(rows, list) else None
 
 
+NOT_ASSESSED_NOTE = ("Each line under 'not_assessed' is a principle this slice predates: the slice and the principle met when a project was "
+                     "brought in from another repository, and nobody has answered it for this slice yet. A Not assessed row is not a finding "
+                     "by itself. Check the diff against the principle as against any rule; a change that breaks it is a blocker that may cite "
+                     "its ID, like any other.")
+
+
+def spec_not_assessed(cell: Cell) -> List[str]:
+    """M21: the spec's Not assessed rows, one line each, as data: '<PP-NN> (revision N) "<statement>": not assessed. <reason>'."""
+    rows = (load_json(cell.root / "spec.json", {}) or {}).get("principles_not_assessed")
+    if not isinstance(rows, list):
+        return []
+    return [f"{row['id']} (revision {row.get('revision')}) \"{row.get('statement')}\": not assessed. {row.get('reason') or ''}".rstrip()
+            for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)]
+
+
 def packet_principles(cell: Cell) -> Optional[Dict[str, Any]]:
-    """The principles block of the packet: what applies and how, and each exception as the product manager's decision."""
+    """The principles block of the packet: what applies and how, each exception as the product manager's decision, and (M21) each
+    principle the slice predates, one line each, only when there is one."""
     rows = spec_principles(cell)
     if rows is None:
         return None
-    return {
+    block = {
         "applies": [{"id": row["id"], "revision": row.get("revision"), "statement": row.get("statement"), "upheld_by": row.get("upheld_by") or []}
                     for row in rows if row.get("answer") == "applies"],
         "does_not_apply": [{"id": row["id"], "statement": row.get("statement"), "reason": row.get("reason")} for row in rows if row.get("answer") == "does_not_apply"],
@@ -733,6 +751,11 @@ def packet_principles(cell: Cell) -> Optional[Dict[str, Any]]:
                        for row in rows if row.get("answer") == "exception"],
         "note": PRINCIPLES_NOTE,
     }
+    unassessed = spec_not_assessed(cell)
+    if unassessed:  # only then, so every other packet is exactly as before
+        block["not_assessed"] = unassessed
+        block["not_assessed_note"] = NOT_ASSESSED_NOTE
+    return block
 
 
 def check_principle_citation(cell: Cell, label: str, rule: str) -> None:
@@ -741,6 +764,10 @@ def check_principle_citation(cell: Cell, label: str, rule: str) -> None:
     if not cited:
         return
     rows = {row["id"]: row for row in spec_principles(cell) or []}
+    unassessed = (load_json(cell.root / "spec.json", {}) or {}).get("principles_not_assessed")
+    for row in unassessed if isinstance(unassessed, list) else []:  # M21: in the Principles section too, as Not assessed
+        if isinstance(row, dict) and isinstance(row.get("id"), str):
+            rows.setdefault(row["id"], {"id": row["id"], "answer": "not_assessed"})
     for ident in cited:
         if ident not in rows:
             raise ReviewError(f"{label}: the rule cites {ident}, which this slice's spec does not list. A blocker may cite only a principle in the "
