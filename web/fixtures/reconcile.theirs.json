@@ -5,7 +5,8 @@
     "took": "theirs",
     "github_version": 2,
     "approvals_withdrawn": [],
-    "note": "Your draft now holds the version from GitHub. Mark it ready to approve it yourself."
+    "note": "Your draft now holds the version from GitHub. Mark it ready to approve it yourself. Your own draft is kept at .factory/studio/replaced/SLICE-004-yours-20261125T154545737327Z/.",
+    "kept_yours": ".factory/studio/replaced/SLICE-004-yours-20261125T154545737327Z/"
   },
   "refused": null,
   "hint": null

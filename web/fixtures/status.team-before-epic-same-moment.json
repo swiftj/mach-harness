@@ -65,6 +65,7 @@
           "question": null,
           "question_note": null,
           "shipped_issues": [],
+          "not_approved": null,
           "times": {
             "marked_ready": null,
             "building": null,

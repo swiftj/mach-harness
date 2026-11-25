@@ -10,7 +10,7 @@
     "approved_by": "ada-pm",
     "folder": "/project/.factory/studio/draft/product/ready/NEEDS",
     "warned": [
-      "@ben-pm published version 3 of the technical needs on GitHub at 10:00 UTC on 2026-11-17. Yours is now version 4 and replaces it. Theirs is kept in the edit history of the project's issue (#1) and at .factory/studio/replaced/needs-version-3/. You can take theirs instead."
+      "@ben-pm published version 3 of the technical needs on GitHub at 10:00 UTC on 2026-11-17. Yours is now version 4 and replaces it. Theirs is kept in the edit history of the project's issue (#1) and at .factory/studio/replaced/needs-version-3-20261125T154642001544Z/. You can take theirs instead."
     ],
     "replaced": [
       {
@@ -19,7 +19,7 @@
         "revision": 3,
         "by": "ben-pm",
         "at": "2026-11-17T10:00:07Z",
-        "kept": ".factory/studio/replaced/needs-version-3/",
+        "kept": ".factory/studio/replaced/needs-version-3-20261125T154642001544Z/",
         "replaced_by_revision": 4
       }
     ],
@@ -36,7 +36,7 @@
     "ways_on": [
       "Add this folder to the project's repository; the engineers read the needs from there when they record their decisions."
     ],
-    "note": "@ben-pm published version 3 of the technical needs on GitHub at 10:00 UTC on 2026-11-17. Yours is now version 4 and replaces it. Theirs is kept in the edit history of the project's issue (#1) and at .factory/studio/replaced/needs-version-3/. You can take theirs instead. Published on the project's issue (#1) as version 4, and to the folder with the same version. No decision was taken and no work has started."
+    "note": "@ben-pm published version 3 of the technical needs on GitHub at 10:00 UTC on 2026-11-17. Yours is now version 4 and replaces it. Theirs is kept in the edit history of the project's issue (#1) and at .factory/studio/replaced/needs-version-3-20261125T154642001544Z/. You can take theirs instead. Published on the project's issue (#1) as version 4, and to the folder with the same version. No decision was taken and no work has started."
   },
   "refused": null,
   "hint": null

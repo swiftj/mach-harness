@@ -34,9 +34,9 @@
     "request_updates": null,
     "factory_authorized": false,
     "warned": [
-      "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so MACH used #1, the one this workspace already follows. Closing #4 changes nothing in your work: it leaves one project issue, and its text stays in its history. MACH can close it for you: ask for it in your conversation with MACH."
+      "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so MACH used #1, the one this workspace already follows. Closing #4 changes nothing in your work: it leaves one project issue, and its text stays in its history. MACH can close it for you."
     ],
-    "note": "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so MACH used #1, the one this workspace already follows. Closing #4 changes nothing in your work: it leaves one project issue, and its text stays in its history. MACH can close it for you: ask for it in your conversation with MACH. Saved to GitHub as #5 and marked ready. The builders take it from there; nothing has started yet."
+    "note": "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so MACH used #1, the one this workspace already follows. Closing #4 changes nothing in your work: it leaves one project issue, and its text stays in its history. MACH can close it for you. Saved to GitHub as #5 and marked ready. The builders take it from there; nothing has started yet."
   },
   "refused": null,
   "hint": null

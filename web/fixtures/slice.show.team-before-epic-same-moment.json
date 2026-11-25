@@ -683,7 +683,7 @@
       },
       "title": "Invite a teammate by email",
       "shipped": {
-        "commit": "c9e1ccdfac34f6da8fdd7e68286d63cfaf9d8568",
+        "commit": "aef7c6dc7493f86c4ab47f2f42671fabf3d06946",
         "branch": "main",
         "rules": 0,
         "notes": [
@@ -709,6 +709,7 @@
       "question": null,
       "question_note": null,
       "shipped_issues": [],
+      "not_approved": null,
       "times": {
         "marked_ready": null,
         "building": null,

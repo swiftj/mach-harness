@@ -16,9 +16,12 @@
     "taken_from_github": 1,
     "url": "https://github.com/acme/team-space/issues/1",
     "warned": [
-      "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so MACH used #1, the oldest one MACH can read. Closing #4 changes nothing in your work: it leaves one project issue, and its text stays in its history. MACH can close it for you: ask for it in your conversation with MACH."
+      "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so MACH used #1, the oldest one MACH can read. Closing #4 changes nothing in your work: it leaves one project issue, and its text stays in its history. MACH can close it for you."
     ],
-    "note": "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so MACH used #1, the oldest one MACH can read. Closing #4 changes nothing in your work: it leaves one project issue, and its text stays in its history. MACH can close it for you: ask for it in your conversation with MACH. This repository already has a project on GitHub (#1), so MACH took its name, vision and outcomes from there. Your own words were not used. A repository holds one project."
+    "extra_issues": [
+      4
+    ],
+    "note": "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so MACH used #1, the oldest one MACH can read. Closing #4 changes nothing in your work: it leaves one project issue, and its text stays in its history. MACH can close it for you. This repository already has a project on GitHub (#1), so MACH took its name, vision and outcomes from there. Your own words were not used. A repository holds one project."
   },
   "refused": null,
   "hint": null

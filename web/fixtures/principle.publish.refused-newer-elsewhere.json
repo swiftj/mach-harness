@@ -9,7 +9,7 @@
     "url": "https://github.com/acme/team-space/issues/1",
     "approved_by": "ada-pm",
     "warned": [
-      "@ben-pm published version 3 of the principles on GitHub at 10:00 UTC on 2026-11-17. Yours is now version 4 and replaces it. Theirs is kept in the edit history of the project's issue (#1) and at .factory/studio/replaced/principles-version-3/. You can take theirs instead."
+      "@ben-pm published version 3 of the principles on GitHub at 10:00 UTC on 2026-11-17. Yours is now version 4 and replaces it. Theirs is kept in the edit history of the project's issue (#1) and at .factory/studio/replaced/principles-version-3-20261125T154557696410Z/. You can take theirs instead."
     ],
     "replaced": [
       {
@@ -18,13 +18,13 @@
         "revision": 3,
         "by": "ben-pm",
         "at": "2026-11-17T10:00:07Z",
-        "kept": ".factory/studio/replaced/principles-version-3/",
+        "kept": ".factory/studio/replaced/principles-version-3-20261125T154557696410Z/",
         "replaced_by_revision": 4
       }
     ],
     "active": 3,
     "factory_authorized": false,
-    "note": "@ben-pm published version 3 of the principles on GitHub at 10:00 UTC on 2026-11-17. Yours is now version 4 and replaces it. Theirs is kept in the edit history of the project's issue (#1) and at .factory/studio/replaced/principles-version-3/. You can take theirs instead. Published on the project's issue (#1) as version 4. Slices marked ready from now on answer these principles."
+    "note": "@ben-pm published version 3 of the principles on GitHub at 10:00 UTC on 2026-11-17. Yours is now version 4 and replaces it. Theirs is kept in the edit history of the project's issue (#1) and at .factory/studio/replaced/principles-version-3-20261125T154557696410Z/. You can take theirs instead. Published on the project's issue (#1) as version 4. Slices marked ready from now on answer these principles."
   },
   "refused": null,
   "hint": null
