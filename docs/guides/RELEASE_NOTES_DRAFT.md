@@ -2,6 +2,21 @@
 
 What is new in each release, newest first, followed by supported platforms, what you need, upgrading and security notes.
 
+## What changed in 0.27.0
+
+One command opens the app.
+
+| Change | What it is |
+| --- | --- |
+| `/mach-app` | Opens MACH Product Studio in your browser. There is nothing to add after it and nothing to phrase. With the plugin it is `/mach:app`. |
+| Always the installed release | The app that opens is the one for the MACH release installed in the project. A missing or older program is fetched and checked against the release's checksum first. An older Product Studio still running for the project is stopped and replaced. |
+| It says what it did | "Product Studio 0.27.0 is open in your browser.", whether it was already running, and a fresh link for another browser on this computer. When a newer MACH release exists it says so, and that running the installer updates it. |
+| `/mach-app link` and `/mach-app stop` | A fresh link without opening a browser; and stopping the app. |
+| `/mach-app floor` | The same for the Factory Floor, with `link` and `stop`. |
+| It keeps running | The app runs until `/mach-app stop` or the computer restarts, not only while Claude Code is open. |
+
+`/mach-studio open the app` and `/mach floor` still work and do the same thing.
+
 ## What changed in 0.26.0
 
 Nobody is blocked because someone else has the work. MACH says who has it and since when, then does what was asked.
