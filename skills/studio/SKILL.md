@@ -301,7 +301,7 @@ A slice someone else saved on GitHub shows in refresh under `github.slices` with
 
 ## Moving the project to another repository
 
-A PM can take the whole project from one repository to another, for example into another organisation where GitHub will not move issues, in one file that names no repository and no account. One repository holds one project: a project that arrives where there already is one joins it as more epics, with new numbers. MACH does the move itself: never ask the PM to prepare anything, and never ask a person to type a command or a flag: you choose the form from what they said. The same can be done in the visual app.
+A PM can take the whole project from one repository to another, for example into another organisation where GitHub will not move issues, in one file that names no repository and no account. One repository holds one project: a project that arrives where there already is one joins it as more epics, with new numbers. MACH does the move itself: never ask the PM to prepare anything, and never ask a person to type a command or a flag: you choose the form from what they said. The same can be done in the visual app, under "Move this project"; a file larger than 64 MB is brought in here.
 
 **Leaving.** When the PM asks to take the project elsewhere, run `STUDIO project export` straight away. It needs nothing opened, taken or refreshed first. Whatever this workspace lacks, it reads by itself: the project, principles, technical needs, epics and every slice (shipped ones too) from GitHub, and their design mock pictures from the main branch. It changes nothing here. Never run `slice take`, `project init` or `refresh` to prepare it. Add `--only-mine` only when the PM asks for just what is in their workspace.
 
