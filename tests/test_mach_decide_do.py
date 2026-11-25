@@ -550,22 +550,75 @@ class CommandTest(Base):
         self.assertRegex(result["warnings"][0], r"^Another worker was handed this ticket's review step at \d\d:\d\d UTC and may still be at work\.$")
         self.assertNotIn("took_over", result, "the station accepts it: the other worker's claim is only said")
 
+    def take_over_cli(self, *extra, carry=None):
+        given = []
+        answer = carry or {"supervisor": "none", "pid": None, "why_not": "No Factory is running here."}
+
+        def carry_on(make, **how):
+            given.append(how)
+            return lambda: answer
+        with mock.patch.object(act, "supervisor_carry_on", carry_on):
+            code, out, err = self.cli("decide", "do", TICKET, "take-over", "--by=Dana Smith", "--json", *extra)
+        self.assertEqual(code, 0, err)
+        return json.loads(out), out
+
     def test_take_it_over_from_the_floor(self):
+        """The real take-over, the one `next` makes for a person: the other worker is displaced, so every station refuses it."""
         self.cell(stage="built")
         claim(self, "built", minutes_ago=10)
-        with mock.patch.object(act, "supervisor_carry_on", lambda make, **how: (lambda: {"supervisor": "none", "pid": None, "why_not": "No Factory is running here."})):
-            code, out, err = self.cli("decide", "do", TICKET, "take-over", "--by=Dana Smith", "--via=floor", "--json")
-        self.assertEqual(code, 0, err)
-        result = json.loads(out)
+        result, out = self.take_over_cli("--via=floor")
         self.assertEqual((result["done"], result["option"], result["took_over"]["taken"], result["took_over"]["step"]), (True, "take-over", True, "review"))
-        self.assertTrue(result["now"].startswith("Dana Smith took over LOCAL-001's review step. The other worker had been handed the review step at "), result["now"])
-        self.assertIn(act.TAKE_OVER_EFFECT, result["now"])
+        self.assertRegex(result["now"], r"^Dana Smith took over LOCAL-001's review step\. Another worker had been handed the review step at \d\d:\d\d UTC: "
+                                        r"it stops at its next step, and nothing it had not committed is used\. ")
         self.assertRegex(result["now"], r"No Factory is running here\. /mach(:run)? LOCAL-001 in Claude Code carries it on: it goes on from where the "
                                         r"other worker left it\.$")
         self.assertFalse((self.cellroot() / "claim.json").exists(), "the step is free for whoever carries the ticket on")
-        [entry] = [json.loads(line) for line in (self.cellroot() / "takeovers.jsonl").read_text().splitlines()]
-        self.assertEqual((entry["step"], entry["by"], entry["via"]), ("review", "Dana Smith", "floor"))
+        C = run.claims()
+        self.assertIsNotNone(C.displaced(self.cellroot(), "ab" * 16), "the other worker is displaced: every station refuses it")
+        self.assertIn("This ticket was taken over by a person", C.station_stop(self.project, TICKET, "ab" * 16) or "")
+        self.assertEqual(len((self.cellroot() / "takeovers.jsonl").read_text().splitlines()), 1)
         self.assertNotIn("ab" * 16, out, "the holder is never passed on")
+        # The next driver (the Factory, or the person's /mach) takes the step without being held.
+        step = run.next_step(run.Project(self.project), TICKET, False)
+        taken = run.claim_step(run.Project(self.project), step, "cd" * 16, False)
+        self.assertNotEqual(taken.get("needs"), "worker-in-cell", taken)
+
+    def test_take_it_over_from_the_terminal_leaves_it_for_the_person(self):
+        self.cell(stage="built")
+        claim(self, "built", minutes_ago=10)
+        result, _ = self.take_over_cli()
+        self.assertEqual(result["supervisor"], "none")
+        self.assertRegex(result["now"], r"/mach(:run)? LOCAL-001 in Claude Code carries it on: it goes on from where the other worker left it\.$")
+        self.assertNotIn("No Factory is running", result["now"], "nothing was asked of the Factory")
+
+    def test_taking_over_a_factory_run_ends_it_and_gives_the_ticket_back_to_the_factory(self):
+        self.cell(stage="built")
+        execution = "x0123456789ab"
+        ledger = self.project / ".factory/intake/ledger.json"
+        ledger.parent.mkdir(parents=True, exist_ok=True)
+        ledger.write_text(json.dumps({"supervisor": {"executions": {execution: {"ticket_id": TICKET, "state": "started"}}}, "slices": {}}))
+        moment = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=5)
+        self.write(TICKET, "claim.json", {"step": "verify", "stage": "built", "holder": run.execution_holder(execution), "at": moment.isoformat(),
+                                          "renewed_at": moment.isoformat()})
+        # The run is live (no wrapper is started here, so the check that it stopped is told it has not).
+        patcher = mock.patch.object(run, "stopped_execution_holders", lambda project, ticket: [])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        # The decide list says the run is ended, in the take-over's own words.
+        listed = decide.main([TICKET], self.project, config={}, next_step=lambda t: run.next_step(run.Project(self.project), t, False),
+                             held_by=lambda t: run.held_by_worker(run.Project(self.project), t),
+                             factory_run=lambda t: run.held_by_factory_run(run.Project(self.project), t))
+        take = next(o for o in listed["tickets"][0]["options"] if o["key"] == "take-over")
+        self.assertTrue(take["does"].endswith(act.TAKE_OVER_EFFECT_FACTORY), take["does"])
+        stopped, given = [], []
+        import activation
+        with mock.patch.object(run, "stop_displaced_executions", lambda project, ticket, holders: stopped.append(list(holders)) or []), \
+                mock.patch.object(activation, "give_to_supervisor", lambda ctx, tickets: given.append(list(tickets)) or (list(tickets), [])):
+            result, _ = self.take_over_cli("--via=floor", carry={"supervisor": "woken", "pid": 9, "why_not": None, "given": [TICKET], "not_given": []})
+        self.assertEqual(stopped, [[run.execution_holder(execution)]], "the supervisor's own stop for one execution ends the run")
+        self.assertEqual(given, [[TICKET]], "the person said the Factory carries it on: the ticket is the supervisor's again")
+        self.assertRegex(result["now"], r"It was a Factory run, handed the verify step at \d\d:\d\d UTC: MACH ended that run, and its worker stops at its next step\. "
+                                        r"The Factory carries it on in the background: it goes on from where the other worker left it\.$")
 
 
 def claim(test, stage, minutes_ago, step="review"):
@@ -612,23 +665,41 @@ class TakeOverTest(Base):
         super().setUp()
         self.taken = []
 
-    def seam(self, ticket, *, by, via):
-        self.taken.append((ticket, by, via))
-        return {"taken": True, "step": "verify", "since": "2026-11-24T11:50:00Z", "other": "The other worker is stopped at its next step."}
+    def seam(self, ticket, *, by, via, to_factory=False):
+        self.taken.append((ticket, by, via, to_factory))
+        return {"taken": True, "step": "verify", "since": "2026-11-24T11:50:00Z", "factory_run": False, "said": [],
+                "other": "Another worker had been handed the verify step at 11:50 UTC: it stops at its next step, and nothing it had not committed is used."}
 
     def claimed(self, stage):
         self.write(TICKET, "claim.json", {"step": "verify", "stage": stage, "holder": "ab" * 16, "at": "2026-11-24T11:50:00+00:00",
                                           "renewed_at": "2026-11-24T11:50:00+00:00"})
 
-    def test_take_it_over_says_what_happened_to_the_other_worker_in_the_seams_words(self):
+    def test_take_it_over_from_the_floor_hands_it_to_the_factory(self):
         self.cell(stage="built")
         self.claimed("built")
         result = self.do("take-over", take_over=self.seam, via="floor")
-        self.assertEqual(self.taken, [(TICKET, "Dana Smith", "floor")])
-        self.assertEqual(result["now"], "Dana Smith took over LOCAL-001's verify step. The other worker is stopped at its next step. "
+        self.assertEqual(self.taken, [(TICKET, "Dana Smith", "floor", True)], "from the Floor the Factory carries it on")
+        self.assertEqual(result["now"], "Dana Smith took over LOCAL-001's verify step. Another worker had been handed the verify step at 11:50 UTC: "
+                                        "it stops at its next step, and nothing it had not committed is used. "
                                         "The Factory carries it on in the background: it goes on from where the other worker left it.")
         self.assertEqual(result["warnings"], ["Another worker was handed this ticket's verify step at 11:50 UTC and may still be at work."])
         self.assertEqual((self.carried, self.station.calls), ([True], []))
+
+    def test_take_it_over_from_the_terminal_leaves_it_for_the_person(self):
+        self.cell(stage="built")
+        self.claimed("built")
+        result = self.do("take-over", take_over=self.seam)
+        self.assertEqual(self.taken, [(TICKET, "Dana Smith", "terminal", False)])
+        self.assertEqual(self.carried, [], "nothing is started or woken: the person carries it on")
+        self.assertEqual(result["supervisor"], "none")
+        self.assertTrue(result["now"].endswith("/mach LOCAL-001 in Claude Code carries it on: it goes on from where the other worker left it."), result["now"])
+        self.assertNotIn("keep_here", result)
+        self.carried.clear()
+        self.taken.clear()
+        self.cell(stage="built")
+        self.claimed("built")
+        self.do("take-over", take_over=self.seam, to_factory=True)
+        self.assertEqual((self.taken[0][3], self.carried), (True, [True]), "said to let the Factory carry on: it does")
 
     def test_let_it_carry_on_changes_nothing(self):
         self.cell(stage="built")
@@ -638,25 +709,17 @@ class TakeOverTest(Base):
         self.assertEqual(result["now"], "Nothing changed: the other worker carries on with LOCAL-001.")
         self.assertEqual((self.taken, self.carried, snapshot(self.project)), ([], [], before))
 
-    def test_the_real_take_over_records_it_and_frees_the_step(self):
+    def test_files_kept_aside_are_said(self):
         self.cell(stage="built")
         self.claimed("built")
-        taker = act.claim_taker(self.project, {}, run.claims, now=lambda: NOW)
-        result = self.do("take-over", take_over=taker)
-        self.assertEqual(result["took_over"], {"taken": True, "step": "verify", "since": "2026-11-24T11:50:00+00:00",
-                                               "other": f"The other worker had been handed the verify step at 11:50 UTC: {act.TAKE_OVER_EFFECT}"})
-        self.assertFalse((self.cellroot() / "claim.json").exists())
-        self.assertEqual(json.loads((self.cellroot() / "takeovers.jsonl").read_text()),
-                         {"step": "verify", "from_claim_at": "2026-11-24T11:50:00+00:00", "at": "2026-11-24T12:00:00+00:00", "by": "Dana Smith", "via": "terminal"})
-        # Nobody holds it now: the next person who tries is told it was taken over, not refused.
-        again = self.do("take-over", by="Lee Park", take_over=taker)
-        self.assertEqual((again["done"], again["already_decided"]), (False, True))
-        self.assertTrue(again["now"].startswith("Taken over by Dana Smith at 12:00 UTC. LOCAL-001 is not waiting for a person"), again["now"])
+        kept = lambda ticket, **kw: {**self.seam(ticket, **kw), "said": ["The worker that was taken over left 2 uncommitted file(s); they are kept under refs/mach/cell-files/LOCAL-001/taken-over-1."]}
+        result = self.do("take-over", take_over=kept, via="floor")
+        self.assertIn("used. The worker that was taken over left 2 uncommitted file(s); they are kept under refs/mach/cell-files/LOCAL-001/taken-over-1.", result["now"])
 
     def test_a_lapsed_claim_is_said_and_the_ticket_carries_on(self):
         self.cell(stage="built")
         self.claimed("built")
-        lapse = lambda ticket, *, by, via: {"taken": False, "step": None, "since": None, "other": "The other worker's claim had already lapsed, so no other worker holds the step now."}
+        lapse = lambda ticket, **kw: {"taken": False, "step": None, "since": None, "other": "The other worker's claim had already lapsed, so no other worker holds the step now."}
         result = self.do("take-over", take_over=lapse)
         self.assertTrue(result["now"].startswith("The other worker's claim had already lapsed, so no other worker holds the step now. LOCAL-001 is free to carry on."))
 
@@ -665,9 +728,10 @@ class TakeOverTest(Base):
         self.claimed("built")
         self.park()
         result = self.do("retry", take_over=self.seam)
-        self.assertEqual(self.taken, [(TICKET, "Dana Smith", "terminal")])
-        self.assertIn("LOCAL-001 is released to run again. Dana Smith took over its verify step. The other worker is stopped at its next step.", result["now"])
+        self.assertEqual(self.taken, [(TICKET, "Dana Smith", "terminal", True)], "a release to the Factory is the Factory's")
+        self.assertIn("LOCAL-001 is released to run again. Dana Smith took over its verify step. Another worker had been handed the verify step", result["now"])
         self.assertTrue(result["unparked"])
+        self.assertEqual(self.carried, [True])
 
     def test_a_decision_the_station_accepts_does_not_take_the_step(self):
         self.awaiting()
@@ -680,9 +744,40 @@ class TakeOverTest(Base):
         self.cell(stage="built")
         self.claimed("built")
 
-        def broken(ticket, *, by, via):
-            raise act.ActError("MACH could not take LOCAL-001's verify step over (disk full), so nothing was changed. /mach LOCAL-001 in Claude Code takes it over there.")
-        self.refused("take-over", "could not take LOCAL-001's verify step over", take_over=broken)
+        def broken(ticket, **kw):
+            raise act.ActError("MACH could not take LOCAL-001 over (disk full), so nothing was changed. /mach LOCAL-001 in Claude Code takes it over there.")
+        self.refused("take-over", "could not take LOCAL-001 over", take_over=broken)
+
+    def test_the_effect_words(self):
+        self.assertEqual(act.TAKE_OVER_EFFECT, "the other worker stops at its next step.")
+        self.assertEqual(act.TAKE_OVER_EFFECT_FACTORY, "the Factory's run on it is ended, and the other worker stops at its next step.")
+        self.assertFalse(hasattr(act, "claim_taker"), "one take-over: the one `next` makes for a person")
+
+
+class MergeAnswersTest(Base):
+    """A person's merge of a second copy of a slice: closed out when it is all on main, renumbered when its number is taken."""
+
+    def setUp(self):
+        super().setUp()
+        self.cell(stage="approved")
+        (self.project / ".factory" / "config.json").write_text(json.dumps({"merge": {"mode": "manual"}}))
+
+    def test_already_on_main(self):
+        self.station.answers[("merge", "run")] = (0, json.dumps({"status": "ALREADY_ON_MAIN", "reason": "Everything in this copy is already on main."}), "")
+        result = self.do("merge")
+        self.assertEqual(self.station.calls, [("merge", ["run", TICKET, "--by-person"])])
+        self.assertTrue(result["now"].startswith("Everything in LOCAL-001 is already on the main branch: another copy of its slice landed first, so MACH "
+                                                 "closes this copy out as merged. The Factory carries it on in the background: cleanup removes its cell."), result["now"])
+        self.assertNotIn("abandon", result["now"].lower())
+
+    def test_renumbered(self):
+        reason = "SLICE-004 is already on main as another slice, so MACH gave this ticket's slice the next free number: it is SLICE-009 now."
+        self.station.answers[("merge", "run")] = (3, json.dumps({"status": "RENUMBERED", "reason": reason}), "")
+        result = self.do("merge")
+        self.assertTrue(result["done"])
+        self.assertTrue(result["now"].startswith(f"LOCAL-001 is not merged yet. {reason} The Factory carries it on in the background: it is verified and "
+                                                 "reviewed again on the renamed spec, then merged."), result["now"])
+        self.assertNotIn("pull request", result["now"])
 
 
 class ShapeTest(Base):
@@ -727,6 +822,17 @@ class SourceTest(unittest.TestCase):
         files += sorted(p for p in (ROOT / "web/apps/factory-floor/src").rglob("*.ts*"))
         banned = re.compile(r"decide again in a moment|[\"'`]Wait for it\b|ask (?:the|another|that|them|him|her) (?:person|engineer|worker|owner|holder|teammate)"
                             r"|ask (?:them|someone) to release|to release (?:the|this|that|their) (?:slice|ticket|step|claim)", re.IGNORECASE)
+        # The take-over's own sentences, in run.py's decide part, and the sentences a person reads from it.
+        import inspect
+        said = "\n".join([inspect.getsource(run.decide_take_over), inspect.getsource(run.held_by_factory_run), act.TAKE_OVER_EFFECT,
+                          act.TAKE_OVER_EFFECT_FACTORY, *act.DECIDED_WORDS.values(), *act.WAITING_FOR.values(),
+                          decide.SUMMARY["landed-elsewhere"], decide.SUMMARY["already-on-main"], decide.SUMMARY["worker-in-cell"]])
+        for number, line in enumerate(said.splitlines(), 1):
+            self.assertIsNone(banned.search(line), f"take-over sentence {number}: {line.strip()}")
+            self.assertNotIn("not stopped yet", line, "a displaced worker is stopped at its next step")
+            self.assertNotIn("—", line)
+        for text in (decide.SUMMARY["landed-elsewhere"], decide.SUMMARY["already-on-main"], act.WAITING_FOR["landed-elsewhere"]):
+            self.assertNotIn("abandon", text.lower(), "a second copy is merged or closed out, never suggested for abandoning")
         for path in files:
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 self.assertIsNone(banned.search(line), f"{path.relative_to(ROOT)}:{number}: {line.strip()}")
