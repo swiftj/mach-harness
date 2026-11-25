@@ -1266,7 +1266,7 @@ def cmd_decide(project: Project, args: argparse.Namespace) -> int:
         ticket_ids.append(ticket_id)
     try:
         report = decide.main(ticket_ids, project.root, config=project.config, next_step=lambda ticket_id: next_step(project, ticket_id, False),
-                             intent_skill=skill("intent"), run_skill=skill("run"))
+                             intent_skill=skill("intent"), run_skill=skill("run"), held_by=lambda ticket_id: held_by_worker(project, ticket_id))
     except decide.DecideError as exc:
         raise RunError(str(exc))
     if resolved:
@@ -1289,15 +1289,22 @@ def cmd_decide_do(project: Project, args: argparse.Namespace, decide: Any, ticke
     def report(ticket: str) -> Dict[str, Any]:
         try:
             return decide.main([ticket], project.root, config=project.config, next_step=lambda ticket_id: next_step(project, ticket_id, False),
-                               intent_skill=skill("intent"), run_skill=skill("run"))
+                               intent_skill=skill("intent"), run_skill=skill("run"), held_by=lambda ticket_id: held_by_worker(project, ticket_id))
         except decide.DecideError as exc:
             raise act.ActError(str(exc))
 
+    via = args.via or "terminal"
+
+    def waiting() -> None:  # the terminal is told once that this decision waits for another to finish; the Floor shows it itself
+        if via == "terminal":
+            print("Another decision on this project is being recorded. MACH records this one as soon as it finishes.", file=sys.stderr, flush=True)
+
     try:
+        # The take-over seam (act.claim_taker): takes the ticket's step from the worker that holds it, for this person.
         result = act.main(ticket_id, key, project.root, report=report, by=by, reason=args.reason, adrs=args.adr, test_cmd=args.test_cmd,
-                          answers_file=answers, via=args.via or "terminal", station=act.station_runner(project.root, sibling),
-                          line=lambda: factory(project)[1], carry_on=act.supervisor_carry_on(lambda: factory_context(project), tickets=[ticket_id], start=(args.via or "terminal") != "floor"),
-                          run_skill=skill("run"))
+                          answers_file=answers, via=via, station=act.station_runner(project.root, sibling),
+                          line=lambda: factory(project)[1], carry_on=act.supervisor_carry_on(lambda: factory_context(project), tickets=[ticket_id], start=via != "floor"),
+                          take_over=act.claim_taker(project.root, project.config, claims), run_skill=skill("run"), on_wait=waiting)
     except act.ActError as exc:
         raise RunError(str(exc))
     print(json.dumps(result, indent=2, ensure_ascii=False) if args.json else act.human(result))

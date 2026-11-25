@@ -14,7 +14,7 @@ machine-local Factory settings. It never runs unattended: run.py refuses it insi
 
 Entry point, wired in by run.py:
 
-    decide.main(ticket_ids, root, *, config, next_step, intent_skill="/mach-intent", explain_facts=None, now=None) -> dict
+    decide.main(ticket_ids, root, *, config, next_step, intent_skill="/mach-intent", explain_facts=None, now=None, held_by=None) -> dict
 
     ticket_ids     tickets a person named, already resolved by run.py; empty means every open ticket
     root           the project root
@@ -23,16 +23,23 @@ Entry point, wired in by run.py:
     intent_skill   the intent skill's command as installed ("/mach-intent", or "/mach:intent" as a plugin)
     explain_facts  callable(ticket_id, next_info) -> explain.explain's report; by default explain.explain itself
     now            the current time, for a claim's freshness (tests)
+    held_by        callable(ticket_id) -> a sentence, or None when no live worker holds the ticket's claim (run.py's
+                   held_by_worker: a claim a stopped Factory execution left is nobody's); by default every fresh claim counts
 
 The result: `nothing_waiting`, `order` (tickets a person's approval or merge unblocks first, then stuck ones; stable
 otherwise), `tickets` (one record each, in that order) and `not_waiting` (a plain answer for each named ticket that
 is not waiting on a person). Each record has `ticket_id`, `state`, `situation`, `show_first`, `options`,
 `recommendation` and `decide_command` (the run skill's walkthrough of this ticket, for options a conversation carries
 out); a ticket waiting for answers also has `questions` ([{"n", "text", "follow_up"}], from the spec's Open questions).
+Each record also has `warnings`: plain sentences for a person, shown above the options and never in their place. Another
+worker's fresh claim on the ticket's step is one of them. A claim never hides a decision: the ticket is listed in the state
+its stations are in, with every option that state offers, and the claim is only said. A ticket that waits for nothing but
+that other worker is listed as `worker-in-cell`, with "Let it carry on" and "Take it over"; act.py carries out both.
 Each option has `key`, `label` (one to five words), `does` (one sentence), `route` (the run-skill input that carries
 it out, or null for "wait"), `needs_reason`, `recommended`, `do` (whether `run.py decide do` carries it out by itself;
-act.py), `needs` (the other inputs it takes: "test_cmd", "answers") and `confirm` (a decision that cannot be undone,
-confirmed first). At most three options; "Skip for now" is the skill's own and is never listed here. `recommendation`
+act.py), `needs` (the other inputs it takes: "test_cmd", "answers"), `confirm` (a decision a person confirms first: it
+cannot be undone, or it stops another worker) and `takes_over` (act.py takes the step from the other worker as it records
+this decision, so the Factory can run the ticket). At most three options; "Skip for now" is the skill's own and is never listed here. `recommendation`
 is {"basis": "rule", "why": ...} only where a rule decides it, never for approving or rejecting a change; otherwise
 {"basis": "judgement"}.
 
@@ -82,7 +89,7 @@ SUMMARY = {
     "stuck": "The cell is in a state the line cannot handle.",
     "bronze": "The repository's readiness tier is Bronze, so only hardening tickets may be built.",
     "parked": "The Factory supervisor took this ticket out of automatic execution until a person says to carry on.",
-    "worker-in-cell": "Another worker was handed this ticket's step and may still be at work in the cell.",
+    "worker-in-cell": "Another worker was handed this ticket's step and may still be at work in the cell; nothing else waits on a person.",
     "adr-conflict": "The contract engineer found that this slice cannot be planned under an accepted architecture decision (ADR).",
     "adr-acceptance": "This High-risk ticket's plan proposes a new architecture decision (ADR); the build waits until an engineer accepts it.",
     "adr-fix": "An architecture decision record (ADR) on the main branch cannot be read, so no ticket is planned until it is fixed.",
@@ -192,6 +199,28 @@ def fresh_claim(cellroot: Path, stage: Optional[str], config: Dict[str, Any], no
             "lapses_at": stamp(last + timedelta(minutes=limit))}
 
 
+def clock(moment_text: Any, now: datetime) -> str:
+    """A time as a person reads it: 02:47 UTC on the day it is now, else with its date."""
+    moment = parse_time(moment_text)
+    if moment is None:
+        return "an earlier time"
+    moment = moment.astimezone(timezone.utc)
+    day = "" if moment.date() == now.astimezone(timezone.utc).date() else moment.strftime("%Y-%m-%d ")
+    return f"{day}{moment.strftime('%H:%M')} UTC"
+
+
+def claim_warning(claim: Dict[str, Any], now: datetime) -> str:
+    step = claim.get("step") or "next"
+    return f"Another worker was handed this ticket's {step} step at {clock(claim.get('since'), now)} and may still be at work."
+
+
+def take_over_does(step: Optional[str]) -> str:
+    """What "Take it over" does, in one sentence: what MACH does, then what happens to the other worker, in the words of the
+    take-over act.py carries out (act.TAKE_OVER_EFFECT)."""
+    import act
+    return f"MACH takes the {step or 'current'} step from the other worker for you and carries the ticket on: {act.TAKE_OVER_EFFECT}"
+
+
 def parked_tickets(root: Path) -> Dict[str, Dict[str, Any]]:
     """Tickets the Factory supervisor parked for a person, from the intake ledger (never the machine-local settings)."""
     ledger = load_json(root / ".factory" / "intake" / "ledger.json", {})
@@ -230,13 +259,18 @@ def option(key: str, label: str, does: str, route: Optional[str], needs_reason: 
 
 # What `run.py decide do` (act.py) carries out by itself, per option key. The rest need an agent or a conversation:
 # `decide do` answers them with the command to run, and changes nothing.
-CARRIED_OUT = ("approve", "send-back", "merge", "abandon", "replan", "retry", "run", "revise", "answers", "wait")
-CONFIRM_FIRST = ("approve", "merge", "abandon")  # decisions that cannot be undone: a person confirms them first
+CARRIED_OUT = ("approve", "send-back", "merge", "abandon", "replan", "retry", "run", "revise", "answers", "wait", "take-over")
+# Decisions a person confirms first: they cannot be undone, or they stop another worker.
+CONFIRM_FIRST = ("approve", "merge", "abandon", "take-over")
+# Decisions that hand the ticket to the Factory at the stage it is at. While another worker's claim on that stage is fresh,
+# the Factory would be held by it, so act.py takes the step over as it records the decision: the person asked for it to run.
+TAKES_OVER = ("retry", "run", "revise", "set-test-command")
 
 
-def mark(options: List[Dict[str, Any]], state: str) -> None:
-    """For each option: whether `decide do` carries it out (`do`), the inputs it needs (`needs`) and whether a person confirms
-    it first (`confirm`). The Factory Floor draws a row from these without guessing."""
+def mark(options: List[Dict[str, Any]], state: str, claimed: bool = False) -> None:
+    """For each option: whether `decide do` carries it out (`do`), the inputs it needs (`needs`), whether a person confirms
+    it first (`confirm`) and whether it takes the step from another worker (`takes_over`). The Factory Floor draws a row
+    from these without guessing."""
     for item in options:
         key, route = item["key"], item["route"] or ""
         can = key in CARRIED_OUT
@@ -249,7 +283,8 @@ def mark(options: List[Dict[str, Any]], state: str) -> None:
         elif key == "run" and state == "parked":  # "Run it here": in this conversation, station by station
             can = False
         needs = ["test_cmd"] if key == "set-test-command" else ["answers"] if key == "answers" else []
-        item.update({"do": can, "needs": needs, "confirm": key in CONFIRM_FIRST})
+        takes = key == "take-over" or (claimed and can and key in TAKES_OVER)
+        item.update({"do": can, "needs": needs, "confirm": key in CONFIRM_FIRST, "takes_over": takes})
 
 
 OPEN_QUESTIONS_RE = re.compile(r"^##\s+Open questions\s*$", re.IGNORECASE)
@@ -388,16 +423,15 @@ def situation(state: str, info: Dict[str, Any], report: Dict[str, Any], cell: Di
 
 
 def classify(root: Path, ticket: str, info: Dict[str, Any], report: Dict[str, Any], config: Dict[str, Any],
-             parked: Dict[str, Dict[str, Any]], now: datetime, named: bool = False) -> Optional[str]:
+             parked: Dict[str, Dict[str, Any]], now: datetime, named: bool = False,
+             held_by: Optional[Callable[[str], Optional[str]]] = None) -> Optional[str]:
     """Which waiting state the ticket is in, read from the stations' own files; None when it is not waiting on a person."""
     cellroot = root / ".factory" / "worktrees" / ticket
     cell = load_json(cellroot / "cell.json")
     stage = cell.get("stage") if isinstance(cell, dict) else None
     if info.get("stop") and info.get("needs") in ADR_STATES:
         return ADR_STATES[info["needs"]]  # a stop at an architecture decision is a person's whatever claim the planner left
-    if info.get("needs") == "worker-in-cell" or (isinstance(cell, dict) and fresh_claim(cellroot, stage, config, now)):
-        return "worker-in-cell"
-    if info.get("stop"):
+    if info.get("stop") and info.get("needs") != "worker-in-cell":
         needs = info.get("needs")
         if needs == "human-approval":
             return "approval"
@@ -432,11 +466,15 @@ def classify(root: Path, ticket: str, info: Dict[str, Any], report: Dict[str, An
             return "build-gate"
     if ticket in parked:
         return "parked"
+    held = isinstance(cell, dict) and fresh_claim(cellroot, stage, config, now) and (held_by is None or held_by(ticket))
+    if info.get("needs") == "worker-in-cell" or held:
+        return "worker-in-cell"  # it waits for nothing but the other worker: a person may let it carry on or take it over
     return None
 
 
 def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Dict[str, Any], config: Dict[str, Any],
-           parked: Dict[str, Dict[str, Any]], intent_skill: str, now: datetime, run_skill: str = "/mach") -> Dict[str, Any]:
+           parked: Dict[str, Dict[str, Any]], intent_skill: str, now: datetime, run_skill: str = "/mach",
+           held_by: Optional[Callable[[str], Optional[str]]] = None) -> Dict[str, Any]:
     cellroot = root / ".factory" / "worktrees" / ticket
     cell = load_json(cellroot / "cell.json", {}) or {}
     cell = cell if isinstance(cell, dict) else {}
@@ -446,6 +484,15 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
     options: List[Dict[str, Any]] = []
     extra: Dict[str, Any] = {}
     rule: Optional[str] = None
+    warnings: List[str] = []
+    # Another worker's fresh claim is said, never a reason to hold a decision back. A claim a stopped Factory execution
+    # left is nobody's (held_by says so), so it is not said.
+    claim = fresh_claim(cellroot, stage, config, now) if cell else None
+    if claim and held_by is not None and not held_by(ticket):
+        claim = None
+    if claim:
+        facts["claim"] = claim
+        warnings.append(claim_warning(claim, now))
 
     if state == "approval":
         decision = load_json(cellroot / "review" / "decision.json", {})
@@ -575,12 +622,13 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
         options.append(run_again(ticket, "The line runs the ticket in this conversation, station by station, stopping wherever a person is needed.", "Run it here"))
         options.append(abandon(ticket))
     elif state == "worker-in-cell":
-        facts["claim"] = fresh_claim(cellroot, stage, config, now)
-        options.append(option("wait", "Wait for it", "Nothing changes; the claim lapses by itself if no worker renews it.", None))
-        options.append(option("take-over", "Take over the step",
-                              "The line replaces the other worker's claim and hands the step to a new worker; two workers may then be on one cell.",
-                              f"{ticket} --take-over"))
-        rule = "A fresh claim means a worker may still be at work in the cell, and a second worker could undo its work."
+        held = claim or fresh_claim(cellroot, stage, config, now)
+        if not warnings:
+            if held:
+                facts["claim"] = held
+            warnings.append(claim_warning(held, now) if held else "Another worker was handed this ticket's step and may still be at work.")
+        options.append(option("wait", "Let it carry on", "Nothing changes: the other worker carries on, and its claim lapses by itself if it stops.", None))
+        options.append(option("take-over", "Take it over", take_over_does((held or {}).get("step")), f"{ticket} --take-over"))
 
     elif state == "adr-conflict":
         A = adr_helper()
@@ -648,10 +696,10 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
     options = options[:3]
     if rule and options:
         options[0]["recommended"] = True
-    mark(options, state)
+    mark(options, state, claimed=bool(claim))
     return {"ticket_id": ticket, "state": state, "situation": facts, "show_first": show_first, "options": options,
             "recommendation": {"basis": "rule", "why": rule} if rule else {"basis": "judgement"},
-            "decide_command": f"{run_skill} decide {ticket}", **extra}
+            "decide_command": f"{run_skill} decide {ticket}", "warnings": warnings, **extra}
 
 
 def not_waiting(ticket: str, info: Dict[str, Any]) -> Dict[str, Any]:
@@ -665,7 +713,7 @@ def not_waiting(ticket: str, info: Dict[str, Any]) -> Dict[str, Any]:
 
 def main(ticket_ids: Sequence[str], root: Path, *, config: Dict[str, Any], next_step: Callable[[str], Dict[str, Any]],
          intent_skill: str = "/mach-intent", explain_facts: Optional[Callable[[str, Dict[str, Any]], Dict[str, Any]]] = None,
-         now: Optional[datetime] = None, run_skill: str = "/mach") -> Dict[str, Any]:
+         now: Optional[datetime] = None, run_skill: str = "/mach", held_by: Optional[Callable[[str], Optional[str]]] = None) -> Dict[str, Any]:
     """Every ticket waiting on a person (or the ones named), with its options, in the order to walk them."""
     root = Path(root)
     config = config if isinstance(config, dict) else {}
@@ -680,12 +728,12 @@ def main(ticket_ids: Sequence[str], root: Path, *, config: Dict[str, Any], next_
     for ticket in named or open_tickets(root):
         info = next_step(ticket)
         report = facts(ticket, info)
-        state = classify(root, ticket, info, report, config, parked, moment, named=bool(named))
+        state = classify(root, ticket, info, report, config, parked, moment, named=bool(named), held_by=held_by)
         if state is None:
             if named:
                 answers.append(not_waiting(ticket, info))
             continue
-        waiting.append(record(root, ticket, state, info, report, config, parked, intent_skill, moment, run_skill))
+        waiting.append(record(root, ticket, state, info, report, config, parked, intent_skill, moment, run_skill, held_by))
     waiting = [item for _, item in sorted(enumerate(waiting), key=lambda pair: (pair[1]["state"] not in UNBLOCKED_BY_A_PERSON, pair[0]))]
     return {"reads_only": True, "nothing_waiting": not waiting, "order": [item["ticket_id"] for item in waiting], "tickets": waiting,
             "not_waiting": answers, "data_fields": list(DATA_FIELDS), "data_note": DATA_NOTE,
@@ -702,6 +750,8 @@ def human(report: Dict[str, Any]) -> str:
         lines.append(f"{item['ticket_id']} ({item['state']}): {facts['summary']}" + (f" Stage: {facts['stage']}." if facts.get("stage") else ""))
         if facts.get("title"):
             lines.append(f'    title: "{facts["title"]}"')
+        for warning in item.get("warnings") or []:
+            lines.append(f"    warning: {warning}")
         for path in item["show_first"]:
             lines.append(f"    read first: {path}")
         for question in item.get("questions") or []:

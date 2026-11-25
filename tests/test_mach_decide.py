@@ -24,6 +24,11 @@ ROUTE_FORMS = ("approve {t}", 'send-back {t} "<why>"', "merge {t}", 'abandon {t}
                "/mach-intent {t}", "factory resume --retry {t}", "audit", "answers {t}")
 
 
+def decide_act():
+    import act
+    return act
+
+
 def snapshot(root: Path):
     found = {}
     for path in sorted(root.rglob("*")):
@@ -81,9 +86,11 @@ class Base(unittest.TestCase):
             self.assertTrue(o["does"].endswith(".") and o["does"].count(". ") == 0, o["does"])
             self.assertTrue(o["route"] is None or o["route"] in forms, o["route"])
             self.assertEqual(o["needs_reason"], "<why>" in (o["route"] or ""))
-            self.assertEqual((type(o["do"]), o["confirm"]), (bool, o["key"] in ("approve", "merge", "abandon")))
+            self.assertEqual((type(o["do"]), o["confirm"]), (bool, o["key"] in ("approve", "merge", "abandon", "take-over")))
+            self.assertIs(type(o["takes_over"]), bool)
             self.assertTrue(set(o["needs"]) <= {"test_cmd", "answers"}, o["needs"])
         self.assertEqual(item["decide_command"], f"/mach decide {item['ticket_id']}")
+        self.assertTrue(all(isinstance(w, str) and w.endswith(".") for w in item["warnings"]), item["warnings"])
         if item["recommendation"]["basis"] == "rule":
             self.assertTrue(options[0]["recommended"])
             self.assertTrue(item["recommendation"]["why"])
@@ -277,17 +284,76 @@ class WorkerInCellTest(Base):
     def claim(self, stage, at):
         self.write(TICKET, "claim.json", {"step": "verify", "stage": stage, "holder": "ab" * 16, "at": stamp(at), "renewed_at": stamp(at)})
 
-    def test_a_fresh_claim_recommends_waiting_by_rule(self):
+    WARNING = "Another worker was handed this ticket's verify step at 11:50 UTC and may still be at work."
+
+    def test_a_ticket_that_waits_for_nothing_else_offers_to_let_it_carry_on_or_take_it_over(self):
         self.cell(stage="built")
         self.claim("built", NOW - timedelta(minutes=10))
         item = self.one()
         self.assertEqual(item["state"], "worker-in-cell")
         self.assertEqual(self.keys(item), (["wait", "take-over"], [None, f"{TICKET} --take-over"]))
-        self.assertEqual(item["recommendation"]["basis"], "rule")
-        self.assertTrue(item["options"][0]["recommended"])
+        self.assertEqual([o["label"] for o in item["options"]], ["Let it carry on", "Take it over"])
+        wait, take = item["options"]
+        self.assertEqual((wait["do"], wait["confirm"], wait["takes_over"]), (True, False, False))
+        self.assertEqual((take["do"], take["confirm"], take["takes_over"]), (True, True, True), "taking over is carried out by decide do, after a confirm")
+        self.assertIn("MACH takes the verify step from the other worker for you", take["does"])
+        self.assertIn(decide_act().TAKE_OVER_EFFECT, take["does"], "what happens to the other worker is said in the take-over's own words")
+        self.assertEqual(item["recommendation"], {"basis": "judgement"}, "nothing recommends waiting a person out")
+        self.assertEqual(item["warnings"], [self.WARNING])
         self.assertEqual(item["situation"]["claim"]["step"], "verify")
         self.assertEqual(item["situation"]["claim"]["lapses_at"], stamp(NOW + timedelta(minutes=80)))
         self.assertNotIn("abab", json.dumps(item), "the holder token is never passed on")
+
+    def awaiting(self):
+        self.cell(stage="awaiting-human")
+        self.write(TICKET, "review/round-1/findings.md", "# Findings\n")
+        self.write(TICKET, "review/decision.json", {"outcome": "AWAITING_HUMAN", "round": 1,
+                                                    "findings": str(self.project / ".factory/worktrees" / TICKET / "review/round-1/findings.md")})
+
+    def test_a_fresh_claim_never_hides_a_decision(self):
+        self.awaiting()
+        unclaimed = self.one()
+        self.claim("awaiting-human", NOW - timedelta(minutes=10))
+        item = self.one()
+        self.assertEqual(item["state"], "approval")
+        self.assertEqual(item["options"], unclaimed["options"], "every option the ticket's state offers, exactly as without the claim")
+        self.assertEqual([o["key"] for o in item["options"]], ["approve", "send-back", "abandon"])
+        self.assertEqual((unclaimed["warnings"], item["warnings"]), ([], [self.WARNING]))
+        self.assertEqual(item["situation"]["summary"], unclaimed["situation"]["summary"])
+        self.assertIn("warning: " + self.WARNING, decide.human({"tickets": [item]}))
+
+    def test_a_step_the_factory_would_run_takes_the_claim_over(self):
+        self.cell(stage="built")
+        self.claim("built", NOW - timedelta(minutes=10))
+        path = self.project / ".factory" / "intake" / "ledger.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"supervisor": {"parked": {TICKET: {"reason": "It failed twice.", "at": "2026-11-16T10:00:00Z"}}}}))
+        item = self.one()
+        self.assertEqual(item["state"], "parked")
+        retry = next(o for o in item["options"] if o["key"] == "retry")
+        self.assertTrue(retry["takes_over"], "released to the Factory, the claim must not hold it")
+        self.assertFalse(next(o for o in item["options"] if o["key"] == "abandon")["takes_over"])
+
+    def test_a_claim_a_stopped_execution_left_is_nobodys(self):
+        self.awaiting()
+        self.claim("awaiting-human", NOW - timedelta(minutes=10))
+        project = run.Project(self.project)
+        result = decide.main([], self.project, config=project.config, next_step=lambda ticket: run.next_step(project, ticket, False), now=NOW,
+                             held_by=lambda ticket: None)
+        self.assertEqual(result["tickets"][0]["warnings"], [])
+        self.cell(stage="built")
+        self.claim("built", NOW - timedelta(minutes=10))
+        result = decide.main([], self.project, config=project.config, next_step=lambda ticket: run.next_step(project, ticket, False), now=NOW,
+                             held_by=lambda ticket: None)
+        self.assertEqual(result["tickets"], [])
+
+    def test_a_claim_from_another_day_says_its_date(self):
+        after_midnight = datetime(2026, 11, 17, 0, 5, tzinfo=timezone.utc)
+        self.cell(stage="built")
+        self.claim("built", after_midnight - timedelta(minutes=10))
+        self.assertEqual(self.one(now=after_midnight)["warnings"],
+                         ["Another worker was handed this ticket's verify step at 2026-11-16 23:55 UTC and may still be at work."])
+        self.assertEqual(decide.clock("2026-11-16T02:47:00+00:00", NOW), "02:47 UTC")
 
     def test_a_stale_claim_or_one_from_another_stage_counts_for_nothing(self):
         self.cell(stage="built")
