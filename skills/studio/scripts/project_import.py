@@ -285,7 +285,10 @@ def lookup(studio: Any, ident: Optional[str]) -> Dict[str, Any]:
             f"set aside on {day} before it was finished" if data.get("set_aside_at") else f"being brought in since {day}; not finished"
         for old, new in sorted(data["map"].items()):
             if old == ident or new == ident:
-                if old == new:
+                if old in (data.get("principles_matched") or {}):
+                    words = (f"{old} of '{name}' said the same as {new} here, so it was taken as {new} ({when})." if old == ident else
+                             f"{new} here is also what {old} of '{name}' said, so that one was taken as {new} ({when}).")
+                elif old == new:
                     words = f"{old} of '{name}' kept its number here ({when})."
                 elif old == ident:
                     words = f"{old} of '{name}' is {new} here ({when})."
@@ -689,9 +692,11 @@ class Content:
                 raise self.bad("the archive's facts", where, f"{slice_id}'s request is not an issue number")
             if note is not None and (not isinstance(note, str) or len(note) > NOTE_CHARS):
                 raise self.bad("the archive's facts", where, f"{slice_id}'s resume note is not a short text")
+            ready = entry.get("was_ready") if type(entry.get("was_ready")) is bool else None  # the exporter's own word, when it gives one
             if slice_id in self.found.slices:
                 facts["slices"][slice_id] = {key: value for key, value in (("was", was), ("revision", revision), ("jira", jira),
-                                                                           ("request", request), ("note", note)) if value is not None}
+                                                                           ("request", request), ("note", note), ("was_ready", ready))
+                                             if value is not None}
         for epic_id, entry in mapping("epics").items():
             jira = entry.get("jira") if isinstance(entry, dict) else None
             if not isinstance(entry, dict) or (jira is not None and not (isinstance(jira, str) and product.JIRA_RE.fullmatch(jira))):
@@ -753,6 +758,37 @@ class Content:
             location, _, problem = error.partition(": ")
             ident = Path(location).stem if location.startswith("product/slices/") else location
             raise self.bad("a slice" if location.startswith("product/slices") else "a project", ident, problem or error)
+
+
+READY_WAS = ("approved", "ready_to_build", "being_built", "question", "shipped")  # what a slice was when it had been marked ready
+
+
+def ready_in_source(found: Incoming) -> List[str]:
+    """The archive's slices (old IDs) that were ready in the old repository: as the archive says it per slice (`was_ready` in
+    the manifest's `slices`, as an object or a list, or in facts.json), else from what facts.json records each slice was
+    (marked ready to build, being built, with a question from the builders, shipped, or approved). Read defensively: anything
+    else in those places is ignored. A slice replaced there is never counted."""
+    told: Dict[str, bool] = {}
+    listed = found.manifest.get("slices")
+    entries = list(listed.items()) if isinstance(listed, dict) else \
+        [(e.get("slice_id") or e.get("id"), e) for e in listed if isinstance(e, dict)] if isinstance(listed, list) else []
+    for ident, entry in entries:
+        value = entry.get("was_ready") if isinstance(entry, dict) else entry
+        if isinstance(ident, str) and type(value) is bool:
+            told.setdefault(ident, value)
+    for ident, entry in found.facts["slices"].items():
+        if type(entry.get("was_ready")) is bool:
+            told.setdefault(ident, entry["was_ready"])
+    out = []
+    for ident, work in found.slices.items():
+        if work.get("status") == "superseded":
+            continue
+        said = told.get(ident)
+        if said is None:
+            said = found.facts["slices"].get(ident, {}).get("was") in READY_WAS
+        if said:
+            out.append(ident)
+    return sorted(out, key=number)
 
 
 def spec_heading(text: str) -> Optional[str]:
@@ -1186,8 +1222,12 @@ def read_sections(hand: Any, ledger: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def numbering(mode: str, incoming: Dict[str, List[str]], used: Dict[str, Set[int]]) -> Tuple[Dict[str, str], List[str]]:
-    """The map (4.3) and, for a new project, why a kind was numbered after all (open point 5)."""
+def numbering(mode: str, incoming: Dict[str, List[str]], used: Dict[str, Set[int]],
+              fixed: Optional[Dict[str, str]] = None) -> Tuple[Dict[str, str], List[str]]:
+    """The map (4.3) and, for a new project, why a kind was numbered after all (open point 5). `fixed`: incoming IDs that
+    take an ID already here (a principle that says the same as one of this project's), given no number of their own."""
+    fixed = dict(fixed or {})
+    incoming = {kind: [i for i in idents if i not in fixed] for kind, idents in incoming.items()}
     first: Dict[str, Optional[int]] = {}
     why: List[str] = []
     for kind in KINDS:
@@ -1204,7 +1244,9 @@ def numbering(mode: str, incoming: Dict[str, List[str]], used: Dict[str, Set[int
                        f"repository, so every {NOUNS[kind]} that comes in takes the next free number, from {project_ids._format(kind, free)}.")  # noqa: SLF001
         else:
             first[kind] = None
-    return project_ids.numbering(incoming, first), why
+    mapping = project_ids.numbering(incoming, first)
+    mapping.update(fixed)
+    return mapping, why
 
 
 def by_kind(mapping: Dict[str, str]) -> Dict[str, List[List[str]]]:
@@ -1238,6 +1280,9 @@ class Built:
         self.slice_order: List[str] = []
         self.links_dropped: List[Dict[str, Any]] = []        # links to things not in the archive, taken out (section 5, as built)
         self.none_left_behind: List[str] = []                # the archive's "nothing to say" answers on needs, not merged when joining
+        self.not_assessed: List[Dict[str, Any]] = []         # Not assessed rows written into the specs that came (a principle here they predate)
+        self.aligned: List[Dict[str, Any]] = []              # rows of a principle that says the same as one here, now naming it as it is here
+        self.dependencies_added: List[Dict[str, Any]] = []   # a slice that names a rule of one that came with it now depends on that one
 
 
 class Links:
@@ -1360,9 +1405,14 @@ def links_that_cannot_go(host: Any, found: Incoming, incoming: Dict[str, List[st
                 raise stop(f"conflict {item.get('n')} of {ident} is against {against}, which did not come with the project.")
 
 
-def build(host: Any, studio: Any, found: Incoming, mapping: Dict[str, str], mode: str, into: str) -> Built:
+def build(host: Any, studio: Any, found: Incoming, mapping: Dict[str, str], mode: str, into: str,
+          joined: Optional[Dict[str, Any]] = None) -> Built:
+    """Every file the import writes, rewritten in memory. `joined` (joining only): {"matched": incoming principle ID -> the ID
+    here that says the same, "here": this project's principles as they stood when the import started, "day": that day}; from
+    the record when resuming, so the same import always writes the same bytes."""
     out = Built()
     pid = into if mode == "join" else None
+    joined = joined or {"matched": {}, "here": [], "day": None}
     rules = host.ticket_rules()
     links = Links(host, found, mapping, mode, out)
 
@@ -1470,7 +1520,9 @@ def build(host: Any, studio: Any, found: Incoming, mapping: Dict[str, str], mode
 
     # 5. Principles and needs, merged by ID when placed.
     if found.principles is not None:
-        out.principles = record("principles", found.principles, PRINCIPLES_REL)["principles"]
+        # A principle that says the same as one here is that one: it is not added, and its slices' rows name the one here.
+        matched_here = {mapping[old] for old in joined["matched"]}
+        out.principles = [item for item in record("principles", found.principles, PRINCIPLES_REL)["principles"] if item["id"] not in matched_here]
     if found.needs is not None:
         rewritten = record("needs", found.needs, NEEDS_REL)
         out.needs = rewritten["needs"]
@@ -1495,6 +1547,8 @@ def build(host: Any, studio: Any, found: Incoming, mapping: Dict[str, str], mode
             rewritten = text(spec, rel)
             if spec_heading(rewritten) != new:
                 raise AssertionError(f"{rel}: its title no longer names {new}")
+            if mode == "join" and found.slices[ident]["status"] != "superseded":
+                rewritten = principle_rows_brought_in(studio, out, rel, new, rewritten, mapping, joined, found.name)
             add("specs", rel, rewritten.encode("utf-8"), new)
             spec_notes(studio, out, rel, new, rewritten)
         if ident in found.intents:
@@ -1515,6 +1569,7 @@ def build(host: Any, studio: Any, found: Incoming, mapping: Dict[str, str], mode
         small = work.get("small")
         if isinstance(small, dict) and isinstance(small.get("shipped_rule"), str):
             out.shipped_rules.append({"file": rel_slice(new), "line": None, "of": new, "rule": small["shipped_rule"], "where": "small"})
+    ships_first(studio, out, found, mapping, works)
     for new in topological(works):
         add("slices", rel_slice(new), canonical_bytes(host, works[new]), new)
         out.slice_order.append(new)
@@ -1577,6 +1632,250 @@ def topological(works: Dict[str, Dict[str, Any]]) -> List[str]:
     return done
 
 
+# ---- principles when joining: the same principle is one principle; one a slice predates is "Not assessed" (M21) ----
+
+
+def plain(value: Any) -> str:
+    """A statement compared as a person reads it: spacing and capitals do not count."""
+    return re.sub(r"\s+", " ", str(value or "")).strip().lower()
+
+
+def active_here(studio: Any) -> List[Dict[str, Any]]:
+    """This project's active principles as they stand: {id, revision, statement}."""
+    return [{"id": item["id"], "revision": item.get("revision"), "statement": item.get("statement")}
+            for item in _items_of(studio.draft / PRINCIPLES_REL, "principles")
+            if item.get("status") == "active" and isinstance(item.get("id"), str) and isinstance(item.get("statement"), str)]
+
+
+def matched_principles(found: Incoming, here: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Joining: each incoming active principle whose statement is the statement of one of this project's active principles,
+    word for word or but for spacing and capitals: incoming ID -> {here, how}. Each one here is matched once, in ID order."""
+    out: Dict[str, Dict[str, Any]] = {}
+    taken: Set[str] = set()
+    incoming = [item for item in (found.principles or {}).get("principles") or [] if item.get("status") == "active"]
+    for item in sorted(incoming, key=lambda i: number(i["id"])):
+        for other in sorted(here, key=lambda i: number(i["id"])):
+            if other["id"] in taken:
+                continue
+            if item["statement"] == other["statement"]:
+                how = "word for word"
+            elif plain(item["statement"]) and plain(item["statement"]) == plain(other["statement"]):
+                how = "but for spacing and capitals"
+            else:
+                continue
+            out[item["id"]] = {"here": other["id"], "how": how}
+            taken.add(other["id"])
+            break
+    return out
+
+
+def principle_section(lines: List[str]) -> Tuple[Optional[int], int, List[Tuple[int, int, str]]]:
+    """(the index of the '## Principles' heading or None, the index where its section ends, every heading outside code as
+    (index, level, title in lower case))."""
+    heads: List[Tuple[int, int, str]] = []
+    fence = False
+    for index, line in enumerate(lines):
+        if project_ids.FENCE_RE.match(line):
+            fence = not fence
+            continue
+        if fence:
+            continue
+        match = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
+        if match:
+            heads.append((index, len(match.group(1)), match.group(2).strip().lower()))
+    start = next((i for i, level, title in heads if level == 2 and title == "principles"), None)
+    end = next((i for i, level, _ in heads if start is not None and i > start and level <= 2), len(lines))
+    return start, end, heads
+
+
+def principle_rows(studio: Any, text: str) -> Dict[str, Dict[str, Any]]:
+    """The rows of '## Principles' by principle, both forms of row: ID -> {index (of the line), revision, statement, answer
+    (the answer's word, or "Not assessed"), reason (a Not assessed row's)}."""
+    lines = text.splitlines()
+    start, end, _ = principle_section(lines)
+    found: Dict[str, Dict[str, Any]] = {}
+    if start is None:
+        return found
+    vs = studio.validate_slice
+    for index in range(start + 1, end):
+        line = lines[index].strip()
+        match = vs.PRINCIPLE_ROW_RE.match(line)
+        if match:
+            found.setdefault(match.group(1), {"index": index, "revision": match.group(2), "statement": match.group(3), "answer": match.group(4),
+                                              "reason": None})
+            continue
+        match = vs.NOT_ASSESSED_ROW_RE.match(line)
+        if match:
+            found.setdefault(match.group(1), {"index": index, "revision": match.group(2), "statement": match.group(3), "answer": "Not assessed",
+                                              "reason": match.group(4).strip()})
+    return found
+
+
+AFTER_PRINCIPLES = ("policies", "dependencies and permissions", "assumptions", "accepted defaults", "open questions")
+
+
+def with_rows(studio: Any, text: str, rows: List[str]) -> str:
+    """The spec with these rows added to '## Principles': in place of its '- None.', after its last line, or in a new section
+    where the template puts it (before '## Policies', else before '## Dependencies and permissions' and what follows)."""
+    if not rows:
+        return text
+    newline = "\r\n" if "\r\n" in text else "\n"
+    lines = text.split(newline)
+    start, end, heads = principle_section(lines)
+    vs = studio.validate_slice
+    if start is not None:
+        body = list(range(start + 1, end))
+        nothing = [i for i in body if vs.BULLET_RE.match(lines[i].strip()) and vs.is_none(vs.BULLET_RE.match(lines[i].strip()).group(1))]
+        if nothing:
+            lines[nothing[0]:nothing[0] + 1] = rows
+        else:
+            last = max((i for i in body if lines[i].strip()), default=start)
+            lines[last + 1:last + 1] = ([""] if last == start else []) + rows
+        return newline.join(lines)
+    before = next((i for i, level, title in heads if level == 2 and title in AFTER_PRINCIPLES), None)
+    block = ["## Principles", "", *rows, ""]
+    if before is None:
+        return text.rstrip("\r\n") + newline + newline + newline.join(block)
+    lines[before:before] = block
+    return newline.join(lines)
+
+
+def not_assessed_row(item: Dict[str, Any], reason: str) -> str:
+    return f'- **{item["id"]}** (revision {item["revision"]}): "{item["statement"]}" **Not assessed:** {reason}'
+
+
+def slice_came_reason(project: str, day: str, ident: str) -> str:
+    return f"This slice came with the project {project}, brought in here on {day}, which did not have {ident}."
+
+
+def principle_came_reason(ident: str, project: str, day: str) -> str:
+    return f"{ident} came with the project {project}, brought in here on {day}, after this slice was written."
+
+
+def principle_rows_brought_in(studio: Any, out: Built, rel: str, new: str, spec: str, mapping: Dict[str, str], joined: Dict[str, Any],
+                              project: str) -> str:
+    """One spec that came, joining: a row of a principle that says the same as one here names it as it is here (its revision
+    and exact statement), when the row quoted that same statement; and each active principle here the spec does not answer gets
+    a Not assessed row, saying the slice came from a project that did not have it. Nothing is answered for the PM."""
+    here = {item["id"]: item for item in joined["here"]}
+    same = {mapping[old] for old in joined["matched"] if old in mapping}
+    newline = "\r\n" if "\r\n" in spec else "\n"
+    lines = spec.split(newline)
+    rows = principle_rows(studio, newline.join(lines))
+    for ident, row in sorted(rows.items()):
+        index, revision, statement, answer = row["index"], row["revision"], row["statement"], row["answer"]
+        mine = here.get(ident)
+        if ident not in same or mine is None or answer == "Not assessed":
+            continue
+        if plain(statement) != plain(mine["statement"]) or (revision == str(mine["revision"]) and statement == mine["statement"]):
+            continue
+        match = studio.validate_slice.PRINCIPLE_ROW_RE.match(lines[index].strip())
+        indent = lines[index][:len(lines[index]) - len(lines[index].lstrip())]
+        lines[index] = (f'{indent}- **{ident}** (revision {mine["revision"]}): "{mine["statement"]}" **{match.group(4)}:**'
+                        + (f" {match.group(5).strip()}" if match.group(5).strip() else ""))
+        out.aligned.append({"slice": new, "file": rel, "principle": ident, "line": index + 1,
+                            "words": f"{new}'s row for {ident} now quotes {ident} as it is here (revision {mine['revision']}); the statement is the same."})
+    spec = newline.join(lines)
+    # A principle here that one of the project's own says the same as was the project's too: a row it lacks is the draft's own
+    # gap, not something the slice predates, so it is left for the interview as it was.
+    missing = [item for item in sorted(joined["here"], key=lambda i: number(i["id"])) if item["id"] not in rows and item["id"] not in same]
+    added = []
+    for item in missing:
+        reason = slice_came_reason(project, joined["day"], item["id"])
+        added.append(not_assessed_row(item, reason))
+        out.not_assessed.append({"slice": new, "principle": item["id"], "file": rel, "how": "slice_came",
+                                 "words": f"{new}: {item['id']} is not assessed. {reason}"})
+    return with_rows(studio, spec, added)
+
+
+def rows_for_slices_here(host: Any, studio: Any, incoming: List[Dict[str, Any]], brought: Set[str], project: str, day: str,
+                         write: bool, only: Optional[Sequence[str]] = None, editable: bool = True) -> List[Dict[str, Any]]:
+    """The other way: each principle that came with the project and is active, against this project's own slices still being
+    written (draft, being defined, ready for approval) that do not answer it: a Not assessed row saying the principle came
+    after the slice was written. `write` False only says which; True adds them (each spec once; a row already there, of
+    either form, is never added again). `only`: these slices; `editable` False: whatever their status (a slice reopened)."""
+    if not incoming:
+        return []
+    editable_states = getattr(host, "EDITABLE_SLICE", ("draft", "interviewing", "ready_for_approval"))
+    found: List[Dict[str, Any]] = []
+    for slice_id, data in sorted(studio.all("slice").items()):
+        if slice_id in brought or (only is not None and slice_id not in only):
+            continue
+        if editable and data.get("status") not in editable_states:
+            continue
+        spec = studio.spec_of(slice_id)
+        if spec is None or spec.is_symlink():
+            continue
+        try:
+            text = spec.read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        answered = principle_rows(studio, text)
+        rows, words = [], []
+        for item in sorted(incoming, key=lambda i: number(i["id"])):
+            reason = principle_came_reason(item["id"], project, day)
+            if item["id"] in answered and answered[item["id"]]["reason"] != reason:
+                continue
+            if item["id"] not in answered:  # a row this import wrote on an earlier run is listed, never written twice
+                rows.append(not_assessed_row(item, reason))
+            words.append({"slice": slice_id, "principle": item["id"], "file": studio.relative(spec), "how": "principle_came",
+                          "words": f"{slice_id}: {item['id']} is not assessed. {reason}"})
+        if rows and write:
+            host.write(spec, with_rows(studio, text, rows))
+        found += words
+    return found
+
+
+# ---- effects on shipped behaviour that name a rule of a slice that came with the project (M21) ----
+
+
+def ships_first(studio: Any, out: Built, found: Incoming, mapping: Dict[str, str], works: Dict[str, Dict[str, Any]]) -> None:
+    """A slice whose effects, or whose small change, name a rule of a slice that came with it named a rule that had shipped in
+    the old repository; here that slice ships first. When the work order does not already reach it through its dependencies,
+    the dependency is added (unless that would go round in a circle), so marking ready and the Factory take them in order."""
+    came = {mapping[i] for i, w in found.slices.items() if w["status"] != "superseded"}
+    effects = studio_effects(studio)
+    back = {new: old for old, new in mapping.items()}
+    for new in sorted(works, key=number):
+        if works[new].get("status") == "superseded":
+            continue
+        named: List[Tuple[str, str]] = []
+        old = back.get(new)
+        if old in found.specs:
+            spec = project_ids.rewrite_text(found.specs[old][1], mapping)[0]
+            named += [(row["slice_id"], row["shipped_rule"]) for row in effects.parse(spec)["rows"]]
+        small = works[new].get("small")
+        if isinstance(small, dict) and isinstance(small.get("shipped_rule"), str) and "/" in small["shipped_rule"]:
+            named.append((small["shipped_rule"].split("/", 1)[0], small["shipped_rule"]))
+        for target, rule in named:
+            if target == new or target not in came or target not in works:
+                continue
+            if target in reach(works, new):
+                continue
+            if new in reach(works, target):
+                out.dependencies_added.append({"slice": new, "on": target, "rule": rule, "added": False,
+                                               "words": f"{new} names {rule}, but {target} depends on {new}, so {new} cannot wait for it; "
+                                                        "answer that row again here."})
+                continue
+            works[new]["dependencies"] = list(works[new].get("dependencies") or []) + [target]
+            out.dependencies_added.append({"slice": new, "on": target, "rule": rule, "added": True,
+                                           "words": f"{new} now depends on {target}: it names {rule}, which shipped in the old repository "
+                                                    f"(as {back.get(target, target)}{'/' + rule.split('/', 1)[1]}) and ships here first."})
+
+
+def reach(works: Dict[str, Dict[str, Any]], start: str) -> Set[str]:
+    """Every slice `start` depends on, directly or through others."""
+    seen: Set[str] = set()
+    stack = list(works.get(start, {}).get("dependencies") or [])
+    while stack:
+        item = stack.pop()
+        if item in seen:
+            continue
+        seen.add(item)
+        stack.extend((works.get(item) or {}).get("dependencies") or [])
+    return seen
+
+
 # ---- what the person reads (4.4, 4.7) ----
 
 
@@ -1620,9 +1919,26 @@ def _here_words(host: Any, studio: Any, ident: str) -> str:
 
 
 def summary(host: Any, studio: Any, found: Incoming, mapping: Dict[str, str], mode: str, into: str, built: Built,
-            how: Optional[Dict[str, Dict[str, Any]]], why: List[str], notes: List[str], numbers: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """The fields the plan and the result share (4.4)."""
+            how: Optional[Dict[str, Dict[str, Any]]], why: List[str], notes: List[str], numbers: Optional[Dict[str, Any]],
+            joined: Optional[Dict[str, Any]] = None, rows_here: Optional[List[Dict[str, Any]]] = None,
+            renumbered_now: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """The fields the plan and the result share (4.4). Every sentence that names something by its new number here and says what it
+    was in the old repository names both: "SLICE-013 (was SLICE-001)"."""
     facts = found.facts
+    joined = joined or {"matched": {}, "here": [], "day": None}
+    rows_here = rows_here or []
+    back = {new: old for old, new in mapping.items()}
+
+    def both(new: str) -> str:
+        """A new ID with what it was in the old repository, when that differs."""
+        old = back.get(new, new)
+        return new if old == new else f"{new} (was {old})"
+
+    def rule_both(rule: str) -> str:
+        head, _, tail = rule.partition("/")
+        old = back.get(head, head)
+        return rule if old == head else f"{rule} (was {old}/{tail})"
+
     slices = []
     for ident in sorted(found.slices, key=number):
         was = facts["slices"].get(ident, {}).get("was")
@@ -1639,39 +1955,80 @@ def summary(host: Any, studio: Any, found: Incoming, mapping: Dict[str, str], mo
     epic_jira.update({mapping[i]: entry["jira"] for i, entry in facts["epics"].items()})
     requests = {mapping[i]: entry["request"] for i, entry in facts["slices"].items() if entry.get("request")}
     in_force = shipped_here(studio)
+    came = {mapping[i] for i, work in found.slices.items() if work["status"] != "superseded"}
     for row in built.shipped_rules:
         row["in_force_here"] = row["rule"] in in_force if in_force is not None else None
-    same = same_principles(studio, built.principles) if mode == "join" else []
+        row["came_with_the_project"] = row["rule"].split("/", 1)[0] in came
+    same = [{"incoming": old, "here": item["here"], "how": item["how"],
+             "words": f"{old} of the project says the same as {item['here']} here ({item['how']}), so the two are one principle here and it "
+                      "was not added again" + ("." if old == item["here"] else f": the rows that answered {old} now answer {item['here']}.")}
+            for old, item in sorted(joined["matched"].items(), key=lambda pair: number(pair[0]))]
     principles_in = [item["id"] for item in built.principles]
     needs_in = [item["need_id"] for item in built.needs]
+    added = {(row["slice"], row["on"]): row for row in built.dependencies_added}
     after: List[str] = []
     if principles_in:
-        after.append(f"Publish the principles before any slice can be marked ready: {len(principles_in)} came with the project.")
+        after.append(f"Publish the principles before any slice can be marked ready: {len(principles_in)} came with the project "
+                     f"({listing([both(i) for i in principles_in])}).")
     if needs_in:
         after.append(f"Publish the technical needs: {len(needs_in)} came with the project.")
-    effects = sorted({row["of"] for row in built.shipped_rules if row["where"] == "effects"}, key=number)
-    if effects:
-        after.append(f"{plural(len(effects), 'slice names', 'slices name')} shipped rules of the old repository under 'Effects on shipped behaviour' "
-                     f"({listing(effects)}); each needs those rows answered again here.")
+    after.extend(item["words"] for item in same)
+    not_assessed = built.not_assessed + rows_here
+    if not_assessed:
+        came_rows = [row for row in not_assessed if row["how"] == "slice_came"]
+        here_rows = [row for row in not_assessed if row["how"] == "principle_came"]
+        if came_rows:
+            after.append(f"{plural(len({r['slice'] for r in came_rows}), 'slice')} that came "
+                         f"({listing(sorted({both(r['slice']) for r in came_rows}))}) did not answer this project's "
+                         f"{listing(sorted({r['principle'] for r in came_rows}))}, which the old project did not have: each such row says "
+                         "'Not assessed', which does not hold up marking ready. Answer them in the interview when you next change those slices "
+                         "(listed under principles_not_assessed).")
+        if here_rows:
+            after.append(f"{plural(len({r['slice'] for r in here_rows}), 'slice')} of this project still being written "
+                         f"({listing(sorted({r['slice'] for r in here_rows}))}) did not answer "
+                         f"{listing(sorted({both(r['principle']) for r in here_rows}))}, which came with the project: each such row says "
+                         "'Not assessed', which does not hold up marking ready. Answer them in the interview when you next change those slices "
+                         "(listed under principles_not_assessed).")
+    if built.aligned:
+        after.append(f"{plural(len(built.aligned), 'row')} answering a principle that says the same as one here now quote it as it is here "
+                     "(listed under principles_aligned).")
+    waiting = sorted({row["of"] for row in built.shipped_rules if row["where"] == "effects" and row["came_with_the_project"]}, key=number)
+    for new in waiting:
+        named = sorted({row["rule"] for row in built.shipped_rules if row["of"] == new and row["where"] == "effects" and row["came_with_the_project"]})
+        targets = sorted({rule.split("/", 1)[0] for rule in named}, key=number)
+        stuck = [t for t in targets if (new, t) in added and not added[(new, t)]["added"]]
+        ok = [t for t in targets if t not in stuck]
+        if ok:
+            after.append(f"{both(new)} names {listing([rule_both(r) for r in named if r.split('/', 1)[0] in ok])} under 'Effects on shipped "
+                         f"behaviour'. {listing(ok)} came with the project and {'has' if len(ok) == 1 else 'have'} not shipped here, so "
+                         f"{'it ships' if len(ok) == 1 else 'they ship'} first: {new} depends on {listing(ok)}, and those rows are checked "
+                         f"again when {new} is built. Nothing needs answering again.")
+        for target in stuck:
+            after.append(added[(new, target)]["words"])
+    effects_gone = sorted({row["of"] for row in built.shipped_rules if row["where"] == "effects" and not row["came_with_the_project"]}, key=number)
+    if effects_gone:
+        after.append(f"{plural(len(effects_gone), 'slice names', 'slices name')} rules under 'Effects on shipped behaviour' of slices that did "
+                     f"not come with the project ({listing([both(i) for i in effects_gone])}); each needs those rows answered again here.")
     for row in built.shipped_rules:
         if row["where"] == "small":
-            after.append(f"{row['of']} is a small change to {row['rule']}, a rule shipped in the old repository; it is not in force here, "
-                         "so the small change needs a rule shipped here, or to become a full slice.")
+            target = row["rule"].split("/", 1)[0]
+            depends = " It now depends on " + target + "." if (row["of"], target) in added and added[(row["of"], target)]["added"] else ""
+            after.append(f"{both(row['of'])} is a small change to {rule_both(row['rule'])}. {target} came with the project and has not shipped "
+                         f"here yet, so {row['of']} stays a small change that waits for {target} to ship.{depends}")
     others = sorted({row["of"] for row in built.shipped_rules if row["where"] in ("brief", "lookups", "idea_source")}, key=number)
     if others:
-        after.append(f"{listing(others)} {'names' if len(others) == 1 else 'name'} shipped rules of the old repository; look them up again here.")
+        after.append(f"{listing([both(i) for i in others])} {'names' if len(others) == 1 else 'name'} rules that had shipped in the old repository; "
+                     "look them up again here.")
     if built.verdicts_stale:
-        after.append(f"The verdict on {listing(built.verdicts_stale)} no longer holds, because renumbering changed the brief's text. "
-                     "Record a verdict on the brief as it is now.")
+        after.append(f"The verdict on {listing([both(i) for i in built.verdicts_stale])} no longer holds, because renumbering changed the "
+                     "brief's text. Record a verdict on the brief as it is now.")
     if built.policy_rows:
-        after.append(f"{listing(built.policy_rows)} answered the old organisation's policy packs; they show as answered under other packs "
-                     "until answered again here.")
+        after.append(f"{listing([both(i) for i in built.policy_rows])} answered the old organisation's policy packs; they show as answered under "
+                     "other packs until answered again here.")
     if jira or epic_jira:
-        named = [f"{k} was {v}" for k, v in sorted({**epic_jira, **jira}.items())]
+        named = [f"{both(k)} had {v}" for k, v in sorted({**epic_jira, **jira}.items())]
         after.append(f"Jira keys were left behind; link each again if this organisation uses the same Jira ({listing(named[:6])}"
                      f"{' and others' if len(named) > 6 else ''}).")
-    if same:
-        after.extend(item["words"] for item in same)
     if built.links_dropped:
         named = sorted({row["id"] for row in built.links_dropped}, key=lambda i: (prefix(i), number(i)))
         after.append(f"{plural(len(built.links_dropped), 'link')} to things that did not come with the project "
@@ -1685,8 +2042,10 @@ def summary(host: Any, studio: Any, found: Incoming, mapping: Dict[str, str], mo
     if built.none_left_behind:
         after.append(f"The project's 'nothing to say' answers on technical needs ({listing(built.none_left_behind)}) were not brought in: "
                      "they answered for the other project, and this project's own answers stay as they are.")
+    after.extend(row["words"] for row in renumbered_now or [])
     superseded = [row["to"] for row in slices if row["status_here"] == "superseded"]
     numbers_note = prd.numbers_note(numbers, {"slices": list(mapping.values())}).strip() if numbers else ""
+    ready = [mapping[i] for i in ready_in_source(found)]
     return {
         "archive": {"file": found.label, "sha256": found.sha256, "exported_at": found.manifest.get("exported_at"),
                     "mach_version": found.manifest.get("mach_version")},
@@ -1700,7 +2059,16 @@ def summary(host: Any, studio: Any, found: Incoming, mapping: Dict[str, str], mo
         "slices": slices, "superseded": superseded,
         "check_by_hand": built.check_by_hand, "not_in_archive": built.not_in_archive, "links_dropped": built.links_dropped,
         "needs_none_left_behind": built.none_left_behind,
-        "shipped_rules": built.shipped_rules, "same_principles": same, "after": after,
+        "shipped_rules": built.shipped_rules, "same_principles": same,
+        "principles_not_assessed": not_assessed, "principles_aligned": built.aligned, "dependencies_added": built.dependencies_added,
+        "renumbered_on_resume": list(renumbered_now or []),
+        "ready_in_source": {"slices": ready, "count": len(ready),
+                            "words": (f"{plural(len(ready), 'slice was', 'slices were')} ready in the old repository "
+                                      f"({listing([both(i) for i in ready[:6]])}{' and others' if len(ready) > 6 else ''}). On your word, MACH can mark "
+                                      f"{'it' if len(ready) == 1 else 'them'} ready here in one step, dependencies first, each checked as "
+                                      "marking ready checks it; it stops at the first that is not ready yet."
+                                      if ready else "No slice was ready in the old repository.")},
+        "after": after,
         "left_behind": {"jira": jira, "epic_jira": epic_jira, "requests": requests, "accepted_concerns": built.accepted_concerns,
                         "idea_sources": {mapping[i]: s for i, s in sorted(found.idea_sources.items())},
                         "lookups_removed": {mapping[i]: n for i, n in sorted(found.lookups_removed.items()) if n},
@@ -1716,20 +2084,6 @@ def shipped_here(studio: Any) -> Optional[Set[str]]:
         return {str(item.get("rule")) for item in studio.shipped().get("in_force") or [] if isinstance(item, dict)}
     except Exception:  # noqa: BLE001
         return None
-
-
-def same_principles(studio: Any, incoming: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Incoming principles that say the same as one here (5.4): listed, never merged."""
-    coming = {item.get("id") for item in incoming}
-    mine = [item for item in _items_of(studio.draft / PRINCIPLES_REL, "principles") if item.get("id") not in coming]
-    found = []
-    clean = lambda value: re.sub(r"\s+", " ", str(value or "")).strip().lower()  # noqa: E731
-    for item in incoming:
-        for other in mine:
-            if clean(item.get("statement")) and clean(item.get("statement")) == clean(other.get("statement")):
-                found.append({"incoming": item["id"], "here": other["id"],
-                              "words": f"{item['id']} says the same as {other['id']}; retire one if they are the same."})
-    return found
 
 
 def note_words(found: Incoming, mapping: Dict[str, str], shared: Dict[str, Any], placed: bool) -> str:
@@ -1751,6 +2105,10 @@ def note_words(found: Incoming, mapping: Dict[str, str], shared: Dict[str, Any],
         text += " Publish the principles, then mark each slice ready when you have checked it."
     else:
         text += " Mark each slice ready when you have checked it."
+    ready = shared["ready_in_source"]["count"]
+    if ready:
+        text += (f" The {plural(ready, 'slice')} that {'was' if ready == 1 else 'were'} ready in the old repository can be marked ready "
+                 "here in one step, on your word.")
     return text
 
 
@@ -1772,17 +2130,105 @@ def prepare(host: Any, studio: Any, archive: Path) -> Dict[str, Any]:
                                    "Run it again with the MACH that started it.")
         mapping = {str(k): str(v) for k, v in existing["map"].items()}
         mode, into = existing["mode"], existing["into_project"]
-        built = build(host, studio, found, mapping, mode, into)
-        return {"found": found, "record": existing, "mapping": mapping, "mode": mode, "into": into, "built": built, "how": None,
-                "why": list(existing.get("why_numbered") or []), "notes": [], "numbers": None}
+        joined = joined_of(existing)
+        first = build(host, studio, found, mapping, mode, into, joined)
+        # Numbers given out before the stop may since have been taken where the engineers number their own slices: one this
+        # import has placed nothing of takes the next free number; one it has placed part of stops, with what to do.
+        ours = ours_of(first, placed_so_far(studio, existing))
+        mapping, renumbered = settle_clashes(host, studio, found, mapping, ours)
+        built = build(host, studio, found, mapping, mode, into, joined) if renumbered else first
+        return {"found": found, "record": existing, "mapping": mapping, "mode": mode, "into": into, "built": built, "first": first,
+                "renumbered_now": renumbered, "joined": joined, "how": None, "why": list(existing.get("why_numbered") or []), "notes": [],
+                "numbers": None}
     mode, into, notes = choose_mode(host, studio, found)
     incoming = incoming_ids(studio, found)
     links_that_cannot_go(host, found, incoming)  # before GitHub is read, so this refusal changes nothing either
     used, how, numbers = counted(host, studio)
-    mapping, why = numbering(mode, incoming, used)
-    built = build(host, studio, found, mapping, mode, into)
-    return {"found": found, "record": None, "mapping": mapping, "mode": mode, "into": into, "built": built, "how": how,
-            "why": why, "notes": notes, "numbers": numbers}
+    here = active_here(studio) if mode == "join" else []
+    matched = matched_principles(found, here) if mode == "join" else {}
+    joined = {"matched": matched, "here": here, "day": host.now(None)[:10]}
+    mapping, why = numbering(mode, incoming, used, {old: item["here"] for old, item in matched.items()})
+    mapping, renumbered = settle_clashes(host, studio, found, mapping, set())
+    built = build(host, studio, found, mapping, mode, into, joined)
+    return {"found": found, "record": None, "mapping": mapping, "mode": mode, "into": into, "built": built, "first": built,
+            "renumbered_now": renumbered, "joined": joined, "how": how, "why": why, "notes": notes, "numbers": numbers}
+
+
+def joined_of(record: Dict[str, Any]) -> Dict[str, Any]:
+    """What a record kept of this project's principles when the import started (none in a record from before they were kept)."""
+    matched = record.get("principles_matched") if isinstance(record.get("principles_matched"), dict) else {}
+    here = record.get("here_principles") if isinstance(record.get("here_principles"), list) else []
+    return {"matched": {str(k): dict(v) for k, v in matched.items() if isinstance(v, dict) and isinstance(v.get("here"), str)},
+            "here": [dict(item) for item in here if isinstance(item, dict) and isinstance(item.get("id"), str)],
+            "day": str(record.get("day") or record.get("started_at") or "")[:10] or None}
+
+
+# ---- slice numbers taken where the engineers number their own slices, after the import gave them out (M21) ----
+
+
+def elsewhere(studio: Any) -> Dict[str, List[Path]]:
+    """Every slice ID a file outside the Product Studio draft holds, as the engineers' allocator (cell.slice_ids) reads them:
+    the specs on this checkout and in every ticket's workspace, and the work orders committed on this checkout."""
+    found: Dict[str, List[Path]] = {}
+    draft = (studio.draft / "specs" / "slices").resolve()
+    for folder in studio.cell.registries(studio.project):
+        if folder.resolve() == draft:
+            continue
+        for path in sorted(folder.glob("SLICE-*.md")):
+            match = studio.validate_slice.FILENAME_RE.match(path.name)
+            if match:
+                found.setdefault(match.group(1), []).append(path)
+    folder = studio.project / "product" / "slices"
+    if folder.is_dir():
+        for path in sorted(folder.glob("SLICE-*.json")):
+            if product.SLICE_RE.fullmatch(path.stem):
+                found.setdefault(path.stem, []).append(path)
+    return found
+
+
+def where_words(studio: Any, path: Path) -> str:
+    """Where another slice's file is, in a product manager's words."""
+    worktrees = studio.project / ".factory" / "worktrees"
+    try:
+        parts = path.relative_to(worktrees).parts
+        return f"the engineers' ticket {parts[0]} (its spec {path.name})"
+    except ValueError:
+        pass
+    try:
+        return f"{path.relative_to(studio.project).as_posix()} in this repository"
+    except ValueError:
+        return path.name
+
+
+def settle_clashes(host: Any, studio: Any, found: Incoming, mapping: Dict[str, str], ours: Set[str]) -> Tuple[Dict[str, str], List[Dict[str, Any]]]:
+    """The slice numbers of the map against every slice ID in use outside the draft. One this import has placed nothing of takes
+    the next free number (listed); one it has placed part of stops the import with a sentence a product manager can act on. A
+    slice of this project already marked ready is the same slice in the engineers' hands, never a clash."""
+    other = elsewhere(studio)
+    handed = set(studio.handoff().handed_over())
+    clashes = sorted((old, new) for old, new in mapping.items() if prefix(new) == "SLICE" and new in other and new not in handed)
+    if not clashes:
+        return mapping, []
+    for old, new in clashes:
+        if new in ours:
+            where = where_words(studio, other[new][0])
+            raise host.StudioError(
+                f"Bringing in stopped: {new} is the number this import gave {old} of the project {found.name}, and part of it is already here, "
+                f"but {where} now uses {new} for another slice. Ask the engineer working on it to give their slice another number, then bring "
+                "the same file in again. Or set this import aside: what it already brought in stays where it is.")
+    used, reserved = studio.cell.slice_ids(studio.project)
+    taken = {number(v) for v in mapping.values() if prefix(v) == "SLICE"} | set(used) | set(reserved) | {number(i) for i in other}
+    taken |= {int(n) for n in studio.handoff().taken_ids()} | set(reserved_numbers(studio, "SLICE"))
+    free = max(taken | {0}) + 1
+    mapping = dict(mapping)
+    moved = []
+    for old, new in clashes:
+        mapping[old] = project_ids._format("SLICE", free)  # noqa: SLF001
+        moved.append({"id": old, "was_to_be": new, "now": mapping[old], "taken_by": where_words(studio, other[new][0]),
+                      "words": f"{old} of the project was to be {new} here, but {where_words(studio, other[new][0])} now uses {new}, "
+                               f"so it is {mapping[old]}."})
+        free += 1
+    return mapping, moved
 
 
 def already(found: Incoming, record: Dict[str, Any], plan_only: bool) -> Dict[str, Any]:
@@ -1802,8 +2248,10 @@ def plan(host: Any, studio: Any, archive: Path) -> Dict[str, Any]:
     found = work["found"]
     if "finished" in work:
         return already(found, work["finished"], True)
+    rows_here = rows_for_slices_here(host, studio, [item for item in work["built"].principles if item.get("status") == "active"],
+                                     set(work["mapping"].values()), found.name, work["joined"]["day"] or host.now(None)[:10], write=False)
     shared = summary(host, studio, found, work["mapping"], work["mode"], work["into"], work["built"], work["how"], work["why"],
-                     work["notes"], work["numbers"])
+                     work["notes"], work["numbers"], work["joined"], rows_here, work["renumbered_now"])
     if work["record"] is None:
         keep_plan(host, studio, found, work["mapping"])
     return {"plan": True, "resuming": work["record"] is not None, **shared, "writes": "nothing",
@@ -1849,19 +2297,25 @@ def run(host: Any, studio: Any, archive: Path) -> Dict[str, Any]:
     resuming = work["record"] is not None
     if resuming:
         record = work["record"]
-        if record.get("targets") != targets:
+        if record.get("targets") != {rel: sha(data) for rel, data in work["first"].files.items()}:
             raise host.StudioError("Bringing in stopped part way: this MACH rewrites the archive's files differently from the one that started "
                                    "the import. Run it again with the MACH that started it.")
+        if work["renumbered_now"]:  # numbers taken meanwhile by the engineers: the map and every file it changes, recorded first
+            record = {**record, "map": mapping, "targets": targets,
+                      "renumbered_on_resume": list(record.get("renumbered_on_resume") or []) + work["renumbered_now"]}
+            host.write(record_path, host.canonical(record))
     else:
         foreign = foreign_file(studio, built, targets, {})
         if foreign:
             raise refusal(host, stopped_words(host, *foreign))
         studio.ensure_ignored()
-        record = new_record(host, found, mapping, mode, into, built, targets, work["why"])
+        record = new_record(host, found, mapping, mode, into, built, targets, work["why"], work["joined"])
         host.write(record_path, host.canonical(record))  # 1. recorded before anything is placed
     moved = numbers_moved(studio, found.sha256, mapping) if not resuming else []
     # What an earlier run placed. A file placed then and changed since is the person's edit: kept, never a reason to stop.
     earlier = placed_so_far(studio, record)
+    if resuming and work["renumbered_now"]:
+        earlier = replace_unchanged(studio, found.sha256, staging, built, targets, earlier)
 
     # 2. Staging: every file, already rewritten, rebuilt from the archive when it is missing (the rewrite is deterministic).
     try:
@@ -1900,6 +2354,10 @@ def run(host: Any, studio: Any, archive: Path) -> Dict[str, Any]:
             there += merge_sets(host, studio, found, built, mode, into, placed, earlier, yours)
         there += place_order(studio, built, placed)
         there += place_notes(host, studio, built, placed)
+        # 3b. This project's own slices still being written, against each principle that came: a Not assessed row where they do
+        # not answer it. Last, after the principles are in; a second run finds the rows there and adds none.
+        rows_here = rows_for_slices_here(host, studio, [item for item in built.principles if item.get("status") == "active"],
+                                         set(mapping.values()), found.name, work["joined"]["day"] or host.now(None)[:10], write=True)
     except OSError as exc:
         raise host.StudioError(stopped_os(exc))
 
@@ -1911,10 +2369,13 @@ def run(host: Any, studio: Any, archive: Path) -> Dict[str, Any]:
     record["structural_errors"] = introduced
     record["placed"] = placed_so_far(studio, record)
     record["kept_yours"] = [row["file"] for row in yours]
+    record["principles_not_assessed"] = [{k: row[k] for k in ("slice", "principle", "file", "how")} for row in built.not_assessed + rows_here]
+    record["dependencies_added"] = [{k: row[k] for k in ("slice", "on", "rule", "added")} for row in built.dependencies_added]
     host.write(record_path, host.canonical(record))
     tidy(studio, found.sha256)
 
-    shared = summary(host, studio, found, mapping, mode, into, built, work["how"], work["why"], work["notes"], work["numbers"])
+    shared = summary(host, studio, found, mapping, mode, into, built, work["how"], work["why"], work["notes"], work["numbers"],
+                     work["joined"], rows_here, work["renumbered_now"])
     note = note_words(found, mapping, shared, placed=True)
     if yours:
         note += " " + " ".join(row["words"] for row in yours[:5])
@@ -2026,14 +2487,20 @@ def write_bytes(path: Path, data: bytes) -> None:
 
 
 def new_record(host: Any, found: Incoming, mapping: Dict[str, str], mode: str, into: str, built: Built, targets: Dict[str, str],
-               why: List[str]) -> Dict[str, Any]:
+               why: List[str], joined: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     facts = found.facts
+    joined = joined or {"matched": {}, "here": [], "day": None}
     return {
         "schema_version": SCHEMA_VERSION, "archive_sha256": found.sha256,
         "archive": {"file": found.label, "path": str(found.path), "exported_at": found.manifest.get("exported_at"),
                     "mach_version": found.manifest.get("mach_version")},
         "mode": mode, "from_project": found.project_id, "from_project_name": found.name, "into_project": into,
-        "started_at": host.now(None), "finished_at": None, "map": mapping, "why_numbered": why, "targets": targets,
+        "started_at": host.now(None), "day": joined["day"] or host.now(None)[:10], "finished_at": None, "map": mapping, "why_numbered": why,
+        "targets": targets,
+        # Joining: the principles that say the same as one here (taken as that one), and this project's principles as they stood,
+        # so a second run writes the same rows whatever changed here meanwhile.
+        "principles_matched": joined["matched"], "here_principles": joined["here"],
+        "was_ready": {mapping[i]: True for i in sorted(ready_in_source(found), key=number)},
         "merges": {"principles": [item["id"] for item in built.principles], "needs": [item["need_id"] for item in built.needs]},
         "order": built.order, "notes": built.notes,
         "facts": {"last_read_github_at": facts["last_read_github_at"],
@@ -2158,6 +2625,25 @@ def place_one(host: Any, studio: Any, archive_sha256: str, staging: Path, rel: s
     return "placed"
 
 
+def replace_unchanged(studio: Any, archive_sha256: str, staging: Path, built: Built, targets: Dict[str, str],
+                      earlier: Dict[str, str]) -> Dict[str, str]:
+    """After a slice was given another number on resuming: a file an earlier run placed that names it, and that nobody has changed
+    since, is this import's own and is put right (placed again with the new number). One the person changed is theirs and kept."""
+    earlier = dict(earlier)
+    for rel, digest in sorted(targets.items()):
+        old = earlier.get(rel)
+        target = studio.draft / rel
+        if old is None or old == digest or not target.is_file() or target.is_symlink() or sha(target.read_bytes()) != old:
+            continue
+        source = staging / rel
+        source.parent.mkdir(parents=True, exist_ok=True)
+        write_bytes(source, built.files[rel])
+        _place(source, target)
+        note_placed(studio, archive_sha256, rel, digest)
+        earlier[rel] = digest
+    return earlier
+
+
 def item_sha(item: Dict[str, Any]) -> str:
     return sha(json.dumps(item, sort_keys=True, ensure_ascii=False).encode("utf-8"))
 
@@ -2259,3 +2745,171 @@ def place_notes(host: Any, studio: Any, built: Built, placed: Dict[str, int]) ->
     if changed:
         studio.save_session(session)
     return there
+
+
+# ---- what the rest of Product Studio asks of the imports here (M21): every one reads the records, never the archive ----
+
+
+def slices_of(record: Dict[str, Any]) -> Set[str]:
+    return {new for new in (record.get("map") or {}).values() if isinstance(new, str) and prefix(new) == "SLICE"}
+
+
+def waiting_on(studio: Any, slice_id: str) -> Set[str]:
+    """The slices that came into this project with `slice_id` (one import), that it depends on directly or through others, that
+    are not replaced and have not shipped here: it named their rules as shipped in the old repository, and here they ship first."""
+    mates: Set[str] = set()
+    for _, record in _records(studio):
+        came = slices_of(record)
+        if slice_id in came:
+            mates |= came - {slice_id}
+    if not mates:
+        return set()
+    works = studio.all("slice")
+    shipped = {str(item.get("rule") if isinstance(item, dict) else item).split("/", 1)[0] for item in studio.shipped().get("rules") or []}
+    return {s for s in mates & reach(works, slice_id) if s in works and works[s].get("status") != "superseded" and s not in shipped}
+
+
+def pending_rules(studio: Any, slice_id: str) -> Dict[str, Dict[str, Any]]:
+    """For the spec check (effects.check's `pending`): every rule (INV, FR, R) of each slice `slice_id` waits on, from that slice's
+    draft spec. Empty for every slice that did not come with a project brought in here. Never raises."""
+    try:
+        found: Dict[str, Dict[str, Any]] = {}
+        for other in sorted(waiting_on(studio, slice_id)):
+            spec = studio.spec_of(other)
+            if spec is None or spec.is_symlink():
+                continue
+            _, model = studio.validate_slice.analyze(spec.read_text(encoding="utf-8-sig"), spec.name)
+            ids = [item.get("id") for item in (model.get("invariants") or []) + (model.get("functional_requirements") or [])]
+            ids += [rule.get("id") for rule in (model.get("decision_matrix") or {}).get("rules") or []]
+            for ident in ids:
+                if isinstance(ident, str):
+                    found[f"{other}/{ident}"] = {"slice_id": other}
+        return found
+    except Exception:  # noqa: BLE001  the check then reads the row as any other, an error until it has shipped
+        return {}
+
+
+def principles_brought_in(studio: Any) -> Set[str]:
+    """The principles that came into this project with a project brought in here (added, not matched to one already here)."""
+    found: Set[str] = set()
+    for _, record in _records(studio):
+        merges = record.get("merges") if isinstance(record.get("merges"), dict) else {}
+        found |= {i for i in merges.get("principles") or [] if isinstance(i, str)}
+    return found
+
+
+def not_assessed_problems(studio: Any, slice_id: str, rows: Sequence[Dict[str, Any]]) -> List[str]:
+    """Each Not assessed row of a spec, against the imports here: it stands only when one wrote it. "This slice came ... which
+    did not have PP-01": the slice came with that import (on that day, from that project) and the principle did not. "PP-03 came
+    ...": the principle came with that import and the slice did not. Anything else is written by someone else, and is refused."""
+    problems = []
+    records = [record for _, record in _records(studio) if record.get("mode") == "join"]
+    for row in rows:
+        ident, how = row.get("id"), row.get("how")
+        fine = False
+        for record in records:
+            day = str(record.get("day") or record.get("started_at") or "")[:10]
+            if day != row.get("day") or str(record.get("from_project_name") or "") != row.get("project"):
+                continue
+            came = slices_of(record)
+            added = set((record.get("merges") or {}).get("principles") or [])
+            if how == "slice_came" and slice_id in came and ident not in added and ident not in (record.get("map") or {}).values():
+                fine = True
+            elif how == "principle_came" and ident in added and slice_id not in came:
+                fine = True
+        if not fine:
+            problems.append(f"{ident}'s row says 'Not assessed', which only bringing in a project writes, and no project brought in here wrote "
+                            f"it for {slice_id}. Answer {ident}: does it apply, not apply, or is this slice an exception?")
+    return problems
+
+
+def rows_on_reopen(host: Any, studio: Any, slice_id: str) -> List[Dict[str, Any]]:
+    """A slice of this project marked ready before a project was brought in, reopened now: each principle that came with that
+    import and that its spec does not answer gets the same Not assessed row a slice still being written got then. Nothing else."""
+    found: List[Dict[str, Any]] = []
+    current = {item["id"]: item for item in active_here(studio)}
+    for _, record in _records(studio):
+        if record.get("mode") != "join" or not record.get("finished_at") or slice_id in slices_of(record):
+            continue
+        came = [current[i] for i in (record.get("merges") or {}).get("principles") or [] if i in current]
+        day = str(record.get("day") or record.get("started_at") or "")[:10]
+        found += rows_for_slices_here(host, studio, came, slices_of(record), str(record.get("from_project_name") or record.get("from_project")),
+                                      day, write=True, only=[slice_id], editable=False)
+    return found
+
+
+# ---- marking ready, in one step, the slices that were ready in the old repository (M21) ----
+
+
+def ready_record(host: Any, studio: Any, which: Optional[str]) -> Tuple[Path, Dict[str, Any]]:
+    """The import whose slices are to be marked ready: the one named (its record, the archive's SHA-256 or file name), else the
+    last one finished here."""
+    records = _records(studio)
+    if not records:
+        raise refusal(host, "No project has been brought in here, so there is nothing to mark ready.")
+    if which:
+        chosen = [(p, d) for p, d in records if which in (p.stem, d["archive_sha256"], str((d.get("archive") or {}).get("file") or ""))]
+    else:
+        chosen = [(p, d) for p, d in records if d.get("finished_at")][-1:] or [(p, d) for p, d in records if open_record(d)][-1:]
+    if not chosen:
+        raise refusal(host, f"No project brought in here matches '{project_archive.shown(which or '')}'." if which else
+                      "No project brought in here has finished being brought in.")
+    path, record = chosen[-1]
+    if not record.get("finished_at"):
+        name = (record.get("archive") or {}).get("file") or "the archive"
+        raise refusal(host, f"Bringing in {name} has not finished. Finish it first (bring the same file in again), then mark its slices ready.")
+    return path, record
+
+
+def ready_all(host: Any, studio: Any, which: Optional[str]) -> Dict[str, Any]:
+    """`project imports ready [<record>]` and `project import <archive> --ready`, on the product manager's word: every slice of the
+    import that was ready in the old repository, still here and not replaced, marked ready as `slice ready` marks it (its checks, its
+    issue on GitHub or its folder), dependencies first. Stops at the first that is refused or cannot be marked ready in this act, and
+    says what was done and what is left. A slice already marked ready here is left as it is."""
+    if host.policies_helper().unattended():
+        raise refusal(host, "Marking slices ready is a product manager's act; a supervised execution does not do it.")
+    path, record = ready_record(host, studio, which)
+    told = record.get("was_ready") if isinstance(record.get("was_ready"), dict) else None
+    if told is None:  # a record from before was_ready was kept: what each slice was, as the archive's facts said
+        told = {new: True for new, entry in ((record.get("facts") or {}).get("slices") or {}).items()
+                if isinstance(entry, dict) and entry.get("was") in READY_WAS}
+    works = studio.all("slice")
+    chosen = {s: works[s] for s in told if told.get(s) and s in works and works[s].get("status") != "superseded"}
+    order = topological({s: {"dependencies": [d for d in (w.get("dependencies") or []) if d in chosen]} for s, w in chosen.items()})
+    rules = host.ticket_rules()
+    done: List[Dict[str, Any]] = []
+    already: List[str] = []
+    stopped: Optional[Dict[str, Any]] = None
+    for slice_id in order:
+        data = studio.load("slice", slice_id)
+        view = handoff.slice_view(studio.handoff().load(), slice_id, data, rules)
+        if data.get("status") == host.APPROVED and view.get("saved"):
+            already.append(slice_id)
+            continue
+        try:
+            result = host.mark_ready(studio, slice_id)
+        except host.StudioError as exc:
+            stopped = {"slice": slice_id, "reason": str(exc)}
+            break
+        if not result.get("ready"):
+            stopped = {"slice": slice_id, "reason": result.get("note") or f"{slice_id} was not marked ready."}
+            break
+        done.append({"slice": slice_id, "saved_to": result.get("saved_to"), "issue": result.get("issue"), "folder": result.get("folder"),
+                     "warnings": result.get("warnings") or []})
+    left = [s for s in order if s not in already and s not in {row["slice"] for row in done}]
+    name = str((record.get("archive") or {}).get("file") or "the archive")
+    parts = [f"Marked {plural(len(done), 'slice')} ready" + (f" ({listing([row['slice'] for row in done])})" if done else "")
+             + f", dependencies first, of the {plural(len(order), 'slice')} from {name} that {'was' if len(order) == 1 else 'were'} ready in the "
+               "old repository."]
+    if already:
+        parts.append(f"{listing(already)} {'was' if len(already) == 1 else 'were'} already marked ready here.")
+    if stopped:
+        reason = " ".join(stopped["reason"].split())
+        parts.append(f"Stopped at {stopped['slice']}: {reason}{'' if reason.endswith('.') else '.'}")
+        parts.append(f"Still to mark ready: {listing(left)}. Once that is settled, ask again and MACH carries on from {stopped['slice']}.")
+    others = sorted((s for s in slices_of(record) if s in works and s not in chosen), key=number)
+    if others:
+        parts.append("The other slice that came was not ready in the old repository: mark it ready when you have checked it." if len(others) == 1
+                     else f"The other {len(others)} slices that came were not ready in the old repository: mark each ready when you have checked it.")
+    return {"marked_ready": done, "already_ready": already, "stopped_at": stopped, "left": left, "not_ready_in_source": others,
+            "record": str(path.relative_to(studio.project)), "complete": stopped is None, "factory_authorized": False, "note": " ".join(parts)}
