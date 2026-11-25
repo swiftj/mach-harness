@@ -122,6 +122,7 @@ Written before Part A was built. With it built, the first, third, fourth and six
 
 #### As written before the build
 
+- MACH no longer holds one person's work for another's: anyone may take over, open, mark ready or publish what someone else has, with a warning first, and the merge settles the rest (the rule is stated in `docs/BLUEPRINT.md`, under the invariants and Product Studio's "Several product managers", and in `skills/studio/SKILL.md`, "Never blocked").
 - One Factory pulls and dispatches: one engineer's machine or one supervisor. Never two supervisors on one repository.
 - Merge by pull request, with GitHub set to require an up-to-date branch and passing checks.
 - One product manager creates the project and each epic; the others refresh before adding slices.
