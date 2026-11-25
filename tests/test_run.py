@@ -970,7 +970,8 @@ workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.s
         self.assertIn("if (prepare && step.action === prepare)", self.SCRIPT)
 
     def test_the_belt_uses_only_cleaned_steps_and_a_strict_schema(self):
-        self.assertIn("const read = cleanStep(await clerk(`next ${ticket} --headless`, STEP", self.SCRIPT)
+        self.assertIn("const asked = await clerk(`next ${ticket} --headless`, STEP", self.SCRIPT)
+        self.assertIn("const read = cleanStep(asked, AGENT_TYPES)", self.SCRIPT)
         self.assertIn("enum: ['', ...AGENT_TYPES]", self.SCRIPT)
         for name in ("builder", "contract-engineer", "verifier", "reviewer"):
             self.assertTrue((ROOT / "agents" / f"{name}.md").is_file(), name)
