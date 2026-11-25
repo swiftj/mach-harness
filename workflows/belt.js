@@ -29,6 +29,9 @@ const byPerson = options.by_person === true && limit > 0
 // A person named these tickets (run.py schedule --named put it in workflow_args): each ticket's first `next` says so (--by-person),
 // so work another worker has is taken over once, with a warning. Later calls are routine and take nothing over.
 const named = options.named === true
+// The person's word is passed once per ticket per run: a ticket taken over by someone else later in this run is stopped and
+// reported, never taken back without a person naming it again.
+const namedOnce = new Set()
 if (!tickets.length) {
   return { error: 'Pass the ticket IDs to run, for example ["LOCAL-001", "LOCAL-002"].' }
 }
@@ -383,7 +386,9 @@ async function runTicket(ticket, prepare) {
   let last = ''
   let repeats = 0
   for (let i = 0; i < MAX_STEPS; i++) {
-    const asked = await clerk(`next ${ticket} --headless${named && i === 0 ? ' --by-person' : ''}`, STEP, `${ticket}: what next?`, 'Preflight')
+    const sayNamed = named && !namedOnce.has(ticket)
+    if (sayNamed) namedOnce.add(ticket)
+    const asked = await clerk(`next ${ticket} --headless${sayNamed ? ' --by-person' : ''}`, STEP, `${ticket}: what next?`, 'Preflight')
     // A ticket a person named is never refused because another worker has it: run.py takes the step over and says so first.
     for (const warning of (asked && Array.isArray(asked.warnings) ? asked.warnings : []).slice(0, 5)) log(`${ticket}: ${String(warning).slice(0, 400)}`)
     const read = cleanStep(asked, AGENT_TYPES)
@@ -393,6 +398,10 @@ async function runTicket(ticket, prepare) {
     if (read.note) log(`${ticket}: ${read.note}`)
     const step = read.step
     if (step.stop || step.action === 'stop') {
+      if (step.needs === 'taken-over') {
+        // Another person took this ticket over: this run's part stops here, and only a person naming it again takes it back.
+        return { ticket, outcome: 'taken-over', stage: step.stage || '', waiting_for: 'nothing: a person took it over', reason: step.reason, stations: done }
+      }
       return { ticket, outcome: 'stopped', stage: step.stage || '', waiting_for: step.needs || '', reason: step.reason, stations: done }
     }
     if (until && step.action === until) {
@@ -533,5 +542,6 @@ return {
   waiting_on_a_person: report.filter(r => r.outcome === 'stopped' && r.waiting_for !== 'nothing').map(r => `${r.ticket}: ${r.waiting_for || r.reason}`),
   finished: report.filter(r => r.outcome === 'stopped' && r.waiting_for === 'nothing').map(r => r.ticket),
   held: report.filter(r => r.outcome === 'held').map(r => `${r.ticket}: ${r.reason}`),
-  problems: report.filter(r => r.outcome !== 'stopped' && r.outcome !== 'held').map(r => `${r.ticket}: ${r.reason}`),
+  taken_over: report.filter(r => r.outcome === 'taken-over').map(r => `${r.ticket}: ${r.reason}`),
+  problems: report.filter(r => r.outcome !== 'stopped' && r.outcome !== 'held' && r.outcome !== 'taken-over').map(r => `${r.ticket}: ${r.reason}`),
 }

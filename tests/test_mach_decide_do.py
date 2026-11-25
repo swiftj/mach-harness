@@ -770,6 +770,22 @@ class MergeAnswersTest(Base):
                                                  "closes this copy out as merged. The Factory carries it on in the background: cleanup removes its cell."), result["now"])
         self.assertNotIn("abandon", result["now"].lower())
 
+    def test_recheck_is_not_a_pull_request(self):
+        self.station.answers[("merge", "run")] = (3, json.dumps({"status": "RECHECK", "reason": "Another copy landed first."}), "")
+        result = self.do("merge")
+        self.assertTrue(result["now"].startswith("LOCAL-001 is not merged yet. Another copy of this slice landed first, so MACH brought main in and "
+                                                 "sent this copy to be verified and reviewed again before it lands."), result["now"])
+        self.assertNotIn("pull request", result["now"])
+
+    def test_a_merge_while_a_take_over_stands_takes_the_ticket_first(self):
+        cellroot = self.project / ".factory" / "worktrees" / TICKET
+        (cellroot / "displaced.json").write_text(json.dumps({"holders": {"b" * 32: {"at": "2026-11-25T10:00:00+00:00", "step": "merge"}}}))
+        (cellroot / "claim.json").write_text(json.dumps({"step": "merge", "stage": "approved", "holder": "c" * 32, "at": "2026-11-25T10:00:00+00:00"}))
+        taken = []
+        self.station.answers[("merge", "run")] = (0, json.dumps({"status": "MERGED"}), "")
+        self.do("merge", take_over=lambda ticket, **kw: taken.append((ticket, kw)) or {"taken": True})
+        self.assertEqual([item[0] for item in taken], [TICKET], "the person deciding takes the ticket, then merges")
+
     def test_renumbered(self):
         reason = "SLICE-004 is already on main as another slice, so MACH gave this ticket's slice the next free number: it is SLICE-009 now."
         self.station.answers[("merge", "run")] = (3, json.dumps({"status": "RENUMBERED", "reason": reason}), "")

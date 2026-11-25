@@ -1795,7 +1795,8 @@ def lanes_claim(project: Project, ticket_id: str, holder: Optional[str], take_ov
                 "next": f"Start no builder: this driver's part stops here. The person who took {ticket_id} over carries it on.", "lanes": []}
     return {"ticket_id": ticket_id, "status": "WAIT", "code": "worker-in-cell", "needs": "worker-in-cell", "reason": claimed["reason"],
             "other_claim": claimed.get("other_claim"), "then": "wait",
-            "next": "This supervised execution starts no builder while another worker has the lanes. A person who names the ticket takes them over at once.",
+            "next": (f"Start no builder for now: another worker has this step. Say /mach {ticket_id} and MACH takes it over." if person else
+                     "This supervised execution starts no builder while another worker has the lanes. A person who names the ticket takes them over at once."),
             "lanes": []}
 
 
