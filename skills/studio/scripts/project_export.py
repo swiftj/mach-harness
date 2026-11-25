@@ -563,7 +563,7 @@ GITHUB_PROBLEMS = {
 
 
 def _found_words(kind: str, value: str, line: Optional[int]) -> str:
-    at = f" on line {line}" if line else " inside the picture file"
+    at = f" on line {line}" if line else "" if line == 0 else " inside the picture file"  # 0: a record read whole, where a line means nothing
     if kind == "repository":
         return f"names this repository ({value}){at}"
     if kind == "login":
@@ -571,6 +571,12 @@ def _found_words(kind: str, value: str, line: Optional[int]) -> str:
     if kind == "path":
         return f"names a folder on this computer ({value}){at}"
     return f"holds text shaped like a password or key{at}"
+
+
+def _plural(words: str) -> str:
+    """_found_words for a plural subject: "names" -> "name", "holds" -> "hold"."""
+    head, _, rest = words.partition(" ")
+    return f"{head[:-1] if head in ('names', 'holds') else head} {rest}"
 
 
 def _unit_finding(scanner: "_Scanner", unit: Dict[str, bytes]) -> Optional[Tuple[str, str]]:
@@ -610,6 +616,7 @@ class _FromGitHub:
         self.epics: Dict[str, Dict[str, Any]] = {}       # epic ID -> record, for epics read from GitHub
         self.slices: Dict[str, Dict[str, Any]] = {}      # slice ID -> work order, for slices read from GitHub
         self.replaced: List[str] = []                    # local slices whose newer version on GitHub the archive holds
+        self.numbers: Dict[str, int] = {}                # epic or slice ID read from GitHub -> its issue
         self.mocks = 0
 
     def leave(self, ident: str, what: str, issue: Optional[int], reason: str) -> None:
@@ -778,10 +785,9 @@ class _FromGitHub:
                     continue  # handed over from here; its issue is not among GitHub's now, so nothing there is newer
                 issue = max(numbers)
                 clashed.add(slice_id)
-                self.leave(slice_id, "slice", issue, f"{slice_id} here is a different draft from the slice GitHub holds as {slice_id} (#{issue}), so "
-                                                     "GitHub's is not in the archive. " + host.say(
-                                                         f"Give your draft a new number (slice renumber {slice_id}), then export again to include both.",
-                                                         "Give your draft a new number, then export again to include both."))
+                self.leave(slice_id, "slice", issue, f"Two different slices use the number {slice_id}: your draft here and #{issue} on GitHub. The "
+                                                     f"archive holds the one from this workspace. Giving your draft a new number in Product Studio "
+                                                     + host.say(f"(slice renumber {slice_id}) ", "") + "lets both come; then export again.")
                 continue
             item = next(item for item in items if item["number"] == own)
             theirs = (item["marker"].get("spec_sha256"), item["marker"].get("why_sha256"))
@@ -835,6 +841,7 @@ class _FromGitHub:
                 self.leave(epic_id, "epic", item["number"], bad_epics[epic_id])
                 continue
             epic_units[epic_id] = (unit, record)
+            self.numbers[epic_id] = item["number"]
 
         units: Dict[str, Tuple[Dict[str, bytes], Dict[str, Any], Optional[str], Dict[str, Any]]] = {}
         for slice_id, held in sorted(reads.items()):
@@ -900,6 +907,7 @@ class _FromGitHub:
                                         f"#{held['number']}); the archive holds that version, since yours here was not changed."})
         self.files.update(unit)
         self.slices[slice_id] = work
+        self.numbers[slice_id] = held["number"]
         self.ids.append(slice_id)
         self.mocks += len(work.get("mocks") or [])
         if mocks_left:
@@ -940,6 +948,30 @@ def _ordered(ids: Sequence[str]) -> List[str]:
         kind, _, number = ident.partition("-")
         return KIND_ORDER.index(kind if kind in KIND_ORDER else ident), int(number) if number.isdigit() else 0
     return sorted(dict.fromkeys(ids), key=key)
+
+
+def _misfit(host: Any, error: str, numbers: Dict[str, int]) -> str:
+    """The refusal when what GitHub holds and what is here do not fit together: the first thing that does not, in plain words,
+    where it came from, and what resolves it."""
+    location, _, message = error.partition(": ")
+    found = re.search(r"(SLICE|EPIC)-[0-9]+", location)
+    ident = found.group(0) if found else None
+    known = re.fullmatch(r"unknown dependency '(.+)'", message)
+    if ident and known:
+        plain = f"{ident} depends on {known.group(1)}, which is neither in this workspace nor on GitHub"
+    elif ident and message == "epic_id is unknown":
+        plain = f"{ident} belongs to an epic that is neither in this workspace nor on GitHub"
+    elif ident:
+        plain = f"{described('workspace/' + location)[0]} does not fit with the rest ({message})"
+    else:
+        plain = f"{location} does not fit with the rest ({message})"
+    if ident in numbers:
+        where = (f"{ident} came from GitHub (#{numbers[ident]}): the product manager who marked it ready can put it right in Product Studio "
+                 "and mark it ready again")
+    else:
+        where = f"{ident or 'It'} is in this workspace: put it right here in Product Studio"
+    return (f"What GitHub holds and what is in this workspace do not fit together, so nothing was exported: {plain}. {where}, then export again, or "
+            + host.say("export only what is here (project export --only-mine).", "export only what is in this workspace."))
 
 
 def _combined_errors(files: Dict[str, bytes]) -> List[str]:
@@ -1228,9 +1260,7 @@ def _collect(host: Any, studio: Any, only_mine: bool) -> Tuple[Dict[str, bytes],
     if from_github:  # what came from GitHub must fit what is here: the same structural check the workspace passes
         errors = _combined_errors(files)
         if errors:
-            raise refusal(host, "What GitHub holds and what is in this workspace do not fit together, so nothing was exported: " + "; ".join(errors[:5])
-                          + ". " + host.say("Export only what is here (project export --only-mine), or refresh and look at status.",
-                                            "Export only what is here, or refresh and look at the project home."))
+            raise refusal(host, _misfit(host, errors[0], completion.numbers if completion else {}))
 
     # Nothing in any text may name the repository, an account, a folder here, or a secret (section 2.4). Resume notes are
     # read on their own first, so the sentence names the slice rather than the archive's facts.
@@ -1245,6 +1275,8 @@ def _collect(host: Any, studio: Any, only_mine: bool) -> Tuple[Dict[str, bytes],
     if completion and not here:
         from_github_members.add("workspace/product/project.json")
     for member in sorted(files):
+        if member not in files:
+            continue
         if project_archive.kind_of(member) == "mock":
             in_picture = scanner.in_bytes(files[member])
             if in_picture:
@@ -1253,12 +1285,22 @@ def _collect(host: Any, studio: Any, only_mine: bool) -> Tuple[Dict[str, bytes],
         found = scanner.first(files[member].decode("utf-8"))
         if found:
             sentence = _found_sentence(member, *found)
-            if member in from_github_members:  # the project's record or a set from its issue: the slices and epics were checked as they were read
+            if member in from_github_members and member != "workspace/product/project.json":
+                # The principles or needs from the project's issue: left out and named, as a slice or epic read from GitHub is.
+                key = "principles" if member.endswith("principles.json") else "needs"
                 what, _ = described(member)
-                sentence = (f"{what}, as the project's issue on GitHub holds {'it' if member.endswith('project.json') else 'them'} (#{project_issue}), "
-                            f"{_found_words(found[1], found[2], found[0])}. The archive must not, so nothing was exported. "
-                            + host.say("Take the project into this workspace (project init, then refresh), change that line here, then export again.",
-                                       "Take the project into this workspace, change that line here, then export again."))
+                del files[member]
+                counts[key] = 0
+                from_github = [ident for ident in from_github if ident != key]
+                not_included.append({"id": key, "what": key, "issue": project_issue,
+                                     "reason": f"{what} on GitHub (the project's issue, #{project_issue}) {_plural(_found_words(found[1], found[2], 0))}, so "
+                                               "they are not in the archive. Change that line in Product Studio on any computer that has the project, "
+                                               "this one included, and publish them again; then export again."})
+                continue
+            if member in from_github_members:  # the project's record from its issue: the archive cannot be without it
+                sentence = (f"The project's record on GitHub (the project's issue, #{project_issue}) {_found_words(found[1], found[2], 0)}, and the "
+                            "archive must not, so nothing was exported. Change it in Product Studio on any computer that has the project, this one "
+                            "included, and save it to GitHub again by marking a slice ready; then export again.")
             raise refusal(host, sentence)
 
     report = {"from_here": from_here, "from_github": from_github, "not_included": not_included, "left_out": left_out,
