@@ -30,6 +30,7 @@ import collab
 Failure = collab.Failure
 ISSUE_FIELDS = "number,title,state,labels,body,url"
 LIST_LIMIT = 1000
+LIST_CEILING = 64000  # list_all_issues asks for more, by this much at most, while GitHub keeps filling the page it was asked for
 OTHER = "other"
 
 
@@ -58,14 +59,35 @@ def signed_in(project: Path) -> Tuple[Optional[str], Failure]:
 
 
 def list_issues(project: Path, repository: str, label: str) -> Tuple[Optional[List[Dict[str, Any]]], Failure]:
-    """Every issue carrying `label`, open or closed."""
+    """Every issue carrying `label`, open or closed (at most LIST_LIMIT of them: see list_all_issues)."""
+    found, failure, _ = _listed(project, repository, label, LIST_LIMIT)
+    return found, failure
+
+
+def list_all_issues(project: Path, repository: str, label: str) -> Tuple[Optional[List[Dict[str, Any]]], Failure, bool]:
+    """Every issue carrying `label`, open or closed, and whether that is all of them. gh pages through GitHub itself up to the
+    limit it is given; when GitHub fills it, the list is asked for again with a limit ten times larger, up to LIST_CEILING.
+    (found, None, False) when even that was full: GitHub holds more than was read. M21: project export reads this way."""
+    limit = LIST_LIMIT
+    while True:
+        found, failure, full = _listed(project, repository, label, limit)
+        if failure or not full:
+            return found, failure, failure is None
+        if limit >= LIST_CEILING:
+            return found, None, False
+        limit = min(limit * 10, LIST_CEILING)
+
+
+def _listed(project: Path, repository: str, label: str, limit: int) -> Tuple[Optional[List[Dict[str, Any]]], Failure, bool]:
+    """The issues carrying `label`, and whether GitHub gave as many as were asked for (so there may be more)."""
     found, failure = collab._gh_json(project, "issue", "list", "--repo", repository, "--label", label, "--state", "all",
-                                     "--limit", str(LIST_LIMIT), "--json", ISSUE_FIELDS)
+                                     "--limit", str(limit), "--json", ISSUE_FIELDS)
     if failure:
-        return None, failure
+        return None, failure, False
     if not isinstance(found, list):
-        return [], None
-    return [item for item in found if isinstance(item, dict) and type(item.get("number")) is int and is_here(item, repository)], None
+        return [], None, False
+    return ([item for item in found if isinstance(item, dict) and type(item.get("number")) is int and is_here(item, repository)], None,
+            len(found) >= limit)
 
 
 def view(project: Path, repository: str, number: int) -> Tuple[Optional[Dict[str, Any]], Failure]:

@@ -82,6 +82,12 @@ SLICE_FILE_RE = re.compile(r"^SLICE-(\d{3,})-.*\.md$")
 SLICE_ID_RE = re.compile(r"SLICE-(\d{3,})")
 PRODUCT_SLICE_RE = re.compile(r"^SLICE-(\d{3,})\.json$")
 STUDIO_DRAFT = (".factory", "studio", "draft")
+# M21: a project being brought in from another repository keeps its record here (one JSON file per archive) while it is
+# placed; the slice numbers its map gives out are held until it finishes or is set aside. Read as files: nothing of
+# Product Studio's code is used here.
+STUDIO_IMPORTS = (".factory", "studio", "imports")
+IMPORT_RECORD_RE = re.compile(r"^[0-9a-f]{16}\.json$")
+HELD_SLICE_RE = re.compile(r"^SLICE-(\d{3,})$")
 FIELD_RE = re.compile(r"^[-*+]\s+\*\*([A-Za-z ]+):\*\*\s*(.*)$")
 REQ_RE = re.compile(r"\b(?:FR|INV|AC)-\d{2,}\b")
 PLAN_TASK_RE = re.compile(r"^\s*[-*+]\s+\[[ xX]\]\s+((?:R\d+-)?T\d+)\s+\[(test|impl|contract|refactor|docs)\]\s+(.*)$")
@@ -558,7 +564,35 @@ def slice_ids(project: Path) -> Tuple[Dict[int, str], Dict[int, List[Dict[str, s
             match = PRODUCT_SLICE_RE.match(path.name)
             if match:
                 used.setdefault(int(match.group(1)), path.name)
+    for number, where in held_by_imports(project).items():
+        used.setdefault(number, where)
     return used, reserved
+
+
+def held_by_imports(project: Path) -> Dict[int, str]:
+    """M21: the slice numbers a project being brought in holds while its import is unfinished (its record in
+    .factory/studio/imports/ has no finished_at and was not set aside), so no one takes a number it is about to place.
+    Never raises: a record that cannot be read holds nothing."""
+    held: Dict[int, str] = {}
+    folder = project.joinpath(*STUDIO_IMPORTS)
+    try:
+        if folder.is_symlink() or not folder.is_dir():
+            return held
+        paths = sorted(p for p in folder.iterdir() if IMPORT_RECORD_RE.fullmatch(p.name) and p.is_file() and not p.is_symlink())
+    except OSError:
+        return held
+    for path in paths:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, RecursionError):
+            continue
+        if not isinstance(data, dict) or data.get("finished_at") or data.get("set_aside_at") or not isinstance(data.get("map"), dict):
+            continue
+        for new in data["map"].values():
+            match = HELD_SLICE_RE.fullmatch(new) if isinstance(new, str) else None
+            if match:
+                held.setdefault(int(match.group(1)), f"{'/'.join(STUDIO_IMPORTS)}/{path.name} (a project being brought in holds it)")
+    return held
 
 
 def shared_main_ref(project: Path) -> Optional[str]:

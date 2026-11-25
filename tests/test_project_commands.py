@@ -52,10 +52,13 @@ class ParserTest(unittest.TestCase):
     def test_the_three_commands_are_under_project(self):
         self.assertTrue({"init", "set", "export", "import", "imports"} <= set(self.project))
         self.assertEqual(options(self.project["export"]) - {"-h", "--help"}, {"--out", "--only-mine"})
-        self.assertEqual(options(self.project["import"]) - {"-h", "--help"}, {"--plan", "--abandon"})
+        self.assertEqual(options(self.project["import"]) - {"-h", "--help"}, {"--plan", "--abandon", "--ready"})
         self.assertEqual(positionals(self.project["import"]), ["archive"])
         self.assertEqual(options(self.project["imports"]) - {"-h", "--help"}, set())
-        self.assertEqual(positionals(self.project["imports"]), ["identifier"])
+        self.assertEqual(positionals(self.project["imports"]), ["identifier", "which"])
+        args = studio.build_parser().parse_args(["project", "imports", "ready", "lending.zip"])
+        self.assertEqual((args.func, args.identifier, args.which), (studio.cmd_project_imports, "ready", "lending.zip"))
+        self.assertTrue(studio.build_parser().parse_args(["project", "import", "a.zip", "--ready"]).ready)
 
     def test_the_arguments_parse(self):
         parser = studio.build_parser()
