@@ -178,8 +178,9 @@ elif args[:2] == ["issue", "close"]:
 elif args[:2] == ["issue", "pin"]:
     find(args[2])["pinned"] = True
 elif args[:2] == ["pr", "list"]:
-    head = value("--head")
-    print(json.dumps([p for p in state.get("pulls", []) if p.get("head") == head and p.get("state", "open") == "open"]))
+    head = value("--head") if "--head" in args else None
+    print(json.dumps([{**p, "headRefName": p.get("head")} for p in state.get("pulls", [])
+                      if (head is None or p.get("head") == head) and p.get("state", "open") == "open"]))
 elif args[:2] == ["label", "list"]:
     print(json.dumps([{"name": n} for n in labels]))
 elif args[:2] == ["label", "create"]:
@@ -720,7 +721,35 @@ class RefreshTest(IssuesBase):
         self.change_issue(number, body=new, comments=[*self.issue(number)["comments"], {"login": "ben-pm", "body": approval}])
         return spec
 
-    def test_a_newer_version_from_someone_else_is_chosen_before_ready(self):
+    def test_marking_mine_ready_over_a_newer_version_replaces_it_and_keeps_theirs(self):
+        """Never blocked: the product manager asked to mark their text ready, so it replaces the newer version someone else saved.
+        Theirs is kept whole, and the note says who saved it, when, and where it is."""
+        self.project_and_epic()
+        self.drafted()
+        number = self.ready()["issue"]
+        self.ok(self.a, "slice", "reopen", "SLICE-001")
+        theirs = self.newer_version(number)
+        self.assertTrue(self.refreshed()["SLICE-001"]["newer_elsewhere"])
+        self.assertIn("Marking yours ready replaces it", self.ok(self.a, "status")["next_actions"][0]["reason"])
+        result = self.ready()
+        self.assertEqual((result["issue"], result["revision"]), (number, 3))
+        self.assertIn("@ben-pm saved version 2 of SLICE-001 on GitHub", result["note"])
+        self.assertIn(f"Yours is now version 3 and replaces it. Theirs is kept in the edit history of #{number} on GitHub and at "
+                      f".factory/studio/replaced/SLICE-001-issue-{number}-version-2-", result["note"])
+        (folder,) = (self.a / ".factory/studio/replaced").glob(f"SLICE-001-issue-{number}-version-2-*")
+        self.assertEqual((folder / "spec.md").read_text(), theirs)
+        self.assertEqual(result["replaced"][0]["kept"], f".factory/studio/replaced/{folder.name}/")
+        # Kept, listed, and put back in one act; what was there is kept in turn, and nothing is overwritten.
+        listed = self.ok(self.a, "replaced", "list")["kept"]
+        self.assertEqual([row["name"] for row in listed], [folder.name])
+        restored = self.ok(self.a, "replaced", "restore", folder.name)
+        self.assertEqual(self.draft(self.a, "specs/slices/SLICE-001-invite-teammate.md").read_text(), theirs)
+        self.assertNotEqual(self.artifact(self.a, "product/slices/SLICE-001.json")["status"], "approved_for_engineering")
+        self.assertIn("What you had is kept at .factory/studio/replaced/SLICE-001-yours-", restored["note"])
+        self.assertEqual(len(self.ok(self.a, "replaced", "list")["kept"]), 2)
+        self.assertNotIn("Changed by Ben", self.issue(number)["body"])
+
+    def test_a_newer_version_from_someone_else_can_still_be_taken(self):
         self.project_and_epic()
         self.drafted()
         number = self.ready()["issue"]
@@ -728,7 +757,6 @@ class RefreshTest(IssuesBase):
         theirs = self.newer_version(number)
         self.assertTrue(self.refreshed()["SLICE-001"]["newer_elsewhere"])
         self.assertEqual(self.ok(self.a, "status")["next_actions"][0]["kind"], "reconcile")
-        self.assertIn("Someone else saved a newer version", self.refused(self.a, "slice", "ready", "SLICE-001"))
         taken = self.ok(self.a, "reconcile", "SLICE-001", "--take", "theirs")
         self.assertEqual((taken["took"], taken["github_version"]), ("theirs", 2))
         self.assertEqual(self.draft(self.a, "specs/slices/SLICE-001-invite-teammate.md").read_text(), theirs)
@@ -758,12 +786,12 @@ class RefreshTest(IssuesBase):
         state["next_number"] = 100
         self.gh_state.write_text(json.dumps(state))
         self.drafted()
-        refused = self.refused(self.a, "slice", "ready", "SLICE-001")
-        self.assertIn("already used on GitHub by another slice (#77)", refused)
-        self.assertEqual(self.writes(), [])
-        renumbered = self.ok(self.a, "slice", "renumber", "SLICE-001")["renumbered"]
-        self.assertEqual(renumbered, {"from": "SLICE-001", "to": "SLICE-002"})
-        self.ready("SLICE-002")
+        result = self.ready("SLICE-001")  # never blocked: the next free number, and marked ready in the same act
+        self.assertEqual(result["renumbered"], [{"from": "SLICE-001", "to": "SLICE-002"}])
+        self.assertIn("SLICE-001 was already used on GitHub by another slice (#77), so MACH gave your draft the next free number: "
+                      "SLICE-001 is now SLICE-002.", result["note"])
+        self.assertEqual((result["ready"], result["slice"]["slice_id"], result["slice"]["status"]), (True, "SLICE-002", "approved_for_engineering"))
+        self.assertEqual(issue_rules.parse_slice_body(self.issue(result["issue"])["body"])["slice_id"], "SLICE-002")
         self.assertEqual(self.issue(77)["body"], body)  # never touched
 
     def test_refresh_without_github_says_so_and_changes_nothing(self):

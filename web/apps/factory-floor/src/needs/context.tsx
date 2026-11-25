@@ -12,7 +12,14 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useSceneStore } from "../scene";
 import { useSource } from "../shell/source/context";
 import { ObserverError, type DecisionBody } from "../live/observer";
-import { loadName, readDecided, readNeeds, saveName, type Decided, type NeedsList, type NeedTicket } from "./model";
+import { RETRY_MS, loadName, readDecided, readNeeds, saveName, type Decided, type NeedsList, type NeedTicket } from "./model";
+
+/** A decision made here that waits while another decision on the project is recorded: the page asks again by itself. */
+export interface Waiting {
+  readonly option: string;
+  /** When it started waiting (ms). */
+  readonly since: number;
+}
 
 /** What one decision made here answered: shown in its row until the event stream has caught up. */
 export interface Outcome {
@@ -28,7 +35,8 @@ export interface Outcome {
 /** The least time a decision's answer stays in its row. */
 export const OUTCOME_MS = 60_000;
 
-export type ActResult = { readonly ok: true; readonly decided: Decided } | { readonly ok: false; readonly message: string };
+/** `stopped`: the person stopped waiting for another decision to finish; nothing was recorded and nothing is said as an error. */
+export type ActResult = { readonly ok: true; readonly decided: Decided } | { readonly ok: false; readonly message: string; readonly stopped?: true };
 
 export interface NeedsState {
   readonly enabled: boolean;
@@ -37,10 +45,14 @@ export interface NeedsState {
   readonly list: NeedsList | null;
   readonly error: string | null;
   readonly outcomes: Readonly<Record<string, Outcome>>;
+  /** Decisions made here that wait for another decision on the project to finish, by ticket. */
+  readonly waiting: Readonly<Record<string, Waiting>>;
   readonly name: string;
   setName(name: string): void;
   find(ticket: string | null): NeedTicket | null;
+  /** Records one decision. While another decision on the project is being recorded it waits and asks again, until it is recorded or `stopWaiting`. */
   decide(ticket: string, option: string, body: DecisionBody): Promise<ActResult>;
+  stopWaiting(ticket: string): void;
   stop(): Promise<{ readonly ok: true; readonly note: string | null } | { readonly ok: false; readonly message: string }>;
 }
 
@@ -50,10 +62,12 @@ const OFF: NeedsState = {
   list: null,
   error: null,
   outcomes: {},
+  waiting: {},
   name: "",
   setName: () => undefined,
   find: () => null,
   decide: async () => ({ ok: false, message: "Decisions cannot be recorded here." }),
+  stopWaiting: () => undefined,
   stop: async () => ({ ok: false, message: "The Factory cannot be stopped from here." }),
 };
 
@@ -137,22 +151,56 @@ export function NeedsProvider({ children }: { children: ReactNode }) {
     saveName(browserStorage(), v);
   }, []);
 
+  const [waiting, setWaiting] = useState<Record<string, Waiting>>({});
+  // One flag per ticket's waiting decision: set when the person stops waiting.
+  const stops = useRef<Record<string, { stopped: boolean }>>({});
+  const endWait = useCallback((ticket: string) => {
+    setWaiting((prev) => {
+      if (!(ticket in prev)) return prev;
+      const next = { ...prev };
+      delete next[ticket];
+      return next;
+    });
+  }, []);
+
   const decide = useCallback(
     async (ticket: string, option: string, body: DecisionBody): Promise<ActResult> => {
       if (!enabled || !client?.decide) return { ok: false, message: "Decisions cannot be recorded here." };
+      const flag = { stopped: false };
+      stops.current[ticket] = flag;
+      const since = Date.now();
       try {
-        const decided = readDecided(await client.decide(ticket, option, body));
-        setOutcomes((prev) => ({ ...prev, [ticket]: { decided, refusal: null, logSize: sizeRef.current, at: Date.now() } }));
-        void read();
-        return { ok: true, decided };
-      } catch (e) {
-        const message = words(e);
-        setOutcomes((prev) => ({ ...prev, [ticket]: { decided: null, refusal: message, logSize: sizeRef.current, at: Date.now() } }));
-        return { ok: false, message };
+        for (;;) {
+          try {
+            const decided = readDecided(await client.decide(ticket, option, body));
+            setOutcomes((prev) => ({ ...prev, [ticket]: { decided, refusal: null, logSize: sizeRef.current, at: Date.now() } }));
+            void read();
+            return { ok: true, decided };
+          } catch (e) {
+            // Another decision on this project is being recorded: not a refusal. Wait, say so, and ask again.
+            if (e instanceof ObserverError && e.kind === "conflict" && !flag.stopped) {
+              setWaiting((prev) => (prev[ticket]?.option === option ? prev : { ...prev, [ticket]: { option, since } }));
+              await new Promise((resolve) => window.setTimeout(resolve, RETRY_MS));
+              if (!flag.stopped) continue;
+            }
+            if (flag.stopped) return { ok: false, message: "", stopped: true };
+            const message = words(e);
+            setOutcomes((prev) => ({ ...prev, [ticket]: { decided: null, refusal: message, logSize: sizeRef.current, at: Date.now() } }));
+            return { ok: false, message };
+          }
+        }
+      } finally {
+        if (stops.current[ticket] === flag) delete stops.current[ticket];
+        endWait(ticket);
       }
     },
-    [enabled, client, read],
+    [enabled, client, read, endWait],
   );
+
+  const stopWaiting = useCallback((ticket: string) => {
+    const flag = stops.current[ticket];
+    if (flag) flag.stopped = true;
+  }, []);
 
   const stop = useCallback(async () => {
     if (!canStop || !client?.stopFactory) return { ok: false as const, message: "The Factory cannot be stopped from here." };
@@ -174,12 +222,14 @@ export function NeedsProvider({ children }: { children: ReactNode }) {
       list: enabled ? list : null,
       error: enabled ? error : null,
       outcomes,
+      waiting,
       name,
       setName,
       find: (ticket) => (ticket && enabled ? (byTicket.get(ticket) ?? null) : null),
       decide,
+      stopWaiting,
       stop,
     };
-  }, [enabled, canStop, list, error, outcomes, name, setName, decide, stop]);
+  }, [enabled, canStop, list, error, outcomes, waiting, name, setName, decide, stopWaiting, stop]);
   return <NeedsContext.Provider value={value}>{children}</NeedsContext.Provider>;
 }

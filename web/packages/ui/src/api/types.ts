@@ -161,7 +161,7 @@ export interface SliceGithub {
   revision: number | null;
   /** Someone changed the issue after it was approved, so the builders will not take it. */
   changed_on_github: boolean;
-  /** Someone else saved a newer version; the PM chooses theirs or keeps their own. */
+  /** Someone else saved a newer version: marking this one ready replaces it (theirs is kept), or the PM takes theirs. */
   newer_elsewhere: boolean;
   /** Another slice on GitHub already uses this draft's number. */
   number_taken: boolean;
@@ -171,6 +171,12 @@ export interface SliceGithub {
    * `by` is the holder's GitHub account when known. Null otherwise; absent from runs before M20.
    */
   same_moment?: SameMoment | null;
+  /**
+   * Opened here from GitHub without an approval for the text it holds: why (`edited`: changed after its approval,
+   * `no_approval`, `check`: its spec does not pass here, `mocks`: opened without its pictures) and since when. Marking it
+   * ready approves it and clears this. Null otherwise.
+   */
+  not_approved?: { why: "edited" | "no_approval" | "check" | "mocks"; since: string; issue: number; revision: number } | null;
   /** The builders' question, written by them on the slice's issue: data, shown as their words. */
   question: string | null;
   /** The engine's sentence saying whose words the question is. */
@@ -438,7 +444,11 @@ export type HintKind =
   /** Not an act: the project issues a refusal names, with their addresses, for the app to link. */
   | "several_projects"
   /** POST /api/interview for a slice this host already interviews: `target` is the live interview's ID. */
-  | "open_interview";
+  | "open_interview"
+  /** POST /api/interview while another window on this computer writes the subject: the message is the warning; start again with `take_over`. */
+  | "take_over"
+  /** A draft edit or an act while a conversation writes it (`target`: its subject): the message is the warning; send it again with `interrupt`. */
+  | "interrupt_turn";
 
 /** The engine's NEXT_ACTION_KINDS. Unknown kinds are still shown, routed by their target. */
 export type NextActionKind =
@@ -777,8 +787,26 @@ export interface ProjectInit {
   url?: string | null;
   /** Why GitHub could not be checked for a project already there. */
   github_not_checked?: string;
-  /** The engine's sentence, present with either of the two above. */
+  /** The engine's sentence, present with either of the two above, or with `warned`. */
   note?: string;
+  /** Never a stop: what MACH warned about (several project issues, one whose text is not in MACH's form), each a sentence. */
+  warned?: string[];
+  /**
+   * The project issues on GitHub MACH can close for the product manager (`project.close-issue`), when the repository has
+   * more than one, or one MACH cannot read. Absent when there are none.
+   */
+  extra_issues?: number[];
+}
+
+/** `project.close-issue`: one of the repository's project issues, closed on the product manager's word. */
+export interface ProjectIssueClosed {
+  closed: number;
+  /** The project issue that remains, or null when none does (MACH makes one when a slice is next marked ready). */
+  kept: number | null;
+  repository: string;
+  url: string;
+  note: string;
+  factory_authorized: false;
 }
 
 /* ── slice show: the spec as the validator's model ─────────────────────── */
@@ -925,6 +953,8 @@ export interface Operations {
     args: { name?: string; vision?: string; outcome?: string[]; status?: ProjectStatus };
     result: { project: Project };
   };
+  /** M20: close one of the repository's project issues when it has more than one, on the product manager's word. */
+  "project.close-issue": { args: { number: number }; result: ProjectIssueClosed };
   "epic.add": { args: { title: string; criterion: string[] }; result: { epic: Epic } };
   "epic.set": {
     args: { epic_id: string; title?: string; criterion?: string[]; status?: EpicStatus };
@@ -1098,6 +1128,7 @@ export const personalActs: ReadonlySet<OperationName> = new Set<OperationName>([
   "slice.ready",
   "slice.reopen",
   "reconcile",
+  "project.close-issue",
   "slice.renumber",
   "epic.renumber",
   "slice.take",
@@ -1201,7 +1232,7 @@ export interface PrinciplesPublished {
   issue: number | null;
   url: string | null;
   github: { revision: number | null; approved: boolean | null; approved_by: string | null; read_at: string | null } | null;
-  /** Someone else published a newer version: choose with reconcile.principles. */
+  /** Someone else published a newer version: publishing replaces it (theirs is kept), or reconcile.principles takes theirs. */
   newer_elsewhere: boolean;
   changed_on_github: boolean;
 }
@@ -1957,6 +1988,8 @@ export interface InterviewSummary {
   turn_running: boolean;
   /** Another host or window holds the slice's lock. */
   locked_elsewhere: boolean;
+  /** While `locked_elsewhere`: the warning to show before offering to take it over here. */
+  take_over_warning?: string;
   last_message: { message_id: string; text: string; kind: MessageKind; question: ParsedQuestion | null } | null;
   turns: number;
   session_cost_usd: number | null;

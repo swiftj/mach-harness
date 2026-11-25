@@ -477,6 +477,11 @@ def cmd_open(project: Path, args: argparse.Namespace) -> int:
     root.mkdir(parents=True, exist_ok=True)
     (root / "evidence").mkdir(exist_ok=True)
     branch = f"feature/{ticket_id}"
+    given = getattr(args, "branch", None)
+    if given:  # intake's, for a slice a person took over from another Factory: its own branch, so neither Factory's push meets the other's
+        if not re.fullmatch(rf"feature/{re.escape(ticket_id)}-[a-z0-9][a-z0-9-]{{0,38}}", given):
+            raise CellError(f"--branch must be feature/{ticket_id}-<a short lowercase name>, not '{given}'. Nothing was opened.", code="bad-branch")
+        branch = given
     isolation, note = "none", ""
     inside = git(["rev-parse", "--is-inside-work-tree"], project)
     if inside.returncode != 0 and any((folder / ".git").exists() for folder in (project, *project.parents)):
@@ -534,7 +539,11 @@ def scan_ids(folders: Sequence[Path]) -> Tuple[Dict[int, str], Dict[int, List[Di
             if not match or path.name in seen:
                 continue
             seen.add(path.name)
-            used.setdefault(int(match.group(1)), path.name)
+            number = int(match.group(1))
+            if number in used and path.name not in used[number].split(" and "):
+                used[number] = f"{used[number]} and {path.name}"  # two specs under one number: both are named, the number counted once
+            else:
+                used.setdefault(number, path.name)
             try:
                 text = path.read_text(encoding="utf-8-sig")
             except (OSError, UnicodeDecodeError):
@@ -702,7 +711,28 @@ def analyze_spec(project: Path, spec: Path, ready: bool, cell_root: Optional[Pat
                                                                 "by Product Studio, so 'Not assessed' does not answer it here. Answer it: does it "
                                                                 "apply, not apply, or is this slice an exception?")
                     if finding.rule == "principle-not-assessed" and finding.severity == "warning" else finding for finding in findings]
+    findings = [shared_number(project, spec, finding) for finding in findings]
     return findings, model
+
+
+def shared_number(project: Path, spec: Path, finding: Any) -> Any:
+    """An old pair of specs under one slice number, both already on the main branch, is someone else's file, not this spec's choice:
+    re-finalizing this spec is not refused for it. The finding becomes a warning naming both files; this spec keeps its number. A new
+    spec that takes a number another spec already has is still an error (its own number to change, with cell.py next-id)."""
+    if finding.rule != "duplicate-slice-id" or finding.severity != "error":
+        return finding
+    match = re.search(r"is already used by (\S+?\.md)\.", finding.message)
+    other = match.group(1) if match else None
+    if not other:
+        return finding
+    tracked = set(git(["ls-files", "--", "specs/slices/"], project).stdout.split())
+    if f"specs/slices/{spec.name}" not in tracked or f"specs/slices/{other}" not in tracked:
+        return finding
+    slice_id = spec.name.split("-", 2)
+    number = "-".join(slice_id[:2])
+    return finding._replace(severity="warning", message=(
+        f"{number} is used by two specs on the main branch: {spec.name} (this one, which keeps its number) and {other}. "
+        f"{other} can be given a free number by an ordinary change (cell.py next-id names one)."))
 
 
 def shipped_rules(project: Path) -> Dict[str, Any]:
@@ -1515,7 +1545,7 @@ def refuse_without_baseline(project: Path, ticket_id: str) -> None:
     """No plan is started or accepted while a required topic has no accepted ADR on the main branch (adr.baseline_stop)."""
     stop = adr.baseline_stop(project, load_config(project), ticket_labels(project, ticket_id))
     if stop:
-        raise CellError(stop["reason"] + " Do not start the contract engineer, and do not plan it yourself.", code="adr-baseline-missing")
+        raise CellError(stop["reason"] + " Planning starts once those decisions are on the main branch; until then the contract engineer is not started and nothing is planned.", code="adr-baseline-missing")
 
 
 def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
@@ -2755,15 +2785,34 @@ def cmd_claim(project: Path, args: argparse.Namespace) -> int:
         refuse_without_baseline(project, args.ticket_id)
     holder = args.holder or claims.new_holder()
     limit = claims.minutes(load_config(project))
+    gone = claims.displaced(root, holder)
+    if gone:  # a person took this ticket over from this holder: its worker's part ends here
+        raise CellError(claims.stopped_words(gone), code="taken-over")
+    # A person who named the ticket (--by-person, never inside a supervised execution) is never refused because another worker has the
+    # step: it takes it over, and that worker is stopped at its next station call. Without that word nothing is taken over.
+    supervised = bool(os.environ.get("MACH_EXECUTION_ID"))
+    if args.by_person and supervised:
+        raise CellError("--by-person is a person's word, and this runs inside a supervised Factory execution: it never takes a step over. "
+                        "Nothing was claimed.", code="claim-refused")
     try:
-        result = claims.take(root, args.step, holder, limit)
+        result = claims.take(root, args.step, holder, limit, take_over=bool(args.by_person))
+        if result["replaced"]:
+            claims.displace(root, [result["replaced"]["holder"]], args.step, head=claims.head_of(root / "repo"), taker=holder)
     except claims.ClaimError as exc:
         raise CellError(str(exc), code="claim-refused")
     except OSError as exc:
-        raise CellError(f"The claim could not be recorded ({exc.__class__.__name__}), so do not start the worker.", code="claim-failed")
+        raise CellError(f"The claim could not be recorded ({exc.__class__.__name__}), so the worker was not started. Run the claim again once the cell can be written.", code="claim-failed")
+    if result["refused"] and supervised:
+        raise CellError(claims.in_words(result["refused"], limit) + " This supervised execution waits for it: a supervised execution never "
+                        "takes a step over. A person who names the ticket takes it over at once.", code="claim-held")
     if result["refused"]:
-        raise CellError(claims.in_words(result["refused"], limit) + " Do not start another worker on it; a person can say to take over.", code="claim-held")
-    print(json.dumps({"ticket_id": args.ticket_id, **claims.shown(result["claim"], limit)}, indent=2))
+        other = result["refused"]
+        raise CellError(f"Another worker was handed the {other['step']} step at {claims.clock(other.get('at'))}. Say /mach {args.ticket_id} and "
+                        f"MACH takes it over (cell.py claim {args.ticket_id} {args.step} --by-person, when the person named it).", code="claim-held")
+    shown = {"ticket_id": args.ticket_id, **claims.shown(result["claim"], limit)}
+    if result["replaced"]:
+        shown["warnings"] = [claims.taken_over_warning(result["replaced"])]
+    print(json.dumps(shown, indent=2))
     return 0
 
 
@@ -2777,6 +2826,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--title")
     p.add_argument("--headless", action="store_true", help="record that no person is answering questions")
     p.add_argument("--small", action="store_true", help="a small change, on the engineer's word: the short interview, the same spec and gates (M18)")
+    p.add_argument("--branch", help="intake's: the cell's branch, feature/<ticket>-<name>, for a slice taken over from another Factory (default feature/<ticket>)")
     p.set_defaults(func=cmd_open)
 
     p = sub.add_parser("widen", help="make a small change a full slice while its spec is written, so the interview carries on in full")
@@ -2842,6 +2892,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("ticket_id")
     p.add_argument("step", help="the step, such as plan")
     p.add_argument("--holder", help="the holder token a claim printed earlier (default: a new one)")
+    p.add_argument("--by-person", action="store_true", help="a person named this ticket: another worker's fresh claim is taken over; refused in a supervised execution")
     p.set_defaults(func=cmd_claim)
 
     p = sub.add_parser("adrs", help="the architecture decisions for this cell: an index, the accepted ones that apply, proposals; reads only")
@@ -2905,10 +2956,26 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
+    import claim as claims  # the shared helper beside this script: a worker a person's take-over displaced is refused here
+    parser = build_parser()
+    argv, holder = claims.station_argv(parser, sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(argv)
     project = args.project.resolve() if args.project else find_project(Path.cwd())
     try:
-        return args.func(project, args)
+        stop = claims.station_stop(project, getattr(args, "ticket_id", None), holder, args.command,
+                                   ("status", "next-id", "validate", "principles", "shipped", "policies", "adrs", "open", "claim"))
+        if stop:
+            raise CellError(stop, code="taken-over")
+        ticket = getattr(args, "ticket_id", None)
+        if not isinstance(ticket, str):
+            return args.func(project, args)
+        cell_dir = project / ".factory" / "worktrees" / ticket
+        said = claims.watch(cell_dir, ticket)
+        if said:
+            print(f"warning: {said}", file=sys.stderr)
+        code = args.func(project, args)
+        claims.record(cell_dir)
+        return code
     except CellError as exc:
         print(f"error: {exc}", file=sys.stderr)
         station, gate = {"finalize": ("groom", "groom.finalize"), "check-plan": ("plan", "plan.check"), "replan": ("plan", "plan.replan"),

@@ -6,7 +6,7 @@
     "requests": {
       "repository": "acme/team-space",
       "refreshed": true,
-      "refreshed_at": "2026-11-24T13:29:56Z",
+      "refreshed_at": "2026-11-25T15:47:18Z",
       "problem": null,
       "truncated": false,
       "truncated_note": null,
@@ -20,7 +20,7 @@
       "repository": "acme/team-space",
       "refreshed": true,
       "problem": null,
-      "refreshed_at": "2026-11-24T13:29:56Z",
+      "refreshed_at": "2026-11-25T15:47:19Z",
       "form": null,
       "project_issue": null,
       "project_url": null,
@@ -43,6 +43,7 @@
           "question": null,
           "question_note": null,
           "shipped_issues": [],
+          "not_approved": null,
           "times": {
             "marked_ready": null,
             "building": null,
@@ -82,7 +83,7 @@
           "github_order": [
             "SLICE-001"
           ],
-          "github_read_at": "2026-11-24T13:29:56Z",
+          "github_read_at": "2026-11-25T15:47:19Z",
           "matches_github": true,
           "unfinished": false,
           "taken_from_github": false,
@@ -103,7 +104,7 @@
           "revision": null,
           "approved": null,
           "approved_by": null,
-          "read_at": "2026-11-24T13:29:56Z"
+          "read_at": "2026-11-25T15:47:19Z"
         },
         "newer_elsewhere": false,
         "changed_on_github": false
@@ -113,7 +114,7 @@
           "id": null,
           "kept": null,
           "kind": "project",
-          "note": "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project. Ask someone who looks after the repository to close the one that should not be there, then try again.",
+          "note": "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so MACH used #1, the oldest. Closing #4 changes nothing in your work: it leaves one project issue, and its text stays in its history. MACH can close it for you.",
           "others": [
             1,
             4
@@ -122,6 +123,7 @@
             "1": "https://github.com/acme/team-space/issues/1",
             "4": "https://github.com/acme/team-space/issues/4"
           },
+          "used": 1,
           "yours": null
         }
       ],

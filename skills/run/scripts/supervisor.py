@@ -59,7 +59,7 @@ LEASE_SECONDS = 180
 MIN_RUN_BUDGET_USD = float(policy_module.LIMITS["max_budget_usd_per_run"][1])
 SUPERVISOR = "supervisor"
 UNSET = object()  # start() works out the run's spending limit itself
-QUIET_NEEDS = (None, "nothing", "worker-in-cell")  # stops nobody has to act on: no message
+QUIET_NEEDS = (None, "nothing", "worker-in-cell", "taken-over")  # stops nobody has to act on: no message
 
 
 class SupervisorError(Exception):
@@ -380,7 +380,8 @@ class Supervisor:
                 self.line.emit(ledger, "recovery.started", ticket_id=record["ticket_id"], slice_id=record.get("slice_id"), execution_id=execution_id, kind=how)
                 self.finish(ledger, pol, record, {**facts, "how": how, "ended_at": facts.get("ended_at") or stamp()}, known=True)
                 report["recovered"].append({"execution_id": execution_id, "ticket_id": record["ticket_id"],
-                                            "found": "paused when a person stopped the Factory" if how == executor.STOPPED_BY_PERSON else "paused when its session ended"})
+                                            "found": "paused when a person stopped the Factory" if how == executor.STOPPED_BY_PERSON else
+                                            "stopped when a person took its ticket over" if how == executor.TAKEN_OVER else "paused when its session ended"})
             elif record["state"] == "claimed" and not facts["started"] and not record.get("wrapper_pid"):
                 # Reserved, never launched: nothing ran, so nothing is uncertain. Give the place back.
                 record.update({"state": "released", "ended_at": stamp()})
@@ -411,9 +412,10 @@ class Supervisor:
             # paused. Nothing is parked and no attempt is counted: the next pull or factory start carries the ticket on from the
             # stage its records show. Merge and cleanup reach beyond the cell, so one of those cut short still goes to a person.
             by_person = facts.get("how") == executor.STOPPED_BY_PERSON
-            because = "a person stopped the Factory" if by_person else "the Claude Code session ended"
+            taken = facts.get("how") == executor.TAKEN_OVER
+            because = ("a person took the ticket over" if taken else "a person stopped the Factory" if by_person else "the Claude Code session ended")
             record["state"] = "finished"
-            if record.get("action_at_start") in NEVER_RETRIED and not moved:
+            if record.get("action_at_start") in NEVER_RETRIED and not moved and not taken:
                 self.line.emit(ledger, "execution.failed", stage=step.get("stage"), next=step.get("action"), how=record["how"], claude_error=None,
                                exit_code=record["exit_code"], attempt=None, session_id=record["session_id"], **common)
                 self.park(ledger, ticket, f"The {record.get('action_at_start')} station was running when {because}, and what it did is "
@@ -833,10 +835,14 @@ class Supervisor:
 
     # ---- stopping ----
 
-    def stop_executions(self, only: Optional[str] = None) -> List[Dict[str, Any]]:
+    def stop_executions(self, only: Optional[str] = None, reason: Optional[str] = None) -> List[Dict[str, Any]]:
         """A person stopped the Factory: each running execution is stopped, marked "stopped-by-person". It is not parked and no
         attempt is counted: the next pass (a pull, factory start) records it and carries the ticket on from the stage its records
-        show, except a run cut short at merge or cleanup, which goes to a person (finish)."""
+        show, except a run cut short at merge or cleanup, which goes to a person (finish).
+
+        With `reason` "taken-over" (and `only`): a person took that execution's ticket over (run.py next). It is stopped marked
+        "taken-over-by-person": not parked, no attempt counted, and the ticket's slice moves to the engineer (owner "engineer"), so the
+        supervisor does not start it again; the person carries it on."""
         stopped = []
         with self.line.lock("supervisor"):
             ledger = self.line.ledger()
@@ -844,7 +850,13 @@ class Supervisor:
                 if record["state"] not in LIVE or (only and execution_id != only):
                     continue
                 record["stop_requested_at"] = stamp()
-                if only:
+                if only and reason == "taken-over":
+                    signalled = executor.end_for_takeover(self.root, record.get("wrapper_pid"), execution_id)
+                    record["taken_over_at"] = stamp()
+                    for entry in ledger.get("slices", {}).values():
+                        if isinstance(entry, dict) and entry.get("ticket_id") == record["ticket_id"] and entry.get("owner") == SUPERVISOR:
+                            entry["owner"] = "engineer"
+                elif only:
                     # One run stopped while the Factory goes on: held for a person, or the supervisor would start it again at once.
                     signalled = executor.stop(record.get("wrapper_pid"), execution_id, self.root)
                     self.park(ledger, record["ticket_id"], "Its execution was stopped by a person. What it had done by then is not known; check the ticket before resuming.",

@@ -131,9 +131,17 @@ def needs_newer_elsewhere(Scenario):
         s.capture("refresh.needs-newer-elsewhere", "refresh")
         s.capture("need.list.newer-elsewhere", "need", "list")
         s.capture("status.needs-newer-elsewhere", "status")
-        s.capture("need.publish.refused-newer-elsewhere", "need", "publish")
         s.capture("reconcile.needs", "reconcile", "needs", "--take", "theirs")
         s.capture("reconcile.needs.refused-nothing-newer", "reconcile", "needs", "--take", "mine")
+        # Never blocked: Ben publishes once more, and Ada publishes hers over it. Hers replaces it; Ben's is kept. (The file keeps
+        # its old name, from when this was refused.)
+        s.set_gh(me="ben-pm")
+        s.ok(s.b, "refresh")
+        s.ok(s.b, "need", "set", "TN-01", "--why", "It sets how large it must be, and who pays.")
+        s.ok(s.b, "need", "publish")
+        s.set_gh(me="ada-pm")
+        add(s, "priority", PRIORITY, "A mistake costs more than a delay.")
+        s.capture("need.publish.refused-newer-elsewhere", "need", "publish")
     run(Scenario, body)
 
 

@@ -17,7 +17,7 @@ export function useInterview(sliceId: string): InterviewController {
 const sliceInterviews: ConversationSource = { load: loadInterviewClient, label: "interview", started: forgetIdea };
 
 function bySlice(interviews: InterviewClient): ConversationClient {
-  return { ...interviews, start: (sliceId) => interviews.start(sliceId, peekIdea(sliceId)) };
+  return { ...interviews, start: (sliceId, options) => interviews.start(sliceId, peekIdea(sliceId), options) };
 }
 
 /**

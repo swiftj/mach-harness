@@ -1,9 +1,46 @@
 {
-  "exit_code": 1,
-  "data": null,
-  "refused": "SLICE-005 is already used on GitHub by another slice (#77). Give your draft a new number, then mark it ready.",
-  "hint": {
-    "kind": "renumber_slice",
-    "target": "SLICE-005"
-  }
+  "exit_code": 0,
+  "data": {
+    "ready": true,
+    "saved_to": "github",
+    "slice": {
+      "dependencies": [],
+      "epic_id": "EPIC-001",
+      "open_questions": [],
+      "project_id": "team-space",
+      "revision": 2,
+      "schema_version": 1,
+      "slice_id": "SLICE-006",
+      "spec_path": "specs/slices/SLICE-006-invite-teammate.md",
+      "spec_sha256": "25ebf751507ceab256c33a7f037385702fa3eb8c0f1f28b1de0fd010a19fde46",
+      "status": "approved_for_engineering",
+      "title": "Invite by link"
+    },
+    "issue": 7,
+    "url": "https://github.com/acme/team-space/issues/7",
+    "revision": 1,
+    "follows": null,
+    "epic_issue": 2,
+    "project_issue": 1,
+    "approved_by": "ada-pm",
+    "risk": "High",
+    "counts": {
+      "invariants": 4,
+      "functional_requirements": 9,
+      "matrix_rules": 5,
+      "scenarios": 3
+    },
+    "warnings": [],
+    "request_updates": null,
+    "factory_authorized": false,
+    "note": "SLICE-005 was already used on GitHub by another slice (#77), so MACH gave your draft the next free number: SLICE-005 is now SLICE-006. Saved to GitHub as #7 and marked ready. The builders take it from there; nothing has started yet.",
+    "renumbered": [
+      {
+        "from": "SLICE-005",
+        "to": "SLICE-006"
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
 }

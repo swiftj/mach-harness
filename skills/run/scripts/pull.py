@@ -196,7 +196,8 @@ def choose(args: Any, root: Path, config: Dict[str, Any], line: Any, schedule: A
                       # over); a held slice waits for the next pull, or for the supervisor to dispatch it.
                       "in_this_run": in_the_line and item["rule"] != "claimed" and not to_factory,
                       "by": "factory" if to_factory else "here",
-                      "then": ("left to the worker on it" if item["rule"] == "claimed" else
+                      "then": (f"is not taken by this pull; say {run_one} {key and rows.get(key, {}).get('issue') or item['ticket_id']} and MACH "
+                               "takes it over and builds it here" if item["rule"] == "claimed" else
                                "is started by the Factory when the schedule allows" if to_factory else
                                "starts in this run when the schedule allows" if in_the_line else "is dispatched by a later pull")})
     person_slices = {item["slice_id"] for item in for_a_person if item.get("slice_id")}
@@ -205,10 +206,10 @@ def choose(args: Any, root: Path, config: Dict[str, Any], line: Any, schedule: A
             waits.append({"ticket_id": public_ticket(rows, key, None), "slice_id": key, "rule": "ceiling", "why": rows[key]["reasons"][-1], "after": [],
                           "in_this_run": False, "then": "is dispatched by the Factory when a place is free" if handing else "is dispatched by a later pull"})
     for key, row in rows.items():
-        if row.get("held") and key not in person_slices:  # M20: another Factory is building it: skipped, and left to that Factory
+        if row.get("held") and key not in person_slices:  # M20: another Factory is building it: this pull's own choice skips it
             waits.append({"ticket_id": public_ticket(rows, key, None), "slice_id": key, "rule": "being-built-elsewhere", "why": row["held"].rstrip("."),
                           "after": [], "in_this_run": False,
-                          "then": f"is left to that Factory (to build it here instead: product dispatch {key} --take-over, on your word)"})
+                          "then": f"is not taken by this pull; say {run_one} {row.get('issue') or key} to build it here as well"})
         elif row["state"] == "blocked" and key not in person_slices:
             waits.append({"ticket_id": public_ticket(rows, key, None), "slice_id": key, "rule": "blocked", "why": " ".join(row["reasons"]),
                           "after": [dep.get("slice_id") or dep.get("name") for dep in row.get("depends_on") or [] if not dep.get("integrated")],

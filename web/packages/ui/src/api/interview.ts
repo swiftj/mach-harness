@@ -23,6 +23,17 @@ export interface StreamHandlers {
 }
 
 /**
+ * How a start goes ahead when another window on this computer holds the conversation. `takeOver` follows the
+ * host's warning (a `conflict` with hint `take_over`): this host's own conversation is ended and resumed here; another
+ * process keeps writing too, and the draft keeps whichever saves last.
+ */
+export interface StartOptions {
+  takeOver?: boolean;
+}
+
+const startBody = (body: Record<string, unknown>, options?: StartOptions) => (options?.takeOver ? { ...body, take_over: true } : body);
+
+/**
  * Everything an interview screen asks of the host (contract 8.2). One interface, so the HTTP
  * client and a development script are interchangeable.
  */
@@ -33,17 +44,22 @@ export interface InterviewClient {
   history(sliceId: string, signal?: AbortSignal): Promise<InterviewHistory>;
   /**
    * POST /api/interview: start or resume. For a new idea, run `slice.new` first and pass the idea.
-   * Rejects with `conflict` when another window holds the slice, `refused` for an approved slice,
-   * `unavailable` when the host cannot run interviews.
+   * Rejects with `conflict` when another window holds the slice (hint `take_over`: the message is the warning, and
+   * the same start with `takeOver` goes ahead), `refused` for an approved slice, `unavailable` when the host cannot
+   * run interviews.
    */
-  start(sliceId: string, idea?: string): Promise<StartResult>;
+  start(sliceId: string, idea?: string, options?: StartOptions): Promise<StartResult>;
   /**
    * GET /api/interview/<id>/events. Reconnects by itself (the browser resends Last-Event-ID; a closed
    * stream is reopened with back-off) and drops events whose sequence number it has already seen.
    * Returns the unsubscribe function.
    */
   subscribe(interviewId: string, handlers: StreamHandlers): () => void;
-  reply(interviewId: string, text: string): Promise<void>;
+  /**
+   * Rejects with `conflict` while the interviewer is writing its reply (hint `interrupt_turn`: the message is the
+   * warning, and the same reply with `interrupt` stops that turn and is sent), or after the conversation ended.
+   */
+  reply(interviewId: string, text: string, options?: { interrupt?: boolean }): Promise<void>;
   /** Stop the current turn; the interview stays open. */
   interrupt(interviewId: string): Promise<void>;
   /** End the interview. The draft, the saved note and the session remain. */
@@ -62,7 +78,7 @@ export interface IdeaConversationClient extends Pick<InterviewClient, "subscribe
   /** GET /api/interview/history?idea_id=. */
   history(ideaId: string, signal?: AbortSignal): Promise<InterviewHistory>;
   /** POST /api/interview {idea_id}. Refused for an idea shaped into work; `conflict` when another window holds it. */
-  start(ideaId: string): Promise<StartResult>;
+  start(ideaId: string, options?: StartOptions): Promise<StartResult>;
 }
 
 /**
@@ -79,7 +95,7 @@ export interface NeedsConversationClient extends Pick<InterviewClient, "subscrib
   /** GET /api/interview/history?needs=true. */
   history(signal?: AbortSignal): Promise<InterviewHistory>;
   /** POST /api/interview {needs: true}. Refused before a project exists; `conflict` when another window holds it. */
-  start(): Promise<StartResult>;
+  start(options?: StartOptions): Promise<StartResult>;
 }
 
 /**
@@ -95,7 +111,7 @@ export interface PrdConversationClient extends Pick<InterviewClient, "subscribe"
   /** GET /api/interview/history?prd_id=. */
   history(prdId: string, signal?: AbortSignal): Promise<InterviewHistory>;
   /** POST /api/interview {prd_id}. Refused once the drafts are made from it; `conflict` when another window holds it. */
-  start(prdId: string): Promise<StartResult>;
+  start(prdId: string, options?: StartOptions): Promise<StartResult>;
 }
 
 /** IDEA-NNN, checked before it is placed in a URL. */
@@ -142,12 +158,12 @@ export function createInterviewClient(deps: {
       if (!ENGINE_ID.test(sliceId)) throw new MachApiError("invalid", `"${sliceId}" is not a slice ID.`, "interview.history");
       return (await deps.get(`/api/interview/history?slice_id=${encodeURIComponent(sliceId)}`, "interview.history", signal)) as InterviewHistory;
     },
-    start(sliceId, idea) {
+    start(sliceId, idea, options) {
       if (!ENGINE_ID.test(sliceId)) return Promise.reject(new MachApiError("invalid", `"${sliceId}" is not a slice ID.`, "interview.start"));
-      return deps.post("/api/interview", "interview.start", idea ? { slice_id: sliceId, idea } : { slice_id: sliceId }) as Promise<StartResult>;
+      return deps.post("/api/interview", "interview.start", startBody(idea ? { slice_id: sliceId, idea } : { slice_id: sliceId }, options)) as Promise<StartResult>;
     },
-    async reply(id, text) {
-      await deps.post(`/api/interview/${checkId(id, "interview.reply")}/reply`, "interview.reply", { text });
+    async reply(id, text, options) {
+      await deps.post(`/api/interview/${checkId(id, "interview.reply")}/reply`, "interview.reply", options?.interrupt ? { text, interrupt: true } : { text });
     },
     async interrupt(id) {
       await deps.post(`/api/interview/${checkId(id, "interview.interrupt")}/interrupt`, "interview.interrupt", {});
@@ -237,9 +253,9 @@ export function createIdeaConversationClient(
     async history(ideaId, signal) {
       return (await deps.get(`/api/interview/history?idea_id=${check(ideaId, "conversation.history")}`, "conversation.history", signal)) as InterviewHistory;
     },
-    start(ideaId) {
+    start(ideaId, options) {
       if (!IDEA_ID.test(ideaId)) return Promise.reject(new MachApiError("invalid", `"${ideaId}" is not an idea ID.`, "conversation.start"));
-      return deps.post("/api/interview", "conversation.start", { idea_id: ideaId }) as Promise<StartResult>;
+      return deps.post("/api/interview", "conversation.start", startBody({ idea_id: ideaId }, options)) as Promise<StartResult>;
     },
     subscribe: interviews.subscribe,
     reply: interviews.reply,
@@ -261,8 +277,8 @@ export function createNeedsConversationClient(
     async history(signal) {
       return (await deps.get("/api/interview/history?needs=true", "conversation.history", signal)) as InterviewHistory;
     },
-    start() {
-      return deps.post("/api/interview", "conversation.start", { needs: true }) as Promise<StartResult>;
+    start(options) {
+      return deps.post("/api/interview", "conversation.start", startBody({ needs: true }, options)) as Promise<StartResult>;
     },
     subscribe: interviews.subscribe,
     reply: interviews.reply,
@@ -289,9 +305,9 @@ export function createPrdConversationClient(
     async history(prdId, signal) {
       return (await deps.get(`/api/interview/history?prd_id=${check(prdId, "conversation.history")}`, "conversation.history", signal)) as InterviewHistory;
     },
-    start(prdId) {
+    start(prdId, options) {
       if (!PRD_ID.test(prdId)) return Promise.reject(new MachApiError("invalid", `"${prdId}" is not a PRD ID.`, "conversation.start"));
-      return deps.post("/api/interview", "conversation.start", { prd_id: prdId }) as Promise<StartResult>;
+      return deps.post("/api/interview", "conversation.start", startBody({ prd_id: prdId }, options)) as Promise<StartResult>;
     },
     subscribe: interviews.subscribe,
     reply: interviews.reply,

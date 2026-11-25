@@ -6,7 +6,7 @@
     "requests": {
       "repository": "acme/team-space",
       "refreshed": true,
-      "refreshed_at": "2026-11-24T13:29:29Z",
+      "refreshed_at": "2026-11-25T15:46:52Z",
       "problem": null,
       "truncated": false,
       "truncated_note": null,
@@ -20,7 +20,7 @@
       "repository": "acme/team-space",
       "refreshed": true,
       "problem": null,
-      "refreshed_at": "2026-11-24T13:29:29Z",
+      "refreshed_at": "2026-11-25T15:46:52Z",
       "form": "sub_issues",
       "project_issue": 1,
       "project_url": "https://github.com/acme/team-space/issues/1",
@@ -33,7 +33,7 @@
       "slices": [
         {
           "slice_id": "SLICE-001",
-          "in_workspace": true,
+          "in_workspace": false,
           "saved": null,
           "unfinished": false,
           "issue": null,
@@ -42,25 +42,19 @@
           "revision": null,
           "changed_on_github": false,
           "newer_elsewhere": false,
-          "number_taken": true,
-          "same_moment": {
-            "issue": 4,
-            "holder": 3,
-            "by": "ada-pm",
-            "at": "2026-11-24T13:29:28Z",
-            "issue_url": "https://github.com/acme/team-space/issues/4",
-            "holder_url": "https://github.com/acme/team-space/issues/3"
-          },
+          "number_taken": false,
+          "same_moment": null,
           "question": null,
           "question_note": null,
           "shipped_issues": [],
+          "not_approved": null,
           "times": {
             "marked_ready": null,
             "building": null,
             "question": null,
             "shipped": null
           },
-          "progress": "ready_for_approval",
+          "progress": null,
           "on_github": [
             {
               "issue": 3,
@@ -74,6 +68,44 @@
             }
           ],
           "title": "Invite a teammate"
+        },
+        {
+          "slice_id": "SLICE-002",
+          "in_workspace": true,
+          "saved": "github",
+          "unfinished": false,
+          "issue": 5,
+          "url": "https://github.com/acme/team-space/issues/5",
+          "state_label": "mach:ready",
+          "revision": 1,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "same_moment": null,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "not_approved": null,
+          "times": {
+            "marked_ready": "2026-11-17T10:00:16Z",
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "ready_to_build",
+          "on_github": [
+            {
+              "issue": 5,
+              "state": "open",
+              "state_label": "mach:ready",
+              "revision": 1,
+              "title": "Remove a teammate",
+              "matches_approval": true,
+              "approved_by": "ben-pm",
+              "question": null
+            }
+          ],
+          "title": "Remove a teammate"
         }
       ],
       "order": [
@@ -83,17 +115,25 @@
           "slices": [
             {
               "slice_id": "SLICE-001",
+              "title": "Invite a teammate",
+              "in_workspace": false,
+              "issue": 3,
+              "state_label": "mach:ready"
+            },
+            {
+              "slice_id": "SLICE-002",
               "title": "Remove a teammate",
               "in_workspace": true,
-              "issue": 3,
+              "issue": 5,
               "state_label": "mach:ready"
             }
           ],
           "on_github": true,
           "github_order": [
-            "SLICE-001"
+            "SLICE-001",
+            "SLICE-002"
           ],
-          "github_read_at": "2026-11-24T13:29:29Z",
+          "github_read_at": "2026-11-25T15:46:52Z",
           "matches_github": true,
           "unfinished": false,
           "taken_from_github": false,
@@ -114,7 +154,7 @@
           "revision": null,
           "approved": null,
           "approved_by": null,
-          "read_at": "2026-11-24T13:29:29Z"
+          "read_at": "2026-11-25T15:46:52Z"
         },
         "newer_elsewhere": false,
         "changed_on_github": false

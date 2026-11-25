@@ -37,6 +37,14 @@ func (s *Server) interviewError(w http.ResponseWriter, err error) {
 		if conflict.InterviewID != "" {
 			// Held by this host: the hint names the live interview, so the app can attach to it.
 			env.Error.Hint, _ = json.Marshal(map[string]string{"kind": "open_interview", "target": conflict.InterviewID})
+		} else if conflict.Running {
+			// The interviewer is writing its reply: the message is the warning, and the app sends the
+			// same reply again with interrupt (one click).
+			env.Error.Hint, _ = json.Marshal(map[string]any{"kind": "interrupt_turn", "target": nil})
+		} else if conflict.TakeOver {
+			// Held by another live process on this computer: the message is the warning, and the app
+			// offers to continue here (the same start with take_over: true).
+			env.Error.Hint, _ = json.Marshal(map[string]any{"kind": "take_over", "target": nil})
 		}
 		writeEnvelope(w, http.StatusConflict, env)
 	case errors.Is(err, interview.ErrNotFound):
@@ -91,6 +99,9 @@ func (s *Server) interviewStart(w http.ResponseWriter, r *http.Request) {
 		IdeaID  *string `json:"idea_id"`
 		Needs   *bool   `json:"needs"`
 		PrdID   *string `json:"prd_id"`
+		// TakeOver: continue here although another window on this computer holds the lock (the
+		// conflict before it carried the warning and hint {kind: "take_over"}).
+		TakeOver bool `json:"take_over"`
 	}
 	if err := engine.Decode(raw, &body); err != nil {
 		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, err.Error()))
@@ -101,7 +112,7 @@ func (s *Server) interviewStart(w http.ResponseWriter, r *http.Request) {
 			writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "Give prd_id alone, or slice_id, or idea_id, or needs: true."))
 			return
 		}
-		s.prdConversationStart(w, r, *body.PrdID)
+		s.prdConversationStart(w, r, *body.PrdID, body.TakeOver)
 		return
 	}
 	if body.Needs != nil {
@@ -109,7 +120,7 @@ func (s *Server) interviewStart(w http.ResponseWriter, r *http.Request) {
 			writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "Give needs: true alone, or slice_id, or idea_id."))
 			return
 		}
-		s.needsConversationStart(w, r)
+		s.needsConversationStart(w, r, body.TakeOver)
 		return
 	}
 	if body.IdeaID != nil {
@@ -117,7 +128,7 @@ func (s *Server) interviewStart(w http.ResponseWriter, r *http.Request) {
 			writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "Give slice_id or idea_id, not both."))
 			return
 		}
-		s.ideaConversationStart(w, r, *body.IdeaID)
+		s.ideaConversationStart(w, r, *body.IdeaID, body.TakeOver)
 		return
 	}
 	if len(body.SliceID) > 32 || !engine.SliceIDPattern.MatchString(body.SliceID) {
@@ -157,7 +168,7 @@ func (s *Server) interviewStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	started, err := s.opts.Bridge.Start(r.Context(), interview.StartRequest{SliceID: body.SliceID, EpicID: epicID, Idea: strings.TrimSpace(body.Idea),
-		BuildersQuestion: question})
+		BuildersQuestion: question, TakeOver: body.TakeOver})
 	if err != nil {
 		s.interviewError(w, err)
 		return
@@ -168,7 +179,7 @@ func (s *Server) interviewStart(w http.ResponseWriter, r *http.Request) {
 // ideaConversationStart: the engine says whether the idea exists and is not yet shaped into work
 // (its brief is then kept as it was when its slices were made); then the bridge starts the Shape
 // conversation, whose rules let it write only this idea's brief and case (interview.Paths).
-func (s *Server) ideaConversationStart(w http.ResponseWriter, r *http.Request, ideaID string) {
+func (s *Server) ideaConversationStart(w http.ResponseWriter, r *http.Request, ideaID string, takeOver bool) {
 	if len(ideaID) > 32 || !engine.IdeaIDPattern.MatchString(ideaID) {
 		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "idea_id must be an ID such as IDEA-001."))
 		return
@@ -199,7 +210,7 @@ func (s *Server) ideaConversationStart(w http.ResponseWriter, r *http.Request, i
 		writeEnvelope(w, statusFor(check), check)
 		return
 	}
-	started, err := s.opts.Bridge.Start(r.Context(), interview.StartRequest{IdeaID: ideaID})
+	started, err := s.opts.Bridge.Start(r.Context(), interview.StartRequest{IdeaID: ideaID, TakeOver: takeOver})
 	if err != nil {
 		s.interviewError(w, err)
 		return
@@ -210,7 +221,7 @@ func (s *Server) ideaConversationStart(w http.ResponseWriter, r *http.Request, i
 // needsConversationStart: the engine says the technical needs can be read (a project exists and its
 // needs file is in the form Product Studio writes); then the bridge starts the needs conversation,
 // whose rules let it record needs and a design's map only (interview.Paths).
-func (s *Server) needsConversationStart(w http.ResponseWriter, r *http.Request) {
+func (s *Server) needsConversationStart(w http.ResponseWriter, r *http.Request, takeOver bool) {
 	if available, reason := s.opts.Bridge.Available(); !available {
 		writeEnvelope(w, http.StatusServiceUnavailable, engine.Fail(engine.KindUnavailable, reason))
 		return
@@ -234,7 +245,7 @@ func (s *Server) needsConversationStart(w http.ResponseWriter, r *http.Request) 
 		writeEnvelope(w, statusFor(check), check)
 		return
 	}
-	started, err := s.opts.Bridge.Start(r.Context(), interview.StartRequest{Needs: true})
+	started, err := s.opts.Bridge.Start(r.Context(), interview.StartRequest{Needs: true, TakeOver: takeOver})
 	if err != nil {
 		s.interviewError(w, err)
 		return
@@ -246,7 +257,7 @@ func (s *Server) needsConversationStart(w http.ResponseWriter, r *http.Request) 
 // what was imported, and no drafts have been made from it yet (its map is then kept as it was); then
 // the bridge starts the PRD conversation, whose rules let it record that PRD's map only
 // (interview.Paths). It needs no project: a map is recorded before the project is named.
-func (s *Server) prdConversationStart(w http.ResponseWriter, r *http.Request, prdID string) {
+func (s *Server) prdConversationStart(w http.ResponseWriter, r *http.Request, prdID string, takeOver bool) {
 	if len(prdID) > 32 || !engine.PRDIDPattern.MatchString(prdID) {
 		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "prd_id must be an ID such as PRD-01."))
 		return
@@ -281,7 +292,7 @@ func (s *Server) prdConversationStart(w http.ResponseWriter, r *http.Request, pr
 		writeEnvelope(w, statusFor(check), check)
 		return
 	}
-	started, err := s.opts.Bridge.Start(r.Context(), interview.StartRequest{PrdID: prdID})
+	started, err := s.opts.Bridge.Start(r.Context(), interview.StartRequest{PrdID: prdID, TakeOver: takeOver})
 	if err != nil {
 		s.interviewError(w, err)
 		return
@@ -453,6 +464,9 @@ func (s *Server) interviewReply(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Text string `json:"text"`
+		// Interrupt: the interviewer was writing its reply (the conflict before carried the warning and
+		// hint {kind: "interrupt_turn"}); stop that turn, wait for it, then send this reply.
+		Interrupt bool `json:"interrupt"`
 	}
 	if err := engine.Decode(raw, &body); err != nil {
 		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, err.Error()))
@@ -461,6 +475,14 @@ func (s *Server) interviewReply(w http.ResponseWriter, r *http.Request) {
 	if msg := checkPMText("text", body.Text, maxReplyRunes, true); msg != "" {
 		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, msg))
 		return
+	}
+	if body.Interrupt {
+		// Nothing running by now is fine: the turn may have ended on its own meanwhile.
+		var conflict *interview.ConflictError
+		if err := s.opts.Bridge.Interrupt(r.Context(), id); err != nil && !errors.As(err, &conflict) {
+			s.interviewError(w, err)
+			return
+		}
 	}
 	if err := s.opts.Bridge.Reply(r.Context(), id, body.Text); err != nil {
 		s.interviewError(w, err)

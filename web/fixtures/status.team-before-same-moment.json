@@ -24,40 +24,40 @@
         "acceptance_criteria": [
           "Only invited people can join"
         ],
-        "issue": 2,
-        "url": "https://github.com/acme/team-space/issues/2",
+        "issue": null,
+        "url": null,
         "changed_elsewhere": null,
         "same_moment": null,
         "counts": {
           "total": 1,
           "by_progress": {
-            "ready_to_build": 1
+            "draft": 1
           },
-          "ready_or_further": 1,
+          "ready_or_further": 0,
           "ready_or_further_means": "marked ready to build, being built, or shipped"
         }
       }
     ],
     "slices": [
       {
-        "slice_id": "SLICE-002",
+        "slice_id": "SLICE-001",
         "title": "Remove a teammate",
         "epic_id": "EPIC-001",
-        "status": "approved_for_engineering",
-        "revision": 4,
+        "status": "draft",
+        "revision": 1,
         "open_questions": 0,
-        "spec": "specs/slices/SLICE-002-invite-teammate.md",
+        "spec": "specs/slices/SLICE-001-invite-teammate.md",
         "has_intent": true,
         "resume_note": null,
         "dependencies": [],
-        "editable": false,
+        "editable": true,
         "github": {
-          "saved": "github",
+          "saved": null,
           "unfinished": false,
-          "issue": 5,
-          "url": "https://github.com/acme/team-space/issues/5",
-          "state_label": "mach:ready",
-          "revision": 1,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": null,
           "changed_on_github": false,
           "newer_elsewhere": false,
           "number_taken": false,
@@ -65,13 +65,14 @@
           "question": null,
           "question_note": null,
           "shipped_issues": [],
+          "not_approved": null,
           "times": {
-            "marked_ready": "2026-11-24T13:29:29Z",
+            "marked_ready": null,
             "building": null,
             "question": null,
             "shipped": null
           },
-          "progress": "ready_to_build"
+          "progress": "draft"
         }
       }
     ],
@@ -84,29 +85,20 @@
     "order": [
       {
         "epic_id": "EPIC-001",
-        "issue": 2,
+        "issue": null,
         "slices": [
           {
             "slice_id": "SLICE-001",
-            "title": "Invite a teammate",
-            "in_workspace": false,
-            "issue": 3,
-            "state_label": "mach:ready"
-          },
-          {
-            "slice_id": "SLICE-002",
             "title": "Remove a teammate",
             "in_workspace": true,
-            "issue": 5,
-            "state_label": "mach:ready"
+            "issue": null,
+            "state_label": null
           }
         ],
-        "on_github": true,
-        "github_order": [
-          "SLICE-001"
-        ],
-        "github_read_at": "2026-11-24T13:29:29Z",
-        "matches_github": true,
+        "on_github": false,
+        "github_order": null,
+        "github_read_at": null,
+        "matches_github": null,
         "unfinished": false,
         "taken_from_github": false,
         "could_not_read": false,
@@ -114,32 +106,26 @@
       }
     ],
     "same_id_twice": [],
-    "project_on_github": {
-      "issue": 1,
-      "url": "https://github.com/acme/team-space/issues/1",
-      "name": "Team Space",
-      "readable": true,
-      "read_at": "2026-11-24T13:29:29Z"
-    },
+    "project_on_github": null,
     "github": {
       "repository": "acme/team-space",
-      "form": "sub_issues",
-      "last_read": "2026-11-24T13:29:29Z"
+      "form": null,
+      "last_read": null
     },
-    "current_slice": "SLICE-002",
-    "last_refreshed": "2026-11-24T13:29:29Z",
+    "current_slice": "SLICE-001",
+    "last_refreshed": null,
     "structurally_valid": true,
     "structural_errors": [],
     "factory_authorized": false,
     "suggested_next": [
-      "Start a new slice (slice new --epic EPIC-NNN --title \"...\")."
+      "Continue the interview for SLICE-001: Remove a teammate (slice resume SLICE-001)."
     ],
     "next_actions": [
       {
-        "kind": "start_slice",
-        "target": null,
-        "title": "Start a new slice",
-        "reason": "No slice of intent is being defined right now.",
+        "kind": "continue_interview",
+        "target": "SLICE-001",
+        "title": "Continue the interview for SLICE-001",
+        "reason": "Remove a teammate is still being defined.",
         "related": []
       }
     ]

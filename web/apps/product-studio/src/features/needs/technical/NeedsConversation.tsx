@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { CircleAlert, MessagesSquare, Pause, Square, WifiOff } from "lucide-react";
-import { Banner, Button, CommandLine, EmptyState, ErrorState, Heading, HintAction, LoadingState, RichText, Spinner, Text, Tooltip, describeError } from "@mach/ui";
+import { Banner, Button, CommandLine, EmptyState, ErrorState, Heading, LoadingState, RichText, Spinner, Text, Tooltip, describeError } from "@mach/ui";
 import { answerText } from "../../interview/model";
 import { loadSession } from "../../../api/session";
 import { ExploreTranscript } from "../../shape/explore/ExploreTranscript";
@@ -8,6 +8,8 @@ import { ReplyField, conversationBusy, useNewestInView } from "../../shape/explo
 import { openQuestion } from "../../shape/explore/model";
 import type { ConversationController } from "../shell/useNeedsConversation";
 import { needsCommand } from "./model";
+import { TakeOverBanner } from "../../../shared/TakeOverBanner";
+import { ConversationProblem } from "../../../shared/ConversationProblem";
 
 const PAUSE_REQUEST = "I need to stop here. Please save where we are so I can continue later.";
 const NOTHING_TO_SAY = "Nothing to say about this.";
@@ -107,11 +109,7 @@ function Current({ conv, busy }: { conv: ConversationController; busy: boolean }
     case "unavailable":
       return <ContinueInClaudeCode reason={conv.capability?.reason ?? null} />;
     case "conflict":
-      return (
-        <Banner tone="warning" title="The conversation cannot be opened here" actions={<Button onClick={conv.retryLoad}>Check again</Button>}>
-          {conv.problem?.kind === "conflict" ? conv.problem.message : "Another window or process holds the needs conversation."}
-        </Banner>
-      );
+      return <TakeOverBanner conv={conv} subject="the technical needs" />;
     case "refused":
     case "error": {
       const error = conv.problem;
@@ -196,15 +194,7 @@ function Current({ conv, busy }: { conv: ConversationController; busy: boolean }
           Nothing you said is lost. The conversation catches up when the connection returns.
         </Banner>
       ) : null}
-      {conv.problem ? (
-        <Banner
-          tone="danger"
-          title={conv.problem.kind === "conflict" ? "MACH is still working on a reply" : describeError(conv.problem).title}
-          actions={conv.problem.hint ? <HintAction hint={conv.problem.hint} /> : undefined}
-        >
-          {conv.problem.kind === "conflict" ? "Wait for it to finish, or interrupt it." : conv.problem.message}
-        </Banner>
-      ) : null}
+      {conv.problem ? <ConversationProblem problem={conv.problem} /> : null}
       {body}
       <div className="sr-only" aria-live="polite">
         {announce}

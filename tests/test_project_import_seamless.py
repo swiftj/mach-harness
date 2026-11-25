@@ -339,21 +339,21 @@ class NumbersTest(ImportBase):
         self.assertTrue(self.ok(self.b, "validate")["valid"])
         self.assertIsNone(project_import.unfinished(studio.Studio(self.b)))
 
-    def test_a_number_taken_of_a_file_the_person_changed_stops_with_what_to_do(self):
+    def test_a_number_taken_of_a_file_the_person_changed_carries_on_and_keeps_their_file(self):
+        """Never blocked: the engineer's ticket keeps SLICE-002, the import moves on to the next free number, and the file the
+        product manager changed is kept whole aside, never lost."""
         self.stop_at("SLICE-002.json")
         spec = self.draft(self.b, "specs/slices/SLICE-002-invite-teammate.md")
         spec.write_text(spec.read_text() + "\nAdded by the PM.\n")
         ticket = self.b / ".factory/worktrees/LOCAL-007/repo/specs/slices"
         ticket.mkdir(parents=True)
         (ticket / "SLICE-002-fix-login.md").write_text("# SLICE-002: Fix login\n")
-        with self.assertRaises(studio.StudioError) as caught:
-            self.bring(self.b, self.archive)
-        self.assertEqual(str(caught.exception),
-                         "Bringing in stopped: SLICE-002 is the number this import gave SLICE-002 of the project Lending, and part of it is already "
-                         "here, but the engineers' ticket LOCAL-007 (its spec SLICE-002-fix-login.md) now uses SLICE-002 for another slice. Ask the "
-                         "engineer working on it to give their slice another number, then bring the same file in again. Or set this import aside: "
-                         "what it already brought in stays where it is.")
-        self.assertTrue(spec.read_text().endswith("Added by the PM.\n"), "the person's file is never moved")
+        result = self.bring(self.b, self.archive)
+        self.assertEqual(self.pairs(result, "SLICE")["SLICE-002"], "SLICE-008")
+        (folder,) = (self.b / ".factory/studio/replaced").glob("import-SLICE-002-*")
+        self.assertTrue((folder / "SLICE-002-invite-teammate.md").read_text().endswith("Added by the PM.\n"), "the person's file is kept whole")
+        self.assertIn(f".factory/studio/replaced/{folder.name}/", json.dumps(result))
+        self.assertTrue(self.draft(self.b, "specs/slices/SLICE-008-invite-teammate.md").exists())
 
     def test_set_aside_takes_the_path_it_was_run_with(self):
         self.stop_at("EPIC-001.json")

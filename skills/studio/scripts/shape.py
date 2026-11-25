@@ -93,6 +93,14 @@ class ShapeError(Exception):
         self.app = app
 
 
+class IdeaNumberTaken(ShapeError):
+    """Another idea's issue on GitHub holds this idea's number: never a stop, the idea is renumbered and published (cmd_idea_publish)."""
+
+    def __init__(self, message: str, holder: int):
+        super().__init__(message)
+        self.holder = holder
+
+
 def sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -784,8 +792,8 @@ def next_step(ideas: Ideas, record: Dict[str, Any], github: Dict[str, Any]) -> D
         return step("publish", host.say(f"Saving {idea_id} to GitHub stopped part way: publish it again to finish (idea publish {idea_id}).",
                     f"Saving {idea_id} to GitHub stopped part way. Save it again to finish."))
     if github.get("number_taken"):
-        return step("renumber", host.say(f"Another idea on GitHub already uses {idea_id}: give yours the next free number (idea renumber {idea_id}).",
-                    f"Another idea on GitHub already uses {idea_id}. Give yours the next free number."))
+        return step("publish", host.say(f"Another idea on GitHub already uses {idea_id}: publishing it gives yours the next free number (idea publish {idea_id}).",
+                    f"Another idea on GitHub already uses {idea_id}. Saving it gives yours the next free number."))
     if record["stage"] == "shaped":
         if github.get("saved") == "github" and not github.get("up_to_date"):
             return step("publish", host.say(f"{idea_id} is shaped into work: publish it again so its issue says so (idea publish {idea_id}).",
@@ -894,12 +902,18 @@ def publish(ideas: Ideas, idea_id: str) -> Dict[str, Any]:
                                                                  for key, value in ledger["ideas"].items() if value.get("saved") == "folder"})
             entry = ideas.entry(ledger, idea_id)
         ledger["repository"] = repository
+        relayed = None
         if wanted_verdict and wanted_verdict["by"] != channel.login:
-            raise ShapeError(host.say(f"{idea_id}'s verdict was recorded by {wanted_verdict['by'] or 'someone not signed in to GitHub'}, and this computer is "
-                                      f"signed in as {channel.login}. Nothing was saved. Record the verdict again signed in as the person deciding "
-                                      f"(verdict record {idea_id}), or publish from their account.",
-                                      f"{idea_id}'s verdict was recorded by {wanted_verdict['by'] or 'someone not signed in to GitHub'}, and this computer is "
-                                      f"signed in as {channel.login}. Nothing was saved. Record the verdict again as the person deciding."))
+            # Never blocked: the idea is published under this account, and the verdict stays exactly as it was recorded, with
+            # its author. A verdict's comment on the issue proves who decided by the account GitHub shows posting it (refresh
+            # reads only the author's own), so MACH never posts one in someone else's name: it is posted when its author
+            # publishes from their account.
+            when = str(verdict.get("at") or "")[:10]
+            relayed = (f"The verdict on {idea_id} was recorded by @{wanted_verdict['by']}{f' on {when}' if when else ''}. Publishing it under your account "
+                       f"keeps their verdict as recorded: it stays theirs, and its comment on the issue is posted only from @{wanted_verdict['by']}'s "
+                       "account, never in their name from yours." if wanted_verdict["by"] else
+                       f"The verdict on {idea_id} was recorded{f' on {when}' if when else ''} while this computer was not signed in to GitHub, so "
+                       "it names no account. Publishing keeps it as recorded; no verdict comment is posted, because one must name the account that decided.")
         if len(body) > rules.ISSUE_BODY_LIMIT:
             raise ShapeError(f"{idea_id}'s brief is too large to save: it is {len(body):,} characters, and GitHub takes at most "
                              f"{rules.ISSUE_BODY_LIMIT:,} in one issue. A brief is one page. Nothing was saved.")
@@ -920,9 +934,10 @@ def publish(ideas: Ideas, idea_id: str) -> Dict[str, Any]:
                 number = entry["number"] = mine[0]["number"]
         others = [item["number"] for item in listed if (rules.parse_shape_body(item.get("body")) or {}).get("idea_id") == idea_id and item["number"] != number]
         if not number and others:
-            raise ShapeError(host.say(f"Another idea on GitHub already uses {idea_id} (#{others[0]}). Nothing was saved. Give yours the next free number "
-                                      f"(idea renumber {idea_id}), then publish it.",
-                                      f"Another idea on GitHub already uses {idea_id} (#{others[0]}). Nothing was saved. Give yours the next free number, then save it."))
+            # Never blocked: cmd_idea_publish gives this idea the next free number and publishes it in the same act. The numbers
+            # GitHub holds are kept first, so the next free one is none of them.
+            ideas.save_ledger(ledger)
+            raise IdeaNumberTaken(f"Another idea on GitHub already uses {idea_id} (#{others[0]}).", holder=others[0])
         entry["run"] = {"body_sha256": body_sha, "label": label, "verdict": wanted_verdict, "login": channel.login,
                         "steps": dict(run.get("steps") or {}) if same else {}, "started_at": run.get("started_at") if same else host.now(None)}
         steps = entry["run"]["steps"]
@@ -982,7 +997,7 @@ def publish(ideas: Ideas, idea_id: str) -> Dict[str, Any]:
                 if failure:
                     stop(failure)
             steps["state"] = "done"
-        if wanted_verdict and step("verdict"):
+        if wanted_verdict and not relayed and step("verdict"):
             found, failure = issues.comments(studio.project, repository, number)
             if failure:
                 stop(failure)
@@ -998,14 +1013,15 @@ def publish(ideas: Ideas, idea_id: str) -> Dict[str, Any]:
                      published={"revision": record["revision"], "brief_sha256": check["sha256"], "label": label, "verdict": wanted_verdict, "at": host.now(None)})
         seen = ledger["seen"].setdefault("issues", {})
         seen[str(number)] = {"idea_id": idea_id, "revision": record["revision"], "brief_sha256": check["sha256"], "intact": True, "state": "open",
-                             "labels": [rules.SHAPE_IDEA_LABEL, label], "verdict_found": True if wanted_verdict else None, "read_at": host.now(None)}
+                             "labels": [rules.SHAPE_IDEA_LABEL, label], "verdict_found": (not relayed) if wanted_verdict else None, "read_at": host.now(None)}
         ideas.save_ledger(ledger)
     with ideas.held(idea_id):
         record = ideas.load(idea_id)
         record["issue"] = {"number": number, "state": (record.get("issue") or {}).get("state", "open")}
         ideas.save(record)
     return {"saved_to": "github", "issue": number, "url": rules.issue_url(repository, number), "revision": record["revision"], "state_label": label,
-            "verdict_posted": bool(wanted_verdict), "by": channel.login}
+            "verdict_posted": bool(wanted_verdict) and not relayed, "by": channel.login,
+            **({"verdict_by": wanted_verdict["by"], "warned": [relayed]} if relayed else {})}
 
 
 def remember(ledger: Dict[str, Any], listed: Sequence[Dict[str, Any]], rules: Any) -> None:
@@ -1407,19 +1423,46 @@ def cmd_verdict_record(host: Any, studio: Any, args: argparse.Namespace) -> Dict
 def cmd_idea_publish(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str, Any]:
     ideas = Ideas(host, studio)
     studio.prepare()
-    saved = publish(ideas, args.idea_id)
+    idea_id, done, renumbered = args.idea_id, [], None
+    for _ in range(4):
+        try:
+            saved = publish(ideas, idea_id)
+            break
+        except IdeaNumberTaken as exc:
+            # Never blocked: the product manager's idea gets the next free number and is published under it, in the same act.
+            try:
+                moved = renumber_idea(ideas, idea_id)["renumbered"]
+            except ShapeError as inner:
+                raise ShapeError(f"{exc} {inner}", getattr(inner, "app", None))
+            done.append(f"{idea_id} was already used on GitHub by another idea (#{exc.holder}), so MACH gave yours the next free number: "
+                        f"{idea_id} is now {moved['to']}; its brief, case and lookups moved with it.")
+            renumbered = {"from": args.idea_id, "to": moved["to"]}
+            idea_id = moved["to"]
+        except ShapeError as exc:
+            if not done:
+                raise
+            raise ShapeError(" ".join([*done, str(exc)]), " ".join([*done, getattr(exc, "app", None) or str(exc)]))
+    else:
+        raise ShapeError(" ".join(done) + " Every new number was taken on GitHub at once. Save it again: MACH tries the next free number.")
+    warned = [*done, *saved.pop("warned", [])]
+    lead = (" ".join(warned) + " ") if warned else ""
+    extra = {**({"idea_id": idea_id, "renumbered": renumbered} if done else {}), **({"warned": warned} if warned else {})}
     if saved["saved_to"] == "folder":
-        return {"published": True, **saved, "factory_authorized": False,
-                "note": "Saved to the folder in the workspace. Nothing was sent to GitHub, and nothing reaches the builders: the brief is for people."}
-    return {"published": True, **saved, "factory_authorized": False,
-            "note": f"Saved as issue #{saved['issue']}. The brief is its body" + (" and the verdict a comment on it." if saved["verdict_posted"] else ".")
+        return {"published": True, **saved, **extra, "factory_authorized": False,
+                "note": lead + "Saved to the folder in the workspace. Nothing was sent to GitHub, and nothing reaches the builders: the brief is for people."}
+    return {"published": True, **saved, **extra, "factory_authorized": False,
+            "note": lead + f"Saved as issue #{saved['issue']}. The brief is its body" + (" and the verdict a comment on it." if saved["verdict_posted"] else ".")
                     + " Nothing reaches the builders: the brief is for people."}
 
 
 def cmd_idea_renumber(host: Any, studio: Any, args: argparse.Namespace) -> Dict[str, Any]:
     """An idea never saved to GitHub takes the next free number: its record, brief, case and lookups move with it."""
-    ideas = Ideas(host, studio)
-    old = args.idea_id
+    return renumber_idea(Ideas(host, studio), args.idea_id)
+
+
+def renumber_idea(ideas: "Ideas", old: str) -> Dict[str, Any]:
+    """`idea renumber`'s act; also done by MACH itself when publishing finds the number taken (cmd_idea_publish)."""
+    host = ideas.host
     ledger = ideas.load_ledger()
     entry = ledger["ideas"].get(old) or {}
     if entry.get("saved") or entry.get("run") or entry.get("number"):
@@ -1431,27 +1474,53 @@ def cmd_idea_renumber(host: Any, studio: Any, args: argparse.Namespace) -> Dict[
         new = ideas.next_id()
         moves = [(ideas.brief_path(old), ideas.brief_path(new)), (ideas.case_path(old), ideas.case_path(new)), (ideas.lookups_path(old), ideas.lookups_path(new)),
                  (ideas.map_path(old), ideas.map_path(new))]
+        # Every mention of the old number moves with it, as slice renumber does: in the brief's and case's own text, and in every
+        # value of the record, the lookups and the map. A text changed only by that is the same text, so the SHA-256 that named it
+        # (a verdict's brief_sha256, a map's or lookups' brief_sha256) names the renamed text; the verdict's author is never touched.
+        texts = {source: source.read_text(encoding="utf-8") for source, _ in moves if source.is_file() and not source.is_symlink()}
+        renamed = {source: (text if source.suffix == ".json" else host.replace_id(text, old, new)) for source, text in texts.items()}
+        digests = {sha(texts[source]): sha(renamed[source]) for source in texts if renamed[source] != texts[source]}
+
+        def follow(value: Any) -> Any:
+            if isinstance(value, dict):
+                return {key: (value[key] if key == "by" else follow(value[key])) for key in value}
+            if isinstance(value, list):
+                return [follow(item) for item in value]
+            if isinstance(value, str):
+                return digests.get(value) or host.replace_id(value, old, new)
+            return value
+
         for source, target in moves:
-            if source.is_file() and not source.is_symlink():
-                text = source.read_text(encoding="utf-8")
-                if source.suffix == ".json":
-                    data = json.loads(text)
-                    if isinstance(data, dict) and data.get("idea_id") == old:
-                        data["idea_id"] = new
-                    text = host.canonical(data)
+            if source in texts:
+                text = host.canonical(follow(json.loads(texts[source]))) if source.suffix == ".json" else renamed[source]
                 host.write(target, text)
+        record = follow(record)
         record["idea_id"] = new
         ideas.save(record)
         for source, _ in moves:
             if source.is_file() and not source.is_symlink():
                 source.unlink()
         ideas.path(old).unlink()
+    # Other ideas' records that name it (an idea moved or started from this one) follow the new number too.
+    others = []
+    for other in ideas.ids():
+        if other == new:
+            continue
+        with ideas.held(other):
+            data = ideas.load(other)
+            text = host.canonical(data)
+            if host.replace_id(text, old, new) != text:
+                ideas.save(json.loads(host.replace_id(text, old, new)))
+                others.append(other)
     ledger["ideas"].pop(old, None)
     with ideas.ledger_held():
         fresh = ideas.load_ledger()
         fresh["ideas"].pop(old, None)
         ideas.save_ledger(fresh)
-    return {"renumbered": {"from": old, "to": new}, "factory_authorized": False}
+    import project_import  # the records of projects brought in here follow the new number, as for a slice
+    records = project_import.renamed_here(host, ideas.studio, old, new)
+    return {"renumbered": {"from": old, "to": new}, **({"also_changed": sorted(others) + records} if others or records else {}),
+            "factory_authorized": False}
 
 
 # ---- hooks for studio.py ----

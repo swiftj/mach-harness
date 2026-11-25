@@ -2349,8 +2349,8 @@ def settle_clashes(host: Any, studio: Any, found: Incoming, mapping: Dict[str, s
     """The slice numbers of the map against every slice ID in use outside the draft. A clashing slice takes the next free number
     (listed), and the files this import already placed under the old number that nobody has changed since (as its log says, or,
     after a stop between placing a file and logging it, with exactly the bytes it was placing) are to be removed: placing then puts
-    them under the new number, and replace_unchanged puts right the import's other files that name it. Only when a person has
-    changed such a file does it stop, with a sentence a product manager can act on. A slice of this project already marked ready
+    them under the new number, and replace_unchanged puts right the import's other files that name it. A file a person changed is
+    kept whole under .factory/studio/replaced/ first, and the words say where; it never stops. A slice of this project already marked ready
     is the same slice in the engineers' hands, never a clash. Returns (the map, what was renumbered, files to remove)."""
     other = elsewhere(studio)
     handed = set(studio.handoff().handed_over())
@@ -2359,23 +2359,24 @@ def settle_clashes(host: Any, studio: Any, found: Incoming, mapping: Dict[str, s
         return mapping, [], []
     earlier = earlier or {}
     remove: List[str] = []
+    kept_aside: Dict[str, str] = {}
     for old, new in clashes:
-        changed = False
         for rel, owner in sorted((first.owners if first else {}).items()):
             target = studio.draft / rel
             if owner != new or not target.is_file() or target.is_symlink():
                 continue
             here = sha(target.read_bytes())
             if rel in earlier and here != earlier[rel]:
-                changed = True
+                # Never blocked: a person changed this file, and the number is now another slice's. Their file is kept whole, aside,
+                # before it is removed; the import's file comes in under the new number, and the words say where theirs is.
+                import replaced
+                name = Path(rel).name
+                kept = replaced.keep(studio.home, host.write, f"import-{new}", {name: target.read_text(encoding="utf-8", errors="replace")},
+                                     {"what": "files", "about": f"the file you changed under {new} while a project was brought in", "to": {name: rel}})
+                kept_aside[new] = str(kept.relative_to(studio.project)) + "/"
+                remove.append(rel)
             elif here == earlier.get(rel, sha(first.files[rel])):
                 remove.append(rel)
-        if changed:
-            where = where_words(studio, other[new][0])
-            raise host.StudioError(
-                f"Bringing in stopped: {new} is the number this import gave {old} of the project {found.name}, and part of it is already here, "
-                f"but {where} now uses {new} for another slice. Ask the engineer working on it to give their slice another number, then bring "
-                "the same file in again. Or set this import aside: what it already brought in stays where it is.")
     used, reserved = studio.cell.slice_ids(studio.project)
     taken = {number(v) for v in mapping.values() if prefix(v) == "SLICE"} | set(used) | set(reserved) | {number(i) for i in other}
     taken |= {int(n) for n in studio.handoff().taken_ids()} | set(reserved_numbers(studio, "SLICE"))
@@ -2386,7 +2387,9 @@ def settle_clashes(host: Any, studio: Any, found: Incoming, mapping: Dict[str, s
         mapping[old] = project_ids._format("SLICE", free)  # noqa: SLF001
         moved.append({"id": old, "was_to_be": new, "now": mapping[old], "taken_by": where_words(studio, other[new][0]),
                       "words": f"{old} of the project was to be {new} here, but {where_words(studio, other[new][0])} now uses {new}, "
-                               f"so it is {mapping[old]}."})
+                               f"so it is {mapping[old]}."
+                               + (f" What you had changed in it under {new} is kept at {kept_aside[new]}; it comes in again as {mapping[old]}, as "
+                                  "the archive holds it." if new in kept_aside else "")})
         free += 1
     return mapping, moved, remove
 

@@ -65,6 +65,7 @@
           "question": null,
           "question_note": null,
           "shipped_issues": [],
+          "not_approved": null,
           "times": {
             "marked_ready": null,
             "building": null,
@@ -109,10 +110,10 @@
     "github": {
       "repository": "acme/team-space",
       "form": null,
-      "last_read": "2026-11-24T13:29:26Z"
+      "last_read": "2026-11-25T15:46:50Z"
     },
     "current_slice": "SLICE-001",
-    "last_refreshed": "2026-11-24T13:29:26Z",
+    "last_refreshed": "2026-11-25T15:46:50Z",
     "structurally_valid": true,
     "structural_errors": [],
     "factory_authorized": false,

@@ -643,9 +643,13 @@ class DispatchTest(Base):
         self.ready("SLICE-002", epic, depends=[first])
         self.product("reconcile")
         self.assertFalse((self.eng / ".factory/worktrees").exists())  # nothing dispatches without being asked
-        sent = self.product("dispatch", "SLICE-002")
-        self.assertEqual((sent["tickets"], sent["refused"][0]["state"]), ([], "blocked"))
-        self.assertIn("Not in the intake ledger", " ".join(self.product("dispatch", "SLICE-404")["refused"][0]["why"]).replace("It is not", "Not"))
+        self.assertEqual(self.product("dispatch", "--ready", "--limit", "0")["tickets"], [])
+        # An engineer who names a slice gets it (the owner's rule of 2026-11-25): a dependency not merged is a warning.
+        self.assertEqual(self.product("dispatch", "SLICE-002")["tickets"], [], "without the engineer's word the plan's rule holds")
+        sent = self.product("dispatch", "SLICE-002", "--by-person")
+        self.assertEqual(len(sent["tickets"]), 1)
+        self.assertIn("which is not merged yet", " ".join(sent["warnings"]))
+        self.assertIn("No approved slice called SLICE-404 was found", " ".join(self.product("dispatch", "SLICE-404", "--by-person")["refused"][0]["why"]))
 
     def test_a_received_copy_that_changed_is_never_used(self):
         number = self.ready("SLICE-001")

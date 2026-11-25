@@ -32,7 +32,7 @@ export function bySubject(needs: NeedsConversationClient): ConversationClient {
   return {
     current: (_subject, signal) => needs.current(signal),
     history: (_subject, signal) => needs.history(signal),
-    start: () => needs.start(),
+    start: (_subject, options) => needs.start(options),
     subscribe: needs.subscribe,
     reply: needs.reply,
     interrupt: needs.interrupt,

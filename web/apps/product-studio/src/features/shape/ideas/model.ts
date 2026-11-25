@@ -146,7 +146,7 @@ export function savedShown(github: IdeaGithubView): SavedShown {
     return { ...base, key: "unfinished", attention: true, word: "Saving stopped part way", description: "Saving it to GitHub did not finish. Save it again to finish; nothing is made twice.", tone: "warning", glyph: "blocked" };
   }
   if (github.number_taken) {
-    return { ...base, key: "number_taken", attention: true, word: "Number taken on GitHub", description: "Another idea on GitHub already uses this number. Give it a new one before saving.", tone: "warning", glyph: "blocked" };
+    return { ...base, key: "number_taken", attention: true, word: "Number taken on GitHub", description: "Another idea on GitHub already uses this number. Saving it gives it the next free number.", tone: "warning", glyph: "blocked" };
   }
   if (github.saved === "github") {
     return { ...base, key: "github", attention: false, word: "Saved on GitHub", description: "Saved as an issue others can read.", tone: "neutral", glyph: "submitted" };

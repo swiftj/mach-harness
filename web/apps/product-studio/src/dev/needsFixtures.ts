@@ -136,7 +136,8 @@ export const needsRuns = {
   "need.none.refused-has-need": refusal(needNoneRefusedHasNeed),
   "need.publish": run<NeedsPublishResult>(needPublish),
   "need.publish.again": run<NeedsPublishResult>(needPublishAgain),
-  "need.publish.refused-newer-elsewhere": refusal(needPublishRefusedNewerElsewhere),
+  // Never blocked: publishing over a newer version goes ahead, replacing it and keeping theirs (the file keeps its old name).
+  "need.publish.refused-newer-elsewhere": run<NeedsPublishResult>(needPublishRefusedNewerElsewhere),
   "need.publish.refused-none": refusal(needPublishRefusedNone),
   "need.retire": run<NeedChanged>(needRetire),
   "need.set": run<NeedChanged>(needSet),

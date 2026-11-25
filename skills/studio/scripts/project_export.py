@@ -502,13 +502,14 @@ def _no_project_here(host: Any, github: Dict[str, Any]) -> Tuple[Dict[str, Any],
     open_ = sorted((item for item in github["snapshot"]["projects"] if item["state"] == "open"), key=lambda item: item["number"])
     if not open_:
         raise refusal(host, f"There is no project here yet, and GitHub holds none for this repository, so there is nothing to export. {define}")
-    if len(open_) > 1:
-        raise refusal(host, handoff.several_projects([item["number"] for item in open_]).replace("so nothing was saved", "so nothing was exported"))
-    item = open_[0]
+    # Never blocked by a second project issue: the oldest one MACH can read is exported, and the warning says so.
+    readable = [found for found in open_ if handoff.parse_project_text(found) is not None and product.PROJECT_RE.fullmatch(str(found.get("id") or ""))]
+    if not readable:
+        item = open_[0]
+        raise refusal(host, f"There is no project here yet, and the project on GitHub (#{item['number']}) is not in the form MACH writes, so MACH "
+                            f"cannot read a name, vision and outcomes from it, and nothing was exported. {define} Then export again.")
+    item = readable[0]
     theirs = handoff.parse_project_text(item)
-    if theirs is None or not product.PROJECT_RE.fullmatch(str(item.get("id") or "")):
-        raise refusal(host, f"There is no project here yet, and the project on GitHub (#{item['number']}) is not in the form MACH writes, so it could "
-                            "not be taken and nothing was exported. Ask the person who looks after the repository to check it.")
     return ({"schema_version": 1, "project_id": item["id"], "name": theirs["name"], "revision": 1, "status": "draft",
              "vision": theirs["vision"], "outcomes": list(theirs["outcomes"])}, item["number"])
 
@@ -518,12 +519,18 @@ def _project_issue(github: Dict[str, Any], ledger: Dict[str, Any], project: Dict
     epics and slices are not this project's)."""
     projects = github["snapshot"]["projects"]
     several = sorted(item["number"] for item in projects if item["state"] == "open")
-    if len(several) > 1:
-        return None, handoff.several_projects(several).replace(" so nothing was saved.", " so nothing was taken from GitHub.")
     linked = (ledger.get("project") or {}).get("number") if ledger.get("repository") == github["repository"] else None
+    same = sorted(item["number"] for item in projects if item["id"] == project["project_id"] and item["state"] == "open")
+    if len(several) > 1:
+        # Never blocked by a second project issue: the one this workspace follows, else this project's oldest, as find_project.
+        if linked in several:
+            return linked, None
+        if same:
+            return same[0], None
+        return None, (f"This repository has more than one project issue on GitHub ({', '.join(f'#{n}' for n in several)}), and none of them is "
+                      f"{project['project_id']}, so nothing was taken from GitHub.")
     if linked in [item["number"] for item in projects]:
         return linked, None
-    same = sorted(item["number"] for item in projects if item["id"] == project["project_id"] and item["state"] == "open")
     other = [item for item in projects if item["id"] != project["project_id"] and item["state"] == "open"]
     if not same and other:
         return None, (f"This repository's project on GitHub is a different one ({other[0]['id']}, #{other[0]['number']}), so nothing was taken "
@@ -555,10 +562,10 @@ def _picture(host: Any, studio: Any, ref: str, slice_id: str, name: str) -> Opti
 
 GITHUB_PROBLEMS = {
     "not_ours": "{slice_id}: issue #{number} is not in the form Product Studio writes, so it is not in the archive.",
-    "edited": "{slice_id}: the text of #{number} was changed on GitHub after it was approved, so it is not in the archive. The product manager "
-              "who approved it can mark it ready again to put the approved version back; then export again.",
-    "no_approval": "{slice_id}: #{number} has no approval for the version it holds, so it is not in the archive. Marking it ready again on the "
-                   "computer where it was written gives it one; then export again.",
+    "edited": "{slice_id}: the text of #{number} was changed on GitHub after it was approved, so it is not in the archive. Open it here "
+              "(it opens as a draft), read it and mark it ready to approve this version; then export again.",
+    "no_approval": "{slice_id}: #{number} has no approval for the version it holds, so it is not in the archive. Open it here (it opens as a "
+                   "draft), read it and mark it ready to approve this version; then export again.",
 }
 
 
@@ -685,7 +692,8 @@ class _FromGitHub:
         chosen = github_epics.get(epic_id)
         if chosen is not None and chosen["number"] != epic_issue["number"]:
             return (f"belongs to {epic_id} on GitHub (#{epic_issue['number']}), and another epic on GitHub (#{chosen['number']}) holds {epic_id} "
-                    "too. Ask the person who looks after the repository to close the one that should not be there, then export again.")
+                    f"too. The archive holds #{chosen['number']} as {epic_id}. Closing #{epic_issue['number']} on GitHub changes "
+                    "nothing in your work; to bring this slice too, open it here and mark it ready under its own epic, then export again.")
         return None
 
     def vet(self, read: Dict[str, Any], slice_id: str, spec_name: Optional[str]) -> Tuple[Optional[str], Dict[str, Any]]:

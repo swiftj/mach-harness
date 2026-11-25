@@ -153,6 +153,41 @@ try:
 except Exception:  # noqa: BLE001
     lifecycle = None
 
+# A person may take any ticket over (claim.py, with the intent station): a worker whose holder a take-over displaced is refused at its
+# next call to this station. Every command takes --holder for that; without one, nothing is checked. If the helper cannot be
+# loaded, nothing is checked and this station behaves exactly as before.
+try:
+    import claim as _claim  # noqa: E402
+except Exception:  # noqa: BLE001
+    _claim = None
+
+
+def split_holder(parser: Any, argv: Optional[Sequence[str]]) -> Tuple[List[str], Optional[str]]:
+    items = list(sys.argv[1:] if argv is None else argv)
+    return _claim.station_argv(parser, items) if _claim is not None else (items, None)
+
+
+READS = ('status', 'next')  # commands that change nothing: a holderless call of one is never refused
+
+
+def taken_over(project: Optional[Path], ticket_id: Any, holder: Optional[str], command: Optional[str] = None) -> Optional[str]:
+    """The refusal for a displaced worker, or for a holderless call that changes something while a take-over stands; else None."""
+    return _claim.station_stop(project, ticket_id, holder, command, READS) if _claim is not None else None
+
+
+def guarded(project: Optional[Path], ticket_id: Any, holder: Optional[str], run: Any) -> Any:
+    """After a take-over, every station call first says, once, which commits were made outside MACH's stations since (claim.watch;
+    nothing is reset, and the reviewers see them), then records the commit it ends on as a station's (claim.record)."""
+    if _claim is None or project is None or not isinstance(ticket_id, str):
+        return run()
+    cell_dir = Path(project) / ".factory" / "worktrees" / ticket_id
+    said = _claim.watch(cell_dir, ticket_id)
+    if said:
+        print(f"warning: {said}", file=sys.stderr)
+    code = run()
+    _claim.record(cell_dir)
+    return code
+
 
 def telemetry(*args: Any, **kwargs: Any) -> None:
     """Report what this station has just recorded to the cell's lifecycle log. Never raises."""
@@ -923,7 +958,7 @@ def ensure_isolated(cell: Cell) -> None:
         exclude.parent.mkdir(parents=True, exist_ok=True)
         with exclude.open("a", encoding="utf-8") as handle:
             handle.write("\n" + EXCLUDE_LINE + "\n")
-    branch = f"feature/{cell.ticket_id}"
+    branch = cell.info.get("branch") or f"feature/{cell.ticket_id}"  # a taken-over slice's own branch (feature/<ticket>-<name>) is kept
     if workspace is None:
         raise BuildError("The intent station's workspace.py is not installed beside this skill, so the ticket's workspace cannot be made.", code="worktree-failed")
     try:  # the same sparse worktree cell.py open makes: it never holds .claude/ or .mcp.json
@@ -2700,7 +2735,8 @@ def cmd_lanes_open(cell: Cell, args: argparse.Namespace) -> int:
         if not candidates:
             if held:
                 raise BuildError(f"Every lane left ({', '.join(held)}) is being built by another holder, whose builder called the station less "
-                                 f"than factory.claim_minutes ({minutes}) ago. Wait for it, or a person takes it over with --take-over.",
+                                 f"than factory.claim_minutes ({minutes}) ago. This caller is not a person, so it starts no builder in them; a person who names "
+                                 "the ticket takes them over at once (run.py lanes-start, which passes --take-over for a person).",
                                  code="lane-held")
             save_shared(cell)
             print(json.dumps({"status": "NONE_LEFT", "lanes": [], "why": f"Every lane is done ({', '.join(done)}).",
@@ -3365,14 +3401,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    argv, holder = split_holder(parser, argv)
+    args = parser.parse_args(argv)
     for name in ("allow_extra", "amend_test", "covered", "no_baseline", "written_early", "unrelated_failure", "already_done", "not_a_secret"):
         if not hasattr(args, name):
             setattr(args, name, None)
     project = None
     try:
         project = args.project.resolve() if args.project else find_project(Path.cwd())
-        return args.func(Cell(project, args.ticket_id), args)
+        stop = taken_over(project, args.ticket_id, holder, args.command)
+        if stop:
+            raise BuildError(stop, code="taken-over")
+        return guarded(project, args.ticket_id, holder or getattr(args, "holder", None), lambda: args.func(Cell(project, args.ticket_id), args))
     except BuildError as exc:
         print(f"refused: {exc}", file=sys.stderr)
         if project is not None and args.command not in ("next", "status", "lanes"):

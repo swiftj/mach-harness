@@ -4,15 +4,15 @@
  * web/fixtures/team_memory.py on two product managers' clones of one repository (Ada and Ben; the app is Ben's unless
  * said). It remembers what the person did on the page, so each state can be walked to its end; reloading starts again.
  *
- *   ?team=same-moment#/slices/SLICE-001      Ben's SLICE-001 was refused at "mark ready": Ada's issue was made at the same
- *                                            moment, first, and keeps the number. Mark it ready (refused, with the new-number
- *                                            act), give it a new number (SLICE-002), mark it ready again.
- *   ?team=epic-same-moment#/slices/SLICE-002 The same for the epic: Ben's EPIC-001 ("Billing") lost to Ada's. Mark SLICE-002
- *                                            ready (refused), give EPIC-001 a new number, mark it ready again.
+ *   ?team=same-moment#/slices/SLICE-001      Ben marks SLICE-001 ready at the same moment as Ada's, which GitHub made first and
+ *                                            which keeps the number. Never blocked: his issue is closed, and in the same act
+ *                                            his draft becomes SLICE-002 and is marked ready, the note saying so first.
+ *   ?team=epic-same-moment#/slices/SLICE-002 The same for the epic: Ben's EPIC-001 ("Billing") loses to Ada's. Marking
+ *                                            SLICE-002 ready gives his epic EPIC-002 and marks the slice ready, in one act.
  *   ?team=twice-kept#/                       A number held by two open issues, found by a refresh: Ada's view (hers kept).
  *   ?team=twice-closed#/                     Ben's view: his later issue was closed by MACH; his slice needs a new number.
  *   ?team=twice-builders#/                   Ben's later issue was already taken by the builders: reported, left alone.
- *   ?team=several#/                          Two project issues: refresh reports them; marking ready is refused (SLICE-002).
+ *   ?team=several#/                          Two project issues: refresh reports them; marking ready carries on, warning (SLICE-002).
  *   ?team=text-taken#/                       A refresh took Ada's new criteria for EPIC-001 into Ben's workspace.
  *   ?team=text-taken&show=ready#/slices/SLICE-001   Marking ready took the project's and epic's text instead of writing over it.
  *   ?team=project-changed#/                  Both changed the vision: "Carry on" leads to the choice on Vision. Keep mine or
@@ -25,7 +25,7 @@
  *                                            the home's refresh has read GitHub (#/), the start screen and the form say so
  *                                            before anything is typed.
  *   ?team=start-not-checked#/vision          Naming it while GitHub cannot be read.
- *   ?team=start-several#/vision              Two project issues on GitHub: naming it is refused, naming both.
+ *   ?team=start-several#/vision              Two project issues on GitHub: naming it takes the oldest, warning.
  *   ?team=prd-not-checked#/prds/PRD-01       Making a PRD's drafts while GitHub cannot be read.
  *   ?team=idea-not-checked&idea=settled&fixture=status.ideas-apply#/shape/ideas/IDEA-001/route
  *                                            Making an idea's drafts while GitHub cannot be read.
@@ -60,16 +60,16 @@ function answer(name: string): TransportResponse {
 }
 
 /** What the person did on this page. */
-const done = { renumbered: false, epicRenumbered: false, ready: false, took: null as "mine" | "theirs" | null, named: false, applied: false, refreshed: false };
+const done = { ready: false, took: null as "mine" | "theirs" | null, named: false, applied: false, refreshed: false };
 
 export const teamScenario = (): string | null => devParam("team");
 
 function statusFor(team: string): string | null {
   switch (team) {
     case "same-moment":
-      return done.ready ? "status.team-renumbered-ready" : done.renumbered ? "status.team-renumbered" : "status.team-same-moment";
+      return done.ready ? "status.team-same-moment" : "status.team-before-same-moment";
     case "epic-same-moment":
-      return done.epicRenumbered ? "status.team-epic-renumbered" : "status.team-epic-same-moment";
+      return done.ready ? "status.team-epic-same-moment" : "status.team-before-epic-same-moment";
     case "twice-kept":
     case "twice-closed":
     case "twice-builders":
@@ -132,27 +132,19 @@ export function teamRoute(path: string, args: Record<string, unknown>): Transpor
       return name ? answer(name) : null;
     }
     case "slice.show":
-      if (team === "same-moment") return answer(sliceId === "SLICE-001" && !done.renumbered ? "slice.show.team-same-moment" : "slice.show.team-renumbered");
-      if (team === "epic-same-moment") return answer("slice.show.team-epic-same-moment");
+      if (team === "same-moment") return answer(done.ready || sliceId === "SLICE-002" ? "slice.show.team-same-moment" : "slice.show.team-before-same-moment");
+      if (team === "epic-same-moment") return answer(done.ready ? "slice.show.team-epic-same-moment" : "slice.show.team-before-epic-same-moment");
       if (team === "twice-closed") return answer("slice.show.team-twice-closed");
       return null;
     case "slice.ready":
-      if (team === "same-moment") {
-        if (sliceId === "SLICE-001") return answer("slice.ready.team-same-moment");
+      if (team === "same-moment" || team === "epic-same-moment") {
         done.ready = true;
-        return answer("slice.ready.team-renumbered");
+        return answer(`slice.ready.team-${team}`);
       }
-      if (team === "epic-same-moment") return answer(done.epicRenumbered ? "slice.ready.team-epic-renumbered" : "slice.ready.team-epic-same-moment");
       if (team === "several") return answer("slice.ready.team-several");
       if (team === "text-taken") return answer("slice.ready.team-text-taken");
       if (team === "project-changed") return answer("slice.ready.team-text-changed");
       return null;
-    case "slice.renumber":
-      done.renumbered = true;
-      return answer("slice.renumber.team-same-moment");
-    case "epic.renumber":
-      done.epicRenumbered = true;
-      return answer("epic.renumber.team-epic-same-moment");
     case "reconcile": {
       const take = args.take === "theirs" ? "theirs" : "mine";
       if (team === "project-unreadable") {

@@ -6,13 +6,13 @@
       "epic_id": "EPIC-001",
       "open_questions": [],
       "project_id": "team-space",
-      "revision": 3,
+      "revision": 1,
       "schema_version": 1,
       "slice_id": "SLICE-002",
       "spec_path": "specs/slices/SLICE-002-invite-teammate.md",
       "spec_sha256": null,
-      "status": "ready_for_approval",
-      "title": "Remove a teammate"
+      "status": "draft",
+      "title": "Send an invoice"
     },
     "editable": true,
     "edit_refusal": null,
@@ -683,7 +683,7 @@
       },
       "title": "Invite a teammate by email",
       "shipped": {
-        "commit": "e9646758b93713168e72aaf78171f2456e58f531",
+        "commit": "52115d8935d9c11e13dccd9e0fbe244c4202b36a",
         "branch": "main",
         "rules": 0,
         "notes": [
@@ -709,13 +709,14 @@
       "question": null,
       "question_note": null,
       "shipped_issues": [],
+      "not_approved": null,
       "times": {
         "marked_ready": null,
         "building": null,
         "question": null,
         "shipped": null
       },
-      "progress": "ready_for_approval"
+      "progress": "draft"
     },
     "factory_authorized": false
   },

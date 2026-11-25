@@ -8,6 +8,8 @@ package interview
 import (
 	"context"
 	"errors"
+	"fmt"
+	"time"
 )
 
 // Errors the server maps to envelope kinds.
@@ -18,11 +20,19 @@ var (
 
 // ConflictError: the slice's lock is held, a turn is running, or the interview has ended.
 // InterviewID is set when this host itself is running the slice's interview: the app can attach
-// to that interview instead of starting one.
+// to that interview instead of starting one. TakeOver is set when a live process elsewhere on this
+// computer holds the lock: Message is the warning, and starting again with TakeOver continues here.
 type ConflictError struct {
 	Message     string
 	InterviewID string
+	TakeOver    bool
+	// Running: the interviewer is writing its reply. Message is the warning (ReplyWhileRunning); the
+	// same reply with interrupt stops that turn and is sent.
+	Running bool
 }
+
+// ReplyWhileRunning is the warning when the product manager replies while the interviewer writes.
+const ReplyWhileRunning = "The interviewer is still writing its reply. Sending yours stops it first."
 
 func (e *ConflictError) Error() string { return e.Message }
 
@@ -45,6 +55,10 @@ type StartRequest struct {
 	PrdID  string
 	EpicID string
 	Idea   string
+	// TakeOver: continue here although another process holds the subject's lock. This host's own
+	// interview is ended first and resumed here; another live process keeps writing too (the
+	// warning said so). A lock whose process is gone is taken without it.
+	TakeOver bool
 	// BuildersQuestion is the builders' question the engine reports on the slice (slice show). The
 	// host never sends its text to the interviewer: an opening turn says only that there is one,
 	// and the interviewer reads it from `slice resume`, fenced as data.
@@ -86,15 +100,18 @@ type Message struct {
 // Current answers GET /api/interview?slice_id=...: the live interview for a slice, or what is
 // saved of the last one, so the app can resume after a reload or a host restart.
 type Current struct {
-	InterviewID     *string  `json:"interview_id"` // null when no interview is live in this host
-	SliceID         string   `json:"slice_id,omitempty"`
-	IdeaID          string   `json:"idea_id,omitempty"` // M16: the Shape conversation's idea
-	Needs           bool     `json:"needs,omitempty"`   // M17: the needs conversation
-	PrdID           string   `json:"prd_id,omitempty"`  // M19: the PRD conversation's PRD
-	Live           bool     `json:"live"`
-	State           string   `json:"state"` // a state event's value, or "saved" when not live
-	TurnRunning     bool     `json:"turn_running"`
-	LockedElsewhere bool     `json:"locked_elsewhere"` // another host or terminal holds the slice
+	InterviewID     *string `json:"interview_id"` // null when no interview is live in this host
+	SliceID         string  `json:"slice_id,omitempty"`
+	IdeaID          string  `json:"idea_id,omitempty"` // M16: the Shape conversation's idea
+	Needs           bool    `json:"needs,omitempty"`   // M17: the needs conversation
+	PrdID           string  `json:"prd_id,omitempty"`  // M19: the PRD conversation's PRD
+	Live            bool    `json:"live"`
+	State           string  `json:"state"` // a state event's value, or "saved" when not live
+	TurnRunning     bool    `json:"turn_running"`
+	LockedElsewhere bool    `json:"locked_elsewhere"` // another host or terminal holds the slice
+	// TakeOverWarning: while LockedElsewhere, the warning to show before the app offers to take it
+	// over (POST /api/interview with take_over: true).
+	TakeOverWarning string   `json:"take_over_warning,omitempty"`
 	LastMessage     *Message `json:"last_message"`
 	Turns           int      `json:"turns"`
 	SessionCostUSD  float64  `json:"session_cost_usd"`
@@ -132,8 +149,11 @@ type Bridge interface {
 	// History is the slice's saved interview events (HistoryEvent), oldest first, across
 	// interviews and host restarts, and whether older ones were dropped.
 	History(sliceID string) ([]HistoryEvent, bool, error)
-	// Busy: a turn is running for this slice, so its draft must not be written by anyone else.
+	// Busy: a turn is running for this slice, so its draft is being written.
 	Busy(sliceID string) bool
+	// InterruptSubject stops the running turn of this slice's interview, if there is one, and
+	// waits for it to end, so the product manager's own edit can be written.
+	InterruptSubject(ctx context.Context, sliceID string) error
 	// Shutdown stops every running turn and ends every interview with reason host_shutdown.
 	Shutdown(ctx context.Context)
 }
@@ -170,11 +190,55 @@ func (Unavailable) Current(string) (*Current, error) { return nil, ErrUnavailabl
 func (Unavailable) Subscribe(string, int64) ([]Event, <-chan Event, func(), error) {
 	return nil, nil, nil, ErrUnavailable
 }
-func (Unavailable) Reply(context.Context, string, string) error { return ErrUnavailable }
-func (Unavailable) Interrupt(context.Context, string) error     { return ErrUnavailable }
-func (Unavailable) Stop(context.Context, string) error          { return ErrUnavailable }
-func (Unavailable) Busy(string) bool                            { return false }
+func (Unavailable) Reply(context.Context, string, string) error    { return ErrUnavailable }
+func (Unavailable) Interrupt(context.Context, string) error        { return ErrUnavailable }
+func (Unavailable) Stop(context.Context, string) error             { return ErrUnavailable }
+func (Unavailable) Busy(string) bool                               { return false }
+func (Unavailable) InterruptSubject(context.Context, string) error { return nil }
 func (Unavailable) History(string) ([]HistoryEvent, bool, error) {
 	return []HistoryEvent{}, false, nil
 }
 func (Unavailable) Shutdown(context.Context) {}
+
+// lockHolder is what a held lock file says about the process holding it. PID is 0 when it left no
+// readable record; Alive is false only when that process is known to be gone.
+type lockHolder struct {
+	PID   int
+	Since string
+	Alive bool
+}
+
+// SubjectName is how the product manager knows the subject in a sentence.
+func SubjectName(subject string) string {
+	if IsNeeds(subject) {
+		return "the technical needs"
+	}
+	return subject
+}
+
+// TakeOverWarning is said before a second writer starts on a subject another live process holds.
+func TakeOverWarning(subject string, holder lockHolder) string {
+	who := ""
+	if holder.PID > 0 {
+		who = fmt.Sprintf(" (process %d", holder.PID)
+		if since := clockTime(holder.Since); since != "" {
+			who += ", since " + since
+		}
+		who += ")"
+	}
+	return "Another window on this computer is writing " + SubjectName(subject) + " right now" + who + ". " +
+		"Continuing here means two writers: the draft keeps whichever saves last, and the other's last turn stays in the history."
+}
+
+// clockTime shows a recorded time as the local clock time, with the date when it was not today.
+func clockTime(recorded string) string {
+	at, err := time.Parse(time.RFC3339, recorded)
+	if err != nil {
+		return ""
+	}
+	local, today := at.Local(), time.Now()
+	if local.YearDay() == today.YearDay() && local.Year() == today.Year() {
+		return local.Format("15:04")
+	}
+	return local.Format("2 Jan 15:04")
+}

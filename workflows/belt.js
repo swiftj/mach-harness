@@ -26,6 +26,12 @@ const until = typeof options.until === 'string' ? options.until : ''
 const limit = Number.isInteger(options.limit) && options.limit >= 1 ? options.limit : 0
 const sequential = options.sequential === true
 const byPerson = options.by_person === true && limit > 0
+// A person named these tickets (run.py schedule --named put it in workflow_args): each ticket's first `next` says so (--by-person),
+// so work another worker has is taken over once, with a warning. Later calls are routine and take nothing over.
+const named = options.named === true
+// The person's word is passed once per ticket per run: a ticket taken over by someone else later in this run is stopped and
+// reported, never taken back without a person naming it again.
+const namedOnce = new Set()
 if (!tickets.length) {
   return { error: 'Pass the ticket IDs to run, for example ["LOCAL-001", "LOCAL-002"].' }
 }
@@ -44,6 +50,7 @@ const STEP = {
     action: { type: 'string', enum: ACTIONS }, stop: { type: 'boolean' }, reason: text, stage: text, needs: text,
     agent_type: { type: 'string', enum: ['', ...AGENT_TYPES], description: 'the "agent_type" field exactly, or an empty string when it is null or absent' },
     model: text, prompt: text,
+    warnings: { type: 'array', items: text, description: 'the "warnings" list exactly (what was taken over, said first), or an empty list' },
   },
   required: ['action', 'stop', 'reason', 'agent_type'],
 }
@@ -281,7 +288,7 @@ const RUN = `${where.python || 'python3'} "${where.run_script}" --project "${whe
 // One holder for this whole run: every `next` claims its step for it, and `schedule` holds only tickets another
 // worker has claimed. Without a usable one the run claims nothing, and run.py still refuses a step another worker holds.
 const HOLDER = cleanHolder(where.holder)
-if (!HOLDER) log('No usable holder came back from run.py where, so this run claims no steps; a ticket another worker holds is still refused.')
+if (!HOLDER) log('No usable holder came back from run.py where, so each step is claimed for a new holder only when another worker has it.')
 
 function clerk(command, schema, label, phase) {
   return agent(
@@ -379,13 +386,22 @@ async function runTicket(ticket, prepare) {
   let last = ''
   let repeats = 0
   for (let i = 0; i < MAX_STEPS; i++) {
-    const read = cleanStep(await clerk(`next ${ticket} --headless`, STEP, `${ticket}: what next?`, 'Preflight'), AGENT_TYPES)
+    const sayNamed = named && !namedOnce.has(ticket)
+    if (sayNamed) namedOnce.add(ticket)
+    const asked = await clerk(`next ${ticket} --headless${sayNamed ? ' --by-person' : ''}`, STEP, `${ticket}: what next?`, 'Preflight')
+    // A ticket a person named is never refused because another worker has it: run.py takes the step over and says so first.
+    for (const warning of (asked && Array.isArray(asked.warnings) ? asked.warnings : []).slice(0, 5)) log(`${ticket}: ${String(warning).slice(0, 400)}`)
+    const read = cleanStep(asked, AGENT_TYPES)
     if (read.error) {
       return { ticket, outcome: 'error', reason: `the next step could not be read: ${read.error}`, stations: done }
     }
     if (read.note) log(`${ticket}: ${read.note}`)
     const step = read.step
     if (step.stop || step.action === 'stop') {
+      if (step.needs === 'taken-over') {
+        // Another person took this ticket over: this run's part stops here, and only a person naming it again takes it back.
+        return { ticket, outcome: 'taken-over', stage: step.stage || '', waiting_for: 'nothing: a person took it over', reason: step.reason, stations: done }
+      }
       return { ticket, outcome: 'stopped', stage: step.stage || '', waiting_for: step.needs || '', reason: step.reason, stations: done }
     }
     if (until && step.action === until) {
@@ -440,7 +456,7 @@ if (status && (status.audit_state === 'missing' || status.audit_state === 'stale
 // ones, do not run together. run.py schedule decides what may start; this pool only asks it again whenever a ticket
 // finishes, and starts what it names.
 function scheduleCommand(pending, running) {
-  const flags = sequential ? ' --sequential' : limit ? ` --limit ${limit}${byPerson ? ' --by-person' : ''}` : ''
+  const flags = (sequential ? ' --sequential' : limit ? ` --limit ${limit}${byPerson ? ' --by-person' : ''}` : '') + (named ? ' --named' : '')
   return `schedule ${pending.join(' ')}${running.length ? ' --running ' + running.join(' ') : ''}${flags}`
 }
 
@@ -526,5 +542,6 @@ return {
   waiting_on_a_person: report.filter(r => r.outcome === 'stopped' && r.waiting_for !== 'nothing').map(r => `${r.ticket}: ${r.waiting_for || r.reason}`),
   finished: report.filter(r => r.outcome === 'stopped' && r.waiting_for === 'nothing').map(r => r.ticket),
   held: report.filter(r => r.outcome === 'held').map(r => `${r.ticket}: ${r.reason}`),
-  problems: report.filter(r => r.outcome !== 'stopped' && r.outcome !== 'held').map(r => `${r.ticket}: ${r.reason}`),
+  taken_over: report.filter(r => r.outcome === 'taken-over').map(r => `${r.ticket}: ${r.reason}`),
+  problems: report.filter(r => r.outcome !== 'stopped' && r.outcome !== 'held' && r.outcome !== 'taken-over').map(r => `${r.ticket}: ${r.reason}`),
 }

@@ -9,9 +9,9 @@ import { routeFor, routeForHint } from "../src/api/nextActions.ts";
 const run = (name) => JSON.parse(readFileSync(new URL(`../../../fixtures/${name}.json`, import.meta.url), "utf8"));
 
 test("someone else's newer principles: the hint leads to the principles page, not the inbox", () => {
-  const refused = run("principle.publish.refused-newer-elsewhere");
-  assert.deepEqual(refused.hint, { kind: "reconcile", target: "principles" });
-  assert.deepEqual(routeForHint(refused.hint), { type: "navigate", to: "/principles", label: "Choose a version of the principles" });
+  // Publishing no longer stops for it (never blocked); the next action still offers the choice for a PM who wants theirs.
+  assert.equal(run("principle.publish.refused-newer-elsewhere").exit_code, 0);
+  assert.deepEqual(routeForHint({ kind: "reconcile", target: "principles" }), { type: "navigate", to: "/principles", label: "Choose a version of the principles" });
   assert.equal(routeForHint({ kind: "reconcile", target: "SLICE-002" }).to, "/inbox", "a slice's newer version is still chosen in the inbox");
 });
 

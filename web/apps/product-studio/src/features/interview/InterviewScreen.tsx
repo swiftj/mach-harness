@@ -9,7 +9,6 @@ import {
   EmptyState,
   ErrorState,
   Heading,
-  HintAction,
   LoadingState,
   Page,
   RichText,
@@ -33,6 +32,8 @@ import { useSliceShow } from "../../api/useSliceShow";
 import { useStatus } from "../../api/store";
 import { MarkReadyDialog } from "../spec/SliceActs";
 import { BuildersQuestion } from "../../shared/BuildersQuestion";
+import { TakeOverBanner } from "../../shared/TakeOverBanner";
+import { ConversationProblem } from "../../shared/ConversationProblem";
 import { Fold } from "../../shared/layout/Fold";
 import { ContextRow, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
 
@@ -214,10 +215,7 @@ function Current({ iv, busy, sliceId, show, onApproved }: { iv: InterviewControl
       );
     case "conflict":
       return (
-        <Banner tone="warning" title="The interview cannot be opened here" actions={<Button onClick={iv.retryLoad}>Check again</Button>}>
-          {/* The host's own words when it gave them; otherwise the fact the lookup reported. */}
-          {iv.problem?.kind === "conflict" ? iv.problem.message : "Another process holds this slice's interview."}
-        </Banner>
+        <TakeOverBanner conv={iv} subject={sliceId} />
       );
     case "refused":
     case "error": {
@@ -346,15 +344,7 @@ function Current({ iv, busy, sliceId, show, onApproved }: { iv: InterviewControl
           {last.text}
         </Banner>
       ) : null}
-      {iv.problem ? (
-        <Banner
-          tone="danger"
-          title={iv.problem.kind === "conflict" ? "The interviewer is still working on a reply" : describeError(iv.problem).title}
-          actions={iv.problem.hint ? <HintAction hint={iv.problem.hint} /> : undefined}
-        >
-          {iv.problem.kind === "conflict" ? "Wait for it to finish, or interrupt it." : iv.problem.message}
-        </Banner>
-      ) : null}
+      {iv.problem ? <ConversationProblem problem={iv.problem} who="The interviewer" /> : null}
       {body}
       <div className="sr-only" aria-live="polite">
         {announce}

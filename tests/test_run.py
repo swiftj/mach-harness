@@ -480,7 +480,7 @@ class WorkflowScriptTest(unittest.TestCase):
             self.assertNotIn(banned, body)
 
     def test_the_script_never_decides_the_order_itself(self):
-        self.assertIn("clerk(`next ${ticket} --headless`", self.SCRIPT)
+        self.assertIn("clerk(`next ${ticket} --headless", self.SCRIPT)
         self.assertIn("/mach:run where", self.SCRIPT)
         self.assertIn("is_mach_project !== true", self.SCRIPT)
         self.assertNotIn("name: 'run'", self.SCRIPT, "the workflow must not share a name with the run skill")
@@ -970,7 +970,11 @@ workflow(ARGS, agent, parallel, null, phase, log, null).then(result => process.s
         self.assertIn("if (prepare && step.action === prepare)", self.SCRIPT)
 
     def test_the_belt_uses_only_cleaned_steps_and_a_strict_schema(self):
-        self.assertIn("const read = cleanStep(await clerk(`next ${ticket} --headless`, STEP", self.SCRIPT)
+        self.assertIn("const asked = await clerk(`next ${ticket} --headless${sayNamed ? ' --by-person' : ''}`, STEP", self.SCRIPT)
+        self.assertIn("const named = options.named === true", self.SCRIPT, "only a run a person named passes the person's word")
+        self.assertIn("const sayNamed = named && !namedOnce.has(ticket)", self.SCRIPT, "once per ticket per run, never again after a take-over")
+        self.assertIn("if (step.needs === 'taken-over')", self.SCRIPT, "a ticket taken over mid-run is stopped and reported")
+        self.assertIn("const read = cleanStep(asked, AGENT_TYPES)", self.SCRIPT)
         self.assertIn("enum: ['', ...AGENT_TYPES]", self.SCRIPT)
         for name in ("builder", "contract-engineer", "verifier", "reviewer"):
             self.assertTrue((ROOT / "agents" / f"{name}.md").is_file(), name)

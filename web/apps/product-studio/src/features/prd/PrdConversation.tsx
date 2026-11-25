@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CircleAlert, Square, WifiOff } from "lucide-react";
-import { Banner, Button, CommandLine, ErrorState, Heading, HintAction, LoadingState, RichText, Spinner, Text, Tooltip, describeError } from "@mach/ui";
+import { Banner, Button, CommandLine, ErrorState, Heading, LoadingState, RichText, Spinner, Text, Tooltip, describeError } from "@mach/ui";
 import { loadSession } from "../../api/session";
 import { ExploreTranscript } from "../shape/explore/ExploreTranscript";
 import { ReplyField, conversationBusy, useNewestInView } from "../shape/explore/Conversation";
 import type { ConversationController } from "./usePrdConversation";
 import { prdCommand } from "./model";
+import { TakeOverBanner } from "../../shared/TakeOverBanner";
+import { ConversationProblem } from "../../shared/ConversationProblem";
 
 /**
  * The PRD conversation (M19), inside the map part of a PRD's page: MACH reads the PRD, proposes its epics and thin
@@ -75,11 +77,7 @@ function Current({ prdId, conv, busy, hasMap }: { prdId: string; conv: Conversat
     case "unavailable":
       return <InClaudeCode prdId={prdId} reason={conv.capability?.reason ?? null} />;
     case "conflict":
-      return (
-        <Banner tone="warning" title="The conversation cannot be opened here" actions={<Button onClick={conv.retryLoad}>Check again</Button>}>
-          {conv.problem?.kind === "conflict" ? conv.problem.message : `Another window or process holds the conversation about ${prdId}.`}
-        </Banner>
-      );
+      return <TakeOverBanner conv={conv} subject={prdId} />;
     case "refused":
     case "error": {
       const error = conv.problem;
@@ -165,15 +163,7 @@ function Current({ prdId, conv, busy, hasMap }: { prdId: string; conv: Conversat
   }
   return (
     <div className="flex flex-col gap-5">
-      {conv.problem ? (
-        <Banner
-          tone="danger"
-          title={conv.problem.kind === "conflict" ? "MACH is still working on a reply" : describeError(conv.problem).title}
-          actions={conv.problem.hint ? <HintAction hint={conv.problem.hint} /> : undefined}
-        >
-          {conv.problem.kind === "conflict" ? "Wait for it to finish, or interrupt it." : conv.problem.message}
-        </Banner>
-      ) : null}
+      {conv.problem ? <ConversationProblem problem={conv.problem} /> : null}
       {body}
     </div>
   );

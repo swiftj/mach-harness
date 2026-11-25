@@ -265,15 +265,18 @@ class PickTest(RequestBase):
         self.assertEqual(listed["slices"], [slice_id])
         self.assertTrue(listed["picked_up_here"])
 
-    def test_already_picked_up_needs_also(self):
+    def test_already_picked_up_is_picked_up_as_well_with_a_warning(self):
+        """Never blocked: a request someone already picked up is picked up again, with no --also and no second question."""
         self.ready(self.a)
         self.request(self.a)
         self.pick()
-        err = self.refused(self.a, "request", "pick", "42", "--epic", "EPIC-001", "--title", "Second")
-        self.assertIn("Already picked up by @ada-pm", err)
-        second = self.pick(None, "--also")
+        second = self.ok(self.a, "request", "pick", "42", "--epic", "EPIC-001", "--title", "Second")
+        self.assertEqual(second["warned"], ["@ada-pm has also picked this up."])
+        self.assertTrue(second["note"].startswith("@ada-pm has also picked this up. A draft slice was started from the request."))
         self.assertEqual(len(self.comments()), 2)
         self.assertNotEqual(second["slice"]["slice_id"], "SLICE-001")
+        third = self.pick(None, "--also")  # --also still works
+        self.assertNotIn(third["slice"]["slice_id"], ("SLICE-001", second["slice"]["slice_id"]))
 
     def test_repeated_pick_never_comments_twice(self):
         self.ready(self.a)

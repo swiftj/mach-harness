@@ -207,18 +207,99 @@ func TestAnInterviewOverHTTP(t *testing.T) {
 	expect(t, status, env, 404, engine.KindInvalid)
 }
 
-func TestDraftWritesWaitForARunningTurn(t *testing.T) {
+// A draft edit while the interviewer writes is warned about once; the same edit with interrupt
+// stops the reply and is written.
+func TestADraftEditWhileTheInterviewerWritesIsWarnedThenApplied(t *testing.T) {
 	h, _ := withClaude(t, testkit.Turn{Kind: "slow", Sleep: 60})
 	h.login()
 	h.startSlice()
 	id := h.startInterview(`{"slice_id":"SLICE-001"}`)
 	status, env := h.call("PUT", "/api/drafts/spec/SLICE-001", specBody(t, "invite-teammate"), nil)
 	expect(t, status, env, 409, engine.KindConflict)
-	if status, env := h.call("POST", "/api/interview/"+id+"/interrupt", `{}`, nil); status != 200 || !env.OK {
-		t.Fatalf("interrupt: %d %+v", status, env.Error)
+	if env.Error.Message != "The interviewer is writing SLICE-001's draft right now. Saving stops its reply first, and your edit replaces what it wrote." ||
+		string(env.Error.Hint) != `{"kind":"interrupt_turn","target":"SLICE-001"}` {
+		t.Fatalf("the warning: %q %s", env.Error.Message, env.Error.Hint)
 	}
-	if status, env := h.call("PUT", "/api/drafts/spec/SLICE-001", specBody(t, "invite-teammate"), nil); status != 200 || !env.OK {
-		t.Fatalf("after the interrupt: %d %+v", status, env.Error)
+	var body map[string]any
+	json.Unmarshal([]byte(specBody(t, "invite-teammate")), &body)
+	body["interrupt"] = true
+	raw, _ := json.Marshal(body)
+	began := time.Now()
+	if status, env := h.call("PUT", "/api/drafts/spec/SLICE-001", string(raw), nil); status != 200 || !env.OK {
+		t.Fatalf("with interrupt: %d %+v", status, env.Error)
+	}
+	if time.Since(began) > 10*time.Second {
+		t.Fatal("the interrupt did not stop the reply promptly")
+	}
+	written, err := os.ReadFile(testkit.Draft(h.project, "specs", "slices", "SLICE-001-invite-teammate.md"))
+	if err != nil || string(written) != body["markdown"] {
+		t.Fatalf("the edit was not written: %v", err)
+	}
+	evs := h.stream(id, 0, "waiting_for_reply")
+	if !strings.Contains(sseNames(evs), "turn") {
+		t.Fatalf("the interrupted turn: %s", sseNames(evs))
+	}
+	for _, e := range evs {
+		if e.Name == "turn" && e.Data["outcome"] != "interrupted" {
+			t.Fatalf("the turn was not interrupted: %v", e.Data)
+		}
+	}
+}
+
+// A reply while the interviewer writes is never refused: it is warned about once, and the same
+// reply with interrupt stops the running turn and is sent as the next turn.
+func TestAReplyWhileTheInterviewerWritesIsWarnedThenSent(t *testing.T) {
+	h, claude := withClaude(t, testkit.Turn{Kind: "slow", Sleep: 60}, testkit.Turn{Text: testkit.QuestionText(1, "Who invites")}, testkit.Turn{Text: testkit.QuestionText(2, "Seats")})
+	h.login()
+	h.startSlice()
+	id := h.startInterview(`{"slice_id":"SLICE-001"}`)
+	// The first turn's process is up (it has recorded its call) before anything stops it.
+	for deadline := time.Now().Add(20 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		if entries, _ := os.ReadDir(filepath.Join(filepath.Dir(claude), "calls")); len(entries) == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the first turn never started")
+		}
+	}
+	status, env := h.call("POST", "/api/interview/"+id+"/reply", `{"text":"Only admins invite."}`, nil)
+	expect(t, status, env, 409, engine.KindConflict)
+	if env.Error.Message != "The interviewer is still writing its reply. Sending yours stops it first." ||
+		string(env.Error.Hint) != `{"kind":"interrupt_turn","target":null}` {
+		t.Fatalf("the warning: %q %s", env.Error.Message, env.Error.Hint)
+	}
+	for _, bad := range []string{`{"text":"yes","interrupt":"yes"}`, `{"interrupt":true}`} {
+		status, env := h.call("POST", "/api/interview/"+id+"/reply", bad, nil)
+		expect(t, status, env, 400, engine.KindInvalid)
+	}
+	began := time.Now()
+	if status, env := h.call("POST", "/api/interview/"+id+"/reply", `{"text":"Only admins invite.","interrupt":true}`, nil); status != 200 || !env.OK {
+		t.Fatalf("with interrupt: %d %+v", status, env.Error)
+	}
+	if time.Since(began) > 10*time.Second {
+		t.Fatal("the interrupt did not stop the reply promptly")
+	}
+	evs := h.stream(id, 0, "waiting_for_reply")
+	var outcomes []any
+	replied := false
+	for _, e := range evs {
+		if e.Name == "turn" {
+			outcomes = append(outcomes, e.Data["outcome"])
+		}
+		if e.Name == "reply" && e.Data["text"] == "Only admins invite." {
+			replied = true
+		}
+	}
+	if !replied || !strings.Contains(sseNames(evs), "question") {
+		t.Fatalf("the reply was not sent as the next turn: %s", sseNames(evs))
+	}
+	calls := testkit.Calls(t, claude)
+	if len(calls) != 2 || calls[1].Argv[len(calls[1].Argv)-1] != "Only admins invite." {
+		t.Fatalf("the reply is not the second turn's message: %d calls", len(calls))
+	}
+	// With interrupt and no turn running, the reply is simply sent.
+	if status, env := h.call("POST", "/api/interview/"+id+"/reply", `{"text":"Yes.","interrupt":true}`, nil); status != 200 || !env.OK {
+		t.Fatalf("interrupt with nothing running: %d %+v (turns %v)", status, env.Error, outcomes)
 	}
 }
 
@@ -280,23 +361,62 @@ func TestEveryInterviewRouteNeedsTheSessionOriginAndCSRF(t *testing.T) {
 	}
 }
 
-func TestAnInterviewHeldByAnotherProcessIsAPlainConflict(t *testing.T) {
-	h, _ := withClaude(t)
-	h.login()
-	h.startSlice()
-	lock := testkit.Draft(h.project, "..", "interviews", "SLICE-001.lock")
+// holdLock holds the slice's lock from another process, which records pid, or its own when pid is 0.
+func holdLock(t *testing.T, project, slice string, pid int) *exec.Cmd {
+	t.Helper()
+	lock := testkit.Draft(project, "..", "interviews", slice+".lock")
 	os.MkdirAll(filepath.Dir(lock), 0o755)
 	holder := exec.Command(testkit.Python(t), "-c",
-		"import fcntl,sys,time; f=open(sys.argv[1],'a+'); fcntl.flock(f, fcntl.LOCK_EX); f.write('{\\\"pid\\\": 4242, \\\"since\\\": \\\"2026-11-11T12:00:00Z\\\"}'); f.flush(); print('held', flush=True); time.sleep(60)", lock)
+		"import fcntl,json,os,sys,time; f=open(sys.argv[1],'a+'); fcntl.flock(f, fcntl.LOCK_EX); f.truncate(0); "+
+			"f.write(json.dumps({'pid': int(sys.argv[2]) or os.getpid(), 'since': '2026-11-11T12:00:00Z'})); f.flush(); print('held', flush=True); time.sleep(60)",
+		lock, strconv.Itoa(pid))
 	out, _ := holder.StdoutPipe()
 	if err := holder.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { holder.Process.Kill(); holder.Wait() }()
+	t.Cleanup(func() { holder.Process.Kill(); holder.Wait() })
 	out.Read(make([]byte, 5))
+	return holder
+}
+
+// Another live process holds the slice: the start is a warning with one action, and the same start
+// with take_over goes ahead.
+func TestAnInterviewHeldByAnotherProcessIsWarnedThenTakenOver(t *testing.T) {
+	h, _ := withClaude(t, testkit.Turn{Text: "Hello."})
+	h.login()
+	h.startSlice()
+	holder := holdLock(t, h.project, "SLICE-001", 0)
 	status, env := h.call("POST", "/api/interview", `{"slice_id":"SLICE-001"}`, nil)
 	expect(t, status, env, 409, engine.KindConflict)
-	if env.Error.Hint != nil || !strings.Contains(env.Error.Message, "SLICE-001 already has an interview running (process 4242") {
+	want := "Another window on this computer is writing SLICE-001 right now (process " + strconv.Itoa(holder.Process.Pid) + ", since "
+	if string(env.Error.Hint) != `{"kind":"take_over","target":null}` || !strings.HasPrefix(env.Error.Message, want) ||
+		!strings.HasSuffix(env.Error.Message, "Continuing here means two writers: the draft keeps whichever saves last, and the other's last turn stays in the history.") {
 		t.Fatalf("held elsewhere: %q %s", env.Error.Message, env.Error.Hint)
 	}
+	_, env = h.call("GET", "/api/interview?slice_id=SLICE-001", "", nil)
+	var current struct {
+		Interview interview.Current `json:"interview"`
+	}
+	json.Unmarshal(env.Data, &current)
+	if !current.Interview.LockedElsewhere || !strings.HasPrefix(current.Interview.TakeOverWarning, want) {
+		t.Fatalf("current while held: %+v", current.Interview)
+	}
+	id := h.startInterview(`{"slice_id":"SLICE-001","take_over":true}`)
+	if evs := h.stream(id, 0, "waiting_for_reply"); !strings.Contains(sseNames(evs), "message") {
+		t.Fatalf("the taken-over interview: %s", sseNames(evs))
+	}
+}
+
+// A lock whose process is gone is taken without a warning.
+func TestALockWhoseProcessIsGoneIsTaken(t *testing.T) {
+	h, _ := withClaude(t, testkit.Turn{Text: "Hello."})
+	h.login()
+	h.startSlice()
+	gone := exec.Command("true")
+	if err := gone.Run(); err != nil {
+		t.Fatal(err)
+	}
+	holdLock(t, h.project, "SLICE-001", gone.Process.Pid)
+	id := h.startInterview(`{"slice_id":"SLICE-001"}`)
+	h.stream(id, 0, "waiting_for_reply")
 }

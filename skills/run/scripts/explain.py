@@ -406,6 +406,15 @@ def no_cell(root: Path, ticket_id: str, next_info: Dict[str, Any]) -> Tuple[Dict
             "detail": f"No cell, archive, run record, local ticket or inbox record exists for {ticket_id} in this project."}, 1
 
 
+def started_before(cell: Dict[str, Any]) -> Optional[str]:
+    """The sentence for a ticket a person started before a slice it depends on was merged (intake records it at their dispatch), or None."""
+    early = [clean(name, 40) for name in cell.get("started_before") or [] if isinstance(name, str)][:5]
+    if not early:
+        return None
+    return (f"It was started before {', '.join(early)}, which it depends on, {'was' if len(early) == 1 else 'were'} merged: "
+            "a failure may come from that work missing.")
+
+
 def explain(root: Path, ticket_id: str, next_info: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, Any], int]:
     """The facts behind where a ticket stands, and the exit code: 1 only for a ticket this project does not know."""
     config = config if isinstance(config, dict) else {}
@@ -526,6 +535,9 @@ def explain(root: Path, ticket_id: str, next_info: Dict[str, Any], config: Optio
     lanes = lanes_facts(cellroot)  # M22: nothing for a build without lanes
     if lanes:
         base["lanes"] = lanes
+    early = started_before(cell)
+    if early and (used or base["headline_code"]):  # it failed or waits, and it was started before what it depends on was merged
+        base["started_before"] = early
     mode = summary.get("evidence_mode")
     if isinstance(mode, dict) and mode.get("mode") == "headless":  # verified without screenshots: said so, and why
         base["verification_evidence"] = {"mode": "headless", "said": clean(mode.get("said"), 300), "why": clean(mode.get("why"), 300),

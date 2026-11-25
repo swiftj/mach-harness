@@ -320,7 +320,8 @@ def give_to_supervisor(ctx: Context, tickets: Sequence[str]) -> Tuple[List[str],
                 continue
             holder = held_by(ticket)
             if holder:
-                kept.append({"ticket_id": ticket, "why": f"{holder}; it carries on there (or /mach {ticket} in that conversation)"})
+                kept.append({"ticket_id": ticket, "why": f"{holder}; it is not given to the Factory while that worker has it. Say /mach {ticket} "
+                             "and MACH takes it over and builds it here"})
                 continue
             if entry.get("owner") != SUPERVISOR:
                 entry["owner"] = SUPERVISOR

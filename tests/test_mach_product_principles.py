@@ -356,10 +356,33 @@ class StudioTest(IssuesBase):
         refreshed = self.ok(self.a, "refresh")
         self.assertNotIn("principles_taken", refreshed)
         self.assertTrue(refreshed["github"]["principles"]["newer_elsewhere"])
-        self.assertIn("reconcile principles", self.refused(self.a, "principle", "publish"))
         self.ok(self.a, "reconcile", "principles", "--take", "theirs")
         self.assertEqual(self.ok(self.a, "principle", "list")["active"], ["PP-01", "PP-02"])
         self.assertFalse(self.ok(self.a, "principle", "list")["unpublished_changes"])
+
+    def test_publishing_mine_over_a_newer_version_replaces_it_and_keeps_theirs(self):
+        """Never blocked: the product manager asked to publish their principles, so they replace the newer version someone else
+        published, which is kept whole; reconcile --take theirs is still there."""
+        self.add()
+        self.ok(self.a, "principle", "publish")
+        self.project_and_epic(self.b)
+        self.set_gh(me="ben-pm")
+        self.ok(self.b, "refresh")
+        self.ok(self.b, "principle", "add", "--title", "Senders", "--statement", SECOND, "--reason", "Trust.")
+        self.ok(self.b, "principle", "publish")
+        self.set_gh(me="ada-pm")
+        self.ok(self.a, "principle", "set", "PP-01", "--reason", "Ada's reason.")
+        self.ok(self.a, "refresh")
+        published = self.ok(self.a, "principle", "publish")
+        self.assertEqual(published["revision"], 3)
+        self.assertIn("@ben-pm published version 2 of the principles on GitHub", published["note"])
+        self.assertIn("Yours is now version 3 and replaces it. Theirs is kept in the edit history of the project's issue", published["note"])
+        self.assertRegex(published["note"], r"\.factory/studio/replaced/principles-version-2-\d{8}T\d+Z/")
+        (folder,) = (self.a / ".factory/studio/replaced").glob("principles-version-2-*")
+        kept = json.loads((folder / "principles.json").read_text())
+        self.assertEqual((kept["revision"], [item["id"] for item in kept["principles"]]), (2, ["PP-01", "PP-02"]))
+        parsed = issue_rules.parse_principles_section(self.issues("mach:project")[0]["body"])
+        self.assertEqual(parsed["principles"][0]["reason"], "Ada's reason.")
 
     def test_keeping_mine_replaces_theirs_on_the_next_publish(self):
         self.add()

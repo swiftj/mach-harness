@@ -25,6 +25,7 @@ var (
 var Options = map[string]bool{
 	"approve": true, "send-back": true, "merge": true, "accept": true, "exception": true, "replan": true,
 	"set-test-command": true, "retry": true, "run": true, "revise": true, "answers": true, "abandon": true,
+	"take-over": true,
 }
 
 // LongOptions may run the project's tests or a merge: they are given the longer time limit.

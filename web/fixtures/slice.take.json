@@ -20,6 +20,8 @@
     "url": "https://github.com/acme/team-space/issues/3",
     "revision": 1,
     "approved_by": "ada-pm",
+    "approved_here": true,
+    "linked": true,
     "state_label": "mach:ready",
     "epic": {
       "epic_id": "EPIC-001",
@@ -27,6 +29,7 @@
       "created_here": true
     },
     "dependencies": [],
+    "opened_first": [],
     "spec": "specs/slices/SLICE-001-invite-a-teammate.md",
     "why": "product/intents/SLICE-001.md",
     "editable": false,

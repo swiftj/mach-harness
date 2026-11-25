@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useNavigate } from "react-router";
 import { Banner, Button } from "@mach/ui";
 import type { SameMoment, SliceGithub } from "@mach/ui/api";
 import { IssueText } from "./IssueLink";
@@ -8,29 +7,16 @@ import { epicNumberTakenWords, momentUrls, numberTakenWords } from "./team";
 
 /**
  * On a slice's own pages (M20): another slice on GitHub holds this draft's number, taken at the same moment or before.
- * Who holds it and which issue, from the engine's record, each issue linked, and the one act: a new number. After it, the
- * page moves to the new number, where the slice is marked ready again.
+ * Who holds it and which issue, from the engine's record, each issue linked. No step of its own: marking the slice ready
+ * (on the same page) gives it the next free number in the same act.
  */
 export function NumberTakenNotice({ sliceId, github }: { sliceId: string; github: Pick<SliceGithub, "number_taken" | "same_moment"> }) {
-  const [open, setOpen] = useState(false);
-  const navigate = useNavigate();
   const words = numberTakenWords(sliceId, github);
   if (!words) return null;
   return (
-    <>
-      <Banner
-        tone="warning"
-        title={words.title}
-        actions={
-          <Button size="sm" variant="primary" onClick={() => setOpen(true)}>
-            Give it a new number
-          </Button>
-        }
-      >
-        <IssueText text={words.body} urls={momentUrls(github.same_moment)} />
-      </Banner>
-      <RenumberDialog id={open ? sliceId : null} onOpenChange={setOpen} onRenumbered={({ to }) => void navigate(`/slices/${to}`, { replace: true })} />
-    </>
+    <Banner tone="info" title={words.title}>
+      <IssueText text={words.body} urls={momentUrls(github.same_moment)} />
+    </Banner>
   );
 }
 

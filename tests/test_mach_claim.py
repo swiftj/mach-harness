@@ -1,4 +1,7 @@
-"""Tests for the per-ticket claim (M9 design section 5): one worker per ticket.
+"""Tests for the per-ticket claim (M9 design section 5): one worker per ticket, and a person's word always wins.
+
+A person (no supervised execution) who names a ticket takes another worker's step over in the same call, with a warning;
+a supervised execution keeps the one-worker rule. tests/test_never_blocked.py states the rule on its own.
 
 The claim is .factory/worktrees/<ticket_id>/claim.json, written by the shared helper claim.py. These tests cover
 every row of the table in 5.2 (run.py next with a holder, with none, with --take-over; cell.py claim; run.py
@@ -86,6 +89,13 @@ class Base(unittest.TestCase):
     def config(self, **factory):
         (self.root / ".factory" / "config.json").write_text(json.dumps({"factory": factory}))
 
+    def supervise(self, ticket="T-1"):
+        """From here on, this runs inside a supervised Factory execution of `ticket`: the one-worker rule, never a take-over."""
+        (self.root / ".factory" / "intake").mkdir(exist_ok=True)
+        (self.root / ".factory" / "intake" / "ledger.json").write_text(json.dumps(
+            {"supervisor": {"executions": {"x0123456789ab": {"ticket_id": ticket, "state": "started"}}}}))
+        os.environ[run.EXECUTION_ENV] = "x0123456789ab"
+
 
 class HelperTest(Base):
     def test_the_helper_is_the_intent_stations_file(self):
@@ -165,8 +175,23 @@ class NextWithHolderTest(Base):
         self.assertEqual((second["at"], second["renewed_at"]), (first["at"], C.stamp(start + timedelta(minutes=80))))
         self.assertEqual(second["lapses_at"], C.stamp(start + timedelta(minutes=170)))
 
-    def test_another_holders_fresh_claim_stops_it_without_showing_that_holder(self):
+    def test_a_person_takes_another_holders_fresh_claim_over_at_once(self):
         self.cell()
+        self.put_claim(holder=OTHER, at=ago(10))
+        code, out, err = self.run_cmd("next", "T-1", "--holder", MINE, "--by-person")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn(OTHER, out)
+        step = json.loads(out)
+        self.assertEqual(list(step)[0], "warnings", "the warnings are said first")
+        self.assertEqual((step["action"], step["stop"], step["claim"]["holder"]), ("plan", False, MINE))
+        self.assertIn("Another worker was handed the plan step for this ticket at", step["warnings"][0])
+        self.assertIn("You have taken it over; that worker is stopped at its next step.", step["warnings"][0])
+        self.assertEqual(self.saved()["holder"], MINE)
+        self.assertIn(OTHER, C.displaced_all(self.path().parent), "the worker taken over is recorded as displaced")
+
+    def test_a_supervised_execution_is_stopped_by_another_holders_fresh_claim_without_seeing_that_holder(self):
+        self.cell()
+        self.supervise()
         self.put_claim(holder=OTHER, at=ago(10))
         before = self.path().read_text()
         code, out, err = self.run_cmd("next", "T-1", "--holder", MINE)
@@ -176,10 +201,10 @@ class NextWithHolderTest(Base):
         self.assertEqual((step["action"], step["stop"], step["needs"]), ("stop", True, "worker-in-cell"))
         other = step["other_claim"]
         self.assertEqual(set(other), {"step", "stage", "at", "renewed_at", "lapses_at"})
-        for text in ("plan step", other["at"], other["lapses_at"], "take over"):
+        for text in ("plan step", other["at"], other["lapses_at"], "takes it over at once"):
             self.assertIn(text, step["reason"])
         self.assertNotIn("claim", step)
-        self.assertEqual(step["digest"]["needs_person"], run.NEEDS_TEXT["worker-in-cell"])
+        self.assertEqual(step["digest"]["needs_person"], run.NEEDS_TEXT["worker-in-cell"].replace("<ticket>", "T-1"))
         self.assertEqual(self.path().read_text(), before, "a refusal writes nothing")
 
     def test_holder_new_makes_and_returns_a_holder(self):
@@ -190,10 +215,12 @@ class NextWithHolderTest(Base):
         self.assertEqual(self.saved()["holder"], step["holder"])
         again = self.next("T-1", "--holder", step["holder"])
         self.assertEqual(again["claim"]["at"], step["claim"]["at"])
-        refused = self.next("T-1", "--holder", "new")
-        self.assertEqual(refused["needs"], "worker-in-cell")
-        self.assertNotIn(step["holder"], json.dumps(refused))
-        self.assertNotEqual(refused["holder"], step["holder"], "a refused caller still gets its own new holder")
+        self.assertEqual(self.next("T-1", "--holder", "new")["needs"], "worker-in-cell", "a new holder alone takes nothing over")
+        taken = self.next("T-1", "--holder", "new", "--by-person")
+        self.assertEqual((taken["action"], taken["claim"]["holder"]), ("plan", taken["holder"]), "a person's new holder takes the step over")
+        self.assertNotIn(step["holder"], json.dumps(taken))
+        self.assertNotEqual(taken["holder"], step["holder"])
+        self.assertEqual(self.next("T-1", "--holder", step["holder"])["needs"], "taken-over", "the holder taken over stops at its next step")
 
     def test_an_unusable_holder_is_refused(self):
         self.cell()
@@ -237,8 +264,11 @@ class NextWithHolderTest(Base):
 
 
 class FreshnessTest(Base):
+    """Freshness, seen where it still decides: a supervised execution waits for a fresh claim and takes a stale one."""
+
     def test_a_new_stage_makes_the_claim_stale(self):
         self.cell(stage="spec-ready")
+        self.supervise()  # freshness decides whether a supervised execution waits
         self.put_claim(holder=OTHER)
         self.assertEqual(self.next("T-1", "--holder", MINE)["needs"], "worker-in-cell")
         self.cell(stage="planned")
@@ -253,11 +283,13 @@ class FreshnessTest(Base):
 
     def test_a_renewed_claim_stays_fresh(self):
         self.cell()
+        self.supervise()  # freshness decides whether a supervised execution waits
         self.put_claim(holder=OTHER, at=ago(200), renewed_at=ago(30))
         self.assertEqual(self.next("T-1", "--holder", MINE)["needs"], "worker-in-cell")
 
     def test_claim_minutes_is_read_from_the_settings(self):
         self.cell()
+        self.supervise()  # freshness decides whether a supervised execution waits
         self.config(claim_minutes=5)
         self.put_claim(holder=OTHER, at=ago(6))
         self.assertEqual(self.next("T-1", "--holder", MINE)["claim"]["holder"], MINE)
@@ -277,8 +309,20 @@ class NextWithoutHolderTest(Base):
         self.assertEqual((first["action"], "claim" in first, "holder" in first), ("plan", False, False))
         self.assertNotIn("--holder", first["prompt"])
 
-    def test_refused_while_any_claim_is_fresh(self):
+    def test_a_person_takes_a_fresh_claim_over_for_a_new_holder(self):
         self.cell()
+        self.put_claim(holder=OTHER)
+        code, out, _ = self.run_cmd("next", "T-1", "--by-person")
+        self.assertNotIn(OTHER, out)
+        step = json.loads(out)
+        self.assertEqual((code, step["action"]), (0, "plan"))
+        self.assertRegex(step["holder"], HEX32)
+        self.assertEqual(self.saved()["holder"], step["holder"])
+        self.assertTrue(step["warnings"])
+
+    def test_a_supervised_execution_is_refused_while_any_claim_is_fresh(self):
+        self.cell()
+        self.supervise()
         self.put_claim(holder=OTHER)
         before = self.path().read_text()
         code, out, _ = self.run_cmd("next", "T-1")
@@ -340,15 +384,29 @@ class CellClaimTest(Base):
         code, out, _ = self.cell_claim("T-1", "plan", "--holder", shown["holder"])
         self.assertEqual((code, json.loads(out)["at"]), (0, shown["at"]), "the same holder renews")
 
-    def test_refuses_another_holders_fresh_claim(self):
+    def test_a_person_takes_another_holders_fresh_claim_over(self):
         self.cell()
+        self.put_claim(holder=OTHER, at=ago(15))
+        code, out, err = self.cell_claim("T-1", "plan", "--holder", MINE, "--by-person")
+        self.assertEqual(code, 0, err)
+        shown = json.loads(out)
+        self.assertNotIn(OTHER, out)
+        self.assertEqual((shown["holder"], self.saved()["holder"]), (MINE, MINE))
+        self.assertIn("You have taken it over", shown["warnings"][0])
+        code, _, err = self.cell_claim("T-1", "plan", "--holder", OTHER)
+        self.assertNotEqual(code, 0)
+        self.assertIn("taken over by a person", err)
+
+    def test_a_supervised_execution_is_refused_another_holders_fresh_claim(self):
+        self.cell()
+        self.supervise()
         self.put_claim(holder=OTHER, at=ago(15))
         code, out, err = self.cell_claim("T-1", "plan", "--holder", MINE)
         self.assertNotEqual(code, 0)
         self.assertEqual(out, "")
         self.assertNotIn(OTHER, err)
         lapses = C.lapses_at(self.saved(), 90)
-        for text in ("plan step", self.saved()["at"], lapses, "take over"):
+        for text in ("plan step", self.saved()["at"], lapses, "takes it over at once"):
             self.assertIn(text, err)
         self.assertEqual(self.saved()["holder"], OTHER)
 
@@ -357,8 +415,10 @@ class CellClaimTest(Base):
         step = self.next("T-1", "--holder", "new")
         code, _, err = self.cell_claim("T-1", "plan", "--holder", step["holder"])
         self.assertEqual(code, 0, err)
-        code, _, _ = self.cell_claim("T-1", "plan")
-        self.assertNotEqual(code, 0, "a planner without the holder is refused while the belt's claim is fresh")
+        code, out, _ = self.cell_claim("T-1", "plan", "--by-person")
+        self.assertEqual(code, 0, "a person's planner without the holder takes the step over")
+        self.assertIn("warnings", json.loads(out))
+        self.assertEqual(self.next("T-1", "--holder", step["holder"])["needs"], "taken-over", "the belt's run stops at its next step")
 
     def test_refuses_no_cell_a_bad_step_or_a_bad_holder(self):
         code, _, err = self.cell_claim("T-1", "plan")
@@ -373,8 +433,13 @@ class CellClaimTest(Base):
     def test_a_cell_claim_is_seen_by_run_next(self):
         self.cell()
         self.cell_claim("T-1", "plan")
-        self.assertEqual(self.next("T-1", "--holder", MINE)["needs"], "worker-in-cell")
-        self.assertEqual(self.next("T-1")["needs"], "worker-in-cell")
+        self.assertEqual(self.next("T-1", "--holder", MINE)["needs"], "worker-in-cell", "a look takes nothing over")
+        self.assertIn("took_over", self.next("T-1", "--holder", MINE, "--by-person"), "a person's next takes the cell claim over")
+        self.cell("T-2")
+        self.cell_claim("T-2", "plan")
+        self.supervise("T-2")
+        self.assertEqual(self.next("T-2", "--holder", MINE)["needs"], "worker-in-cell")
+        self.assertEqual(self.next("T-2")["needs"], "worker-in-cell")
 
 
 class ScheduleTest(Base):
@@ -385,25 +450,35 @@ class ScheduleTest(Base):
         self.assertEqual(code, 0, err)
         return json.loads(out)
 
-    def test_another_holders_claim_holds_the_ticket_before_the_ceiling(self):
+    def test_a_persons_schedule_never_holds_a_claimed_ticket_it_warns(self):
         self.cell("T-1")
         self.cell("T-2")
-        self.cell("T-3")
         self.put_claim("T-1", holder=OTHER, at=ago(10))
-        report = self.schedule("T-1", "T-2", "T-3", "--running", "R-1", "--limit", "1", "--holder", MINE)
+        report = self.schedule("T-1", "T-2", "--holder", MINE, "--named")
+        self.assertNotIn(OTHER, json.dumps(report))
+        self.assertEqual([item["ticket_id"] for item in report["start"]], ["T-1", "T-2"])
+        self.assertIn("plan step of T-1", report["start"][0]["warnings"][0])
+        self.assertEqual(list(report)[0], "warnings")
+        self.assertFalse(report["started"])
+
+    def test_a_supervised_schedule_holds_a_claimed_ticket_before_the_ceiling(self):
+        self.cell("T-1")
+        self.put_claim("T-1", holder=OTHER, at=ago(10))
+        self.supervise("T-1")
+        report = self.schedule("T-1", "--running", "R-1", "--limit", "1", "--holder", MINE)
         self.assertNotIn(OTHER, json.dumps(report))
         held = {item["ticket_id"]: item for item in report["held"]}
         self.assertEqual((held["T-1"]["rule"], held["T-1"]["after"]), ("claimed", []))
         for text in ("plan step", self.saved("T-1")["at"], C.lapses_at(self.saved("T-1"), 90)):
             self.assertIn(text, held["T-1"]["why"])
-        self.assertEqual((held["T-2"]["rule"], held["T-3"]["rule"]), ("ceiling", "ceiling"))
         self.assertFalse(report["started"])
 
     def test_own_claims_do_not_hold_and_no_holder_holds_any(self):
         self.cell("T-1")
         self.put_claim("T-1", holder=MINE)
         self.assertEqual([item["ticket_id"] for item in self.schedule("T-1", "--holder", MINE)["start"]], ["T-1"])
-        self.assertEqual(self.schedule("T-1")["held"][0]["rule"], "claimed")
+        self.assertEqual(self.schedule("T-1")["held"][0]["rule"], "claimed", "without --named any fresh claim holds it")
+        self.assertIn("warnings", self.schedule("T-1", "--named")["start"][0], "a person's schedule starts it with a warning")
         self.put_claim("T-1", holder=MINE, stage="interview")
         self.assertEqual([item["ticket_id"] for item in self.schedule("T-1")["start"]], ["T-1"], "a stale claim holds nothing")
 

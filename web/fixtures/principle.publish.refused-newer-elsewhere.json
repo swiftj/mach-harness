@@ -1,9 +1,31 @@
 {
-  "exit_code": 1,
-  "data": null,
-  "refused": "Someone else published version 2 of the principles on GitHub. Choose yours or theirs on the Product principles page before publishing. Nothing was saved.",
-  "hint": {
-    "kind": "reconcile",
-    "target": "principles"
-  }
+  "exit_code": 0,
+  "data": {
+    "published": true,
+    "saved_to": "github",
+    "revision": 4,
+    "sha256": "9f0743220f04a843d973021b5559987df096e7f508124c3554720c42871a56ab",
+    "issue": 1,
+    "url": "https://github.com/acme/team-space/issues/1",
+    "approved_by": "ada-pm",
+    "warned": [
+      "@ben-pm published version 3 of the principles on GitHub at 10:00 UTC on 2026-11-17. Yours is now version 4 and replaces it. Theirs is kept in the edit history of the project's issue (#1) and at .factory/studio/replaced/principles-version-3-20261125T154557696410Z/. You can take theirs instead."
+    ],
+    "replaced": [
+      {
+        "what": "principles",
+        "issue": 1,
+        "revision": 3,
+        "by": "ben-pm",
+        "at": "2026-11-17T10:00:07Z",
+        "kept": ".factory/studio/replaced/principles-version-3-20261125T154557696410Z/",
+        "replaced_by_revision": 4
+      }
+    ],
+    "active": 3,
+    "factory_authorized": false,
+    "note": "@ben-pm published version 3 of the principles on GitHub at 10:00 UTC on 2026-11-17. Yours is now version 4 and replaces it. Theirs is kept in the edit history of the project's issue (#1) and at .factory/studio/replaced/principles-version-3-20261125T154557696410Z/. You can take theirs instead. Published on the project's issue (#1) as version 4. Slices marked ready from now on answer these principles."
+  },
+  "refused": null,
+  "hint": null
 }

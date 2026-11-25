@@ -1,6 +1,44 @@
-# MACH release notes: 0.25.0
+# MACH release notes: 0.26.0
 
 What is new in each release, newest first, followed by supported platforms, what you need, upgrading and security notes.
+
+## What changed in 0.26.0
+
+Nobody is blocked because someone else has the work. MACH says who has it and since when, then does what was asked.
+
+### Engineers
+
+| Change | What it is |
+| --- | --- |
+| Naming a ticket takes it | `/mach 6`, `/mach 1 3 6` and "take over SLICE-011" start the work in the same step. There is no flag to know, no plan to read first and no second yes. |
+| What held it becomes a warning | Another worker's or another Factory's claim, a slice it depends on that is not merged yet, and the limit on how many run at once are said first, then the work starts. |
+| The other worker stops | A worker whose ticket was taken over is refused at its next step, and a Factory run on it is ended. Files it had not committed are kept aside and named. |
+| Both copies can be on GitHub | A slice taken over from another Factory gets its own branch, so neither push is refused and both can open pull requests. Each Factory is told about the other's. |
+| A second copy can be merged | When another copy of a slice landed first, a person's merge brings main in. If nothing differs MACH says so and closes this copy out. If something does, it is verified and reviewed again, then lands on top, and the change record says another copy landed first. |
+| Looking never takes anything | Status, explain and the list of what needs you change nothing. They say who has the work and how to take it. |
+| The Factory still keeps out of the way | Work the Factory picks by itself (`/mach pull`, the supervisor) leaves other people's work alone and says how to take it: by naming it. |
+| A build started early says so | A ticket built before the slice it depends on was merged says that when a check fails. |
+
+### Product managers
+
+| Change | What it is |
+| --- | --- |
+| Any slice can be opened | A slice another product manager saved opens here, with its design mocks from the main branch. One whose text changed after approval, or that has no approval, opens as a draft and says so. What it depends on is opened first. |
+| A taken number is handled in one act | Marking a slice ready, or saving an idea, whose number someone else took gives it the next free number and carries on. |
+| Your version is published when you ask | When someone else saved a newer version, yours replaces it as asked. MACH says what it replaced and keeps the other version; `replaced list` shows what was kept and `replaced restore` puts one back. |
+| Told when the builders have started | Marking ready over a version the builders are working on says so, and when they take the new one. |
+| A request can be picked up by two | Picking up a request someone else picked up adds you as well. |
+| In the app | Another window writing the same slice can be taken over with one click. A reply or an edit sent while the interviewer is writing stops it and goes ahead. An extra project issue can be closed from the app. |
+
+### Decisions
+
+| Change | What it is |
+| --- | --- |
+| Every decision stays on offer | A ticket another worker holds shows everything it is waiting for, with a warning above. |
+| Take it over, from anywhere | "Take it over" works in the terminal and in the Factory Floor, and can hand the ticket back to the Factory. |
+| Two people deciding at once | The second waits for the first. If the first already settled it, the second is told what was decided and what is on offer now. |
+
+No message tells one person to ask another. A slice with nothing valid to build, such as one whose text was changed after approval, still says what fixes it.
 
 ## What changed in 0.25.0
 

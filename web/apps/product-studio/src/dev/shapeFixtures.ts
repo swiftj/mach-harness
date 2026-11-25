@@ -257,8 +257,10 @@ export const shapeRuns = {
   "idea.publish.finished": run<Extract<IdeaPublished, { saved_to: "github" }>>(ideaPublishFinished),
   "idea.publish.folder": run<Extract<IdeaPublished, { saved_to: "folder" }>>(ideaPublishFolder),
   "idea.publish": run<Extract<IdeaPublished, { saved_to: "github" }>>(ideaPublish),
-  "idea.publish.refused-no-login": refusal(ideaPublishRefusedNoLogin),
-  "idea.publish.refused-number-taken": refusal(ideaPublishRefusedNumberTaken),
+  // Never blocked: a verdict recorded without a login is kept as it is, and the idea is published (the file keeps its old name).
+  "idea.publish.refused-no-login": run<Extract<IdeaPublished, { saved_to: "github" }>>(ideaPublishRefusedNoLogin),
+  // Never blocked: publishing gives the idea the next free number and saves it in the same act (the file keeps its old name).
+  "idea.publish.refused-number-taken": run<Extract<IdeaPublished, { saved_to: "github" }>>(ideaPublishRefusedNumberTaken),
   "idea.publish.refused-stopped": refusal(ideaPublishRefusedStopped),
   "idea.publish.shaped": run<Extract<IdeaPublished, { saved_to: "github" }>>(ideaPublishShaped),
   "idea.renumber": run<IdeaRenumbered>(ideaRenumber),

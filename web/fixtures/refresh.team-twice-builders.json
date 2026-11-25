@@ -6,7 +6,7 @@
     "requests": {
       "repository": "acme/team-space",
       "refreshed": true,
-      "refreshed_at": "2026-11-24T13:29:34Z",
+      "refreshed_at": "2026-11-25T15:46:57Z",
       "problem": null,
       "truncated": false,
       "truncated_note": null,
@@ -20,7 +20,7 @@
       "repository": "acme/team-space",
       "refreshed": true,
       "problem": null,
-      "refreshed_at": "2026-11-24T13:29:34Z",
+      "refreshed_at": "2026-11-25T15:46:57Z",
       "form": "sub_issues",
       "project_issue": 1,
       "project_url": "https://github.com/acme/team-space/issues/1",
@@ -47,6 +47,7 @@
           "question": null,
           "question_note": null,
           "shipped_issues": [],
+          "not_approved": null,
           "times": {
             "marked_ready": "2026-11-17T10:00:11Z",
             "building": null,
@@ -96,7 +97,7 @@
           "github_order": [
             "SLICE-001"
           ],
-          "github_read_at": "2026-11-24T13:29:34Z",
+          "github_read_at": "2026-11-25T15:46:57Z",
           "matches_github": true,
           "unfinished": false,
           "taken_from_github": false,
@@ -117,7 +118,7 @@
           "revision": null,
           "approved": null,
           "approved_by": null,
-          "read_at": "2026-11-24T13:29:34Z"
+          "read_at": "2026-11-25T15:46:57Z"
         },
         "newer_elsewhere": false,
         "changed_on_github": false
@@ -127,7 +128,7 @@
           "id": "SLICE-001",
           "kept": 3,
           "kind": "slice",
-          "note": "SLICE-001 is held by more than one open issue on GitHub: #3 was made first, then #4. Yours was made later, and the builders have already taken it: tell the engineer before anything else.",
+          "note": "SLICE-001 is held by more than one open issue on GitHub: #3 was made first, then #4. Yours was made later, and the builders have already started on it, so MACH left it open: both are built, and the merge of the builders' work settles which one stays.",
           "others": [
             4
           ],
