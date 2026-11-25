@@ -539,7 +539,11 @@ def scan_ids(folders: Sequence[Path]) -> Tuple[Dict[int, str], Dict[int, List[Di
             if not match or path.name in seen:
                 continue
             seen.add(path.name)
-            used.setdefault(int(match.group(1)), path.name)
+            number = int(match.group(1))
+            if number in used and path.name not in used[number].split(" and "):
+                used[number] = f"{used[number]} and {path.name}"  # two specs under one number: both are named, the number counted once
+            else:
+                used.setdefault(number, path.name)
             try:
                 text = path.read_text(encoding="utf-8-sig")
             except (OSError, UnicodeDecodeError):
@@ -707,7 +711,28 @@ def analyze_spec(project: Path, spec: Path, ready: bool, cell_root: Optional[Pat
                                                                 "by Product Studio, so 'Not assessed' does not answer it here. Answer it: does it "
                                                                 "apply, not apply, or is this slice an exception?")
                     if finding.rule == "principle-not-assessed" and finding.severity == "warning" else finding for finding in findings]
+    findings = [shared_number(project, spec, finding) for finding in findings]
     return findings, model
+
+
+def shared_number(project: Path, spec: Path, finding: Any) -> Any:
+    """An old pair of specs under one slice number, both already on the main branch, is someone else's file, not this spec's choice:
+    re-finalizing this spec is not refused for it. The finding becomes a warning naming both files; this spec keeps its number. A new
+    spec that takes a number another spec already has is still an error (its own number to change, with cell.py next-id)."""
+    if finding.rule != "duplicate-slice-id" or finding.severity != "error":
+        return finding
+    match = re.search(r"is already used by (\S+?\.md)\.", finding.message)
+    other = match.group(1) if match else None
+    if not other:
+        return finding
+    tracked = set(git(["ls-files", "--", "specs/slices/"], project).stdout.split())
+    if f"specs/slices/{spec.name}" not in tracked or f"specs/slices/{other}" not in tracked:
+        return finding
+    slice_id = spec.name.split("-", 2)
+    number = "-".join(slice_id[:2])
+    return finding._replace(severity="warning", message=(
+        f"{number} is used by two specs on the main branch: {spec.name} (this one, which keeps its number) and {other}. "
+        f"{other} can be given a free number by an ordinary change (cell.py next-id names one)."))
 
 
 def shipped_rules(project: Path) -> Dict[str, Any]:
@@ -2945,12 +2970,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if not isinstance(ticket, str):
             return args.func(project, args)
         cell_dir = project / ".factory" / "worktrees" / ticket
-        limit = claims.config_minutes(project)
-        said = claims.guard(cell_dir, holder or getattr(args, "holder", None), ticket, limit)
+        said = claims.watch(cell_dir, ticket)
         if said:
-            print(f"note: {said}", file=sys.stderr)
+            print(f"warning: {said}", file=sys.stderr)
         code = args.func(project, args)
-        claims.record(cell_dir, holder or getattr(args, "holder", None), limit)
+        claims.record(cell_dir)
         return code
     except CellError as exc:
         print(f"error: {exc}", file=sys.stderr)

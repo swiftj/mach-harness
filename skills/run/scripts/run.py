@@ -1755,9 +1755,16 @@ def station_answer(project: Project, ticket_id: str, *argv: str) -> Tuple[Option
     B = build_station()
     args = B.build_parser().parse_args(["--project", str(project.root), *argv])
     out = io.StringIO()
+    cell_dir = project.cell_dir(ticket_id)
+    said = claims().watch(cell_dir, ticket_id)  # after a take-over: commits made outside the stations are said, never reset
+    if said:
+        print(f"warning: {said}", file=sys.stderr)
     try:
         with redirect_stdout(out):
-            args.func(B.Cell(project.root, ticket_id), args)
+            try:
+                args.func(B.Cell(project.root, ticket_id), args)
+            finally:
+                claims().record(cell_dir)  # the commits this station made (a lanes join) are a station's
     except B.BuildError as exc:
         B.telemetry(project.cell_dir(ticket_id), "gate.evaluated", "build", lambda: {
             "gate": f"build.{args.command}", "outcome": "refuse", "reason_code": exc.code, "overridden_by_reason": False, "task": None})

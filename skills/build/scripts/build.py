@@ -176,17 +176,16 @@ def taken_over(project: Optional[Path], ticket_id: Any, holder: Optional[str], c
 
 
 def guarded(project: Optional[Path], ticket_id: Any, holder: Optional[str], run: Any) -> Any:
-    """While a take-over stands, every call by a holder that is not displaced first sets aside commits made outside the stations since
-    the last station call (claim.guard), then records the commit it ends on as a station's (claim.record)."""
+    """After a take-over, every station call first says, once, which commits were made outside MACH's stations since (claim.watch;
+    nothing is reset, and the reviewers see them), then records the commit it ends on as a station's (claim.record)."""
     if _claim is None or project is None or not isinstance(ticket_id, str):
         return run()
     cell_dir = Path(project) / ".factory" / "worktrees" / ticket_id
-    limit = _claim.config_minutes(Path(project))
-    said = _claim.guard(cell_dir, holder, ticket_id, limit)
+    said = _claim.watch(cell_dir, ticket_id)
     if said:
-        print(f"note: {said}", file=sys.stderr)
+        print(f"warning: {said}", file=sys.stderr)
     code = run()
-    _claim.record(cell_dir, holder, limit)
+    _claim.record(cell_dir)
     return code
 
 
@@ -707,18 +706,6 @@ def commit(cell: Cell, files: Sequence[str], message: str) -> str:
     if done.returncode != 0:
         raise BuildError("git commit failed: " + (done.stderr.strip() or done.stdout.strip()), code="git-commit-failed")
     return git(cell.work, "rev-parse", "HEAD").stdout.strip()
-
-
-def outside_step(cell: Cell, task: Dict[str, Any], files: Sequence[str]) -> List[str]:
-    """While a person's take-over of this ticket stands, files changed outside this task's own (the plan's files for it, and its tests)
-    are kept aside before the commit, so the worker taken over cannot slip one in (claim.aside_outside). Returns what is left."""
-    if _claim is None:
-        return list(files)
-    keep = list(task.get("files") or [])
-    left, said = _claim.aside_outside(cell.work, cell.ticket_id, keep, files, cell.root, _claim.config_minutes(cell.project))
-    if said:
-        print(f"note: {said}", file=sys.stderr)
-    return left
 
 
 def check_scope(cell: Cell, task: Dict[str, Any], files: Sequence[str], args: argparse.Namespace) -> None:
@@ -1275,7 +1262,7 @@ def cmd_red(cell: Cell, args: argparse.Namespace) -> int:
     if recovered is not None:
         return recovered_answer(cell, recovered)
     task = take(cell, args.task, "red")
-    files = outside_step(cell, task, changed_files(cell))
+    files = changed_files(cell)
     if args.written_early:
         # An earlier task committed this task's test along with its own. Nothing is left to write;
         # record the slip for the reviewers rather than strand the ticket or pad a file.
@@ -1443,7 +1430,7 @@ def cmd_green(cell: Cell, args: argparse.Namespace) -> int:
     if recovered is not None:
         return recovered_answer(cell, recovered)
     task = take(cell, args.task, "green")
-    files = outside_step(cell, task, changed_files(cell))
+    files = changed_files(cell)
     if args.already_done:
         return green_already_done(cell, task, files, args.already_done)
     check_scope(cell, task, files, args)
@@ -1462,7 +1449,7 @@ def cmd_done(cell: Cell, args: argparse.Namespace) -> int:
     if recovered is not None:
         return recovered_answer(cell, recovered)
     task = take(cell, args.task, "done")
-    files = outside_step(cell, task, changed_files(cell))
+    files = changed_files(cell)
     check_scope(cell, task, files, args)
     result = None
     note = "Committed while tests are still red for the next implementation task."

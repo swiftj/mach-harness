@@ -269,9 +269,9 @@ def _write_takeover(cell_dir: Path, record: Dict[str, Any]) -> None:
 
 def displace(cell_dir: Path, holders: Any, step: str, by: str = "person", at: Optional[datetime] = None,
              head: Optional[str] = None, taker: Optional[str] = None) -> None:
-    """Record that a person took this cell's work over from these holders, and that the take-over stands: the stage then, and the
-    branch's commit then (`known`), which every later station call by a holder that is not displaced checks against and moves on
-    (guard, record). Raises OSError when it cannot be written."""
+    """Record that a person took this cell's work over from these holders: when, and the branch's commit then (`known`). Every station
+    call afterwards moves `known` on to the commit it ends on (record), so commits made outside the stations can be told (watch).
+    Raises OSError when it cannot be written."""
     names = [name for name in dict.fromkeys(holders or []) if valid_holder(name)]
     if not names:
         return
@@ -279,105 +279,75 @@ def displace(cell_dir: Path, holders: Any, step: str, by: str = "person", at: Op
     for name in names:
         known[name] = {"at": stamp(at or now()), "step": step, "by": by}
     _write_displaced(cell_dir, known)
-    if valid_holder(taker) or taker is None:
-        good = head if isinstance(head, str) and re.fullmatch(r"[0-9a-f]{40}", head or "") else None
-        _write_takeover(cell_dir, {"taker": taker, "known": good, "at": stamp(at or now()), "last_stray_at": None,
-                                   "stage": stage_of(cell_dir), "stages_after": []})
+    good = head if isinstance(head, str) and re.fullmatch(r"[0-9a-f]{40}", head or "") else None
+    _write_takeover(cell_dir, {"taker": taker if valid_holder(taker) else None, "known": good, "at": stamp(at or now()), "warned": []})
 
 
 def open_takeover(cell_dir: Path) -> None:
-    """The take-over was made for whoever carries the ticket on next (a decision recorded outside a run): any holder that is not
-    displaced is the taker."""
+    """The take-over was made for whoever carries the ticket on next (a decision recorded outside a run)."""
     record = _read_takeover(cell_dir)
     if record is not None:
         record["taker"] = None
         _write_takeover(cell_dir, record)
 
 
-def standing(cell_dir: Path, limit: int, at: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
-    """The take-over record while it stands, else None. It ends once the ticket has moved two stages past the stage it was taken over
-    at, or once `limit` minutes (factory.claim_minutes, the displaced worker's own claim window) have passed since the take-over and
-    since the last stray commit or file was found, with none found since."""
+def in_claim_window(cell_dir: Path, limit: int, at: Optional[datetime] = None) -> bool:
+    """Whether the displaced worker's own claim window (`limit`, factory.claim_minutes) since the take-over has not passed yet. It is
+    counted once, from the take-over, and never starts again."""
     record = _read_takeover(cell_dir)
-    if record is None or record.get("ended"):
-        return None
-    stage = stage_of(cell_dir)
-    later = [item for item in record.get("stages_after") or [] if isinstance(item, str)]
-    if stage and stage != record.get("stage") and stage not in later:
-        later.append(stage)
-        record["stages_after"] = later
-        try:
-            _write_takeover(cell_dir, record)
-        except OSError:
-            pass
-    quiet_since = max(moment for moment in (parse(record.get("at")), parse(record.get("last_stray_at"))) if moment) \
-        if parse(record.get("at")) or parse(record.get("last_stray_at")) else None
-    if len(later) >= 2 or (quiet_since is not None and (at or now()) - quiet_since >= timedelta(minutes=limit)):
-        record["ended"] = stamp(at or now())
-        try:
-            _write_takeover(cell_dir, record)
-        except OSError:
-            pass
-        return None
-    return record
+    moment = parse(record.get("at")) if record else None
+    return moment is not None and (at or now()) - moment < timedelta(minutes=limit)
 
 
-def _free_ref(work: Path, prefix: str) -> str:
-    taken = _git(work, "for-each-ref", "--format=%(refname)", prefix.rsplit("/", 1)[0] + "/").stdout.split()
-    return f"{prefix}{1 + sum(1 for name in taken if name.startswith(prefix))}"
-
-
-def guard(cell_dir: Path, holder: Optional[str], ticket_id: str, limit: int) -> Optional[str]:
-    """At the start of every station call by a holder that is not displaced, while a take-over stands: a commit on the cell's branch
-    that no station call by such a holder ended on (the record moves on at the end of each, `record`) was made outside the stations,
-    by the worker taken over: it is kept under refs/mach/taken-over/<ticket>/<n> and the branch goes back to the last commit a station
-    ended on. The holder's own uncommitted work is kept in place (git reset --keep); only if that cannot be done are the uncommitted
-    files kept aside too, and said. Returns the sentence to say, or None. Never raises."""
+def watch(cell_dir: Path, ticket_id: str) -> Optional[str]:
+    """At the start of a station call after a take-over: commits on the branch that no station call ended on since the take-over were
+    made outside MACH's stations (by whom is not known: a person by hand, or the worker taken over). Nothing is reset: they are part of
+    the change, said once each, and recorded for the reviewers as a deviation in the build's records. Returns the sentence, or None.
+    Never raises."""
     folder = Path(cell_dir)
-    if not valid_holder(holder) or displaced(folder, holder):
-        return None
-    record = standing(folder, limit)
-    if record is None or (record.get("taker") and record.get("taker") != holder):
+    record = _read_takeover(folder)
+    if record is None:
         return None
     work = folder / "repo"
     base, tip = record.get("known"), head_of(work)
     if not base or not tip or tip == base:
         return None
-    said: List[str] = []
-    try:
-        ref = _free_ref(work, f"refs/mach/taken-over/{ticket_id}/")
-        count = _git(work, "rev-list", "--count", f"{base}..{tip}").stdout.strip() or "some"
-        if _git(work, "update-ref", ref, tip).returncode != 0:
-            raise OSError(f"git could not keep {tip[:12]} as {ref}")
-        if _git(work, "reset", "-q", "--keep", base).returncode != 0:
-            kept = set_aside(work, _free_ref(work, f"refs/mach/cell-files/{ticket_id}/after-take-over-"),
-                             f"Uncommitted files in the cell when commits made outside the stations were set aside [{ticket_id}]")
-            if kept:
-                said.append(f"{len(kept['paths'])} uncommitted file(s) could not stay in place and are kept under {kept['ref']} "
-                            f"(git checkout {kept['ref']} -- <file> brings one back).")
-            if _git(work, "reset", "-q", "--hard", base).returncode != 0:
-                raise OSError("git could not put the branch back")
-        said.insert(0, f"{count} commit(s) on the branch were made after the take-over outside the stations, by the worker taken over; they "
-                       f"are kept under {ref} and not used, and the branch is back at {base[:12]} (git log {ref} shows them).")
-    except OSError as exc:
-        said.append(f"MACH found commits made outside the stations after the take-over and could not set them aside ({str(exc)[:160]}); "
-                    "look at the cell's branch before going on.")
-    record["last_stray_at"] = stamp(now())
+    listed = _git(work, "rev-list", "--reverse", f"{base}..{tip}")
+    warned = set(record.get("warned") or [])
+    found = [sha for sha in listed.stdout.split() if sha not in warned] if listed.returncode == 0 else []
+    record["known"] = tip
+    record["warned"] = sorted(warned | set(found))
     try:
         _write_takeover(folder, record)
     except OSError:
         pass
-    return " ".join(said)
+    if not found:
+        return None
+    said = (f"{len(found)} commit(s) were made on this branch outside MACH's stations since the take-over at {clock(record.get('at'))} "
+            f"({', '.join(sha[:10] for sha in found[:10])}{' and more' if len(found) > 10 else ''}). They are part of this change now: reviewers see "
+            "them. If they are not wanted, remove them before the next step.")
+    deviation = {"task": None, "type": "commits-outside-stations", "detail": said, "commits": found[:50], "by": "MACH", "at": stamp(now())}
+    for name in ("build.json", "build-report.json"):
+        path = folder / name
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict):
+            data.setdefault("deviations", []).append(dict(deviation, loop=data.get("loop", data.get("review_loop", 0))))
+            try:
+                path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+            except OSError:
+                pass
+    return said
 
 
-def record(cell_dir: Path, holder: Optional[str], limit: int) -> None:
-    """At the end of a station call by a holder that is not displaced, while a take-over stands: the branch commit it ended on is a
-    station's (the commits it made are that holder's), so the next call checks against it. Never raises."""
+def record(cell_dir: Path, holder: Optional[str] = None, limit: Optional[int] = None) -> None:
+    """At the end of any station call after a take-over: the branch commit it ended on is a station's, so the commits it made are never
+    warned about. Never raises. (`holder` and `limit` are accepted for callers; any station's commit is a station's.)"""
     folder = Path(cell_dir)
-    if not valid_holder(holder) or displaced(folder, holder):
-        return
-    current_record = standing(folder, limit)
-    if current_record is None or (current_record.get("taker") and current_record.get("taker") != holder):
+    current_record = _read_takeover(folder)
+    if current_record is None:
         return
     tip = head_of(folder / "repo")
     if tip and tip != current_record.get("known"):
@@ -386,53 +356,6 @@ def record(cell_dir: Path, holder: Optional[str], limit: int) -> None:
             _write_takeover(folder, current_record)
         except OSError:
             pass
-
-
-def aside_outside(work: Path, ticket_id: str, keep: Sequence[str], changed: Sequence[str], cell_dir: Path, limit: int) -> Tuple[List[str], Optional[str]]:
-    """While a take-over stands, before a build step commits: files changed in the checkout that the step does not commit (not in
-    `keep`, the task's own files) are kept under refs/mach/cell-files/<ticket>/outside-step-<n> and put back to the branch, so the
-    worker taken over cannot slip a file into the step's commit. Returns (the files left to commit, the sentence or None)."""
-    if not keep or standing(Path(cell_dir), limit) is None:
-        return list(changed), None
-    outside = [name for name in changed if name not in set(keep)]
-    if not outside:
-        return list(changed), None
-    try:
-        import subprocess
-        ref = _free_ref(Path(work), f"refs/mach/cell-files/{ticket_id}/outside-step-")
-        head = head_of(Path(work))
-        index = Path(_git(Path(work), "rev-parse", "--git-path", "index").stdout.strip())
-        index = index if index.is_absolute() else Path(work) / index
-        scratch = index.with_name(index.name + ".mach-outside")
-        env = dict(os.environ, GIT_INDEX_FILE=str(scratch))
-        if _git(Path(work), "var", "GIT_COMMITTER_IDENT").returncode != 0:
-            env.update({"GIT_AUTHOR_NAME": "MACH", "GIT_AUTHOR_EMAIL": "mach@localhost", "GIT_COMMITTER_NAME": "MACH", "GIT_COMMITTER_EMAIL": "mach@localhost"})
-        try:
-            import shutil
-            if index.is_file():
-                shutil.copyfile(str(index), str(scratch))
-            run = lambda *args: subprocess.run(["git", *args], cwd=str(work), capture_output=True, text=True, env=env)  # noqa: E731
-            run("add", "-A", "--sparse", "--", *outside)
-            tree = run("write-tree").stdout.strip()
-            made = run("commit-tree", tree, "-p", head, "-m", f"Files outside the step, set aside while {ticket_id} was taken over [{ticket_id}]")
-        finally:
-            if scratch.exists():
-                scratch.unlink()
-        if made.returncode != 0 or _git(Path(work), "update-ref", ref, made.stdout.strip()).returncode != 0:
-            raise OSError("git could not keep them")
-        _git(Path(work), "reset", "-q", "--", *outside)
-        tracked = [name for name in outside if _git(Path(work), "cat-file", "-e", f"HEAD:{name}").returncode == 0]
-        if tracked:
-            _git(Path(work), "checkout", "-q", "HEAD", "--", *tracked)
-        for name in outside:
-            target = Path(work) / name
-            if name not in tracked and (target.is_file() or target.is_symlink()):
-                target.unlink()
-    except OSError:
-        return list(changed), None
-    return ([name for name in changed if name in set(keep)],
-            f"While this ticket was taken over, {len(outside)} file(s) changed outside this step's own files ({', '.join(outside[:5])}); they are "
-            f"kept under {ref} and not committed (git checkout {ref} -- <file> brings one back).")
 
 
 def reinstate(cell_dir: Path, holder: Optional[str]) -> None:
@@ -498,7 +421,7 @@ def station_stop(project: Optional[Path], ticket_id: Any, holder: Optional[str],
 
     A call with no holder cannot be told apart from the worker taken over, so while a take-over stands (some holder is displaced in the
     cell, and someone's claim on its step is fresh) a holderless call of a command that changes something (`command` not in `reads`)
-    is refused too, with how a caller says who it is."""
+    is refused too, with how a caller says who it is, until the displaced worker's claim window since the take-over has passed."""
     if project is None or not isinstance(ticket_id, str):
         return None
     cell_dir = Path(project) / ".factory" / "worktrees" / ticket_id
@@ -509,7 +432,7 @@ def station_stop(project: Optional[Path], ticket_id: Any, holder: Optional[str],
         return None
     gone = displaced_all(cell_dir)
     limit = config_minutes(Path(project))
-    if not gone or current(cell_dir, limit) is None or standing(cell_dir, limit) is None:
+    if not gone or current(cell_dir, limit) is None or not in_claim_window(cell_dir, limit):
         return None
     latest = max(gone.values(), key=lambda item: str(item.get("at")))
     return (f"This ticket was taken over by a person at {clock(latest.get('at'))}, and this call names no holder, so MACH cannot tell it from "
