@@ -691,9 +691,18 @@ def analyze_spec(project: Path, spec: Path, ready: bool, cell_root: Optional[Pat
     '## Effects on shipped behaviour' is required and checked against them. `same_slice`: the slice ID Product Studio
     handed this cell, whose draft in the Studio workspace is this same slice and not a duplicate."""
     text = spec.read_text(encoding="utf-8-sig")
+    same_slice = [slice_id for slice_id in same_slice]
     others = specs_sharing_ids(project, spec, same_slice)
-    return validate_slice.analyze(text, spec.name, others, ready=ready, principles=cell_principles(cell_root) if cell_root else None, shipped=rules,
-                                  policies=packs)
+    findings, model = validate_slice.analyze(text, spec.name, others, ready=ready, principles=cell_principles(cell_root) if cell_root else None,
+                                             shipped=rules, policies=packs)
+    if not same_slice:
+        # M21: only bringing in a project writes a Not assessed row, and Product Studio checks each against its import records. A ticket
+        # the engineers groom themselves was not handed over by Product Studio, so there the row answers nothing: an error.
+        findings = [finding._replace(severity="error", message=f"{finding.message.split(' is not assessed')[0]}: this ticket was not handed over "
+                                                                "by Product Studio, so 'Not assessed' does not answer it here. Answer it: does it "
+                                                                "apply, not apply, or is this slice an exception?")
+                    if finding.rule == "principle-not-assessed" and finding.severity == "warning" else finding for finding in findings]
+    return findings, model
 
 
 def shipped_rules(project: Path) -> Dict[str, Any]:

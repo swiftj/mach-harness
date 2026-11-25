@@ -638,9 +638,9 @@ def principle_flags(studio: Studio, slice_id: str, current: Sequence[Dict[str, A
         # M21: a principle that came with a project brought in after this slice was marked ready is not assessed for it, as for a
         # slice still being written then; reopening the slice writes that row (project_import.rows_on_reopen).
         import project_import
-        came = project_import.principles_brought_in(studio)
-        not_assessed += [ident for ident in unanswered if ident in came]
-        unanswered = [ident for ident in unanswered if ident not in came]
+        listed = project_import.not_assessed_ready(studio)  # exactly the slices the import's record says were ready before it
+        not_assessed += [ident for ident in unanswered if (slice_id, ident) in listed]
+        unanswered = [ident for ident in unanswered if (slice_id, ident) not in listed]
     retired = sorted(ident for ident in answered if ident in known and known[ident]["status"] == "retired")
     stale = bool(older or unanswered)
     return {"answered_under_older": bool(older), "older": older, "unanswered": unanswered, "retired": retired, "not_assessed": sorted(set(not_assessed)),
@@ -1041,12 +1041,20 @@ def cmd_project_import(studio: Studio, args: argparse.Namespace) -> int:
         return emit(project_import.plan(sys.modules[__name__], studio, archive))
     if args.ready and policies_helper().unattended():  # refused before anything is brought in
         raise StudioError("Marking slices ready is a product manager's act; a supervised execution does not do it. Nothing was changed.")
-    result = project_import.run(sys.modules[__name__], studio, archive)
+    result = project_import.run(sys.modules[__name__], studio, archive, ready_step=args.ready)
     if not args.ready:
         return emit(result)
     # M21, on the product manager's word: then every slice that was ready in the old repository, marked ready as slice ready does.
-    ready = project_import.ready_all(sys.modules[__name__], studio, result["archive"]["sha256"])
-    emit({**result, "ready": ready, "note": result["note"] + " " + ready["note"]})
+    # The import's own result is never lost: whatever happens while marking ready, both are printed.
+    try:
+        ready = project_import.ready_all(sys.modules[__name__], studio, result["archive"]["sha256"])
+    except Exception as exc:  # noqa: BLE001
+        words = " ".join(str(exc).split()) or type(exc).__name__
+        ready = {"published_first": [], "marked_ready": [], "already_ready": [], "stopped_at": {"slice": None, "reason": words}, "left": [],
+                 "complete": False, "factory_authorized": False, "note": f"Nothing was marked ready: {words}"}
+    lead = (f"Already brought in on {str(result.get('finished_at'))[:10]}; bringing it in again changed nothing." if result.get("already")
+            else result["note"])
+    emit({**result, "ready": ready, "note": lead + " " + ready["note"]})
     return 0 if ready["complete"] else 1
 
 
