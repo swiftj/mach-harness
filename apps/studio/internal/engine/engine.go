@@ -83,6 +83,12 @@ func (e *Engine) Do(ctx context.Context, name string, body []byte) Envelope {
 	if err := Decode(body, args); err != nil {
 		return Fail(KindInvalid, err.Error())
 	}
+	switch move := args.(type) {
+	case *ProjectImportArgs:
+		return e.doImport(ctx, name, move)
+	case *ProjectAbandonArgs:
+		return e.doAbandon(ctx, name, move)
+	}
 	files, ok := args.(FileArgs)
 	if !ok {
 		return e.Transaction(ctx, func(tx *Tx) Envelope { return tx.Call(ctx, name, args) })
@@ -155,6 +161,9 @@ func (e *Engine) run(parent context.Context, op Operation, argv []string) Envelo
 	limit := e.cfg.Timeout
 	if op.Network {
 		limit = e.cfg.NetworkTimeout
+	}
+	if op.Timeout > limit {
+		limit = op.Timeout
 	}
 	ctx, cancel := context.WithTimeout(parent, limit)
 	defer cancel()

@@ -217,6 +217,35 @@ engine's pattern), an adjustment names none. `slice.widen` `{slice_id, why}` is 
 interview for a slice started as a small change may also run `slice widen <its ID> --by-rule <rule>`
 for exactly the thirteen rules the short interview names; `--why` is denied to it.
 
+### Moving the whole project (M21 F)
+
+`internal/engine/ops_move.go`, the only place the host reads these commands' answers.
+
+| Operation | Arguments | Engine command | Kind |
+|-----------|-----------|----------------|------|
+| `project.export` | `{only_mine?}` | `project export [--only-mine]` (never `--out`) | network, 15 min; download |
+| `project.import` | exactly one of `file: {name, content_base64}` (a `.zip`, at most 64 MiB) or `kept: <sha256>`; `plan?`, `ready?` (never both) | `project import <kept file> [--plan] [--ready]` | network, 15 min; body at most base64 of 64 MiB plus 64 KiB |
+| `project.import.abandon` | `{archive?}` (one line, not starting with `-`) | `project import --abandon [<archive>]` | this computer |
+| `project.imports` | `{identifier?}` (`SLICE-007`, `EPIC-002`, `PP-03`, `TN-01`, `IDEA-004`, `PRD-01`, `DES-01`) | `project imports [<ID>]` | reads only |
+
+**The project file brought in** is kept, unlike other uploads, so "look first" and "bring it in" use
+the same bytes: `.factory/studio/incoming/<sha256>/<plain name>`, written exclusively and without
+following links, never cleared at start. Every answer of a plan (and of an import that did not finish)
+gains `kept: {sha256, name, bytes}`; the next request names the file by `kept`. The host re-hashes it
+before each use; a file that is gone or changed is `invalid` with the hint `{kind: "choose_file_again"}`.
+A plan forgets every other kept file; a refused plan of a newly sent file forgets that file; the file
+is forgotten once the answer says `imported` or `already`, and when `project.import.abandon` sets aside
+the import whose `archive.sha256` it is. A body over the limit is refused (413) with a sentence that
+names `/mach-studio` for a larger file. A per-operation `Timeout` longer than the configured limit
+replaces it.
+
+**The project download**: `project.export`'s answer gains `downloads: [{name, url, bytes}]` for the
+one file `mach-project-<id>-<YYYYMMDDTHHMMSSZ>.zip` in `.factory/studio/export/`. The host keeps its
+path, size and SHA-256 and reads it again for each download, serving it (`application/zip`) only while
+it is still those bytes; a later project export replaces it, a Jira export does not. A file over
+64 MiB is not offered: the answer has `downloads: []` and `download_problem`, a sentence saying where
+the file is.
+
 `acceptance record` stays a terminal command; it is not on the allowlist, and neither is any name of
 the removed `slice approve`, waves, `send` or `feedback`. No operation's argument vector can start
 with one (`internal/engine/ops_test.go`).

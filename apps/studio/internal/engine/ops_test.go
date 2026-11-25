@@ -22,7 +22,7 @@ func TestAllowlistIsExactlyTheContract(t *testing.T) {
 		"policy.accept", "policy.list",
 		"prd.apply", "prd.confirm", "prd.draft", "prd.import", "prd.list", "prd.map", "prd.settle", "prd.show", "prd.status",
 		"principle.add", "principle.list", "principle.publish", "principle.retire", "principle.set",
-		"project.init", "project.set",
+		"project.export", "project.import", "project.import.abandon", "project.imports", "project.init", "project.set",
 		"reconcile", "reconcile.needs", "reconcile.principles", "refresh", "request.link", "request.list", "request.met", "request.pick", "request.show",
 		"slice.check", "slice.link", "slice.mock.add", "slice.mock.list", "slice.mock.remove", "slice.move", "slice.new", "slice.pause", "slice.ready",
 		"slice.renumber", "slice.reopen", "slice.resume", "slice.set", "slice.show", "slice.take", "slice.widen", "status", "validate", "verdict.record", "where",
@@ -45,8 +45,11 @@ func TestAllowlistIsExactlyTheContract(t *testing.T) {
 	// Only the export offers files back; only the operations that carry a file take a larger body.
 	for _, name := range engine.Names() {
 		op, _ := engine.Lookup(name)
-		if op.Download != (name == "jira.export") {
+		if op.Download != (name == "jira.export" || name == "project.export") {
 			t.Errorf("%s: Download is %v", name, op.Download)
+		}
+		if name == "project.import" {
+			continue // M21 F: a project file, kept between requests (ops_move_test.go)
 		}
 		_, file := op.New().(engine.FileArgs)
 		carries := map[string]bool{"jira.keys": true, "prd.import": true, "prd.map": true, "prd.draft": true, "slice.mock.add": true,
@@ -176,6 +179,12 @@ func argv(t *testing.T, name, body string) ([]string, error) {
 			return nil, err
 		}
 		files.SetPath("/staged/" + name)
+	}
+	// M21 F: a project file is kept between the plan and the import (security.KeepIncoming).
+	if imported, ok := args.(*engine.ProjectImportArgs); ok {
+		if err := engine.StageImportForTest(imported, "/kept/project.zip"); err != nil {
+			return nil, err
+		}
 	}
 	return args.Argv()
 }
@@ -318,6 +327,7 @@ func TestEveryOperationsArgumentVector(t *testing.T) {
 	}
 	cases = append(cases, needsArgvCases...)
 	cases = append(cases, smallArgvCases...)
+	cases = append(cases, moveArgvCases...)
 	covered := map[string]bool{}
 	for _, c := range cases {
 		got, err := argv(t, c.op, c.body)

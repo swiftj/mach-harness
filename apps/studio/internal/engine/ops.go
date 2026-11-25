@@ -3,6 +3,7 @@ package engine
 import (
 	"sort"
 	"strconv"
+	"time"
 )
 
 // Args is one operation's typed arguments. Argv validates them and returns the fixed argument
@@ -26,9 +27,15 @@ type Operation struct {
 	// MaxBody is the largest JSON body the operation accepts; zero means MaxBodyBytes. Only the
 	// operations that carry a file (FileArgs) need more.
 	MaxBody int64
-	// Download: the engine writes files the person must then get (jira export). The server records
-	// exactly those files after a successful call and serves only them (server/downloads.go).
+	// Download: the engine writes files the person must then get (jira export, project export). The
+	// server records exactly those files after a successful call and serves only them
+	// (server/downloads.go).
 	Download bool
+	// Timeout, when longer than the configured limit, is this operation's own time limit (M21 F:
+	// exporting and bringing in a whole project).
+	Timeout time.Duration
+	// TooLarge is said instead of the general sentence when the body is larger than BodyLimit.
+	TooLarge string
 }
 
 // BodyLimit is the largest request body this operation accepts.
