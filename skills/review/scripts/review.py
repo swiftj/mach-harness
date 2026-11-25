@@ -180,17 +180,16 @@ def taken_over(project: Optional[Path], ticket_id: Any, holder: Optional[str], c
 
 
 def guarded(project: Optional[Path], ticket_id: Any, holder: Optional[str], run: Any) -> Any:
-    """While a take-over stands, every call by a holder that is not displaced first sets aside commits made outside the stations since
-    the last station call (claim.guard), then records the commit it ends on as a station's (claim.record)."""
+    """After a take-over, every station call first says, once, which commits were made outside MACH's stations since (claim.watch;
+    nothing is reset, and the reviewers see them), then records the commit it ends on as a station's (claim.record)."""
     if _claim is None or project is None or not isinstance(ticket_id, str):
         return run()
     cell_dir = Path(project) / ".factory" / "worktrees" / ticket_id
-    limit = _claim.config_minutes(Path(project))
-    said = _claim.guard(cell_dir, holder, ticket_id, limit)
+    said = _claim.watch(cell_dir, ticket_id)
     if said:
-        print(f"note: {said}", file=sys.stderr)
+        print(f"warning: {said}", file=sys.stderr)
     code = run()
-    _claim.record(cell_dir, holder, limit)
+    _claim.record(cell_dir)
     return code
 
 
