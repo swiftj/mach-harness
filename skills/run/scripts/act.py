@@ -34,14 +34,16 @@ with what was decided, by whom and when, and what is on offer now (`already_deci
 Entry point, wired in by run.py:
 
     act.main(ticket, key, root, *, report, by, reason, adrs, test_cmd, answers_file, via, station, line, carry_on,
-             take_over=None, run_skill="/mach", now=None, lock_wait=None) -> dict
+             take_over=None, to_factory=False, run_skill="/mach", now=None, lock_wait=None) -> dict
 
     report     callable(ticket) -> decide.main's report for that one ticket, computed now
     station    callable(name, argv) -> (exit code, stdout, stderr): runs one station script (see station_runner)
     line       callable() -> the product intake (intake.Factory) for the ledger and its lock, or raises
     carry_on   callable() -> {"supervisor": "started"|"woken"|"none", "pid", "why_not"}
-    take_over  callable(ticket, *, by, via) -> {"taken", "step", "since", "other"}: takes the ticket's step from the
-               worker that holds it, for a person (see claim_taker, the seam)
+    take_over  callable(ticket, *, by, via, to_factory) -> {"taken", "step", "since", "factory_run", "other", "said"}: takes
+               the ticket's step from the worker that holds it, for a person (run.py's decide_take_over; the seam below)
+    to_factory the person said the Factory carries a taken-over ticket on (the Factory Floor always does). Otherwise "Take it
+               over" leaves the ticket for /mach <ticket> in Claude Code and starts or wakes nothing
 
 It raises ActError, with a sentence that says what to do next, when it records nothing. A person's reason, answers and
 name are passed on exactly as given: never written, shortened or improved here.
@@ -357,52 +359,21 @@ def clock(moment_text: Any, now: Optional[datetime] = None) -> str:
 
 # ---- The take-over seam ----
 #
-# take_over(ticket, *, by, via) -> {"taken": bool, "step": str|None, "since": str|None, "other": str}
+# take_over(ticket, *, by, via, to_factory) -> {"taken": bool, "step", "since", "factory_run": bool, "other": str, "said": [str]}
 #
-# Takes the ticket's current step from the worker that holds its claim, for the person `by`, and leaves the step free for
-# whoever carries the ticket on next (the Factory supervisor, or /mach <ticket> in Claude Code). `other` is one plain
-# sentence about what happened to the other worker; act.py puts it in the decision's `now` as it is. `taken` is false when
-# no fresh claim was left to take (`other` then says so). It raises ActError, or any exception with a plain message, when
-# the step could not be taken; nothing has changed then.
+# run.py's decide_take_over: the same take-over `run.py next` makes when a person names a ticket. It displaces the worker that
+# holds the ticket's step (every station refuses it at its next call), ends a live Factory run on it, keeps a build step's
+# uncommitted files aside, and leaves the step free for whoever carries the ticket on next. `to_factory`: the person said the
+# Factory carries it on, so the ticket is the supervisor's again. `other` is one plain sentence about what happened to the other
+# worker and `said` any further sentences (the files kept aside); act.py puts them in the decision's `now` as they are. `taken`
+# is false when no other worker held the step (`other` then says so). It raises ActError when the step could not be taken;
+# nothing has changed then.
 #
-# claim_taker is this MACH's take-over: claim.py's own, the way `run.py next --take-over` does it, recorded in the cell's
-# takeovers.jsonl. TAKE_OVER_EFFECT says, as the end of one sentence, what it means for the other worker; decide.py puts it
-# in "Take it over"'s `does`, and the Factory Floor's confirm shows that.
+# TAKE_OVER_EFFECT (TAKE_OVER_EFFECT_FACTORY for a Factory run) says, as the end of one sentence, what it means for the other
+# worker; decide.py puts it in "Take it over"'s `does`, and the Factory Floor's confirm shows that.
 
-TAKE_OVER_EFFECT = ("its claim is released, and if it is still at work it is not stopped yet, so review and merge sort out "
-                    "anything both of them change.")
-
-
-def claim_taker(root: Path, config: Dict[str, Any], claims: Callable[[], Any], now: Optional[Callable[[], datetime]] = None) -> Callable[..., Dict[str, Any]]:
-    """The take-over on this MACH: claim.py's take with take_over, for a new holder that is the person's, recorded in the cell's
-    takeovers.jsonl as `run.py next --take-over` records one; then that claim is let go at once, so the Factory or the person's
-    next /mach <ticket> claims the step without being held."""
-    def take_over(ticket: str, *, by: str, via: str) -> Dict[str, Any]:
-        C = claims()
-        cell_dir = Path(root) / ".factory" / "worktrees" / ticket
-        limit = C.minutes(config)
-        moment = now() if now else C.now()
-        other = C.current(cell_dir, limit, moment)
-        if not other:
-            return {"taken": False, "step": None, "since": None,
-                    "other": "The other worker's claim had already lapsed, so no other worker holds the step now."}
-        mine = C.new_holder()
-        try:
-            result = C.take(cell_dir, other["step"], mine, limit, take_over=True, at=moment)
-        except (C.ClaimError, OSError) as exc:
-            raise ActError(f"MACH could not take {ticket}'s {other['step']} step over ({exc}), so nothing was changed. "
-                           f"/mach {ticket} in Claude Code takes it over there.")
-        before = C.public(result.get("replaced") or other, limit)
-        with contextlib.suppress(OSError):
-            with (cell_dir / "takeovers.jsonl").open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps({"step": before.get("step"), "from_claim_at": before.get("at"), "at": C.stamp(moment),
-                                         "by": by, "via": via}) + "\n")
-        with contextlib.suppress(OSError):
-            if (C.read(cell_dir) or {}).get("holder") == mine:
-                (cell_dir / C.FILE).unlink()
-        return {"taken": True, "step": before["step"], "since": before["at"],
-                "other": f"The other worker had been handed the {before['step']} step at {clock(before['at'], moment)}: {TAKE_OVER_EFFECT}"}
-    return take_over
+TAKE_OVER_EFFECT = "the other worker stops at its next step."
+TAKE_OVER_EFFECT_FACTORY = "the Factory's run on it is ended, and the other worker stops at its next step."
 
 
 # ---- What was decided last, for the next person ----
@@ -420,7 +391,8 @@ WAITING_FOR = {
     "merge-stopped": "a person to decide on the stopped merge", "answers": "answers to its open questions",
     "build-gate": "a person to decide on the stopped build", "parked": "a person to say it may run again",
     "worker-in-cell": "the other worker, or for someone to take it over", "main-conflict": "the conflict with the main branch to be resolved",
-    "escalated": "a person to decide what happens to it", "security-veto": "a person to decide on the security finding",
+    "escalated": "a person to decide what happens to it", "landed-elsewhere": "a person's merge of this copy",
+    "already-on-main": "this copy to be closed out", "security-veto": "a person to decide on the security finding",
 }
 
 
@@ -583,8 +555,8 @@ def deciding(root: Path, wait: float = LOCK_WAIT_SECONDS, on_wait: Optional[Call
 def main(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[str, Any]], by: Optional[str], reason: Optional[str] = None,
          adrs: Optional[List[str]] = None, test_cmd: Optional[str] = None, answers_file: Optional[Path] = None, via: str = "terminal",
          station: Callable[[str, Sequence[str]], Tuple[int, str, str]], line: Callable[[], Any], carry_on: Callable[[], Dict[str, Any]],
-         take_over: Optional[Callable[..., Dict[str, Any]]] = None, run_skill: str = "/mach", now: Optional[datetime] = None,
-         lock_wait: Optional[float] = None, on_wait: Optional[Callable[[], None]] = None) -> Dict[str, Any]:
+         take_over: Optional[Callable[..., Dict[str, Any]]] = None, to_factory: bool = False, run_skill: str = "/mach",
+         now: Optional[datetime] = None, lock_wait: Optional[float] = None, on_wait: Optional[Callable[[], None]] = None) -> Dict[str, Any]:
     """Record one decision under the decision lock, then carry the ticket on (outside the lock: starting a supervisor may take a moment).
     While another decision holds the lock it waits; if that one is still going when the wait ends, the answer is `busy` and
     nothing is recorded yet: the caller (the Factory Floor, or the run skill) asks again with the same decision."""
@@ -596,10 +568,14 @@ def main(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[str,
                     "unparked": False, "supervisor": "none", "pid": None, "why_not": None, "now": BUSY_NOW,
                     "then": "Nothing is recorded yet. The same decide do records it once the other decision has finished."}
         result, after = record(ticket, key, root, report=report, by=by, reason=reason, adrs=adrs, test_cmd=test_cmd, answers_file=answers_file,
-                               via=via, station=station, line=line, take_over=take_over, run_skill=run_skill, now=now)
+                               via=via, station=station, line=line, take_over=take_over, to_factory=to_factory, run_skill=run_skill, now=now)
     if after is None:
         return result
     done, what = after
+    if result.pop("keep_here", False):
+        # "Take it over" from the terminal, without the Factory: the ticket is the person's, carried on in Claude Code.
+        result.update({"supervisor": "none", "pid": None, "why_not": None, "now": f"{done} {run_skill} {ticket} in Claude Code carries it on: {what}."})
+        return result
     going = carry(carry_on)
     result.update(going)
     result["now"] = f"{done} {carried(ticket, run_skill, going, what)}"
@@ -609,7 +585,7 @@ def main(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[str,
 def record(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[str, Any]], by: Optional[str], reason: Optional[str] = None,
          adrs: Optional[List[str]] = None, test_cmd: Optional[str] = None, answers_file: Optional[Path] = None, via: str = "terminal",
          station: Callable[[str, Sequence[str]], Tuple[int, str, str]], line: Callable[[], Any],
-         take_over: Optional[Callable[..., Dict[str, Any]]] = None,
+         take_over: Optional[Callable[..., Dict[str, Any]]] = None, to_factory: bool = False,
          run_skill: str = "/mach", now: Optional[datetime] = None) -> Tuple[Dict[str, Any], Optional[Tuple[str, str]]]:
     """The decision itself: (the result, (what was done, what happens next)), or (the result, None) when nothing is left to carry on."""
     if via not in VIA:
@@ -664,7 +640,14 @@ def record(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[st
     elif key == "merge":
         result["station"] = run_station(station, key, [ticket, "--by-person"], allowed=(0, 3))
         answer = result["station"]["answer"] or {}
-        if result["station"]["exit_code"] == 3:
+        if answer.get("status") == "ALREADY_ON_MAIN":
+            # A second copy of a slice that landed first, with nothing of its own left: closed out as merged, never abandoned.
+            done, what = (f"Everything in {ticket} is already on the main branch: another copy of its slice landed first, so MACH closes "
+                          "this copy out as merged.", "cleanup removes its cell")
+        elif answer.get("status") == "RENUMBERED":
+            done, what = (f"{ticket} is not merged yet. {sentence(answer.get('reason'))}",
+                          "it is verified and reviewed again on the renamed spec, then merged")
+        elif result["station"]["exit_code"] == 3:
             done, what = (f"The pull request for {ticket} is open and not merged yet: {answer.get('pull_request') or 'see the merge result'}.",
                           "the merge is checked again until it lands")
         else:
@@ -683,12 +666,15 @@ def record(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[st
         result["station"] = run_station(station, key, [ticket, f"--test-cmd={test_cmd}", f"--reason={reason}", f"--by={name}", f"--via={via}"])
         done, what = f"The test command for {ticket} is set.", "the build carries on from where it is"
     elif key == "take-over":
-        took = take_over(ticket, by=name, via=via)
+        factory = to_factory or via == "floor"
+        took = take_over(ticket, by=name, via=via, to_factory=factory)
         result["took_over"] = took
         step = took.get("step")
         done = (f"{name} took over {ticket}'s {step} step. {sentence(took.get('other'))}" if took.get("taken")
                 else f"{sentence(took.get('other'))} {ticket} is free to carry on.")
+        done += "".join(f" {sentence(extra)}" for extra in took.get("said") or [])
         what = "it goes on from where the other worker left it"
+        result["keep_here"] = not factory
     elif key in NOTHING_RECORDED:
         done, what = f"{ticket} is released to run again.", "it runs from where it stopped"
     elif key == "answers":
@@ -721,13 +707,14 @@ def record(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[st
         # The Factory is handed the ticket at the stage another worker holds: the step is taken from it, as the person asked
         # for the ticket to run. The decision above is recorded either way.
         try:
-            took = take_over(ticket, by=name, via=via)
+            took = take_over(ticket, by=name, via=via, to_factory=True)
         except Exception as exc:  # noqa: BLE001 - the decision stands; the claim is said, with how to take it over
             result["note"] = f"{sentence(str(exc))} The other worker's claim may hold the Factory until it lapses."
         else:
             result["took_over"] = took
             if took.get("taken"):
                 done += f" {name} took over its {took.get('step')} step. {sentence(took.get('other'))}"
+                done += "".join(f" {sentence(extra)}" for extra in took.get("said") or [])
     remember(root, ticket, key, name, via, now)
     unparked, note = unpark(root, ticket, line, announce=key != "abandon", run_skill=run_skill)
     result["unparked"] = unparked

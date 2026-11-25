@@ -1384,7 +1384,7 @@ def cmd_decide(project: Project, args: argparse.Namespace) -> int:
     import decide
     doing = args.ticket_ids[:1] == ["do"]
     given_for_do = [flag for flag, value in (("--by", args.by), ("--reason", args.reason), ("--adr", args.adr), ("--test-cmd", args.test_cmd),
-                                             ("--answers-file", args.answers_file), ("--via", args.via)) if value is not None]
+                                             ("--answers-file", args.answers_file), ("--via", args.via), ("--to-factory", args.to_factory or None)) if value is not None]
     if doing and len(args.ticket_ids) != 3:
         args.decide_parser.error("decide do takes a ticket and one option key: decide do <ticket> <option> [--by NAME] [--reason WHY] ...")
     if not doing and given_for_do:
@@ -1406,13 +1406,82 @@ def cmd_decide(project: Project, args: argparse.Namespace) -> int:
         ticket_ids.append(ticket_id)
     try:
         report = decide.main(ticket_ids, project.root, config=project.config, next_step=lambda ticket_id: next_step(project, ticket_id, False),
-                             intent_skill=skill("intent"), run_skill=skill("run"), held_by=lambda ticket_id: held_by_worker(project, ticket_id))
+                             intent_skill=skill("intent"), run_skill=skill("run"), held_by=lambda ticket_id: held_by_worker(project, ticket_id),
+                             factory_run=lambda ticket_id: held_by_factory_run(project, ticket_id))
     except decide.DecideError as exc:
         raise RunError(str(exc))
     if resolved:
         report["resolved_from"] = {ticket_id: typed for typed, ticket_id in resolved.items()}
     print(json.dumps(report, indent=2, ensure_ascii=False) if args.json else decide.human(report))
     return 0
+
+
+def held_by_factory_run(project: Project, ticket_id: str) -> bool:
+    """Whether the fresh claim on this ticket's step is a supervised execution's (a Factory run), for what "Take it over" says."""
+    C = claims()
+    held = C.current(project.cell_dir(ticket_id), C.minutes(project.config))
+    return bool(held) and held.get("holder") in execution_holders(project)
+
+
+def decide_take_over(project: Project) -> Any:
+    """The take-over act.py calls for a person's decision (act.py's seam): the same take-over `run.py next` makes when a person names a
+    ticket (claim_step, person=True). The other worker is displaced (every station refuses it at its next call), a live Factory run
+    on the ticket is ended (not parked, no attempt counted), uncommitted files of a build step are kept aside. Then the person's own
+    claim is let go at once, so whoever carries the ticket on (the supervisor, or the person's /mach <ticket>) takes the step without
+    being held by it. With `to_factory` (the person said the Factory carries it on), the ticket's slice is the supervisor's again: the
+    take-over of a Factory run had given it to the engineer.
+
+    Returns {"taken", "step", "since", "factory_run", "other": the sentence about the other worker, "said": [the other sentences]}."""
+    def take_over(ticket_id: str, *, by: str, via: str, to_factory: bool = False) -> Dict[str, Any]:
+        C = claims()
+        root = project.cell_dir(ticket_id)
+        limit = C.minutes(project.config)
+        before = C.current(root, limit)
+        factory_run = bool(before) and before.get("holder") in execution_holders(project)
+        found = next_step(project, ticket_id, False)
+        if found.get("stop") or C.stage_of(root) is None:
+            return {"taken": False, "step": None, "since": None, "factory_run": False, "said": [],
+                    "other": "No other worker holds the step now, so there was nothing to take over."}
+        try:
+            claimed = claim_step(project, found, None, True, person=True, named=True)
+        except RunError as exc:
+            raise act_error()(f"MACH could not take {ticket_id} over ({exc}), so nothing was changed. /mach {ticket_id} in Claude Code takes it over there.")
+        mine = claimed.get("holder")
+        if mine and (C.read(root) or {}).get("holder") == mine:
+            try:
+                (root / C.FILE).unlink()
+            except OSError:
+                pass  # the step is free for the next driver: nobody is held by the person's claim
+        took = claimed.get("took_over")
+        warnings = [w for w in claimed.get("warnings") or [] if isinstance(w, str)]
+        if not took and not any(w.startswith("Another worker's builders") for w in warnings):
+            return {"taken": False, "step": None, "since": None, "factory_run": False, "said": [],
+                    "other": "The other worker's claim had already lapsed, so no other worker holds the step now."}
+        step_name = (took or {}).get("step") or found.get("action")
+        said = [w for w in warnings if w.startswith(("The worker that was taken over", "It was a Factory execution on this machine, and MACH could not"))]
+        if factory_run:
+            ended = not any(w.startswith("It was a Factory execution on this machine, and MACH could not") for w in warnings)
+            other = (f"It was a Factory run, handed the {step_name} step at {C.clock((took or {}).get('at'))}: MACH ended that run, and its worker "
+                     "stops at its next step." if ended else
+                     f"It was a Factory run, handed the {step_name} step at {C.clock((took or {}).get('at'))}: its worker stops at its next step.")
+        else:
+            other = (f"Another worker had been handed the {step_name} step at {C.clock((took or {}).get('at'))}: it stops at its next step, "
+                     "and nothing it had not committed is used.")
+        if to_factory:
+            try:
+                sys.path.insert(0, str(Path(__file__).resolve().parent))
+                import activation
+                _, line = factory(project)
+                activation.give_to_supervisor(factory_context(project, line), [ticket_id])
+            except Exception:  # noqa: BLE001 - carry_on says where the ticket goes; the take-over stands
+                pass
+        return {"taken": True, "step": step_name, "since": (took or {}).get("at"), "factory_run": factory_run, "other": other, "said": said}
+    return take_over
+
+
+def act_error() -> Any:
+    import act
+    return act.ActError
 
 
 def cmd_decide_do(project: Project, args: argparse.Namespace, decide: Any, ticket_id: str, key: str) -> int:
@@ -1429,7 +1498,8 @@ def cmd_decide_do(project: Project, args: argparse.Namespace, decide: Any, ticke
     def report(ticket: str) -> Dict[str, Any]:
         try:
             return decide.main([ticket], project.root, config=project.config, next_step=lambda ticket_id: next_step(project, ticket_id, False),
-                               intent_skill=skill("intent"), run_skill=skill("run"), held_by=lambda ticket_id: held_by_worker(project, ticket_id))
+                               intent_skill=skill("intent"), run_skill=skill("run"), held_by=lambda ticket_id: held_by_worker(project, ticket_id),
+                               factory_run=lambda ticket_id: held_by_factory_run(project, ticket_id))
         except decide.DecideError as exc:
             raise act.ActError(str(exc))
 
@@ -1440,11 +1510,11 @@ def cmd_decide_do(project: Project, args: argparse.Namespace, decide: Any, ticke
             print("Another decision on this project is being recorded. MACH records this one as soon as it finishes.", file=sys.stderr, flush=True)
 
     try:
-        # The take-over seam (act.claim_taker): takes the ticket's step from the worker that holds it, for this person.
+        # The take-over seam (decide_take_over): the same take-over `next` makes for a person who names the ticket.
         result = act.main(ticket_id, key, project.root, report=report, by=by, reason=args.reason, adrs=args.adr, test_cmd=args.test_cmd,
                           answers_file=answers, via=via, station=act.station_runner(project.root, sibling),
                           line=lambda: factory(project)[1], carry_on=act.supervisor_carry_on(lambda: factory_context(project), tickets=[ticket_id], start=via != "floor"),
-                          take_over=act.claim_taker(project.root, project.config, claims), run_skill=skill("run"), on_wait=waiting)
+                          take_over=decide_take_over(project), to_factory=bool(args.to_factory), run_skill=skill("run"), on_wait=waiting)
     except act.ActError as exc:
         raise RunError(str(exc))
     print(json.dumps(result, indent=2, ensure_ascii=False) if args.json else act.human(result))
@@ -2869,6 +2939,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--test-cmd", metavar="CMD", help="decide do set-test-command: the command that runs the tests")
     p.add_argument("--answers-file", metavar="FILE", help='decide do answers: a JSON file, [{"n": 1, "answer": "..."}, {"n": 2, "leave_open": true}]')
     p.add_argument("--via", choices=("terminal", "floor"), help="decide do: where the person decided (default: terminal)")
+    p.add_argument("--to-factory", action="store_true",
+                   help="decide do take-over: the Factory carries the ticket on afterwards (with --via=floor it always does); "
+                        "without it, /mach <ticket> in Claude Code carries it on")
     p.set_defaults(func=cmd_decide, decide_parser=p)
 
     p = sub.add_parser("report", help="MACH's own internal error as an issue text for MACH's repository: shown first, filed only with --confirm")

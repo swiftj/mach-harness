@@ -163,6 +163,7 @@ export const GATE_REASON_WORDS: Readonly<Record<string, string>> = {
   "lane-not-open": "the lane is not open yet",
   "lane-held": "every lane left is being built by another builder",
   "lane-taken-over": "the lane was taken over by another builder",
+  "taken-over": "a person took the ticket over, so this worker's part stopped",
   "lane-state": "a lane may not write the cell's own record",
   "lane-folder-unknown": "a lane's folder is not its worktree",
   "lane-files-not-saved": "a lane's uncommitted files could not be kept, so the join did not go on",

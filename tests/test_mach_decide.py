@@ -376,6 +376,53 @@ class WorkerInCellTest(Base):
         self.assertEqual(self.one(next_step=lambda ticket: stop)["state"], "worker-in-cell")
 
 
+class TakenOverAndLandedElsewhereTest(Base):
+    """The needs a person's take-over and a second copy of a slice bring: a displaced driver is nothing to decide; a copy whose
+    slice landed first is merged by a person, never suggested for abandoning."""
+
+    def stop(self, needs, stage):
+        return lambda ticket: {"ticket_id": ticket, "stage": stage, "action": "stop", "stop": True, "needs": needs, "reason": "SLICE-001 landed first."}
+
+    def test_a_displaced_driver_is_not_in_needs_you(self):
+        self.cell(stage="building")
+        self.assertEqual(self.decide(next_step=self.stop("taken-over", "building"))["tickets"], [])
+        self.assertEqual(self.decide(TICKET, next_step=self.stop("taken-over", "building"))["not_waiting"][0]["waiting"], False)
+
+    def test_an_approved_copy_is_merged_as_well(self):
+        self.cell(stage="approved")
+        item = self.one(next_step=self.stop("landed-elsewhere", "approved"))
+        self.assertEqual(item["state"], "landed-elsewhere")
+        self.assertEqual([o["key"] for o in item["options"]], ["merge", "abandon"])
+        merge = item["options"][0]
+        self.assertEqual((merge["label"], merge["do"], merge["confirm"], merge["route"]), ("Merge this copy as well", True, True, f"merge {TICKET}"))
+        self.assertNotIn("abandon", (item["situation"]["summary"] + merge["does"]).lower(), "abandoning is never the suggested route")
+        self.assertFalse(any(o["recommended"] for o in item["options"]))
+
+    def test_a_copy_still_being_built_is_carried_on_by_a_person(self):
+        self.cell(stage="building")
+        item = self.one(next_step=self.stop("landed-elsewhere", "building"))
+        carry = item["options"][0]
+        self.assertEqual((carry["key"], carry["label"], carry["do"]), ("run", "Carry this copy on", False), "only a person's run meets main")
+
+    def test_close_it_out_only_once_the_merge_found_it_all_on_main(self):
+        self.cell(stage="merged", merged={"already_on_main": "abc123", "by_person": True})
+        on_main = lambda ticket: {"ticket_id": ticket, "stage": "merged", "action": "cleanup", "stop": False, "reason": "Merged."}
+        item = self.one(next_step=on_main)
+        self.assertEqual((item["state"], [o["label"] for o in item["options"]]), ("already-on-main", ["Close it out"]))
+        self.cell(stage="merged", merged={"commit": "abc123"})
+        self.assertEqual(self.decide(next_step=on_main)["tickets"], [], "an ordinary merge waits for nobody")
+
+    def test_taking_over_a_factory_run_says_the_run_is_ended(self):
+        self.cell(stage="built")
+        self.write(TICKET, "claim.json", {"step": "verify", "stage": "built", "holder": "ab" * 16, "at": stamp(NOW - timedelta(minutes=5)),
+                                          "renewed_at": stamp(NOW - timedelta(minutes=5))})
+        project = run.Project(self.project)
+        result = decide.main([], self.project, config={}, next_step=lambda t: run.next_step(project, t, False), now=NOW, factory_run=lambda t: True)
+        take = result["tickets"][0]["options"][1]
+        self.assertTrue(take["does"].endswith("the Factory's run on it is ended, and the other worker stops at its next step."), take["does"])
+        self.assertTrue(self.one()["options"][1]["does"].endswith(": the other worker stops at its next step."))
+
+
 class OrderAndDataTest(Base):
     def test_tickets_a_person_unblocks_come_first_in_a_stable_order(self):
         self.cell("LOCAL-001", stage="blocked")
