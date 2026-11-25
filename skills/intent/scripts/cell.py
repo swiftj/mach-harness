@@ -477,6 +477,11 @@ def cmd_open(project: Path, args: argparse.Namespace) -> int:
     root.mkdir(parents=True, exist_ok=True)
     (root / "evidence").mkdir(exist_ok=True)
     branch = f"feature/{ticket_id}"
+    given = getattr(args, "branch", None)
+    if given:  # intake's, for a slice a person took over from another Factory: its own branch, so neither Factory's push meets the other's
+        if not re.fullmatch(rf"feature/{re.escape(ticket_id)}-[a-z0-9][a-z0-9-]{{0,38}}", given):
+            raise CellError(f"--branch must be feature/{ticket_id}-<a short lowercase name>, not '{given}'. Nothing was opened.", code="bad-branch")
+        branch = given
     isolation, note = "none", ""
     inside = git(["rev-parse", "--is-inside-work-tree"], project)
     if inside.returncode != 0 and any((folder / ".git").exists() for folder in (project, *project.parents)):
@@ -2755,15 +2760,27 @@ def cmd_claim(project: Path, args: argparse.Namespace) -> int:
         refuse_without_baseline(project, args.ticket_id)
     holder = args.holder or claims.new_holder()
     limit = claims.minutes(load_config(project))
+    gone = claims.displaced(root, holder)
+    if gone:  # a person took this ticket over from this holder: its worker's part ends here
+        raise CellError(claims.stopped_words(gone), code="taken-over")
+    # A person's conversation (no supervised execution) is never refused because another worker has the step: it takes it over, and
+    # that worker is stopped at its next station call. A supervised execution keeps the one-worker rule.
+    person = not os.environ.get("MACH_EXECUTION_ID")
     try:
-        result = claims.take(root, args.step, holder, limit)
+        result = claims.take(root, args.step, holder, limit, take_over=person)
+        if result["replaced"]:
+            claims.displace(root, [result["replaced"]["holder"]], args.step)
     except claims.ClaimError as exc:
         raise CellError(str(exc), code="claim-refused")
     except OSError as exc:
         raise CellError(f"The claim could not be recorded ({exc.__class__.__name__}), so do not start the worker.", code="claim-failed")
     if result["refused"]:
-        raise CellError(claims.in_words(result["refused"], limit) + " Do not start another worker on it; a person can say to take over.", code="claim-held")
-    print(json.dumps({"ticket_id": args.ticket_id, **claims.shown(result["claim"], limit)}, indent=2))
+        raise CellError(claims.in_words(result["refused"], limit) + " This supervised execution waits for it: a supervised execution never "
+                        "takes a step over. A person who names the ticket takes it over at once.", code="claim-held")
+    shown = {"ticket_id": args.ticket_id, **claims.shown(result["claim"], limit)}
+    if result["replaced"]:
+        shown["warnings"] = [claims.taken_over_warning(result["replaced"])]
+    print(json.dumps(shown, indent=2))
     return 0
 
 
@@ -2777,6 +2794,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--title")
     p.add_argument("--headless", action="store_true", help="record that no person is answering questions")
     p.add_argument("--small", action="store_true", help="a small change, on the engineer's word: the short interview, the same spec and gates (M18)")
+    p.add_argument("--branch", help="intake's: the cell's branch, feature/<ticket>-<name>, for a slice taken over from another Factory (default feature/<ticket>)")
     p.set_defaults(func=cmd_open)
 
     p = sub.add_parser("widen", help="make a small change a full slice while its spec is written, so the interview carries on in full")
@@ -2905,9 +2923,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
+    import claim as claims  # the shared helper beside this script: a worker a person's take-over displaced is refused here
+    parser = build_parser()
+    argv, holder = claims.station_argv(parser, sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(argv)
     project = args.project.resolve() if args.project else find_project(Path.cwd())
     try:
+        stop = claims.station_stop(project, getattr(args, "ticket_id", None), holder)
+        if stop:
+            raise CellError(stop, code="taken-over")
         return args.func(project, args)
     except CellError as exc:
         print(f"error: {exc}", file=sys.stderr)

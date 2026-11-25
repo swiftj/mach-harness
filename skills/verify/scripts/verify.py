@@ -54,7 +54,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 TICKET_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*$")
 AUTO_FILES = ("test-suite.log", "contract-check.log", "results.json", "summary.json", "findings.md")
@@ -144,6 +144,23 @@ try:
     import lifecycle  # noqa: E402
 except Exception:  # noqa: BLE001
     lifecycle = None
+
+# A person may take any ticket over (claim.py, with the intent station): a worker whose holder a take-over displaced is refused at its
+# next call to this station. Every command takes --holder for that; without one, nothing is checked. If the helper cannot be
+# loaded, nothing is checked and this station behaves exactly as before.
+try:
+    import claim as _claim  # noqa: E402
+except Exception:  # noqa: BLE001
+    _claim = None
+
+
+def split_holder(parser: Any, argv: Optional[Sequence[str]]) -> Tuple[List[str], Optional[str]]:
+    items = list(sys.argv[1:] if argv is None else argv)
+    return _claim.station_argv(parser, items) if _claim is not None else (items, None)
+
+
+def taken_over(project: Optional[Path], ticket_id: Any, holder: Optional[str]) -> Optional[str]:
+    return _claim.station_stop(project, ticket_id, holder) if _claim is not None else None
 
 # The environment of the project's commands (the intent station's command_env.py), shared with the audit, build and merge stations.
 try:
@@ -1013,7 +1030,9 @@ def parse(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     argv = list(sys.argv[1:] if argv is None else argv)
     cut = argv.index("--") if "--" in argv else len(argv)
     parser = build_parser()
-    args = parser.parse_args(argv[:cut])
+    own, holder = split_holder(parser, argv[:cut])
+    args = parser.parse_args(own)
+    args.holder_given = holder
     if cut < len(argv):
         if args.command != "capture":
             parser.error(f"'--' and what follows it are only for capture, which passes them to its driver; {args.command} takes none")
@@ -1026,6 +1045,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     project = None
     try:
         project = args.project.resolve() if args.project else find_project(Path.cwd())
+        stop = taken_over(project, args.ticket_id, getattr(args, "holder_given", None))
+        if stop:
+            raise VerifyError(stop, code="taken-over")
         return args.func(Cell(project, args.ticket_id), args)
     except VerifyError as exc:
         print(f"refused: {exc}", file=sys.stderr)
