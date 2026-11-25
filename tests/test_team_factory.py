@@ -129,7 +129,7 @@ class SameSliceTwiceTest(TwoFactories):
         self.assertEqual(self.product2("dispatch", "--ready")["tickets"], [], "the Factory's own choice skips it")
         self.assertFalse((self.eng2 / ".factory/worktrees").exists())
         # An engineer who names it gets it: taken over with a warning, on a branch of its own.
-        taken = self.product2("dispatch", "SLICE-001")
+        taken = self.product2("dispatch", "SLICE-001", "--by-person")
         self.assertEqual((taken["tickets"], taken["refused"]), ([str(number)], []))
         self.assertTrue(taken["warnings"][0].startswith("@erin-eng's Factory has been building SLICE-001 since"), taken["warnings"])
         self.assertEqual(taken["dispatched"][0]["branch"], f"feature/{number}-erin-eng")
@@ -233,7 +233,7 @@ class ClaimTest(TwoFactories):
         self.assertEqual(git(self.eng, "branch", "--list").split(), ["*", "main"])
         self.assertEqual(self.claim_comments(number), [])
         self.gh_fails("api comments")
-        named = self.product("dispatch", "SLICE-001")
+        named = self.product("dispatch", "SLICE-001", "--by-person")
         self.assertEqual(named["tickets"], [str(number)], "an engineer who names it gets it, GitHub or not")
         self.assertTrue(any("GitHub could not be reached to claim SLICE-001" in line and "MACH builds it here anyway" in line for line in named["warnings"]))
 
@@ -343,7 +343,7 @@ class ReleaseTest(TwoFactories):
         self.product2("intake")
         self.assertEqual(self.product2("dispatch", "--ready")["tickets"], [])
         self.set_gh(me="ada-pm")
-        done = self.product2("dispatch", "SLICE-001")  # naming it is enough: no flag, no plan first, no second yes
+        done = self.product2("dispatch", "SLICE-001", "--by-person")  # the engineer named it: no plan first, no second yes
         self.set_gh(me="erin-eng")
         self.assertEqual(done["tickets"], [str(number)])
         self.assertEqual(done["dispatched"][0]["branch"], f"feature/{number}-ada-pm", "both Factories' branches can be on origin at once")

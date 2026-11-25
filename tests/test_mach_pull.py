@@ -523,7 +523,7 @@ class HandOverTest(PullBase):
         report = self.pull()
         self.assertEqual((report["factory"]["handed_over"], report["factory"]["tickets"]), (True, [str(b)]))
         self.assertEqual(self.owners(), {"SLICE-001": "engineer", "SLICE-002": "supervisor"})
-        self.assertIn("is left alone by this pull; say /mach:run", self.waiting(report)["SLICE-001"]["then"])
+        self.assertIn("is not taken by this pull; say /mach:run", self.waiting(report)["SLICE-001"]["then"])
 
     def test_an_engineers_own_ticket_stays_in_the_conversation(self):
         (a,) = self.issues(1)

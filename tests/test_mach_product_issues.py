@@ -178,8 +178,9 @@ elif args[:2] == ["issue", "close"]:
 elif args[:2] == ["issue", "pin"]:
     find(args[2])["pinned"] = True
 elif args[:2] == ["pr", "list"]:
-    head = value("--head")
-    print(json.dumps([p for p in state.get("pulls", []) if p.get("head") == head and p.get("state", "open") == "open"]))
+    head = value("--head") if "--head" in args else None
+    print(json.dumps([{**p, "headRefName": p.get("head")} for p in state.get("pulls", [])
+                      if (head is None or p.get("head") == head) and p.get("state", "open") == "open"]))
 elif args[:2] == ["label", "list"]:
     print(json.dumps([{"name": n} for n in labels]))
 elif args[:2] == ["label", "create"]:
