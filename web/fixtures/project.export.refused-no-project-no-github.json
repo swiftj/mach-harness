@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "data": null,
+  "refused": "There is no project here yet, and MACH could not read GitHub to take it from there. GitHub could not be reached. The GitHub tool (gh) said: \"error connecting to api.github.com\". Try again when GitHub can be reached, or export on the computer where the project was made. Nothing was changed.",
+  "hint": null
+}

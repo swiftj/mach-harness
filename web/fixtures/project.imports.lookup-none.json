@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "data": {
+    "identifier": "SLICE-099",
+    "found": [],
+    "reads_only": true,
+    "factory_authorized": false,
+    "note": "SLICE-099 did not come from a project brought in here."
+  },
+  "refused": null,
+  "hint": null
+}

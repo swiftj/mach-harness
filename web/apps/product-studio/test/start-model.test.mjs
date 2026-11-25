@@ -32,7 +32,7 @@ test("the engine needs the project only to make drafts: a PRD is imported, mappe
 test("the ways are every way to start, each saying what happens and what is needed, in the app's words", () => {
   assert.deepEqual(
     ways.map((w) => w.id),
-    ["describe", "prd", "idea", "request"],
+    ["describe", "prd", "idea", "request", "import"],
   );
   const forbidden = /on-ramp|onramp|\bengine\b|light path|\bkind\b|\bscript\b|architecture|\bsubmit\b/i;
   for (const way of ways) {

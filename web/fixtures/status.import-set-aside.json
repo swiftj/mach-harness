@@ -1,0 +1,148 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "lending",
+      "name": "Lending",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Members borrow what they need.",
+      "outcomes": [
+        "Members can borrow books"
+      ],
+      "issue": null,
+      "url": null,
+      "changed_elsewhere": null
+    },
+    "approvals_withdrawn": [],
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "Loans",
+        "status": "open",
+        "revision": 1,
+        "acceptance_criteria": [
+          "A loan has a due date"
+        ],
+        "issue": null,
+        "url": null,
+        "changed_elsewhere": null,
+        "same_moment": null,
+        "counts": {
+          "total": 0,
+          "by_progress": {},
+          "ready_or_further": 0,
+          "ready_or_further_means": "marked ready to build, being built, or shipped"
+        }
+      },
+      {
+        "epic_id": "EPIC-002",
+        "title": "Renewals",
+        "status": "open",
+        "revision": 1,
+        "acceptance_criteria": [
+          "A member can renew once"
+        ],
+        "issue": null,
+        "url": null,
+        "changed_elsewhere": null,
+        "same_moment": null,
+        "counts": {
+          "total": 0,
+          "by_progress": {},
+          "ready_or_further": 0,
+          "ready_or_further_means": "marked ready to build, being built, or shipped"
+        }
+      }
+    ],
+    "slices": [],
+    "principles": {
+      "active": [
+        "PP-01"
+      ],
+      "retired": [],
+      "unpublished_changes": true,
+      "published": {
+        "saved": null,
+        "unfinished": false,
+        "revision": null,
+        "sha256": null,
+        "approved_by": null,
+        "published_at": null,
+        "issue": null,
+        "url": null,
+        "github": null,
+        "newer_elsewhere": false,
+        "changed_on_github": false
+      },
+      "slices_answered_under_older": [],
+      "next": "The principles have changes that are not published: publish them so the builders get them."
+    },
+    "saved": {
+      "everything_saved": false,
+      "note": "1 thing is not saved yet.",
+      "not_saved": [
+        {
+          "kind": "principles_unpublished",
+          "target": null,
+          "text": "The product principles have changes that are not published. Publish them so the builders get them."
+        }
+      ],
+      "github_check": null
+    },
+    "order": [
+      {
+        "epic_id": "EPIC-001",
+        "issue": null,
+        "slices": [],
+        "on_github": false,
+        "github_order": null,
+        "github_read_at": null,
+        "matches_github": null,
+        "unfinished": false,
+        "taken_from_github": false,
+        "could_not_read": false,
+        "note": null
+      },
+      {
+        "epic_id": "EPIC-002",
+        "issue": null,
+        "slices": [],
+        "on_github": false,
+        "github_order": null,
+        "github_read_at": null,
+        "matches_github": null,
+        "unfinished": false,
+        "taken_from_github": false,
+        "could_not_read": false,
+        "note": null
+      }
+    ],
+    "same_id_twice": [],
+    "project_on_github": null,
+    "github": {
+      "repository": "acme/team-space",
+      "form": null,
+      "last_read": null
+    },
+    "current_slice": null,
+    "last_refreshed": null,
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Start a new slice (slice new --epic EPIC-NNN --title \"...\")."
+    ],
+    "next_actions": [
+      {
+        "kind": "start_slice",
+        "target": null,
+        "title": "Start a new slice",
+        "reason": "No slice of intent is being defined right now.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

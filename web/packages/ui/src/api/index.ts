@@ -8,3 +8,4 @@ export * from "./interview";
 export * from "./client";
 export * from "./upload";
 export * from "./small";
+export * from "./move";
