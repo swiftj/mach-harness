@@ -550,7 +550,7 @@ def next_step(project: Project, ticket_id: str, headless: bool, meet_on_main: bo
                         prompt=f"Revise MACH ticket {ticket_id} after a rejected review. Findings: {decision.get('findings')}")
         if summary.get("status") == "FAIL_WITH_EVIDENCE" and summary.get("head") == head:
             findings = str(root / "evidence" / "findings.md")
-            return step(ticket_id, stage, "revise", "Verification failed this build.", agent_type=agent_type("builder"), findings=findings,
+            return step(ticket_id, stage, "revise", "Verification failed this build." + early_note(cell), agent_type=agent_type("builder"), findings=findings,
                         prompt=f"Revise MACH ticket {ticket_id} after a failed verification. Findings: {findings}")
         return step(ticket_id, stage, "verify", "Built; not yet verified.", agent_type=agent_type("verifier"), prompt=f"Verify MACH ticket {ticket_id}.")
 
@@ -591,7 +591,7 @@ def next_step(project: Project, ticket_id: str, headless: bool, meet_on_main: bo
                         prompt=f"Use the MACH cleanup skill: {skill('cleanup')} {ticket_id}")
         return step(ticket_id, stage, "stop", f"Approved. The branch {cell.get('branch')} is ready to merge; MACH does not merge.", needs="merge")
     if stage == "blocked":
-        return step(ticket_id, stage, "stop", "The ticket failed its third round and was escalated.", needs="person-to-take-over")
+        return step(ticket_id, stage, "stop", "The ticket failed its third round and was escalated." + early_note(cell), needs="person-to-take-over")
     return step(ticket_id, stage, "stop", f"The cell is in an unknown stage ('{stage}').", needs="person-to-take-over")
 
 
@@ -755,6 +755,14 @@ def landed_from_another_factory(project: Project, cell: Dict[str, Any]) -> Optio
     refs = [ref for ref in (f"refs/heads/{default}", f"refs/remotes/origin/{default}") if git(project.root, "rev-parse", "--verify", "-q", ref).returncode == 0]
     landed = intake.already_landed(project.root, str(product["slice_id"]), product.get("spec_sha256"), refs)
     return intake.landed_message(str(product["slice_id"]), landed) if landed else None
+
+
+def early_note(cell: Dict[str, Any]) -> str:
+    """For a failed build or verification: once, that a person started the ticket before a slice it depends on was merged."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import explain
+    said = explain.started_before(cell if isinstance(cell, dict) else {})
+    return f" {said}" if said else ""
 
 
 def exceptions_lapsed(decision: Dict[str, Any]) -> List[str]:
@@ -1181,9 +1189,10 @@ def claim_step(project: Project, found: Dict[str, Any], holder: Optional[str], t
     """Who works on a ticket's step (claim.py). A work step is claimed for `holder`, or its own claim renewed. A stop is never claimed,
     and a ticket with no cell has nothing to claim. A claim that cannot be written is refused: the step is not handed out.
 
-    A person (`person`: no supervised execution) is never refused because another worker has the step: another holder's fresh claim, or
-    lanes another driver's builders are at work in, are taken over in this call, the step is handed to `holder`, and the answer carries
-    `warnings`, said first. The holders taken over are recorded as displaced: every station refuses them at their next call, and their
+    A person who named the ticket (`named`: --by-person or --take-over, from a person: `person`, no supervised execution) is never refused
+    because another worker has the step: another holder's fresh claim, or lanes another driver's builders are at work in, are taken over
+    in this call, the step is handed to `holder`, and the answer carries `warnings`, said first. Without that word nothing is taken over
+    and a look writes nothing: the answer is the stop saying who has the step and that naming the ticket takes it over. The holders taken over are recorded as displaced: every station refuses them at their next call, and their
     own driver's next `next` stops with `taken-over`. A holder a person's take-over displaced stops the same way, unless the person
     names the ticket again (`named`: --by-person or --take-over), which hands the work back to it.
 
@@ -1202,9 +1211,12 @@ def claim_step(project: Project, found: Dict[str, Any], holder: Optional[str], t
         return step(ticket_id, found.get("stage"), "stop", C.stopped_words(gone).replace(" Stop now and report that the ticket was taken over.", "")
                     + f" Nothing more is done here. To take the ticket back, the person says /mach {ticket_id}.",
                     needs="taken-over", taken_over={"at": gone.get("at"), "step": gone.get("step")})
-    take_over = take_over or person
+    take_over = (take_over or named) and person
 
     def refused(other: Dict[str, Any]) -> Dict[str, Any]:
+        if person:  # a look, or a routine call of a run nobody named this ticket for: it names the way to take it, and writes nothing
+            return step(ticket_id, found.get("stage"), "stop", f"Another worker was handed the {other['step']} step at {C.clock(other.get('at'))}. "
+                        f"Say /mach {ticket_id} and MACH takes it over.", needs="worker-in-cell", other_claim=C.public(other, limit))
         return step(ticket_id, found.get("stage"), "stop", C.in_words(other, limit) + " This supervised execution waits for it: it never takes a "
                     "step over. A person who names this ticket takes it over at once.", needs="worker-in-cell", other_claim=C.public(other, limit))
 
@@ -1214,7 +1226,12 @@ def claim_step(project: Project, found: Dict[str, Any], holder: Optional[str], t
     # A supervised execution carries on at once from the same supervisor's earlier execution of this ticket once the ledger records
     # that one as ended: its claim and lanes are its predecessor's, not another worker's.
     succeeded = ended_executions_holders(project, ticket_id) if holder else []
-    shown = lanes_held(project, ticket_id, holder, succeeded)
+    # Lanes whose builders a person's take-over displaced hold nothing: their builders are refused at every station call.
+    shown = lanes_held(project, ticket_id, holder, [*succeeded, *C.displaced_all(root)])
+    if shown and not take_over and person:
+        return step(ticket_id, found.get("stage"), "stop",
+                    f"Another worker's builders are building lane{'s' if len(shown['lanes']) > 1 else ''} {', '.join(shown['lanes'])} of this ticket, "
+                    f"last at {C.clock(shown['renewed_at'])}. Say /mach {ticket_id} and MACH takes them over.", needs="worker-in-cell", other_claim=shown)
     if shown and not take_over:
         return step(ticket_id, found.get("stage"), "stop",
                     f"Another worker is building lane{'s' if len(shown['lanes']) > 1 else ''} {', '.join(shown['lanes'])} of this ticket, since {shown['at']}; "
@@ -1227,11 +1244,13 @@ def claim_step(project: Project, found: Dict[str, Any], holder: Optional[str], t
     if holder is None:
         if not other and not shown:
             return found
-        if not person:
+        if not take_over:
             return refused(other) if other else found
         holder = C.new_holder()  # a person asked with no holder: MACH takes the step over for a new one, printed with the answer
         found = dict(found, holder=holder)
     carried_on = bool(other) and other["holder"] in succeeded and not named and not person
+    if other and other["holder"] != holder and not take_over and not carried_on:
+        return refused(other)  # nothing is written: only a person who named the ticket takes a step over
     try:
         if gone:
             C.reinstate(root, holder)
@@ -1271,7 +1290,7 @@ def claim_step(project: Project, found: Dict[str, Any], holder: Optional[str], t
             displaced += [str(lane.get("holder")) for lane in B.lanes_at_work(root, limit) if lane.get("holder") and lane.get("holder") not in mine]
     if displaced:
         try:
-            C.displace(root, displaced, found["action"])
+            C.displace(root, displaced, found["action"], head=C.head_of(root / "repo"), taker=holder)
         except OSError as exc:
             raise RunError(f"The take-over could not be recorded in the cell ({exc}), so the step was not handed out.")
         warnings += stop_displaced_executions(project, ticket_id, displaced)
@@ -1452,6 +1471,10 @@ def decide_take_over(project: Project) -> Any:
                 (root / C.FILE).unlink()
             except OSError:
                 pass  # the step is free for the next driver: nobody is held by the person's claim
+            try:
+                C.open_takeover(root)  # whoever carries it on first sets aside what the displaced worker left
+            except OSError:
+                pass
         took = claimed.get("took_over")
         warnings = [w for w in claimed.get("warnings") or [] if isinstance(w, str)]
         if not took and not any(w.startswith("Another worker's builders") for w in warnings):
@@ -1585,6 +1608,9 @@ def cmd_schedule(project: Project, args: argparse.Namespace) -> int:
         return found
 
     args.ticket_ids, args.running = resolve(args.ticket_ids), resolve(args.running or [])
+    if getattr(args, "named", False) and (execution_scope(project) is not None or os.environ.get(EXECUTION_ENV)
+                                          or not person_driving(project, getattr(args, "holder", None))):
+        raise RunError("--named is a person's word (they named these tickets), and this runs inside a supervised Factory execution. Nothing was scheduled.")
     if getattr(args, "holder", None) is not None and not claims().valid_holder(args.holder):
         raise RunError("--holder takes the holder token an earlier answer printed (hex).")
     scope = execution_scope(project)
@@ -1601,7 +1627,7 @@ def cmd_schedule(project: Project, args: argparse.Namespace) -> int:
     try:
         report = schedule.main(args, project.root, config=project.config, sibling=sibling, factory=lambda: factory(project)[1],
                                workflow=workflow_name(), supervised=scope, resolved=resolved, beside=beside, claims=claims(),
-                               person=scope is None and person_driving(project, getattr(args, "holder", None)))
+                               person=bool(getattr(args, "named", False)))
     except schedule.ScheduleError as exc:
         raise RunError(str(exc))
     if resolved:
@@ -1801,8 +1827,9 @@ def cmd_lanes_start(project: Project, args: argparse.Namespace) -> int:
     named = bool(args.take_over or getattr(args, "by_person", False))
     warnings: List[str] = []
     answer = lanes_ready(project, args.ticket_id) or lanes_claim(project, args.ticket_id, holder, named, warnings)
-    # A person's driver hands over any lane another driver's builder holds (the step is theirs now); a supervised one never does.
-    take_lanes = person_driving(project, holder)
+    # A person who named the ticket hands over any lane another driver's builder holds; lanes of a driver a take-over displaced are
+    # carried on by whoever holds the step now. A supervised run, and a routine call, never take a live driver's lanes.
+    take_lanes = named and person_driving(project, holder)
     if answer is None:
         B = build_station()
         try:
@@ -1818,6 +1845,8 @@ def cmd_lanes_start(project: Project, args: argparse.Namespace) -> int:
                 "other_tickets": others, "own_place_only": free < 1}
         argv = ["lanes-open", args.ticket_id, "--holder", holder, "--grant", str(grant)] + (["--take-over"] if take_lanes else [])
         for earlier in ended_executions_holders(project, args.ticket_id):  # an ended execution's lanes: this execution carries them on
+            argv += ["--carry-on-from", earlier]
+        for earlier in claims().displaced_all(project.cell_dir(args.ticket_id)):  # lanes of a driver a person's take-over displaced
             argv += ["--carry-on-from", earlier]
         said, refusal = station_answer(project, args.ticket_id, *argv)
         if refusal is not None:
@@ -2011,6 +2040,7 @@ def cmd_product(project: Project, args: argparse.Namespace) -> int:
             result = line.reconcile()
         elif args.action == "dispatch":
             supervised = execution_scope(project) is not None or bool(os.environ.get(EXECUTION_ENV))
+            args.take_over = bool(args.take_over or getattr(args, "by_person", False))
             if args.take_over and supervised:
                 raise RunError("Taking a slice over from another Factory is an engineer's act, on their explicit word in conversation; "
                                "a supervised execution never takes one over.")
@@ -2018,7 +2048,7 @@ def cmd_product(project: Project, args: argparse.Namespace) -> int:
                 raise RunError("Name the slice to take over (its ID or issue number). --take-over is never used with --ready.")
             # An engineer naming slices in conversation is a person's request: it is carried out. Whatever another Factory holds becomes
             # a warning; what is missing first (the slice not taken in yet, its ticket not filed, its work abandoned) is done first.
-            person = bool(args.slice_ids) and not args.ready and not supervised
+            person = bool(args.take_over) and bool(args.slice_ids) and not args.ready and not supervised
             before = prepare_named_dispatch(line, args.slice_ids) if person else {}
             result = line.dispatch(args.slice_ids, all_ready=args.ready, limit=args.limit, take_over=bool(args.take_over), person=person)
             if before:
@@ -2961,8 +2991,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sequential", action="store_true", help="one ticket at a time")
     p.add_argument("--by-person", action="store_true", help="with --limit: a person raised the limit for this run (at most 8); refused in a supervised execution")
     p.add_argument("--dry-run", action="store_true", help="say so in the report; the command never starts anything either way")
-    p.add_argument("--holder", metavar="H", help="the caller's holder token. A person's schedule starts a ticket another holder has a fresh claim on, "
-                   "with a warning (its next takes it over); a supervised execution holds it")
+    p.add_argument("--holder", metavar="H", help="the caller's holder token: a ticket another holder has a fresh claim on is held, unless --named")
+    p.add_argument("--named", action="store_true", help="a person named these tickets: one another worker has, or whose dependency is outside this "
+                   "run, starts with a warning (its first next takes it over); refused in a supervised execution")
     p.set_defaults(func=cmd_schedule)
     for name, func, text in (("review-start", cmd_review_start, "start the review round and print one prompt per seat"),
                              ("review-tally", cmd_review_tally, "count the review votes")):
@@ -3003,8 +3034,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("slice_ids", nargs="*", help="slice IDs, or their issue numbers")
     p.add_argument("--ready", action="store_true", help="every slice the plan marks dispatchable")
     p.add_argument("--limit", type=int, help="dispatch at most this many")
-    p.add_argument("--take-over", action="store_true",
-                   help="on an engineer's explicit word: build the named slice although another Factory has claimed it; the issue says who took it over")
+    p.add_argument("--by-person", action="store_true",
+                   help="an engineer named these slices: each is dispatched whatever holds it (another Factory's claim is taken over, the issue says "
+                        "so), with warnings; refused with --ready and in a supervised execution")
+    p.add_argument("--take-over", action="store_true", help="the same as --by-person (kept for older callers)")
     p.set_defaults(func=cmd_product)
     p = product.add_parser("events", help="the intake ledger's transitions, in order")
     p.add_argument("--since", type=int, default=0, help="only events after this sequence number")

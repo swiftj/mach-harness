@@ -1520,7 +1520,7 @@ def refuse_without_baseline(project: Path, ticket_id: str) -> None:
     """No plan is started or accepted while a required topic has no accepted ADR on the main branch (adr.baseline_stop)."""
     stop = adr.baseline_stop(project, load_config(project), ticket_labels(project, ticket_id))
     if stop:
-        raise CellError(stop["reason"] + " Do not start the contract engineer, and do not plan it yourself.", code="adr-baseline-missing")
+        raise CellError(stop["reason"] + " Planning starts once those decisions are on the main branch; until then the contract engineer is not started and nothing is planned.", code="adr-baseline-missing")
 
 
 def cmd_check_plan(project: Path, args: argparse.Namespace) -> int:
@@ -2763,20 +2763,27 @@ def cmd_claim(project: Path, args: argparse.Namespace) -> int:
     gone = claims.displaced(root, holder)
     if gone:  # a person took this ticket over from this holder: its worker's part ends here
         raise CellError(claims.stopped_words(gone), code="taken-over")
-    # A person's conversation (no supervised execution) is never refused because another worker has the step: it takes it over, and
-    # that worker is stopped at its next station call. A supervised execution keeps the one-worker rule.
-    person = not os.environ.get("MACH_EXECUTION_ID")
+    # A person who named the ticket (--by-person, never inside a supervised execution) is never refused because another worker has the
+    # step: it takes it over, and that worker is stopped at its next station call. Without that word nothing is taken over.
+    supervised = bool(os.environ.get("MACH_EXECUTION_ID"))
+    if args.by_person and supervised:
+        raise CellError("--by-person is a person's word, and this runs inside a supervised Factory execution: it never takes a step over. "
+                        "Nothing was claimed.", code="claim-refused")
     try:
-        result = claims.take(root, args.step, holder, limit, take_over=person)
+        result = claims.take(root, args.step, holder, limit, take_over=bool(args.by_person))
         if result["replaced"]:
-            claims.displace(root, [result["replaced"]["holder"]], args.step)
+            claims.displace(root, [result["replaced"]["holder"]], args.step, head=claims.head_of(root / "repo"), taker=holder)
     except claims.ClaimError as exc:
         raise CellError(str(exc), code="claim-refused")
     except OSError as exc:
-        raise CellError(f"The claim could not be recorded ({exc.__class__.__name__}), so do not start the worker.", code="claim-failed")
-    if result["refused"]:
+        raise CellError(f"The claim could not be recorded ({exc.__class__.__name__}), so the worker was not started. Run the claim again once the cell can be written.", code="claim-failed")
+    if result["refused"] and supervised:
         raise CellError(claims.in_words(result["refused"], limit) + " This supervised execution waits for it: a supervised execution never "
                         "takes a step over. A person who names the ticket takes it over at once.", code="claim-held")
+    if result["refused"]:
+        other = result["refused"]
+        raise CellError(f"Another worker was handed the {other['step']} step at {claims.clock(other.get('at'))}. Say /mach {args.ticket_id} and "
+                        f"MACH takes it over (cell.py claim {args.ticket_id} {args.step} --by-person, when the person named it).", code="claim-held")
     shown = {"ticket_id": args.ticket_id, **claims.shown(result["claim"], limit)}
     if result["replaced"]:
         shown["warnings"] = [claims.taken_over_warning(result["replaced"])]
@@ -2860,6 +2867,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("ticket_id")
     p.add_argument("step", help="the step, such as plan")
     p.add_argument("--holder", help="the holder token a claim printed earlier (default: a new one)")
+    p.add_argument("--by-person", action="store_true", help="a person named this ticket: another worker's fresh claim is taken over; refused in a supervised execution")
     p.set_defaults(func=cmd_claim)
 
     p = sub.add_parser("adrs", help="the architecture decisions for this cell: an index, the accepted ones that apply, proposals; reads only")
@@ -2929,7 +2937,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parser.parse_args(argv)
     project = args.project.resolve() if args.project else find_project(Path.cwd())
     try:
-        stop = claims.station_stop(project, getattr(args, "ticket_id", None), holder)
+        stop = claims.station_stop(project, getattr(args, "ticket_id", None), holder, args.command,
+                                   ("status", "next-id", "validate", "principles", "shipped", "policies", "adrs", "open", "claim"))
         if stop:
             raise CellError(stop, code="taken-over")
         return args.func(project, args)

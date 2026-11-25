@@ -26,6 +26,9 @@ const until = typeof options.until === 'string' ? options.until : ''
 const limit = Number.isInteger(options.limit) && options.limit >= 1 ? options.limit : 0
 const sequential = options.sequential === true
 const byPerson = options.by_person === true && limit > 0
+// A person named these tickets (run.py schedule --named put it in workflow_args): each ticket's first `next` says so (--by-person),
+// so work another worker has is taken over once, with a warning. Later calls are routine and take nothing over.
+const named = options.named === true
 if (!tickets.length) {
   return { error: 'Pass the ticket IDs to run, for example ["LOCAL-001", "LOCAL-002"].' }
 }
@@ -380,7 +383,7 @@ async function runTicket(ticket, prepare) {
   let last = ''
   let repeats = 0
   for (let i = 0; i < MAX_STEPS; i++) {
-    const asked = await clerk(`next ${ticket} --headless`, STEP, `${ticket}: what next?`, 'Preflight')
+    const asked = await clerk(`next ${ticket} --headless${named && i === 0 ? ' --by-person' : ''}`, STEP, `${ticket}: what next?`, 'Preflight')
     // A ticket a person named is never refused because another worker has it: run.py takes the step over and says so first.
     for (const warning of (asked && Array.isArray(asked.warnings) ? asked.warnings : []).slice(0, 5)) log(`${ticket}: ${String(warning).slice(0, 400)}`)
     const read = cleanStep(asked, AGENT_TYPES)
@@ -444,7 +447,7 @@ if (status && (status.audit_state === 'missing' || status.audit_state === 'stale
 // ones, do not run together. run.py schedule decides what may start; this pool only asks it again whenever a ticket
 // finishes, and starts what it names.
 function scheduleCommand(pending, running) {
-  const flags = sequential ? ' --sequential' : limit ? ` --limit ${limit}${byPerson ? ' --by-person' : ''}` : ''
+  const flags = (sequential ? ' --sequential' : limit ? ` --limit ${limit}${byPerson ? ' --by-person' : ''}` : '') + (named ? ' --named' : '')
   return `schedule ${pending.join(' ')}${running.length ? ' --running ' + running.join(' ') : ''}${flags}`
 }
 
