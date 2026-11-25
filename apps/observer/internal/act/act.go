@@ -10,7 +10,10 @@
 // run has its own process group (killed whole on a time limit), a capped stdout and stderr, no
 // stdin, the project as its working folder, and the environment of the observer less Git's GIT_*
 // variables and MACH_EXECUTION_ID (a decision is a person's, never a supervised execution's). One
-// decision or stop runs at a time per project; a second is answered "conflict" at once.
+// decision or stop runs at a time per project. A second decision waits a few seconds for the first
+// (BusyWait); if the first is still running then, or run.py answers that another decision on the
+// project holds its lock (`"busy": true`), the reply is "conflict" with BusyMessage, and the page
+// asks again by itself, showing that it waits. Nothing of the second has run.
 //
 // The pattern is Product Studio's engine package (apps/studio/internal/engine: engine.go, args.go,
 // locate.go, exec_unix.go), copied and narrowed rather than shared: the two programs are separate
@@ -40,9 +43,15 @@ import (
 const (
 	KindRefused  = "refused"  // run.py refused (exit 1, "refused: <sentence>"): the sentence is for a person, as it came
 	KindInvalid  = "invalid"  // the request was not accepted by the observer, or run.py's arguments by run.py (exit 2)
-	KindConflict = "conflict" // another decision or stop for this project is still running
+	KindConflict = "conflict" // another decision or stop for this project is still running: asked again, it is recorded after it
 	KindFailed   = "failed"   // run.py could not be run, timed out, replied too much, or replied with something not JSON
 )
+
+// BusyMessage is the conflict's sentence for a decision: it is not refused, it waits its turn.
+const BusyMessage = "Recording after another decision finishes."
+
+// stopBusyMessage is the conflict's sentence for a stop asked for while a decision is recorded.
+const stopBusyMessage = "A decision on this project is being recorded. The Factory can be stopped as soon as it has finished."
 
 // Reply is what one run gave.
 type Reply struct {
@@ -67,6 +76,7 @@ type Config struct {
 	ActTimeout  time.Duration // a decision; default 3 min
 	LongTimeout time.Duration // merge, set-test-command, abandon, approve (they may run the project's tests); default 20 min
 	StopTimeout time.Duration // factory stop; default 2 min
+	BusyWait    time.Duration // how long a decision waits for another one in this observer; default 5 s
 	MaxStdout   int           // default 4 MiB
 	MaxStderr   int           // default 64 KiB
 }
@@ -109,6 +119,9 @@ func New(cfg Config) (*Runner, error) {
 	if cfg.StopTimeout <= 0 {
 		cfg.StopTimeout = 2 * time.Minute
 	}
+	if cfg.BusyWait <= 0 {
+		cfg.BusyWait = 5 * time.Second
+	}
 	if cfg.MaxStdout <= 0 {
 		cfg.MaxStdout = 4 << 20
 	}
@@ -135,7 +148,7 @@ func (r *Runner) Status(ctx context.Context) Reply {
 
 // Stop runs `factory stop`: the running executions and the supervisor stop.
 func (r *Runner) Stop(ctx context.Context) Reply {
-	release, busy := r.take()
+	release, busy := r.take(0, stopBusyMessage)
 	if busy != nil {
 		return *busy
 	}
@@ -149,7 +162,7 @@ func (r *Runner) Decide(ctx context.Context, d Decision, allowed func(ticket, op
 	if err := d.Check(allowed); err != nil {
 		return Reply{Kind: KindInvalid, Message: err.Error()}
 	}
-	release, busy := r.take()
+	release, busy := r.take(r.cfg.BusyWait, BusyMessage)
 	if busy != nil {
 		return *busy
 	}
@@ -167,16 +180,41 @@ func (r *Runner) Decide(ctx context.Context, d Decision, allowed func(ticket, op
 	if LongOptions[d.Option] {
 		limit = r.cfg.LongTimeout
 	}
-	return r.run(ctx, limit, d.Argv(answers))
+	reply := r.run(ctx, limit, d.Argv(answers))
+	if reply.OK() && busyAnswer(reply.Data) {
+		return Reply{Kind: KindConflict, Message: BusyMessage}
+	}
+	return reply
 }
 
-func (r *Runner) take() (func(), *Reply) {
+// busyAnswer: run.py waited for another decision on the project (a terminal's, say) and recorded
+// nothing yet.
+func busyAnswer(data []byte) bool {
+	var top struct {
+		Busy bool `json:"busy"`
+		Done bool `json:"done"`
+	}
+	return json.Unmarshal(data, &top) == nil && top.Busy && !top.Done
+}
+
+// take holds this project's one place for a write, waiting up to `wait` for it.
+func (r *Runner) take(wait time.Duration, busy string) (func(), *Reply) {
+	release := func() { <-r.write }
 	select {
 	case r.write <- struct{}{}:
-		return func() { <-r.write }, nil
+		return release, nil
 	default:
-		return nil, &Reply{Kind: KindConflict, Message: "Another decision for this project is still being recorded. Try again in a moment."}
 	}
+	if wait > 0 {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case r.write <- struct{}{}:
+			return release, nil
+		case <-timer.C:
+		}
+	}
+	return nil, &Reply{Kind: KindConflict, Message: busy}
 }
 
 func (r *Runner) reading(ctx context.Context, argv []string) Reply {

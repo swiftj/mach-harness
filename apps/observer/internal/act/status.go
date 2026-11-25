@@ -28,7 +28,10 @@ import (
 //	note | in_words            run.py's sentence for a person
 //
 // decide do (act.py): ticket_id, option, done, now, in_conversation, command, why, supervisor,
-// unparked, note, why_not, by (the person's name: used only to take it out of `now`, never passed on).
+// unparked, note, why_not, warnings (run.py's sentences: another worker may be on the ticket),
+// already_decided and decided.at (another person's decision came first; `now` says what it was and
+// what waits now), took_over.taken, by (the person's name: used only to take it out of `now`, never
+// passed on). A `busy` answer never reaches here: Decide turns it into a conflict.
 
 // Running is whether a Factory supervisor runs for this project, as `factory status` says.
 type Running struct {
@@ -131,7 +134,17 @@ type Decided struct {
 	Supervisor     *string `json:"supervisor"` // "started" | "woken" | "none"
 	WhyNot         *string `json:"why_not"`    // why no Factory carries it on now (run.py's sentence)
 	Unparked       *bool   `json:"unparked"`
+	// Warnings are run.py's sentences shown with the decision, such as another worker on the ticket.
+	Warnings []string `json:"warnings"`
+	// AlreadyDecided: another person's decision on this ticket came first and made this one moot.
+	// Nothing was recorded; `now` says what was decided, when, and what the ticket waits for now.
+	AlreadyDecided bool    `json:"already_decided"`
+	DecidedAt      *string `json:"decided_at"`
+	TookOver       bool    `json:"took_over"`
 }
+
+// maxWarnings: at most this many warnings are passed on.
+const maxWarnings = 5
 
 var supervisorStates = map[string]bool{"started": true, "woken": true, "none": true}
 
@@ -162,6 +175,23 @@ func ParseDecided(data []byte) Decided {
 	out.Supervisor = oneOf(top["supervisor"], supervisorStates)
 	if b, ok := top["unparked"].(bool); ok {
 		out.Unparked = &b
+	}
+	out.Warnings = []string{}
+	if list, ok := top["warnings"].([]any); ok {
+		for _, w := range list {
+			if s := sentenceOf(w, name); s != nil && len(out.Warnings) < maxWarnings {
+				out.Warnings = append(out.Warnings, *s)
+			}
+		}
+	}
+	out.AlreadyDecided = top["already_decided"] == true && !out.Done
+	if decided, ok := top["decided"].(map[string]any); ok && out.AlreadyDecided {
+		if s, ok := decided["at"].(string); ok && len(s) <= 40 && timeText(s) {
+			out.DecidedAt = &s
+		}
+	}
+	if took, ok := top["took_over"].(map[string]any); ok {
+		out.TookOver = took["taken"] == true
 	}
 	return out
 }
