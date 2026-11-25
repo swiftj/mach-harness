@@ -190,7 +190,7 @@
           "SLICE-002",
           "SLICE-003"
         ],
-        "github_read_at": "2026-11-25T22:34:56Z",
+        "github_read_at": "2026-11-25T22:50:05Z",
         "matches_github": true,
         "unfinished": false,
         "taken_from_github": false,
@@ -204,16 +204,16 @@
       "url": "https://github.com/acme/team-space/issues/1",
       "name": "Team Space",
       "readable": true,
-      "read_at": "2026-11-25T22:34:56Z"
+      "read_at": "2026-11-25T22:50:05Z"
     },
     "github": {
       "repository": "acme/team-space",
       "form": null,
-      "last_read": "2026-11-25T22:34:56Z",
+      "last_read": "2026-11-25T22:50:05Z",
       "connected": true
     },
     "current_slice": null,
-    "last_refreshed": "2026-11-25T22:34:56Z",
+    "last_refreshed": "2026-11-25T22:50:05Z",
     "structurally_valid": true,
     "structural_errors": [],
     "factory_authorized": false,

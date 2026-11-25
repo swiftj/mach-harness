@@ -36,6 +36,7 @@ export async function startJoin(): Promise<void> {
   if (joining(state)) return;
   set({ phase: "looking" });
   let done = 0;
+  let joinedHere: { issue: number | null; url: string | null; last: string } | null = null;
   try {
     for (;;) {
       const result = await client.op("project.join", { batch: JOIN_BATCH });
@@ -49,13 +50,17 @@ export async function startJoin(): Promise<void> {
         return;
       }
       if (result.taken.project) {
-        // Said once on the project home, until closed: what came, and what exists only on the author's computer.
-        rememberProjectStart({ kind: "joined", note: (result.in_words ?? [result.note]).join(" "), issue: result.project?.issue ?? null, url: result.project?.url ?? null });
+        joinedHere = { issue: result.project?.issue ?? null, url: result.project?.url ?? null, last: result.only_on_their_computer ?? "" };
       }
       done += result.taken.slices.length + (result.updated?.length ?? 0);
       const remaining = result.remaining ?? 0;
       set({ phase: "bringing", name: result.project?.name ?? "the project", done, total: done + remaining });
       if (remaining <= 0) {
+        if (joinedHere) {
+          // Said once on the project home, until closed: the whole project as it came, and what exists only on the author's computer.
+          const note = [result.project_words ?? result.note, joinedHere.last].filter(Boolean).join(" ");
+          rememberProjectStart({ kind: "joined", note, issue: joinedHere.issue, url: joinedHere.url });
+        }
         await reloadStatus();
         set({ phase: "done", result });
         return;

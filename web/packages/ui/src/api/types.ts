@@ -609,6 +609,8 @@ export interface ProjectJoin {
   /** Slices still to bring in when a batch was asked for; 0 when everything came. */
   remaining: number | null;
   only_on_their_computer?: string;
+  /** The project as it now is in this workspace, in one sentence ("This repository's project is X. MACH brought it in from GitHub: ..."). */
+  project_words?: string;
   in_words?: string[];
   note: string;
   factory_authorized: false;

@@ -2467,6 +2467,11 @@ def refreshed(studio: Studio, found: Optional[Dict[str, Any]] = None, joined: Op
         session["refreshed_at"] = now(None)
         studio.save_session(session)
     if joined.get("joined"):  # the principles and technical needs that came with the project, approvals and all
+        # Said again from what this refresh read: where each slice stands with the builders now.
+        joined["project_words"] = join.project_words(sys.modules[__name__], studio, hand, (project or {}).get("name") or "this project")
+        if joined["taken"]["project"] and joined.get("in_words"):
+            joined["in_words"][0] = joined["project_words"]
+            joined["note"] = " ".join([*joined.get("warned", []), *joined["in_words"]])
         joined["taken"].update(principles=bool(taken) or joined["taken"]["principles"], needs=bool(needs_taken) or joined["taken"]["needs"])
     return {
         "refreshed": bool(github.get("refreshed")),

@@ -255,6 +255,7 @@ def join(host: Any, studio: Any, found: Optional[Dict[str, Any]] = None, batch: 
     taken["ideas"] = [{**item, "lacks": IDEA_LACKS} for item in found.get("idea_items") or [] if item["idea_id"] not in local_ideas]
     remember_ideas(studio, taken["ideas"], found.get("idea_items") or [], local_ideas)
     result["only_on_their_computer"] = from_github.ONLY_THERE
+    result["project_words"] = project_words(host, studio, hand, project.get("name") or project["project_id"])
     result["in_words"] = in_words(studio, result)
     result["note"] = " ".join([*result["warned"], *result["in_words"]])
     return result
@@ -323,17 +324,25 @@ def remember_ideas(studio: Any, items: List[Dict[str, Any]], all_items: List[Dic
     studio.save_session(session)
 
 
+def project_words(host: Any, studio: Any, hand: Any, name: str) -> str:
+    """The project as it now is in this workspace, in one sentence: "This repository's project is Rulebook Explorer. MACH brought it
+    in from GitHub: 3 epics and 10 slices, 8 ready and 2 shipped." The app says it once everything has come, batch by batch."""
+    epics, slices = studio.all("epic"), studio.all("slice")
+    states = [state_of(dependency_view(host, studio, hand, slice_id)) for slice_id in slices]
+    what = listed([part for part in (plural(len(epics), "epic") if epics else "", plural(len(slices), "slice") if slices else "") if part])
+    if not what:
+        return f"This repository's project is {name}. MACH brought it in from GitHub, with no epics or slices yet."
+    return f"This repository's project is {name}. MACH brought it in from GitHub: {what}" + (f", {counts_words(states)}." if states else ".")
+
+
 def in_words(studio: Any, result: Dict[str, Any]) -> List[str]:
     """What joining did, in plain sentences for the person: the first one names the project and what came."""
     taken, said = result["taken"], []
     slices = taken["slices"]
     states = [row["state"] for row in slices]
     epics = len(taken["epics"])
-    name = (result.get("project") or {}).get("name") or "this project"
     if taken["project"]:
-        what = listed([part for part in (plural(epics, "epic") if epics else "", plural(len(slices), "slice") if slices else "") if part])
-        said.append(f"This repository's project is {name}. MACH brought it in from GitHub"
-                    + (f": {what}" + (f", {counts_words(states)}" if slices else "") + "." if what else ", with no epics or slices yet."))
+        said.append(result["project_words"])
     elif slices or epics:
         parts = [plural(epics, "epic") if epics else "", plural(len(slices), "slice") if slices else ""]
         said.append(f"MACH brought in what is new on GitHub: {listed([part for part in parts if part])}"

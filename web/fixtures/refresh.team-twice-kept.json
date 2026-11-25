@@ -39,13 +39,14 @@
         "url": "https://github.com/acme/team-space/issues/1"
       },
       "only_on_their_computer": "Drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were written.",
+      "project_words": "This repository's project is Team Space. MACH brought it in from GitHub: 1 epic and 1 slice, 1 ready.",
       "in_words": [],
       "note": ""
     },
     "requests": {
       "repository": "acme/team-space",
       "refreshed": true,
-      "refreshed_at": "2026-11-25T22:34:29Z",
+      "refreshed_at": "2026-11-25T22:49:39Z",
       "problem": null,
       "truncated": false,
       "truncated_note": null,
@@ -59,7 +60,7 @@
       "repository": "acme/team-space",
       "refreshed": true,
       "problem": null,
-      "refreshed_at": "2026-11-25T22:34:29Z",
+      "refreshed_at": "2026-11-25T22:49:39Z",
       "form": "sub_issues",
       "project_issue": 1,
       "project_url": "https://github.com/acme/team-space/issues/1",
@@ -137,7 +138,7 @@
           "github_order": [
             "SLICE-001"
           ],
-          "github_read_at": "2026-11-25T22:34:29Z",
+          "github_read_at": "2026-11-25T22:49:39Z",
           "matches_github": true,
           "unfinished": false,
           "taken_from_github": false,
@@ -158,7 +159,7 @@
           "revision": null,
           "approved": null,
           "approved_by": null,
-          "read_at": "2026-11-25T22:34:29Z"
+          "read_at": "2026-11-25T22:49:39Z"
         },
         "newer_elsewhere": false,
         "changed_on_github": false

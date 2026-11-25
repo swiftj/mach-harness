@@ -10,10 +10,10 @@
       "note": "Everything is saved.",
       "not_saved": [],
       "github_check": {
-        "failed_at": "2026-11-25T22:34:57Z",
+        "failed_at": "2026-11-25T22:50:07Z",
         "last_worked_at": null,
         "problem": "GitHub could not be reached. The GitHub tool (gh) said: \"error connecting to api.github.com\".",
-        "text": "MACH could not check GitHub at 2026-11-25 22:34 UTC: GitHub could not be reached. The GitHub tool (gh) said: \"error connecting to api.github.com\". MACH has not yet read this project from GitHub on this computer. Nothing of yours is lost; MACH checks again when you refresh."
+        "text": "MACH could not check GitHub at 2026-11-25 22:50 UTC: GitHub could not be reached. The GitHub tool (gh) said: \"error connecting to api.github.com\". MACH has not yet read this project from GitHub on this computer. Nothing of yours is lost; MACH checks again when you refresh."
       }
     },
     "order": [],
