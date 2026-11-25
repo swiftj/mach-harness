@@ -101,15 +101,23 @@ export interface ExportView {
   download: DownloadOffer | null;
   /** The host's sentence when it cannot offer the file (larger than it serves), with where it is. */
   downloadProblem: string | null;
-  fromHere: string[];
-  fromGithub: string[];
-  /** What was left out, each with why when the engine says. */
-  leftOut: string[];
-  warnings: string[];
+  /** The engine's first sentence: what the file holds and what was read from GitHub. */
+  lead: string | null;
+  /** Where this workspace and GitHub differed, which version went in and why (`chosen[].note`), as written. */
+  chosen: string[];
+  /** What did not go in, each with its reason as written (`not_included[].reason`). */
+  notIncluded: string[];
+  /** GitHub could not be read for this export: the engine's sentence, said prominently. Null when it was read. */
+  githubNotRead: string | null;
+  /** The rest of the engine's sentences, in its order, warnings last. */
+  rest: string[];
+  /** How many things came from this workspace and from GitHub. */
+  fromHere: number | null;
+  fromGithub: number | null;
   staysBehind: string[];
   /** The engine's note, word for word. */
   note: string;
-  /** Sentences the engine adds that this screen does not know yet, shown as they come. */
+  /** Lists the engine adds that this screen does not know yet, shown as they come. */
   more: Array<{ title: string; items: string[] }>;
 }
 
@@ -129,6 +137,10 @@ const EXPORT_READ = new Set([
   "download_problem",
   "from_here",
   "from_github",
+  "github",
+  "not_included",
+  "chosen",
+  "in_words",
 ]);
 
 /** A field's name as a heading: "left_out_why" → "Left out why", GitHub kept as GitHub. */
@@ -145,16 +157,33 @@ export function exportView(result: ProjectExport): ExportView {
     if (items.length) more.push({ title: fieldTitle(key), items });
   }
   const download = result.downloads?.[0] ?? null;
+  const chosen = (result.chosen ?? []).map((row) => row.note).filter((text): text is string => Boolean(sentence(text)));
+  const notIncluded = (result.not_included ?? []).map((row) => row.reason).filter((text): text is string => Boolean(sentence(text)));
+  // An engine without `in_words` (before the exporter read GitHub): its warnings are the sentences.
+  const words = result.in_words ?? itemsOf(result.warnings);
+  const lead = result.in_words ? (words[0] ?? null) : null;
+  const shownApart = new Set([...chosen, ...notIncluded]);
+  let rest = (result.in_words ? words.slice(1) : words).filter((text) => !shownApart.has(text));
+  // GitHub not read: its sentence is the one that carries the problem's own words; said apart, prominently.
+  let githubNotRead: string | null = null;
+  if (result.github && !result.github.checked) {
+    const problem = result.github.problem;
+    githubNotRead = (problem && rest.find((text) => text.includes(problem))) || (problem ? `MACH could not read GitHub just now: ${problem}` : null);
+    if (githubNotRead) rest = rest.filter((text) => text !== githubNotRead);
+  }
   return {
     holds: holdsWords(result.counts),
     fileName: download?.name ?? (result.file ? (result.file.split(/[\\/]/).pop() ?? null) : null),
     bytes: download?.bytes ?? result.bytes,
     download,
     downloadProblem: sentence(result.download_problem),
-    fromHere: itemsOf(result.from_here),
-    fromGithub: itemsOf(result.from_github),
-    leftOut: itemsOf(result.left_out),
-    warnings: itemsOf(result.warnings),
+    lead,
+    chosen,
+    notIncluded,
+    githubNotRead,
+    rest,
+    fromHere: typeof result.from_here?.count === "number" ? result.from_here.count : null,
+    fromGithub: typeof result.from_github?.count === "number" ? result.from_github.count : null,
     staysBehind: itemsOf(result.stays_behind),
     note: result.note,
     more,

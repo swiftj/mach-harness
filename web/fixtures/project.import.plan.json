@@ -4,9 +4,9 @@
     "plan": true,
     "resuming": false,
     "archive": {
-      "file": "mach-project-lending-20261125T022841Z.zip",
-      "sha256": "e3b05d1f7e1bb02680b3f41852e4c7eea1dd70a9f8e357edf489c0ae54542331",
-      "exported_at": "2026-11-25T02:28:41Z",
+      "file": "mach-project-lending-20261125T023502Z.zip",
+      "sha256": "c7357068c7aac8633e0986284901ca893df1b1f99abf9f81c5e6262be9fd6167",
+      "exported_at": "2026-11-25T02:35:02Z",
       "mach_version": "0.24.0"
     },
     "mode": "new",

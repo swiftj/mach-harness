@@ -240,7 +240,7 @@ names `/mach-studio` for a larger file. A per-operation `Timeout` longer than th
 replaces it.
 
 **The project download**: `project.export`'s answer gains `downloads: [{name, url, bytes}]` for the
-one file `mach-project-<id>-<YYYYMMDDTHHMMSSZ>.zip` in `.factory/studio/export/`. The host keeps its
+one file `mach-project-<id>-<YYYYMMDDTHHMMSSZ>[-<2..999>].zip` (the suffix when two exports land in one second) in `.factory/studio/export/`. The host keeps its
 path, size and SHA-256 and reads it again for each download, serving it (`application/zip`) only while
 it is still those bytes; a later project export replaces it, a Jira export does not. A file over
 64 MiB is not offered: the answer has `downloads: []` and `download_problem`, a sentence saying where

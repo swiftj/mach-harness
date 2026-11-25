@@ -80,6 +80,12 @@ def leaving(Scenario, folder: Path) -> Path:
         exported = s.capture("project.export", "project", "export")
         copy = folder / Path(exported["file"]).name
         shutil.copy(exported["file"], copy)
+        # Another product manager's computer, with nothing of the project in its workspace: MACH reads it from GitHub.
+        s.capture("project.export.from-github", "project", "export", project=s.b)
+        # GitHub cannot be read: the export says so, prominently; with nothing here either, it is refused.
+        s.gh_fails("issue list", once=False)
+        s.capture("project.export.github-not-read", "project", "export")
+        s.capture("project.export.refused-no-project-no-github", "project", "export", project=s.b)
         return copy
 
     return run(Scenario, body)

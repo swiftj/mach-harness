@@ -67,7 +67,7 @@ type downloads struct {
 //	GET  /api/downloads/<token>/<name> -> that file, as an attachment (application/zip)
 var (
 	projectExportFolder = []string{".factory", "studio", "export"}
-	projectFileName     = regexp.MustCompile(`^mach-project-[a-z][a-z0-9-]{1,63}-[0-9]{8}T[0-9]{6}Z\.zip$`)
+	projectFileName     = regexp.MustCompile(`^mach-project-[a-z][a-z0-9-]{1,63}-[0-9]{8}T[0-9]{6}Z(-[1-9][0-9]{0,2})?\.zip$`)
 )
 
 type projectFile struct {

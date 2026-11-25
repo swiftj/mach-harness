@@ -25,7 +25,7 @@ func TestTheProjectFileIsOfferedAndNothingElse(t *testing.T) {
 	if err := json.Unmarshal(h.mustOp("project.export", `{}`), &first); err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Downloads) != 1 || !regexp.MustCompile(`^mach-project-team-space-[0-9]{8}T[0-9]{6}Z\.zip$`).MatchString(first.Downloads[0].Name) {
+	if len(first.Downloads) != 1 || !regexp.MustCompile(`^mach-project-team-space-[0-9]{8}T[0-9]{6}Z(-[0-9]+)?\.zip$`).MatchString(first.Downloads[0].Name) {
 		t.Fatalf("downloads %+v", first.Downloads)
 	}
 	if filepath.Dir(first.File) != filepath.Join(h.project, ".factory", "studio", "export") {

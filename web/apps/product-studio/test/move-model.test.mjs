@@ -38,23 +38,46 @@ test("export: what the file holds, the download, the note word for word", () => 
   assert.equal(view.download.bytes, data.bytes);
   assert.equal(view.downloadProblem, null);
   assert.equal(view.note, data.note);
-  assert.deepEqual(view.leftOut, []);
+  assert.equal(view.lead, data.in_words[0]);
+  assert.deepEqual([view.chosen, view.notIncluded, view.rest], [[], [], []]);
+  assert.equal(view.githubNotRead, null);
+  assert.equal(view.fromHere, 7);
+  assert.equal(view.fromGithub, 0);
   assert.deepEqual(view.staysBehind, data.stays_behind);
   assert.deepEqual(view.more, [], "nothing the screen does not know about");
 });
 
-test("export: fields the export is gaining are shown as they come, by their items' text", () => {
-  const data = {
-    ...withDownload(fixture("project.export")),
-    from_here: { slices: 2, epics: 2 },
-    from_github: [{ id: "SLICE-004", words: "SLICE-004 came from GitHub (#12)." }],
-    left_out: [{ id: "SLICE-009", why: "it was closed on GitHub" }],
-    left_out_note: "One slice was left out because it was closed.",
-  };
+test("export from a workspace without the project: read from GitHub, in the engine's words and order", () => {
+  const data = withDownload(fixture("project.export.from-github"));
   const view = exportView(data);
-  assert.deepEqual(view.fromHere, ["2 epics and 2 slices"]);
-  assert.deepEqual(view.fromGithub, ["SLICE-004 came from GitHub (#12)."]);
-  assert.deepEqual(view.leftOut, ["SLICE-009: it was closed on GitHub"]);
+  assert.equal(view.fromGithub, 5);
+  assert.equal(view.lead, data.in_words[0]);
+  assert.deepEqual(view.rest, data.in_words.slice(1));
+});
+
+test("export when GitHub could not be read: that sentence is said apart, and nowhere else", () => {
+  const data = withDownload(fixture("project.export.github-not-read"));
+  const view = exportView(data);
+  assert.equal(view.githubNotRead, data.in_words[1]);
+  assert.match(view.githubNotRead, /^MACH could not read GitHub just now/);
+  assert.deepEqual(view.rest, []);
+});
+
+test("export: chosen versions and what was not included, each as written, before the rest", () => {
+  const data = {
+    ...withDownload(fixture("project.export.from-github")),
+    chosen: [{ id: "SLICE-001", used: "github", issue: 3, note: "Note on SLICE-001." }],
+    not_included: [{ id: "SLICE-004", what: "slice", issue: 9, reason: "Reason for SLICE-004." }],
+  };
+  data.in_words = [data.in_words[0], "Note on SLICE-001.", "Reason for SLICE-004.", ...data.in_words.slice(1)];
+  const view = exportView(data);
+  assert.deepEqual(view.chosen, ["Note on SLICE-001."]);
+  assert.deepEqual(view.notIncluded, ["Reason for SLICE-004."]);
+  assert.deepEqual(view.rest, fixture("project.export.from-github").in_words.slice(1));
+});
+
+test("export: lists the engine adds later are shown as they come, by their items' text", () => {
+  const view = exportView({ ...withDownload(fixture("project.export")), left_out_note: "One slice was left out because it was closed." });
   assert.deepEqual(view.more, [{ title: "Left out note", items: ["One slice was left out because it was closed."] }]);
 });
 
@@ -68,6 +91,7 @@ test("export: a file larger than the host serves says where it is instead", () =
 test("export refusals are the engine's words; only the one about slices only on GitHub offers to leave them out", () => {
   assert.equal(offersOnlyMine(run("project.export.refused-no-project").refused), false);
   assert.equal(offersOnlyMine(run("project.export.refused-unfinished").refused), false);
+  assert.equal(offersOnlyMine(run("project.export.refused-no-project-no-github").refused), false);
   assert.equal(offersOnlyMine("2 slices of this project are on GitHub but not in your workspace: SLICE-004 (#12), SLICE-005. Open each here first, or export without them."), true);
 });
 

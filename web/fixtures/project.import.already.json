@@ -5,8 +5,8 @@
     "already": true,
     "imported": false,
     "archive": {
-      "file": "mach-project-lending-20261125T022841Z.zip",
-      "sha256": "e3b05d1f7e1bb02680b3f41852e4c7eea1dd70a9f8e357edf489c0ae54542331"
+      "file": "mach-project-lending-20261125T023502Z.zip",
+      "sha256": "c7357068c7aac8633e0986284901ca893df1b1f99abf9f81c5e6262be9fd6167"
     },
     "mode": "new",
     "into_project": "lending",
@@ -47,7 +47,7 @@
       "PRD": [],
       "DES": []
     },
-    "finished_at": "2026-11-25T02:28:42Z",
+    "finished_at": "2026-11-25T02:35:05Z",
     "writes": "nothing",
     "factory_authorized": false,
     "note": "Already brought in on 2026-11-25. Nothing was changed."

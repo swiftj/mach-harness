@@ -179,11 +179,16 @@ function TakeElsewhere({ status, blocked }: { status: Status; blocked: boolean }
       <Heading level={2} size="title-2" id="move-take">
         Take this project to another repository
       </Heading>
-      {status.project ? (
-        <>
+      <>
           <Text className="max-w-reading">
-            Download the whole project as one file, then bring it in from the other repository&apos;s Product Studio. Nothing is sent anywhere, and nothing here changes.
+            Download the whole project as one file, then bring it in from the other repository&apos;s Product Studio. MACH reads GitHub for anything of the project this
+            workspace does not have. Nothing is sent anywhere, and nothing here changes.
           </Text>
+          {status.project ? null : (
+            <Text size="body-sm" tone="muted" className="max-w-reading">
+              This workspace has no project yet. If the project is on GitHub, MACH takes it from there.
+            </Text>
+          )}
           <dl className="grid max-w-reading gap-x-6 gap-y-2 text-body-sm sm:grid-cols-[8rem_minmax(0,1fr)]">
             <dt className="font-semibold text-ink-muted">Goes in the file</dt>
             <dd className="text-ink">The project, its epics, the slices with their specs and whys, principles, technical needs, ideas, PRDs, designs and design mocks.</dd>
@@ -201,12 +206,7 @@ function TakeElsewhere({ status, blocked }: { status: Status; blocked: boolean }
               </Text>
             ) : null}
           </div>
-        </>
-      ) : (
-        <Text tone="muted" className="max-w-reading">
-          There is no project here yet, so there is nothing to download. Bring one in below, or define the project from the project home.
-        </Text>
-      )}
+      </>
 
       <ConfirmDialog
         open={confirming}
@@ -215,13 +215,18 @@ function TakeElsewhere({ status, blocked }: { status: Status; blocked: boolean }
           if (!open) setProblem(null);
         }}
         title="Download this project?"
-        description="MACH puts the whole project in one file that names no repository and no account, and your browser downloads it. Nothing is sent anywhere, and nothing here changes."
+        description="MACH reads GitHub for anything of the project this workspace does not have, puts the whole project in one file that names no repository and no account, and your browser downloads it. Nothing is sent anywhere, and nothing here changes."
         confirmLabel={onlyMine ? "Download without them" : "Download"}
         onConfirm={run}
         error={problem}
         focusAfter={() => document.getElementById("move-export-result") ?? opener.current}
       >
-        {running ? <Working words="Putting the project in one file" detail="A large project can take a few minutes." /> : null}
+        {running ? (
+          <Working
+            words="Putting the project in one file"
+            detail="MACH reads GitHub for what this workspace does not have. With many slices this can take a few minutes. Leave this window open."
+          />
+        ) : null}
         {offerOnlyMine ? (
           // The refusal names slices that are on GitHub but not in this workspace: the person may leave them out.
           <div className="pt-3">
@@ -275,10 +280,15 @@ function ExportResult({ view }: { view: ExportView }) {
           {view.downloadProblem ?? "Product Studio did not offer the file. Download the project again."}
         </Banner>
       )}
-      <List title="Look at these first" items={view.warnings} />
-      <List title="From this workspace" items={view.fromHere} />
-      <List title="Fetched from GitHub" items={view.fromGithub} />
-      <List title="Left out" items={view.leftOut} />
+      {view.githubNotRead ? (
+        <Banner tone="warning" title="GitHub could not be read for this file">
+          {view.githubNotRead}
+        </Banner>
+      ) : null}
+      {view.lead ? <Text className="max-w-reading">{view.lead}</Text> : null}
+      <List title="Where this workspace and GitHub differed" items={view.chosen} />
+      <List title="Not in the file" items={view.notIncluded} />
+      <List title="Also" items={view.rest} />
       <List title="Stays in this repository" items={view.staysBehind} />
       {view.more.map((group) => (
         <List key={group.title} title={group.title} items={group.items} />

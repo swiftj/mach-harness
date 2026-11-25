@@ -4,8 +4,8 @@
  * (move_memory.py), plus what the host adds (apps/studio/internal/engine/ops_move.go): `downloads` and
  * `download_problem` after an export, `kept` after a plan.
  *
- * Fields marked "assumed" are not printed by the engine yet: they are what the export and import are gaining (what came
- * from here and from GitHub, why something was left out, marking ready what was ready there). They are optional, and
+ * Fields marked "assumed" are not printed by the engine yet: they are what the import is gaining (marking ready what was
+ * ready there, principles recorded as not assessed). They are optional, and
  * the app reads every one of these results in one place only (apps/product-studio/src/features/move/model.ts), so a
  * name that turns out different is changed there and here.
  */
@@ -22,18 +22,26 @@ export interface ProjectExport {
   bytes: number;
   sha256: string;
   counts: MoveCounts;
-  /** Slices of this project left out because they are on GitHub but not in this workspace (`only_mine`). Assumed: items
-   *  may become objects with the reason. */
-  left_out: Array<string | MoveItem>;
+  /** The IDs of the slices left out (their reasons are in `not_included`). */
+  left_out: string[];
   /** Sentences: a slice changed since it was marked ready (the file holds the draft), slices left out as asked. */
   warnings: string[];
   /** What stays in this repository, in words: approvals, GitHub issues, Jira keys, requests, ready folders. */
   stays_behind: string[];
   note: string;
   factory_authorized: false;
-  /** Assumed: what came from this workspace and what MACH fetched from GitHub. */
-  from_here?: Array<string | MoveItem> | MoveCounts;
-  from_github?: Array<string | MoveItem> | MoveCounts;
+  /** What came from this workspace and what MACH read from GitHub: how many, and their IDs ("project", "principles",
+   *  "needs" for the sets). */
+  from_here?: { count: number; ids: string[] };
+  from_github?: { count: number; ids: string[] };
+  /** Whether GitHub was read for this export; `problem` when it could not be. */
+  github?: { checked: boolean; problem: string | null; read_at: string | null };
+  /** What did not go in the file, each with its reason in words. */
+  not_included?: Array<{ id: string; what: string; issue: number | null; reason: string }>;
+  /** Where this workspace and GitHub held different versions: which was used, and why in words. */
+  chosen?: Array<{ id: string; used: "here" | "github"; issue: number | null; note: string }>;
+  /** Every sentence a person reads about this export, in order, then the warnings. */
+  in_words?: string[];
   /** Added by the host: the one file to download, or none when `download_problem` says why. */
   downloads: DownloadOffer[];
   download_problem?: string;

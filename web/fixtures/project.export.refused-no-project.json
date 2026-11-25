@@ -1,6 +1,6 @@
 {
   "exit_code": 1,
   "data": null,
-  "refused": "There is no project here yet, so there is nothing to export. Nothing was changed.",
+  "refused": "There is no project here yet, and GitHub holds none for this repository, so there is nothing to export. Define the project first. Nothing was changed.",
   "hint": null
 }
