@@ -52,10 +52,13 @@ class ParserTest(unittest.TestCase):
     def test_the_three_commands_are_under_project(self):
         self.assertTrue({"init", "set", "export", "import", "imports"} <= set(self.project))
         self.assertEqual(options(self.project["export"]) - {"-h", "--help"}, {"--out", "--only-mine"})
-        self.assertEqual(options(self.project["import"]) - {"-h", "--help"}, {"--plan", "--abandon"})
+        self.assertEqual(options(self.project["import"]) - {"-h", "--help"}, {"--plan", "--abandon", "--ready"})
         self.assertEqual(positionals(self.project["import"]), ["archive"])
         self.assertEqual(options(self.project["imports"]) - {"-h", "--help"}, set())
-        self.assertEqual(positionals(self.project["imports"]), ["identifier"])
+        self.assertEqual(positionals(self.project["imports"]), ["identifier", "which"])
+        args = studio.build_parser().parse_args(["project", "imports", "ready", "lending.zip"])
+        self.assertEqual((args.func, args.identifier, args.which), (studio.cmd_project_imports, "ready", "lending.zip"))
+        self.assertTrue(studio.build_parser().parse_args(["project", "import", "a.zip", "--ready"]).ready)
 
     def test_the_arguments_parse(self):
         parser = studio.build_parser()
@@ -118,7 +121,8 @@ class ExportCommandTest(IssuesBase):
 
     def test_a_refusal_ends_with_nothing_was_changed(self):
         err = self.refused(self.a, "project", "export")
-        self.assertIn("There is no project here yet, so there is nothing to export.", err)
+        self.assertIn("There is no project here yet, and GitHub holds none for this repository, so there is nothing to export. "
+                      "Define the project first (project init).", err)
         self.assertTrue(err.strip().endswith(NOTHING_CHANGED), err)
         err = self.refused(self.a, "project", "export", "--out", str(self.root / "missing"))
         self.assertTrue(err.strip().endswith(NOTHING_CHANGED), err)
@@ -133,28 +137,32 @@ class ExportCommandTest(IssuesBase):
             err = self.refused(self.a, "project", "export")
         self.assertEqual(err.count(NOTHING_CHANGED), 1)
 
-    def slices_only_on_github(self):
-        ledger_path = self.a / ".factory/studio/issues.json"
-        ledger = json.loads(ledger_path.read_text())
-        epic_issue = ledger["epics"]["EPIC-001"]["number"]
-        ledger["seen"]["slices"]["SLICE-009"] = [{"issue": 41, "epic_issue": epic_issue, "state": "open", "state_label": "mach:ready", "revision": 1}]
-        ledger_path.write_text(json.dumps(ledger))
-
     def test_the_app_wording_names_no_command_or_flag(self):
+        """Ben's own SLICE-001 clashes with Ada's on GitHub: the sentence names the fix in the app's words, the command in the terminal's."""
         self.built()
         self.ready("SLICE-001")
-        self.slices_only_on_github()
-        err = self.refused(self.a, "--app", "project", "export")
-        self.assertIn("1 slice of this project is on GitHub but not in your workspace: SLICE-009 (#41). Open it here first, or export without it.", err)
+        self.project_and_epic(self.b)
+        self.drafted(self.b, title="Ben's own")
+        result = self.ok(self.b, "--app", "project", "export", "--out", str(self.out))
+        (row,) = result["not_included"]
+        self.assertEqual(row["reason"], f"Two different slices use the number SLICE-001: your draft here and #{row['issue']} on GitHub. The archive "
+                                        "holds the one from this workspace. Giving your draft a new number in Product Studio lets both come; then export again.")
+        for line in result["in_words"] + [result["note"]]:
+            self.assertIsNone(BANNED.search(line), line)
+        terminal = self.ok(self.b, "project", "export", "--out", str(self.out))
+        self.assertIn("(slice renumber SLICE-001)", terminal["not_included"][0]["reason"])
+        err = self.refused(self.empty_copy(), "--app", "project", "export", "--only-mine")
+        self.assertIn("Export everything to take the project from GitHub.", err)
         self.assertIsNone(BANNED.search(err), err)
-        terminal = self.refused(self.a, "project", "export")
-        self.assertIn("(slice take 41)", terminal)
-        self.assertIn("(project export --only-mine)", terminal)
         stopped = {"file": "mach-project-lending-20261124T130600Z.zip", "archive_sha256": "e" * 64, "started_at": "2026-11-24T10:00:00Z"}
         with mock.patch.object(project_export, "_unfinished_import", return_value=stopped):
             err = self.refused(self.a, "--app", "project", "export", "--only-mine")
         self.assertIn("Bringing in another project stopped part way here.", err)
         self.assertIsNone(BANNED.search(err), err)
+
+    def empty_copy(self):
+        """A third copy of the repository with nothing in its workspace."""
+        return self.clone("c", "Cy PM")
 
 
 class ImportCommandTest(IssuesBase):

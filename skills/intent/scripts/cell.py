@@ -82,6 +82,12 @@ SLICE_FILE_RE = re.compile(r"^SLICE-(\d{3,})-.*\.md$")
 SLICE_ID_RE = re.compile(r"SLICE-(\d{3,})")
 PRODUCT_SLICE_RE = re.compile(r"^SLICE-(\d{3,})\.json$")
 STUDIO_DRAFT = (".factory", "studio", "draft")
+# M21: a project being brought in from another repository keeps its record here (one JSON file per archive) while it is
+# placed; the slice numbers its map gives out are held until it finishes or is set aside. Read as files: nothing of
+# Product Studio's code is used here.
+STUDIO_IMPORTS = (".factory", "studio", "imports")
+IMPORT_RECORD_RE = re.compile(r"^[0-9a-f]{16}\.json$")
+HELD_SLICE_RE = re.compile(r"^SLICE-(\d{3,})$")
 FIELD_RE = re.compile(r"^[-*+]\s+\*\*([A-Za-z ]+):\*\*\s*(.*)$")
 REQ_RE = re.compile(r"\b(?:FR|INV|AC)-\d{2,}\b")
 PLAN_TASK_RE = re.compile(r"^\s*[-*+]\s+\[[ xX]\]\s+((?:R\d+-)?T\d+)\s+\[(test|impl|contract|refactor|docs)\]\s+(.*)$")
@@ -558,7 +564,35 @@ def slice_ids(project: Path) -> Tuple[Dict[int, str], Dict[int, List[Dict[str, s
             match = PRODUCT_SLICE_RE.match(path.name)
             if match:
                 used.setdefault(int(match.group(1)), path.name)
+    for number, where in held_by_imports(project).items():
+        used.setdefault(number, where)
     return used, reserved
+
+
+def held_by_imports(project: Path) -> Dict[int, str]:
+    """M21: the slice numbers a project being brought in holds while its import is unfinished (its record in
+    .factory/studio/imports/ has no finished_at and was not set aside), so no one takes a number it is about to place.
+    Never raises: a record that cannot be read holds nothing."""
+    held: Dict[int, str] = {}
+    folder = project.joinpath(*STUDIO_IMPORTS)
+    try:
+        if folder.is_symlink() or not folder.is_dir():
+            return held
+        paths = sorted(p for p in folder.iterdir() if IMPORT_RECORD_RE.fullmatch(p.name) and p.is_file() and not p.is_symlink())
+    except OSError:
+        return held
+    for path in paths:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, RecursionError):
+            continue
+        if not isinstance(data, dict) or data.get("finished_at") or data.get("set_aside_at") or not isinstance(data.get("map"), dict):
+            continue
+        for new in data["map"].values():
+            match = HELD_SLICE_RE.fullmatch(new) if isinstance(new, str) else None
+            if match:
+                held.setdefault(int(match.group(1)), f"{'/'.join(STUDIO_IMPORTS)}/{path.name} (a project being brought in holds it)")
+    return held
 
 
 def shared_main_ref(project: Path) -> Optional[str]:
@@ -657,9 +691,18 @@ def analyze_spec(project: Path, spec: Path, ready: bool, cell_root: Optional[Pat
     '## Effects on shipped behaviour' is required and checked against them. `same_slice`: the slice ID Product Studio
     handed this cell, whose draft in the Studio workspace is this same slice and not a duplicate."""
     text = spec.read_text(encoding="utf-8-sig")
+    same_slice = [slice_id for slice_id in same_slice]
     others = specs_sharing_ids(project, spec, same_slice)
-    return validate_slice.analyze(text, spec.name, others, ready=ready, principles=cell_principles(cell_root) if cell_root else None, shipped=rules,
-                                  policies=packs)
+    findings, model = validate_slice.analyze(text, spec.name, others, ready=ready, principles=cell_principles(cell_root) if cell_root else None,
+                                             shipped=rules, policies=packs)
+    if not same_slice:
+        # M21: only bringing in a project writes a Not assessed row, and Product Studio checks each against its import records. A ticket
+        # the engineers groom themselves was not handed over by Product Studio, so there the row answers nothing: an error.
+        findings = [finding._replace(severity="error", message=f"{finding.message.split(' is not assessed')[0]}: this ticket was not handed over "
+                                                                "by Product Studio, so 'Not assessed' does not answer it here. Answer it: does it "
+                                                                "apply, not apply, or is this slice an exception?")
+                    if finding.rule == "principle-not-assessed" and finding.severity == "warning" else finding for finding in findings]
+    return findings, model
 
 
 def shipped_rules(project: Path) -> Dict[str, Any]:

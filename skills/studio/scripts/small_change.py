@@ -92,7 +92,15 @@ def shipped_slices(studio: Any) -> set:
 def judge(host: Any, studio: Any, data: Dict[str, Any], model: Dict[str, Any], text: str, risk: Optional[str]) -> Dict[str, Any]:
     """Part A's first seven rules for this slice: its spec, its one epic, its why's risk tier, its dependencies."""
     found, _ = limits(host, studio)
-    return helper(host).judge(model, text, epics=[data.get("epic_id")], risks=[risk], depends_on=list(data.get("dependencies") or []),
+    depends_on = list(data.get("dependencies") or [])
+    if depends_on and data.get("slice_id"):
+        # M21: a small change brought in from another repository waits for the slices that came with it and had shipped there
+        # (its fix's own rule's slice among them); they ship here first. It stays a small change; the engineers judge it again
+        # against what has shipped when they take it, by which time those slices have shipped.
+        import project_import
+        waiting = project_import.waiting_on(studio, data["slice_id"])
+        depends_on = [d for d in depends_on if d not in waiting]
+    return helper(host).judge(model, text, epics=[data.get("epic_id")], risks=[risk], depends_on=depends_on,
                               shipped_slices=shipped_slices(studio), limits=found)
 
 

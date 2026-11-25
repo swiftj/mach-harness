@@ -18,9 +18,11 @@ import { feature as mocks } from "./mocks";
 import { feature as shape } from "./shape";
 // M17: Technical needs (docs/mach-next/M17_APP_FOUNDATION.md).
 import { feature as needs } from "./needs";
+// M21 F: moving the whole project to another repository (docs/mach-next/M21_EXPORT_IMPORT.md).
+import { feature as move } from "./move";
 
 /** Every feature of the app. Add a folder under features/ and list it here; nothing else needs to change. */
-export const features: Feature[] = [home, vision, roadmap, spec, interview, inbox, activity, principles, policies, effects, epicToday, prd, jira, mocks, shape, needs];
+export const features: Feature[] = [home, vision, roadmap, spec, interview, inbox, activity, principles, policies, effects, epicToday, prd, jira, mocks, shape, needs, move];
 
 export const routes = features.flatMap((feature) => feature.routes);
 

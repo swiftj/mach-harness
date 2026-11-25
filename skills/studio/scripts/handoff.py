@@ -33,6 +33,7 @@ SCHEMA_VERSION = 1
 WAIT_SECONDS = 5.0
 STEPS = ("labels", "project", "epic", "slice", "unique", "approval", "link", "ready")
 STUDIO_LABELS = ("mach:project", "mach:epic", "mach:slice", "mach:ready")
+SNAPSHOT_LABELS = ("mach:project", "mach:epic", "mach:slice")
 BUSY = "Another Product Studio command is saving to GitHub; try again."
 
 
@@ -196,11 +197,16 @@ class Handoff:
 
     def read(self, repository: str) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, str]]]:
         found: Dict[str, Any] = {}
-        for label in ("mach:project", "mach:epic", "mach:slice"):
+        for label in SNAPSHOT_LABELS:
             listed, failure = issues.list_issues(self.project, repository, label)
             if failure:
                 return None, failure
             found[label] = listed or []
+        return self.snapshot_of(found), None
+
+    def snapshot_of(self, found: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
+        """The snapshot read() makes from the issues listed under each of SNAPSHOT_LABELS. M21: project export lists them to
+        their end itself (issues.list_all_issues) and makes the same snapshot here."""
         slices = []
         for item in found["mach:slice"]:
             marker = self.rules.parse_slice_body(item.get("body"))
@@ -213,7 +219,7 @@ class Handoff:
                              "kind": (self.rules.product_marker(item.get("body")) or (None,))[0], "title": item.get("title"),
                              "body": item.get("body"), "state": str(item.get("state") or "").lower()} for item in found[label]]
         return {"slices": slices, "projects": [p for p in tagged["project"] if p["kind"] == "project"],
-                "epics": [e for e in tagged["epic"] if e["kind"] == "epic"]}, None
+                "epics": [e for e in tagged["epic"] if e["kind"] == "epic"]}
 
     def own_issue(self, data: Dict[str, Any], slice_id: str, snapshot: Dict[str, Any], spec_sha: str, why_sha: str) -> Tuple[Optional[Dict[str, Any]], List[int]]:
         """This slice's own open issue, if it has one, and the numbers of issues holding its ID that are not its own."""
@@ -1520,6 +1526,12 @@ class Handoff:
             if not listed:
                 raise HandoffError(f"No slice {target} was found on GitHub. Nothing was changed.")
             number = max(item["number"] for item in (waiting or listed))
+        return self.read_slice_issue(repository, snapshot, number)
+
+    def read_slice_issue(self, repository: str, snapshot: Dict[str, Any], number: int) -> Dict[str, Any]:
+        """take_read's reading of one slice issue, given the snapshot already read: the issue, its comments and the shared rules'
+        take check. M21: project export reads every slice issue of the project through this, so what it puts in an archive passed
+        the same checks as `slice take`. Writes nothing; refuses (HandoffError) when the issue or its comments cannot be read."""
         current, failure = issues.view(self.project, repository, number)
         if failure or current is None:
             raise HandoffError(f"Issue #{number} could not be read, so nothing was changed. {explain(failure)}")
@@ -1533,7 +1545,29 @@ class Handoff:
         number_to_slice = {item["number"]: item["marker"]["slice_id"] for item in snapshot["slices"]}
         return {"repository": repository, "number": number, "title": self.rules.issue_title(current.get("title")), "labels": names,
                 "state": str(current.get("state") or "").lower(), "check": check, "epic": epic, "comments": found or [],
-                "depends": [(dep, number_to_slice.get(dep)) for dep in marker.get("depends") or []], "snapshot": snapshot}
+                "depends": [(dep, number_to_slice.get(dep)) for dep in marker.get("depends") or []], "snapshot": snapshot,
+                "body": current.get("body")}
+
+    def published_sets(self, repository: str, snapshot: Dict[str, Any], number: int) -> Tuple[Dict[str, Dict[str, Any]], List[str], Optional[str]]:
+        """M21, for project export: the principles and technical needs as the project's issue holds them now, each with read_set's
+        check (intact, and approved for exactly that revision and SHA-256 by the account it names), recording nothing. Also the
+        logins of the issue's comments. ({}, [], why) when the comments cannot be read."""
+        body = project_body(snapshot, number)
+        found: Dict[str, Dict[str, Any]] = {}
+        comments: Optional[List[Dict[str, Any]]] = None
+        for kind in SETS:
+            rules_set = self.rules_set(kind)
+            parsed = rules_set.parse(body)
+            if parsed is None:
+                continue
+            if comments is None:
+                comments, failure = issues.comments(self.project, repository, number)
+                if failure:
+                    return {}, [], explain(failure)
+            check = rules_set.take_check(body, comments or [])
+            found[kind.name] = {"revision": parsed["revision"], "intact": parsed["intact"], "approved": check["problem"] is None,
+                                "approved_by": check["approved_by"], "items": check["items"], "extra": check["extra"]}
+        return found, sorted({str(item.get("login")) for item in comments or [] if item.get("login")}), None
 
     def record_taken(self, data: Dict[str, Any], read: Dict[str, Any], slice_id: str, saved: str, epic_id: str) -> None:
         """Link the slice opened here to its issue, at the revision it was based on. Recorded before the

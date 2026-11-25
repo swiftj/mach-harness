@@ -71,7 +71,8 @@ def main():
     import small_memory  # noqa: E402  (beside this file)
     import start_memory  # noqa: E402  (beside this file)
     import team_memory  # noqa: E402  (beside this file)
-    only = {"needs": needs_memory, "small": small_memory, "start": start_memory, "team": team_memory}
+    import move_memory  # noqa: E402  (beside this file)
+    only = {"needs": needs_memory, "small": small_memory, "start": start_memory, "team": team_memory, "move": move_memory}
     if len(sys.argv) == 3 and sys.argv[1] == "--only" and sys.argv[2] in only:
         # M17 and M18: write only one milestone's fixtures, leaving the others as they are (a full run changes only times
         # and paths in them).
@@ -105,6 +106,8 @@ def main():
     start_memory.generate(Scenario, OUT)
     # M20: several product managers sharing one repository.
     team_memory.generate(Scenario, OUT)
+    # M21 F: taking the whole project to another repository, and bringing one in.
+    move_memory.generate(Scenario, OUT)
     print("wrote", len(list(OUT.glob("*.json"))), "fixtures to", OUT)
 
 

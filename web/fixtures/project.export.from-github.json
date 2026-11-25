@@ -1,0 +1,57 @@
+{
+  "exit_code": 0,
+  "data": {
+    "exported": true,
+    "file": "/project/.factory/studio/export/mach-project-lending-20261125T024110Z.zip",
+    "bytes": 7473,
+    "sha256": "52fa19cd9c4863e546c6d302bace0bdad1cab1526684b1665cb7dffa8e381eee",
+    "counts": {
+      "epics": 1,
+      "slices": 2,
+      "principles": 1,
+      "needs": 0,
+      "ideas": 0,
+      "prds": 0,
+      "designs": 0,
+      "mocks": 0
+    },
+    "from_here": {
+      "count": 0,
+      "ids": []
+    },
+    "from_github": {
+      "count": 5,
+      "ids": [
+        "project",
+        "principles",
+        "EPIC-001",
+        "SLICE-001",
+        "SLICE-002"
+      ]
+    },
+    "github": {
+      "checked": true,
+      "problem": null,
+      "read_at": "2026-11-25T02:41:09Z"
+    },
+    "not_included": [],
+    "chosen": [],
+    "left_out": [],
+    "warnings": [],
+    "stays_behind": [
+      "approvals",
+      "GitHub issues and their numbers",
+      "Jira keys (listed in the archive for the report)",
+      "requests",
+      "ready folders"
+    ],
+    "factory_authorized": false,
+    "note": "The project is in one file. It names no repository and no account. Nothing was sent anywhere. Drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were written. Export there to include them.",
+    "in_words": [
+      "The archive holds the project, 1 epic and 2 slices. Read from GitHub: the project, the product principles, EPIC-001, SLICE-001, SLICE-002.",
+      "Drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were written. Export there to include them."
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

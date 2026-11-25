@@ -1,0 +1,193 @@
+{
+  "exit_code": 0,
+  "data": {
+    "plan": true,
+    "resuming": false,
+    "archive": {
+      "file": "mach-project-lending-20261125T024109Z.zip",
+      "sha256": "30609135f3dd740a2d7794adf5c8f7edaa6938f44d77765021555ef18103bf38",
+      "exported_at": "2026-11-25T02:41:09Z",
+      "mach_version": "0.24.0"
+    },
+    "mode": "join",
+    "into_project": "workbench",
+    "from_project": "lending",
+    "from_project_name": "Lending",
+    "map": {
+      "EPIC": [
+        [
+          "EPIC-001",
+          "EPIC-002"
+        ],
+        [
+          "EPIC-002",
+          "EPIC-003"
+        ]
+      ],
+      "SLICE": [
+        [
+          "SLICE-001",
+          "SLICE-002"
+        ],
+        [
+          "SLICE-002",
+          "SLICE-003"
+        ],
+        [
+          "SLICE-003",
+          "SLICE-004"
+        ]
+      ],
+      "PP": [
+        [
+          "PP-01",
+          "PP-01"
+        ]
+      ],
+      "TN": [],
+      "IDEA": [],
+      "PRD": [],
+      "DES": []
+    },
+    "renumbered": true,
+    "why_numbered": [],
+    "numbers_counted": {
+      "SLICE": {
+        "github_read": true,
+        "origin_main_read": true,
+        "notes": [],
+        "reserved_by_unfinished_import": [],
+        "highest_used": 1
+      },
+      "EPIC": {
+        "github_read": true,
+        "reserved_by_unfinished_import": [],
+        "highest_used": 1
+      },
+      "IDEA": {
+        "github_read": true,
+        "reserved_by_unfinished_import": [],
+        "highest_used": 0
+      },
+      "PP": {
+        "github_read": true,
+        "reserved_by_unfinished_import": [],
+        "highest_used": 0
+      },
+      "TN": {
+        "github_read": true,
+        "reserved_by_unfinished_import": [],
+        "highest_used": 0
+      },
+      "PRD": {
+        "github_read": null,
+        "reserved_by_unfinished_import": [],
+        "highest_used": 0
+      },
+      "DES": {
+        "github_read": null,
+        "reserved_by_unfinished_import": [],
+        "highest_used": 0
+      }
+    },
+    "numbers_note": null,
+    "notes": [],
+    "counts": {
+      "epics": 2,
+      "slices": 3,
+      "principles": 1,
+      "needs": 0,
+      "ideas": 0,
+      "prds": 0,
+      "designs": 0,
+      "mocks": 0,
+      "files": 9
+    },
+    "slices": [
+      {
+        "from": "SLICE-001",
+        "to": "SLICE-002",
+        "title": "Borrow a book",
+        "epic": "EPIC-002",
+        "was": "ready_to_build",
+        "was_words": "ready to build in the old repository",
+        "status_here": "draft",
+        "revision_there": 1
+      },
+      {
+        "from": "SLICE-002",
+        "to": "SLICE-003",
+        "title": "Return a book",
+        "epic": "EPIC-002",
+        "was": "ready_to_build",
+        "was_words": "ready to build in the old repository",
+        "status_here": "draft",
+        "revision_there": 1
+      },
+      {
+        "from": "SLICE-003",
+        "to": "SLICE-004",
+        "title": "Renew a loan",
+        "epic": "EPIC-003",
+        "was": "draft",
+        "was_words": "a draft in the old repository",
+        "status_here": "draft",
+        "revision_there": null
+      }
+    ],
+    "superseded": [],
+    "check_by_hand": [],
+    "not_in_archive": [],
+    "links_dropped": [],
+    "needs_none_left_behind": [],
+    "shipped_rules": [],
+    "same_principles": [],
+    "principles_not_assessed": [
+      {
+        "slice": "SLICE-001",
+        "principle": "PP-01",
+        "file": "specs/slices/SLICE-001-invite-teammate.md",
+        "how": "principle_came",
+        "words": "SLICE-001: PP-01 is not assessed. PP-01 came with the project Lending, brought in here on 2026-11-25, after this slice was written."
+      }
+    ],
+    "principles_aligned": [],
+    "dependencies_added": [],
+    "renumbered_on_resume": [],
+    "ready_in_source": {
+      "slices": [
+        "SLICE-002",
+        "SLICE-003"
+      ],
+      "count": 2,
+      "held_back": [],
+      "words": "2 slices were ready in the old repository (SLICE-002 (was SLICE-001) and SLICE-003 (was SLICE-002)). On your word, MACH can mark them ready here in one step, dependencies first, each checked as marking ready checks it; it stops at the first that is not ready yet."
+    },
+    "after": [
+      "Publish the principles before any slice can be marked ready: 1 came with the project (PP-01).",
+      "1 slice of this project still being written (SLICE-001) did not answer PP-01, which came with the project: each such row says 'Not assessed', which does not hold up marking ready. Answer them in the interview when you next change those slices (listed under principles_not_assessed)."
+    ],
+    "left_behind": {
+      "jira": {},
+      "epic_jira": {},
+      "requests": {},
+      "accepted_concerns": [],
+      "idea_sources": {},
+      "lookups_removed": {},
+      "project": {
+        "name": "Lending",
+        "vision": "Members borrow what they need.",
+        "outcomes": [
+          "Members can borrow books"
+        ]
+      },
+      "approvals": "never carried",
+      "github_issues": "stay in the old repository"
+    },
+    "factory_authorized": false,
+    "writes": "nothing",
+    "note": "Would bring in 3 slices in 2 epics from the project 'Lending'. Every slice is a draft here: in the old repository 2 were ready to build. Nothing was sent to GitHub. Publish the principles, then mark each slice ready when you have checked it. The 2 slices that were ready in the old repository can be marked ready here in one step, on your word."
+  },
+  "refused": null,
+  "hint": null
+}

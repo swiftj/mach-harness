@@ -374,8 +374,18 @@ class Studio:
         others = self.cell.specs_sharing_ids(self.project, spec, self.handoff().handed_over())
         findings, model = self.validate_slice.analyze(spec.read_text(encoding="utf-8-sig"), spec.name, others, ready=ready,
                                                       principles=self.principles_for_check(), shipped=self.shipped()["rules"],
-                                                      policies=policies_helper().for_validator(self.policy_listing()))
+                                                      policies=policies_helper().for_validator(self.policy_listing()),
+                                                      pending=self.pending_rules(spec))
         return [finding._replace(message=app_finding(finding.message)) for finding in findings] if APP else findings, model
+
+    def pending_rules(self, spec: Path) -> Dict[str, Dict[str, Any]]:
+        """M21: the rules of slices that came with this one from another repository, that it depends on and that have not shipped
+        here yet: rules that had shipped there, so its effects may name them; here they ship first. Empty for any other slice."""
+        match = self.validate_slice.FILENAME_RE.match(spec.name)
+        if match is None or spec.parent.resolve() != (self.draft / "specs" / "slices").resolve():
+            return {}
+        import project_import
+        return project_import.pending_rules(self, match.group(1))
 
     # ---- policy packs (M14 part A) ----
 
@@ -431,9 +441,17 @@ class Studio:
             return None
         text = spec.read_text(encoding="utf-8-sig")
         helper = shipped_helper()
-        if not helper.current_module().effects_module().parse(text)["rows"]:
+        rows = helper.current_module().effects_module().parse(text)["rows"]
+        if not rows:
             return None
-        return helper.moved(text, slice_id, None, checked.get("commit"), self.shipped())
+        moved = helper.moved(text, slice_id, None, checked.get("commit"), self.shipped())
+        if moved:  # M21: a row naming a rule of a slice it waits on is not stale; that slice has not shipped yet and ships first
+            waiting = self.pending_rules(spec)
+            lines = {row["line"] for row in rows if row["shipped_rule"] in waiting}
+            moved["problems"] = [item for item in moved["problems"] if item["line"] not in lines]
+            if not moved["problems"]:
+                return None
+        return moved
 
     # ---- product principles (M13) ----
 
@@ -526,6 +544,15 @@ class Studio:
                 (result["errors"] if finding.severity == "error" else result["warnings"]).append(text)
             if model.get("slice_id") and model.get("slice_id") != slice_id:
                 result["errors"].append(f"{spec.name}: the spec's title names {model.get('slice_id')}, not {slice_id}.")
+            if model.get("principles_not_assessed"):  # M21: a Not assessed row stands only when bringing in a project wrote it
+                import project_import
+                problems = project_import.not_assessed_problems(self, slice_id, model["principles_not_assessed"])
+                result["errors"] += [f"{spec.name}: {problem} [principle-not-assessed]" for problem in problems]
+                # A row refused here is not also "not assessed yet": the validator's warning for it is dropped, so it is said once.
+                refused = {problem.split("'", 1)[0] for problem in problems}
+                said = lambda text: any(f": {ident} is not assessed for this slice yet" in text for ident in refused)  # noqa: E731
+                result["warnings"] = [w for w in result["warnings"] if not said(w)]
+                result["diagnostics"] = [d for d in result["diagnostics"] if not (d["rule"] == "principle-not-assessed" and said(": " + d["message"]))]
             result["open_questions"] = [self.question_text(q) for q in (model.get("open_questions") or [])]
             result["counts"] = {
                 "invariants": len(model.get("invariants") or []),
@@ -601,16 +628,27 @@ def principle_flags(studio: Studio, slice_id: str, current: Sequence[Dict[str, A
     except (OSError, UnicodeDecodeError):
         return None
     answered: Dict[str, int] = {}
+    not_assessed: List[str] = []
     for line in text.splitlines():
         found = studio.validate_slice.PRINCIPLE_ROW_RE.match(line.strip())
-        if found:
-            answered[found.group(1)] = int(found.group(2))
+        unassessed = None if found else studio.validate_slice.NOT_ASSESSED_ROW_RE.match(line.strip())
+        if found or unassessed:
+            answered[(found or unassessed).group(1)] = int((found or unassessed).group(2))
+        if unassessed:
+            not_assessed.append(unassessed.group(1))
     known = {item["id"]: item for item in current}
     older = sorted(ident for ident, revision in answered.items() if ident in known and known[ident]["status"] == "active" and revision < known[ident]["revision"])
     unanswered = sorted(item["id"] for item in current if item["status"] == "active" and item["id"] not in answered)
+    if unanswered and studio.load("slice", slice_id).get("status") not in EDITABLE_SLICE:
+        # M21: a principle that came with a project brought in after this slice was marked ready is not assessed for it, as for a
+        # slice still being written then; reopening the slice writes that row (project_import.rows_on_reopen).
+        import project_import
+        listed = project_import.not_assessed_ready(studio)  # exactly the slices the import's record says were ready before it
+        not_assessed += [ident for ident in unanswered if (slice_id, ident) in listed]
+        unanswered = [ident for ident in unanswered if (slice_id, ident) not in listed]
     retired = sorted(ident for ident in answered if ident in known and known[ident]["status"] == "retired")
     stale = bool(older or unanswered)
-    return {"answered_under_older": bool(older), "older": older, "unanswered": unanswered, "retired": retired,
+    return {"answered_under_older": bool(older), "older": older, "unanswered": unanswered, "retired": retired, "not_assessed": sorted(set(not_assessed)),
             "note": (f"{slice_id} was answered under older principles ({', '.join(older + unanswered)}). Check its answers"
                      + (" in the interview." if (studio.load('slice', slice_id).get('status') in EDITABLE_SLICE) else
                         "; to change it, reopen it. Work the builders already took is not restarted.")) if stale else None}
@@ -995,6 +1033,8 @@ def cmd_project_export(studio: Studio, args: argparse.Namespace) -> int:
 def cmd_project_import(studio: Studio, args: argparse.Namespace) -> int:
     import project_import
     if args.abandon:  # on the product manager's word: set aside the import that stopped part way; what it placed stays
+        if args.ready:
+            raise StudioError("Setting aside an import marks nothing ready. Nothing was changed.")
         if args.plan:
             raise StudioError("Setting aside an import changes nothing to plan. Nothing was changed.")
         return emit(project_import.set_aside(sys.modules[__name__], studio, args.archive))
@@ -1004,11 +1044,38 @@ def cmd_project_import(studio: Studio, args: argparse.Namespace) -> int:
     archive = Path(os.path.abspath(str(Path(args.archive).expanduser())))
     if args.plan:
         return emit(project_import.plan(sys.modules[__name__], studio, archive))
-    return emit(project_import.run(sys.modules[__name__], studio, archive))
+    if args.ready and policies_helper().unattended():  # refused before anything is brought in
+        raise StudioError("Marking slices ready is a product manager's act; a supervised execution does not do it. Nothing was changed.")
+    result = project_import.run(sys.modules[__name__], studio, archive, ready_step=args.ready)
+    if not args.ready:
+        return emit(result)
+    # M21, on the product manager's word: then every slice that was ready in the old repository, marked ready as slice ready does.
+    # The import's own result is never lost: whatever happens while marking ready, both are printed.
+    try:
+        ready = project_import.ready_all(sys.modules[__name__], studio, result["archive"]["sha256"])
+    except Exception as exc:  # noqa: BLE001
+        words = " ".join(str(exc).split()) or type(exc).__name__
+        ready = {"published_first": [], "marked_ready": [], "already_ready": [], "stopped_at": {"slice": None, "reason": words}, "left": [],
+                 "complete": False, "factory_authorized": False, "note": f"Nothing was marked ready: {words}"}
+    lead = (f"Already brought in on {str(result.get('finished_at'))[:10]}; bringing it in again changed nothing." if result.get("already")
+            else result["note"])
+    # What is left to do no longer says to publish what the ready step has just published.
+    done = set(ready.get("published_first") or [])
+    after = [line for line in result.get("after") or []
+             if not ((line.startswith("Publish the principles before") and "principles" in done)
+                     or (line.startswith("Publish the technical needs") and "needs" in done))]
+    emit({**result, **({"after": after} if "after" in result else {}), "ready": ready, "note": lead + " " + ready["note"]})
+    return 0 if ready["complete"] else 1
 
 
 def cmd_project_imports(studio: Studio, args: argparse.Namespace) -> int:
     import project_import
+    if args.identifier == "ready":  # M21, on the product manager's word: mark ready what was ready in the old repository
+        ready = project_import.ready_all(sys.modules[__name__], studio, args.which)
+        emit(ready)
+        return 0 if ready["complete"] else 1
+    if args.which:
+        raise StudioError("Name one ID, such as SLICE-007, or nothing to list every project brought in here.")
     return emit(project_import.lookup(studio, args.identifier))
 
 
@@ -1531,8 +1598,12 @@ def text_field(hand: handoff.Handoff) -> Dict[str, Any]:
 
 def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
     """Approve a slice and hand it to the builders: its GitHub issue under its epic, or the ready folder."""
+    return emit(mark_ready(studio, args.slice_id))
+
+
+def mark_ready(studio: Studio, slice_id: str) -> Dict[str, Any]:
+    """`slice ready`'s act, returning its result; a refusal raises StudioError. M21: `project imports ready` marks several in turn."""
     studio.prepare()
-    slice_id = args.slice_id
     data = studio.load("slice", slice_id)
     if data.get("status") in EDITABLE_SLICE:
         result, problems = approval_problems(studio, data, slice_id)
@@ -1542,7 +1613,7 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
         if (result.get("small_change") or {}).get("widened_now"):
             # M18: this check has just taken a small change off the light path. It was interviewed the short way, so it is not
             # marked ready in the same act: the interview carries on in full, and the product manager marks it ready again then.
-            return emit({"ready": False, "widened": True, "slice": studio.load("slice", slice_id), "small_change": result["small_change"],
+            return dict({"ready": False, "widened": True, "slice": studio.load("slice", slice_id), "small_change": result["small_change"],
                          "risk": result.get("risk"), "counts": result.get("counts"), "warnings": result["warnings"], "factory_authorized": False,
                          "note": f"{data['widened']['reason']} It was not marked ready: it is a full slice now, and the interview carries on in full, "
                                  "with every answer kept. Mark it ready again once the interview is done."})
@@ -1588,7 +1659,7 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
                 approve_locally(studio, data, slice_id)
             saved = hand.write_folder(ledger, slice_id, data.get("title") or slice_id, epic, dependencies, why, spec, jira, mock_list, mock_files, small)
             folder = Path(saved["folder"])
-            return emit({"ready": True, "saved_to": "folder", "slice": studio.load("slice", slice_id), "folder": str(folder),
+            return dict({"ready": True, "saved_to": "folder", "slice": studio.load("slice", slice_id), "folder": str(folder),
                          "files": [str(folder / name) for name in ("spec.md", "why.md", "slice.json", *sorted("mocks/" + name for name in mock_files))],
                          "revision": saved["revision"],
                          "why_folder": channel.why, "risk": result.get("risk"), "counts": result.get("counts"), "warnings": result["warnings"],
@@ -1616,7 +1687,7 @@ def cmd_slice_ready(studio: Studio, args: argparse.Namespace) -> int:
     request = None
     if isinstance(data.get("origin"), dict):
         request = studio.requests().queue_ready(data["origin"], slice_id, saved["issue"])
-    return emit({"ready": True, "saved_to": "github", "slice": studio.load("slice", slice_id), "issue": saved["issue"], "url": saved["url"],
+    return dict({"ready": True, "saved_to": "github", "slice": studio.load("slice", slice_id), "issue": saved["issue"], "url": saved["url"],
                  "revision": saved["revision"], "follows": saved["follows"], "epic_issue": saved["epic_issue"], "project_issue": saved["project_issue"],
                  "approved_by": channel.login, "risk": result.get("risk"), "counts": result.get("counts"), "warnings": result["warnings"],
                  **({"small_change": result["small_change"]} if "small_change" in result else {}),
@@ -1641,7 +1712,12 @@ def cmd_slice_reopen(studio: Studio, args: argparse.Namespace) -> int:
     data.update({"status": "interviewing", "spec_sha256": None})
     studio.commit_or_restore([("slice", data)], f"Reopening {args.slice_id}")
     studio.note_withdrawn({args.slice_id: "You reopened it to change it."})
+    import project_import  # M21: principles that came with a project brought in after it was marked ready: Not assessed rows
+    unassessed = project_import.rows_on_reopen(sys.modules[__name__], studio, args.slice_id)
     note = "You can change it now. Mark it ready again when it is done."
+    if unassessed:
+        note += (f" {', '.join(row['principle'] for row in unassessed)} came with a project brought in after it was marked ready; "
+                 "its spec now says so ('Not assessed'). Answer them in the interview.")
     if widened:
         note = (f"The builders said: {widened['reason']} So it is a full slice now, and the interview carries on in full, "
                 "with every answer kept. " + note)
@@ -1656,6 +1732,7 @@ def cmd_slice_reopen(studio: Studio, args: argparse.Namespace) -> int:
     elif taken.get("where") == "folder":
         note = "Its ready folder was removed. " + note
     return emit({"reopened": True, "slice": studio.load("slice", args.slice_id), "github": taken, "note": note, "factory_authorized": False,
+                 **({"principles_not_assessed": unassessed} if unassessed else {}),
                  **({"small_change": dict(small_change.view(sys.modules[__name__], studio, data), widened_now=True)} if widened else {})})
 
 
@@ -1982,6 +2059,11 @@ def cmd_principle_list(studio: Studio, args: argparse.Namespace) -> int:
 
 def cmd_principle_publish(studio: Studio, args: argparse.Namespace) -> int:
     """Save the principles where the builders read them: the project's GitHub issue, or the ready folder. On the product manager's word."""
+    return emit(publish_principles(studio))
+
+
+def publish_principles(studio: Studio) -> Dict[str, Any]:
+    """`principle publish`'s act, returning its result; a refusal raises StudioError. M21: the ready step of an import calls it too."""
     studio.prepare()
     project = studio.load("project")
     items = studio.principles()
@@ -1994,12 +2076,12 @@ def cmd_principle_publish(studio: Studio, args: argparse.Namespace) -> int:
     active = sum(1 for item in items if item["status"] == "active")
     if saved["saved_to"] == "folder":
         folder = Path(saved["folder"])
-        return emit({"published": True, **saved, "files": [str(folder / "principles.json")], "active": active, "factory_authorized": False,
+        return dict({"published": True, **saved, "files": [str(folder / "principles.json")], "active": active, "factory_authorized": False,
                      "ways_on": [say(f"Commit the folder {folder.relative_to(studio.draft)} to the repository; the builders read it from the main branch.",
                                      "Add this folder to the project's repository; the builders read it from there."),
                                  "Slices marked ready from now on answer these principles."],
                      "note": "Published to the folder. Nothing was sent to GitHub and no work has started."})
-    return emit({"published": True, **saved, "active": active, "factory_authorized": False,
+    return dict({"published": True, **saved, "active": active, "factory_authorized": False,
                  "note": f"Published on the project's issue (#{saved['issue']}) as version {saved['revision']}. Slices marked ready from now on answer these principles."})
 
 
@@ -2340,8 +2422,10 @@ def cmd_renumber(studio: Studio, args: argparse.Namespace) -> int:
     if kind == "epic":
         studio.handoff().forget_epic_lost(old)  # M20: the number another epic's issue took is no longer this draft's
     studio.note_withdrawn({artifact: "It was given a new number, so it needs your approval again." for artifact in set(returned)})
+    import project_import  # M21: the records of projects brought in here follow the new number (rows vouched for, ready in one step)
+    records = project_import.renamed_here(sys.modules[__name__], studio, old, new) if mine else []
     structural = studio.structural()
-    return emit({"renumbered": {"from": old, "to": new}, "changed": sorted(set(changed)), "needs_approval_again": sorted(set(returned)),
+    return emit({"renumbered": {"from": old, "to": new}, "changed": sorted(set(changed + records)), "needs_approval_again": sorted(set(returned)),
                  "structurally_valid": structural["valid"], "structural_errors": structural["errors"]})
 
 
@@ -2375,18 +2459,32 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--status", choices=product.ENUMS["project"]["status"])
     p.set_defaults(func=cmd_project_set)
     # M21: moving the project to another repository in one archive file (only on the product manager's word)
-    p = project.add_parser("export", help="write the whole project to one archive file that names no repository")
+    p = project.add_parser("export", help="write the whole project to one archive file that names no repository; what GitHub holds and this "
+                                          "workspace does not is read from there (nothing here changes)")
     p.add_argument("--out", help="the folder to write it in; left out, .factory/studio/export/")
-    p.add_argument("--only-mine", action="store_true", help="leave out this project's slices that are on GitHub but not in this workspace")
+    p.add_argument("--only-mine", action="store_true", help="only what is in this workspace: leave out what is on GitHub but not here")
     p.set_defaults(func=cmd_project_export)
     p = project.add_parser("import", help="bring a project archive into this repository's workspace; every slice arrives as a draft")
     p.add_argument("archive", nargs="?", help="the archive file that project export wrote (with --abandon: which unfinished import, if more than one)")
     p.add_argument("--plan", action="store_true", help="say what would be brought in and every new number; change nothing")
     p.add_argument("--abandon", action="store_true",
                    help="set aside the import that stopped part way: its numbers are freed, what it already brought in stays where it is")
+    p.add_argument("--ready", action="store_true",
+                   help="then publish the principles and technical needs that came, and mark ready, dependencies first, every slice that was ready in the old repository (on the product manager's word)")
     p.set_defaults(func=cmd_project_import)
-    p = project.add_parser("imports", help="the projects brought in here, or what one of their IDs is called here (reads only)")
-    p.add_argument("identifier", nargs="?", help="an ID from the project brought in, such as SLICE-007")
+    p = project.add_parser(
+        "imports", help="the projects brought in here, or what one of their IDs is called here (reads only); "
+                        "'project imports ready' marks ready what was ready in the old repository (on the product manager's word)",
+        usage="%(prog)s [ID]\n       %(prog)s ready [WHICH]",
+        description="project imports [ID]: every project brought in here, or what one of its IDs (such as SLICE-007) was or became. "
+                    "Reads only.\n\nproject imports ready [WHICH]: only on the product manager's word. For a project brought in here (the "
+                    "last one finished, or WHICH: its record or the archive's file name), publishes the product principles and technical "
+                    "needs that came with it, as they stand in this workspace, then marks ready, dependencies first and as slice ready "
+                    "does, every slice that was ready in the old repository. It stops at the first that is refused and says what was done "
+                    "and what is left; asked again, it carries on. A slice already marked ready is left as it is.",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("identifier", nargs="?", metavar="ID", help="an ID from a project brought in, such as SLICE-007; or the word ready")
+    p.add_argument("which", nargs="?", metavar="WHICH", help="after ready: which import (its record, or the archive's file name); left out, the last one")
     p.set_defaults(func=cmd_project_imports)
 
     epic = sub.add_parser("epic", help="epics").add_subparsers(dest="action", required=True)

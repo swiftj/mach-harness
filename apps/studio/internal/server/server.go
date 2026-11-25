@@ -254,7 +254,7 @@ func (s *Server) operation(w http.ResponseWriter, r *http.Request) {
 		writeEnvelope(w, http.StatusNotFound, engine.Fail(engine.KindInvalid, "There is no operation called "+strconv.Quote(truncate(name, 64))+"."))
 		return
 	}
-	body, ok := readBody(w, r, op.BodyLimit())
+	body, ok := readBody(w, r, op.BodyLimit(), op.TooLarge)
 	if !ok {
 		return
 	}
@@ -281,7 +281,11 @@ func (s *Server) operation(w http.ResponseWriter, r *http.Request) {
 	}
 	env := s.opts.Engine.Do(r.Context(), name, body)
 	if env.OK && op.Download {
-		data, err := s.downloads.record(s.opts.Engine.Project(), env.Data)
+		record := s.downloads.record
+		if name == "project.export" {
+			record = s.downloads.recordProject
+		}
+		data, err := record(s.opts.Engine.Project(), env.Data)
 		if err != nil {
 			s.opts.Logger.Printf("engine %s: the written files are not offered for download", name)
 			env = engine.Fail(engine.KindInternal, "The files were written, but the host could not offer them for download.")
@@ -296,12 +300,16 @@ func (s *Server) operation(w http.ResponseWriter, r *http.Request) {
 // ---- helpers ----
 
 // readBody reads at most limit bytes; a larger body is refused whole.
-func readBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, bool) {
+func readBody(w http.ResponseWriter, r *http.Request, limit int64, tooLargeWords ...string) ([]byte, bool) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			writeEnvelope(w, http.StatusRequestEntityTooLarge, engine.Fail(engine.KindInvalid, "The request body is too large."))
+			message := "The request body is too large."
+			if len(tooLargeWords) > 0 && tooLargeWords[0] != "" {
+				message = tooLargeWords[0]
+			}
+			writeEnvelope(w, http.StatusRequestEntityTooLarge, engine.Fail(engine.KindInvalid, message))
 		} else {
 			writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, "The request body could not be read."))
 		}

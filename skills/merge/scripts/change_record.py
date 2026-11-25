@@ -321,7 +321,8 @@ def principles_section(t: Text, spec: Dict[str, Any], info: Dict[str, Any]) -> L
     read = info.get("principles") if isinstance(info.get("principles"), dict) else {}
     if type(read.get("revision")) is int and SHA256_RE.match(str(read.get("sha256"))):
         lines += [f"Answered against the published principles, revision {read['revision']} (SHA-256 {sha(read['sha256'])}).", ""]
-    if not rows:
+    unassessed = [row for row in _rows(spec, "principles_not_assessed") or [] if isinstance(row.get("id"), str)]
+    if not rows and not unassessed:
         return lines + ["- None.", ""]
     shown: List[str] = []
     for row in sorted(rows, key=lambda item: natural(item.get("id")))[:MAX_ITEMS]:
@@ -336,7 +337,11 @@ def principles_section(t: Text, spec: Dict[str, Any], info: Dict[str, Any]) -> L
             shown.append(head + f"an exception, the product manager's decision: \"{t.one(row.get('reason'), REASON_LIMIT)}\"")
         else:
             shown.append(head + "(answer not recorded)")
-    return lines + capped(shown, len(rows), MAX_ITEMS, "principles") + [""]
+    # M21: a principle this slice predates (a project brought in from another repository), one line each, after the answers.
+    for row in sorted(unassessed, key=lambda item: natural(item.get("id")))[:max(0, MAX_ITEMS - len(shown))]:
+        shown.append(f"- {t.one(row.get('id'), 20)} (revision {t.one(row.get('revision'), 10)}) \"{t.one(row.get('statement'), TITLE_LIMIT)}\": "
+                     f"not assessed: {t.one(row.get('reason'), REASON_LIMIT)}")
+    return lines + capped(shown, len(rows) + len(unassessed), MAX_ITEMS, "principles") + [""]
 
 
 SHORT_DIGEST_RE = re.compile(r"^[0-9a-f]{12}$")

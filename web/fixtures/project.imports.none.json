@@ -1,0 +1,11 @@
+{
+  "exit_code": 0,
+  "data": {
+    "imports": [],
+    "reads_only": true,
+    "factory_authorized": false,
+    "note": "No project has been brought in here."
+  },
+  "refused": null,
+  "hint": null
+}
