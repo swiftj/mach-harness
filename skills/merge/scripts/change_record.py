@@ -247,6 +247,11 @@ def render(root: Path, info: Dict[str, Any], ticket_id: str, commits: Dict[str, 
         + EVIDENCE_WORDS,
         "",
     ]
+    first = info.get("landed_first") if isinstance(info.get("landed_first"), dict) else None
+    if first:  # a person merged a second copy of a slice: it lands as a change on top of the copy that landed first
+        lines += ["## Another copy landed first", "",
+                  f"Another copy of {t.one(first.get('slice_id'), 40)} landed on the main branch first, as commit {t.one(str(first.get('commit') or 'unknown')[:12], 20)}. "
+                  "A person merged this copy after it: main was brought in, and what lands here is only what this copy still changes on top of that one.", ""]
     lines += ticket_section(t, info, ticket_id, rules, jira_url)
     lines += ["## Why", "", *t.block(read_text(root / "intent.md"), INTENT_LIMIT), ""]
     spec = load_dict(root / "spec.json")  # M15: each of the next three sections only when the spec has it
