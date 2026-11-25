@@ -67,13 +67,13 @@ MACH tells you where things stand and suggests a next step. It also starts Produ
 
 > If that command is not found, your engineer installed MACH as a plugin. Type `/mach:studio` instead. Everything else is the same.
 
-**Prefer a screen to a conversation?** Click the link, or paste it into a browser on your computer. Or say:
+**Prefer a screen to a conversation?** Click the link, or paste it into a browser on your computer. Or type:
 
 ```
-open the app
+/mach-app
 ```
 
-Product Studio opens in your browser, on your own computer. A link works once. For another browser, or if you closed the page, ask for a new link. The app and the conversation work on the same drafts, so switch between them whenever you like.
+Product Studio opens in your browser, on your own computer, always the release of MACH installed in this project. With the plugin, type `/mach:app`. A link works once. For another browser, or if you closed the page, type `/mach-app link` for a new one. `/mach-app stop` stops the app. The app and the conversation work on the same drafts, so switch between them whenever you like.
 
 ### Step 5. Tell MACH about the product
 
@@ -267,7 +267,7 @@ Each of these is optional. Say the words on the left when you need it.
 | `export for Jira` | Write one file your Jira administrator can import, with epics and their slices as stories. |
 | `move this project to another repository` | One file that carries the whole project to another repository, and brings it in there as it was. Every slice arrives as a draft; those that were ready there can be marked ready again in one step, on your word. See the Product Manager Guide. |
 | `how does this epic work today?` | The rules that have shipped. Choose one and say "change this" to start an idea from it. |
-| `open the app` | The same workspace in your browser. |
+| `/mach-app` | The same workspace in your browser. |
 
 If your organisation keeps policies in the project (brand, security, privacy, accessibility), MACH reads them during the interview and follows them in what it recommends. If a slice cannot meet one, MACH tells you which owner must answer before the slice can be marked ready.
 
