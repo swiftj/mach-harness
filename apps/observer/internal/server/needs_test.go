@@ -201,7 +201,7 @@ func TestDecisionBodyAndReply(t *testing.T) {
 		"unknown field":     {"/api/v1/needs/T-1/approve", `{"by": "a", "force": true}`},
 		"not an object":     {"/api/v1/needs/T-1/approve", `["approve"]`},
 		"two objects":       {"/api/v1/needs/T-1/approve", `{} {}`},
-		"option not ours":   {"/api/v1/needs/T-1/take-over", `{}`},
+		"option not ours":   {"/api/v1/needs/T-1/audit", `{}`},
 		"option shape":      {"/api/v1/needs/T-1/--json", `{}`},
 		"ticket shape":      {"/api/v1/needs/-T-1/approve", `{}`},
 		"bad ADR":           {"/api/v1/needs/T-1/accept", `{"adrs": ["../x"]}`},
@@ -221,9 +221,30 @@ func TestDecisionBodyAndReply(t *testing.T) {
 	if resp, env, _ := h.write(t, "/api/v1/needs/T-1/approve", `{}`, nil); resp.StatusCode != 409 || env.Error.Kind != KindRefused || !strings.HasPrefix(env.Error.Message, `"approve" is not on offer`) {
 		t.Fatalf("%d %+v", resp.StatusCode, env.Error)
 	}
-	actor.decided = act.Reply{Kind: act.KindConflict, Message: "Another decision for this project is still being recorded."}
-	if resp, env, _ := h.write(t, "/api/v1/needs/T-1/approve", `{}`, nil); resp.StatusCode != 409 || env.Error.Kind != KindConflict {
+	actor.decided = act.Reply{Kind: act.KindConflict, Message: act.BusyMessage}
+	if resp, env, _ := h.write(t, "/api/v1/needs/T-1/approve", `{}`, nil); resp.StatusCode != 409 || env.Error.Kind != KindConflict || env.Error.Message != act.BusyMessage {
 		t.Fatalf("%d %+v", resp.StatusCode, env.Error)
+	}
+	// A ticket another worker holds is approved, with the warning; taking it over is an option like any other.
+	actor.decided = act.Reply{Data: json.RawMessage(`{"ticket_id": "T-1", "option": "approve", "done": true, "by": "Ada Quist",
+		"warnings": ["Another worker was handed this ticket's review step at 02:47 UTC and may still be at work."], "now": "Ada Quist's approval of T-1 is recorded."}`)}
+	_, env, body = h.write(t, "/api/v1/needs/T-1/approve", `{"by": "Ada Quist"}`, nil)
+	if !env.OK || !strings.Contains(string(body), `"warnings":["Another worker was handed this ticket's review step at 02:47 UTC and may still be at work."]`) ||
+		!strings.Contains(string(body), "Your approval of T-1 is recorded.") {
+		t.Fatalf("%s", body)
+	}
+	actor.decided = act.Reply{Data: json.RawMessage(`{"ticket_id": "T-1", "option": "take-over", "done": true, "by": "Ada Quist", "took_over": {"taken": true},
+		"now": "Ada Quist took over T-1's build step. The other worker is stopped at its next step."}`)}
+	_, env, body = h.write(t, "/api/v1/needs/T-1/take-over", `{"by": "Ada Quist"}`, nil)
+	if !env.OK || !strings.Contains(string(body), `"took_over":true`) || !strings.Contains(string(body), "You took over T-1's build step.") || strings.Contains(string(body), "Ada") {
+		t.Fatalf("%s", body)
+	}
+	// A second person's decision the first made moot is information, not an error.
+	actor.decided = act.Reply{Data: json.RawMessage(`{"ticket_id": "T-1", "option": "approve", "done": false, "already_decided": true, "by": "Bo Ek",
+		"decided": {"option": "approve", "at": "2026-11-25T14:02:00Z"}, "now": "Approved by Dana at 14:02 UTC. It is now waiting for the merge."}`)}
+	resp, env, body = h.write(t, "/api/v1/needs/T-1/approve", `{"by": "Bo Ek"}`, nil)
+	if resp.StatusCode != 200 || !env.OK || !strings.Contains(string(body), `"already_decided":true`) || !strings.Contains(string(body), "It is now waiting for the merge.") {
+		t.Fatalf("%d %s", resp.StatusCode, body)
 	}
 	// A conversation's option: why, and the command.
 	actor.decided = act.Reply{Data: json.RawMessage(`{"ticket_id": "T-1", "option": "exception", "done": false, "in_conversation": true, "command": "/mach decide T-1", "why": "Read with an agent first."}`)}

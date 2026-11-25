@@ -23,8 +23,10 @@ export interface NeedOption {
   readonly canDo: boolean;
   readonly needsTestCommand: boolean;
   readonly needsAnswers: boolean;
-  /** A decision that cannot be undone: confirmed in a dialog first. */
+  /** A decision confirmed in a dialog first: it cannot be undone, or it stops another worker. */
   readonly confirm: boolean;
+  /** MACH takes the ticket's step from the other worker as it records this (the take-over, or a release to the Factory). */
+  readonly takesOver: boolean;
 }
 
 export interface NeedQuestion {
@@ -50,6 +52,11 @@ export interface NeedTicket {
   /** The command that walks this ticket in Claude Code. */
   readonly decideCommand: string;
   readonly questions: readonly NeedQuestion[];
+  /**
+   * MACH's own sentences to read before deciding, such as another worker that may still be on the ticket. Shown above
+   * the options in the warning tone; they never disable an option or take its place.
+   */
+  readonly warnings: readonly string[];
 }
 
 export interface NeedsList {
@@ -91,8 +98,17 @@ function readOption(value: unknown): NeedOption | null {
     canDo: o.do === true,
     needsTestCommand: needs.includes("test_cmd"),
     needsAnswers: needs.includes("answers"),
-    confirm: o.confirm === true,
+    confirm: o.confirm === true || o.takes_over === true,
+    takesOver: o.takes_over === true,
   };
+}
+
+/** MACH's sentences, at most `max`, each plain text. */
+function sentences(value: unknown, max = 5): string[] {
+  return arr(value)
+    .filter((s): s is string => typeof s === "string" && s.trim() !== "")
+    .slice(0, max)
+    .map((s) => s.slice(0, 1000));
 }
 
 function details(situation: Record<string, unknown>): UncheckedText[] {
@@ -130,6 +146,7 @@ export function readNeeds(data: unknown): NeedsList {
         .map((q) => obj(q))
         .filter((q) => typeof q.n === "number" && Number.isInteger(q.n) && q.n > 0)
         .map((q) => ({ n: q.n as number, text: unchecked(q.text, FIELD.question, 300), followUp: unchecked(q.follow_up, FIELD.question, 300) })),
+      warnings: sentences(item.warnings),
     });
   }
   const at = str(d.read_at);
@@ -151,12 +168,24 @@ export interface Decided {
   /** Why no Factory carries it on now ("No Factory is running here. ..."), when that is so. */
   readonly whyNot: string | null;
   readonly supervisor: "started" | "woken" | "none" | null;
+  /** MACH's sentences recorded with the decision, such as another worker that may still be on the ticket. */
+  readonly warnings: readonly string[];
+  /**
+   * Another person's decision on this ticket came first and made this one moot. Nothing was recorded, and it is not a
+   * refusal: `now` says what was decided, when, and what the ticket waits for now (information, not an error).
+   */
+  readonly alreadyDecided: boolean;
+  /** The step was taken from the other worker. */
+  readonly tookOver: boolean;
 }
 
 export function readDecided(data: unknown): Decided {
   const d = obj(data);
   const sup = d.supervisor === "started" || d.supervisor === "woken" || d.supervisor === "none" ? d.supervisor : null;
   return {
+    warnings: sentences(d.warnings),
+    alreadyDecided: d.already_decided === true && d.done !== true,
+    tookOver: d.took_over === true,
     ticketId: str(d.ticket_id),
     option: str(d.option),
     done: d.done === true,
@@ -223,9 +252,32 @@ export function confirmWords(ticket: string, option: NeedOption): { readonly tit
       return { title: `Merge ${ticket}?`, description: `MACH merges ${ticket} into the main branch, and cleanup follows. A merge cannot be undone from here.`, verb: "Merge", tone: "primary" };
     case "abandon":
       return { title: `Abandon ${ticket}?`, description: `MACH takes ${ticket} off the line and removes its cell, with your reason. This cannot be undone from here; MACH says how to get its work back.`, verb: "Abandon", tone: "danger" };
+    case "take-over":
+      // MACH's own sentence says what happens to the other worker, in the words of the take-over it carries out.
+      return { title: `Take over ${ticket}?`, description: option.does, verb: "Take it over", tone: "primary" };
     default:
+      if (option.takesOver) {
+        return {
+          title: `${option.label}: ${ticket}?`,
+          description: `${option.does} Another worker holds this ticket's step, so MACH takes the step over from it as it records this.`,
+          verb: option.label,
+          tone: "primary",
+        };
+      }
       return { title: `${option.label}: ${ticket}?`, description: `${option.does} This cannot be undone from here.`, verb: option.label, tone: "primary" };
   }
+}
+
+/** While another decision on the project is being recorded, a decision made here waits for it, and the page asks again by itself. */
+export const WAITING_WORDS = "Recording after another decision finishes";
+
+/** How often the page asks again while another decision is being recorded. */
+export const RETRY_MS = 2000;
+
+/** "for 12 s", "for 3 min": how long a decision made here has waited for another one. */
+export function waitedWords(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s < 60 ? `for ${s} s` : `for ${Math.floor(s / 60)} min`;
 }
 
 /** The sentence when something waits and no Factory runs here. */

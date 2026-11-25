@@ -48,7 +48,7 @@ const (
 
 // Error kinds of the write routes.
 const (
-	KindConflict = "conflict" // another decision or stop for this project is still running
+	KindConflict = "conflict" // another decision or stop for this project is still running: the page asks again, and says it waits
 )
 
 // writeRoute: the only paths a POST may reach. Everything else answers GET only.

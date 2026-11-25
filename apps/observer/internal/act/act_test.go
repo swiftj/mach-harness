@@ -216,17 +216,19 @@ func TestTimeoutKillsTheGroup(t *testing.T) {
 
 func quote(s string) string { b, _ := json.Marshal(s); return string(b) }
 
-// One decision at a time: a second is a conflict at once, and nothing of it runs.
+// One decision at a time: a second waits its turn for BusyWait, then is a conflict that says it is
+// recorded after the first (never "nothing was recorded"), and nothing of it runs.
 func TestOneDecisionAtATime(t *testing.T) {
 	f, r := newFake(t)
+	r.cfg.BusyWait = 200 * time.Millisecond
 	f.mode(t, map[string]any{"sleep": 1.5, "stdout": "{}"})
 	done := make(chan Reply)
 	go func() { done <- r.Decide(context.Background(), Decision{Ticket: "T-1", Option: "retry"}, nil) }()
 	time.Sleep(400 * time.Millisecond)
-	if got := r.Decide(context.Background(), Decision{Ticket: "T-2", Option: "retry"}, nil); got.Kind != KindConflict {
+	if got := r.Decide(context.Background(), Decision{Ticket: "T-2", Option: "retry"}, nil); got.Kind != KindConflict || got.Message != BusyMessage {
 		t.Fatalf("%+v", got)
 	}
-	if got := r.Stop(context.Background()); got.Kind != KindConflict {
+	if got := r.Stop(context.Background()); got.Kind != KindConflict || strings.Contains(got.Message, "again") {
 		t.Fatalf("stop while deciding: %+v", got)
 	}
 	if got := <-done; !got.OK() {
@@ -234,6 +236,60 @@ func TestOneDecisionAtATime(t *testing.T) {
 	}
 	if n := len(f.calls(t)); n != 1 {
 		t.Fatalf("%d runs", n)
+	}
+}
+
+// A second decision that comes while the first is nearly done waits for it and is then run.
+func TestASecondDecisionWaitsItsTurn(t *testing.T) {
+	f, r := newFake(t)
+	r.cfg.BusyWait = 5 * time.Second
+	f.mode(t, map[string]any{"sleep": 0.6, "stdout": "{}"})
+	done := make(chan Reply)
+	go func() { done <- r.Decide(context.Background(), Decision{Ticket: "T-1", Option: "retry"}, nil) }()
+	time.Sleep(200 * time.Millisecond)
+	if got := r.Decide(context.Background(), Decision{Ticket: "T-2", Option: "retry"}, nil); !got.OK() {
+		t.Fatalf("the second decision: %+v", got)
+	}
+	if got := <-done; !got.OK() {
+		t.Fatalf("%+v", got)
+	}
+	if n := len(f.calls(t)); n != 2 {
+		t.Fatalf("%d runs", n)
+	}
+}
+
+// run.py waited for a decision made elsewhere (a terminal's) and recorded nothing yet: a conflict,
+// with the same sentence, so the page asks again.
+func TestRunPyBusyIsAConflict(t *testing.T) {
+	f, r := newFake(t)
+	f.mode(t, map[string]any{"stdout": `{"ticket_id": "T-1", "option": "approve", "done": false, "busy": true, "now": "Recording after another decision finishes."}`})
+	if got := r.Decide(context.Background(), Decision{Ticket: "T-1", Option: "approve"}, nil); got.Kind != KindConflict || got.Message != BusyMessage {
+		t.Fatalf("%+v", got)
+	}
+}
+
+// What a decision on a ticket another worker holds, a take-over and a decision another person made
+// moot give the page.
+func TestDecidedWarningsTakeOverAndAlreadyDecided(t *testing.T) {
+	d := ParseDecided([]byte(`{"ticket_id": "T-1", "option": "approve", "done": true, "by": "Ann Lee",
+		"warnings": ["Another worker was handed this ticket's review step at 02:47 UTC and may still be at work."],
+		"now": "Ann Lee's approval of T-1 is recorded."}`))
+	if !d.Done || len(d.Warnings) != 1 || !strings.HasPrefix(d.Warnings[0], "Another worker was handed") || d.AlreadyDecided {
+		t.Fatalf("%+v", d)
+	}
+	d = ParseDecided([]byte(`{"ticket_id": "T-1", "option": "take-over", "done": true, "by": "Ann Lee", "took_over": {"taken": true, "step": "build"},
+		"now": "Ann Lee took over T-1's build step. The other worker is stopped at its next step."}`))
+	if !d.TookOver || d.Now == nil || !strings.HasPrefix(*d.Now, "You took over T-1's build step.") {
+		t.Fatalf("%+v %v", d, *d.Now)
+	}
+	d = ParseDecided([]byte(`{"ticket_id": "T-1", "option": "approve", "done": false, "already_decided": true, "by": "Bo Ek",
+		"decided": {"option": "approve", "at": "2026-11-25T14:02:00Z", "via": "floor"},
+		"now": "Approved by Dana at 14:02 UTC. It is now waiting for the merge."}`))
+	if !d.AlreadyDecided || d.Done || d.DecidedAt == nil || *d.DecidedAt != "2026-11-25T14:02:00Z" || *d.Now != "Approved by Dana at 14:02 UTC. It is now waiting for the merge." {
+		t.Fatalf("%+v", d)
+	}
+	if d = ParseDecided([]byte(`{"done": false, "already_decided": true, "decided": {"at": "<script>"}}`)); d.DecidedAt != nil || d.Warnings == nil {
+		t.Fatalf("%+v", d)
 	}
 }
 
@@ -245,7 +301,7 @@ func TestDecisionChecks(t *testing.T) {
 		"ticket with a dash first": {Ticket: "-T", Option: "retry"},
 		"ticket with a slash":      {Ticket: "T/1", Option: "retry"},
 		"ticket with dots":         {Ticket: "T..1", Option: "retry"},
-		"unknown option":           {Ticket: "T-1", Option: "take-over"},
+		"unknown option":           {Ticket: "T-1", Option: "audit"},
 		"option shape":             {Ticket: "T-1", Option: "--json"},
 		"interview":                {Ticket: "T-1", Option: "interview"},
 		"name with a newline":      {Ticket: "T-1", Option: "retry", Body: Body{By: str("A\nB")}},
