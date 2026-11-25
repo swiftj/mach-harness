@@ -336,16 +336,17 @@ class RoundTripTest(ImportBase):
         self.assertEqual(result["mode"], "join")
         self.assertEqual(self.pairs(result, "EPIC"), {"EPIC-001": "EPIC-003", "EPIC-002": "EPIC-004"})
         self.assertEqual(self.pairs(result, "SLICE"), {"SLICE-001": "SLICE-011", "SLICE-002": "SLICE-012", "SLICE-003": "SLICE-013"})
-        self.assertEqual(self.pairs(result, "PP"), {"PP-01": "PP-04"})
+        self.assertEqual(self.pairs(result, "PP"), {"PP-01": "PP-02"}, "the same principle as Ben's PP-02 is taken as PP-02")
         self.assertEqual(self.pairs(result, "IDEA"), {"IDEA-001": "IDEA-002", "IDEA-002": "IDEA-003"})
         self.assertTrue(self.ok(self.b, "validate")["valid"])
         for slice_id in ("SLICE-011", "SLICE-012", "SLICE-013"):
             self.assertEqual(self.work(self.b, slice_id)["project_id"], "team-space")
         self.assertEqual(self.work(self.b, "SLICE-013")["epic_id"], "EPIC-004")
         self.assertTrue(self.text(self.b, "specs/slices/SLICE-011-invite-teammate.md").startswith("# SLICE-011: "))
-        self.assertEqual([p["id"] for p in self.artifact(self.b, "product/principles.json")["principles"]], ["PP-01", "PP-02", "PP-03", "PP-04"])
-        self.assertEqual(result["same_principles"], [{"incoming": "PP-04", "here": "PP-02",
-                                                      "words": "PP-04 says the same as PP-02; retire one if they are the same."}])
+        self.assertEqual([p["id"] for p in self.artifact(self.b, "product/principles.json")["principles"]], ["PP-01", "PP-02", "PP-03"])
+        self.assertEqual(result["same_principles"], [{"incoming": "PP-01", "here": "PP-02", "how": "word for word",
+                                                      "words": "PP-01 of the project says the same as PP-02 here (word for word), so the two are one "
+                                                               "principle here and it was not added again: the rows that answered PP-01 now answer PP-02."}])
         self.assertEqual(result["left_behind"]["project"]["name"], "Lending")
         self.assertEqual(self.artifact(self.b, "product/project.json")["name"], "Team Space", "joining never writes the project")
 
@@ -380,7 +381,7 @@ class JoinTest(ImportBase):
         self.assertEqual(self.pairs(result, "EPIC"), {"EPIC-001": "EPIC-004", "EPIC-002": "EPIC-005"})
         self.assertEqual(self.pairs(result, "SLICE"), {"SLICE-001": "SLICE-013", "SLICE-002": "SLICE-014", "SLICE-003": "SLICE-015",
                                                        "SLICE-004": "SLICE-016", "SLICE-007": "SLICE-017"})
-        self.assertEqual(self.pairs(result, "PP"), {"PP-01": "PP-04", "PP-02": "PP-05"})
+        self.assertEqual(self.pairs(result, "PP"), {"PP-01": "PP-02", "PP-02": "PP-04"}, "PP-01 says what Ben's PP-02 says")
         self.assertEqual(self.pairs(result, "TN"), {"TN-01": "TN-03"})
         self.assertEqual(self.pairs(result, "IDEA"), {"IDEA-001": "IDEA-002"})
         self.assertEqual(self.pairs(result, "PRD"), {"PRD-01": "PRD-01"})
@@ -411,7 +412,7 @@ class JoinTest(ImportBase):
         spec = self.text(b, "specs/slices/SLICE-013-invite-teammate.md")
         self.assertTrue(spec.startswith("# SLICE-013: "))
         self.assertIn("(Deferred to SLICE-017)", spec)
-        self.assertIn("**PP-04** (revision 1)", spec)
+        self.assertIn("- **PP-02** (revision 1): Followed.", spec)
         self.assertNotIn("SLICE-001", spec)
         self.assertIn("| SLICE-013/FR-02 | kept |", self.text(b, "specs/slices/SLICE-015-invite-teammate.md"))
         why = self.text(b, "product/intents/SLICE-014.md")
@@ -424,11 +425,12 @@ class JoinTest(ImportBase):
         self.assertEqual(self.artifact(b, "product/ideas/IDEA-002.map.json")["applied"], {"epics": {"E1": "EPIC-005"}, "slices": {"B1": "SLICE-015"}})
         self.assertEqual(self.artifact(b, "product/prds/PRD-01/map.json")["applied"]["slices"], {"M1": "SLICE-014"})
         self.assertEqual(self.artifact(b, "product/prds/PRD-01/answers/M1.json")["slice_id"], "SLICE-014")
-        self.assertEqual(self.artifact(b, "product/designs/DES-01/map.json")["conflicts"][0]["against"], "PP-04")
+        self.assertEqual(self.artifact(b, "product/designs/DES-01/map.json")["conflicts"][0]["against"], "PP-02")
         self.assertEqual(self.draft(b, "product/prds/PRD-01/document.md").read_bytes(), DOC.encode(), "a document is never rewritten")
         self.assertEqual(self.artifact(b, "product/epics/EPIC-005.json")["serves"]["idea"], "IDEA-002")
         principles = {p["id"]: p for p in self.artifact(b, "product/principles.json")["principles"]}
-        self.assertEqual(principles["PP-05"]["statement"], "Every message SHALL use words a member knows, as PP-04 does.")
+        self.assertEqual(principles["PP-04"]["statement"], "Every message SHALL use words a member knows, as PP-02 does.")
+        self.assertNotIn("PP-05", principles)
         self.assertEqual(self.ledger(b)["order"]["EPIC-004"]["slices"], ["SLICE-014", "SLICE-013", "SLICE-016"])
         session = json.loads((b / ".factory/studio/session.json").read_text())
         self.assertEqual(session["notes"]["SLICE-013"]["note"], "Stopped at SLICE-014's question.")
@@ -443,29 +445,57 @@ class JoinTest(ImportBase):
         self.assertTrue(view["stale"])
         self.assertIn("The brief changed after this verdict was recorded", view["stale_note"])
         self.assertIsNone(record["verdict"]["by"])
-        self.assertTrue(any("The verdict on IDEA-002 no longer holds" in line for line in result["after"]), result["after"])
+        self.assertTrue(any("The verdict on IDEA-002 (was IDEA-001) no longer holds" in line for line in result["after"]), result["after"])
 
     def test_principles_arrive_unpublished_and_ready_waits_for_them(self):
         """Scenario 8."""
         result = self.bring(self.b, self.archive)
         listed = self.ok(self.b, "principle", "list")
-        self.assertEqual([p["id"] for p in listed["principles"]], ["PP-01", "PP-02", "PP-03", "PP-04", "PP-05"])
-        self.assertIn("Publish the principles before any slice can be marked ready: 2 came with the project.", result["after"])
-        self.assertEqual(result["same_principles"][0]["words"], "PP-04 says the same as PP-02; retire one if they are the same.")
+        self.assertEqual([p["id"] for p in listed["principles"]], ["PP-01", "PP-02", "PP-03", "PP-04"])
+        self.assertIn("Publish the principles before any slice can be marked ready: 1 came with the project (PP-04 (was PP-02)).", result["after"])
+        self.assertEqual(result["same_principles"][0]["words"], "PP-01 of the project says the same as PP-02 here (word for word), so the two are "
+                                                                "one principle here and it was not added again: the rows that answered PP-01 now answer PP-02.")
         refused = self.refused(self.b, "slice", "ready", "SLICE-014")
         self.assertIn("the product principles have changes that are not published", refused)
         self.assertEqual(self.writes(), [])
 
     def test_rules_shipped_in_the_old_repository_are_listed_and_checked(self):
-        """Scenario 16."""
+        """Scenario 16, as rebuilt: a row naming a rule of a slice that came with it ships after that slice. The dependency is made
+        real; the row is a warning here and is checked against what shipped when the engineers take the slice."""
         planned = self.plan(self.b, self.archive)
         rows = {(row["of"], row["where"]): row for row in planned["shipped_rules"]}
         self.assertEqual(rows[("SLICE-015", "effects")]["rule"], "SLICE-013/FR-02")
+        self.assertTrue(rows[("SLICE-015", "effects")]["came_with_the_project"])
         self.assertEqual(rows[("SLICE-016", "small")]["rule"], "SLICE-013/FR-02")
-        self.assertIn("1 slice names shipped rules of the old repository under 'Effects on shipped behaviour' (SLICE-015); "
-                      "each needs those rows answered again here.", planned["after"])
-        self.assertTrue(any(line.startswith("SLICE-016 is a small change to SLICE-013/FR-02") for line in planned["after"]))
+        self.assertIn("SLICE-015 (was SLICE-003) names SLICE-013/FR-02 (was SLICE-001/FR-02) under 'Effects on shipped behaviour'. SLICE-013 "
+                      "came with the project and has not shipped here, so it ships first: SLICE-015 depends on SLICE-013, and those rows are "
+                      "checked again when SLICE-015 is built. Nothing needs answering again.", planned["after"])
+        self.assertIn("SLICE-016 (was SLICE-004) is a small change to SLICE-013/FR-02 (was SLICE-001/FR-02). SLICE-013 came with the project "
+                      "and has not shipped here yet, so SLICE-016 stays a small change that waits for SLICE-013 to ship. It now depends on SLICE-013.",
+                      planned["after"])
+        self.assertEqual([(r["slice"], r["on"], r["added"]) for r in planned["dependencies_added"]],
+                         [("SLICE-015", "SLICE-013", True), ("SLICE-016", "SLICE-013", True)])
         self.bring(self.b, self.archive)
+        self.assertEqual(self.work(self.b, "SLICE-015")["dependencies"], ["SLICE-013"])
+        self.assertEqual(self.work(self.b, "SLICE-016")["dependencies"], ["SLICE-013"])
+        _, out, _ = self.run_studio(self.b, "slice", "check", "SLICE-015")
+        self.assertNotIn("[effects-not-shipped]", out)
+        self.assertIn("SLICE-013/FR-02 has not shipped yet. SLICE-013 ships before this slice, which depends on it, so this row is checked "
+                      "again when this slice is built. [effects-ships-first]", out)
+        check = json.loads(out)
+        self.assertFalse([e for e in check["errors"] if "effects" in e], check["errors"])
+        # SLICE-016 waits for SLICE-013 as a small change: depending on it is not the rule that takes it off the light path.
+        import small_change
+        here = studio.Studio(self.b)
+        _, model = here.analyze(here.spec_of("SLICE-016"), ready=False)
+        verdict = small_change.judge(studio, here, self.work(self.b, "SLICE-016"), model, "", None)
+        self.assertNotIn("unshipped-dependency", verdict["failed"])
+        other = dict(self.work(self.b, "SLICE-016"), dependencies=["SLICE-013", "SLICE-001"])  # one of Ben's, not shipped: still counts
+        self.assertIn("unshipped-dependency", small_change.judge(studio, here, other, model, "", None)["failed"])
+        # Taken out of the dependencies, the row is an error again: nothing passes because it came with a project.
+        work = self.work(self.b, "SLICE-015")
+        work["dependencies"] = []
+        self.write_json_in(self.b, "product/slices/SLICE-015.json", work)
         _, out, _ = self.run_studio(self.b, "slice", "check", "SLICE-015")
         self.assertIn("SLICE-013/FR-02 is not in any shipped spec: no spec of SLICE-013 has shipped. [effects-not-shipped]", out)
 
