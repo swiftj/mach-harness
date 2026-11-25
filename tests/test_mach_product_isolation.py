@@ -86,7 +86,10 @@ class NothingIsWiredInTest(unittest.TestCase):
                 if path.is_file() and "__pycache__" not in path.parts and "studio" not in path.parts and path.suffix in (".py", ".js", ""):
                     text = path.read_text(encoding="utf-8", errors="ignore")
                     found += [f"{path.relative_to(ROOT)}: {word}" for word in ("studio.py", "product.py", "collab.py", "import product", "import studio", "import collab") if word in text]
-        self.assertEqual(found, [])
+        # /mach-app starts the Product Studio program and tells it where studio.py is (--engine). It never runs or imports it.
+        self.assertEqual(found, ["skills/app/scripts/app.py: studio.py"])
+        app = (ROOT / "skills" / "app" / "scripts" / "app.py").read_text()
+        self.assertNotIn("import studio", app)
         source = (ROOT / "skills" / "run" / "scripts" / "intake.py").read_text()
         for word in ("self.collab", "self.product", "sibling(\"studio\")"):
             self.assertNotIn(word, source)  # M11: the Factory reads what Product Studio handed over, never its scripts
