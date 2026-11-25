@@ -28,6 +28,13 @@ def git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, errors="replace")
 
 
+def git_bytes(cwd: Path, *args: str) -> Optional[bytes]:
+    """A Git read whose answer is bytes, such as a picture on a branch (M21: project export reads design mocks this way). None
+    when Git refuses."""
+    done = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True)
+    return done.stdout if done.returncode == 0 else None
+
+
 def gh(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["gh", *args], cwd=str(cwd), capture_output=True, text=True, errors="replace")
 
