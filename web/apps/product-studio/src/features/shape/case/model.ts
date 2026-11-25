@@ -142,7 +142,8 @@ export function publishAct(state: PublishState, next: IdeaRow["next"]["kind"]): 
     case "stopped":
       return { label: "Save again to finish", again: true };
     case "number-taken":
-      return null;
+      // Never a step before saving: saving gives the idea the next free number in the same act.
+      return { label: "Save to GitHub", again: false };
     case "folder":
       return { label: "Save again", again: true };
     case "github":
@@ -151,17 +152,17 @@ export function publishAct(state: PublishState, next: IdeaRow["next"]["kind"]): 
   }
 }
 
-/** Renumbering is offered only where the engine reported the number taken, or named it as the next step. */
-export const renumberOffered = (state: PublishState, next: IdeaRow["next"]["kind"]): boolean => state.kind === "number-taken" || next === "renumber";
-
-/** What a publish did, for the dialog's result. */
-export type PublishOutcome =
+/** What a publish did, for the dialog's result. `renumbered`: another idea on GitHub held the number, so MACH gave this one the next free number in the same act. */
+export type PublishOutcome = (
   | { where: "github"; issue: number; url: string; by: string; verdictPosted: boolean; revision: number; note: string }
-  | { where: "folder"; folder: string; whyFolder: string; revision: number; note: string };
+  | { where: "folder"; folder: string; whyFolder: string; revision: number; note: string }
+) & { renumbered: { from: string; to: string } | null };
 
 export function publishOutcome(result: IdeaPublished): PublishOutcome {
-  if (result.saved_to === "github") return { where: "github", issue: result.issue, url: result.url, by: result.by, verdictPosted: result.verdict_posted, revision: result.revision, note: result.note };
-  return { where: "folder", folder: result.folder, whyFolder: result.why_folder, revision: result.revision, note: result.note };
+  const renumbered = result.renumbered ?? null;
+  if (result.saved_to === "github")
+    return { where: "github", issue: result.issue, url: result.url, by: result.by, verdictPosted: result.verdict_posted, revision: result.revision, note: result.note, renumbered };
+  return { where: "folder", folder: result.folder, whyFolder: result.why_folder, revision: result.revision, note: result.note, renumbered };
 }
 
 /**
@@ -204,7 +205,7 @@ export function publishSummary(state: PublishState): string {
     case "stopped":
       return "Saving stopped part way. Save again to finish.";
     case "number-taken":
-      return "Another idea on GitHub uses this number. Give yours the next free number, then save it.";
+      return "Another idea on GitHub uses this number. Saving gives yours the next free number.";
     case "folder":
       return "In a folder in your workspace, for you to commit.";
     case "github":

@@ -9,7 +9,6 @@ import {
   EmptyState,
   ErrorState,
   Heading,
-  HintAction,
   LoadingState,
   Page,
   RichText,
@@ -34,6 +33,7 @@ import { useStatus } from "../../api/store";
 import { MarkReadyDialog } from "../spec/SliceActs";
 import { BuildersQuestion } from "../../shared/BuildersQuestion";
 import { TakeOverBanner } from "../../shared/TakeOverBanner";
+import { ConversationProblem } from "../../shared/ConversationProblem";
 import { Fold } from "../../shared/layout/Fold";
 import { ContextRow, WorkPane, WorkPanes, WorkScreen } from "../../shared/layout/WorkScreen";
 
@@ -344,15 +344,7 @@ function Current({ iv, busy, sliceId, show, onApproved }: { iv: InterviewControl
           {last.text}
         </Banner>
       ) : null}
-      {iv.problem ? (
-        <Banner
-          tone="danger"
-          title={iv.problem.kind === "conflict" ? "The interviewer is still working on a reply" : describeError(iv.problem).title}
-          actions={iv.problem.hint ? <HintAction hint={iv.problem.hint} /> : undefined}
-        >
-          {iv.problem.kind === "conflict" ? "Wait for it to finish, or interrupt it." : iv.problem.message}
-        </Banner>
-      ) : null}
+      {iv.problem ? <ConversationProblem problem={iv.problem} who="The interviewer" /> : null}
       {body}
       <div className="sr-only" aria-live="polite">
         {announce}

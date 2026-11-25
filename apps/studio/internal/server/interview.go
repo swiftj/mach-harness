@@ -37,6 +37,10 @@ func (s *Server) interviewError(w http.ResponseWriter, err error) {
 		if conflict.InterviewID != "" {
 			// Held by this host: the hint names the live interview, so the app can attach to it.
 			env.Error.Hint, _ = json.Marshal(map[string]string{"kind": "open_interview", "target": conflict.InterviewID})
+		} else if conflict.Running {
+			// The interviewer is writing its reply: the message is the warning, and the app sends the
+			// same reply again with interrupt (one click).
+			env.Error.Hint, _ = json.Marshal(map[string]any{"kind": "interrupt_turn", "target": nil})
 		} else if conflict.TakeOver {
 			// Held by another live process on this computer: the message is the warning, and the app
 			// offers to continue here (the same start with take_over: true).
@@ -460,6 +464,9 @@ func (s *Server) interviewReply(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Text string `json:"text"`
+		// Interrupt: the interviewer was writing its reply (the conflict before carried the warning and
+		// hint {kind: "interrupt_turn"}); stop that turn, wait for it, then send this reply.
+		Interrupt bool `json:"interrupt"`
 	}
 	if err := engine.Decode(raw, &body); err != nil {
 		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, err.Error()))
@@ -468,6 +475,14 @@ func (s *Server) interviewReply(w http.ResponseWriter, r *http.Request) {
 	if msg := checkPMText("text", body.Text, maxReplyRunes, true); msg != "" {
 		writeEnvelope(w, http.StatusBadRequest, engine.Fail(engine.KindInvalid, msg))
 		return
+	}
+	if body.Interrupt {
+		// Nothing running by now is fine: the turn may have ended on its own meanwhile.
+		var conflict *interview.ConflictError
+		if err := s.opts.Bridge.Interrupt(r.Context(), id); err != nil && !errors.As(err, &conflict) {
+			s.interviewError(w, err)
+			return
+		}
 	}
 	if err := s.opts.Bridge.Reply(r.Context(), id, body.Text); err != nil {
 		s.interviewError(w, err)

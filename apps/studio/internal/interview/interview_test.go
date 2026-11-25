@@ -625,8 +625,11 @@ func TestInterruptAndStop(t *testing.T) {
 	r := newRig(t, testkit.Turn{Kind: "slow", Sleep: 60}, testkit.Turn{Text: "Back."})
 	started := r.start("SLICE-001")
 	evs := waitFor(t, r.bridge, started.InterviewID, "text") // the process is up and streaming
-	if err := r.bridge.Reply(context.Background(), started.InterviewID, "hello"); err == nil {
-		t.Fatal("a reply during a turn was accepted")
+	// A reply during a turn is a warning, never a refusal: the host offers to stop the turn and send it.
+	var running *interview.ConflictError
+	if err := r.bridge.Reply(context.Background(), started.InterviewID, "hello"); !errors.As(err, &running) || !running.Running ||
+		running.Message != interview.ReplyWhileRunning {
+		t.Fatalf("a reply during a turn: %v", err)
 	}
 	began := time.Now()
 	if err := r.bridge.Interrupt(context.Background(), started.InterviewID); err != nil {

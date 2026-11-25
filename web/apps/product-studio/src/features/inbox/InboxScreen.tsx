@@ -5,7 +5,6 @@ import { ArtifactId, Button, EmptyState, ErrorState, Heading, Page, Skeleton, Sl
 import { useStatus } from "../../api/store";
 import { titleFor } from "../../api/describe";
 import { IssueLink, IssueText } from "../../shared/IssueLink";
-import { RenumberDialog } from "../../shared/RenumberDialog";
 import { holderWords, momentUrls } from "../../shared/team";
 import { AnswerQuestionButton, BuildersQuestion } from "../../shared/BuildersQuestion";
 import { NewerVersionCard } from "./NewerVersionCard";
@@ -79,7 +78,6 @@ function WithdrawnCard({ item, status }: { item: ApprovalWithdrawn; status: Stat
 export function InboxScreen() {
   const status = useStatus();
   const requests = useRequestList();
-  const [renumber, setRenumber] = useState<string | null>(null);
   // Undefined until the person opens or closes a group: then the most urgent group is open.
   const [chosen, setChosen] = useState<string | null | undefined>(undefined);
 
@@ -153,7 +151,7 @@ export function InboxScreen() {
     },
     {
       id: "numbers",
-      name: "New numbers needed",
+      name: "Numbers someone else holds",
       count: taken.length,
       summary: sliceGroupSummary(titles(taken)),
       hint: "Another slice on GitHub already uses these numbers. Your work is fine: marking it ready gives it the next free number.",
@@ -163,8 +161,8 @@ export function InboxScreen() {
           slice={slice}
           label="numbers"
           action={
-            <Button variant="primary" onClick={() => setRenumber(slice.slice_id)}>
-              Give {slice.slice_id} a new number
+            <Button asChild variant="primary">
+              <Link to={`/slices/${slice.slice_id}`}>Read it and mark it ready</Link>
             </Button>
           }
         >
@@ -295,7 +293,6 @@ export function InboxScreen() {
           ) : null}
         </div>
       </OnePane>
-      <RenumberDialog id={renumber} onOpenChange={(next) => !next && setRenumber(null)} />
     </WorkScreen>
   );
 }

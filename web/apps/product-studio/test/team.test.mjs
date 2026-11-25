@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   epicNumberTakenWords,
+  extraProjectIssues,
   hintUrls,
   holderWords,
   issueParts,
@@ -144,7 +145,7 @@ test("a number held twice is a calm notice in the engine's words, for each side"
   const ready = run("slice.ready.team-several");
   assert.equal(ready.exit_code, 0);
   assert.match(ready.data.note, /^This repository has more than one project issue on GitHub \(#1 and #4\)\. A repository holds one project, so MACH used #1/);
-  assert.match(ready.data.note, /Closing #4 changes nothing in your work.* MACH can close it for you: ask for it in your conversation with MACH\./);
+  assert.match(ready.data.note, /Closing #4 changes nothing in your work.* MACH can close it for you\./);
   plainWords(ready.data.note, "several, marking ready");
   assert.deepEqual(hintUrls(null), {});
 });
@@ -255,7 +256,9 @@ test("before the product is named, the project already on GitHub is said from th
   assert.match(words.body, /^Its issue on GitHub is #1\. When you name the product, MACH takes its name, vision and outcomes from GitHub, and what you type is not used\./);
   plainWords(`${words.title} ${words.body}`, "project on GitHub");
   const unreadable = projectOnGithubWords({ ...found, name: null, readable: false });
-  assert.match(unreadable.body, /not in the form MACH writes, so MACH cannot take it/);
+  assert.match(unreadable.body, /not in the form MACH writes, so MACH cannot take its words\. When you name the product, your own words define the project, and the first slice you mark ready writes them to #1\./);
+  assert.doesNotMatch(unreadable.body, /ask|before you name/i, "never sent to another person, never a step before naming it");
+  plainWords(unreadable.body, "project on GitHub, not in MACH's form");
   // Several project issues: none is the one MACH would take; the start screen names them instead.
   assert.equal(run("status.team-several-start").data.project_on_github, null);
 });
@@ -272,4 +275,59 @@ test("drafts numbered without GitHub: the sentence stands apart from what was ma
   const checked = run("prd.apply").data;
   assert.deepEqual(splitNumbersNote(checked.note, checked.numbers_from_github), { made: checked.note, numbers: null });
   assert.deepEqual(splitNumbersNote("Made 1 epic.", { checked: true, problem: null }), { made: "Made 1 epic.", numbers: null });
+});
+
+test("several project issues: a warning, and closing each extra one is offered beside it", () => {
+  // The one this project follows stays; else the oldest, which is the one MACH uses.
+  assert.deepEqual(extraProjectIssues([4, 1], null), [4]);
+  assert.deepEqual(extraProjectIssues([1, 4, 9], 4), [1, 9]);
+  assert.deepEqual(extraProjectIssues([1, 4], 7), [4], "a followed issue that is not among them leaves the oldest");
+  assert.deepEqual(extraProjectIssues([3], 3), [], "one project issue: nothing to close");
+  assert.deepEqual(extraProjectIssues([], null), []);
+  // On the project home: the engine's sentence for the project, with the extra issues to close; never for a slice or an epic.
+  const status = {
+    project: { issue: 1, url: null },
+    epics: [],
+    same_id_twice: [
+      { kind: "project", id: null, kept: null, others: [1, 4], yours: null, note: "This repository has more than one project issue on GitHub (#1 and #4).", urls: {} },
+      { kind: "slice", id: "SLICE-002", kept: 3, others: [5], yours: null, note: "SLICE-002 is held twice.", urls: {} },
+    ],
+  };
+  assert.deepEqual(
+    teamNotices(status, null).map((n) => n.close),
+    [[4], []],
+  );
+  // After naming the product: the issues the engine says MACH can close, never the one it took.
+  assert.deepEqual(projectStartNote({ taken_from_github: 1, url: null, note: "MACH used #1.", extra_issues: [1, 4] }).close, [4]);
+  const warned = projectStartNote({ warned: ["This repository already has a project issue on GitHub (#3), but it names a project MACH cannot read."], extra_issues: [3] });
+  assert.equal(warned.kind, "warned");
+  assert.deepEqual(warned.close, [3]);
+  assert.match(warned.note, /^This repository already has a project issue/);
+  assert.deepEqual(projectStartNote({ taken_from_github: 1, note: "n" }).close, [], "an engine that names none offers none");
+  // The button sits beside the notice wherever it shows: the project home, a refusal's hint, and after naming the product.
+  for (const file of ["../src/features/home/HomeScreen.tsx", "../src/shared/AppHint.tsx", "../src/shared/ProjectStartNotice.tsx"]) {
+    assert.match(readFileSync(new URL(file, import.meta.url), "utf8"), /<CloseProjectIssues numbers=/, file);
+  }
+  const button = readFileSync(new URL("../src/shared/CloseProjectIssue.tsx", import.meta.url), "utf8");
+  assert.match(button, /act\.run\("project\.close-issue", \{ number \}\)/);
+  assert.match(button, /<ConfirmDialog/);
+});
+
+test("their text not in MACH's form: keeping yours is the act, and no one else is asked", () => {
+  const lead = sharedTextWords({ kind: "project", target: "project", readable: false }).lead;
+  assert.match(lead, /Keep yours, and MACH writes it over theirs the next time you mark a slice ready; theirs stays in the issue's history on GitHub\.$/);
+  assert.doesNotMatch(lead, /ask the person/i);
+  plainWords(lead, "shared text not in MACH's form");
+});
+
+test("a number someone else holds goes straight to marking ready: no new number first", () => {
+  assert.deepEqual(routeFor({ kind: "renumber_slice", target: "SLICE-003", title: "", reason: null }), {
+    type: "navigate",
+    to: "/slices/SLICE-003",
+    label: "Read it and mark it ready",
+  });
+  const inbox = readFileSync(new URL("../src/features/inbox/InboxScreen.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(inbox, /RenumberDialog/);
+  const notice = readFileSync(new URL("../src/shared/NumberTakenNotice.tsx", import.meta.url), "utf8");
+  assert.match(notice, /export function NumberTakenNotice[\s\S]*?<Banner tone="info" title=\{words\.title\}>/);
 });

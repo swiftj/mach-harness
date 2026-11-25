@@ -54,7 +54,7 @@ export function NewerVersionCard({ slice }: { slice: StatusSliceRow }) {
         {slice.github.issue ? <IssueLink number={slice.github.issue} url={slice.github.url} /> : null}
       </header>
       <Text>
-        Someone else saved a newer version of this slice on GitHub. Choose which version your draft goes on from.
+        Someone else saved a newer version of this slice on GitHub. Marking yours ready replaces it, and theirs is kept. Or take theirs here.
       </Text>
       <div className="flex flex-wrap gap-2">
         <Button variant="primary" onClick={() => setTake("theirs")}>

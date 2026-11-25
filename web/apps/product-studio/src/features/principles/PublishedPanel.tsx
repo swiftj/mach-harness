@@ -30,7 +30,7 @@ function explanation(state: PublishState, list: PrincipleList): string {
     case "changed-on-github":
       return "The principles on the project's issue were edited after they were approved, so the builders cannot rely on them. Publish them again to save a version you approved.";
     case "newer-elsewhere":
-      return "Choose a version first. Publishing now would be refused, because someone else published a newer one.";
+      return "Someone else published a newer version. Publishing yours replaces it, and theirs is kept; or take theirs instead.";
     case "none":
       return "There is nothing to publish yet.";
   }

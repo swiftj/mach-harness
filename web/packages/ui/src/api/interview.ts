@@ -55,7 +55,11 @@ export interface InterviewClient {
    * Returns the unsubscribe function.
    */
   subscribe(interviewId: string, handlers: StreamHandlers): () => void;
-  reply(interviewId: string, text: string): Promise<void>;
+  /**
+   * Rejects with `conflict` while the interviewer is writing its reply (hint `interrupt_turn`: the message is the
+   * warning, and the same reply with `interrupt` stops that turn and is sent), or after the conversation ended.
+   */
+  reply(interviewId: string, text: string, options?: { interrupt?: boolean }): Promise<void>;
   /** Stop the current turn; the interview stays open. */
   interrupt(interviewId: string): Promise<void>;
   /** End the interview. The draft, the saved note and the session remain. */
@@ -158,8 +162,8 @@ export function createInterviewClient(deps: {
       if (!ENGINE_ID.test(sliceId)) return Promise.reject(new MachApiError("invalid", `"${sliceId}" is not a slice ID.`, "interview.start"));
       return deps.post("/api/interview", "interview.start", startBody(idea ? { slice_id: sliceId, idea } : { slice_id: sliceId }, options)) as Promise<StartResult>;
     },
-    async reply(id, text) {
-      await deps.post(`/api/interview/${checkId(id, "interview.reply")}/reply`, "interview.reply", { text });
+    async reply(id, text, options) {
+      await deps.post(`/api/interview/${checkId(id, "interview.reply")}/reply`, "interview.reply", options?.interrupt ? { text, interrupt: true } : { text });
     },
     async interrupt(id) {
       await deps.post(`/api/interview/${checkId(id, "interview.interrupt")}/interrupt`, "interview.interrupt", {});

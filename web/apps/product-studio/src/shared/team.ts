@@ -100,6 +100,8 @@ export interface TeamNotice {
   link: { number: number; url: string | null } | null;
   /** The addresses of the issues the text names, to link them in place. */
   urls: IssueUrls;
+  /** Several project issues: the extra ones MACH can close for the person (`project.close-issue`). */
+  close: number[];
 }
 
 /**
@@ -109,10 +111,13 @@ export interface TeamNotice {
 export function teamNotices(status: Status, refresh: Refresh | null): TeamNotice[] {
   const notices: TeamNotice[] = [];
   const clashes: SameIdTwice[] = refresh?.github.same_id_twice ?? status.same_id_twice ?? [];
-  for (const clash of clashes) notices.push({ key: `twice-${clash.kind}-${clash.id ?? clash.others.join("-")}`, text: clash.note, link: null, urls: clash.urls ?? {} });
+  for (const clash of clashes) {
+    const close = clash.kind === "project" ? extraProjectIssues(clash.others, status.project?.issue) : [];
+    notices.push({ key: `twice-${clash.kind}-${clash.id ?? clash.others.join("-")}`, text: clash.note, link: null, urls: clash.urls ?? {}, close });
+  }
   for (const note of refresh?.github.text_taken ?? []) {
     const link = note.issue ? { number: note.issue, url: issueUrl(status, note.target) } : null;
-    notices.push({ key: `taken-${note.target}`, text: takenWords(note, status), link, urls: {} });
+    notices.push({ key: `taken-${note.target}`, text: takenWords(note, status), link, urls: {}, close: [] });
   }
   return notices;
 }
@@ -176,7 +181,7 @@ export function sharedTextWords(changed: Pick<SharedTextChanged, "kind" | "targe
     heading: `Someone else changed ${what} on GitHub`,
     lead: changed.readable
       ? `Their ${parts} on GitHub differ from yours here, and you changed yours too. Choose which version to go on from: one or the other, whole.`
-      : `Their change on GitHub is not in the form MACH writes, so it cannot be shown or taken here. Read it on GitHub. You can keep yours, or ask the person who changed it.`,
+      : `Their change on GitHub is not in the form MACH writes, so it cannot be shown or taken here. Read it on GitHub. Keep yours, and MACH writes it over theirs ${nextReady}; theirs stays in the issue's history on GitHub.`,
     mine: {
       button: "Keep mine",
       title: `Keep your version of ${what}?`,
@@ -214,7 +219,11 @@ export function sharedTextAfterReady(notes: SharedTextNote[] | undefined): Array
 
 /* ── Starting a project ─────────────────────────────────────────────── */
 
-export type ProjectStartNote = { kind: "taken"; issue: number; url: string | null; note: string } | { kind: "not_checked"; note: string };
+/** `close`: the extra project issues MACH can close for the person (`project.close-issue`), each one click and a confirm. */
+export type ProjectStartNote =
+  | { kind: "taken"; issue: number; url: string | null; note: string; close: number[] }
+  | { kind: "warned"; note: string; close: number[] }
+  | { kind: "not_checked"; note: string };
 
 /**
  * Before the product is named: the repository's project already on GitHub, as last read. Said before the person types
@@ -230,15 +239,39 @@ export function projectOnGithubWords(found: Status["project_on_github"]): { titl
   }
   return {
     title: "This repository already has a project on GitHub",
-    body: `Its issue is #${found.issue}, but its text is not in the form MACH writes, so MACH cannot take it. Ask the person who looks after the repository to check it before you name the product.`,
+    body: `Its issue is #${found.issue}, but its text is not in the form MACH writes, so MACH cannot take its words. When you name the product, your own words define the project, and the first slice you mark ready writes them to #${found.issue}. What it holds now stays in its history on GitHub.`,
   };
 }
 
-/** What naming the product leaves to say once the page has moved on: the project taken from GitHub, or GitHub not checked. */
-export function projectStartNote(result: { taken_from_github?: number; url?: string | null; github_not_checked?: string; note?: string }): ProjectStartNote | null {
-  if (result.taken_from_github) return { kind: "taken", issue: result.taken_from_github, url: result.url ?? null, note: result.note ?? "" };
+/**
+ * What naming the product leaves to say once the page has moved on: the project taken from GitHub, what MACH warned
+ * about (several project issues, one it cannot read), or GitHub not checked. Each extra project issue the engine named
+ * can be closed from the notice.
+ */
+export function projectStartNote(result: {
+  taken_from_github?: number;
+  url?: string | null;
+  github_not_checked?: string;
+  note?: string;
+  warned?: string[];
+  extra_issues?: number[];
+}): ProjectStartNote | null {
+  const close = (result.extra_issues ?? []).filter((n) => Number.isInteger(n) && n > 0 && n !== result.taken_from_github);
+  if (result.taken_from_github) return { kind: "taken", issue: result.taken_from_github, url: result.url ?? null, note: result.note ?? "", close };
+  if (result.warned?.length) return { kind: "warned", note: result.note ?? result.warned.join(" "), close };
   if (result.github_not_checked) return { kind: "not_checked", note: result.note ?? result.github_not_checked };
   return null;
+}
+
+/**
+ * The project issues to offer closing when the repository has several: every one but the issue this project follows
+ * (the status's own, else the oldest, which is the one MACH uses).
+ */
+export function extraProjectIssues(issues: number[], following: number | null | undefined): number[] {
+  const sorted = [...new Set(issues.filter((n) => Number.isInteger(n) && n > 0))].sort((a, b) => a - b);
+  if (sorted.length < 2) return [];
+  const kept = following && sorted.includes(following) ? following : sorted[0];
+  return sorted.filter((n) => n !== kept);
 }
 
 /* ── Making drafts: numbers not checked against GitHub ─────────────────── */

@@ -7,6 +7,8 @@ import { useRefresh } from "../../../api/store";
 import { useRequestList } from "../../../shared/useRequestList";
 import { IssueLink, IssueText } from "../../../shared/IssueLink";
 import { ProjectOnGithubNotice } from "../../../shared/ProjectStartNotice";
+import { CloseProjectIssues } from "../../../shared/CloseProjectIssue";
+import { extraProjectIssues } from "../../../shared/team";
 import { ContextRow, OnePane, WorkScreen } from "../../../shared/layout/WorkScreen";
 import { usePrdImport } from "../../prd/usePrdImport";
 import { AddIdeaDialog } from "../../shape/ideas/AddIdeaDialog";
@@ -59,9 +61,13 @@ export function StartScreen({ status }: { status: Status }) {
               : "This project has no product definition yet. Choose the way that fits what you have. Everything stays a private draft in your workspace until you approve it."}
           </Text>
           {several ? (
-            // M20: naming the product would be refused until one of the project issues is closed; said before they try.
-            <Banner tone="warning" title="This repository has more than one project on GitHub" className="max-w-reading">
+            // M20: never a stop. Naming the product carries on with the oldest project issue and says so; closing an extra
+            // one is offered beside the sentence, as the person's one yes.
+            <Banner tone="info" title="This repository has more than one project on GitHub" className="max-w-reading">
               <IssueText text={several.note} urls={several.urls ?? {}} />
+              <div className="mt-2">
+                <CloseProjectIssues numbers={extraProjectIssues(several.others, null)} />
+              </div>
             </Banner>
           ) : (
             // M20: one project already on GitHub; naming the product here takes its words. Said before anything is typed.

@@ -202,6 +202,13 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
             ) : error ? (
               <Failure error={error} what={`${id} was not marked ready`} />
             ) : null}
+            {/* Someone else holds the number or a newer version: said first, and marking ready still goes ahead. */}
+            {!error && show.github.number_taken ? (
+              <Text size="body-sm">Another slice on GitHub already uses {id}. Marking it ready gives yours the next free number; everything that refers to it moves with it.</Text>
+            ) : null}
+            {!error && show.github.newer_elsewhere ? (
+              <Text size="body-sm">Someone else saved a newer version of {id} on GitHub. Marking yours ready replaces it, and theirs is kept.</Text>
+            ) : null}
             <div className="flex flex-col gap-2 rounded-md border border-line bg-surface px-4 py-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-label text-ink">What MACH's check says</p>
