@@ -39,7 +39,7 @@ test("Technical needs sits in the product's own navigation beside Vision, and it
   assert.equal(order(needs), 21);
   assert.equal(order(source("../src/features/vision/index.tsx")), 20);
   assert.equal(order(source("../src/features/principles/index.tsx")), 22);
-  assert.match(source("../src/features/registry.ts"), /import \{ feature as needs \} from "\.\/needs";[\s\S]*shape, needs\]/);
+  assert.match(source("../src/features/registry.ts"), /import \{ feature as needs \} from "\.\/needs";[\s\S]*shape, needs(, [a-z]+)*\]/);
 });
 
 test("the fixtures hold every state the two screens start from", () => {

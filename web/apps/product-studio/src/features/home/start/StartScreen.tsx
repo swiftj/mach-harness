@@ -11,7 +11,9 @@ import { ContextRow, OnePane, WorkScreen } from "../../../shared/layout/WorkScre
 import { usePrdImport } from "../../prd/usePrdImport";
 import { AddIdeaDialog } from "../../shape/ideas/AddIdeaDialog";
 import { ideaPath } from "../../shape/shell/steps";
-import { requestsToStartFrom, startedWays, ways, type Started, type Way } from "./model";
+import { requestsToStartFrom, startedWays, wayById, ways, type Started, type Way } from "./model";
+import { ImportUnfinishedNotice } from "../../../shared/ImportUnfinishedNotice";
+import { PROJECT_FILE_MAX } from "../../move/model";
 
 const sizeWords = (bytes: number) => (bytes % (1024 * 1024) === 0 ? `${bytes / (1024 * 1024)} MB` : `${Math.round(bytes / 1024)} KB`);
 
@@ -65,6 +67,7 @@ export function StartScreen({ status }: { status: Status }) {
             // M20: one project already on GitHub; naming the product here takes its words. Said before anything is typed.
             <ProjectOnGithubNotice found={status.project_on_github} className="max-w-reading" />
           )}
+          <ImportUnfinishedNotice status={status} className="max-w-reading" />
           {started.length ? <WhereYouAre started={started} /> : null}
           <section aria-labelledby="ways-title" className="flex flex-col gap-4">
             <Heading level={2} size="title-3" id="ways-title" className={started.length ? undefined : "sr-only"}>
@@ -89,6 +92,7 @@ export function StartScreen({ status }: { status: Status }) {
                   </ul>
                 </WayRow>
               ) : null}
+              <ImportWay way={wayById("import")} />
             </ul>
           </section>
         </div>
@@ -146,6 +150,21 @@ function WayRow({ way, action, needs, children }: { way: Way; action: ReactNode;
       </div>
       {action ? <div className="pt-1 md:justify-self-end">{action}</div> : null}
     </li>
+  );
+}
+
+/** M21 F: a project downloaded from another repository; the "Move this project" screen looks at it first. */
+function ImportWay({ way }: { way: Way }) {
+  return (
+    <WayRow
+      way={way}
+      needs={`${way.needs} It can be at most ${sizeWords(PROJECT_FILE_MAX)}.`}
+      action={
+        <Button asChild>
+          <Link to="/move">{way.action}</Link>
+        </Button>
+      }
+    />
   );
 }
 

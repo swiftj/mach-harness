@@ -1,0 +1,57 @@
+{
+  "exit_code": 0,
+  "data": {
+    "plan": true,
+    "already": true,
+    "imported": false,
+    "archive": {
+      "file": "mach-project-lending-20261125T022841Z.zip",
+      "sha256": "e3b05d1f7e1bb02680b3f41852e4c7eea1dd70a9f8e357edf489c0ae54542331"
+    },
+    "mode": "new",
+    "into_project": "lending",
+    "from_project": "lending",
+    "map": {
+      "EPIC": [
+        [
+          "EPIC-001",
+          "EPIC-001"
+        ],
+        [
+          "EPIC-002",
+          "EPIC-002"
+        ]
+      ],
+      "SLICE": [
+        [
+          "SLICE-001",
+          "SLICE-001"
+        ],
+        [
+          "SLICE-002",
+          "SLICE-002"
+        ],
+        [
+          "SLICE-003",
+          "SLICE-003"
+        ]
+      ],
+      "PP": [
+        [
+          "PP-01",
+          "PP-01"
+        ]
+      ],
+      "TN": [],
+      "IDEA": [],
+      "PRD": [],
+      "DES": []
+    },
+    "finished_at": "2026-11-25T02:28:42Z",
+    "writes": "nothing",
+    "factory_authorized": false,
+    "note": "Already brought in on 2026-11-25. Nothing was changed."
+  },
+  "refused": null,
+  "hint": null
+}

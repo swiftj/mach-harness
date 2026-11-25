@@ -58,6 +58,7 @@ import type {
   ReconcileNeeds,
 } from "./needs";
 import type { SliceSmallChange, SliceWiden, SmallChangeResume, SmallOnWorkOrder, SmallStart, SmallWidened, StatusSmall } from "./small";
+import type { ProjectExport, ProjectImportResult, ProjectImportSetAside, ProjectImportsList, ProjectImportsLookup } from "./move";
 
 /* ── Vocabulary ─────────────────────────────────────────────────────────── */
 
@@ -1038,6 +1039,16 @@ export interface Operations {
   "design.show": { args: { design_id: string; lines?: string }; result: DesignShow };
   "design.settle": { args: { design_id: string; conflict: number; as: DesignSettleAs; reason: string; by?: string }; result: DesignSettled };
   "design.publish": { args: { design_id: string }; result: DesignPublished };
+
+  /* M21 F: moving the whole project (apps/studio/internal/engine/ops_move.go; the results in ./move.ts). A project file
+     is sent once (`file`) and named afterwards by the `kept` hash the host returns. */
+  "project.export": { args: { only_mine?: boolean }; result: ProjectExport };
+  "project.import": {
+    args: ({ file: UploadFile; kept?: never } | { kept: string; file?: never }) & { plan?: boolean; ready?: boolean };
+    result: ProjectImportResult;
+  };
+  "project.import.abandon": { args: { archive?: string }; result: ProjectImportSetAside };
+  "project.imports": { args: { identifier?: string }; result: ProjectImportsList | ProjectImportsLookup };
 }
 
 export type OperationName = keyof Operations;
@@ -1073,6 +1084,7 @@ export const readOnlyOperations: ReadonlySet<OperationName> = new Set<OperationN
   "need.list",
   "design.list",
   "design.show",
+  "project.imports",
 ]);
 
 /**
@@ -1127,6 +1139,10 @@ export const personalActs: ReadonlySet<OperationName> = new Set<OperationName>([
   "design.publish",
   // M18: making a small change a full slice, for the product manager's own reason.
   "slice.widen",
+  // M21 F: taking the project elsewhere, bringing one in, and setting aside one that stopped part way.
+  "project.export",
+  "project.import",
+  "project.import.abandon",
 ]);
 
 /* ── M15: types for what M13 and M14 added (web/fixtures/product_memory.py holds real samples) ── */

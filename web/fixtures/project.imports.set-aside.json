@@ -1,0 +1,32 @@
+{
+  "exit_code": 0,
+  "data": {
+    "imports": [
+      {
+        "file": "mach-project-lending-20261125T022841Z.zip",
+        "archive_sha256": "e3b05d1f7e1bb02680b3f41852e4c7eea1dd70a9f8e357edf489c0ae54542331",
+        "mode": "new",
+        "from_project": "lending",
+        "from_project_name": "Lending",
+        "into_project": "lending",
+        "started_at": "2026-11-25T02:28:44Z",
+        "finished_at": null,
+        "set_aside_at": "2026-11-25T02:28:44Z",
+        "counts": {
+          "EPIC": 2,
+          "SLICE": 3,
+          "PP": 1,
+          "TN": 0,
+          "IDEA": 0,
+          "PRD": 0,
+          "DES": 0
+        }
+      }
+    ],
+    "reads_only": true,
+    "factory_authorized": false,
+    "note": "1 project was brought in here."
+  },
+  "refused": null,
+  "hint": null
+}

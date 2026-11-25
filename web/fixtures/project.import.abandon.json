@@ -1,0 +1,60 @@
+{
+  "exit_code": 0,
+  "data": {
+    "set_aside": true,
+    "archive": {
+      "file": "mach-project-lending-20261125T022841Z.zip",
+      "sha256": "e3b05d1f7e1bb02680b3f41852e4c7eea1dd70a9f8e357edf489c0ae54542331"
+    },
+    "from_project": "lending",
+    "brought_in": [
+      {
+        "id": "EPIC-001",
+        "was": "EPIC-001",
+        "files": [
+          "product/epics/EPIC-001.json"
+        ]
+      },
+      {
+        "id": "EPIC-002",
+        "was": "EPIC-002",
+        "files": [
+          "product/epics/EPIC-002.json"
+        ]
+      },
+      {
+        "id": "PP-01",
+        "was": "PP-01",
+        "files": [
+          "product/principles.json"
+        ]
+      },
+      {
+        "id": "the project",
+        "was": null,
+        "files": [
+          "product/project.json"
+        ]
+      }
+    ],
+    "numbers_released": {
+      "EPIC": [
+        1,
+        2
+      ],
+      "SLICE": [
+        1,
+        2,
+        3
+      ],
+      "PP": [
+        1
+      ]
+    },
+    "record": ".factory/studio/imports/e3b05d1f7e1bb026.set-aside-20261125T022844Z.json",
+    "factory_authorized": false,
+    "note": "MACH stopped bringing in the project from mach-project-lending-20261125T022841Z.zip and set it aside. What it had already brought in stays where it is: EPIC-001, EPIC-002, PP-01 and the project (listed under brought_in). Keep them, or remove them if you do not want them. The numbers it was holding are free again, and nothing else was changed."
+  },
+  "refused": null,
+  "hint": null
+}

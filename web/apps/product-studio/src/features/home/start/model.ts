@@ -6,7 +6,7 @@
 import type { IdeaRow, PrdStatus, PrdSummary, RequestItem, Status } from "@mach/ui/api";
 import { nextPathOf } from "../../shape/shell/steps.ts";
 
-export type WayId = "describe" | "prd" | "idea" | "request";
+export type WayId = "describe" | "prd" | "idea" | "request" | "import";
 
 export interface Way {
   id: WayId;
@@ -23,7 +23,8 @@ export interface Way {
 /**
  * Every way to start, in the order the screen lists them. A request is offered only when one is waiting (see
  * `requestsToStartFrom`). Starting from a teammate's project on GitHub is not one: MACH cannot yet bring a project in from
- * GitHub, so it is not offered.
+ * GitHub, so it is not offered. M21 F: a project downloaded from another repository as one file is brought in on the
+ * "Move this project" screen (features/move).
  */
 export const ways: readonly Way[] = [
   {
@@ -55,6 +56,14 @@ export const ways: readonly Way[] = [
     happens: "Someone filed it on GitHub. You name the product, add the epic it belongs to, and pick it up as a draft slice.",
     needs: "nothing more: the request is already here.",
     action: "Start from it",
+  },
+  {
+    id: "import",
+    title: "Bring in a project from another repository",
+    happens:
+      "Someone downloaded it there as one file. MACH shows you what would come in and what changes, and brings it in when you say so. Every slice arrives as a draft.",
+    needs: "the file MACH made when the project was downloaded.",
+    action: "Bring a project in",
   },
 ];
 

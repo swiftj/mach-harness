@@ -1,0 +1,320 @@
+{
+  "exit_code": 0,
+  "data": {
+    "project": {
+      "project_id": "lending",
+      "name": "Lending",
+      "status": "draft",
+      "revision": 1,
+      "vision": "Members borrow what they need.",
+      "outcomes": [
+        "Members can borrow books"
+      ],
+      "issue": null,
+      "url": null,
+      "changed_elsewhere": null
+    },
+    "approvals_withdrawn": [],
+    "epics": [
+      {
+        "epic_id": "EPIC-001",
+        "title": "Loans",
+        "status": "open",
+        "revision": 1,
+        "acceptance_criteria": [
+          "A loan has a due date"
+        ],
+        "issue": null,
+        "url": null,
+        "changed_elsewhere": null,
+        "same_moment": null,
+        "counts": {
+          "total": 2,
+          "by_progress": {
+            "draft": 2
+          },
+          "ready_or_further": 0,
+          "ready_or_further_means": "marked ready to build, being built, or shipped"
+        }
+      },
+      {
+        "epic_id": "EPIC-002",
+        "title": "Renewals",
+        "status": "open",
+        "revision": 1,
+        "acceptance_criteria": [
+          "A member can renew once"
+        ],
+        "issue": null,
+        "url": null,
+        "changed_elsewhere": null,
+        "same_moment": null,
+        "counts": {
+          "total": 1,
+          "by_progress": {
+            "draft": 1
+          },
+          "ready_or_further": 0,
+          "ready_or_further_means": "marked ready to build, being built, or shipped"
+        }
+      }
+    ],
+    "slices": [
+      {
+        "principles": {
+          "answered_under_older": false,
+          "older": [],
+          "unanswered": [
+            "PP-01"
+          ],
+          "retired": [],
+          "note": "SLICE-001 was answered under older principles (PP-01). Check its answers in the interview."
+        },
+        "slice_id": "SLICE-001",
+        "title": "Borrow a book",
+        "epic_id": "EPIC-001",
+        "status": "draft",
+        "revision": 2,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-001-invite-teammate.md",
+        "has_intent": true,
+        "resume_note": null,
+        "dependencies": [],
+        "editable": true,
+        "github": {
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": null,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "same_moment": null,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": null,
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "draft"
+        }
+      },
+      {
+        "principles": {
+          "answered_under_older": false,
+          "older": [],
+          "unanswered": [
+            "PP-01"
+          ],
+          "retired": [],
+          "note": "SLICE-002 was answered under older principles (PP-01). Check its answers in the interview."
+        },
+        "slice_id": "SLICE-002",
+        "title": "Return a book",
+        "epic_id": "EPIC-001",
+        "status": "draft",
+        "revision": 2,
+        "open_questions": 0,
+        "spec": "specs/slices/SLICE-002-invite-teammate.md",
+        "has_intent": true,
+        "resume_note": null,
+        "dependencies": [
+          "SLICE-001"
+        ],
+        "editable": true,
+        "github": {
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": null,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "same_moment": null,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": null,
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "draft"
+        }
+      },
+      {
+        "slice_id": "SLICE-003",
+        "title": "Renew a loan",
+        "epic_id": "EPIC-002",
+        "status": "draft",
+        "revision": 1,
+        "open_questions": 0,
+        "spec": null,
+        "has_intent": false,
+        "resume_note": null,
+        "dependencies": [],
+        "editable": true,
+        "github": {
+          "saved": null,
+          "unfinished": false,
+          "issue": null,
+          "url": null,
+          "state_label": null,
+          "revision": null,
+          "changed_on_github": false,
+          "newer_elsewhere": false,
+          "number_taken": false,
+          "same_moment": null,
+          "question": null,
+          "question_note": null,
+          "shipped_issues": [],
+          "times": {
+            "marked_ready": null,
+            "building": null,
+            "question": null,
+            "shipped": null
+          },
+          "progress": "draft"
+        }
+      }
+    ],
+    "principles": {
+      "active": [
+        "PP-01"
+      ],
+      "retired": [],
+      "unpublished_changes": true,
+      "published": {
+        "saved": null,
+        "unfinished": false,
+        "revision": null,
+        "sha256": null,
+        "approved_by": null,
+        "published_at": null,
+        "issue": null,
+        "url": null,
+        "github": null,
+        "newer_elsewhere": false,
+        "changed_on_github": false
+      },
+      "slices_answered_under_older": [
+        "SLICE-001",
+        "SLICE-002"
+      ],
+      "next": "The principles have changes that are not published: publish them so the builders get them."
+    },
+    "saved": {
+      "everything_saved": false,
+      "note": "1 thing is not saved yet.",
+      "not_saved": [
+        {
+          "kind": "principles_unpublished",
+          "target": null,
+          "text": "The product principles have changes that are not published. Publish them so the builders get them."
+        }
+      ],
+      "github_check": null
+    },
+    "order": [
+      {
+        "epic_id": "EPIC-001",
+        "issue": null,
+        "slices": [
+          {
+            "slice_id": "SLICE-001",
+            "title": "Borrow a book",
+            "in_workspace": true,
+            "issue": null,
+            "state_label": null
+          },
+          {
+            "slice_id": "SLICE-002",
+            "title": "Return a book",
+            "in_workspace": true,
+            "issue": null,
+            "state_label": null
+          }
+        ],
+        "on_github": false,
+        "github_order": null,
+        "github_read_at": null,
+        "matches_github": null,
+        "unfinished": false,
+        "taken_from_github": false,
+        "could_not_read": false,
+        "note": null
+      },
+      {
+        "epic_id": "EPIC-002",
+        "issue": null,
+        "slices": [
+          {
+            "slice_id": "SLICE-003",
+            "title": "Renew a loan",
+            "in_workspace": true,
+            "issue": null,
+            "state_label": null
+          }
+        ],
+        "on_github": false,
+        "github_order": null,
+        "github_read_at": null,
+        "matches_github": null,
+        "unfinished": false,
+        "taken_from_github": false,
+        "could_not_read": false,
+        "note": null
+      }
+    ],
+    "same_id_twice": [],
+    "project_on_github": null,
+    "github": {
+      "repository": "acme/team-space",
+      "form": null,
+      "last_read": null
+    },
+    "current_slice": null,
+    "last_refreshed": null,
+    "structurally_valid": true,
+    "structural_errors": [],
+    "factory_authorized": false,
+    "suggested_next": [
+      "Continue the interview for SLICE-001: Borrow a book (slice resume SLICE-001).",
+      "Continue the interview for SLICE-002: Return a book (slice resume SLICE-002).",
+      "Continue the interview for SLICE-003: Renew a loan (slice resume SLICE-003)."
+    ],
+    "next_actions": [
+      {
+        "kind": "continue_interview",
+        "target": "SLICE-001",
+        "title": "Continue the interview for SLICE-001",
+        "reason": "Borrow a book is still being defined.",
+        "related": []
+      },
+      {
+        "kind": "continue_interview",
+        "target": "SLICE-002",
+        "title": "Continue the interview for SLICE-002",
+        "reason": "Return a book is still being defined.",
+        "related": []
+      },
+      {
+        "kind": "continue_interview",
+        "target": "SLICE-003",
+        "title": "Continue the interview for SLICE-003",
+        "reason": "Renew a loan is still being defined.",
+        "related": []
+      }
+    ]
+  },
+  "refused": null,
+  "hint": null
+}

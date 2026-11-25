@@ -1,0 +1,32 @@
+{
+  "exit_code": 0,
+  "data": {
+    "exported": true,
+    "file": "/project/.factory/studio/export/mach-project-lending-20261125T022841Z.zip",
+    "bytes": 8179,
+    "sha256": "e3b05d1f7e1bb02680b3f41852e4c7eea1dd70a9f8e357edf489c0ae54542331",
+    "counts": {
+      "epics": 2,
+      "slices": 3,
+      "principles": 1,
+      "needs": 0,
+      "ideas": 0,
+      "prds": 0,
+      "designs": 0,
+      "mocks": 0
+    },
+    "left_out": [],
+    "warnings": [],
+    "stays_behind": [
+      "approvals",
+      "GitHub issues and their numbers",
+      "Jira keys (listed in the archive for the report)",
+      "requests",
+      "ready folders"
+    ],
+    "factory_authorized": false,
+    "note": "The project is in one file. It names no repository and no account. Nothing was sent anywhere."
+  },
+  "refused": null,
+  "hint": null
+}

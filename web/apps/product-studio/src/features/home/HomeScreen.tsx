@@ -51,6 +51,7 @@ import { Fold } from "../../shared/layout/Fold";
 import { ContextRow, OnePane, WorkScreen } from "../../shared/layout/WorkScreen";
 import { doneWhenLabel } from "./model";
 import { ProjectStartNotice } from "../../shared/ProjectStartNotice";
+import { ImportUnfinishedNotice } from "../../shared/ImportUnfinishedNotice";
 import { numberTakenLine, teamNotices } from "../../shared/team";
 
 /** Refresh once per visit, when the project home first opens. */
@@ -241,7 +242,7 @@ function CarryOn({ action, onGo }: { action: NextAction; onGo: () => void }) {
 
 /** Everything the engine reports as waiting for the PM, in one notice, plus problems reaching GitHub. */
 function Notices({ status, refresh, refreshError, onRetry }: { status: Status; refresh: Refresh | null; refreshError: string | null; onRetry: () => void }) {
-  const notices: ReactNode[] = [<ProjectStartNotice key="start" />];
+  const notices: ReactNode[] = [<ProjectStartNotice key="start" />, <ImportUnfinishedNotice key="import" status={status} />];
   if (refreshError) {
     notices.push(
       <Banner key="host" tone="danger" live="assertive" title="Could not check GitHub" actions={<Button size="sm" onClick={onRetry}>Try again</Button>}>

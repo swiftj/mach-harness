@@ -1,0 +1,21 @@
+{
+  "exit_code": 0,
+  "data": {
+    "identifier": "SLICE-002",
+    "found": [
+      {
+        "from": "SLICE-002",
+        "to": "SLICE-002",
+        "from_project": "lending",
+        "from_project_name": "Lending",
+        "finished": true,
+        "words": "SLICE-002 of 'Lending' kept its number here (brought in on 2026-11-25)."
+      }
+    ],
+    "reads_only": true,
+    "factory_authorized": false,
+    "note": "SLICE-002 of 'Lending' kept its number here (brought in on 2026-11-25)."
+  },
+  "refused": null,
+  "hint": null
+}
