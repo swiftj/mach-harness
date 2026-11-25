@@ -59,7 +59,7 @@ LEASE_SECONDS = 180
 MIN_RUN_BUDGET_USD = float(policy_module.LIMITS["max_budget_usd_per_run"][1])
 SUPERVISOR = "supervisor"
 UNSET = object()  # start() works out the run's spending limit itself
-QUIET_NEEDS = (None, "nothing", "worker-in-cell")  # stops nobody has to act on: no message
+QUIET_NEEDS = (None, "nothing", "worker-in-cell", "taken-over")  # stops nobody has to act on: no message
 
 
 class SupervisorError(Exception):

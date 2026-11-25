@@ -236,7 +236,7 @@ class NamingTest(Documents):
     def test_no_documents_is_asked_once_and_recorded(self):
         first = self.baseline()
         self.assertTrue(first["documents"]["ask_for_documents"])
-        self.assertIn("ask the engineer once whether they have technical documents", first["next"])
+        self.assertIn("find out once from the engineer you are working with whether they have technical documents", first["next"])
         none = self.cmd("adr", "baseline", "--no-documents")
         self.assertFalse(none["documents"]["ask_for_documents"])
         self.assertTrue(none["documents"]["none"])
@@ -440,7 +440,7 @@ class SittingTest(Documents):
 
         ready = self.baseline()
         self.assertEqual(len(ready["ready_to_accept"]), 7)
-        self.assertIn("ask the engineer once whether to accept", ready["next"])
+        self.assertIn("find out once from the engineer you are working with whether to accept", ready["next"])
         self.cmd("adr", "accept", *ready["ready_to_accept"], "--by", "Sam Engineer")
         accepted = self.baseline()
         self.assertIn("bind once they are committed on the main branch", accepted["next"])

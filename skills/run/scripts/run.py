@@ -1099,7 +1099,7 @@ def cmd_next(project: Project, args: argparse.Namespace) -> int:
     if getattr(args, "resolved_from", None):
         shown["resolved_from"] = args.resolved_from
     print(json.dumps(shown, indent=2, ensure_ascii=False))
-    if args.headless and found.get("stop") and found.get("needs") not in (None, "nothing", "worker-in-cell") and execution_scope(project) is None:
+    if args.headless and found.get("stop") and found.get("needs") not in (None, "nothing", "worker-in-cell", "taken-over") and execution_scope(project) is None:
         # Unattended work stopped for a person: tell the channel once per wait. Inside a supervised execution the
         # supervisor tells it, and the address is not read here. Nothing about this changes the answer or the exit code.
         sys.stdout.flush()
