@@ -17,7 +17,7 @@ Facts per ticket, all read from what the stations and the intake ledger recorded
 A ticket in "prepare" may start, under the ceiling, only as far as the build station (until "build"), and is
 then scheduled again with its plan known.
 
-A person's schedule (run.py schedule outside a supervised execution: the tickets a person named) never holds a
+A person's schedule (run.py schedule --named: the tickets a person named, never inside a supervised execution) never holds a
 ticket because someone else has it: a ticket another worker has a fresh claim on, or whose lanes another worker's
 builders are at work in, starts, with a sentence in its "warnings" (its own `next` takes the step over), and so does
 a ticket whose dependencies are not integrated yet, unless the dependency is itself in this run. The ceiling,
@@ -106,7 +106,8 @@ def decide(tickets: Sequence[Dict[str, Any]], running: Sequence[Dict[str, Any]],
                      f"as at work until {claimed.get('lapses_at')}, or until their lanes are done", [])
             else:
                 hold(ticket_id, "claimed", f"another worker was handed its {claimed.get('step')} step at {claimed.get('at')}; "
-                     f"the claim lapses at {claimed.get('lapses_at')}, or when the ticket moves to a new stage", [])
+                     f"the claim lapses at {claimed.get('lapses_at')}, or when the ticket moves to a new stage; naming the ticket "
+                     f"(/mach {ticket_id}) takes it over", [])
             continue
         if len(busy) >= ceiling:
             hold(ticket_id, "ceiling", f"all {ceiling} place(s) are in use", [str(item["ticket_id"]) for item in busy])
@@ -374,6 +375,8 @@ def main(args: Any, project: Path, *, config: Dict[str, Any], sibling: Optional[
     # The advisory order leaves claims out: a claim lapses or ends with its stage, and the simulation assumes work finishes.
     simulated = simulate([dict(item, claimed=None) for item in facts if item["ticket_id"] not in running], busy, ceiling["in_force"], ceiling["high"])
     workflow_args: Dict[str, Any] = {"tickets": [name for name in tickets if name not in decided["running"]]}
+    if person:
+        workflow_args["named"] = True  # the belt's first next for each ticket says a person named it (--by-person)
     if args.sequential:
         workflow_args["sequential"] = True
     elif args.limit is not None:

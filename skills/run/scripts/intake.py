@@ -314,7 +314,7 @@ class Factory:
                         self.lock_path.unlink()
                     continue
                 raise IntakeError(f"Another {other.get('purpose') or 'intake or dispatch'} is running on this Factory "
-                                  f"(process {other.get('pid')} on {other.get('host')}, since {other.get('at')}). Wait for it to finish, then try again.")
+                                  f"(process {other.get('pid')} on {other.get('host')}, since {other.get('at')}). The ledger takes one writer at a time: run this again in a moment, once that one has finished.")
             else:
                 with os.fdopen(handle, "w", encoding="utf-8") as out:
                     out.write(json.dumps(holder))
@@ -1362,10 +1362,16 @@ class Factory:
         return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def branch_active_at(self, issue: Any) -> Optional[str]:
-        """The last commit time of the slice's branch (feature/<issue>) on GitHub, as last fetched: activity of whoever holds it."""
-        done = self.git(self.root, "log", "-1", "--format=%ct", f"refs/remotes/origin/feature/{issue}")
-        stamp = done.stdout.strip() if done.returncode == 0 else ""
-        return datetime.fromtimestamp(int(stamp), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if stamp.isdigit() else None
+        """The last commit time of the slice's branches on GitHub, as last fetched: feature/<issue>, and feature/<issue>-<name>, the branch a
+        Factory that took the slice over builds on. The latest of them is the activity of whoever holds it."""
+        listed = self.git(self.root, "for-each-ref", "--format=%(committerdate:unix) %(refname)", "refs/remotes/origin/feature/")
+        times = []
+        for line in listed.stdout.splitlines() if listed.returncode == 0 else []:
+            stamp, _, name = line.partition(" ")
+            short = name[len("refs/remotes/origin/feature/"):]
+            if stamp.isdigit() and (short == str(issue) or short.startswith(f"{issue}-")):
+                times.append(int(stamp))
+        return datetime.fromtimestamp(max(times), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if times else None
 
     def held_elsewhere(self, ledger: Dict[str, Any], repository: Optional[str], issue: int, marker: Dict[str, Any], checked: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Who else is building this slice, or None: another Factory's counting claim (this revision, or while the issue carries
@@ -1386,6 +1392,11 @@ class Factory:
             return {"login": checked.get("building_by"), "since": checked.get("building_since"), "active_at": checked.get("building_since"),
                     "revision": None, "issue": issue}
         return None
+
+    @staticmethod
+    def take_it_words(slice_id: str, issue: Any) -> str:
+        """How a person takes a slice the Factory's own choice left to the Factory building it: by naming it."""
+        return f"An engineer who names it builds it here as well: /mach {issue or slice_id}, or product dispatch {slice_id} --by-person."
 
     def held_warning(self, slice_id: str, held: Dict[str, Any]) -> str:
         """What a person is told first when they dispatch a slice another Factory is building: MACH takes it over for them."""
@@ -2109,7 +2120,7 @@ class Factory:
                 accepted.append(key)  # M20: held only by another Factory's claim, and an engineer said to take it over
                 taking_over.append(key)
             elif not row["dispatchable"]:
-                refused.append({"slice_id": key, "state": row["state"], "why": row["reasons"]})
+                refused.append({"slice_id": key, "state": row["state"], "why": row["reasons"] + ([self.take_it_words(key, row.get("issue"))] if row.get("held") else [])})
             else:
                 accepted.append(key)
         head = self.git(self.root, "rev-parse", "HEAD").stdout.strip()
@@ -2132,11 +2143,15 @@ class Factory:
                     warnings.setdefault(key, []).append(f"{why.replace(' Nothing was started here.', '').replace(' so it was not started and nothing was made.', '.')} "
                                                         "MACH builds it here anyway, as you asked; the claim is tried again at the next intake.")
                 elif why:
-                    refused.append({"slice_id": key, "state": "being_built_elsewhere" if entry.get("claim_lost") else "not_claimed", "why": [why]})
+                    refused.append({"slice_id": key, "state": "being_built_elsewhere" if entry.get("claim_lost") else "not_claimed",
+                                    "why": [why] + ([self.take_it_words(key, entry.get("issue"))] if entry.get("claim_lost") else [])})
                     continue
                 if person and elsewhere:
                     branch = self.own_branch(entry)
             opened = self.open_cell(ledger, entry, by, authorization, branch=branch)
+            early = [dep.get("name") for dep in (by_id.get(key) or {}).get("depends_on") or [] if not dep.get("integrated") and dep.get("name")]
+            if person and early and not opened.get("already_dispatched"):
+                self.mark_started_before(str(entry["ticket_id"]), early)
             if branch:
                 opened["branch"] = branch
                 warnings.setdefault(key, []).append(f"This copy is built on its own branch, {branch}, so neither Factory's push meets the other's.")
@@ -2305,15 +2320,29 @@ class Factory:
                     "mocks": [{**item, "file": self.rules.mock_file_name(item)} for item in entry["mocks"]]}
         write_atomic(target / "manifest.json", canonical(manifest))
 
+    def mark_started_before(self, ticket_id: str, names: Sequence[str]) -> None:
+        """A person dispatched this slice before what it depends on was merged: kept in the cell, so a failure later says it once."""
+        path = self.root / ".factory" / "worktrees" / ticket_id / "cell.json"
+        try:
+            cell = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if isinstance(cell, dict):
+            cell["started_before"] = [str(name) for name in names][:5]
+            path.write_text(json.dumps(cell, indent=2) + "\n", encoding="utf-8")
+
     def own_branch(self, entry: Dict[str, Any]) -> str:
         """The branch of a cell for a slice a person took over from another Factory: feature/<ticket>-<who>, where <who> is this Factory's
         GitHub login as its claim recorded it, or a short name made from this Factory's own secret. Both Factories' branches can then
         be on origin at once, each with its own pull request; neither push is refused or overwrites the other."""
+        secret = self.factory_secret() or ""
+        mine = "f" + hashlib.sha256(f"mach branch {secret}".encode("utf-8")).hexdigest()[:6]
         login = re.sub(r"[^a-z0-9-]+", "-", str((entry.get("claim") or {}).get("login") or "").lower()).strip("-")[:30]
-        if not login:
-            secret = self.factory_secret() or ""
-            login = "f" + hashlib.sha256(f"mach branch {secret}".encode("utf-8")).hexdigest()[:8]
-        return f"feature/{entry['ticket_id']}-{login}"
+        branch = f"feature/{entry['ticket_id']}-{login or mine}"
+        if login and self.git(self.root, "rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}").returncode == 0:
+            # Another Factory signed in as the same account took the slice over before: this Factory's own short name keeps them apart.
+            branch = f"{branch}-{mine}"
+        return branch
 
     def open_cell(self, ledger: Dict[str, Any], entry: Dict[str, Any], by: str = ENGINEER,
                   authorization: str = "an engineer's explicit command", branch: Optional[str] = None) -> Dict[str, Any]:

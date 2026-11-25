@@ -505,7 +505,7 @@ class TwoDriversTest(Base):
 
     def test_a_persons_driver_takes_live_lanes_over_and_the_old_builders_stop(self):
         self.opened()
-        taken = self.next_step("--holder", OTHER)
+        taken = self.next_step("--holder", OTHER, "--by-person")
         self.assertEqual(taken["action"], "build-lanes")
         self.assertTrue(any("lanes L1, L2" in line and "taken them over" in line for line in taken["warnings"]), taken.get("warnings"))
         self.assertNotIn(HOLDER, json.dumps(taken), "never the holder")
@@ -567,7 +567,7 @@ class TwoDriversTest(Base):
     def test_a_persons_schedule_starts_a_ticket_whose_lanes_another_driver_holds_with_a_warning(self):
         self.opened()
         self.age(self.cellroot / "claim.json")  # only the live lanes hold it now
-        report = self.run_json("schedule", TICKET, "--holder", OTHER)
+        report = self.run_json("schedule", TICKET, "--holder", OTHER, "--named")
         self.assertEqual([item["ticket_id"] for item in report["start"]], [TICKET])
         self.assertIn("lane(s) L1, L2", report["start"][0]["warnings"][0])
         self.assertNotIn(HOLDER, json.dumps(report), "never the holder")

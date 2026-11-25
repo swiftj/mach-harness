@@ -235,8 +235,14 @@ def _write_displaced(cell_dir: Path, holders: Dict[str, Dict[str, Any]]) -> None
         raise
 
 
-def displace(cell_dir: Path, holders: Any, step: str, by: str = "person", at: Optional[datetime] = None) -> None:
-    """Record that a person took this cell's work over from these holders. Raises OSError when it cannot be written."""
+TAKEOVER = "takeover.json"  # the latest take-over: who took it, and the branch's commit then, for the sweep at the taker's first call
+
+
+def displace(cell_dir: Path, holders: Any, step: str, by: str = "person", at: Optional[datetime] = None,
+             head: Optional[str] = None, taker: Optional[str] = None) -> None:
+    """Record that a person took this cell's work over from these holders, and (with `head` and `taker`) the cell's branch commit at that
+    moment, so the taker's first build or verify call sets aside anything the displaced workers did after it (sweep). Raises OSError
+    when it cannot be written."""
     names = [name for name in dict.fromkeys(holders or []) if valid_holder(name)]
     if not names:
         return
@@ -244,6 +250,86 @@ def displace(cell_dir: Path, holders: Any, step: str, by: str = "person", at: Op
     for name in names:
         known[name] = {"at": stamp(at or now()), "step": step, "by": by}
     _write_displaced(cell_dir, known)
+    if valid_holder(taker):
+        record = {"taker": taker, "head": head if isinstance(head, str) and re.fullmatch(r"[0-9a-f]{40}", head or "") else None,
+                  "at": stamp(at or now()), "swept": False}
+        folder = Path(cell_dir)
+        handle, temp = tempfile.mkstemp(prefix=".takeover-", suffix=".tmp", dir=str(folder))
+        with os.fdopen(handle, "w", encoding="utf-8") as out:
+            out.write(json.dumps(record, indent=2) + "\n")
+        os.replace(temp, folder / TAKEOVER)
+
+
+def open_takeover(cell_dir: Path) -> None:
+    """The take-over was made for whoever carries the ticket on next (a decision recorded outside a run): the first holder that is not
+    displaced sweeps the cell."""
+    path = Path(cell_dir) / TAKEOVER
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if isinstance(record, dict):
+        record["taker"] = None
+        path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+
+
+def head_of(work: Path) -> Optional[str]:
+    """The commit a checkout is at, or None when it is not a Git checkout."""
+    import subprocess
+    if not Path(work).is_dir():
+        return None
+    done = subprocess.run(["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=str(work), capture_output=True, text=True)
+    return done.stdout.strip() if done.returncode == 0 and done.stdout.strip() else None
+
+
+def sweep(cell_dir: Path, holder: Optional[str], ticket_id: str) -> Optional[str]:
+    """At the taker's first build or verify call after a take-over: whatever the displaced workers did to the cell's checkout after it
+    (uncommitted files, and commits no station of the taker made, since the branch's commit at the take-over) is kept under refs and the
+    checkout goes back to that commit, so none of it is used. Returns the sentence to say, or None when there was nothing (or this is not
+    the taker, or it was swept already). Never raises: a sweep that fails leaves everything as it was and says so."""
+    import subprocess
+    folder = Path(cell_dir)
+    try:
+        record = json.loads((folder / TAKEOVER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict) or record.get("swept") or not valid_holder(holder) or displaced(folder, holder):
+        return None
+    if record.get("taker") and record.get("taker") != holder:
+        return None
+    work = folder / "repo"
+    said: List[str] = []
+
+    def git(*args: str) -> Any:
+        return subprocess.run(["git", *args], cwd=str(work), capture_output=True, text=True)
+
+    def free_ref(prefix: str) -> str:
+        taken = git("for-each-ref", "--format=%(refname)", prefix.rsplit("/", 1)[0] + "/").stdout.split()
+        return f"{prefix}{1 + sum(1 for name in taken if name.startswith(prefix))}"
+
+    try:
+        if work.is_dir() and head_of(work):
+            kept = set_aside(work, free_ref(f"refs/mach/cell-files/{ticket_id}/after-take-over-"),
+                             f"Uncommitted files left in the cell after {ticket_id} was taken over [{ticket_id}]")
+            if kept:
+                said.append(f"{len(kept['paths'])} uncommitted file(s) left in the cell after the take-over are kept under {kept['ref']} and not used "
+                            f"(git checkout {kept['ref']} -- <file> brings one back).")
+            base = record.get("head")
+            tip = head_of(work)
+            if base and tip and tip != base:
+                ref = free_ref(f"refs/mach/taken-over/{ticket_id}/")
+                count = git("rev-list", "--count", f"{base}..{tip}").stdout.strip() or "some"
+                if git("update-ref", ref, tip).returncode == 0 and git("reset", "-q", "--hard", base).returncode == 0:
+                    said.append(f"{count} commit(s) made on the branch after the take-over, by no station of this worker, are kept under {ref} "
+                                f"and not used: the branch is back at {base[:12]} (git log {ref} shows them).")
+    except OSError as exc:
+        said.append(f"MACH could not set aside what was left in the cell after the take-over ({str(exc)[:160]}); look at the cell's checkout.")
+    record.update({"swept": True, "swept_at": stamp(now()), "said": said})
+    try:
+        (folder / TAKEOVER).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    return " ".join(said) or None
 
 
 def reinstate(cell_dir: Path, holder: Optional[str]) -> None:
@@ -295,12 +381,36 @@ def station_argv(parser: Any, argv: Sequence[str]) -> Tuple[List[str], Optional[
     return out, holder
 
 
-def station_stop(project: Optional[Path], ticket_id: Any, holder: Optional[str]) -> Optional[str]:
-    """The refusal for a worker whose holder a person's take-over displaced, or None. Shared by every station's command line."""
-    if project is None or not isinstance(ticket_id, str) or not valid_holder(holder):
+def config_minutes(project: Path) -> int:
+    try:
+        config = json.loads((Path(project) / ".factory" / "config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        config = {}
+    return minutes(config)
+
+
+def station_stop(project: Optional[Path], ticket_id: Any, holder: Optional[str], command: Optional[str] = None,
+                 reads: Sequence[str] = ()) -> Optional[str]:
+    """The refusal for a worker whose holder a person's take-over displaced, or None. Shared by every station's command line.
+
+    A call with no holder cannot be told apart from the worker taken over, so while a take-over stands (some holder is displaced in the
+    cell, and someone's claim on its step is fresh) a holderless call of a command that changes something (`command` not in `reads`)
+    is refused too, with how a caller says who it is."""
+    if project is None or not isinstance(ticket_id, str):
         return None
-    record = displaced(Path(project) / ".factory" / "worktrees" / ticket_id, holder)
-    return stopped_words(record) if record else None
+    cell_dir = Path(project) / ".factory" / "worktrees" / ticket_id
+    if valid_holder(holder):
+        record = displaced(cell_dir, holder)
+        return stopped_words(record) if record else None
+    if holder is not None or command is None or command in reads:
+        return None
+    gone = displaced_all(cell_dir)
+    if not gone or current(cell_dir, config_minutes(Path(project))) is None:
+        return None
+    latest = max(gone.values(), key=lambda item: str(item.get("at")))
+    return (f"This ticket was taken over by a person at {clock(latest.get('at'))}, and this call names no holder, so MACH cannot tell it from "
+            "the worker taken over. Pass --holder <the holder your step's prompt names>. A person running a station by hand takes the ticket "
+            f"first with run.py next {ticket_id} --by-person --holder new and passes the holder it prints.")
 
 
 def set_aside(work: Path, ref: str, message: str) -> Optional[Dict[str, Any]]:
