@@ -4,7 +4,24 @@ What is new in each release, newest first, followed by supported platforms, what
 
 ## What changed in 0.27.0
 
-One command opens the app.
+A project someone else defined is there when you open Product Studio, and one command opens the app.
+
+### Joining a project
+
+| Change | What it is |
+| --- | --- |
+| Nothing to fill in | On a fresh clone of a repository whose product is already on GitHub, Product Studio brings it in before showing anything: the project, its principles and technical needs, every epic, and every slice in the state it is in. The app shows "Bringing in <project> from GitHub", then the project. The terminal says the same in one line. |
+| It stays in step | Every refresh also takes in what others have published since, and newer versions of anything you have not changed. A draft you changed is never replaced. |
+| A newer version is looked at first | When someone published a newer version of something you changed, the first step is to look at the two, then take theirs or keep yours as a new version. |
+| "From GitHub" on the project home | What came, what could not come and why, what waits, and where an earlier copy of yours was kept, each with its one step. |
+| Design pictures | A slice's pictures come from the main branch at the first refresh after this computer has them (after a pull or fetch). Until then the slice says so, and marking it ready never drops them without your word. |
+| A project you had started | If you began a project here that was never saved to GitHub and the repository has one, MACH brings in the repository's project, keeps your words aside and keeps your epics and drafts as drafts. |
+| When GitHub cannot be read | The app says why and tries again. It does not offer to describe a product that may already exist, unless you say to start one of your own. |
+| The ways to start from nothing | Shown only when GitHub was read and holds no project for the repository, or the repository has no GitHub origin. |
+
+Drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were written.
+
+### One command opens the app
 
 | Change | What it is |
 | --- | --- |
