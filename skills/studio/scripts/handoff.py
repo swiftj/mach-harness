@@ -232,7 +232,7 @@ class Handoff:
             if marker:
                 slices.append({"number": item["number"], "state": str(item.get("state") or "").lower(), "labels": issues.label_names(item),
                                "title": item.get("title"), "marker": marker, "url": item.get("url"),
-                               "body_sha256": body_digest(item.get("body"))})
+                               "body_sha256": body_digest(item.get("body")), "body": item.get("body")})
         tagged = {}
         for label, kind in (("mach:project", "project"), ("mach:epic", "epic")):
             tagged[kind] = [{"number": item["number"], "id": (self.rules.product_marker(item.get("body")) or ("", None))[1],
@@ -577,8 +577,9 @@ class Handoff:
                     stop(failure)
             finished("ready")
 
-        entry.update(saved="github", revision=run["revision"], base_revision=run["revision"], spec_sha256=run["spec_sha256"],
-                     why_sha256=run["why_sha256"], jira=run.get("jira"), approved_by=run["login"], ready_at=utc_now(), run=None)
+        self.record_version(entry, agreed_base(run["revision"], run["spec_sha256"], run["why_sha256"], run.get("mocks_sha256")),
+                            saved="github", revision=run["revision"], base_revision=run["revision"], spec_sha256=run["spec_sha256"],
+                            why_sha256=run["why_sha256"], jira=run.get("jira"), approved_by=run["login"], ready_at=utc_now(), run=None)
         entry.pop("not_approved", None)  # approved now, for exactly this text
         if run.get("mocks_sha256") or entry.get("mocks_sha256"):
             entry["mocks_sha256"] = run.get("mocks_sha256")  # M14 C: kept only once a slice has had mocks
@@ -1186,7 +1187,9 @@ class Handoff:
             os.replace(str(staging), str(target))
         finally:
             shutil.rmtree(staging, ignore_errors=True)
-        entry.update(saved="folder", revision=revision, base_revision=revision, spec_sha256=spec_sha, why_sha256=why_sha, jira=jira, ready_at=utc_now(), run=None)
+        self.record_version(entry, agreed_base(revision, spec_sha, why_sha, mocks_sha),
+                            saved="folder", revision=revision, base_revision=revision, spec_sha256=spec_sha, why_sha256=why_sha, jira=jira,
+                            ready_at=utc_now(), run=None)
         if mocks_sha or entry.get("mocks_sha256"):
             entry["mocks_sha256"] = mocks_sha
         if small or entry.get("small"):
@@ -1739,8 +1742,22 @@ class Handoff:
                                 "approved_by": check["approved_by"], "items": check["items"], "extra": check["extra"]}
         return found, sorted({str(item.get("login")) for item in comments or [] if item.get("login")}), None
 
+    @staticmethod
+    def record_version(entry: Dict[str, Any], agreed: Dict[str, Any], **fields: Any) -> None:
+        """THE one write of a slice version this workspace and GitHub agree on: marked ready here (on GitHub or to the folder), taken
+        from GitHub, or settled by reconcile. It records the version's fields and its BASE: the revision and the SHA-256 of the spec,
+        why and design mocks as this workspace holds them for that version, and what GitHub's issue held (its marker, or for text
+        changed after approval its body). A slice whose files still match its base is unchanged here, whatever its approval
+        (join.unchanged_here); one whose issue no longer matches the base changed on GitHub. Every path that agrees on a version
+        comes through here, so none can leave the base behind."""
+        entry.update(fields)
+        entry["base"] = agreed
+        entry.pop("taken", None)      # the earlier record of the same idea, for slices taken before the base existed
+        entry.pop("undecided", None)  # agreed now
+
     def record_taken(self, data: Dict[str, Any], read: Dict[str, Any], slice_id: str, saved: str, epic_id: str,
-                     not_approved: Optional[str] = None, approver: Optional[str] = None) -> None:
+                     not_approved: Optional[str] = None, approver: Optional[str] = None,
+                     written: Optional[Tuple[str, str, Optional[str]]] = None) -> None:
         """Link the slice opened here to its issue, at the revision it was based on. Recorded before the
         draft's files are written, so an interrupted take is finished by taking it again. With `not_approved` (why: edited,
         no_approval, check, mocks) the record says the truth: no approval is held here for that text, why, and since when, so
@@ -1750,10 +1767,14 @@ class Handoff:
         self.remember(data, read["snapshot"])
         entry = self.entry(data, slice_id)
         approved = not_approved is None
-        entry.update(number=read["number"], id=None, base_revision=marker["revision"], revision=marker["revision"],
-                     spec_sha256=marker["spec_sha256"] if approved else None, why_sha256=marker["why_sha256"] if approved else None,
-                     jira=marker.get("jira"), saved=saved, approved_by=check["approved_by"] if approved else None, run=None, taken_at=utc_now(),
-                     shipped=sorted(set(entry.get("shipped") or []) | ({marker["follows"]} if marker.get("follows") else set())))
+        # `written`: the SHA-256 of the spec and why as written here, and the mocks' digest, which this workspace and GitHub now agree on.
+        spec_text, why_text, mocks_now = written or (marker["spec_sha256"], marker["why_sha256"], marker.get("mocks_sha256"))
+        listed = self.rules.parse_slice_body(read.get("body")) or marker  # the marker as the listing parses it, with `intact`
+        self.record_version(entry, agreed_base(marker["revision"], spec_text, why_text, mocks_now, github_sig(listed, body_digest(read.get("body")))),
+                            number=read["number"], id=None, base_revision=marker["revision"], revision=marker["revision"],
+                            spec_sha256=marker["spec_sha256"] if approved else None, why_sha256=marker["why_sha256"] if approved else None,
+                            jira=marker.get("jira"), saved=saved, approved_by=check["approved_by"] if approved else None, run=None,
+                            taken_at=utc_now(), shipped=sorted(set(entry.get("shipped") or []) | ({marker["follows"]} if marker.get("follows") else set())))
         if approved:
             entry.pop("not_approved", None)
         else:
@@ -1804,6 +1825,21 @@ def epic_sha(title: Any, criteria: Any) -> str:
 
 # Comments of slice issues read in this command, by (repository, issue). studio.py empties it at the start of every command.
 COMMENTS_READ: Dict[Tuple[str, int], List[Dict[str, Any]]] = {}
+
+
+def agreed_base(revision: Any, spec: Optional[str], why: Optional[str], mocks: Optional[str], github: Optional[str] = None) -> Dict[str, Any]:
+    """A slice's base (Handoff.record_version): what this workspace and GitHub last agreed on. `github` defaults to the marker of an
+    intact, approved version of exactly that text."""
+    return {"revision": revision, "spec": spec, "why": why, "mocks": mocks,
+            "github": github or f"{revision}:{spec}:{why}:{mocks or '-'}:intact"}
+
+
+def github_sig(marker: Dict[str, Any], body_sha: Optional[str]) -> str:
+    """What a slice issue holds, in one string to compare with a base: its marker when its text is the marked one, else (text
+    changed after its approval) the body itself."""
+    if marker.get("intact"):
+        return f"{marker.get('revision')}:{marker.get('spec_sha256')}:{marker.get('why_sha256')}:{marker.get('mocks_sha256') or '-'}:intact"
+    return f"{marker.get('revision')}:edited:{body_sha}"
 
 
 def body_digest(body: Any) -> Optional[str]:

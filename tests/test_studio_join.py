@@ -324,7 +324,7 @@ class CameWithoutApprovalTest(JoinBase):
         status = self.status(self.b)
         (action,) = [a for a in status["next_actions"] if a["target"] == slice_id]
         self.assertEqual((action["kind"], action["reason"]), ("mocks_waiting", "Invite a teammate's design mock pictures are not on the main branch "
-                                                                               "yet. It updates by itself once they are."))
+                                                                               "here yet. They come at the first refresh after this computer has the main branch with them (after a pull or fetch)."))
         refused = self.refused(self.b, "slice", "ready", slice_id)
         self.assertIn(f"{slice_id}'s issue on GitHub carries 1 design mock picture that is not on the main branch here yet. Marking it ready now "
                       "would save it without it, so nothing was changed.", refused)
@@ -346,6 +346,8 @@ class CameWithoutApprovalTest(JoinBase):
         self.assertIn("Ben's edit.", spec.read_text())
         self.assertIn("SLICE-001 was changed here without being reopened, so it is not the version approved on GitHub", joined["note"])
         self.assertEqual([r["slice_id"] for r in self.status(self.b)["from_github"]["kept_changed"]], ["SLICE-001"])
+        first = self.status(self.b)["next_actions"][0]
+        self.assertEqual((first["kind"], first["title"]), ("reopen_changed", "Reopen SLICE-001"))
 
 
 class NotOursTest(JoinBase):
@@ -441,10 +443,143 @@ class ImportWaitTest(ImportBase):
         self.assertIn("on GitHub waits while bringing in a project file is unfinished here: finish bringing it in, or set it aside, and it "
                       "comes in.", joined["note"])
         self.assertEqual({p.name: p.read_bytes() for p in self.draft(self.b, "specs/slices").glob("SLICE-002-*")}, placed, "never written over")
+        first = self.ok(self.b, "status")["next_actions"][0]  # still true and needs the person: a next action, not only a line said once
+        self.assertEqual((first["kind"], first["related"]), ("import_waiting", ["SLICE-002"]))
         self.bring(self.b, archive)  # finished
         joined = self.ok(self.b, "refresh")["joined"]
         self.assertIn("SLICE-002", [row["slice_id"] for row in joined["taken"]["slices"]])
         self.assertEqual(self.ok(self.b, "status")["slices"][1]["github"]["issue"] is not None, True)
+
+
+class BaseTest(JoinBase):
+    """Second review: one base per slice, written wherever this workspace and GitHub agree on a version."""
+
+    def github_text(self, slice_id):
+        (issue,) = [i for i in self.issues("mach:slice") if (issue_rules.parse_slice_body(i["body"]) or {}).get("slice_id") == slice_id
+                    and i["state"] == "OPEN"]
+        marker = issue_rules.parse_slice_body(issue["body"])
+        return marker["revision"], marker["spec"]
+
+    def local_text(self, project, slice_id):
+        work = json.loads(self.draft(project, f"product/slices/{slice_id}.json").read_text())
+        return work["status"], self.draft(project, work["spec_path"]).read_text()
+
+    def test_three_rounds_two_people_both_workspaces_equal_github_at_each_step(self):
+        self.project_and_epic(self.ada())
+        self.ready(self.drafted(self.a), self.a)
+        self.ok(self.ben(), "refresh")
+        for round_ in range(1, 4):
+            for writer in (self.a, self.b):
+                me = "ada-pm" if writer == self.a else "ben-pm"
+                self.set_gh(me=me)
+                self.ok(writer, "refresh")
+                self.ok(writer, "slice", "reopen", "SLICE-001")
+                path = self.draft(writer, json.loads(self.draft(writer, "product/slices/SLICE-001.json").read_text())["spec_path"])
+                path.write_text(path.read_text() + f"\nRound {round_} by {me}.\n")
+                ready = self.ready("SLICE-001", writer)
+                self.assertNotIn("newer version", ready["note"], "nobody publishes over a version they had not seen")
+                for reader, login in ((self.a, "ada-pm"), (self.b, "ben-pm")):
+                    self.set_gh(me=login)
+                    self.ok(reader, "refresh")
+                revision, spec = self.github_text("SLICE-001")
+                for reader in (self.a, self.b):
+                    status, text = self.local_text(reader, "SLICE-001")
+                    self.assertEqual((status, text), ("approved_for_engineering", spec), f"round {round_}, after {me}: {reader.name}")
+                    self.assertEqual(self.ledger(reader)["slices"]["SLICE-001"]["base"]["revision"], revision)
+                    kinds = [a["kind"] for a in self.status(reader)["next_actions"]]
+                    self.assertNotIn("reopen_changed", kinds)
+                    self.assertNotIn("reconcile", kinds)
+
+    def test_pictures_that_arrive_later_make_the_slice_approved(self):
+        self.project_and_epic(self.ada())
+        slice_id = self.drafted(self.a)
+        picture = self.root / "p.png"
+        picture.write_bytes(png())
+        self.ok(self.a, "slice", "mock", "add", slice_id, str(picture))
+        ready = self.ready(slice_id, self.a)
+        self.ok(self.ben(), "refresh")
+        self.commit_mocks(slice_id, ready["mocks"]["files"])
+        git(self.b, "fetch", "-q", "origin")
+        joined = self.ok(self.b, "refresh")["joined"]
+        self.assertIn(f"{slice_id}'s design pictures arrived; it is approved as @ada-pm approved it.", joined["note"])
+        (row,) = self.status(self.b)["slices"]
+        self.assertEqual((row["status"], row["github"]["not_approved"]), ("approved_for_engineering", None))
+        self.assertNotIn("mocks_waiting", [a["kind"] for a in self.status(self.b)["next_actions"]])
+        self.assertEqual(self.ok(self.b, "refresh")["joined"]["updated"], [], "in step, and stays so")
+
+    def test_a_workspace_from_before_the_base_gets_one_without_guessing(self):
+        self.project_and_epic(self.ada())
+        kept = self.ready(self.drafted(self.a), self.a)["issue"]
+        number = self.ready(self.drafted(self.a, title="Remove a teammate"), self.a)["issue"]
+        approved = self.issue(number)["body"]
+        self.change_issue(number, body=approved.replace("An admin cannot bring a colleague in.", "Anyone can do anything."))
+        self.ok(self.ben(), "refresh")
+        self.change_issue(number, body=approved)  # the author puts the approved text back
+        # Ben's workspace as the 0.26.0 code left it: no base anywhere.
+        ledger = self.ledger(self.b)
+        for entry in ledger["slices"].values():
+            entry.pop("base", None)
+        (self.b / ".factory/studio/issues.json").write_text(json.dumps(ledger))
+        self.ok(self.b, "refresh")
+        ledger = self.ledger(self.b)["slices"]
+        self.assertEqual(ledger["SLICE-001"]["base"]["revision"], 1, "approved and matching its approval: that is its base")
+        self.assertIn("undecided", ledger["SLICE-002"])
+        status = self.status(self.b)
+        first = status["next_actions"][0]
+        self.assertEqual((first["kind"], first["target"]), ("choose_version", "SLICE-002"))
+        self.assertEqual(first["reason"], f"SLICE-002 here differs from GitHub (#{number}), and MACH cannot tell whether you changed it. Keep yours, "
+                                          "or take GitHub's (reconcile SLICE-002 --take mine, or --take theirs; yours is kept first).")
+        self.assertNotIn("mark_ready", [a["kind"] for a in status["next_actions"]][:1])
+        took = self.ok(self.b, "reconcile", "SLICE-002", "--take", "theirs")
+        self.assertTrue(took["approved_here"])
+        self.assertIn(".factory/studio/replaced/", took["kept_yours"])
+        self.assertNotIn("undecided", self.ledger(self.b)["slices"]["SLICE-002"])
+        self.assertEqual(kept, self.ledger(self.b)["slices"]["SLICE-001"]["number"])
+
+    def test_a_newer_version_is_looked_at_first_never_published_over(self):
+        self.project_and_epic(self.ada())
+        self.ready(self.drafted(self.a), self.a)
+        self.ok(self.ben(), "refresh")
+        self.ok(self.b, "slice", "reopen", "SLICE-001")
+        path = self.draft(self.b, json.loads(self.draft(self.b, "product/slices/SLICE-001.json").read_text())["spec_path"])
+        path.write_text(path.read_text() + "\nBen's change.\n")
+        self.set_gh(me="ada-pm")
+        self.ok(self.a, "slice", "reopen", "SLICE-001")
+        self.write_slice(self.a, "SLICE-001", extra="\nAda's v2.\n")
+        self.ready("SLICE-001", self.a)
+        self.ok(self.ben(), "refresh")
+        first = self.status(self.b)["next_actions"][0]
+        self.assertEqual((first["kind"], first["title"]), ("reconcile", "Look at the two versions of SLICE-001"))
+        self.assertEqual(first["reason"], "Someone else saved a newer version of Invite a teammate on GitHub, and your copy here differs. Look at the "
+                                          "two, then take theirs, or keep yours as a new version.")
+
+    def test_a_never_published_principle_gives_way_to_githubs_and_stays_a_draft(self):
+        ben = self.ben()
+        self.ok(ben, "project", "init", "--name", "Ben's product", "--vision", "v", "--outcome", "o")
+        self.ok(ben, "principle", "add", "--title", "Ben's", "--statement", "An invitation MUST name the person who sent it.", "--reason", "Trust.")
+        self.project_and_epic(self.ada())
+        self.ok(self.a, "principle", "add", "--title", "Versions", "--statement", "A published version MUST NOT be edited in place.", "--reason", "Why.")
+        self.ok(self.a, "principle", "publish")
+        joined = self.ok(self.ben(), "refresh")["joined"]
+        self.assertIn("The principles published on GitHub came in under their own numbers. Yours were never published, so they stay drafts: "
+                      "PP-01 is now PP-02.", joined["note"])
+        listed = {item["id"]: item["statement"] for item in self.ok(self.b, "principle", "list")["principles"]}
+        self.assertEqual(listed, {"PP-01": "A published version MUST NOT be edited in place.", "PP-02": "An invitation MUST name the person who sent it."})
+
+    def test_an_epic_renumbering_chain_is_said_once_where_it_ended(self):
+        ben = self.ben()
+        self.ok(ben, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "v", "--outcome", "o")
+        for title in ("Ben one", "Ben two"):
+            self.ok(ben, "epic", "add", "--title", title, "--criterion", "Something")
+        self.project_and_epic(self.ada())
+        for title in ("Billing", "Reports"):
+            self.ok(self.a, "epic", "add", "--title", title, "--criterion", "Something")
+        for epic in ("EPIC-001", "EPIC-002", "EPIC-003"):
+            self.ready(self.slice_in(self.a, epic, f"A slice of {epic}"), self.a)
+        joined = self.ok(self.ben(), "refresh")["joined"]
+        epic_lines = [line for line in joined["warned"] if line.startswith("Your epic ")]
+        self.assertEqual(sorted(epic_lines), ["Your epic EPIC-001 is now EPIC-005, so the epics on GitHub could come in under their own numbers.",
+                                              "Your epic EPIC-002 is now EPIC-004, so the epics on GitHub could come in under their own numbers."])
 
 
 class ReadsTest(JoinBase):
