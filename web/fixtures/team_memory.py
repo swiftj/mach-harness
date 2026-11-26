@@ -246,11 +246,14 @@ def project_join_none(s):
 
 
 def project_not_checked(s):
-    """GitHub cannot be read when the product is named: it is defined from the person's words, and they are told."""
+    """GitHub cannot be read when the product is named: nothing is defined (the repository may already have a project), and the
+    person may start their own anyway, on their word: then it is defined from their words, and they are told."""
     ben = s.ben()
     s.gh_fails("issue list", once=False)
     s.capture("project.init.team-not-checked", "project", "init", "--id", "team-space", "--name", "Team Space",
               "--vision", "Teams work together.", "--outcome", "Teams can work together", project=ben)
+    s.capture("project.init.team-not-checked-anyway", "project", "init", "--id", "team-space", "--name", "Team Space",
+              "--vision", "Teams work together.", "--outcome", "Teams can work together", "--anyway", project=ben)
 
 
 def several_projects(s):

@@ -27,7 +27,7 @@ import {
   versionFields,
 } from "../src/shared/team.ts";
 import { routeFor, routeForHint } from "../src/api/nextActions.ts";
-import { bringsInFromGithub, joinProgressWords, JOIN_BATCH } from "../src/features/home/start/model.ts";
+import { bringsInFromGithub, joinProgressWords, JOIN_BATCH, projectEntry } from "../src/features/home/start/model.ts";
 
 const run = (name) => JSON.parse(readFileSync(new URL(`../../../fixtures/${name}.json`, import.meta.url), "utf8"));
 
@@ -235,7 +235,14 @@ test("naming the product: the project already on GitHub is taken and said; GitHu
   assert.equal(taken.issue, 1);
   assert.match(taken.url, /\/issues\/1$/);
   assert.match(taken.note, /so MACH brought it in from there\. The words you gave were not used: a repository holds one project\./);
-  const notChecked = projectStartNote(run("project.init.team-not-checked").data);
+  // GitHub cannot be read: nothing is defined unasked (the repository may already have a project); starting anyway is the person's word.
+  const refusedUnread = run("project.init.team-not-checked");
+  assert.equal(refusedUnread.exit_code, 1);
+  assert.deepEqual(refusedUnread.hint, { kind: "start_anyway", target: null });
+  assert.match(refusedUnread.refused, /^MACH could not read GitHub, so it cannot tell whether this repository already has a project\./);
+  assert.match(refusedUnread.refused, /You can also start a product of your own here anyway\.$/);
+  plainWords(refusedUnread.refused, "project init, GitHub unread");
+  const notChecked = projectStartNote(run("project.init.team-not-checked-anyway").data);
   assert.equal(notChecked.kind, "not_checked");
   assert.match(notChecked.note, /^MACH could not check GitHub for a project already there\./);
   assert.equal(projectStartNote(run("project.init").data), null, "a project named with nothing on GitHub says nothing more");
@@ -344,7 +351,7 @@ test("a fresh clone of a repository whose project is on GitHub brings it in firs
   assert.equal(first.taken.project, true);
   assert.equal(first.taken.slices.length, 2);
   assert.equal(first.remaining, 1);
-  assert.equal(first.in_words[0], "This repository's project is Team Space. MACH brought it in from GitHub: 1 epic and 2 slices, 2 ready.");
+  assert.equal(first.in_words[0], "This repository's project is Team Space. MACH is bringing it in from GitHub: 1 epic and 2 slices so far.");
   for (const line of first.in_words) plainWords(line, "joined");
   assert.equal(run("project.join.team-last").data.remaining, 0);
   assert.ok(JOIN_BATCH > 0);
@@ -373,10 +380,13 @@ test("GitHub out of reach at the start: said in the tool's words, nothing change
   const status = run("status.team-join-failed").data;
   assert.equal(status.project, null);
   assert.equal(bringsInFromGithub(status), true, "still brought in, never defined from nothing");
-  const screen = readFileSync(new URL("../src/features/home/start/StartScreen.tsx", import.meta.url), "utf8");
-  assert.match(screen, /bringsInFromGithub\(status\) \? <FromGithub \/> : <Ways status=\{status\} \/>/);
-  assert.match(screen, /Try again/);
-  assert.doesNotMatch(screen, /what you type is not used/);
+  // Every screen that would ask for the project (the home, Vision, the roadmap, a way that names the product) decides by
+  // projectEntry: while the project comes from GitHub, none of them offers to define it; only the person's own word does.
+  assert.equal(projectEntry(status), "join");
+  assert.equal(projectEntry(run("status.team-join-start").data), "join");
+  assert.equal(projectEntry(status, true), "define", "the person chose to start a product of their own");
+  assert.equal(projectEntry(run("status.team-join-none").data), "define");
+  assert.equal(projectEntry(run("status.team-joined").data), "project");
 });
 
 test("GitHub holds no project for this repository: the ways to start are offered", () => {

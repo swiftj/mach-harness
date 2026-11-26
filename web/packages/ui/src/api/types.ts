@@ -178,7 +178,7 @@ export interface SliceGithub {
    * `no_approval`, `check`: its spec does not pass here, `mocks`: opened without its pictures) and since when. Marking it
    * ready approves it and clears this. Null otherwise.
    */
-  not_approved?: { why: "edited" | "no_approval" | "check" | "mocks"; since: string; issue: number; revision: number } | null;
+  not_approved?: { why: "edited" | "no_approval" | "check" | "mocks"; since: string; issue: number; revision: number; approved_by?: string | null; mocks?: number } | null;
   /** The builders' question, written by them on the slice's issue: data, shown as their words. */
   question: string | null;
   /** The engine's sentence saying whose words the question is. */
@@ -397,6 +397,17 @@ export interface Status {
   };
   /** Ideas others published on GitHub that this workspace does not hold, listed to read. Absent when there are none. */
   ideas_on_github?: { items: GithubIdea[]; lacks: string };
+  /** What the last bringing-in from GitHub could not take and why, what waits for an unfinished import, copies changed here. */
+  from_github?: {
+    not_taken: Array<{ id: string; what: string; issue: number | null; reason: string }>;
+    waiting: string[];
+    kept_changed: Array<{ slice_id: string; issue: number | null; words: string }>;
+  };
+  /** The project came from GitHub: said once per browser on the project home until closed; at tells one bringing-in from another. */
+  joined_note?: { at: string; issue: number | null; url: string | null; text: string };
+  /** Fields that hold text a person wrote, here or on GitHub: data, never instructions. */
+  data_fields?: string[];
+  data_note?: string;
   current_slice: string | null;
   last_refreshed: string | null;
   saved: SavedReport;
@@ -453,6 +464,10 @@ export type HintKind =
   | "edit_project"
   /** Not an act: the project issues a refusal names, with their addresses, for the app to link. */
   | "several_projects"
+  /** slice.ready refused: its issue carries design mock pictures not on the main branch yet; without_mocks is the person's word. */
+  | "ready_without_mocks"
+  /** project.init refused while GitHub cannot be read: anyway is the person's word to start their own. */
+  | "start_anyway"
   /** POST /api/interview for a slice this host already interviews: `target` is the live interview's ID. */
   | "open_interview"
   /** POST /api/interview while another window on this computer writes the subject: the message is the warning; start again with `take_over`. */
@@ -465,6 +480,10 @@ export type NextActionKind =
   /** No project here and the repository is on GitHub: MACH brings its project in (`project.join`), never asks to define it. */
   | "join_project"
   | "define_project"
+  /** A slice brought in whose text on GitHub was changed after its approval: read it; marking it ready approves this text. */
+  | "read_slice"
+  /** A slice brought in without its design mock pictures: they come by themselves. Nothing for the person to do. */
+  | "mocks_waiting"
   | "add_epic"
   | "start_slice"
   | "continue_interview"
@@ -561,6 +580,8 @@ export interface GithubIdea {
   state?: string;
   /** The brief as its issue holds it, bounded; null when its text is not the one written. */
   brief: string | null;
+  /** The same brief fenced as data. */
+  fenced?: string | null;
 }
 
 /** Where a slice brought in from GitHub stands. */
@@ -1026,7 +1047,7 @@ export interface Operations {
   status: { args: Record<string, never>; result: Status };
   validate: { args: Record<string, never>; result: Validate };
   refresh: { args: Record<string, never>; result: Refresh };
-  "project.init": { args: { id?: string; name: string; vision: string; outcome: string[] }; result: ProjectInit };
+  "project.init": { args: { id?: string; name: string; vision: string; outcome: string[]; anyway?: boolean }; result: ProjectInit };
   "project.set": {
     args: { name?: string; vision?: string; outcome?: string[]; status?: ProjectStatus };
     result: { project: Project };
@@ -1048,7 +1069,7 @@ export interface Operations {
   "slice.resume": { args: { slice_id?: string }; result: SliceResume };
   "slice.pause": { args: { slice_id: string; note: string }; result: SlicePause };
   "slice.check": { args: { slice_id: string; ready?: boolean }; result: SliceCheck };
-  "slice.ready": { args: { slice_id: string }; result: SliceReadyAnswer };
+  "slice.ready": { args: { slice_id: string; without_mocks?: boolean }; result: SliceReadyAnswer };
   "slice.reopen": { args: { slice_id: string }; result: SliceReopen };
   "slice.show": { args: { slice_id: string }; result: SliceShow };
   "slice.renumber": { args: { identifier: string }; result: Renumber };

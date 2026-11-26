@@ -150,6 +150,18 @@ export function bringsInFromGithub(status: Pick<Status, "project" | "next_action
   return !status.project && status.next_actions.some((action) => action.kind === "join_project");
 }
 
+export type ProjectEntry = "project" | "join" | "define";
+
+/**
+ * What every screen that would ask for the project shows (the home, Vision, the roadmap, a way that names the product):
+ * the project when there is one; the bringing-in from GitHub when the engine says the project comes from there, unless the
+ * person chose to start a product of their own anyway; otherwise the form that defines it.
+ */
+export function projectEntry(status: Pick<Status, "project" | "next_actions">, startAnyway = false): ProjectEntry {
+  if (status.project) return "project";
+  return bringsInFromGithub(status) && !startAnyway ? "join" : "define";
+}
+
 /** How many slices a batch of `project.join` brings at a time, so the screen can say how many have come. */
 export const JOIN_BATCH = 4;
 

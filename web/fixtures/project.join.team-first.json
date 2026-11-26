@@ -48,6 +48,8 @@
     "not_taken": [],
     "renumbered": [],
     "warned": [],
+    "kept_changed": [],
+    "waiting_for_import": [],
     "remaining": 1,
     "factory_authorized": false,
     "project": {
@@ -57,13 +59,13 @@
       "url": "https://github.com/acme/team-space/issues/1"
     },
     "only_on_their_computer": "Drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were written.",
-    "project_words": "This repository's project is Team Space. MACH brought it in from GitHub: 1 epic and 2 slices, 2 ready.",
+    "project_words": "This repository's project is Team Space. MACH is bringing it in from GitHub: 1 epic and 2 slices so far.",
     "in_words": [
-      "This repository's project is Team Space. MACH brought it in from GitHub: 1 epic and 2 slices, 2 ready.",
+      "This repository's project is Team Space. MACH is bringing it in from GitHub: 1 epic and 2 slices so far.",
       "1 slice still to bring in; MACH carries on.",
       "Drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were written."
     ],
-    "note": "This repository's project is Team Space. MACH brought it in from GitHub: 1 epic and 2 slices, 2 ready. 1 slice still to bring in; MACH carries on. Drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were written."
+    "note": "This repository's project is Team Space. MACH is bringing it in from GitHub: 1 epic and 2 slices so far. 1 slice still to bring in; MACH carries on. Drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were written."
   },
   "refused": null,
   "hint": null

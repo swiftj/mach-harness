@@ -184,7 +184,7 @@ export function teamRoute(path: string, args: Record<string, unknown>): Transpor
     case "project.init":
       if (team === "start-several") return answer("project.init.team-several");
       done.named = true;
-      return answer(team === "start-not-checked" ? "project.init.team-not-checked" : "project.init.team-taken");
+      return answer(team === "start-not-checked" ? (args.anyway ? "project.init.team-not-checked-anyway" : "project.init.team-not-checked") : "project.init.team-taken");
     case "prd.list":
       return team === "prd-not-checked" ? answer("prd.list") : null;
     case "prd.show":

@@ -61,7 +61,7 @@
         "state": "settled",
         "settled": {
           "as": "slice",
-          "at": "2026-11-25T22:50:12Z",
+          "at": "2026-11-26T00:40:12Z",
           "slice": "M1"
         }
       },
@@ -91,7 +91,7 @@
         "state": "settled",
         "settled": {
           "as": "out-of-scope",
-          "at": "2026-11-25T22:50:12Z",
+          "at": "2026-11-26T00:40:12Z",
           "reason": "Billing belongs to the finance team."
         }
       },
@@ -103,7 +103,7 @@
         "state": "settled",
         "settled": {
           "as": "later",
-          "at": "2026-11-25T22:50:12Z"
+          "at": "2026-11-26T00:40:12Z"
         }
       }
     ],

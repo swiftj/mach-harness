@@ -43,9 +43,10 @@
     "not_taken": [],
     "renumbered": [],
     "warned": [
-      "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so MACH used #1, the oldest one MACH can read. Closing #4 changes nothing in your work: it leaves one project issue, and its text stays in its history. MACH can close it for you.",
-      "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so MACH used #1, the one this workspace already follows. Closing #4 changes nothing in your work: it leaves one project issue, and its text stays in its history. MACH can close it for you."
+      "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so MACH used #1, the oldest one MACH can read. Closing #4 changes nothing in your work: it leaves one project issue, and its text stays in its history. MACH can close it for you."
     ],
+    "kept_changed": [],
+    "waiting_for_import": [],
     "remaining": 0,
     "factory_authorized": false,
     "extra_issues": [
@@ -68,7 +69,7 @@
       "This repository's project is Team Space. MACH brought it in from GitHub: 1 epic and 1 slice, 1 ready.",
       "Drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were written."
     ],
-    "note": "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so MACH used #1, the oldest one MACH can read. Closing #4 changes nothing in your work: it leaves one project issue, and its text stays in its history. MACH can close it for you. This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so MACH used #1, the one this workspace already follows. Closing #4 changes nothing in your work: it leaves one project issue, and its text stays in its history. MACH can close it for you. This repository already has a project on GitHub (#1), so MACH brought it in from there. The words you gave were not used: a repository holds one project. This repository's project is Team Space. MACH brought it in from GitHub: 1 epic and 1 slice, 1 ready. Drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were written.",
+    "note": "This repository has more than one project issue on GitHub (#1 and #4). A repository holds one project, so MACH used #1, the oldest one MACH can read. Closing #4 changes nothing in your work: it leaves one project issue, and its text stays in its history. MACH can close it for you. This repository already has a project on GitHub (#1), so MACH brought it in from there. The words you gave were not used: a repository holds one project. This repository's project is Team Space. MACH brought it in from GitHub: 1 epic and 1 slice, 1 ready. Drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were written.",
     "path": "/project/.factory/studio/draft/product/project.json",
     "taken_from_github": 1,
     "url": "https://github.com/acme/team-space/issues/1"
