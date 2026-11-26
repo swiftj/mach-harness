@@ -1,4 +1,4 @@
-# MACH release notes: 0.26.0
+# MACH release notes: 0.27.0
 
 What is new in each release, newest first, followed by supported platforms, what you need, upgrading and security notes.
 
