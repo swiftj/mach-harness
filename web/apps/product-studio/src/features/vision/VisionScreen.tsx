@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useStartAnyway } from "../../api/join";
+import { projectEntry } from "../home/start/model";
+import { FromGithub } from "../home/start/StartScreen";
 import { useLocation } from "react-router";
 import { CircleAlert, Plus } from "lucide-react";
 import { ArtifactId, Banner, Button, EpicStatusPill, ErrorState, Field, Heading, Input, Skeleton, SkeletonText, Text, Textarea, cn, describeError, plural, toast, type Status, type StatusEpicRow, HintAction } from "@mach/ui";
@@ -55,6 +58,7 @@ export function VisionScreen() {
 
 function Vision({ status }: { status: Status }) {
   const location = useLocation();
+  const anyway = useStartAnyway();
   useEffect(() => {
     const focus = (location.state as { focus?: string } | null)?.focus;
     const target = focus ? document.getElementById(focus) : null;
@@ -64,6 +68,8 @@ function Vision({ status }: { status: Status }) {
   }, [location.state]);
 
   const project = status.project;
+  // The project comes from GitHub: the same bringing-in as the project home, never a form to define it again.
+  if (!project && projectEntry(status, anyway) === "join") return <FromGithub />;
   if (!project) {
     return (
       <WorkScreen header={<ContextRow title="Define the project" about="Start with what the product is for. You can refine every part of this later." />}>

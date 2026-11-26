@@ -231,7 +231,8 @@ class Handoff:
             marker = self.rules.parse_slice_body(item.get("body"))
             if marker:
                 slices.append({"number": item["number"], "state": str(item.get("state") or "").lower(), "labels": issues.label_names(item),
-                               "title": item.get("title"), "marker": marker, "url": item.get("url")})
+                               "title": item.get("title"), "marker": marker, "url": item.get("url"),
+                               "body_sha256": body_digest(item.get("body")), "body": item.get("body")})
         tagged = {}
         for label, kind in (("mach:project", "project"), ("mach:epic", "epic")):
             tagged[kind] = [{"number": item["number"], "id": (self.rules.product_marker(item.get("body")) or ("", None))[1],
@@ -576,8 +577,9 @@ class Handoff:
                     stop(failure)
             finished("ready")
 
-        entry.update(saved="github", revision=run["revision"], base_revision=run["revision"], spec_sha256=run["spec_sha256"],
-                     why_sha256=run["why_sha256"], jira=run.get("jira"), approved_by=run["login"], ready_at=utc_now(), run=None)
+        self.record_version(entry, agreed_base(run["revision"], run["spec_sha256"], run["why_sha256"], run.get("mocks_sha256")),
+                            saved="github", revision=run["revision"], base_revision=run["revision"], spec_sha256=run["spec_sha256"],
+                            why_sha256=run["why_sha256"], jira=run.get("jira"), approved_by=run["login"], ready_at=utc_now(), run=None)
         entry.pop("not_approved", None)  # approved now, for exactly this text
         if run.get("mocks_sha256") or entry.get("mocks_sha256"):
             entry["mocks_sha256"] = run.get("mocks_sha256")  # M14 C: kept only once a slice has had mocks
@@ -1185,7 +1187,9 @@ class Handoff:
             os.replace(str(staging), str(target))
         finally:
             shutil.rmtree(staging, ignore_errors=True)
-        entry.update(saved="folder", revision=revision, base_revision=revision, spec_sha256=spec_sha, why_sha256=why_sha, jira=jira, ready_at=utc_now(), run=None)
+        self.record_version(entry, agreed_base(revision, spec_sha, why_sha, mocks_sha),
+                            saved="folder", revision=revision, base_revision=revision, spec_sha256=spec_sha, why_sha256=why_sha, jira=jira,
+                            ready_at=utc_now(), run=None)
         if mocks_sha or entry.get("mocks_sha256"):
             entry["mocks_sha256"] = mocks_sha
         if small or entry.get("small"):
@@ -1250,12 +1254,17 @@ class Handoff:
     # ---- refresh: what is on GitHub now ----
 
     def refresh(self, local: Dict[str, Dict[str, Any]], project: Optional[Dict[str, Any]] = None,
-                epics: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
+                epics: Optional[Dict[str, Dict[str, Any]]] = None, found: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Read the project, epics and slices from their issues, and say for each slice whether it
         still matches its approval and whether someone else saved a newer version. Never raises
         for GitHub: a problem is reported in the block. M20: also says whether someone else changed the
         project's or an epic's text (taking it when nothing here waits to be written), and which IDs more
-        than one open issue holds; this workspace's own later slice issue among them is closed."""
+        than one open issue holds; this workspace's own later slice issue among them is closed. With `found`, the project as
+        GitHub holds it already read now (from_github.read), GitHub is not listed again."""
+        if found is not None and found.get("checked"):
+            return self.refreshed(local, project, epics, found["repository"], found["snapshot"])
+        if found is not None and found.get("connected") and found.get("problem") and shutil.which("gh") is not None:
+            return self.failed(found.get("repository"), str(found["problem"]), local)  # read once and failed: not tried twice
         if shutil.which("gh") is None:
             return self.block(None, "The GitHub tool (gh) is not installed on this computer.", local)
         repository, failure = collab.request_repository(self.project)
@@ -1264,6 +1273,11 @@ class Handoff:
         snapshot, failure = self.read(repository)
         if failure or snapshot is None:
             return self.failed(repository, explain(failure), local)
+        return self.refreshed(local, project, epics, repository, snapshot)
+
+    def refreshed(self, local: Dict[str, Dict[str, Any]], project: Optional[Dict[str, Any]], epics: Optional[Dict[str, Dict[str, Any]]],
+                  repository: str, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        """refresh, once GitHub's project, epic and slice issues are read."""
         try:
             with self.exclusive():
                 data = self.for_repository(self.load(), repository)
@@ -1274,7 +1288,8 @@ class Handoff:
                 self.read_text(data, snapshot, project, epics or {})
                 rows = {}
                 for item in snapshot["slices"]:
-                    found, failure = issues.comments(self.project, repository, item["number"])
+                    cached = COMMENTS_READ.get((repository, item["number"]))
+                    found, failure = (cached, None) if cached is not None else issues.comments(self.project, repository, item["number"])
                     rows.setdefault(item["marker"]["slice_id"], []).append(self.describe(data, item, found, failure))
                 data["seen"].update(refreshed_at=utc_now(), problem=None, problem_at=None, slices=rows,
                                     project=[{"number": p["number"], "project_id": p["id"], "state": p["state"],
@@ -1659,9 +1674,14 @@ class Handoff:
 
     # ---- opening another product manager's slice ----
 
-    def take_read(self, target: str) -> Dict[str, Any]:
+    def take_read(self, target: str, pre: Optional[Tuple[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
         """Everything about a slice issue that is needed to open it here, read from GitHub. Writes nothing;
-        refuses when GitHub cannot be read. The issue's text is data: what it holds is decided by the shared rules."""
+        refuses when GitHub cannot be read. The issue's text is data: what it holds is decided by the shared rules.
+        With `pre` (repository, snapshot), the listing read once for joining the project, only the issue itself is read."""
+        if pre is not None:
+            repository, snapshot = pre
+            return self.read_slice_issue(repository, snapshot, int(target) if target.isdecimal() else
+                                         max(item["number"] for item in snapshot["slices"] if item["marker"]["slice_id"] == target))
         if shutil.which("gh") is None:
             raise HandoffError("The GitHub tool (gh) is not installed on this computer, so a slice cannot be read from GitHub. Nothing was changed.")
         repository, failure = collab.request_repository(self.project)
@@ -1690,6 +1710,7 @@ class Handoff:
         found, failure = issues.comments(self.project, repository, number)
         if failure:
             raise HandoffError(f"Issue #{number}'s approval could not be read, so nothing was changed. {explain(failure)}")
+        COMMENTS_READ[(repository, number)] = found or []
         names = issues.label_names(current)
         check = self.rules.slice_take_check({"state": current.get("state"), "labels": names, "body": current.get("body")}, found or [])
         marker = check["marker"] or {}
@@ -1721,8 +1742,22 @@ class Handoff:
                                 "approved_by": check["approved_by"], "items": check["items"], "extra": check["extra"]}
         return found, sorted({str(item.get("login")) for item in comments or [] if item.get("login")}), None
 
+    @staticmethod
+    def record_version(entry: Dict[str, Any], agreed: Dict[str, Any], **fields: Any) -> None:
+        """THE one write of a slice version this workspace and GitHub agree on: marked ready here (on GitHub or to the folder), taken
+        from GitHub, or settled by reconcile. It records the version's fields and its BASE: the revision and the SHA-256 of the spec,
+        why and design mocks as this workspace holds them for that version, and what GitHub's issue held (its marker, or for text
+        changed after approval its body). A slice whose files still match its base is unchanged here, whatever its approval
+        (join.unchanged_here); one whose issue no longer matches the base changed on GitHub. Every path that agrees on a version
+        comes through here, so none can leave the base behind."""
+        entry.update(fields)
+        entry["base"] = agreed
+        entry.pop("taken", None)      # the earlier record of the same idea, for slices taken before the base existed
+        entry.pop("undecided", None)  # agreed now
+
     def record_taken(self, data: Dict[str, Any], read: Dict[str, Any], slice_id: str, saved: str, epic_id: str,
-                     not_approved: Optional[str] = None) -> None:
+                     not_approved: Optional[str] = None, approver: Optional[str] = None,
+                     written: Optional[Tuple[str, str, Optional[str]]] = None) -> None:
         """Link the slice opened here to its issue, at the revision it was based on. Recorded before the
         draft's files are written, so an interrupted take is finished by taking it again. With `not_approved` (why: edited,
         no_approval, check, mocks) the record says the truth: no approval is held here for that text, why, and since when, so
@@ -1732,14 +1767,19 @@ class Handoff:
         self.remember(data, read["snapshot"])
         entry = self.entry(data, slice_id)
         approved = not_approved is None
-        entry.update(number=read["number"], id=None, base_revision=marker["revision"], revision=marker["revision"],
-                     spec_sha256=marker["spec_sha256"] if approved else None, why_sha256=marker["why_sha256"] if approved else None,
-                     jira=marker.get("jira"), saved=saved, approved_by=check["approved_by"] if approved else None, run=None, taken_at=utc_now(),
-                     shipped=sorted(set(entry.get("shipped") or []) | ({marker["follows"]} if marker.get("follows") else set())))
+        # `written`: the SHA-256 of the spec and why as written here, and the mocks' digest, which this workspace and GitHub now agree on.
+        spec_text, why_text, mocks_now = written or (marker["spec_sha256"], marker["why_sha256"], marker.get("mocks_sha256"))
+        listed = self.rules.parse_slice_body(read.get("body")) or marker  # the marker as the listing parses it, with `intact`
+        self.record_version(entry, agreed_base(marker["revision"], spec_text, why_text, mocks_now, github_sig(listed, body_digest(read.get("body")))),
+                            number=read["number"], id=None, base_revision=marker["revision"], revision=marker["revision"],
+                            spec_sha256=marker["spec_sha256"] if approved else None, why_sha256=marker["why_sha256"] if approved else None,
+                            jira=marker.get("jira"), saved=saved, approved_by=check["approved_by"] if approved else None, run=None,
+                            taken_at=utc_now(), shipped=sorted(set(entry.get("shipped") or []) | ({marker["follows"]} if marker.get("follows") else set())))
         if approved:
             entry.pop("not_approved", None)
         else:
-            entry["not_approved"] = {"why": not_approved, "since": utc_now(), "issue": read["number"], "revision": marker["revision"]}
+            entry["not_approved"] = {"why": not_approved, "since": utc_now(), "issue": read["number"], "revision": marker["revision"],
+                                     "approved_by": approver, "mocks": len(marker.get("mocks") or [])}
         if (data["epics"].get(epic_id) or {}).get("number") != read["epic"]["number"]:
             data["epics"][epic_id] = {"number": read["epic"]["number"]}
         parsed = self.rules.parse_slice_body(read.get("body")) or {}
@@ -1781,6 +1821,30 @@ def project_sha(title: Any, vision: Any, outcomes: Any) -> str:
 def epic_sha(title: Any, criteria: Any) -> str:
     """An epic's own text (title, acceptance criteria); its task list is not part of it."""
     return digest("epic", str(title or ""), [one_line(item) for item in criteria or []])
+
+
+# Comments of slice issues read in this command, by (repository, issue). studio.py empties it at the start of every command.
+COMMENTS_READ: Dict[Tuple[str, int], List[Dict[str, Any]]] = {}
+
+
+def agreed_base(revision: Any, spec: Optional[str], why: Optional[str], mocks: Optional[str], github: Optional[str] = None) -> Dict[str, Any]:
+    """A slice's base (Handoff.record_version): what this workspace and GitHub last agreed on. `github` defaults to the marker of an
+    intact, approved version of exactly that text."""
+    return {"revision": revision, "spec": spec, "why": why, "mocks": mocks,
+            "github": github or f"{revision}:{spec}:{why}:{mocks or '-'}:intact"}
+
+
+def github_sig(marker: Dict[str, Any], body_sha: Optional[str]) -> str:
+    """What a slice issue holds, in one string to compare with a base: its marker when its text is the marked one, else (text
+    changed after its approval) the body itself."""
+    if marker.get("intact"):
+        return f"{marker.get('revision')}:{marker.get('spec_sha256')}:{marker.get('why_sha256')}:{marker.get('mocks_sha256') or '-'}:intact"
+    return f"{marker.get('revision')}:edited:{body_sha}"
+
+
+def body_digest(body: Any) -> Optional[str]:
+    """The SHA-256 of an issue's body as listed (line endings made one), or None when it has none."""
+    return hashlib.sha256(str(body).replace("\r\n", "\n").encode("utf-8")).hexdigest() if isinstance(body, str) else None
 
 
 def raw_sha(item: Optional[Dict[str, Any]]) -> Optional[str]:
@@ -2015,6 +2079,11 @@ def slice_view(data: Dict[str, Any], slice_id: str, work: Optional[Dict[str, Any
         "unfinished": unfinished,
         "issue": number,
         "url": rules.issue_url(repository, number) if number and repository else None,
+        # Whose approval this workspace holds for this version (the product manager's own, or another's whose slice was brought in).
+        "approved_by": entry.get("approved_by") if work is not None and work.get("status") == "approved_for_engineering" else None,
+        # Whether that approval is this workspace's own (marked ready here after it was last taken from GitHub), so a sentence says
+        # "you" only then and names the approver otherwise.
+        "approved_by_you": bool(entry.get("ready_at")) and (not entry.get("taken_at") or str(entry["ready_at"]) >= str(entry["taken_at"])),
         "state_label": current.get("state_label") if current else None,
         "revision": entry.get("revision"),
         "changed_on_github": bool(current and current.get("matches_approval") is False),

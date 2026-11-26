@@ -343,10 +343,14 @@ class StudioTest(IssuesBase):
     def test_another_product_managers_principles_are_taken_at_refresh_or_chosen(self):
         self.add()
         self.ok(self.a, "principle", "publish")
-        self.project_and_epic(self.b)
         self.set_gh(me="ben-pm")
-        refreshed = self.ok(self.b, "refresh")
-        self.assertEqual(refreshed["principles_taken"]["revision"], 1)
+        # The project is on GitHub, so starting it takes it from there, with its principles and their approval.
+        joined = self.ok(self.b, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.",
+                         "--outcome", "Teams can work together")
+        self.assertTrue(joined["taken"]["principles"])
+        self.assertEqual(joined["principles_taken"]["revision"], 1)
+        self.assertEqual(joined["principles_taken"]["note"], "Another product manager published version 1 of the principles; it was taken, since you had no "
+                                                    "unpublished changes.")
         self.assertEqual(self.ok(self.b, "principle", "list")["principles"][0]["statement"], STATEMENT)
         self.ok(self.b, "principle", "add", "--title", "Senders", "--statement", SECOND, "--reason", "Trust.")
         self.assertEqual(self.ok(self.b, "principle", "publish")["revision"], 2)

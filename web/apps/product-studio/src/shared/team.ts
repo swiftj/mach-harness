@@ -221,22 +221,19 @@ export function sharedTextAfterReady(notes: SharedTextNote[] | undefined): Array
 
 /** `close`: the extra project issues MACH can close for the person (`project.close-issue`), each one click and a confirm. */
 export type ProjectStartNote =
+  /** The project someone else defined, brought in from GitHub when the app started: what came, in the engine's words. */
+  | { kind: "joined"; issue: number | null; url: string | null; note: string }
   | { kind: "taken"; issue: number; url: string | null; note: string; close: number[] }
   | { kind: "warned"; note: string; close: number[] }
   | { kind: "not_checked"; note: string };
 
 /**
- * Before the product is named: the repository's project already on GitHub, as last read. Said before the person types
- * anything, since naming it takes that project's words instead of theirs. Null when GitHub held none or was not read.
+ * Before the product is named: the repository's project issue on GitHub, as last read, when MACH cannot bring it in (its
+ * text is not in the form MACH writes). A project MACH can read is brought in by itself before anything is shown, so
+ * nothing is said for it here. Null when GitHub held none or was not read.
  */
 export function projectOnGithubWords(found: Status["project_on_github"]): { title: string; body: string } | null {
-  if (!found) return null;
-  if (found.readable && found.name) {
-    return {
-      title: `This repository already has a project: ${found.name}`,
-      body: `Its issue on GitHub is #${found.issue}. When you name the product, MACH takes its name, vision and outcomes from GitHub, and what you type is not used. A repository holds one project.`,
-    };
-  }
+  if (!found || (found.readable && found.name)) return null;
   return {
     title: "This repository already has a project on GitHub",
     body: `Its issue is #${found.issue}, but its text is not in the form MACH writes, so MACH cannot take its words. When you name the product, your own words define the project, and the first slice you mark ready writes them to #${found.issue}. What it holds now stays in its history on GitHub.`,
@@ -287,4 +284,43 @@ export function splitNumbersNote(note: string, numbers: NumbersFromGithub | unde
   const at = note.indexOf(NOT_CHECKED);
   if (at < 0) return { made: note, numbers: null };
   return { made: note.slice(0, at), numbers: note.slice(at + 1) };
+}
+
+/** Who approved a slice, for a sentence: "you" only when the approval is this workspace's own, else the approver, else "someone". */
+export function approverWords(github: Pick<SliceGithub, "approved_by" | "approved_by_you">): string {
+  if (github.approved_by_you) return "you";
+  return github.approved_by ? `@${github.approved_by}` : "someone";
+}
+
+/* ── From GitHub: what bringing the project in said, and what stays true ─── */
+
+export interface FromGithubLine {
+  key: string;
+  text: string;
+  /** The one step the line offers: choose a version, reopen a slice, or finish bringing in a project file. */
+  step: { kind: "choose" | "reopen" | "import"; target: string } | null;
+}
+
+/**
+ * The project home's "From GitHub" panel, in the engine's own words: first what still needs the person (a copy MACH cannot tell
+ * apart, a copy changed here, slices waiting for an import), then what this visit's refresh said, then what could not be taken.
+ */
+export function fromGithubLines(status: Pick<Status, "from_github">, refresh: Pick<Refresh, "joined"> | null): FromGithubLine[] {
+  const found = status.from_github;
+  const lines: FromGithubLine[] = [];
+  for (const row of found?.undecided ?? []) lines.push({ key: `undecided-${row.slice_id}`, text: row.words, step: { kind: "choose", target: row.slice_id } });
+  for (const row of found?.kept_changed ?? []) lines.push({ key: `kept-${row.slice_id}`, text: row.words, step: { kind: "reopen", target: row.slice_id } });
+  if (found?.waiting?.length) {
+    const names = found.waiting.join(", ");
+    lines.push({
+      key: "waiting",
+      text: `${names} on GitHub ${found.waiting.length === 1 ? "waits" : "wait"} while bringing in a project file is unfinished here. Finish it, or set it aside, and ${found.waiting.length === 1 ? "it comes" : "they come"} in.`,
+      step: { kind: "import", target: "" },
+    });
+  }
+  const said = new Set(lines.map((line) => line.text));
+  const note = refresh?.joined?.joined ? refresh.joined.note : "";
+  if (note && !said.has(note)) lines.push({ key: "refresh", text: note, step: null });
+  for (const row of found?.not_taken ?? []) if (!note.includes(row.reason)) lines.push({ key: `not-${row.id}`, text: row.reason, step: null });
+  return lines;
 }

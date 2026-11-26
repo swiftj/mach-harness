@@ -24,6 +24,11 @@
  *   ?team=start-taken#/vision                No project yet; naming it takes the project already on GitHub (Ada's). Once
  *                                            the home's refresh has read GitHub (#/), the start screen and the form say so
  *                                            before anything is typed.
+ *   ?team=join#/                             A fresh clone of Ada's repository: the app brings her project in by itself, a
+ *                                            batch of slices at a time, then shows its home as she published it.
+ *   ?team=join-failed#/                      The same while GitHub cannot be read: said in the tool's words, with Try again;
+ *                                            the ways to start from nothing are not offered.
+ *   ?team=join-none#/                        GitHub holds no project for this repository: the ways to start are offered.
  *   ?team=start-not-checked#/vision          Naming it while GitHub cannot be read.
  *   ?team=start-several#/vision              Two project issues on GitHub: naming it takes the oldest, warning.
  *   ?team=prd-not-checked#/prds/PRD-01       Making a PRD's drafts while GitHub cannot be read.
@@ -60,7 +65,7 @@ function answer(name: string): TransportResponse {
 }
 
 /** What the person did on this page. */
-const done = { ready: false, took: null as "mine" | "theirs" | null, named: false, applied: false, refreshed: false };
+const done = { ready: false, took: null as "mine" | "theirs" | null, named: false, applied: false, refreshed: false, joined: 0 };
 
 export const teamScenario = (): string | null => devParam("team");
 
@@ -90,6 +95,12 @@ function statusFor(team: string): string | null {
       return done.named ? "status.team-taken" : "status.team-start";
     case "start-several":
       return "status.team-several-start";
+    case "join":
+      return done.joined >= 1 ? "status.team-joined" : "status.team-join-start";
+    case "join-failed":
+      return "status.team-join-failed";
+    case "join-none":
+      return done.joined >= 1 ? "status.team-join-none" : "status.team-join-start";
     default:
       // prd-not-checked and idea-not-checked: the PRD's and Shape's own fixtures answer status.
       return null;
@@ -156,10 +167,24 @@ export function teamRoute(path: string, args: Record<string, unknown>): Transpor
       done.took = take;
       return answer(args.target === "project" ? `reconcile.team-project-${take}` : `reconcile.team-epic-${take}`);
     }
+    case "project.join": {
+      // The app sends it by itself, batch after batch: the first batch, then the last (two runs of one fresh clone).
+      done.joined += 1;
+      if (team === "join") return answer(done.joined === 1 ? "project.join.team-first" : "project.join.team-last");
+      if (team === "join-failed") return answer("project.join.team-failed");
+      if (team === "join-none") return answer("project.join.team-none");
+      // Borrowed: a start in a repository whose project is on GitHub is the same join as ?team=join.
+      if (team === "start-taken") {
+        done.named = done.joined >= 2;
+        return answer(done.joined === 1 ? "project.join.team-first" : "project.join.team-last");
+      }
+      if (team === "start-not-checked") return answer("project.join.team-failed");
+      return null;
+    }
     case "project.init":
       if (team === "start-several") return answer("project.init.team-several");
       done.named = true;
-      return answer(team === "start-not-checked" ? "project.init.team-not-checked" : "project.init.team-taken");
+      return answer(team === "start-not-checked" ? (args.anyway ? "project.init.team-not-checked-anyway" : "project.init.team-not-checked") : "project.init.team-taken");
     case "prd.list":
       return team === "prd-not-checked" ? answer("prd.list") : null;
     case "prd.show":

@@ -189,8 +189,9 @@ class NotApprovedRecordTest(TakeBase, Done):
         self.assertEqual(slice_row["github"]["not_approved"]["why"], "edited")
         self.assertTrue(slice_row["github"]["changed_on_github"])
         first = next(a for a in status["next_actions"] if a["target"] == slice_id)
-        self.assertEqual(first["kind"], "mark_ready")
-        self.assertIn("is not approved: its text was changed on GitHub after it was approved", first["reason"])
+        # Never a bare "mark it ready": read it, knowing whose approval was for which text.
+        self.assertEqual(first["kind"], "read_slice")
+        self.assertIn("@ada-pm approved Invite a teammate (version 1), and its text on GitHub was changed after that", first["reason"])
         self.assertEqual(status["saved"]["not_saved"], [], "nothing calls it changed since you marked it ready")
         self.done(self.b, "slice", "ready", slice_id)
         self.assertNotIn("not_approved", self.ledger(self.b)["slices"][slice_id])
@@ -209,6 +210,8 @@ class NotApprovedRecordTest(TakeBase, Done):
         number = self.slice_issue(slice_id)[0]["number"]
         self.done(self.b, "slice", "take", str(number))
         self.ok(self.b, "slice", "reopen", slice_id)
+        mine = next(self.draft(self.b, "specs/slices").glob(f"{slice_id}-*.md"))
+        mine.write_text(mine.read_text() + "\nBen's own change.\n")  # changed here: a refresh keeps it, and taking theirs is his choice
         # Ada saves version 2, then someone edits its text on GitHub after her approval.
         self.set_gh(me="ada-pm")
         self.ok(self.a, "slice", "reopen", slice_id)

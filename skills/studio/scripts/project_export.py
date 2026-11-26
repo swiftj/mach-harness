@@ -32,6 +32,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import collab
 import design
+import from_github
 import handoff
 import issues
 import mocks
@@ -438,45 +439,12 @@ def _studio_errors(host: Any, call: Callable[[], Any]) -> Any:
 
 
 def _read_github(host: Any, studio: Any) -> Dict[str, Any]:
-    """The project's, epics' and slices' issues and the idea issues, read once, now. Nothing is recorded: not the ledger, not
-    the workspace. `checked` is False with `problem` when GitHub could not be read; `connected` is False when the project is
-    not on GitHub at all (then there is nothing there to miss)."""
-    rules = host.ticket_rules()
-    hand = studio.handoff()
-    found: Dict[str, Any] = {"checked": False, "connected": False, "problem": None, "repository": None, "snapshot": None, "read_at": None,
-                             "ideas": [], "hand": hand, "incomplete": []}
-    repository, why = hand.reachable()
-    if repository is None:
-        if why is None:  # no gh, or a remote that is not GitHub: only the first leaves something unread
-            address = collab.git(studio.project, "config", "--get", f"remote.{collab.REMOTE}.url").stdout.strip()
-            if address and collab.GITHUB_REMOTE_RE.fullmatch(address):
-                why = "The GitHub tool (gh) is not installed on this computer."
-        found.update(connected=why is not None, problem=why)
-        return found
-    found.update(connected=True, repository=repository)
-    lists: Dict[str, List[Dict[str, Any]]] = {}
-    failure = None
-    for label in (*handoff.SNAPSHOT_LABELS, rules.SHAPE_IDEA_LABEL):  # each read to its end; a list GitHub holds more of is named
-        listed, failure, whole = issues.list_all_issues(studio.project, repository, label)
-        if failure:
-            found["problem"] = handoff.explain(failure)
-            return found
-        lists[label] = listed or []
-        if not whole:
-            found["incomplete"].append(label)
-    snapshot = hand.snapshot_of(lists)
-    listed = lists[rules.SHAPE_IDEA_LABEL]
-    ideas = set()
-    for item in listed or []:
-        marker = rules.parse_shape_body(item.get("body"))
-        if marker and rules.is_issue_number(item.get("number")):
-            ideas.add((str(marker["idea_id"]), item["number"]))
-    found.update(checked=True, snapshot=snapshot, read_at=host.now(None), ideas=sorted(ideas))
-    return found
+    """The project's, epics' and slices' issues and the idea issues, read once, now, by the one reader of the project as
+    GitHub holds it (from_github.read). Nothing is recorded."""
+    return from_github.read(host, studio)
 
 
-LISTED_WHAT = {"mach:project": ("project", "project issues", "the project"), "mach:epic": ("epics", "epic issues", "epics"),
-               "mach:slice": ("slices", "slice issues", "slices"), "mach:idea": ("ideas", "idea issues", "ideas")}
+LISTED_WHAT = from_github.LISTED_WHAT
 
 
 def _unread(github: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -515,27 +483,8 @@ def _no_project_here(host: Any, github: Dict[str, Any]) -> Tuple[Dict[str, Any],
 
 
 def _project_issue(github: Dict[str, Any], ledger: Dict[str, Any], project: Dict[str, Any]) -> Tuple[Optional[int], Optional[str]]:
-    """This project's issue on GitHub, as handoff.find_project finds it, without refusing: (number or None, why GitHub's
-    epics and slices are not this project's)."""
-    projects = github["snapshot"]["projects"]
-    several = sorted(item["number"] for item in projects if item["state"] == "open")
-    linked = (ledger.get("project") or {}).get("number") if ledger.get("repository") == github["repository"] else None
-    same = sorted(item["number"] for item in projects if item["id"] == project["project_id"] and item["state"] == "open")
-    if len(several) > 1:
-        # Never blocked by a second project issue: the one this workspace follows, else this project's oldest, as find_project.
-        if linked in several:
-            return linked, None
-        if same:
-            return same[0], None
-        return None, (f"This repository has more than one project issue on GitHub ({', '.join(f'#{n}' for n in several)}), and none of them is "
-                      f"{project['project_id']}, so nothing was taken from GitHub.")
-    if linked in [item["number"] for item in projects]:
-        return linked, None
-    other = [item for item in projects if item["id"] != project["project_id"] and item["state"] == "open"]
-    if not same and other:
-        return None, (f"This repository's project on GitHub is a different one ({other[0]['id']}, #{other[0]['number']}), so nothing was taken "
-                      "from GitHub.")
-    return (same[0] if same else None), None
+    """This project's issue on GitHub (from_github.project_issue)."""
+    return from_github.project_issue(github, ledger, project)
 
 
 def _main_ref(studio: Any) -> str:
@@ -671,11 +620,7 @@ class _FromGitHub:
 
     def chosen_epics(self) -> Dict[str, Dict[str, Any]]:
         """Each epic ID's issue: the lowest-numbered open one, else the lowest-numbered."""
-        by_id: Dict[str, List[Dict[str, Any]]] = {}
-        for item in self.snapshot["epics"]:
-            if product.EPIC_RE.fullmatch(str(item.get("id") or "")):
-                by_id.setdefault(item["id"], []).append(item)
-        return {ident: sorted(items, key=lambda item: (item["state"] != "open", item["number"]))[0] for ident, items in by_id.items()}
+        return from_github.chosen_epics(self.snapshot)
 
     def epic_fits(self, epic_issue: Dict[str, Any], local_epics: Dict[str, Dict[str, Any]], github_epics: Dict[str, Dict[str, Any]]) -> Optional[str]:
         """None when the slice's epic issue is the epic the archive holds under that ID; otherwise why not, as `slice take` says it."""
@@ -954,8 +899,7 @@ class _FromGitHub:
 
 
 SHIPPED_LABEL = "mach:shipped"
-FROM_GITHUB_NOTE = ("Drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were "
-                    "written. Export there to include them.")
+FROM_GITHUB_NOTE = f"{from_github.ONLY_THERE} Export there to include them."
 
 
 KIND_ORDER = ("project", "principles", "needs", "EPIC", "SLICE", "IDEA", "PRD", "DES")

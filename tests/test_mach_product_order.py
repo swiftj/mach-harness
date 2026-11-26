@@ -207,14 +207,15 @@ def git_status(test):
 
 class TakeBase(OrderBase):
     def ada_ready(self, depends=()):
-        """Ada saves slices on GitHub; Ben's workspace has only the project."""
+        """Ada saves slices on GitHub; Ben's workspace has only the project: he started it before anything was on GitHub, and
+        has not refreshed since (a refresh brings in what Ada published by itself, test_studio_join)."""
+        self.ok(self.b, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
         self.project_and_epic(self.a)
         made = []
         for title, dep in (("Invite a teammate", None), ("Remove a teammate", "first"))[: 1 + len(depends)]:
             made.append(self.drafted(self.a, title=title, depends=[made[0]] if dep else ()))
         for slice_id in made:
             self.ready(slice_id, self.a)
-        self.ok(self.b, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
         self.set_gh(me="ben-pm")
         return made
 
@@ -227,7 +228,11 @@ class TakeTest(TakeBase):
     def test_another_product_managers_slice_is_opened_as_their_approved_version(self):
         (slice_id,) = self.ada_ready()
         (issue,) = self.slice_issue(slice_id)
-        listed = {row["slice_id"]: row for row in self.ok(self.b, "refresh")["github"]["slices"]}
+        # A refresh that could not take it in (here: joining takes nothing) lists it as not in the workspace; it is opened by hand.
+        import join  # noqa: E402
+        real = join.join
+        with mock.patch.object(join, "join", lambda host, studio_, found=None, batch=None: real(host, studio_, found, 0)):
+            listed = {row["slice_id"]: row for row in self.ok(self.b, "refresh")["github"]["slices"]}
         self.assertFalse(listed[slice_id]["in_workspace"])
         checkout = self.checkout_state(self.b)
         writes = len(self.writes())
@@ -236,7 +241,8 @@ class TakeTest(TakeBase):
         self.assertEqual(self.checkout_state(self.b), checkout)
         self.assertEqual((taken["taken"], taken["issue"], taken["revision"], taken["approved_by"], taken["state_label"], taken["editable"], taken["factory_authorized"]),
                          (True, issue["number"], 1, "ada-pm", "mach:ready", False, False))
-        self.assertEqual(taken["epic"], {"epic_id": "EPIC-001", "issue": self.issues("mach:epic")[0]["number"], "created_here": True})
+        # The epic came with the refresh (epics are taken before any slice), so opening the slice did not have to make it.
+        self.assertEqual(taken["epic"], {"epic_id": "EPIC-001", "issue": self.issues("mach:epic")[0]["number"], "created_here": False})
         # The why and spec exactly as approved.
         self.assertEqual(self.draft(self.b, taken["spec"]).read_bytes(), self.draft(self.a, f"specs/slices/{slice_id}-invite-teammate.md").read_bytes())
         self.assertEqual(self.draft(self.b, taken["why"]).read_bytes(), self.draft(self.a, f"product/intents/{slice_id}.md").read_bytes())
@@ -257,9 +263,11 @@ class TakeTest(TakeBase):
         self.assertEqual((result["issue"], result["revision"], result["approved_by"]), (issue["number"], 2, "ben-pm"))
         self.assertEqual(len(self.slice_issue(slice_id)), 1)
         self.assertIn("Ben's change.", self.issue(issue["number"])["body"])
-        # Ada now sees Ben's newer version, by the existing rule.
+        # Ada's copy is the unchanged approved version 1, so her next refresh brings in Ben's version 2 by itself.
         self.set_gh(me="ada-pm")
-        self.assertTrue({r["slice_id"]: r for r in self.ok(self.a, "refresh")["github"]["slices"]}[slice_id]["newer_elsewhere"])
+        refreshed = self.ok(self.a, "refresh")
+        self.assertEqual([(row["slice_id"], row["was_version"]) for row in refreshed["joined"]["updated"]], [(slice_id, 1)])
+        self.assertFalse({r["slice_id"]: r for r in refreshed["github"]["slices"]}[slice_id]["newer_elsewhere"])
 
     def test_taken_on_a_computer_where_the_factory_already_has_it(self):
         (slice_id,) = self.ada_ready()
@@ -367,8 +375,8 @@ class TakeRefusalTest(TakeBase):
         body = self.issue(number)["body"]
         self.change_issue(number, body=body.replace("An admin", "Anyone"))
         taken = self.ok(self.b, "slice", "take", str(number))
-        self.assertIn(f"#{number}'s text was changed on GitHub after @ada-pm approved it. It is open here as a draft, not as approved: read it, "
-                      "then mark it ready to approve this version.", taken["note"])
+        self.assertIn(f"#{number}'s text was changed on GitHub after @ada-pm approved it. It is open here as a draft, not as approved: read it; "
+                      "marking it ready approves this text as yours.", taken["note"])
         self.assertEqual((taken["taken"], taken["approved_here"]), (True, False))
         self.assertNotEqual(taken["slice"]["status"], "approved_for_engineering")
         held = self.draft(self.b, taken["spec"]).read_text() + self.draft(self.b, taken["why"]).read_text()

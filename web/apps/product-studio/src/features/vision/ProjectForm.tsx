@@ -7,6 +7,26 @@ import { rememberProjectStart } from "../../api/projectStart";
 import { projectStartNote } from "../../shared/team";
 import { ProjectOnGithubNotice } from "../../shared/ProjectStartNotice";
 import { useStatus } from "../../api/store";
+import { useStartAnyway } from "../../api/join";
+import { projectEntry } from "../home/start/model";
+import { Link } from "react-router";
+
+/** In place of the form while the project comes from GitHub: there is nothing to type, and the project home brings it in. */
+export function ComesFromGithub() {
+  return (
+    <Banner
+      tone="info"
+      title="This repository's project comes from GitHub"
+      actions={
+        <Button size="sm" asChild>
+          <Link to="/">Open the project home</Link>
+        </Button>
+      }
+    >
+      MACH brings it in, with its epics and slices, as the person who defined it saved them. There is nothing to type here.
+    </Banner>
+  );
+}
 
 /* ── Outcomes ────────────────────────────────────────────────────────── */
 
@@ -74,8 +94,10 @@ export function ProjectCreator({
   doneVerb?: string;
 }) {
   const act = useEngineAct();
+  const status = useStatus().data;
+  const anyway = useStartAnyway();
   // M20: the repository's project already on GitHub, as last read; null when there is none or GitHub was not read.
-  const onGithub = useStatus().data?.project_on_github ?? null;
+  const onGithub = status?.project_on_github ?? null;
   const [name, setName] = useState("");
   const [vision, setVision] = useState("");
   const [outcomes, setOutcomes] = useState<string[]>([""]);
@@ -89,7 +111,7 @@ export function ProjectCreator({
     if (!cleanList(outcomes).length) next.outcomes = "Add at least one outcome.";
     setErrors(next);
     if (Object.keys(next).length) return;
-    const result = await act.run("project.init", { name: name.trim(), vision: vision.trim(), outcome: cleanList(outcomes) });
+    const result = await act.run("project.init", { name: name.trim(), vision: vision.trim(), outcome: cleanList(outcomes), ...(anyway ? { anyway: true } : {}) });
     if (!result) return;
     // M20: the repository already had a project on GitHub (its words were taken, not these), or GitHub was not checked.
     // The page moves on at once, so the note is kept for the next page as well as said here.
@@ -99,6 +121,9 @@ export function ProjectCreator({
     else toast({ tone: "success", title: `${doneVerb} ${result.project.name}`, description: note ? `${createdNote} ${note.note}` : createdNote });
     onCreated?.(result);
   };
+
+  // The project comes from GitHub: nothing to name here. Every screen that would ask for it says so and leads home, where it is brought in.
+  if (status && projectEntry(status, anyway) === "join") return <ComesFromGithub />;
 
   return (
     <form onSubmit={submit} noValidate aria-label="Name the product" className="flex max-w-[40rem] flex-col gap-6">

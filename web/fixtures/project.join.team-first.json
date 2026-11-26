@@ -1,0 +1,73 @@
+{
+  "exit_code": 0,
+  "data": {
+    "joined": true,
+    "github": {
+      "connected": true,
+      "checked": true,
+      "problem": null,
+      "repository": "acme/team-space"
+    },
+    "taken": {
+      "project": true,
+      "principles": false,
+      "needs": false,
+      "epics": [
+        {
+          "epic_id": "EPIC-001",
+          "issue": 2,
+          "title": "Team membership"
+        }
+      ],
+      "slices": [
+        {
+          "slice_id": "SLICE-001",
+          "issue": 3,
+          "title": "Invite a teammate",
+          "state": "ready",
+          "approved_by": "ada-pm",
+          "epic_id": "EPIC-001"
+        },
+        {
+          "slice_id": "SLICE-002",
+          "issue": 4,
+          "title": "Remove a teammate",
+          "state": "ready",
+          "approved_by": "ada-pm",
+          "epic_id": "EPIC-001"
+        }
+      ],
+      "ideas": []
+    },
+    "updated": [],
+    "already_here": {
+      "project": false,
+      "epics": [],
+      "slices": []
+    },
+    "not_taken": [],
+    "renumbered": [],
+    "warned": [],
+    "kept_changed": [],
+    "waiting_for_import": [],
+    "undecided": [],
+    "remaining": 1,
+    "factory_authorized": false,
+    "project": {
+      "project_id": "team-space",
+      "name": "Team Space",
+      "issue": 1,
+      "url": "https://github.com/acme/team-space/issues/1"
+    },
+    "only_on_their_computer": "Drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were written.",
+    "project_words": "This repository's project is Team Space. MACH is bringing it in from GitHub: 1 epic and 2 slices so far.",
+    "in_words": [
+      "This repository's project is Team Space. MACH is bringing it in from GitHub: 1 epic and 2 slices so far.",
+      "1 slice still to bring in; MACH carries on.",
+      "Drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were written."
+    ],
+    "note": "This repository's project is Team Space. MACH is bringing it in from GitHub: 1 epic and 2 slices so far. 1 slice still to bring in; MACH carries on. Drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were written."
+  },
+  "refused": null,
+  "hint": null
+}

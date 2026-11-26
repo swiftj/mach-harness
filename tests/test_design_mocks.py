@@ -165,15 +165,17 @@ class TakeTest(intake_tests.Base):
         self.ok(self.a, "slice", "mock", "add", "SLICE-001", str(picture))
         ready = self.ok(self.a, "slice", "ready", "SLICE-001")
         number = ready["issue"]
-        self.ok(self.b, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
         self.set_gh(me="ben-pm")
-        taken = self.ok(self.b, "slice", "take", str(number))
-        self.assertEqual((taken["taken"], taken["approved_here"]), (True, False))
-        self.assertIn(f"#{number} has design mocks, and their pictures are not on", taken["note"])
-        self.assertIn("So SLICE-001 is open here without them, as a draft, not as approved. To bring them, fetch the main branch (git fetch) "
-                      f"and open #{number} again (slice take {number}); or add them again (slice mock add SLICE-001 <picture>).", taken["note"])
-        self.assertNotIn("mocks", taken["slice"])
-        # Ada commits the pictures to the main branch; Ben fetches, and taking it again brings them.
+        # Ben starts the project: it is on GitHub, so MACH brings it in, and this slice opens without its pictures, as a draft.
+        joined = self.ok(self.b, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.", "--outcome", "Teams can work together")
+        (row,) = joined["taken"]["slices"]
+        self.assertEqual((row["slice_id"], row["state"], row["not_approved"]["why"]), ("SLICE-001", "to_approve", "mocks"))
+        self.assertIn(f"#{number} has design mocks, and their pictures are not on", joined["note"])
+        self.assertIn("So SLICE-001 is open here without them, as a draft, not as approved.", joined["note"])
+        self.assertNotIn("mocks", self.artifact(self.b, "product/slices/SLICE-001.json"))
+        refreshed = self.ok(self.b, "refresh")["joined"]  # nothing to bring yet: the pictures are not on the main branch
+        self.assertNotIn("mocks_brought", refreshed)
+        # Ada commits the pictures to the main branch; Ben fetches, and his next refresh brings them, checked against the approved hash.
         git(self.a, "pull", "-q", "--ff-only")
         folder = self.a / "product/ready/SLICE-001/mocks"
         folder.mkdir(parents=True, exist_ok=True)
@@ -183,9 +185,35 @@ class TakeTest(intake_tests.Base):
         git(self.a, "commit", "-q", "-m", "design mocks for SLICE-001")
         git(self.a, "push", "-q", "origin", "main")
         git(self.b, "fetch", "-q", "origin")
+        # Taking it again by hand brings them, checked against the approved hash ...
         again = self.ok(self.b, "slice", "take", str(number))
         self.assertEqual((again["already_in_workspace"], again.get("mocks_brought")), (True, True))
         self.assertEqual(len(again["slice"]["mocks"]), 1)
+        self.assertEqual(len(self.artifact(self.b, "product/slices/SLICE-001.json")["mocks"]), 1)
+        self.assertNotIn("mocks_brought", self.ok(self.b, "refresh")["joined"], "nothing left for a refresh to bring")
+
+    def test_a_refresh_brings_the_pictures_once_they_are_on_the_main_branch(self):
+        """... and so does the next refresh, with nothing typed."""
+        self.set_gh(me="ada-pm")
+        self.project_and_epic()
+        self.drafted()
+        picture = self.root / "a.png"
+        picture.write_bytes(png())
+        self.ok(self.a, "slice", "mock", "add", "SLICE-001", str(picture))
+        ready = self.ok(self.a, "slice", "ready", "SLICE-001")
+        self.set_gh(me="ben-pm")
+        self.ok(self.b, "refresh")
+        git(self.a, "pull", "-q", "--ff-only")
+        folder = self.a / "product/ready/SLICE-001/mocks"
+        folder.mkdir(parents=True, exist_ok=True)
+        for name in ready["mocks"]["files"]:
+            (folder / name).write_bytes((self.a / ".factory/studio/draft/product/ready/SLICE-001/mocks" / name).read_bytes())
+        git(self.a, "add", "-A", "product")
+        git(self.a, "commit", "-q", "-m", "design mocks for SLICE-001")
+        git(self.a, "push", "-q", "origin", "main")
+        git(self.b, "fetch", "-q", "origin")
+        self.assertEqual(self.ok(self.b, "refresh")["joined"]["mocks_brought"], ["SLICE-001"])
+        self.assertEqual(len(self.artifact(self.b, "product/slices/SLICE-001.json")["mocks"]), 1)
 
     def refused_studio(self, project, *argv):
         code, out, err = self.run_studio(project, *argv)

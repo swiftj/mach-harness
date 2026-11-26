@@ -6,8 +6,9 @@
 // is MACH's own run.py, through internal/act and with a fixed argument vector, for four requests a
 // person makes in the Factory Floor: the "Needs you" list (decide --json), a decision on one ticket
 // in it (decide do ... --via=floor), whether a Factory runs here (factory status) and the stop
-// (factory stop). It never enables, starts or dispatches work. It is started by a skill, never by
-// a MACH command, and prints the one-time link; it does not open a browser itself.
+// (factory stop). It never enables, starts or dispatches work. It is started when a person asks for
+// it (/mach-app floor), never by the line, and prints the one-time link; it does not open a browser
+// itself. Beside the link it keeps host.json: its release, process and port, while it runs.
 package main
 
 import (
@@ -156,6 +157,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err := writePrivate(filepath.Join(indexDir, PortName), []byte(strconv.Itoa(bound)+"\n")); err != nil {
 			logger.Printf("could not remember the port: %v", err)
 		}
+		// Which release and process this is, beside the link, so MACH can tell whether the running
+		// observer is the release now installed and stop only this one when it is not.
+		host, _ := json.Marshal(Host{Program: "mach-observer", Version: version, PID: os.Getpid(), Port: bound, Project: root})
+		hostPath := filepath.Join(indexDir, HostName)
+		if err := writePrivate(hostPath, append(host, '\n')); err != nil {
+			logger.Printf("could not record which release is running: %v", err)
+		}
+		defer os.Remove(hostPath)
 		opts = keptSessions(root, indexDir, logger, stderr)
 	}
 	guard, err := security.NewGuardWith(bound, opts)
@@ -266,7 +275,19 @@ const (
 	PortName     = "port"           // the last port bound
 	SecretName   = "session-secret" // 32 random bytes; with the project folder, the key sessions are hashed under
 	SessionsName = "sessions.json"  // keyed hashes of session tokens and their expiry; never a token
+	// HostName says which program runs for this project (its release, process and port), while it
+	// runs. One left by an observer that crashed is ignored, since its lock is free.
+	HostName = "host.json"
 )
+
+// Host is what the host file records.
+type Host struct {
+	Program string `json:"program"`
+	Version string `json:"version"`
+	PID     int    `json:"pid"`
+	Port    int    `json:"port"`
+	Project string `json:"project"`
+}
 
 // readPort returns the port remembered from the last run, or 0.
 func readPort(indexDir string) int {

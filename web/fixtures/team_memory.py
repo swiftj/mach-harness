@@ -50,6 +50,9 @@ def generate(Scenario, out: Path) -> None:
     run(Scenario, lambda s: epic_changed(s, "theirs"))
     run(Scenario, lambda s: epic_changed(s, "mine"))
     run(Scenario, project_taken)
+    run(Scenario, project_joined)
+    run(Scenario, project_join_failed)
+    run(Scenario, project_join_none)
     run(Scenario, project_not_checked)
     run(Scenario, several_projects)
     run(Scenario, prd_numbers)
@@ -106,7 +109,8 @@ def epic_same_moment(s):
     s.ada_ships_first_slice()
     ada_epic = s.issues("mach:epic")[0]["number"]
     ben = s.ben()
-    s.ok(ben, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "x", "--outcome", "y")
+    with s.hidden({item["number"] for item in s.issues()}):  # Ben started before Ada's issues were there, and has not refreshed since
+        s.ok(ben, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "x", "--outcome", "y")
     s.ok(ben, "epic", "add", "--title", "Billing", "--criterion", "Invoices are sent")
     s.drafted(ben, title="Send an invoice")
     s.ok(ben, "slice", "renumber", "SLICE-001")
@@ -143,10 +147,17 @@ def text_taken_at_refresh(s):
     s.capture("status.team-text-taken-refresh", "status", project=ben)
 
 
+def ben_brings_it_in(s):
+    """Ben starts Product Studio on his clone once Ada's project is on GitHub: MACH brings it in, so he has seen its text."""
+    ben = s.ben()
+    s.ok(ben, "refresh")
+    return ben
+
+
 def project_changed(s, take):
     """Ada and Ben both change the project's vision; Ada's reaches GitHub first. Ben chooses."""
     s.ada_ships_first_slice()
-    ben = s.ben_starts_the_same_project()
+    ben = ben_brings_it_in(s)
     s.ok(s.ada(), "project", "set", "--vision", "Teams of any size work together.")
     s.ready("SLICE-001", s.a)
     s.ok(s.ben(), "project", "set", "--vision", "Small teams work together.")
@@ -165,7 +176,7 @@ def project_unreadable(s):
     """Both changed the project, and the other change was made by hand on GitHub, not in MACH's form: theirs cannot be shown."""
     s.ada_ships_first_slice()
     project_issue = s.issues("mach:project")[0]["number"]
-    ben = s.ben_starts_the_same_project()
+    ben = ben_brings_it_in(s)
     s.ok(s.ben(), "project", "set", "--vision", "Small teams work together.")
     # MACH's marker is kept (it is still the project's issue); the vision gained a second paragraph, which is not MACH's form.
     s.change_issue(project_issue, body="<!-- mach:project id=team-space -->\n## Vision\nTeams work together.\n"
@@ -197,20 +208,52 @@ def project_taken(s):
     s.ada_ships_first_slice()
     ben = s.ben()
     s.capture("status.team-start", "status", project=ben)
-    # Once the start screen's refresh has read GitHub, status says the repository already has a project, before anything is typed.
-    s.capture("refresh.team-start-taken", "refresh", project=ben)
-    s.capture("status.team-start-known", "status", project=ben)
+    # Naming it in a repository whose project is on GitHub brings that project in, with its epics and slices.
     s.capture("project.init.team-taken", "project", "init", "--id", "teamspace", "--name", "Teamspace", "--vision", "Mine.",
               "--outcome", "Mine too", project=ben)
     s.capture("status.team-taken", "status", project=ben)
+    s.capture("refresh.team-start-taken", "refresh", project=ben)
+    s.capture("status.team-start-known", "status", project=ben)
+
+
+def project_joined(s):
+    """A fresh clone of a repository whose project Ada defined: the app brings it in by itself, a few slices at a time, and
+    Ben sees what Ada published without typing anything."""
+    s.project_and_epic(s.ada())
+    for title in ("Invite a teammate", "Remove a teammate", "Rename a teammate"):
+        s.ready(s.drafted(s.a, title=title), s.a)
+    ben = s.ben()
+    s.capture("status.team-join-start", "status", project=ben)
+    s.capture("project.join.team-first", "project", "join", "--batch", "2", project=ben)
+    s.capture("project.join.team-last", "project", "join", "--batch", "2", project=ben)
+    s.capture("status.team-joined", "status", project=ben)
+
+
+def project_join_failed(s):
+    """The same fresh clone while GitHub cannot be read: nothing changes, it is said in the tool's words, and tried again."""
+    s.ada_ships_first_slice()
+    ben = s.ben()
+    s.gh_fails("issue list", once=False)
+    s.capture("project.join.team-failed", "project", "join", "--batch", "2", project=ben)
+    s.capture("status.team-join-failed", "status", project=ben)
+
+
+def project_join_none(s):
+    """A repository whose GitHub holds no project yet: there is nothing to bring in, so the ways to start are offered."""
+    ben = s.ben()
+    s.capture("project.join.team-none", "project", "join", "--batch", "2", project=ben)
+    s.capture("status.team-join-none", "status", project=ben)
 
 
 def project_not_checked(s):
-    """GitHub cannot be read when the product is named: it is defined from the person's words, and they are told."""
+    """GitHub cannot be read when the product is named: nothing is defined (the repository may already have a project), and the
+    person may start their own anyway, on their word: then it is defined from their words, and they are told."""
     ben = s.ben()
     s.gh_fails("issue list", once=False)
     s.capture("project.init.team-not-checked", "project", "init", "--id", "team-space", "--name", "Team Space",
               "--vision", "Teams work together.", "--outcome", "Teams can work together", project=ben)
+    s.capture("project.init.team-not-checked-anyway", "project", "init", "--id", "team-space", "--name", "Team Space",
+              "--vision", "Teams work together.", "--outcome", "Teams can work together", "--anyway", project=ben)
 
 
 def several_projects(s):
@@ -218,9 +261,9 @@ def several_projects(s):
     s.ada_ships_first_slice()
     s.second_project_issue()
     s.ben()
+    s.capture("project.init.team-several", "project", "init", "--id", "team-space", "--name", "x", "--vision", "y", "--outcome", "z", project=s.b)
     s.capture("refresh.team-several-start", "refresh", project=s.b)
     s.capture("status.team-several-start", "status", project=s.b)
-    s.capture("project.init.team-several", "project", "init", "--id", "team-space", "--name", "x", "--vision", "y", "--outcome", "z", project=s.b)
     s.drafted(s.ada(), title="Remove a teammate")
     s.capture("slice.ready.team-several", "slice", "ready", "SLICE-002", project=s.a)
     s.capture("refresh.team-several", "refresh", project=s.a)

@@ -728,9 +728,11 @@ class RefreshTest(IssuesBase):
         self.drafted()
         number = self.ready()["issue"]
         self.ok(self.a, "slice", "reopen", "SLICE-001")
+        self.write_slice(self.a, "SLICE-001", extra="\nAda's own change.\n")  # changed here: a refresh keeps it (an unchanged copy follows GitHub)
         theirs = self.newer_version(number)
         self.assertTrue(self.refreshed()["SLICE-001"]["newer_elsewhere"])
-        self.assertIn("Marking yours ready replaces it", self.ok(self.a, "status")["next_actions"][0]["reason"])
+        # First look at the two; publishing over theirs is never the first step (it stays the person's explicit word, below).
+        self.assertIn("Look at the two, then take theirs, or keep yours as a new version.", self.ok(self.a, "status")["next_actions"][0]["reason"])
         result = self.ready()
         self.assertEqual((result["issue"], result["revision"]), (number, 3))
         self.assertIn("@ben-pm saved version 2 of SLICE-001 on GitHub", result["note"])
@@ -754,12 +756,16 @@ class RefreshTest(IssuesBase):
         self.drafted()
         number = self.ready()["issue"]
         self.ok(self.a, "slice", "reopen", "SLICE-001")
+        self.write_slice(self.a, "SLICE-001", extra="\nAda's own change.\n")  # changed here: a refresh keeps it (an unchanged copy follows GitHub)
         theirs = self.newer_version(number)
         self.assertTrue(self.refreshed()["SLICE-001"]["newer_elsewhere"])
         self.assertEqual(self.ok(self.a, "status")["next_actions"][0]["kind"], "reconcile")
         taken = self.ok(self.a, "reconcile", "SLICE-001", "--take", "theirs")
-        self.assertEqual((taken["took"], taken["github_version"]), ("theirs", 2))
-        self.assertEqual(self.draft(self.a, "specs/slices/SLICE-001-invite-teammate.md").read_text(), theirs)
+        # Taken as GitHub holds it: Ada reopened it, so its issue is not marked ready, and it comes as a draft to mark ready.
+        self.assertEqual((taken["took"], taken["github_version"], taken["approved_here"]), ("theirs", 2, False))
+        (spec,) = self.draft(self.a, "specs/slices").glob("SLICE-001-*.md")
+        self.assertEqual(spec.read_text(), theirs)
+        self.assertIn(".factory/studio/replaced/SLICE-001-yours-", taken["kept_yours"])
         self.assertFalse(self.refreshed()["SLICE-001"]["newer_elsewhere"])
         result = self.ready()
         self.assertEqual((result["issue"], result["revision"]), (number, 2))  # the same text: the same version, approved by Ada too
@@ -770,6 +776,7 @@ class RefreshTest(IssuesBase):
         self.drafted()
         number = self.ready()["issue"]
         self.ok(self.a, "slice", "reopen", "SLICE-001")
+        self.write_slice(self.a, "SLICE-001", extra="\nAda's own change.\n")  # changed here: a refresh keeps it (an unchanged copy follows GitHub)
         self.newer_version(number)
         self.refreshed()
         self.ok(self.a, "reconcile", "SLICE-001", "--take", "mine")
@@ -1024,7 +1031,7 @@ class RetryTest(IssuesBase):
         saved = self.ok(self.a, "status")["saved"]
         self.assertTrue(saved["everything_saved"], "a failed check is not something unsaved")
         self.assertEqual(saved["note"], "Everything is saved.")
-        self.assertIn(f'GitHub could not be reached. The GitHub tool (gh) said: "{NETWORK_DOWN}".', saved["github_check"]["problem"])
+        self.assertIn(f'GitHub could not be reached (tried 3 times). The GitHub tool (gh) said: "{NETWORK_DOWN}".', saved["github_check"]["problem"])
         # The first read that failed was tried three times; after that the command stops trying again, so it never waits long.
         listed = [json.dumps(call) for call in self.gh()["calls"][self.before:] if call[:2] == ["issue", "list"]]
         self.assertEqual(max(listed.count(call) for call in listed), 3)

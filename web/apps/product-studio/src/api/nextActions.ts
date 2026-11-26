@@ -22,6 +22,20 @@ export function routeFor(action: NextAction): ActionRoute {
   const kind = artifactKind(id);
   const slice = kind === "slice" ? id : null;
   switch (action.kind) {
+    case "join_project":
+      // The project home brings it in by itself, before anything else is shown.
+      return { type: "navigate", to: "/", label: "Bring in the project" };
+    case "choose_version":
+      // The two choices sit in the "From GitHub" panel on the project home.
+      return { type: "navigate", to: "/", label: "Keep yours or take GitHub's" };
+    case "reopen_changed":
+      return slice ? { type: "navigate", to: `/slices/${slice}`, label: "Reopen it" } : { type: "navigate", to: "/roadmap", label: "Open" };
+    case "import_waiting":
+      return { type: "navigate", to: "/move", label: "Finish bringing it in" };
+    case "read_slice":
+      return slice ? { type: "navigate", to: `/slices/${slice}`, label: "Read it" } : { type: "navigate", to: "/roadmap", label: "Open" };
+    case "mocks_waiting":
+      return slice ? { type: "navigate", to: `/slices/${slice}`, label: "See its pictures" } : { type: "navigate", to: "/roadmap", label: "Open" };
     case "define_project":
       return { type: "navigate", to: "/vision", label: "Define the project" };
     case "add_epic":
@@ -77,6 +91,12 @@ export function routeForHint(hint: ApiErrorHint): ActionRoute {
       return t ? { type: "renumber", id: t, label: `Give ${t} a new number` } : { type: "navigate", to: "/vision", label: "Open the epics" };
     case "edit_project":
       return { type: "navigate", to: "/vision", label: "Edit the project" };
+    case "ready_without_mocks":
+      // The mark-ready dialog offers "Mark ready without the pictures" itself; elsewhere, the slice's page.
+      return t ? { type: "navigate", to: `/slices/${t}`, label: `Open ${t}` } : { type: "navigate", to: "/roadmap", label: "Open the roadmap" };
+    case "start_anyway":
+      // The project home brings the project in from GitHub, and offers starting one's own when GitHub cannot be read.
+      return { type: "navigate", to: "/", label: "Open the project home" };
     default: {
       const route = routeFor({ kind: hint.kind, target: t, title: "", reason: null });
       if (route.type === "renumber") return { ...route, label: `Give ${route.id} a new number` };

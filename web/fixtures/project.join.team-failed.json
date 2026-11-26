@@ -1,0 +1,27 @@
+{
+  "exit_code": 0,
+  "data": {
+    "joined": false,
+    "github": {
+      "connected": true,
+      "checked": false,
+      "problem": "GitHub could not be reached. The GitHub tool (gh) said: \"error connecting to api.github.com\".",
+      "kind": "network",
+      "advice": null
+    },
+    "project": null,
+    "taken": {
+      "project": false,
+      "principles": false,
+      "needs": false,
+      "epics": [],
+      "slices": [],
+      "ideas": []
+    },
+    "remaining": null,
+    "factory_authorized": false,
+    "note": "MACH could not check GitHub at 2026-11-26 01:32 UTC: GitHub could not be reached. The GitHub tool (gh) said: \"error connecting to api.github.com\". MACH has not yet read this project from GitHub on this computer. Nothing of yours is lost; MACH checks again when you refresh. Nothing here was changed."
+  },
+  "refused": null,
+  "hint": null
+}

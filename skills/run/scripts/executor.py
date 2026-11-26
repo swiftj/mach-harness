@@ -223,7 +223,10 @@ def project_files(root: Path) -> Dict[str, bytes]:
                 continue
             data = path.read_bytes()
             if relative.as_posix() == "SKILL.md":
-                data = unprefixed(data.decode("utf-8"), station).encode("utf-8")
+                text = unprefixed(data.decode("utf-8"), station)
+                # A skill that runs another skill's script names its folder: .claude/skills/mach-app/ in a project, skills/app/ here.
+                text = re.sub(r"(\$\{CLAUDE_SKILL_DIR\}/\.\./)mach-([a-z0-9-]+)/", r"\1\2/", text)
+                data = text.encode("utf-8")
             files[f"skills/{station}/{relative.as_posix()}"] = data
     if "run" not in stations:
         raise PluginError("MACH's run skill is not installed in this project's .claude/skills.")

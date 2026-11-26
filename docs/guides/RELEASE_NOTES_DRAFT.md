@@ -1,6 +1,38 @@
-# MACH release notes: 0.26.0
+# MACH release notes: 0.27.0
 
 What is new in each release, newest first, followed by supported platforms, what you need, upgrading and security notes.
+
+## What changed in 0.27.0
+
+A project someone else defined is there when you open Product Studio, and one command opens the app.
+
+### Joining a project
+
+| Change | What it is |
+| --- | --- |
+| Nothing to fill in | On a fresh clone of a repository whose product is already on GitHub, Product Studio brings it in before showing anything: the project, its principles and technical needs, every epic, and every slice in the state it is in. The app shows "Bringing in <project> from GitHub", then the project. The terminal says the same in one line. |
+| It stays in step | Every refresh also takes in what others have published since, and newer versions of anything you have not changed. A draft you changed is never replaced. |
+| A newer version is looked at first | When someone published a newer version of something you changed, the first step is to look at the two, then take theirs or keep yours as a new version. |
+| "From GitHub" on the project home | What came, what could not come and why, what waits, and where an earlier copy of yours was kept, each with its one step. |
+| Design pictures | A slice's pictures come from the main branch at the first refresh after this computer has them (after a pull or fetch). Until then the slice says so, and marking it ready never drops them without your word. |
+| A project you had started | If you began a project here that was never saved to GitHub and the repository has one, MACH brings in the repository's project, keeps your words aside and keeps your epics and drafts as drafts. |
+| When GitHub cannot be read | The app says why and tries again. It does not offer to describe a product that may already exist, unless you say to start one of your own. |
+| The ways to start from nothing | Shown only when GitHub was read and holds no project for the repository, or the repository has no GitHub origin. |
+
+Drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were written.
+
+### One command opens the app
+
+| Change | What it is |
+| --- | --- |
+| `/mach-app` | Opens MACH Product Studio in your browser. There is nothing to add after it and nothing to phrase. With the plugin it is `/mach:app`. |
+| Always the installed release | The app that opens is the one for the MACH release installed in the project. A missing or older program is fetched and checked against the release's checksum first. An older Product Studio still running for the project is stopped and replaced. |
+| It says what it did | "Product Studio 0.27.0 is open in your browser.", whether it was already running, and a fresh link for another browser on this computer. When a newer MACH release exists it says so, and that running the installer updates it. |
+| `/mach-app link` and `/mach-app stop` | A fresh link without opening a browser; and stopping the app. |
+| `/mach-app floor` | The same for the Factory Floor, with `link` and `stop`. |
+| It keeps running | The app runs until `/mach-app stop` or the computer restarts, not only while Claude Code is open. |
+
+`/mach-studio open the app` and `/mach floor` still work and do the same thing.
 
 ## What changed in 0.26.0
 

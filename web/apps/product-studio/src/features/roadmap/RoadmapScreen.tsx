@@ -1,4 +1,6 @@
 import { useMemo, useState } from "react";
+import { useStartAnyway } from "../../api/join";
+import { projectEntry } from "../home/start/model";
 import { Link } from "react-router";
 import { CircleAlert, Feather, Info, List, Network, Plus } from "lucide-react";
 import type { StartAs } from "../small-change/model";
@@ -29,6 +31,7 @@ const stateOrder: GraphState[] = ["proposed", "interviewing", "ready", "approved
 
 export function RoadmapScreen() {
   const status = useStatus();
+  const anyway = useStartAnyway();
   if (!status.data && !status.error) {
     return (
       <Page>
@@ -49,6 +52,24 @@ export function RoadmapScreen() {
     );
   }
   const data = status.data;
+  if (!data.project && projectEntry(data, anyway) === "join") {
+    return (
+      <Page>
+        <EmptyState
+          layout="page"
+          headingLevel={1}
+          icon={<Network />}
+          title="This project comes from GitHub"
+          description="MACH brings it in on the project home, with its epics and slices, as the person who defined it saved them. There is nothing to type."
+          action={
+            <Button variant="primary" asChild>
+              <Link to="/">Open the project home</Link>
+            </Button>
+          }
+        />
+      </Page>
+    );
+  }
   if (!data.project) {
     return (
       <Page>

@@ -124,6 +124,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	logger := log.New(stderr, "mach-studio ", log.LstdFlags)
+	// Which release and process this is, beside the link, so MACH can tell whether the running host
+	// is the release now installed and stop only this one when it is not.
+	if hostDir != nil {
+		host := hostdir.Host{Program: "mach-studio", Version: version, PID: os.Getpid(), Port: listener.Addr().(*net.TCPAddr).Port, Project: project}
+		if err := hostDir.WriteHost(host); err != nil {
+			logger.Printf("could not record which release is running: %v", err)
+		}
+		defer hostDir.RemoveHost()
+	}
 	if *budget <= 0 || *budget > 100 || *turnTimeout < time.Second {
 		listener.Close()
 		return errors.New("--budget-per-turn must be between 0 and 100 dollars and --turn-timeout at least 1s")

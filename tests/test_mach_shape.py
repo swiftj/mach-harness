@@ -452,8 +452,10 @@ class PublishTest(ShapeBase):
 class RefreshTest(ShapeBase):
     def test_refresh_without_ideas_makes_no_call_for_them(self):
         self.ok(self.a, "refresh")
+        calls = len(self.gh()["calls"])
         self.assertNotIn("ideas", self.ok(self.a, "refresh"))
-        self.assertFalse(any("mach:idea" in call for call in self.gh()["calls"]))
+        # One listing of the idea issues, to bring in ideas others published (test_studio_join); nothing more for ideas.
+        self.assertEqual(len([call for call in self.gh()["calls"][calls:] if "mach:idea" in call]), 1)
 
     def test_an_issue_changed_on_github_after_its_verdict_is_flagged(self):
         self.decided()

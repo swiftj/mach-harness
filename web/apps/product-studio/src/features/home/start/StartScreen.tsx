@@ -13,11 +13,105 @@ import { ContextRow, OnePane, WorkScreen } from "../../../shared/layout/WorkScre
 import { usePrdImport } from "../../prd/usePrdImport";
 import { AddIdeaDialog } from "../../shape/ideas/AddIdeaDialog";
 import { ideaPath } from "../../shape/shell/steps";
-import { requestsToStartFrom, startedWays, wayById, ways, type Started, type Way } from "./model";
+import { joinProgressWords, projectEntry, requestsToStartFrom, startedWays, wayById, ways, type Started, type Way } from "./model";
+import { chooseStartAnyway, startJoin, useJoin, useStartAnyway, type JoinState } from "../../../api/join";
 import { ImportUnfinishedNotice } from "../../../shared/ImportUnfinishedNotice";
 import { PROJECT_FILE_MAX } from "../../move/model";
 
 const sizeWords = (bytes: number) => (bytes % (1024 * 1024) === 0 ? `${bytes / (1024 * 1024)} MB` : `${Math.round(bytes / 1024)} KB`);
+
+/**
+ * A workspace with no project yet. When the repository is on GitHub and may hold one, the project someone else defined is
+ * brought in first, by itself (FromGithub); the ways to start from nothing are offered only when GitHub was read and holds
+ * no project for this repository, or when the repository is not on GitHub.
+ */
+export function StartScreen({ status }: { status: Status }) {
+  const anyway = useStartAnyway();
+  return projectEntry(status, anyway) === "join" ? <FromGithub /> : <Ways status={status} />;
+}
+
+/** How long the screen waits before reading GitHub again by itself after a failed read. */
+const RETRY_MS = 60_000;
+
+/**
+ * The project is on GitHub: MACH brings it in. While it does, the screen says so with how many slices have come; if GitHub
+ * cannot be read, it says that in the engine's own words, offers "Try again", tries again by itself, and never offers to
+ * describe the product from nothing (that would start a second project).
+ */
+export function FromGithub() {
+  const join = useJoin();
+  const failedAt = join.phase === "failed" ? join.at : null;
+  useEffect(() => {
+    if (join.phase === "idle") void startJoin();
+  }, [join.phase]);
+  useEffect(() => {
+    if (failedAt === null) return;
+    const timer = window.setTimeout(() => void startJoin(), RETRY_MS);
+    return () => window.clearTimeout(timer);
+  }, [failedAt]);
+  if (join.phase !== "failed" && join.phase !== "done") return <BringingIn join={join.phase === "idle" ? { phase: "looking" } : join} />;
+  const words = join.phase === "failed" ? join.text : (join.result?.note ?? "");
+  return (
+    <WorkScreen header={<ContextRow title="This project is on GitHub" />}>
+      <OnePane label="Bringing in the project" width="content">
+        <div className="flex max-w-reading flex-col gap-6 pb-6">
+          <Banner
+            tone="warning"
+            live="polite"
+            title="MACH could not read GitHub"
+            actions={
+              <Button size="sm" onClick={() => void startJoin()}>
+                Try again
+              </Button>
+            }
+          >
+            {words}
+          </Banner>
+          <Text tone="muted">
+            This repository is on GitHub, so its project, epics and slices come from there, exactly as the person who defined them saved them. Nothing here
+            was changed. Meanwhile, check that this computer is online and signed in to GitHub. MACH tries again by itself every minute.
+          </Text>
+          <div className="flex flex-col items-start gap-2">
+            <Text size="body-sm" tone="muted">
+              If this repository has no project yet, you can start a product of your own here instead. A project that is on GitHub comes in once GitHub
+              can be read.
+            </Text>
+            <Button variant="secondary" size="sm" onClick={chooseStartAnyway}>
+              Start a product of my own
+            </Button>
+          </div>
+        </div>
+      </OnePane>
+    </WorkScreen>
+  );
+}
+
+/** "Bringing in Rulebook Explorer from GitHub", with how many slices have come. */
+export function BringingIn({ join }: { join: Extract<JoinState, { phase: "looking" | "bringing" | "other_window" }> }) {
+  const title =
+    join.phase === "bringing"
+      ? `Bringing in ${join.name} from GitHub`
+      : join.phase === "other_window"
+        ? "Another window is bringing the project in"
+        : "Looking for this project on GitHub";
+  const progress = join.phase === "bringing" ? joinProgressWords(join.done, join.total) : null;
+  return (
+    <WorkScreen header={<ContextRow title={title} />}>
+      <OnePane label="Bringing in the project" width="content">
+        <div className="flex max-w-reading flex-col gap-4 pb-6">
+          <span role="status" className="inline-flex items-center gap-2 text-body text-ink">
+            <Spinner size="sm" />
+            {progress ? `${progress} so far` : "Reading the project, its epics and slices"}
+          </span>
+          <Text tone="muted">
+            This repository's project was defined on GitHub. MACH brings it into your workspace as it is there, with its epics and slices, so you see the same
+            product and have nothing to type again. Nothing is changed on GitHub.
+          </Text>
+        </div>
+      </OnePane>
+    </WorkScreen>
+  );
+}
 
 /**
  * A project with no definition yet (M19). It asks how the person wants to start and lists every way, each with what
@@ -25,7 +119,7 @@ const sizeWords = (bytes: number) => (bytes % (1024 * 1024) === 0 ? `${bytes / (
  * idea added) it first says where they are, with the way to carry on, and keeps the other ways below. Every state shown
  * is what the engine reported (`status.prds`, `status.ideas`, `request.list`).
  */
-export function StartScreen({ status }: { status: Status }) {
+function Ways({ status }: { status: Status }) {
   const started = startedWays(status);
   const refresh = useRefresh();
   const requests = useRequestList();
