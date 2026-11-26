@@ -566,7 +566,10 @@ def said_once(studio: Any, lines: List[str]) -> List[str]:
 def project_words(host: Any, studio: Any, hand: Any, name: str, so_far: bool = False) -> str:
     """The project as it now is in this workspace, in one sentence: "This repository's project is Rulebook Explorer. MACH brought it
     in from GitHub: 3 epics and 10 slices, 8 ready and 2 shipped." While a batched join is under way it says what came so far."""
-    epics, slices = studio.all("epic"), studio.all("slice")
+    # The project as GitHub holds it here: epics and slices linked to their issues (drafts of this person's are theirs, not counted).
+    ledger = hand.load()
+    epics = [epic_id for epic_id in studio.all("epic") if (ledger["epics"].get(epic_id) or {}).get("number")]
+    slices = [slice_id for slice_id in studio.all("slice") if (ledger["slices"].get(slice_id) or {}).get("number")]
     states = [state_of(dependency_view(host, studio, hand, slice_id)) for slice_id in slices]
     what = listed([part for part in (plural(len(epics), "epic") if epics else "", plural(len(slices), "slice") if slices else "") if part])
     if so_far:

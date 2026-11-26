@@ -43,14 +43,14 @@
         "url": "https://github.com/acme/team-space/issues/1"
       },
       "only_on_their_computer": "Drafts never marked ready, PRDs, designs, ideas' working files and interview notes exist only on the computer where they were written.",
-      "project_words": "This repository's project is Team Space. MACH brought it in from GitHub: 1 epic and 1 slice, 1 to approve again.",
+      "project_words": "This repository's project is Team Space. MACH brought it in from GitHub: 1 epic.",
       "in_words": [],
       "note": ""
     },
     "requests": {
       "repository": "acme/team-space",
       "refreshed": true,
-      "refreshed_at": "2026-11-26T00:39:39Z",
+      "refreshed_at": "2026-11-26T00:51:43Z",
       "problem": null,
       "truncated": false,
       "truncated_note": null,
@@ -64,7 +64,7 @@
       "repository": "acme/team-space",
       "refreshed": true,
       "problem": null,
-      "refreshed_at": "2026-11-26T00:39:39Z",
+      "refreshed_at": "2026-11-26T00:51:43Z",
       "form": "sub_issues",
       "project_issue": 1,
       "project_url": "https://github.com/acme/team-space/issues/1",
@@ -92,7 +92,7 @@
             "issue": 4,
             "holder": 3,
             "by": null,
-            "at": "2026-11-26T00:39:39Z",
+            "at": "2026-11-26T00:51:43Z",
             "issue_url": "https://github.com/acme/team-space/issues/4",
             "holder_url": "https://github.com/acme/team-space/issues/3"
           },
@@ -139,7 +139,7 @@
           "github_order": [
             "SLICE-001"
           ],
-          "github_read_at": "2026-11-26T00:39:39Z",
+          "github_read_at": "2026-11-26T00:51:43Z",
           "matches_github": true,
           "unfinished": false,
           "taken_from_github": false,
@@ -160,7 +160,7 @@
           "revision": null,
           "approved": null,
           "approved_by": null,
-          "read_at": "2026-11-26T00:39:39Z"
+          "read_at": "2026-11-26T00:51:43Z"
         },
         "newer_elsewhere": false,
         "changed_on_github": false

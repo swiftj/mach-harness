@@ -2149,7 +2149,7 @@ def take_slice(studio: Studio, target: str, opening: List[str], pre: Optional[Tu
         lead = (f"#{number}'s text was changed on GitHub after {who} approved it." if check["problem"] == "edited" and who else
                 f"#{number}'s text was changed on GitHub after it was approved." if check["problem"] == "edited" else
                 f"#{number} has no approval for the version it holds.")
-        warned.append(f"{lead} It is open here as a draft, not as approved: read it, then mark it ready to approve this version.")
+        warned.append(f"{lead} It is open here as a draft, not as approved: read it; marking it ready approves this text as yours.")
     local = studio.all("slice")
     ledger = hand.load()
     if slice_id in local and (ledger["slices"].get(slice_id) or {}).get("number") == number:

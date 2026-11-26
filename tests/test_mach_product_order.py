@@ -375,8 +375,8 @@ class TakeRefusalTest(TakeBase):
         body = self.issue(number)["body"]
         self.change_issue(number, body=body.replace("An admin", "Anyone"))
         taken = self.ok(self.b, "slice", "take", str(number))
-        self.assertIn(f"#{number}'s text was changed on GitHub after @ada-pm approved it. It is open here as a draft, not as approved: read it, "
-                      "then mark it ready to approve this version.", taken["note"])
+        self.assertIn(f"#{number}'s text was changed on GitHub after @ada-pm approved it. It is open here as a draft, not as approved: read it; "
+                      "marking it ready approves this text as yours.", taken["note"])
         self.assertEqual((taken["taken"], taken["approved_here"]), (True, False))
         self.assertNotEqual(taken["slice"]["status"], "approved_for_engineering")
         held = self.draft(self.b, taken["spec"]).read_text() + self.draft(self.b, taken["why"]).read_text()

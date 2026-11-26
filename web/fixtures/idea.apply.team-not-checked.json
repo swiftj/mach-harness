@@ -4,7 +4,7 @@
     "idea_id": "IDEA-001",
     "stage": "shaped",
     "route": {
-      "at": "2026-11-26T00:40:14Z",
+      "at": "2026-11-26T00:52:19Z",
       "brief_sha256": "5c0fcf8917b5ec60044fbc43068faadc6c89a54f8c485c23a941f799fae08836",
       "counted": {
         "capabilities": 2,
@@ -99,7 +99,7 @@
         }
       ],
       "applied": true,
-      "mapped_at": "2026-11-26T00:40:14Z"
+      "mapped_at": "2026-11-26T00:52:19Z"
     },
     "coverage": [
       {
