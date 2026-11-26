@@ -223,13 +223,10 @@ def for_take(host: Any, studio: Any, slice_id: str, number: int, items: List[Dic
         name = rules.mock_file_name(item)
         data = project_export._picture(host, studio, ref, slice_id, name)  # noqa: SLF001
         if data is None or rules.check_mock_file(item, data) is not None:
-            return False, host.say(
-                f"#{number} has design mocks, and their pictures are not on {ref} in this copy of the repository, or are not the approved ones. "
-                f"So {slice_id} is open here without them, as a draft, not as approved. To bring them, fetch the main branch (git fetch) and open "
-                f"#{number} again (slice take {number}); or add them again (slice mock add {slice_id} <picture>).",
-                f"#{number} has design mocks, and their pictures are not in this copy of the project's repository yet. So {slice_id} is open here "
-                f"without them, as a draft, not as approved. To bring them, get the latest from the repository and open #{number} again; or add "
-                "the pictures again.")
+            # The pictures are the author's to commit; nothing the person here does brings them sooner. A refresh brings them by itself.
+            return False, (f"#{number} has design mocks, and their pictures are not on the main branch here yet (or are not the approved ones). "
+                           f"So {slice_id} is open here without them, as a draft, not as approved. They come by themselves once the pictures are "
+                           "on the main branch.")
         files[name] = data
     for name, data in files.items():
         write_picture(host, folder(studio, into or slice_id) / name, data)

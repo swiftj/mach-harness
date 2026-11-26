@@ -46,8 +46,8 @@ import { AnswerQuestionDialog } from "../../shared/BuildersQuestion";
 import { SliceTimes } from "../../shared/SliceTimes";
 import { EpicSheet } from "../vision/EpicSheet";
 import { BringingIn, StartScreen } from "./start/StartScreen";
-import { bringsInFromGithub } from "./start/model";
-import { joining, startJoin, useJoin } from "../../api/join";
+import { projectEntry } from "./start/model";
+import { joining, startJoin, useJoin, useStartAnyway } from "../../api/join";
 import { ShapeCarryOn } from "../shape/shell/ShapeCarryOn";
 import { Fold } from "../../shared/layout/Fold";
 import { ContextRow, OnePane, WorkScreen } from "../../shared/layout/WorkScreen";
@@ -64,7 +64,8 @@ export function HomeScreen() {
   const status = useStatus();
   const refresh = useRefresh();
   const join = useJoin();
-  const needsJoin = status.data ? bringsInFromGithub(status.data) : null;
+  const anyway = useStartAnyway();
+  const needsJoin = status.data ? projectEntry(status.data, anyway) === "join" : null;
 
   useEffect(() => {
     // Once the status says what is here: a project to bring in from GitHub is brought in first (its last batch is the

@@ -349,6 +349,9 @@ class Ideas:
         numbers = [0] + [int(name.split("-")[1]) for name in self.ids()] + project_import.reserved_numbers(self.studio, "IDEA")
         numbers += [int(row["idea_id"].split("-")[1]) for row in (self.load_ledger()["seen"].get("issues") or {}).values()
                     if isinstance(row, dict) and IDEA_RE.fullmatch(str(row.get("idea_id") or ""))]
+        # Ideas others published, as joining last read them (studio.session's github_ideas), as slices skip the numbers GitHub holds.
+        numbers += [int(row["idea_id"].split("-")[1]) for row in (self.studio.session().get("github_ideas") or [])
+                    if isinstance(row, dict) and IDEA_RE.fullmatch(str(row.get("idea_id") or ""))]
         return f"IDEA-{max(numbers) + 1:03d}"
 
     # -- the brief, the case and the lookups --

@@ -40,6 +40,8 @@
     "not_taken": [],
     "renumbered": [],
     "warned": [],
+    "kept_changed": [],
+    "waiting_for_import": [],
     "remaining": 0,
     "factory_authorized": false,
     "project": {

@@ -72,10 +72,12 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
   const [renumber, setRenumber] = useState<string | null>(null);
   const navigate = useNavigate();
 
-  const markReady = () => {
+  // A slice brought in without the design mock pictures its issue carries is marked ready without them only on the person's word.
+  const withoutMocks = error?.kind === "refused" && error.hint?.kind === "ready_without_mocks";
+  const markReady = (leaveOutMocks = false) => {
     setBusy(true);
     setError(null);
-    studioClient.op("slice.ready", { slice_id: id }).then(
+    studioClient.op("slice.ready", leaveOutMocks ? { slice_id: id, without_mocks: true } : { slice_id: id }).then(
       (result) => {
         setBusy(false);
         if (isMadeFullAtReady(result)) {
@@ -180,9 +182,15 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
                 </Button>
               </DialogClose>
               {/* After a refusal for a taken number, the new number is the act; marking ready again would be refused. */}
-              <Button variant={taken ? "secondary" : "primary"} loading={busy} onClick={markReady}>
-                Mark ready to build
-              </Button>
+              {withoutMocks ? (
+                <Button variant="secondary" loading={busy} onClick={() => markReady(true)}>
+                  Mark ready without the pictures
+                </Button>
+              ) : (
+                <Button variant={taken ? "secondary" : "primary"} loading={busy} onClick={() => markReady()}>
+                  Mark ready to build
+                </Button>
+              )}
             </>
           }
         >
@@ -205,6 +213,12 @@ export function MarkReadyDialog({ show, onDone, primary }: { show: SliceShow; on
             {/* Someone else holds the number or a newer version: said first, and marking ready still goes ahead. */}
             {!error && show.github.number_taken ? (
               <Text size="body-sm">Another slice on GitHub already uses {id}. Marking it ready gives yours the next free number; everything that refers to it moves with it.</Text>
+            ) : null}
+            {!error && show.github.not_approved?.why === "edited" ? (
+              <Text size="body-sm">
+                {show.github.not_approved.approved_by ? "@" + show.github.not_approved.approved_by : "Someone"} approved a different text of {id}, and its
+                text on GitHub was changed after that. This is the changed text: marking it ready approves it as yours.
+              </Text>
             ) : null}
             {!error && show.github.newer_elsewhere ? (
               <Text size="body-sm">Someone else saved a newer version of {id} on GitHub. Marking yours ready replaces it, and theirs is kept.</Text>

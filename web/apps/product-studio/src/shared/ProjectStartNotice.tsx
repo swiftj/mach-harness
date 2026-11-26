@@ -1,4 +1,7 @@
+import { useState } from "react";
 import { Banner, Button } from "@mach/ui";
+import { useStatus } from "../api/store";
+import type { ProjectStartNote } from "./team";
 import type { Status } from "@mach/ui/api";
 import { forgetProjectStart, useProjectStartNote } from "../api/projectStart";
 import { IssueLink, IssueText } from "./IssueLink";
@@ -36,8 +39,20 @@ function ExtraIssues({ numbers }: { numbers: number[] | undefined }) {
  * When GitHub could not be checked, that is said too. The engine's sentence is shown as written. It stays until closed.
  */
 export function ProjectStartNotice() {
-  const note = useProjectStartNote();
+  const kept = useProjectStartNote();
+  const joined = useStatus().data?.joined_note ?? null;
+  const [closedAt, setClosedAt] = useState<string | null>(() => readClosed());
+  // The project came from GitHub: said from status in every browser, once, until it is closed there (whichever window joined).
+  const fromStatus: ProjectStartNote | null =
+    joined && joined.at !== closedAt ? { kind: "joined", note: joined.text, issue: joined.issue, url: joined.url } : null;
+  const note = fromStatus ?? (kept?.kind === "joined" ? null : kept);
   if (!note) return null;
+  const closeJoined = () => {
+    if (joined) {
+      writeClosed(joined.at);
+      setClosedAt(joined.at);
+    }
+  };
   const close = (
     <Button size="sm" variant="secondary" onClick={forgetProjectStart}>
       Close
@@ -45,7 +60,16 @@ export function ProjectStartNotice() {
   );
   if (note.kind === "joined") {
     return (
-      <Banner tone="info" live="polite" title="This project came from GitHub" actions={close}>
+      <Banner
+        tone="info"
+        live="polite"
+        title="This project came from GitHub"
+        actions={
+          <Button size="sm" variant="secondary" onClick={closeJoined}>
+            Close
+          </Button>
+        }
+      >
         <p>{note.note}</p>
         {note.issue ? (
           <p className="mt-1">
@@ -79,4 +103,23 @@ export function ProjectStartNotice() {
       {note.note}
     </Banner>
   );
+}
+
+const CLOSED_KEY = "mach.joined-note-closed";
+
+/** When this browser last closed the note: the bringing-in it was about, by its time. Guarded: storage may be blocked. */
+function readClosed(): string | null {
+  try {
+    return window.localStorage.getItem(CLOSED_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeClosed(at: string): void {
+  try {
+    window.localStorage.setItem(CLOSED_KEY, at);
+  } catch {
+    // Storage blocked: closed for this page only.
+  }
 }

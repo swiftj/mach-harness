@@ -1,21 +1,9 @@
 {
-  "exit_code": 0,
-  "data": {
-    "project": {
-      "schema_version": 1,
-      "project_id": "team-space",
-      "name": "Team Space",
-      "revision": 1,
-      "status": "draft",
-      "vision": "Teams work together.",
-      "outcomes": [
-        "Teams can work together"
-      ]
-    },
-    "path": "/project/.factory/studio/draft/product/project.json",
-    "github_not_checked": "GitHub could not be reached. The GitHub tool (gh) said: \"error connecting to api.github.com\".",
-    "note": "MACH could not check GitHub for a project already there. GitHub could not be reached. The GitHub tool (gh) said: \"error connecting to api.github.com\". It checks again when you mark a slice ready."
-  },
-  "refused": null,
-  "hint": null
+  "exit_code": 1,
+  "data": null,
+  "refused": "MACH could not read GitHub, so it cannot tell whether this repository already has a project. GitHub could not be reached. The GitHub tool (gh) said: \"error connecting to api.github.com\". Nothing was changed. If it has one, MACH brings it in once GitHub can be read, with nothing to type. You can also start a product of your own here anyway.",
+  "hint": {
+    "kind": "start_anyway",
+    "target": null
+  }
 }

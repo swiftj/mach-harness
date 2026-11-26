@@ -13,8 +13,8 @@ import { ContextRow, OnePane, WorkScreen } from "../../../shared/layout/WorkScre
 import { usePrdImport } from "../../prd/usePrdImport";
 import { AddIdeaDialog } from "../../shape/ideas/AddIdeaDialog";
 import { ideaPath } from "../../shape/shell/steps";
-import { bringsInFromGithub, joinProgressWords, requestsToStartFrom, startedWays, wayById, ways, type Started, type Way } from "./model";
-import { startJoin, useJoin, type JoinState } from "../../../api/join";
+import { joinProgressWords, projectEntry, requestsToStartFrom, startedWays, wayById, ways, type Started, type Way } from "./model";
+import { chooseStartAnyway, startJoin, useJoin, useStartAnyway, type JoinState } from "../../../api/join";
 import { ImportUnfinishedNotice } from "../../../shared/ImportUnfinishedNotice";
 import { PROJECT_FILE_MAX } from "../../move/model";
 
@@ -26,7 +26,8 @@ const sizeWords = (bytes: number) => (bytes % (1024 * 1024) === 0 ? `${bytes / (
  * no project for this repository, or when the repository is not on GitHub.
  */
 export function StartScreen({ status }: { status: Status }) {
-  return bringsInFromGithub(status) ? <FromGithub /> : <Ways status={status} />;
+  const anyway = useStartAnyway();
+  return projectEntry(status, anyway) === "join" ? <FromGithub /> : <Ways status={status} />;
 }
 
 /** How long the screen waits before reading GitHub again by itself after a failed read. */
@@ -37,7 +38,7 @@ const RETRY_MS = 60_000;
  * cannot be read, it says that in the engine's own words, offers "Try again", tries again by itself, and never offers to
  * describe the product from nothing (that would start a second project).
  */
-function FromGithub() {
+export function FromGithub() {
   const join = useJoin();
   const failedAt = join.phase === "failed" ? join.at : null;
   useEffect(() => {
@@ -48,7 +49,7 @@ function FromGithub() {
     const timer = window.setTimeout(() => void startJoin(), RETRY_MS);
     return () => window.clearTimeout(timer);
   }, [failedAt]);
-  if (join.phase !== "failed" && join.phase !== "done") return <BringingIn join={join.phase === "bringing" ? join : { phase: "looking" }} />;
+  if (join.phase !== "failed" && join.phase !== "done") return <BringingIn join={join.phase === "idle" ? { phase: "looking" } : join} />;
   const words = join.phase === "failed" ? join.text : (join.result?.note ?? "");
   return (
     <WorkScreen header={<ContextRow title="This project is on GitHub" />}>
@@ -70,6 +71,15 @@ function FromGithub() {
             This repository is on GitHub, so its project, epics and slices come from there, exactly as the person who defined them saved them. Nothing here
             was changed. Meanwhile, check that this computer is online and signed in to GitHub. MACH tries again by itself every minute.
           </Text>
+          <div className="flex flex-col items-start gap-2">
+            <Text size="body-sm" tone="muted">
+              If this repository has no project yet, you can start a product of your own here instead. A project that is on GitHub comes in once GitHub
+              can be read.
+            </Text>
+            <Button variant="secondary" size="sm" onClick={chooseStartAnyway}>
+              Start a product of my own
+            </Button>
+          </div>
         </div>
       </OnePane>
     </WorkScreen>
@@ -77,8 +87,13 @@ function FromGithub() {
 }
 
 /** "Bringing in Rulebook Explorer from GitHub", with how many slices have come. */
-export function BringingIn({ join }: { join: Extract<JoinState, { phase: "looking" | "bringing" }> }) {
-  const title = join.phase === "bringing" ? `Bringing in ${join.name} from GitHub` : "Looking for this project on GitHub";
+export function BringingIn({ join }: { join: Extract<JoinState, { phase: "looking" | "bringing" | "other_window" }> }) {
+  const title =
+    join.phase === "bringing"
+      ? `Bringing in ${join.name} from GitHub`
+      : join.phase === "other_window"
+        ? "Another window is bringing the project in"
+        : "Looking for this project on GitHub";
   const progress = join.phase === "bringing" ? joinProgressWords(join.done, join.total) : null;
   return (
     <WorkScreen header={<ContextRow title={title} />}>
