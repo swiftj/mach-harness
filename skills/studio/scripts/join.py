@@ -261,6 +261,9 @@ def join(host: Any, studio: Any, found: Optional[Dict[str, Any]] = None, batch: 
                     result["already_here"]["slices"].append(slice_id)
                     result["undecided"].append({"slice_id": slice_id, "issue": item["number"], "words": undecided_words(host, slice_id, item["number"])})
                     continue
+                if entry.get("run"):
+                    result["already_here"]["slices"].append(slice_id)  # marking it ready stopped part way here: its retry finishes it
+                    continue
                 if not unchanged_here(host, studio, rules, slice_id, entry, local[slice_id]):
                     result["already_here"]["slices"].append(slice_id)
                     if local[slice_id].get("status") == host.APPROVED:

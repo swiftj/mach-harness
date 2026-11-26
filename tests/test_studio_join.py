@@ -595,6 +595,22 @@ class BaseTest(JoinBase):
         result = self.ok(self.b, "slice", "ready", slice_id)  # no --without-mocks needed: the pictures are here
         self.assertTrue(result["ready"])
 
+    def test_a_refresh_between_an_interrupted_ready_and_its_retry_offers_finishing_it(self):
+        self.project_and_epic(self.ada())
+        self.ready(self.drafted(self.a), self.a)
+        self.ok(self.ben(), "refresh")
+        self.ok(self.b, "slice", "reopen", "SLICE-001")
+        spec = self.draft(self.b, self.ben_slice("SLICE-001")["spec_path"])
+        spec.write_text(spec.read_text() + "\nBen's version.\n")
+        self.gh_fails("issue edit labels")  # the last step, marking it ready, fails once
+        self.refused(self.b, "slice", "ready", "SLICE-001")
+        joined = self.ok(self.b, "refresh")["joined"]
+        self.assertNotIn("changed here without being reopened", joined["note"])
+        kinds = [a["kind"] for a in self.status(self.b)["next_actions"]]
+        self.assertEqual(kinds[0], "finish_ready")
+        self.assertNotIn("reopen_changed", kinds)
+        self.assertTrue(self.ready("SLICE-001", self.b)["ready"])
+
     def test_a_newer_version_is_looked_at_first_never_published_over(self):
         self.project_and_epic(self.ada())
         self.ready(self.drafted(self.a), self.a)
