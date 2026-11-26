@@ -496,6 +496,17 @@ def github_text(host: Any, rules: Any, item: Dict[str, Any]) -> Optional[Tuple[s
     return (rules.text_sha256_of(spec), rules.text_sha256_of(why)) if spec is not None and why is not None else None
 
 
+def approved_mocks(entry: Dict[str, Any], work: Dict[str, Any], item: Optional[Dict[str, Any]], here: Optional[str]) -> Optional[str]:
+    """The design mocks' digest an approved slice's base records, for a ledger written before the base: older ledgers kept
+    `mocks_sha256` empty even for a slice with pictures. The work order's own mocks are what was approved when the approval (the
+    ledger's, else the issue's marker) names them or names none; otherwise the marker's. Never None for a slice that has mocks."""
+    marker = (item or {}).get("marker") or {}
+    named = [digest for digest in (entry.get("mocks_sha256"), marker.get("mocks_sha256")) if digest]
+    if here and (here in named or not named):
+        return here
+    return named[0] if named else here
+
+
 def adopt_bases(host: Any, studio: Any, hand: Any, snapshot: Dict[str, Any]) -> List[str]:
     """A workspace from before the base (0.26.0 to 0.27.x) gets one for every slice linked to an issue, without guessing: an approved
     slice whose files match its approval has that as its base; one whose files match what GitHub holds now has GitHub's version; one
@@ -516,7 +527,8 @@ def adopt_bases(host: Any, studio: Any, hand: Any, snapshot: Dict[str, Any]) -> 
             if now is None:
                 continue
             if work.get("status") == host.APPROVED and entry.get("spec_sha256"):
-                agreed = handoff.agreed_base(entry.get("revision"), entry["spec_sha256"], entry.get("why_sha256"), entry.get("mocks_sha256"))
+                agreed = handoff.agreed_base(entry.get("revision"), entry["spec_sha256"], entry.get("why_sha256"),
+                                             approved_mocks(entry, work, item, now[2]))
             elif item is not None and github_text(host, rules, item) == now[:2]:
                 marker = item["marker"]
                 agreed = handoff.agreed_base(marker["revision"], now[0], now[1], now[2], handoff.github_sig(marker, item.get("body_sha256")))

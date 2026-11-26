@@ -536,6 +536,44 @@ class BaseTest(JoinBase):
         self.assertNotIn("undecided", self.ledger(self.b)["slices"]["SLICE-002"])
         self.assertEqual(kept, self.ledger(self.b)["slices"]["SLICE-001"]["number"])
 
+    def older_ledger(self, project):
+        """The ledger as the 0.26.0 code left it: no base, and no mocks digest even for a slice with pictures."""
+        ledger = self.ledger(project)
+        for entry in ledger["slices"].values():
+            entry.pop("base", None)
+            if "mocks_sha256" in entry:
+                entry["mocks_sha256"] = None
+        (project / ".factory/studio/issues.json").write_text(json.dumps(ledger))
+
+    def test_an_older_workspaces_approved_slice_with_pictures_is_unchanged_and_follows_github(self):
+        self.project_and_epic(self.ada())
+        slice_id = self.drafted(self.a)
+        picture = self.root / "p.png"
+        picture.write_bytes(png())
+        self.ok(self.a, "slice", "mock", "add", slice_id, str(picture))
+        ready = self.ready(slice_id, self.a)
+        self.commit_mocks(slice_id, ready["mocks"]["files"])
+        git(self.b, "fetch", "-q", "origin")
+        self.ok(self.ben(), "refresh")
+        self.assertEqual(self.ben_slice(slice_id)["status"], "approved_for_engineering")
+        for project, login in ((self.a, "ada-pm"), (self.b, "ben-pm")):
+            self.older_ledger(project)
+            self.set_gh(me=login)
+            self.ok(project, "refresh")
+            base = self.ledger(project)["slices"][slice_id]["base"]
+            self.assertIsNotNone(base["mocks"], project.name)
+            kinds = [a["kind"] for a in self.status(project)["next_actions"]]
+            self.assertNotIn("reopen_changed", kinds, project.name)
+        # Ada publishes version 2: Ben's untouched copy follows.
+        self.set_gh(me="ada-pm")
+        self.ok(self.a, "slice", "reopen", slice_id)
+        path = self.draft(self.a, f"specs/slices/{slice_id}-invite-teammate.md")
+        path.write_text(path.read_text() + "\nVersion two.\n")
+        self.ready(slice_id, self.a)
+        joined = self.ok(self.ben(), "refresh")["joined"]
+        self.assertEqual([row["slice_id"] for row in joined["updated"]], [slice_id])
+        self.assertEqual(self.ben_slice(slice_id)["status"], "approved_for_engineering")
+
     def test_a_newer_version_is_looked_at_first_never_published_over(self):
         self.project_and_epic(self.ada())
         self.ready(self.drafted(self.a), self.a)
