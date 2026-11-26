@@ -286,6 +286,12 @@ export function splitNumbersNote(note: string, numbers: NumbersFromGithub | unde
   return { made: note.slice(0, at), numbers: note.slice(at + 1) };
 }
 
+/** Who approved a slice, for a sentence: "you" only when the approval is this workspace's own, else the approver, else "someone". */
+export function approverWords(github: Pick<SliceGithub, "approved_by" | "approved_by_you">): string {
+  if (github.approved_by_you) return "you";
+  return github.approved_by ? `@${github.approved_by}` : "someone";
+}
+
 /* ── From GitHub: what bringing the project in said, and what stays true ─── */
 
 export interface FromGithubLine {

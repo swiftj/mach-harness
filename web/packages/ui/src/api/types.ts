@@ -158,6 +158,8 @@ export interface SliceGithub {
   url: string | null;
   /** The GitHub account whose approval this workspace holds for the slice's version, when it is approved. */
   approved_by?: string | null;
+  /** Whether that approval is this workspace's own (marked ready here after the slice was last taken from GitHub). */
+  approved_by_you?: boolean;
   state_label: SliceStateLabel | null;
   /** The approved version saved on GitHub. */
   revision: number | null;

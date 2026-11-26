@@ -611,6 +611,31 @@ class BaseTest(JoinBase):
         self.assertNotIn("reopen_changed", kinds)
         self.assertTrue(self.ready("SLICE-001", self.b)["ready"])
 
+    def test_a_change_on_github_names_whose_approval_it_was(self):
+        self.project_and_epic(self.ada())
+        number = self.ready(self.drafted(self.a), self.a)["issue"]
+        self.ok(self.ben(), "refresh")
+        self.change_issue(number, body=self.issue(number)["body"].replace("An admin cannot bring a colleague in.", "Anyone can do anything."))
+        for project, login, who in ((self.b, "ben-pm", "@ada-pm"), (self.a, "ada-pm", "you")):
+            self.set_gh(me=login)
+            self.ok(project, "refresh")
+            (action,) = [a for a in self.status(project)["next_actions"] if a["target"] == "SLICE-001"]
+            self.assertEqual(action["reason"], f"Invite a teammate was changed on GitHub after {who} approved it, so the builders will not take it.")
+
+    def test_keeping_mine_makes_it_my_draft_not_githubs_text_to_read(self):
+        self.project_and_epic(self.ada())
+        number = self.ready(self.drafted(self.a), self.a)["issue"]
+        approved = self.issue(number)["body"]
+        self.change_issue(number, body=approved.replace("An admin cannot bring a colleague in.", "Anyone can do anything."))
+        self.ok(self.ben(), "refresh")
+        self.change_issue(number, body=approved)
+        self.older_ledger(self.b)
+        self.ok(self.b, "refresh")  # undecided
+        self.ok(self.b, "reconcile", "SLICE-001", "--take", "mine")
+        kinds = [a["kind"] for a in self.status(self.b)["next_actions"] if a["target"] == "SLICE-001"]
+        self.assertNotIn("read_slice", kinds)
+        self.assertNotIn("choose_version", kinds)
+
     def test_a_newer_version_is_looked_at_first_never_published_over(self):
         self.project_and_epic(self.ada())
         self.ready(self.drafted(self.a), self.a)

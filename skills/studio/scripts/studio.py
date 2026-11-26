@@ -1021,8 +1021,10 @@ def next_actions(project, epics, slice_rows, changed: Sequence[Dict[str, Any]] =
             act("finish_ready", sid, f"Finish marking {sid} ready", f"{row['title']} is approved, but saving it did not finish.",
                 f"{sid} is approved, but saving it did not finish: mark it ready again to finish (slice ready {sid}).", first=True)
         elif row["status"] == APPROVED and gh["changed_on_github"]:
-            act("mark_ready", sid, f"Mark {sid} ready again", f"{row['title']} was changed on GitHub after you approved it, so the builders will not take it.",
-                f"{sid} was changed on GitHub after you approved it: mark it ready again to put your approved version back (slice ready {sid}).")
+            who = "you" if gh.get("approved_by_you") else f"@{gh['approved_by']}" if gh.get("approved_by") else "it was"
+            approved = f"after {who} approved it" if who != "it was" else "after it was approved"
+            act("mark_ready", sid, f"Mark {sid} ready again", f"{row['title']} was changed on GitHub {approved}, so the builders will not take it.",
+                f"{sid} was changed on GitHub {approved}: mark it ready again to put the approved version back (slice ready {sid}).")
     for epic_id, moment in sorted((epic_moments or {}).items(), reverse=True):  # M20: an epic's number taken at the same moment
         title = (epics.get(epic_id) or {}).get("title") or epic_id
         act("renumber_epic", epic_id, f"Give {epic_id} a new number",
@@ -2747,6 +2749,7 @@ def reconcile_slice(studio: Studio, slice_id: str, take: str) -> int:
             hand.record_version(entry, handoff.agreed_base(marker["revision"], None, None, None,
                                                            handoff.github_sig(marker, handoff.body_digest((current or {}).get("body")))),
                                 base_revision=marker["revision"])
+            entry.pop("not_approved", None)  # kept as theirs: it is the person's own draft now, not GitHub's text awaiting a read
             hand.save(ledger)
         return emit({"reconciled": slice_id, "took": take, "github_version": marker["revision"], "approvals_withdrawn": [], "factory_authorized": False,
                      "note": say(f"Your copy of {slice_id} stays as it is. To make it the next version on GitHub, mark it ready (slice ready {slice_id}).",
