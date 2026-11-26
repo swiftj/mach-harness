@@ -25,6 +25,13 @@ export function routeFor(action: NextAction): ActionRoute {
     case "join_project":
       // The project home brings it in by itself, before anything else is shown.
       return { type: "navigate", to: "/", label: "Bring in the project" };
+    case "choose_version":
+      // The two choices sit in the "From GitHub" panel on the project home.
+      return { type: "navigate", to: "/", label: "Keep yours or take GitHub's" };
+    case "reopen_changed":
+      return slice ? { type: "navigate", to: `/slices/${slice}`, label: "Reopen it" } : { type: "navigate", to: "/roadmap", label: "Open" };
+    case "import_waiting":
+      return { type: "navigate", to: "/move", label: "Finish bringing it in" };
     case "read_slice":
       return slice ? { type: "navigate", to: `/slices/${slice}`, label: "Read it" } : { type: "navigate", to: "/roadmap", label: "Open" };
     case "mocks_waiting":

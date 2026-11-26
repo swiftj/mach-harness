@@ -47,6 +47,7 @@
     ],
     "kept_changed": [],
     "waiting_for_import": [],
+    "undecided": [],
     "remaining": 0,
     "factory_authorized": false,
     "extra_issues": [

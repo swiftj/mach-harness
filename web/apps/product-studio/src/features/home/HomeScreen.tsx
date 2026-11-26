@@ -53,6 +53,7 @@ import { Fold } from "../../shared/layout/Fold";
 import { ContextRow, OnePane, WorkScreen } from "../../shared/layout/WorkScreen";
 import { doneWhenLabel } from "./model";
 import { ProjectStartNotice } from "../../shared/ProjectStartNotice";
+import { FromGithubPanel } from "../../shared/FromGithubPanel";
 import { CloseProjectIssues } from "../../shared/CloseProjectIssue";
 import { ImportUnfinishedNotice } from "../../shared/ImportUnfinishedNotice";
 import { numberTakenLine, teamNotices } from "../../shared/team";
@@ -169,6 +170,8 @@ function ProjectHome({ status }: { status: Status }) {
           <Notices status={status} refresh={refresh.data} refreshError={refresh.error ? describeError(refresh.error).message : null} onRetry={() => void refresh.run()} />
 
           <ShapeCarryOn status={status} />
+
+          <FromGithubPanel status={status} refresh={refresh.data} />
 
           <IdeasOnGithub status={status} />
 
