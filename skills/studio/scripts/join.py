@@ -244,6 +244,17 @@ def join(host: Any, studio: Any, found: Optional[Dict[str, Any]] = None, batch: 
             else:
                 base = int(entry.get("revision") or entry.get("base_revision") or 0)
                 newer = type(item["marker"].get("revision")) is int and item["marker"]["revision"] > base
+                if waiting_for_mocks(host, studio, entry, local[slice_id], item):
+                    # The issue carries design pictures this workspace lacks, and this copy's main branch has them as approved: brought,
+                    # whatever the copy's state (the pictures are not the person's text), as `slice take` brings them.
+                    try:
+                        brought = host.take_slice(studio, str(item["number"]), [], pre, shipped_ok=True)
+                    except (host.StudioError, handoff.HandoffError):
+                        brought = {}
+                    if brought.get("mocks_brought"):
+                        result.setdefault("mocks_brought", []).append(slice_id)
+                        result["warned"].append(brought["note"])
+                        local, entry = studio.all("slice"), hand.load()["slices"].get(slice_id) or {}
                 agreed = entry.get("base") if isinstance(entry.get("base"), dict) else {}
                 changed_on_github = bool(agreed.get("github")) and handoff.github_sig(item["marker"], item.get("body_sha256")) != agreed["github"]
                 if entry.get("undecided"):
@@ -266,15 +277,6 @@ def join(host: Any, studio: Any, found: Optional[Dict[str, Any]] = None, batch: 
                     continue
                 if not (newer or changed_on_github):
                     result["already_here"]["slices"].append(slice_id)
-                    if waiting_for_mocks(host, studio, entry, local[slice_id], item):
-                        # Opened without its design mocks, and their pictures are on the main branch now: brought, as `slice take` does.
-                        try:
-                            brought = host.take_slice(studio, str(item["number"]), [], pre, shipped_ok=True)
-                        except (host.StudioError, handoff.HandoffError):
-                            continue
-                        if brought.get("mocks_brought"):
-                            result.setdefault("mocks_brought", []).append(slice_id)
-                            result["warned"].append(brought["note"])
                     continue
                 update = {"was_version": base, "why": "newer" if newer else "changed"}
         if batch is not None and count >= batch:
@@ -598,7 +600,7 @@ def waiting_for_mocks(host: Any, studio: Any, entry: Dict[str, Any], work: Dict[
     """A slice opened here without its design mocks whose approved pictures are all on the main branch of this copy now. Read from
     Git alone, so a refresh reads GitHub for it only when there is something to bring."""
     items = item["marker"].get("mocks") or []
-    if not items or work.get("mocks") or (entry.get("not_approved") or {}).get("why") != "mocks":
+    if not items or work.get("mocks"):
         return False
     import project_export  # noqa: E402  its reading of a picture on the main branch (no checkout)
     rules, ref = host.ticket_rules(), project_export._main_ref(studio)

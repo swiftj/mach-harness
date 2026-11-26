@@ -2363,6 +2363,15 @@ def already_taken(studio: Studio, rules: Any, read: Dict[str, Any], slice_id: st
                         "approved_here": True, "url": rules.issue_url(read["repository"], number), "factory_authorized": False,
                         "note": f"{slice_id}'s design pictures arrived; it is approved as @{check['approved_by']} approved it."}
             studio.save("slice", work)
+            with hand.exclusive():
+                # The pictures are not the person's text: the base takes them, and "without its pictures" no longer holds.
+                data = hand.load()
+                record = data["slices"].get(slice_id) or {}
+                if (record.get("not_approved") or {}).get("why") == "mocks":
+                    record.pop("not_approved", None)
+                if isinstance(record.get("base"), dict):
+                    hand.record_version(record, {**record["base"], "mocks": rules.mocks_sha256(work["mocks"])})
+                hand.save(data)
             return {"taken": False, "already_in_workspace": True, "slice": studio.load("slice", slice_id), "issue": number, "mocks_brought": True,
                     "url": rules.issue_url(read["repository"], number), "factory_authorized": False,
                     "note": f"{slice_id} is already in your workspace from #{number}. MACH brought its design mocks now; mark it ready to approve it with them."}

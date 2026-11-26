@@ -574,6 +574,27 @@ class BaseTest(JoinBase):
         self.assertEqual([row["slice_id"] for row in joined["updated"]], [slice_id])
         self.assertEqual(self.ben_slice(slice_id)["status"], "approved_for_engineering")
 
+    def test_pictures_come_to_a_copy_the_person_changed_in_an_older_workspace(self):
+        self.project_and_epic(self.ada())
+        slice_id = self.drafted(self.a)
+        picture = self.root / "p.png"
+        picture.write_bytes(png())
+        self.ok(self.a, "slice", "mock", "add", slice_id, str(picture))
+        ready = self.ready(slice_id, self.a)
+        self.ok(self.ben(), "refresh")  # opened without its pictures
+        spec = self.draft(self.b, self.ben_slice(slice_id)["spec_path"])
+        spec.write_text(spec.read_text() + "\nBen's own change.\n")  # kept as his own
+        self.older_ledger(self.b)
+        self.commit_mocks(slice_id, ready["mocks"]["files"])
+        git(self.b, "fetch", "-q", "origin")
+        joined = self.ok(self.ben(), "refresh")["joined"]
+        self.assertEqual(joined.get("mocks_brought"), [slice_id])
+        self.assertEqual(len(self.ben_slice(slice_id)["mocks"]), 1)
+        self.assertIn("Ben's own change.", spec.read_text(), "his text stays his")
+        self.assertNotIn("mocks_waiting", [a["kind"] for a in self.status(self.b)["next_actions"]])
+        result = self.ok(self.b, "slice", "ready", slice_id)  # no --without-mocks needed: the pictures are here
+        self.assertTrue(result["ready"])
+
     def test_a_newer_version_is_looked_at_first_never_published_over(self):
         self.project_and_epic(self.ada())
         self.ready(self.drafted(self.a), self.a)
