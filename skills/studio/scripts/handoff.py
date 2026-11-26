@@ -2081,6 +2081,9 @@ def slice_view(data: Dict[str, Any], slice_id: str, work: Optional[Dict[str, Any
         "url": rules.issue_url(repository, number) if number and repository else None,
         # Whose approval this workspace holds for this version (the product manager's own, or another's whose slice was brought in).
         "approved_by": entry.get("approved_by") if work is not None and work.get("status") == "approved_for_engineering" else None,
+        # Whether that approval is this workspace's own (marked ready here after it was last taken from GitHub), so a sentence says
+        # "you" only then and names the approver otherwise.
+        "approved_by_you": bool(entry.get("ready_at")) and (not entry.get("taken_at") or str(entry["ready_at"]) >= str(entry["taken_at"])),
         "state_label": current.get("state_label") if current else None,
         "revision": entry.get("revision"),
         "changed_on_github": bool(current and current.get("matches_approval") is False),

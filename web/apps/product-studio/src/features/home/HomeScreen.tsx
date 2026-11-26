@@ -56,7 +56,7 @@ import { ProjectStartNotice } from "../../shared/ProjectStartNotice";
 import { FromGithubPanel } from "../../shared/FromGithubPanel";
 import { CloseProjectIssues } from "../../shared/CloseProjectIssue";
 import { ImportUnfinishedNotice } from "../../shared/ImportUnfinishedNotice";
-import { numberTakenLine, teamNotices } from "../../shared/team";
+import { approverWords, numberTakenLine, teamNotices } from "../../shared/team";
 
 /** Refresh once per visit, when the project home first opens. */
 let refreshedThisVisit = false;
@@ -275,8 +275,14 @@ function Notices({ status, refresh, refreshError, onRetry }: { status: Status; r
   const waiting: ReactNode[] = [];
   const named = (slice: Status["slices"][number]) => <span className="font-semibold">{slice.title}</span>;
   for (const slice of status.slices) {
-    if (slice.github.changed_on_github) waiting.push(<li key={`c-${slice.slice_id}`}>{named(slice)} was changed on GitHub after you approved it: the builders will not take it until you mark it ready again.</li>);
-    if (slice.github.newer_elsewhere) waiting.push(<li key={`n-${slice.slice_id}`}>Someone else saved a newer version of {named(slice)}: marking yours ready replaces it, and theirs is kept; or take theirs.</li>);
+    if (slice.github.changed_on_github)
+      waiting.push(
+        <li key={`c-${slice.slice_id}`}>
+          {named(slice)} was changed on GitHub after {approverWords(slice.github)} approved it: the builders will not take it until it is marked ready again.
+        </li>,
+      );
+    if (slice.github.newer_elsewhere)
+      waiting.push(<li key={`n-${slice.slice_id}`}>Someone else saved a newer version of {named(slice)}: look at the two, then take theirs, or keep yours as a new version.</li>);
     if (slice.github.number_taken) waiting.push(<li key={`t-${slice.slice_id}`}>{named(slice)} {numberTakenLine(slice.github)}</li>);
     if (slice.github.unfinished) waiting.push(<li key={`u-${slice.slice_id}`}>Saving {named(slice)} to GitHub stopped part way: mark it ready again to finish.</li>);
     if (slice.github.state_label === "mach:question") waiting.push(<li key={`b-${slice.slice_id}`}>The builders have a question about {named(slice)}.</li>);

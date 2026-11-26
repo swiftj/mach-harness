@@ -796,6 +796,8 @@ def here_vs_base(studio: Studio, ledger: Dict[str, Any], slice_id: str, work: Di
     """A slice linked to its issue against what this workspace and GitHub last agreed on (its base): `changed_here` when its files
     no longer match it, and `undecided` (the sentence) when a workspace from before the base cannot tell. Nothing otherwise."""
     entry = ledger["slices"].get(slice_id) or {}
+    if entry.get("run"):
+        return {}  # marking it ready stopped part way: finishing it is the next step, not a question of what changed here
     if entry.get("undecided"):
         return {"undecided": join.undecided_words(sys.modules[__name__], slice_id, entry["undecided"].get("issue") or entry.get("number"))}
     if isinstance(entry.get("base"), dict) and not join.unchanged_here(sys.modules[__name__], studio, ticket_rules(), slice_id, entry, work):
@@ -1017,10 +1019,12 @@ def next_actions(project, epics, slice_rows, changed: Sequence[Dict[str, Any]] =
                 f"{sid} is ready for your approval: mark it ready for the builders (slice ready {sid}).")
         elif row["status"] == APPROVED and (gh["unfinished"] or gh["saved"] is None):
             act("finish_ready", sid, f"Finish marking {sid} ready", f"{row['title']} is approved, but saving it did not finish.",
-                f"{sid} is approved, but saving it did not finish: mark it ready again to finish (slice ready {sid}).")
+                f"{sid} is approved, but saving it did not finish: mark it ready again to finish (slice ready {sid}).", first=True)
         elif row["status"] == APPROVED and gh["changed_on_github"]:
-            act("mark_ready", sid, f"Mark {sid} ready again", f"{row['title']} was changed on GitHub after you approved it, so the builders will not take it.",
-                f"{sid} was changed on GitHub after you approved it: mark it ready again to put your approved version back (slice ready {sid}).")
+            who = "you" if gh.get("approved_by_you") else f"@{gh['approved_by']}" if gh.get("approved_by") else "it was"
+            approved = f"after {who} approved it" if who != "it was" else "after it was approved"
+            act("mark_ready", sid, f"Mark {sid} ready again", f"{row['title']} was changed on GitHub {approved}, so the builders will not take it.",
+                f"{sid} was changed on GitHub {approved}: mark it ready again to put the approved version back (slice ready {sid}).")
     for epic_id, moment in sorted((epic_moments or {}).items(), reverse=True):  # M20: an epic's number taken at the same moment
         title = (epics.get(epic_id) or {}).get("title") or epic_id
         act("renumber_epic", epic_id, f"Give {epic_id} a new number",
@@ -2363,6 +2367,15 @@ def already_taken(studio: Studio, rules: Any, read: Dict[str, Any], slice_id: st
                         "approved_here": True, "url": rules.issue_url(read["repository"], number), "factory_authorized": False,
                         "note": f"{slice_id}'s design pictures arrived; it is approved as @{check['approved_by']} approved it."}
             studio.save("slice", work)
+            with hand.exclusive():
+                # The pictures are not the person's text: the base takes them, and "without its pictures" no longer holds.
+                data = hand.load()
+                record = data["slices"].get(slice_id) or {}
+                if (record.get("not_approved") or {}).get("why") == "mocks":
+                    record.pop("not_approved", None)
+                if isinstance(record.get("base"), dict):
+                    hand.record_version(record, {**record["base"], "mocks": rules.mocks_sha256(work["mocks"])})
+                hand.save(data)
             return {"taken": False, "already_in_workspace": True, "slice": studio.load("slice", slice_id), "issue": number, "mocks_brought": True,
                     "url": rules.issue_url(read["repository"], number), "factory_authorized": False,
                     "note": f"{slice_id} is already in your workspace from #{number}. MACH brought its design mocks now; mark it ready to approve it with them."}
@@ -2736,6 +2749,7 @@ def reconcile_slice(studio: Studio, slice_id: str, take: str) -> int:
             hand.record_version(entry, handoff.agreed_base(marker["revision"], None, None, None,
                                                            handoff.github_sig(marker, handoff.body_digest((current or {}).get("body")))),
                                 base_revision=marker["revision"])
+            entry.pop("not_approved", None)  # kept as theirs: it is the person's own draft now, not GitHub's text awaiting a read
             hand.save(ledger)
         return emit({"reconciled": slice_id, "took": take, "github_version": marker["revision"], "approvals_withdrawn": [], "factory_authorized": False,
                      "note": say(f"Your copy of {slice_id} stays as it is. To make it the next version on GitHub, mark it ready (slice ready {slice_id}).",

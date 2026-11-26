@@ -244,11 +244,25 @@ def join(host: Any, studio: Any, found: Optional[Dict[str, Any]] = None, batch: 
             else:
                 base = int(entry.get("revision") or entry.get("base_revision") or 0)
                 newer = type(item["marker"].get("revision")) is int and item["marker"]["revision"] > base
+                if waiting_for_mocks(host, studio, entry, local[slice_id], item):
+                    # The issue carries design pictures this workspace lacks, and this copy's main branch has them as approved: brought,
+                    # whatever the copy's state (the pictures are not the person's text), as `slice take` brings them.
+                    try:
+                        brought = host.take_slice(studio, str(item["number"]), [], pre, shipped_ok=True)
+                    except (host.StudioError, handoff.HandoffError):
+                        brought = {}
+                    if brought.get("mocks_brought"):
+                        result.setdefault("mocks_brought", []).append(slice_id)
+                        result["warned"].append(brought["note"])
+                        local, entry = studio.all("slice"), hand.load()["slices"].get(slice_id) or {}
                 agreed = entry.get("base") if isinstance(entry.get("base"), dict) else {}
                 changed_on_github = bool(agreed.get("github")) and handoff.github_sig(item["marker"], item.get("body_sha256")) != agreed["github"]
                 if entry.get("undecided"):
                     result["already_here"]["slices"].append(slice_id)
                     result["undecided"].append({"slice_id": slice_id, "issue": item["number"], "words": undecided_words(host, slice_id, item["number"])})
+                    continue
+                if entry.get("run"):
+                    result["already_here"]["slices"].append(slice_id)  # marking it ready stopped part way here: its retry finishes it
                     continue
                 if not unchanged_here(host, studio, rules, slice_id, entry, local[slice_id]):
                     result["already_here"]["slices"].append(slice_id)
@@ -266,15 +280,6 @@ def join(host: Any, studio: Any, found: Optional[Dict[str, Any]] = None, batch: 
                     continue
                 if not (newer or changed_on_github):
                     result["already_here"]["slices"].append(slice_id)
-                    if waiting_for_mocks(host, studio, entry, local[slice_id], item):
-                        # Opened without its design mocks, and their pictures are on the main branch now: brought, as `slice take` does.
-                        try:
-                            brought = host.take_slice(studio, str(item["number"]), [], pre, shipped_ok=True)
-                        except (host.StudioError, handoff.HandoffError):
-                            continue
-                        if brought.get("mocks_brought"):
-                            result.setdefault("mocks_brought", []).append(slice_id)
-                            result["warned"].append(brought["note"])
                     continue
                 update = {"was_version": base, "why": "newer" if newer else "changed"}
         if batch is not None and count >= batch:
@@ -431,14 +436,19 @@ def take_published_sets(host: Any, studio: Any, hand: Any, found: Dict[str, Any]
         statements = {same(item.get("statement")): item[key] for item in items}
         top = max([0, *(int(str(item[key]).split("-")[1]) for item in items)])
         moved: List[str] = []
+        renamed: Dict[str, str] = {}
         for item in mine:
             if same(item.get("statement")) in statements:
-                moved.append(f"{item[key]} is now {statements[same(item.get('statement'))]}, which says the same")
+                renamed[item[key]] = statements[same(item.get("statement"))]
+                moved.append(f"{item[key]} is now {renamed[item[key]]}, which says the same")
                 continue
             top += 1
             new_id = f"{prefix}-{top:02d}"
+            renamed[item[key]] = new_id
             moved.append(f"{item[key]} is now {new_id}")
             items.append({**item, key: new_id, "revision": 1})
+        if rewrite_own_drafts(studio, hand, prefix, renamed):
+            moved.append("your drafts' answers name them by their new numbers")
         if kind == "principles":
             studio.save_principles(items, "Taking the principles from GitHub")
             hand.take_set(handoff.PRINCIPLES_KIND, theirs["revision"], rules.principles_sha256(theirs["items"]), theirs["items"], None, theirs.get("approved_by"))
@@ -450,6 +460,29 @@ def take_published_sets(host: Any, studio: Any, hand: Any, found: Dict[str, Any]
             said.append(f"The {words} published on GitHub came in under their own numbers. Yours were never published, so they stay drafts: "
                         + "; ".join(moved) + ".")
     return said
+
+
+def rewrite_own_drafts(studio: Any, hand: Any, prefix: str, renamed: Dict[str, str]) -> bool:
+    """The person's own drafts (never saved to GitHub) answer their principles or needs by ID: each ID that moved is rewritten in
+    their specs and whys, all at once, as slice and epic references are when a draft is renumbered. True when any text changed."""
+    moving = {old: new for old, new in renamed.items() if old != new}
+    if not moving:
+        return False
+    pattern = re.compile(rf"\b{prefix}-\d+\b")
+    ledger = hand.load()
+    changed = False
+    for slice_id in studio.all("slice"):
+        if (ledger["slices"].get(slice_id) or {}).get("number"):
+            continue  # saved to GitHub: answered under the published set already
+        for path in (studio.spec_of(slice_id), studio.intent_path(slice_id)):
+            if path is None or not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8")
+            new_text = pattern.sub(lambda found: moving.get(found.group(0), found.group(0)), text)
+            if new_text != text:
+                path.write_text(new_text, encoding="utf-8")
+                changed = True
+    return changed
 
 
 def import_waiting(studio: Any) -> Optional[Dict[str, Any]]:
@@ -496,6 +529,17 @@ def github_text(host: Any, rules: Any, item: Dict[str, Any]) -> Optional[Tuple[s
     return (rules.text_sha256_of(spec), rules.text_sha256_of(why)) if spec is not None and why is not None else None
 
 
+def approved_mocks(entry: Dict[str, Any], work: Dict[str, Any], item: Optional[Dict[str, Any]], here: Optional[str]) -> Optional[str]:
+    """The design mocks' digest an approved slice's base records, for a ledger written before the base: older ledgers kept
+    `mocks_sha256` empty even for a slice with pictures. The work order's own mocks are what was approved when the approval (the
+    ledger's, else the issue's marker) names them or names none; otherwise the marker's. Never None for a slice that has mocks."""
+    marker = (item or {}).get("marker") or {}
+    named = [digest for digest in (entry.get("mocks_sha256"), marker.get("mocks_sha256")) if digest]
+    if here and (here in named or not named):
+        return here
+    return named[0] if named else here
+
+
 def adopt_bases(host: Any, studio: Any, hand: Any, snapshot: Dict[str, Any]) -> List[str]:
     """A workspace from before the base (0.26.0 to 0.27.x) gets one for every slice linked to an issue, without guessing: an approved
     slice whose files match its approval has that as its base; one whose files match what GitHub holds now has GitHub's version; one
@@ -516,7 +560,8 @@ def adopt_bases(host: Any, studio: Any, hand: Any, snapshot: Dict[str, Any]) -> 
             if now is None:
                 continue
             if work.get("status") == host.APPROVED and entry.get("spec_sha256"):
-                agreed = handoff.agreed_base(entry.get("revision"), entry["spec_sha256"], entry.get("why_sha256"), entry.get("mocks_sha256"))
+                agreed = handoff.agreed_base(entry.get("revision"), entry["spec_sha256"], entry.get("why_sha256"),
+                                             approved_mocks(entry, work, item, now[2]))
             elif item is not None and github_text(host, rules, item) == now[:2]:
                 marker = item["marker"]
                 agreed = handoff.agreed_base(marker["revision"], now[0], now[1], now[2], handoff.github_sig(marker, item.get("body_sha256")))
@@ -586,7 +631,7 @@ def waiting_for_mocks(host: Any, studio: Any, entry: Dict[str, Any], work: Dict[
     """A slice opened here without its design mocks whose approved pictures are all on the main branch of this copy now. Read from
     Git alone, so a refresh reads GitHub for it only when there is something to bring."""
     items = item["marker"].get("mocks") or []
-    if not items or work.get("mocks") or (entry.get("not_approved") or {}).get("why") != "mocks":
+    if not items or work.get("mocks"):
         return False
     import project_export  # noqa: E402  its reading of a picture on the main branch (no checkout)
     rules, ref = host.ticket_rules(), project_export._main_ref(studio)

@@ -536,6 +536,106 @@ class BaseTest(JoinBase):
         self.assertNotIn("undecided", self.ledger(self.b)["slices"]["SLICE-002"])
         self.assertEqual(kept, self.ledger(self.b)["slices"]["SLICE-001"]["number"])
 
+    def older_ledger(self, project):
+        """The ledger as the 0.26.0 code left it: no base, and no mocks digest even for a slice with pictures."""
+        ledger = self.ledger(project)
+        for entry in ledger["slices"].values():
+            entry.pop("base", None)
+            if "mocks_sha256" in entry:
+                entry["mocks_sha256"] = None
+        (project / ".factory/studio/issues.json").write_text(json.dumps(ledger))
+
+    def test_an_older_workspaces_approved_slice_with_pictures_is_unchanged_and_follows_github(self):
+        self.project_and_epic(self.ada())
+        slice_id = self.drafted(self.a)
+        picture = self.root / "p.png"
+        picture.write_bytes(png())
+        self.ok(self.a, "slice", "mock", "add", slice_id, str(picture))
+        ready = self.ready(slice_id, self.a)
+        self.commit_mocks(slice_id, ready["mocks"]["files"])
+        git(self.b, "fetch", "-q", "origin")
+        self.ok(self.ben(), "refresh")
+        self.assertEqual(self.ben_slice(slice_id)["status"], "approved_for_engineering")
+        for project, login in ((self.a, "ada-pm"), (self.b, "ben-pm")):
+            self.older_ledger(project)
+            self.set_gh(me=login)
+            self.ok(project, "refresh")
+            base = self.ledger(project)["slices"][slice_id]["base"]
+            self.assertIsNotNone(base["mocks"], project.name)
+            kinds = [a["kind"] for a in self.status(project)["next_actions"]]
+            self.assertNotIn("reopen_changed", kinds, project.name)
+        # Ada publishes version 2: Ben's untouched copy follows.
+        self.set_gh(me="ada-pm")
+        self.ok(self.a, "slice", "reopen", slice_id)
+        path = self.draft(self.a, f"specs/slices/{slice_id}-invite-teammate.md")
+        path.write_text(path.read_text() + "\nVersion two.\n")
+        self.ready(slice_id, self.a)
+        joined = self.ok(self.ben(), "refresh")["joined"]
+        self.assertEqual([row["slice_id"] for row in joined["updated"]], [slice_id])
+        self.assertEqual(self.ben_slice(slice_id)["status"], "approved_for_engineering")
+
+    def test_pictures_come_to_a_copy_the_person_changed_in_an_older_workspace(self):
+        self.project_and_epic(self.ada())
+        slice_id = self.drafted(self.a)
+        picture = self.root / "p.png"
+        picture.write_bytes(png())
+        self.ok(self.a, "slice", "mock", "add", slice_id, str(picture))
+        ready = self.ready(slice_id, self.a)
+        self.ok(self.ben(), "refresh")  # opened without its pictures
+        spec = self.draft(self.b, self.ben_slice(slice_id)["spec_path"])
+        spec.write_text(spec.read_text() + "\nBen's own change.\n")  # kept as his own
+        self.older_ledger(self.b)
+        self.commit_mocks(slice_id, ready["mocks"]["files"])
+        git(self.b, "fetch", "-q", "origin")
+        joined = self.ok(self.ben(), "refresh")["joined"]
+        self.assertEqual(joined.get("mocks_brought"), [slice_id])
+        self.assertEqual(len(self.ben_slice(slice_id)["mocks"]), 1)
+        self.assertIn("Ben's own change.", spec.read_text(), "his text stays his")
+        self.assertNotIn("mocks_waiting", [a["kind"] for a in self.status(self.b)["next_actions"]])
+        result = self.ok(self.b, "slice", "ready", slice_id)  # no --without-mocks needed: the pictures are here
+        self.assertTrue(result["ready"])
+
+    def test_a_refresh_between_an_interrupted_ready_and_its_retry_offers_finishing_it(self):
+        self.project_and_epic(self.ada())
+        self.ready(self.drafted(self.a), self.a)
+        self.ok(self.ben(), "refresh")
+        self.ok(self.b, "slice", "reopen", "SLICE-001")
+        spec = self.draft(self.b, self.ben_slice("SLICE-001")["spec_path"])
+        spec.write_text(spec.read_text() + "\nBen's version.\n")
+        self.gh_fails("issue edit labels")  # the last step, marking it ready, fails once
+        self.refused(self.b, "slice", "ready", "SLICE-001")
+        joined = self.ok(self.b, "refresh")["joined"]
+        self.assertNotIn("changed here without being reopened", joined["note"])
+        kinds = [a["kind"] for a in self.status(self.b)["next_actions"]]
+        self.assertEqual(kinds[0], "finish_ready")
+        self.assertNotIn("reopen_changed", kinds)
+        self.assertTrue(self.ready("SLICE-001", self.b)["ready"])
+
+    def test_a_change_on_github_names_whose_approval_it_was(self):
+        self.project_and_epic(self.ada())
+        number = self.ready(self.drafted(self.a), self.a)["issue"]
+        self.ok(self.ben(), "refresh")
+        self.change_issue(number, body=self.issue(number)["body"].replace("An admin cannot bring a colleague in.", "Anyone can do anything."))
+        for project, login, who in ((self.b, "ben-pm", "@ada-pm"), (self.a, "ada-pm", "you")):
+            self.set_gh(me=login)
+            self.ok(project, "refresh")
+            (action,) = [a for a in self.status(project)["next_actions"] if a["target"] == "SLICE-001"]
+            self.assertEqual(action["reason"], f"Invite a teammate was changed on GitHub after {who} approved it, so the builders will not take it.")
+
+    def test_keeping_mine_makes_it_my_draft_not_githubs_text_to_read(self):
+        self.project_and_epic(self.ada())
+        number = self.ready(self.drafted(self.a), self.a)["issue"]
+        approved = self.issue(number)["body"]
+        self.change_issue(number, body=approved.replace("An admin cannot bring a colleague in.", "Anyone can do anything."))
+        self.ok(self.ben(), "refresh")
+        self.change_issue(number, body=approved)
+        self.older_ledger(self.b)
+        self.ok(self.b, "refresh")  # undecided
+        self.ok(self.b, "reconcile", "SLICE-001", "--take", "mine")
+        kinds = [a["kind"] for a in self.status(self.b)["next_actions"] if a["target"] == "SLICE-001"]
+        self.assertNotIn("read_slice", kinds)
+        self.assertNotIn("choose_version", kinds)
+
     def test_a_newer_version_is_looked_at_first_never_published_over(self):
         self.project_and_epic(self.ada())
         self.ready(self.drafted(self.a), self.a)
@@ -557,12 +657,20 @@ class BaseTest(JoinBase):
         ben = self.ben()
         self.ok(ben, "project", "init", "--name", "Ben's product", "--vision", "v", "--outcome", "o")
         self.ok(ben, "principle", "add", "--title", "Ben's", "--statement", "An invitation MUST name the person who sent it.", "--reason", "Trust.")
+        self.ok(ben, "epic", "add", "--title", "Ben's epic", "--criterion", "Something")
+        mine = self.drafted(ben, title="Ben's own slice")
+        own_spec = self.draft(ben, f"specs/slices/{mine}-invite-teammate.md")
+        own_spec.write_text(own_spec.read_text() + '\n- **PP-01** (revision 1): "An invitation MUST name the person who sent it." Followed.\n')
         self.project_and_epic(self.ada())
         self.ok(self.a, "principle", "add", "--title", "Versions", "--statement", "A published version MUST NOT be edited in place.", "--reason", "Why.")
         self.ok(self.a, "principle", "publish")
         joined = self.ok(self.ben(), "refresh")["joined"]
         self.assertIn("The principles published on GitHub came in under their own numbers. Yours were never published, so they stay drafts: "
-                      "PP-01 is now PP-02.", joined["note"])
+                      "PP-01 is now PP-02; your drafts' answers name them by their new numbers.", joined["note"])
+        (own,) = [row for row in self.status(self.b)["slices"] if row["title"] == "Ben's own slice"]
+        text = self.draft(self.b, own["spec"]).read_text()
+        self.assertIn('- **PP-02** (revision 1): "An invitation MUST name the person who sent it." Followed.', text)
+        self.assertNotIn("**PP-01**", text)
         listed = {item["id"]: item["statement"] for item in self.ok(self.b, "principle", "list")["principles"]}
         self.assertEqual(listed, {"PP-01": "A published version MUST NOT be edited in place.", "PP-02": "An invitation MUST name the person who sent it."})
 

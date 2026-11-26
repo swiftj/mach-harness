@@ -5,7 +5,7 @@ import { ArtifactId, Button, EmptyState, ErrorState, Heading, Page, Skeleton, Sl
 import { useStatus } from "../../api/store";
 import { titleFor } from "../../api/describe";
 import { IssueLink, IssueText } from "../../shared/IssueLink";
-import { holderWords, momentUrls } from "../../shared/team";
+import { approverWords, holderWords, momentUrls } from "../../shared/team";
 import { AnswerQuestionButton, BuildersQuestion } from "../../shared/BuildersQuestion";
 import { NewerVersionCard } from "./NewerVersionCard";
 import { OpenQuestionsCard } from "./OpenQuestionsCard";
@@ -122,10 +122,10 @@ export function InboxScreen() {
   const groups: Array<{ id: string; name: string; summary: string; count: number; hint: string; body: ReactNode }> = [
     {
       id: "changed",
-      name: "Changed on GitHub after you approved it",
+      name: "Changed on GitHub after it was approved",
       count: changed.length,
       summary: sliceGroupSummary(titles(changed)),
-      hint: "The builders will not take these until you put your approved version back.",
+      hint: "The builders will not take these until the approved version is put back.",
       body: changed.map((slice) => (
         <SliceCard
           key={slice.slice_id}
@@ -137,7 +137,8 @@ export function InboxScreen() {
             </Button>
           }
         >
-          Someone edited this slice&apos;s issue on GitHub after you approved it. Marking it ready again puts your approved version back.
+          Someone edited this slice&apos;s issue on GitHub after {approverWords(slice.github)} approved it. Marking it ready again puts the approved
+          version back.
         </SliceCard>
       )),
     },
