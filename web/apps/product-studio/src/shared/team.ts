@@ -285,3 +285,36 @@ export function splitNumbersNote(note: string, numbers: NumbersFromGithub | unde
   if (at < 0) return { made: note, numbers: null };
   return { made: note.slice(0, at), numbers: note.slice(at + 1) };
 }
+
+/* ── From GitHub: what bringing the project in said, and what stays true ─── */
+
+export interface FromGithubLine {
+  key: string;
+  text: string;
+  /** The one step the line offers: choose a version, reopen a slice, or finish bringing in a project file. */
+  step: { kind: "choose" | "reopen" | "import"; target: string } | null;
+}
+
+/**
+ * The project home's "From GitHub" panel, in the engine's own words: first what still needs the person (a copy MACH cannot tell
+ * apart, a copy changed here, slices waiting for an import), then what this visit's refresh said, then what could not be taken.
+ */
+export function fromGithubLines(status: Pick<Status, "from_github">, refresh: Pick<Refresh, "joined"> | null): FromGithubLine[] {
+  const found = status.from_github;
+  const lines: FromGithubLine[] = [];
+  for (const row of found?.undecided ?? []) lines.push({ key: `undecided-${row.slice_id}`, text: row.words, step: { kind: "choose", target: row.slice_id } });
+  for (const row of found?.kept_changed ?? []) lines.push({ key: `kept-${row.slice_id}`, text: row.words, step: { kind: "reopen", target: row.slice_id } });
+  if (found?.waiting?.length) {
+    const names = found.waiting.join(", ");
+    lines.push({
+      key: "waiting",
+      text: `${names} on GitHub ${found.waiting.length === 1 ? "waits" : "wait"} while bringing in a project file is unfinished here. Finish it, or set it aside, and ${found.waiting.length === 1 ? "it comes" : "they come"} in.`,
+      step: { kind: "import", target: "" },
+    });
+  }
+  const said = new Set(lines.map((line) => line.text));
+  const note = refresh?.joined?.joined ? refresh.joined.note : "";
+  if (note && !said.has(note)) lines.push({ key: "refresh", text: note, step: null });
+  for (const row of found?.not_taken ?? []) if (!note.includes(row.reason)) lines.push({ key: `not-${row.id}`, text: row.reason, step: null });
+  return lines;
+}

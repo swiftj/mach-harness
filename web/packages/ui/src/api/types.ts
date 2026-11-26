@@ -402,6 +402,8 @@ export interface Status {
     not_taken: Array<{ id: string; what: string; issue: number | null; reason: string }>;
     waiting: string[];
     kept_changed: Array<{ slice_id: string; issue: number | null; words: string }>;
+    /** Slices of a workspace from before the base that MACH cannot tell apart from GitHub's: the person chooses. */
+    undecided?: Array<{ slice_id: string; issue: number | null; words: string }>;
   };
   /** The project came from GitHub: said once per browser on the project home until closed; at tells one bringing-in from another. */
   joined_note?: { at: string; issue: number | null; url: string | null; text: string };
@@ -480,6 +482,12 @@ export type NextActionKind =
   /** No project here and the repository is on GitHub: MACH brings its project in (`project.join`), never asks to define it. */
   | "join_project"
   | "define_project"
+  /** A slice MACH cannot tell apart from GitHub's (a workspace from before the base): keep yours, or take GitHub's. */
+  | "choose_version"
+  /** An approved slice changed here without being reopened: reopen it to make the change a new version. */
+  | "reopen_changed"
+  /** Slices from GitHub wait for bringing in a project file to finish. */
+  | "import_waiting"
   /** A slice brought in whose text on GitHub was changed after its approval: read it; marking it ready approves this text. */
   | "read_slice"
   /** A slice brought in without its design mock pictures: they come by themselves. Nothing for the person to do. */

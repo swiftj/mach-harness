@@ -117,7 +117,7 @@ def join(host: Any, studio: Any, found: Optional[Dict[str, Any]] = None, batch: 
     hand, repository, snapshot = found["hand"], found["repository"], found["snapshot"]
     result: Dict[str, Any] = {"joined": True, "github": {"connected": True, "checked": True, "problem": None, "repository": repository},
                               "taken": empty_taken(), "updated": [], "already_here": {"project": False, "epics": [], "slices": []},
-                              "not_taken": [], "renumbered": [], "warned": [], "kept_changed": [], "waiting_for_import": [],
+                              "not_taken": [], "renumbered": [], "warned": [], "kept_changed": [], "waiting_for_import": [], "undecided": [],
                               "remaining": 0, "factory_authorized": False}
     taken = result["taken"]
     # ---- the project ----
@@ -163,6 +163,7 @@ def join(host: Any, studio: Any, found: Optional[Dict[str, Any]] = None, batch: 
         result.update(joined=False, note=why_not)
         return result
     pre = (repository, snapshot)
+    adopt_bases(host, studio, hand, snapshot)  # a workspace from before the base gets one, never guessed
     waiting = import_waiting(studio)  # numbers an unfinished import holds: nothing from GitHub is written under them
     # ---- the epics ----
     elsewhere: Dict[str, str] = {}  # epic IDs here that are a different epic from GitHub's: their slices are not taken
@@ -243,8 +244,12 @@ def join(host: Any, studio: Any, found: Optional[Dict[str, Any]] = None, batch: 
             else:
                 base = int(entry.get("revision") or entry.get("base_revision") or 0)
                 newer = type(item["marker"].get("revision")) is int and item["marker"]["revision"] > base
-                taken_record_ = entry.get("taken") if isinstance(entry.get("taken"), dict) else None
-                changed_on_github = bool(taken_record_ and item.get("body_sha256") and item["body_sha256"] != taken_record_.get("body"))
+                agreed = entry.get("base") if isinstance(entry.get("base"), dict) else {}
+                changed_on_github = bool(agreed.get("github")) and handoff.github_sig(item["marker"], item.get("body_sha256")) != agreed["github"]
+                if entry.get("undecided"):
+                    result["already_here"]["slices"].append(slice_id)
+                    result["undecided"].append({"slice_id": slice_id, "issue": item["number"], "words": undecided_words(host, slice_id, item["number"])})
+                    continue
                 if not unchanged_here(host, studio, rules, slice_id, entry, local[slice_id]):
                     result["already_here"]["slices"].append(slice_id)
                     if local[slice_id].get("status") == host.APPROVED:
@@ -254,6 +259,11 @@ def join(host: Any, studio: Any, found: Optional[Dict[str, Any]] = None, batch: 
                                                                 + host.say(f"Reopen it to make your change a new version (slice reopen {slice_id}).",
                                                                            "Reopen it to make your change a new version.")})
                     continue  # changed here: yours stays; a newer version on GitHub is said by refresh (newer_elsewhere)
+                if not newer and changed_on_github and local[slice_id].get("status") == host.APPROVED and not item["marker"].get("intact"):
+                    # Text changed on GitHub after its approval never replaces an approved copy here: refresh says changed_on_github,
+                    # and marking it ready again puts the approved version back.
+                    result["already_here"]["slices"].append(slice_id)
+                    continue
                 if not (newer or changed_on_github):
                     result["already_here"]["slices"].append(slice_id)
                     if waiting_for_mocks(host, studio, entry, local[slice_id], item):
@@ -322,20 +332,26 @@ def several(result: Dict[str, Any], numbers: List[int], chosen: Dict[str, Any], 
         result["extra_issues"] = [number for number in numbers if number != chosen["number"]]
 
 
+EPIC_RENUMBERED_RE = re.compile(r"^Your epic (EPIC-\d+) is now (EPIC-\d+), so GitHub's \1 \(#\d+\) could come in under its own number\.$")
+
+
 def renumbered_once(warned: List[str], renumbered: List[Dict[str, Any]]) -> List[str]:
-    """Each draft of the person's that moved, said once with where it ended: "Your draft SLICE-001 is now SLICE-005", however many
-    steps it took."""
-    steps = [(match.group(1), match.group(2)) for line in warned for match in [RENUMBERED_RE.match(line)] if match]
-    if not steps:
-        return warned
-    ends: Dict[str, str] = {}
-    for old, new in steps:
-        origin = next((start for start, end in ends.items() if end == old), old)
-        ends[origin] = new
-    kept = [line for line in warned if not RENUMBERED_RE.match(line)]
-    for origin, end in ends.items():
-        renumbered.append({"what": "slice", "from": origin, "to": end})
-        kept.append(f"Your draft {origin} is now {end}, so the slices on GitHub could come in under their own numbers.")
+    """Each draft or epic of the person's that moved, said once with where it ended: "Your draft SLICE-001 is now SLICE-005",
+    however many steps it took."""
+    kept = [line for line in warned if not RENUMBERED_RE.match(line) and not EPIC_RENUMBERED_RE.match(line)]
+    for pattern, what, words in ((EPIC_RENUMBERED_RE, "epic", "Your epic {0} is now {1}, so the epics on GitHub could come in under their own numbers."),
+                                 (RENUMBERED_RE, "slice", "Your draft {0} is now {1}, so the slices on GitHub could come in under their own numbers.")):
+        steps = [(match.group(1), match.group(2)) for line in warned for match in [pattern.match(line)] if match]
+        ends: Dict[str, str] = {}
+        for old, new in steps:
+            origin = next((start for start, end in ends.items() if end == old), old)
+            ends[origin] = new
+        if not ends:
+            continue
+        renumbered[:] = [row for row in renumbered if row.get("what") != what]
+        for origin, end in ends.items():
+            renumbered.append({"what": what, "from": origin, "to": end})
+            kept.append(words.format(origin, end))
     return kept
 
 
@@ -383,13 +399,57 @@ def take_over_project(host: Any, studio: Any, found: Dict[str, Any], hand: Any, 
         path.write_text(host.canonical(project), encoding="utf-8")
         raise
     hand.link_project(found["repository"], chosen)
+    sets_words = take_published_sets(host, studio, hand, found, chosen["number"])
     old = host_clean(rules, project.get("name")) or project["project_id"]
     new = host_clean(rules, record.get("name")) or record["project_id"]
     where = hand.where_kept(kept)
     return {"from": project["project_id"], "to": record["project_id"], "issue": chosen["number"], "kept": where,
             "words": f"This workspace had its own project, {old}, which was never saved to GitHub, and this repository's project on GitHub is {new} "
                      f"(#{chosen['number']}). A repository holds one project, so MACH brought {new} in. Your project's own words are kept at {where}; "
-                     "your epics and drafts stay here as drafts."}
+                     "your epics and drafts stay here as drafts." + "".join(f" {line}" for line in sets_words)}
+
+
+def take_published_sets(host: Any, studio: Any, hand: Any, found: Dict[str, Any], number: int) -> List[str]:
+    """With GitHub's project taken over this workspace's own (never published), the principles and technical needs published on its
+    issue come in under their own IDs and versions. The person's own, never published, are drafts: one that says the same as a
+    published one (after normalising) becomes it; the others are renumbered after GitHub's and stay drafts, not yet published.
+    Returns what to say."""
+    import needs as needs_module  # noqa: E402  here, not above: it reaches back into studio.py's helpers
+    rules = host.ticket_rules()
+    published, _, problem = hand.published_sets(found["repository"], found["snapshot"], number)
+    if problem:
+        return []
+    said: List[str] = []
+    same = lambda text: " ".join(str(text or "").lower().split())  # noqa: E731
+    for kind, key, prefix, words in (("principles", "id", "PP", "principles"), ("needs", "need_id", "TN", "technical needs")):
+        theirs = published.get(kind)
+        if not theirs or not theirs.get("approved"):
+            continue
+        mine = studio.principles() if kind == "principles" else needs_module.load(host, studio)[0]
+        none = [] if kind == "principles" else list(needs_module.load(host, studio)[1])
+        items = [dict(item) for item in theirs["items"]]
+        statements = {same(item.get("statement")): item[key] for item in items}
+        top = max([0, *(int(str(item[key]).split("-")[1]) for item in items)])
+        moved: List[str] = []
+        for item in mine:
+            if same(item.get("statement")) in statements:
+                moved.append(f"{item[key]} is now {statements[same(item.get('statement'))]}, which says the same")
+                continue
+            top += 1
+            new_id = f"{prefix}-{top:02d}"
+            moved.append(f"{item[key]} is now {new_id}")
+            items.append({**item, key: new_id, "revision": 1})
+        if kind == "principles":
+            studio.save_principles(items, "Taking the principles from GitHub")
+            hand.take_set(handoff.PRINCIPLES_KIND, theirs["revision"], rules.principles_sha256(theirs["items"]), theirs["items"], None, theirs.get("approved_by"))
+        else:
+            extra = list(theirs.get("extra") or [])
+            needs_module.save(host, studio, items, sorted(set(none) | set(extra)), "Taking the technical needs from GitHub")
+            hand.take_set(handoff.NEEDS_KIND, theirs["revision"], rules.needs_sha256(theirs["items"]), theirs["items"], extra, theirs.get("approved_by"))
+        if mine:
+            said.append(f"The {words} published on GitHub came in under their own numbers. Yours were never published, so they stay drafts: "
+                        + "; ".join(moved) + ".")
+    return said
 
 
 def import_waiting(studio: Any) -> Optional[Dict[str, Any]]:
@@ -408,30 +468,74 @@ def dependency_numbers(snapshot: Dict[str, Any], item: Dict[str, Any]) -> List[i
     return [int(by_issue[dep].split("-")[1]) for dep in item["marker"].get("depends") or [] if dep in by_issue]
 
 
-def taken_record(rules: Any, spec: str, why: str, mocks: Any, body: Any) -> Dict[str, Any]:
-    """What a slice taken from GitHub held here when it was taken: its spec and why as written, its design mocks, and the issue's body."""
-    return {"spec": rules.text_sha256_of(spec), "why": rules.text_sha256_of(why), "mocks": mocks_digest(mocks), "body": handoff.body_digest(body)}
-
-
-def mocks_digest(mocks: Any) -> Optional[str]:
-    import hashlib  # noqa: E402
-    import json  # noqa: E402
-    return hashlib.sha256(json.dumps(mocks, sort_keys=True).encode("utf-8")).hexdigest() if mocks else None
+def local_digests(rules: Any, studio: Any, slice_id: str, work: Dict[str, Any]) -> Optional[Tuple[Optional[str], Optional[str], Optional[str]]]:
+    """The SHA-256 of the spec and why as they are here now, and the digest of the design mocks the work order lists."""
+    spec, intent = studio.spec_of(slice_id), studio.intent_path(slice_id)
+    try:
+        return (rules.text_sha256_of(spec.read_text(encoding="utf-8")) if spec else None,
+                rules.text_sha256_of(intent.read_text(encoding="utf-8")) if intent.is_file() else None,
+                rules.mocks_sha256(work["mocks"]) if work.get("mocks") else None)
+    except (OSError, UnicodeDecodeError):
+        return None
 
 
 def unchanged_here(host: Any, studio: Any, rules: Any, slice_id: str, entry: Dict[str, Any], work: Dict[str, Any]) -> bool:
-    """Whether this person left the slice as it came: its spec, why and design mocks are still what was taken from GitHub (or, for a
-    slice this workspace marked ready itself, still what it approved). Its approval state does not decide it."""
-    spec, intent = studio.spec_of(slice_id), studio.intent_path(slice_id)
-    try:
-        now = (rules.text_sha256_of(spec.read_text(encoding="utf-8")) if spec else None,
-               rules.text_sha256_of(intent.read_text(encoding="utf-8")) if intent.is_file() else None)
-    except (OSError, UnicodeDecodeError):
-        return False
-    taken = entry.get("taken")
-    if isinstance(taken, dict):
-        return now == (taken.get("spec"), taken.get("why")) and mocks_digest(work.get("mocks")) == taken.get("mocks")
-    return work.get("status") == host.APPROVED and now == (entry.get("spec_sha256"), entry.get("why_sha256"))
+    """Whether this workspace still holds exactly the version it last agreed on with GitHub (its base, handoff.record_version): taken,
+    marked ready here, or settled. Its approval state does not decide it."""
+    agreed = entry.get("base")
+    now = local_digests(rules, studio, slice_id, work)
+    return isinstance(agreed, dict) and now is not None and now == (agreed.get("spec"), agreed.get("why"), agreed.get("mocks"))
+
+
+def github_text(host: Any, rules: Any, item: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+    """The SHA-256 of the spec and why a slice issue holds now, approved or not (from the listing; nothing is read)."""
+    marker = item["marker"]
+    if marker.get("intact"):
+        return marker.get("spec_sha256"), marker.get("why_sha256")
+    spec, why, _ = host.held_text(rules, {"body": item.get("body"), "check": {"marker": marker}, "comments": []})
+    return (rules.text_sha256_of(spec), rules.text_sha256_of(why)) if spec is not None and why is not None else None
+
+
+def adopt_bases(host: Any, studio: Any, hand: Any, snapshot: Dict[str, Any]) -> List[str]:
+    """A workspace from before the base (0.26.0 to 0.27.x) gets one for every slice linked to an issue, without guessing: an approved
+    slice whose files match its approval has that as its base; one whose files match what GitHub holds now has GitHub's version; one
+    that matches neither and is not approved cannot be told apart (the person's own change, or text GitHub held that was changed
+    after its approval), so it is marked undecided and the person chooses. Returns the undecided slice IDs."""
+    rules = host.ticket_rules()
+    by_number = {item["number"]: item for item in snapshot["slices"]}
+    local = studio.all("slice")
+    undecided: List[str] = []
+    with hand.exclusive():
+        data = hand.load()
+        changed = False
+        for slice_id, entry in data["slices"].items():
+            if not isinstance(entry, dict) or isinstance(entry.get("base"), dict) or not entry.get("number") or slice_id not in local:
+                continue
+            work, item = local[slice_id], by_number.get(entry["number"])
+            now = local_digests(rules, studio, slice_id, work)
+            if now is None:
+                continue
+            if work.get("status") == host.APPROVED and entry.get("spec_sha256"):
+                agreed = handoff.agreed_base(entry.get("revision"), entry["spec_sha256"], entry.get("why_sha256"), entry.get("mocks_sha256"))
+            elif item is not None and github_text(host, rules, item) == now[:2]:
+                marker = item["marker"]
+                agreed = handoff.agreed_base(marker["revision"], now[0], now[1], now[2], handoff.github_sig(marker, item.get("body_sha256")))
+            else:
+                if not entry.get("undecided"):
+                    entry["undecided"] = {"issue": entry["number"], "since": handoff.utc_now()}
+                    changed = True
+                undecided.append(slice_id)
+                continue
+            hand.record_version(entry, agreed)
+            changed = True
+        if changed:
+            hand.save(data)
+    return undecided
+
+
+def undecided_words(host: Any, slice_id: str, issue: int) -> str:
+    return (f"{slice_id} here differs from GitHub (#{issue}), and MACH cannot tell whether you changed it. Keep yours, or take GitHub's"
+            + host.say(f" (reconcile {slice_id} --take mine, or --take theirs; yours is kept first).", " (yours is kept first)."))
 
 
 def before_ready(host: Any, studio: Any, slice_id: str, without_mocks: bool) -> Optional[str]:
@@ -446,11 +550,13 @@ def before_ready(host: Any, studio: Any, slice_id: str, without_mocks: bool) -> 
         raise host.StudioError(
             host.say(f"{slice_id}'s issue on GitHub carries {plural(count, 'design mock picture')} that {'is' if count == 1 else 'are'} not on the "
                      f"main branch here yet. Marking it ready now would save it without {'it' if count == 1 else 'them'}, so nothing was changed. "
-                     f"{slice_id} updates by itself once the pictures are on the main branch. To mark it ready without them, say so "
+                     "They come at the first refresh after this computer has the main branch with them (after a pull or fetch). To mark it ready "
+                     "without them, say so "
                      f"(slice ready {slice_id} --without-mocks).",
                      f"{slice_id}'s issue on GitHub carries {plural(count, 'design mock picture')} that {'is' if count == 1 else 'are'} not on the "
                      f"main branch here yet. Marking it ready now would save it without {'it' if count == 1 else 'them'}, so nothing was changed. "
-                     f"{slice_id} updates by itself once the pictures are on the main branch. You can also mark it ready without them."),
+                     "They come at the first refresh after this computer has the main branch with them (after a pull or fetch). You can also mark "
+                     "it ready without them."),
             {"kind": "ready_without_mocks", "target": slice_id})
     if record.get("why") == "mocks":
         return f"{slice_id} is marked ready without the design mock pictures its issue carried on GitHub, as you asked."
@@ -548,6 +654,7 @@ def remember_lasting(studio: Any, result: Dict[str, Any]) -> None:
     session["github_not_taken"] = [{key: row.get(key) for key in ("id", "what", "issue", "reason")} for row in result["not_taken"]]
     session["github_waiting"] = list(result.get("waiting_for_import") or [])
     session["github_kept_changed"] = [{key: row.get(key) for key in ("slice_id", "issue", "words")} for row in result.get("kept_changed") or []]
+    session["github_undecided"] = [{key: row.get(key) for key in ("slice_id", "issue", "words")} for row in result.get("undecided") or []]
     studio.save_session(session)
 
 
@@ -598,7 +705,7 @@ def in_words(studio: Any, result: Dict[str, Any]) -> List[str]:
         else:
             said.append(f"{row['slice_id']} is now the newer version someone else marked ready on GitHub (#{row['issue']}); your earlier copy was "
                         f"unchanged and is kept at {row['kept_yours']}.")
-    lasting = [row["words"] for row in result.get("kept_changed") or []]
+    lasting = [row["words"] for row in (result.get("kept_changed") or []) + (result.get("undecided") or [])]
     if taken["ideas"]:
         lasting.append(f"{plural(len(taken['ideas']), 'idea')} published on GitHub {'is' if len(taken['ideas']) == 1 else 'are'} listed to read: "
                        + ", ".join(f"{item['idea_id']} (#{item['issue']})" for item in taken["ideas"]) + ". "

@@ -291,7 +291,7 @@ class NothingIsWiredInTest(unittest.TestCase):
         self.assertNotIn("--body\"", issues_source)  # text goes in a file written from a template, never on the command line
         # studio.py reads issues only to settle a slice someone else changed; it writes through handoff.py.
         studio_source = (PRODUCT_SCRIPTS / "studio.py").read_text()
-        self.assertEqual(set(re.findall(r"\bissues\.([a-z_]+)\(", studio_source)), {"view", "comments"})
+        self.assertEqual(set(re.findall(r"\bissues\.([a-z_]+)\(", studio_source)), {"view"})  # reconcile now takes through handoff
         # M13: publishing the principles added no GitHub call. handoff.py uses exactly these of issues.py's calls.
         self.assertEqual(set(re.findall(r"\bissues\.([a-z_]+)\(", handoff_source)),
                          {"add_labels", "add_sub_issue", "comment", "comments", "create", "create_label", "database_id", "label_names", "labels",

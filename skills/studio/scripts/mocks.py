@@ -225,8 +225,8 @@ def for_take(host: Any, studio: Any, slice_id: str, number: int, items: List[Dic
         if data is None or rules.check_mock_file(item, data) is not None:
             # The pictures are the author's to commit; nothing the person here does brings them sooner. A refresh brings them by itself.
             return False, (f"#{number} has design mocks, and their pictures are not on the main branch here yet (or are not the approved ones). "
-                           f"So {slice_id} is open here without them, as a draft, not as approved. They come by themselves once the pictures are "
-                           "on the main branch.")
+                           f"So {slice_id} is open here without them, as a draft, not as approved. "
+                           "They come at the first refresh after this computer has the main branch with them (after a pull or fetch).")
         files[name] = data
     for name, data in files.items():
         write_picture(host, folder(studio, into or slice_id) / name, data)

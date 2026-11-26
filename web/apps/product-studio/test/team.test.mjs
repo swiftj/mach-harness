@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import {
   epicNumberTakenWords,
   extraProjectIssues,
+  fromGithubLines,
   hintUrls,
   holderWords,
   issueParts,
@@ -396,4 +397,29 @@ test("GitHub holds no project for this repository: the ways to start are offered
   const status = run("status.team-join-none").data;
   assert.deepEqual(status.next_actions.map((a) => a.kind), ["define_project"]);
   assert.equal(bringsInFromGithub(status), false);
+});
+
+test("From GitHub on the project home: what still needs the person first, each with its one step, then what refresh said", () => {
+  const status = {
+    from_github: {
+      undecided: [{ slice_id: "SLICE-006", issue: 9, words: "SLICE-006 here differs from GitHub (#9), and MACH cannot tell whether you changed it. Keep yours, or take GitHub's (yours is kept first)." }],
+      kept_changed: [{ slice_id: "SLICE-001", issue: 3, words: "SLICE-001 was changed here without being reopened." }],
+      waiting: ["SLICE-002"],
+      not_taken: [{ id: "#90", what: "issue", issue: 90, reason: "#90 is labelled as a slice, but Product Studio did not write it, so it was not brought in." }],
+    },
+  };
+  const lines = fromGithubLines(status, { joined: { joined: true, note: "MACH brought in what is new on GitHub: 1 slice (SLICE-004; 1 ready)." } });
+  assert.deepEqual(
+    lines.map((line) => [line.key, line.step?.kind ?? null]),
+    [
+      ["undecided-SLICE-006", "choose"],
+      ["kept-SLICE-001", "reopen"],
+      ["waiting", "import"],
+      ["refresh", null],
+      ["not-#90", null],
+    ],
+  );
+  assert.equal(lines[2].text, "SLICE-002 on GitHub waits while bringing in a project file is unfinished here. Finish it, or set it aside, and it comes in.");
+  for (const line of lines) plainWords(line.text, "from GitHub");
+  assert.deepEqual(fromGithubLines({}, null), []);
 });

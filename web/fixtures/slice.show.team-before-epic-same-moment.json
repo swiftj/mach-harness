@@ -683,7 +683,7 @@
       },
       "title": "Invite a teammate by email",
       "shipped": {
-        "commit": "5a410f0c79e9d5523088ae9e5e36a4d0b5d8f2e1",
+        "commit": "896745a3114219daf6e80a13898434aa76d7248a",
         "branch": "main",
         "rules": 0,
         "notes": [
