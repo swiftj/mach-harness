@@ -228,7 +228,12 @@ class TakeTest(TakeBase):
     def test_another_product_managers_slice_is_opened_as_their_approved_version(self):
         (slice_id,) = self.ada_ready()
         (issue,) = self.slice_issue(slice_id)
-        # Opened by hand here; a refresh would have brought it in by itself (test_studio_join).
+        # A refresh that could not take it in (here: joining takes nothing) lists it as not in the workspace; it is opened by hand.
+        import join  # noqa: E402
+        real = join.join
+        with mock.patch.object(join, "join", lambda host, studio_, found=None, batch=None: real(host, studio_, found, 0)):
+            listed = {row["slice_id"]: row for row in self.ok(self.b, "refresh")["github"]["slices"]}
+        self.assertFalse(listed[slice_id]["in_workspace"])
         checkout = self.checkout_state(self.b)
         writes = len(self.writes())
         taken = self.ok(self.b, "slice", "take", str(issue["number"]))
@@ -236,7 +241,8 @@ class TakeTest(TakeBase):
         self.assertEqual(self.checkout_state(self.b), checkout)
         self.assertEqual((taken["taken"], taken["issue"], taken["revision"], taken["approved_by"], taken["state_label"], taken["editable"], taken["factory_authorized"]),
                          (True, issue["number"], 1, "ada-pm", "mach:ready", False, False))
-        self.assertEqual(taken["epic"], {"epic_id": "EPIC-001", "issue": self.issues("mach:epic")[0]["number"], "created_here": True})
+        # The epic came with the refresh (epics are taken before any slice), so opening the slice did not have to make it.
+        self.assertEqual(taken["epic"], {"epic_id": "EPIC-001", "issue": self.issues("mach:epic")[0]["number"], "created_here": False})
         # The why and spec exactly as approved.
         self.assertEqual(self.draft(self.b, taken["spec"]).read_bytes(), self.draft(self.a, f"specs/slices/{slice_id}-invite-teammate.md").read_bytes())
         self.assertEqual(self.draft(self.b, taken["why"]).read_bytes(), self.draft(self.a, f"product/intents/{slice_id}.md").read_bytes())

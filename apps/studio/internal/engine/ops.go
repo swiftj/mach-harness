@@ -73,6 +73,8 @@ type ProjectInitArgs struct {
 	Name    string   `json:"name"`
 	Vision  string   `json:"vision"`
 	Outcome []string `json:"outcome"`
+	// Anyway: the person's word to start a product of their own while GitHub cannot be read.
+	Anyway bool `json:"anyway"`
 }
 
 func (a *ProjectInitArgs) Argv() ([]string, error) {
@@ -96,7 +98,11 @@ func (a *ProjectInitArgs) Argv() ([]string, error) {
 		argv = append(argv, flag("id", a.ID))
 	}
 	argv = append(argv, flag("name", a.Name), flag("vision", a.Vision))
-	return append(argv, repeated("outcome", a.Outcome)...), nil
+	argv = append(argv, repeated("outcome", a.Outcome)...)
+	if a.Anyway {
+		argv = append(argv, "--anyway")
+	}
+	return argv, nil
 }
 
 type ProjectSetArgs struct {
@@ -330,12 +336,21 @@ func (a *SliceCheckArgs) Argv() ([]string, error) {
 // SliceIDArgs serves slice show, ready and reopen.
 type SliceIDArgs struct {
 	SliceID string `json:"slice_id"`
-	verb    string
+	// WithoutMocks, for slice.ready only: the person's word to mark ready a slice brought in from GitHub without the design
+	// mock pictures its issue carries.
+	WithoutMocks bool `json:"without_mocks"`
+	verb         string
 }
 
 func (a *SliceIDArgs) Argv() ([]string, error) {
 	if err := checkID("slice_id", a.SliceID, SliceIDPattern, "SLICE-001"); err != nil {
 		return nil, err
+	}
+	if a.WithoutMocks {
+		if a.verb != "ready" {
+			return nil, invalid("without_mocks is only for slice.ready.")
+		}
+		return []string{"slice", a.verb, a.SliceID, "--without-mocks"}, nil
 	}
 	return []string{"slice", a.verb, a.SliceID}, nil
 }

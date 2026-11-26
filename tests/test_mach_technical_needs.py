@@ -262,6 +262,9 @@ class StudioTest(IssuesBase):
         joined = self.ok(self.b, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.",
                          "--outcome", "Teams can work together")
         self.assertTrue(joined["taken"]["needs"])
+        self.assertEqual(joined["needs_taken"]["revision"], 1)
+        self.assertEqual(joined["needs_taken"]["note"], "Another product manager published version 1 of the technical needs; it was taken, since you had no "
+                                                    "unpublished changes.")
         self.assertEqual(self.ok(self.b, "need", "list")["needs"], [need()])
         self.assertEqual(self.add("data", "It keeps names for seven years.", self.b)["need"]["need_id"], "TN-02")
         self.assertEqual(self.ok(self.b, "need", "publish")["revision"], 2)

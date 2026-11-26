@@ -348,6 +348,9 @@ class StudioTest(IssuesBase):
         joined = self.ok(self.b, "project", "init", "--id", "team-space", "--name", "Team Space", "--vision", "Teams work together.",
                          "--outcome", "Teams can work together")
         self.assertTrue(joined["taken"]["principles"])
+        self.assertEqual(joined["principles_taken"]["revision"], 1)
+        self.assertEqual(joined["principles_taken"]["note"], "Another product manager published version 1 of the principles; it was taken, since you had no "
+                                                    "unpublished changes.")
         self.assertEqual(self.ok(self.b, "principle", "list")["principles"][0]["statement"], STATEMENT)
         self.ok(self.b, "principle", "add", "--title", "Senders", "--statement", SECOND, "--reason", "Trust.")
         self.assertEqual(self.ok(self.b, "principle", "publish")["revision"], 2)

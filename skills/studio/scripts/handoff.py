@@ -231,7 +231,8 @@ class Handoff:
             marker = self.rules.parse_slice_body(item.get("body"))
             if marker:
                 slices.append({"number": item["number"], "state": str(item.get("state") or "").lower(), "labels": issues.label_names(item),
-                               "title": item.get("title"), "marker": marker, "url": item.get("url")})
+                               "title": item.get("title"), "marker": marker, "url": item.get("url"),
+                               "body_sha256": body_digest(item.get("body"))})
         tagged = {}
         for label, kind in (("mach:project", "project"), ("mach:epic", "epic")):
             tagged[kind] = [{"number": item["number"], "id": (self.rules.product_marker(item.get("body")) or ("", None))[1],
@@ -1284,7 +1285,8 @@ class Handoff:
                 self.read_text(data, snapshot, project, epics or {})
                 rows = {}
                 for item in snapshot["slices"]:
-                    found, failure = issues.comments(self.project, repository, item["number"])
+                    cached = COMMENTS_READ.get((repository, item["number"]))
+                    found, failure = (cached, None) if cached is not None else issues.comments(self.project, repository, item["number"])
                     rows.setdefault(item["marker"]["slice_id"], []).append(self.describe(data, item, found, failure))
                 data["seen"].update(refreshed_at=utc_now(), problem=None, problem_at=None, slices=rows,
                                     project=[{"number": p["number"], "project_id": p["id"], "state": p["state"],
@@ -1705,6 +1707,7 @@ class Handoff:
         found, failure = issues.comments(self.project, repository, number)
         if failure:
             raise HandoffError(f"Issue #{number}'s approval could not be read, so nothing was changed. {explain(failure)}")
+        COMMENTS_READ[(repository, number)] = found or []
         names = issues.label_names(current)
         check = self.rules.slice_take_check({"state": current.get("state"), "labels": names, "body": current.get("body")}, found or [])
         marker = check["marker"] or {}
@@ -1737,7 +1740,7 @@ class Handoff:
         return found, sorted({str(item.get("login")) for item in comments or [] if item.get("login")}), None
 
     def record_taken(self, data: Dict[str, Any], read: Dict[str, Any], slice_id: str, saved: str, epic_id: str,
-                     not_approved: Optional[str] = None) -> None:
+                     not_approved: Optional[str] = None, approver: Optional[str] = None) -> None:
         """Link the slice opened here to its issue, at the revision it was based on. Recorded before the
         draft's files are written, so an interrupted take is finished by taking it again. With `not_approved` (why: edited,
         no_approval, check, mocks) the record says the truth: no approval is held here for that text, why, and since when, so
@@ -1754,7 +1757,8 @@ class Handoff:
         if approved:
             entry.pop("not_approved", None)
         else:
-            entry["not_approved"] = {"why": not_approved, "since": utc_now(), "issue": read["number"], "revision": marker["revision"]}
+            entry["not_approved"] = {"why": not_approved, "since": utc_now(), "issue": read["number"], "revision": marker["revision"],
+                                     "approved_by": approver, "mocks": len(marker.get("mocks") or [])}
         if (data["epics"].get(epic_id) or {}).get("number") != read["epic"]["number"]:
             data["epics"][epic_id] = {"number": read["epic"]["number"]}
         parsed = self.rules.parse_slice_body(read.get("body")) or {}
@@ -1796,6 +1800,15 @@ def project_sha(title: Any, vision: Any, outcomes: Any) -> str:
 def epic_sha(title: Any, criteria: Any) -> str:
     """An epic's own text (title, acceptance criteria); its task list is not part of it."""
     return digest("epic", str(title or ""), [one_line(item) for item in criteria or []])
+
+
+# Comments of slice issues read in this command, by (repository, issue). studio.py empties it at the start of every command.
+COMMENTS_READ: Dict[Tuple[str, int], List[Dict[str, Any]]] = {}
+
+
+def body_digest(body: Any) -> Optional[str]:
+    """The SHA-256 of an issue's body as listed (line endings made one), or None when it has none."""
+    return hashlib.sha256(str(body).replace("\r\n", "\n").encode("utf-8")).hexdigest() if isinstance(body, str) else None
 
 
 def raw_sha(item: Optional[Dict[str, Any]]) -> Optional[str]:
