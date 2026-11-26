@@ -48,8 +48,12 @@ def tool(tid, name, inp, denied=False, write=None, error=None):
         out({"type": "system", "subtype": "permission_denied", "tool_name": name, "tool_use_id": tid, "decision_reason": "denied"})
     if write:
         path = os.path.join(os.getcwd(), write)
-        with open(path, "w") as f:
+        # Written outside the draft and moved into place, so a reader never finds the file
+        # empty and reports one change as two.
+        writing = os.path.join(os.getcwd(), ".fake-claude-writing")
+        with open(writing, "w") as f:
             f.write("# changed at %f\n" % time.time())
+        os.replace(writing, path)
     result = {"type": "tool_result", "tool_use_id": tid, "content": error or "SECRET FILE CONTENT"}
     if error:
         result["is_error"] = True
