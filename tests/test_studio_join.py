@@ -632,12 +632,20 @@ class BaseTest(JoinBase):
         ben = self.ben()
         self.ok(ben, "project", "init", "--name", "Ben's product", "--vision", "v", "--outcome", "o")
         self.ok(ben, "principle", "add", "--title", "Ben's", "--statement", "An invitation MUST name the person who sent it.", "--reason", "Trust.")
+        self.ok(ben, "epic", "add", "--title", "Ben's epic", "--criterion", "Something")
+        mine = self.drafted(ben, title="Ben's own slice")
+        own_spec = self.draft(ben, f"specs/slices/{mine}-invite-teammate.md")
+        own_spec.write_text(own_spec.read_text() + '\n- **PP-01** (revision 1): "An invitation MUST name the person who sent it." Followed.\n')
         self.project_and_epic(self.ada())
         self.ok(self.a, "principle", "add", "--title", "Versions", "--statement", "A published version MUST NOT be edited in place.", "--reason", "Why.")
         self.ok(self.a, "principle", "publish")
         joined = self.ok(self.ben(), "refresh")["joined"]
         self.assertIn("The principles published on GitHub came in under their own numbers. Yours were never published, so they stay drafts: "
-                      "PP-01 is now PP-02.", joined["note"])
+                      "PP-01 is now PP-02; your drafts' answers name them by their new numbers.", joined["note"])
+        (own,) = [row for row in self.status(self.b)["slices"] if row["title"] == "Ben's own slice"]
+        text = self.draft(self.b, own["spec"]).read_text()
+        self.assertIn('- **PP-02** (revision 1): "An invitation MUST name the person who sent it." Followed.', text)
+        self.assertNotIn("**PP-01**", text)
         listed = {item["id"]: item["statement"] for item in self.ok(self.b, "principle", "list")["principles"]}
         self.assertEqual(listed, {"PP-01": "A published version MUST NOT be edited in place.", "PP-02": "An invitation MUST name the person who sent it."})
 

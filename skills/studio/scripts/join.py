@@ -436,14 +436,19 @@ def take_published_sets(host: Any, studio: Any, hand: Any, found: Dict[str, Any]
         statements = {same(item.get("statement")): item[key] for item in items}
         top = max([0, *(int(str(item[key]).split("-")[1]) for item in items)])
         moved: List[str] = []
+        renamed: Dict[str, str] = {}
         for item in mine:
             if same(item.get("statement")) in statements:
-                moved.append(f"{item[key]} is now {statements[same(item.get('statement'))]}, which says the same")
+                renamed[item[key]] = statements[same(item.get("statement"))]
+                moved.append(f"{item[key]} is now {renamed[item[key]]}, which says the same")
                 continue
             top += 1
             new_id = f"{prefix}-{top:02d}"
+            renamed[item[key]] = new_id
             moved.append(f"{item[key]} is now {new_id}")
             items.append({**item, key: new_id, "revision": 1})
+        if rewrite_own_drafts(studio, hand, prefix, renamed):
+            moved.append("your drafts' answers name them by their new numbers")
         if kind == "principles":
             studio.save_principles(items, "Taking the principles from GitHub")
             hand.take_set(handoff.PRINCIPLES_KIND, theirs["revision"], rules.principles_sha256(theirs["items"]), theirs["items"], None, theirs.get("approved_by"))
@@ -455,6 +460,29 @@ def take_published_sets(host: Any, studio: Any, hand: Any, found: Dict[str, Any]
             said.append(f"The {words} published on GitHub came in under their own numbers. Yours were never published, so they stay drafts: "
                         + "; ".join(moved) + ".")
     return said
+
+
+def rewrite_own_drafts(studio: Any, hand: Any, prefix: str, renamed: Dict[str, str]) -> bool:
+    """The person's own drafts (never saved to GitHub) answer their principles or needs by ID: each ID that moved is rewritten in
+    their specs and whys, all at once, as slice and epic references are when a draft is renumbered. True when any text changed."""
+    moving = {old: new for old, new in renamed.items() if old != new}
+    if not moving:
+        return False
+    pattern = re.compile(rf"\b{prefix}-\d+\b")
+    ledger = hand.load()
+    changed = False
+    for slice_id in studio.all("slice"):
+        if (ledger["slices"].get(slice_id) or {}).get("number"):
+            continue  # saved to GitHub: answered under the published set already
+        for path in (studio.spec_of(slice_id), studio.intent_path(slice_id)):
+            if path is None or not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8")
+            new_text = pattern.sub(lambda found: moving.get(found.group(0), found.group(0)), text)
+            if new_text != text:
+                path.write_text(new_text, encoding="utf-8")
+                changed = True
+    return changed
 
 
 def import_waiting(studio: Any) -> Optional[Dict[str, Any]]:
