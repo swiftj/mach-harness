@@ -13,7 +13,7 @@
  */
 import { memo, type ReactNode } from "react";
 import { Callout, SelectionBrackets, fc, modelTiers, project, regions, round, screenBounds, type Lod, type PlanBox, type RegionKind } from "@mach/ui";
-import { isKnown, nextRoundAfter, refId, refKind, roundLimit, sliceHoldOf, type EntityRef, type Scene } from "../sim";
+import { isKnown, nextRoundAfter, refId, refKind, roundOfWords, sliceHoldOf, type EntityRef, type Scene } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { useAtlas, useNowKeyed } from "./context";
 import { AFTERGLOW, agentsElapsedKey, animating, anim, fmtElapsed, fmtElapsedKnown, chamberOccupant, latestGate, ticketOfRef, placeAgents, q, uiTier, type ViewMode } from "./derive";
@@ -420,9 +420,9 @@ function calloutOffers(L: PlantLayout, scene: Scene, t: number, reduced: boolean
       if (!v || !bay || v.status !== "FAIL_WITH_EVIDENCE" || v.decidedAt === null) continue;
       const failed = v.checks.filter((c) => c.result === "fail");
       const next = nextRoundAfter(cell, v.round);
-      const limit = roundLimit(cell);
-      // The round that follows, against the limit in force; none after the last round: a person decides.
-      const then = next !== null ? `back to build, round ${next} of ${limit}` : cell.stage === "blocked" ? `round ${Math.min(v.round, limit)} of ${limit}, stopped for a person` : `round ${Math.min(v.round, limit)} of ${limit}, the last`;
+      // One reading on every screen: the round in force and its limit, as the Facts and the Line say it.
+      const now = roundOfWords(cell);
+      const then = next !== null ? `round ${now}, back to build` : cell.stage === "blocked" ? `round ${now}, stopped for a person` : `round ${now}, the last`;
       put(`vf-${cell.ticketId}`, { ...bay.gate, z: PLATE_Z + 36 }, `Verification failed · ${failed.map((c) => c.targetId).join(", ")}`, `${v.checks.length - failed.length} of ${v.checks.length} proven; ${then}`, "fail", q(anim("stateChange", t - v.decidedAt, reduced)), 1);
     }
   }

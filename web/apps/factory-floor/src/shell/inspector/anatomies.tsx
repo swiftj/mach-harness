@@ -861,7 +861,7 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
           facts={[
             decision.reason ? ["Reason", decision.reason === "none" ? NO_REASON_WORDS : <ReasonWords key="r" reason={decision.reason} />] : null,
             decision.subject ? ["For", <Mono key="s">{decision.subject}</Mono>] : null,
-            gate.round ? ["Round", cell ? roundAgainstLimit(cell, gate.round) : String(gate.round)] : null,
+            gate.round ? ["Round", cell ? roundAgainstLimit(cell, gate.round, gate.openedAt) : String(gate.round)] : null,
             reachedEarlier ? ["Reached", at(gate.openedAt)] : null,
             waitingSince !== null ? ["Waiting", <Elapsed key="w" startedAt={waitingSince} finishedAt={null} mode="wait" />] : null,
             // Once merged, where the merge is (its station's visits): reached from here only.
@@ -1324,7 +1324,7 @@ export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
             // The station is a link to every visit of this ticket to it (the ticket is the header's link).
             ["Station", <EntityLink key="st" to={ref.station(visit.station, visit.ticketId)} label={`Every visit to ${STATION_WORDS[kind] ?? visit.station} in ${visit.ticketId}`}>{STATION_WORDS[kind] ?? visit.station}</EntityLink>],
             ["Cell", <Mono key="c">{visit.ticketId}</Mono>],
-            ["Round", roundAgainstLimit(cellOfVisit ?? { round: visit.round, stage: "building" }, visit.round)],
+            ["Round", roundAgainstLimit(cellOfVisit ?? { round: visit.round, stage: "building" }, visit.round, visit.enteredAt)],
             ["Step", isKnown(visit.meta, "action") ? visit.action : <NotRecorded key="a" />],
             ["Entered", at(visit.enteredAt)],
             ["State", visitStateWords(visit)],
@@ -1375,6 +1375,7 @@ function ReviewerWords({ seat }: { seat: SeatEntity }) {
 
 export function SeatAnatomy({ seat }: { seat: SeatEntity }) {
   const cellOfSeat = useScene((s) => s.cells[seat.ticketId] ?? null);
+  const seatStartedAt = cellOfSeat?.reviews.find((r) => r.round === seat.round)?.startedAt ?? null;
   return (
     <>
       <Section title="Facts">
@@ -1382,7 +1383,7 @@ export function SeatAnatomy({ seat }: { seat: SeatEntity }) {
           facts={[
             ["Seat", seat.seat],
             ["Cell", <Mono key="c">{seat.ticketId}</Mono>],
-            ["Round", roundAgainstLimit(cellOfSeat ?? { round: seat.round, stage: "building" }, seat.round)],
+            ["Round", roundAgainstLimit(cellOfSeat ?? { round: seat.round, stage: "building" }, seat.round, seatStartedAt ?? undefined)],
             ["Review", <EntityLink key="g" to={ref.gate(`${seat.ticketId}/review#${seat.round}`)}>Review, round {seat.round}</EntityLink>],
             ["Model", seatModelName(seat.model) ?? <NotRecorded key="m" />],
             ["Vote", seat.vote ? outcomeStateWords(seat.vote) : "not yet"],

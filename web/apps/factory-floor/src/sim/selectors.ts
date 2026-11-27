@@ -8,7 +8,7 @@ import type { AnySimEvent, EventKind } from "./events";
 import type { Significance } from "./catalog";
 import { EVENT_CATALOG } from "./catalog";
 import { describe } from "./describe";
-import { describeEntry, significanceOf } from "./describe-v3";
+import { describeEntry, significanceOfEvent } from "./describe-v3";
 import { indexFixture, lowerBound, upperBound } from "./engine";
 import type { LogEntry, SceneLog } from "./log";
 import { isSceneLog } from "./log";
@@ -691,7 +691,7 @@ function momentOfEntry(entry: LogEntry): Moment {
     seq: sim ? (event as AnySimEvent).seq : (event as { pos: number }).pos,
     t: entry.t,
     kind: event.type as EventKind,
-    significance: sim ? EVENT_CATALOG[(event as AnySimEvent).type].significance : significanceOf(event.type),
+    significance: sim ? EVENT_CATALOG[(event as AnySimEvent).type].significance : significanceOfEvent(event),
     ticketId: sim ? (event as AnySimEvent).ticket_id : ((event as { ids: { ticket_id: string | null } }).ids.ticket_id ?? null),
     text: describeEntry(entry),
     refs: entry.refs,
@@ -707,7 +707,7 @@ const momentFolds: Readonly<Record<Significance, (log: SceneLog) => LogFold<Mome
 };
 function significanceOfEntry(entry: LogEntry): Significance {
   const event = entry.event;
-  return !isV3(event) ? EVENT_CATALOG[(event as AnySimEvent).type].significance : significanceOf(event.type);
+  return !isV3(event) ? EVENT_CATALOG[(event as AnySimEvent).type].significance : significanceOfEvent(event);
 }
 
 /** The first `n` items of a fold's list, one array per (list, n) while it is in use, so a selector can compare by identity. */
@@ -1046,6 +1046,13 @@ function cellActivity(scene: Scene, cell: CellState): Activity {
   const slice = scene.slices[cell.sliceId];
   if (slice?.scheduler === "waiting-on-dependency") return { state: "waiting-dependency", reason: slice.reasons.join(" ") || "Waiting for what it depends on.", since: slice.since, authority: slice.meta.authority };
   if (cell.stage === "approved" || cell.stage === "pr-open") return awaitingMerge(scene, cell, authority);
+  // A person carried it on, or started work on it again, and no visit has started since: it waits for the line.
+  const lastEntry = cell.visits.at(-1)?.enteredAt ?? Number.NEGATIVE_INFINITY;
+  const carried = (cell.carriedOn ?? []).filter((c) => c.at >= lastEntry).at(-1);
+  if (carried) {
+    const how = carried.outcome === "rounds-reset" || carried.by === "person-start" ? "A person started work on it again, which gave it a fresh set of rounds" : "A person carried it on with a fix, which gave it one more round";
+    return { state: "waiting-resources", reason: `${how}. It waits for the line to take it up: a Factory running here does; if none is running, /mach pull in Claude Code carries it on.`, since: carried.at, authority, label: "Carried on; waits for the line" };
+  }
   if (execution && authority !== "simulated") return betweenExecutions(cell, execution);
   return { state: "unknown", reason: "Between stations; nothing recorded says what it waits for.", since: null, authority };
 }

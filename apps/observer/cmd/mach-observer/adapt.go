@@ -87,6 +87,9 @@ func (a ingestSource) Ingest() server.IngestState {
 		case src.Archived:
 			// M6.6: a cell's log gone because cleanup archived the cell is finished, not lost.
 			state = "archived"
+		case src.Closed:
+			// Gone because cleanup closed the ticket without an archive (an abandon deletes the cell): finished, not lost.
+			state = "closed"
 		case src.Gone:
 			state = "gone"
 		case state == "":

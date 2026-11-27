@@ -5,7 +5,7 @@
  * risers, and the supervisor's conduits lit for each running execution.
  */
 import { ArtifactCard, DependencyLink, Escalation, Packet, RetryLoop, RoutePath, fc, pointAlong, project, round, type Vec3 } from "@mach/ui";
-import { nextRoundAfter, ref, roundLimit, type CellState } from "../sim";
+import { nextRoundAfter, ref, roundLimit, roundNow, type CellState } from "../sim";
 import { useScene, useSceneStore } from "../scene";
 import { Hit, isDimmed, useAtlas, useHighlight, useNowKeyed } from "./context";
 import { animating, anim, legsInFlight, onFloor, q, workStation } from "./derive";
@@ -97,9 +97,9 @@ export function Transit() {
 
   return (
     <g>
-      {returns.map(({ cell, bay, next, p }) => (
+      {returns.map(({ cell, bay, p }) => (
         <g key={`ret-${cell.ticketId}`} style={{ opacity: isDimmed(highlight, ref.cell(cell.ticketId)) ? 0.28 : 1 }}>
-          <RetryLoop from={L.review.entry} to={{ ...bay.pads.build, z: FLOOR_Z }} round={next} maxRounds={roundLimit(cell)} progress={p} lift={92} lod={lod} />
+          <RetryLoop from={L.review.entry} to={{ ...bay.pads.build, z: FLOOR_Z }} round={roundNow(cell)} maxRounds={roundLimit(cell)} progress={p} lift={92} lod={lod} />
         </g>
       ))}
       {legs.map(({ leg, p }) => {
@@ -133,7 +133,7 @@ export function Transit() {
         .map((c) => {
           const bay = L.bayByTicket.get(c.ticketId);
           const at = c.stageHistory[c.stageHistory.length - 1]?.at ?? t;
-          return bay ? <Escalation key={`esc-${c.ticketId}`} from={{ x: bay.origin.x + 10, y: bay.origin.y + 10, z: FLOOR_Z + 34 }} progress={q(anim("verifyReturn", t - at, reduced))} label={`${c.ticketId} escalated: blocked-requires-sme`} /> : null;
+          return bay ? <Escalation key={`esc-${c.ticketId}`} from={{ x: bay.origin.x + 10, y: bay.origin.y + 10, z: FLOOR_Z + 34 }} progress={q(anim("verifyReturn", t - at, reduced))} label={`${c.ticketId} stopped for a person`} /> : null;
         })}
     </g>
   );

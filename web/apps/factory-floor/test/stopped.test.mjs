@@ -138,7 +138,7 @@ test("a person starting the Factory gives a fresh set: round 4 reads 1 of 3, rou
   assert.equal(L.sentBackTimesWords(row.sentBack.times), "Sent back 4 times");
   assert.equal(L.drawsSentBack(row), true, "at work again at Build: both ends are drawn");
   const groups = sim.roundGroups(cell);
-  assert.deepEqual(groups.map((g) => (g.kind === "round" ? `round ${g.round}${g.reads ? ` (${g.reads})` : ""}` : `carry ${g.carry.by}`)), ["round 1", "round 2", "round 3", "carry person-start", "round 4 (1 of 3)"]);
+  assert.deepEqual(groups.map((g) => (g.kind === "round" ? `round ${g.round}${g.reads ? ` (${g.reads})` : ""}` : `carry ${g.carry.by}`)), ["round 1 (1 of 3)", "round 2 (2 of 3)", "round 3 (3 of 3)", "carry person-start", "round 4 (1 of 3)"]);
   assert.equal(groups[4].verification.checks.find((c) => c.targetId === "AC-05").result, "fail");
   // A fresh count on a ticket that was not stopped (rounds-reset) is listed too.
   const reset = sceneOf(stoppedRun({ carry: [{ by: "person-decision", max: 4, then: "build" }], reset: true })).cells["6"];

@@ -23,6 +23,7 @@ import {
   carryOns,
   roundLimit,
   roundNow,
+  roundAgainstLimit,
   shownRound,
   capacityWaitOf,
   cellStopOf,
@@ -109,6 +110,8 @@ export type HeldReason =
   | { readonly kind: "dependency"; readonly words: string }
   | { readonly kind: "supervisor"; readonly words: string; readonly freeText: string }
   | { readonly kind: "next"; readonly words: string }
+  /** A person carried it on, or started work on it again, and its next step has not started. */
+  | { readonly kind: "carried"; readonly words: string }
   /** M15: sent back by the merge-time recheck; it moves on by itself, to Verify. */
   | { readonly kind: "recheck"; readonly words: string };
 
@@ -378,6 +381,10 @@ function waitingColumn(cell: CellState): number {
     case "merged":
       return CLEANUP;
     case "blocked": {
+      // At the station that failed it: the build station's refusal of another round is not where it stopped.
+      const judged = [...cell.visits].reverse().find((v) => v.station === "verify" || v.station === "review" || v.station === "human-approval" || v.station === "merge");
+      const lastBuild = [...cell.visits].reverse().find((v) => v.station === "build");
+      if (judged && lastBuild && judged.enteredAt < lastBuild.enteredAt && lastBuild.outcomeWord === "escalated") return columnOf(judged.station) ?? BUILD;
       const last = [...cell.visits].reverse().find((v) => columnOf(v.station) !== null);
       return columnOf(last?.station) ?? BUILD;
     }
@@ -400,10 +407,14 @@ export function reviewOfVisit(cell: Pick<CellState, "visits" | "reviews">, v: St
   return cell.reviews.filter((r) => r.round === v.round)[nth] ?? cell.reviews.find((r) => r.round === v.round) ?? null;
 }
 
-/** "round 1", or "round 1, repeat 1 (no judging round used)" for a repeat review round. */
-export function visitRoundWords(cell: Pick<CellState, "visits" | "reviews"> | null, v: StationVisit): string {
+/**
+ * "round 1", or "round 1, repeat 1 (no judging round used)" for a repeat review round. Once a person
+ * changed the ticket's rounds, a round says how it read when it ran: "round 4 (4 of 4)", "round 4 (1 of 3)".
+ */
+export function visitRoundWords(cell: (Pick<CellState, "visits" | "reviews"> & Partial<Pick<CellState, "round" | "stage" | "carriedOn" | "roundBase" | "roundMax">>) | null, v: StationVisit): string {
   const repeat = cell && v.station === "review" ? (reviewOfVisit(cell, v)?.repeat ?? 0) : 0;
-  return repeat > 0 ? `round ${v.round}, repeat ${repeat} (no judging round used)` : `round ${v.round}`;
+  const read = cell?.carriedOn?.length ? ` (${roundAgainstLimit({ round: cell.round ?? v.round, stage: cell.stage ?? "building", carriedOn: cell.carriedOn }, v.round, v.enteredAt)})` : "";
+  return repeat > 0 ? `round ${v.round}${read}, repeat ${repeat} (no judging round used)` : `round ${v.round}${read}`;
 }
 
 /** The verb a "Needs you" item starts with: what the person must do (style guide 8.8). */
@@ -513,7 +524,7 @@ export function rowOfCell(scene: Scene, cell: CellState, now: number): LineRow {
       since: attention?.at ?? [...cell.stageHistory].reverse().find((h) => h.stage === "blocked")?.at ?? null,
       held: null,
       why,
-      needs: "Read what failed, then carry it on with a fix: the builder takes it up again at the build step. Or re-plan it, fix it by hand, or abandon it.",
+      needs: "Read what failed, then carry it on with a fix: the builder takes it up again at the build step. /mach decide in Claude Code lists what can be done.",
       command: command("decide", cell.ticketId),
     };
   }
@@ -647,22 +658,31 @@ export function rowOfCell(scene: Scene, cell: CellState, now: number): LineRow {
   const column = waitingColumn(cell);
   const wait = capacityWaitOf(scene, cell.ticketId) ?? (cell.capacityWait ? { since: cell.capacityWait.since, limit: cell.capacityWait.limit } : null);
   const blocking = slice ? slice.dependsOn.filter((d) => scene.dependencies[`${slice.id}->${d}`]?.state === "blocking") : [];
+  // A person carried it on, or started work on it again, and its next step has not started: said from the records alone.
+  const lastEntry = cell.visits.at(-1)?.enteredAt ?? Number.NEGATIVE_INFINITY;
+  const carried = carryOns(cell).filter((c) => c.at >= lastEntry).at(-1) ?? null;
+  const next = (LINE_STATIONS[column] as LineStation).name;
+  const step = column === BUILD ? "the build step" : `the ${next.toLowerCase()} step`;
   const held: HeldReason = wait
     ? { kind: "capacity", words: `Waiting for a free place to work${wait.limit !== null ? ` (at most ${wait.limit} at once)` : ""}.` }
     : blocking.length
       ? { kind: "dependency", words: `Waits for ${blocking.join(", ")} to be merged first.` }
-      : { kind: "next", words: `Next: ${(LINE_STATIONS[column] as LineStation).name}. Its last step finished; the next has not started yet.` };
+      : carried
+        ? { kind: "carried", words: `${carried.outcome === "rounds-reset" || carried.by === "person-start" ? "A person started work on it again, which gave it a fresh set of rounds" : "A person carried it on with a fix, which gave it one more round"}. It waits for the line to take it up at ${step}.` }
+        : { kind: "next", words: `Next: ${next}. Its last step finished; the next has not started yet.` };
   return {
     ...base,
     state: "held",
     column,
     beforeMerge: false,
     passed: passedColumns(cell, column),
-    detail: held.kind === "next" ? `next: ${(LINE_STATIONS[column] as LineStation).name.toLowerCase()}` : held.kind === "capacity" ? "no free place" : "waits on another",
-    since: wait?.since ?? cell.visits.at(-1)?.leftAt ?? cell.stationSince ?? null,
+    detail: held.kind === "next" || held.kind === "carried" ? `next: ${next.toLowerCase()}` : held.kind === "capacity" ? "no free place" : "waits on another",
+    since: wait?.since ?? carried?.at ?? cell.visits.at(-1)?.leftAt ?? cell.stationSince ?? null,
     held,
     why: held.words,
-    needs: "Nothing. It moves on when the line takes it up.",
+    needs: carried
+      ? `Nothing from you. A Factory running here takes it up; if none is running, /mach pull in Claude Code carries it on from ${step}.`
+      : "Nothing. It moves on when the line takes it up.",
     command: command("explain", cell.ticketId),
   };
 }

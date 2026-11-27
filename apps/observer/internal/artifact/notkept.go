@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -30,6 +31,8 @@ type NotKept struct {
 	// names none (none was kept).
 	Archive *string `json:"archive"`
 	Outcome *string `json:"outcome"`
+	// ClosedAt is when cleanup closed the ticket, as its run record says (closed_at); null when it does not.
+	ClosedAt *string `json:"closed_at"`
 }
 
 // NotKeptFallback is said when a run record names no archive and gives no reason.
@@ -127,6 +130,13 @@ func ArchiveNotKept(root *os.Root, ticket string) *NotKept {
 	var outcome string
 	if json.Unmarshal(last["outcome"], &outcome) == nil && (outcome == "merged" || outcome == "abandoned") {
 		out.Outcome = &outcome
+	}
+	var closed string
+	if json.Unmarshal(last["closed_at"], &closed) == nil {
+		if t, err := time.Parse(time.RFC3339, closed); err == nil {
+			s := t.UTC().Format(time.RFC3339)
+			out.ClosedAt = &s
+		}
 	}
 	switch {
 	case named != nil:

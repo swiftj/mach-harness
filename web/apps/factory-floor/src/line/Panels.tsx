@@ -242,7 +242,7 @@ function FeedTime({ t }: { t: number }) {
   const w = wallMoment(t);
   const day = w.day === "today" ? "Today" : w.day === "yesterday" ? "Yesterday" : w.text.slice(0, w.text.length - w.clock.length).replace(/,?\s*$/, "");
   return (
-    <time dateTime={w.iso} title={w.exact} aria-label={w.age ? `${w.exact}, ${w.age}` : w.exact} className="flex flex-col pt-px font-mono text-[12px] leading-tight text-ink-subtle tabular" data-moment={w.day}>
+    <time dateTime={w.iso} title={w.exact} aria-label={w.age ? `${w.exact}, ${w.age}` : w.exact} className="flex flex-col whitespace-nowrap pt-px font-mono text-[12px] leading-tight text-ink-subtle tabular" data-moment={w.day}>
       <span>{day}</span>
       <span>{w.clock}</span>
       {w.age ? <span className="text-[11px]">{w.age}</span> : null}
@@ -266,7 +266,7 @@ export function Feed({ moments, onTicket }: { moments: readonly Moment[]; onTick
       ) : (
         <ul className="mt-3 divide-y divide-line border-y border-line" data-feed="">
           {moments.map((m) => (
-            <li key={m.id} className="grid grid-cols-[76px_minmax(0,1fr)] gap-2 py-2 text-body-sm">
+            <li key={m.id} className="grid grid-cols-[minmax(76px,max-content)_minmax(0,1fr)] gap-2 py-2 text-body-sm">
               <FeedTime t={m.t} />
               <span className="min-w-0 text-ink">
                 {m.ticketId ? (

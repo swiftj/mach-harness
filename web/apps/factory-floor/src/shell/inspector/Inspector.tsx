@@ -97,6 +97,8 @@ function lookOf(entity: AnyRef, value: unknown, historyEnd: number | null = null
     }
     case "cell": {
       const c = value as CellState;
+      // Abandoned (cleanup's run record): finished, its work deleted; never "in progress" at the stage it was at.
+      if (c.runRecord?.outcome === "abandoned") return { glyph: <CellGlyph size={28} state="idle" />, state: "idle", word: "Abandoned: its work was deleted", phase: "finished", since: c.runRecord.at, sinceWord: "Abandoned" };
       const l = stageLook(c.stage);
       return { glyph: <CellGlyph size={28} state={l.state} />, state: l.state, mark: l.mark, word: l.label, ...cellTiming(c) };
     }

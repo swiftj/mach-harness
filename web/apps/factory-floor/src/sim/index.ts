@@ -14,7 +14,7 @@ export * from "./rounds";
 export * from "./v3";
 export { createSceneLog, isSceneLog, reuse } from "./log";
 export type { LogEntry, SceneLog, SceneLogOptions, IngestResult, LogStats } from "./log";
-export { describeEntry, describeV3, significanceOf } from "./describe-v3";
+export { describeEntry, describeV3, significanceOf, significanceOfEvent } from "./describe-v3";
 export { modelIdOf, gapClassOf } from "./reduce-v3";
 export { emptyScene, reduce } from "./reducer";
 export * from "./selectors";

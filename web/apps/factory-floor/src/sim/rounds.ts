@@ -43,10 +43,40 @@ export function roundOfWords(cell: RoundCell): string {
   return `${roundNow(cell)} of ${roundLimit(cell)}`;
 }
 
-/** A recorded round read against the limit in force ("2 of 3"), or its own number for a round of an earlier set. */
-export function roundAgainstLimit(cell: RoundCell, round: number): string {
-  const shown = shownRound(cell, round);
-  return shown === null ? `${round}, of an earlier set of rounds` : `${shown} of ${Math.max(roundLimit(cell), shown)}`;
+/**
+ * The allowance in force at a moment: the rounds set aside and the limit, from the last record of a
+ * person changing the rounds at or before it (none: nothing set aside, the configured limit).
+ */
+export function allowanceAt(cell: RoundCell, at: number): { readonly base: number; readonly max: number } {
+  let base = 0;
+  let max: number = MAX_ROUNDS;
+  for (const c of carryOns(cell)) {
+    if (c.at > at) break;
+    base = c.base ?? base;
+    max = c.max ?? max;
+  }
+  return { base: Math.max(0, base), max };
+}
+
+/**
+ * A recorded round read as it was when it happened (`at`: when it started): its number less the rounds
+ * set aside then, of the limit then, never above it ("4 of 4" for a round under a carry-on, even after a
+ * later fresh set). Without `at`, against the allowance in force now.
+ */
+export function roundAgainstLimit(cell: RoundCell, round: number, at?: number): string {
+  if (at === undefined) {
+    const shown = shownRound(cell, round);
+    return shown === null ? `${round}, of an earlier set of rounds` : `${shown} of ${Math.max(roundLimit(cell), shown)}`;
+  }
+  const a = allowanceAt(cell, at);
+  const shown = round - a.base;
+  if (shown < 1) return String(round);
+  return `${shown} of ${Math.max(a.max, shown)}`;
+}
+
+/** The number a person read for a recorded round when it happened (`at`), never above its limit then. */
+export function shownRoundAt(cell: RoundCell, round: number, at: number): number {
+  return Math.max(1, round - allowanceAt(cell, at).base);
 }
 
 /** Stopped by the line (the round limit, or a stop for a person): no next round runs without a person. */
@@ -92,12 +122,12 @@ export function roundGroups<V extends { readonly round: number; readonly started
   for (const v of cell.verifications) put(v.round, v.startedAt, (g) => (g.verification = v));
   // The first review of a round is the round's own; a repeat (no judging round used) does not replace it.
   for (const r of cell.reviews) put(r.round, r.startedAt, (g) => (g.review = g.review ?? r));
-  const base = roundBase(cell);
   const out: (RoundGroup<V, R> & { readonly order: number })[] = [...rounds.entries()].map(([round, g]) => ({
     kind: "round" as const,
     key: `round/${round}`,
     round,
-    reads: base > 0 && round > base ? roundAgainstLimit(cell, round) : null,
+    // Once a person changed the rounds, each round says how it read when it ran ("4 of 4", "1 of 3").
+    reads: carryOns(cell).length ? roundAgainstLimit(cell, round, g.at) : null,
     verification: g.verification,
     review: g.review,
     order: g.at,
@@ -115,8 +145,8 @@ export function carriedOnTitle(c: Pick<CarriedOnState, "outcome" | "by">): strin
 /** The words for one record: who changed the rounds, and what its next round reads. */
 export function carriedOnWords(c: Pick<CarriedOnState, "outcome" | "round" | "max" | "by">): string {
   const next = c.round !== null && c.max !== null ? ` Its next round reads ${c.round} of ${c.max}.` : "";
-  if (c.outcome === "rounds-reset") return `A person started the Factory, so its rounds count from the start again.${next}`;
-  if (c.by === "person-start") return `A person started the Factory, which carried it on from the build step with a fresh set of rounds.${next}`;
+  if (c.outcome === "rounds-reset") return `A person started work on it again, which gave it a fresh set of rounds.${next}`;
+  if (c.by === "person-start") return `A person started work on it again, which gave it a fresh set of rounds and carried it on from the build step.${next}`;
   if (c.by === "person-decision") return `A person carried it on with a fix, which gave it one more round.${next}`;
   return `A person carried it on.${next}`;
 }
