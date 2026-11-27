@@ -5,7 +5,7 @@
     mach scaffold   scaffold the factory files only (for projects that use the MACH plugin)
     mach uninstall  remove everything this tool installed and has not been changed since
     mach status     show what is installed and what has been changed
-    mach programs   bring the two programs in .factory/bin/ to the release installed here (used by /mach-app)
+    mach programs   bring the two programs in .factory/bin/ to the release installed here (used by /mach-studio and /mach floor)
 
 Install and update always bring MACH's own files to the version being installed: the skills,
 agents and workflow under .claude/skills/mach/, .claude/skills/mach-*, .claude/agents/mach-* and
@@ -205,8 +205,8 @@ def skill_items(root: Path) -> List[Item]:
             data = path.read_bytes()
             if relative.as_posix() == "SKILL.md":
                 text = prefixed(data.decode("utf-8"), skill.name, project_name(skill.name))
-                # A skill that runs another skill's script names it beside its own folder: skills/app/ in the plugin,
-                # .claude/skills/mach-app/ in a project.
+                # A skill that runs another skill's script names it beside its own folder: skills/run/ in the plugin,
+                # .claude/skills/mach/ in a project (skills/studio/ and .claude/skills/mach-studio/ for the others).
                 text = SIBLING_RE.sub(lambda found: f"${{CLAUDE_SKILL_DIR}}/../{project_name(found.group(1))}/", text)
                 data = text.encode("utf-8")
             items.append(Item(f".claude/skills/{project_name(skill.name)}/{relative.as_posix()}", data, "managed", path.suffix == ".py"))
@@ -526,6 +526,7 @@ def apply(project: Path, items: Sequence[Item], components: Sequence[str], versi
 
     # Files an earlier version installed that this version no longer ships.
     scopes = [prefix for prefix, on in ((".claude/", "skills" in components), (".factory/", "scaffold" in components)) if on]
+    removed: List[Path] = []
     for dest in sorted(set(recorded) - wanted):
         path = project / dest
         if not any(dest.startswith(scope) for scope in scopes) or dest in SEEDS:
@@ -535,13 +536,18 @@ def apply(project: Path, items: Sequence[Item], components: Sequence[str], versi
             saved.append(dest)
             if not args.dry_run:
                 path.unlink()
+            removed.append(path)
         elif path.is_file() and sha(path.read_bytes()) != recorded[dest]:
             log.append(f"  keep     {dest} (no longer shipped, but you changed it)")
         else:
             log.append(f"  remove   {dest} (no longer shipped)")
             if not args.dry_run and path.is_file():
                 path.unlink()
+            removed.append(path)
         del recorded[dest]
+    # A skill no longer shipped (0.27.0's .claude/skills/mach-app/) leaves no folder behind, so Claude Code lists it no more.
+    log.extend(remove_caches(project, [path for path in removed if path.suffix == ".py"], args.dry_run))
+    prune(project, [path.parent for path in removed], args.dry_run)
 
     blocks: Dict[str, Dict[str, bool]] = dict(manifest.get("blocks", {}))
     if "scaffold" in components:
@@ -1020,7 +1026,7 @@ def refresh_program(program: Program, root: Path, project: Path, version: str, m
 
 def cmd_programs(args: argparse.Namespace) -> int:
     """Bring the prebuilt programs in .factory/bin/ to the MACH release installed in this project, and nothing else: no
-    skill, agent or setting is touched. Used by /mach-app so the app that opens is always the installed release's."""
+    skill, agent or setting is touched. Used by /mach-studio and /mach floor so the app that opens is always the installed release's."""
     project = args.project.resolve()
     manifest = load_manifest(project)
     version = args.release or manifest.get("version") or source_version(source_root())

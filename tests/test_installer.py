@@ -97,7 +97,7 @@ class InstallTest(Base):
                          ".claude/skills/mach/scripts/run.py", ".claude/workflows/mach-belt.js",
                          ".claude/skills/mach-merge/SKILL.md", ".claude/skills/mach-merge/scripts/merge.py",
                          ".claude/skills/mach-idea/SKILL.md", ".claude/skills/mach-idea/scripts/idea.py",
-                         ".claude/skills/mach-app/SKILL.md", ".claude/skills/mach-app/scripts/app.py",
+                         ".claude/skills/mach/scripts/app.py",
                          ".claude/agents/mach-contract-engineer.md", ".factory/bin/mach", ".factory/mach.mk", ".factory/config.json",
                          "REVIEW.md", "AGENTS.md", "Makefile", "CLAUDE.md", ".gitignore", ".factory/.mach-manifest.json"):
             self.assertIn(expected, files)
@@ -821,7 +821,7 @@ def program(name, version):
 
 
 class ProgramsTest(Base):
-    """`mach programs` (used by /mach-app): brings the two programs in .factory/bin/ to the release installed in the
+    """`mach programs` (used by /mach-studio and /mach floor): brings the two programs in .factory/bin/ to the release installed in the
     project, downloaded and checked exactly as install does, and changes nothing else."""
 
     def setUp(self):
@@ -989,25 +989,72 @@ class ProgramsTest(Base):
         self.assertEqual(self.here.read_bytes(), data)
 
 
-class AppSkillTest(Base):
-    def test_the_app_skill_is_installed_as_mach_app_and_finds_its_neighbours(self):
+class AppCommandsTest(Base):
+    """/mach-studio and /mach floor open the two web apps; app.py lives in the run skill and the studio skill names it
+    beside its own folder. 0.27.0's /mach-app skill is gone, and an update removes the copy a project still has."""
+
+    def test_the_two_skills_find_the_one_app_script_in_a_project(self):
         code, out = self.mach("install")
         self.assertEqual(code, 0, out)
-        skill = (self.project / ".claude/skills/mach-app/SKILL.md").read_text()
-        self.assertIn("\nname: mach-app\n", skill)
-        self.assertIn('!`python3 "${CLAUDE_SKILL_DIR}/scripts/app.py" "$ARGUMENTS"`', skill)
         studio = (self.project / ".claude/skills/mach-studio/SKILL.md").read_text()
-        self.assertIn('python3 "${CLAUDE_SKILL_DIR}/../mach-app/scripts/app.py"', studio)
-        self.assertNotIn("${CLAUDE_SKILL_DIR}/../app/", studio)
+        self.assertIn('python3 "${CLAUDE_SKILL_DIR}/../mach/scripts/app.py" for-skill studio <<\'!MACH_TYPED_WORDS_END\'\n$ARGUMENTS\n!MACH_TYPED_WORDS_END\n', studio)
+        self.assertIn('  - Bash(python3 "${CLAUDE_SKILL_DIR}/../mach/scripts/app.py" *)\n', studio)
+        self.assertNotIn("${CLAUDE_SKILL_DIR}/../run/", studio)
         run_skill = (self.project / ".claude/skills/mach/SKILL.md").read_text()
-        self.assertIn('python3 "${CLAUDE_SKILL_DIR}/../mach-app/scripts/app.py" floor', run_skill)
+        self.assertIn('python3 "${CLAUDE_SKILL_DIR}/scripts/app.py" for-skill run <<\'!MACH_TYPED_WORDS_END\'\n', run_skill)
+        self.assertIn('  - Bash(python3 "${CLAUDE_SKILL_DIR}/scripts/app.py" *)\n', run_skill)
+        self.assertTrue((self.project / ".claude/skills/mach/scripts/app.py").is_file())
+        self.assertFalse((self.project / ".claude/skills/mach-app").exists())
         # A path above the skills folder is left as it is.
         self.assertEqual(mach.SIBLING_RE.sub("x", "${CLAUDE_SKILL_DIR}/../../apps/studio/"), "${CLAUDE_SKILL_DIR}/../../apps/studio/")
 
-    def test_the_plugin_lists_the_app_skill(self):
-        self.assertTrue((ROOT / "skills/app/SKILL.md").is_file())
-        self.assertNotIn("app", mach.PLUGIN_ONLY_SKILLS)
-        self.assertEqual(mach.project_name("app"), "mach-app")
+    def test_the_plugin_has_no_app_skill(self):
+        self.assertFalse((ROOT / "skills/app").exists())
+        self.assertTrue((ROOT / "skills/run/scripts/app.py").is_file())
+
+    def leftover_app_skill(self, changed: bool) -> None:
+        """What 0.27.0 installed: .claude/skills/mach-app/, recorded in the manifest."""
+        files = {".claude/skills/mach-app/SKILL.md": "---\nname: mach-app\n---\n", ".claude/skills/mach-app/scripts/app.py": "print('0.27.0')\n"}
+        manifest_path = self.project / ".factory/.mach-manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        for dest, text in files.items():
+            path = self.project / dest
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text + ("# changed here\n" if changed else ""))
+            manifest["files"][dest] = mach.sha(text.encode("utf-8"))
+        cache = self.project / ".claude/skills/mach-app/scripts/__pycache__"
+        cache.mkdir()
+        (cache / "app.cpython-312.pyc").write_bytes(b"compiled")
+        manifest_path.write_text(json.dumps(manifest))
+
+    def test_an_update_removes_the_mach_app_skill_of_0_27_0(self):
+        self.mach("install")
+        self.leftover_app_skill(changed=False)
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertIn("remove   .claude/skills/mach-app/SKILL.md (no longer shipped)", out)
+        self.assertIn("remove   .claude/skills/mach-app/scripts/app.py (no longer shipped)", out)
+        self.assertFalse((self.project / ".claude/skills/mach-app").exists(), "no folder is left for Claude Code to list")
+        self.assertTrue((self.project / ".claude/skills/mach-studio/SKILL.md").is_file())
+        manifest = json.loads((self.project / ".factory/.mach-manifest.json").read_text())
+        self.assertFalse([dest for dest in manifest["files"] if "mach-app" in dest])
+
+    def test_a_changed_mach_app_skill_is_saved_and_removed(self):
+        self.mach("install")
+        self.leftover_app_skill(changed=True)
+        code, out = self.mach("install")
+        self.assertEqual(code, 0, out)
+        self.assertIn("remove   .claude/skills/mach-app/SKILL.md (no longer shipped; your version saved to .factory/mach-backup-", out)
+        self.assertFalse((self.project / ".claude/skills/mach-app").exists())
+        self.assertEqual(len(list(self.project.glob(".factory/mach-backup-*/.claude/skills/mach-app/SKILL.md"))), 1)
+
+    def test_a_dry_run_removes_nothing(self):
+        self.mach("install")
+        self.leftover_app_skill(changed=False)
+        code, out = self.mach("install", "--dry-run")
+        self.assertEqual(code, 0, out)
+        self.assertIn("remove   .claude/skills/mach-app/SKILL.md (no longer shipped)", out)
+        self.assertTrue((self.project / ".claude/skills/mach-app/SKILL.md").is_file())
 
 
 class ProvenanceTest(Base):
