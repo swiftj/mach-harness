@@ -137,11 +137,20 @@ export interface V3Ids {
 type ByRole = "engineer" | "supervisor" | "person";
 type Counts = Readonly<Record<string, number | boolean>>;
 
-/** A person carried the ticket on past its stop (the station's outcome `carried-on-by-person`): the round shown from then on, the new limit, and who gave them. */
+/**
+ * A person changed a ticket's rounds (the build station's station.exited, rounds.py; the observer's
+ * `carried_on`): a carry-on past its stop (`carried-on-by-person`) or a fresh count when a person started
+ * the Factory (`rounds-reset`); the round a person reads and its limit, the round's own number since the
+ * ticket began, the rounds that no longer count, who gave them and where it had stopped.
+ */
 export interface CarriedOnData {
+  readonly outcome?: "carried-on-by-person" | "rounds-reset" | null;
   readonly round: number | null;
   readonly max: number | null;
+  readonly number?: number | null;
+  readonly base?: number | null;
   readonly by: "person-start" | "person-decision" | null;
+  readonly stopped_at?: "verify" | "review" | "person" | "merge" | null;
 }
 type Stage = CellStage | "spec-open";
 
@@ -286,6 +295,8 @@ export interface ObserverSnapshotState {
     readonly rounds?: number | null;
     /** The round limit a person's carry-on set (the observer's `round_max`); null: the configured one. */
     readonly round_max?: number | null;
+    /** The rounds that no longer count (a person started the Factory: the observer's `round_base`). */
+    readonly round_base?: number | null;
     /** Observer M6.2: the cell's app type, and the plan's facts (`plan {app_type, risk, contracts, tasks, recorded_by}`). */
     readonly app_type?: string | null;
     readonly plan?: { readonly app_type: string | null; readonly risk: string | null; readonly contracts: number | null; readonly tasks: number | null; readonly recorded_by: string | null } | null;

@@ -8,10 +8,11 @@ import { ev, finalize } from "./v3.mjs";
 export const T0 = Date.UTC(2026, 10, 24, 20, 0, 0);
 
 /**
- * `carry`: [] (stopped), or a list of carry-ons, each { by, round, max, then } where `then` is "build"
+ * `carry`: [] (stopped), or a list of carry-ons, each { by, max, then } where `then` is "decided" (recorded, the
+ * revision not started), "build"
  * (the build round started) or "fail-build" (that round's verification failed and it went back to build).
  */
-export function stoppedRun({ ticket = "6", carry = [], extraBuild = false } = {}) {
+export function stoppedRun({ ticket = "6", carry = [], extraBuild = false, reset = false } = {}) {
   const out = [];
   const key = `c:${ticket}:5e6f7a8b`;
   let seq = 0;
@@ -47,14 +48,33 @@ export function stoppedRun({ ticket = "6", carry = [], extraBuild = false } = {}
     // A fourth build round recorded with no carry-on record (the record was lost): the limit reads as the round that started.
     enter("build", 4, { stage: "building", action: "revise" });
   }
+  let judged = 3;
   for (const c of carry) {
     t += 3_600_000;
-    const b = enter("build", c.round, { stage: "building", action: "revise", carried_on: { round: c.round, max: c.max, by: c.by } });
+    // The build station's record (rounds.py): station.exited, the round being judged as the envelope's round.
+    const number = judged + 1;
+    const base = c.by === "person-start" ? judged : 0;
+    life("station.exited", "build", `${ticket}/build#${visits.build}`, judged, {
+      station: "build", outcome: "carried-on-by-person", stage: "built", duration_ms: null, closed_by: null, head: null, counts: { round_number: number, rounds_base: base },
+      carried_on: { outcome: "carried-on-by-person", round: number - base, max: c.max, number, base, by: c.by, stopped_at: "verify" },
+    });
+    if (c.then === "decided") continue; // the revision has not started yet
+    const b = enter("build", number, { stage: "building", action: "revise" });
+    judged = number;
     if (c.then === "fail-build") {
-      exit("build", b, c.round, "built", "built");
-      failedVerify(c.round, ["AC-05"]);
-      enter("build", c.round + 1, { stage: "building", action: "revise" });
+      exit("build", b, number, "built", "built");
+      failedVerify(number, ["AC-05"]);
+      enter("build", number + 1, { stage: "building", action: "revise" });
+      judged = number + 1;
     }
+  }
+  if (reset) {
+    // A person started the Factory on a ticket that is not stopped: its count starts again.
+    t += 3_600_000;
+    life("station.exited", "build", `${ticket}/build#${visits.build}`, judged, {
+      station: "build", outcome: "rounds-reset", stage: "building", duration_ms: null, closed_by: null, head: null, counts: {},
+      carried_on: { outcome: "rounds-reset", round: 1, max: 3, number: judged, base: judged - 1, by: "person-start", stopped_at: null },
+    });
   }
   return finalize(out);
 }

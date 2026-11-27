@@ -770,6 +770,7 @@ export function readSnapshotState(data: unknown): ObserverSnapshotState {
         current_visit: str(c.current_visit),
         rounds: num(c.round ?? c.rounds),
         round_max: num(c.round_max),
+        round_base: num(c.round_base),
         app_type: str(c.app_type) || null,
         plan: plan ? { app_type: plan.appType, risk: plan.risk, contracts: plan.contracts, tasks: plan.tasks, recorded_by: plan.recordedBy } : null,
       };

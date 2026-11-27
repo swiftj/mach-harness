@@ -8,7 +8,7 @@
  * verification's checks, the last rejected review's blocking findings, the findings file it wrote. A
  * figure no record carries is left out, never guessed.
  */
-import { roundGroups, roundLimit, type CellState, type RoundGroup, type VerificationState, type ReviewRoundState } from "../sim";
+import { roundGroups, roundLimit, shownRound, type CellState, type RoundGroup, type VerificationState, type ReviewRoundState } from "../sim";
 import type { NeedTicket, StoppedFacts } from "../needs/model";
 import type { UncheckedText } from "../text/unchecked";
 
@@ -34,7 +34,7 @@ export interface StoppedView {
   readonly rounds: readonly RoundGroup<VerificationState, ReviewRoundState>[];
 }
 
-const STATION_WORDS: Readonly<Record<string, string>> = { verify: "Verification", review: "Review", build: "Build", "human-approval": "A person's approval", merge: "Merge" };
+const STATION_WORDS: Readonly<Record<string, string>> = { verify: "Verification", review: "Review", build: "Build", "human-approval": "a person's approval", person: "a person's approval", merge: "Merge" };
 
 /** The last judging round that failed, and the station that judged it, from the records. */
 function lastFailure(cell: CellState): { station: "verify" | "review"; round: number } | null {
@@ -70,7 +70,7 @@ export function stoppedView(input: { readonly ticketId: string; readonly cell: C
   const facts: StoppedFacts | null = need?.stopped ?? null;
   const last = cell ? lastFailure(cell) : null;
   const station = facts?.station ?? last?.station ?? null;
-  const usedFromRecords = cell ? Math.min(Math.max(...[0, ...cell.verifications.map((v) => v.round), ...cell.reviews.map((r) => r.round)]), roundLimit(cell)) : null;
+  const usedFromRecords = cell ? Math.min(Math.max(0, ...cell.verifications.map((v) => shownRound(cell, v.round) ?? 0), ...cell.reviews.map((r) => shownRound(cell, r.round) ?? 0)), roundLimit(cell)) : null;
   return {
     ticketId: input.ticketId,
     sentence: need?.summary ?? input.sentence,
@@ -80,7 +80,8 @@ export function stoppedView(input: { readonly ticketId: string; readonly cell: C
       used: facts?.round.used ?? (usedFromRecords ? usedFromRecords : null),
       max: facts?.round.max ?? (cell ? roundLimit(cell) : null),
     },
-    failed: facts ? facts.failed.map((f) => ({ from: "mach" as const, ...f })) : cell ? failedFromRecords(cell) : [],
+    // MACH's items lead; when it names none, the failed checks and blocking findings the records hold.
+    failed: facts && facts.failed.length ? facts.failed.map((f) => ({ from: "mach" as const, ...f })) : cell ? failedFromRecords(cell) : [],
     findingsFile: facts?.findingsFile ?? (cell ? findingsFromRecords(cell) : null),
     rounds: cell ? roundGroups(cell) : [],
   };

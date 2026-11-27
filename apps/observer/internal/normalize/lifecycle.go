@@ -223,44 +223,41 @@ func (l *Lifecycle) Line(line []byte, r Read) []*event.Event {
 	return out
 }
 
-// CarriedOnOutcome is the outcome (or reason code) a station records when a person carries a ticket
-// on: one more round by a person's decision ("person-decision"), or a fresh allowance when a person
-// starts the Factory or pulls the ticket by hand ("person-start").
-const CarriedOnOutcome = "carried-on-by-person"
+// The outcomes the build station records when a person changes a ticket's rounds (rounds.py): a carry-on
+// of a stopped ticket (by a person's decision, one more round; or by a person starting the Factory, a
+// fresh set), and a reset of the count when a person starts the Factory on a ticket that is not stopped.
+const (
+	CarriedOnOutcome   = "carried-on-by-person"
+	RoundsResetOutcome = "rounds-reset"
+)
 
-// carriedOn keeps what a carry-on record says of the rounds: the round shown from now on, the new
-// limit, and who gave them. Set as data.carried_on only on such a record; absent on every other.
+// carriedOn keeps what such a record says of the rounds, as data.carried_on: the outcome, who gave
+// them, the round a person reads and its limit, the round's own number since the ticket began, and the
+// rounds that no longer count (rounds_base). Absent on every other record.
 func carriedOn(d, in map[string]any, used map[string]bool) {
 	outcome, _ := in["outcome"].(string)
-	reason, _ := in["reason_code"].(string)
-	nested, isNested := in["carried_on"].(map[string]any)
-	if outcome != CarriedOnOutcome && reason != CarriedOnOutcome && !isNested {
+	if outcome != CarriedOnOutcome && outcome != RoundsResetOutcome {
 		return
 	}
-	src := in
-	if isNested {
-		used["carried_on"] = true
-		src = nested
-	}
-	num := func(keys ...string) any {
+	num := func(min int64, keys ...string) any {
 		for _, k := range keys {
-			if v, ok := src[k]; ok {
-				if !isNested {
-					used[k] = true
-				}
-				if n, ok := redact.Int(v); ok && n >= 1 && n <= 99 {
+			if v, ok := in[k]; ok {
+				used[k] = true
+				if n, ok := redact.Int(v); ok && n >= min && n <= 999 {
 					return n
 				}
 			}
 		}
 		return nil
 	}
-	out := map[string]any{"round": num("round", "new_round"), "max": num("max", "max_rounds", "new_max"), "by": nil}
-	if v, ok := src["by"]; ok {
-		if !isNested {
-			used["by"] = true
-		}
+	out := map[string]any{"outcome": outcome, "round": num(0, "round"), "max": num(1, "max_rounds"), "number": num(1, "round_number"), "base": num(0, "rounds_base"), "by": nil, "stopped_at": nil}
+	if v, ok := in["by"]; ok {
+		used["by"] = true
 		out["by"] = enum(v, "person-start", "person-decision")
+	}
+	if v, ok := in["stopped_at"]; ok {
+		used["stopped_at"] = true
+		out["stopped_at"] = enum(v, "verify", "review", "person", "merge")
 	}
 	d["carried_on"] = out
 }

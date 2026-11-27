@@ -83,7 +83,8 @@ func TestStoppedTicketsAreInTheTestData(t *testing.T) {
 			}
 		}
 	}
-	if carried["SYN-STOP2"] != `{"by":"person-decision","max":4,"round":4}` || carried["SYN-STOP3"] != `{"by":"person-start","max":3,"round":1}` || carried["SYN-STOP1"] != "" {
+	if carried["SYN-STOP2"] != `{"base":0,"by":"person-decision","max":4,"number":4,"outcome":"carried-on-by-person","round":4,"stopped_at":"verify"}` ||
+		carried["SYN-STOP3"] != `{"base":3,"by":"person-start","max":3,"number":4,"outcome":"carried-on-by-person","round":1,"stopped_at":"verify"}` || carried["SYN-STOP1"] != "" {
 		t.Fatalf("carry-ons: %v", carried)
 	}
 	if !escalated["SYN-STOP1"] || !escalated["SYN-STOP2"] || !escalated["SYN-STOP3"] {

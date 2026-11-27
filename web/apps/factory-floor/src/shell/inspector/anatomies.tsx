@@ -19,6 +19,7 @@ import {
   streamObservationOf,
   visitStatusOf,
   type Scene,
+  carriedOnTitle,
   carriedOnWords,
   roundAgainstLimit,
   roundGroups,
@@ -377,7 +378,7 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
               return (
                 <li key={g.key} className="rounded-sm border border-dashed border-factory-human bg-factory-human-soft px-3 py-2" data-round-carried-on={g.carry.by ?? ""}>
                   <p className="text-caption font-semibold text-ink">
-                    {g.carry.by === "person-start" ? "A fresh set of rounds" : g.carry.by === "person-decision" ? "One more round" : "Carried on"}, <When t={g.carry.at} inline />
+                    {carriedOnTitle(g.carry)}, <When t={g.carry.at} inline />
                   </p>
                   <p className="mt-0.5 text-caption text-ink-muted">{carriedOnWords(g.carry)}</p>
                 </li>
@@ -389,7 +390,10 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
             const passed = v ? v.checks.filter((c) => c.result === "pass").length : 0;
             return (
               <li key={g.key} className="rounded-sm border border-line px-3 py-2">
-                <p className="mb-1 text-caption font-semibold text-ink">Round {n}</p>
+                <p className="mb-1 text-caption font-semibold text-ink">
+                  Round {n}
+                  {g.reads ? <span className="font-normal text-ink-muted"> · reads {g.reads}</span> : null}
+                </p>
                 <RefList>
                   {v ? (
                     <RefLink to={ref.gate(`${cell.ticketId}/verification#${n}`)} glyph={<GateGlyphSmall kind="verification" size={18} state={v.status === "running" ? "active" : v.status === "PASS" ? "succeeded" : "failed"} />} detail={`${passed} of ${v.checks.length}`}>

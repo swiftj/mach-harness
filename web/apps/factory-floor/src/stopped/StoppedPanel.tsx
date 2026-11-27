@@ -16,7 +16,7 @@ import { FreeText } from "../shell/inspector/FreeText";
 import { UncheckedNote, UncheckedText } from "../text/UncheckedText";
 import { useDisplayPolicy } from "../shell/displayPolicy";
 import { When } from "../shell/When";
-import { carriedOnWords } from "../sim";
+import { carriedOnTitle, carriedOnWords } from "../sim";
 import { DecidePanel } from "../needs/Decide";
 import type { NeedTicket } from "../needs/model";
 import { roundResultWords, stoppedView, type StoppedView } from "./model";
@@ -49,12 +49,12 @@ function Failed({ view }: { view: StoppedView }) {
                 <>
                   {f.text ? (
                     <span className="block text-ink">
-                      <UncheckedText text={f.text} />
+                      <UncheckedText text={f.text} labelled />
                     </span>
                   ) : null}
                   {f.note ? (
                     <span className="mt-0.5 block border-l-2 border-line-strong pl-2 text-ink-muted">
-                      <UncheckedText text={f.note} />
+                      <UncheckedText text={f.note} labelled />
                     </span>
                   ) : null}
                   {!f.text && !f.note ? <span className="text-ink-muted">No words recorded.</span> : null}
@@ -62,7 +62,7 @@ function Failed({ view }: { view: StoppedView }) {
               ) : f.from === "reviewer" ? (
                 <>
                   <span className="block text-ink">
-                    <FreeText field="findingTitle" text={f.title} />
+                    <FreeText field="findingTitle" text={f.title} labelled />
                   </span>
                   <span className="block text-caption text-ink-muted">The {f.seat} reviewer, round {f.round}: a blocking finding</span>
                 </>
@@ -89,7 +89,7 @@ function Rounds({ view }: { view: StoppedView }) {
       {view.rounds.map((g) =>
         g.kind === "carried-on" ? (
           <li key={g.key} className="rounded-sm border border-dashed border-factory-human bg-factory-human-soft px-3 py-1.5 text-body-sm" data-stopped-carried-on={g.carry.by ?? ""}>
-            <span className="font-semibold text-ink">{g.carry.by === "person-start" ? "A fresh set of rounds" : g.carry.by === "person-decision" ? "One more round" : "Carried on"}</span>
+            <span className="font-semibold text-ink">{carriedOnTitle(g.carry)}</span>
             <span className="text-ink-muted">
               {" "}
               · <When t={g.carry.at} />
@@ -98,7 +98,10 @@ function Rounds({ view }: { view: StoppedView }) {
           </li>
         ) : (
           <li key={g.key} className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-2 text-body-sm">
-            <span className="font-semibold text-ink">Round {g.round}</span>
+            <span className="font-semibold text-ink">
+              Round {g.round}
+              {g.reads ? <span className="block text-caption font-normal text-ink-muted">reads {g.reads}</span> : null}
+            </span>
             <span className="text-ink">
               {roundResultWords(g)}
               {g.verification?.decidedAt ?? g.review?.decidedAt ? (

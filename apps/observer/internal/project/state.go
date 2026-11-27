@@ -361,6 +361,7 @@ type Cell struct {
 	// CarriedOn each carry-on, oldest first: a fresh allowance ("person-start") or one more round
 	// ("person-decision").
 	RoundMax     *int64         `json:"round_max"`
+	RoundBase    *int64         `json:"round_base"`
 	CarriedOn    []*CarriedOn   `json:"carried_on,omitempty"`
 	Visits       []*Visit       `json:"visits"`
 	Gates        []*Gate        `json:"gates"`
@@ -884,11 +885,17 @@ type Gap struct {
 	NoticedMS *int64 `json:"noticed_ms,omitempty"`
 }
 
-// CarriedOn is one record of a person carrying a ticket on past its stop: the round shown from then
-// on, the new limit, who gave them ("person-start", "person-decision"; "" when not recorded) and when.
+// CarriedOn is one record of a person changing a ticket's rounds (rounds.py): a carry-on past its stop
+// ("carried-on-by-person") or a fresh count when a person started the Factory ("rounds-reset"); who
+// gave them ("person-start", "person-decision"; "" when not recorded), the round a person reads and its
+// limit, the round's own number since the ticket began, the rounds that no longer count, and when.
 type CarriedOn struct {
-	Round *int64 `json:"round"`
-	Max   *int64 `json:"max"`
-	By    string `json:"by,omitempty"`
-	At    *Stamp `json:"at"`
+	Outcome   string `json:"outcome"`
+	Round     *int64 `json:"round"`
+	Max       *int64 `json:"max"`
+	Number    *int64 `json:"number"`
+	Base      *int64 `json:"base"`
+	By        string `json:"by,omitempty"`
+	StoppedAt string `json:"stopped_at,omitempty"`
+	At        *Stamp `json:"at"`
 }

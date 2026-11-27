@@ -96,39 +96,50 @@ test("MACH's facts of the stop lead when its list is read: the IDs, the texts an
   assert.match(N.carryOnNext(null), /if none is running, \/mach pull/);
 });
 
-test("a person's carry-on: one more round reads 4 of 4, and the ticket is at work again", () => {
-  const scene = sceneOf(stoppedRun({ carry: [{ by: "person-decision", round: 4, max: 4, then: "build" }] }));
+test("a person's carry-on: 3 of 4 until the revision starts, then 4 of 4; the carry-on is no new send-back", () => {
+  const decided = sceneOf(stoppedRun({ carry: [{ by: "person-decision", max: 4, then: "decided" }] })).cells["6"];
+  assert.equal(decided.stage, "built", "no longer stopped");
+  assert.equal(sim.roundOfWords(decided), "3 of 4");
+  assert.equal(sim.nextRoundAfter(decided, 3), 4, "the round to come");
+  assert.equal(decided.carriedOn[0].outcome, "carried-on-by-person");
+  assert.equal(decided.carriedOn[0].stoppedAt, "verify");
+  const scene = sceneOf(stoppedRun({ carry: [{ by: "person-decision", max: 4, then: "build" }] }));
   const cell = scene.cells["6"];
   assert.equal(cell.stage, "building");
   assert.equal(sim.roundOfWords(cell), "4 of 4");
   assert.equal(cell.carriedOn.length, 1);
-  assert.equal(cell.carriedOn[0].by, "person-decision");
   const row = L.rowOfCell(scene, cell, now(scene));
   assert.equal(row.state, "working");
   assert.equal(row.roundLimit, 4);
   assert.match(row.needs, /round 4 of 4, the last/);
-  assert.equal(row.sentBack.times, 3, "the carry-on is no new send-back");
+  assert.equal(row.sentBack.times, 3, "the carry-on takes up the same send-back");
   assert.equal(sim.nextRoundAfter(cell, 4), null);
-  assert.match(sim.carriedOnWords(cell.carriedOn[0]), /one more round\. It went on in round 4 of 4\./);
+  assert.equal(sim.carriedOnTitle(cell.carriedOn[0]), "Carried on, with one more round");
+  assert.match(sim.carriedOnWords(cell.carriedOn[0]), /one more round\. Its next round reads 4 of 4\./);
 });
 
-test("a person starting the Factory gives a fresh set: round 1 of 3, then 2 of 3; sent back counts across both sets", () => {
-  const scene = sceneOf(stoppedRun({ carry: [{ by: "person-start", round: 1, max: 3, then: "fail-build" }] }));
+test("a person starting the Factory gives a fresh set: round 4 reads 1 of 3, round 5 reads 2 of 3; sent back counts across both sets", () => {
+  const scene = sceneOf(stoppedRun({ carry: [{ by: "person-start", max: 3, then: "fail-build" }] }));
   const cell = scene.cells["6"];
+  assert.equal(cell.round, 5, "the round's own number, as recorded");
   assert.equal(sim.roundOfWords(cell), "2 of 3");
+  assert.equal(sim.roundAgainstLimit(cell, 4), "1 of 3");
+  assert.equal(sim.roundAgainstLimit(cell, 2), "2, of an earlier set of rounds");
   const row = L.rowOfCell(scene, cell, now(scene));
   assert.equal(row.state, "working");
-  assert.equal(row.roundsUsed, 1, "rounds used in the current set");
-  assert.equal(row.sentBack.times, 4, "every time it was sent back to build, across both sets; the carry-on itself is no send-back");
+  assert.equal(row.roundsUsed, 1, "rounds used in the set in force");
+  assert.equal(row.sentBack.times, 4, "every time it was sent back to build, across both sets");
   assert.equal(L.sentBackTimesWords(row.sentBack.times), "Sent back 4 times");
   assert.equal(L.drawsSentBack(row), true, "at work again at Build: both ends are drawn");
   const groups = sim.roundGroups(cell);
-  const kinds = groups.map((g) => (g.kind === "round" ? `round ${g.round}` : `carry ${g.carry.by}`));
-  assert.deepEqual(kinds, ["round 1", "round 2", "round 3", "carry person-start", "round 1"]);
-  assert.notEqual(groups[0].key, groups[4].key, "the two round 1s are kept apart");
+  assert.deepEqual(groups.map((g) => (g.kind === "round" ? `round ${g.round}${g.reads ? ` (${g.reads})` : ""}` : `carry ${g.carry.by}`)), ["round 1", "round 2", "round 3", "carry person-start", "round 4 (1 of 3)"]);
   assert.equal(groups[4].verification.checks.find((c) => c.targetId === "AC-05").result, "fail");
-  assert.equal(groups[0].verification.checks.find((c) => c.targetId === "AC-05").result, "pass");
+  // A fresh count on a ticket that was not stopped (rounds-reset) is listed too.
+  const reset = sceneOf(stoppedRun({ carry: [{ by: "person-decision", max: 4, then: "build" }], reset: true })).cells["6"];
+  assert.equal(sim.roundOfWords(reset), "1 of 3");
+  assert.equal(sim.carriedOnTitle(reset.carriedOn[1]), "A fresh set of rounds");
 });
+
 
 test("without a carry-on record, a round that really started reads as its own limit, never above it", () => {
   const scene = sceneOf(stoppedRun({ extraBuild: true }));

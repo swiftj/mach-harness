@@ -23,6 +23,7 @@ import {
   carryOns,
   roundLimit,
   roundNow,
+  shownRound,
   capacityWaitOf,
   cellStopOf,
   mockWaitsOf,
@@ -224,10 +225,9 @@ export function stationTimes(cell: CellState, now: number): StationTime[] {
  * limit in force.
  */
 export function roundsUsed(cell: CellState): number {
-  const fresh = carryOns(cell).filter((c) => c.by === "person-start").at(-1)?.at ?? Number.NEGATIVE_INFINITY;
   let n = 0;
-  for (const v of cell.verifications) if (v.startedAt >= fresh) n = Math.max(n, v.round);
-  for (const r of cell.reviews) if (r.startedAt >= fresh) n = Math.max(n, r.round);
+  for (const v of cell.verifications) n = Math.max(n, shownRound(cell, v.round) ?? 0);
+  for (const r of cell.reviews) n = Math.max(n, shownRound(cell, r.round) ?? 0);
   return Math.min(n, roundLimit(cell));
 }
 
@@ -262,12 +262,18 @@ function sentBackOf(cell: CellState): LineRow["sentBack"] {
   let builds = 0;
   let from: number | null = null;
   let last: number | null = null;
-  // A person's carry-on enters the build station again without being sent back again: not counted.
-  const carried = new Set(carryOns(cell).map((c) => c.at));
+  // A person's carry-on takes the stopped work up again at the build station: the first build visit after
+  // it carries on the send-back that stopped it, and is not counted as another.
+  const carried = carryOns(cell).filter((c) => c.outcome === "carried-on-by-person").map((c) => c.at);
+  const skip = new Set<StationVisit>();
+  for (const at of carried) {
+    const next = cell.visits.find((v) => v.station === "build" && v.enteredAt >= at);
+    if (next) skip.add(next);
+  }
   for (const v of cell.visits) {
     const c = columnOf(v.station);
     if (c === null) continue;
-    if (c === BUILD && carried.has(v.enteredAt)) {
+    if (skip.has(v)) {
       last = c;
       continue;
     }
@@ -485,7 +491,7 @@ export function rowOfCell(scene: Scene, cell: CellState, now: number): LineRow {
     const why = parked
       ? `${parkedWords(parked.notProgressing)}.`
       : lastReview?.outcome === "ESCALATE"
-        ? `Review rejected it in round ${Math.min(lastReview.round, roundLimit(cell))}, the last of ${roundLimit(cell)}. The line has stopped work on it.`
+        ? `Review rejected it in round ${Math.min(shownRound(cell, lastReview.round) ?? lastReview.round, roundLimit(cell))}, the last of ${roundLimit(cell)}. The line has stopped work on it.`
         : `It used its ${roundLimit(cell)} judging rounds without passing. The line has stopped work on it.`;
     return {
       ...base,

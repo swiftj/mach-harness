@@ -105,7 +105,8 @@ export const FIELD = {
   reason: "/api/v1/needs tickets[].situation.reason",
   detail: "/api/v1/needs tickets[].situation",
   question: "/api/v1/needs tickets[].questions[].text",
-  stopped: "/api/v1/needs tickets[].situation.stopped.failed[]",
+  stoppedText: "/api/v1/needs tickets[].situation.stopped.failed[].text",
+  stoppedNote: "/api/v1/needs tickets[].situation.stopped.failed[].note",
 } as const;
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._#/-]{0,59}$/;
@@ -125,7 +126,7 @@ export function readStopped(value: unknown): StoppedFacts | null {
     const f = obj(item);
     const id = str(f.id);
     if (!id || !SAFE_ID.test(id)) continue;
-    failed.push({ id, text: unchecked(f.text, FIELD.stopped, 300), note: unchecked(f.note, FIELD.stopped, 600) });
+    failed.push({ id, text: unchecked(f.text, FIELD.stoppedText, 300), note: unchecked(f.note, FIELD.stoppedNote, 600) });
   }
   return { station: str(s.station) && /^[a-z-]{1,30}$/.test(s.station as string) ? (s.station as string) : null, round: { used: roundNum(round.used), max: roundNum(round.max) }, failed, findingsFile: relPath(s.findings_file) };
 }

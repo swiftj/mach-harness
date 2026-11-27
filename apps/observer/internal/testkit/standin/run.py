@@ -14,7 +14,7 @@ It answers the three requests the observer makes (internal/act):
     --project=<root> decide do <ticket> carry-on [--guidance=<text>] [--by=<name>] --via=floor --json
                                                      appends the build station's carried-on-by-person
                                                      record (one more round) to the cell's lifecycle
-                                                     log, sets the cell building, and answers `now`
+                                                     log, sets the cell built, and answers `now`
     --project=<root> factory status                  no supervisor runs here
 
 Anything else is refused. Standard library only.
@@ -75,8 +75,12 @@ def decide_list(root: Path) -> dict:
             "options": [
                 {"key": "carry-on", "label": "Carry on with a fix", "does": "MACH gives the ticket one more round and the builder takes it up again at the build step, with the findings and your words.",
                  "route": "build.py revise", "needs_reason": False, "recommended": True, "do": True, "needs": [], "confirm": False, "takes_over": False, "takes": ["guidance"]},
+                {"key": "replan", "label": "Plan it again", "does": "The contract engineer writes the plan again from the spec, in a conversation.",
+                 "route": "/mach-intent", "needs_reason": False, "recommended": False, "do": False, "needs": [], "confirm": False, "takes_over": False, "takes": []},
+                {"key": "fix", "label": "Fix it by hand", "does": "You fix the code in the cell yourself, then MACH verifies it again.",
+                 "route": None, "needs_reason": False, "recommended": False, "do": False, "needs": [], "confirm": False, "takes_over": False, "takes": []},
                 {"key": "abandon", "label": "Abandon it", "does": "MACH takes the ticket off the line and deletes its cell and its work for good.",
-                 "route": "cleanup.py abandon", "needs_reason": True, "recommended": False, "do": True, "needs": [], "confirm": True, "takes_over": False},
+                 "route": "cleanup.py abandon", "needs_reason": True, "recommended": False, "do": True, "needs": [], "confirm": True, "takes_over": False, "takes": []},
             ],
         })
     return {"tickets": tickets, "order": [t["ticket_id"] for t in tickets], "nothing_waiting": not tickets, "data_fields": ["situation.title", "situation.stopped.failed[].text", "situation.stopped.failed[].note"],
@@ -96,13 +100,16 @@ def carry_on(root: Path, ticket: str, guidance: str | None) -> dict:
     builds = sum(1 for r in recs if r.get("station") == "build" and r.get("type") == "station.entered")
     used = max([r.get("round") for r in recs if isinstance(r.get("round"), int)] + [3])
     at = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-    record = {"v": 1, "seq": seq, "at": at, "ticket_id": ticket, "type": "station.entered", "station": "build", "visit": f"build#{builds + 1}",
+    # The build station's record (skills/intent/scripts/rounds.py): station.exited, judged round `used`; the
+    # round a person reads next is one more, of a limit one more.
+    record = {"v": 1, "seq": seq, "at": at, "ticket_id": ticket, "type": "station.exited", "station": "build", "visit": f"build#{builds}",
               "round": used, "execution_id": None,
-              "data": {"stage": "building", "revision": used, "outcome": "carried-on-by-person", "round": used + 1, "max": used + 1,
-                       "by": "person-decision", "findings_copied": True, "guidance_given": bool(guidance)}}
+              "data": {"outcome": "carried-on-by-person", "by": "person-decision", "stage": "built", "round": used + 1, "max_rounds": used + 1,
+                       "round_number": used + 1, "rounds_base": 0, "extra_rounds": used + 1 - 3, "stopped_at": "verify",
+                       "guidance": bool(guidance), "via": "floor"}}
     with (folder / "lifecycle.jsonl").open("a", encoding="utf-8") as log:
         log.write(json.dumps(record) + "\n")
-    info["stage"] = "building"
+    info["stage"] = "built"
     info_path.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
     words = " with your words" if guidance else ""
     return {"ticket_id": ticket, "option": "carry-on", "done": True, "supervisor": "none",

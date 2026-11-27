@@ -21,8 +21,9 @@ import (
 //     set of rounds (by "person-start": round 1 of 3), verification failed once more in that round, and
 //     it is building again in round 2 of 3: sent back 4 times across both sets.
 //
-// The carry-on record's shape is the one the stations write when a person carries a ticket on (the
-// outcome "carried-on-by-person" with the new round, the new limit and who gave them). Every other record
+// The carry-on record's shape is the one the build station writes (skills/intent/scripts/rounds.py): a
+// station.exited with the outcome "carried-on-by-person", who gave it, the round a person reads and its
+// limit (max_rounds), the round's own number and the rounds that no longer count. Every other record
 // is one a station writes, in its own shape. Off by default, so every recorded history stays as it was.
 
 const (
@@ -90,10 +91,16 @@ func escalation(f float64) []m15Rec {
 	}
 }
 
-// carriedOn is the build station carrying a ticket on for a person: the new round, the new limit, who gave them.
-func carriedOn(f float64, visit, round, max int, by string) m15Rec {
-	return m15Rec{f, "station.entered", "build", visit, round, map[string]any{"stage": "building", "revision": 3, "outcome": "carried-on-by-person",
-		"round": round, "max": max, "by": by, "findings_copied": true}}
+// carriedOn is the build station's record of a person carrying a stopped ticket on (rounds.py): a
+// station.exited of the build station, judged round 3 (build.json's loop + 1), with the round a person
+// reads, its limit, the round's own number and the rounds that no longer count. The revision that
+// follows is a build visit of its own, its round the round's own number.
+func carriedOn(f float64, shown, max, number, base int, by string) []m15Rec {
+	return []m15Rec{
+		{f, "station.exited", "build", 4, 3, map[string]any{"outcome": "carried-on-by-person", "by": by, "stage": "built", "round": shown, "max_rounds": max,
+			"round_number": number, "rounds_base": base, "extra_rounds": max - 3, "stopped_at": "verify", "guidance": by == "person-decision", "via": "floor"}},
+		{f + 0.002, "station.entered", "build", 5, number, map[string]any{"stage": "building", "revision": number - 1, "findings_copied": true}},
+	}
 }
 
 // stoppedFindings is the findings file a failed verification round writes (verify.py's shape, abridged).
@@ -111,18 +118,20 @@ func (g *gen) writeStopped() error {
 	if !w.stoppedOn() {
 		return nil
 	}
-	stop := append(threeFailedRounds(0.86), escalation(0.912)...)
-	carried := append(append(threeFailedRounds(0.80), escalation(0.852)...),
-		carriedOn(0.95, 5, 4, 4, "person-decision"))
-	fresh := append(append(threeFailedRounds(0.70), escalation(0.752)...),
-		carriedOn(0.90, 5, 1, 3, "person-start"),
-		m15Rec{0.902, "station.exited", "build", 5, 1, map[string]any{"outcome": "built", "stage": "built"}},
-		m15Rec{0.903, "station.entered", "verify", 4, 1, map[string]any{"stage": "built"}},
-		m15Rec{0.904, "verify.check_recorded", "verify", 4, 1, map[string]any{"item": "AC-03", "kind": "scenario", "result": "pass", "evidence": []any{}}},
-		m15Rec{0.9045, "verify.check_recorded", "verify", 4, 1, map[string]any{"item": "AC-05", "kind": "scenario", "result": "fail", "evidence": []any{}}},
-		m15Rec{0.905, "gate.evaluated", "verify", 4, 1, map[string]any{"gate": "verify.verdict", "outcome": "refuse", "reason_code": "FAIL_WITH_EVIDENCE", "overridden_by_reason": false}},
-		m15Rec{0.9052, "station.exited", "verify", 4, 1, map[string]any{"outcome": "FAIL_WITH_EVIDENCE", "stage": "built"}},
-		m15Rec{0.906, "station.entered", "build", 6, 2, map[string]any{"stage": "building", "revision": 1, "findings_copied": true}},
+	stop := append(threeFailedRounds(0.86), escalation(0.94)...)
+	// One more round by a person's decision: round 4 of 4 (its own number 4, nothing set aside).
+	carried := append(append(threeFailedRounds(0.80), escalation(0.88)...), carriedOn(0.95, 4, 4, 4, 0, "person-decision")...)
+	// A fresh set by a person starting the Factory: rounds 1 to 3 no longer count, round 4 reads 1 of 3; it
+	// fails verification and round 5 reads 2 of 3.
+	fresh := append(append(threeFailedRounds(0.70), escalation(0.78)...), carriedOn(0.90, 1, 3, 4, 3, "person-start")...)
+	fresh = append(fresh,
+		m15Rec{0.9025, "station.exited", "build", 5, 4, map[string]any{"outcome": "built", "stage": "built"}},
+		m15Rec{0.903, "station.entered", "verify", 4, 4, map[string]any{"stage": "built"}},
+		m15Rec{0.904, "verify.check_recorded", "verify", 4, 4, map[string]any{"item": "AC-03", "kind": "scenario", "result": "pass", "evidence": []any{}}},
+		m15Rec{0.9045, "verify.check_recorded", "verify", 4, 4, map[string]any{"item": "AC-05", "kind": "scenario", "result": "fail", "evidence": []any{}}},
+		m15Rec{0.905, "gate.evaluated", "verify", 4, 4, map[string]any{"gate": "verify.verdict", "outcome": "refuse", "reason_code": "FAIL_WITH_EVIDENCE", "overridden_by_reason": false}},
+		m15Rec{0.9052, "station.exited", "verify", 4, 4, map[string]any{"outcome": "FAIL_WITH_EVIDENCE", "stage": "built"}},
+		m15Rec{0.906, "station.entered", "build", 6, 5, map[string]any{"stage": "building", "revision": 4, "findings_copied": true}},
 	)
 	cells := []struct {
 		ticket, stage, slice string
@@ -131,7 +140,7 @@ func (g *gen) writeStopped() error {
 	}{
 		{stopTicket, "blocked", "SLICE-095", 2, stop},
 		{carriedTicket, "building", "SLICE-096", 3, carried},
-		{freshTicket, "building", "SLICE-097", 1, fresh},
+		{freshTicket, "building", "SLICE-097", 4, fresh},
 	}
 	for _, c := range cells {
 		var log bytes.Buffer

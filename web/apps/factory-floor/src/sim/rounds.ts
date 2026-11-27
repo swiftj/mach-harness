@@ -1,27 +1,41 @@
 /**
- * A ticket's judging rounds, read once for every view: the round it is in, its limit, whether another
- * round follows, and the history of its rounds with each time a person carried it on.
+ * A ticket's judging rounds, read once for every view: the round a person reads now, its limit, whether
+ * another round follows, and the history of its rounds with each time a person changed them.
  *
- * The limit is the configured one (MAX_ROUNDS) until a person's carry-on record sets another: one more
- * round by a person's decision ("person-decision": round 4 of 4), or a fresh allowance when a person
- * starts the Factory or pulls the ticket by hand ("person-start": round 1 of 3 again). Without such a
- * record a round is never shown above its limit: the limit reads as the recorded round only when a
- * later round really started. A ticket stopped after its last round shows the rounds it used and no
- * next round. Nothing here is estimated: every figure is a record's.
+ * The records number each round from the ticket's start (the lifecycle's `round`, build.json's loop + 1).
+ * The build station records when a person changes the rounds (skills/intent/scripts/rounds.py): a
+ * carry-on of a stopped ticket ("carried-on-by-person": by a person's decision, one more round; by a
+ * person starting the Factory, a fresh set) or a fresh count ("rounds-reset", a person started the
+ * Factory). Each says the limit in force (`max_rounds`) and the rounds that no longer count
+ * (`rounds_base`). A person reads a round as its number less those, against that limit: "3 of 3", then
+ * after one more round "3 of 4" until the revision starts and "4 of 4" once it has, or after a fresh set
+ * "1 of 3". Without such a record the limit is the configured one (MAX_ROUNDS), and never below a round
+ * that really started: a round is never shown above its limit. Nothing here is estimated.
  */
 import { MAX_ROUNDS } from "./vocabulary";
 import type { CarriedOnState, CellState } from "./model";
 
-type RoundCell = Pick<CellState, "round" | "stage"> & { readonly roundMax?: number | null; readonly carriedOn?: readonly CarriedOnState[] };
+type RoundCell = Pick<CellState, "round" | "stage"> & { readonly roundMax?: number | null; readonly roundBase?: number | null; readonly carriedOn?: readonly CarriedOnState[] };
 
-/** The round limit in force: a carry-on's, else the configured one; never below a round that really started. */
-export function roundLimit(cell: RoundCell): number {
-  return Math.max(cell.roundMax ?? MAX_ROUNDS, cell.round);
+/** The rounds that no longer count (a person started the Factory); 0 when none. */
+export function roundBase(cell: RoundCell): number {
+  return Math.max(0, cell.roundBase ?? 0);
 }
 
-/** The round shown now, never above the limit. */
+/** The round limit in force: the recorded one, else the configured one; never below a round that really started. */
+export function roundLimit(cell: RoundCell): number {
+  return Math.max(cell.roundMax ?? MAX_ROUNDS, cell.round - roundBase(cell));
+}
+
+/** A recorded round (its number since the ticket began) as a person reads it now, or null for a round of an earlier set. */
+export function shownRound(cell: RoundCell, round: number): number | null {
+  const shown = round - roundBase(cell);
+  return shown >= 1 ? shown : null;
+}
+
+/** The round a person reads now, never above the limit. */
 export function roundNow(cell: RoundCell): number {
-  return Math.min(Math.max(1, cell.round), roundLimit(cell));
+  return Math.min(Math.max(1, cell.round - roundBase(cell)), roundLimit(cell));
 }
 
 /** "3 of 3": the round in force and its limit. */
@@ -29,10 +43,10 @@ export function roundOfWords(cell: RoundCell): string {
   return `${roundNow(cell)} of ${roundLimit(cell)}`;
 }
 
-/** Any round number read against the cell's limit ("2 of 3"), capped so it never reads past the limit. */
+/** A recorded round read against the limit in force ("2 of 3"), or its own number for a round of an earlier set. */
 export function roundAgainstLimit(cell: RoundCell, round: number): string {
-  const limit = Math.max(roundLimit(cell), round);
-  return `${round} of ${limit}`;
+  const shown = shownRound(cell, round);
+  return shown === null ? `${round}, of an earlier set of rounds` : `${shown} of ${Math.max(roundLimit(cell), shown)}`;
 }
 
 /** Stopped by the line (the round limit, or a stop for a person): no next round runs without a person. */
@@ -41,76 +55,68 @@ export function stoppedForPerson(cell: Pick<CellState, "stage">): boolean {
 }
 
 /**
- * The round a failed judging round sends the work back to, or null when none follows: the failed round
- * was the last of the limit, or the ticket is stopped for a person.
+ * The round, as a person reads it, that a failed judging round (its recorded number) sends the work back
+ * to, or null when none follows: the failed round was the last of the limit, or the ticket is stopped
+ * for a person.
  */
 export function nextRoundAfter(cell: RoundCell, failedRound: number): number | null {
   if (stoppedForPerson(cell)) return null;
-  const next = failedRound + 1;
-  return next <= roundLimit(cell) ? next : null;
+  const next = failedRound + 1 - roundBase(cell);
+  return next >= 1 && next <= roundLimit(cell) ? next : null;
 }
 
-/** The carry-ons a person recorded, oldest first. */
+/** The records of a person changing the rounds, oldest first. */
 export function carryOns(cell: RoundCell): readonly CarriedOnState[] {
   return cell.carriedOn ?? [];
 }
 
-/** One line of a ticket's round history: a judging result, or a person carrying it on. */
-export type RoundEntry =
-  | { readonly kind: "verification"; readonly round: number; readonly at: number | null; readonly passed: boolean | null; readonly failed: readonly string[]; readonly checks: number }
-  | { readonly kind: "review"; readonly round: number; readonly at: number | null; readonly outcome: string | null; readonly blockers: number }
-  | { readonly kind: "carried-on"; readonly at: number; readonly round: number | null; readonly max: number | null; readonly by: CarriedOnState["by"] };
-
-/** Every judging round and every carry-on, in the order they happened (a round of a fresh allowance keeps its own number). */
-export function roundHistory(cell: Pick<CellState, "verifications" | "reviews"> & RoundCell): RoundEntry[] {
-  const out: (RoundEntry & { readonly order: number })[] = [];
-  for (const v of cell.verifications) {
-    const failed = v.checks.filter((c) => c.result === "fail").map((c) => c.targetId);
-    const passed = v.status === "running" ? null : v.status === "PASS";
-    out.push({ kind: "verification", round: v.round, at: v.decidedAt ?? v.startedAt, passed, failed, checks: v.checks.length, order: v.decidedAt ?? v.startedAt });
-  }
-  for (const r of cell.reviews) {
-    const blockers = r.findings.filter((f) => f.severity === "blocker" && !f.outvoted).length;
-    out.push({ kind: "review", round: r.round, at: r.decidedAt, outcome: r.outcome, blockers, order: r.decidedAt ?? r.startedAt });
-  }
-  for (const c of carryOns(cell)) out.push({ kind: "carried-on", at: c.at, round: c.round, max: c.max, by: c.by, order: c.at });
-  return out.sort((a, b) => a.order - b.order).map(({ order: _order, ...e }) => e as RoundEntry);
-}
-
 /**
- * The rounds as the inspector lists them: each judging round with its verification and review, in the
- * order they happened, and each carry-on between them. A fresh allowance numbers its rounds from 1
- * again, so a round is matched to its verification and review within its own allowance.
+ * The rounds as the panels list them: each judging round (by its recorded number) with its verification
+ * and review, in the order they happened, and each time a person changed the rounds between them. A round
+ * of the set in force also says how a person reads it ("1 of 3").
  */
 export type RoundGroup<V, R> =
-  | { readonly kind: "round"; readonly key: string; readonly round: number; readonly verification: V | null; readonly review: R | null }
+  | { readonly kind: "round"; readonly key: string; readonly round: number; readonly reads: string | null; readonly verification: V | null; readonly review: R | null }
   | { readonly kind: "carried-on"; readonly key: string; readonly carry: CarriedOnState };
 
 export function roundGroups<V extends { readonly round: number; readonly startedAt: number }, R extends { readonly round: number; readonly startedAt: number }>(
   cell: RoundCell & { readonly verifications: readonly V[]; readonly reviews: readonly R[] },
 ): RoundGroup<V, R>[] {
-  const starts = carryOns(cell).filter((c) => c.by === "person-start").map((c) => c.at);
-  const allowance = (t: number) => starts.filter((s) => s <= t).length;
-  const rounds = new Map<string, { round: number; at: number; verification: V | null; review: R | null }>();
+  const rounds = new Map<number, { at: number; verification: V | null; review: R | null }>();
   const put = (round: number, at: number, set: (g: { verification: V | null; review: R | null }) => void) => {
-    const key = `${allowance(at)}/${round}`;
-    const g = rounds.get(key) ?? { round, at, verification: null, review: null };
+    const g = rounds.get(round) ?? { at, verification: null, review: null };
     g.at = Math.min(g.at, at);
     set(g);
-    rounds.set(key, g);
+    rounds.set(round, g);
   };
   for (const v of cell.verifications) put(v.round, v.startedAt, (g) => (g.verification = v));
   // The first review of a round is the round's own; a repeat (no judging round used) does not replace it.
   for (const r of cell.reviews) put(r.round, r.startedAt, (g) => (g.review = g.review ?? r));
-  const out: (RoundGroup<V, R> & { readonly order: number })[] = [...rounds.entries()].map(([key, g]) => ({ kind: "round" as const, key, round: g.round, verification: g.verification, review: g.review, order: g.at }));
+  const base = roundBase(cell);
+  const out: (RoundGroup<V, R> & { readonly order: number })[] = [...rounds.entries()].map(([round, g]) => ({
+    kind: "round" as const,
+    key: `round/${round}`,
+    round,
+    reads: base > 0 && round > base ? roundAgainstLimit(cell, round) : null,
+    verification: g.verification,
+    review: g.review,
+    order: g.at,
+  }));
   carryOns(cell).forEach((c, i) => out.push({ kind: "carried-on", key: `carry/${i}`, carry: c, order: c.at }));
   return out.sort((a, b) => a.order - b.order).map(({ order: _order, ...g }) => g as RoundGroup<V, R>);
 }
 
-/** The words for one carry-on: who gave the rounds, and what they read now. */
-export function carriedOnWords(c: Pick<CarriedOnState, "round" | "max" | "by">): string {
-  const now = c.round !== null && c.max !== null ? ` It went on in round ${c.round} of ${c.max}.` : "";
-  if (c.by === "person-start") return `A person started the Factory or pulled it by hand, which gave it a fresh set of rounds.${now}`;
-  if (c.by === "person-decision") return `A person carried it on with a fix, which gave it one more round.${now}`;
-  return `A person carried it on.${now}`;
+/** What a person's change to the rounds was, in a few words. */
+export function carriedOnTitle(c: Pick<CarriedOnState, "outcome" | "by">): string {
+  if (c.outcome === "rounds-reset") return "A fresh set of rounds";
+  return c.by === "person-start" ? "Carried on, with a fresh set of rounds" : "Carried on, with one more round";
+}
+
+/** The words for one record: who changed the rounds, and what its next round reads. */
+export function carriedOnWords(c: Pick<CarriedOnState, "outcome" | "round" | "max" | "by">): string {
+  const next = c.round !== null && c.max !== null ? ` Its next round reads ${c.round} of ${c.max}.` : "";
+  if (c.outcome === "rounds-reset") return `A person started the Factory, so its rounds count from the start again.${next}`;
+  if (c.by === "person-start") return `A person started the Factory, which carried it on from the build step with a fresh set of rounds.${next}`;
+  if (c.by === "person-decision") return `A person carried it on with a fix, which gave it one more round.${next}`;
+  return `A person carried it on.${next}`;
 }

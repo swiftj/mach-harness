@@ -80,10 +80,10 @@ var Allow = map[string]*Shape{
 	"execution.completed": obj("stage", "next", "waiting_for", "needs", "how", "seen_to_end", "cost_usd", "exit_code", "refused_tools", leafList),
 	"execution.failed":    obj("stage", "next", "how", "claude_error", "exit_code", "attempt", "not_progressing"),
 
-	"station.entered":           obj("station", "stage", "action", "resumed", "unclosed_visit", "head", "counts", anyKeys(scalar), "carried_on", obj("round", "max", "by")),
-	"station.exited":            obj("station", "outcome", "stage", "duration_ms", "closed_by", "head", "counts", anyKeys(scalar), "carried_on", obj("round", "max", "by"), "app_type", "risk", "kind", "widened", "widened_rule"), // revision 2: app_type, risk (plan exit); revision 8: kind, widened, widened_rule (a small change, groom exit)
-	"gate.evaluated":            obj("gate", "verdict", "reason_code", "subject", "status", "audit_tier", "counts", anyKeys(scalar), "carried_on", obj("round", "max", "by"), "lane"),                                              // revision 9: lane (M22)
-	"build.task_completed":      obj("task_id", "kind", "step", "first_run", "suite", "commit", "lane"),                                                                                                                            // revision 9: lane (M22)
+	"station.entered":           obj("station", "stage", "action", "resumed", "unclosed_visit", "head", "counts", anyKeys(scalar), "carried_on", obj("outcome", "round", "max", "number", "base", "by", "stopped_at")),
+	"station.exited":            obj("station", "outcome", "stage", "duration_ms", "closed_by", "head", "counts", anyKeys(scalar), "carried_on", obj("outcome", "round", "max", "number", "base", "by", "stopped_at"), "app_type", "risk", "kind", "widened", "widened_rule"), // revision 2: app_type, risk (plan exit); revision 8: kind, widened, widened_rule (a small change, groom exit)
+	"gate.evaluated":            obj("gate", "verdict", "reason_code", "subject", "status", "audit_tier", "counts", anyKeys(scalar), "carried_on", obj("outcome", "round", "max", "number", "base", "by", "stopped_at"), "lane"),                                              // revision 9: lane (M22)
+	"build.task_completed":      obj("task_id", "kind", "step", "first_run", "suite", "commit", "lane"),                                                                                                                                                                       // revision 9: lane (M22)
 	"verify.check_recorded":     obj("target_id", "target_kind", "result", "evidence", list(obj("file", "sha256", "bytes")), "rerecorded"),
 	"review.round_started":      obj("risk", "max_rounds", "tuning", "approvals_needed", "human_approval_required", "panel", list(obj("seat", "model")), "delta", "restarted", "repeat"),
 	"review.verdict_submitted":  obj("seat", "vote", "blockers", "notes", "rules", leafList, "model"),
