@@ -11,6 +11,7 @@ import { FreeText } from "../shell/inspector/FreeText";
 import { visitStateWords } from "../shell/inspector/outcomes";
 import { planWords } from "../shell/inspector/words";
 import { duration } from "../shell/time";
+import { When } from "../shell/When";
 import { columnOf, LINE_STATIONS, reviewOfVisit, visitRoundWords, type LineRow } from "./model";
 import { StatePill } from "./Marks";
 import { costWords, modelWords } from "./words";
@@ -125,7 +126,7 @@ export function TicketRecord({ row, now, onClose }: { row: LineRow | null; now: 
             <p className="mt-2 flex flex-wrap items-center gap-2 text-body-sm text-ink-muted">
               <StatePill state={row.state} />
               <span>
-                {row.risk ? `${row.risk} risk` : "Risk not recorded"}. Rounds used: {row.roundsUsed} of {MAX_ROUNDS}. Cost: {costWords(row.cost)}.
+                {row.risk ? `${row.risk} risk` : "Risk not recorded"}. Rounds used: {row.roundsUsed} of {row.roundLimit ?? MAX_ROUNDS}. Cost: {costWords(row.cost)}.
               </span>
             </p>
             <p className="mt-1 text-body-sm text-ink-muted" data-record-ids="">
@@ -142,6 +143,7 @@ export function TicketRecord({ row, now, onClose }: { row: LineRow | null; now: 
                     <tr className="text-left text-label text-ink-muted">
                       <th scope="col" className="border-b border-line-strong px-2 py-1.5 font-semibold">Station</th>
                       <th scope="col" className="border-b border-line-strong px-2 py-1.5 font-semibold">Worker</th>
+                      <th scope="col" className="border-b border-line-strong px-2 py-1.5 font-semibold">Started</th>
                       <th scope="col" className="border-b border-line-strong px-2 py-1.5 font-semibold">Time</th>
                       <th scope="col" className="border-b border-line-strong px-2 py-1.5 font-semibold">Result</th>
                       <th scope="col" className="border-b border-line-strong px-2 py-1.5 font-semibold">What to look at</th>
@@ -159,6 +161,9 @@ export function TicketRecord({ row, now, onClose }: { row: LineRow | null; now: 
                             <span className="block text-caption text-ink-subtle">{visitRoundWords(cell, v)}</span>
                           </Cell>
                           <Cell>{cell ? (visitModels(cell, v) ?? <span className="text-ink-muted">not recorded</span>) : null}</Cell>
+                          <Cell className="whitespace-nowrap">
+                            <When t={v.enteredAt} precision="second" age={false} />
+                          </Cell>
                           <Cell className="whitespace-nowrap tabular">{visitTime(v, now)}</Cell>
                           <Cell>{visitStateWords(v)}</Cell>
                           <Cell>{cell ? <LookAt cell={cell} v={v} onEvidence={evidence} /> : null}</Cell>

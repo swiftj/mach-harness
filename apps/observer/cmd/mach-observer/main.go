@@ -7,7 +7,7 @@
 // person makes in the Factory Floor: the "Needs you" list (decide --json), a decision on one ticket
 // in it (decide do ... --via=floor), whether a Factory runs here (factory status) and the stop
 // (factory stop). It never enables, starts or dispatches work. It is started when a person asks for
-// it (/mach-app floor), never by the line, and prints the one-time link; it does not open a browser
+// it (/mach floor; /mach:run floor with the plugin), never by the line, and prints the one-time link; it does not open a browser
 // itself. Beside the link it keeps host.json: its release, process and port, while it runs.
 package main
 

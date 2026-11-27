@@ -10,6 +10,7 @@ export type { CatalogEntry, Telemetry, Significance } from "./catalog";
 export { sceneAt, sceneAtCursor, finalScene, cursorAt, indexFixture, fixtureLog, SIM_CHECKPOINT_EVERY } from "./engine";
 export type { SimIndex } from "./engine";
 export * from "./provenance";
+export * from "./rounds";
 export * from "./v3";
 export { createSceneLog, isSceneLog, reuse } from "./log";
 export type { LogEntry, SceneLog, SceneLogOptions, IngestResult, LogStats } from "./log";

@@ -20,7 +20,8 @@ import { Badge, Banner, Button, Checkbox, CommandLine, ConfirmDialog, Field, Inp
 import { UncheckedText, UncheckedNote } from "../text/UncheckedText";
 import { useDisplayPolicy } from "../shell/displayPolicy";
 import { useNeeds, type Outcome, type Waiting } from "./context";
-import { WAITING_WORDS, answersPayload, confirmWords, decisionBody, missingInput, waitedWords, type AnswerDraft, type NeedOption, type NeedTicket } from "./model";
+import { CARRY_ON, TAKES_WORDS, WAITING_WORDS, answersPayload, carryOnNext, confirmWords, decisionBody, missingInput, waitedWords, type AnswerDraft, type NeedOption, type NeedTicket, type TakesName } from "./model";
+import { useSceneStore } from "../scene";
 
 /** MACH's warnings for a ticket, above its options: read before deciding, never a reason an option is unavailable. */
 export function Warnings({ warnings, className }: { warnings: readonly string[]; className?: string }) {
@@ -89,6 +90,7 @@ export function OutcomeLine({ outcome, ticket }: { outcome: Outcome | null | und
   return (
     <div role="status" className="mt-3 rounded-md border border-success-line bg-success-soft px-3 py-2.5" data-decide-now="">
       {d.now ? <p className="text-body-sm text-ink">{d.now}</p> : <p className="text-body-sm text-ink">Recorded.</p>}
+      {d.option === CARRY_ON ? <CarryOnNext /> : null}
       {d.warnings.map((w) => (
         <p key={w} className="mt-1 text-body-sm text-warning-ink" data-decide-now-warning="">
           {w}
@@ -96,6 +98,16 @@ export function OutcomeLine({ outcome, ticket }: { outcome: Outcome | null | und
       ))}
       {d.note ? <p className="mt-1 text-body-sm text-ink-muted">{d.note}</p> : null}
     </div>
+  );
+}
+
+/** After a carry-on: who takes the ticket up next, from whether a Factory runs here now. */
+function CarryOnNext() {
+  const running = useSceneStore((s) => s.factoryStatus?.running?.running ?? null);
+  return (
+    <p className="mt-1 text-body-sm text-ink" data-decide-carry-on-next={running === null ? "unknown" : running ? "running" : "none"}>
+      {carryOnNext(running)}
+    </p>
   );
 }
 
@@ -141,12 +153,14 @@ function Answers({ ticket, drafts, onChange }: { ticket: NeedTicket; drafts: Rec
 }
 
 /** The decision part of a ticket's panel: everything a person needs to decide here. */
-export function DecidePanel({ ticket }: { ticket: NeedTicket }) {
+export function DecidePanel({ ticket, compact = false, preselect = false }: { ticket: NeedTicket; compact?: boolean; preselect?: boolean }) {
   const needs = useNeeds();
   const policy = useDisplayPolicy();
-  const [chosen, setChosen] = useState<NeedOption | null>(null);
+  // `preselect`: the recommended option is open from the start (a stopped ticket's "Carry on with a fix"), when it can be done here.
+  const [chosen, setChosen] = useState<NeedOption | null>(() => (preselect ? (ticket.options.find((o) => o.recommended && o.canDo) ?? null) : null));
   const [reason, setReason] = useState("");
   const [testCmd, setTestCmd] = useState("");
+  const [takes, setTakes] = useState<Partial<Record<TakesName, string>>>({});
   const [drafts, setDrafts] = useState<Record<number, AnswerDraft>>({});
   const [problem, setProblem] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -169,11 +183,12 @@ export function DecidePanel({ ticket }: { ticket: NeedTicket }) {
     if (!chosen) return false;
     setSending(true);
     try {
-      const result = await needs.decide(ticket.ticketId, chosen.key, decisionBody(chosen, { name: needs.name, reason, testCmd, answers: payload?.answers ?? null }));
+      const result = await needs.decide(ticket.ticketId, chosen.key, decisionBody(chosen, { name: needs.name, reason, testCmd, answers: payload?.answers ?? null, takes }));
       if (result.ok) {
         setChosen(null);
         setReason("");
         setTestCmd("");
+        setTakes({});
         setDrafts({});
         return true;
       }
@@ -207,12 +222,14 @@ export function DecidePanel({ ticket }: { ticket: NeedTicket }) {
   return (
     <section aria-labelledby={headingId} data-decide={ticket.ticketId}>
       <h4 id={headingId} className="mb-1.5 text-label text-ink-muted">
-        What it needs from you
+        {compact ? "The decision" : "What it needs from you"}
       </h4>
-      <p className="text-body-sm text-ink" data-decide-summary="">
-        {ticket.summary}
-      </p>
-      {hasData ? (
+      {compact ? null : (
+        <p className="text-body-sm text-ink" data-decide-summary="">
+          {ticket.summary}
+        </p>
+      )}
+      {hasData && !compact ? (
         <div className="mt-2 flex flex-col gap-1 border-l-2 border-line-strong pl-3">
           {ticket.title ? (
             <p className="text-body-sm text-ink">
@@ -234,7 +251,7 @@ export function DecidePanel({ ticket }: { ticket: NeedTicket }) {
           </p>
         </div>
       ) : null}
-      {ticket.showFirst.length > 0 ? (
+      {ticket.showFirst.length > 0 && !compact ? (
         <div className="mt-3">
           <p className="text-body-sm text-ink">Read these first. Open them in your editor:</p>
           <ul className="mt-1 flex flex-col gap-0.5" data-decide-read-first="">
@@ -256,7 +273,8 @@ export function DecidePanel({ ticket }: { ticket: NeedTicket }) {
           <Button
             key={o.key}
             size="sm"
-            variant="secondary"
+            // The recommended option is the primary one (never abandoning, which is always last).
+            variant={o.recommended && o.key !== "abandon" && chosen?.key !== o.key ? "primary" : "secondary"}
             className={cn(chosen?.key === o.key && "border-accent bg-accent-soft text-accent-ink ring-1 ring-accent")}
             aria-pressed={chosen?.key === o.key}
             onClick={() => choose(o)}
@@ -294,6 +312,11 @@ export function DecidePanel({ ticket }: { ticket: NeedTicket }) {
                 </Field>
               ) : null}
               {chosen.needsAnswers ? <Answers ticket={ticket} drafts={drafts} onChange={(n, d) => setDrafts((prev) => ({ ...prev, [n]: d }))} /> : null}
+              {chosen.takes.map((name) => (
+                <Field key={name} label={TAKES_WORDS[name].label} optional hint={TAKES_WORDS[name].hint}>
+                  <Textarea rows={4} value={takes[name] ?? ""} onChange={(e) => setTakes((prev) => ({ ...prev, [name]: e.target.value }))} maxLength={TAKES_WORDS[name].max} data-decide-takes={name} />
+                </Field>
+              ))}
               <NameField />
               {problem ? (
                 <p role="alert" className="text-body-sm text-danger-ink">
@@ -301,8 +324,16 @@ export function DecidePanel({ ticket }: { ticket: NeedTicket }) {
                 </p>
               ) : null}
               <div className="flex flex-wrap items-center gap-2">
-                <Button ref={sendRef} variant={chosen.key === "abandon" ? "danger" : "primary"} size="sm" loading={sending && !confirming} onClick={submit} data-decide-send="">
-                  {chosen.label}: {ticket.ticketId}
+                <Button
+                  ref={sendRef}
+                  variant={chosen.key === "abandon" ? "danger" : "primary"}
+                  size="sm"
+                  loading={sending && !confirming}
+                  onClick={submit}
+                  data-decide-send=""
+                  aria-label={chosen.key === CARRY_ON ? `${chosen.label}: ${ticket.ticketId}` : undefined}
+                >
+                  {chosen.key === CARRY_ON ? chosen.label : `${chosen.label}: ${ticket.ticketId}`}
                 </Button>
                 <Button variant="ghost" size="sm" onClick={() => setChosen(null)} disabled={sending}>
                   Not now

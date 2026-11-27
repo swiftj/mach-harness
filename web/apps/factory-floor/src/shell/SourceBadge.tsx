@@ -27,7 +27,8 @@ import { connectionLook, noticesFor, unavailableSourceWords, type ConnectionLook
 
 export { connectionLook, noticesFor, type ConnectionLook, type Notice } from "./notices";
 import type { SourceChoice } from "./source/boot";
-import { duration as durationWords, isMoment, timecode, utcClock } from "./vocab";
+import { duration as durationWords, isMoment, timecode } from "./vocab";
+import { When } from "./When";
 import { LOST_RANGES_ACTION, lostRangeLines, lostRangeSentence } from "./gaps";
 
 // ---------------------------------------------------------------- the two sources
@@ -203,7 +204,7 @@ export function ConnectionFacts({ connection }: { connection: ConnectionStatus }
   const rows: Array<[string, ReactNode]> = [
     ["Connection", look.sentence],
     ...(unavailable ? ([["Sources", `Unavailable: ${unavailable}`]] as Array<[string, ReactNode]>) : []),
-    ["Last confirmed", isMoment(connection.confirmedAt) ? `${utcClock(connection.confirmedAt)} UTC` : "Nothing yet"],
+    ["Last confirmed", isMoment(connection.confirmedAt) ? <When key="c" t={connection.confirmedAt} precision="second" /> : "Nothing yet"],
     ["Settled history", connection.sourceLagMs !== null ? `trails now by ${connection.sourceLagMs < 1000 ? "under a second" : durationWords(connection.sourceLagMs)}` : "Not reported"],
     ["Delivery lag", deliveryLagWords(connection.deliveryLagMs ?? factory?.delivery?.lastHoldMs ?? null)],
     [

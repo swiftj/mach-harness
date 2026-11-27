@@ -9,7 +9,8 @@ import { cn } from "@mach/ui";
 import { entriesBehind, EVENT_CATALOG, eventsFor, isSceneLog, timingAt, type AnyRef, type AnySimEvent, type EntityRef, type Authority, type LogEntry, type Telemetry } from "../../sim";
 import { analyticsStationOf, showInAnalytics, useNowEffect, useSceneStore, useStore, type AnalyticsTarget } from "../../scene";
 import { visitAnalyticsWindow } from "../../scene/analytics";
-import { duration as durationWords, selectable, TELEMETRY_WORDS, timecode } from "../vocab";
+import { duration as durationWords, selectable, TELEMETRY_WORDS } from "../vocab";
+import { When } from "../When";
 import { formatHash } from "../source/hash";
 import { elapsedWords } from "./words";
 import { EventWords } from "./FreeText";
@@ -245,7 +246,7 @@ export function EventRow({ entry, current }: { entry: LogEntry; current?: boolea
         <span className="font-mono text-[12px] font-semibold text-ink">{event.type}</span>
         {sim ? <TelemetryBadge telemetry={EVENT_CATALOG[(event as AnySimEvent).type]?.telemetry ?? "missing"} /> : <AuthorityBadge authority={entry.authority} />}
         <span className="ml-auto font-mono text-[11px] text-ink-subtle tabular">
-          {timecode(entry.t)}
+          <When t={entry.t} precision="second" />
           {sim ? ` · seq ${(event as AnySimEvent).seq}` : ""}
         </span>
       </div>

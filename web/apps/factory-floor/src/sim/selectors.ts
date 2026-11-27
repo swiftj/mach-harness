@@ -1016,7 +1016,8 @@ function cellActivity(scene: Scene, cell: CellState): Activity {
   if (stop?.kind === "main-conflict") return { state: "waiting-person", reason: "Bringing its branch up to date with the main branch conflicts; a person resolves it.", since: stop.since, authority, label: "Waits for a person: conflict with main" };
   if (stop?.kind === "merge-recheck" && !cell.station) return { state: "unknown", reason: "The merge-time check sent it back to be verified and reviewed again; no judging round is used.", since: stop.since, authority, label: "Held: back to verify" };
   if (cell.stage === "awaiting-human" || cell.stage === "spec-open") return { state: "waiting-person", reason: cell.stage === "spec-open" ? "The spec has open questions." : "A person must approve.", since: cell.stageHistory.at(-1)?.at ?? null, authority };
-  if (cell.stage === "blocked") return { state: "waiting-person", reason: "Escalated to a person.", since: cell.stageHistory.at(-1)?.at ?? null, authority };
+  // Stopped for a person: no execution runs, and none will until a person decides. Said as such, never "idle".
+  if (cell.stage === "blocked") return { state: "waiting-person", reason: STOPPED_FOR_PERSON, since: cell.stageHistory.at(-1)?.at ?? null, authority, label: "Waits for a person's decision" };
   // The human gate's id is the ticket's (one per ticket): looked up, never a scan of every gate per cell.
   const human = scene.gates[gateId(cell.ticketId, "human-approval")];
   const waitingGate = human?.state === "waiting" ? human : undefined;
@@ -1048,6 +1049,13 @@ function cellActivity(scene: Scene, cell: CellState): Activity {
   if (execution && authority !== "simulated") return betweenExecutions(cell, execution);
   return { state: "unknown", reason: "Between stations; nothing recorded says what it waits for.", since: null, authority };
 }
+
+/**
+ * What a ticket stopped for a person waits for, and what follows: true whether or not a Factory runs
+ * here (the supervisor takes no step on it until a person decides).
+ */
+export const STOPPED_FOR_PERSON =
+  "Stopped: it waits for a person, and no execution runs until then. A person carries it on with a fix, or starts the Factory with /mach pull, which gives a ticket stopped for its rounds a fresh set of rounds; the Factory then takes it up again at the build step.";
 
 /**
  * When an execution ended: when its process ended (measured, from the process record), else when the

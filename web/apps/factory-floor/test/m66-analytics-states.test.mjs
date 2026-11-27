@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import "./_load.mjs";
+import { said } from "./_moments.mjs";
 
 const { sourceLabel } = await import("../src/scene/store.ts");
 const H = await import("../src/analytics/wire/history.ts");
@@ -36,7 +37,7 @@ test("I-03: incomplete history is said in the words for a gap, with suspect days
   const w = H.historyWords(h);
   assert.equal(w.title, "Incomplete history.");
   assert.match(w.body, /^History is missing here: /);
-  assert.match(w.body, /not received \(4 records\) at 3 Nov 09:29:13 UTC/);
+  assert.ok(w.body.includes(`not received (4 records) at ${said(nov(3, 9, 29, 13))}`), "the moment, as the person's zone says it");
   assert.match(w.body, /History was repaired or kept apart: a conflicting copy, the first kept \(1 record\)/);
   assert.match(w.body, /Figures for 3 Nov, 6 Nov \(UTC\) may count less than happened/);
   assert.match(w.body, /Nothing is filled in/);
