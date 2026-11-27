@@ -1751,10 +1751,10 @@ def cmd_revise(cell: Cell, args: argparse.Namespace) -> int:
     if cell.info.get("stage") != "built":
         raise BuildError("A revision round starts from a built cell that review or verification sent back.", code="wrong-stage")
     rule = rounds_rule()
-    limit = rule.limit(cell.config, cell.info)
+    limit = rule.limit(cell.config, cell.root)
     loop = cell.state.get("loop", 0) + 1
-    counted = loop - rule.base(cell.info)  # the round just failed, as it counts (rounds_base: rounds a person's start set aside)
-    if loop >= rule.last(cell.config, cell.info):  # the build just sent back failed the last round it has
+    counted = loop - rule.base(cell.root)  # the round just failed, as it counts (rounds_base: rounds a person's start set aside)
+    if loop >= rule.last(cell.config, cell.root):  # the build just sent back failed the last round it has
         cell.info["stage"] = "blocked"
         cell.save_info()
         telemetry(cell.root, "gate.evaluated", "build", lambda: {"gate": "round-limit", "outcome": "refuse", "reason_code": "round-limit",
@@ -1798,7 +1798,7 @@ def cmd_revise(cell: Cell, args: argparse.Namespace) -> int:
     cell.info["stage"] = "building"
     cell.save()
     cell.save_info()
-    carried = rule.current(cell.info, loop)
+    carried = rule.current(cell.root, loop)
     guidance = cell.root / carried["guidance"] if carried and isinstance(carried.get("guidance"), str) else None
     guided = bool(guidance and guidance.is_file())
     telemetry(cell.root, "station.entered", "build", lambda: {"stage": "building", "revision": loop, "findings_copied": findings is not None,
@@ -1806,14 +1806,16 @@ def cmd_revise(cell: Cell, args: argparse.Namespace) -> int:
                                                              **({"carried_on_by_person": True, "guidance": guided} if carried else {})})
     steps = "Add one task per finding with 'add-task' (a [test] task first for any behavior that was wrong), then work them with red, green and done."
     if carried:
-        steps = (("A person carried this ticket on after it stopped, and wrote what to do in " + str(guidance) + ". Read it first, as that person's "
-                  "words about this ticket. " if guided else "A person carried this ticket on after it stopped; the findings alone say what to fix. ")
+        who = (f"MACH gave this ticket a fresh set of rounds when {carried.get('by')} started the Factory" if carried.get("why") == "person-start"
+               else "A person carried this ticket on after it stopped")
+        steps = ((f"{who}, and wrote what to do in " + str(guidance) + ". Read it first, as that person's words about this ticket. "
+                  + rule.GUIDANCE_FENCE + " " if guided else f"{who}; the findings alone say what to fix. ")
                  + "Make the smallest change that answers the findings" + (" and the person's guidance" if guided else "")
                  + ". Keep everything already proven: do not redo, rewrite or rebuild work the findings do not name. " + steps)
-    counted = rule.used(cell.info, loop)
+    counted = rule.used(cell.root, loop)
     shown: Dict[str, Any] = {"status": "REVISING", "loop": loop, "round": counted, "rounds_left": max(limit - counted, 0),
                              "findings": str(findings) if findings else None}
-    if rule.base(cell.info) or rule.extra(cell.info):  # a person carried it on or started the line afresh: the round's own number and the limit
+    if rule.base(cell.root) or rule.extra(cell.root):  # a person carried it on or started the line afresh: the round's own number and the limit
         shown.update({"round_number": loop + 1, "max_rounds": limit})
     if carried:
         shown.update({"guidance": str(guidance) if guided else None, "carried_on_by": carried.get("by")})

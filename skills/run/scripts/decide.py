@@ -74,6 +74,7 @@ DATA_FIELDS = ("situation.title", "situation.reason", "situation.causes[].detail
                "situation.parked.reason", "situation.approval_reasons[]", "situation.pull_request",
                "situation.adr.title", "situation.adr.reason", "situation.adr_problems[]", "situation.missing_topics[].topic", "situation.proposed[].title", "situation.question",
                "situation.conflict.files[]", "situation.concerns[].statement", "situation.concerns[].why", "situation.concerns[].owner",
+               "situation.stopped.failed[].id", "situation.stopped.failed[].text", "situation.stopped.failed[].note", "guidance",
                "questions[].text", "questions[].follow_up")
 # A stop for an architecture decision, by the routing sheet's `needs`, and the waiting state it is walked as.
 ADR_STATES = {"adr-decision": "adr-conflict", "adr-acceptance": "adr-acceptance", "adr-fix": "adr-fix", "adr-baseline": "adr-baseline"}
@@ -358,6 +359,9 @@ def abandon_does(stake: Optional[Dict[str, Any]], extra: str = "") -> str:
             f"for it{counted}), keeps no archive, and closes the ticket as abandoned{extra}.")
 
 
+# CARRY_ON_FIRST, the one rule: wherever carry-on is offered it is the first option and the recommended one, before a security
+# exception (new or renewed) and before anything else. A fix keeps the work moving whatever is decided about the finding; an
+# exception is a person's acceptance of a real finding, never recommended, so it comes second.
 def carry_on_option(ticket: str) -> Dict[str, Any]:
     item = option("carry-on", "Carry on with a fix",
                   "The builder gets one more round on the same branch, with the last findings and what the person says to do; nothing already "
@@ -560,10 +564,10 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
                                   f"approve {ticket}"))
         else:
             facts["note"] = "This round's findings file is missing, so approval is not offered: a person sees the findings before approving."
-        last = type(decision.get("round")) is int and decision["round"] - explain.rounds_base(cell) >= explain.max_rounds(config, cell)
+        last = type(decision.get("round")) is int and decision["round"] - explain.rounds_base(cellroot) >= explain.max_rounds(config, cellroot)
         options.append(option("send-back", "Send it back",
-                              ("The review station records the person's reason; as this is the ticket's last round, the ticket then stops, and carrying "
-                               "it on gives the builder one more round with the reason as the finding."
+                              ("The review station records the person's reason, and as this is the ticket's last round the builder also gets one more "
+                               "round, with the reason as the finding and the guidance."
                                if last else "The review station records the person's reason as the finding to answer, and the builder revises; it uses one of the ticket's rounds."),
                               f'send-back {ticket} "<why>"', needs_reason=True))
         options.append(abandon(ticket))
@@ -684,10 +688,10 @@ def record(root: Path, ticket: str, state: str, info: Dict[str, Any], report: Di
         build = load_json(cellroot / "build.json", {}) or {}
         if isinstance(build, dict) and build.get("tasks"):
             item = carry_on_option(ticket)
-            item.update({"label": "Let the builder fix it", "recommended": not options,
+            item.update({"label": "Let the builder fix it",
                          "does": "The builder gets a round on the same branch to fix the security finding, with what the person says to do; nothing "
                                  "already built is redone, and verification and review then run again as normal."})
-            options.append(item)
+            options.insert(0, item)  # CARRY_ON_FIRST
             facts["stopped"] = stopped_facts(root, cellroot, report)
             facts["stopped"]["station"] = facts["stopped"]["station"] or "review"  # the security veto stands again
         options.append(abandon(ticket))

@@ -74,10 +74,10 @@ When the input is `<ticket> approve --by <name>`, or the user approves a ticket 
 
 A person may answer a ticket that is `AWAITING_HUMAN` by sending it back: the panel approved, and they want something changed before they will approve. Only on their explicit word in this conversation, with the reason in their own words. Never write the reason for them, and never improve it.
 
-Run `REVIEW send-back <ticket> --by '<name>' --reason '<their words: what has to change>'`. It counts as one of the ticket's judging rounds, like any rejection, so if this is the last round tell them first that the ticket then stops, and that carrying it on gives the builder one more round with their reason as the finding.
+Run `REVIEW send-back <ticket> --by '<name>' --reason '<their words: what has to change>'`. It counts as one of the ticket's judging rounds, like any rejection. In the last round it never stops the ticket: the script grants one more round in the same step, with their reason as the finding and the guidance (`carried_on` in its answer). Tell them that first.
 
 - `REJECTED`: the cell is back at the build station. The script wrote their reason to `person-findings.md` in the round's folder, with a pointer to the panel's own findings. Return it to the build station as its `next` says (`build revise <ticket> --findings <that file>`), and record it on the ticket as for a rejection.
-- `ESCALATE`: it was the last round. Do as its `next` says: label the ticket `blocked-requires-sme`, set its state to blocked, and tell the person they can carry it on with a fix (`/mach decide do <ticket> carry-on`).
+- With `carried_on`: it was the last round, and the builder has one more. Return it to the build station as its `next` says, as for a rejection.
 
 ## Recording a person's rating of a finding
 

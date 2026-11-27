@@ -528,14 +528,15 @@ class ExplainAndDecideTest(Base):
         self.expire()
         [item] = self.decide()["tickets"]
         self.assertEqual(item["state"], "exception-expired")
-        self.assertEqual([o["key"] for o in item["options"]], ["exception", "abandon"])
-        self.assertFalse(any(o["recommended"] for o in item["options"]))
+        self.assertEqual([o["key"] for o in item["options"]], ["carry-on", "exception", "abandon"], "carry-on first (decide.py CARRY_ON_FIRST)")
+        self.assertEqual([o["key"] for o in item["options"] if o["recommended"]], ["carry-on"], "the exception is never recommended")
 
-    def test_an_escalated_round_lists_it_beside_abandoning(self):
+    def test_an_escalated_round_lists_it_after_carrying_on(self):
         self.vetoed(config={"review": {"max_loops": 1}})
         [item] = self.decide()["tickets"]
         self.assertEqual(item["state"], "escalated")
-        self.assertEqual([o["key"] for o in item["options"]], ["exception", "abandon"])
+        self.assertEqual([o["key"] for o in item["options"]], ["carry-on", "exception", "abandon"], "carry-on first (decide.py CARRY_ON_FIRST)")
+        self.assertEqual([o["key"] for o in item["options"] if o["recommended"]], ["carry-on"], "the exception is never recommended")
 
 
 class UnattendedTest(unittest.TestCase):

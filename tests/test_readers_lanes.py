@@ -432,10 +432,13 @@ class CleanupTest(Built):
     def all_worktrees(self):
         return [line for line in git(self.project, "worktree", "list", "--porcelain").stdout.splitlines() if line.startswith("worktree ")]
 
-    def assert_clean(self):
+    def assert_clean(self, archived=True):
         self.assertEqual(self.all_worktrees(), [f"worktree {self.project}"], "only the main checkout is left in Git's records")
         self.assertEqual(git(self.project, "branch", "--list", "mach-lane/*").stdout, "", "no lane branch is left")
         self.assertFalse(self.cellroot.exists())
+        if not archived:
+            self.assertEqual(list((self.project / ".factory/archive").glob("*.tar.gz")), [], "no archive is written")
+            return []
         names = self.members()
         self.assertFalse([n for n in names if n.split("/")[1:2] == ["lanes"] and n.split("/")[3:4] == ["repo"]], "no lane's checked-out tree is archived")
         self.assertFalse([n for n in names if n.startswith("LOCAL-001/repo")])
@@ -449,11 +452,11 @@ class CleanupTest(Built):
         self.assertEqual(git(self.project, "merge", "--no-ff", "-q", "-m", "Merge LOCAL-001", "feature/LOCAL-001").returncode, 0)
         info = json.loads((self.cellroot / "cell.json").read_text())
         (self.cellroot / "cell.json").write_text(json.dumps({**info, "stage": "approved"}))
-        plan = self.c_ok("plan", TICKET)
+        plan = self.c_ok("plan", TICKET, "--keep-archive")
         self.assertEqual(plan["would"]["remove_lane_worktrees"], [".factory/worktrees/LOCAL-001/lanes/L1/repo"])
         self.assertEqual(plan["would"]["delete_lane_branches"], ["mach-lane/LOCAL-001/L1"])
         self.assertFalse([m for m in plan["would"]["archive_members"] if "/lanes/L1/repo" in m])
-        done = self.c_ok("run", TICKET)
+        done = self.c_ok("run", TICKET, "--keep-archive")
         names = self.assert_clean()
         for name in ("LOCAL-001/lanes/L1/lane.json", "LOCAL-001/lanes/L2/lane.json", "LOCAL-001/build.json", "LOCAL-001/lanes.bundle"):
             self.assertIn(name, names)
@@ -462,7 +465,7 @@ class CleanupTest(Built):
         self.assertEqual(done["record"]["outcome"], "merged")
         self.assertEqual(set(done["record"]), RECORD_KEYS, "the run record keeps its shape")
 
-    def test_a_ticket_abandoned_with_lanes_open_loses_nothing(self):
+    def test_a_ticket_abandoned_with_lanes_open_and_its_archive_kept_loses_nothing(self):
         self.ready_lanes()
         self.ok("start", TICKET)
         self.open_lanes()
@@ -470,11 +473,11 @@ class CleanupTest(Built):
         self.build_lane("L2", L2[:1])
         tips = {name: git(self.lane_work(name), "rev-parse", "HEAD").stdout.strip() for name in ("L1", "L2")}
         self.put(self.lane_work("L2"), {"app/release.py": "def release():\n    return 'half done'\n", "README.md": "# Sample, changed in L2\n"})
-        plan = self.c_ok("plan", TICKET, "--abandon", WHY)
+        plan = self.c_ok("plan", TICKET, "--abandon", WHY, "--keep-archive")
         self.assertTrue(plan["allowed"], plan["refusals"])
         self.assertEqual(plan["would"]["save_lane_uncommitted"], ["L2"])
         self.assertTrue(plan["would"]["bundle_lanes"])
-        done = self.c_ok("run", TICKET, "--abandon", WHY)
+        done = self.c_ok("run", TICKET, "--abandon", WHY, "--keep-archive")
         names = self.assert_clean()
         for name in ("LOCAL-001/lanes/L1/lane.json", "LOCAL-001/lanes/L2/lane.json", "LOCAL-001/lanes.bundle",
                      "LOCAL-001/lanes-saved/L2/uncommitted.patch", "LOCAL-001/lanes-saved/L2/untracked/app/release.py"):
@@ -506,40 +509,51 @@ class CleanupTest(Built):
         self.assertEqual((out / "LOCAL-001/lanes-saved/L2/untracked/app/release.py").read_text(), "def release():\n    return 'half done'\n")
         self.assertIn("T04", self.member("LOCAL-001/lanes/L2/lane.json").decode(), "the lane's state is kept")
 
-    def test_with_no_archive_the_lanes_work_stays_in_git(self):
-        """cleanup.archive "none": a lane's unjoined commits and its uncommitted files are kept under MACH's own refs, the lanes'
-        worktrees and branches still go, and the printed commands bring the work back; no tarball is written."""
+    def test_with_no_archive_the_lanes_work_stays_in_git_for_a_merged_ticket(self):
+        """cleanup.archive "none" (the default) on a merged ticket: a lane's unjoined commits are kept under MACH's own refs, the
+        lanes' worktrees and branches still go, and the printed commands bring the work back; no tarball is written."""
+        self.finished_in_two_lanes()
+        lane_commits = [t["lane_commit"] for t in self.state()["tasks"] if t.get("lane") == "L1"]
+        git(self.project, "worktree", "add", "-q", "-b", "mach-lane/LOCAL-001/L1", str(self.lane_work("L1")), lane_commits[-1])
+        git(self.lane_work("L1"), "commit", "-q", "--allow-empty", "-m", "a lane commit the join never took")
+        tip = git(self.lane_work("L1"), "rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(git(self.project, "merge", "--no-ff", "-q", "-m", "Merge LOCAL-001", "feature/LOCAL-001").returncode, 0)
+        info = json.loads((self.cellroot / "cell.json").read_text())
+        (self.cellroot / "cell.json").write_text(json.dumps({**info, "stage": "approved"}))
+        done = self.c_ok("run", TICKET)
+        self.assertIsNone(done["archive"])
+        self.assert_clean(archived=False)
+        listed = {item["name"]: item for item in done["kept_in_git"]}
+        ref = f"refs/mach/lanes-set-aside/{TICKET}/L1/1"
+        self.assertEqual(listed[ref]["commit"], tip)
+        brought = subprocess.run(shlex.split(listed[ref]["bring_back"]), capture_output=True, text=True)
+        self.assertEqual(brought.returncode, 0, brought.stderr)
+        self.assertIn("kept in Git under refs/mach/", done["lanes"]["note"])
+
+    def test_a_ticket_abandoned_with_lanes_open_is_deleted_for_good(self):
+        """The owner's rule (2026-11-27): an abandoned ticket's work is deleted, not archived. With its lanes open, every lane and
+        join worktree, every mach-lane/<ticket>/* branch, the ticket's branch and every ref MACH kept for it go; nothing is kept."""
         self.ready_lanes()
         self.ok("start", TICKET)
         self.open_lanes()
         self.build_lane("L1", L1)
         self.build_lane("L2", L2[:1])
-        tips = {name: git(self.lane_work(name), "rev-parse", "HEAD").stdout.strip() for name in ("L1", "L2")}
         self.put(self.lane_work("L2"), {"app/release.py": "def release():\n    return 'half done'\n", "README.md": "# Sample, changed in L2\n"})
-        self.put(self.project, {".factory/config.json": json.dumps({"cleanup": {"archive": "none"}})})
+        git(self.project, "update-ref", f"refs/mach/lane-files/{TICKET}/L1/1", "HEAD")
+        plan = self.c_ok("plan", TICKET, "--abandon", WHY)
+        self.assertTrue(plan["deletes_for_good"])
+        self.assertIn("Nothing is archived or kept", plan["in_words"])
+        self.assertGreater(plan["deletes"]["lane_commits"], 0)
+        self.assertGreater(plan["deletes"]["uncommitted_files"], 0)
         done = self.c_ok("run", TICKET, "--abandon", WHY)
         self.assertIsNone(done["archive"])
-        self.assertEqual(list((self.project / ".factory/archive").glob("*.tar.gz")), [])
-        self.assertEqual(self.all_worktrees(), [f"worktree {self.project}"])
-        self.assertEqual(git(self.project, "branch", "--list", "mach-lane/*").stdout, "", "the lane branches are removed as before")
-        self.assertIn("feature/LOCAL-001", git(self.project, "branch", "--format=%(refname:short)").stdout.split(), "the abandoned ticket's branch is kept")
-        listed = {item["name"]: item for item in done["kept_in_git"]}
-        for lane in ("L1", "L2"):
-            ref = f"refs/mach/lanes-set-aside/{TICKET}/{lane}/1"
-            self.assertEqual(listed[ref]["commit"], tips[lane])
-            shown = subprocess.run(shlex.split(listed[ref]["show"]), capture_output=True, text=True)
-            self.assertEqual(shown.returncode, 0, shown.stderr)
-            brought = subprocess.run(shlex.split(listed[ref]["bring_back"]), capture_output=True, text=True)
-            self.assertEqual(brought.returncode, 0, brought.stderr)
-            self.assertEqual(git(self.project, "rev-parse", f"recovered/lanes-set-aside/{TICKET}/{lane}/1").stdout.strip(), tips[lane])
-        files = listed[f"refs/mach/lane-files/{TICKET}/L2/1"]
-        self.assertEqual(git(self.project, "rev-parse", f"{files['name']}^").stdout.strip(), tips["L2"], "the files sit on the lane's last commit")
-        self.assertEqual(subprocess.run(shlex.split(files["bring_back"]), capture_output=True).returncode, 0)
-        self.assertEqual(git(self.project, "show", f"recovered/lane-files/{TICKET}/L2/1:README.md").stdout, "# Sample, changed in L2\n")
-        self.assertEqual(git(self.project, "show", f"recovered/lane-files/{TICKET}/L2/1:app/release.py").stdout, "def release():\n    return 'half done'\n")
-        self.assertIsNone(done["lanes"]["bundle"])
-        self.assertTrue(done["lanes"]["restore"])
-        self.assertIn("kept in Git under refs/mach/", done["lanes"]["note"])
+        self.assert_clean(archived=False)
+        self.assertNotIn("feature/LOCAL-001", git(self.project, "branch", "--format=%(refname:short)").stdout.split())
+        self.assertEqual(git(self.project, "for-each-ref", "--format=%(refname)", f"refs/mach/").stdout.split(), [], "no ref of the ticket is kept")
+        self.assertEqual(done["kept_in_git"], [])
+        self.assertEqual(sorted(done["lanes"]["branches_deleted"]), ["mach-lane/LOCAL-001/L1", "mach-lane/LOCAL-001/L2"])
+        self.assertIsNone(done["lanes"]["restore"])
+        self.assertIn("deleted", done["lanes"]["note"])
 
     def test_a_half_made_join_is_removed_too(self):
         self.ready_lanes()
@@ -550,7 +564,7 @@ class CleanupTest(Built):
         import build
         build.workspace.create(self.project, self.cellroot / "lanes/join/repo", "mach-lane/LOCAL-001/join", start=self.state()["lanes"]["fork"])
         done = self.c_ok("run", TICKET, "--abandon", WHY)
-        self.assert_clean()
+        self.assert_clean(archived=False)
         self.assertIn("mach-lane/LOCAL-001/join", done["lanes"]["branches_deleted"])
 
     def test_a_folder_that_is_not_a_lane_worktree_is_left_for_a_person(self):
