@@ -86,7 +86,7 @@ class TheObserverActsOnlyThroughRunPyTest(unittest.TestCase):
         for vector in ('[]string{"decide", "--json"}', '[]string{"factory", "status"}', '[]string{"factory", "stop"}',
                        '[]string{"decide", "do", d.Ticket, d.Option}', '"--via=floor", "--json"', '"-I", "-B", r.cfg.Script, "--project=" + r.cfg.Project'):
             self.assertIn(vector, code)
-        self.assertEqual(sorted(set(re.findall(r'\bflag\("([a-z-]+)"', code))), ["adr", "answers-file", "by", "reason", "test-cmd"])
+        self.assertEqual(sorted(set(re.findall(r'\bflag\("([a-z-]+)"', code))), ["adr", "answers-file", "by", "guidance", "reason", "test-cmd"])  # guidance: decide do <t> carry-on
 
     def test_it_never_names_the_factory_switch(self):
         found = []
