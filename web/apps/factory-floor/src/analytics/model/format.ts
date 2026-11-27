@@ -8,7 +8,7 @@
  */
 import type { Basis, MetricGroup, MetricRow } from "../contract";
 import { NO_VALUE, percentOf, recordedUsd, tokenWords } from "../data/format";
-import { duration, utcClock } from "../../shell/time";
+import { duration, wallMoment } from "../../shell/time";
 
 const S = 1000;
 const MIN = 60 * S;
@@ -142,9 +142,13 @@ export function dayText(t: number): string {
 export function windowText(from: number, to: number): string {
   return `${dayText(from)} – ${dayText(to - 1)}`;
 }
-/** A moment in the Floor's words (I-09): "4 Nov, 09:29:43 UTC", the day as a ruler names it and the clock as the inspector does. */
+/** A moment in the Floor's words (I-09), with its date, in the person's locale and time zone: "Today 09:29:43", "4 Nov 09:29:43". */
 export function clockText(t: number): string {
-  return `${dayText(t)}, ${utcClock(t)} UTC`;
+  return wallMoment(t, "second").text;
+}
+/** As `clockText`, worded for inside a sentence: "As of today 09:29:43". */
+export function clockInline(t: number): string {
+  return wallMoment(t, "second").inline;
 }
 
 /** The catalog's target in words: "> 0.85" → "above 85%", "< 1.3" → "below 1.3". */

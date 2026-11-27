@@ -56,9 +56,12 @@ import {
   stageLook,
   STATION_WORDS,
   tierOf,
+  spanCode,
   timecode,
+  timecodeInline,
   toolFamily,
 } from "../vocab";
+import { When } from "../When";
 import { Elapsed, EntityLink, Facts, Mono, NotRecorded, RecurrenceLink, RefLink, RefList, Section, StationHistoryLink, useEntityEvents, VisitHistoryLink } from "./parts";
 import { parseStation } from "./entity";
 import { reviewTally } from "./timing";
@@ -97,7 +100,7 @@ function agentsOf(scene: Scene, status: FactoryStatus | null, executionId: strin
   return agentsWords(observation, started, working);
 }
 
-const at = (t: number | null | undefined) => (t === null || t === undefined ? "not yet" : <Mono>{timecode(t, false)}</Mono>);
+const at = (t: number | null | undefined) => (t === null || t === undefined ? "not yet" : <Mono><When t={t} /></Mono>);
 
 /** An agent by its role (and seat), never by its opaque id. */
 const agentWord = (agent: Pick<AgentState, "role" | "seat">): string => (agent.role === "reviewer" && agent.seat ? `Reviewer, ${agent.seat}` : ROLE_WORDS[agent.role]);
@@ -105,7 +108,7 @@ const agentWord = (agent: Pick<AgentState, "role" | "seat">): string => (agent.r
 function AgentLink({ agent }: { agent: AgentState }) {
   const word = agentWord(agent);
   return (
-    <RefLink to={ref.agent(agent.id)} glyph={<AgentGlyph tier={tierOf(agent.model)} agentRole={roleOf(agent.role)} size={20} state={runState(agent.status)} />} detail={agent.status === "running" ? "working" : timecode(agent.startedAt, false)}>
+    <RefLink to={ref.agent(agent.id)} glyph={<AgentGlyph tier={tierOf(agent.model)} agentRole={roleOf(agent.role)} size={20} state={runState(agent.status)} />} detail={agent.status === "running" ? "working" : <When t={agent.startedAt} age={false} />}>
       {word} <FreeText field="agentLabel" text={agent.label} labelled expandable={false} className="text-ink-subtle" />
     </RefLink>
   );
@@ -133,7 +136,7 @@ function FreeTextNote({ label, block = false }: { label: string; block?: boolean
 export function ArtifactLink({ artifact }: { artifact: ArtifactState }) {
   const freeText = useFreeTextLabel(artifact);
   return (
-    <RefLink to={ref.artifact(artifact.id)} glyph={<ArtifactGlyph kind={artifactOf(artifact.kind)} size={18} failed={/findings/.test(artifact.kind)} />} detail={timecode(artifact.writtenAt, false)}>
+    <RefLink to={ref.artifact(artifact.id)} glyph={<ArtifactGlyph kind={artifactOf(artifact.kind)} size={18} failed={/findings/.test(artifact.kind)} />} detail={<When t={artifact.writtenAt} age={false} />}>
       <span className="font-mono text-[12px]">{artifact.label}</span>
       {freeText ? <FreeTextNote label={freeText} /> : null}
     </RefLink>
@@ -286,7 +289,7 @@ export function SliceAnatomy({ slice }: { slice: SliceState }) {
               <li key={h.seq} className="flex items-center gap-2">
                 <StateGlyph state={l.state} mark={l.mark} size={11} />
                 <span className="flex-1 text-ink">{l.label}</span>
-                <Mono muted>{timecode(h.at, false)}</Mono>
+                <Mono muted><When t={h.at} /></Mono>
               </li>
             );
           })}
@@ -337,7 +340,7 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
             // Two different counts, each named for what it is (D13); the files available to view are the observer's catalog.
             ["Artifacts referenced", `${artifactCounts.distinct} distinct`],
             artifactCounts.records !== artifactCounts.distinct ? ["Artifact records", `${artifactCounts.records} received (a file recorded again counts again)`] : null,
-            cell.merged ? ["Merged", <Mono key="m">{`${cell.merged.commit.slice(0, 7)} at ${timecode(cell.merged.at, false)}`}</Mono>] : null,
+            cell.merged ? ["Merged", <Mono key="m">{`${cell.merged.commit.slice(0, 7)}, `}<When t={cell.merged.at} inline /></Mono>] : null,
           ]}
         />
       </Section>
@@ -384,7 +387,7 @@ export function CellAnatomy({ cell }: { cell: CellState }) {
                 <span className="min-w-0 flex-1 truncate text-caption text-ink-subtle" title={h.by}>
                   {h.by}
                 </span>
-                <Mono muted>{timecode(h.at, false)}</Mono>
+                <Mono muted><When t={h.at} /></Mono>
               </li>
             );
           })}
@@ -465,9 +468,9 @@ export function StationAnatomy({ id, cell }: { id: string; cell: CellState }) {
                     </span>
                   </p>
                   <p className="font-mono text-[11px] text-ink-subtle tabular">
-                    {timecode(v.enteredAt, false)} to {v.leftAt === null ? "now" : `${status.state === "ended-unrecorded" ? "at most " : ""}${timecode(v.leftAt, false)}`}
+                    {v.leftAt === null ? `${timecode(v.enteredAt)} to now` : spanCode(v.enteredAt, v.leftAt, status.state === "ended-unrecorded" ? "at most " : "")}
                   </p>
-                  {v.interrupted ? <p className="text-[11px] text-ink-subtle">Not continuous: {interruptionWords(v, (t) => timecode(t, false))}.</p> : null}
+                  {v.interrupted ? <p className="text-[11px] text-ink-subtle">Not continuous: {interruptionWords(v, (t) => timecodeInline(t, true))}.</p> : null}
                 </div>
               </li>
             );
@@ -606,7 +609,7 @@ function PerCallAgent({ agent }: { agent: AgentState }) {
             </p>
             <RefList>
               {agent.toolCalls.slice(-8).reverse().map((c) => (
-                <RefLink key={c.id} to={ref.tool(c.id)} glyph={<ToolGlyph family={toolFamily(c.tool, c.target)} size={16} state={runState(c.status)} />} detail={c.status === "running" ? "running" : timecode(c.startedAt, false)}>
+                <RefLink key={c.id} to={ref.tool(c.id)} glyph={<ToolGlyph family={toolFamily(c.tool, c.target)} size={16} state={runState(c.status)} />} detail={c.status === "running" ? "running" : <When t={c.startedAt} age={false} />}>
                   <span className="font-mono text-[12px]">
                     {c.tool} <span className="text-ink-muted">{c.target}</span>
                   </span>
@@ -785,7 +788,7 @@ export function ArtifactAnatomy({ artifact }: { artifact: ArtifactState }) {
             </RefLink>
           ) : null}
           {readers.slice(0, 6).map(({ call, agent }) => (
-            <RefLink key={call.id} to={ref.tool(call.id)} glyph={<ToolGlyph family={toolFamily(call.tool, call.target)} size={16} />} detail={timecode(call.startedAt, false)}>
+            <RefLink key={call.id} to={ref.tool(call.id)} glyph={<ToolGlyph family={toolFamily(call.tool, call.target)} size={16} />} detail={<When t={call.startedAt} age={false} />}>
               {ROLE_WORDS[agent.role]} <span className="font-mono text-[12px] text-ink-muted">{call.tool}</span>
             </RefLink>
           ))}
@@ -833,7 +836,7 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
               {decision.evaluations.map((e, i) => (
                 <li key={`${e.at}-${i}`} className="flex items-baseline gap-2">
                   <span className="min-w-0 flex-1 text-ink">{evaluationWords(e)}</span>
-                  <Mono muted>{timecode(e.at, false)}</Mono>
+                  <Mono muted><When t={e.at} /></Mono>
                 </li>
               ))}
             </ol>
@@ -899,7 +902,7 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
               <div>
                 <p className="text-body-sm font-semibold text-ink">Approved by {review.humanApproval.by}</p>
                 <p className="mt-0.5 text-body-sm text-ink-muted">
-                  <span className="font-mono text-[12px] tabular">{timecode(review.humanApproval.at, false)}</span>
+                  <When t={review.humanApproval.at} className="font-mono text-[12px]" />
                   {review.humanApproval.note ? `, “${review.humanApproval.note}”` : ", no note"}
                 </p>
               </div>
@@ -910,7 +913,7 @@ export function GateAnatomy({ gate }: { gate: GateState }) {
               <div>
                 <p className="text-body-sm font-semibold text-ink">Sent back by {review.humanSentBack.by}</p>
                 <p className="mt-0.5 text-body-sm text-ink-muted">
-                  <span className="font-mono text-[12px] tabular">{timecode(review.humanSentBack.at, false)}</span>
+                  <When t={review.humanSentBack.at} className="font-mono text-[12px]" />
                   {review.humanSentBack.noteGiven ? ", with a reason (not shown here)" : ", no reason given"}. The change went back to the build station; it was not approved.
                 </p>
               </div>
@@ -1100,7 +1103,7 @@ export function ExecutionAnatomy({ execution }: { execution: ExecutionState }) {
               ? ["Recorded by the supervisor", at(execution.endedAt)]
               : null,
             real && execution.processStartedAt !== null
-              ? ["Process", `${timecode(execution.processStartedAt, false)} to ${execution.processEndedAt !== null ? timecode(execution.processEndedAt, false) : historyEnd !== null ? `no end recorded (the history ends at ${timecode(historyEnd, false)})` : "now"}${execution.ended ? `, ${execution.ended}` : ""}${execution.exitCode !== null ? `, exit ${execution.exitCode}` : ""}`]
+              ? ["Process", `${execution.processEndedAt !== null ? spanCode(execution.processStartedAt, execution.processEndedAt) : `${timecode(execution.processStartedAt)} to ${historyEnd !== null ? `no end recorded (the history ends ${timecodeInline(historyEnd, true)})` : "now"}`}${execution.ended ? `, ${execution.ended}` : ""}${execution.exitCode !== null ? `, exit ${execution.exitCode}` : ""}`]
               : null,
             execution.recovery ? ["Recovery", execution.recovery] : null,
             execution.outcome
@@ -1255,8 +1258,8 @@ export function VisitAnatomy({ visit }: { visit: VisitEntity }) {
             ["Step", isKnown(visit.meta, "action") ? visit.action : <NotRecorded key="a" />],
             ["Entered", at(visit.enteredAt)],
             ["State", visitStateWords(visit)],
-            ["Left", status.state === "ended" ? at(visit.leftAt) : visitLeftWords(visit, status, (t) => timecode(t, false))],
-            visit.interrupted ? ["Not continuous", interruptionWords(visit, (t) => timecode(t, false))] : null,
+            ["Left", status.state === "ended" ? at(visit.leftAt) : visitLeftWords(visit, status, (t) => timecodeInline(t, true))],
+            visit.interrupted ? ["Not continuous", interruptionWords(visit, (t) => timecodeInline(t, true))] : null,
             [
               "Duration",
               visit.durationMs !== null ? (

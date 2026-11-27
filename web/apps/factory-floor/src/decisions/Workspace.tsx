@@ -14,7 +14,7 @@
  */
 import { ArrowLeft, FileText, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { Badge, CommandLine, EmptyState, ErrorState, LoadingState, StatusPill, cn } from "@mach/ui";
+import { Badge, CommandLine, EmptyState, ErrorState, LoadingState, Moment, StatusPill, cn } from "@mach/ui";
 import { useSceneStore, useStore } from "../scene";
 import { ObserverError } from "../live/observer";
 import { SourceStamp } from "../shell/SourceBadge";
@@ -600,7 +600,7 @@ function DecisionBody({ p, onOpen }: { p: DecisionPage; onOpen: (id: string) => 
               <li key={t.ticket} className="flex flex-wrap items-baseline gap-x-2">
                 <span className="font-mono text-[13px] text-ink">{t.ticket}</span>
                 <span className="text-ink-muted">{t.stage ? `at ${t.stage}` : "stage not recorded"}</span>
-                <span className="text-ink-muted">planned {t.plannedAt ? <time dateTime={t.plannedAt}>{t.plannedAt.replace("T", " ").replace(/(\+00:00|Z)$/, " UTC")}</time> : "at a time not recorded"}</span>
+                <span className="text-ink-muted">planned {t.plannedAt ? <Moment at={t.plannedAt} inline /> : "at a time not recorded"}</span>
                 <Badge tone={t.sameText === false ? "warning" : "neutral"} outline>
                   {sameTextWords(t.sameText)}
                 </Badge>
@@ -623,8 +623,8 @@ function DecisionBody({ p, onOpen }: { p: DecisionPage; onOpen: (id: string) => 
                     decided by {e.by}
                     {e.at ? (
                       <>
-                        {" on "}
-                        <time dateTime={e.at}>{e.at.replace("T", " ").replace(/(\+00:00|Z)$/, " UTC")}</time>
+                        {" "}
+                        <Moment at={e.at} inline />
                       </>
                     ) : null}
                     ; recorded by {e.recordedBy}

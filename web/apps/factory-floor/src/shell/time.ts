@@ -5,11 +5,12 @@
 /**
  * What a time `t` means, set once by the app when it chooses its source (App.tsx):
  * - `scenario`: the simulation's ms from the scenario start, printed as a time code (mm:ss.s);
- * - `wall`: real history's `order_ms` (Unix ms), printed as wall-clock UTC (HH:MM:SS).
+ * - `wall`: real history's `order_ms` (Unix ms), printed as a moment with its date, in the person's
+ *   locale and time zone ("Today 14:53:26"; see `wallMoment`).
  * Only one source is shown at a time, so one module-wide base is enough and every caller of
  * `timecode` prints the right kind of time without being told.
  */
-import { momentWords, type MomentWords, type Precision } from "@mach/ui/datetime";
+import { momentWords, spanWords, type MomentWords, type Precision } from "@mach/ui/datetime";
 
 export type TimeBase = "scenario" | "wall";
 let timeBase: TimeBase = "scenario";
@@ -57,6 +58,18 @@ export function timecode(t: number, tenths = true): string {
 export function timecodeInline(t: number, tenths = false): string {
   if (timeBase === "wall") return wallMoment(t, tenths ? "second" : "minute").inline;
   return scenarioCode(t, tenths);
+}
+
+/**
+ * A span of two moments: real history to the second, the second one without its day when it is the
+ * same day ("Today 14:53:26 to 14:55:02"); the Simulation's two time codes. `toPrefix` goes before the
+ * second ("at most ").
+ */
+export function spanCode(from: number, to: number, toPrefix = ""): string {
+  if (timeBase !== "wall") return `${scenarioCode(from, false)} to ${toPrefix}${scenarioCode(to, false)}`;
+  const words = spanWords(from, to, { precision: "second" });
+  const head = `${wallMoment(from, "second").text} to `;
+  return `${head}${toPrefix}${words.slice(head.length)}`;
 }
 
 function scenarioCode(t: number, tenths: boolean): string {

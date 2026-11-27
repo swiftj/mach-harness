@@ -19,7 +19,7 @@ import { ENTITY_KINDS, gateNameWords, MODELS, type ActorId, type AgentRole, type
 // ---------------------------------------------------------------- time
 
 // The time words live in a module of their own (no grammar import), so plain tests can read them.
-export { setTimeBase, getTimeBase, utcClock, utcDate, timecode, duration, isMoment, type TimeBase } from "./time";
+export { setTimeBase, getTimeBase, utcClock, utcDate, timecode, timecodeInline, spanCode, wallMoment, duration, isMoment, type TimeBase } from "./time";
 
 // ---------------------------------------------------------------- grammar mapping
 

@@ -6,7 +6,7 @@
  */
 import { isStale, type ConnectionStatus } from "../scene/connection";
 import type { SceneSource } from "../sim";
-import { isMoment, utcClock } from "./time";
+import { isMoment, wallMoment } from "./time";
 
 export interface ConnectionLook {
   state: "connecting" | "live" | "reconnecting" | "stale" | "disconnected";
@@ -53,7 +53,7 @@ export function unavailableSourceWords(sources: readonly { readonly key: string;
 
 /** The words for a connection. Times are factory time (the stream's), never the browser's clock. `unavailable`: unavailableSourceWords. */
 export function connectionLook(c: ConnectionStatus, unavailable: string | null = null): ConnectionLook {
-  const since = isMoment(c.staleSince) ? utcClock(c.staleSince) : null;
+  const since = isMoment(c.staleSince) ? wallMoment(c.staleSince, "second").inline : null;
   switch (c.state) {
     case "connecting":
       return { state: "connecting", label: "Connecting", sentence: "Connecting to the observer." };
@@ -67,12 +67,12 @@ export function connectionLook(c: ConnectionStatus, unavailable: string | null =
         };
       return { state: "live", label: "Live", sentence: "Connected: receiving live." };
     case "stale":
-      return { state: "stale", label: since ? `Stale since ${since}` : "Stale", sentence: `Nothing heard from the observer${since ? ` since ${since} UTC` : ""}. What is shown is as last seen.` };
+      return { state: "stale", label: since ? `Stale since ${since}` : "Stale", sentence: `Nothing heard from the observer${since ? ` since ${since}` : ""}. What is shown is as last seen.` };
     case "reconnecting":
       return { state: "reconnecting", label: "Reconnecting", sentence: "The stream dropped. Reconnecting from the last cursor." };
     case "disconnected":
       // The source says disconnected after several failed attempts and keeps retrying (attempts > 0).
-      if (c.attempts > 0) return { state: "disconnected", label: "Disconnected, retrying", sentence: `The observer cannot be reached${since ? ` since ${since} UTC` : ""}. Retrying; what is shown is as last seen.` };
+      if (c.attempts > 0) return { state: "disconnected", label: "Disconnected, retrying", sentence: `The observer cannot be reached${since ? ` since ${since}` : ""}. Retrying; what is shown is as last seen.` };
       return { state: "disconnected", label: "Disconnected", sentence: `Disconnected${c.reason ? `: ${c.reason}` : "."}` };
     case "no-session":
       return { state: "disconnected", label: "No session", sentence: "The observer does not know this browser: the session expired or was dropped. Open the observer's new link." };

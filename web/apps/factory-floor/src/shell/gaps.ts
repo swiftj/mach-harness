@@ -9,7 +9,7 @@
  * Only identifiers, record numbers, codes and times are used: a gap carries no free text.
  */
 import type { HistoryGapState, LostRange } from "../sim";
-import { utcClock } from "./time";
+import { wallMoment } from "./time";
 
 export interface LostRangeLine {
   /** Event id of the gap record, for a stable key. */
@@ -22,7 +22,7 @@ export interface LostRangeLine {
   readonly reason: string;
   /** The reason as recorded (a code), shown beside the words so a report can quote it. */
   readonly code: string;
-  /** When it was noticed, "14:02:10 UTC", or null when not recorded. */
+  /** When it was noticed, "today 14:02:10", or null when not recorded. */
   readonly noticed: string | null;
 }
 
@@ -81,7 +81,7 @@ export function lostRangeLines(gaps: readonly HistoryGapState[], observer: reado
       records: client ? null : rangeWords(g.from, g.to),
       reason: GAP_REASON_WORDS[g.reason] ?? g.reason.replace(/-/g, " "),
       code: g.reason,
-      noticed: g.noticedAt !== null && g.noticedAt !== undefined ? `${utcClock(g.noticedAt)} UTC` : null,
+      noticed: g.noticedAt !== null && g.noticedAt !== undefined ? wallMoment(g.noticedAt, "second").inline : null,
       order: g.at,
     });
   }
@@ -94,7 +94,7 @@ export function lostRangeLines(gaps: readonly HistoryGapState[], observer: reado
       records: rangeWords(r.fromSeq, r.toSeq),
       reason: GAP_REASON_WORDS[r.reason] ?? r.reason.replace(/-/g, " "),
       code: r.reason,
-      noticed: r.noticedMs !== null ? `${utcClock(r.noticedMs)} UTC` : null,
+      noticed: r.noticedMs !== null ? wallMoment(r.noticedMs, "second").inline : null,
       order: r.atMs ?? 0,
     });
   }
