@@ -40,6 +40,8 @@ SPEC_ID_RE = re.compile(r"\b(?:(?:FR|INV|AC)-\d{2,}|R\d{1,3})\b")
 VETO_IMPACTS = ("critical", "high")
 IMPACTS = ("critical", "high", "medium", "low")
 FAILING_STAGES = ("built", "building", "blocked")
+# Which station's failure a headline is: what stopped a ticket last, for a person carrying it on (decide.py's facts.stopped).
+LAST_FAILURE_STATION = {"verification_failed": "verify", "review_rejected": "review", "sent_back_by_person": "person", "sent_back_by_merge": "merge"}
 HEADLINES = {
     "verification_failed": "Verification failed",
     "verification_incomplete": "Verification could not finish: items were left unproven",
@@ -48,7 +50,7 @@ HEADLINES = {
     "sent_back_by_person": "A person sent the change back after the panel approved it",
     "merge_refused": "The merge station stopped",
     "build_gate_refused": "A build gate refused",
-    "escalated": "The ticket used all its rounds and was escalated to a person",
+    "escalated": "The ticket failed its last round and stopped for a person, who can carry it on with a fix",
     "waiting_for_person": "Nothing failed; the ticket is waiting for a person",
     "nothing_failed": "Nothing failed",
     "not_started": "No cell yet: the ticket has not been groomed",
@@ -368,9 +370,45 @@ def refused_gate(records: List[Dict[str, Any]], station: str) -> Optional[Dict[s
     return None
 
 
-def max_rounds(config: Dict[str, Any]) -> int:
+_ROUNDS: List[Any] = []
+
+
+def rounds_helper() -> Any:
+    """The intent station's rounds.py, the one rule for how many rounds a ticket has, whichever way MACH is installed; None if absent."""
+    if not _ROUNDS:
+        import importlib.util
+        skills = Path(__file__).resolve().parent.parent.parent
+        script = next((folder / "scripts" / "rounds.py" for folder in (skills / "mach-intent", skills / "intent") if (folder / "scripts" / "rounds.py").is_file()), None)
+        found = None
+        if script is not None:
+            try:
+                spec = importlib.util.spec_from_file_location("mach_rounds_for_explain", script)
+                found = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(found)
+            except Exception:  # noqa: BLE001 - the same rule is applied below
+                found = None
+        _ROUNDS.append(found)
+    return _ROUNDS[0]
+
+
+def rounds_base(cell: Optional[Dict[str, Any]]) -> int:
+    """Rounds a person's start set aside (cell.json rounds_base): a round counts as its own number less this."""
+    helper = rounds_helper()
+    if helper is not None:
+        return helper.base(cell)
+    value = cell.get("rounds_base") if isinstance(cell, dict) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
+def max_rounds(config: Dict[str, Any], cell: Optional[Dict[str, Any]] = None) -> int:
+    """The ticket's last round: review.max_loops plus the rounds a person granted it by carrying it on (cell.json extra_rounds)."""
+    helper = rounds_helper()
+    if helper is not None:
+        return helper.limit(config, cell)
     value = (config.get("review") or {}).get("max_loops", 3) if isinstance(config.get("review"), dict) else 3
-    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 3
+    base = value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 3
+    extra = cell.get("extra_rounds") if isinstance(cell, dict) else None
+    return base + (extra if isinstance(extra, int) and not isinstance(extra, bool) and extra > 0 else 0)
 
 
 def no_cell(root: Path, ticket_id: str, next_info: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
@@ -431,6 +469,8 @@ def explain(root: Path, ticket_id: str, next_info: Dict[str, Any], config: Optio
         return base, code
 
     stage = cell.get("stage") if isinstance(cell.get("stage"), str) else None
+    limit = max_rounds(config, cell)
+    base["max_rounds"] = limit
     build = load_json(cellroot / "build.json", {}) or {}
     report = load_json(cellroot / "build-report.json", {}) or {}
     summary = load_json(cellroot / "evidence" / "summary.json", {}) or {}
@@ -441,7 +481,7 @@ def explain(root: Path, ticket_id: str, next_info: Dict[str, Any], config: Optio
     seat_veto_on = review_settings.get("security_veto") is not False
 
     loop = build.get("loop") if isinstance(build.get("loop"), int) and not isinstance(build.get("loop"), bool) else 0
-    used = loop + 1 if (cellroot / "build.json").is_file() else 0
+    used = max(loop + 1 - rounds_base(cell), 0) if (cellroot / "build.json").is_file() else 0  # rounds a person's start set aside do not count
     if stage == "blocked":
         used = max(used, limit)
     base.update({"stage": stage, "risk": clean(cell.get("risk"), 20), "rounds_used": used, "rounds_left": max(limit - used, 0)})
@@ -477,11 +517,13 @@ def explain(root: Path, ticket_id: str, next_info: Dict[str, Any], config: Optio
                                    str(findings.relative_to(cellroot)) if findings.is_file() else None))
         if candidates:
             candidates.sort(key=lambda item: (item[0], item[1]))
-            _, _, headline, causes, findings_file = candidates[-1]
+            failed_round, _, headline, causes, findings_file = candidates[-1]
             base["findings_file"] = findings_file if findings_file and (cellroot / findings_file).is_file() else None
+            base["last_failure"] = {"station": LAST_FAILURE_STATION.get(headline), "round": failed_round if isinstance(failed_round, int) else None}
         incomplete = refused_gate(records, "verify") if stage == "built" else None
-        if incomplete and incomplete.get("reason_code") == "incomplete-evidence" and (not candidates or candidates[-1][0] < used):
+        if incomplete and incomplete.get("reason_code") == "incomplete-evidence" and (not candidates or candidates[-1][0] < loop + 1):
             headline = "verification_incomplete"
+            base["last_failure"] = {"station": "verify", "round": loop + 1}
             causes = [cause("verification", ident, index, detail="Not proven: verification finished without evidence for this item.", source_file="lifecycle.jsonl")
                       for ident in incomplete.get("unproven") or [] if isinstance(ident, str)] or [
                 cause("verification", "verify.finish", index, detail="Verification could not finish: evidence was incomplete.", source_file="lifecycle.jsonl")]
@@ -494,7 +536,8 @@ def explain(root: Path, ticket_id: str, next_info: Dict[str, Any], config: Optio
         if stage == "blocked":
             headline = "escalated"
             causes.insert(0, cause("blocked", "round-limit", index, source_file="cell.json",
-                                   detail=f"The ticket failed {limit} judging rounds, the limit, and was escalated: a person takes it over."))
+                                   detail=f"It failed round {used} of {limit}, the last, so it stopped for a person. A person can carry it on with a fix: "
+                                          "the builder gets one more round on the same branch, with these findings and their words."))
     elif stage in ("approved", "pr-open"):
         gate = refused_gate(records, "merge")
         if gate:
@@ -535,6 +578,13 @@ def explain(root: Path, ticket_id: str, next_info: Dict[str, Any], config: Optio
     lanes = lanes_facts(cellroot)  # M22: nothing for a build without lanes
     if lanes:
         base["lanes"] = lanes
+    carried = [{"n": item.get("n") if isinstance(item.get("n"), int) else None, "by": clean(item.get("by"), 80), "at": clean(item.get("at"), 40),
+                "round": item.get("round") if isinstance(item.get("round"), int) else None,
+                "max_rounds": item.get("max_rounds") if isinstance(item.get("max_rounds"), int) else None,
+                "guidance_file": clean(item.get("guidance"), 60), "source_file": "cell.json"}
+               for item in cell.get("carried_on") or [] if isinstance(item, dict)] if isinstance(cell.get("carried_on"), list) else []
+    if carried:  # a person carried this ticket on after it stopped: who, when, and the round it was given
+        base["carried_on"] = carried[-10:]
     early = started_before(cell)
     if early and (used or base["headline_code"]):  # it failed or waits, and it was started before what it depends on was merged
         base["started_before"] = early

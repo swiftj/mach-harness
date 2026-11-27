@@ -1,6 +1,6 @@
 ---
 name: review
-description: Runs the MACH review panel on a verified ticket. Seats independent reviewers (architecture, security and performance, product) in fresh contexts, collects their findings, and gives a scripted outcome by risk tier, with a person's approval required for high-risk changes and escalation after a third failed round. Use after the verify station passes a ticket, when asked to review, approve or run the review panel for a built ticket, or to record a person's approval.
+description: Runs the MACH review panel on a verified ticket. Seats independent reviewers (architecture, security and performance, product) in fresh contexts, collects their findings, and gives a scripted outcome by risk tier, with a person's approval required for high-risk changes; a ticket that fails its last round stops for a person, who can carry it on with a fix. Use after the verify station passes a ticket, when asked to review, approve or run the review panel for a built ticket, or to record a person's approval.
 argument-hint: "[ticket ID] [approve --by <name>]"
 compatibility: "python3 >= 3.8, git"
 ---
@@ -56,7 +56,7 @@ When every reviewer has returned, run `REVIEW tally <ticket>`. Do not rely on wh
 | `APPROVED` | Enough reviewers found no blocker. For a `factory-tuning` ticket this means all three seats, with no person's approval. | Report it. The branch may be merged. |
 | `AWAITING_HUMAN` | The panel approved, and the change is high risk or the repository's readiness tier requires a person. | Show the user the outcome and the notes, and ask for their decision. Stop and wait. |
 | `REJECTED` | Too few approvals. | Post the findings on the ticket. Return the ticket to the build station only if you were asked to run the pipeline; otherwise report the command that does it. |
-| `ESCALATE` | Rejected in the third failed round. | Do not return it to the build station. Label the ticket `blocked-requires-sme`, set its state to `blocked`, and give the user the findings. |
+| `ESCALATE` | Rejected in the ticket's last round (`review.max_loops`, 3 unless set, plus any round a person granted it). | Do not return it to the build station yet. Label the ticket `blocked-requires-sme`, set its state to `blocked`, and give the user the findings. Tell them a person carries it on with a fix (`/mach decide <ticket>`, or the Factory Floor): the builder gets one more round on the same branch, with the findings and what the person says to do. Never suggest abandoning it, starting the slice again, or fixing the branch by hand. |
 
 A blocker from the security seat, and a `high` or `critical` security-class blocker from any seat (`security_blockers` in `decision.json`), rejects the round whatever the count; no setting overrides the second. A fix and a new round clear it, or a person's recorded exception for exactly this commit: `decision.json` lists the blockers that vetoed under `vetoing` (and each rejecting seat's blockers under `blockers_by_seat`), and the run skill's `/mach except` route records an exception, only on a person's explicit word in conversation. An exception also clears the reject vote of a seat whose every blocker it excepts, so it can apply at any tier; a seat with any other blocker still rejects. You never record one, never suggest one, and never treat a vetoed round as anything but rejected; inside a supervised Factory execution the script refuses it. When the outcome is an approval with `overruled_blockers_from`, a reviewer found a blocker and was outvoted. Say so plainly, name the blocker, and include it in what you show the person approving.
 
@@ -74,10 +74,10 @@ When the input is `<ticket> approve --by <name>`, or the user approves a ticket 
 
 A person may answer a ticket that is `AWAITING_HUMAN` by sending it back: the panel approved, and they want something changed before they will approve. Only on their explicit word in this conversation, with the reason in their own words. Never write the reason for them, and never improve it.
 
-Run `REVIEW send-back <ticket> --by '<name>' --reason '<their words: what has to change>'`. It counts as one of the ticket's three judging rounds, like any rejection, so if this is the last round tell them first that sending it back escalates the ticket and it will not be built again.
+Run `REVIEW send-back <ticket> --by '<name>' --reason '<their words: what has to change>'`. It counts as one of the ticket's judging rounds, like any rejection, so if this is the last round tell them first that the ticket then stops, and that carrying it on gives the builder one more round with their reason as the finding.
 
 - `REJECTED`: the cell is back at the build station. The script wrote their reason to `person-findings.md` in the round's folder, with a pointer to the panel's own findings. Return it to the build station as its `next` says (`build revise <ticket> --findings <that file>`), and record it on the ticket as for a rejection.
-- `ESCALATE`: it was the last round. Do as its `next` says: label the ticket `blocked-requires-sme`, set its state to blocked, and tell the person.
+- `ESCALATE`: it was the last round. Do as its `next` says: label the ticket `blocked-requires-sme`, set its state to blocked, and tell the person they can carry it on with a fix (`/mach decide do <ticket> carry-on`).
 
 ## Recording a person's rating of a finding
 

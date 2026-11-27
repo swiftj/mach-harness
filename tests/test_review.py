@@ -426,7 +426,7 @@ class TallyTest(Base):
         code, done = self.tally()
         self.assertEqual((code, done["outcome"], done["round"]), (1, "ESCALATE", 3))
         self.assertIn("blocked-requires-sme", done["next"])
-        self.assertIn("Do not send it back to the build station", done["next"])
+        self.assertIn("A person carries it on with a fix", done["next"])
         cell = self.cell_json()
         self.assertEqual((cell["stage"], cell["review"]), ("blocked", "ESCALATE"))
         self.assertIn("round 3 of 3", (folder / "findings.md").read_text())

@@ -32,11 +32,17 @@ INTEGRATION_KEYS = {"branch", "into", "method", "approved_commit", "landed_commi
 
 
 class Base(BuildBase):
+    keep_archive = True  # test_cleanup_archive's classes test the setting, the default and the deletion, so they pass no flag of their own
+
     def setUp(self):
         super().setUp()
         self.archive = self.project / ".factory/archive"
 
     def run_cleanup(self, *argv):
+        # These tests are of the archive itself: a person's --keep-archive asks for it (no archive is kept by default, and an
+        # abandoned ticket's work is otherwise deleted for good: test_cleanup_archive.DeletedForGoodTest).
+        if self.keep_archive and argv and argv[0] in ("plan", "run") and "--no-archive" not in argv and "--keep-archive" not in argv:
+            argv = (argv[0], "--keep-archive", *argv[1:])
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             code = cleanup.main(["--project", str(self.project), *argv])

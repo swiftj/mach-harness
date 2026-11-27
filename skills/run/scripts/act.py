@@ -14,6 +14,7 @@ option that list offers, through the station that owns it, with that station's o
     set-test-command   build.py set-commands            abandon        cleanup.py plan, then run, then the ticket is closed
     retry, run, revise nothing is recorded              answers        .factory/local/answers/<ticket>.json, its hash in the ledger (3.2)
     wait               nothing changes                  take-over      the step is taken from the other worker (the `take_over` seam)
+    carry-on           build.py carry-on (--guidance: the person's words, optional): one more round for a stopped ticket
 
 An option that needs an agent or a conversation (`do: false` in the list) is answered with the command to run, and
 nothing changes. After a decision that moves the ticket, its parked entry and attempt count are removed from the intake
@@ -78,7 +79,9 @@ STATIONS = {
     "exception": ("intent", "cell.py", "adr-exception"),
     "replan": ("intent", "cell.py", "replan"),
     "set-test-command": ("build", "build.py", "set-commands"),
+    "carry-on": ("build", "build.py", "carry-on"),
 }
+GUIDANCE_LIMIT = 4000
 NOTHING_RECORDED = ("retry", "run", "revise")
 # Why an option is left to a conversation, said to the person with the command to run.
 IN_CONVERSATION = {
@@ -161,7 +164,7 @@ def on_offer(item: Dict[str, Any]) -> str:
 
 
 def check_inputs(choice: Dict[str, Any], key: str, by: Optional[str], reason: Optional[str], adrs: List[str], test_cmd: Optional[str],
-                 answers_file: Optional[Path], option_adrs: List[str]) -> None:
+                 answers_file: Optional[Path], option_adrs: List[str], guidance: Optional[str] = None) -> None:
     label = choice["label"]
     if key != "wait" and not (by or "").strip():
         raise ActError("No name to record the decision under: git config user.name is not set here. Give the person's name with "
@@ -179,6 +182,10 @@ def check_inputs(choice: Dict[str, Any], key: str, by: Optional[str], reason: Op
                        "entry per question, each answered or marked leave open. Nothing was recorded.")
     if answers_file is not None and "answers" not in choice.get("needs", []):
         raise ActError(f"\"{label}\" takes no answers: leave --answers-file out. Nothing was recorded.")
+    if guidance is not None and "guidance" not in choice.get("takes", []):
+        raise ActError(f"\"{label}\" takes no guidance: leave --guidance out. Nothing was recorded.")
+    if guidance and ("\x00" in guidance or len(guidance) > GUIDANCE_LIMIT):
+        raise ActError(f"The guidance must be plain text of at most {GUIDANCE_LIMIT} characters. Nothing was recorded.")
     if adrs:
         if not option_adrs:
             raise ActError(f"\"{label}\" is not about an architecture decision: leave --adr out. Nothing was recorded.")
@@ -384,14 +391,14 @@ DECIDED_WORDS = {
     "approve": "Approved", "send-back": "Sent back", "merge": "Merged", "abandon": "Abandoned", "replan": "Sent back to be planned again",
     "accept": "Its ADR was accepted", "exception": "An exception to its ADR was recorded", "set-test-command": "Its test command was set",
     "retry": "Released to run again", "run": "Released to run again", "revise": "Released to be revised", "answers": "Its open questions were answered",
-    "take-over": "Taken over",
+    "take-over": "Taken over", "carry-on": "Carried on with a fix",
 }
 WAITING_FOR = {
     "approval": "a person's approval", "merge": "the merge", "pull-request": "its pull request to land",
     "merge-stopped": "a person to decide on the stopped merge", "answers": "answers to its open questions",
     "build-gate": "a person to decide on the stopped build", "parked": "a person to say it may run again",
     "worker-in-cell": "the other worker, or for someone to take it over", "main-conflict": "the conflict with the main branch to be resolved",
-    "escalated": "a person to decide what happens to it", "landed-elsewhere": "a person's merge of this copy",
+    "escalated": "a person to carry it on with a fix", "stuck": "a person to carry it on", "landed-elsewhere": "a person's merge of this copy",
     "already-on-main": "this copy to be closed out", "security-veto": "a person to decide on the security finding",
 }
 
@@ -553,7 +560,7 @@ def deciding(root: Path, wait: float = LOCK_WAIT_SECONDS, on_wait: Optional[Call
 
 
 def main(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[str, Any]], by: Optional[str], reason: Optional[str] = None,
-         adrs: Optional[List[str]] = None, test_cmd: Optional[str] = None, answers_file: Optional[Path] = None, via: str = "terminal",
+         adrs: Optional[List[str]] = None, test_cmd: Optional[str] = None, answers_file: Optional[Path] = None, via: str = "terminal", guidance: Optional[str] = None,
          station: Callable[[str, Sequence[str]], Tuple[int, str, str]], line: Callable[[], Any], carry_on: Callable[[], Dict[str, Any]],
          take_over: Optional[Callable[..., Dict[str, Any]]] = None, to_factory: bool = False, run_skill: str = "/mach",
          now: Optional[datetime] = None, lock_wait: Optional[float] = None, on_wait: Optional[Callable[[], None]] = None) -> Dict[str, Any]:
@@ -567,7 +574,7 @@ def main(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[str,
             return {"ticket_id": ticket, "option": key, "done": False, "busy": True, "by": " ".join((by or "").split()) or None, "via": via,
                     "unparked": False, "supervisor": "none", "pid": None, "why_not": None, "now": BUSY_NOW,
                     "then": "Nothing is recorded yet. The same decide do records it once the other decision has finished."}
-        result, after = record(ticket, key, root, report=report, by=by, reason=reason, adrs=adrs, test_cmd=test_cmd, answers_file=answers_file,
+        result, after = record(ticket, key, root, report=report, by=by, reason=reason, adrs=adrs, test_cmd=test_cmd, answers_file=answers_file, guidance=guidance,
                                via=via, station=station, line=line, take_over=take_over, to_factory=to_factory, run_skill=run_skill, now=now)
     if after is None:
         return result
@@ -583,7 +590,7 @@ def main(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[str,
 
 
 def record(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[str, Any]], by: Optional[str], reason: Optional[str] = None,
-         adrs: Optional[List[str]] = None, test_cmd: Optional[str] = None, answers_file: Optional[Path] = None, via: str = "terminal",
+         adrs: Optional[List[str]] = None, test_cmd: Optional[str] = None, answers_file: Optional[Path] = None, via: str = "terminal", guidance: Optional[str] = None,
          station: Callable[[str, Sequence[str]], Tuple[int, str, str]], line: Callable[[], Any],
          take_over: Optional[Callable[..., Dict[str, Any]]] = None, to_factory: bool = False,
          run_skill: str = "/mach", now: Optional[datetime] = None) -> Tuple[Dict[str, Any], Optional[Tuple[str, str]]]:
@@ -611,7 +618,7 @@ def record(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[st
     if not choice.get("do"):
         return in_conversation(ticket, key, item, run_skill), None
     targets = option_adrs(item, key)
-    check_inputs(choice, key, by, reason, adrs, test_cmd, answers_file, targets)
+    check_inputs(choice, key, by, reason, adrs, test_cmd, answers_file, targets, guidance)
     result: Dict[str, Any] = {"ticket_id": ticket, "option": key, "done": True, "by": name or None, "via": via, "station": None,
                               "warnings": list(item.get("warnings") or [])}
     if key == "wait":
@@ -633,8 +640,8 @@ def record(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[st
         result["station"] = run_station(station, key, [ticket, f"--by={name}", f"--reason={reason}", f"--via={via}"])
         if (result["station"]["answer"] or {}).get("outcome") == "ESCALATE":
             result["ticket"] = update_ticket(station, ticket, ["--state=blocked", "--label=blocked-requires-sme"])
-            done = (f"{ticket} is sent back with {name}'s reason. It was the last round, so it is escalated, not built again: "
-                    f"{run_skill} decide {ticket} shows what a person can do with it now.")
+            done = (f"{ticket} is sent back with {name}'s reason. It was its last round, so it stops for a person: {run_skill} decide do {ticket} "
+                    "carry-on gives the builder one more round, with that reason as the finding.")
         else:
             done, what = f"{ticket} is sent back with {name}'s reason, which uses one of its rounds.", "the builder revises it"
     elif key == "merge":
@@ -672,6 +679,14 @@ def record(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[st
     elif key == "replan":
         result["station"] = run_station(station, key, [ticket, f"--reason={reason}", f"--by={name}", f"--via={via}"])
         done, what = f"{ticket} goes back to be planned again, with {name}'s reason.", "the contract engineer writes a new plan"
+    elif key == "carry-on":
+        words = (guidance or "").strip()
+        result["station"] = run_station(station, key, [ticket, f"--by={name}", f"--via={via}"] + ([f"--guidance={words}"] if words else []))
+        answer = result["station"]["answer"] or {}
+        result["ticket"] = update_ticket(station, ticket, ["--state=in_progress", "--remove-label=blocked-requires-sme"])
+        done = (f"{name} carried {ticket} on: round {answer.get('round')} of {answer.get('max_rounds')}, on the same branch, with the last findings"
+                + (" and their guidance." if words else "."))
+        what = "the builder revises it, then verification and review run again"
     elif key == "set-test-command":
         result["station"] = run_station(station, key, [ticket, f"--test-cmd={test_cmd}", f"--reason={reason}", f"--by={name}", f"--via={via}"])
         done, what = f"The test command for {ticket} is set.", "the build carries on from where it is"
@@ -711,7 +726,8 @@ def record(ticket: str, key: str, root: Path, *, report: Callable[[str], Dict[st
         else:
             result["ticket"] = update_ticket(station, ticket, ["--state=closed", "--label=abandoned", f"--comment={reason}"])
         restore = answer.get("restore")
-        done = f"{ticket} is abandoned and its cell is removed." + (f" To get its work back: {sentence(restore)}" if restore else "")
+        done = (f"{ticket} is abandoned: its work is deleted from this machine." if not restore else
+                f"{ticket} is abandoned and its cell is removed. Its archive is kept, as asked: {sentence(restore)}")
 
     if key != "take-over" and choice.get("takes_over"):
         # The Factory is handed the ticket at the stage another worker holds: the step is taken from it, as the person asked
