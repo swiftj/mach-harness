@@ -10,7 +10,7 @@
  * differently. Elsewhere (the Simulation, or no run.py) the command to run in Claude Code.
  */
 import { CommandLine } from "@mach/ui";
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { type CellState } from "../sim";
 import { FreeText } from "../shell/inspector/FreeText";
 import { UncheckedNote, UncheckedText } from "../text/UncheckedText";
@@ -120,11 +120,13 @@ function Rounds({ view }: { view: StoppedView }) {
 
 export function StoppedPanel({ ticketId, cell, sentence, at, need, live }: { ticketId: string; cell: CellState | null; sentence: string; at: number | null; need: NeedTicket | null; live: boolean }) {
   const view = stoppedView({ ticketId, cell, sentence, at, need });
+  // The same ticket's panel may be drawn on the Line and in the Floor's inspector at once: ids of its own.
+  const uid = useId();
   const showFirst = (need?.showFirst ?? []).filter((p) => p !== view.findingsFile);
   return (
     <div data-stopped-panel={ticketId}>
-      <section aria-labelledby={`stopped-${ticketId}`}>
-        <h4 id={`stopped-${ticketId}`} tabIndex={-1} data-stopped-heading="" className="mb-1.5 text-label text-ink-muted outline-none">
+      <section aria-labelledby={`${uid}-stopped`}>
+        <h4 id={`${uid}-stopped`} tabIndex={-1} data-stopped-heading="" className="mb-1.5 text-label text-ink-muted outline-none">
           What stopped it
         </h4>
         <p className="text-body-sm text-ink" data-stopped-sentence="">
@@ -142,13 +144,13 @@ export function StoppedPanel({ ticketId, cell, sentence, at, need, live }: { tic
           {view.round.used !== null && view.round.max !== null ? ` · round ${Math.min(view.round.used, view.round.max)} of ${view.round.max}` : ""}
         </p>
       </section>
-      <Part title="What failed" id={`stopped-failed-${ticketId}`}>
+      <Part title="What failed" id={`${uid}-failed`}>
         <Failed view={view} />
       </Part>
-      <Part title="Rounds so far" id={`stopped-rounds-${ticketId}`}>
+      <Part title="Rounds so far" id={`${uid}-rounds`}>
         <Rounds view={view} />
       </Part>
-      <Part title="Findings file" id={`stopped-findings-${ticketId}`}>
+      <Part title="Findings file" id={`${uid}-findings`}>
         {view.findingsFile ? (
           <>
             <p className="break-all font-mono text-[13px] text-ink" translate="no" data-stopped-findings-file="">

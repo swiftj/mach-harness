@@ -103,6 +103,11 @@ test("a person's carry-on: 3 of 4 until the revision starts, then 4 of 4; the ca
   assert.equal(sim.nextRoundAfter(decided, 3), 4, "the round to come");
   assert.equal(decided.carriedOn[0].outcome, "carried-on-by-person");
   assert.equal(decided.carriedOn[0].stoppedAt, "verify");
+  const decidedScene = sceneOf(stoppedRun({ carry: [{ by: "person-decision", max: 4, then: "decided" }] }));
+  const waiting = L.rowOfCell(decidedScene, decided, now(decidedScene));
+  assert.equal(waiting.state, "held");
+  assert.equal(L.LINE_STATIONS[waiting.column].name, "Build", "its revision is next, at Build");
+  assert.equal(waiting.detail, "next: build");
   const scene = sceneOf(stoppedRun({ carry: [{ by: "person-decision", max: 4, then: "build" }] }));
   const cell = scene.cells["6"];
   assert.equal(cell.stage, "building");
@@ -128,6 +133,7 @@ test("a person starting the Factory gives a fresh set: round 4 reads 1 of 3, rou
   const row = L.rowOfCell(scene, cell, now(scene));
   assert.equal(row.state, "working");
   assert.equal(row.roundsUsed, 1, "rounds used in the set in force");
+  assert.equal(row.why, "Verification failed in round 4 (1 of 3 of its fresh set). The builder is fixing what it found.");
   assert.equal(row.sentBack.times, 4, "every time it was sent back to build, across both sets");
   assert.equal(L.sentBackTimesWords(row.sentBack.times), "Sent back 4 times");
   assert.equal(L.drawsSentBack(row), true, "at work again at Build: both ends are drawn");

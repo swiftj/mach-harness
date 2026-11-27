@@ -287,6 +287,12 @@ function sentBackOf(cell: CellState): LineRow["sentBack"] {
 }
 
 /** The last judging outcome before the open build visit (a revision), in words. */
+/** A recorded round in words: "3", or "4 (1 of 3 of its fresh set)" once a person gave it a fresh set of rounds. */
+export function roundName(cell: CellState, round: number): string {
+  const shown = shownRound(cell, round);
+  return (cell.roundBase ?? 0) > 0 && shown !== null ? `${round} (${shown} of ${roundLimit(cell)} of its fresh set)` : String(round);
+}
+
 function revisionWhy(cell: CellState): string | null {
   const reviews = cell.reviews.filter((r) => r.outcome !== null);
   const verifications = cell.verifications.filter((v) => v.status !== "running");
@@ -294,12 +300,12 @@ function revisionWhy(cell: CellState): string | null {
   const lastVerify = verifications.at(-1) ?? null;
   const reviewAt = lastReview?.decidedAt ?? -1;
   const verifyAt = lastVerify?.decidedAt ?? -1;
-  if (lastReview?.humanSentBack && reviewAt >= verifyAt) return `A person sent it back in round ${lastReview.round}. The builder is working on their reason.`;
+  if (lastReview?.humanSentBack && reviewAt >= verifyAt) return `A person sent it back in round ${roundName(cell, lastReview.round)}. The builder is working on their reason.`;
   if (lastReview && lastReview.outcome === "REJECTED" && reviewAt >= verifyAt) {
     const blockers = lastReview.findings.filter((f) => f.severity === "blocker" && !f.outvoted).length;
-    return `Review rejected round ${lastReview.round}${blockers ? ` with ${blockers} blocking finding${blockers === 1 ? "" : "s"}` : ""}. The builder is fixing what it found.`;
+    return `Review rejected round ${roundName(cell, lastReview.round)}${blockers ? ` with ${blockers} blocking finding${blockers === 1 ? "" : "s"}` : ""}. The builder is fixing what it found.`;
   }
-  if (lastVerify && lastVerify.status !== "PASS") return `Verification failed in round ${lastVerify.round}. The builder is fixing what it found.`;
+  if (lastVerify && lastVerify.status !== "PASS") return `Verification failed in round ${roundName(cell, lastVerify.round)}. The builder is fixing what it found.`;
   return null;
 }
 
@@ -354,6 +360,10 @@ function waitingColumn(cell: CellState): number {
     case "building":
       return BUILD;
     case "built": {
+      // A person carried it on and its revision has not started: the build station is next.
+      const carried = carryOns(cell).filter((c) => c.outcome === "carried-on-by-person").at(-1);
+      const lastBuildAt = [...cell.visits].reverse().find((v) => v.station === "build")?.enteredAt ?? Number.NEGATIVE_INFINITY;
+      if (carried && carried.at >= lastBuildAt) return BUILD;
       const lastJudge = [...cell.visits].reverse().find((v) => v.station === "verify" || v.station === "review" || v.station === "merge");
       const lastBuild = [...cell.visits].reverse().find((v) => v.station === "build");
       // Judged after the last build and not passed: back to Build; otherwise on to Verify.
