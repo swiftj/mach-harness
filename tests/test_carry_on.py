@@ -11,6 +11,7 @@ No supervisor, `claude` or `gh` is started.
 
 import io
 import json
+import shutil
 import os
 import sys
 import tempfile
@@ -116,7 +117,7 @@ class CarryOnTest(FileCells):
                 report = self.report()
                 self.assertEqual((report["rounds_used"], report["max_rounds"], report["rounds_left"]), (3, 4, 1), "round 4 of 4 is to come, never 4 of 3")
                 self.assertEqual(report["carried_on"][0]["by"], "Dana Smith")
-                self.tmp.cleanup()
+                shutil.rmtree(self.tmp.name)  # not tmp.cleanup(): on Python 3.9 it removes the folder only the first time
                 Path(self.tmp.name).mkdir()
                 (self.project / ".factory").mkdir()
 
